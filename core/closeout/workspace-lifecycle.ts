@@ -277,7 +277,14 @@ export class Lifecycle {
     task = await this.settlePreservedCatalogArchive(task, retryWorkspaceId);
     const runs=this.store.runs(task.id);
     const attachedAgentIds=new Set([task.agentId,task.coordinatorAgentId,task.resolution.reviewerAgentId,
-      ...task.retiredWorkers.map(worker=>worker.agentId),...runs.map(run=>run.agentId)].filter((id):id is string=>Boolean(id)));
+      ...task.retiredWorkers.map(worker=>worker.agentId),...runs.map(run=>run.agentId)].filter((id):id is string=>Boolean(id)).filter(id=>{
+        // Terminal deletion is already confirmed by the host and recorded in
+        // the thread lane. Such a thread has no projection left to observe.
+        // Pending/unknown effects and live runs keep the participant proof.
+        const key=this.store.threadArchiveKey(id,task.hostId);
+        const effect=key?this.store.getMeta<{status:string;op?:string}>(key):undefined;
+        return effect?.status!=='archived'||effect.op!=='delete'||runs.some(run=>run.agentId===id&&!run.released);
+      }));
     for(const workspace of terminalArchiveWorkspaces(task,runs)){
       if(!workspace.id||!workspace.directory||!workspace.head||task.resolution.archivedWorkspaceIds.includes(workspace.id))continue;
       const id=workspace.id;

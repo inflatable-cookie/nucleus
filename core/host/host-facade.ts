@@ -199,6 +199,14 @@ export class HostFacade implements Pick<Host, HostFacadeMethod> {
     return this.#route(id, (adapter, nativeId) => adapter.archiveAgent(nativeId));
   }
 
+  deleteAgent(id: AgentId): Promise<void> {
+    return this.#route(id, (adapter, nativeId) => {
+      const read = adapter.deleteAgent;
+      if (!read) return refused('This host cannot remove a thread');
+      return read.call(adapter, nativeId);
+    });
+  }
+
   /**
    * Optional on `Host`: present exactly when the adapter has a usage stream, so a
    * caller's presence check reads the same fact it read on the adapter. Each read
@@ -303,7 +311,7 @@ export type HostFacadeMethod =
   | 'catalog' | 'profiles' | 'capabilities'
   | 'findWorkspaces' | 'workspaceAvailable' | 'workspaceCatalog' | 'workspaceArchived'
   | 'originAgent' | 'observe' | 'observationInventory' | 'listLiveAgents'
-  | 'agentTimelinePage' | 'agentTimeline' | 'stopAgentTurn' | 'archiveAgent' | 'subscribeRunUsage'
+  | 'agentTimelinePage' | 'agentTimeline' | 'stopAgentTurn' | 'archiveAgent' | 'deleteAgent' | 'subscribeRunUsage'
   | 'sendMessage' | 'enqueueMessage' | 'interruptAndContinue'
   | 'pendingQuestions' | 'answeredQuestions' | 'answerNativeQuestion' | 'answerNativePermission' | 'dismissNativeQuestion';
 

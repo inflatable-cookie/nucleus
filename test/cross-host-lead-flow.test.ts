@@ -32,10 +32,10 @@ interface HostRecording {
 
 const recording = () => ({ workspaces: [], agents: [], asks: [], notifications: [], origins: [] } as HostRecording);
 
-const testProfile: Profile = { id: 'worker', name: 'Worker', provider: 'test', model: 'test', notes: '', available: true, problem: '', supportedThinking: ['low'] };
+const testProfile: Profile = { id: 'worker', name: 'Worker', provider: 'codex', model: 'test', notes: '', available: true, problem: '', supportedThinking: ['low'] };
 
 const catalog = {
-  providers: [{ key: 'test', label: 'test', available: true, problem: '', models: [{ id: 'test', label: 'test', aliases: [], thinkingOptions: [{ id: 'low', label: 'low' }], defaultThinkingOptionId: null, modes: [], features: [] }] }],
+  providers: [{ key: 'codex', label: 'Codex', available: true, problem: '', models: [{ id: 'test', label: 'test', aliases: [], thinkingOptions: [{ id: 'low', label: 'low' }], defaultThinkingOptionId: null, modes: [], features: [] }] }],
 };
 
 interface Fixture {

@@ -326,6 +326,10 @@ export class WorkerFailover {
       for (const host of hosts) await this.engine.withHost(host, () => this.archiveRetiredErroredAgents(host));
       return;
     }
+    // T3 keeps every task thread visible until closeout, including displaced
+    // workers and support threads. This Paseo Failed-workspace cleanup must not
+    // archive them while their task is still open (nucleus#1155).
+    if (typeof this.engine.adapter.deleteAgent === 'function') return;
     const sweep = this.store.getMeta<Record<string, { count: number; at: string; archived?: string[] }>>('retiredArchiveSweep') ?? {};
     let sweepChanged = false;
     const tasks = this.store.activeCapacityTasks();

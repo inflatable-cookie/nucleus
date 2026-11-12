@@ -84,6 +84,20 @@ export interface Host {
   agentTimeline(id: AgentId, limit?: number): Promise<HostTimelineEntry[] | null>;
   stopAgentTurn(id: AgentId): Promise<void>;
   archiveAgent(id: AgentId): Promise<void>;
+  /**
+   * Permanently remove one thread (T3Code, nucleus#1155). Optional: a host that
+   * cannot remove a thread archives it instead, so its closeout keeps the
+   * archive behaviour it has today (Paseo).
+   *
+   * A host with this method keeps a task's support threads settled and visible
+   * while the task is open and removes them at closeout, because nothing they
+   * hold is the only copy: review text, verdicts, recovery reports and decisions
+   * are already in Nucleus's records and on the pull request.
+   *
+   * An unknown outcome is never re-sent: the caller reads the thread back
+   * (absent from a complete inventory, or `deletedAt`) before anything else.
+   */
+  deleteAgent?(id: AgentId): Promise<void>;
   /** Optional: a host without run-usage streams has no method, so usage stays unknown rather than zero. */
   subscribeRunUsage?(id: AgentId, handler: (event: RunUsageStreamEvent) => void): Promise<RunUsageStream>;
 
@@ -295,6 +309,8 @@ export interface OriginAgent {
   workspaceId: WorkspaceId | null;
   title: string;
   archived: boolean;
+  /** The host reports the thread permanently removed, when it distinguishes that from archived (T3Code). */
+  deleted?: boolean;
 }
 
 export interface HostLiveAgent {

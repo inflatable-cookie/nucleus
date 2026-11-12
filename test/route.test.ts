@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { Store } from '../core/store/store';
+import { Store, qualifiedThreadArchiveEffectKey } from '../core/store/store';
 import { Engine } from '../core/engine';
 import { chooseProfile } from '../core/dispatch/routing';
 import { submissionSchema, reviewEntryRecordSchema, runSchema, taskControlInputSchema, type Profile, type Run } from '../shared/contracts';
@@ -694,6 +694,46 @@ test('route now stops and replaces a live reviewer without losing the PR or head
     assert.equal(run.profile?.id, 'authorrev', 'the replacement starts on the new route');
     assert.equal(f.current().prUrl, 'https://github.com/example/repo/pull/1', 'the PR is kept');
     assert.equal(f.current().prHead, head, 'the exact head is kept');
+  } finally { await f.close(); }
+});
+
+test('a removable host finishes a reviewer route after its stop reply precedes idleness (#1155)', async () => {
+  const f = fixture(); try {
+    const archived: string[] = [], deleted: string[] = [], settled: string[] = [];
+    f.adapter.archiveAgent = async id => { archived.push(id); };
+    f.adapter.deleteAgent = async id => { deleted.push(id); };
+    f.adapter.settleReportedThread = async id => { settled.push(id); };
+    f.adapter.stopAgentTurn = async id => { f.stops.push(id); };
+    f.store.putRun({ id: 'rev-live', taskId: f.task.id, hostId: 'host', role: 'reviewer', generation: 1, head, base,
+      agentId: 'reviewer', workspaceId: 'workspace', profile: f.engine.profiles.find(p => p.id === 'luna')!,
+      status: 'running', createdAt: new Date().toISOString(), lastObservedAt: null, active: true,
+      idleSince: null, completion: null, released: false });
+    f.store.setCredential('rev-live', 'token');
+    f.store.update(f.task.id, { phase: 'reviewing', resolution: { ...f.current().resolution,
+      currentRunId: 'rev-live', reviewerAgentId: 'reviewer', reviewerProfile: f.engine.profiles.find(p => p.id === 'luna')! } });
+    f.observations.set('reviewer', { id: 'reviewer', workspaceId: 'workspace', status: 'running', active: true,
+      permissions: false, error: '', activeTurnId: 'turn-9' });
+
+    await f.control({ role: 'reviewer', profileId: 'authorrev', now: true, reason: 'Replace the live reviewer' });
+    const key = qualifiedThreadArchiveEffectKey('host', 'reviewer');
+    assert.deepEqual(f.stops, ['reviewer']);
+    assert.equal(f.store.run('rev-live')!.released, false, 'the still-active stopped turn retains its run');
+    assert.equal(f.store.getMeta<{ status: string }>(key)?.status, 'ready', 'the existing observation marker records the wait');
+    await f.engine.resolution.observe();
+    assert.equal(f.store.run('rev-live')!.released, false, 'observation waits while the turn is active');
+
+    f.idle('reviewer');
+    await f.engine.resolution.observe();
+    assert.equal(f.store.run('rev-live')!.released, true, 'observation releases the displaced run once idle');
+    assert.equal(f.current().phase, 'awaiting_review');
+    assert.equal(f.current().resolution.reviewerAgentId, null);
+    assert.equal(f.current().profileRequests?.reviewer?.profileId, 'authorrev', 'the requested route is retained');
+    assert.equal(f.store.getMeta(key), undefined, 'closeout will start its own deletion effect');
+    assert.deepEqual(settled, ['reviewer']);
+    assert.deepEqual(archived, [], 'no thread is archived while the task is open');
+    assert.deepEqual(deleted, [], 'no thread is deleted while the task is open');
+    assert.throws(() => f.engine.resolution.complete({ taskId: f.task.id, runId: 'rev-live', eventId: 'late-review',
+      status: 'ready_to_merge', summary: 'Late verdict', prNumber: 1, head }, 'token'), /Unauthorized callback/);
   } finally { await f.close(); }
 });
 

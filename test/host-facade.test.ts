@@ -32,7 +32,7 @@ const FACADE_METHODS: HostFacadeMethod[] = [
   "catalog", "profiles", "capabilities",
   "findWorkspaces", "workspaceAvailable", "workspaceCatalog", "workspaceArchived",
   "originAgent", "observe", "observationInventory", "listLiveAgents",
-  "agentTimelinePage", "agentTimeline", "stopAgentTurn", "archiveAgent", "subscribeRunUsage",
+  "agentTimelinePage", "agentTimeline", "stopAgentTurn", "archiveAgent", "deleteAgent", "subscribeRunUsage",
   "sendMessage", "enqueueMessage", "interruptAndContinue",
   "pendingQuestions", "answeredQuestions", "answerNativeQuestion", "answerNativePermission", "dismissNativeQuestion",
 ];
@@ -63,18 +63,21 @@ test("each delegate forwards its arguments and returns the adapter's own promise
   const workspaces = Promise.resolve([{ id: "w1", directory: "/d" }]);
   const observation = Promise.resolve({ id: "a1", workspaceId: null, status: "idle", active: false, permissions: false, error: "" });
   const archived = Promise.resolve();
+  const deleted = Promise.resolve();
   const seen: unknown[][] = [];
   const adapter = {
     findWorkspaces: (...args: unknown[]) => { seen.push(["findWorkspaces", ...args]); return workspaces; },
     observe: (...args: unknown[]) => { seen.push(["observe", ...args]); return observation; },
     archiveAgent: (...args: unknown[]) => { seen.push(["archiveAgent", ...args]); return archived; },
+    deleteAgent: (...args: unknown[]) => { seen.push(["deleteAgent", ...args]); return deleted; },
   } as unknown as Adapter;
   const host = new HostFacade({ adapter });
 
   assert.equal(host.findWorkspaces(task), workspaces);
   assert.equal(host.observe("a1"), observation);
   assert.equal(host.archiveAgent("a1"), archived);
-  assert.deepEqual(seen, [["findWorkspaces", task], ["observe", "a1"], ["archiveAgent", "a1"]]);
+  assert.equal(host.deleteAgent("a1"), deleted);
+  assert.deepEqual(seen, [["findWorkspaces", task], ["observe", "a1"], ["archiveAgent", "a1"], ["deleteAgent", "a1"]]);
 
   // The adapter is entered before the façade returns: no await sits in front of the call.
   seen.length = 0;
@@ -155,6 +158,7 @@ test("an optional adapter method that is absent refuses by rejection with the na
   await assert.rejects(host.answerNativePermission('a1', 'w1', 'r1', 'accept', 'intent'), { message: 'This host cannot answer native permissions' });
   await assert.rejects(host.dismissNativeQuestion("a1", "w1", "r1"), { message: "This host cannot dismiss native questions" });
   await assert.rejects(host.sendMessage("a1", { messageId: "m", text: "t" }), { message: "This host cannot send messages" });
+  await assert.rejects(host.deleteAgent("a1"), { message: "This host cannot remove a thread" });
   await assert.rejects(host.enqueueMessage("a1", { messageId: "m", text: "t" }), { message: "This host cannot queue a message behind the current step" });
 });
 

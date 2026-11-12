@@ -26,6 +26,7 @@ export class Dispositions {
       hostAvailable: task => this.engine.taskHostAvailable(task),
       withHost: (id, fn) => this.engine.withHost(id, fn),
       observe: (id) => this.engine.host.observe(id),
+      retainThreadsUntilCloseout: () => typeof this.adapter.deleteAgent === "function",
       archiveAgent: (id) => this.engine.host.archiveAgent(id),
       archiveWorkspace: async (task, attachedAgentIds) => {
         if (!this.adapter.archiveTaskWorkspace) throw new Error("Workspace cleanup is unavailable; task remains preserved");

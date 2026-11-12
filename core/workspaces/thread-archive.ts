@@ -1,5 +1,5 @@
 import { historicalWireLabel } from "../../shared/wire-labels";
-import type { Adapter } from '../host/adapter';
+import type { Adapter, OriginAgent } from '../host/adapter';
 import { HostFacade } from '../host/host-facade';
 import type { Run, Task } from '../../shared/contracts';
 import { isDispositionActive } from '../../shared/contracts';
@@ -12,8 +12,62 @@ import { supersededIdleBinding } from '../recovery/fence-settlement';
 import { blockingRecoveryEffectsRefusal } from '../recovery/recovery-effects';
 import { observationAdvanceSince, runsUnchangedSince } from '../recovery/observation-advance';
 
-type ArchiveEffect = { status: 'intent' | 'ready' | 'archived' | 'uncertain'; at: string; detail?: string; retries?: number; nextRetryAt?: number; retryable?: boolean };
+type ArchiveEffect = { status: 'intent' | 'ready' | 'archived' | 'uncertain'; at: string; detail?: string; retries?: number; nextRetryAt?: number; retryable?: boolean;
+  /** The cleanup this record names: archive the thread, or remove it (nucleus#1155). */
+  op?: 'archive' | 'delete' };
 type RetryProof = (agentId: string, workspaceId: string) => Promise<string | null>;
+
+/** A proof-only task whose recorded proof is the outcome it was dispatched for. */
+function proofOnlyComplete(task: Task): boolean {
+  return Boolean(task.entrypoint === 'proof' && task.proofOnly && task.proofOnlyResult
+    && task.proofOnlyResult.commit === task.proofOnly.commit);
+}
+
+/**
+ * A task that has ended and so owes its threads their terminal cleanup: merged, a
+ * completed proof, or a completed cancellation (nucleus#1155 review). A cancelled
+ * task's workspace is retired by its own path; its threads are archived and
+ * removed here, under the same durable effects and retries.
+ */
+export function terminalThreadCleanup(task: Task, removal = false): boolean {
+  if (task.removedAt) return false;
+  if (task.phase === 'done') return Boolean(task.resolution.mergedCommit || proofOnlyComplete(task));
+  return removal && task.phase === 'cancelled' && task.disposition?.status === 'complete';
+}
+
+/**
+ * A host that can remove a thread keeps a task's support threads settled and
+ * visible while the task is open, and removes them at closeout (Tom,
+ * 2026-11-12; nucleus#1155). Nothing they hold is the only copy: review text,
+ * verdicts, recovery reports and decisions already live in Nucleus's records and
+ * on the pull request, and the thread's runs are released before the removal.
+ * Paseo has no removal, so its support threads keep the archive behaviour they
+ * have today: there they stay hidden on the workspace once archived.
+ */
+export const removesThreads = (adapter: Adapter): boolean => typeof adapter.deleteAgent === 'function';
+
+/**
+ * The host's own answer that the recorded cleanup finished. A removed or absent
+ * thread finishes either operation; an archived one finishes an archive only —
+ * a removal still owes the thread's deletion. Only a direct per-agent answer
+ * counts.
+ */
+function cleanupComplete(origin: OriginAgent | null, op: 'archive' | 'delete' = 'archive'): boolean {
+  if (!origin || origin.deleted === true) return true;
+  return op === 'archive' && origin.archived === true;
+}
+
+/** Worker history also includes revision runs whose task pointer has moved on. */
+function workerThreadIds(task: Task, runs: Run[]): Set<string> {
+  return new Set([task.agentId, ...task.retiredWorkers.map(worker => worker.agentId),
+    ...runs.filter(run => run.hostId === task.hostId && run.role === 'revision').map(run => run.agentId)]
+    .filter((agentId): agentId is string => Boolean(agentId)));
+}
+
+/** Whether this task owns the thread: it must carry this task's own label. */
+function ownedByTask(labels: Record<string, string> | undefined, taskId: string): boolean {
+  return historicalWireLabel(labels, 'task') === taskId;
+}
 
 /** Exhausted thread attempts block the existing workspace archive effect. */
 export function exhaustedThreadArchives(store: Store, task: Task, runs: Run[], workspaceId: string): string[] {
@@ -30,11 +84,39 @@ export function exhaustedThreadArchives(store: Store, task: Task, runs: Run[], w
   });
 }
 
-/** Archive a deliberately replaced reviewer before releasing its ownership. */
+/**
+ * Fence a deliberately replaced reviewer before releasing its ownership.
+ *
+ * A host that can remove a thread keeps the displaced thread settled until
+ * closeout and removes it there with the rest of the support set (brief v3: no
+ * in-flight deletion or archive): the fence is the displaced run's release plus a
+ * settled thread, which can no longer report into the task. A host that cannot
+ * remove a thread keeps the archive fence it has today, exactly as before.
+ */
 export async function archiveReplacedReviewer(store: Store, adapter: Adapter, run: Run): Promise<boolean> {
   if (!run.agentId) return false;
   const key = store.threadArchiveKey(run.agentId, run.hostId);
   if (!key || !adapter.originAgent) return false;
+  const stoppedAndIdle = async (): Promise<boolean> => {
+    const state = await new HostFacade({ adapter }).observe(run.agentId!);
+    return state.id === run.agentId && state.workspaceId === run.workspaceId && !state.active && !state.activeTurnId
+      && !state.permissions && ['idle', 'error', 'closed'].includes(state.status);
+  };
+  if (removesThreads(adapter)) {
+    // A stop reply may precede its turn becoming idle. Reuse the existing ready
+    // observation marker so the sweep finishes that replacement after the stop;
+    // ready proves that no archive or delete was sent. A prior unknown effect
+    // keeps its own identity and delivery history.
+    if (!store.getMeta<ArchiveEffect>(key))
+      store.putThreadArchiveEffect(key, run.agentId, { status: 'ready', at: now() } satisfies ArchiveEffect);
+    try {
+      if (!await stoppedAndIdle()) return false;
+      // Presentation only: the thread stays visible and settled until closeout.
+      await adapter.settleReportedThread?.(run.agentId, run.id).catch(() => undefined);
+      if (store.getMeta<ArchiveEffect>(key)?.status === 'ready') store.deleteMeta(key);
+      return true;
+    } catch { return false; }
+  }
   let effect = store.getMeta<ArchiveEffect>(key);
   const fresh = !effect;
   if (!effect) {
@@ -45,11 +127,7 @@ export async function archiveReplacedReviewer(store: Store, adapter: Adapter, ru
     store.putThreadArchiveEffect(key, run.agentId, effect);
     store.event(run.taskId, 'thread_archive_intent', `reviewer: ${run.agentId}`);
   }
-  if (effect.status === 'ready') {
-    const state = await new HostFacade({ adapter }).observe(run.agentId);
-    if (state.id !== run.agentId || state.workspaceId !== run.workspaceId || state.active || state.activeTurnId
-        || state.permissions || !['idle', 'error', 'closed'].includes(state.status)) return false;
-  }
+  if (effect.status === 'ready' && !await stoppedAndIdle()) return false;
   if (effect.status !== 'archived') await settleArchive(store, adapter, run.taskId, run.agentId, key, fresh, effect);
   return store.getMeta<ArchiveEffect>(key)?.status === 'archived';
 }
@@ -63,7 +141,7 @@ export async function archiveReplacedReviewer(store: Store, adapter: Adapter, ru
 export async function threadArchivedOrGone(adapter: Adapter, agentId: string): Promise<boolean> {
   if (!adapter.originAgent) return false;
   const observed = await new HostFacade({ adapter }).originAgent(agentId);
-  return !observed || observed.archived === true;
+  return !observed || observed.archived === true || observed.deleted === true;
 }
 
 /**
@@ -154,9 +232,22 @@ export async function archiveFinishedThreads(store: Store, adapter: Adapter, tas
   const host = new HostFacade({ adapter });
   const task = store.task(taskId);
   if (isDispositionActive(task) || task.removedAt || store.getMeta('paused') || !adapter.originAgent) return;
-  const proofOnlyDone = Boolean(task.entrypoint === 'proof' && task.proofOnly && task.proofOnlyResult
-    && task.proofOnlyResult.commit === task.proofOnly.commit);
-  if (task.phase === 'done' && (task.resolution.mergedCommit || proofOnlyDone)) return archiveTerminalTaskThreads(store, adapter, task, retryProof);
+  if (terminalThreadCleanup(task, removesThreads(adapter))) {
+    await archiveTerminalTaskThreads(store, adapter, task, retryProof);
+    // Ordinary completion can finish before the catch-up query gets here. The
+    // common terminal lane owns this marker, so neither route can miss it.
+    const current = store.task(taskId), completionKey = finishedThreadCleanupKey(taskId);
+    if (removesThreads(adapter) && current.hostId && terminalThreadCleanup(current, true)
+        && !threadCleanupPending(store, current, true) && !store.getMeta(completionKey))
+      store.setMeta(completionKey, now());
+    return;
+  }
+  // A host that can remove a thread keeps every support thread of an open task
+  // settled, never archived (nucleus#1155): the retained reviewer and recovery
+  // bindings stay exactly as they are, so the next review round or recovery
+  // episode continues the same thread instead of leaving an archived one behind
+  // and opening a new one. Closeout is where they are removed.
+  if (removesThreads(adapter)) return;
   for (const run of store.runs(taskId)) {
     if (!run.agentId || !run.released || !['reviewer', 'recovery', 'executor'].includes(run.role)) continue;
     const agentId = run.agentId;
@@ -185,15 +276,20 @@ export async function archiveFinishedThreads(store: Store, adapter: Adapter, tas
   }
 }
 
-/** Observe, then archive at most once, one thread whose archive intent is recorded. */
+/** Observe, then archive or remove at most once, one thread whose cleanup intent is recorded. */
 async function settleArchive(store: Store, adapter: Adapter, taskId: string, agentId: string, key: string, fresh: boolean, effect: ArchiveEffect, retry = false): Promise<void> {
   const host = new HostFacade({ adapter });
   if (!adapter.originAgent) return;
+  // The record names the operation: an intent keeps the operation that may
+  // already have been sent, so a recorded archive is never reissued as a delete.
+  const op = effect.op ?? 'archive';
+  const remove = op === 'delete';
+  const done = remove ? 'Observed deleted or absent' : 'Observed archived or absent';
   let sent = false;
   try {
     const observed = await host.originAgent(agentId);
-    if (observed?.archived || !observed) {
-      store.putThreadArchiveEffect(key, agentId, { status: 'archived', at: now(), detail: 'Observed archived or absent' } satisfies ArchiveEffect);
+    if (cleanupComplete(observed, op)) {
+      store.putThreadArchiveEffect(key, agentId, { status: 'archived', at: now(), detail: done, ...(effect.op ? { op: effect.op } : {}) } satisfies ArchiveEffect);
       store.deleteMeta(archiveProbeKey(store, taskId, agentId));
       store.event(taskId, 'thread_archive_observed', agentId);
       store.retireThreadScratch(taskId, agentId);
@@ -203,19 +299,23 @@ async function settleArchive(store: Store, adapter: Adapter, taskId: string, age
     // but do not issue the archive again merely because it still looks live.
     if (!fresh && effect.status !== 'ready' && !retry) {
       if (effect.status === 'intent') {
-        store.putThreadArchiveEffect(key, agentId, { status: 'uncertain', at: now(), detail: 'Prior archive intent still appears live', retryable: false } satisfies ArchiveEffect);
+        store.putThreadArchiveEffect(key, agentId, { status: 'uncertain', at: now(), detail: 'Prior archive intent still appears live', retryable: false, ...(effect.op ? { op: effect.op } : {}) } satisfies ArchiveEffect);
         store.event(taskId, 'thread_archive_uncertain', `${agentId}: prior archive intent still appears live`);
       }
       return;
     }
     // Persist the delivery fence again before the call, including a safe retry.
     const retries = (effect.retries ?? 0) + (retry ? 1 : 0);
-    store.putThreadArchiveEffect(key, agentId, { status: 'intent', at: now(), retries, nextRetryAt: Date.now() + 2000 * 2 ** Math.max(0, retries - 1) } satisfies ArchiveEffect);
+    store.putThreadArchiveEffect(key, agentId, { status: 'intent', at: now(), retries, nextRetryAt: Date.now() + 2000 * 2 ** Math.max(0, retries - 1), ...(effect.op ? { op: effect.op } : {}) } satisfies ArchiveEffect);
     sent = true;
-    await host.archiveAgent(agentId);
+    // A retry only reaches here after the caller re-proved the same identity,
+    // workspace, idleness and owned tools, so the identical command may be sent
+    // again under its own identity; the host replays its recorded receipt.
+    if (remove) await host.deleteAgent(agentId);
+    else await host.archiveAgent(agentId);
     const after = await host.originAgent(agentId);
-    if (after && !after.archived) throw Error('Archive was not confirmed');
-    store.putThreadArchiveEffect(key, agentId, { status: 'archived', at: now(), detail: 'Archive observed' } satisfies ArchiveEffect);
+    if (!cleanupComplete(after, op)) throw Error(remove ? 'Thread deletion was not confirmed' : 'Archive was not confirmed');
+    store.putThreadArchiveEffect(key, agentId, { status: 'archived', at: now(), detail: remove ? 'Deletion observed' : 'Archive observed', ...(effect.op ? { op: effect.op } : {}) } satisfies ArchiveEffect);
     store.deleteMeta(archiveProbeKey(store, taskId, agentId));
     store.event(taskId, 'thread_archive_observed', agentId);
     // The thread can take no further turn, so the leaves its tools started with
@@ -228,12 +328,20 @@ async function settleArchive(store: Store, adapter: Adapter, taskId: string, age
     if (error instanceof AdmissionDeferred) {
       const detail = String(error);
       if (effect.detail !== detail) store.event(taskId, 'thread_archive_wait', `${agentId}: Archive deferred: ${detail}`);
-      store.putThreadArchiveEffect(key, agentId, { status: 'ready', at: now(), detail, retries: effect.retries ?? 0, retryable: effect.retryable } satisfies ArchiveEffect);
+      store.putThreadArchiveEffect(key, agentId, { status: 'ready', at: now(), detail, retries: effect.retries ?? 0, retryable: effect.retryable, ...(effect.op ? { op: effect.op } : {}) } satisfies ArchiveEffect);
+      return;
+    }
+    if (remove && error instanceof ArchiveNotDeliveredError && (fresh || effect.status === 'ready')) {
+      // The adapter proved this occurrence never reached the host. Keep the
+      // existing terminal lane ready; no prior unknown delivery is reopened.
+      store.putThreadArchiveEffect(key, agentId, { status: 'ready', at: now(), detail: String(error),
+        retries: effect.retries ?? 0, ...(effect.op ? { op: effect.op } : {}) } satisfies ArchiveEffect);
+      store.event(taskId, 'thread_archive_wait', `${agentId}: ${String(error)}`);
       return;
     }
     // A failed read before delivery is safe to try again; after delivery starts
     // its outcome remains unknown and may only be observed.
-    store.putThreadArchiveEffect(key, agentId, { status: sent && !(error instanceof ArchiveNotDeliveredError) ? 'uncertain' : effect.status === 'uncertain' || !fresh && effect.status === 'intent' ? 'uncertain' : 'ready', at: now(), detail: String(error), retries: (effect.retries ?? 0) + (retry ? 1 : 0), nextRetryAt: retry ? Date.now() + 2000 * 2 ** (effect.retries ?? 0) : undefined, retryable: sent && !(error instanceof ArchiveNotDeliveredError) && (isTransportFailure(error) || /connection (?:lost|reset)/i.test(String(error))) ? true : effect.retryable } satisfies ArchiveEffect);
+    store.putThreadArchiveEffect(key, agentId, { status: sent && !(error instanceof ArchiveNotDeliveredError) ? 'uncertain' : effect.status === 'uncertain' || !fresh && effect.status === 'intent' ? 'uncertain' : 'ready', at: now(), detail: String(error), retries: (effect.retries ?? 0) + (retry ? 1 : 0), nextRetryAt: retry ? Date.now() + 2000 * 2 ** (effect.retries ?? 0) : undefined, retryable: sent && !(error instanceof ArchiveNotDeliveredError) && (isTransportFailure(error) || /connection (?:lost|reset)/i.test(String(error))) ? true : effect.retryable, ...(effect.op ? { op: effect.op } : {}) } satisfies ArchiveEffect);
     store.event(taskId, 'thread_archive_uncertain', `${agentId}: ${String(error)}`);
   }
 }
@@ -257,24 +365,44 @@ export function archiveProbeKey(store: Store, taskId: string, agentId: string): 
 /**
  * Tom, 2026-10-19: once a task is complete it is free to archive. A terminal
  * task needs none of its own threads, whatever their role, idle state or stale
- * tool labels: every thread Queue created for this task (labelled with its task
- * ID) is archived. Threads Queue does not own (a review-entry author, an origin or external coordinator) carry no such label and are
- * never touched.
+ * tool labels: the worker threads Queue created for this task are archived, and
+ * on a host that can remove a thread every support thread (reviewer, recovery,
+ * coordinator, executor) is removed (Tom, 2026-11-12; nucleus#1155).
+ * Removal loses nothing durable: those runs are released, their verdicts,
+ * reports and decisions are already in Nucleus's records and on the pull
+ * request, and the thread can take no further turn. Threads Queue does not own
+ * (a review-entry author, an origin or external coordinator) carry no `task`
+ * label and are never touched.
  */
 async function archiveTerminalTaskThreads(store: Store, adapter: Adapter, task: Task, retryProof?: RetryProof): Promise<void> {
   const host = new HostFacade({ adapter });
   const taskRuns = store.runs(task.id);
   const candidates = new Set([task.agentId, ...task.retiredWorkers.map(worker => worker.agentId), ...taskRuns.filter(run => run.hostId === task.hostId && task.hostId).map(run => run.agentId)]
     .filter((agentId): agentId is string => Boolean(agentId)));
+  // The task's own worker threads stay as archive history: the worker's thread
+  // is where its work happened, and the task keeps it. Every other identity this
+  // task ran on is a support thread and is removed where the host can.
+  const workerAgents = workerThreadIds(task, taskRuns);
+  const supportRemoval = removesThreads(adapter);
+  const opFor = (agentId: string, labels?: Record<string, string>): 'archive' | 'delete' => {
+    // Read the stored namespace through the shared keys. Initial worker threads
+    // have no role label, so the task pointer or revision run supplies that role.
+    const role = historicalWireLabel(labels, 'role');
+    const worker = role ? role === 'worker' || role === 'revision' : workerAgents.has(agentId);
+    return supportRemoval && !worker ? 'delete' : 'archive';
+  };
   const wait = (agentId: string, detail: string) => archiveWait(store, task.id, agentId, detail);
   const archiveOne = async (agentId: string) => {
     if (taskRuns.some(run => run.agentId === agentId && (!run.hostId || run.hostId !== task.hostId))) { wait(agentId, 'Waiting for proven run host'); return; }
     const key = store.threadArchiveKey(agentId, task.hostId);
     if (!key) { wait(agentId, 'Waiting for proven archive host'); return; }
+    let op = opFor(agentId);
     let effect = store.getMeta<ArchiveEffect>(key);
-    if (effect?.status === 'archived') { store.deleteMeta(archiveProbeKey(store, task.id, agentId)); return; }
-    const fresh = !effect;
-    if (!effect || effect.status === 'ready') {
+    // A record completes this candidate only when it names the same operation:
+    // a support thread archived earlier in the task's life is still removed here.
+    if (effect?.status === 'archived' && (effect.op ?? 'archive') === op) { store.deleteMeta(archiveProbeKey(store, task.id, agentId)); return; }
+    const fresh = !effect || effect.status === 'archived';
+    if (!effect || effect.status === 'ready' || fresh) {
       // A thread still serving anything else is not this task's to archive: an
       // unreleased run on any task, or a live binding on another task (a worker
       // remapped as another task's coordinator) (review #543).
@@ -284,20 +412,38 @@ async function archiveTerminalTaskThreads(store: Store, adapter: Adapter, task: 
       let observed;
       try { observed = await host.observe(agentId); }
       catch (error) {
-        const detail = String(error);
-        wait(agentId, detail);
+        // A thread the host already reports archived, removed or absent is done,
+        // even when its own projection can no longer be read (a removed T3
+        // thread has no projection). Anything else waits for a readable pass.
+        let origin: OriginAgent | null = null, readable = false;
+        try { origin = await host.originAgent(agentId); readable = true; } catch { /* the same outage keeps the wait */ }
+        if (readable && cleanupComplete(origin, op)) {
+          store.putThreadArchiveEffect(key, agentId, { status: 'archived', at: now(), detail: 'Observed archived, removed or absent', op } satisfies ArchiveEffect);
+          store.deleteMeta(archiveProbeKey(store, task.id, agentId));
+          store.event(task.id, 'thread_archive_observed', agentId);
+          return;
+        }
+        wait(agentId, String(error));
         return;
       }
-      if (!observed || historicalWireLabel(observed.labels, 'task') !== task.id) { store.deleteMeta(archiveProbeKey(store, task.id, agentId)); return; }
+      // A thread Queue does not own is never touched.
+      if (!observed || !ownedByTask(observed.labels, task.id)) { store.deleteMeta(archiveProbeKey(store, task.id, agentId)); return; }
+      op = opFor(agentId, observed.labels);
       // An active turn or pending permission waits for the next pass (review #543).
       if (observed.active || observed.activeTurnId || observed.permissions || !['idle', 'error', 'closed'].includes(observed.status)) { wait(agentId, 'Thread is active or waiting for permission'); return; }
       store.deleteMeta(archiveProbeKey(store, task.id, agentId));
       // Ownership may have changed while the observation was in flight.
       if (store.getMeta('paused') || store.unreleasedRunsForAgent(agentId, task.hostId).length || store.tasks().some(other => other.id !== task.id && (!other.hostId || !task.hostId || other.hostId === task.hostId) && !['done', 'cancelled'].includes(other.phase) && !other.removedAt
         && [other.agentId, other.coordinatorAgentId, other.resolution.reviewerAgentId].includes(agentId))) return;
-      if (!effect) {
-        store.putThreadArchiveEffect(key, agentId, { status: 'intent', at: now() } satisfies ArchiveEffect);
-        store.event(task.id, 'thread_archive_intent', `terminal task thread: ${agentId}`);
+      // A ready record has never delivered anything: a stopped-reviewer
+      // observation marker may safely take the terminal role's desired operation.
+      if (effect?.status === 'ready' && (effect.op ?? 'archive') !== op) {
+        effect = { ...effect, op };
+        store.putThreadArchiveEffect(key, agentId, effect);
+      }
+      if (!effect || fresh) {
+        store.putThreadArchiveEffect(key, agentId, { status: 'intent', at: now(), op } satisfies ArchiveEffect);
+        store.event(task.id, 'thread_archive_intent', `terminal task thread: ${op === 'delete' ? 'remove' : 'archive'} ${agentId}`);
         effect = store.getMeta<ArchiveEffect>(key);
         if (!effect) return;
       }
@@ -310,7 +456,7 @@ async function archiveTerminalTaskThreads(store: Store, adapter: Adapter, task: 
       try { origin = await host.originAgent(agentId); }
       catch (error) { wait(agentId, `Archive outcome uncertain: ${String(error)}`); return; }
       if (origin && origin.id !== agentId) { wait(agentId, 'Archive outcome uncertain; thread identity changed'); return; }
-      if (!origin || origin.archived) { await settleArchive(store, adapter, task.id, agentId, key, false, effect); return; }
+      if (cleanupComplete(origin, effect.op ?? 'archive')) { await settleArchive(store, adapter, task.id, agentId, key, false, effect); return; }
       if (effect.status === 'intent' || effect.retryable !== true) {
         wait(agentId, 'Archive outcome uncertain; prior intent has no proven transport-loss result and remains observation-only');
         return;
@@ -318,6 +464,12 @@ async function archiveTerminalTaskThreads(store: Store, adapter: Adapter, task: 
       const retries = effect.retries ?? 0;
       if (retries >= 3) { wait(agentId, 'Archive outcome uncertain; retry limit reached, owner reconciliation required'); return; }
       if ((effect.nextRetryAt ?? 0) > Date.now()) { wait(agentId, 'Archive outcome uncertain; waiting for retry backoff'); return; }
+      if (effect.op === 'delete') {
+        // A deletion's unknown outcome is only ever read back: no resend flag, no
+        // second command. The observation above proved the thread is still listed.
+        wait(agentId, 'Deletion outcome uncertain; observed still present, observation-only');
+        return;
+      }
       const runs = store.runs(task.id).filter(run => run.agentId === agentId);
       const workspaces = new Set(runs.map(run => run.workspaceId).filter(Boolean));
       if (task.agentId === agentId || task.retiredWorkers.some(worker => worker.agentId === agentId)) {
@@ -328,12 +480,12 @@ async function archiveTerminalTaskThreads(store: Store, adapter: Adapter, task: 
       const safe = async () => {
         admissionOf(adapter)?.invalidate(agentId);
         const state = await host.observe(agentId);
-        if (state.id !== agentId || state.workspaceId !== workspaceId || historicalWireLabel(state.labels, 'task') !== task.id)
+        if (state.id !== agentId || state.workspaceId !== workspaceId || !ownedByTask(state.labels, task.id))
           return 'Thread identity or workspace changed';
         if (state.active || state.activeTurnId || state.permissions || !['idle', 'closed'].includes(state.status))
           return 'Thread is active or waiting for permission';
         const current = store.task(task.id);
-        if (current.phase !== 'done' || current.removedAt || store.getMeta('paused') || store.unreleasedRunsForAgent(agentId, task.hostId).length || store.tasks().some(other => other.id !== task.id && (!other.hostId || !task.hostId || other.hostId === task.hostId) && !other.removedAt && !['done', 'cancelled'].includes(other.phase) && [other.agentId, other.coordinatorAgentId, other.resolution.reviewerAgentId].includes(agentId)))
+        if (!terminalThreadCleanup(current, supportRemoval) || current.removedAt || store.getMeta('paused') || store.unreleasedRunsForAgent(agentId, task.hostId).length || store.tasks().some(other => other.id !== task.id && (!other.hostId || !task.hostId || other.hostId === task.hostId) && !other.removedAt && !['done', 'cancelled'].includes(other.phase) && [other.agentId, other.coordinatorAgentId, other.resolution.reviewerAgentId].includes(agentId)))
           return 'Thread ownership or terminal state changed';
         return null;
       };
@@ -344,8 +496,8 @@ async function archiveTerminalTaskThreads(store: Store, adapter: Adapter, task: 
         const second = await safe(); if (second) { wait(agentId, second); return; }
         const latest = await host.originAgent(agentId);
         if (latest && latest.id !== agentId) { wait(agentId, 'Thread identity changed'); return; }
-        if (!latest || latest.archived) { await settleArchive(store, adapter, task.id, agentId, key, false, effect); return; }
-        if (latest.workspaceId !== workspaceId) { wait(agentId, 'Thread identity or workspace changed'); return; }
+        if (cleanupComplete(latest, effect.op ?? 'archive')) { await settleArchive(store, adapter, task.id, agentId, key, false, effect); return; }
+        if (!latest || latest.workspaceId !== workspaceId) { wait(agentId, 'Thread identity or workspace changed'); return; }
         wait(agentId, 'Archive outcome uncertain; reissuing after identity, idleness and owned-tool proof');
         await settleArchive(store, adapter, task.id, agentId, key, false, effect, true);
       } catch (error) { wait(agentId, `Archive outcome uncertain: ${String(error)}`); }
@@ -359,6 +511,86 @@ async function archiveTerminalTaskThreads(store: Store, adapter: Adapter, task: 
   await Promise.all(Array.from({ length: Math.min(2, pending.length) }, async () => {
     while (pending.length) await archiveOne(pending.shift()!);
   }));
+}
+
+/** The task-level record that the pre-existing-finished cleanup ran to completion. */
+export function finishedThreadCleanupKey(taskId: string): string { return `finishedTaskThreadCleanup:${taskId}`; }
+
+/**
+ * Whether this task still owes any of its own threads their terminal cleanup:
+ * the worker threads an archive, and on a host that can remove a thread the
+ * support threads a removal. The same candidate set and operation the terminal
+ * lane uses, read from the durable effect records.
+ */
+export function threadCleanupPending(store: Store, task: Task, removal: boolean): boolean {
+  const runs = store.runs(task.id);
+  const workerAgents = workerThreadIds(task, runs);
+  const agents = new Set(workerAgents);
+  for (const run of runs) if (run.agentId && run.hostId === task.hostId) agents.add(run.agentId);
+  return [...agents].some(agentId => {
+    const key = store.threadArchiveKey(agentId, task.hostId);
+    if (!key) return false;
+    const op = removal && !workerAgents.has(agentId) ? 'delete' : 'archive';
+    const effect = store.getMeta<ArchiveEffect>(key);
+    return !(effect?.status === 'archived' && (effect.op ?? 'archive') === op);
+  });
+}
+
+/**
+ * Finished tasks on this host whose threads this rule has not cleaned up yet.
+ *
+ * One direct query over the stored tasks: done or cancelled (the active-capacity
+ * index deliberately excludes both, so the ordinary sweep never presents them),
+ * this host's, not removed, and still owing a thread's archive or removal. A task
+ * is selected again on a later sweep only while an effect is still owed, so a
+ * lost or partial cleanup keeps its durable retry (nucleus#1155 brief v3).
+ */
+export function finishedThreadCleanupCatchUp(store: Store, hostId: string, removal: boolean): Task[] {
+  // Select pending effects in SQL before returning tasks. A fixed prefix of
+  // completed or unreadable tasks must never hide later finished tasks.
+  const rows = store.db.prepare(`WITH finished AS (
+    SELECT id, data, json_extract(data,'$.hostId') AS hostId FROM tasks
+    WHERE json_extract(data,'$.hostId')=?
+      AND json_extract(data,'$.removedAt') IS NULL
+      AND ((json_extract(data,'$.phase')='done' AND (
+        COALESCE(json_extract(data,'$.resolution.mergedCommit'),'')<>''
+        OR (json_extract(data,'$.entrypoint')='proof'
+          AND json_extract(data,'$.proofOnly.commit')=json_extract(data,'$.proofOnlyResult.commit'))))
+        OR (? AND json_extract(data,'$.phase')='cancelled'
+          AND json_extract(data,'$.disposition.status')='complete'))
+      AND NOT EXISTS (SELECT 1 FROM meta WHERE key='finishedTaskThreadCleanup:' || tasks.id)
+  ), threads AS (
+    SELECT id AS taskId, hostId, json_extract(data,'$.agentId') AS agentId, 1 AS worker FROM finished
+    UNION ALL
+    SELECT finished.id, hostId, json_extract(retired.value,'$.agentId'), 1
+      FROM finished, json_each(finished.data,'$.retiredWorkers') AS retired
+    UNION ALL
+    SELECT finished.id, finished.hostId, json_extract(runs.data,'$.agentId'),
+      CASE WHEN json_extract(runs.data,'$.role')='revision' THEN 1 ELSE 0 END
+      FROM finished JOIN runs ON runs.taskId=finished.id
+      WHERE json_extract(runs.data,'$.hostId')=finished.hostId
+  ), candidates AS (
+    SELECT taskId, hostId, agentId, MAX(worker) AS worker FROM threads
+      WHERE agentId IS NOT NULL AND agentId<>'' GROUP BY taskId, hostId, agentId
+  )
+  SELECT finished.data FROM finished WHERE EXISTS (
+    SELECT 1 FROM candidates LEFT JOIN meta
+      ON meta.key='threadArchiveQualified:nucleus-agent:v1:' || json_array(candidates.hostId,candidates.agentId)
+    WHERE candidates.taskId=finished.id AND (
+      COALESCE(json_extract(meta.value,'$.status'),'')<>'archived'
+      OR COALESCE(json_extract(meta.value,'$.op'),'archive')<>
+        CASE WHEN ? AND candidates.worker=0 THEN 'delete' ELSE 'archive' END)
+  ) ORDER BY finished.id`).all(hostId, removal ? 1 : 0, removal ? 1 : 0) as { data: string }[];
+  return rows.map(row => JSON.parse(row.data) as Task);
+}
+
+/** One finished task's cleanup, called on its existing task lane by the sweep. */
+export async function catchUpFinishedTaskThreads(store: Store, adapter: Adapter, taskId: string): Promise<void> {
+  if (store.getMeta('paused') || !removesThreads(adapter)) return;
+  const task = store.task(taskId);
+  if (!terminalThreadCleanup(task, true) || store.getMeta(finishedThreadCleanupKey(taskId))) return;
+  try { await archiveFinishedThreads(store, adapter, taskId); }
+  catch (error) { store.event(taskId, 'thread_cleanup_catch_up_error', String(error).slice(0, 2000)); }
 }
 
 function finished(store: Store, task: Task, run: Run): boolean {

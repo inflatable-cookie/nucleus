@@ -12,6 +12,7 @@ import {
 } from '../service/install/standby';
 import { COMPACTION_MAX_BLOCKED_MS } from '../core/store/store-compaction';
 import { bridgeSupport } from './support/bridge-fixture';
+import { HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS } from './support/budgets';
 
 // The 2026-10-21 schema 43 roll: a start that migrates its store outlasted the
 // fixed readiness budget, so the bridge called it unhealthy and retried beside it.
@@ -24,6 +25,7 @@ const waitFor = async (predicate: () => boolean) => {
     await new Promise(resolve => setTimeout(resolve, 10));
   }
 };
+const startupBudgetMs = HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS;
 const migratingService = () => ({ command: process.execPath, args: ['--import', 'tsx', fileURLToPath(new URL('./fixtures/migrating-service.mjs', import.meta.url))] });
 
 test('a start that reports migrating its store is waited for past the readiness budget, with one spawn', async () => {
@@ -32,20 +34,24 @@ test('a start that reports migrating its store is waited for past the readiness 
   process.env.FIXTURE_GATE_PHASE = 'migration';
   process.env.FIXTURE_RELEASE_FILE = join(root, 'release');
   let spawns = 0, pid = 0, clock = Date.now(), clockReads = 0;
-  const bridge = trackedBridge({ dataDir, paseoHome, readinessBudgetMs: 2_000, readinessPollMs: 10, readinessNow: () => { clockReads++; return clock; }, onSpawn: child => { pid = child; }, serviceCommand: () => { spawns++; return migratingService(); } });
+  const initialClock = clock;
+  const bridge = trackedBridge({ dataDir, paseoHome, readinessBudgetMs: startupBudgetMs, readinessPollMs: 10, readinessNow: () => { clockReads++; return clock; }, onSpawn: child => { pid = child; }, serviceCommand: () => { spawns++; return migratingService(); } });
   try {
     const forwarded = bridge.forward(entry, {});
     // The waiting bridge keeps its spawn claim fresh (Sol, #574): an aged claim is
     // rewritten, so a second bridge sees a live spawn instead of spawning beside it.
     const claimPath = join(dataDir, 'queue-service.claim.json');
     await waitFor(() => pid > 0 && existsSync(migrationMarkerPath(dataDir, pid)));
-    clock = Date.now() + 10_000;
+    clock = Date.now() + startupBudgetMs + 10_000;
+    assert.ok(clock - initialClock > startupBudgetMs, 'the controlled clock passes the ordinary readiness budget');
     const aged = new Date(Date.now() - 46_000).toISOString();
     writeFileSync(claimPath, JSON.stringify({ ...JSON.parse(readFileSync(claimPath, 'utf8')), at: aged }));
     const readsBefore = clockReads;
     await waitFor(() => clockReads > readsBefore + 2 && JSON.parse(readFileSync(claimPath, 'utf8')).at !== aged);
     assert.ok(Date.now() - Date.parse(JSON.parse(readFileSync(claimPath, 'utf8')).at) < 5_000, 'the claim is fresh again');
-    const second = trackedBridge({ dataDir, paseoHome, readinessBudgetMs: 10_000, readinessPollMs: 10, serviceCommand: () => { spawns++; return migratingService(); } });
+    // The competing bridge observes the same controlled wait, independent of cold-start speed.
+    const secondClock = Date.now();
+    const second = trackedBridge({ dataDir, paseoHome, readinessBudgetMs: 10_000, readinessPollMs: 10, readinessNow: () => secondClock, serviceCommand: () => { spawns++; return migratingService(); } });
     const secondForward = second.forward(entry, {});
     writeFileSync(process.env.FIXTURE_RELEASE_FILE!, 'go');
     const state = await forwarded as Record<string, unknown>;
@@ -112,8 +118,9 @@ test('a bounded store-maintenance window is waited for by the roll, with one rep
   process.env.FIXTURE_GATE_PHASE = 'maintenance';
   process.env.FIXTURE_RELEASE_FILE = join(root, 'release');
   let spawns = 0, pid = 0, clock = Date.now(), clockReads = 0;
+  const initialClock = clock;
   const secondClock = Date.now();
-  const bridge = trackedBridge({ dataDir, paseoHome, readinessBudgetMs: 2_000, readinessPollMs: 10, readinessNow: () => { clockReads++; return clock; }, onSpawn: child => { pid = child; }, serviceCommand: () => { spawns++; return migratingService(); } });
+  const bridge = trackedBridge({ dataDir, paseoHome, readinessBudgetMs: startupBudgetMs, readinessPollMs: 10, readinessNow: () => { clockReads++; return clock; }, onSpawn: child => { pid = child; }, serviceCommand: () => { spawns++; return migratingService(); } });
   try {
     const forwarded = bridge.forward(entry, {});
     // Keep the competing bridge's bounded wait under test control too. Its
@@ -125,7 +132,8 @@ test('a bounded store-maintenance window is waited for by the roll, with one rep
     const claimPath = join(dataDir, 'queue-service.claim.json');
     const aged = new Date(Date.now() - 46_000).toISOString();
     writeFileSync(claimPath, JSON.stringify({ ...JSON.parse(readFileSync(claimPath, 'utf8')), at: aged }));
-    clock = Date.now() + 10_000;
+    clock = Date.now() + startupBudgetMs + 10_000;
+    assert.ok(clock - initialClock > startupBudgetMs, 'the controlled clock passes the ordinary readiness budget');
     const readsBefore = clockReads;
     await waitFor(() => clockReads > readsBefore + 2 && existsSync(claimPath) && JSON.parse(readFileSync(claimPath, 'utf8')).at !== aged);
     clock = Date.now();

@@ -6,6 +6,7 @@ import type { Task } from "../../shared/contracts";
 import { isDispositionActive } from "../../shared/contracts";
 import type { ReconciliationSweep } from "../../shared/telemetry";
 import type { AgentObservation } from "../host/adapter";
+import { catchUpFinishedTaskThreads, finishedThreadCleanupCatchUp, removesThreads } from '../workspaces/thread-archive';
 import { sanitizeHostFailureReason } from "../host";
 import { reapHookCheckouts } from "../hooks/hook-cleanup";
 import { removeTaskProofFiles } from "../intake/proof-files";
@@ -56,6 +57,10 @@ export class Sweep {
       const runs = this.engine.store.runs(task.id);
       for (const run of runs) {
         if (run.hostId !== hostId || !run.agentId || (!run.released && !run.completion)) continue;
+        // The terminal lane's confirmed effect covers this thread, even when
+        // settling it previously needed no native receipt. An unresolved effect
+        // still needs observation and settlement on the next pass.
+        if (this.engine.store.threadArchiveEffect(run.agentId, hostId)?.status === 'archived') continue;
         const settle = run.role === 'revision' && reviewPhases.has(task.phase)
           ? settleWorker : supportRoles.has(run.role) ? settleSupport : undefined;
         if (!settle) continue;
@@ -67,7 +72,8 @@ export class Sweep {
       }
       // The initial worker run predates the role run ledger on legacy tasks.
       // The task only reaches these phases after its handover was accepted.
-      if (settleWorker && reviewPhases.has(task.phase) && task.agentId && task.runId && !runs.some(run => run.id === task.runId)) {
+      if (settleWorker && reviewPhases.has(task.phase) && task.agentId && task.runId && !runs.some(run => run.id === task.runId)
+        && this.engine.store.threadArchiveEffect(task.agentId, hostId)?.status !== 'archived') {
         try { await settleWorker.call(adapter, task.agentId, task.runId); }
         catch (error) {
           this.engine.store.event(task.id, 'thread_settlement_warning',
@@ -248,6 +254,7 @@ export class Sweep {
       // A list that cannot be walked to its end answers nothing, so every
       // identity falls back to the narrow read and no inactivity is inferred.
       let inventory: ReadonlyMap<string, AgentObservation> | null = null;
+      const finishedCatchUp = new Map<string, Task>();
       const hosts = new Set([...this.engine.hostIds(), ...this.engine.store.activeCapacityTasks().flatMap(task => task.hostId ? [task.hostId] : [])]);
       for (const host of hosts) await this.engine.withHost(host, async () => {
         if (!this.engine.hostAvailable(host)) return;
@@ -267,6 +274,11 @@ export class Sweep {
         // retried on this host's pass. Presentation only: it never changes a task.
         try { await this.engine.adapter.reconcileSettledThreads?.(); }
         catch { /* the record keeps for the next pass */ }
+        // Select directly from finished history, but never await cleanup in the
+        // shared host pass. These tasks join the rotating, bounded task window.
+        if (!this.engine.store.getMeta('paused') && removesThreads(this.engine.adapter))
+          for (const task of finishedThreadCleanupCatchUp(this.engine.store, host, true))
+            finishedCatchUp.set(task.id, task);
         if (this.engine.inventoryHostMatches(host)) inventory = observed;
       });
       this.engine.clearRetiredInvalidations();
@@ -319,7 +331,9 @@ export class Sweep {
       // concurrently. The audit yields to the event loop between bounded
       // chunks so acceptance and reads stay responsive.
       const reconciled = new Set<string>();
-      const order = this.engine.sweepOrder(drain);
+      const order = [...new Map([...this.engine.sweepOrder(drain), ...finishedCatchUp.values()]
+        .map(task => [task.id, task])).values()];
+      this.engine.sweepStats.tasks = order.length;
       const cursorAt = this.engine.sweepCursor ? order.findIndex(task => task.id === this.engine.sweepCursor) : -1;
       const resume = cursorAt + 1 >= order.length ? 0 : cursorAt + 1;
       // A window reconciles one page from the cursor. A drain walks, from the
@@ -339,7 +353,18 @@ export class Sweep {
           if (this.engine.stopped) return { fault: null, covered: false, visited };
           visited.add(candidate.id);
           const task = this.engine.store.task(candidate.id);
-          if (["done", "cancelled"].includes(task.phase)) continue;
+          if (["done", "cancelled"].includes(task.phase)) {
+            if (finishedCatchUp.has(task.id)) {
+              pending.push(boundQuantum(this.engine.scheduleLane(`task:${task.id}`, LANE_PRIORITY_TASK, async () => {
+                const current = this.engine.store.task(task.id);
+                if (!current.hostId || !this.engine.taskHostAvailable(current)) return;
+                await this.engine.withHost(current.hostId, () =>
+                  catchUpFinishedTaskThreads(this.engine.store, this.engine.adapter, current.id));
+              }), () => this.recordQuantumOutage(task.id)));
+              await new Promise<void>(resolve => setImmediate(resolve));
+            }
+            continue;
+          }
           // Spec 058 budgets (nucleus#1153): the wall clock pauses while the host, a
           // workspace or a dispatch hold keeps the task from progress — including a
           // task whose quantum this sweep cannot start at all.

@@ -1,7 +1,7 @@
 import { historicalWireLabel } from "../../shared/wire-labels";
 import { existsSync, rmSync } from "node:fs";
 import type { Run, Task } from "../../shared/contracts";
-import type { AgentObservation } from "../host/adapter";
+import type { AgentObservation, OriginAgent } from "../host/adapter";
 import type { WorkspaceContinuationHost } from "./workspace-continuation";
 import type { TimelinePage } from "../recovery/stall";
 import { readToolTimeline, liveToolIssue } from "../recovery/stall";
@@ -16,6 +16,15 @@ export class OwnedWorkspaceArchive {
   constructor(private readonly host: OwnedWorkspaceArchiveHost) {}
   async archiveTaskWorkspace(task:Task,id:string,directory:string,expectedHead:string,allowed:()=>boolean,uncertain:boolean,requirePublished=false,attachedAgentIds:ReadonlySet<string>=new Set(),requireDirectory=false,allowIdleForeignThreads=false,buildOutputCleanup?:BuildOutputCleanupHooks,reviewRun?:Run,discard?:WorkspaceDiscard|null,primaryArchived?:()=>boolean) {
     const workspace=this.host.workspaceHost.workspaceRef(id);
+    const terminal=task.phase==='done'||task.phase==='cancelled'&&task.disposition?.status==='complete';
+    const participantDeleted=async(agentId:string)=>{
+      if(!terminal||!this.host.deleteAgent||!this.host.originAgent)return false;
+      // A terminal cleanup can delete a participant after the caller built its
+      // attached set. Only the host's authoritative origin read proves that
+      // race complete; a missing projection or a `gone` status alone does not.
+      const origin=await this.host.originAgent(agentId);
+      return origin===null||origin.id===agentId&&origin.deleted===true;
+    };
     const proofOnlyDone=Boolean(task.phase==='done'&&task.entrypoint==='proof'&&task.proofOnly&&task.proofOnlyResult
       &&task.proofOnlyResult.commit===task.proofOnly.commit);
     // A proof-only checkout is detached at its commit with no branch, however the task
@@ -101,7 +110,10 @@ export class OwnedWorkspaceArchive {
       // not prove that no reader or helper still holds it.
       if(localTeardown||!current||ownedCheckout||reviewRun){
         for(const agentId of new Set([...attachedAgentIds,...entries.map(entry=>entry.agent.id)])){
-          const state=await this.host.observe(agentId);
+          let state:AgentObservation|null;
+          try{state=await this.host.observe(agentId);}
+          catch(error){if(await participantDeleted(agentId))continue;throw error;}
+          if(state?.status==='gone'&&await participantDeleted(agentId))continue;
           if(!state||state.id!==agentId)throw Error('Preserving workspace: participant observation is unreadable');
           if(state.workspaceId!==id){
             if(entries.some(entry=>entry.agent.id===agentId)||(id===task.workspaceId&&agentId===task.agentId))throw Error('Preserving workspace: participant ownership changed');
@@ -260,6 +272,8 @@ export interface ArchiveThreadPage { entries: { agent: ArchiveThreadRecord }[]; 
 export interface OwnedWorkspaceArchiveHost extends WorkspaceContinuationHost {
   readonly workspaceHost: WorkspaceContinuationHost["workspaceHost"] & { workspaceIdAccepted?(id: unknown): boolean; archiveThreadPage(options: { filter: { includeArchived: boolean; projectKeys?: string[] }; page: { limit: number; cursor?: string } }): Promise<ArchiveThreadPage> };
   observe(id: string): Promise<AgentObservation | null>;
+  originAgent?(id: string): Promise<OriginAgent | null>;
+  deleteAgent?(id: string): Promise<void>;
   agentTimelinePage?(id: string, limit?: number): Promise<TimelinePage | null>;
   classifyOrphan: typeof classifyOrphanWorktree;
   ownedDataDirFor(task: Task, directory: string): Promise<string | null>;

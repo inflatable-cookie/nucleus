@@ -28,6 +28,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../core/store/store";
+import { writeOwnedJson } from "../core/machine/owned-file.mjs";
 import { HostRunScheduler } from "../core/host-runs/host-run-scheduler";
 import { ADMISSION_RETIRED_WATCH_MS, ADMISSION_WATCH_MS, EffigyAdmissionEndpoint } from "../service/callbacks/effigy-admission-endpoint";
 import { hostRunAccountingDispositionMetaKey } from "../core/host-runs/host-run-meta-keys";
@@ -132,7 +133,7 @@ async function rowFixture(root: string, runId: string): Promise<RowFixture> {
   mkdirSync(project, { recursive: true });
   const countFile = join(root, `${runId}.observations`);
   const stateFile = join(root, `${runId}.state.json`);
-  writeFileSync(stateFile, JSON.stringify({ state: "running" }));
+  writeOwnedJson(stateFile, { state: "running" });
   runStatusFixture(project, countFile, stateFile);
   return { project, stateFile, countFile };
 }
@@ -296,9 +297,10 @@ test("a restarted service reattaches an operator-retired row on the slow cadence
 
   // The producer's own closure now arrives: it is late evidence, recorded once,
   // while the operator's accounting record stays exactly what it was.
-  writeFileSync(row.stateFile, closureState("late-evidence", { exit_code: 3 }));
+  // Publish a whole producer frame: an in-place write can race the real observer.
+  writeOwnedJson(row.stateFile, JSON.parse(closureState("late-evidence", { exit_code: 3 })));
   await waitUntil(() => scheduler.store.hostRunJournal(id).some(entry => entry.event === "effigy_observation"),
-    6_000, () => `the late producer closure is kept (${JSON.stringify(journalEvents(scheduler, id))})`);
+    6_000, () => `the late producer closure is kept (${JSON.stringify(scheduler.store.hostRunJournal(id).map(({ event, data }) => ({ event, data })))})`);
   const observed = scheduler.store.hostRunJournal(id).filter(entry => entry.event === "effigy_observation");
   assert.equal(observed.length, 1, "one note for the one producer answer");
   assert.equal((observed[0].data as { exitCode: number }).exitCode, 3, "the producer's own verdict is the evidence");
@@ -334,7 +336,7 @@ test("a row retired on either automatic basis stops its watch instead of observi
   const endpoint = await isolatedEndpoint(t, scheduler, root);
 
   const cleanup = await rowFixture(root, "producer-cleanup");
-  writeFileSync(cleanup.stateFile, closureState("producer-cleanup"));
+  writeOwnedJson(cleanup.stateFile, JSON.parse(closureState("producer-cleanup")));
   const cleanupId = await launchedReservation(endpoint, scheduler, cleanup, "producer-cleanup");
   await waitUntil(() => scheduler.accountingStatus(cleanupId)?.accounting === "retired", 5_000,
     () => `the producer closure retires the accounting (${JSON.stringify(journalEvents(scheduler, cleanupId))})`);
@@ -345,7 +347,7 @@ test("a row retired on either automatic basis stops its watch instead of observi
     "a producer-cleanup retirement has its final evidence, so the watch stops");
 
   const absent = await rowFixture(root, "foreground-absent");
-  writeFileSync(absent.stateFile, absenceState("foreground-absent"));
+  writeOwnedJson(absent.stateFile, JSON.parse(absenceState("foreground-absent")));
   const absentId = await launchedReservation(endpoint, scheduler, absent, "foreground-absent");
   await waitUntil(() => scheduler.accountingStatus(absentId)?.accounting === "retired", 5_000,
     () => `the absence answer retires the accounting (${JSON.stringify(journalEvents(scheduler, absentId))})`);

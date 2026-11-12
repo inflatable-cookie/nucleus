@@ -588,10 +588,11 @@ test('a Queue-held brief handover keeps its exact checked claim across restart a
  * cadence itself.
  */
 function serviceRuntime(f:Fixture,w:ReturnType<typeof writer>,dataDir:string){
+  f.reviewer.provider='codex'; // Runtime refresh reads the canonical stored profile vocabulary.
   const adapter={...f.buildAdapter(),...w.overrides,client:{isConnected:true},
-    catalog:async()=>({providers:[{key:'test',label:'test',available:true,problem:'',models:[{id:'reviewer-model',label:'reviewer-model',aliases:[],thinkingOptions:[],defaultThinkingOptionId:null,modes:[],features:[]}]}]})} as Adapter&ReviewEntryAdapter;
+    catalog:async()=>({providers:[{key:'codex',label:'Codex',available:true,problem:'',models:[{id:'reviewer-model',label:'reviewer-model',aliases:[],thinkingOptions:[],defaultThinkingOptionId:null,modes:[],features:[]}]}]})} as Adapter&ReviewEntryAdapter;
   const runtime = new QueueRuntime({dataDir,adapterFactory:()=>adapter,timers:true,sweepIntervalMs:20});
-  runtime.store.setProfiles([{id:'reviewer',name:'Reviewer',provider:'test',model:'reviewer-model',notes:''}]);
+  runtime.store.setProfiles([{id:'reviewer',name:'Reviewer',provider:'codex',model:'reviewer-model',notes:''}]);
   return runtime;
 }
 // Profiles route from the Queue store (#870): seed the reviewer, then refresh the routed list the bootstrap built without it.

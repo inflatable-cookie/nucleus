@@ -8,11 +8,15 @@ import { T3CodeHost } from '../hosts/t3code/adapter';
 import { ProvenPreSendRefusalError, HostUnknownDeliveryError } from '../core/host';
 import { isTransportFailure } from '../shared/transport';
 import type { HostAgentSpec } from '../shared/host';
-import type { Profile, Task } from '../shared/contracts';
+import { submissionSchema, type Profile, type Task } from '../shared/contracts';
+import { Store, qualifiedThreadArchiveEffectKey } from '../core/store/store';
+import { archiveFinishedThreads } from '../core/workspaces/thread-archive';
+import type { Adapter } from '../core/host';
 import { taskWorkspaceTitle } from '../core/workspaces/workspace-title';
 import { capPaseoTitle } from '../shared/paseo-title';
-import { WIRE_LABEL_KEYS, WIRE_PLUGIN_LABEL_KEY, wireLabels } from '../shared/wire-labels';
+import { WIRE_LABEL_KEYS, WIRE_PLUGIN_LABEL_KEY } from '../shared/wire-labels';
 import { t3Fake, STAMP, threadProjection } from './support/t3code-fake';
+import { storedT3Labels } from './support/t3code-labels';
 
 const profile: Profile = { id: 'synthetic-profile', name: 'Synthetic', provider: 'synthetic-provider', model: 'synthetic-model',
   available: true, problem: '', notes: '', supportedThinking: [] };
@@ -26,7 +30,7 @@ async function fixture(t: TestContext) {
   await host.connect();
   const workspace = await host.createWorkspace({ title: 'Synthetic worktree', requestId: 'workspace-intent', directory, project: { projectId: 'synthetic-project' } });
   const spec = (requestId = 'launch-intent', prompt = 'Synthetic prompt', role = 'worker'): HostAgentSpec => ({ workspaceId: workspace.id, profile, title: role === 'worker' ? 'Synthetic role' : `${role}: Synthetic role`, taskNumber: 225, mcpBindingPath: null,
-    attempt: () => ({ requestId, prompt, labels: wireLabels({ task: 'synthetic-task', run: role === 'worker' ? 'worker-run' : `${role}-run`, ...(role === 'worker' ? {} : { role }) }), environment: {} }) });
+    attempt: () => ({ requestId, prompt, labels: storedT3Labels(role, { runId: role === 'worker' ? 'worker-run' : `${role}-run` }), environment: {} }) });
   return { root, directory, server, options, host, workspace, spec };
 }
 
@@ -199,7 +203,7 @@ test('durable create replay survives reload and refuses changed payload or label
   assert.deepEqual(await reloaded.createAgent(spec()), first);
   assert.equal(server.commands.length, 1);
   await assert.rejects(reloaded.createAgent(spec('launch-intent', 'Changed prompt')), /payload changed/);
-  const changed = spec(); changed.attempt = () => ({ requestId: 'launch-intent', prompt: 'Synthetic prompt', labels: wireLabels({ task: 'other-task', run: 'worker-run' }), environment: {} });
+  const changed = spec(); changed.attempt = () => ({ requestId: 'launch-intent', prompt: 'Synthetic prompt', labels: storedT3Labels('worker', { taskId: 'other-task', runId: 'worker-run' }), environment: {} });
   await assert.rejects(reloaded.createAgent(changed), /retained identity changed/);
   assert.equal(server.commands.length, 1);
 });
@@ -372,8 +376,10 @@ test('observations distinguish idle, active run, permissions, archived and expli
   assert.equal(retired.archived, true);
   assert.ok(server.requests.some(r => r.tag === 'orchestration.getArchivedShellSnapshot'));
   assert.equal((await host.listLiveAgents()).some(r => r.id === created.id), false);
+  // A removed thread has no projection at all: the nightly refuses the read, so
+  // observation fails rather than inventing a status (brief v3).
   p.thread.deletedAt = STAMP;
-  assert.equal((await host.observe(created.id)).status, 'gone');
+  await assert.rejects(host.observe(created.id), /ThreadNotFound|T3Code/);
   await assert.rejects(host.observe('absent-thread'));
   assert.equal(await host.observationInventory(['absent-thread']), null);
 });
@@ -529,7 +535,7 @@ test('host identity conflicts and unsupported per-thread bindings refuse before 
   const { host, server, options, workspace, spec, root } = await fixture(t);
   const mcp = spec(); mcp.mcpBindingPath = 'synthetic-binding';
   await assert.rejects(host.createAgent(mcp), /MCP reporting/);
-  const environment = spec(); environment.attempt = () => ({ requestId: 'environment', prompt: 'Synthetic', labels: wireLabels({ task: 'synthetic-task', run: 'worker-run' }), environment: { SYNTHETIC: 'value' } });
+  const environment = spec(); environment.attempt = () => ({ requestId: 'environment', prompt: 'Synthetic', labels: storedT3Labels('worker', { runId: 'worker-run' }), environment: { SYNTHETIC: 'value' } });
   await assert.rejects(host.createAgent(environment), /launch environment/);
   const guarded = spec(); guarded.guard = { async allowed() { return true; }, stillAllowed() { return false; } };
   await assert.rejects(host.createAgent(guarded), /guard changed/);
@@ -553,7 +559,7 @@ test('the origin read answers authoritative absence, and only an unread inventor
   const { host, server, workspace, spec } = await fixture(t);
   const created = await host.createAgent(spec());
   assert.deepEqual(await host.originAgent(created.id),
-    { id: created.id, workspaceId: workspace.id, title: '225: Synthetic role', archived: false });
+    { id: created.id, workspaceId: workspace.id, title: '225: Synthetic role', archived: false, deleted: false });
   // T3 has no such thread: a complete shell plus archive read proves absence, so
   // the lookup answers not-mine instead of throwing.
   assert.equal(await host.originAgent('native-id-t3-does-not-have'), null);
@@ -875,4 +881,198 @@ test('after a socket drop, observation is an outage until reconnect, then resume
   const resumed = await host.observe(created.id);
   assert.equal(resumed.active, true);
   assert.equal(resumed.activeTurnId, 'resumed-run');
+});
+
+test('a support thread is removed once through the nightly thread.delete command and then reads as absent', async t => {
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const before = server.commands.length;
+
+  await host.deleteAgent(created.id);
+  const removals = server.commands.filter(command => command.type === 'thread.delete');
+  assert.equal(removals.length, 1);
+  assert.equal(removals[0]!.method, 'orchestration.dispatchCommand');
+  assert.equal(removals[0]!.threadId, created.id);
+  assert.equal(typeof removals[0]!.commandId, 'string');
+  // `onlyIfUnused` would make the nightly answer success without changing a
+  // thread that has runs or messages, reporting a removal that never happened.
+  assert.equal(removals[0]!.onlyIfUnused, undefined);
+  assert.equal(await host.originAgent(created.id), null, 'a removed thread is absent from a complete inventory');
+
+  // The durable receipt replays the recorded answer: one command, never two.
+  await host.deleteAgent(created.id);
+  assert.equal(server.commands.filter(command => command.type === 'thread.delete').length, 1);
+  assert.ok(server.commands.length > before);
+  host.state.update(state => { state.hostId = 't3code:other-environment'; });
+  await assert.rejects(host.deleteAgent(created.id), /durable host identity changed/);
+  assert.equal(server.commands.filter(command => command.type === 'thread.delete').length, 1, 'receipt replay still proves its host identity');
+});
+
+test('a native not_sent delete stays ready in the terminal lane and succeeds on the next attempt', async t => {
+  const { host, server, spec, root, workspace } = await fixture(t);
+  const store = new Store(join(root, 'delete-retry.sqlite'));
+  t.after(() => store.close());
+  store.setMeta('paused', false);
+  const task = store.insert(submissionSchema.parse({ submissionId: 'delete-retry', title: 'Synthetic cleanup',
+    repoPath: '/synthetic/repository', planningCommit: 'a'.repeat(40), handoffPath: 'synthetic.md', originAgentId: 'synthetic-origin' }),
+    host.hostId, 'Synthetic handoff', 'a'.repeat(40));
+  const launch = spec();
+  const attempt = launch.attempt;
+  launch.attempt = (mcp, retry) => ({ ...attempt(mcp, retry), labels: storedT3Labels('recovery', { taskId: task.id, runId: 'recovery-run' }) });
+  const created = await host.createAgent(launch);
+  store.update(task.id, { phase: 'done', workspaceId: workspace.id,
+    resolution: { ...store.task(task.id).resolution, mergedCommit: 'b'.repeat(40) } });
+  store.putRun({ id: 'recovery-run', taskId: task.id, hostId: host.hostId, role: 'recovery', generation: 1,
+    head: 'b'.repeat(40), base: 'a'.repeat(40), agentId: created.id, workspaceId: workspace.id, profile: null,
+    status: 'finished', createdAt: STAMP, lastObservedAt: STAMP, active: false, idleSince: STAMP, completion: null, released: true });
+  const adapter = { hostId: host.hostId, observe: host.observe.bind(host), originAgent: (id: string) => host.originAgent(id),
+    archiveAgent: host.archiveAgent.bind(host), deleteAgent: host.deleteAgent.bind(host) } as unknown as Adapter;
+  const nativeCall = host.rpc.call.bind(host.rpc);
+  host.rpc.call = (method, payload) => {
+    if (method === 'orchestration.dispatchCommand' && (payload as { type?: string }).type === 'thread.delete') host.rpc.close();
+    // The real RPC client, now disconnected, returns delivery:not_sent before
+    // serializing or writing any command to the fake Nightly server.
+    return nativeCall(method, payload);
+  };
+
+  await archiveFinishedThreads(store, adapter, task.id);
+  const key = qualifiedThreadArchiveEffectKey(host.hostId, created.id);
+  assert.equal(store.getMeta<{ status: string }>(key)?.status, 'ready', 'proven non-delivery remains safely retryable');
+  assert.equal(server.commands.filter(command => command.type === 'thread.delete').length, 0);
+  assert.equal(Object.values(host.state.read().intents).find(intent => JSON.parse(intent.payload).payload.type === 'thread.delete')?.status,
+    'refused', 'the native delivery ledger records its own not-sent result');
+
+  host.rpc.call = nativeCall;
+  await host.connect();
+  const nativeOrigin = host.originAgent.bind(host);
+  host.originAgent = async id => {
+    const origin = await nativeOrigin(id);
+    host.close(); // A known-refused attempt now loses its connection before reservation.
+    return origin;
+  };
+  await archiveFinishedThreads(store, adapter, task.id);
+  assert.equal(store.getMeta<{ status: string }>(key)?.status, 'ready');
+  assert.equal(server.commands.filter(command => command.type === 'thread.delete').length, 0);
+  assert.equal(Object.values(host.state.read().intents).find(intent => JSON.parse(intent.payload).payload.type === 'thread.delete')?.status,
+    'refused', 'a refused intent remains known-unsent across connection preflight failure');
+  host.originAgent = nativeOrigin;
+  await host.connect();
+  await archiveFinishedThreads(store, adapter, task.id);
+  assert.equal(store.getMeta<{ status: string }>(key)?.status, 'archived');
+  assert.equal(server.commands.filter(command => command.type === 'thread.delete').length, 1, 'the same deletion is delivered once');
+  await archiveFinishedThreads(store, adapter, task.id);
+  assert.equal(server.commands.filter(command => command.type === 'thread.delete').length, 1);
+});
+
+test('an unknown thread.delete outcome is never resent; the thread is read back instead', async t => {
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  // The nightly applied the removal and the reply was lost with the socket.
+  server.controls.disconnectAfterEffect = true;
+  await assert.rejects(host.deleteAgent(created.id), /unknown/i);
+  server.controls.disconnectAfterEffect = false;
+  assert.equal(server.threads.get(created.id)!.thread.deletedAt, STAMP, 'the removal landed');
+  const sent = server.commands.filter(command => command.type === 'thread.delete');
+  assert.equal(sent.length, 1);
+  host.close();
+  await assert.rejects(host.deleteAgent(created.id), HostUnknownDeliveryError,
+    'an offline connection cannot turn an earlier unknown delivery into a pre-send refusal');
+  assert.equal(Object.values(host.state.read().intents).find(intent => JSON.parse(intent.payload).payload.type === 'thread.delete')?.status,
+    'unknown');
+
+  // The outcome stays unknown: nothing re-sends it, with or without a fresh read,
+  // and the host's own inventory is the proof the caller reads instead.
+  await host.connect();
+  await assert.rejects(host.deleteAgent(created.id), /unknown/i);
+  assert.equal(server.commands.filter(command => command.type === 'thread.delete').length, 1);
+  assert.equal(await host.originAgent(created.id), null, 'the removal is read back as authoritative absence');
+});
+
+
+for (const lostDeleteReply of [false, true])
+test(`confirmed own deletion retires unknown presentation intents without replay (lost delete reply: ${lostDeleteReply})`, async t => {
+  const { host, server, options, spec } = await fixture(t);
+  const created = await host.createAgent(spec('deleted-presentations'));
+  const p = server.threads.get(created.id)!;
+  p.runs.push({ id: 'completed-native-run', status: 'completed', startedAt: STAMP });
+  const task = { id: 'synthetic-task', agentId: created.id, runId: 'worker-run', number: 225,
+    title: 'Updated title', phase: 'working', held: false, hostId: host.hostId } as Task;
+  for (const operation of [
+    () => host.setTaskWorkspaceTitle(task, 'Updated title', 'lost-title', false),
+    () => { p.thread.settledOverride = 'settled'; return host.sendMessage(created.id, { messageId: 'lost-unsettle', text: 'Continue' }); },
+    () => host.settleReportedThread(created.id, 'lost-settle'),
+  ]) {
+    server.controls.disconnectAfterEffect = true;
+    await assert.rejects(operation(), HostUnknownDeliveryError);
+    server.controls.disconnectAfterEffect = false;
+    await host.connect();
+  }
+  const presentationKeys = Object.entries(host.state.read().intents).filter(([, entry]) => entry.status === 'unknown').map(([key]) => key);
+  assert.equal(presentationKeys.length, 3, 'title, unsettle and settle delivery are all unknown');
+  host.state.update(state => {
+    state.intents['unrelated-message'] = { status: 'unknown', payload: JSON.stringify({ method: 'orchestration.dispatchCommand',
+      payload: { type: 'message.dispatch', threadId: created.id, commandId: 'unrelated-message' } }) };
+  });
+  server.controls.disconnectAfterEffect = lostDeleteReply;
+  if (lostDeleteReply) {
+    await assert.rejects(host.deleteAgent(created.id), HostUnknownDeliveryError);
+    assert.ok(presentationKeys.every(key => host.state.read().intents[key].status === 'unknown'), 'unknown delete delivery alone retires nothing');
+    server.controls.disconnectAfterEffect = false;
+    await host.connect();
+    assert.equal(await host.originAgent(created.id), null, 'complete inventory confirms our delete postcondition');
+  } else await host.deleteAgent(created.id);
+  const deleted = host.state.read();
+  const deleteKey = Object.keys(deleted.intents).find(key => JSON.parse(deleted.intents[key].payload).payload.type === 'thread.delete')!;
+  assert.equal(deleted.intents[deleteKey].status, lostDeleteReply ? 'unknown' : 'settled', 'observing deletion does not invent a reply');
+  assert.equal(Boolean(deleted.intents[deleteKey].deletionObservedAt), lostDeleteReply);
+  for (const key of presentationKeys) {
+    assert.equal(deleted.intents[key].status, 'moot');
+    assert.equal(deleted.intents[key].retiredByDeletion, deleteKey);
+    assert.equal(deleted.intents[key].result, undefined);
+  }
+  assert.equal(deleted.intents['unrelated-message'].status, 'unknown', 'non-presentation effects retain unknown delivery');
+  // Simulate interruption after recording the delete but before presentation
+  // retirement. A reload must reconstruct retirement from that durable proof.
+  host.state.update(state => {
+    for (const key of presentationKeys) { state.intents[key].status = 'unknown'; delete state.intents[key].retiredByDeletion; }
+    state.pendingSettles = { queued: { agentId: created.id, runId: 'queued-worker', commandId: 'queued', recordedAt: STAMP } };
+  });
+  host.close();
+  const reloaded = new T3CodeHost(options); t.after(() => reloaded.close());
+  const nativeRead = reloaded.rpc.readStream.bind(reloaded.rpc), reads: string[] = [];
+  reloaded.rpc.readStream = (method, payload, accept) => {
+    if (method === 'orchestration.subscribeThread') reads.push((payload as { threadId: string }).threadId);
+    return nativeRead(method, payload, accept);
+  };
+  await reloaded.connect();
+  const commands = server.commands.length;
+  for (let pass = 0; pass < 3; pass++) {
+    await reloaded.reconcileReportedSettlements();
+    await reloaded.reconcileSettledThreads();
+    await reloaded.settleReportedThread(created.id, 'lost-settle');
+    await reloaded.settleWorkerThread(created.id, 'queued-worker');
+    await reloaded.setTaskWorkspaceTitle(task, 'Updated title', 'lost-title', true);
+  }
+  await assert.rejects(reloaded.sendMessage(created.id, { messageId: 'lost-unsettle', text: 'Continue' }), ProvenPreSendRefusalError);
+  assert.equal(reads.filter(id => id === created.id).length, 0, 'the real stream boundary never reads the deleted projection');
+  assert.equal(server.commands.length, commands, 'no effect is replayed');
+  assert.deepEqual(reloaded.state.read().pendingSettles, {});
+  assert.ok(presentationKeys.every(key => reloaded.state.read().intents[key].status === 'moot'));
+});
+
+test('external deletion without our recorded delete leaves unknown presentation delivery untouched', async t => {
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec('external-deletion'));
+  const p = server.threads.get(created.id)!;
+  p.runs.push({ id: 'finished-native', status: 'completed', startedAt: STAMP });
+  server.controls.disconnectAfterEffect = true;
+  await assert.rejects(host.settleReportedThread(created.id, 'unknown-support'), HostUnknownDeliveryError);
+  server.controls.disconnectAfterEffect = false;
+  await host.connect();
+  const key = Object.keys(host.state.read().intents).find(key => host.state.read().intents[key].status === 'unknown')!;
+  p.thread.deletedAt = STAMP;
+  assert.equal(await host.originAgent(created.id), null);
+  await host.reconcileReportedSettlements();
+  assert.equal(host.state.read().intents[key].status, 'unknown');
+  assert.equal(host.state.read().intents[key].retiredByDeletion, undefined);
 });
