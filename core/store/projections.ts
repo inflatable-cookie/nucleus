@@ -155,7 +155,16 @@ export class Projections {
   }
   /** Respect each durable archive backoff while waking only this task. */
   scheduleCleanupRetry(taskId: string): void {
-    const task = this.store.task(taskId);
+    // A cleanup finishing while the service drains must not read a closed store.
+    // The durable archive retry stays on the task, so the next start resumes it.
+    let task: Task;
+    try { task = this.store.task(taskId); }
+    catch {
+      const follow = this.cleanupRetryFollowUps.get(taskId);
+      if (follow?.timer) clearTimeout(follow.timer);
+      this.cleanupRetryFollowUps.delete(taskId);
+      return;
+    }
     const due = task.phase === "done" && !task.removedAt
       ? task.resolution.workspaceArchiveRetries.map(retry => Date.parse(retry.nextAttemptAt)).filter(Number.isFinite)
       : [];

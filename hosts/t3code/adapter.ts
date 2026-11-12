@@ -6,12 +6,17 @@ import type { Host, HostAgentSpec, HostWorkspaceSpec, HostMessage, HostGuardedMe
 import type { Task, Profile } from '../../shared/contracts';
 import { ProvenPreSendRefusalError, HostUnknownDeliveryError, sanitizeHostDeliveryDiagnostic } from '../../core/host';
 import { T3RpcClient, T3RpcError } from './rpc';
-import { T3StateFile, canonical, type T3State } from './state';
+import { T3StateFile, canonical, type T3SettleIntent, type T3State } from './state';
 import { decode, config, optionDescriptor, shellSnapshot, projection, threadSnapshot, shellThread, project, T3CompatibilityError, runtimeModes, defaultRuntimeMode, type RuntimeMode } from './contracts';
 
 export interface T3CodeConfig { endpoint: string; bearer: string; statePath: string; timeoutMs?: number; probeThreadId?: string }
 const identity = (purpose: string, value: string) => `nucleus-${purpose}-${createHash('sha256').update(value).digest('hex').slice(0, 40)}`;
 const activeStatuses = new Set(['preparing', 'queued', 'starting', 'running', 'waiting']);
+/** A handover settle that never found an ended turn is retired rather than retried forever. */
+const SETTLE_INTENT_TTL_MS = 24 * 60 * 60_000;
+/** The nightly's newest run: the latest start, with the list order breaking a tie. */
+const latestRun = (projection: Projection) => projection.runs.reduce((best: Projection['runs'][number] | undefined, run) =>
+  !best || String(run.startedAt ?? '') >= String(best.startedAt ?? '') ? run : best, undefined);
 const inventoryReadAttempts = 5;
 const unsupported = (capability: string): never => { throw new ProvenPreSendRefusalError(`T3Code does not support ${capability}`); };
 /**
@@ -535,33 +540,68 @@ export class T3CodeHost implements Host {
   /**
    * Settle a worker thread once Nucleus accepted its handover and moved the task
    * to review (Tom, 2026-11-12). `expectedLatestRunId` names the run this
-   * handover ended, so a thread a later run already owns is never settled. A
-   * recorded intent is left exactly as recorded: an unknown delivery is not
+   * handover ended, so a thread a later run already owns is never settled.
+   *
+   * The accepted receipt is durable before this presentation effect, and the
+   * handover's turn may still be ending when it arrives: an active run is never
+   * settled (the next turn would clear the marker anyway), so the intent is
+   * recorded and the ordinary host sweep retries it once that run has ended.
+   * A recorded command is left exactly as recorded — an unknown delivery is not
    * permission to resend, and a settled one is the same settle again. T3 clears
-   * the marker when a new message wakes the thread, so a revision round makes
-   * the worker active and its next handover settles it again under that run's
-   * own command id.
+   * the marker when a new message wakes the thread, so a revision round makes the
+   * worker active and its next handover settles it again under that run's own
+   * command id.
    */
   async settleWorkerThread(agentId: string, runId: string): Promise<void> {
     this.requireConnection();
     const commandId = identity('settle', canonical([this.hostId, agentId, runId]));
     if (this.state.read().intents[commandId]) return;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const projection = await this.readProjection(agentId);
-      if (projection.thread.archivedAt || projection.thread.deletedAt) return;
-      const latest = projection.runs.reduce((best: Projection['runs'][number] | undefined, run) =>
-        !best || String(run.startedAt ?? '') >= String(best.startedAt ?? '') ? run : best, undefined);
-      // A thread with no run has nothing the settle's own guard could name.
-      if (!latest) return;
-      if (!activeStatuses.has(latest.status)) {
-        await this.effect(commandId, 'orchestration.dispatchCommand', { type: 'thread.settle', commandId, threadId: agentId, expectedLatestRunId: latest.id });
-        return;
-      }
-      // The report is usually the turn's last act, but the run may still be
-      // ending; settling is presentation, so it waits rather than settling a
-      // live run a later turn would immediately clear.
-      if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 200));
+    await this.attemptWorkerSettle({ agentId, runId, commandId, recordedAt: new Date().toISOString() });
+  }
+
+  /** Retry durable worker settle intents during the ordinary host sweep. */
+  async reconcileSettledThreads(): Promise<void> {
+    const pending = Object.values(this.state.read().pendingSettles ?? {});
+    if (!pending.length) return;
+    this.requireConnection();
+    for (const entry of pending) {
+      try { await this.attemptWorkerSettle(entry); }
+      catch { /* an unreadable thread or unknown delivery keeps its record for the next pass */ }
     }
+  }
+
+  /** One worker settle: send when the handover's own run has ended, else retain the intent. */
+  private async attemptWorkerSettle(entry: T3SettleIntent): Promise<void> {
+    // The delivery ledger owns every command id it has recorded. A settled one
+    // needs nothing more; an unknown one is never resent, so the pending record
+    // is retired either way.
+    if (this.state.read().intents[entry.commandId]) { this.forgetSettle(entry.commandId); return; }
+    if (Date.now() - Date.parse(entry.recordedAt) > SETTLE_INTENT_TTL_MS) { this.forgetSettle(entry.commandId); return; }
+    const projection = await this.readProjection(entry.agentId);
+    if (projection.thread.archivedAt || projection.thread.deletedAt) { this.forgetSettle(entry.commandId); return; }
+    const latest = latestRun(projection);
+    // A later run owns the thread now; this handover must not settle it.
+    if (entry.expectedLatestRunId && (!latest || latest.id !== entry.expectedLatestRunId)) { this.forgetSettle(entry.commandId); return; }
+    // Still live, or the run has not appeared yet: keep the recorded intent.
+    if (!latest || activeStatuses.has(latest.status)) { this.recordSettle({ ...entry, expectedLatestRunId: latest?.id }); return; }
+    this.recordSettle({ ...entry, expectedLatestRunId: latest.id });
+    await this.effect(entry.commandId, 'orchestration.dispatchCommand',
+      { type: 'thread.settle', commandId: entry.commandId, threadId: entry.agentId, expectedLatestRunId: latest.id });
+    this.forgetSettle(entry.commandId);
+  }
+
+  /** Record one pending settle; an unchanged record is the same intent, never a rewrite. */
+  private recordSettle(entry: T3SettleIntent): void {
+    const current = this.state.read().pendingSettles?.[entry.commandId];
+    if (current && current.expectedLatestRunId === entry.expectedLatestRunId) return;
+    this.state.update(state => {
+      state.pendingSettles = { ...state.pendingSettles, [entry.commandId]: { ...entry, recordedAt: current?.recordedAt ?? entry.recordedAt } };
+    });
+  }
+
+  private forgetSettle(commandId: string): void {
+    if (!this.state.read().pendingSettles?.[commandId]) return;
+    this.state.update(state => { if (state.pendingSettles) delete state.pendingSettles[commandId]; });
   }
   private async request(agent: string, workspace: string, id: string) {
     this.requireConnection();

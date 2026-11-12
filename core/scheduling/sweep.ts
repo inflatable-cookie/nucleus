@@ -214,6 +214,10 @@ export class Sweep {
         }
         const retired = await this.engine.observeRetiredWorkers(retiredPlan, observed);
         if (retired.changed) this.engine.store.setMeta(this.engine.retiredObservationKey(host), retired.observations);
+        // A handover settle recorded for a thread whose turn was still ending is
+        // retried on this host's pass. Presentation only: it never changes a task.
+        try { await this.engine.adapter.reconcileSettledThreads?.(); }
+        catch { /* the record keeps for the next pass */ }
         if (this.engine.inventoryHostMatches(host)) inventory = observed;
       });
       this.engine.clearRetiredInvalidations();

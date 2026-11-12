@@ -13,9 +13,19 @@ const diagnostic = z.object({ command: z.string().optional(), field: z.string().
 const intent = z.object({ payload: z.string(), status: z.enum(['unknown', 'settled', 'refused']), result: z.unknown().optional(),
   diagnostic: diagnostic.optional(),
   response: z.object({ agentId: z.string(), workspaceId: z.string(), requestId: z.string(), input: z.string() }).optional() });
+/**
+ * One accepted worker handover whose thread had not yet ended its turn: the
+ * settle waits for the named run (or the next run to end) instead of settling a
+ * live turn, and the ordinary host sweep retries it. Presentation only; the
+ * durable settle itself is the `intents` ledger entry written before the send.
+ */
+const settleIntent = z.object({ agentId: z.string(), runId: z.string(), commandId: z.string(),
+  expectedLatestRunId: z.string().optional(), recordedAt: z.string() });
 const schema = z.object({ version: z.literal(1), hostId: z.string(), lastPassedVersion: z.string(),
-  workspaces: z.record(z.string(), workspace), agents: z.record(z.string(), agent), intents: z.record(z.string(), intent) });
+  workspaces: z.record(z.string(), workspace), agents: z.record(z.string(), agent), intents: z.record(z.string(), intent),
+  pendingSettles: z.record(z.string(), settleIntent).optional() });
 export type T3State = z.infer<typeof schema>;
+export type T3SettleIntent = z.infer<typeof settleIntent>;
 
 /** A synchronous read/modify/write under an exclusive owner-only lock; no awaits cross it. */
 export class T3StateFile {

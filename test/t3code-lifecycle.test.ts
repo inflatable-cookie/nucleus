@@ -445,6 +445,34 @@ test('a T3 worker thread settles when its task moves to review, and wakes again 
   } finally { await f.close(); }
 });
 
+test('a worker thread whose turn is still ending settles on the next host pass', async t => {
+  const f = await fixture(t);
+  try {
+    const { taskId, head, workerThreadId, workerRunId } = await taskWithWorker(f);
+    // The report arrives while the worker's own run is still ending.
+    f.server.threads.get(workerThreadId)!.runs = [{ id: 'worker-run-1', status: 'running', startedAt: STAMP }];
+    const report = await helperReport(f, runTicketPath(f, { id: workerRunId }), {
+      status: 'ready_for_review', summary: 'Change set ready', prNumber: 7, head,
+    });
+    assert.equal(report.code, 0, report.err);
+    assert.equal(f.server.commands.filter(command => command.type === 'thread.settle').length, 0,
+      'a live run is never settled, and the handover has not been lost');
+
+    // The turn ends: the ordinary fleet pass — the same one the timers drive —
+    // retries the recorded settle on the task's own host.
+    f.server.threads.get(workerThreadId)!.runs = completedWorkerRun();
+    for (let pass = 0; pass < 5 && !f.server.commands.some(command => command.type === 'thread.settle'); pass++)
+      await f.runtime.engine.auditPass(false);
+    const settles = f.server.commands.filter(command => command.type === 'thread.settle');
+    assert.equal(settles.length, 1, `the recorded settle was sent once the run ended (${JSON.stringify(settles)})`);
+    assert.equal(settles[0]!.threadId, workerThreadId);
+    assert.equal(settles[0]!.expectedLatestRunId, 'worker-run-1');
+    assert.equal(f.server.threads.get(workerThreadId)!.thread.settledOverride, 'settled');
+    // The pass scheduled task quanta; let them finish before the store closes.
+    await f.runtime.engine.quiesce().catch(() => {});
+  } finally { await f.close(); }
+});
+
 test('the worker thread is watched and messaged on the task host, never the default host', async t => {
   const f = await fixture(t);
   try {

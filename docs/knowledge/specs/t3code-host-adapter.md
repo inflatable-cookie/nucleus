@@ -458,9 +458,15 @@ A T3 worker thread is settled with `thread.settle` once its handover is accepted
 and the task moves to review, guarded by `expectedLatestRunId` so a thread a
 later run already owns is never settled (nucleus#1154). The accepted receipt is
 durable first; the settle is presentation only, so a refused or unknown send
-changes nothing and leaves the thread as it was. The nightly clears the manual
-settled marker on a new message dispatch, so a revision round wakes the worker
-and its next handover settles it again under that run's own command id.
+changes nothing and leaves the thread as it was. The handover's turn may still
+be ending when the report arrives, and a live run is never settled — the next
+turn would clear the marker anyway — so the intent is recorded in the adapter's
+own state (`pendingSettles`) and the ordinary host sweep retries it once that run
+has ended, naming it in `expectedLatestRunId`; an intent whose run never ends is
+retired after 24 hours, and one that a later run replaced is retired without
+touching the thread. The nightly clears the manual settled marker on a new
+message dispatch, so a revision round wakes the worker and its next handover
+settles it again under that run's own command id.
 
 One end-to-end test drives an ordinary task's whole lifecycle on the fake
 Nightly transport (nucleus#1139): promotion onto the T3 host, workspace

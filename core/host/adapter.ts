@@ -108,6 +108,8 @@ export interface Adapter extends RunUsageSource {
    * or refused settle never changes the task or retries blindly.
    */
   settleWorkerThread?(agentId: string, runId: string): Promise<void>;
+  /** Retry recorded worker settles during the ordinary host sweep. */
+  reconcileSettledThreads?(): Promise<void>;
   runTemporaryDirectory?(runId: string, task?: Task): string;
   workspaceAvailable?(id:string):Promise<boolean>;
   profiles?(): Promise<Profile[]>;

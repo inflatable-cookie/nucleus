@@ -120,6 +120,7 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     stopAgentTurn(id: string) { return this.native.stopAgentTurn(id); }
     archiveAgent(id: string) { return this.native.archiveAgent(id); }
     settleWorkerThread(id: string, runId: string) { return this.native.settleWorkerThread(id, runId); }
+    reconcileSettledThreads() { return this.native.reconcileSettledThreads(); }
     agentTimelinePage(id: string, limit?: number) { return this.native.agentTimelinePage(id, limit); }
     agentTimeline(id: string, limit?: number) { return this.native.agentTimeline(id, limit); }
     pendingQuestions(id: string) { return this.native.pendingQuestions(id); }
