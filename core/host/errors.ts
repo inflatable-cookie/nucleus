@@ -15,25 +15,30 @@ export interface HostDeliveryDiagnostic { command?: string; field?: string; reas
 
 /**
  * The bounded why behind a remote failure: a whitelisted error tag, a defect
- * message or an HTTP status. Actual values are dropped (quoted spans and JSON
- * structures become `[value]`), newlines collapse, and the text is capped, so
- * no remote body, prompt text or credential can ride into attention details.
- * Stripping a known bearer stays the caller's job; this boundary drops any
- * remaining quoted value.
+ * message or an HTTP status. Actual values never survive: JSON structures,
+ * quoted spans and the value clause of a decoder message all become `[value]`,
+ * location segments are dropped (the extracted field already carries them),
+ * newlines collapse and the text is capped. Stripping a known bearer stays the
+ * caller's job and must cover every branch that builds a reason; this boundary
+ * then removes whatever values remain.
  */
 export function sanitizeHostFailureReason(input: unknown): string | undefined {
   if (typeof input !== 'string') return undefined;
   let text = input.length > 4096 ? input.slice(0, 4096) : input;
   text = text.replace(/\s+/g, ' ').trim();
   for (let depth = 0; depth < 8 && /\{[^{}]*\}/.test(text); depth++) text = text.replace(/\{[^{}]*\}/g, '[value]');
-  text = text.replace(/"([^"\\]{0,64})"/g, (quoted, inner: string) => /^[A-Za-z0-9_.:@ \/-]+$/.test(inner) ? quoted : '[value]');
+  text = text.replace(/"(?:[^"\\]|\\.)*"/g, '[value]');
+  text = text.replace(/`(?:[^`\\]|\\.)*`/g, '[value]');
+  text = text.replace(/\s+at\s+\[.*$/g, '');
+  if (/^Expected\b/.test(text)) text = text.replace(/\bgot\b.*$/g, 'got [value]').trim();
+  text = text.replace(/\s+at\s+\[.*$/g, '');
   for (let depth = 0; depth < 8 && /\{[^{}]*\}/.test(text); depth++) text = text.replace(/\{[^{}]*\}/g, '[value]');
-  if (!text || /^(?:\[value\][, ]*)+$/.test(text)) return undefined;
   text = text.replace(/\[value\](\s*\[value\])+/g, '[value]').replace(/\[\[value\]\]/g, '[value]');
+  if (!text || /^(?:\[value\][, ]*)+$/.test(text)) return undefined;
   return text.length > 240 ? `${text.slice(0, 240)}...` : text;
 }
 
-/** Native names plus a bounded reason: never a remote body, expected/actual value or stack. */
+/** Native names plus a bounded, value-free reason: never a remote body or stack. */
 export function sanitizeHostDeliveryDiagnostic(input: unknown): HostDeliveryDiagnostic {
   const value = input && typeof input === 'object' ? input as Record<string, unknown> : {};
   const command = typeof value.command === 'string' && /^[A-Za-z][A-Za-z0-9_.:-]{0,99}$/.test(value.command) ? value.command : undefined;

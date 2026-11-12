@@ -9,8 +9,9 @@ before any handler runs. Registration keeps its deterministic project and
 command IDs, adopts a project that appeared after an unknown delivery, and
 resends at most once with the recorded IDs so T3's command receipt answers
 idempotently; an unknown intent recorded on the retired dispatch route resends
-once on the new route. A build without the route still refuses with the
-repository path and the manual setup steps.
+once on the new route. When the build's remote text names no known registration
+method, the create stays unknown delivery carrying the repository path and the
+manual setup steps as guidance; it is never marked refused on remote text.
 
 Host delivery diagnostics now keep the bounded why behind a remote failure: a
 whitelisted error tag, a defect message with quoted values and JSON structures

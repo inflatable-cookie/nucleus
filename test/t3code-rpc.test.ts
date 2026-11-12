@@ -192,9 +192,7 @@ test('schema diagnostics retain bounded field locations and defect shapes withou
     assert.equal(error.delivery, 'unknown');
     assert.equal(error.field, i ? undefined : 'modelSelection.options[0].value');
     assert.equal(error.command, i ? undefined : 'message.dispatch');
-    assert.equal(error.reason, i
-      ? 'Missing key at [value]'
-      : 'Expected string, got [value] at ["modelSelection"]["options"][0]["value"]');
+    assert.equal(error.reason, i ? 'Missing key' : 'Expected string, got [value]');
     assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic-bearer|prompt secret|got "/);
     return true;
   });
@@ -221,10 +219,10 @@ test('the nightly dispatch union refuses project.create before any handler and t
   });
 });
 
-test('typed project mutation failures keep their tag and message as the reason', async t => {
+test('typed project mutation failures keep their tag and message as the redacted reason', async t => {
   const server = await fakeServer(t, (request, send) => {
     if (request._tag === 'Request') send(failure(request, { _tag: 'Fail', error: {
-      _tag: 'ProjectMutationError', commandId: 'stable', message: 'Failed to mutate project.' } }));
+      _tag: 'ProjectMutationError', commandId: 'stable', message: 'Failed to mutate project for synthetic-bearer.' } }));
   });
   const client = await clientFor(t, server);
   await assert.rejects(client.call('projects.mutate', { type: 'project.create', commandId: 'stable',
@@ -232,8 +230,9 @@ test('typed project mutation failures keep their tag and message as the reason',
     assert.ok(error instanceof T3RpcError);
     assert.equal(error.delivery, 'unknown');
     assert.equal(error.command, 'project.create');
-    assert.equal(error.reason, 'ProjectMutationError: Failed to mutate project.');
-    assert.match(String(error), /reason ProjectMutationError: Failed to mutate project\./);
+    assert.equal(error.reason, 'ProjectMutationError: Failed to mutate project for [redacted].');
+    assert.match(String(error), /reason ProjectMutationError: Failed to mutate project for \[redacted\]\./);
+    assert.doesNotMatch(String(error), /synthetic-bearer/);
     return true;
   });
 });

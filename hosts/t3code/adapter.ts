@@ -171,7 +171,7 @@ export class T3CodeHost implements Host {
       const commandId = identity('project-create', canonical([this.hostId, repositoryRoot]));
       const created = await this.effect(commandId, 'projects.mutate', {
         type: 'project.create', commandId, projectId, title: basename(repositoryRoot), workspaceRoot: repositoryRoot,
-      }, undefined, undefined, { resendUnknownAfterInventory: true, unsupportedMethodMessage: createWireRefusal(repositoryRoot) });
+      }, undefined, undefined, { resendUnknownAfterInventory: true, unsupportedMethodGuidance: createWireRefusal(repositoryRoot) });
       decode(z.object({ id: z.literal(projectId), title: z.string(), workspaceRoot: z.string() }).passthrough(), created, 'projects.mutate');
       selected = { id: projectId, title: basename(repositoryRoot), workspaceRoot: repositoryRoot };
     }
@@ -213,7 +213,8 @@ export class T3CodeHost implements Host {
   private async effect(key: string, method: string, payload: unknown, beforeSend?: () => void,
     response?: { binding: ResponseBinding; prepare(): Promise<unknown> }, options: {
       resendUnknownAfterInventory?: boolean;
-      unsupportedMethodMessage?: string;
+      /** Guidance that rides an unknown delivery when the remote text names no known method. */
+      unsupportedMethodGuidance?: string;
     } = {}): Promise<unknown> {
     if (!response) this.requireConnection();
     let encoded = canonical({ method, payload });
@@ -260,14 +261,20 @@ export class T3CodeHost implements Host {
       this.state.update(state => { state.intents[key] = { ...state.intents[key], payload: encoded, status: 'settled', result }; });
       return result;
     } catch (error) {
+      // Only a local fence proves non-delivery. The remote text that names no known
+      // method cannot prove a phase either (a handler can emit it after an effect),
+      // so it stays unknown delivery; the task keeps the path-and-manual-fix
+      // guidance and the recorded intent is never marked refused.
       const refusal = error instanceof ProvenPreSendRefusalError ? error
-        : options.unsupportedMethodMessage && error instanceof T3RpcError && error.code === 'unsupported_method'
-          ? new ProvenPreSendRefusalError(options.unsupportedMethodMessage)
         : !wrote || error instanceof T3RpcError && error.delivery === 'not_sent'
           ? new ProvenPreSendRefusalError(error instanceof T3RpcError ? error.message : 'T3Code send fence refused before delivery') : null;
       if (refusal) this.state.update(state => { state.intents[key] = { ...state.intents[key], payload: encoded, status: 'refused' }; });
       if (refusal) throw refusal;
-      const diagnostic = sanitizeHostDeliveryDiagnostic(error instanceof T3RpcError ? { command: error.command, field: error.field, reason: error.reason }
+      const guidance = !refusal && options.unsupportedMethodGuidance && error instanceof T3RpcError && error.code === 'unsupported_method'
+        ? options.unsupportedMethodGuidance : undefined;
+      const remoteReason = error instanceof T3RpcError ? error.reason : error instanceof HostUnknownDeliveryError ? error.diagnostic.reason : undefined;
+      const reason = [remoteReason, guidance].filter(Boolean).join('; ') || undefined;
+      const diagnostic = sanitizeHostDeliveryDiagnostic(error instanceof T3RpcError ? { command: error.command, field: error.field, reason }
         : error instanceof HostUnknownDeliveryError ? error.diagnostic : undefined);
       const unknown = new HostUnknownDeliveryError(diagnostic);
       try { this.state.update(state => { state.intents[key] = { ...state.intents[key], diagnostic }; }); }

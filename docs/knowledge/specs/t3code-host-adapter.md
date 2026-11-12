@@ -88,9 +88,11 @@ non-delivery (planner ruling, 2026-11-11). Sanitized reported command and field
 names remain diagnostic text, never proof of a decoder phase; raw error bodies,
 actual values and credentials are omitted. The recorded diagnostic also keeps
 the bounded why behind a remote failure: a whitelisted error tag, a defect
-message with quoted values and JSON structures replaced by `[value]`, or the
-ticket exchange's HTTP status. The configured bearer is stripped before that
-reason is built; delivery classification is unchanged (nucleus#1136).
+message with quoted spans, JSON structures, decoder location segments and the
+decoder's value clause replaced by `[value]`, or the ticket exchange's HTTP
+status. Every branch that builds a reason strips the configured bearer first;
+no branch keeps a remote value; delivery classification is unchanged
+(nucleus#1136, review 2026-11-12).
 Those names and the reason are stored on the durable unknown intent and returned
 on blocked repeats, including after reload. A registered permission failure also
 records them through the owning task's existing attention policy, selected by
@@ -140,9 +142,11 @@ create, read the complete project inventory again and adopt a project that now
 exists for that root; a resend keeps the recorded command and project IDs, so
 T3's receipt answers idempotently. An unknown intent recorded on the retired
 dispatch route may resend once on the mutation route with the same IDs
-(nucleus#1136); no other payload change is accepted. A build that does not
-support the route leaves the task waiting with a refusal naming the path and
-the manual setup steps. Nucleus does not rename or remove projects.
+(nucleus#1136); no other payload change is accepted. When the remote failure
+text names no known registration method, the create stays unknown delivery —
+the same text can come from a handler after an effect — and the task keeps the
+path-and-manual-fix guidance inside that unknown, never a refused mark
+(review ruling, 2026-11-12). Nucleus does not rename or remove projects.
 
 Nucleus prepares and verifies the Git worktree before handing it to T3. Creation
 uses only `existing_worktree`; T3 must confirm it belongs to the selected project.

@@ -77,15 +77,18 @@ function schemaFieldDiagnostic(value: unknown): string | undefined {
 
 /** The nightly has no authenticated decode-phase tag; remote failure text cannot prove non-delivery. */
 function remoteFailure(method: string, cause: unknown, command?: string, bearer?: string): Error {
+  // Every reason text passes the bearer redaction before the bounded sanitizer,
+  // whichever branch builds it.
+  const redact = (text: string) => bearer ? text.split(bearer).join('[redacted]') : text;
   if (!Array.isArray(cause) || cause.length !== 1 || !object(cause[0])) return new T3RpcError('remote', method, undefined, 'unknown', { command });
   const reason = cause[0];
   if (reason._tag === 'Die') {
-    if (reason.defect === `Unknown request tag: ${method}`) return new T3RpcError('unsupported_method', method, undefined, 'unknown', { command });
+    if (reason.defect === `Unknown request tag: ${method}`) return new T3RpcError('unsupported_method', method, undefined, 'unknown', { command, reason: redact(String(reason.defect)) });
     const field = schemaFieldDiagnostic(reason.defect);
     return new T3RpcError('remote', method, undefined, 'unknown', {
       command,
       field: field && (!bearer || !field.includes(bearer)) ? field : undefined,
-      reason: typeof reason.defect === 'string' ? reason.defect.split(bearer ?? '\u0000').join('[redacted]') : undefined,
+      reason: typeof reason.defect === 'string' ? redact(reason.defect) : undefined,
     });
   }
   const tag = reason._tag === 'Fail' && object(reason.error) ? safeTag(reason.error._tag) : undefined;
@@ -94,7 +97,7 @@ function remoteFailure(method: string, cause: unknown, command?: string, bearer?
   const reportedCommand = tag === 'OrchestrationV2DispatchCommandError' && object(reason.error) ? safeCommand(reason.error.commandType) : undefined;
   return new T3RpcError('remote', method, tag, 'unknown', {
     command: reportedCommand ?? command,
-    reason: tag ? [tag, message].filter(Boolean).join(': ') : undefined,
+    reason: tag ? [tag, message !== undefined ? redact(message) : undefined].filter(Boolean).join(': ') : undefined,
   });
 }
 
