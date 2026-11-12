@@ -6,9 +6,9 @@ import { sanitizeHostDeliveryDiagnostic } from '../../core/host';
 
 const workspace = z.object({ id: z.string(), directory: z.string(), projectId: z.string(), title: z.string() });
 const agent = z.object({ id: z.string(), workspaceId: z.string(), labels: z.record(z.string(), z.string()) });
-const diagnostic = z.object({ command: z.string().optional(), field: z.string().optional(), reason: z.string().optional(), guidance: z.string().optional(), path: z.string().optional() }).strict().refine(value => {
+const diagnostic = z.object({ command: z.string().optional(), field: z.string().optional(), reason: z.string().optional(), guidance: z.string().optional() }).strict().refine(value => {
   const clean = sanitizeHostDeliveryDiagnostic(value);
-  return clean.command === value.command && clean.field === value.field && clean.reason === value.reason && clean.guidance === value.guidance && clean.path === value.path;
+  return clean.command === value.command && clean.field === value.field && clean.reason === value.reason && clean.guidance === value.guidance;
 });
 const intent = z.object({ payload: z.string(), status: z.enum(['unknown', 'settled', 'refused']), result: z.unknown().optional(),
   diagnostic: diagnostic.optional(),

@@ -192,7 +192,7 @@ test('schema diagnostics retain bounded field locations and defect shapes withou
     assert.equal(error.delivery, 'unknown');
     assert.equal(error.field, i ? undefined : 'modelSelection.options[0].value');
     assert.equal(error.command, i ? undefined : 'message.dispatch');
-    assert.equal(error.reason, i ? 'Missing key' : 'Expected a different payload shape, got [value]');
+    assert.equal(error.reason, i ? 'schema_missing_key' : 'schema_expected');
     assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic-bearer|prompt secret|got "/);
     return true;
   });
@@ -213,29 +213,29 @@ test('the nightly dispatch union refuses project.create before any handler and t
     assert.equal(error.delivery, 'unknown');
     assert.equal(error.command, 'project.create');
     assert.equal(error.field, undefined);
-    assert.equal(error.reason, 'Expected a different payload shape, got [value]');
+    assert.equal(error.reason, 'schema_expected');
     assert.doesNotMatch(String(error), /synthetic-project|synthetic-repository|private/);
     return true;
   });
-  // A secret in the decoder's expected-shape position canonicalizes away too.
+  // A secret in the decoder's expected-shape position retains only the shape name.
   const secretServer = await fakeServer(t, (request, send) => {
     if (request._tag === 'Request') send(failure(request, { _tag: 'Die', defect: 'Expected synthetic-secret got value' }));
   });
   const secretClient = await clientFor(t, secretServer);
   await assert.rejects(secretClient.call('projects.mutate', { type: 'project.create', commandId: 'stable' }), error => {
     assert.ok(error instanceof T3RpcError);
-    assert.equal(error.reason, 'Expected a different payload shape, got [value]');
+    assert.equal(error.reason, 'schema_expected');
     assert.doesNotMatch(String(error), /synthetic-secret/);
     return true;
   });
-  // The method-name position of the unknown-tag text is a variable as well.
+  // The method-name position of the unknown-tag text retains only the shape name.
   const methodServer = await fakeServer(t, (request, send) => {
     if (request._tag === 'Request') send(failure(request, { _tag: 'Die', defect: 'Unknown request tag: synthetic-secret' }));
   });
   const methodClient = await clientFor(t, methodServer);
   await assert.rejects(methodClient.call('projects.mutate', { type: 'project.create', commandId: 'stable' }), error => {
     assert.ok(error instanceof T3RpcError);
-    assert.equal(error.reason, 'Unknown request tag');
+    assert.equal(error.reason, 'unknown_request_tag');
     assert.doesNotMatch(String(error), /synthetic-secret/);
     return true;
   });
@@ -249,7 +249,7 @@ test('unquoted Die secrets retain no reason text at all', async t => {
   await assert.rejects(client.call('projects.mutate', { type: 'project.create', commandId: 'stable' }), error => {
     assert.ok(error instanceof T3RpcError);
     assert.equal(error.delivery, 'unknown');
-    assert.equal(error.reason, undefined, 'arbitrary handler text retains nothing');
+    assert.equal(error.reason, 'remote_failure', 'an unrecognized remote failure keeps only its shape name');
     assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic-secret|Authentication failed/);
     return true;
   });
@@ -270,14 +270,14 @@ test('typed project mutation failures retain the fixed wire message and drop arb
     assert.ok(error instanceof T3RpcError);
     assert.equal(error.delivery, 'unknown');
     assert.equal(error.command, 'project.create');
-    assert.equal(error.reason, i === 0 ? 'ProjectMutationError: Failed to mutate project.' : 'ProjectMutationError');
+    assert.equal(error.reason, i === 0 ? 'ProjectMutationError:project_mutation_failed' : 'ProjectMutationError');
     assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /api_key|synthetic-secret/);
     return true;
   });
   assert.equal(calls, 2);
 });
 
-test('typed variable positions canonicalize away unquoted secrets', async t => {
+test('typed variable positions retain the known tag and the fixed shape name only', async t => {
   let calls = 0;
   const server = await fakeServer(t, (request, send) => {
     if (request._tag !== 'Request') return;
@@ -289,8 +289,8 @@ test('typed variable positions canonicalize away unquoted secrets', async t => {
   for (let i = 0; i < 2; i++) await assert.rejects(client.call('projects.mutate', { type: 'project.create', commandId: 'stable' }), error => {
     assert.ok(error instanceof T3RpcError);
     assert.equal(error.reason, i === 0
-      ? 'ProjectMutationError: Project is not empty.'
-      : 'EnvironmentAuthorizationError: The authenticated token is missing a required scope.');
+      ? 'ProjectMutationError:project_not_empty'
+      : 'EnvironmentAuthorizationError:scope_missing');
     assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic-secret/);
     return true;
   });
@@ -313,7 +313,7 @@ test('reasons stay bounded and nameless for unknown tags, giant defects and valu
   });
   await assert.rejects(client.call('projects.mutate', { type: 'project.create', commandId: 'stable-2' }), error => {
     assert.ok(error instanceof T3RpcError);
-    assert.equal(error.reason, 'Expected a different payload shape, got [value]', 'the giant defect canonicalizes to the fixed wording');
+    assert.equal(error.reason, 'schema_expected', 'the giant defect retains only its shape name');
     assert.doesNotMatch(String(error), /xxxxx/);
     return true;
   });

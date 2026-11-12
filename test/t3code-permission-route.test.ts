@@ -269,7 +269,7 @@ test('reported command and field enter the exact owning task attention and survi
   server.controls.postEffectDefect = true;
   await assert.rejects(runtime.answerHostPermission(input), error => {
     assert.ok(error instanceof HostUnknownDeliveryError);
-    assert.deepEqual(error.diagnostic, { command: 'runtime-request.respond', field: 'commandId', reason: 'Missing key' });
+    assert.deepEqual(error.diagnostic, { command: 'runtime-request.respond', field: 'commandId', reason: 'schema_missing_key' });
     return true;
   });
   const attention = store.task(task.id);
@@ -285,7 +285,7 @@ test('reported command and field enter the exact owning task attention and survi
   const evidence = JSON.parse(deliveryEvents[0]!.detail);
   assert.equal(evidence.command, 'runtime-request.respond'); assert.equal(evidence.field, 'commandId'); assert.equal(evidence.delivery, 'unknown');
   assert.doesNotMatch(JSON.stringify({ reason: attention.reason, evidence, intent: host.state.read().intents[input.intentId]!.diagnostic }), /synthetic-bearer|synthetic-ticket|prompt secret|\n  at/);
-  assert.match(attention.reason, /reason Missing key;/);
+  assert.match(attention.reason, /reason schema_missing_key;/);
   for (const item of untouched) assert.deepEqual(store.task(item.id), item.task, 'colliding, foreign, origin-only and terminal tasks are untouched');
   const storePath = store.path;
   await runtime.drain(); host.close();
@@ -309,7 +309,7 @@ test('reported command and field enter the exact owning task attention and survi
         attention: (current, reason) => engine.withHost(current.hostId, () => engine.resolution.attention(current, reason, 'uncertain_delivery')),
       }), error => {
         assert.ok(error instanceof HostUnknownDeliveryError);
-        assert.deepEqual(error.diagnostic, { command: 'runtime-request.respond', field: 'commandId', reason: 'Missing key' });
+        assert.deepEqual(error.diagnostic, { command: 'runtime-request.respond', field: 'commandId', reason: 'schema_missing_key' });
         return true;
       });
     }

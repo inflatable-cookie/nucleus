@@ -1,4 +1,4 @@
-import { canonicalRemoteDefect, canonicalRemoteMessage, SAFE_REMOTE_TAGS, sanitizeHostFailureReason } from '../../core/host';
+import { SAFE_REMOTE_TAGS, sanitizeHostFailureReason } from '../../core/host';
 
 export interface T3ConnectionConfig {
   endpoint: string;
@@ -73,33 +73,49 @@ function schemaFieldDiagnostic(value: unknown): string | undefined {
 
 /**
  * The nightly has no authenticated decode-phase tag; remote failure text cannot prove non-delivery.
- * Reasons are canonicalized to fixed value-free strings, so no remote text — bearer, identifier,
- * method, scope or any unquoted secret — survives into diagnostics. The field check alone keeps
- * the configured bearer out of a retained location name.
+ * The retained reason is a value-free fact only: the known tag, a fixed
+ * failure-shape name from the adapter's own constants, or both. No remote
+ * string — bearer, identifier, method, scope name or any part of a defect —
+ * is copied into a diagnostic. The field check alone keeps the configured
+ * bearer out of a retained location name.
  */
+const DEFECT_SHAPES: readonly { shape: RegExp; name: string }[] = [
+  { shape: /^Unknown request tag:/, name: 'unknown_request_tag' },
+  { shape: /^Missing key/, name: 'schema_missing_key' },
+  { shape: /^Expected/, name: 'schema_expected' },
+  { shape: /^Failed to encode response for RPC/, name: 'encoder_rejected' },
+];
+const TYPED_SHAPES: readonly { tag: string; shape: RegExp; name: string }[] = [
+  { tag: 'ProjectMutationError', shape: /^Failed to mutate project\.$/, name: 'project_mutation_failed' },
+  { tag: 'ProjectMutationError', shape: /^Project .* is not empty\.$/, name: 'project_not_empty' },
+  { tag: 'EnvironmentAuthorizationError', shape: /^The authenticated token is missing required scope:/, name: 'scope_missing' },
+];
 function remoteFailure(method: string, cause: unknown, command?: string, bearer?: string): Error {
   if (!Array.isArray(cause) || cause.length !== 1 || !object(cause[0])) return new T3RpcError('remote', method, undefined, 'unknown', { command });
   const reason = cause[0];
   if (reason._tag === 'Die') {
-    if (reason.defect === `Unknown request tag: ${method}`) return new T3RpcError('unsupported_method', method, undefined, 'unknown', { command, reason: 'Unknown request tag' });
+    if (reason.defect === `Unknown request tag: ${method}`) return new T3RpcError('unsupported_method', method, undefined, 'unknown', { command, reason: 'unknown_request_tag' });
     const field = schemaFieldDiagnostic(reason.defect);
+    const defect = typeof reason.defect === 'string' ? reason.defect : undefined;
+    const shape = defect ? DEFECT_SHAPES.find(entry => entry.shape.test(defect))?.name ?? 'remote_failure' : 'remote_failure';
     return new T3RpcError('remote', method, undefined, 'unknown', {
       command,
       field: field && (!bearer || !field.includes(bearer)) ? field : undefined,
-      reason: canonicalRemoteDefect(reason.defect),
+      reason: shape,
     });
   }
   const tag = reason._tag === 'Fail' && object(reason.error) ? safeTag(reason.error._tag) : undefined;
   const message = reason._tag === 'Fail' && object(reason.error) && typeof reason.error.message === 'string' && reason.error.message.length <= 512
     ? reason.error.message : undefined;
   const reportedCommand = tag === 'OrchestrationV2DispatchCommandError' && object(reason.error) ? safeCommand(reason.error.commandType) : undefined;
-  // Only the handlers' own fixed wire messages may be canonicalized beside the
-  // tag; arbitrary text — including any unquoted secret it carries — retains
-  // the tag alone.
-  const canonicalMessage = message !== undefined ? canonicalRemoteMessage(message) : undefined;
+  // An unknown tag is not a fact we can name; the failure stays unknown with no
+  // reason at all. A known tag keeps the tag, plus the fixed shape name when
+  // the failure matches one.
+  if (!tag) return new T3RpcError('remote', method, undefined, 'unknown', { command: reportedCommand ?? command });
+  const typed = TYPED_SHAPES.find(entry => entry.tag === tag && typeof message === 'string' && entry.shape.test(message));
   return new T3RpcError('remote', method, tag, 'unknown', {
     command: reportedCommand ?? command,
-    reason: tag ? [tag, canonicalMessage].filter(Boolean).join(': ') : undefined,
+    reason: typed ? `${tag}:${typed.name}` : tag,
   });
 }
 

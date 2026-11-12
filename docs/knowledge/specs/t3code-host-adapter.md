@@ -86,20 +86,21 @@ from a handler after an effect, so every remote failure remains unknown delivery
 and is never resent. Only a local refusal before the socket write proves
 non-delivery (planner ruling, 2026-11-11). Sanitized reported command and field
 names remain diagnostic text, never proof of a decoder phase; raw error bodies,
-actual values and credentials are omitted. The recorded diagnostic also keeps
-the bounded why behind a remote failure, restricted to fixed, value-free
-canonical strings: a whitelisted error tag alone or beside the handlers' fixed
-wire messages (`Failed to mutate project.`, `Project is not empty.`, `The
-authenticated token is missing a required scope.`), the decoder's canonical
-outcomes (`Missing key`, `Unknown request tag`, `Expected a different payload
-shape, got [value]`, the encoder-message prefix), or the ticket exchange's
-HTTP status. Every variable portion of remote text — identifiers, method and
-scope names, expected-shape text — is dropped at canonicalization, so an
-unquoted secret in any position retains nothing; the configured bearer is
-stripped first and delivery classification is unchanged (nucleus#1136, review
-2026-11-12). Nucleus-authored remediation rides a separate bounded guidance
-field, and the complete repository root rides a separate path field, so no
-budget can cut off the manual fix or the repository identity.
+actual values and credentials are omitted. The recorded diagnostic keeps the
+bounded why behind a remote failure as value-free facts only (planner ruling,
+2026-11-12, after three review rounds): the remote error tag when it is on the
+fixed list of known tags, which known failure shape matched as a fixed name the
+adapter defines (`unknown_request_tag`, `schema_missing_key`, `schema_expected`,
+`encoder_rejected`, `remote_failure`, `project_mutation_failed`,
+`project_not_empty`, `scope_missing`), the ticket exchange's HTTP status, and
+method and command names from the adapter's own constants. No remote string,
+and no part of one, is copied into a diagnostic, intent or attention text; a
+secret in any position of any remote failure retains nothing. The token shapes
+make that structural: reasons admit no spaces, quotes or punctuation beyond the
+tag/shape separator, and delivery classification is unchanged (nucleus#1136).
+The manual-fix guidance is Nucleus-authored and names the repository path in
+full, untruncated, straight from Nucleus's own record; only remote-derived
+fields are bounded.
 Those names and the reason are stored on the durable unknown intent and returned
 on blocked repeats, including after reload. A registered permission failure also
 records them through the owning task's existing attention policy, selected by

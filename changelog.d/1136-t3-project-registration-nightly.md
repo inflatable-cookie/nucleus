@@ -14,12 +14,11 @@ method, the create stays unknown delivery carrying the repository path and the
 manual setup steps as guidance; it is never marked refused on remote text.
 
 Host delivery diagnostics now keep the bounded why behind a remote failure as
-fixed, value-free canonical strings only: a whitelisted error tag (alone or
-beside the handlers' fixed wire messages), the decoder's canonical outcomes,
-or the ticket exchange's HTTP status. Every variable portion of remote text —
-identifiers, method and scope names, expected-shape text — is dropped at
-canonicalization, so an unquoted secret in any position retains nothing; the
-configured bearer is stripped first and delivery classification is unchanged.
-Nucleus-authored remediation rides a separate bounded guidance field and the
-complete repository root a separate path field, so no budget can cut off the
-manual setup steps or the repository identity.
+value-free facts only, with no remote text: the known remote error tag, a fixed
+failure-shape name the adapter defines (`unknown_request_tag`,
+`schema_missing_key`, `schema_expected`, `encoder_rejected`, `remote_failure`,
+`project_mutation_failed`, `project_not_empty`, `scope_missing`), the ticket
+exchange's HTTP status, and method and command names from the adapter's own
+constants. A secret in any position of any remote failure retains nothing.
+The manual-fix guidance is Nucleus-authored and names the repository path in
+full, untruncated; only remote-derived fields are bounded.
