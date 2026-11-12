@@ -57,6 +57,10 @@ export class Sweep {
       const runs = this.engine.store.runs(task.id);
       for (const run of runs) {
         if (run.hostId !== hostId || !run.agentId || (!run.released && !run.completion)) continue;
+        // The terminal lane's confirmed effect covers this thread, even when
+        // settling it previously needed no native receipt. An unresolved effect
+        // still needs observation and settlement on the next pass.
+        if (this.engine.store.threadArchiveEffect(run.agentId, hostId)?.status === 'archived') continue;
         const settle = run.role === 'revision' && reviewPhases.has(task.phase)
           ? settleWorker : supportRoles.has(run.role) ? settleSupport : undefined;
         if (!settle) continue;
@@ -68,7 +72,8 @@ export class Sweep {
       }
       // The initial worker run predates the role run ledger on legacy tasks.
       // The task only reaches these phases after its handover was accepted.
-      if (settleWorker && reviewPhases.has(task.phase) && task.agentId && task.runId && !runs.some(run => run.id === task.runId)) {
+      if (settleWorker && reviewPhases.has(task.phase) && task.agentId && task.runId && !runs.some(run => run.id === task.runId)
+        && this.engine.store.threadArchiveEffect(task.agentId, hostId)?.status !== 'archived') {
         try { await settleWorker.call(adapter, task.agentId, task.runId); }
         catch (error) {
           this.engine.store.event(task.id, 'thread_settlement_warning',

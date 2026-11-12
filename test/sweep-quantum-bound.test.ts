@@ -94,10 +94,14 @@ function catchUpSweepFixture() {
   store.setMeta('hostRegistry', hosts.map(id => ({ id, endpoint: 'synthetic' })));
   for (const key of ['lastRetentionAt', 'lastLaneIdleAt', 'lastLaneDrainAt']) store.setMeta(key, Date.now());
   const agents = new Map<string, { taskId: string; hostId: string; owned: boolean }>();
-  const deleted = new Set<string>(), calls: string[] = [], observations: string[] = [];
+  const deleted = new Set<string>(), calls: string[] = [], observations: string[] = [], settlements: string[] = [];
   let hungAgent: string | null = null, releaseHung!: () => void;
   const hung = new Promise<void>(resolve => { releaseHung = resolve; });
   const adapters = new Map(hosts.map(hostId => [hostId, {
+    settleReportedThread: async (id: string) => {
+      settlements.push(id);
+      if (deleted.has(id)) throw new Error('deleted thread projection is unavailable');
+    },
     observe: async (id: string) => {
       observations.push(id);
       const agent = agents.get(id)!;
@@ -146,7 +150,7 @@ function catchUpSweepFixture() {
       active: false, idleSince: null, released: true, completion: null });
     return { task, agentId };
   };
-  return { store, engine, hosts, agents, deleted, calls, observations, add,
+  return { store, engine, hosts, agents, deleted, calls, observations, settlements, add,
     hold: (agentId: string) => { hungAgent = agentId; }, releaseHung,
     close: async () => { releaseHung(); await engine.stop(); store.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
@@ -206,5 +210,28 @@ test('real catch-up sweep rotates past 25 permanently pending tasks to a later c
     assert.equal(f.engine.sweepStats.swept, 30);
     assert.equal(f.store.getMeta(finishedThreadCleanupKey(tasks[0].task.id)), undefined,
       'the earliest unowned candidate remains pending without starving later work');
+  } finally { await f.close(); }
+});
+
+
+test('real sweeps skip confirmed cleanup while unresolved threads and other tasks still progress', async () => {
+  const f = catchUpSweepFixture();
+  try {
+    const finished = f.add(), unresolved = f.add(f.hosts[0], false);
+    assert.equal((await f.engine.auditPass(false)).fault, null);
+    assert.ok(f.deleted.has(finished.agentId));
+    const history = f.store.eventsAll(finished.task.id);
+    const settledBefore = f.settlements.filter(id => id === finished.agentId).length;
+    const unresolvedBefore = f.settlements.filter(id => id === unresolved.agentId).length;
+    // A partial task cleanup has no completion marker yet; its already confirmed
+    // threads still need no further projection reads while other threads retry.
+    f.store.setMeta(finishedThreadCleanupKey(finished.task.id), null);
+    const other = f.add(f.hosts[1]);
+    for (let pass = 0; pass < 3; pass++) assert.equal((await f.engine.auditPass(false)).fault, null);
+    assert.equal(f.settlements.filter(id => id === finished.agentId).length, settledBefore);
+    assert.deepEqual(f.store.eventsAll(finished.task.id), history, 'confirmed deletion adds no repeated warning');
+    assert.ok(f.settlements.filter(id => id === unresolved.agentId).length > unresolvedBefore, 'unresolved threads keep retrying settlement');
+    assert.ok(f.deleted.has(other.agentId), 'another task on the other host makes progress');
+    assert.ok(f.store.getMeta(finishedThreadCleanupKey(other.task.id)));
   } finally { await f.close(); }
 });

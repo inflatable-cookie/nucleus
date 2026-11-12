@@ -598,6 +598,11 @@ thread settled while the task is open and continues the same thread for the next
 fault instead of opening another. The test fails on a tree
 without the model-option, archive and steering work.
 
+The settlement sweep skips threads whose terminal archive or deletion is already
+confirmed in the durable cleanup lane, even if settling the thread previously
+needed no native receipt. Unresolved cleanup effects still get observation and
+settlement on later sweeps.
+
 The private proof starts an unmodified checkout of the target nightly revision,
 or its bundled server copied into fresh run scratch, with separate home, data,
 configuration and synthetic Git project/worktree. A local scripted provider drives questions, approvals and a

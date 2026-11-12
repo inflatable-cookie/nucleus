@@ -822,6 +822,9 @@ test('a task that finished before this rule is cleaned up by the next sweep, exa
     await f.host.settleReportedThread(recovery.id, recoveryRunId);
     assert.deepEqual(f.host.state.read().agents[recovery.id]!.labels, recoveryLabels);
     assert.equal(recoveryLabels[WIRE_LABEL_KEYS.role], 'recovery');
+    assert.equal(Object.values(f.host.state.read().intents).some(intent =>
+      intent.payload.includes('thread.settle') && intent.payload.includes(recovery.id)), false,
+      'an already settled recovery with no native run needs no settlement receipt');
     const verdict = { taskId, runId: reviewerRun.id, eventId: randomUUID(), status: 'ready_to_merge' as const,
       head, summary: 'Approved', reviewText: 'The reviewed change meets the brief.' };
     f.runtime.store.putRun({ ...reviewerRun, status: 'finished', active: false, released: true, completion: verdict });
@@ -865,9 +868,22 @@ test('a task that finished before this rule is cleaned up by the next sweep, exa
       assert.equal(f.runtime.store.getMeta(`finishedTaskThreadCleanup:00000000-0000-4000-8000-${String(index).padStart(12, '0')}`),
         undefined, 'an unowned historical candidate stays pending without starving later tasks');
 
+    // Finish presentation already queued by the first pass before measuring
+    // whether later passes add any work or history for the cleaned task.
+    await f.runtime.engine.drainProjections({ cleanup: false });
     const commands = f.server.commands.length;
-    await f.runtime.engine.auditPass(false);
-    assert.equal(f.server.commands.length, commands, 'a later sweep does nothing');
+    const history = f.runtime.store.eventsAll(taskId);
+    const nativeCall = f.host.rpc.call.bind(f.host.rpc);
+    const deletedReads: string[] = [];
+    f.host.rpc.call = (method, payload) => {
+      const id = (payload as { threadId?: string }).threadId;
+      if (method === 'orchestration.subscribeThread' && (id === recovery.id || id === reviewerThreadId)) deletedReads.push(id);
+      return nativeCall(method, payload);
+    };
+    for (let pass = 0; pass < 3; pass++) assert.equal((await f.runtime.engine.auditPass(false)).fault, null);
+    assert.deepEqual(deletedReads, [], 'later real sweeps never read a confirmed deleted thread');
+    assert.equal(f.server.commands.length, commands, 'later sweeps send no commands');
+    assert.deepEqual(f.runtime.store.eventsAll(taskId), history, 'later sweeps add no settlement warnings or task history');
   } finally { await f.close(); }
 });
 
