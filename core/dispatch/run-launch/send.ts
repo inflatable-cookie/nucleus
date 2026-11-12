@@ -17,7 +17,7 @@ export interface RunSendOwner {
   ticket(task: Task, run: Run, token: string): string;
   continueReviewer(task: Task, run: Run, messageId: string, text: string, allowed: () => Promise<boolean>, stillAllowed: () => boolean, beforeSend?: () => void): Promise<{sent: true} | {sent: false; reason: string}>;
 }
-export async function sendRunVia(owner: RunSendOwner, task: Task, run: Run, token: string, context: RecoveryDispatchSnapshot | null = null, ownerContext: OwnerReviewContext | null = null, guard?: { allowed: () => Promise<boolean>; stillAllowed: () => boolean }) {
+export async function sendRunVia(owner: RunSendOwner, task: Task, run: Run, token: string, context: RecoveryDispatchSnapshot | null = null, ownerContext: OwnerReviewContext | null = null, guard?: { allowed: () => Promise<boolean>; stillAllowed: () => boolean }, affectedTestsCommand?: string) {
     // Retained runs do not pass through createRun again. Re-prove and exclusively
     // create their recorded leaf here, before any prompt is sent.
     const temporary = runTemporaryEnvironment(run.id, owner.scratchPlacement(task), run.temporaryDirectory);
@@ -26,7 +26,7 @@ export async function sendRunVia(owner: RunSendOwner, task: Task, run: Run, toke
     const key=wireLabel(agent.current()?.labels, "mcpBinding");
     if(key && !run.ordinaryDetached)owner.binding(key,task,run.id,token);
     const effectiveRun = { ...run, temporaryDirectory: temporary.TMPDIR };
-    const prompt = runPrompt(task, effectiveRun, owner.helperPath, owner.ticket(task, run, token),Boolean(key), context, ownerContext);
+    const prompt = runPrompt(task, effectiveRun, owner.helperPath, owner.ticket(task, run, token),Boolean(key), context, ownerContext, affectedTestsCommand);
     if (run.ordinaryDetached) {
       if (!guard) throw Error('Ordinary retained round requires a live Nucleus custody guard');
       const sent = await owner.continueReviewer(task, run, `ns-run-${run.id}`, prompt, guard.allowed, guard.stillAllowed, () => { if(key)owner.binding(key,task,run.id,token); });

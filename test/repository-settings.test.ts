@@ -38,10 +38,14 @@ test('project rows round-trip through set, get and list with outcome-style repos
     const normalizedValidation = projectValidationSchema.parse(validation);
     assert.deepEqual(configured.validation, normalizedValidation);
     assert.deepEqual((await runtime.getRepository({repository: 'acme/app'}))?.validation, normalizedValidation);
+    const affected = await runtime.setRepository({repository: 'acme/app', affectedTests: {command: 'npm run test:affected'}});
+    assert.deepEqual(affected.affectedTests, {command: 'npm run test:affected'});
+    assert.deepEqual((await runtime.getRepository({repository: repo}))?.affectedTests, {command: 'npm run test:affected'});
 
     // Set patches the named fields: null clears an override, absent keeps it.
     const kept = await runtime.setRepository({repository: 'acme/app', closeout: null, note: ''});
     assert.deepEqual(kept.validation, normalizedValidation);
+    assert.deepEqual(kept.affectedTests, {command: 'npm run test:affected'});
     const cleared = await runtime.setRepository({repository: 'acme/app', closeout: null, validation: null, note: ''});
     assert.equal(cleared.closeout, null);
     assert.equal(cleared.validation, null);
@@ -542,7 +546,7 @@ test('a supported required-check surface permits activation, is re-read on every
     ]);
     assert.equal(calls.some(call => /\/main/.test(call)), false, 'no branch is guessed');
     // The settings row carries the documented fields only: the capability is not proof.
-    assert.deepEqual(Object.keys(saved).sort(), ['checksPolicy', 'closeout', 'hostKind', 'note', 'qa', 'repository', 'reviewer', 'revision', 'scratchNamespace', 'updatedAt', 'validation']);
+    assert.deepEqual(Object.keys(saved).sort(), ['affectedTests', 'checksPolicy', 'closeout', 'hostKind', 'note', 'qa', 'repository', 'reviewer', 'revision', 'scratchNamespace', 'updatedAt', 'validation']);
     // A second explicit activation observes again instead of relying on the first answer.
     calls.length = 0;
     await runtime.setRepository({repository: 'acme/rules', checksPolicy: 'all'});

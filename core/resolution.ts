@@ -152,8 +152,8 @@ export interface RetainedSourceExternalMerge {
 export interface ResolutionAdapter {
   /** `context` is a recovery coordinator's launch snapshot, passed to its prompt and never stored. */
   createRun(task: Task, run: Run, token: string, context?: RecoveryDispatchSnapshot | null, ownerContext?: OwnerReviewContext | null,
-    guard?: { allowed: () => Promise<boolean>; stillAllowed: () => boolean }): Promise<{ id: string; workspaceId: string | null }>;
-  sendRun(task: Task, run: Run, token: string, context?: RecoveryDispatchSnapshot | null, ownerContext?: OwnerReviewContext | null, guard?: { allowed: () => Promise<boolean>; stillAllowed: () => boolean }): Promise<void>;
+    guard?: { allowed: () => Promise<boolean>; stillAllowed: () => boolean }, affectedTestsCommand?: string): Promise<{ id: string; workspaceId: string | null }>;
+  sendRun(task: Task, run: Run, token: string, context?: RecoveryDispatchSnapshot | null, ownerContext?: OwnerReviewContext | null, guard?: { allowed: () => Promise<boolean>; stillAllowed: () => boolean }, affectedTestsCommand?: string): Promise<void>;
   findRunAgents(run: Run): Promise<{ id: string; workspaceId: string | null }[]>;
   publishReview?(store:Store, task:Task, run:Run, status:string, text:string, allowed?:()=>boolean, reviewer?:ReviewerSetting):Promise<number|PublicationOutcome>;
   reconcileReviewPublication?(store:Store, task:Task, run:Run, reviewer:ReviewerSetting, reason:string, allowed:()=>boolean):Promise<number>;

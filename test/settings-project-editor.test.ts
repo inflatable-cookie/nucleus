@@ -26,7 +26,7 @@ const done = (ui: { update(next: React.ReactElement): void }) => ui.update(h('Vi
 type Repo = { origin: string | null; path: string };
 const repo = (origin: string): Repo => ({ origin, path: `/workspace/user/Dev/${origin.split('/')[1]}` });
 const settingsRow = (repository: Repo, extra: Partial<RepositorySettings> = {}): RepositorySettings => ({
-  repository, scratchNamespace: null, closeout: null, validation: null, reviewer: null, qa: null, checksPolicy: null, hostKind: 'paseo', note: '', updatedAt: '2026-11-08T00:00:00.000Z', revision: 1, ...extra,
+  repository, scratchNamespace: null, closeout: null, validation: null, reviewer: null, qa: null, affectedTests: null, checksPolicy: null, hostKind: 'paseo', note: '', updatedAt: '2026-11-08T00:00:00.000Z', revision: 1, ...extra,
 });
 function row(key: string, name: string, repos: Repo[], extra: Partial<ProjectSettingsRow> & { settings?: Array<RepositorySettings | null>; planner?: string } = {}): ProjectSettingsRow {
   const { settings, planner, ...rest } = extra;
