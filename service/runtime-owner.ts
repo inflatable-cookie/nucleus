@@ -527,6 +527,8 @@ export class QueueRuntime {
       }
     };
     this.engine.resolveHostAdapter = id => this.hostRegistry.get(id)?.adapter;
+    // Per-host routing profiles (nucleus#1139): each registered host's own catalog decides its availability.
+    this.engine.hostIds = () => this.hostRegistry.known().map(host => host.id);
     this.engine.inventoryHostMatches = id => this.hostSession?.id === id;
     this.engine.retiredObservationKey = id => id === this.hostRegistry.known()[0]?.id ? 'retiredObservations' : `retiredObservations:${JSON.stringify(id)}`;
     this.engine.canReuseUnqualifiedOriginWorkspace = () => this.hostRegistry.known().length === 1;
@@ -858,6 +860,21 @@ export class QueueRuntime {
     return this.refreshing;
   }
 
+  /** A secondary host's last known connection state, for the arrival refresh below. */
+  private secondaryOnline = false;
+  /**
+   * One catalog refresh when a secondary host actually comes online, so its
+   * own routing snapshot exists before any host-bound dispatch; steady-state
+   * ticks and a disconnected primary change nothing and reject nothing
+   * (nucleus#1139 review). Later refreshes ride the periodic profile pass.
+   */
+  private async refreshOnSecondaryArrival(): Promise<void> {
+    const online = this.t3Host?.status().connected === true;
+    if (!online || this.secondaryOnline) { this.secondaryOnline = online; return; }
+    await this.refresh();
+    this.secondaryOnline = true;
+  }
+
   private async start(): Promise<void> {
     this.phase = "starting";
     // Spec 028: a store that still says `auto_vacuum=0` is converted here, before the
@@ -987,7 +1004,12 @@ export class QueueRuntime {
     if (this.closing || this.idleShutdownLatched) return false;
     // The legacy primary identity is recorded first; a secondary reconnect
     // remains independent of primary availability after that first bootstrap.
-    if (this.hostRegistry.known().length) void this.t3Host?.ensureConnected().then(() => this.plannerTickets.ensure());
+    // A secondary host coming online owes one catalog refresh so its own
+    // routing snapshot exists before any host-bound dispatch; later refreshes
+    // ride the periodic profile pass. The chain runs on every bootstrap tick
+    // and must never reject unhandled (a disconnected primary rejects refresh),
+    // so the transition-guarded refresh is caught here.
+    if (this.hostRegistry.known().length) void this.t3Host?.ensureConnected().then(() => this.plannerTickets.ensure()).then(() => this.refreshOnSecondaryArrival()).catch(() => { /* the next tick reconnects; the catalog rides the periodic profile pass */ });
     if (this.bootstrapped && this.connected()) {
       await this.plannerTickets.ensure();
       return true;

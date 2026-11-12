@@ -138,13 +138,17 @@ export class Dispatch {
       const a = JSON.parse(String(r.data));
       return groupIsUnavailable(a) ? [a.group] : [];
     }));
-    const workerProfiles=this.engine.profiles.filter(profile=>!workerProfileIsExcluded(task,profile.id));
+    // The task's own host decides availability: profiles its catalog cannot
+    // run (a thinking level or feature value it does not report) are kept out
+    // of selection here instead of being refused at launch (nucleus#1139).
+    const hostProfiles = this.engine.profilesFor(task.hostId);
+    const workerProfiles=hostProfiles.filter(profile=>!workerProfileIsExcluded(task,profile.id));
     const selection = task.entrypoint === 'proof'
       ? this.resolution.select(task, proofOnlyNeedsGo ? 'reviewer' : 'executor')
       : chooseProfile(task, workerProfiles, this.store.pool(), this.store.counts(), unavailable,'worker',this.store.recentCounts(),this.store.usageLevel(), this.store.demandRoleOffsets(), true);
     if (dispatchGate({ selectionAvailable: Boolean(selection) })) { const availability=this.store.db.prepare("SELECT data FROM availability").all().map(row=>JSON.parse(String(row.data)));const reason=task.entrypoint === 'proof'
       ? `No eligible ${proofOnlyNeedsGo ? 'independent reviewer' : 'proof executor'} profile; check the profile pool`
-      : eligibilityReasons(task,workerProfiles,this.store.pool(),availability,this.store.usageLevel(),this.engine.profiles);this.engine.note(task.id,task.workerExclusions.length?`No eligible worker remains after recorded exclusions: ${reason}`:reason, 'route_unavailable'); this.store.markRoutingAttempt(task.id); void this.engine.cleanContext(() => this.engine.wakeRepository(task.repoPath)); return; }
+      : eligibilityReasons(task,workerProfiles,this.store.pool(),availability,this.store.usageLevel(),hostProfiles);this.engine.note(task.id,task.workerExclusions.length?`No eligible worker remains after recorded exclusions: ${reason}`:reason, 'route_unavailable'); this.store.markRoutingAttempt(task.id); void this.engine.cleanContext(() => this.engine.wakeRepository(task.repoPath)); return; }
     if (!selection) return; // The route gate above handles this case.
     // Bounded workspace admission (Contract 007): a degraded Paseo or a full
     // Queue-owned workspace budget defers this creation plainly. No durable

@@ -40,7 +40,11 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
       };
     }
     get hostId() { return this.native.hostId; }
-    capabilities() { return { ...this.native.capabilities(), lifecycleDispatch: true, supportsCoordinatorRecovery: true }; }
+    capabilities() { return { ...this.native.capabilities(), lifecycleDispatch: true, supportsCoordinatorRecovery: true,
+      // One project per repository: a workspace archive retires the
+      // registration every task there shares, so closeout holds while any
+      // live task works in the same repository (nucleus#1139 review).
+      repositorySharedWorkspaces: true }; }
     creationOwner() {
       return { ...super.creationOwner(), perThreadEnvironment: false as const };
     }
@@ -105,6 +109,7 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     }
     observe(id: string) { return this.native.observe(id); }
     observationInventory(ids: readonly string[]) { return this.native.observationInventory(ids); }
+    taskWorkspaceArchived(id: string) { return this.native.workspaceArchived(id); }
     originAgent(id: string) { return this.native.originAgent(id); }
     listLiveAgents() { return this.native.listLiveAgents(); }
     workspaceAvailable(id: string) { return this.native.workspaceAvailable(id); }

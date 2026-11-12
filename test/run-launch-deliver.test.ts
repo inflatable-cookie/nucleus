@@ -244,3 +244,36 @@ test('retained send keeps the guard immediately before the native send', async (
     assert.deepEqual(order, ['scratch', 'refresh', 'binding', 'ticket', 'allowed', 'stillAllowed', 'send']);
   } finally { await f.close(); }
 });
+
+test('a proven refusal at a creation settles the run refused and names the step that failed', async () => {
+  const f = fixture();
+  try {
+    const { run, context } = reserved(f, { role: 'closeout' });
+    f.adapter.createRun = async () => { throw new ProvenPreSendRefusalError('T3Code model sol-model has no reasoningEffort "xhigh"'); };
+    // A proven pre-send refusal needs no exact lookup and no replacement: the
+    // task stops in attention with the real cause (nucleus#1139).
+    await f.engine.resolution.deliverLaunchRun(f.current(), 'closeout', context);
+    assert.equal(f.store.run(run.id)?.status, 'superseded');
+    assert.equal(f.store.run(run.id)?.released, true);
+    assert.equal(credential(f.store, run.id), null);
+    assert.equal(f.current().resolution.currentRunId, null);
+    assert.equal(f.current().resolution.attention, true);
+    assert.equal(f.current().phase, 'needs_attention');
+    assert.match(f.current().reason, /^Coordinator creation refused before send: T3Code model sol-model has no reasoningEffort "xhigh"$/);
+    const event = f.store.eventsAll(f.task.id).find(event => event.kind === 'creation_refused_before_send');
+    assert.ok(event, 'the refusal is recorded as its own event kind');
+    assert.equal(f.current().resolution.incident?.action ?? null, null, 'no exact-lookup incident: nothing was delivered');
+  } finally { await f.close(); }
+});
+
+test('a proven refusal at a reviewer creation names reviewer creation, not a reviewer continuation', async () => {
+  const f = fixture();
+  try {
+    const { run, context } = reserved(f);
+    f.adapter.createRun = async () => { throw new ProvenPreSendRefusalError('T3Code workspace is not registered'); };
+    await f.engine.resolution.deliverLaunchRun(f.current(), 'reviewer', context);
+    assert.match(f.current().reason, /^Reviewer creation refused before send: T3Code workspace is not registered$/);
+    assert.ok(f.store.eventsAll(f.task.id).some(event => event.kind === 'creation_refused_before_send'));
+    assert.equal(f.store.run(run.id)?.status, 'superseded');
+  } finally { await f.close(); }
+});

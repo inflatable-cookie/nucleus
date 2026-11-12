@@ -370,3 +370,28 @@ test('launches write only nucleus labels and only stored history still reads nor
   assert.equal(historicalWireLabel({ 'northstar.plugin': 'northstar-queue', 'northstar.task': 't' }, 'task'), 't');
   assert.throws(() => historicalWireLabel({ 'northstar.plugin': 'other' }, 'task'), /Invalid northstar plugin label/);
 });
+
+test('nucleus#1139: a proven refusal at worker creation names the step and skips the absent-creation ladder', async () => {
+  const f = fixture(); try {
+    const { ProvenPreSendRefusalError } = await import('../core/recovery/task-reasons');
+    const original = f.adapter.createAgent;
+    f.adapter.createAgent = async (...args: Parameters<Adapter['createAgent']>) => {
+      await original(...args);
+      throw new ProvenPreSendRefusalError('T3Code model luna-model has no reasoningEffort "xhigh"');
+    };
+    const task = f.add();
+    await f.engine.wake();
+    const current = f.store.task(task.id);
+    assert.equal(current.phase, 'needs_attention');
+    assert.equal(current.agentIntent, false);
+    assert.equal(current.runId, null);
+    assert.match(current.reason, /^Worker creation refused before send: T3Code model luna-model has no reasoningEffort "xhigh"$/);
+    assert.equal(f.credentialCount(), 0, 'the creation credential is revoked');
+    assert.equal(current.resolution.incident?.action ?? null, null, 'no exact-lookup incident: nothing was delivered');
+    assert.equal(f.creates.length, 1, 'exactly one creation was attempted');
+    const event = f.store.events(task.id).find(candidate => candidate.kind === 'worker_creation_refused_before_send');
+    assert.ok(event, 'the refusal is recorded as its own event kind');
+    // A later dispatch reselects; no stale run identity blocks it.
+    assert.equal(current.resolution.currentRunId ?? null, null);
+  } finally { await f.close(); }
+});

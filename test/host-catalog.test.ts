@@ -72,7 +72,7 @@ test("Spec 052 host catalog: every provider the host reports, with models, think
       listFeatures: async () => ({ features: [] }),
     },
   });
-  const catalog = hostCatalogSchema.parse(await adapter.catalog());
+  const catalog = hostCatalogSchema.parse(await adapter.catalog({ cwd: "/fixture/project" }));
   assert.deepEqual(
     catalog.providers.map((provider) => provider.key),
     ["openai", "anthropic", "t3"],
@@ -212,7 +212,8 @@ test("Spec 052 hostProfiles: Paseo's own list with ids unchanged, and availabili
   const adapter = adapterWith({
     providers: {
       snapshot: async () => ({ entries }),
-      listFeatures: async () => ({ features: [] }),
+      // The host reports what its imported profiles carry: the fast toggle on gpt-5.
+      listFeatures: async input => ({ features: (input as { provider?: string }).provider === "openai/gpt-5" ? [{ type: "toggle", id: "fast", label: "Fast", value: true }] : [] }),
     },
     config: {
       get: async () => ({
@@ -257,7 +258,7 @@ test("Spec 052 hostProfiles: Paseo's own list with ids unchanged, and availabili
       notes: "",
     },
   ]);
-  const catalog = hostCatalogSchema.parse(await adapter.catalog());
+  const catalog = hostCatalogSchema.parse(await adapter.catalog({ cwd: "/fixture/project" }));
   assert.deepEqual(profileAvailability(profiles[0]!, catalog), {
     available: true,
     problem: "",
@@ -275,8 +276,8 @@ test("imported profile projection matches the former Paseo routing list", async 
     { id: "sol", name: "Sol", provider: "openai", model: "gpt-5", modeId: "agent", thinkingOptionId: "high", featureValues: { fast: true }, notes: "frontier" },
     { id: "mini", name: "Mini", provider: "openai", model: "gpt-5-mini" },
   ];
-  const adapter = adapterWith({ providers: { snapshot: async () => ({ entries }), listFeatures: async () => ({ features: [] }) } });
-  const catalog = await adapter.catalog();
+  const adapter = adapterWith({ providers: { snapshot: async () => ({ entries }), listFeatures: async input => ({ features: (input as { provider?: string }).provider === "openai/gpt-5" ? [{ type: "toggle", id: "fast", label: "Fast", value: true }] : [] }) } });
+  const catalog = await adapter.catalog({ cwd: "/fixture/project" });
   const legacy = hostProfiles.map(p => {
     const model = entries[0]!.models.find(m => m.id === p.model)!;
     const supportedThinking = (model.thinkingOptions ?? []).map(o => o.id);
@@ -285,4 +286,52 @@ test("imported profile projection matches the former Paseo routing list", async 
       available: true, problem: "", supportedThinking };
   });
   assert.deepEqual(routingProfiles(hostProfiles.map(p => nucleusProfileSchema.parse(p)), catalog), legacy);
+});
+
+test("nucleus#1139 review: availability answers the configured runtime mode and feature values", () => {
+  const catalog = hostCatalogSchema.parse({
+    providers: [{
+      key: "openai", label: "OpenAI", available: true, problem: "",
+      models: [{
+        id: "gpt-5", label: "GPT-5", aliases: [],
+        thinkingOptions: [{ id: "low", label: "Low" }, { id: "high", label: "High", isDefault: true }],
+        defaultThinkingOptionId: "high",
+        modes: [{ id: "agent", label: "Agent" }],
+        features: [
+          { type: "toggle", id: "fast", label: "Fast", value: true },
+          { type: "select", id: "serviceTier", label: "Service tier", value: "standard",
+            options: [{ id: "standard", label: "Standard" }, { id: "priority", label: "Priority" }] },
+        ],
+      }],
+    }],
+  });
+  const base = { id: "sol", name: "Sol", provider: "openai", model: "gpt-5", notes: "" };
+  // Reported mode and feature values stay available.
+  assert.deepEqual(profileAvailability(nucleusProfileSchema.parse({ ...base, modeId: "agent", thinkingOptionId: "high", featureValues: { fast: true, serviceTier: "priority" } }), catalog),
+    { available: true, problem: "", supportedThinking: ["low", "high"] });
+  // A mode the host does not report is ineligible there.
+  assert.equal(profileAvailability(nucleusProfileSchema.parse({ ...base, modeId: "plan" }), catalog).problem,
+    "Configured runtime mode is not supported");
+  // An option id the host does not report, and an unreported select value.
+  assert.equal(profileAvailability(nucleusProfileSchema.parse({ ...base, featureValues: { contextWindow: 200000 } }), catalog).problem,
+    "Configured option contextWindow is not supported");
+  assert.equal(profileAvailability(nucleusProfileSchema.parse({ ...base, featureValues: { serviceTier: "ultra" } }), catalog).problem,
+    "Configured option serviceTier does not offer that value");
+  // A toggle that names a non-boolean value.
+  assert.equal(profileAvailability(nucleusProfileSchema.parse({ ...base, featureValues: { fast: "yes" } }), catalog).problem,
+    "Configured option fast needs a boolean value");
+});
+
+test("nucleus#1139 review: a deferred feature answer is unknown, never negative", () => {
+  const providers = [{
+    key: "openai", label: "OpenAI", available: true, problem: "",
+    models: [{ id: "gpt-5", label: "GPT-5", aliases: [], thinkingOptions: [{ id: "high", label: "High" }], defaultThinkingOptionId: null, modes: [], features: [] }],
+  }];
+  const profile = nucleusProfileSchema.parse({ id: "sol", name: "Sol", provider: "openai", model: "gpt-5", featureValues: { fast: true }, notes: "" });
+  // The no-cwd read defers the feature answer: the profile stays available.
+  assert.deepEqual(profileAvailability(profile, hostCatalogSchema.parse({ featuresDeferred: true, providers })),
+    { available: true, problem: "", supportedThinking: ["high"] });
+  // The same answer without the deferral is a negative: the option is refused.
+  assert.equal(profileAvailability(profile, hostCatalogSchema.parse({ providers })).problem,
+    "Configured option fast is not supported");
 });

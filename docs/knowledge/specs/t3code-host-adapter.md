@@ -158,6 +158,22 @@ the same text can come from a handler after an effect — and the task keeps the
 path-and-manual-fix guidance inside that unknown, never a refused mark
 (review ruling, 2026-11-12). Nucleus does not rename or remove projects.
 
+Closing a task archives the task's project through the `project.update`
+mutation with `archived: true` — the nightly keeps the project's threads and
+files (nucleus#1139, shapes read from the same bundle:
+`ProjectMutation = project.create | project.update | project.delete` in
+`packages/contracts/src/project.ts`). The project is one registration per
+repository, so while another live task on the same host still works there the
+archive holds — a visible `workspace_cleanup_wait` wait, never a failure — and
+the last closer retires the registration; earlier terminal tasks complete
+their local teardown against whatever state the last closer leaves, including
+the archived one. An archived project keeps its repository
+root, so a later task in the same repository reopens the same registration
+with `archived: false` instead of registering a second project, which the
+nightly refuses for an owned root. Archive observation is a positive native
+fact: the project is gone from the inventory or carries `archivedAt`, and an
+archived registration is no longer a current workspace.
+
 Nucleus prepares and verifies the Git worktree before handing it to T3. Creation
 uses only `existing_worktree`; T3 must confirm it belongs to the selected project.
 The adapter never asks T3 to create, rename, remove or clean a worktree. Thread
@@ -170,12 +186,14 @@ pretend to be a Paseo workspace.
 | Host operation | T3 RPC or command | Required result |
 | --- | --- | --- |
 | Register project | `projects.mutate` / `project.create` mutation | Deterministic IDs bind the real repository root; the receipt ledger answers replays; reconcile unknown delivery against the complete inventory before retry |
-| Create | `orchestration.launchThread` with explicit thread/message IDs, provider instance/model, prompt and `existing_worktree` | Top-level thread with the exact project and directory |
+| Create | `orchestration.launchThread` with explicit thread/message IDs, provider instance/model, prompt, model options and `existing_worktree` | Top-level thread with the exact project and directory |
 | Follow-up | `orchestration.dispatchCommand` / `message.dispatch` | Stable command and message IDs; receipt records acceptance |
 | Observe | `orchestration.subscribeShell` and `orchestration.subscribeThread` | Fresh complete state, including active run and pending request |
 | Answer question or permission | `runtime-request.respond` through dispatch | Exact request, thread and workspace; typed answers or approval decision |
 | Stop | `thread.stop` through dispatch | Receipt followed by observation; never a replacement thread |
 | Archive | `thread.archive` through dispatch | Receipt followed by archived-state observation |
+| Archive workspace | `projects.mutate` / `project.update` `archived: true` | The project is retired with threads and files kept; observation reads `archivedAt` from the inventory |
+| Atomic interrupt and continue | `message.dispatch` `steer_active` with the live run's `targetRunId` | The message injects into the active turn; with no active run the refusal is proven before send |
 
 Use `launchThread` for creation because it supplies the native workspace strategy
 and initial-message preparation. Other mutations use `dispatchCommand`. Each
@@ -183,6 +201,44 @@ operation binds a stable command ID, native target and canonical payload to the
 existing durable intent before send. Launch also binds its explicit thread and
 initial-message IDs. Persist the mapping before remote creation so a lost reply
 cannot produce an unowned thread.
+
+### Model options
+
+The nightly carries each model's configurable options in
+`server.getConfig`: `capabilities.optionDescriptors` — a select with its
+choices or a boolean toggle, `currentValue` when the provider reports one
+(`packages/contracts/src/model.ts`, nightly
+`0.1.10-nightly.20261111.4529`, app commit `d2c25950b4d9`). The catalog maps
+them onto the shared shape: the reasoning select becomes `thinkingOptions` —
+T3 marks a provider's own thought-level control `role: "reasoning"`, and every
+stock driver (Codex, Grok, Muse, Kiro) names its reasoning select
+`reasoningEffort` — with `defaultThinkingOptionId` from the default choice or
+`currentValue`; other selects and booleans become catalog features; model
+`aliases` carry through.
+
+At launch the adapter maps the profile's `thinkingOptionId` and feature values
+into `ModelSelection.options` (`[{ id, value }]`;
+`packages/contracts/src/modelSelection.ts`, values `string | boolean`). A
+value the model does not report is refused before send with the option and
+value named — no silent dropping, no nearest-value guessing. Selection keeps
+such a profile out of a host-bound task in the first place: the engine keeps a
+routing-profile snapshot per registered host, built from that host's own
+catalog, and dispatch, worker creation, reviewer selection and the
+`route`/`set_routing` validation read the task host's snapshot, so
+availability — including the configured runtime mode and every feature value —
+and `supportedThinking` are that host's own answer. T3Code answers feature
+values without a project context, so its answer is always authoritative; a
+host that resolves features per directory (Paseo) marks a read made without
+one `featuresDeferred`, and availability treats that as unknown, never
+negative. The launch fence catches catalog drift between refresh and send. A secondary host's snapshot is built
+when it comes online, and afterwards on the periodic profile pass, never on an
+unguarded per-tick chain.
+
+A creation refusal that is proven pre-send settles the run refused and the task
+in attention with the step that failed named — `Worker creation refused before
+send: …`, `Reviewer creation refused before send: …`, `Coordinator creation
+refused before send: …` — instead of the absent-creation exact-lookup ladder,
+which would find nothing and send a replacement into the same refusal.
 
 The adapter's owner-only state file binds those records to the authenticated
 environment. Synchronous exclusive locking and atomic, synced replacement keep
@@ -245,6 +301,14 @@ retained-thread read must settle an identity before reporting it gone. Coverage
 flags and cursors are strictly typed; retyped fields or a remaining history
 cursor cannot establish complete observation or timeline coverage.
 
+The canonical thread projection is the whole turn list, so timeline pages carry
+the full coverage contract: no gap, no reset, no newer history, an epoch that
+is the thread identity, and start/end cursors that are positions in the full
+list. Archived threads are retired participants: they report the terminal
+closed state with `archived` carried on its own field, so archive proofs and
+workspace teardown read a terminal state while retained reads still see the
+retirement.
+
 On T3 startup, active runs are cancelled and live approvals expire. Pending
 questions may remain pending with `responseCapability: {type: "message"}`.
 Read this capability from the fresh thread projection and answer through
@@ -267,11 +331,17 @@ It selects only that registered host, with no fallback, and uses its permission
 response through the host facade. The native adapter rechecks the pending
 request's kind and workspace before delivery.
 
-Expose explicit unsupported capabilities for per-thread MCP reporting,
-Nucleus-raised native decisions and UI contributions. Do not substitute empty
-success results. The Host keeps `lifecycleDispatch` false; the Adapter turns it
-on once the Nucleus helper path is wired, so T3 threads report through the
-helper and ticket named in the prompt. Service composition injects
+Expose explicit unsupported capabilities for Nucleus-raised native decisions,
+Nucleus-raised in-thread questions, native workspace titles and UI
+contributions. Do not substitute empty success results. Core routes those
+needs for T3 through the board, CLI-helper reporting and core's own workspace
+allocation, so an ordinary task never reaches those refusals (nucleus#1139):
+per-thread MCP reporting is unreachable because reporting rides the helper;
+per-thread launch environment is unreachable because T3 launches carry none;
+unreported runtime modes are unreachable because T3's catalog reports no modes,
+so imported profiles carry none. The Host keeps `lifecycleDispatch` false; the
+Adapter turns it on once the Nucleus helper path is wired, so T3 threads report
+through the helper and ticket named in the prompt. Service composition injects
 `HostPolicies` through the public `core/host` constructor, so review
 verification (live author/reviewer independence and exact-head checks) and
 retained-thread continuation, recovery and checkpoint delivery use the same
@@ -322,6 +392,16 @@ and post-effect handler defects must both retain unknown delivery. Contract
 fixtures pin the nightly command shapes rather than a server-version allowlist.
 Cross-host cases deliberately reuse native IDs and keep task, run, message and
 question ownership separate.
+
+One end-to-end test drives an ordinary task's whole lifecycle on the fake
+Nightly transport (nucleus#1139): promotion onto the T3 host, workspace
+registration, a worker launch whose profile carries a thinking level (the
+launch carries `modelSelection.options`), a planner `tell` delivered mid-run,
+the worker's report through the packaged helper, an independent reviewer's
+launch and verdict, a revision round addressed on the retained worker, the
+accepted round-two verdict, the merge, closeout, and the archive of both
+threads and the native project, observed positively. The test fails on a tree
+without the model-option, archive and steering work.
 
 The private proof starts an unmodified checkout of the target nightly revision,
 or its bundled server copied into fresh run scratch, with separate home, data,

@@ -7,6 +7,7 @@ import {join} from 'node:path';
 import {Store} from '../core/store/store';
 import {Engine} from '../core/engine';
 import {chooseProfile,eligibilityReasons,validateNamedProfile} from '../core/dispatch/routing';
+import { liveRepositorySharer, repositorySharedWorkspaces, sharedRepositoryArchiveHold } from '../core/workspaces/repository-archive-gate';
 import {parseNorthstarDocument,submissionQueueFields} from '../core/planning/handoff';
 import {
   capabilityLevelSchema,outcomeSchema,poolRecordFromLegacy,poolSchema,scopeSchema,
@@ -270,4 +271,78 @@ test('set_routing naming a profile before the catalog loads refuses as retryable
     const scoped=await engine.performTaskControl(taskControlInputSchema.parse({taskId:task.id,version:task.version,action:'set_routing',reason:'Scope only',complexity:'low'}));
     assert.equal(scoped.complexity,'low');
   }finally{await engine.stop();store.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('nucleus#1139: a task\'s host catalog keeps profiles it cannot run out of selection', async t => {
+  // One profile with a thinking level the T3 catalog does not report, one it does.
+  const luna=profile('luna','luna-model',{thinkingOptionId:'xhigh',supportedThinking:['xhigh']});
+  const sol=profile('sol','sol-model',{thinkingOptionId:'high',supportedThinking:['high']});
+  const all=[luna,sol];
+  const pool=all.map((p,i)=>poolSchema.parse({profileId:p.id,enabled:true,group:`g-${i}`,roles:['worker'],weight:1,scopes:['general','mechanical','complex'],capability:'medium'}));
+  const t3Catalog={providers:[{key:'test',label:'test',available:true,problem:'',models:[
+    {id:'luna-model',label:'Luna',aliases:[],thinkingOptions:[{id:'low',label:'Low'},{id:'high',label:'High'}],defaultThinkingOptionId:null,modes:[],features:[]},
+    {id:'sol-model',label:'Sol',aliases:[],thinkingOptions:[{id:'high',label:'High'}],defaultThinkingOptionId:null,modes:[],features:[]}]}]};
+  const primaryAdapter={profiles:async()=>all,observe:observeIdle('ws','agent'),catalog:async()=>({providers:[]})} as unknown as Adapter;
+  const t3Adapter={profiles:async()=>[],observe:observeIdle('ws','agent'),catalog:async()=>t3Catalog} as unknown as Adapter;
+  const dir=mkdtempSync(join(tmpdir(),'ns-host-routing-')),store=new Store(join(dir,'db'));
+  store.setProfiles([{ id: luna.id, name: luna.id, provider: luna.provider, model: luna.model, thinkingOptionId: 'xhigh', notes: '' },
+    { id: sol.id, name: sol.id, provider: sol.provider, model: sol.model, thinkingOptionId: 'high', notes: '' }]);
+  const engine=new Engine(store,primaryAdapter,0);
+  engine.hostIds=()=>['t3code:env'];
+  engine.resolveHostAdapter=id=>id==='t3code:env'?t3Adapter:primaryAdapter;
+  try{
+    assert.equal(engine.profileCatalogKnownFor('t3code:env'),false,'a secondary host waits for its own catalog');
+    await engine.refresh();
+    assert.equal(engine.profileCatalogKnownFor('t3code:env'),true);
+    assert.equal(engine.profileCatalogKnownFor('paseo-primary'),true,'the primary host reads the primary set');
+    // The task host's snapshot: Luna (xhigh) is unavailable on T3, Sol stays.
+    const onT3=engine.profilesFor('t3code:env');
+    assert.equal(onT3.find(p=>p.id==='luna')?.available,false,'xhigh is not reported by the T3 catalog');
+    assert.deepEqual(onT3.find(p=>p.id==='luna')?.supportedThinking,['low','high']);
+    assert.equal(onT3.find(p=>p.id==='sol')?.available,true);
+    // The primary set is untouched: both profiles available from the empty primary catalog.
+    const onPrimary=engine.profilesFor(undefined);
+    assert.equal(onPrimary.find(p=>p.id==='luna')?.available,false,'the primary catalog offers no providers at all');
+    assert.match(onPrimary.find(p=>p.id==='luna')?.problem ?? '',/Provider test is not available/);
+    const task=taskOf({complexity:'high',thinkingOptionId:'xhigh'});
+    assert.equal(ids(chooseProfile(task,onT3,pool,equalUsage(pool),new Set())),null,'a task pinned to xhigh has no eligible T3 profile');
+    assert.equal(ids(chooseProfile({...task,thinkingOptionId:'high'},onT3,pool,equalUsage(pool),new Set())),'sol','the supported level selects Sol on T3');
+    // Route validation reads the task host's snapshot too: a mode or feature
+    // value the host does not report refuses the routing instead of recording
+    // a request that refuses at launch (nucleus#1139 review).
+    const novaFeature=profile('nova','sol-model',{featureValues:{fast:true}});
+    store.setProfiles([...store.profiles(),{id:novaFeature.id,name:novaFeature.id,provider:novaFeature.provider,model:novaFeature.model,featureValues:{fast:true},notes:''}]);
+    const storeTask=store.insert(taskOf({complexity:'high'}),'t3code:env','handoff','a'.repeat(40));
+    store.update(storeTask.id,{phase:'queued',reason:'Queued for dispatch',profile:sol,profileGroup:'g-1',workspaceId:'ws',directory:'/worktree'});
+    await engine.refresh();
+    assert.equal(engine.profilesFor('t3code:env').find(p=>p.id==='nova')?.available,false,'the feature value is not reported by the T3 catalog');
+    await assert.rejects(engine.performTaskControl(taskControlInputSchema.parse({taskId:storeTask.id,version:store.task(storeTask.id).version,
+      action:'set_routing',reason:'Route the grind profile',caller:'operator (board)',
+      profileRequests:{worker:{profileId:'nova',reason:'The trial runs grind work on the grind profile',required:false}}})),
+      /Profile nova is unavailable: Configured option fast is not supported/);
+    // The same routing on the primary host's view is only unavailable for a
+    // different reason, never the T3 feature answer.
+    assert.equal(engine.profilesFor(undefined).find(p=>p.id==='nova')?.problem,'Provider test is not available on this host');
+  }finally{await engine.stop();store.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test("nucleus#1139 review: a shared-project archive holds while a live task shares the repository", () => {
+  const t3Adapter = { capabilities: () => ({ repositorySharedWorkspaces: true }) } as never;
+  const paseoAdapter = { capabilities: () => ({}) } as never;
+  const task = (id: string, over: Partial<Task> = {}): Task => ({
+    ...taskOf(), id, hostId: 't3code:env', repoPath: '/repo', phase: 'working', ...over,
+  }) as Task;
+  const base = task('archiving');
+  // A live sibling on the same host and repository holds the shared registration.
+  const withLiveSibling = [base, task('other')];
+  assert.equal(liveRepositorySharer(withLiveSibling, base), true);
+  assert.match(sharedRepositoryArchiveHold(t3Adapter, withLiveSibling, base) ?? '', /another live task in this repository still uses the shared project registration/);
+  // A terminal, removed, other-host or other-repository sibling holds nothing.
+  assert.equal(liveRepositorySharer([base, task('done', { phase: 'done' })], base), false);
+  assert.equal(liveRepositorySharer([base, task('gone', { removedAt: new Date().toISOString() })], base), false);
+  assert.equal(liveRepositorySharer([base, task('paseo', { hostId: 'paseo:primary' })], base), false);
+  assert.equal(liveRepositorySharer([base, task('elsewhere', { repoPath: '/other' })], base), false);
+  assert.equal(sharedRepositoryArchiveHold(t3Adapter, [base, task('paseo', { hostId: 'paseo:primary' })], base), null);
+  // Paseo worktrees are independent registrations: no gate at all.
+  assert.equal(sharedRepositoryArchiveHold(paseoAdapter, withLiveSibling, base), null);
 });

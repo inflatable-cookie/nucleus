@@ -9,7 +9,7 @@ import type { Engine } from "../engine";
 import { isPiSettingsLockFailure, isRateLimitError, rateLimitCooldownData, transientProviderRetryAt } from "../recovery/exhaustion";
 import { workerPrompt } from "./prompts";
 import { runTicketPath } from "./agent-creation";
-import { ABSENT_WORKER_REASON, PRE_AGENT_LAUNCH_FAILURE_REASON, PROFILE_CATALOG_PENDING_REASON } from "../recovery/task-reasons";
+import { ABSENT_WORKER_REASON, PRE_AGENT_LAUNCH_FAILURE_REASON, PROFILE_CATALOG_PENDING_REASON, ProvenPreSendRefusalError } from "../recovery/task-reasons";
 import { startsNoRuns } from "../closeout/queue-drain";
 
 /**
@@ -38,7 +38,8 @@ export class WorkerLauncher {
     if (dispatchBlocked(task)) { this.store.update(task.id, { reason: DISPATCH_HELD_REASON }); return; }
     // A dispatching task resumed after a restart reaches here without dispatchTask;
     // its route and escalation proofs read the catalog, so wait for it (review #565).
-    if (!this.engine.profileCatalogKnown()) { this.resolution.waiting(task, PROFILE_CATALOG_PENDING_REASON, 'lifecycle'); return; }
+    // The task's own host's catalog decides, not only the primary's (nucleus#1139).
+    if (!this.engine.profileCatalogKnownFor(task.hostId)) { this.resolution.waiting(task, PROFILE_CATALOG_PENDING_REASON, 'lifecycle'); return; }
     if (!task.directory || !task.workspaceId || !task.profile) throw new Error("Missing workspace or route");
     task = await this.engine.ensureSiblings(task);
     task = await this.engine.refreshCheckoutSiblings(task, "worker_creation");
@@ -132,6 +133,25 @@ export class WorkerLauncher {
             laneDocumentRuns: (current.laneDocumentRuns ?? []).filter(item => item.runId !== runId) }, 'agent_create_storage_deferred');
         });
         throw error;
+      }
+      // A proven pre-send refusal is not an absent creation: nothing was sent,
+      // so there is nothing for exact-lookup reconciliation to find and a
+      // replacement creation would refuse identically. The task stops in
+      // attention with the real cause named, and the next dispatch reselects
+      // against the host catalog (nucleus#1139).
+      if (error instanceof ProvenPreSendRefusalError) {
+        const current = this.store.task(task.id);
+        if (current.agentIntent && !current.agentId && current.runId === runId) {
+          const reason = `Worker creation refused before send: ${error.reason}`;
+          this.store.transaction(() => {
+            this.store.deleteCredential(runId);
+            this.store.update(task.id, { phase: 'needs_attention', reason, agentIntent: false, runId: null,
+              briefRuns: current.briefRuns.filter(item => item.runId !== runId),
+              laneDocumentRuns: (current.laneDocumentRuns ?? []).filter(item => item.runId !== runId),
+              resolution: { ...current.resolution, attention: true } }, 'worker_creation_refused_before_send', reason);
+          });
+          return;
+        }
       }
       // Record the exact-lookup window now: automatic reconciliation owns the fault before any coordinator can engage.
       this.resolution.ensureIncident(this.store.task(task.id), null, ABSENT_WORKER_REASON, 'exact_lookup');

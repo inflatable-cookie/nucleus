@@ -221,7 +221,11 @@ test('observations distinguish idle, active run, permissions, archived and expli
   const archivedCommands = server.commands.length;
   await host.archiveAgent(created.id);
   assert.equal(server.commands.length, archivedCommands);
-  assert.equal((await host.observe(created.id)).status, 'archived');
+  // An archived thread is retired: terminal closed status, with the archived
+  // fact on its own field.
+  const retired = await host.observe(created.id);
+  assert.equal(retired.status, 'closed');
+  assert.equal(retired.archived, true);
   assert.ok(server.requests.some(r => r.tag === 'orchestration.getArchivedShellSnapshot'));
   assert.equal((await host.listLiveAgents()).some(r => r.id === created.id), false);
   p.thread.deletedAt = STAMP;
@@ -598,4 +602,94 @@ test('guidance preserves a repository path with repeated whitespace exactly', as
     assert.ok(String(error).includes(project.workspaceRoot!), 'the attention text carries the path byte-exactly');
     return true;
   });
+});
+
+test('the catalog reports each model\'s real option choices from server.getConfig', async t => {
+  const { host } = await fixture(t);
+  const [provider] = (await host.catalog()).providers;
+  const model = provider!.models[0]!;
+  // The nightly's reasoning select: every choice, the default from isDefault.
+  assert.deepEqual(model.thinkingOptions, [{ id: 'low', label: 'Low' }, { id: 'medium', label: 'Medium' }, { id: 'high', label: 'High', isDefault: true }]);
+  assert.equal(model.defaultThinkingOptionId, 'high');
+  assert.deepEqual(model.aliases, ['synthetic-alias']);
+  const tier = model.features.find(f => f.id === 'serviceTier');
+  assert.equal(tier?.type, 'select');
+  assert.equal(tier?.type === 'select' && tier.value, 'standard');
+  assert.ok(tier?.type === 'select' && tier.options.some(option => option.id === 'priority'));
+  const verbose = model.features.find(f => f.id === 'verbose');
+  assert.deepEqual(verbose, { type: 'toggle', id: 'verbose', label: 'Verbose', value: true });
+});
+
+test('a profile with a supported thinking level launches with the mapped modelSelection options', async t => {
+  const { host, server, spec } = await fixture(t);
+  const thinking: Profile = { ...profile, thinkingOptionId: 'high', supportedThinking: ['high'],
+    featureValues: { serviceTier: 'priority', verbose: false } };
+  await host.createAgent({ ...spec(), profile: thinking });
+  const command = server.commands[0]!;
+  assert.deepEqual(command.modelSelection, { instanceId: 'synthetic-provider', model: 'synthetic-model',
+    options: [{ id: 'reasoningEffort', value: 'high' }, { id: 'serviceTier', value: 'priority' }, { id: 'verbose', value: false }] });
+});
+
+test('an unreported option value is refused before send with the option and value named', async t => {
+  const { host, server, spec } = await fixture(t);
+  const xhigh: Profile = { ...profile, thinkingOptionId: 'xhigh', supportedThinking: ['xhigh'] };
+  await assert.rejects(host.createAgent({ ...spec('launch-xhigh'), profile: xhigh }),
+    /T3Code model synthetic-model has no reasoningEffort "xhigh"/);
+  const unknownChoice: Profile = { ...profile, featureValues: { serviceTier: 'ultra' } };
+  await assert.rejects(host.createAgent({ ...spec('launch-tier'), profile: unknownChoice }),
+    /T3Code model synthetic-model has no serviceTier "ultra"/);
+  const unknownOption: Profile = { ...profile, featureValues: { contextWindow: 200000 } };
+  await assert.rejects(host.createAgent({ ...spec('launch-window'), profile: unknownOption }),
+    /T3Code model synthetic-model has no "contextWindow" option/);
+  assert.equal(server.commands.length, 0, 'nothing was sent');
+  assert.equal(Object.keys(host.state.read().intents).length, 0, 'no durable launch intent was recorded for a refusal');
+});
+
+test('workspace archive is the native project.update archived mutation, observed positively', async t => {
+  const { host, server, workspace } = await fixture(t);
+  assert.equal(await host.workspaceArchived(workspace.id), false);
+  const ref = host.workspaceRef(workspace.id);
+  await ref.refresh();
+  assert.ok(ref.current());
+  const result = await ref.archive('ns-archive-check');
+  assert.equal(result.error, null);
+  assert.ok(result.archivedAt);
+  const command = server.commands.find(c => c.method === 'projects.mutate');
+  assert.equal(command?.type, 'project.update');
+  assert.equal(command?.archived, true);
+  assert.equal(command?.projectId, 'synthetic-project');
+  assert.equal(await host.workspaceArchived(workspace.id), true);
+  assert.equal(await host.workspaceAvailable(workspace.id), false);
+  await ref.refresh();
+  assert.equal(ref.current(), null, 'an archived project is no longer a current registration');
+  // The durable intent replays the settled outcome; no second mutation is sent.
+  const again = await ref.archive('ns-archive-check');
+  assert.equal(again.error, null);
+  assert.equal(server.commands.filter(c => c.method === 'projects.mutate').length, 1);
+});
+
+test('createWorkspace reopens an archived project for its root instead of registering a second one', async t => {
+  const { host, server, workspace, directory } = await fixture(t);
+  await host.workspaceRef(workspace.id).archive('ns-archive-recreate');
+  const reopened = await host.createWorkspace({ title: 'Synthetic worktree', requestId: 'workspace-archived-root', directory, project: { projectId: 'synthetic-project', workspaceRoot: directory } });
+  assert.equal(await host.workspaceAvailable(reopened.id), true, 'the archived registration was reopened, not replaced');
+  const updates = server.commands.filter(c => c.method === 'projects.mutate');
+  assert.deepEqual(updates.map(c => c.type), ['project.update', 'project.update'], 'archive then reopen, never a second project.create');
+  assert.equal(updates[1]?.archived, false);
+  assert.equal(updates[1]?.projectId, 'synthetic-project');
+});
+
+test('atomic interrupt and continue steers the live run through steer_active', async t => {
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const p = server.threads.get(created.id)!;
+  p.runs = [{ id: 'run-1', status: 'running', startedAt: STAMP }];
+  await host.interruptAndContinue(created.id, 'ns-steer-live', 'Change course: X');
+  const command = server.commands.at(-1)!;
+  assert.equal(command.type, 'message.dispatch');
+  assert.deepEqual(command.dispatchMode, { type: 'steer_active', targetRunId: 'run-1' });
+  // With no active run there is nothing to steer: proven refusal before send.
+  p.runs = [];
+  await assert.rejects(host.interruptAndContinue(created.id, 'ns-steer-idle', 'Change course: Y'), /no active run to steer/);
+  assert.equal(server.commands.filter(c => c.type === 'message.dispatch').length, 1);
 });

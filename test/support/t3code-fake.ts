@@ -21,6 +21,7 @@ export async function t3Fake(t: TestContext, directory: string) {
   const requests: Value[] = [];
   const commands: Value[] = [];
   const projectRows: Value[] = [{ id: 'synthetic-project', title: 'Synthetic project', workspaceRoot: directory }];
+  const archivedProjects = new Set<string>();
   const threads = new Map<string, Value>([['synthetic-probe', threadProjection('synthetic-probe', directory)]]);
   const controls = { environmentId: 'synthetic-environment', version: 'nightly-synthetic-unseen', protocol: 2,
     synchronized: true, incompleteThread: false, enrichment: false, shellMissingField: '',
@@ -45,7 +46,7 @@ export async function t3Fake(t: TestContext, directory: string) {
     if (controls.shellMissingField) delete value[controls.shellMissingField];
     return value;
   };
-  const projects = () => projectRows;
+  const projects = () => projectRows.map(row => ({ ...row, archivedAt: archivedProjects.has(row.id) ? STAMP : null }));
   server.on('upgrade', (request, rawSocket) => {
     const socket = rawSocket as Socket;
     sockets.add(socket); socket.on('close', () => sockets.delete(socket));
@@ -70,9 +71,30 @@ export async function t3Fake(t: TestContext, directory: string) {
       const stream = (values: unknown[]) => send({ _tag: 'Chunk', requestId: request.id, values });
       const marker = () => controls.synchronized ? [{ kind: 'synchronized', sequence: 1 }] : [];
       switch (request.tag) {
-        case 'server.getConfig':
-          return success({ environment: { environmentId: controls.environmentId, serverVersion: controls.version, orchestrationProtocolVersion: controls.protocol },
-            providers: [{ instanceId: 'synthetic-provider', displayName: 'Synthetic provider', enabled: true, status: 'ready', models: [{ slug: 'synthetic-model', name: 'Synthetic model' }] }], unrelatedAdditiveField: true });
+        case 'server.getConfig': {
+          const reasoning: Value = { id: 'reasoningEffort', label: 'Reasoning', type: 'select', currentValue: 'medium',
+            options: [{ id: 'low', label: 'Low' }, { id: 'medium', label: 'Medium' }, { id: 'high', label: 'High', isDefault: true }] };
+          const serviceTier: Value = { id: 'serviceTier', label: 'Service Tier', type: 'select', currentValue: 'standard',
+            options: [{ id: 'standard', label: 'Standard', isDefault: true }, { id: 'priority', label: 'Priority' }] };
+          const verbose: Value = { id: 'verbose', label: 'Verbose', type: 'boolean', currentValue: true };
+          return success({
+            environment: { environmentId: controls.environmentId, serverVersion: controls.version, orchestrationProtocolVersion: controls.protocol },
+            providers: [
+              {
+                instanceId: 'synthetic-provider', displayName: 'Synthetic provider', enabled: true, status: 'ready',
+                models: [
+                  {
+                    slug: 'synthetic-model', name: 'Synthetic model', aliases: ['synthetic-alias'],
+                    // Nightly 0.1.10 shape: each model lists its configurable options.
+                    capabilities: { optionDescriptors: [reasoning, serviceTier, verbose] },
+                  },
+                  { slug: 'synthetic-model-2', name: 'Synthetic model two' },
+                ],
+              },
+            ],
+            unrelatedAdditiveField: true,
+          });
+        }
         case 'orchestration.subscribeShell': {
           const active = [...threads.values()].filter(p => !p.thread.archivedAt && !p.thread.deletedAt).map(shell);
           return stream([{ kind: 'snapshot', snapshot: { schemaVersion: 1, snapshotSequence: controls.snapshotSequence, projects: projects(), threads: active, archivedThreads: [] } },
@@ -92,6 +114,13 @@ export async function t3Fake(t: TestContext, directory: string) {
           assert.ok(contract.launchThread.runtimeModes.includes(payload.runtimeMode));
           assert.ok(contract.launchThread.interactionModes.includes(payload.interactionMode));
           for (const field of contract.launchThread.modelSelectionRequired) assert.ok(Object.hasOwn(payload.modelSelection, field), `modelSelection.${field}`);
+          if (payload.modelSelection.options !== undefined) {
+            assert.ok(Array.isArray(payload.modelSelection.options), 'modelSelection.options is the nightly selection array');
+            for (const selection of payload.modelSelection.options) {
+              for (const field of contract.modelOptions.optionSelectionRequired) assert.ok(Object.hasOwn(selection, field), `modelSelection.options.${field}`);
+              assert.ok(contract.modelOptions.optionSelectionValueTypes.includes(typeof selection.value), `modelSelection.options value type ${typeof selection.value}`);
+            }
+          }
           commands.push({ method: request.tag, ...payload }); controls.mutationObserver();
           if (controls.disconnectMutation) return socket.destroy();
           const p = threadProjection(payload.threadId, payload.workspaceStrategy.worktreePath);
@@ -106,7 +135,11 @@ export async function t3Fake(t: TestContext, directory: string) {
           // unknown command type is a decoder defect with no effect and no span.
           if (!definition) return failure({ _tag: 'Die', defect: contract.dispatchUnknownCommandExample });
           for (const field of definition.required) assert.ok(Object.hasOwn(payload, field), `${payload.type}.${field}`);
-          if (payload.type === 'message.dispatch') assert.ok(definition.dispatchModes.includes(payload.dispatchMode.type));
+          if (payload.type === 'message.dispatch') {
+            assert.ok(definition.dispatchModes.includes(payload.dispatchMode.type));
+            if (definition.steerModes.includes(payload.dispatchMode.type) && definition.steerRequiresTargetRunId)
+              assert.equal(typeof payload.dispatchMode.targetRunId, 'string', `${payload.dispatchMode.type}.targetRunId`);
+          }
           if (payload.type === 'runtime-request.respond') {
             if (payload.decision) assert.ok(definition.decisions.includes(payload.decision));
             if (payload.answers) for (const answer of Object.values(payload.answers)) assert.ok(Array.isArray(answer), 'question answer uses provider answer array');
@@ -134,7 +167,19 @@ export async function t3Fake(t: TestContext, directory: string) {
         }
         case 'projects.mutate': {
           const mutation = contract.projectMutation;
-          assert.equal(payload.type, 'project.create', 'only project.create mutations are exercised');
+          if (payload.type === 'project.update') {
+            for (const field of mutation.updateRequired) assert.ok(Object.hasOwn(payload, field), `projects.mutate.${field}`);
+            commands.push({ method: request.tag, ...payload }); controls.mutationObserver();
+            if (controls.refuseMutation) return failure({ _tag: 'Die', defect: contract.boundaryDecodeExample });
+            if (controls.disconnectMutation) return socket.destroy();
+            const project = projectRows.find((row: Value) => row.id === payload.projectId);
+            if (!project) return failure({ _tag: 'Fail', error: { _tag: 'ProjectMutationError', commandId: payload.commandId, message: 'Failed to mutate project.' } });
+            if (payload.archived === true) archivedProjects.add(payload.projectId);
+            else if (payload.archived === false) archivedProjects.delete(payload.projectId);
+            if (controls.disconnectAfterEffect) return socket.destroy();
+            return success({ ...project, archivedAt: payload.archived ? STAMP : null });
+          }
+          assert.equal(payload.type, 'project.create', 'only project.create and project.update mutations are exercised');
           for (const field of mutation.createRequired) assert.ok(Object.hasOwn(payload, field), `projects.mutate.${field}`);
           commands.push({ method: request.tag, ...payload }); controls.mutationObserver();
           if (controls.refuseMutation) return failure({ _tag: 'Die', defect: contract.boundaryDecodeExample });

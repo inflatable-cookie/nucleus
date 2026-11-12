@@ -7,12 +7,28 @@ import type { Task, Profile } from '../../shared/contracts';
 import { ProvenPreSendRefusalError, HostUnknownDeliveryError, sanitizeHostDeliveryDiagnostic } from '../../core/host';
 import { T3RpcClient, T3RpcError } from './rpc';
 import { T3StateFile, canonical, type T3State } from './state';
-import { decode, config, shellSnapshot, projection, threadSnapshot, shellThread, project, T3CompatibilityError } from './contracts';
+import { decode, config, optionDescriptor, shellSnapshot, projection, threadSnapshot, shellThread, project, T3CompatibilityError } from './contracts';
 
 export interface T3CodeConfig { endpoint: string; bearer: string; statePath: string; timeoutMs?: number; probeThreadId?: string }
 const identity = (purpose: string, value: string) => `nucleus-${purpose}-${createHash('sha256').update(value).digest('hex').slice(0, 40)}`;
 const activeStatuses = new Set(['preparing', 'queued', 'starting', 'running', 'waiting']);
 const unsupported = (capability: string): never => { throw new ProvenPreSendRefusalError(`T3Code does not support ${capability}`); };
+/**
+ * The option descriptor a model's thinking level rides: the nightly marks a
+ * provider's own thought-level control `role: "reasoning"`, and every stock
+ * driver (Codex, Grok, Muse, Kiro) names its reasoning select `reasoningEffort`.
+ * The same id is what the nightly reads back out of `modelSelection.options`.
+ */
+const isReasoningDescriptor = (descriptor: z.infer<typeof optionDescriptor>): descriptor is Extract<z.infer<typeof optionDescriptor>, { type: 'select' }> =>
+  descriptor.type === 'select' && (descriptor.role === 'reasoning' || descriptor.id === 'reasoningEffort');
+type OptionSelection = { id: string; value: string | boolean };
+/**
+ * The model's real option descriptors from `server.getConfig`, read at launch:
+ * a value T3 does not report for that model is refused before send, never
+ * dropped silently and never guessed to a nearest choice.
+ */
+const optionRefusal = (model: string, option: string, value?: string): string =>
+  value === undefined ? `T3Code model ${model} has no "${option}" option` : `T3Code model ${model} has no ${option} "${value}"`;
 /**
  * The manual fix names the repository path in full. The path comes from
  * Nucleus's own record, not from T3, so it is not secret and is never
@@ -160,7 +176,19 @@ export class T3CodeHost implements Host {
     const value = decode(config, await this.rpc.call('server.getConfig', {}), 'server.getConfig');
     return { providers: value.providers.map(p => ({ key: p.instanceId, label: p.displayName ?? p.instanceId,
       available: p.enabled && p.status === 'ready', problem: p.enabled && p.status === 'ready' ? '' : 'T3Code provider is unavailable',
-      models: p.models.map(m => ({ id: m.slug, label: m.name, aliases: [], thinkingOptions: [], defaultThinkingOptionId: null, modes: [], features: [] })) })) };
+      models: p.models.map(m => {
+        const descriptors = m.capabilities?.optionDescriptors ?? [];
+        const reasoning = descriptors.find(isReasoningDescriptor);
+        const feature = (descriptor: z.infer<typeof optionDescriptor>) => descriptor.type === 'boolean'
+          ? { type: 'toggle' as const, id: descriptor.id, label: descriptor.label, ...(descriptor.description ? { description: descriptor.description } : {}), value: descriptor.currentValue ?? false }
+          : { type: 'select' as const, id: descriptor.id, label: descriptor.label, ...(descriptor.description ? { description: descriptor.description } : {}), value: descriptor.currentValue ?? null,
+            options: descriptor.options.map(c => ({ id: c.id, label: c.label, ...(c.description ? { description: c.description } : {}), ...(c.isDefault === undefined ? {} : { isDefault: c.isDefault }) })) };
+        return { id: m.slug, label: m.name, aliases: m.aliases ?? [],
+          thinkingOptions: reasoning ? reasoning.options.map(c => ({ id: c.id, label: c.label, ...(c.isDefault === undefined ? {} : { isDefault: c.isDefault }) })) : [],
+          defaultThinkingOptionId: reasoning?.options.find(c => c.isDefault)?.id
+            ?? (reasoning?.currentValue && reasoning.options.some(c => c.id === reasoning.currentValue) ? reasoning.currentValue : null),
+          modes: [], features: descriptors.filter(d => d !== reasoning).map(feature) };
+    }) })) };
   }
   async profiles(): Promise<Profile[]> { return []; }
   async createWorkspace(spec: HostWorkspaceSpec) {
@@ -171,6 +199,13 @@ export class T3CodeHost implements Host {
     let selected = repositoryRoot
       ? inventory.projects.find(p => p.workspaceRoot === repositoryRoot)
       : inventory.projects.find(p => spec.project.projectId ? p.id === spec.project.projectId : p.workspaceRoot === directory);
+    // An archived project keeps its repository root: the nightly refuses a second
+    // registration for it. Reopening the same registration is the native path.
+    if (selected?.archivedAt != null) {
+      const reopenId = identity('project-open', canonical([this.hostId, selected.id]));
+      await this.effect(reopenId, 'projects.mutate', { type: 'project.update', commandId: reopenId, projectId: selected.id, archived: false });
+      selected = { ...selected, archivedAt: null };
+    }
     if (!selected && repositoryRoot) {
       const projectId = identity('project', canonical([this.hostId, repositoryRoot]));
       const commandId = identity('project-create', canonical([this.hostId, repositoryRoot]));
@@ -194,24 +229,41 @@ export class T3CodeHost implements Host {
     return { projectId: (await this.inventory()).projects.find(p => p.workspaceRoot === workspaceRoot)?.id, workspaceRoot };
   }
   async findWorkspaces(task: Task) { return Object.values(this.state.read().workspaces).filter(w => w.directory === task.directory).map(w => ({ id: w.id, directory: w.directory })); }
-  async workspaceAvailable(id: string) { const w = this.state.read().workspaces[id]; return !!w && (await this.inventory()).projects.some(p => p.id === w.projectId); }
+  async workspaceAvailable(id: string) { const w = this.state.read().workspaces[id]; return !!w && (await this.inventory()).projects.some(p => p.id === w.projectId && p.archivedAt == null); }
   workspaceIdAccepted(id: unknown) { return typeof id === 'string' && /^nucleus-worktree-[a-f0-9]{40}$/.test(id); }
   workspaceRef(id: string): HostWorkspaceRef {
     const host = this; let available = false;
     return { get directory() { return host.state.read().workspaces[id]?.directory; },
       async refresh() { available = await host.workspaceAvailable(id); return available; },
       current() { const w = host.state.read().workspaces[id]; return available && w ? { projectRootPath: w.directory, workspaceDirectory: w.directory, projectId: w.projectId, workspaceKind: 'external' } : null; },
-      async archive() { return unsupported('workspace archive'); } };
+      /** The native archive is the project's `archived: true` mutation: threads and files are kept. */
+      async archive(requestId: string) {
+        const workspace = host.state.read().workspaces[id];
+        if (!workspace) return { archivedAt: null, error: 'T3Code workspace is not registered' };
+        try {
+          await host.effect(requestId, 'projects.mutate', { type: 'project.update', commandId: requestId, projectId: workspace.projectId, archived: true });
+          const found = (await host.inventory()).projects.find(p => p.id === workspace.projectId);
+          return { archivedAt: found?.archivedAt ?? null, error: null };
+        } catch (error) { return { archivedAt: null, error: error instanceof Error ? error.message : String(error) }; }
+      } };
   }
   async workspaceCatalog(_directory: string) { return { ok: false as const, reason: 'T3Code does not expose a native workspace registration inventory' }; }
   async setWorkspaceTitle(_id: string, _title: string, _request: string, _uncertain: boolean): Promise<void> { unsupported('native workspace titles'); }
-  async workspaceArchived(_id: string): Promise<boolean> { return unsupported('workspace archive observation'); }
+  /** Archived is a positive native fact: the project is gone from the inventory or carries `archivedAt`. */
+  async workspaceArchived(id: string): Promise<boolean> {
+    const workspace = this.state.read().workspaces[id];
+    if (!workspace) return true;
+    const found = (await this.inventory()).projects.find(p => p.id === workspace.projectId);
+    return !found || found.archivedAt != null;
+  }
   async workspaceTerminals(_id: string) { return { ok: false as const, reason: 'T3Code does not expose a workspace terminal inventory' }; }
   async workspaceThreads(ids: readonly string[]) { return { ok: true as const, threads: (await this.activeAndArchivedThreads()).filter(t => !!t.workspaceId && ids.includes(t.workspaceId)) }; }
   private async activeAndArchivedThreads(): Promise<HostThread[]> {
     const { threads } = await this.inventory();
     return threads.map(t => ({ id: t.id, workspaceId: this.workspaceFor(t), labels: this.state.read().agents[t.id]?.labels ?? {},
-      status: t.deletedAt ? 'gone' : t.archivedAt ? 'archived' : t.status, archived: !!t.archivedAt,
+      // The shell's own status, even for an archived thread: `archived` rides
+      // its own flag, and the workspace archive proof reads terminal states.
+      status: t.deletedAt ? 'gone' : t.status, archived: !!t.archivedAt,
       activeTurn: !!t.activeRunId || activeStatuses.has(t.status), pendingPermissionKinds: t.pendingRuntimeRequest ? [t.pendingRuntimeRequest.kind === 'user_input' ? 'question' : t.pendingRuntimeRequest.kind] : [] }));
   }
   async activeThreads() { return (await this.activeAndArchivedThreads()).filter(t => !t.archived && t.status !== 'gone'); }
@@ -288,15 +340,15 @@ export class T3CodeHost implements Host {
   async createAgent(spec: HostAgentSpec) {
     this.requireConnection();
     if (spec.mcpBindingPath) unsupported('per-thread MCP reporting');
-    if (spec.profile.thinkingOptionId || Object.keys(spec.profile.featureValues ?? {}).length) unsupported('unreported model options');
     if (spec.profile.modeId && spec.profile.modeId !== 'default') unsupported('unreported runtime mode');
     if (spec.guard && !await spec.guard.allowed()) throw new ProvenPreSendRefusalError('T3Code launch guard refused');
     const attempt = spec.attempt(false, false), workspace = this.state.read().workspaces[spec.workspaceId];
     if (!workspace) throw new ProvenPreSendRefusalError('T3Code workspace is not registered');
     if (Object.keys(attempt.environment).length) unsupported('per-thread launch environment');
+    const options = await this.modelSelectionOptions(spec.profile);
     const id = identity('thread', attempt.requestId);
     const payload = { commandId: attempt.requestId, threadId: id, projectId: workspace.projectId, title: spec.title,
-      modelSelection: { instanceId: spec.profile.provider, model: spec.profile.model }, runtimeMode: 'approval-required', interactionMode: 'default',
+      modelSelection: { instanceId: spec.profile.provider, model: spec.profile.model, ...(options.length ? { options } : {}) }, runtimeMode: 'approval-required', interactionMode: 'default',
       workspaceStrategy: { type: 'existing_worktree', worktreePath: workspace.directory },
       initialMessage: { messageId: identity('message', attempt.requestId), text: attempt.prompt, attachments: [] } };
     this.state.update(state => {
@@ -311,6 +363,42 @@ export class T3CodeHost implements Host {
     if (this.pendingThreadShape) await this.readProjection(id);
     return { id, workspaceId: spec.workspaceId };
   }
+  /**
+   * The profile's thinking level and reported feature values as the nightly's
+   * `ProviderOptionSelection[]` for this exact model, read from
+   * `server.getConfig` at launch. A value the model does not report is refused
+   * before send with the option and value named; nothing is dropped or
+   * re-anchored to a nearest choice. Selection keeps such a profile out of a
+   * T3 task through the host catalog; this fence catches catalog drift.
+   */
+  private async modelSelectionOptions(profile: Profile): Promise<OptionSelection[]> {
+    const thinking = profile.thinkingOptionId;
+    const features = Object.entries(profile.featureValues ?? {});
+    if (!thinking && !features.length) return [];
+    const value = decode(config, await this.rpc.call('server.getConfig', {}), 'server.getConfig');
+    const model = value.providers.find(p => p.instanceId === profile.provider)?.models.find(m => m.slug === profile.model);
+    if (!model) throw new ProvenPreSendRefusalError(`T3Code provider ${profile.provider} does not report model ${profile.model}`);
+    const descriptors = model.capabilities?.optionDescriptors ?? [];
+    const options: OptionSelection[] = [];
+    if (thinking) {
+      const reasoning = descriptors.find(isReasoningDescriptor);
+      if (!reasoning || !reasoning.options.some(choice => choice.id === thinking))
+        throw new ProvenPreSendRefusalError(optionRefusal(profile.model, reasoning?.id ?? 'reasoning option', thinking));
+      options.push({ id: reasoning.id, value: thinking });
+    }
+    for (const [option, feature] of features) {
+      const descriptor = descriptors.find(d => d.id === option);
+      if (!descriptor) throw new ProvenPreSendRefusalError(optionRefusal(profile.model, option));
+      const shown = typeof feature === 'string' ? feature : JSON.stringify(feature);
+      if (descriptor.type === 'boolean') {
+        if (typeof feature !== 'boolean') throw new ProvenPreSendRefusalError(optionRefusal(profile.model, option, shown));
+        options.push({ id: option, value: feature });
+      } else if (typeof feature !== 'string' || !descriptor.options.some(choice => choice.id === feature))
+        throw new ProvenPreSendRefusalError(optionRefusal(profile.model, option, shown));
+      else options.push({ id: option, value: feature });
+    }
+    return options;
+  }
   async findAgents(labels: Record<string, string>) { this.requireConnection();
     const candidates = Object.values(this.state.read().agents).filter(a => Object.entries(labels).every(([k,v]) => a.labels[k] === v));
     return Promise.all(candidates.map(async ({id,workspaceId}) => {
@@ -324,7 +412,10 @@ export class T3CodeHost implements Host {
     const active = detail.runs.find(r => activeStatuses.has(r.status));
     const pending = detail.runtimeRequests.filter(r => r.status === 'pending');
     const native = (await this.inventory()).threads.find(t => t.id === id);
-    return { id, workspaceId: this.workspaceFor(thread), status: thread.deletedAt ? 'gone' : thread.archivedAt ? 'archived' : active ? active.status : native && activeStatuses.has(native.status) ? native.status : 'idle',
+    // An archived thread is retired: it reports the terminal closed state, with
+    // the archived fact on its own field for retained-read consumers.
+    return { id, workspaceId: this.workspaceFor(thread), archived: !!thread.archivedAt,
+      status: thread.deletedAt ? 'gone' : thread.archivedAt ? 'closed' : active ? active.status : native && activeStatuses.has(native.status) ? native.status : 'idle',
       active: !!active || !!native?.activeRunId || !!native && activeStatuses.has(native.status), permissions: pending.length > 0 || !!native?.pendingRuntimeRequest,
       error: native?.lastError ?? '', model: thread.modelSelection.model, provider: thread.modelSelection.instanceId,
       updatedAt: detail.updatedAt, activeTurnId: active?.id ?? native?.activeRunId ?? null, turnStartedAt: active?.startedAt ?? null,
@@ -348,21 +439,43 @@ export class T3CodeHost implements Host {
   }
   async listLiveAgents() { return (await this.inventory()).threads.filter(t => !t.archivedAt && !t.deletedAt).map(t => ({ id: t.id, title: t.title, workspaceId: this.workspaceFor(t), labels: this.state.read().agents[t.id]?.labels ?? {} })); }
   async agentTimelinePage(id: string, limit = 100): Promise<HostTimelinePage | null> {
-    try { const p = await this.readProjection(id); const entries = p.turnItems.slice(-limit).map(item => ({ timestamp: item.updatedAt ?? item.createdAt ?? p.updatedAt, item }));
-      return { entries, hasOlder: p.turnItems.length > limit, gap: false, hasNewer: false, projection: 'canonical' }; } catch { return null; }
+    try {
+      // The canonical projection is the thread's complete turn list, so the
+      // coverage contract is positive by construction: no gap, no reset, no
+      // newer history; the epoch is the thread identity and the cursors are
+      // positions in the full list, stable between doubling reads.
+      const p = await this.readProjection(id);
+      const start = Math.max(0, p.turnItems.length - limit);
+      const entries = p.turnItems.slice(start).map(item => ({ timestamp: item.updatedAt ?? item.createdAt ?? p.updatedAt, item }));
+      return { entries, hasOlder: start > 0, gap: false, staleCursor: false, reset: false, hasNewer: false,
+        epoch: id, startCursor: entries.length ? { epoch: id, seq: start + 1 } : null,
+        endCursor: entries.length ? { epoch: id, seq: p.turnItems.length } : null, projection: 'canonical' };
+    } catch { return null; }
   }
   async agentTimeline(id: string, limit?: number) { return (await this.agentTimelinePage(id, limit))?.entries ?? null; }
   async sendMessage(id: string, input: HostMessage) { await this.effect(input.messageId, 'orchestration.dispatchCommand', { type: 'message.dispatch', commandId: input.messageId, threadId: id, messageId: identity('message', input.messageId), text: input.text, attachments: [], createdBy: 'user', creationSource: 'server', dispatchMode: { type: 'queue_after_active' } }); }
   async enqueueMessage(id: string, input: HostMessage): Promise<void> { await this.sendMessage(id, input); }
   async sendGuarded(id: string, input: HostGuardedMessage, guard: HostSendGuard) {
     const observed = await this.observe(id);
-    if (observed.workspaceId !== input.expectedWorkspaceId || observed.active || observed.permissions || observed.status === 'archived' || observed.status === 'gone' || !await guard.allowed()) return { sent: false as const, reason: 'T3Code retained-thread guard refused' };
+    if (observed.workspaceId !== input.expectedWorkspaceId || observed.active || observed.permissions || observed.archived || observed.status === 'gone' || !await guard.allowed()) return { sent: false as const, reason: 'T3Code retained-thread guard refused' };
     await this.effect(input.messageId, 'orchestration.dispatchCommand', { type: 'message.dispatch', commandId: input.messageId, threadId: id, messageId: identity('message', input.messageId), text: input.text, attachments: [], createdBy: 'user', creationSource: 'server', dispatchMode: { type: 'queue_after_active' } }, () => {
       if (!guard.stillAllowed()) throw new ProvenPreSendRefusalError('T3Code send guard changed'); guard.beforeSend?.();
     }); return { sent: true as const };
   }
   async sendWhenIdle(_id: string, _input: HostAsk): Promise<string | null> { return unsupported('in-thread Nucleus questions'); }
-  async interruptAndContinue(_id: string, _messageId: string, _text: string): Promise<void> { unsupported('atomic interrupt and continue'); }
+  /**
+   * One atomic interrupt and continue: the nightly's `steer_active` dispatch
+   * mode injects the message into the thread's live run. The run id is read
+   * immediately before the send; with no active run there is nothing to steer
+   * and the refusal is proven before the socket write.
+   */
+  async interruptAndContinue(id: string, messageId: string, text: string): Promise<void> {
+    const projection = await this.readProjection(id);
+    const native = (await this.inventory()).threads.find(t => t.id === id);
+    const runId = projection.runs.find(r => activeStatuses.has(r.status))?.id ?? native?.activeRunId ?? null;
+    if (!runId) throw new ProvenPreSendRefusalError('T3Code thread has no active run to steer');
+    await this.effect(messageId, 'orchestration.dispatchCommand', { type: 'message.dispatch', commandId: messageId, threadId: id, messageId: identity('message', messageId), text, attachments: [], createdBy: 'user', creationSource: 'server', dispatchMode: { type: 'steer_active', targetRunId: runId } });
+  }
   async stopAgentTurn(id: string) { const p = await this.readProjection(id); const runs = p.runs.filter(r => activeStatuses.has(r.status)).map(r => r.id).sort(); if (!runs.length) return;
     const key = identity('stop', canonical([id, runs])); await this.effect(key, 'orchestration.dispatchCommand', { type: 'thread.stop', commandId: key, threadId: id }); }
   async archiveAgent(id: string) { const key = identity('archive', id); await this.effect(key, 'orchestration.dispatchCommand', { type: 'thread.archive', commandId: key, threadId: id }); }
@@ -427,7 +540,7 @@ export class T3CodeHost implements Host {
   async answerDecision(_agent: string, _workspace: string, _input: NativeDecisionAnswer): Promise<void> { unsupported('in-thread Nucleus decisions'); }
   retainedAgentRef(id: string): HostRetainedAgentRef {
     const host = this; let observed: Awaited<ReturnType<T3CodeHost['observe']>> | null = null;
-    return { get workspaceId() { return observed?.workspaceId ?? null; }, get archivedAt() { return observed?.status === 'archived' ? true : null; },
+    return { get workspaceId() { return observed?.workspaceId ?? null; }, get archivedAt() { return observed?.archived || observed?.status === 'archived' ? true : null; },
       get status() { return observed?.status ?? null; }, get activeTurn() { return observed?.active ? { turnId: observed.activeTurnId } : null; },
       get pendingPermissions() { return observed ? observed.pendingPermissionKinds : null; }, get runtimeInfo() { return observed ? { provider: observed.provider, model: observed.model } : null; },
       async refresh() { observed = await host.observe(id); return observed; }, current() { return observed; }, async send(text, options) { await host.sendMessage(id, { text, messageId: options.messageId }); } };

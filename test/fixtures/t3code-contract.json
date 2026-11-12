@@ -30,7 +30,9 @@
     },
     "message.dispatch": {
       "required": ["type", "createdBy", "creationSource", "commandId", "threadId", "messageId", "text", "attachments", "dispatchMode"],
-      "dispatchModes": ["defer_start", "steer_active", "restart_active", "queue_after_active", "start_immediately"]
+      "dispatchModes": ["defer_start", "steer_active", "restart_active", "queue_after_active", "start_immediately"],
+      "steerModes": ["steer_active", "restart_active"],
+      "steerRequiresTargetRunId": true
     }
   },
   "launchThread": {
@@ -48,7 +50,20 @@
     "createRequired": ["type", "commandId", "projectId", "title", "workspaceRoot"],
     "createOptional": ["createWorkspaceRootIfMissing", "defaultModelSelection", "scripts"],
     "successFields": ["id", "title", "workspaceRoot", "repositoryIdentity", "defaultModelSelection", "scripts", "createdAt", "updatedAt", "deletedAt"],
+    "updateRequired": ["type", "commandId", "projectId"],
+    "updateOptional": ["title", "defaultModelSelection", "defaultThreadEnvMode", "autoPull", "scripts", "pinned", "archived"],
+    "updateArchivedMeaning": "Threads and files are kept.",
     "errorTags": ["ProjectMutationError", "EnvironmentAuthorizationError"]
+  },
+  "modelOptions": {
+    "sourceBuild": "0.1.10-nightly.20261111.4529",
+    "source": "packages/contracts/src/model.ts + packages/contracts/src/modelSelection.ts",
+    "descriptorTypes": ["select", "boolean"],
+    "choiceFields": ["id", "label", "description", "isDefault"],
+    "reasoningRoleMarker": "reasoning",
+    "stockReasoningId": "reasoningEffort",
+    "optionSelectionRequired": ["id", "value"],
+    "optionSelectionValueTypes": ["string", "boolean"]
   },
   "examples": [
     {

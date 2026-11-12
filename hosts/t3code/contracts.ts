@@ -2,6 +2,21 @@ import { z } from 'zod';
 
 const id = z.string().min(1);
 const date = z.string().min(1);
+/** A model's option choice: one selectable value of one option descriptor (nightly `ProviderOptionChoice`). */
+export const optionChoice = z.object({ id, label: z.string(), description: z.string().optional(), isDefault: z.boolean().optional() });
+/**
+ * One configurable option of a model (nightly `ProviderOptionDescriptor`):
+ * a select with its choices or a boolean toggle, `currentValue` when the provider reports one.
+ * `role: "reasoning"` is the nightly's marker for a provider's own thought-level control;
+ * every stock driver names its reasoning select `reasoningEffort`.
+ */
+export const optionDescriptor = z.discriminatedUnion('type', [
+  z.object({ id, label: z.string(), description: z.string().optional(), type: z.literal('select'),
+    options: z.array(optionChoice), currentValue: z.string().optional(), role: z.string().optional() }),
+  z.object({ id, label: z.string(), description: z.string().optional(), type: z.literal('boolean'),
+    currentValue: z.boolean().optional() }),
+]);
+export const modelCapabilities = z.object({ optionDescriptors: z.array(optionDescriptor).optional() });
 export const modelSelection = z.object({ instanceId: id, model: id });
 export const threadRecord = z.object({
   id, projectId: id, title: z.string(), providerInstanceId: id, modelSelection,
@@ -13,7 +28,7 @@ export const shellThread = threadRecord.extend({
   pendingRuntimeRequest: z.object({ id, kind: id, createdAt: date, blocking: z.boolean().optional() }).nullable(),
   latestUserMessageAt: date.nullable(), lastError: z.string().nullable().optional(),
 });
-export const project = z.object({ id, title: z.string(), workspaceRoot: id });
+export const project = z.object({ id, title: z.string(), workspaceRoot: id, archivedAt: date.nullable().optional() });
 export const shellSnapshot = z.object({
   schemaVersion: z.number().int().positive(), snapshotSequence: z.number().int().nonnegative(),
   projects: z.array(project), threads: z.array(shellThread), archivedThreads: z.array(shellThread),
@@ -48,7 +63,8 @@ export const threadSnapshot = z.object({
 });
 export const config = z.object({ environment: z.object({ environmentId: id, serverVersion: id, orchestrationProtocolVersion: z.literal(2) }),
   providers: z.array(z.object({ instanceId: id, displayName: z.string().optional(), enabled: z.boolean(),
-    status: z.string(), models: z.array(z.object({ slug: id, name: z.string() })) })),
+    status: z.string(), models: z.array(z.object({ slug: id, name: z.string(), aliases: z.array(z.string()).optional(),
+      capabilities: modelCapabilities.optional() })) })),
 });
 
 export class T3CompatibilityError extends Error {
