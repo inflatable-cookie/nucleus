@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { QueueRuntime } from '../service/runtime-owner';
 import { git } from '../core/git/index';
-import { leadSubmit, taskSchema, type Profile, type Run } from '../shared/contracts';
+import { leadSubmit, taskSchema, submissionSchema, type Profile, type Run } from '../shared/contracts';
 import { formatAgentId } from '../shared/agent-identity';
 import { fakeAdapter } from './support/fakes';
 import { plannerTicketKey } from '../core/dispatch/participant-tickets';
@@ -790,5 +790,46 @@ test('a task that finished before this rule is cleaned up by the next sweep, exa
     const commands = f.server.commands.length;
     await f.runtime.engine.auditPass(false);
     assert.equal(f.server.commands.length, commands, 'a later sweep does nothing');
+  } finally { await f.close(); }
+});
+
+test('the real sweep retries a native deletion proven not sent and records completion once', async t => {
+  const f = await fixture(t);
+  try {
+    const head = (await git(f.repo, 'rev-parse', 'HEAD')).trim();
+    const initial = f.runtime.store.insert(submissionSchema.parse({ submissionId: randomUUID(), title: 'Synthetic finished recovery',
+      repoPath: f.repo, planningCommit: head, handoffPath: 'synthetic.md', originAgentId: f.planner }), t3Host, 'Synthetic handoff', head);
+    const task = f.runtime.store.update(initial.id, { phase: 'done',
+      resolution: { ...initial.resolution, mergedCommit: head } });
+    const workspace = await f.host.createWorkspace({ title: 'Synthetic recovery workspace', requestId: randomUUID(), directory: f.repo, project: { projectId: 'synthetic-project' } });
+    const profile: Profile = { id: 'sol-grind', name: 'Sol grind', provider: 'synthetic-provider', model: 'synthetic-model',
+      available: true, problem: '', notes: '', supportedThinking: [] };
+    const runId = randomUUID();
+    const recovery = await f.host.createAgent({ workspaceId: workspace.id, profile, title: 'Synthetic recovery', mcpBindingPath: null,
+      attempt: () => ({ requestId: runId, prompt: 'Synthetic completed recovery',
+        labels: storedT3Labels('recovery', { taskId: task.id, runId }), environment: {} }) });
+    f.runtime.store.putRun({ id: runId, taskId: task.id, hostId: t3Host, role: 'recovery', generation: task.coordinatorGeneration,
+      head, base: head, workspaceId: workspace.id, agentId: recovery.id, profile, status: 'finished', createdAt: STAMP,
+      lastObservedAt: STAMP, active: false, idleSince: STAMP, completion: null, released: true });
+    const nativeCall = f.host.rpc.call.bind(f.host.rpc);
+    f.host.rpc.call = (method, payload) => {
+      if (method === 'orchestration.dispatchCommand' && (payload as { type?: string }).type === 'thread.delete') f.host.rpc.close();
+      return nativeCall(method, payload);
+    };
+    assert.equal((await f.runtime.engine.auditPass(false)).fault, null);
+    const key = f.runtime.store.threadArchiveKey(recovery.id, t3Host)!;
+    assert.equal(f.runtime.store.getMeta<{ status: string }>(key)?.status, 'ready');
+    assert.equal(f.server.commands.filter(command => command.type === 'thread.delete').length, 0, 'the native RPC proved no write');
+    assert.equal(f.runtime.store.getMeta(`finishedTaskThreadCleanup:${task.id}`), undefined);
+
+    f.host.rpc.call = nativeCall;
+    await f.host.connect();
+    assert.equal((await f.runtime.engine.auditPass(false)).fault, null);
+    assert.equal(f.server.commands.filter(command => command.type === 'thread.delete').length, 1, 'the next sweep delivers it once');
+    const completed = f.runtime.store.getMeta(`finishedTaskThreadCleanup:${task.id}`);
+    assert.ok(completed);
+    assert.equal((await f.runtime.engine.auditPass(false)).fault, null);
+    assert.equal(f.server.commands.filter(command => command.type === 'thread.delete').length, 1);
+    assert.equal(f.runtime.store.getMeta(`finishedTaskThreadCleanup:${task.id}`), completed);
   } finally { await f.close(); }
 });

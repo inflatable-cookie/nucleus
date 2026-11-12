@@ -232,7 +232,16 @@ export async function archiveFinishedThreads(store: Store, adapter: Adapter, tas
   const host = new HostFacade({ adapter });
   const task = store.task(taskId);
   if (isDispositionActive(task) || task.removedAt || store.getMeta('paused') || !adapter.originAgent) return;
-  if (terminalThreadCleanup(task, removesThreads(adapter))) return archiveTerminalTaskThreads(store, adapter, task, retryProof);
+  if (terminalThreadCleanup(task, removesThreads(adapter))) {
+    await archiveTerminalTaskThreads(store, adapter, task, retryProof);
+    // Ordinary completion can finish before the catch-up query gets here. The
+    // common terminal lane owns this marker, so neither route can miss it.
+    const current = store.task(taskId), completionKey = finishedThreadCleanupKey(taskId);
+    if (removesThreads(adapter) && current.hostId && terminalThreadCleanup(current, true)
+        && !threadCleanupPending(store, current, true) && !store.getMeta(completionKey))
+      store.setMeta(completionKey, now());
+    return;
+  }
   // A host that can remove a thread keeps every support thread of an open task
   // settled, never archived (nucleus#1155): the retained reviewer and recovery
   // bindings stay exactly as they are, so the next review round or recovery
@@ -320,6 +329,14 @@ async function settleArchive(store: Store, adapter: Adapter, taskId: string, age
       const detail = String(error);
       if (effect.detail !== detail) store.event(taskId, 'thread_archive_wait', `${agentId}: Archive deferred: ${detail}`);
       store.putThreadArchiveEffect(key, agentId, { status: 'ready', at: now(), detail, retries: effect.retries ?? 0, retryable: effect.retryable, ...(effect.op ? { op: effect.op } : {}) } satisfies ArchiveEffect);
+      return;
+    }
+    if (remove && error instanceof ArchiveNotDeliveredError && (fresh || effect.status === 'ready')) {
+      // The adapter proved this occurrence never reached the host. Keep the
+      // existing terminal lane ready; no prior unknown delivery is reopened.
+      store.putThreadArchiveEffect(key, agentId, { status: 'ready', at: now(), detail: String(error),
+        retries: effect.retries ?? 0, ...(effect.op ? { op: effect.op } : {}) } satisfies ArchiveEffect);
+      store.event(taskId, 'thread_archive_wait', `${agentId}: ${String(error)}`);
       return;
     }
     // A failed read before delivery is safe to try again; after delivery starts
@@ -567,25 +584,13 @@ export function finishedThreadCleanupCatchUp(store: Store, hostId: string, remov
   return rows.map(row => JSON.parse(row.data) as Task);
 }
 
-/**
- * Catch up the tasks that finished before this rule rolled: the first sweep after
- * it runs the closeout cleanup for each, through the same terminal lane and its
- * durable effects. Completion is recorded per task, so a later sweep does
- * nothing; a task that still owes an effect stays selectable until it is done.
- */
-export async function catchUpFinishedTaskThreads(store: Store, adapter: Adapter, hostId: string): Promise<void> {
+/** One finished task's cleanup, called on its existing task lane by the sweep. */
+export async function catchUpFinishedTaskThreads(store: Store, adapter: Adapter, taskId: string): Promise<void> {
   if (store.getMeta('paused') || !removesThreads(adapter)) return;
-  for (const task of finishedThreadCleanupCatchUp(store, hostId, true)) {
-    try {
-      await archiveFinishedThreads(store, adapter, task.id);
-    } catch (error) {
-      store.event(task.id, 'thread_cleanup_catch_up_error', String(error).slice(0, 2000));
-      continue;
-    }
-    const current = store.task(task.id);
-    if (terminalThreadCleanup(current, true) && !threadCleanupPending(store, current, true))
-      store.setMeta(finishedThreadCleanupKey(task.id), now());
-  }
+  const task = store.task(taskId);
+  if (!terminalThreadCleanup(task, true) || store.getMeta(finishedThreadCleanupKey(taskId))) return;
+  try { await archiveFinishedThreads(store, adapter, taskId); }
+  catch (error) { store.event(taskId, 'thread_cleanup_catch_up_error', String(error).slice(0, 2000)); }
 }
 
 function finished(store: Store, task: Task, run: Run): boolean {

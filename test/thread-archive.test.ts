@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Store, qualifiedThreadArchiveEffectKey } from '../core/store/store';
-import { archiveFinishedThreads, archiveReplacedReviewer } from '../core/workspaces/thread-archive';
+import { archiveFinishedThreads, archiveReplacedReviewer, finishedThreadCleanupCatchUp, finishedThreadCleanupKey } from '../core/workspaces/thread-archive';
 import { dispositionSchema } from '../shared/contracts';
 import { profileSchema, submissionSchema, type Run } from '../shared/contracts';
 import type { Adapter } from '../core/host';
@@ -343,6 +343,33 @@ test('at closeout a host that can remove threads archives the worker thread and 
     assert.deepEqual([...f.calls].sort(), ['retired-worker', 'worker'], 'each worker thread is archived once');
     assert.equal(f.deletes.length, 4, 'each support thread is removed once');
     assert.equal(f.store.eventsAll(f.task.id).filter(event => event.kind === 'thread_archive_observed').length, 6);
+  } finally { f.close(); }
+});
+
+test('ordinary terminal cleanup records completion before a later catch-up query (#1155)', async () => {
+  const f = fixture(); try {
+    ownedAndIdle(f);
+    f.store.putRun(f.run('reviewer', 'reviewer-1'));
+    f.store.putRun(f.run('recovery', 'coordinator'));
+    f.store.update(f.task.id, { phase: 'done',
+      resolution: { ...f.store.task(f.task.id).resolution, mergedCommit: 'c'.repeat(40) } });
+    const key = finishedThreadCleanupKey(f.task.id);
+    assert.equal(f.store.getMeta(key), undefined);
+
+    // Ordinary closeout can finish before the sweep queries for outstanding
+    // effects. Its common terminal lane must retain that completion evidence.
+    await archiveFinishedThreads(f.store, f.t3Adapter, f.task.id);
+    const completedAt = f.store.getMeta(key);
+    assert.ok(completedAt, 'ordinary cleanup records completion without running catch-up');
+    assert.deepEqual(finishedThreadCleanupCatchUp(f.store, 'host', true), [],
+      'a cleaned task is excluded from the later catch-up query');
+    assert.deepEqual(f.calls, ['worker']);
+    assert.deepEqual(f.deletes.map(item => item.id).sort(), ['coordinator', 'reviewer-1']);
+
+    await archiveFinishedThreads(f.store, f.t3Adapter, f.task.id);
+    assert.equal(f.store.getMeta(key), completedAt, 'completion is recorded once per task');
+    assert.equal(f.calls.length, 1);
+    assert.equal(f.deletes.length, 2);
   } finally { f.close(); }
 });
 

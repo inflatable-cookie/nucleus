@@ -8,7 +8,10 @@ import { T3CodeHost } from '../hosts/t3code/adapter';
 import { ProvenPreSendRefusalError, HostUnknownDeliveryError } from '../core/host';
 import { isTransportFailure } from '../shared/transport';
 import type { HostAgentSpec } from '../shared/host';
-import type { Profile } from '../shared/contracts';
+import { submissionSchema, type Profile } from '../shared/contracts';
+import { Store, qualifiedThreadArchiveEffectKey } from '../core/store/store';
+import { archiveFinishedThreads } from '../core/workspaces/thread-archive';
+import type { Adapter } from '../core/host';
 import { t3Fake, STAMP, threadProjection } from './support/t3code-fake';
 import { storedT3Labels } from './support/t3code-labels';
 import { NUCLEUS_LABEL_KEYS } from '../shared/wire-labels';
@@ -827,6 +830,49 @@ test('a support thread is removed once through the nightly thread.delete command
   await host.deleteAgent(created.id);
   assert.equal(server.commands.filter(command => command.type === 'thread.delete').length, 1);
   assert.ok(server.commands.length > before);
+});
+
+test('a native not_sent delete stays ready in the terminal lane and succeeds on the next attempt', async t => {
+  const { host, server, spec, root, workspace } = await fixture(t);
+  const store = new Store(join(root, 'delete-retry.sqlite'));
+  t.after(() => store.close());
+  store.setMeta('paused', false);
+  const task = store.insert(submissionSchema.parse({ submissionId: 'delete-retry', title: 'Synthetic cleanup',
+    repoPath: '/synthetic/repository', planningCommit: 'a'.repeat(40), handoffPath: 'synthetic.md', originAgentId: 'synthetic-origin' }),
+    host.hostId, 'Synthetic handoff', 'a'.repeat(40));
+  const launch = spec();
+  const attempt = launch.attempt;
+  launch.attempt = (mcp, retry) => ({ ...attempt(mcp, retry), labels: storedT3Labels('recovery', { taskId: task.id, runId: 'recovery-run' }) });
+  const created = await host.createAgent(launch);
+  store.update(task.id, { phase: 'done', workspaceId: workspace.id,
+    resolution: { ...store.task(task.id).resolution, mergedCommit: 'b'.repeat(40) } });
+  store.putRun({ id: 'recovery-run', taskId: task.id, hostId: host.hostId, role: 'recovery', generation: 1,
+    head: 'b'.repeat(40), base: 'a'.repeat(40), agentId: created.id, workspaceId: workspace.id, profile: null,
+    status: 'finished', createdAt: STAMP, lastObservedAt: STAMP, active: false, idleSince: STAMP, completion: null, released: true });
+  const adapter = { hostId: host.hostId, observe: host.observe.bind(host), originAgent: host.originAgent.bind(host),
+    archiveAgent: host.archiveAgent.bind(host), deleteAgent: host.deleteAgent.bind(host) } as unknown as Adapter;
+  const nativeCall = host.rpc.call.bind(host.rpc);
+  host.rpc.call = (method, payload) => {
+    if (method === 'orchestration.dispatchCommand' && (payload as { type?: string }).type === 'thread.delete') host.rpc.close();
+    // The real RPC client, now disconnected, returns delivery:not_sent before
+    // serializing or writing any command to the fake Nightly server.
+    return nativeCall(method, payload);
+  };
+
+  await archiveFinishedThreads(store, adapter, task.id);
+  const key = qualifiedThreadArchiveEffectKey(host.hostId, created.id);
+  assert.equal(store.getMeta<{ status: string }>(key)?.status, 'ready', 'proven non-delivery remains safely retryable');
+  assert.equal(server.commands.filter(command => command.type === 'thread.delete').length, 0);
+  assert.equal(Object.values(host.state.read().intents).find(intent => JSON.parse(intent.payload).payload.type === 'thread.delete')?.status,
+    'refused', 'the native delivery ledger records its own not-sent result');
+
+  host.rpc.call = nativeCall;
+  await host.connect();
+  await archiveFinishedThreads(store, adapter, task.id);
+  assert.equal(store.getMeta<{ status: string }>(key)?.status, 'archived');
+  assert.equal(server.commands.filter(command => command.type === 'thread.delete').length, 1, 'the same deletion is delivered once');
+  await archiveFinishedThreads(store, adapter, task.id);
+  assert.equal(server.commands.filter(command => command.type === 'thread.delete').length, 1);
 });
 
 test('an unknown thread.delete outcome is never resent; the thread is read back instead', async t => {

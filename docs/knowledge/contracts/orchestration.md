@@ -2613,10 +2613,14 @@ movement invalidates source approval and preserves the normal readiness gates.
   support thread still owes deletion. Unknown deletion delivery is never resent,
   and only a proven pre-delivery failure remains retryable through the terminal
   lane; cleanup failure never blocks task closeout.
-- The host sweep directly queries already-finished T3 tasks with outstanding
-  thread cleanup, rather than using the active-capacity index. It applies those
-  same effects and records completion per task, so confirmed cleanup runs once
-  even for tasks closed before the rule existed.
+- The sweep directly queries already-finished T3 tasks with outstanding thread
+  cleanup, rather than using the active-capacity index. A bounded rotating window
+  schedules those tasks on their existing task lanes, so a slow cleanup cannot
+  hold the host sweep and permanently pending candidates cannot starve later tasks.
+- The common terminal thread lane records completion per task after every thread
+  effect is confirmed, for ordinary closeout and catch-up alike. A task cleaned
+  before the catch-up query therefore still has its completion record, and later
+  sweeps do nothing once cleanup is confirmed.
 - Paseo keeps its existing archive behaviour for released support threads,
   reviewer replacement and terminal cleanup.
 - A done task's workspace is archived with every thread in it (Tom, 2026-09-27);

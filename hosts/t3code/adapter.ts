@@ -4,7 +4,7 @@ import { basename } from 'node:path';
 import { z } from 'zod';
 import type { Host, HostAgentSpec, HostWorkspaceSpec, HostMessage, HostGuardedMessage, HostSendGuard, HostAsk, HostWorkspaceRef, HostRetainedAgentRef, HostCatalog, HostTimelinePage, HostThread, NativeDecisionInput, NativeDecisionAnswer } from '../../shared/host';
 import type { Task, Profile } from '../../shared/contracts';
-import { ProvenPreSendRefusalError, HostUnknownDeliveryError, sanitizeHostDeliveryDiagnostic } from '../../core/host';
+import { ArchiveNotDeliveredError, ProvenPreSendRefusalError, HostUnknownDeliveryError, sanitizeHostDeliveryDiagnostic } from '../../core/host';
 import { T3RpcClient, T3RpcError } from './rpc';
 import { T3StateFile, canonical, type T3SettleIntent, type T3State } from './state';
 import { decode, config, optionDescriptor, shellSnapshot, projection, threadSnapshot, shellThread, project, T3CompatibilityError, runtimeModes, defaultRuntimeMode, type RuntimeMode } from './contracts';
@@ -304,6 +304,8 @@ export class T3CodeHost implements Host {
     response?: { binding: ResponseBinding; prepare(): Promise<unknown> }, options: {
       /** Caller completed a fresh positive read that reconciles the unknown remote effect. */
       resendUnknownAfterRead?: boolean;
+      /** Retry only a recorded local pre-send refusal, keeping the same payload and command identity. */
+      retryRefusedBeforeSend?: boolean;
       /** Guidance that rides an unknown delivery when the remote text names no known method. */
       unsupportedMethodGuidance?: string;
     } = {}): Promise<unknown> {
@@ -327,9 +329,9 @@ export class T3CodeHost implements Host {
           throw new ProvenPreSendRefusalError(`T3Code original runtime response is ${old.status}; changed answer was not sent`);
       } else if (old && old.payload !== encoded && !projectCreateRouteMigrated(old.payload, encoded))
         throw new ProvenPreSendRefusalError('T3Code intent payload changed');
-      if (!old) {
+      if (!old || old.status === 'refused' && options.retryRefusedBeforeSend) {
         this.requireConnection();
-        state.intents[boundKey] = { payload: encoded, status: 'unknown', ...(response ? { response: response.binding } : {}) };
+        state.intents[boundKey] = { ...old, payload: encoded, status: 'unknown', ...(response ? { response: response.binding } : {}) };
       } else if (response && (!this.hostId || state.hostId !== this.hostId)) {
         throw Error('T3Code prior response requires its recorded host identity; no command was resent');
       }
@@ -337,8 +339,9 @@ export class T3CodeHost implements Host {
     });
     key = reserved.key; const prior = reserved.prior;
     if (prior?.status === 'settled') return prior.result;
-    if (prior?.status === 'refused') throw new ProvenPreSendRefusalError('T3Code command was refused; no retry');
-    if (prior && !(prior.status === 'unknown' && options.resendUnknownAfterRead)) throw new HostUnknownDeliveryError(prior.diagnostic);
+    if (prior?.status === 'refused' && !options.retryRefusedBeforeSend) throw new ProvenPreSendRefusalError('T3Code command was refused; no retry');
+    if (prior && !(prior.status === 'unknown' && options.resendUnknownAfterRead)
+      && !(prior.status === 'refused' && options.retryRefusedBeforeSend)) throw new HostUnknownDeliveryError(prior.diagnostic);
     let wrote = false;
     try {
       if (response) {
@@ -630,7 +633,15 @@ export class T3CodeHost implements Host {
    */
   async deleteAgent(id: string) {
     const key = identity('delete', id);
-    await this.effect(key, 'orchestration.dispatchCommand', { type: 'thread.delete', commandId: key, threadId: id });
+    try {
+      await this.effect(key, 'orchestration.dispatchCommand', { type: 'thread.delete', commandId: key, threadId: id },
+        undefined, undefined, { retryRefusedBeforeSend: true });
+    } catch (error) {
+      // A local not-sent result leaves the terminal effect ready for the next
+      // sweep. Unknown outcomes retain their intent and remain observation-only.
+      if (error instanceof ProvenPreSendRefusalError) throw new ArchiveNotDeliveredError(error);
+      throw error;
+    }
   }
   /**
    * Settle a worker thread once Nucleus accepted its handover and moved the task

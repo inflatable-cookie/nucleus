@@ -6,7 +6,7 @@ import type { Task } from "../../shared/contracts";
 import { isDispositionActive } from "../../shared/contracts";
 import type { ReconciliationSweep } from "../../shared/telemetry";
 import type { AgentObservation } from "../host/adapter";
-import { catchUpFinishedTaskThreads } from '../workspaces/thread-archive';
+import { catchUpFinishedTaskThreads, finishedThreadCleanupCatchUp, removesThreads } from '../workspaces/thread-archive';
 import { reapHookCheckouts } from "../hooks/hook-cleanup";
 import { removeTaskProofFiles } from "../intake/proof-files";
 import { pruneLiveDataHomeBackupCopies } from "../store/data-home-retention";
@@ -203,6 +203,7 @@ export class Sweep {
       // A list that cannot be walked to its end answers nothing, so every
       // identity falls back to the narrow read and no inactivity is inferred.
       let inventory: ReadonlyMap<string, AgentObservation> | null = null;
+      const finishedCatchUp = new Map<string, Task>();
       const hosts = new Set([...this.engine.hostIds(), ...this.engine.store.activeCapacityTasks().flatMap(task => task.hostId ? [task.hostId] : [])]);
       for (const host of hosts) await this.engine.withHost(host, async () => {
         if (!this.engine.hostAvailable(host)) return;
@@ -220,12 +221,11 @@ export class Sweep {
         // retried on this host's pass. Presentation only: it never changes a task.
         try { await this.engine.adapter.reconcileSettledThreads?.(); }
         catch { /* the record keeps for the next pass */ }
-        // A task that finished before the thread-cleanup rule rolled still owes
-        // its threads their closeout cleanup. One direct query per host; the
-        // terminal lane's durable effects and the per-task completion record make
-        // it run once (nucleus#1155 brief v3).
-        try { await catchUpFinishedTaskThreads(this.engine.store, this.engine.adapter, host); }
-        catch { /* the per-thread effects keep for the next pass */ }
+        // Select directly from finished history, but never await cleanup in the
+        // shared host pass. These tasks join the rotating, bounded task window.
+        if (!this.engine.store.getMeta('paused') && removesThreads(this.engine.adapter))
+          for (const task of finishedThreadCleanupCatchUp(this.engine.store, host, true))
+            finishedCatchUp.set(task.id, task);
         if (this.engine.inventoryHostMatches(host)) inventory = observed;
       });
       this.engine.clearRetiredInvalidations();
@@ -278,7 +278,9 @@ export class Sweep {
       // concurrently. The audit yields to the event loop between bounded
       // chunks so acceptance and reads stay responsive.
       const reconciled = new Set<string>();
-      const order = this.engine.sweepOrder(drain);
+      const order = [...new Map([...this.engine.sweepOrder(drain), ...finishedCatchUp.values()]
+        .map(task => [task.id, task])).values()];
+      this.engine.sweepStats.tasks = order.length;
       const cursorAt = this.engine.sweepCursor ? order.findIndex(task => task.id === this.engine.sweepCursor) : -1;
       const resume = cursorAt + 1 >= order.length ? 0 : cursorAt + 1;
       // A window reconciles one page from the cursor. A drain walks, from the
@@ -298,7 +300,18 @@ export class Sweep {
           if (this.engine.stopped) return { fault: null, covered: false, visited };
           visited.add(candidate.id);
           const task = this.engine.store.task(candidate.id);
-          if (["done", "cancelled"].includes(task.phase)) continue;
+          if (["done", "cancelled"].includes(task.phase)) {
+            if (finishedCatchUp.has(task.id)) {
+              pending.push(boundQuantum(this.engine.scheduleLane(`task:${task.id}`, LANE_PRIORITY_TASK, async () => {
+                const current = this.engine.store.task(task.id);
+                if (!current.hostId || !this.engine.taskHostAvailable(current)) return;
+                await this.engine.withHost(current.hostId, () =>
+                  catchUpFinishedTaskThreads(this.engine.store, this.engine.adapter, current.id));
+              }), () => this.recordQuantumOutage(task.id)));
+              await new Promise<void>(resolve => setImmediate(resolve));
+            }
+            continue;
+          }
           // Spec 058 budgets (nucleus#1153): the wall clock pauses while the host, a
           // workspace or a dispatch hold keeps the task from progress — including a
           // task whose quantum this sweep cannot start at all.

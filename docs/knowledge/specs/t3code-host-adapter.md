@@ -451,11 +451,16 @@ the final attempt, and never authorizes resending an unknown effect. A failure
 proven to precede delivery stays retryable through the same terminal lane;
 cleanup failure never blocks task closeout.
 
-Each host sweep directly selects already-finished T3 tasks that still owe a
-thread archive or deletion, including tasks closed before this rule existed.
-The query does not use the active-capacity index. It applies the same terminal
-effects and records completion per task, so later sweeps do nothing once all
-thread effects are confirmed; incomplete effects remain selectable.
+The sweep directly selects already-finished T3 tasks that still owe a thread
+archive or deletion, including tasks closed before this rule existed. The query
+does not use the active-capacity index. A bounded rotating window schedules each
+selected task on its existing task lane; the host sweep never awaits its remote
+cleanup, and permanently pending candidates cannot hide later finished tasks.
+
+Ordinary closeout and catch-up use the same terminal effects and record completion
+per task in the common terminal lane after every thread effect is confirmed. A
+task cleaned before the catch-up query still has its completion record, so later
+sweeps do nothing; incomplete effects remain selectable.
 
 Paseo keeps its existing archive behaviour, including its reviewer-replacement
 fence and support-thread retirement after an episode. This T3 rule changes no
