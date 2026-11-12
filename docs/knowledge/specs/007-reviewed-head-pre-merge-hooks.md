@@ -94,6 +94,14 @@ check settles, Nucleus closes any check-attention episode, reacquires a fresh FI
 turn, and reruns every exact-head merge gate before it can merge or return the
 same PR to its worker for a failed terminal check.
 
+An overdue check at one head gets at most one coordinator recovery look. Its
+poll record binds that look to the check name and job URL; an unchanged queued
+or running result returns to a visible wait with the forge state and job URL,
+without another incident or recovery run. A queued check still without a runner
+after an hour raises planner attention once, including its runner label when
+GitHub provides one. If the job starts, ordinary polling continues; when it
+finishes, the task reacquires the integration turn and rechecks the merge gates.
+
 An overdue `QUEUED` check with fetched zero-step evidence remains in the pending
 poll path while GitHub still reports `QUEUED`; it does not consume the rerun
 intent because the existing workflow rerun call cannot dispatch a queued run.

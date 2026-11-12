@@ -106,7 +106,8 @@ export { docsOnlyProofAutorunSkip, proofAutorunWaitingInputs, proofWaitApplies }
 export { reviewContinuationLocalRefusal } from './review/review-continuation';
 
 /** Task 382: the check evidence a merge gate reports beside its wait: the effective hosted-check policy, the required and advisory results at the exact head, and the repository settings revision the policy came from. */
-export type CheckObservationFields = {checksPolicy?: RepositoryChecksPolicy; requirements?: {known: boolean; required: number; reason?: string}; advisory?: CheckObservation[]; requiredEvidence?: CheckObservation[]; settingsRevision?: number | null};
+export type OverdueCheckEvidence = {key: string; name: string; state: string; elapsedMs: number; jobUrl: string; runnerLabels: string[]};
+export type CheckObservationFields = {checksPolicy?: RepositoryChecksPolicy; requirements?: {known: boolean; required: number; reason?: string}; advisory?: CheckObservation[]; requiredEvidence?: CheckObservation[]; settingsRevision?: number | null; overdueCheck?: OverdueCheckEvidence};
 export type MergeGateResult = { timings?: Record<string, number>; head: string; base: string; wait: string; needsRebase?: boolean; checksFailed?: boolean; overdue?: boolean; pendingCheck?: boolean; infrastructure?: boolean; infraRunIds?: string[] } & CheckObservationFields;
 export type RequiredChecksResult = { head: string; wait: string; needsRebase?: boolean; checksFailed?: boolean; overdue?: boolean; pendingCheck?: boolean; infrastructure?: boolean; infraRunIds?: string[] } & CheckObservationFields;
 /** Project-d #117: an evidence-only PR verified for a continuation, and the task facts the accepting transaction re-checks. */
@@ -558,7 +559,7 @@ export class Resolution {
   private selectRateLimitFailover(task: Task) { return this.transientResume.selectRateLimitFailover(task); }
   resumeTransientProviderThread(task: Task, run: Run, state: Awaited<ReturnType<Adapter['observe']>>): Promise<boolean> { return this.transientResume.resumeTransientProviderThread(task, run, state); }
   resumeTransientWorker(task: Task, state: Awaited<ReturnType<Adapter['observe']>>): Promise<boolean> { return this.transientResume.resumeTransientWorker(task, state); }
-  applyMergeGateWait(t: Task, gate: { wait: string; needsRebase?: boolean; checksFailed?: boolean; overdue?: boolean; pendingCheck?: boolean; infrastructure?: boolean; infraRunIds?: string[] }): Promise<boolean> { return this.checkWaits.applyMergeGateWait(t, gate); }
+  applyMergeGateWait(t: Task, gate: { wait: string; needsRebase?: boolean; checksFailed?: boolean; overdue?: boolean; pendingCheck?: boolean; infrastructure?: boolean; infraRunIds?: string[]; overdueCheck?: OverdueCheckEvidence }): Promise<boolean> { return this.checkWaits.applyMergeGateWait(t, gate); }
   private resolvePassedUnchangedCheckEscalation(t: Task): void { return this.checkWaits.resolvePassedUnchangedCheckEscalation(t); }
   requiredCheckPollState(t: Task): { head: string; nextAt: number; incidentId?: string | null } | null { return this.checkWaits.requiredCheckPollState(t); }
   private holdPendingCheck(t: Task, wait: string, overdue: boolean): void { return this.checkWaits.holdPendingCheck(t, wait, overdue); }

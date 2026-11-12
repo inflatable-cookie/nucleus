@@ -1989,6 +1989,54 @@ test('an overdue runnerless queued check waits for cancellation before its one s
   assert.equal(f.store.runs(f.task.id).filter(run=>run.role==='revision').length,0,'no revision run is launched');
  }finally{await f.close()}
 });
+test('an overdue queued required check gets one recovery look, then waits and escalates once',async()=>{
+ const f=fixture();const realNow=Date.now;let fakeNow=Date.parse('2026-11-12T14:00:00.000Z');Date.now=()=>fakeNow;try{
+  f.adapter.supportsCoordinatorRecovery=true;
+  recordAcceptedReview(f,'merging');
+  const key='Stable process-spawning nextest\u0000https://github.com/example/repo/actions/runs/9/job/1';
+  const job='https://github.com/example/repo/actions/runs/9/job/1';
+  const queued={head,base,wait:`Required check 'Stable process-spawning nextest' (queued, no runner yet) has been pending past its deadline (16m elapsed, bound 15m); runner label: macos-latest; job URL: ${job}`,overdue:true as const,pendingCheck:true as const,
+   overdueCheck:{key,name:'Stable process-spawning nextest',state:'QUEUED',elapsedMs:16*60_000,jobUrl:job,runnerLabels:['macos-latest']}};
+  f.adapter.mergeGate=async()=>queued;
+  await f.engine.wake();
+  let poll=f.store.getMeta<any>(requiredCheckPollMetaKey(f.task.id,head));
+  assert.ok(poll?.recoveryRunId,'the first overrun launches the one recovery look');
+  const recovery=f.store.run(poll.recoveryRunId)!;
+  assert.equal(recovery.role,'recovery');
+  assert.match(f.current().reason,/queued, no runner yet/);
+  assert.match(f.current().reason,/macos-latest/);
+
+  // Simulate the recovery reporting no actionable change. The forge still says QUEUED.
+  f.store.putRun({...recovery,released:true,status:'finished'});
+  f.store.update(f.task.id,{resolution:{...f.current().resolution,recoveryActive:false}});
+  poll={...poll,nextAt:0};f.store.setMeta(requiredCheckPollMetaKey(f.task.id,head),poll);
+  fakeNow+=20*60_000;
+  await f.engine.wake();
+  assert.equal(f.store.runs(f.task.id).filter(run=>run.role==='recovery').length,1,'an unchanged queued check never starts a second recovery');
+  assert.equal(f.current().resolution.attention,false,'the one recovery returns the task to a visible wait');
+  assert.match(f.current().reason,/Stable process-spawning nextest/);
+  assert.equal(f.store.events(f.task.id).filter(event=>event.kind==='incident').map(event=>JSON.parse(event.detail).id).filter((id,index,ids)=>ids.indexOf(id)===index).length,1,'repeat polls retain one incident identity');
+
+  fakeNow+=45*60_000;poll={...f.store.getMeta<any>(requiredCheckPollMetaKey(f.task.id,head)),nextAt:0};f.store.setMeta(requiredCheckPollMetaKey(f.task.id,head),poll);
+  await f.engine.wake();
+  assert.equal(f.current().resolution.attention,true,'a queued job still waiting after an hour reaches planner attention');
+  assert.equal(f.store.runs(f.task.id).filter(run=>run.role==='recovery').length,1,'the longer wait does not reopen recovery');
+  assert.match(f.current().reason,/macos-latest/);
+  const incidentIds=f.store.events(f.task.id).filter(event=>event.kind==='incident').map(event=>JSON.parse(event.detail).id);
+  assert.equal(new Set(incidentIds).size,1,'the one-hour attention reuses the original check incident');
+
+  // A started job remains on the normal poll path and does not generate a new recovery.
+  f.adapter.mergeGate=async()=>({...queued,wait:`Required check 'Stable process-spawning nextest' (in_progress for 61m) has been pending past its deadline (61m elapsed, bound 15m); job URL: ${job}`,
+   overdueCheck:{...queued.overdueCheck,state:'IN_PROGRESS',elapsedMs:61*60_000,runnerLabels:[]}});
+  poll={...f.store.getMeta<any>(requiredCheckPollMetaKey(f.task.id,head)),nextAt:0};f.store.setMeta(requiredCheckPollMetaKey(f.task.id,head),poll);
+  await f.engine.wake();
+  assert.equal(f.store.runs(f.task.id).filter(run=>run.role==='recovery').length,1);
+  f.adapter.mergeGate=async()=>({head,base,wait:''});
+  poll={...f.store.getMeta<any>(requiredCheckPollMetaKey(f.task.id,head)),nextAt:0};f.store.setMeta(requiredCheckPollMetaKey(f.task.id,head),poll);
+  await f.engine.wake();
+  assert.equal(f.counts().merges,1,'a passing check clears the wait and the existing merge path continues by itself');
+ }finally{Date.now=realNow;await f.close()}
+});
 test('a failed same-head rerun dispatch escalates once instead of revising the worker',async()=>{
  const f=fixture();try{
   f.store.update(f.task.id,{skipPRReview:true});

@@ -4,7 +4,7 @@ import { type Store } from '../store/store';
 import { verifyPr, command } from '../git/index';
 import { taskPrNumber } from './pr-identity';
 
-export type PrCheck = {__typename:string;databaseId?:number;name?:string;context?:string;status?:string;conclusion?:string;state?:string;startedAt?:string;completedAt?:string;detailsUrl?:string;targetUrl?:string;title?:string;summary?:string;text?:string;checkSuite?:{app?:{databaseId?:number|null}|null}|null;steps?:{name?:string;conclusion?:string|null;status?:string|null}[];annotations?:{message?:string;title?:string}[]};
+export type PrCheck = {__typename:string;databaseId?:number;name?:string;context?:string;status?:string;conclusion?:string;state?:string;startedAt?:string;completedAt?:string;detailsUrl?:string;targetUrl?:string;title?:string;summary?:string;text?:string;checkSuite?:{app?:{databaseId?:number|null}|null}|null;steps?:{name?:string;conclusion?:string|null;status?:string|null}[];labels?:string[];annotations?:{message?:string;title?:string}[]};
 /** Hosted-runner acquisition signature: the job never ran, so its cancellation proves infrastructure, never code.
  * Every alternative names a runner, so an unrelated annotation that merely contains
  * "acquisition" (or "acquired" without a runner) never matches. */
@@ -54,8 +54,9 @@ export async function enrichPendingCheckEvidence(t: Task, checks: PrCheck[], tra
       const ref = workflowJobRefFromJobUrl(check.detailsUrl);
       if (ref) {
         try {
-          const record = await transport(t, `repos/${name}/actions/jobs/${ref.jobId}`) as {steps?: {name?: string; conclusion?: string | null; status?: string | null}[]};
+          const record = await transport(t, `repos/${name}/actions/jobs/${ref.jobId}`) as {steps?: {name?: string; conclusion?: string | null; status?: string | null}[]; labels?: unknown};
           if (record && Array.isArray(record.steps)) { check.steps = record.steps; stepsKnown = true; }
+          if (record && Array.isArray(record.labels)) check.labels = record.labels.filter((label): label is string => typeof label === 'string').slice(0, 20);
         } catch { /* annotations next for cancellations; queued checks remain ordinary pending */ }
       }
     }
@@ -74,6 +75,7 @@ const CHECK_PENDING_META_PREFIX = "checkPendingSince:";
 const CHECK_COMPLETED_META_PREFIX = "checkCompleted:";
 const REQUIRED_CHECK_POLL_META_PREFIX = "requiredCheckPoll:";
 export const REQUIRED_CHECK_POLL_INTERVAL_MS = 60_000;
+export const REQUIRED_CHECK_ESCALATION_MS = 60 * 60_000;
 export const PENDING_CHECK_FALLBACK_MS = 30 * 60 * 1000;
 function checkDurationMetaKey(repo: string, name: string) { return `${CHECK_DURATION_META_PREFIX}${repo}:${name}`; }
 function checkPendingMetaKey(repo: string, head: string, name: string) { return `${CHECK_PENDING_META_PREFIX}${JSON.stringify([repo, head, name])}`; }
@@ -149,10 +151,11 @@ export function classifyPrChecks(checks: PrCheck[], history?: CheckHistory) {
     const {check, waited, deadline} = overdueChecks[0];
     const name = checkName(check), url = checkJobUrl(check);
     return {
-      wait: `Required check '${name}' has been pending past its deadline (${formatCheckWait(waited)} elapsed, bound ${formatCheckWait(deadline)}); job URL: ${url}`,
+      wait: `Required check '${name}' (${check.status === 'QUEUED' ? 'queued, no runner yet' : check.status === 'IN_PROGRESS' ? `in_progress for ${formatCheckWait(waited)}` : String(check.status ?? 'pending').toLowerCase()}) has been pending past its deadline (${formatCheckWait(waited)} elapsed, bound ${formatCheckWait(deadline)});${check.labels?.length ? ` runner label: ${check.labels.join(', ')};` : ''} job URL: ${url}`,
       checksFailed: false as const,
       overdue: true as const,
       pendingCheck: true as const,
+      overdueCheck: { key: `${name}\u0000${url}`, name, state: check.status ?? check.state ?? 'PENDING', elapsedMs: waited, jobUrl: url, runnerLabels: check.labels ?? [] },
     };
   }
   if (pending.length) return { wait: "PR checks are pending", checksFailed: false as const, pendingCheck: true as const };
@@ -183,6 +186,7 @@ export type CheckClassification = {
   pendingCheck?: boolean;
   infrastructure?: boolean;
   infraRunIds?: string[];
+  overdueCheck?: {key: string; name: string; state: string; elapsedMs: number; jobUrl: string; runnerLabels: string[]};
   checksPolicy?: RepositoryChecksPolicy;
   requirements?: {known: boolean; required: number; reason?: string};
   /** Non-required results recorded as evidence under an advisory policy. */

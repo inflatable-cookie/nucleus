@@ -218,8 +218,8 @@ test('hosted-runner acquisition cancellations classify as infrastructure only wi
  assert.deepEqual(workflowJobRefFromJobUrl(job),{owner:'example',repo:'repo',runId:'9',jobId:'1'});
  assert.equal(workflowJobRefFromJobUrl('(no job URL)'),null);
  assert.equal(workflowJobRefFromJobUrl('https://github.com/example/repo/actions/runs/9'),null);
- const store={jobSteps: new Map<string,{steps:{name?:string}[]}>(), annotations: new Map<string,{message:string}[]>()};
- store.jobSteps.set('1',{steps:[]});
+ const store={jobSteps: new Map<string,{steps:{name?:string}[];labels?:string[]}>(), annotations: new Map<string,{message:string}[]>()};
+ store.jobSteps.set('1',{steps:[],labels:['macos-latest']});
  store.jobSteps.set('2',{steps:[{name:'Run tests'}]});
  store.annotations.set('21',[{message:'The job was not acquired by Runner of type hosted'}]);
  const transport=async(_t:unknown,endpoint:string)=>{
@@ -237,10 +237,13 @@ test('hosted-runner acquisition cancellations classify as infrastructure only wi
  const queued=await enrichPendingCheckEvidence({} as never,[{__typename:'CheckRun',name:'rust',status:'QUEUED',startedAt:'2026-10-05T00:00:00.000Z',detailsUrl:job}],transport as never,'example/repo');
  assert.deepEqual(queued.uninferred,[]);
  assert.deepEqual(queued.checks[0].steps,[],'a queued job carries fetched zero-step runner evidence');
+ assert.deepEqual(queued.checks[0].labels,['macos-latest'],'queued job labels remain visible for planner attention');
  const overdueQueued=classifyPrChecks(queued.checks,{now:Date.parse('2026-10-06T00:00:00.000Z')});
  assert.equal(overdueQueued.overdue,true,'a runnerless queued job remains on the bounded pending-check path');
  assert.equal(overdueQueued.pendingCheck,true);
  assert.equal(overdueQueued.infrastructure,undefined,'do not spend the one-shot rerun intent while GitHub still reports QUEUED');
+ assert.match(overdueQueued.wait,/queued, no runner yet/);
+ assert.match(overdueQueued.wait,/runner label: macos-latest/);
 });
 
 test('a required check pending past its deadline raises attention with the job URL; one within it does not',async()=>{
@@ -253,7 +256,7 @@ test('a required check pending past its deadline raises attention with the job U
  const overdue=classifyPrChecks([{__typename:'CheckRun',name:'build',status:'IN_PROGRESS',startedAt:iso(now-31*60_000),detailsUrl:job}],{now});
  assert.equal(overdue.checksFailed,false);
  assert.equal(overdue.overdue,true);
- assert.match(overdue.wait,/Required check 'build' has been pending past its deadline/);
+ assert.match(overdue.wait,/Required check 'build'.*has been pending past its deadline/);
  assert.match(overdue.wait,/job URL: https:\/\/github.com\/example\/repo\/actions\/runs\/9/);
  assert.equal(isPendingCheckDeadlineReason(overdue.wait),true);
  const within=classifyPrChecks([{__typename:'CheckRun',name:'build',status:'IN_PROGRESS',startedAt:iso(now-10*60_000),detailsUrl:job}],{now,durations:()=>[5*60_000]});
@@ -266,7 +269,8 @@ test('a required check pending past its deadline raises attention with the job U
  assert.equal(queued.infrastructure,undefined,'even with zero-step evidence, a still-queued run cannot use the cancelled-run rerun path');
  assert.equal(queued.overdue,true);
  assert.equal(queued.pendingCheck,true);
- assert.match(queued.wait,/Required check 'rust' has been pending past its deadline/);
+ assert.match(queued.wait,/Required check 'rust'.*queued, no runner yet.*has been pending past its deadline/);
+ assert.equal(queued.overdueCheck?.state,'QUEUED');
  const recentQueued=classifyPrChecks([{__typename:'CheckRun',name:'rust',status:'QUEUED',startedAt:iso(now-10*60_000),detailsUrl:'https://github.com/example/repo/actions/runs/12/job/3',steps:[]}],{now,durations:()=>[5*60_000]});
  assert.deepEqual(recentQueued,{wait:'PR checks are pending',checksFailed:false,pendingCheck:true},'a runnerless queued job is not retried before its bound');
 });
