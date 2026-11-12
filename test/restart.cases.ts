@@ -540,7 +540,7 @@ for (const fresh of [false, true]) test(`worker restart replaces an inactive err
     await f.control({ role: 'worker', fresh });
     await f.engine.wake();
     const task = f.current();
-    assert.equal(task.profile?.id, alternate.id);
+    assert.equal(task.profile?.id, f.profiles.worker.id, 'a connection error does not exclude the worker profile');
     assert.equal(task.retiredWorkers.length, 1);
     assert.equal(task.workspaceId, 'workspace');
     assert.equal(task.directory, '/worktree');
@@ -735,7 +735,7 @@ for (const timeline of ['unavailable', 'gap', 'interrupted tool'] as const) {
           if (status === 'error') {
             await f.engine.wake();
             const replaced = f.current();
-            assert.equal(replaced.profile?.id, alternate.id, 'an errored worker is replaced by another eligible profile');
+            assert.equal(replaced.profile?.id, f.profiles.worker.id, 'a connection error does not exclude the worker profile');
             assert.equal(replaced.retiredWorkers.length, 1);
             assert.equal(replaced.agentId === 'worker-agent', false);
             assert.equal(f.store.runs(f.taskId).some(run => run.role === 'recovery'), false, 'replacement does not open a recovery run');
