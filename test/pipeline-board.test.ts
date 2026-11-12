@@ -191,7 +191,7 @@ test('026-12a every pipeline card renders through the shared board card, and eac
   const ui=boardSource();
   // #1042: the Pipeline view lives in its own module, which the Tasks tab mounts.
   const pipeline=readFileSync(new URL('../client/board/pipeline.tsx',import.meta.url),'utf8');
-  assert.match(ui,/\{tab === "queue" && \(\s*<View style=\{\{ flex: 1, minHeight: 0, gap: 12, zIndex: 0 \}\}>\s*<PipelineBoard /);
+  assert.match(ui,/\{tab === "queue" && \(\s*<View style=\{\{ flex: 1, minHeight: 0, gap: space.sm, zIndex: 0 \}\}>\s*<PipelineBoard /);
   // One card component: TaskCard renders through BoardCard, and leads render BoardCard too.
   assert.match(ui,/function BoardCard\(/);
   // Commit 308157c4 (2026-09-27, one board card component) pinned TaskCard to
@@ -262,7 +262,7 @@ test('026-15a pipeline cards open a record modal and carry no action buttons',()
   const ui=boardSource();
   // #1042: the Pipeline view lives in its own module, which the Tasks tab mounts.
   const pipeline=readFileSync(new URL('../client/board/pipeline.tsx',import.meta.url),'utf8');
-  assert.match(ui,/\{tab === "queue" && \(\s*<View style=\{\{ flex: 1, minHeight: 0, gap: 12, zIndex: 0 \}\}>\s*<PipelineBoard /);
+  assert.match(ui,/\{tab === "queue" && \(\s*<View style=\{\{ flex: 1, minHeight: 0, gap: space.sm, zIndex: 0 \}\}>\s*<PipelineBoard /);
   assert.doesNotMatch(pipeline,/setTab\('papercuts'\)/);
   assert.doesNotMatch(pipeline,/text="Approve"/);
   assert.doesNotMatch(pipeline,/text="Promote"/);
@@ -317,7 +317,7 @@ test('every column is a full-height scroll at the measured board height', async 
 test('the pipeline grid fills the panel width and never scrolls vertically itself', () => {
   const ui = boardSource();
   assert.match(ui, /return \(\s*<View\s+onLayout=\{[^}]*\}\s*style=\{\{\s*flex: 1, minHeight: 0, paddingBottom: inset\s*\}\}\s*>/, 'no side padding outside the horizontal scroll');
-  assert.match(ui, /<ScrollView\s+ref=\{pipelineHorizontal\}\s+horizontal\s[^>]*contentContainerStyle=\{\{\s*paddingHorizontal: inset\s*\}\}\s*>\s*<View style=\{\{ gap: 10, paddingBottom: 12 \}\}>/, 'the side padding scrolls with the content; the grid inside is a plain view');
+  assert.match(ui, /<ScrollView\s+ref=\{pipelineHorizontal\}\s+horizontal\s[^>]*contentContainerStyle=\{\{\s*paddingHorizontal: inset\s*\}\}\s*>\s*<View style=\{\{ gap: space.sm, paddingBottom: space.sm \}\}>/, 'the side padding scrolls with the content; the grid inside is a plain view');
   assert.doesNotMatch(ui, /pipelineVertical/);
 });
 

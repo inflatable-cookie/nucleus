@@ -11,6 +11,7 @@ import { phaseLabel } from "../board/text";
 import { RunRow, RawRecords, type BoardAct } from "./parts";
 import type { TaskDetailRead } from "./task-dialog";
 import type { BoardNavigation } from "../shell/types";
+import { space, type as typeScale } from "../design";
 
 /** The Runs tab: prerequisites, runs, worker exclusions, hooks and cleanup. It owns its exclusion reason. */
 export function RunsTab({ task, drafts, detailQuery, state, pendingOperation, compact, busy, act, navigation, onSelectTask, c }: { task: TaskDetailRead["task"]; detailQuery: UseQueryResult<TaskDetailRead>; state: UiQueueState | undefined; pendingOperation: boolean; compact: boolean; busy: boolean; act: BoardAct; drafts: TaskDrafts; navigation?: BoardNavigation; onSelectTask: (id: string) => void; c: Colors }) {
@@ -23,7 +24,7 @@ export function RunsTab({ task, drafts, detailQuery, state, pendingOperation, co
     workspaceId: task.workspaceId,
     runId: ["done", "cancelled"].includes(task.phase) ? null : task.completion?.runId ?? null,
   });
-  return <View style={{ gap: 12 }}>
+  return <View style={{ gap: space.sm }}>
     {Boolean(detailQuery.data?.dependencies.length) && (
       <DetailSection title="Prerequisites" c={c}>
         {detailQuery.data?.dependencies.map((dependency) => (
@@ -44,7 +45,7 @@ export function RunsTab({ task, drafts, detailQuery, state, pendingOperation, co
         <Text
           selectable
           accessibilityLabel="Run-bound build output cleanup"
-          style={{ color: c.foreground, fontSize: 12 }}
+          style={{ color: c.foreground, fontSize: typeScale.metadata.fontSize }}
         >
           {runBoundCleanup.text}
         </Text>
@@ -52,7 +53,7 @@ export function RunsTab({ task, drafts, detailQuery, state, pendingOperation, co
     )}
     <DetailSection title="Coordination" c={c}>
       {task.workerExclusions.length > 0 && (
-        <Text selectable style={{ ...muted(c), fontSize: 12 }}>
+        <Text selectable style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
           Worker exclusions ·{" "}
           {task.workerExclusions
             .map(
@@ -68,7 +69,7 @@ export function RunsTab({ task, drafts, detailQuery, state, pendingOperation, co
         !["done", "cancelled"].includes(task.phase) &&
         !task.resolution.mergeIntent &&
         !task.resolution.mergedCommit && (
-          <View style={{ gap: 7 }}>
+          <View style={{ gap: space.xs }}>
             <Field
               c={c}
               label="Worker exclusion reason"
@@ -144,7 +145,7 @@ export function RunsTab({ task, drafts, detailQuery, state, pendingOperation, co
           style={{ ...row, justifyContent: "space-between" }}
         >
           <Text
-            style={{ ...muted(c), fontSize: 12, flexShrink: 1 }}
+            style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, flexShrink: 1 }}
           >
             Replaced worker · {w.profile.name} · {w.reason}
           </Text>
@@ -164,7 +165,7 @@ export function RunsTab({ task, drafts, detailQuery, state, pendingOperation, co
       {["blocked", "error"].includes(task.phase) &&
         Boolean(task.agentId) &&
         !task.prUrl && (
-          <Text style={{ ...muted(c), fontSize: 12 }}>
+          <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
             A blocked pre-PR worker resumes through restart in
             Next, with an explicit bounded instruction.
           </Text>
@@ -173,10 +174,10 @@ export function RunsTab({ task, drafts, detailQuery, state, pendingOperation, co
         !task.resolution.mergeIntent &&
         !task.resolution.mergedCommit &&
         detailQuery.data?.runs.every((r) => r.released) && (
-          <View style={{ gap: 7 }}>
+          <View style={{ gap: space.xs }}>
             {task.resolution.revisionInstruction && (
-              <View style={{ gap: 3 }}>
-                <Text style={{ ...muted(c), fontSize: 11 }}>
+              <View style={{ gap: space.xxs }}>
+                <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
                   Recorded revision instruction
                   {task.resolution.revisionInstruction.runId
                     ? ` \u00b7 bound to run ${task.resolution.revisionInstruction.runId}`
@@ -184,7 +185,7 @@ export function RunsTab({ task, drafts, detailQuery, state, pendingOperation, co
                 </Text>
                 <Text
                   selectable
-                  style={{ color: c.foreground, fontSize: 12 }}
+                  style={{ color: c.foreground, fontSize: typeScale.metadata.fontSize }}
                 >
                   {task.resolution.revisionInstruction.text}
                 </Text>
@@ -203,7 +204,7 @@ export function RunsTab({ task, drafts, detailQuery, state, pendingOperation, co
           accessibilityLabel={checkpointStateLabel(
             task.checkpoints,
           )}
-          style={{ ...muted(c), fontSize: 12 }}
+          style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
         >
           {checkpointStateLabel(task.checkpoints)}
         </Text>
@@ -212,7 +213,7 @@ export function RunsTab({ task, drafts, detailQuery, state, pendingOperation, co
         <Text
           selectable
           accessibilityLabel={`Missing result for ${detailQuery.data.missingResult.role} run ${detailQuery.data.missingResult.runId}`}
-          style={{ color: c.statusWarning, fontSize: 12 }}
+          style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize }}
         >{`Missing result · ${detailQuery.data.missingResult.role} run ${detailQuery.data.missingResult.runId}${detailQuery.data.missingResult.prUrl ? ` · ${detailQuery.data.missingResult.prUrl}` : ""}`}</Text>
       )}
       {detailQuery.data?.runs.length ? (
@@ -291,7 +292,7 @@ export function RunsTab({ task, drafts, detailQuery, state, pendingOperation, co
       ))}
     </DetailSection>
     {task.phase === "done" && (
-      <View style={{ gap: 6 }}>
+      <View style={{ gap: space.xs }}>
         <Text style={muted(c)}>
           Workspace cleanup:{" "}
           {api.runtimeRetirementFailure(task) ||
@@ -335,7 +336,7 @@ export function RunsTab({ task, drafts, detailQuery, state, pendingOperation, co
               key={`retire-${record.workspaceId}`}
               selectable
               accessibilityLabel={record.error}
-              style={{ color: c.statusWarning, fontSize: 12 }}
+              style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize }}
             >
               {record.error} · attempts {record.attempts}
               {record.nextAttemptAt
@@ -355,7 +356,7 @@ export function RunsTab({ task, drafts, detailQuery, state, pendingOperation, co
       task.resolution.buildOutputCleanups.some(
         (record) => !record.runId && record.state === "skipped",
       ) && (
-        <View style={{ gap: 6 }}>
+        <View style={{ gap: space.xs }}>
           <Text style={muted(c)}>
             Workspace cleanup stayed blocked:{" "}
             {task.resolution.cleanupReason ||

@@ -21,7 +21,7 @@ test("the Queued column counts every queued task, and queue paging stays out of 
   assert.match(source, /Queued: pipelineCounts\.Queued \+ hiddenQueued/, "the Queued header total includes the held-back cards");
   assert.match(source, /…and \$\{item\.hidden\} more/);
   assert.match(source, /const more = name === 'Queued' \? queuedMoreCards : triageMore/);
-  assert.match(source, /contentContainerStyle=\{\{ gap: 6 \}\}[\s\S]*?\{cards\}[\s\S]*?\{more\}[\s\S]*?<\/ScrollView>/,
+  assert.match(source, /contentContainerStyle=\{\{ gap: space.xs \}\}[\s\S]*?\{cards\}[\s\S]*?\{more\}[\s\S]*?<\/ScrollView>/,
     "the overflow card is rendered inside the column's own scrolling cell");
 });
 

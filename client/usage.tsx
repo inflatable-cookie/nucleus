@@ -9,7 +9,7 @@ import {
   sectionCard,
   type Colors,
 } from "./controls";
-import { roles, space, type as typeScale } from "./design";
+import { roles, space, type as typeScale, radius } from "./design";
 import { PopoverHost } from "./popover";
 import {
   formatRelativeSpan,
@@ -531,7 +531,7 @@ function UsageWindowRow({
   const reset = resetLabel(window.resetsAt);
   return (
     <View
-      style={{ gap: 4 }}
+      style={{ gap: space.xxs }}
       accessibilityLabel={`${friendlyWindowName(window)}. ${reset}. ${used}% used${paceLabel ? `, ${paceLabel}` : ""}${expired ? ". Expired" : ""}`}
     >
       <View
@@ -559,7 +559,7 @@ function UsageWindowRow({
           style={{
             height: 6,
             flex: 1,
-            borderRadius: 3,
+            borderRadius: radius.control,
             backgroundColor: r.border,
             overflow: "visible",
             position: "relative",
@@ -567,7 +567,7 @@ function UsageWindowRow({
         >
           <View
             testID="usage-used-bar"
-            style={{ height: 6, width: `${Math.max(0, Math.min(100, used))}%`, borderRadius: 3, backgroundColor: color }}
+            style={{ height: 6, width: `${Math.max(0, Math.min(100, used))}%`, borderRadius: radius.control, backgroundColor: color }}
           />
           {elapsed !== null && (
             <View
@@ -575,7 +575,7 @@ function UsageWindowRow({
               style={{
                 position: "absolute",
                 left: `${elapsed * 100}%`,
-                top: -3,
+                top: -space.xxs / 2,
                 width: 1,
                 height: 12,
                 backgroundColor: r.foreground,
@@ -689,7 +689,7 @@ export function UsageCard({
           {verdict}
         </Text>
         {reading.status === "ok" ? (
-          <View style={{ gap: space.xs, marginTop: 2 }}>
+          <View style={{ gap: space.xs, marginTop: space.xxs / 2 }}>
             {reading.windows.map((window) => (
               <UsageWindowRow
                 key={window.windowId}

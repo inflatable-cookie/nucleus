@@ -85,10 +85,10 @@ export function NativeQuestionAnswer({ agentId, request, onAnswered, c }: { agen
       .catch(failure => setError(errorText(failure)))
       .finally(() => setBusy(false));
   };
-  return <View style={{ gap: 8 }}>
-    {request.questions.map(question => <View key={question.header} style={{ gap: 6 }}>
+  return <View style={{ gap: space.xs }}>
+    {request.questions.map(question => <View key={question.header} style={{ gap: space.xs }}>
       <Text accessibilityLabel={`Question ${question.header}: ${question.question}`} style={{ color: c.foreground, fontSize: typeScale.body.fontSize, lineHeight: typeScale.body.lineHeight, fontWeight: "600" }}>{question.question}</Text>
-      {question.options.length > 0 && <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>{question.options.map(option =>
+      {question.options.length > 0 && <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.xs }}>{question.options.map(option =>
         <Button key={option} small wrap c={c} text={option} label={`Answer ${question.header}: ${option}`} selected={answers[key(question.header)] === option} disabled={busy}
           onPress={() => setAnswers(current => ({ ...current, [key(question.header)]: option }))} />)}</View>}
       <TextInput accessibilityLabel={`Answer ${question.header}`} value={answers[key(question.header)] ?? ""} editable={!busy}
@@ -96,7 +96,7 @@ export function NativeQuestionAnswer({ agentId, request, onAnswered, c }: { agen
         placeholder={question.options.length ? "Or type your answer" : "Your answer"} placeholderTextColor={c.foregroundMuted} multiline
         style={{ color: c.foreground, backgroundColor: c.surface0, borderColor: c.border, borderWidth: 1, borderRadius: radius.control, padding: space.xs, minHeight: touchTarget, fontSize: typeScale.body.fontSize }} />
     </View>)}
-    <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+    <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: space.xs }}>
       <Button small c={c} text={busy ? "Sending…" : "Submit answer"} label="Submit answer" disabled={busy || !complete}
         hint={busy ? "An answer is already being sent" : complete ? undefined : "Answer every question first"} onPress={submit} />
       {error !== "" && <Text accessibilityRole="alert" style={{ color: roles(c).danger, fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight, flexShrink: 1 }}>Answer not confirmed: {error}. Check the question before answering again.</Text>}

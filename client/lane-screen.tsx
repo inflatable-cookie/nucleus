@@ -182,7 +182,7 @@ export function LaneScreen({ lane, compact, projects, plans, selected, busy, can
     {tasks.items?.map(task => {
       const signal = task.held ? `Held${task.hold?.reason ? ` · ${task.hold.reason}` : ""}` : task.waitState?.nextAction ?? (task.waitState ? `Waiting · ${task.waitState.owner}` : null);
       return <Pressable key={task.id} accessibilityRole="button" accessibilityLabel={`Open task ${task.title}, ${phaseStateLabel(task)}${signal ? `, ${signal}` : ""}`} onPress={() => onOpenTask(task.id)}
-      style={{ gap: 2, padding: space.xs, borderRadius: radius.card, borderWidth: 1, borderColor: r.border, backgroundColor: r.section }}>
+      style={{ gap: space.xxs / 2, padding: space.xs, borderRadius: radius.card, borderWidth: 1, borderColor: r.border, backgroundColor: r.section }}>
       <Text numberOfLines={2} style={{ ...text, fontWeight: "600" }}>{task.title}</Text>
       <Text style={meta}>{phaseStateLabel(task)}{signal ? ` · ${signal}` : ""}</Text>
     </Pressable>})}
@@ -191,7 +191,7 @@ export function LaneScreen({ lane, compact, projects, plans, selected, busy, can
     {(tasks.offset ?? 0) === 0 && tasks.nextOffset != null && onLoadMoreTasks && <View style={row}><Button small c={c} text="Next tasks" label="Load next page of lane tasks" onPress={() => onLoadMoreTasks(tasks.nextOffset!)} /></View>}
     <View style={{ gap: space.xxs, borderTopWidth: 1, borderTopColor: r.border, paddingTop: space.xs }}>
       <Text style={{ ...text, fontWeight: "600" }}>Finished · {lane.terminalCount}</Text>
-      {lane.recentOutcomes.map(outcome => <View key={outcome.taskId} style={{ gap: 2 }}>
+      {lane.recentOutcomes.map(outcome => <View key={outcome.taskId} style={{ gap: space.xxs / 2 }}>
         <Text style={text}>{outcome.title} · {outcome.outcome}</Text>
         <Text selectable style={meta}>{outcome.prNumber ? `PR #${outcome.prNumber}` : outcome.prUrl ?? "No pull request"}{outcome.finishedAt ? ` · ${formatLocalDateTime(outcome.finishedAt)}` : ""}</Text>
       </View>)}

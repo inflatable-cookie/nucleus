@@ -7,6 +7,7 @@ import { activeGroupLimit, automaticSelection, automaticSelectionTag, describeAu
 import { formatLocalDateTime } from "../../shared/date-time";
 import { suggestedVerbRefusals, taskActionPlan } from "../../shared/task-detail-summary";
 import { RecordNotice } from "./parts";
+import { space, type as typeScale } from "../design";
 
 /**
  * Every owner verb with its refusal, for the technical section. The summary shows
@@ -15,11 +16,11 @@ import { RecordNotice } from "./parts";
  */
 export function VerbReference({ verbs, c }: { verbs: readonly TaskNextVerb[]; c: Colors }) {
   if (!verbs.length) return null;
-  return <View style={{ gap: 3 }}>
-    <Text style={{ ...muted(c), fontSize: 11, fontWeight: "600" }}>Owner verbs</Text>
+  return <View style={{ gap: space.xxs }}>
+    <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, fontWeight: "600" }}>Owner verbs</Text>
     {verbs.map((verb, index) => <Text key={`${verb.verb}:${index}`} selectable
       accessibilityLabel={`${verbText(verb)}: ${verb.available ? "available" : `unavailable, ${verb.refusal ?? "no reason recorded"}`}`}
-      style={{ ...muted(c), fontSize: 11, lineHeight: 16 }}>
+      style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>
       {verbText(verb)} · {verb.available ? "available" : `not available — ${verb.refusal ?? "no reason recorded"}`}
     </Text>)}
   </View>;
@@ -92,8 +93,8 @@ function VerbField({ field, value, onChange, roleValue, pool, profiles, usage, a
     const choices = pool.filter(entry => entry.enabled)
       .map(entry => ({ entry, profile: profiles.find(profile => profile.id === entry.profileId) }))
       .filter(item => item.profile?.available);
-    return <View style={{ gap: 5 }}>
-      <Text style={{ ...muted(c), fontSize: 11 }}>Profile{roleValue ? ` for ${roleValue}` : ""}{choices.length ? "" : " · none eligible"}</Text>
+    return <View style={{ gap: space.xxs }}>
+      <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>Profile{roleValue ? ` for ${roleValue}` : ""}{choices.length ? "" : " · none eligible"}</Text>
       <View style={row}>{choices.map(({ entry, profile }) =>
         <Button key={entry.profileId} small wrap c={c} text={`${profile!.name}${choiceTag(entry, usage, availability)}`} label={`Profile ${profile!.name}`} selected={value === entry.profileId} onPress={() => onChange(entry.profileId)} />)}</View>
       <SelectedProfilePolicy entry={choices.find(item => item.entry.profileId === value)?.entry} usage={usage} availability={availability} explicit={() => "Route is an explicit request and applies at every usage level. "} c={c} />
@@ -115,14 +116,14 @@ export function SelectedProfilePolicy({ entry, usage, availability, explicit, c 
   if (!entry) return null;
   // An unavailable subscription group holds every dispatch to the profile, chosen or automatic, until it returns.
   const group = activeGroupLimit(availability, entry.group);
-  if (group) return <Text style={{ color: c.statusWarning, fontSize: 11, flexShrink: 1 }}>Subscription group {entry.group} is unavailable{group.reason ? `: ${group.reason}` : ""}{group.retryAt ? ` · until ${formatLocalDateTime(group.retryAt)}` : ""}. Nothing dispatches to this profile until the group returns, whatever the usage level.</Text>;
-  return <Text style={{ ...muted(c), fontSize: 11, flexShrink: 1 }}>{explicit(automaticSelection(entry, usage.level).startsWith("request"))}Automatic selection: {describeAutomaticSelection(entry, usage, formatLocalDateTime)}.</Text>;
+  if (group) return <Text style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize, flexShrink: 1 }}>Subscription group {entry.group} is unavailable{group.reason ? `: ${group.reason}` : ""}{group.retryAt ? ` · until ${formatLocalDateTime(group.retryAt)}` : ""}. Nothing dispatches to this profile until the group returns, whatever the usage level.</Text>;
+  return <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, flexShrink: 1 }}>{explicit(automaticSelection(entry, usage.level).startsWith("request"))}Automatic selection: {describeAutomaticSelection(entry, usage, formatLocalDateTime)}.</Text>;
 }
 /** Spec 052: the profiles this task's routing names, read against the usage level in force. */
 export function RoutingPolicyLines({ policy, c }: { policy: RoutingPolicy | undefined; c: Colors }) {
   if (!policy?.profiles.length) return null;
-  return <View style={{ gap: 2 }}>{policy.profiles.map(item =>
-    <Text key={`${item.role}:${item.source}:${item.profileId}`} accessibilityLabel={`Routing policy for ${item.role} profile ${item.profileId}`} style={{ ...muted(c), fontSize: 12, flexShrink: 1 }}>{item.role} · {item.profileId} · {describeRoutePolicy(item, policy.usage, formatLocalDateTime)}</Text>)}
+  return <View style={{ gap: space.xxs / 2 }}>{policy.profiles.map(item =>
+    <Text key={`${item.role}:${item.source}:${item.profileId}`} accessibilityLabel={`Routing policy for ${item.role} profile ${item.profileId}`} style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, flexShrink: 1 }}>{item.role} · {item.profileId} · {describeRoutePolicy(item, policy.usage, formatLocalDateTime)}</Text>)}
   </View>;
 }
 /**
@@ -143,11 +144,11 @@ export function NextSection({ next, loading, error, onRetry, busy, pool, profile
   const [showMore, setShowMore] = useState(false);
   if (!next) return <DetailSection title="What you can do" c={c}>
     {error
-      ? <View style={{ gap: 6 }}>
-        <Text accessibilityLabel={`Owner verbs could not be read: ${error}`} style={{ color: c.statusWarning, fontSize: 12, lineHeight: 17 }}>Owner verbs could not be read: {error}</Text>
+      ? <View style={{ gap: space.xs }}>
+        <Text accessibilityLabel={`Owner verbs could not be read: ${error}`} style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>Owner verbs could not be read: {error}</Text>
         <Button small c={c} text="Retry" label="Retry reading owner verbs" disabled={loading} onPress={onRetry} />
       </View>
-      : <Text accessibilityLabel="Reading owner verbs" style={{ ...muted(c), fontSize: 12 }}>{loading ? "Reading owner verbs…" : "Owner verbs are not loaded yet."}</Text>}
+      : <Text accessibilityLabel="Reading owner verbs" style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>{loading ? "Reading owner verbs…" : "Owner verbs are not loaded yet."}</Text>}
   </DetailSection>;
   const refusals = suggestedVerbRefusals(next);
   const forceVerbs = next.verbs.flatMap(verb => verb.forceArgs ? [{ ...verb, available: true, args: verb.forceArgs,
@@ -188,29 +189,29 @@ export function NextSection({ next, loading, error, onRetry, busy, pool, profile
     }).finally(() => setApplying(false));
   };
   return <DetailSection title="What you can do" c={c}>
-    {error && <Text accessibilityLabel={`Owner verbs may be stale: ${error}`} style={{ color: c.statusWarning, fontSize: 12, lineHeight: 17 }}>Refresh failed: {error}. Showing the last reading, which may be stale.</Text>}
-    {next.workerDemandStep && <Text style={{ ...muted(c), fontSize: 12 }}>Worker demand · {next.workerDemandStep}</Text>}
+    {error && <Text accessibilityLabel={`Owner verbs may be stale: ${error}`} style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>Refresh failed: {error}. Showing the last reading, which may be stale.</Text>}
+    {next.workerDemandStep && <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>Worker demand · {next.workerDemandStep}</Text>}
     <View style={row}>
       {actions.map(verb =>
         <Button key={verbKey(verb)} small c={c} text={verbText(verb)} label={verbText(verb)} hint={verb.note} selected={active === verbKey(verb)} disabled={busy || applying} onPress={() => select(verbKey(verb))} />)}
       {(plan.more.length + forceVerbs.length) > 0 &&
         <Button small c={c} text={showMore ? "Fewer" : `More (${plan.more.length + forceVerbs.length})`} label={showMore ? "Hide further owner verbs" : `Show ${plan.more.length + forceVerbs.length} further owner verbs`} selected={showMore} onPress={() => setShowMore(!showMore)} />}
     </View>
-    {!actions.length && <Text style={{ ...muted(c), fontSize: 12 }}>No owner verb applies to this task now.</Text>}
+    {!actions.length && <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>No owner verb applies to this task now.</Text>}
     {/* The stop's suggested verbs that do not apply, each with its refusal. The full reference stays in Technical. */}
-    {refusals.length > 0 && <View style={{ gap: 3 }}>
-      <Text style={{ ...muted(c), fontSize: 11, fontWeight: "600" }}>Suggested, not available now</Text>
+    {refusals.length > 0 && <View style={{ gap: space.xxs }}>
+      <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, fontWeight: "600" }}>Suggested, not available now</Text>
       {refusals.map(refusal => <Text key={refusal.verb} selectable
         accessibilityLabel={`${verbLabel(refusal.verb)} not available: ${refusal.reason}`}
-        style={{ ...muted(c), fontSize: 12, lineHeight: 17 }}>
+        style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>
         {verbLabel(refusal.verb)} · {refusal.reason}
       </Text>)}
     </View>}
-    {activeVerb && <View style={{ gap: 8 }}>
+    {activeVerb && <View style={{ gap: space.xs }}>
       {fill.map(field => <VerbField key={field} field={field} required={field !== "dependsOn"} value={values[field] ?? ""}
         onChange={value => setValues(current => ({ ...current, [field]: value }))}
         roleValue={values.role ?? (typeof activeVerb.args?.role === "string" ? activeVerb.args.role : "")} pool={pool} profiles={profiles} usage={next.routingPolicy?.usage ?? usage} availability={availability} c={c} />)}
-      {qualifying.length > 0 && <Text accessibilityLabel={`Qualifying fields: ${qualifying.join(", ")}`} style={{ ...muted(c), fontSize: 12, flexShrink: 1 }}>
+      {qualifying.length > 0 && <Text accessibilityLabel={`Qualifying fields: ${qualifying.join(", ")}`} style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, flexShrink: 1 }}>
         {partialQualification ? "Supply every qualifying field or none; a partial acceptance cannot be applied." : "Optional, all or none: leave them empty for the ordinary path. Supply every one only for the qualified acceptance this verb names."}
       </Text>}
       {qualifying.map(field => <VerbField key={field} field={field} required={false} value={values[field] ?? ""}

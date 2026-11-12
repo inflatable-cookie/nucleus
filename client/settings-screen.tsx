@@ -6,7 +6,7 @@ import { ScrollView, Text, View } from "react-native";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRpc, type BoardSurfaceProps } from "./shell";
 import { ActionButton, Button, StatusGlyph, Disclosure, DropdownSelect, Field, FieldCaption, LabelHelp, NumberStepper, Section, StopSlider, TabRow, controlText, muted, row, type Colors } from "./controls";
-import { control, space } from "./design";
+import { control, space, type as typeScale, radius } from "./design";
 import { PopoverHost } from "./popover";
 import { useBoardState } from "./board-state";
 import * as api from "../shared/contracts";
@@ -86,12 +86,12 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
     finally { setBusy(false); }
   }
   // Every popover on the screen renders in this host's layer, above the sections (Tom, 2026-11-08).
-  return <PopoverHost style={{ width: "100%" }}><View accessibilityLabel="Nucleus settings" onLayout={event => setWidth(event.nativeEvent.layout.width)} style={{ flex: 1, width: "100%", minWidth: 0, minHeight: 0, backgroundColor: c.surface0, paddingTop: inset, gap: 14 }}>
+  return <PopoverHost style={{ width: "100%" }}><View accessibilityLabel="Nucleus settings" onLayout={event => setWidth(event.nativeEvent.layout.width)} style={{ flex: 1, width: "100%", minWidth: 0, minHeight: 0, backgroundColor: c.surface0, paddingTop: inset, gap: space.md }}>
     {(error || stateQuery.error || state?.error) && <View style={{ ...row, flexWrap: "nowrap" }}><Text accessibilityRole="alert" style={{ color: c.statusDanger, flex: 1 }}>{error || String(stateQuery.error || state?.error)}</Text>
       {error && <ActionButton c={c} action="close" label="Dismiss error" onPress={() => setError("")} />}</View>}
     {/* Five short tabs fit one line at Paseo's 640–700 point settings column (nucleus#963). */}
     <TabRow c={c} label="Settings sections" nowrap tabs={settingsViews.map(view => ({ id: view.id, text: view.short, label: view.label }))} value={settingsTab} onChange={setSettingsTab} />
-    <View style={{flex:1, minWidth:0, minHeight:0, gap:12}}>
+    <View style={{flex:1, minWidth:0, minHeight:0, gap:space.sm}}>
     {settingsTab !== "backups" && (backupStale || backupError) &&
       <View style={row}>
         {backupError
@@ -283,9 +283,9 @@ function ProfileRow({ c, profile, board, catalog, catalogs, providerMap, directo
   }
   const availability = board ?? (catalog && providerMap ? { ...profile, ...profileAvailability(profile, catalog, providerMap) } : { ...profile, available: true, problem: "", supportedThinking: [] as string[] });
   const status = state ? profileRowStatus(availability, entry, state) : { problem: "" };
-  return <View style={{ borderBottomWidth: 1, borderBottomColor: c.border, paddingVertical: 9, gap: 8 }}>
+  return <View style={{ borderBottomWidth: 1, borderBottomColor: c.border, paddingVertical: space.xs, gap: space.xs }}>
     <View style={{ ...row, flexWrap: "nowrap" }}>
-      <Text style={{ flex: 1, minWidth: 0, color: c.foreground, fontWeight: "600", fontSize: 14 }}>{profile.name}</Text>
+      <Text style={{ flex: 1, minWidth: 0, color: c.foreground, fontWeight: "600", fontSize: typeScale.body.fontSize }}>{profile.name}</Text>
       {status.problem ? <StatusGlyph c={c} icon="TriangleAlert" color={c.statusWarning} text={status.problem} label={`${profile.name}: ${status.problem}`} /> : null}
       <Button matchField c={c} text={entry.enabled ? "On" : "Off"} selected={entry.enabled} disabled={busy || !state} label={`${entry.enabled ? "Disable" : "Enable"} ${profile.name}`} onPress={() => change({ enabled: !entry.enabled })} />
       <ActionButton c={c} action={editing ? "close" : "edit"} label={`${editing ? "Close" : "Edit"} ${profile.name}`} onPress={() => { void saver.current!.flush(); onEdit(); }} />
@@ -423,9 +423,9 @@ function ProfileEditor({ c, catalog, catalogs, providerMap, directory, projects,
   /** A slider field's label row: the name and its (?), then the chosen value at the right. */
   const sliderLabel = (label: string, help: string, value: string | null | undefined) => <View style={{ ...row, flexWrap: "nowrap" }}>
     <View style={{ flex: 1, minWidth: 0 }}><FieldCaption c={c} text={label} help={help} /></View>
-    <Text accessibilityLabel={`${label} value`} style={{ ...muted(c), fontSize: 12 }}>{value ? levelLabel(value) : "Unset"}</Text>
+    <Text accessibilityLabel={`${label} value`} style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>{value ? levelLabel(value) : "Unset"}</Text>
   </View>;
-  return <View accessibilityLabel={`${initial?.name ?? "New profile"} editor`} onLayout={event => setEditorWidth(event.nativeEvent.layout.width)} style={{ gap: 12, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface1 }}>
+  return <View accessibilityLabel={`${initial?.name ?? "New profile"} editor`} onLayout={event => setEditorWidth(event.nativeEvent.layout.width)} style={{ gap: space.sm, padding: space.sm, borderRadius: radius.card, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface1 }}>
     {/* Name shares its row with the card actions (Tom, 2026-11-08); the placeholder and accessible label carry "Name". */}
     <View accessibilityLabel="Profile name row" style={{ ...row, flexWrap: "nowrap" }}>
       <View style={{ flex: 1, minWidth: 0 }}><Field hideLabel c={c} label="Name" value={draft.name} onChange={next => applyIdentity({ name: next }, 600)} onBlur={() => void identitySaver.current!.flush()} placeholder="Name" /></View>
@@ -451,23 +451,23 @@ function ProfileEditor({ c, catalog, catalogs, providerMap, directory, projects,
     {optionRows.map(cells => <View key={cells.map(cell => cell.key).join("|")} accessibilityLabel="Model options row" style={{ ...pair, alignItems: "flex-end" }}>
       {cells.map(cell => <View key={cell.key} style={half}>{cell.node}</View>)}
     </View>)}
-    {differing.length > 0 && <View style={{ gap: 6 }}>
-      <Text accessibilityRole="alert" style={{ color: c.statusWarning, fontSize: 12, flexShrink: 1 }}>Feature values differ for {differing.length === 2 ? differing.join(" and ") : differing.join(", ")}.</Text>
+    {differing.length > 0 && <View style={{ gap: space.xs }}>
+      <Text accessibilityRole="alert" style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize, flexShrink: 1 }}>Feature values differ for {differing.length === 2 ? differing.join(" and ") : differing.join(", ")}.</Text>
       <Disclosure c={c} label="Choose which project to use" expanded={projectChoice} onToggle={() => setProjectChoice(open => !open)} />
       {projectChoice && <DropdownSelect label="Project" value={directory ?? ""}
         options={catalogs.map(read => ({ value: read.cwd, label: projectNameForPath(read.cwd, projects, repositories) }))}
         onChange={onChooseDirectory} c={c} />}
     </View>}
-    {availability && !availability.available && <Text accessibilityLabel="Profile availability preview" style={{ color: c.statusWarning, fontSize: 12 }}>{availability.problem}</Text>}
-    {entry && onChangePool && state && <View style={{ ...pair, alignItems: "flex-start" }}><View style={{ ...half, gap: 6 }}>
+    {availability && !availability.available && <Text accessibilityLabel="Profile availability preview" style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize }}>{availability.problem}</Text>}
+    {entry && onChangePool && state && <View style={{ ...pair, alignItems: "flex-start" }}><View style={{ ...half, gap: space.xs }}>
         {sliderLabel("Cost", "Each cost step down doubles this profile's share. Above the usage level's ceiling it needs a request. Unset ranks as medium and is never cost-gated.", entry.cost)}
         <StopSlider captions={false} c={c} a11yLabel="Cost" stops={COST_LEVELS} value={entry.cost ?? null} labelFor={levelLabel} stopLabel={cost => `Cost ${cost.replaceAll("_", " ")}`} onChange={cost => onChangePool({ cost: entry.cost === cost ? null : cost })} />
-      </View><View style={{ ...half, gap: 6 }}>
+      </View><View style={{ ...half, gap: space.xs }}>
         {sliderLabel("Capability", "Each run needs the task's complexity moved by its role and the usage level. Selection rotates among profiles at or above that. Frontier runs only on request below Maximum. Unset counts as medium.", entry.capability)}
         <StopSlider captions={false} c={c} a11yLabel="Capability" stops={PROFILE_CAPABILITY_LEVELS} unsetStop="medium" value={entry.capability ?? null} labelFor={levelLabel} stopLabel={level => `Capability ${level.replaceAll("_", " ")}`} onChange={level => onChangePool({ capability: entry.capability === level ? null : level })} />
       </View></View>}
-    {initial && confirmingRemove && onRemove && <View style={{ ...row, gap: 10, paddingTop: 8, borderTopWidth: 1, borderTopColor: c.border }}>
-        <Text style={{ color: c.statusWarning, fontSize: 12, flexShrink: 1 }}>Remove {initial.name}?</Text>
+    {initial && confirmingRemove && onRemove && <View style={{ ...row, gap: space.sm, paddingTop: space.xs, borderTopWidth: 1, borderTopColor: c.border }}>
+        <Text style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize, flexShrink: 1 }}>Remove {initial.name}?</Text>
         <Button small danger c={c} text="Remove profile" label={`Confirm removing ${initial.name}`} disabled={busy} onPress={() => void onRemove()} />
         <Button small c={c} text="Keep" label={`Keep ${initial.name}`} onPress={() => setConfirmingRemove(false)} />
       </View>}
@@ -591,10 +591,10 @@ function ProfilesPanel({ c, compact, inset, state, repositories, busy, savePool,
   // Profile and stale rows draw their own divider; a trailing loading or empty line does not.
   const profilesEndInRow = live.length > 0 || (stale.length > 0 && editor === "new" && !profilesQuery.isPending);
   return <ScrollView accessibilityLabel="Profiles page" style={{ flex: 1, minHeight: 0, width: compact ? "auto" : "100%", maxWidth: "100%" }} contentContainerStyle={{ paddingBottom: inset, width: "100%", maxWidth: 780 }}>
-    {refreshError && <Text accessibilityRole="alert" style={{ color: c.statusWarning, fontSize: 12 }}>Refresh failed: {refreshError}. The stored providers and models stay.</Text>}
-    {catalogQuery.error && <Text accessibilityRole="alert" style={{ color: c.statusWarning, fontSize: 12 }}>The host catalog could not be read: {failureText(catalogQuery.error)}</Text>}
-    {profilesQuery.error && <Text accessibilityRole="alert" style={{ color: c.statusWarning, fontSize: 12 }}>Could not read profiles: {failureText(profilesQuery.error)}</Text>}
-    {providerMapQuery.error && <Text accessibilityRole="alert" style={{ color: c.statusWarning, fontSize: 12 }}>Could not read the provider map: {failureText(providerMapQuery.error)}</Text>}
+    {refreshError && <Text accessibilityRole="alert" style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize }}>Refresh failed: {refreshError}. The stored providers and models stay.</Text>}
+    {catalogQuery.error && <Text accessibilityRole="alert" style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize }}>The host catalog could not be read: {failureText(catalogQuery.error)}</Text>}
+    {profilesQuery.error && <Text accessibilityRole="alert" style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize }}>Could not read profiles: {failureText(profilesQuery.error)}</Text>}
+    {providerMapQuery.error && <Text accessibilityRole="alert" style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize }}>Could not read the provider map: {failureText(providerMapQuery.error)}</Text>}
     <Section c={c} title="Profiles" label="Stored profiles" status={quietSaveStatus(actionStatus) || null} endsInRow={profilesEndInRow}
       description="A profile is a provider and model this host can run, and how Nucleus uses it for dispatch. Cost and capability sit in the editor."
       action={<View style={{ ...row, flexWrap: "nowrap" }}>
@@ -660,16 +660,16 @@ function ProviderMapEditor({ c, entries, providerMap, suggestion, placeholder, b
 }) {
   const [hostKey, setHostKey] = useState(suggestion?.hostKey ?? ""), [normalised, setNormalised] = useState(suggestion?.normalised ?? "");
   const valid = hostKey.trim().length > 0 && normalised.trim().length > 0;
-  return <View style={{ gap: 10 }}>
+  return <View style={{ gap: space.sm }}>
     {entries.map(([key, value]) => <View key={key} style={{ ...row, flexWrap: "nowrap" }}>
-      <Text style={{ color: c.foreground, flex: 1, minWidth: 0, fontSize: 13 }}>{key} → {value}</Text>
+      <Text style={{ color: c.foreground, flex: 1, minWidth: 0, fontSize: typeScale.body.fontSize }}>{key} → {value}</Text>
       <ActionButton c={c} action="remove" label={`Remove provider map entry ${key}`} disabled={busy}
         onPress={() => onSave(Object.fromEntries(entries.filter(([candidate]) => candidate !== key)))} />
     </View>)}
-    {suggestion && <Text accessibilityLabel="Provider map suggestion" style={{ ...muted(c), fontSize: 12 }}>
+    {suggestion && <Text accessibilityLabel="Provider map suggestion" style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
       Mapping {suggestion.hostKey} to {suggestion.normalised} makes {suggestion.profileName} available on {suggestion.hostId}.
     </Text>}
-    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
+    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.sm, alignItems: "flex-end" }}>
       <View style={{ flexGrow: 1, flexBasis: 180, minWidth: 0 }}><Field c={c} label="Host provider key" value={hostKey} onChange={setHostKey} placeholder={placeholder} /></View>
       <View style={{ flexGrow: 1, flexBasis: 180, minWidth: 0 }}><Field c={c} label="Normalised key" value={normalised} onChange={setNormalised} placeholder="openai" /></View>
       <ActionButton c={c} action="add" label="Add provider map entry" disabled={busy || !valid}
@@ -679,12 +679,12 @@ function ProviderMapEditor({ c, entries, providerMap, suggestion, placeholder, b
 }
 
 function StalePoolEntry({ c, entry, busy, onRemove }: { c: Colors; entry: PoolEntry; busy: boolean; onRemove: () => void }) {
-  return <View style={{ borderBottomWidth: 1, borderBottomColor: c.border, paddingVertical: 9, gap: 8 }}>
+  return <View style={{ borderBottomWidth: 1, borderBottomColor: c.border, paddingVertical: space.xs, gap: space.xs }}>
     <View style={{ ...row, flexWrap: "nowrap" }}>
-      <Text style={{ flex: 1, minWidth: 0, color: c.foreground, fontWeight: "600", fontSize: 14 }}>{entry.profileId}</Text>
+      <Text style={{ flex: 1, minWidth: 0, color: c.foreground, fontWeight: "600", fontSize: typeScale.body.fontSize }}>{entry.profileId}</Text>
       <ActionButton c={c} action="remove" label={`Remove ${entry.profileId}`} disabled={busy} onPress={onRemove} />
     </View>
-    <Text style={{ color: c.statusWarning, fontSize: 12 }}>This profile is gone</Text>
+    <Text style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize }}>This profile is gone</Text>
   </View>;
 }
 
@@ -696,13 +696,13 @@ function Availability({ c, group, state, busy, save }: { c: Colors; group: strin
   const current = state.availability.find(a => a.group === group);
   const [editing, setEditing] = useState(false), [reason, setReason] = useState(current?.reason ?? ""), [retryAt, setRetryAt] = useState(current?.retryAt ?? "");
   const paused = Boolean(activeGroupLimit(state.availability, group));
-  return <View style={{ gap: 8, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: c.border }}>
+  return <View style={{ gap: space.xs, paddingVertical: space.xs, borderBottomWidth: 1, borderBottomColor: c.border }}>
     <View style={row}><Text style={{ color: c.foreground, fontWeight: "600", flex: 1 }}>{group}</Text>
-      <Text style={{ color: paused ? c.statusWarning : c.foregroundMuted, fontSize: 12 }}>{paused ? current?.retryAt ? `Unavailable until ${new Date(current.retryAt).toLocaleString()}` : "Unavailable" : "Available"}</Text>
+      <Text style={{ color: paused ? c.statusWarning : c.foregroundMuted, fontSize: typeScale.metadata.fontSize }}>{paused ? current?.retryAt ? `Unavailable until ${new Date(current.retryAt).toLocaleString()}` : "Unavailable" : "Available"}</Text>
       {paused && <Button small c={c} text={`Reset ${group}`} disabled={busy} onPress={() => void save({ group, unavailable: false, reason: "Reset by operator", retryAt: null })} />}
       <ActionButton c={c} action={editing ? "close" : paused ? "edit" : "pause"} label={`${editing ? "Close" : paused ? "Edit" : "Pause"} ${group}`} onPress={() => setEditing(!editing)} /></View>
-    {editing && <View style={{ gap: 8, padding: 12, backgroundColor: c.surface1, borderRadius: 7 }}>
-      <Text style={{ ...muted(c), fontSize: 12 }}>{`${state.recentAssignments[group] ?? 0} recent · ${state.assignments[group] ?? 0} total`}</Text>
+    {editing && <View style={{ gap: space.xs, padding: space.sm, backgroundColor: c.surface1, borderRadius: radius.control }}>
+      <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>{`${state.recentAssignments[group] ?? 0} recent · ${state.assignments[group] ?? 0} total`}</Text>
       {paused && current?.reason && <Text style={{ color: c.statusWarning }}>Reason: {current.reason}</Text>}
       <Field c={c} label="Reason" value={reason} onChange={setReason} placeholder="Usage limit reached" />
       <Field c={c} label="Retry at" value={retryAt} onChange={setRetryAt} placeholder="2026-09-12T09:00:00Z" />

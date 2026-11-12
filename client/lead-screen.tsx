@@ -374,7 +374,7 @@ export function LeadScreen({ read, actions, readVersion, compact, busy, lane, c,
         </View>}
         {Boolean(lead.reopens.length) && <View accessibilityLabel="Lead reopens" style={{ gap: space.xxs }}>
           <Text style={sectionHeader}>Reopens</Text>
-          {lead.reopens.map((episode, index) => <View key={`${episode.at}:${index}`} style={{ gap: 2 }}>
+          {lead.reopens.map((episode, index) => <View key={`${episode.at}:${index}`} style={{ gap: space.xxs / 2 }}>
             <Text selectable style={meta}>Reopened by {episode.by} · {formatLocalDateTime(episode.at)} · {episode.reason}</Text>
             {episode.drop.reason && <Text selectable style={meta}>Dropped before that: {episode.drop.reason}</Text>}
           </View>)}
@@ -382,7 +382,7 @@ export function LeadScreen({ read, actions, readVersion, compact, busy, lane, c,
         <View accessibilityLabel="Lead versions" style={{ gap: space.xs }}>
           <Text style={sectionHeader}>Versions</Text>
           {hidden > 0 && <Text style={meta}>Showing the latest {shown.length} of {versions.length} versions.</Text>}
-          {shown.map(version => <View key={version.version} style={{ gap: 2 }}>
+          {shown.map(version => <View key={version.version} style={{ gap: space.xxs / 2 }}>
             <Text style={text}>v{version.version} · {version.author} · {formatLocalDateTime(version.createdAt)}{version.version === lead.version ? " · current" : ""}</Text>
             <Text selectable style={meta}>{version.digest ?? "No digest"} · {checkLabel(version.check)} · {version.approval ? `approved for version ${version.approval.version}` : "unapproved"}</Text>
           </View>)}

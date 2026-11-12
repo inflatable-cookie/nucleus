@@ -10,7 +10,7 @@ import * as api from "../shared/contracts";
 import type { DecisionView } from "../shared/contracts";
 import { decisionProjectLabel } from "../shared/decision-project";
 import { Button, ConfirmReplaceAnswer, muted, row } from "./controls";
-import { radius, roles, touchSlop, touchTarget, type as typeScale } from "./design";
+import { radius, roles, touchSlop, touchTarget, type as typeScale, space } from "./design";
 
 /**
  * Spec 032: while any decision is open, every thread's composer shows a pill
@@ -122,24 +122,24 @@ export function decisionPillPopover({ client, boardPanelId, known, projectOf }: 
     // tall, scrolling its content), so the popover fills that box rather than a
     // width of its own, which the host clipped (Tom, 2026-10-21).
     return <View style={{ width: "100%" }}>
-      <View style={{ ...row, paddingBottom: 6 }}>
+      <View style={{ ...row, paddingBottom: space.xs }}>
         <Icon name={PILL_ICON} size={14} color={c.foregroundMuted} />
         <Text style={{ color: c.foreground, fontSize: typeScale.body.fontSize, fontWeight: "600" }}>Operator decisions</Text>
       </View>
-      {project && <View accessibilityRole="tablist" style={{ ...row, gap: 6, paddingBottom: 8 }}>
+      {project && <View accessibilityRole="tablist" style={{ ...row, gap: space.xs, paddingBottom: space.xs }}>
         {([["project", `${project.name} (${(open ?? []).filter(decision => decision.projectKey === project.key).length})`], ["all", `All (${(open ?? []).length})`]] as const).map(([value, text]) =>
           <Pressable key={value} accessibilityRole="tab" accessibilityLabel={`Show ${value === "all" ? "all decisions" : `${project.name} decisions`}`} accessibilityState={{ selected: scope === value }}
             onPress={() => setScope(value)}
-            hitSlop={touchSlop(26)} style={{ borderWidth: 1, borderColor: scope === value ? c.accent : c.border, borderRadius: radius.control, paddingHorizontal: 10, paddingVertical: 4, backgroundColor: scope === value ? c.surface2 : c.surface1 }}>
+            hitSlop={touchSlop(26)} style={{ borderWidth: 1, borderColor: scope === value ? c.accent : c.border, borderRadius: radius.control, paddingHorizontal: space.sm, paddingVertical: space.xxs, backgroundColor: scope === value ? c.surface2 : c.surface1 }}>
             <Text style={{ color: scope === value ? c.foreground : c.foregroundMuted, fontSize: typeScale.metadata.fontSize }}>{text}</Text>
           </Pressable>)}
       </View>}
-      {loadError !== "" && <View style={{ ...row, paddingBottom: 6 }}>
+      {loadError !== "" && <View style={{ ...row, paddingBottom: space.xs }}>
         <Text accessibilityRole="alert" style={{ color: roles(c).danger, fontSize: typeScale.metadata.fontSize, flexShrink: 1 }}>Could not load decisions: {loadError}. The list may be out of date.</Text>
         <Button small c={c} text="Retry" label="Retry loading open decisions" disabled={busy || withdrawing !== null} onPress={() => setReadToken(token => token + 1)} />
       </View>}
-      {answerError !== "" && <Text accessibilityRole="alert" style={{ color: roles(c).danger, fontSize: typeScale.metadata.fontSize, paddingBottom: 6 }}>Answer not confirmed: {answerError}. Check the decision before answering again; your draft is kept.</Text>}
-      {withdrawError !== "" && <Text accessibilityRole="alert" style={{ color: roles(c).danger, fontSize: typeScale.metadata.fontSize, paddingBottom: 6 }}>Withdraw not confirmed: {withdrawError}. Check the decision before trying again.</Text>}
+      {answerError !== "" && <Text accessibilityRole="alert" style={{ color: roles(c).danger, fontSize: typeScale.metadata.fontSize, paddingBottom: space.xs }}>Answer not confirmed: {answerError}. Check the decision before answering again; your draft is kept.</Text>}
+      {withdrawError !== "" && <Text accessibilityRole="alert" style={{ color: roles(c).danger, fontSize: typeScale.metadata.fontSize, paddingBottom: space.xs }}>Withdraw not confirmed: {withdrawError}. Check the decision before trying again.</Text>}
       {decisions === null && loadError === "" && <Text style={muted(c)}>Loading decisions…</Text>}
       {decisions?.length === 0 && <Text style={muted(c)}>{scope === "project" && project ? `No open decisions for ${project.name}.` : "No open decisions."}</Text>}
       <ConfirmReplaceAnswer c={c} option={pendingOption?.option ?? null} onCancel={() => setPendingOption(null)}
@@ -154,41 +154,41 @@ export function decisionPillPopover({ client, boardPanelId, known, projectOf }: 
           const details = [...new Set([decision.question.length > 140 && decision.question !== headline ? `Full question: ${decision.question}` : null,
             decision.details, decision.context, decision.recommendation].filter((value): value is string => Boolean(value)))].join("\n\n");
           const references = decision.overtakenBy ?? [];
-          return <View key={decision.id} style={{ gap: 6, paddingBottom: 12, marginBottom: 12, borderBottomWidth: 1, borderBottomColor: c.border }}>
+          return <View key={decision.id} style={{ gap: space.xs, paddingBottom: space.sm, marginBottom: space.sm, borderBottomWidth: 1, borderBottomColor: c.border }}>
           <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>{decisionProjectLabel(decision)}</Text>
           {decision.links.tasks.length > 0 && <Text numberOfLines={1} style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>Task · {decision.links.tasks.join(", ")}</Text>}
-          <Text selectable style={{ color: c.foreground, fontSize: typeScale.section.fontSize, fontWeight: "600", lineHeight: 21 }}>{headline}</Text>
+          <Text selectable style={{ color: c.foreground, fontSize: typeScale.section.fontSize, fontWeight: "600", lineHeight: typeScale.section.lineHeight }}>{headline}</Text>
           {decision.stale && <Text style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize }}>Stale: every linked task, lead and papercut has finished.</Text>}
-          {references.length > 0 && <View style={{ gap: 4, padding: 8, borderWidth: 1, borderColor: c.statusWarning, borderRadius: 7 }}>
+          {references.length > 0 && <View style={{ gap: space.xxs, padding: space.xs, borderWidth: 1, borderColor: c.statusWarning, borderRadius: radius.control }}>
             <Text style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize, fontWeight: "600" }}>Probably overtaken</Text>
             <Pressable accessibilityRole="link" accessibilityLabel={`Open citing ruling: ${references.at(-1)!.label}`}
               onPress={() => { client.openPanel(boardPanelId, { workspaceId }); close(); }}>
-              <Text numberOfLines={2} style={{ color: c.accent, fontSize: typeScale.metadata.fontSize, lineHeight: 17 }}>{references.at(-1)!.label}</Text>
+              <Text numberOfLines={2} style={{ color: c.accent, fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>{references.at(-1)!.label}</Text>
             </Pressable>
             <Button small c={c} text="Withdraw" disabled={withdrawing !== null} onPress={() => withdraw(decision, references.at(-1)!)} />
           </View>}
-          {choices.length > 0 && <View style={{ gap: 6, paddingTop: 2 }}>{choices.map(choice => {
+          {choices.length > 0 && <View style={{ gap: space.xs, paddingTop: space.xxs / 2 }}>{choices.map(choice => {
             const chosen = (drafts[decision.id] ?? "") === choice.label;
             const isRecommendedChoice = choice.label === recommended;
             return <Pressable key={choice.label} accessibilityRole="button" accessibilityLabel={`Use option: ${choice.label}${isRecommendedChoice ? ", recommended" : ""}`} accessibilityState={{ selected: chosen }}
               onPress={() => { const draft = drafts[decision.id] ?? ""; if (draft.trim() && draft !== choice.label) setPendingOption({ id: decision.id, option: choice.label }); else setDrafts(current => ({ ...current, [decision.id]: choice.label })); }}
-              style={{ ...row, flexWrap: "nowrap", gap: 8, minHeight: touchTarget, borderWidth: 1, borderColor: chosen ? c.accent : c.border, borderRadius: radius.control, paddingHorizontal: 10, paddingVertical: 8, backgroundColor: c.surface1 }}>
+              style={{ ...row, flexWrap: "nowrap", gap: space.xs, minHeight: touchTarget, borderWidth: 1, borderColor: chosen ? c.accent : c.border, borderRadius: radius.control, paddingHorizontal: space.sm, paddingVertical: space.xs, backgroundColor: c.surface1 }}>
               <Icon name={chosen ? "CircleCheck" : "Circle"} size={14} color={chosen ? c.accent : c.foregroundMuted} />
               <Text style={{ color: c.foreground, fontSize: typeScale.body.fontSize, lineHeight: typeScale.body.lineHeight, flex: 1 }}>{isRecommendedChoice ? "★ Recommended · " : ""}{choice.label}{choice.consequence ? ` — ${choice.consequence}` : ""}</Text>
             </Pressable>;
           })}</View>}
-          {details && <View style={{ gap: 4 }}>
+          {details && <View style={{ gap: space.xxs }}>
             <Pressable accessibilityRole="button" hitSlop={touchSlop(22)} accessibilityLabel={`${detailsOpen[decision.id] ? "Hide" : "Show"} details for ${headline}`}
               accessibilityState={{ expanded: Boolean(detailsOpen[decision.id]) }} onPress={() => setDetailsOpen(current => ({ ...current, [decision.id]: !current[decision.id] }))}>
               <Text style={{ color: c.accent, fontSize: typeScale.metadata.fontSize, fontWeight: "600" }}>{detailsOpen[decision.id] ? "Hide details" : "Details"}</Text>
             </Pressable>
-            {detailsOpen[decision.id] && <Text selectable style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, lineHeight: 18 }}>{details}</Text>}
+            {detailsOpen[decision.id] && <Text selectable style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>{details}</Text>}
           </View>}
-          <View style={{ ...row, flexWrap: "nowrap", alignItems: "flex-end", gap: 8 }}>
+          <View style={{ ...row, flexWrap: "nowrap", alignItems: "flex-end", gap: space.xs }}>
             <TextInput accessibilityLabel={`Answer box: ${headline}`} value={drafts[decision.id] ?? ""}
               onChangeText={value => setDrafts(current => ({ ...current, [decision.id]: value }))}
               placeholder={choices.length ? "Pick an option above or write your answer" : "The operator's answer"} placeholderTextColor={c.foregroundMuted} multiline
-              style={{ flex: 1, color: c.foreground, backgroundColor: c.surface1, borderColor: c.border, borderWidth: 1, borderRadius: radius.control, padding: 8, fontSize: typeScale.body.fontSize, minHeight: touchTarget }} />
+              style={{ flex: 1, color: c.foreground, backgroundColor: c.surface1, borderColor: c.border, borderWidth: 1, borderRadius: radius.control, padding: space.xs, fontSize: typeScale.body.fontSize, minHeight: touchTarget }} />
             <Button small c={c} text="Answer" label={`Answer decision: ${headline}`}
               disabled={busy || (drafts[decision.id] ?? "").trim() === ""} hint={busy ? "An answer is already being sent" : (drafts[decision.id] ?? "").trim() === "" ? "Write an answer or pick an option first" : undefined}
               onPress={() => answer(decision)} />
@@ -197,7 +197,7 @@ export function decisionPillPopover({ client, boardPanelId, known, projectOf }: 
         })}
       </View>
       <Pressable accessibilityRole="link" accessibilityLabel="Open the decisions board" onPress={() => { client.openPanel(boardPanelId, { workspaceId }); close(); }}
-        style={{ ...row, paddingTop: 8, gap: 6, minHeight: touchTarget }}>
+        style={{ ...row, paddingTop: space.xs, gap: space.xs, minHeight: touchTarget }}>
         <Icon name="LayoutDashboard" size={14} color={c.accent} />
         <Text style={{ color: c.accent, fontSize: typeScale.body.fontSize }}>Open the board view</Text>
       </Pressable>

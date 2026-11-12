@@ -5,6 +5,7 @@ import * as api from "../../shared/contracts";
 import { useTaskDraft, type TaskDrafts } from "./drafts";
 import type { BoardAct } from "./parts";
 import type { TaskDetailRead } from "./task-dialog";
+import { type as typeScale, space } from "../design";
 
 export function TechnicalDisposition({ task, drafts, busy, pendingOperation, act, c }: {
   task: TaskDetailRead["task"];
@@ -37,10 +38,10 @@ export function TechnicalDisposition({ task, drafts, busy, pendingOperation, act
         }
         c={c}
       >
-        <Text style={{ color: c.foreground, fontSize: 13 }}>
+        <Text style={{ color: c.foreground, fontSize: typeScale.body.fontSize }}>
           {task.disposition.reason}
         </Text>
-        <Text style={{ ...muted(c), fontSize: 12 }}>
+        <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
           Requested by {task.disposition.requestedBy} ·{" "}
           {task.disposition.kind} · {task.disposition.status}
           {task.disposition.completedAt
@@ -48,14 +49,14 @@ export function TechnicalDisposition({ task, drafts, busy, pendingOperation, act
             : ""}
         </Text>
         {task.disposition.replacementTaskId && (
-          <Text style={{ ...muted(c), fontSize: 12 }}>
+          <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
             Replacement: {task.disposition.replacementTaskId}
             {task.disposition.replacementBranch
               ? ` · branch ${task.disposition.replacementBranch}`
               : ""}
           </Text>
         )}
-        <Text style={{ ...muted(c), fontSize: 12 }}>
+        <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
           Work:{" "}
           {task.disposition.workDisposition.replaceAll(
             "_",
@@ -69,20 +70,20 @@ export function TechnicalDisposition({ task, drafts, busy, pendingOperation, act
         </Text>
         {task.disposition.attention && (
           <Text
-            style={{ color: c.statusWarning, fontSize: 12 }}
+            style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize }}
           >
             {task.disposition.attention}
           </Text>
         )}
         {task.disposition.status === "draining" && (
-          <Text style={{ ...muted(c), fontSize: 12 }}>
+          <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
             The worker turn was interrupted and is still
             stopping.
           </Text>
         )}
         {task.disposition.postDispositionRefs.length > 0 && (
           <Text
-            style={{ color: c.statusWarning, fontSize: 12 }}
+            style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize }}
           >
             Refs pushed after disposition:{" "}
             {task.disposition.postDispositionRefs
@@ -94,7 +95,7 @@ export function TechnicalDisposition({ task, drafts, busy, pendingOperation, act
           </Text>
         )}
         {task.disposition.effects.length > 0 && (
-          <Text style={{ ...muted(c), fontSize: 12 }}>
+          <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
             {
               task.disposition.effects.filter(
                 (effect) => effect.result,
@@ -105,8 +106,8 @@ export function TechnicalDisposition({ task, drafts, busy, pendingOperation, act
           </Text>
         )}
         {canWithdrawCancellation && (
-          <View style={{ gap: 6, marginTop: 4 }}>
-            <Text style={{ ...muted(c), fontSize: 12 }}>
+          <View style={{ gap: space.xs, marginTop: space.xxs }}>
+            <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
               You can withdraw this cancellation while
               thread-stop requests are pending, or while its
               disposition is parked in needs attention.
@@ -147,7 +148,7 @@ export function TechnicalDisposition({ task, drafts, busy, pendingOperation, act
       !task.disposition &&
       !["queued", "cancelled", "done"].includes(task.phase) && (
         <DetailSection title="Cancel or supersede" c={c}>
-          <Text style={{ ...muted(c), fontSize: 12 }}>
+          <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
             One versioned operator action. The fence persists
             before any stop or archive request; ordinary
             recovery and relaunch stop while it is active. Only
@@ -236,7 +237,7 @@ export function TechnicalDisposition({ task, drafts, busy, pendingOperation, act
       )}
     {escalatedEpisode && task && (
       <DetailSection title="Answered escalation" c={c}>
-        <Text style={{ ...muted(c), fontSize: 12 }}>
+        <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
           Any owner verb in Next answers the escalation with its
           reason. When nothing else applies, an owner restart
           with the answer as its reason closes it: the escalated

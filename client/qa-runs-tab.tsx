@@ -2,7 +2,7 @@ import { errorText } from "./error-text";
 import React, { useEffect, useMemo, useState } from "react";
 import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { ActionButton, Button, Disclosure, TextLink, controlFrame, controlText, muted, row, type Colors } from "./controls";
-import { overlay, radius, touchTarget, type as typeScale } from "./design";
+import { overlay, radius, touchTarget, type as typeScale, space } from "./design";
 import { canRetryTeardown, ProjectQaFailures, ProjectQaLogWriteErrors } from "./planning-panel";
 import { formatTelemetryDuration } from "../shared/telemetry";
 import { scopeContains } from "../shared/project-scope";
@@ -119,7 +119,7 @@ function badgeColor(label: string, c: Colors): string {
 
 function OutcomeBadge({ label, c }: { label: string; c: Colors }) {
   const color = badgeColor(label, c);
-  return <View accessible accessibilityLabel={`Outcome ${label}`} style={{ borderRadius: 12, borderWidth: 1, borderColor: color, paddingHorizontal: 8, paddingVertical: 3 }}>
+  return <View accessible accessibilityLabel={`Outcome ${label}`} style={{ borderRadius: radius.control, borderWidth: 1, borderColor: color, paddingHorizontal: space.xs, paddingVertical: space.xxs }}>
     <Text style={{ color, fontSize: typeScale.metadata.fontSize, fontWeight: "600" }}>{label}</Text>
   </View>;
 }
@@ -196,12 +196,12 @@ function RunRow({ row, now, onSelect, onOpenTask, onRelease, c }: {
   const escapedCount = row.run.settlement?.result?.escapedDescendants.length ?? 0;
   const escapedHeld = escapedCount > 0 && !row.run.escapedDescendantsProvenDeadAt;
 
-  return <View accessibilityLabel={`QA run row ${row.run.id}`} style={{ gap: 5, paddingVertical: 9, borderTopWidth: 1, borderTopColor: c.border }}>
-    <Pressable accessibilityRole="button" accessibilityLabel={`${row.project?.name ?? "Unknown project"}, ${badge}, ${row.kind}, ${accessibleResult}, Open QA run details`} onPress={onSelect} style={{ gap: 5 }}>
+  return <View accessibilityLabel={`QA run row ${row.run.id}`} style={{ gap: space.xxs, paddingVertical: space.xs, borderTopWidth: 1, borderTopColor: c.border }}>
+    <Pressable accessibilityRole="button" accessibilityLabel={`${row.project?.name ?? "Unknown project"}, ${badge}, ${row.kind}, ${accessibleResult}, Open QA run details`} onPress={onSelect} style={{ gap: space.xxs }}>
       {outcome === "Failed" ? <Text accessibilityLabel={`Failure summary for ${row.run.id}`} numberOfLines={2} style={{ color: c.statusDanger, fontWeight: "600", fontSize: typeScale.body.fontSize }}>
         {failureSummary(row)} · {row.project?.name ?? "Unknown project"}
       </Text> : <Text numberOfLines={1} style={{ color: c.foreground, fontWeight: "600", fontSize: typeScale.body.fontSize }}>{row.project?.name ?? "Unknown project"}</Text>}
-      <View style={{ ...rowStyle, gap: 8 }}>
+      <View style={{ ...rowStyle, gap: space.xs }}>
         <Text style={{ color: c.foregroundMuted, fontSize: typeScale.metadata.fontSize }}>{activityText(row, now)}</Text>
         <OutcomeBadge label={badge} c={c} />
       </View>
@@ -219,7 +219,7 @@ function RunRow({ row, now, onSelect, onOpenTask, onRelease, c }: {
   </View>;
 }
 
-const rowStyle = { flexDirection: "row" as const, flexWrap: "wrap" as const, alignItems: "center" as const, gap: 8 };
+const rowStyle = { flexDirection: "row" as const, flexWrap: "wrap" as const, alignItems: "center" as const, gap: space.xs };
 
 function RunDetail({ row, busy, onClose, onCancel, onRetryTeardown, c }: {
   row: QaRunRow; busy: boolean; onClose: () => void; onCancel: (id: string, reason: string) => void;
@@ -233,20 +233,20 @@ function RunDetail({ row, busy, onClose, onCancel, onRetryTeardown, c }: {
   const canCancel = Boolean(qa && (qa.state === "queued" || qa.state === "running"));
   const steps = qa?.steps ?? [];
   return <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-    <View style={{ flex: 1, justifyContent: "center", padding: 16, backgroundColor: overlay.scrim }}>
+    <View style={{ flex: 1, justifyContent: "center", padding: space.md, backgroundColor: overlay.scrim }}>
       <Pressable accessibilityRole="button" accessibilityLabel="Dismiss QA run detail backdrop" onPress={onClose} style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 }} />
       <View accessibilityViewIsModal accessibilityLabel={`QA run detail ${run.id}`} style={{ width: "100%", maxWidth: 720, maxHeight: "90%", alignSelf: "center", borderRadius: radius.panel, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface0, overflow: "hidden" }}>
-        <View style={{ ...rowStyle, justifyContent: "space-between", padding: 14, borderBottomWidth: 1, borderBottomColor: c.border }}>
-          <View style={{ flex: 1, gap: 4 }}>
+        <View style={{ ...rowStyle, justifyContent: "space-between", padding: space.md, borderBottomWidth: 1, borderBottomColor: c.border }}>
+          <View style={{ flex: 1, gap: space.xxs }}>
             <Text accessibilityRole="header" style={{ color: c.foreground, fontSize: typeScale.page.fontSize, fontWeight: "600" }}>{row.project?.name ?? "Unknown project"} · {row.kind}</Text>
             <Text style={muted(c)}>{rowState(row)} · Commit {row.commit?.slice(0, 12) ?? "not recorded"}</Text>
           </View>
           <ActionButton c={c} action="close" label="Close QA run detail" onPress={onClose} />
         </View>
-        <ScrollView contentContainerStyle={{ gap: 12, padding: 14 }}>
-          <View accessibilityLabel="QA run steps" style={{ gap: 5 }}>
+        <ScrollView contentContainerStyle={{ gap: space.sm, padding: space.md }}>
+          <View accessibilityLabel="QA run steps" style={{ gap: space.xxs }}>
             <Text accessibilityRole="header" style={{ color: c.foreground, fontWeight: "600" }}>Steps</Text>
-            {steps.map(step => <View key={step.name} style={{ gap: 2, paddingTop: 5, borderTopWidth: 1, borderTopColor: c.border }}>
+            {steps.map(step => <View key={step.name} style={{ gap: space.xxs / 2, paddingTop: space.xxs, borderTopWidth: 1, borderTopColor: c.border }}>
               <Text style={{ color: c.foreground, fontSize: typeScale.metadata.fontSize, fontWeight: "600" }}>{step.name} · {step.timedOut ? "timed out" : step.signal ?? (step.exitCode === 0 ? "passed" : `exit ${step.exitCode ?? "—"}`)}{step.wallMs === undefined ? "" : ` · ${formatTelemetryDuration(step.wallMs)}`}</Text>
               {step.stderrTail && <Text selectable style={{ color: c.foregroundMuted, fontSize: typeScale.metadata.fontSize }}>stderr · {step.stderrTail}</Text>}
               {step.stdoutTail && <Text selectable style={{ color: c.foregroundMuted, fontSize: typeScale.metadata.fontSize }}>stdout · {step.stdoutTail}</Text>}
@@ -255,7 +255,7 @@ function RunDetail({ row, busy, onClose, onCancel, onRetryTeardown, c }: {
             {qa && <ProjectQaLogWriteErrors run={qa} c={c} label={`QA log-write errors for run ${run.id}`} />}
             {qa && <ProjectQaFailures run={qa} c={c} label={`QA failures for run ${run.id}`} />}
           </View>
-          <View accessibilityLabel="QA run settlement" style={{ gap: 4 }}>
+          <View accessibilityLabel="QA run settlement" style={{ gap: space.xxs }}>
             <Text accessibilityRole="header" style={{ color: c.foreground, fontWeight: "600" }}>Settlement</Text>
             <Text style={muted(c)}>Outcome · {settlement?.outcome ?? runOutcome(row) ?? run.state}</Text>
             <Text style={muted(c)}>Exit · {settlement?.result?.exitCode ?? "—"}{settlement?.result?.signal ? ` · ${settlement.result.signal}` : ""}</Text>
@@ -266,9 +266,9 @@ function RunDetail({ row, busy, onClose, onCancel, onRetryTeardown, c }: {
             <Text style={muted(c)}>Capacity · {run.capacityReleasedAt ? `released ${run.capacityReleasedAt}${run.capacityReleaseReason ? ` · ${run.capacityReleaseReason}` : ""}` : hostRunHoldsCapacity(run) ? "retained · operator release required" : "released or not held"}</Text>
           </View>
           <Disclosure c={c} label="Diagnostics: identity, host process and output" expanded={diagnosticsOpen} onToggle={() => setDiagnosticsOpen(!diagnosticsOpen)} />
-          {diagnosticsOpen && <View accessibilityLabel="QA run diagnostics" style={{ gap: 12 }}>
+          {diagnosticsOpen && <View accessibilityLabel="QA run diagnostics" style={{ gap: space.sm }}>
           {qa?.outputTail && <Text selectable accessibilityLabel="QA output tail" style={{ color: c.foregroundMuted, fontSize: typeScale.metadata.fontSize }}>{qa.outputTail}</Text>}
-          <View accessibilityLabel="QA run identity" style={{ gap: 4 }}>
+          <View accessibilityLabel="QA run identity" style={{ gap: space.xxs }}>
             <Text accessibilityRole="header" style={{ color: c.foreground, fontWeight: "600" }}>Caller and host identity</Text>
             <Text selectable style={muted(c)}>Caller · {run.caller}</Text>
             <Text selectable style={muted(c)}>Run · {run.id} · epoch {run.epoch}</Text>
@@ -281,7 +281,7 @@ function RunDetail({ row, busy, onClose, onCancel, onRetryTeardown, c }: {
           <View style={rowStyle}>
             {canCancel && <Button small c={c} text="Cancel QA" label={`Cancel QA run ${run.id}`} disabled={busy} onPress={() => onCancel(run.id, `Cancelled from QA runs for ${row.project?.name ?? "project"}`)} />}
           </View>
-          {qa && canRetryTeardown(qa) && <View style={{ gap: 5 }}>
+          {qa && canRetryTeardown(qa) && <View style={{ gap: space.xxs }}>
             <Text style={muted(c)}>Teardown failed. Its QA result is kept; a retry runs only teardown.</Text>
             <View style={rowStyle}>
               <TextInput accessibilityLabel={`Teardown retry reason for run ${run.id}`} maxLength={4000} value={retryReason} onChangeText={setRetryReason}
@@ -329,25 +329,25 @@ export function QaRunsTab({ runs, qaRuns, accounting, projects, tasks, selectedP
   const launchProjects = projects.filter(project => selectedProjects.length ? selectedProjects.includes(project.key) : project.visibility !== "parked").sort((a, b) => a.name.localeCompare(b.name));
 
   return <View accessibilityLabel="QA runs" style={{ flex: 1, minHeight: 0 }}>
-    <ScrollView style={{ flex: 1, minHeight: 0 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24, gap: 14 }}>
+    <ScrollView style={{ flex: 1, minHeight: 0 }} contentContainerStyle={{ paddingHorizontal: space.md, paddingBottom: space.lg, gap: space.md }}>
       <View style={{ ...rowStyle, justifyContent: "space-between" }}>
         <Button c={c} text={fence ? "QA fenced" : "Run QA"} label="Run QA" disabled={busy || !launchProjects.length || Boolean(fence)} onPress={() => setPickerOpen(true)} />
-        <Pressable accessibilityRole="switch" accessibilityLabel="Failed only" accessibilityState={{ checked: failedOnly }} onPress={() => setFailedOnly(!failedOnly)} style={{ minHeight: touchTarget, flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 8 }}>
-          <View style={{ width: 30, height: 18, borderRadius: 9, padding: 2, backgroundColor: failedOnly ? c.accent : c.surface2, alignItems: failedOnly ? "flex-end" : "flex-start" }}>
-            <View style={{ width: 14, height: 14, borderRadius: 7, backgroundColor: failedOnly ? c.accentForeground : c.foregroundMuted }} />
+        <Pressable accessibilityRole="switch" accessibilityLabel="Failed only" accessibilityState={{ checked: failedOnly }} onPress={() => setFailedOnly(!failedOnly)} style={{ minHeight: touchTarget, flexDirection: "row", alignItems: "center", gap: space.xs, paddingHorizontal: space.xs }}>
+          <View style={{ width: 30, height: 18, borderRadius: radius.control, padding: space.xxs / 2, backgroundColor: failedOnly ? c.accent : c.surface2, alignItems: failedOnly ? "flex-end" : "flex-start" }}>
+            <View style={{ width: 14, height: 14, borderRadius: radius.control, backgroundColor: failedOnly ? c.accentForeground : c.foregroundMuted }} />
           </View><Text style={{ color: c.foreground, fontSize: typeScale.body.fontSize }}>Failed only</Text>
         </Pressable>
       </View>
       {fence && <QaFenceNotice fence={fence} inventory={fenceInventory} c={c} />}
       {loadError && <Text accessibilityRole="alert" style={{ color: c.statusDanger, fontSize: typeScale.metadata.fontSize }}>Could not load QA runs: {loadError}. The list may be out of date.</Text>}
       {loading && <Text style={muted(c)}>Loading QA runs…</Text>}
-      <View accessibilityLabel="Now" style={{ gap: 2 }}>
+      <View accessibilityLabel="Now" style={{ gap: space.xxs / 2 }}>
         <Text accessibilityRole="header" style={{ color: c.foreground, fontSize: typeScale.section.fontSize, fontWeight: "600" }}>Now</Text>
         {accounting?.notice && <Text accessibilityRole="alert" style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize }}>{accounting.notice}</Text>}
         {nowRows.map(row => <RunRow key={row.run.id} row={row} now onSelect={() => setSelectedRunId(row.run.id)} onOpenTask={onOpenTask} onRelease={onReleaseCapacity} c={c} />)}
         {!nowRows.length && <Text style={muted(c)}>{failedOnly ? "No failed runs are active or holding capacity." : "Nothing is running or waiting."}</Text>}
       </View>
-      <View accessibilityLabel="Results" style={{ gap: 2 }}>
+      <View accessibilityLabel="Results" style={{ gap: space.xxs / 2 }}>
         <Text accessibilityRole="header" style={{ color: c.foreground, fontSize: typeScale.section.fontSize, fontWeight: "600" }}>Results · past 24 hours</Text>
         {recentRows.map(row => <RunRow key={row.run.id} row={row} now={false} onSelect={() => setSelectedRunId(row.run.id)} onOpenTask={onOpenTask} onRelease={onReleaseCapacity} c={c} />)}
         {!recentRows.length && <Text style={muted(c)}>{failedOnly ? "No failed results in this time range." : "No settled runs in the past 24 hours."}</Text>}
@@ -355,12 +355,12 @@ export function QaRunsTab({ runs, qaRuns, accounting, projects, tasks, selectedP
       </View>
     </ScrollView>
     {pickerOpen && <Modal visible transparent animationType="fade" onRequestClose={() => setPickerOpen(false)}>
-      <View style={{ flex: 1, justifyContent: "center", padding: 16, backgroundColor: overlay.scrim }}>
+      <View style={{ flex: 1, justifyContent: "center", padding: space.md, backgroundColor: overlay.scrim }}>
         <Pressable accessibilityRole="button" accessibilityLabel="Close Run QA project picker" onPress={() => setPickerOpen(false)} style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 }} />
-        <View accessibilityViewIsModal accessibilityLabel="Choose a project for Run QA" style={{ width: "100%", maxWidth: 520, maxHeight: "85%", alignSelf: "center", gap: 10, padding: 14, borderRadius: radius.panel, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface1 }}>
+        <View accessibilityViewIsModal accessibilityLabel="Choose a project for Run QA" style={{ width: "100%", maxWidth: 520, maxHeight: "85%", alignSelf: "center", gap: space.sm, padding: space.md, borderRadius: radius.panel, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface1 }}>
           <Text accessibilityRole="header" style={{ color: c.foreground, fontSize: typeScale.section.fontSize, fontWeight: "600" }}>Choose a project for Run QA</Text>
           {!launchProjects.length && <Text style={muted(c)}>No projects are available in this scope.</Text>}
-          <ScrollView contentContainerStyle={{ gap: 7 }}>{launchProjects.map(project => <Button key={project.key} small c={c} text={project.name} label={`Run QA for ${project.name}`} disabled={busy} onPress={() => { setPickerOpen(false); onRunQa(project.primary.origin ?? project.primary.path); }} />)}</ScrollView>
+          <ScrollView contentContainerStyle={{ gap: space.xs }}>{launchProjects.map(project => <Button key={project.key} small c={c} text={project.name} label={`Run QA for ${project.name}`} disabled={busy} onPress={() => { setPickerOpen(false); onRunQa(project.primary.origin ?? project.primary.path); }} />)}</ScrollView>
           <View style={row}><Button small c={c} text="Cancel" label="Cancel Run QA" onPress={() => setPickerOpen(false)} /></View>
         </View>
       </View>

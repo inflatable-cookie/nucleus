@@ -11,16 +11,17 @@ import { useTaskDraft, type TaskDrafts } from "./drafts";
 import { type BoardAct } from "./parts";
 import type { BoardNavigation } from "../shell/types";
 import type { TaskDetailRead } from "./task-dialog";
+import { space, type as typeScale } from "../design";
 
 function OperationState({ operations, c }: { operations: QueueOperation[]; c: Colors }) {
   if (!operations.length) return null;
-  return <View style={{ gap: 4 }}>
+  return <View style={{ gap: space.xxs }}>
     {operations.slice(0, 4).map(operation => {
       const attention = operation.state === "needs_attention" || operation.state === "failed";
       const color = attention ? c.statusWarning : operation.state === "succeeded" ? c.foregroundMuted : c.accent;
-      return <View key={operation.id} style={{ ...row, flexWrap: "nowrap", gap: 6 }}>
+      return <View key={operation.id} style={{ ...row, flexWrap: "nowrap", gap: space.xs }}>
         <Icon name={attention ? "TriangleAlert" : operation.state === "succeeded" ? "Check" : "LoaderCircle"} size={12} color={color} />
-        <Text numberOfLines={2} selectable accessibilityLabel={operationStateLabel(operation)} style={{ color, fontSize: 12, flex: 1, minWidth: 0 }}>
+        <Text numberOfLines={2} selectable accessibilityLabel={operationStateLabel(operation)} style={{ color, fontSize: typeScale.metadata.fontSize, flex: 1, minWidth: 0 }}>
           {operationStateLabel(operation)}{operation.diagnostic ? ` · ${operation.diagnostic}` : ""}
         </Text>
       </View>;
@@ -52,8 +53,8 @@ export function TechnicalStatus({ task, taskOperations, drafts, pendingOperation
           accessibilityLabel={`Budget: ${budgetSummary(task.budget)}${task.budget.exhausted ? `; reached on ${task.budget.exhausted === "wall_time" ? "wall time" : "effective tokens"}` : ""}`}
           style={{
             color: task.budget.exhausted ? c.statusWarning : c.foregroundMuted,
-            fontSize: 12,
-            lineHeight: 17,
+            fontSize: typeScale.metadata.fontSize,
+            lineHeight: typeScale.metadata.lineHeight,
           }}
         >
           Budget · {budgetSummary(task.budget)}
@@ -61,7 +62,7 @@ export function TechnicalStatus({ task, taskOperations, drafts, pendingOperation
         </Text>
       )}
       {(task.originError || task.originLookupError) && (
-        <Text style={{ color: c.statusWarning, fontSize: 12 }}>
+        <Text style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize }}>
           Origin routing:{" "}
           {task.originError || task.originLookupError}
         </Text>
@@ -70,7 +71,7 @@ export function TechnicalStatus({ task, taskOperations, drafts, pendingOperation
         <DetailSection title="Stalled turn" c={c}>
           <Text
             selectable
-            style={{ ...muted(c), fontSize: 12 }}
+            style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
           >
             Run {stalledIncident.runId} · detected turn{" "}
             {stalledIncident.turnId ?? "unknown"}
@@ -81,7 +82,7 @@ export function TechnicalStatus({ task, taskOperations, drafts, pendingOperation
           {stalledTurnStop && (
             <Text
               selectable
-              style={{ ...muted(c), fontSize: 12 }}
+              style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
             >
               {stalledTurnStop.detail ||
                 (stalledTurnStop.status === "sent"
@@ -89,7 +90,7 @@ export function TechnicalStatus({ task, taskOperations, drafts, pendingOperation
                   : "")}
             </Text>
           )}
-          <Text style={{ ...muted(c), fontSize: 12 }}>
+          <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
             Use restart in Next to stop the exact turn and
             continue the run; Nucleus waits for observed
             inactivity first.
@@ -103,7 +104,7 @@ export function TechnicalStatus({ task, taskOperations, drafts, pendingOperation
             {fences.dispatch && (
               <Text
                 accessibilityLabel="Dispatch hold owner and reason"
-                style={{ ...muted(c), fontSize: 12 }}
+                style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
               >
                 Dispatch held by{" "}
                 {api.holdOwnerOf(task, fences.dispatch.owner)} ·{" "}
@@ -116,7 +117,7 @@ export function TechnicalStatus({ task, taskOperations, drafts, pendingOperation
             {fences.merge && (
               <Text
                 accessibilityLabel="Merge hold owner and reason"
-                style={{ ...muted(c), fontSize: 12 }}
+                style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
               >
                 Merge held by{" "}
                 {api.holdOwnerOf(task, fences.merge.owner)} ·{" "}

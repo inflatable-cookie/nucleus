@@ -15,6 +15,7 @@ import { RunsTab } from "./runs";
 import { ActivityTab, MessagesTab } from "./activity";
 import type { BoardNavigation } from "../shell/types";
 import type { TaskDrafts } from "./drafts";
+import { space, radius, type as typeScale, overlay } from "../design";
 
 /** What `queue.detail` returns for the open task. */
 export type TaskDetailRead = ZodOutput<typeof api.detail.output>;
@@ -54,8 +55,8 @@ export function TaskDialog({ task, detailQuery, nextQuery, state, decisions, qaR
         style={{
           flex: 1,
           justifyContent: "center",
-          padding: compact ? 12 : 32,
-          backgroundColor: "rgba(0, 0, 0, 0.68)",
+          padding: compact ? space.sm : space.xl,
+          backgroundColor: overlay.scrim,
         }}
       >
         <Pressable
@@ -81,9 +82,9 @@ export function TaskDialog({ task, detailQuery, nextQuery, state, decisions, qaR
             backgroundColor: c.surface0,
             borderColor: c.border,
             borderWidth: 1,
-            borderRadius: 12,
+            borderRadius: radius.panel,
             overflow: "hidden",
-            shadowColor: "#000",
+            shadowColor: overlay.shadow,
             shadowOffset: { width: 0, height: 14 },
             shadowOpacity: 0.45,
             shadowRadius: 24,
@@ -95,18 +96,18 @@ export function TaskDialog({ task, detailQuery, nextQuery, state, decisions, qaR
               ...row,
               flexWrap: "nowrap",
               justifyContent: "space-between",
-              paddingHorizontal: compact ? 16 : 20,
-              paddingVertical: 14,
+              paddingHorizontal: compact ? space.md : space.lg,
+              paddingVertical: space.md,
               borderBottomWidth: 1,
               borderBottomColor: c.border,
             }}
           >
-            <View style={{ gap: 5, flex: 1, minWidth: 0 }}>
+            <View style={{ gap: space.xxs, flex: 1, minWidth: 0 }}>
               <Text
                 accessibilityRole="header"
                 style={{
                   color: c.foreground,
-                  fontSize: 18,
+                  fontSize: typeScale.page.fontSize,
                   fontWeight: "600",
                 }}
               >
@@ -118,9 +119,9 @@ export function TaskDialog({ task, detailQuery, nextQuery, state, decisions, qaR
               <View style={row}>
                 <View
                   style={{
-                    paddingHorizontal: 8,
-                    paddingVertical: 3,
-                    borderRadius: 12,
+                    paddingHorizontal: space.xs,
+                    paddingVertical: space.xxs,
+                    borderRadius: radius.panel,
                     backgroundColor: attention(task)
                       ? c.surface2
                       : c.accent,
@@ -131,7 +132,7 @@ export function TaskDialog({ task, detailQuery, nextQuery, state, decisions, qaR
                       color: attention(task)
                         ? c.statusWarning
                         : c.accentForeground,
-                      fontSize: 11,
+                      fontSize: typeScale.metadata.fontSize,
                       fontWeight: "600",
                     }}
                   >
@@ -142,7 +143,7 @@ export function TaskDialog({ task, detailQuery, nextQuery, state, decisions, qaR
                   ? (decisions ?? []).find(decision => decision.id === task.waitState?.decisionId)?.headline
                     ?? (decisions ?? []).find(decision => decision.id === task.waitState?.decisionId)?.question
                   : null} />
-                <Text style={{ ...muted(c), fontSize: 12 }}>
+                <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
                   {projectName(task)}
                 </Text>
                 {taskParked && (
@@ -161,7 +162,7 @@ export function TaskDialog({ task, detailQuery, nextQuery, state, decisions, qaR
                   />
                 )}
                 {taskElapsedMs !== null && (
-                  <Text accessibilityLabel={`Elapsed ${formatSpan(taskElapsedMs)}`} style={{ ...muted(c), fontSize: 12 }}>
+                  <Text accessibilityLabel={`Elapsed ${formatSpan(taskElapsedMs)}`} style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
                     Elapsed {formatSpan(taskElapsedMs)}
                   </Text>
                 )}
@@ -173,8 +174,8 @@ export function TaskDialog({ task, detailQuery, nextQuery, state, decisions, qaR
           <ScrollView
             style={{ flexGrow: 0 }}
             contentContainerStyle={{
-              gap: 12,
-              padding: compact ? 12 : 16,
+              gap: space.sm,
+              padding: compact ? space.sm : space.md,
             }}
           >
           <OverviewSummary task={task} detailTab={detailTab} nextQuery={nextQuery} detailQuery={detailQuery} qaRun={taskQaRun} c={c} />

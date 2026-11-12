@@ -7,6 +7,7 @@ import { waitStateLabels } from "../../shared/wait-state";
 import { taskWaitCardLabel, waitOwnerLabel } from "../../shared/task-detail-summary";
 import { plainCardText, type DisplayTask, attention, holdKindLabel, presentHoldKinds, stopBadgeLabel, budgetFields, budgetSummary, interactiveBadgeLabel, elapsedRun } from "./text";
 import { useTick } from "../use-tick";
+import { roles, space, type as typeScale, radius } from "../design";
 
 export function HoldBadge({ kind, c }: { kind: HoldKind; c: Colors }) {
   const label = holdKindLabel(kind);
@@ -37,12 +38,15 @@ export function PullRequestBadge({task,state,c,small=false}:{task:DisplayTask;st
   const status=task.resolution.mergedCommit?"MERGED":state;
   const blocked=status==="OPEN" && attention(task);
   // Terminal PR state takes precedence over task attention.
-  const color=status==="MERGED"?"#a371f7":status==="CLOSED"?"#f85149":blocked?"#f0883e":status==="OPEN"?"#3fb950":c.foregroundMuted;
+  // Merged, closed, blocked and open read as the matching theme role: the board
+  // carries no GitHub palette of its own.
+  const r = roles(c);
+  const color=status==="MERGED"?r.accent:status==="CLOSED"?r.danger:blocked?r.warning:status==="OPEN"?r.success:c.foregroundMuted;
   const completionNumber = "completionPrNumber" in task ? task.completionPrNumber : "completion" in task ? task.completion?.prNumber ?? undefined : undefined;
   const number=task.resumePrNumber??completionNumber??task.prUrl.match(/\/pull\/(\d+)/)?.[1];
-  return <View accessible accessibilityLabel={`Pull request ${number??""}, ${blocked?"open, task needs attention":status?.toLowerCase()??"status unavailable"}`} style={{flexDirection:"row",alignItems:"center",gap:4}}>
+  return <View accessible accessibilityLabel={`Pull request ${number??""}, ${blocked?"open, task needs attention":status?.toLowerCase()??"status unavailable"}`} style={{flexDirection:"row",alignItems:"center",gap:space.xxs}}>
     <Icon name={status==="MERGED"?"GitMerge":status==="CLOSED"?"GitPullRequestClosed":"GitPullRequest"} size={small?12:14} color={color}/>
-    <Text style={{fontSize:small?11:13,color}}>{number?`PR #${number}`:"PR"}{status==="MERGED"?" · merged":status==="CLOSED"?" · closed":""}</Text>
+    <Text style={{fontSize:small?typeScale.metadata.fontSize:typeScale.body.fontSize,color}}>{number?`PR #${number}`:"PR"}{status==="MERGED"?" · merged":status==="CLOSED"?" · closed":""}</Text>
   </View>;
 }
 /** The theme colour for a badge tone; neutral keeps the muted badge. */
@@ -52,12 +56,12 @@ function toneColor(tone: BadgeTone, c: Colors) {
 /** A card badge: toned badges carry their colour on text and outline over the usual surface. */
 export function Badge({ label, tone, c, bold = false, a11y }: { label: string; tone: BadgeTone; c: Colors; bold?: boolean; a11y?: string }) {
   const color = toneColor(tone, c);
-  return <View accessible={Boolean(a11y)} accessibilityLabel={a11y ? plainCardText(a11y) : undefined} style={{maxWidth:'100%',paddingHorizontal:7,paddingVertical:2,borderRadius:10,backgroundColor:c.surface2,borderWidth:1,borderColor:color??c.surface2}}>
-    <Text numberOfLines={1} ellipsizeMode="tail" style={{...muted(c),fontSize:10,...(color?{color}:{}),...(bold?{fontWeight:'600' as const}:{})}}>{plainCardText(label)}</Text></View>;
+  return <View accessible={Boolean(a11y)} accessibilityLabel={a11y ? plainCardText(a11y) : undefined} style={{maxWidth:'100%',paddingHorizontal:space.xs,paddingVertical:space.xxs / 2,borderRadius:radius.control,backgroundColor:c.surface2,borderWidth:1,borderColor:color??c.surface2}}>
+    <Text numberOfLines={1} ellipsizeMode="tail" style={{...muted(c),fontSize:typeScale.metadata.fontSize,...(color?{color}:{}),...(bold?{fontWeight:'600' as const}:{})}}>{plainCardText(label)}</Text></View>;
 }
 export function RecordChips({chips,c}:{chips:string[];c:Colors}) {
   if(!chips.length)return null;
-  return <View style={{...row,gap:6,flexWrap:'wrap'}}>{chips.map(chip=><Badge key={chip} label={chip} tone={recordBadgeTone(chip)} c={c}/>)}</View>;
+  return <View style={{...row,gap:space.xs,flexWrap:'wrap'}}>{chips.map(chip=><Badge key={chip} label={chip} tone={recordBadgeTone(chip)} c={c}/>)}</View>;
 }
 export function StopBadge({ task, c }: { task: Pick<TaskSummary, "stop">; c: Colors }) {
   const label = stopBadgeLabel(task.stop);
@@ -76,11 +80,11 @@ export function InteractiveBadge({ task, c }: { task: Pick<TaskSummary, "interac
 }
 export function LongShellCommandStatus({ startedAt, c }: { startedAt: string; c: Colors }) {
   useTick(30_000);
-  return <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: c.foregroundMuted, fontSize: 12, lineHeight: 16 }}>Long shell command · {elapsedRun(startedAt)}</Text>;
+  return <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: c.foregroundMuted, fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>Long shell command · {elapsedRun(startedAt)}</Text>;
 }
 export function HeavyRunStatus({run,c,detail=false}:{run:HeavyRunView;c:Colors;detail?:boolean}) {
   useTick(30_000);
-  return <View style={{gap:2}}><Text numberOfLines={1} accessibilityLabel={detail?"Heavy run status":undefined} style={{color:c.statusWarning,fontSize:12,lineHeight:detail?17:16,fontWeight:'600'}}>
+  return <View style={{gap:space.xxs / 2}}><Text numberOfLines={1} accessibilityLabel={detail?"Heavy run status":undefined} style={{color:c.statusWarning,fontSize:typeScale.metadata.fontSize,lineHeight:typeScale.metadata.lineHeight,fontWeight:'600'}}>
     {run.state==='queued'?`Waiting for QA capacity · position ${run.position??'—'}`:`Testing: ${run.selector} · ${elapsedRun(run.launchedAt??run.submittedAt)}`}{run.holder?` · behind ${run.holder}`:''}
-  </Text>{!detail&&<Text numberOfLines={1} style={{...muted(c),fontSize:11}}>{run.selector}</Text>}</View>;
+  </Text>{!detail&&<Text numberOfLines={1} style={{...muted(c),fontSize:typeScale.metadata.fontSize}}>{run.selector}</Text>}</View>;
 }

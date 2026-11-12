@@ -2,7 +2,10 @@
  * Design tokens for the board's shared React Native components. The scale is the
  * point: spacing 4/8/12/16/24/32, five type steps with line height at least 1.3,
  * and colour roles that map the host theme. Shared components read these instead
- * of literals. A new literal needs a reason in review.
+ * of literals. A new literal needs a reason in review (test/client-design-tokens
+ * flags one). Values below the smallest spacing step use `space.xxs / 2`
+ * rather than a new step: the scale stays six steps and the half step keeps
+ * hairline padding and tight stacks at their drawn size.
  */
 import type { BoardTheme } from "./shell/types";
 

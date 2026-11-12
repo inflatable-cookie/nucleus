@@ -27,6 +27,7 @@ import { LeadDialog } from "./records/lead-dialog";
 import { PapercutDialog } from "./records/papercut-dialog";
 import { DecisionDialog } from "./records/decision-dialog";
 import type { RecordNoticeValue } from "./task/parts";
+import { space, type as typeScale } from "./design";
 export { TaskCard, DecisionCard } from "./board/cards";
 export { TaskSummaryBlock, taskIdentityFields, EventRow, type TaskDetailTab, TaskDetailTabs, TechnicalActivityEvents, RunRow, MessageRow, RawRecords, DetailField } from "./task/parts";
 export { NextSection } from "./task/next-section";
@@ -227,7 +228,7 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard }: Board
               minHeight: 0,
               paddingHorizontal: inset,
               paddingBottom: inset,
-              gap: 10,
+              gap: space.sm,
             }}
           >
             <PlanningTab
@@ -329,7 +330,7 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard }: Board
                   />
                 ) : (
                   <>
-                    <Text accessibilityRole="header" style={{ color: c.foreground, fontSize: 16, fontWeight: "600" }}>Lane</Text>
+                    <Text accessibilityRole="header" style={{ color: c.foreground, fontSize: typeScale.section.fontSize, fontWeight: "600" }}>Lane</Text>
                     <Text style={muted(c)}>Select a lane from the plan.</Text>
                   </>
                 )
@@ -393,7 +394,7 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard }: Board
           </View>
         )}
         {tab === "queue" && (
-        <View style={{ flex: 1, minHeight: 0, gap: 12, zIndex: 0 }}>
+        <View style={{ flex: 1, minHeight: 0, gap: space.sm, zIndex: 0 }}>
           <PipelineBoard c={c} state={state} stateError={stateQuery.error} compact={compact} inset={inset} panelWidth={panelWidth}
             pipelineFilterSelection={pipelineFilterSelection} boardLeads={boardLeads} leadLinks={leadLinks} leadsLoading={leadsQuery.isLoading}
             decisions={decisionsQuery.data} queuedHidden={queuedHidden} parkedRepository={parkedRepository} projectForRepository={projectForRepository}
@@ -503,7 +504,7 @@ export function QueueBoardPanel(props: BoardWorkspacePanelProps) {
   </View>;
 }
 function BoardNotice({ text, c }: { text: string; c: Colors }) {
-  return <View accessibilityRole="text" accessibilityLabel="Nucleus board message" style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }}>
+  return <View accessibilityRole="text" accessibilityLabel="Nucleus board message" style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: space.lg }}>
     <Text style={{ ...muted(c), textAlign: "center" }}>{text}</Text>
   </View>;
 }

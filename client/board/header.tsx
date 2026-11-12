@@ -10,6 +10,7 @@ import { ActionButton, Button, muted, row, type Colors } from "../controls";
 import { errorText } from "../error-text";
 import { QaFenceNotice } from "../qa-fence-notice";
 import type { BoardAct } from "./use-board-data";
+import { control as controlSize, space, type as typeScale, radius, overlay } from "../design";
 
 /**
  * Queue #665: the header's slot popover lists only projects with at least one
@@ -83,8 +84,8 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
         style={{
           paddingTop: inset,
           paddingHorizontal: inset,
-          paddingBottom: 20,
-          gap: 20,
+          paddingBottom: space.lg,
+          gap: space.lg,
           position: "relative",
           // Queue #665 / #706: no zIndex here, so this block is not a stacking
           // context. The title+controls row raises to 50 while a header menu is
@@ -94,10 +95,10 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
         }}
       >
         <View style={{ ...row, justifyContent: "space-between", ...(queueMenuOpen || slotsOpen ? { zIndex: 50 } : {}) }}>
-          <View style={{ gap: 5, flexShrink: 1 }}>
+          <View style={{ gap: space.xxs, flexShrink: 1 }}>
             <Text
               accessibilityRole="header"
-              style={{ color: c.foreground, fontSize: 24, fontWeight: "600" }}
+              style={{ color: c.foreground, fontSize: typeScale.heading.fontSize, fontWeight: "600" }}
             >
               {workspacePanel
                 ? `Nucleus board · ${workspaceName}`
@@ -129,16 +130,16 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
             </Text>
             {/* Queue #665: per-project counts live in the anchored dropdown, never inline. */}
             {!workspacePanel && slotsOpen && state && <ScrollView accessibilityRole="menu" accessibilityLabel="Projects using slots" nestedScrollEnabled
-              contentContainerStyle={{ gap: 8 }}
-              style={{ position: "absolute", top: 24, left: 0, width: 380, maxWidth: "92%", maxHeight: 320, padding: 12, borderWidth: 1, borderColor: c.border, borderRadius: 9, backgroundColor: c.surface1,
-                shadowColor: "#000", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.38, shadowRadius: 14, elevation: 12 }}>
-              <Text accessibilityRole="header" style={{ color: c.foreground, fontWeight: "600", fontSize: 13 }}>Projects using slots</Text>
+              contentContainerStyle={{ gap: space.xs }}
+              style={{ position: "absolute", top: space.lg, left: 0, width: 380, maxWidth: "92%", maxHeight: 320, padding: space.sm, borderWidth: 1, borderColor: c.border, borderRadius: radius.panel, backgroundColor: c.surface1,
+                shadowColor: overlay.shadow, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.38, shadowRadius: 14, elevation: 12 }}>
+              <Text accessibilityRole="header" style={{ color: c.foreground, fontWeight: "600", fontSize: typeScale.body.fontSize }}>Projects using slots</Text>
               {slotRows.length === 0
-                ? <Text style={{ ...muted(c), fontSize: 12 }}>No project is using a slot.</Text>
-                : slotRows.map(project => <View key={project.projectKey} accessibilityLabel={`${project.projectName}, ${project.occupiedSlots} of ${project.slotLimit} slots, ${project.inFlightTasks} of ${project.inFlightLimit} in flight`} style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-                  <Text numberOfLines={1} style={{ color: c.foreground, fontSize: 12, flex: 1 }}>{project.projectName}</Text>
-                  <Text numberOfLines={1} style={{ color: c.foregroundMuted, fontSize: 12, fontFamily: "monospace", minWidth: 84, textAlign: "right" }}>{`${project.occupiedSlots}/${project.slotLimit} slots`}</Text>
-                  <Text numberOfLines={1} style={{ color: c.foregroundMuted, fontSize: 12, fontFamily: "monospace", minWidth: 104, textAlign: "right" }}>{`${project.inFlightTasks}/${project.inFlightLimit} in flight`}</Text>
+                ? <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>No project is using a slot.</Text>
+                : slotRows.map(project => <View key={project.projectKey} accessibilityLabel={`${project.projectName}, ${project.occupiedSlots} of ${project.slotLimit} slots, ${project.inFlightTasks} of ${project.inFlightLimit} in flight`} style={{ flexDirection: "row", alignItems: "center", gap: space.sm }}>
+                  <Text numberOfLines={1} style={{ color: c.foreground, fontSize: typeScale.metadata.fontSize, flex: 1 }}>{project.projectName}</Text>
+                  <Text numberOfLines={1} style={{ color: c.foregroundMuted, fontSize: typeScale.metadata.fontSize, fontFamily: "monospace", minWidth: 84, textAlign: "right" }}>{`${project.occupiedSlots}/${project.slotLimit} slots`}</Text>
+                  <Text numberOfLines={1} style={{ color: c.foregroundMuted, fontSize: typeScale.metadata.fontSize, fontFamily: "monospace", minWidth: 104, textAlign: "right" }}>{`${project.inFlightTasks}/${project.inFlightLimit} in flight`}</Text>
                 </View>)}
             </ScrollView>}
             </View>
@@ -149,12 +150,12 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
                   <Text
                     key={notice.text}
                     accessibilityRole="alert"
-                    style={{ color: c.statusWarning, fontSize: 12 }}
+                    style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize }}
                   >
                     {notice.text}
                   </Text>
                 ) : (
-                  <Text key={notice.text} style={{ ...muted(c), fontSize: 12 }}>
+                  <Text key={notice.text} style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
                     {notice.text}
                   </Text>
                 ),
@@ -190,18 +191,18 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
                       onPress={() => { setQueueMenuOpen(false); if (state) void act(() => setQueue({ paused: !state.paused })); }} />
                     <Pressable accessibilityRole="button" accessibilityLabel="Queue controls menu" accessibilityState={{ expanded: queueMenuOpen, disabled: control.disabled }} disabled={control.disabled}
                       onPress={() => { setQueueMenuOpen(!queueMenuOpen); setSlotsOpen(false); }}
-                      style={{ minHeight: 36, minWidth: 28, alignItems: "center", justifyContent: "center", paddingHorizontal: 4, backgroundColor: c.surface2,
-                        borderTopRightRadius: 7, borderBottomRightRadius: 7, borderTopLeftRadius: 0, borderBottomLeftRadius: 0,
+                      style={{ minHeight: 36, minWidth: 28, alignItems: "center", justifyContent: "center", paddingHorizontal: space.xxs, backgroundColor: c.surface2,
+                        borderTopRightRadius: radius.control, borderBottomRightRadius: radius.control, borderTopLeftRadius: 0, borderBottomLeftRadius: 0,
                         borderLeftWidth: 1, borderLeftColor: c.border, opacity: control.disabled ? 0.45 : 1 }}>
                       <Icon name={queueMenuOpen ? "ChevronUp" : "ChevronDown"} size={16} color={c.foreground} />
                     </Pressable>
                   </View>
-                  {queueMenuOpen && <View accessibilityRole="menu" accessibilityLabel="Queue controls" style={{ position: "absolute", top: 38, right: 0, width: 260, borderWidth: 1, borderColor: c.border, borderRadius: 7, backgroundColor: c.surface1,
-                    shadowColor: "#000", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.38, shadowRadius: 14, elevation: 12 }}>
-                    {state && <View accessibilityRole="text" accessibilityLabel={state.drained ? "Drained" : `${state.boundRuns.length} bound run${state.boundRuns.length === 1 ? "" : "s"}`} style={{ paddingHorizontal: 10, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: c.border, gap: 4 }}>
-                      <Text style={{ color: c.foreground, fontSize: 12, fontWeight: "600" }}>{state.drained ? "Drained" : `${state.boundRuns.length} bound run${state.boundRuns.length === 1 ? "" : "s"}`}</Text>
+                  {queueMenuOpen && <View accessibilityRole="menu" accessibilityLabel="Queue controls" style={{ position: "absolute", top: controlSize.height + space.xxs / 2, right: 0, width: 260, borderWidth: 1, borderColor: c.border, borderRadius: radius.panel, backgroundColor: c.surface1,
+                    shadowColor: overlay.shadow, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.38, shadowRadius: 14, elevation: 12 }}>
+                    {state && <View accessibilityRole="text" accessibilityLabel={state.drained ? "Drained" : `${state.boundRuns.length} bound run${state.boundRuns.length === 1 ? "" : "s"}`} style={{ paddingHorizontal: space.sm, paddingVertical: space.xs, borderBottomWidth: 1, borderBottomColor: c.border, gap: space.xxs }}>
+                      <Text style={{ color: c.foreground, fontSize: typeScale.metadata.fontSize, fontWeight: "600" }}>{state.drained ? "Drained" : `${state.boundRuns.length} bound run${state.boundRuns.length === 1 ? "" : "s"}`}</Text>
                       {!state.drained && state.boundRuns.slice(0, 8).map(run =>
-                        <Text key={run.runId} numberOfLines={1} style={{ color: c.foregroundMuted, fontSize: 12 }}>{`${run.reference ?? run.taskId} · ${run.role}`}</Text>)}
+                        <Text key={run.runId} numberOfLines={1} style={{ color: c.foregroundMuted, fontSize: typeScale.metadata.fontSize }}>{`${run.reference ?? run.taskId} · ${run.role}`}</Text>)}
                     </View>}
                     {([
                       { key: "pause", icon: control.icon, label: state?.paused ? "Resume" : "Pause", run: () => { if (state) void act(() => setQueue({ paused: !state.paused })); } },
@@ -213,9 +214,9 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
                       }) },
                     ] as const).map(item => <Pressable key={item.key} accessibilityRole="menuitem" accessibilityLabel={item.label} accessibilityState={{ disabled: control.disabled }} disabled={control.disabled}
                       onPress={() => { setQueueMenuOpen(false); item.run(); }}
-                      style={{ minHeight: 34, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: c.surface1 }}>
+                      style={{ minHeight: 34, flexDirection: "row", alignItems: "center", gap: space.xs, paddingHorizontal: space.sm, paddingVertical: space.xs, backgroundColor: c.surface1 }}>
                       <Icon name={item.icon} size={14} color={c.foreground} />
-                      <Text numberOfLines={1} style={{ color: c.foreground, fontSize: 13 }}>{item.label}</Text>
+                      <Text numberOfLines={1} style={{ color: c.foreground, fontSize: typeScale.body.fontSize }}>{item.label}</Text>
                     </Pressable>)}
                   </View>}
                 </View>

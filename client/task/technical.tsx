@@ -12,11 +12,12 @@ import { TechnicalTelemetry } from "./technical-telemetry";
 import { TechnicalDisposition } from "./technical-disposition";
 import type { TaskDrafts } from "./drafts";
 import type { TaskDetailRead, TaskQaRun } from "./task-dialog";
+import { space } from "../design";
 
 /** The Technical tab composes task identity, status, routing, telemetry and disposition sections. */
 export function TechnicalTab({ task, drafts, detailQuery, nextQuery, state, qaRun: taskQaRun, pendingOperation, compact, busy, act, navigation, onClose, c }: { task: TaskDetailRead["task"]; detailQuery: UseQueryResult<TaskDetailRead>; nextQuery: UseQueryResult<TaskNext>; state: UiQueueState | undefined; qaRun: TaskQaRun | undefined; pendingOperation: boolean; compact: boolean; busy: boolean; act: BoardAct; drafts: TaskDrafts; navigation?: BoardNavigation; onClose: () => void; c: Colors }) {
   const taskOperations: QueueOperation[] = detailQuery.data?.operations ?? [];
-  return <View style={{ gap: 12 }}>
+  return <View style={{ gap: space.sm }}>
     <TechnicalIdentity task={task} detailQuery={detailQuery} nextQuery={nextQuery} state={state} compact={compact} c={c} />
     <TechnicalStatus task={task} taskOperations={taskOperations} drafts={drafts} pendingOperation={pendingOperation} busy={busy} act={act} navigation={navigation} onClose={onClose} c={c} />
     <TechnicalRouting task={task} state={state} drafts={drafts} busy={busy} act={act} c={c} />

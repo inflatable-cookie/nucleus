@@ -42,7 +42,7 @@ const noOutline = (): ViewStyle => (globalThis as { document?: unknown }).docume
 export function controlFrame(c: Colors, { focused = false, invalid = false, compact = false }: { focused?: boolean; invalid?: boolean; compact?: boolean } = {}): ViewStyle {
   const size = compact ? control.compact : control;
   const r = roles(c);
-  return { minHeight: size.height, paddingHorizontal: size.paddingX, paddingVertical: (size.height - 2 * control.border - size.text.lineHeight) / 2,
+  return { minHeight: size.height, paddingHorizontal: size.paddingX, paddingVertical: (size.height - (space.xxs / 2) * control.border - size.text.lineHeight) / (space.xxs / 2),
     borderRadius: control.radius, borderWidth: control.border, borderColor: invalid ? r.danger : focused ? r.focus : r.border, backgroundColor: r.section };
 }
 /** A control's value text: the one value font, in the foreground role. */
@@ -74,10 +74,10 @@ export function Button({ text, label, icon, iconOnly = false, onPress, c, select
       zIndex:(iconOnly||hint)&&showHint?40:0,
       backgroundColor, opacity: disabled ? 0.45 : 1, ...noOutline(), ...(wrap ? { maxWidth: "100%", flexShrink: 1 } : {}) }}>
     <FocusRing c={c} visible={focus.visible} corners={corners} />
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, ...(wrap ? { maxWidth: "100%", flexShrink: 1 } : {}) }}>{icon && <Icon name={icon} size={small ? 14 : 16} color={foregroundColor} />}
+    <View style={{ flexDirection: "row", alignItems: "center", gap: space.xs, ...(wrap ? { maxWidth: "100%", flexShrink: 1 } : {}) }}>{icon && <Icon name={icon} size={small ? 14 : 16} color={foregroundColor} />}
       {!iconOnly&&<Text style={{ color: foregroundColor, fontSize: type.body.fontSize, lineHeight: type.body.lineHeight, ...(wrap ? { flexShrink: 1 } : {}) }}>{text}</Text>}</View>
-    {iconOnly&&showHint&&<Popover anchor={anchor} align="end" pointerEvents="none" inlineStyle={{top:40,right:0}}><View pointerEvents="none" style={{paddingHorizontal:7,paddingVertical:space.xxs,borderRadius:6,...popover(c)}}><Text numberOfLines={1} style={{color:r.foreground,fontSize:type.metadata.fontSize}}>{text}</Text></View></Popover>}
-    {!iconOnly&&hint&&showHint&&<Popover anchor={anchor} align="end" pointerEvents="none" maxWidth={460} inlineStyle={{top:"100%",right:0,marginTop:space.xxs,maxWidth:460}}><View pointerEvents="none" style={{padding:space.xs,borderRadius:6,...popover(c)}}><Text style={{color:r.foreground,fontSize:type.metadata.fontSize,lineHeight:type.metadata.lineHeight}}>{hint}</Text></View></Popover>}
+    {iconOnly&&showHint&&<Popover anchor={anchor} align="end" pointerEvents="none" inlineStyle={{top:control.height + space.xxs,right:0}}><View pointerEvents="none" style={{paddingHorizontal:space.xs,paddingVertical:space.xxs,borderRadius:radius.control,...popover(c)}}><Text numberOfLines={1} style={{color:r.foreground,fontSize:type.metadata.fontSize}}>{text}</Text></View></Popover>}
+    {!iconOnly&&hint&&showHint&&<Popover anchor={anchor} align="end" pointerEvents="none" maxWidth={460} inlineStyle={{top:"100%",right:0,marginTop:space.xxs,maxWidth:460}}><View pointerEvents="none" style={{padding:space.xs,borderRadius:radius.control,...popover(c)}}><Text style={{color:r.foreground,fontSize:type.metadata.fontSize,lineHeight:type.metadata.lineHeight}}>{hint}</Text></View></Popover>}
   </Pressable>;
 }
 /**
@@ -128,10 +128,10 @@ export function StatusGlyph({ c, icon, color, text, label }: { c: Colors; icon: 
   return <Pressable ref={anchor} accessibilityRole="image" accessibilityLabel={label} accessibilityHint={text} onPress={() => setShowHint(open => !open)}
     hitSlop={touchSlop(20)} onHoverIn={() => setShowHint(true)} onHoverOut={() => setShowHint(false)}
     onFocus={() => { focus.onFocus(); setShowHint(true); }} onBlur={() => { focus.onBlur(); setShowHint(false); }}
-    style={{ width: 20, height: 20, alignItems: "center", justifyContent: "center", borderRadius: 10, ...noOutline() }}>
+    style={{ width: 20, height: 20, alignItems: "center", justifyContent: "center", borderRadius: radius.control, ...noOutline() }}>
     <FocusRing c={c} visible={focus.visible} corner={10} />
     <Icon name={icon} size={16} color={color} />
-    {showHint && <Popover anchor={anchor} align="end" pointerEvents="none" inlineStyle={{ top: 26, right: 0 }}><View pointerEvents="none" style={{ paddingHorizontal: 7, paddingVertical: space.xxs, borderRadius: 6, ...popover(c) }}><Text numberOfLines={1} style={{ color: r.foreground, fontSize: type.metadata.fontSize }}>{text}</Text></View></Popover>}
+    {showHint && <Popover anchor={anchor} align="end" pointerEvents="none" inlineStyle={{ top: 20 + space.xxs, right: 0 }}><View pointerEvents="none" style={{ paddingHorizontal: space.xs, paddingVertical: space.xxs, borderRadius: radius.control, ...popover(c) }}><Text numberOfLines={1} style={{ color: r.foreground, fontSize: type.metadata.fontSize }}>{text}</Text></View></Popover>}
   </Pressable>;
 }
 /**
@@ -147,9 +147,9 @@ export function HelpTip({ c, label, text, open, onOpenChange }: { c: Colors; lab
     onHoverIn={() => { if (!suppressed) onOpenChange(true); }} onHoverOut={() => { setSuppressed(false); onOpenChange(false); }}
     onFocus={() => { focus.onFocus(); if (!suppressed) onOpenChange(true); }} onBlur={() => { focus.onBlur(); setSuppressed(false); onOpenChange(false); }}
     onPress={() => { if (open) { setSuppressed(true); onOpenChange(false); } else onOpenChange(true); }} hitSlop={touchSlop(18)}
-    style={{ width: 18, height: 18, borderRadius: 9, borderWidth: 1, borderColor: r.muted, alignItems: "center", justifyContent: "center", ...noOutline() }}>
+    style={{ width: 18, height: 18, borderRadius: radius.control, borderWidth: 1, borderColor: r.muted, alignItems: "center", justifyContent: "center", ...noOutline() }}>
     <FocusRing c={c} visible={focus.visible} corner={9} />
-    <Text style={{ color: r.muted, fontSize: 11, fontWeight: "600", lineHeight: 13 }}>?</Text>
+    <Text style={{ color: r.muted, fontSize: type.metadata.fontSize, fontWeight: "600", lineHeight: type.metadata.lineHeight }}>?</Text>
   </Pressable>;
 }
 /** The explanation a `HelpTip` opens: as wide as its text, never past 420 points or the column. */
@@ -308,8 +308,8 @@ export function StopSlider<T extends string>({ c, a11yLabel, stopLabel, stops, v
       onAccessibilityAction={event => { if (disabled) return; const next = index < 0 ? (unsetStop ? stops.indexOf(unsetStop) : Math.floor(stops.length / 2)) : index + (event.nativeEvent.actionName === "increment" ? 1 : -1); if (next >= 0 && next <= last) onChange(stops[next]); }}
       style={{ height: touchTarget, marginHorizontal: edge }}>
       {/* The track runs centre to centre: a 4-point line, filled up to the chosen stop. */}
-      <View style={{ position: "absolute", left: 0, right: 0, top: half - 2, height: 4, borderRadius: 2, backgroundColor: r.raised }} />
-      {index > 0 && <View style={{ position: "absolute", left: 0, width: at(index), top: half - 2, height: 4, borderRadius: 2, backgroundColor: r.accent }} />}
+      <View style={{ position: "absolute", left: 0, right: 0, top: half - 2, height: 4, borderRadius: radius.control, backgroundColor: r.raised }} />
+      {index > 0 && <View style={{ position: "absolute", left: 0, width: at(index), top: half - 2, height: 4, borderRadius: radius.control, backgroundColor: r.accent }} />}
       {stops.map((stop, i) => {
         const chosen = i === index, filled = i <= index, size = chosen ? 18 : 12;
         // An invisible 44-point target centred on the stop, laid over the track.
@@ -326,7 +326,7 @@ export function StopSlider<T extends string>({ c, a11yLabel, stopLabel, stops, v
         // Middle labels centre under their stop; the first and last align to the column's edges.
         const place = i === 0 ? { left: -edge, textAlign: "left" as const }
           : i === last ? { right: -edge, textAlign: "right" as const }
-          : { left: at(i), width: 96, marginLeft: -48, textAlign: "center" as const };
+          : { left: at(i), width: 96, marginLeft: -96 / 2, textAlign: "center" as const };
         return <Text key={stop} numberOfLines={1} style={{ position: "absolute", top: 0, ...place, ...style }}>{labelFor(stop)}</Text>;
       })}
     </View>}
@@ -394,7 +394,7 @@ export function DropdownSelect({ label, value, options, onChange, c, minWidth = 
       <ScrollView accessibilityRole="menu" nestedScrollEnabled style={{ maxHeight: 260, borderWidth: control.border, borderColor: r.border, borderRadius: control.radius, backgroundColor: r.section,
       shadowColor: overlay.shadow, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.38, shadowRadius: 14, elevation: 12 }}>
       {options.map((option, index) => <React.Fragment key={option.value || "all"}>
-        {option.group && option.group !== options[index - 1]?.group && <Text accessibilityRole="header" style={{ ...captionText(c), fontWeight: "600", paddingHorizontal: control.paddingX, paddingTop: space.xs, paddingBottom: 2 }}>{option.group}</Text>}
+        {option.group && option.group !== options[index - 1]?.group && <Text accessibilityRole="header" style={{ ...captionText(c), fontWeight: "600", paddingHorizontal: control.paddingX, paddingTop: space.xs, paddingBottom: space.xxs / 2 }}>{option.group}</Text>}
         <Pressable accessibilityRole="menuitem" accessibilityLabel={`${label}: ${option.label}`} accessibilityState={{ selected: value === option.value }} onPress={() => { onChange(option.value); setOpen(false); }}
           style={{ minHeight: control.height, flexDirection: "row", alignItems: "center", gap: space.xs, paddingHorizontal: control.paddingX, backgroundColor: value === option.value ? r.raised : r.section }}>
           {value === option.value && <Icon name="Check" size={14} color={r.accent} />}<Text numberOfLines={1} style={controlText(c)}>{option.label}</Text>
@@ -425,7 +425,7 @@ export function InlineConfirm({ c, question, confirmLabel, label, busy = false, 
 }
 export function TextLink({ c, text, label, onPress }: { c: Colors; text: string; label?: string; onPress: () => void }) {
   return <Pressable accessibilityRole="link" accessibilityLabel={label ?? text} onPress={onPress}>
-    <Text style={{ color: c.accent, fontSize: 12, lineHeight: 18 }}>{text}</Text>
+    <Text style={{ color: c.accent, fontSize: type.metadata.fontSize, lineHeight: type.metadata.lineHeight }}>{text}</Text>
   </Pressable>;
 }
 /**

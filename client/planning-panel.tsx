@@ -19,8 +19,8 @@ export type PlanEdit = PlanDraft;
  * the QA runs tab's detail and the task detail. */
 export function ProjectQaSteps({ run, c, label = "QA steps" }: { run: ProjectQaRun; c: Colors; label?: string }) {
   if (!run.steps.length) return null;
-  return <View accessibilityLabel={label} style={{ gap: 2 }}>
-    {run.steps.map(step => <Text key={step.name} style={{ ...muted(c), fontSize: 11 }}>{step.name} · {step.timedOut ? 'timed out' : step.signal ? step.signal : step.exitCode === 0 ? 'passed' : `exit ${step.exitCode ?? '—'}`}{step.wallMs === undefined ? '' : ` · ${formatTelemetryDuration(step.wallMs)}`}</Text>)}
+  return <View accessibilityLabel={label} style={{ gap: space.xxs / 2 }}>
+    {run.steps.map(step => <Text key={step.name} style={{ ...muted(c), fontSize: type.metadata.fontSize }}>{step.name} · {step.timedOut ? 'timed out' : step.signal ? step.signal : step.exitCode === 0 ? 'passed' : `exit ${step.exitCode ?? '—'}`}{step.wallMs === undefined ? '' : ` · ${formatTelemetryDuration(step.wallMs)}`}</Text>)}
   </View>;
 }
 /**
@@ -31,9 +31,9 @@ export function ProjectQaSteps({ run, c, label = "QA steps" }: { run: ProjectQaR
 export function ProjectQaLogWriteErrors({ run, c, label = "QA log-write errors" }: { run: ProjectQaRun; c: Colors; label?: string }) {
   const errors = run.logWriteErrors ?? [];
   if (!errors.length) return null;
-  return <View accessibilityLabel={label} style={{ gap: 2 }}>
+  return <View accessibilityLabel={label} style={{ gap: space.xxs / 2 }}>
     {errors.map((entry, index) => <Text key={`${entry.step}-${entry.stream}-${index}`} selectable accessibilityLabel={`Log-write failure ${entry.step} ${entry.stream}`}
-      style={{ color: c.statusWarning, fontSize: 11 }}>{entry.step} {entry.stream} log could not be written: {entry.error}</Text>)}
+      style={{ color: c.statusWarning, fontSize: type.metadata.fontSize }}>{entry.step} {entry.stream} log could not be written: {entry.error}</Text>)}
   </View>;
 }
 /**
@@ -44,14 +44,14 @@ export function ProjectQaLogWriteErrors({ run, c, label = "QA log-write errors" 
 export function ProjectQaFailures({ run, c, label = "QA failures" }: { run: ProjectQaRun; c: Colors; label?: string }) {
   const indexes = run.failureIndexes ?? [];
   if (!run.failuresLog && !indexes.length) return null;
-  return <View accessibilityLabel={label} style={{ gap: 2 }}>
-    {indexes.map(index => <View key={index.stage} accessibilityLabel={`QA failure index ${index.stage}`} style={{ gap: 1 }}>
-      <Text selectable style={{ color: c.statusWarning, fontSize: 11 }}>{index.stage}: {index.failed ?? "unknown"} failed, {index.cancelled ?? "unknown"} cancelled; {index.identities.length} identities retained, {index.omittedIdentities} omitted{index.truncated ? " (index truncated)" : ""}{index.diagnosticsTruncated ? " (diagnostics truncated)" : ""}</Text>
-      {index.identities.map((identity, entry) => <Text key={`${identity.id ?? "unknown"}-${entry}`} selectable style={{ color: c.statusWarning, fontSize: 11 }}>
+  return <View accessibilityLabel={label} style={{ gap: space.xxs / 2 }}>
+    {indexes.map(index => <View key={index.stage} accessibilityLabel={`QA failure index ${index.stage}`} style={{ gap: space.xxs / 2 }}>
+      <Text selectable style={{ color: c.statusWarning, fontSize: type.metadata.fontSize }}>{index.stage}: {index.failed ?? "unknown"} failed, {index.cancelled ?? "unknown"} cancelled; {index.identities.length} identities retained, {index.omittedIdentities} omitted{index.truncated ? " (index truncated)" : ""}{index.diagnosticsTruncated ? " (diagnostics truncated)" : ""}</Text>
+      {index.identities.map((identity, entry) => <Text key={`${identity.id ?? "unknown"}-${entry}`} selectable style={{ color: c.statusWarning, fontSize: type.metadata.fontSize }}>
         {identity.status} {identity.id === null ? "" : `${identity.id} `}{identity.title}{identity.location ? ` — ${identity.location}` : ""}
       </Text>)}
     </View>)}
-    {run.failuresLog && <Text selectable accessibilityLabel="QA failures log" style={{ color: c.statusWarning, fontSize: 11 }}>{run.failuresLog}</Text>}
+    {run.failuresLog && <Text selectable accessibilityLabel="QA failures log" style={{ color: c.statusWarning, fontSize: type.metadata.fontSize }}>{run.failuresLog}</Text>}
   </View>;
 }
 /** A settled teardown failure can be retried without rerunning setup or QA (task 134). */
@@ -166,9 +166,9 @@ function ProjectRoadmap({ section, leads, lanes, edits, selectedLane, busy, save
   const roadmap = roadmapView({ entries: pending, unplanned: groups.unplanned.filter(entry => !pending.some(item => item.lane === entry.lane)), done: latest?.done, lanes, leads });
   const counts = (item: RoadmapStep) => `${item.tasksDone} done · ${item.tasksLive} live · ${item.openLeads} open leads`;
   const doneWhen = (item: RoadmapStep) => item.doneWhenMissing
-    ? <Text accessibilityLabel={`Done-when not set for ${item.lane}`} style={{ color: c.statusWarning, fontSize: 12 }}>done-when not set</Text>
-    : item.doneWhen ? <Text style={{ color: c.foreground, fontSize: 12 }}>Done when: {item.doneWhen}</Text> : null;
-  const controls = (item: RoadmapStep, index: number, group: RoadmapStep[]) => <View style={{ gap: 5 }}>
+    ? <Text accessibilityLabel={`Done-when not set for ${item.lane}`} style={{ color: c.statusWarning, fontSize: type.metadata.fontSize }}>done-when not set</Text>
+    : item.doneWhen ? <Text style={{ color: c.foreground, fontSize: type.metadata.fontSize }}>Done when: {item.doneWhen}</Text> : null;
+  const controls = (item: RoadmapStep, index: number, group: RoadmapStep[]) => <View style={{ gap: space.xxs }}>
     <View style={row}><Button small c={c} text={moveOpen === item.lane ? "Close move options" : "Move step"} label={`Move ${item.title} in ${name}`} disabled={busy} onPress={() => setMoveOpen(moveOpen === item.lane ? null : item.lane)} /></View>
     {moveOpen === item.lane && <View accessibilityLabel={`Move ${item.title}`} style={row}>
       <Button small c={c} text="Up" label={`Move ${item.title} up`} disabled={busy || index === 0} onPress={() => { change({ entries: reorderPlan(pending, item.lane, -1) }); setMoveOpen(null); }} />
@@ -179,26 +179,26 @@ function ProjectRoadmap({ section, leads, lanes, edits, selectedLane, busy, save
   const open = (item: RoadmapStep) => <Pressable accessibilityRole="button" accessibilityLabel={`Open lane ${item.lane}`} onPress={() => onOpenLane(item.lane)}><Text style={{ color: c.foreground, fontWeight: '600' }}>{item.title}</Text></Pressable>;
   // Spec 041: the Drained flag carries the episode's age; the prompt already went to the plan owner.
   const drained = (item: RoadmapStep) => item.drained
-    ? <Text accessibilityLabel={`Drained ${item.lane}`} style={{ color: c.statusWarning, fontSize: 12 }}>Drained · {decisionAge(item.drained.since)}</Text>
+    ? <Text accessibilityLabel={`Drained ${item.lane}`} style={{ color: c.statusWarning, fontSize: type.metadata.fontSize }}>Drained · {decisionAge(item.drained.since)}</Text>
     : null;
-  const frame = (lane: string) => ({ padding: 9, gap: 6, borderColor: selectedLane === lane ? c.accent : c.border, borderWidth: 1, borderRadius: 7, backgroundColor: c.surface0 });
+  const frame = (lane: string) => ({ padding: space.xs, gap: space.xs, borderColor: selectedLane === lane ? c.accent : c.border, borderWidth: 1, borderRadius: radius.control, backgroundColor: c.surface0 });
   const band = (horizon: typeof HORIZONS[number]) => {
     const group = roadmap[horizon];
-    return <View key={horizon} accessibilityLabel={`${horizonTitle(horizon)} band`} style={{ gap: 7 }}>
+    return <View key={horizon} accessibilityLabel={`${horizonTitle(horizon)} band`} style={{ gap: space.xs }}>
       <Text accessibilityRole="header" style={{ color: c.foreground, fontWeight: '600' }}>{horizonTitle(horizon)}</Text>
       {group.map((item, index) => horizon === 'now'
-        ? <View key={item.lane} accessibilityLabel={`Now step ${item.lane}`} style={{ ...frame(item.lane), padding: 12, gap: 7 }}>
+        ? <View key={item.lane} accessibilityLabel={`Now step ${item.lane}`} style={{ ...frame(item.lane), padding: space.sm, gap: space.xs }}>
           {open(item)}
-          {Boolean(item.aim) && <Text style={{ color: c.foreground, fontSize: 13 }}>{item.aim}</Text>}
+          {Boolean(item.aim) && <Text style={{ color: c.foreground, fontSize: type.body.fontSize }}>{item.aim}</Text>}
           {doneWhen(item)}
           {Boolean(item.note) && <Text style={muted(c)}>{item.note}</Text>}
-          <Text style={{ ...muted(c), fontSize: 11 }}>{counts(item)} · {day(item.lastActivityAt)}</Text>
+          <Text style={{ ...muted(c), fontSize: type.metadata.fontSize }}>{counts(item)} · {day(item.lastActivityAt)}</Text>
           {drained(item)}
           {editing && controls(item, index, group)}
         </View>
         : <View key={item.lane} accessibilityLabel={`${horizonTitle(horizon)} step ${item.lane}`} style={frame(item.lane)}>
-          <View style={{ ...row, justifyContent: 'space-between' }}>{open(item)}<Text style={{ ...muted(c), fontSize: 11 }}>{counts(item)}</Text></View>
-          {Boolean(item.aim) && <Text style={{ color: c.foreground, fontSize: 13 }}>{item.aim}</Text>}
+          <View style={{ ...row, justifyContent: 'space-between' }}>{open(item)}<Text style={{ ...muted(c), fontSize: type.metadata.fontSize }}>{counts(item)}</Text></View>
+          {Boolean(item.aim) && <Text style={{ color: c.foreground, fontSize: type.body.fontSize }}>{item.aim}</Text>}
           {doneWhen(item)}
           {drained(item)}
           {editing && controls(item, index, group)}
@@ -235,8 +235,8 @@ function ProjectRoadmap({ section, leads, lanes, edits, selectedLane, busy, save
     </View>;
   };
   const panelBox = { gap: space.xs, padding: space.sm, borderRadius: radius.control, borderWidth: 1, backgroundColor: r.section } as const;
-  return <View accessibilityLabel={`Plan for ${name}`} style={{gap:10}}>
-    <View style={{...row,justifyContent:'space-between'}}><Text accessibilityRole="header" style={{color:c.foreground,fontSize:16,fontWeight:'600'}}>Plan · {name}{project.visibility === 'parked' ? ' · parked' : ''}</Text><View style={row}>
+  return <View accessibilityLabel={`Plan for ${name}`} style={{gap:space.sm}}>
+    <View style={{...row,justifyContent:'space-between'}}><Text accessibilityRole="header" style={{color:c.foreground,fontSize:type.section.fontSize,fontWeight:'600'}}>Plan · {name}{project.visibility === 'parked' ? ' · parked' : ''}</Text><View style={row}>
       {ready && !editing && <ActionButton c={c} action="edit" label={`Edit ${name} plan`} disabled={busy} onPress={startEdit} />}</View></View>
     {!ready && (error
       ? <View accessibilityRole="alert" style={panelBox}><Text style={{ color: r.foreground }}>Couldn’t load this plan: {error}</Text>{onRetry && <View style={row}><Button small c={c} text="Retry plan" label={`Retry ${name} plan`} disabled={busy} onPress={onRetry} /></View>}</View>
@@ -262,30 +262,30 @@ function ProjectRoadmap({ section, leads, lanes, edits, selectedLane, busy, save
       </View>
       {saveBlock && <Text style={muted(c)}>{saveBlock}</Text>}
     </View> : <Text style={muted(c)}>Version {latest.version}</Text>}
-    {!edit && latest.idle && <Text accessibilityLabel={`Idle on purpose: ${latest.idle.reason}`} style={{color:c.foreground,fontSize:12}}>Idle on purpose since {day(latest.idle.at)}: {latest.idle.reason}. {IDLE_ENDS}</Text>}
+    {!edit && latest.idle && <Text accessibilityLabel={`Idle on purpose: ${latest.idle.reason}`} style={{color:c.foreground,fontSize:type.metadata.fontSize}}>Idle on purpose since {day(latest.idle.at)}: {latest.idle.reason}. {IDLE_ENDS}</Text>}
     {edit && <View style={{gap:space.xs}}>
       <View style={row}><Button small c={c} text={showIdle ? "Hide idle options" : "Idle options"} label={`${showIdle ? "Hide" : "Show"} idle options for ${name} plan`} onPress={() => setShowIdle(!showIdle)} /></View>
       {showIdle && idleEditor()}
     </View>}
     {!latest.version && !pending.length && <Text style={muted(c)}>No plan yet.{roadmap.unplanned.length ? (editing ? ' Add the unplanned lanes below to start one.' : ' Edit plan to start one from the unplanned lanes below.') : ' No lanes for this project yet.'}</Text>}
     {HORIZONS.map(band)}
-    <View accessibilityLabel="Done band" style={{gap:6}}>
+    <View accessibilityLabel="Done band" style={{gap:space.xs}}>
       <Pressable accessibilityRole="button" accessibilityLabel={`Done, ${roadmap.done.length}`} accessibilityState={{expanded:showDone}} onPress={()=>setShowDone(!showDone)}><Text style={{color:c.foreground,fontWeight:'600'}}>{showDone?'▾':'▸'} Done · {roadmap.done.length}</Text></Pressable>
       {showDone&&roadmap.done.map(item=><View key={item.lane} accessibilityLabel={`Done step ${item.lane}`} style={frame(item.lane)}>
-        <View style={{...row,justifyContent:'space-between'}}><Pressable accessibilityRole="button" accessibilityLabel={`Open lane ${item.lane}`} onPress={()=>onOpenLane(item.lane)}><Text style={{color:c.foreground,fontWeight:'600'}}>{item.title}</Text></Pressable><Text style={{...muted(c),fontSize:11}}>{item.status} · {day(item.closedAt)}</Text></View>
+        <View style={{...row,justifyContent:'space-between'}}><Pressable accessibilityRole="button" accessibilityLabel={`Open lane ${item.lane}`} onPress={()=>onOpenLane(item.lane)}><Text style={{color:c.foreground,fontWeight:'600'}}>{item.title}</Text></Pressable><Text style={{...muted(c),fontSize:type.metadata.fontSize}}>{item.status} · {day(item.closedAt)}</Text></View>
         {Boolean(item.note)&&<Text style={muted(c)}>{item.note}</Text>}
       </View>)}
       {showDone&&!roadmap.done.length&&<Text style={muted(c)}>Nothing finished yet.</Text>}
     </View>
-    {roadmap.unplanned.length>0&&<View accessibilityLabel="Unplanned lanes" style={{gap:6}}>
+    {roadmap.unplanned.length>0&&<View accessibilityLabel="Unplanned lanes" style={{gap:space.xs}}>
       <Pressable accessibilityRole="button" accessibilityLabel={`${roadmap.unplanned.length} unplanned lanes`} accessibilityState={{expanded:showUnplanned}} onPress={()=>setShowUnplanned(!showUnplanned)}><Text style={{color:c.foreground,fontWeight:'600'}}>{showUnplanned?'▾':'▸'} {roadmap.unplanned.length} unplanned lanes</Text></Pressable>
-      {showUnplanned&&roadmap.unplanned.map(item=><View key={item.lane} style={{...row,justifyContent:'space-between',borderColor:c.border,borderWidth:1,borderRadius:7,padding:8}}>
+      {showUnplanned&&roadmap.unplanned.map(item=><View key={item.lane} style={{...row,justifyContent:'space-between',borderColor:c.border,borderWidth:1,borderRadius:radius.control,padding:space.xs}}>
         <Pressable accessibilityRole="button" accessibilityLabel={`Open lane ${item.lane}`} onPress={()=>onOpenLane(item.lane)}><Text style={{color:c.foreground}}>{item.title}</Text></Pressable>
         <View style={row}>{editing ? <ActionButton c={c} action="add" label={`Add ${item.lane} to ${name} plan`} disabled={busy} onPress={()=>change({entries:[...pending,{lane:item.lane,note:item.note,horizon:'later'}]})}/> : <Text style={muted(c)}>Edit plan to add</Text>}{onCloseLane&&<Button small c={c} text="Close" label={`Close lane ${item.lane}`} disabled={busy} onPress={()=>onCloseLane(item.lane)}/>}</View>
       </View>)}
     </View>}
     </>}
-    <View style={{ gap: 6, borderTopColor: c.border, borderTopWidth: 1, paddingTop: 10 }}><ProjectQaLatest project={project} runs={qaRuns} loading={qaLoading} error={qaError} onOpenRun={onOpenQaRun} onRetry={onRetryQa} c={c} /></View>
+    <View style={{ gap: space.xs, borderTopColor: c.border, borderTopWidth: 1, paddingTop: space.sm }}><ProjectQaLatest project={project} runs={qaRuns} loading={qaLoading} error={qaError} onOpenRun={onOpenQaRun} onRetry={onRetryQa} c={c} /></View>
   </View>;
 }
 
@@ -296,11 +296,11 @@ function ProjectRoadmap({ section, leads, lanes, edits, selectedLane, busy, save
 function DormantGroup({ projects, c, children }: { projects: Project[]; c: Colors; children?: (project: Project) => ReactNode }) {
   const [open, setOpen] = useState(false);
   if (!projects.length) return null;
-  return <View accessibilityLabel="Dormant projects" style={{ gap: 6 }}>
-    <Pressable accessibilityRole="button" accessibilityLabel={`Dormant projects, ${projects.length}`} accessibilityState={{ expanded: open }} onPress={() => setOpen(!open)} style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
+  return <View accessibilityLabel="Dormant projects" style={{ gap: space.xs }}>
+    <Pressable accessibilityRole="button" accessibilityLabel={`Dormant projects, ${projects.length}`} accessibilityState={{ expanded: open }} onPress={() => setOpen(!open)} style={{ flexDirection: "row", gap: space.xs, alignItems: "center" }}>
       <Text style={{ color: c.foreground, fontWeight: "600" }}>{open ? "▾" : "▸"} Dormant projects</Text><Text style={muted(c)}>{projects.length}</Text></Pressable>
-    {open && projects.map(project => <View key={project.key} style={{ gap: 6, padding: 8, borderWidth: 1, borderColor: c.border, borderRadius: 7, backgroundColor: c.surface0 }}>
-      <Text numberOfLines={1} style={{ color: c.foreground, fontWeight: "600", fontSize: 13 }}>{project.name}</Text>
+    {open && projects.map(project => <View key={project.key} style={{ gap: space.xs, padding: space.xs, borderWidth: 1, borderColor: c.border, borderRadius: radius.control, backgroundColor: c.surface0 }}>
+      <Text numberOfLines={1} style={{ color: c.foreground, fontWeight: "600", fontSize: type.body.fontSize }}>{project.name}</Text>
       {children?.(project)}
     </View>)}
   </View>;
@@ -332,7 +332,7 @@ export function PlanningProjectChooser({ projects, selection, onSelect, compact,
       <Text numberOfLines={1} style={{ color: r.foreground, fontSize: type.body.fontSize, lineHeight: type.body.lineHeight, flexShrink: 1 }}>{label}</Text>
       <Text style={{ color: r.muted, fontSize: type.metadata.fontSize }}>{open ? "▴" : "▾"}</Text>
     </Pressable>
-    {open && !compact && <View style={{ position: "absolute", top: 38, right: 0, width: 300, borderWidth: 1, borderColor: r.border, borderRadius: radius.panel, backgroundColor: r.section,
+    {open && !compact && <View style={{ position: "absolute", top: 34 + space.xxs, right: 0, width: 300, borderWidth: 1, borderColor: r.border, borderRadius: radius.panel, backgroundColor: r.section,
       shadowColor: overlay.shadow, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.38, shadowRadius: 14, elevation: 12, zIndex: 30 }}>{panel}</View>}
     {open && compact && <Modal visible transparent animationType="fade" onRequestClose={() => setOpen(false)}>
       <View style={{ flex: 1, justifyContent: "center", padding: space.md, backgroundColor: overlay.scrim }}>
@@ -369,7 +369,7 @@ export function LaneProjects({ lane, projects, plans, selected = [], busy = fals
     {!places.length && <Text style={muted(c)}>No project lists this lane's repositories yet.</Text>}
     {places.map(place => <View key={place.key} accessibilityLabel={`${place.name}: ${lanePlaceLabel(place)}`}
       style={{ ...row, justifyContent: "space-between", gap: space.xs, padding: space.xs, borderWidth: 1, borderColor: selected.includes(place.key) ? r.accent : r.border, borderRadius: radius.control, backgroundColor: r.section }}>
-      <View style={{ flexShrink: 1, minWidth: 0, gap: 1 }}>
+      <View style={{ flexShrink: 1, minWidth: 0, gap: space.xxs / 2 }}>
         <Text numberOfLines={1} style={{ color: r.foreground, fontSize: type.body.fontSize, lineHeight: type.body.lineHeight }}>{place.name}{place.parked ? " · parked" : ""}</Text>
         <Text style={{ color: r.muted, fontSize: type.metadata.fontSize, lineHeight: type.metadata.lineHeight }}>{lanePlaceLabel(place)}</Text>
       </View>
@@ -472,18 +472,18 @@ export function PlanningTab({ sections: allSections, leads = [], lanes, projects
   const clearSearch = () => { setQuery(""); setBrowse(false); };
   const chosenScope = effectiveSelection(projects, selection);
   const allScopeOn = !chosenScope.length || allScope;
-  const planColumn = <ScrollView accessibilityLabel="Planning plan" style={{flex:1,minHeight:0,backgroundColor:c.surface1,borderColor:c.border,borderWidth:1,borderRadius:8}} contentContainerStyle={{padding:12,gap:14}}>
+  const planColumn = <ScrollView accessibilityLabel="Planning plan" style={{flex:1,minHeight:0,backgroundColor:c.surface1,borderColor:c.border,borderWidth:1,borderRadius:radius.card}} contentContainerStyle={{padding:space.sm,gap:space.md}}>
     {!allSections.length&&<Text style={muted(c)}>No projects yet.</Text>}
     {sections.length===1&&roadmapFor(sections[0])}
     {sections.length>1&&sections.map(section=>{
       const open=expanded===section.project.key, info=summary(section);
-      return <View key={section.project.key} style={{gap:10}}>
-        <View style={{gap:5,padding:10,borderColor:c.border,borderWidth:1,borderRadius:7,backgroundColor:c.surface0}}>
-          <Pressable accessibilityRole="button" accessibilityLabel={`Project row ${section.project.name}`} accessibilityState={{expanded:open}} onPress={()=>setExpanded(open?null:section.project.key)} style={{gap:3}}>
+      return <View key={section.project.key} style={{gap:space.sm}}>
+        <View style={{gap:space.xxs,padding:space.sm,borderColor:c.border,borderWidth:1,borderRadius:radius.control,backgroundColor:c.surface0}}>
+          <Pressable accessibilityRole="button" accessibilityLabel={`Project row ${section.project.name}`} accessibilityState={{expanded:open}} onPress={()=>setExpanded(open?null:section.project.key)} style={{gap:space.xxs}}>
             <Text style={{color:c.foreground,fontWeight:'600'}}>{open?'▾':'▸'} {section.project.name}{section.project.visibility==='parked'?' · parked':''}</Text>
             {info.state==='ready' ? <>
-              {info.attention > 0 && <Text accessibilityLabel={`${info.attention} blocked or attention tasks`} style={{color:c.statusWarning,fontSize:12,fontWeight:'600'}}>{info.attention} need attention</Text>}
-              <Text numberOfLines={2} style={{...muted(c),fontSize:12}}>{info.aim}</Text>
+              {info.attention > 0 && <Text accessibilityLabel={`${info.attention} blocked or attention tasks`} style={{color:c.statusWarning,fontSize:type.metadata.fontSize,fontWeight:'600'}}>{info.attention} need attention</Text>}
+              <Text numberOfLines={2} style={{...muted(c),fontSize:type.metadata.fontSize}}>{info.aim}</Text>
             </> : <Text accessibilityLabel={`${info.state === 'loading' ? 'Loading plan' : 'Plan unavailable'} for ${section.project.name}`} accessibilityRole={info.state === 'error' ? 'alert' : undefined} style={muted(c)}>
               {info.state === 'loading' ? 'Loading…' : `Couldn’t load ${info.subject}: ${info.error}`}
             </Text>}
@@ -495,10 +495,10 @@ export function PlanningTab({ sections: allSections, leads = [], lanes, projects
     })}
     <DormantGroup projects={dormant} c={c}/>
   </ScrollView>;
-  const laneColumn = <ScrollView accessibilityLabel="Planning lane" style={{flex:1,minHeight:0,backgroundColor:c.surface1,borderColor:c.border,borderWidth:1,borderRadius:8}} contentContainerStyle={{padding:12,gap:10}}>
+  const laneColumn = <ScrollView accessibilityLabel="Planning lane" style={{flex:1,minHeight:0,backgroundColor:c.surface1,borderColor:c.border,borderWidth:1,borderRadius:radius.card}} contentContainerStyle={{padding:space.sm,gap:space.sm}}>
     {lanePanel}
   </ScrollView>;
-  const searchColumn = <ScrollView accessibilityLabel="Lane search results" style={{flex:1,minHeight:0,backgroundColor:c.surface1,borderColor:c.border,borderWidth:1,borderRadius:8}} contentContainerStyle={{padding:12,gap:10}}>
+  const searchColumn = <ScrollView accessibilityLabel="Lane search results" style={{flex:1,minHeight:0,backgroundColor:c.surface1,borderColor:c.border,borderWidth:1,borderRadius:radius.card}} contentContainerStyle={{padding:space.sm,gap:space.sm}}>
     <LaneFinderResults rows={rows} total={scoped.length} query={query} loading={lanesLoading} error={lanesError} plansError={plansError} allProjects={allScopeOn} onRetry={onRetryLanes} onOpenLane={onOpenLane} selectedLane={selectedLane} c={c}/>
   </ScrollView>;
   return <>
@@ -523,7 +523,7 @@ export function PlanningTab({ sections: allSections, leads = [], lanes, projects
         </View>
         {searching&&<Text accessibilityLabel="Lane search scope" style={{...muted(c),fontSize:type.metadata.fontSize,lineHeight:type.metadata.lineHeight}}>Searching {scopeLabel==='All projects'?'all projects':scopeLabel}. {query.trim()?'Results match the title, aim or project.':'Every lane in scope is listed.'}</Text>}
       </View>
-      <View style={{flex:1,minHeight:0,flexDirection:compact?'column':'row',gap:12}}>
+      <View style={{flex:1,minHeight:0,flexDirection:compact?'column':'row',gap:space.sm}}>
         {searching
           ? (compact && step==='lane' ? laneColumn : <>{searchColumn}{!compact&&visible.includes('lane')&&laneColumn}</>)
           : <>{visible.includes('plan')&&planColumn}{visible.includes('lane')&&laneColumn}</>}
