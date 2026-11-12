@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { T3CodeHost } from '../hosts/t3code/adapter';
 import { ProvenPreSendRefusalError, HostUnknownDeliveryError } from '../core/host';
+import { isTransportFailure } from '../shared/transport';
 import type { HostAgentSpec } from '../shared/host';
 import type { Profile } from '../shared/contracts';
 import { t3Fake, STAMP, threadProjection } from './support/t3code-fake';
@@ -700,4 +701,39 @@ test('atomic interrupt and continue steers the live run through steer_active', a
   p.runs = [];
   await assert.rejects(host.interruptAndContinue(created.id, 'ns-steer-idle', 'Change course: Y'), /no active run to steer/);
   assert.equal(server.commands.filter(c => c.type === 'message.dispatch').length, 1);
+});
+
+// #1148: a thread read cut mid-turn is an observation outage, not a verdict on the
+// worker. The next observation is a fresh read, and it reports the live activity.
+test('an interrupted thread read is a transport outage, and the next read reports the live run', async t => {
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const p = server.threads.get(created.id)!;
+  const LATER = '2026-01-01T00:05:00.000Z';
+  server.controls.interruptThreadReads = 1;
+  await assert.rejects(host.observe(created.id), error => isTransportFailure(error));
+  p.runs = [{ id: 'live-run', status: 'running', startedAt: LATER }];
+  p.thread.updatedAt = LATER; p.updatedAt = LATER;
+  const live = await host.observe(created.id);
+  assert.equal(live.active, true);
+  assert.equal(live.activeTurnId, 'live-run');
+  assert.equal(live.updatedAt, LATER, 'the observed activity stamp advances with the thread');
+});
+
+// #1148: after the T3 socket drops, observation is an outage until the host
+// reconnects; then every live thread's observation resumes from a fresh read.
+test('after a socket drop, observation is an outage until reconnect, then resumes for the live thread', async t => {
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const p = server.threads.get(created.id)!;
+  server.dropSockets();
+  for (let i = 0; i < 100 && host.connected; i++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(host.connected, false);
+  await assert.rejects(host.observe(created.id), error => isTransportFailure(error));
+  await host.connect();
+  assert.equal(host.connected, true);
+  p.runs = [{ id: 'resumed-run', status: 'running', startedAt: STAMP }];
+  const resumed = await host.observe(created.id);
+  assert.equal(resumed.active, true);
+  assert.equal(resumed.activeTurnId, 'resumed-run');
 });
