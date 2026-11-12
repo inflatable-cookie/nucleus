@@ -513,3 +513,33 @@ test('owned-tool reads time out without accepting a late response', async t => {
   finish(toolTimelinePage([]));
   assert.ok('issue' in result, 'a late empty response cannot turn the refusal into proof');
 });
+
+// #1148 acceptance 2: during a T3 observation outage, stall detection never starts
+// recovery, even though the thread's own projection shows recent activity. The
+// outage throws before any stall judgement; it is deferred, not read as an idle or
+// stalled worker, and the next successful read with fresh activity stays healthy.
+test('an observation outage on a thread with recent projection activity never starts stall recovery', async t => {
+  const f = await fixture(t);
+  t.after(() => f.store.close());
+  // The projection's own stamp is fresh, so a successful read would not be stale.
+  f.setObservation(running({ updatedAt: minutesAgo(1), turnStartedAt: minutesAgo(2) }));
+  const outage = new Error('T3Code transport: orchestration.subscribeThread');
+  f.adapter.observe = async () => { throw outage; };
+  await f.engine.wake();
+  await f.engine.wake();
+  const during = f.store.task(f.task.id);
+  assert.equal(during.phase, 'working', 'an outage keeps the worker in its phase');
+  assert.equal(during.resolution.attention, false);
+  assert.equal(during.resolution.incident ?? null, null, 'no stalled-turn incident is opened');
+  assert.equal(f.stopRequests.length, 0, 'the live turn is never interrupted');
+  assert.deepEqual(f.createdRuns, [], 'no recovery run is launched');
+  assert.doesNotMatch(during.reason, /looks stalled/);
+  // The outage clears: the same thread, with recent activity, stays healthy.
+  f.adapter.observe = async (id: string) => ({ ...running({ updatedAt: minutesAgo(1), turnStartedAt: minutesAgo(2) }), id });
+  await f.engine.wake();
+  const after = f.store.task(f.task.id);
+  assert.equal(after.phase, 'working');
+  assert.equal(after.resolution.incident ?? null, null);
+  assert.equal(f.stopRequests.length, 0);
+  assert.deepEqual(f.createdRuns, []);
+});
