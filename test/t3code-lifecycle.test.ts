@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { QueueRuntime } from '../service/runtime-owner';
 import { git } from '../core/git/index';
-import { leadSubmit, type Profile, type Run } from '../shared/contracts';
+import { leadSubmit, taskSchema, type Profile, type Run } from '../shared/contracts';
 import { formatAgentId } from '../shared/agent-identity';
 import { fakeAdapter } from './support/fakes';
 import { plannerTicketKey } from '../core/dispatch/participant-tickets';
@@ -743,9 +743,9 @@ test('a task that finished before this rule is cleaned up by the next sweep, exa
         const id = `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
         const agentId = index < 501 ? null : `unowned-history-${index}`;
         const historical = { ...completed, id, agentId, retiredWorkers: [],
-          coordinatorAgentId: null, resolution: { ...completed.resolution,
+          coordinatorAgentId: undefined, resolution: { ...completed.resolution,
             reviewerAgentId: null, currentRunId: null } };
-        insert.run(id, `synthetic-history-${index}`, digest(id), JSON.stringify(historical));
+        insert.run(id, `synthetic-history-${index}`, digest(id), JSON.stringify(taskSchema.parse(historical)));
         if (index < 250) f.runtime.store.setMeta(`finishedTaskThreadCleanup:${id}`, STAMP);
         if (agentId) f.server.threads.set(agentId, threadProjection(agentId, f.repo));
       }
@@ -753,7 +753,8 @@ test('a task that finished before this rule is cleaned up by the next sweep, exa
 
     // The real safety sweep selects the finished task directly and applies the
     // closeout rule: the worker archived, the support thread removed.
-    await f.runtime.engine.auditPass(false);
+    const sweep = await f.runtime.engine.auditPass(false);
+    assert.equal(sweep.fault, null, 'the real sweep completes without a fixture or host failure');
     assert.ok(f.server.commands.some(command => command.type === 'thread.archive' && command.threadId === workerThreadId),
       'the worker thread is archived');
     assert.equal(f.server.commands.filter(command => command.type === 'thread.delete' && command.threadId === reviewerThreadId).length, 1,
