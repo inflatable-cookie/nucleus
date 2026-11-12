@@ -171,21 +171,16 @@ the same text can come from a handler after an effect — and the task keeps the
 path-and-manual-fix guidance inside that unknown, never a refused mark
 (review ruling, 2026-11-12). Nucleus does not rename or remove projects.
 
-Closing a task archives the task's project through the `project.update`
-mutation with `archived: true` — the nightly keeps the project's threads and
-files (nucleus#1139, shapes read from the same bundle:
-`ProjectMutation = project.create | project.update | project.delete` in
-`packages/contracts/src/project.ts`). The project is one registration per
-repository, so while another live task on the same host still works there the
-archive holds — a visible `workspace_cleanup_wait` wait, never a failure — and
-the last closer retires the registration; earlier terminal tasks complete
-their local teardown against whatever state the last closer leaves, including
-the archived one. An archived project keeps its repository
-root, so a later task in the same repository reopens the same registration
-with `archived: false` instead of registering a second project, which the
-nightly refuses for an owned root. Archive observation is a positive native
-fact: the project is gone from the inventory or carries `archivedAt`, and an
-archived registration is no longer a current workspace.
+Closing a task retires its task-specific worktree handle from the adapter's
+stored state and tears down its owned Git worktree. It does not mutate the
+native project registration: that registration is shared by every task in the
+repository, and a finished task's archive must proceed while another task is
+live. Nucleus currently leaves the shared project registered; if a future
+project-level retirement is added, it must wait until no task uses the
+registration. A new task reuses the still-registered project directly.
+Workspace archive observation is positive from the stored adapter state: a
+missing task worktree handle is archived, while the shared project remains
+available.
 
 Nucleus prepares and verifies the Git worktree before handing it to T3. Creation
 uses only `existing_worktree`; T3 must confirm it belongs to the selected project.

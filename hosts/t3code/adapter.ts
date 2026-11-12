@@ -283,15 +283,11 @@ export class T3CodeHost implements Host {
     return { get directory() { return host.state.read().workspaces[id]?.directory; },
       async refresh() { available = await host.workspaceAvailable(id); return available; },
       current() { const w = host.state.read().workspaces[id]; return available && w ? { projectRootPath: w.directory, workspaceDirectory: w.directory, projectId: w.projectId, workspaceKind: 'external' } : null; },
-      /** The native archive is the project's `archived: true` mutation: threads and files are kept. */
+      /** A task archive retires only Nucleus's worktree handle; the T3 project is shared by the repository. */
       async archive(requestId: string) {
-        const workspace = host.state.read().workspaces[id];
-        if (!workspace) return { archivedAt: null, error: 'T3Code workspace is not registered' };
-        try {
-          await host.effect(requestId, 'projects.mutate', { type: 'project.update', commandId: requestId, projectId: workspace.projectId, archived: true });
-          const found = (await host.inventory()).projects.find(p => p.id === workspace.projectId);
-          return { archivedAt: found?.archivedAt ?? null, error: null };
-        } catch (error) { return { archivedAt: null, error: error instanceof Error ? error.message : String(error) }; }
+        void requestId;
+        host.state.update(state => { delete state.workspaces[id]; });
+        return { archivedAt: new Date().toISOString(), error: null };
       } };
   }
   async workspaceCatalog(_directory: string) { return { ok: false as const, reason: 'T3Code does not expose a native workspace registration inventory' }; }

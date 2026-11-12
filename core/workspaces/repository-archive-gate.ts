@@ -2,19 +2,17 @@ import type { Task } from "../../shared/contracts";
 import type { Adapter } from "../host/adapter";
 
 /**
- * Whether one workspace archive retires a registration every task in the
- * repository shares. Paseo worktrees are independent registrations and never
- * set this; T3Code projects are one per repository (nucleus#1139 review).
+ * Whether a host has a project registration shared by repository workspaces.
+ * Paseo worktrees are independent registrations; T3Code has one project per
+ * repository. This describes project retirement, not task worktree archives.
  */
 export function repositorySharedWorkspaces(adapter: Pick<Adapter, "capabilities">): boolean {
   return adapter.capabilities?.().repositorySharedWorkspaces === true;
 }
 
 /**
- * A live task on the same host and repository keeps the shared registration
- * alive. Terminal tasks do not hold: each completes its own retirement against
- * whatever registration state the last closer leaves, including the archived
- * one.
+ * A live task on the same host and repository still uses the shared project
+ * registration. Terminal tasks do not use it.
  */
 export function liveRepositorySharer(tasks: readonly Task[], task: Task): boolean {
   return tasks.some(other => other.id !== task.id && !other.removedAt
@@ -23,10 +21,8 @@ export function liveRepositorySharer(tasks: readonly Task[], task: Task): boolea
 }
 
 /**
- * The hold reason a workspace archive owes while a live task shares the
- * repository's project registration; empty when the archive may proceed. The
- * hold is a wait, never a failure: the workspace stays preserved and the next
- * pass retries, and the last closer retires the registration.
+ * The hold reason for retiring a shared project registration while a live task
+ * still uses it. Individual worktree archives do not call this gate.
  */
 export function sharedRepositoryArchiveHold(adapter: Pick<Adapter, "capabilities">, tasks: readonly Task[], task: Task): string | null {
   if (!repositorySharedWorkspaces(adapter)) return null;
