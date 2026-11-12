@@ -68,8 +68,11 @@ export function workerAgentSpec(owner: () => CreationOwner, task: Task, token: s
     workspaceId: task.workspaceId!, profile: task.profile!, title: task.title, mcpBindingPath,
     attempt: (mcp, retry): HostAgentAttempt => {
       const current = owner();
-      const launchEnv = launchEnvironment(current, task, runId, task.temporaryDirectory, ticket);
-      const environment = current.perThreadEnvironment === false ? {} : launchEnv;
+      // A host that takes no per-thread environment (T3) gets an empty one and
+      // manages its own scratch (task 1105): the launch environment, with its
+      // recorded-directory validation and creation, is computed only when the
+      // host will use it (the task 1126 hoist computed it either way).
+      const environment = current.perThreadEnvironment === false ? {} : launchEnvironment(current, task, runId, task.temporaryDirectory, ticket);
       materializeLaneDocuments(task.temporaryDirectory, task.laneDocumentPins);
       return {
         requestId: retry ? `ns-agent-${runId}-socket` : `ns-agent-${runId}`,
@@ -94,9 +97,11 @@ export function runAgentSpec(owner: () => CreationOwner, task: Task, run: Run, t
     workspaceId: run.workspaceId, profile, title: `${run.role}: ${task.title}`, mcpBindingPath, guard,
     attempt: (mcp, retry): HostAgentAttempt => {
       const current = owner();
-      const launchEnv = launchEnvironment(current, task, run.id, run.temporaryDirectory, ticket);
-      const environment = current.perThreadEnvironment === false ? {} : launchEnv;
-      const effectiveRun = { ...run, temporaryDirectory: launchEnv.TMPDIR };
+      // Same task 1105 shape as the worker spec: no per-thread environment, no
+      // launch-environment computation; lane docs materialize at the recorded
+      // run directory the host manages.
+      const environment = current.perThreadEnvironment === false ? {} : launchEnvironment(current, task, run.id, run.temporaryDirectory, ticket);
+      const effectiveRun = { ...run, temporaryDirectory: current.perThreadEnvironment === false ? run.temporaryDirectory : environment.TMPDIR };
       materializeLaneDocuments(effectiveRun.temporaryDirectory, task.laneDocumentPins);
       return {
         requestId: retry ? `ns-run-${run.id}-socket` : `ns-run-${run.id}`,

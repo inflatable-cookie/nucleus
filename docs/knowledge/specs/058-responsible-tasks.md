@@ -55,10 +55,13 @@ way as a submitted one; see [Spec 050](050-owner-task-controls.md#report-only-de
 
 ### Questions and budgets
 
-- A worker or reviewer asks in-turn, on every provider, with `northstar_ask` on the
-  run's own MCP binding (task 550). Its optional kind is a hint: worker and reviewer questions,
+- A worker or reviewer asks in-turn, on every provider, with `ask` (alias `nucleus_ask`) on the
+  run's own MCP binding (task 550; task 1108 renamed the verb and its recipients). Its optional kind is a hint: worker and reviewer questions,
   including native questions Nucleus intercepts, follow Slice 17: a worker consults its retained
-  reviewer first unless the question is operator-only. Reviewer asks skip self-consult and take the
+  reviewer first unless the question is operator-only. A named recipient addresses its own rung (task 1108):
+  `to: "planner"` starts on this task's planner ladder without the reviewer rung, `to: "reviewer"` or no
+  recipient keeps the reviewer-first rung, and project or other-task routes ask those ladders directly.
+  Reviewer asks skip self-consult and take the
   same planner or decider classification as worker asks. An ask with no real question (empty or the
   literal `placeholder`) is refused back to the agent and never routes. Planning rulings go to the planner (or decider)
   for classification before any operator decision. Only an explicit `Decision: operator` reply with a one-line reason

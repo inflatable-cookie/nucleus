@@ -425,7 +425,8 @@ async function verifyViewport(compact: boolean) {
   const ui = mount(tree(MainSurface, compact));
   try {
     await settle(ui);
-    assert.deepEqual(navigationLabels(ui).map(label => label.replace(/\s+\(\d+(?: open)?\)$/, '')), ['Tasks', 'Planning', 'QA runs']);
+    // nucleus#1113 added the Usage destination to the board's navigation.
+    assert.deepEqual(navigationLabels(ui).map(label => label.replace(/\s+\(\d+(?: open)?\)$/, '')), ['Tasks', 'Planning', 'QA runs', 'Usage']);
     assert.equal(ui.query(/^Decisions \(/), undefined, 'Decisions has no top-level tab');
     assert.equal(ui.query('Papercuts'), undefined, 'Papercuts has no top-level tab');
     assert.equal(ui.query('Board mode'), undefined, 'Tasks has no Pipeline/Lanes mode toggle');

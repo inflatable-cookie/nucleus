@@ -85,10 +85,11 @@ export const agentAskSchema = z
     details: z.string().max(48000).nullable().optional(),
     kind: z.enum(AGENT_ASK_KINDS).optional(),
     /**
-     * A worker's second opinion reaches its retained reviewer mid-turn; the answer
-     * records who answered. The target hint cannot bypass that authenticated route.
-     * Reviewer asks and operator-only kinds keep planner classification. With no
-     * retained reviewer the ordinary planner route answers the question.
+     * Legacy alias of `to` (shared/agent-verbs). A named recipient picks the
+     * route (task 1108): "planner" starts on this task's planner ladder;
+     * "reviewer" reaches the retained reviewer mid-turn and opens the planner
+     * rung only on its classification. An unnamed worker process ask keeps the
+     * reviewer-first rung; operator-only kinds skip the reviewer.
      */
     target: z.enum(['planner', 'reviewer']).optional(),
     /** The `ask` recipient (shared/agent-verbs): a keyword, a project or another task's planner. */
