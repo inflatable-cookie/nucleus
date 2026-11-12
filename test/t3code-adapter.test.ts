@@ -10,6 +10,8 @@ import { isTransportFailure } from '../shared/transport';
 import type { HostAgentSpec } from '../shared/host';
 import type { Profile } from '../shared/contracts';
 import { t3Fake, STAMP, threadProjection } from './support/t3code-fake';
+import { storedT3Labels } from './support/t3code-labels';
+import { NUCLEUS_LABEL_KEYS } from '../shared/wire-labels';
 
 const profile: Profile = { id: 'synthetic-profile', name: 'Synthetic', provider: 'synthetic-provider', model: 'synthetic-model',
   available: true, problem: '', notes: '', supportedThinking: [] };
@@ -23,7 +25,7 @@ async function fixture(t: TestContext) {
   await host.connect();
   const workspace = await host.createWorkspace({ title: 'Synthetic worktree', requestId: 'workspace-intent', directory, project: { projectId: 'synthetic-project' } });
   const spec = (requestId = 'launch-intent', prompt = 'Synthetic prompt'): HostAgentSpec => ({ workspaceId: workspace.id, profile, title: 'Synthetic role', mcpBindingPath: null,
-    attempt: () => ({ requestId, prompt, labels: { task: 'synthetic-task', role: 'worker' }, environment: {} }) });
+    attempt: () => ({ requestId, prompt, labels: storedT3Labels('worker'), environment: {} }) });
   return { root, directory, server, options, host, workspace, spec };
 }
 
@@ -57,7 +59,7 @@ test('create uses an existing canonical worktree and explicit top-level provider
   assert.equal(created.workspaceId, workspace.id);
   for (const field of ['parentThreadId', 'parentRunId', 'delegatedFrom', 'environment', 'mcpServers']) assert.equal(Object.hasOwn(command, field), false, field);
   assert.equal((await host.observe(created.id)).workspaceId, workspace.id);
-  assert.deepEqual(await host.findAgents({ task: 'synthetic-task' }), [created]);
+  assert.deepEqual(await host.findAgents({ [NUCLEUS_LABEL_KEYS.task]: 'synthetic-task' }), [created]);
 });
 
 test('connect refuses incompatible protocol and missing probe coverage without a canary mutation', async t => {
@@ -127,7 +129,7 @@ test('durable create replay survives reload and refuses changed payload or label
   assert.deepEqual(await reloaded.createAgent(spec()), first);
   assert.equal(server.commands.length, 1);
   await assert.rejects(reloaded.createAgent(spec('launch-intent', 'Changed prompt')), /payload changed/);
-  const changed = spec(); changed.attempt = () => ({ requestId: 'launch-intent', prompt: 'Synthetic prompt', labels: { task: 'other-task' }, environment: {} });
+  const changed = spec(); changed.attempt = () => ({ requestId: 'launch-intent', prompt: 'Synthetic prompt', labels: storedT3Labels('worker', { taskId: 'other-task' }), environment: {} });
   await assert.rejects(reloaded.createAgent(changed), /retained identity changed/);
   assert.equal(server.commands.length, 1);
 });
@@ -457,7 +459,7 @@ test('host identity conflicts and unsupported per-thread bindings refuse before 
   const { host, server, options, workspace, spec, root } = await fixture(t);
   const mcp = spec(); mcp.mcpBindingPath = 'synthetic-binding';
   await assert.rejects(host.createAgent(mcp), /MCP reporting/);
-  const environment = spec(); environment.attempt = () => ({ requestId: 'environment', prompt: 'Synthetic', labels: {}, environment: { SYNTHETIC: 'value' } });
+  const environment = spec(); environment.attempt = () => ({ requestId: 'environment', prompt: 'Synthetic', labels: storedT3Labels('worker'), environment: { SYNTHETIC: 'value' } });
   await assert.rejects(host.createAgent(environment), /launch environment/);
   const guarded = spec(); guarded.guard = { async allowed() { return true; }, stillAllowed() { return false; } };
   await assert.rejects(host.createAgent(guarded), /guard changed/);

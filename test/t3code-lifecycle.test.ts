@@ -13,6 +13,8 @@ import { fakeAdapter } from './support/fakes';
 import { plannerTicketKey } from '../core/dispatch/participant-tickets';
 import { digest } from '../core/store/store';
 import { t3Fake, threadProjection, STAMP } from './support/t3code-fake';
+import { storedT3Labels } from './support/t3code-labels';
+import { NUCLEUS_LABEL_KEYS } from '../shared/wire-labels';
 import { createHost, createAdapter } from '../hosts/t3code';
 import { archiveFinishedThreads } from '../core/workspaces/thread-archive';
 import { HostPolicies } from '../core/host/host-policies';
@@ -725,10 +727,27 @@ test('a task that finished before this rule is cleaned up by the next sweep, exa
     // The task closed out before the closeout-cleanup rule rolled: it is done and
     // merged, and its threads were never archived or removed.
     const current = f.runtime.store.task(taskId);
+    // Copied stored trial shapes: the worker has no role label, while the
+    // retained recovery thread carries nucleus.role=recovery. IDs are synthetic.
+    const workerLabels = f.host.state.read().agents[workerThreadId]!.labels;
+    assert.deepEqual(workerLabels, storedT3Labels('worker', { taskId, runId: current.runId! }));
+    assert.equal(Object.hasOwn(workerLabels, NUCLEUS_LABEL_KEYS.role), false);
+    const recoveryRunId = randomUUID();
+    const recoveryLabels = storedT3Labels('recovery', { taskId, runId: recoveryRunId });
+    const recovery = await f.host.createAgent({ workspaceId: current.workspaceId!, profile: current.profile!,
+      title: 'Synthetic retained recovery', mcpBindingPath: null,
+      attempt: () => ({ requestId: recoveryRunId, prompt: 'Synthetic completed recovery', labels: recoveryLabels, environment: {} }) });
+    f.runtime.store.putRun({ id: recoveryRunId, taskId, hostId: t3Host, role: 'recovery', generation: current.coordinatorGeneration,
+      head, base: current.planningBase, workspaceId: current.workspaceId!, agentId: recovery.id, profile: current.profile,
+      status: 'finished', createdAt: STAMP, lastObservedAt: STAMP, active: false, idleSince: null, released: true,
+      completion: { taskId, runId: recoveryRunId, eventId: randomUUID(), status: 'recovered', head, summary: 'Recovery applied' } });
+    await f.host.settleReportedThread(recovery.id, recoveryRunId);
+    assert.deepEqual(f.host.state.read().agents[recovery.id]!.labels, recoveryLabels);
+    assert.equal(recoveryLabels[NUCLEUS_LABEL_KEYS.role], 'recovery');
     const verdict = { taskId, runId: reviewerRun.id, eventId: randomUUID(), status: 'ready_to_merge' as const,
       head, summary: 'Approved', reviewText: 'The reviewed change meets the brief.' };
     f.runtime.store.putRun({ ...reviewerRun, status: 'finished', active: false, released: true, completion: verdict });
-    f.runtime.store.update(taskId, { phase: 'done', resolution: { ...current.resolution, currentRunId: null,
+    f.runtime.store.update(taskId, { phase: 'done', coordinatorAgentId: recovery.id, resolution: { ...current.resolution, currentRunId: null,
       mergedCommit: head, review: verdict } });
     assert.equal(f.runtime.store.getMeta(`finishedTaskThreadCleanup:${taskId}`), undefined);
     assert.equal(f.server.commands.some(command => command.type === 'thread.archive' || command.type === 'thread.delete'), false,
@@ -759,6 +778,10 @@ test('a task that finished before this rule is cleaned up by the next sweep, exa
       'the worker thread is archived');
     assert.equal(f.server.commands.filter(command => command.type === 'thread.delete' && command.threadId === reviewerThreadId).length, 1,
       'the reviewer thread is removed once');
+    assert.equal(f.server.commands.filter(command => command.type === 'thread.delete' && command.threadId === recovery.id).length, 1,
+      'the stored-shape recovery thread is removed once');
+    assert.equal(f.server.commands.filter(command => command.type === 'thread.delete' && command.threadId === workerThreadId).length, 0,
+      'the worker without a role label is archived, never deleted');
     assert.ok(f.runtime.store.getMeta(`finishedTaskThreadCleanup:${taskId}`), 'completion is recorded per task');
     for (let index = 501; index < 505; index++)
       assert.equal(f.runtime.store.getMeta(`finishedTaskThreadCleanup:00000000-0000-4000-8000-${String(index).padStart(12, '0')}`),

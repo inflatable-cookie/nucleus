@@ -9,6 +9,8 @@ import { archiveFinishedThreads, archiveReplacedReviewer } from '../core/workspa
 import { dispositionSchema } from '../shared/contracts';
 import { profileSchema, submissionSchema, type Run } from '../shared/contracts';
 import type { Adapter } from '../core/host';
+import { storedT3Labels } from './support/t3code-labels';
+import { NUCLEUS_LABEL_KEYS } from '../shared/wire-labels';
 
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), 'ns-thread-archive-'));
@@ -282,8 +284,13 @@ test('a failed observation before archive delivery can retry without replaying a
 function ownedAndIdle(f: ReturnType<typeof fixture>, extra: Record<string, { status?: string; active?: boolean; permissions?: boolean }> = {}) {
   Object.assign(f.adapter, { observe: async (id: string) => ({ id, workspaceId: 'workspace', error: '', labels: { 'northstar.task': f.task.id },
     status: 'idle', active: false, permissions: false, ...(extra[id] ?? {}) }) });
-  Object.assign(f.t3Adapter, { observe: async (id: string) => ({ id, workspaceId: 'workspace', error: '', labels: { 'northstar.task': f.task.id },
-    status: 'idle', active: false, permissions: false, ...(extra[id] ?? {}) }) });
+  Object.assign(f.t3Adapter, { observe: async (id: string) => {
+    const run = f.store.runs(f.task.id).findLast(candidate => candidate.agentId === id);
+    const role = !run || run.role === 'revision' ? 'worker' : run.role;
+    return { id, workspaceId: 'workspace', error: '',
+      labels: storedT3Labels(role, { taskId: f.task.id, runId: run?.id ?? 'synthetic-worker-run' }),
+      status: 'idle', active: false, permissions: false, ...(extra[id] ?? {}) };
+  } });
 }
 
 test('a task whose host can remove threads keeps its released support threads settled, never archived, and retains its reviewer and recovery bindings (#1155)', async () => {
@@ -336,6 +343,30 @@ test('at closeout a host that can remove threads archives the worker thread and 
     assert.deepEqual([...f.calls].sort(), ['retired-worker', 'worker'], 'each worker thread is archived once');
     assert.equal(f.deletes.length, 4, 'each support thread is removed once');
     assert.equal(f.store.eventsAll(f.task.id).filter(event => event.kind === 'thread_archive_observed').length, 6);
+  } finally { f.close(); }
+});
+
+test('terminal cleanup archives a historical revision worker missing from current and retired bindings, and deletes labelled recovery (#1155)', async () => {
+  const f = fixture(); try {
+    const revision = f.run('revision', 'historical-worker'); f.store.putRun(revision);
+    const recovery = f.run('recovery', 'historical-recovery'); f.store.putRun(recovery);
+    ownedAndIdle(f);
+    f.store.update(f.task.id, { phase: 'done', retiredWorkers: [],
+      resolution: { ...f.store.task(f.task.id).resolution, mergedCommit: 'c'.repeat(40) } });
+
+    const workerState = await f.t3Adapter.observe(revision.agentId!);
+    assert.deepEqual(workerState.labels, storedT3Labels('worker', { taskId: f.task.id, runId: revision.id }),
+      'the historical worker carries the stored worker shape with no role');
+    assert.ok(!Object.hasOwn(workerState.labels!, NUCLEUS_LABEL_KEYS.role));
+    const recoveryState = await f.t3Adapter.observe(recovery.agentId!);
+    assert.deepEqual(recoveryState.labels, storedT3Labels('recovery', { taskId: f.task.id, runId: recovery.id }));
+
+    await archiveFinishedThreads(f.store, f.t3Adapter, f.task.id);
+    assert.deepEqual([...f.calls].sort(), ['historical-worker', 'worker'], 'both worker identities are archived');
+    assert.deepEqual(f.deletes.map(item => item.id), ['historical-recovery'], 'the labelled recovery thread is deleted');
+    await archiveFinishedThreads(f.store, f.t3Adapter, f.task.id);
+    assert.equal(f.calls.length, 2, 'each worker archive happens once');
+    assert.equal(f.deletes.length, 1, 'the recovery deletion happens once');
   } finally { f.close(); }
 });
 
@@ -407,7 +438,7 @@ test('a displaced reviewer stays settled while a removable host keeps its task o
 
     // A live turn is never fenced: the verb stops it first.
     Object.assign(f.t3Adapter, { observe: async (id: string) => ({ id, workspaceId: 'workspace', error: '',
-      labels: { 'nucleus.task': f.task.id }, status: 'running', active: true, permissions: false }) });
+      labels: storedT3Labels('reviewer', { taskId: f.task.id, runId: reviewer.id }), status: 'running', active: true, permissions: false }) });
     assert.equal(await archiveReplacedReviewer(f.store, f.t3Adapter, reviewer), false);
 
     // The fence is the stopped, idle thread with its released run: nothing is

@@ -57,6 +57,13 @@ function cleanupComplete(origin: OriginAgent | null, op: 'archive' | 'delete' = 
   return op === 'archive' && origin.archived === true;
 }
 
+/** Worker history also includes revision runs whose task pointer has moved on. */
+function workerThreadIds(task: Task, runs: Run[]): Set<string> {
+  return new Set([task.agentId, ...task.retiredWorkers.map(worker => worker.agentId),
+    ...runs.filter(run => run.hostId === task.hostId && run.role === 'revision').map(run => run.agentId)]
+    .filter((agentId): agentId is string => Boolean(agentId)));
+}
+
 /** Whether this task owns the thread: it must carry this task's own label. */
 function ownedByTask(labels: Record<string, string> | undefined, taskId: string): boolean {
   return historicalWireLabel(labels, 'task') === taskId;
@@ -358,16 +365,21 @@ async function archiveTerminalTaskThreads(store: Store, adapter: Adapter, task: 
   // The task's own worker threads stay as archive history: the worker's thread
   // is where its work happened, and the task keeps it. Every other identity this
   // task ran on is a support thread and is removed where the host can.
-  const workerAgents = new Set([task.agentId, ...task.retiredWorkers.map(worker => worker.agentId)]
-    .filter((agentId): agentId is string => Boolean(agentId)));
+  const workerAgents = workerThreadIds(task, taskRuns);
   const supportRemoval = removesThreads(adapter);
-  const opFor = (agentId: string): 'archive' | 'delete' => supportRemoval && !workerAgents.has(agentId) ? 'delete' : 'archive';
+  const opFor = (agentId: string, labels?: Record<string, string>): 'archive' | 'delete' => {
+    // Read the stored namespace through the shared keys. Initial worker threads
+    // have no role label, so the task pointer or revision run supplies that role.
+    const role = historicalWireLabel(labels, 'role');
+    const worker = role ? role === 'worker' || role === 'revision' : workerAgents.has(agentId);
+    return supportRemoval && !worker ? 'delete' : 'archive';
+  };
   const wait = (agentId: string, detail: string) => archiveWait(store, task.id, agentId, detail);
   const archiveOne = async (agentId: string) => {
     if (taskRuns.some(run => run.agentId === agentId && (!run.hostId || run.hostId !== task.hostId))) { wait(agentId, 'Waiting for proven run host'); return; }
     const key = store.threadArchiveKey(agentId, task.hostId);
     if (!key) { wait(agentId, 'Waiting for proven archive host'); return; }
-    const op = opFor(agentId);
+    let op = opFor(agentId);
     let effect = store.getMeta<ArchiveEffect>(key);
     // A record completes this candidate only when it names the same operation:
     // a support thread archived earlier in the task's life is still removed here.
@@ -399,6 +411,7 @@ async function archiveTerminalTaskThreads(store: Store, adapter: Adapter, task: 
       }
       // A thread Queue does not own is never touched.
       if (!observed || !ownedByTask(observed.labels, task.id)) { store.deleteMeta(archiveProbeKey(store, task.id, agentId)); return; }
+      op = opFor(agentId, observed.labels);
       // An active turn or pending permission waits for the next pass (review #543).
       if (observed.active || observed.activeTurnId || observed.permissions || !['idle', 'error', 'closed'].includes(observed.status)) { wait(agentId, 'Thread is active or waiting for permission'); return; }
       store.deleteMeta(archiveProbeKey(store, task.id, agentId));
@@ -493,10 +506,10 @@ export function finishedThreadCleanupKey(taskId: string): string { return `finis
  * lane uses, read from the durable effect records.
  */
 export function threadCleanupPending(store: Store, task: Task, removal: boolean): boolean {
-  const workerAgents = new Set([task.agentId, ...task.retiredWorkers.map(worker => worker.agentId)]
-    .filter((agentId): agentId is string => Boolean(agentId)));
+  const runs = store.runs(task.id);
+  const workerAgents = workerThreadIds(task, runs);
   const agents = new Set(workerAgents);
-  for (const run of store.runs(task.id)) if (run.agentId && run.hostId === task.hostId) agents.add(run.agentId);
+  for (const run of runs) if (run.agentId && run.hostId === task.hostId) agents.add(run.agentId);
   return [...agents].some(agentId => {
     const key = store.threadArchiveKey(agentId, task.hostId);
     if (!key) return false;
@@ -535,7 +548,8 @@ export function finishedThreadCleanupCatchUp(store: Store, hostId: string, remov
     SELECT finished.id, hostId, json_extract(retired.value,'$.agentId'), 1
       FROM finished, json_each(finished.data,'$.retiredWorkers') AS retired
     UNION ALL
-    SELECT finished.id, finished.hostId, json_extract(runs.data,'$.agentId'), 0
+    SELECT finished.id, finished.hostId, json_extract(runs.data,'$.agentId'),
+      CASE WHEN json_extract(runs.data,'$.role')='revision' THEN 1 ELSE 0 END
       FROM finished JOIN runs ON runs.taskId=finished.id
       WHERE json_extract(runs.data,'$.hostId')=finished.hostId
   ), candidates AS (

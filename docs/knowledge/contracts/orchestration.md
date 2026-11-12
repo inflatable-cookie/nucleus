@@ -2605,6 +2605,9 @@ movement invalidates source approval and preserves the normal readiness gates.
   task's reviewer, recovery, coordinator and executor threads. Their runs are
   released and their verdicts, reports and decisions already live in Nucleus's
   records and on the PR; decider threads keep their existing lifecycle.
+- T3 role detection uses the shared label keys. A stored role label identifies
+  support; the task's worker identity or revision-run history identifies workers
+  without a role label (planner ruling, 2026-11-12).
 - Deletion records intent before delivery and confirms `deletedAt` or absence
   from a complete inventory, including after the final attempt; an archived
   support thread still owes deletion. Unknown deletion delivery is never resent,

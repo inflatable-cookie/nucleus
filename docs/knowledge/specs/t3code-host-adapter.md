@@ -423,6 +423,11 @@ follow-up helper, which sends `thread.unsettle` before the message. A new thread
 is needed only when the old one is gone or deleted, or the role's selected
 profile changes; displaced threads stay settled until closeout (Tom, 2026-11-12).
 
+Role detection reads the shared `NUCLEUS_LABEL_KEYS` through the label helpers:
+`nucleus.role` identifies support threads, while the task's worker identity or a
+revision run identifies a worker without a role label. Tests copy the stored T3
+worker and recovery label shapes with synthetic IDs, including catch-up cleanup.
+
 A deliberate reviewer replacement stops the turn and observes it idle, then
 releases the displaced run. The existing released-run callback fence refuses a
 late report; it needs no in-flight deletion, archive or separate removal fence.
