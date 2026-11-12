@@ -27,7 +27,9 @@ export async function t3Fake(t: TestContext, directory: string) {
     synchronized: true, incompleteThread: false, enrichment: false, shellMissingField: '',
     snapshotSequence: 1, threadCoverage: {} as Record<string, unknown>, beforeArchiveRead: (() => {}) as () => void,
     disconnectMutation: false, disconnectAfterEffect: false, refuseMutation: false, postEffectDefect: false,
-    unsupportedProjectCreate: false, projectMutationFailure: false, projectMutationSecretFailure: false, projectMutationIdSecretFailure: false, secretDefect: false, secretLocationDefect: false, mutationObserver: (() => {}) as () => void };
+    unsupportedProjectCreate: false, projectMutationFailure: false, projectMutationSecretFailure: false, projectMutationIdSecretFailure: false, secretDefect: false, secretLocationDefect: false, mutationObserver: (() => {}) as () => void,
+    /** Replaces the single synthetic provider in `server.getConfig` when set (nightly provider shapes). */
+    providers: undefined as Value[] | undefined };
   /** Command receipts make a replayed project mutation answer with its recorded outcome. */
   const projectReceipts = new Map<string, { type: string; projectId: string }>();
   const sockets = new Set<Socket>();
@@ -77,6 +79,10 @@ export async function t3Fake(t: TestContext, directory: string) {
           const serviceTier: Value = { id: 'serviceTier', label: 'Service Tier', type: 'select', currentValue: 'standard',
             options: [{ id: 'standard', label: 'Standard', isDefault: true }, { id: 'priority', label: 'Priority' }] };
           const verbose: Value = { id: 'verbose', label: 'Verbose', type: 'boolean', currentValue: true };
+          if (controls.providers) return success({
+            environment: { environmentId: controls.environmentId, serverVersion: controls.version, orchestrationProtocolVersion: controls.protocol },
+            providers: controls.providers,
+          });
           return success({
             environment: { environmentId: controls.environmentId, serverVersion: controls.version, orchestrationProtocolVersion: controls.protocol },
             providers: [
@@ -113,6 +119,9 @@ export async function t3Fake(t: TestContext, directory: string) {
           assert.equal(payload.workspaceStrategy.type, 'existing_worktree');
           assert.ok(contract.launchThread.runtimeModes.includes(payload.runtimeMode));
           assert.ok(contract.launchThread.interactionModes.includes(payload.interactionMode));
+          const launched = (controls.providers ?? []).find(provider => provider.instanceId === payload.modelSelection.instanceId);
+          if (launched?.supportedRuntimeModes?.length)
+            assert.ok(launched.supportedRuntimeModes.includes(payload.runtimeMode), 'a provider only runs a runtime mode it reports');
           for (const field of contract.launchThread.modelSelectionRequired) assert.ok(Object.hasOwn(payload.modelSelection, field), `modelSelection.${field}`);
           if (payload.modelSelection.options !== undefined) {
             assert.ok(Array.isArray(payload.modelSelection.options), 'modelSelection.options is the nightly selection array');
@@ -125,6 +134,7 @@ export async function t3Fake(t: TestContext, directory: string) {
           if (controls.disconnectMutation) return socket.destroy();
           const p = threadProjection(payload.threadId, payload.workspaceStrategy.worktreePath);
           p.thread.title = payload.title; p.thread.modelSelection = payload.modelSelection; p.thread.providerInstanceId = payload.modelSelection.instanceId;
+          p.thread.runtimeMode = payload.runtimeMode;
           p.messages.push({ id: payload.initialMessage.messageId, role: 'user', text: payload.initialMessage.text });
           threads.set(payload.threadId, p);
           return success({ threadId: payload.threadId, projection: p, resumed: false, sequence: 1 });

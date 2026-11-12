@@ -186,7 +186,7 @@ pretend to be a Paseo workspace.
 | Host operation | T3 RPC or command | Required result |
 | --- | --- | --- |
 | Register project | `projects.mutate` / `project.create` mutation | Deterministic IDs bind the real repository root; the receipt ledger answers replays; reconcile unknown delivery against the complete inventory before retry |
-| Create | `orchestration.launchThread` with explicit thread/message IDs, provider instance/model, prompt, model options and `existing_worktree` | Top-level thread with the exact project and directory |
+| Create | `orchestration.launchThread` with explicit thread/message IDs, provider instance/model, prompt, the profile's runtime mode and model options, and `existing_worktree` | Top-level thread with the exact project and directory |
 | Follow-up | `orchestration.dispatchCommand` / `message.dispatch` | Stable command and message IDs; receipt records acceptance |
 | Observe | `orchestration.subscribeShell` and `orchestration.subscribeThread` | Fresh complete state, including active run and pending request |
 | Answer question or permission | `runtime-request.respond` through dispatch | Exact request, thread and workspace; typed answers or approval decision |
@@ -233,6 +233,43 @@ one `featuresDeferred`, and availability treats that as unknown, never
 negative. The launch fence catches catalog drift between refresh and send. A secondary host's snapshot is built
 when it comes online, and afterwards on the periodic profile pass, never on an
 unguarded per-tick chain.
+
+### Runtime mode
+
+A T3 thread runs in one of four runtime modes, narrowest first:
+`approval-required`, `auto-accept-edits`, `auto`, `full-access`
+(`packages/contracts/src/providerPolicy.ts`; nightly
+`0.1.10-nightly.20261111.4529`). `launchThread` requires one, and
+`DEFAULT_RUNTIME_MODE` is `full-access`. Each provider reports the subset it
+offers as `ServerProvider.supportedRuntimeModes`; a provider that reports no
+list offers all four, and a request outside a reported list runs as
+`approval-required` (`providerRuntimeMode`) — silently, since the launch
+succeeds.
+
+The profile's `modeId` is the thread's runtime mode, id for id
+(`full-access` to `full-access`, and so on). A profile with no mode gets
+`full-access`: the mode T3 launches a thread with when none is asked for, and
+the unattended run a Paseo worker of that role has today. `approval-required` is
+never chosen for an unattended role, because it would stop at every approval
+prompt.
+
+The catalog reports each model's modes as its provider's list — the whole four
+when the provider reports none — with the nightly's own labels (`Supervised`,
+`Auto-accept edits`, `Auto`, `Full access`) and descriptions. Selection
+therefore judges the configured mode against the host that will run it, and a
+profile naming a mode outside its provider's list is ineligible for that host
+with the mode named — never silently downgraded, and never sent to be refused
+at launch. The launch re-reads `server.getConfig` and refuses, before send, a
+mode T3 does not have or its provider does not offer; that fence only catches
+catalog drift between refresh and send. Observation reports the thread's
+`runtimeMode`, so a reviewer's mode evidence is the thread's own fact.
+
+A repository's pool profiles are the same pool every host selects from, but each
+host answers availability from its own catalog. T3Code names its provider
+instances itself (`codex`, `claudeAgent`, `grok`, `pi`), so a pool profile using
+another spelling is ineligible on T3 with `Provider … is not available on this
+host` until the Nucleus provider map records the mapping; that mapping is the
+provider map's job, not a runtime-mode substitution.
 
 A creation refusal that is proven pre-send settles the run refused and the task
 in attention with the step that failed named — `Worker creation refused before
@@ -337,9 +374,11 @@ contributions. Do not substitute empty success results. Core routes those
 needs for T3 through the board, CLI-helper reporting and core's own workspace
 allocation, so an ordinary task never reaches those refusals (nucleus#1139):
 per-thread MCP reporting is unreachable because reporting rides the helper;
-per-thread launch environment is unreachable because T3 launches carry none;
-unreported runtime modes are unreachable because T3's catalog reports no modes,
-so imported profiles carry none. The Host keeps `lifecycleDispatch` false; the
+per-thread launch environment is unreachable because T3 launches carry none.
+Runtime modes are not in that list (nucleus#1143): the catalog reports the
+provider's own modes, so a pool profile the pool selects on T3 either launches
+in its configured mode or is ineligible with the reason named in its routing
+policy. The Host keeps `lifecycleDispatch` false; the
 Adapter turns it on once the Nucleus helper path is wired, so T3 threads report
 through the helper and ticket named in the prompt. Service composition injects
 `HostPolicies` through the public `core/host` constructor, so review

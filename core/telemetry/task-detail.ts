@@ -3,7 +3,7 @@ import type { Store } from '../store/store';
 import { deriveTaskTelemetry } from './telemetry';
 import { taskDetailView } from '../../shared/contracts';
 import type { HookRecord } from '../../shared/hooks';
-import type { Notice, Run, Task } from '../../shared/contracts';
+import type { Notice, Profile, Run, Task } from '../../shared/contracts';
 import { taskWaitStateContext, queuedReason } from '../recovery/wait-context';
 
 /** The task's own recorded rows: everything `task.next` derives a verb from, and nothing remote. */
@@ -21,7 +21,9 @@ export type TaskEvidence = {
  * `task.next` shares the evidence read here instead of re-reading the selected task's
  * history on its own four-second poll (audit A8).
  */
-export function createTaskDetailCache(store: Store, options: { maxEntries?: number; maxBytes?: number; maxAgeMs?: number; now?: () => number; slotAdmissionReason?: (task: Task) => string; externalWait?: (task: Task) => string } = {}) {
+export function createTaskDetailCache(store: Store, options: { maxEntries?: number; maxBytes?: number; maxAgeMs?: number; now?: () => number; slotAdmissionReason?: (task: Task) => string; externalWait?: (task: Task) => string;
+  /** The task host's routing profiles, so its routing policy names why a profile is ineligible there (nucleus#1143). */
+  profiles?: (task: Task) => readonly Profile[] } = {}) {
   const now = options.now ?? Date.now;
   const maxEntries = options.maxEntries ?? 4, maxBytes = options.maxBytes ?? 8 * 1024 * 1024;
   const maxAgeMs = options.maxAgeMs ?? 15_000;
@@ -71,6 +73,6 @@ export function createTaskDetailCache(store: Store, options: { maxEntries?: numb
     const currentTask = taskDetailView({ ...task, reason: queuedReason(store, task, context, options.externalWait) }, context, store.runs(taskId));
     const dependencyIds = [...new Set([...task.dependsOn, ...(task.prerequisiteWait?.waitsFor ?? [])])];
     // Spec 052: the usage level can expire with no write, so the routing policy is read fresh too.
-    return { ...entry.value, task: currentTask, dependencies: dependencyIds.map(id => store.taskReference(id)), routingPolicy: store.routingPolicy(task, now()) };
+    return { ...entry.value, task: currentTask, dependencies: dependencyIds.map(id => store.taskReference(id)), routingPolicy: store.routingPolicy(task, now(), options.profiles?.(task) ?? []) };
   }, { evidence: (taskId: string) => current(taskId).evidence });
 }

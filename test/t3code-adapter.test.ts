@@ -49,6 +49,10 @@ test('create uses an existing canonical worktree and explicit top-level provider
   assert.deepEqual(command.workspaceStrategy, { type: 'existing_worktree', worktreePath: directory });
   assert.equal(command.initialMessage.text, 'Synthetic prompt');
   assert.equal(command.initialMessage.attachments.length, 0);
+  // A profile with no mode launches in T3's own default runtime mode, so an
+  // unattended thread never stops at every approval prompt (nucleus#1143).
+  assert.equal(command.runtimeMode, 'full-access');
+  assert.equal((await host.observe(created.id)).modeId, 'full-access');
   assert.equal(created.workspaceId, workspace.id);
   for (const field of ['parentThreadId', 'parentRunId', 'delegatedFrom', 'environment', 'mcpServers']) assert.equal(Object.hasOwn(command, field), false, field);
   assert.equal((await host.observe(created.id)).workspaceId, workspace.id);

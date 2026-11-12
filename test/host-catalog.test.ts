@@ -309,9 +309,10 @@ test("nucleus#1139 review: availability answers the configured runtime mode and 
   // Reported mode and feature values stay available.
   assert.deepEqual(profileAvailability(nucleusProfileSchema.parse({ ...base, modeId: "agent", thinkingOptionId: "high", featureValues: { fast: true, serviceTier: "priority" } }), catalog),
     { available: true, problem: "", supportedThinking: ["low", "high"] });
-  // A mode the host does not report is ineligible there.
+  // A mode the host does not report is ineligible there, and the reason names
+  // the mode and the host's own list (nucleus#1143).
   assert.equal(profileAvailability(nucleusProfileSchema.parse({ ...base, modeId: "plan" }), catalog).problem,
-    "Configured runtime mode is not supported");
+    "Configured runtime mode plan is not one of this host's modes (agent)");
   // An option id the host does not report, and an unreported select value.
   assert.equal(profileAvailability(nucleusProfileSchema.parse({ ...base, featureValues: { contextWindow: 200000 } }), catalog).problem,
     "Configured option contextWindow is not supported");

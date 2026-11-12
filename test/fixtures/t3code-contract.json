@@ -43,6 +43,29 @@
     "runtimeModes": ["approval-required", "auto-accept-edits", "auto", "full-access"],
     "interactionModes": ["default", "plan"]
   },
+  "runtimeModeContract": {
+    "sourceBuild": "0.1.10-nightly.20261111.4529",
+    "source": "packages/contracts/src/providerPolicy.ts (RuntimeMode, DEFAULT_RUNTIME_MODE, providerRuntimeMode) and ServerProvider.supportedRuntimeModes in packages/contracts/src/server.ts, read from the installed bundle",
+    "runtimeModeQuote": "const RuntimeMode$1 = Literals([\"approval-required\",\"auto-accept-edits\",\"auto\",\"full-access\"]); const DEFAULT_RUNTIME_MODE$1 = \"full-access\";",
+    "providerFieldQuote": "supportedRuntimeModes: optional(ForwardCompatibleArray(RuntimeMode$1))",
+    "providerSubsetQuote": "function providerRuntimeMode(runtimeMode, supportedRuntimeModes) { return supportedRuntimeModes === void 0 || supportedRuntimeModes.length === 0 || supportedRuntimeModes.includes(runtimeMode) ? runtimeMode : \"approval-required\"; }",
+    "values": ["approval-required", "auto-accept-edits", "auto", "full-access"],
+    "default": "full-access",
+    "absentProviderFieldMeansAll": true,
+    "unsupportedRequestRunsAs": "approval-required",
+    "labels": {
+      "approval-required": "Supervised",
+      "auto-accept-edits": "Auto-accept edits",
+      "auto": "Auto",
+      "full-access": "Full access"
+    },
+    "descriptions": {
+      "approval-required": "Ask before commands and file changes.",
+      "auto-accept-edits": "Auto-approve edits, ask before other actions.",
+      "auto": "Supported providers approve routine actions; others still ask.",
+      "full-access": "Allow commands and edits without prompts."
+    }
+  },
   "projectMutation": {
     "method": "projects.mutate",
     "sourceBuild": "0.1.10-nightly.20261111.4529",

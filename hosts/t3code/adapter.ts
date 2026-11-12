@@ -7,7 +7,7 @@ import type { Task, Profile } from '../../shared/contracts';
 import { ProvenPreSendRefusalError, HostUnknownDeliveryError, sanitizeHostDeliveryDiagnostic } from '../../core/host';
 import { T3RpcClient, T3RpcError } from './rpc';
 import { T3StateFile, canonical, type T3State } from './state';
-import { decode, config, optionDescriptor, shellSnapshot, projection, threadSnapshot, shellThread, project, T3CompatibilityError } from './contracts';
+import { decode, config, optionDescriptor, shellSnapshot, projection, threadSnapshot, shellThread, project, T3CompatibilityError, runtimeModes, defaultRuntimeMode, type RuntimeMode } from './contracts';
 
 export interface T3CodeConfig { endpoint: string; bearer: string; statePath: string; timeoutMs?: number; probeThreadId?: string }
 const identity = (purpose: string, value: string) => `nucleus-${purpose}-${createHash('sha256').update(value).digest('hex').slice(0, 40)}`;
@@ -21,6 +21,26 @@ const unsupported = (capability: string): never => { throw new ProvenPreSendRefu
  */
 const isReasoningDescriptor = (descriptor: z.infer<typeof optionDescriptor>): descriptor is Extract<z.infer<typeof optionDescriptor>, { type: 'select' }> =>
   descriptor.type === 'select' && (descriptor.role === 'reasoning' || descriptor.id === 'reasoningEffort');
+/**
+ * The nightly's own wording for the four runtime modes (installed bundle, client
+ * `runtimeModes` table): `Supervised`, `Auto-accept edits`, `Auto`, `Full access`.
+ * The catalog reports them so Nucleus's profile editor names the choice the way
+ * T3 does.
+ */
+const runtimeModeLabels: Record<RuntimeMode, { label: string; description: string }> = {
+  'approval-required': { label: 'Supervised', description: 'Ask before commands and file changes.' },
+  'auto-accept-edits': { label: 'Auto-accept edits', description: 'Auto-approve edits, ask before other actions.' },
+  auto: { label: 'Auto', description: 'Supported providers approve routine actions; others still ask.' },
+  'full-access': { label: 'Full access', description: 'Allow commands and edits without prompts.' },
+};
+/**
+ * The runtime modes one provider offers. The nightly omits `supportedRuntimeModes`
+ * for a provider with no restriction, and then passes any of the four through;
+ * a reported list restricts it, and a request outside it would silently run as
+ * `approval-required`, so that list is what the catalog publishes.
+ */
+const providerRuntimeModes = (supported: readonly RuntimeMode[] | undefined): readonly RuntimeMode[] =>
+  supported && supported.length ? supported : runtimeModes;
 type OptionSelection = { id: string; value: string | boolean };
 /**
  * The model's real option descriptors from `server.getConfig`, read at launch:
@@ -37,6 +57,8 @@ const optionRefusal = (model: string, option: string, value?: string): string =>
 const createWireGuidance = (repositoryRoot: string) =>
   `T3Code cannot create a project for ${repositoryRoot}; add that folder as a project in T3Code, then restart the task`;
 type Projection = z.infer<typeof projection>;
+/** One model of `server.getConfig`'s provider snapshot. */
+type ConfigModel = z.infer<typeof config>['providers'][number]['models'][number];
 type ResponseBinding = NonNullable<T3State['intents'][string]['response']>;
 
 interface ProjectCreateWire { method?: string; payload?: { type?: unknown; commandId?: unknown; projectId?: unknown; workspaceRoot?: unknown; title?: unknown } }
@@ -187,7 +209,7 @@ export class T3CodeHost implements Host {
           thinkingOptions: reasoning ? reasoning.options.map(c => ({ id: c.id, label: c.label, ...(c.isDefault === undefined ? {} : { isDefault: c.isDefault }) })) : [],
           defaultThinkingOptionId: reasoning?.options.find(c => c.isDefault)?.id
             ?? (reasoning?.currentValue && reasoning.options.some(c => c.id === reasoning.currentValue) ? reasoning.currentValue : null),
-          modes: [], features: descriptors.filter(d => d !== reasoning).map(feature) };
+          modes: providerRuntimeModes(p.supportedRuntimeModes).map(id => ({ id, ...runtimeModeLabels[id] })), features: descriptors.filter(d => d !== reasoning).map(feature) };
     }) })) };
   }
   async profiles(): Promise<Profile[]> { return []; }
@@ -340,15 +362,21 @@ export class T3CodeHost implements Host {
   async createAgent(spec: HostAgentSpec) {
     this.requireConnection();
     if (spec.mcpBindingPath) unsupported('per-thread MCP reporting');
-    if (spec.profile.modeId && spec.profile.modeId !== 'default') unsupported('unreported runtime mode');
     if (spec.guard && !await spec.guard.allowed()) throw new ProvenPreSendRefusalError('T3Code launch guard refused');
     const attempt = spec.attempt(false, false), workspace = this.state.read().workspaces[spec.workspaceId];
     if (!workspace) throw new ProvenPreSendRefusalError('T3Code workspace is not registered');
     if (Object.keys(attempt.environment).length) unsupported('per-thread launch environment');
-    const options = await this.modelSelectionOptions(spec.profile);
+    // One config read answers every launch fact: the model's options, the
+    // runtime mode the provider offers and the provider's own existence.
+    const observed = decode(config, await this.rpc.call('server.getConfig', {}), 'server.getConfig');
+    const provider = observed.providers.find(p => p.instanceId === spec.profile.provider);
+    if (!provider?.models.some(m => m.slug === spec.profile.model))
+      throw new ProvenPreSendRefusalError(`T3Code provider ${spec.profile.provider} does not report model ${spec.profile.model}`);
+    const options = this.modelSelectionOptions(spec.profile, provider.models.find(m => m.slug === spec.profile.model)!);
+    const runtimeMode = this.launchRuntimeMode(spec.profile, provider.supportedRuntimeModes);
     const id = identity('thread', attempt.requestId);
     const payload = { commandId: attempt.requestId, threadId: id, projectId: workspace.projectId, title: spec.title,
-      modelSelection: { instanceId: spec.profile.provider, model: spec.profile.model, ...(options.length ? { options } : {}) }, runtimeMode: 'approval-required', interactionMode: 'default',
+      modelSelection: { instanceId: spec.profile.provider, model: spec.profile.model, ...(options.length ? { options } : {}) }, runtimeMode, interactionMode: 'default',
       workspaceStrategy: { type: 'existing_worktree', worktreePath: workspace.directory },
       initialMessage: { messageId: identity('message', attempt.requestId), text: attempt.prompt, attachments: [] } };
     this.state.update(state => {
@@ -364,21 +392,39 @@ export class T3CodeHost implements Host {
     return { id, workspaceId: spec.workspaceId };
   }
   /**
+   * The profile's `modeId` as the thread's runtime mode. Nucleus profiles name the
+   * host's mode by id, so T3's four modes carry over unchanged (`full-access` is
+   * `full-access`, and so on). A profile with no mode gets the mode T3 launches a
+   * thread with when none is asked for, `full-access`: the same unattended run a
+   * Paseo worker of that role gets today, and never `approval-required`, which
+   * would stop at every approval prompt.
+   *
+   * A profile naming a mode T3 does not have stays ineligible at selection; this
+   * fence catches catalog drift and names the mode instead of sending it to be
+   * silently downgraded to `approval-required` (nightly `providerRuntimeMode`).
+   */
+  private launchRuntimeMode(profile: Profile, supported: readonly RuntimeMode[] | undefined): RuntimeMode {
+    const requested = !profile.modeId || profile.modeId === 'default' ? defaultRuntimeMode : profile.modeId;
+    if (!(runtimeModes as readonly string[]).includes(requested))
+      throw new ProvenPreSendRefusalError(`T3Code has no runtime mode ${requested}; its modes are ${runtimeModes.join(', ')}`);
+    const offered = providerRuntimeModes(supported);
+    if (!offered.includes(requested as RuntimeMode))
+      throw new ProvenPreSendRefusalError(`T3Code provider ${profile.provider} does not offer runtime mode ${requested}; it offers ${offered.join(', ')}`);
+    return requested as RuntimeMode;
+  }
+  /**
    * The profile's thinking level and reported feature values as the nightly's
-   * `ProviderOptionSelection[]` for this exact model, read from
-   * `server.getConfig` at launch. A value the model does not report is refused
+   * `ProviderOptionSelection[]` for this exact model, from the `server.getConfig`
+   * read the launch already made. A value the model does not report is refused
    * before send with the option and value named; nothing is dropped or
    * re-anchored to a nearest choice. Selection keeps such a profile out of a
    * T3 task through the host catalog; this fence catches catalog drift.
    */
-  private async modelSelectionOptions(profile: Profile): Promise<OptionSelection[]> {
+  private modelSelectionOptions(profile: Profile, model: ConfigModel | undefined): OptionSelection[] {
     const thinking = profile.thinkingOptionId;
     const features = Object.entries(profile.featureValues ?? {});
     if (!thinking && !features.length) return [];
-    const value = decode(config, await this.rpc.call('server.getConfig', {}), 'server.getConfig');
-    const model = value.providers.find(p => p.instanceId === profile.provider)?.models.find(m => m.slug === profile.model);
-    if (!model) throw new ProvenPreSendRefusalError(`T3Code provider ${profile.provider} does not report model ${profile.model}`);
-    const descriptors = model.capabilities?.optionDescriptors ?? [];
+    const descriptors = model?.capabilities?.optionDescriptors ?? [];
     const options: OptionSelection[] = [];
     if (thinking) {
       const reasoning = descriptors.find(isReasoningDescriptor);
@@ -418,6 +464,7 @@ export class T3CodeHost implements Host {
       status: thread.deletedAt ? 'gone' : thread.archivedAt ? 'closed' : active ? active.status : native && activeStatuses.has(native.status) ? native.status : 'idle',
       active: !!active || !!native?.activeRunId || !!native && activeStatuses.has(native.status), permissions: pending.length > 0 || !!native?.pendingRuntimeRequest,
       error: native?.lastError ?? '', model: thread.modelSelection.model, provider: thread.modelSelection.instanceId,
+      modeId: thread.runtimeMode ?? null,
       updatedAt: detail.updatedAt, activeTurnId: active?.id ?? native?.activeRunId ?? null, turnStartedAt: active?.startedAt ?? null,
       lastUserMessageAt: native?.latestUserMessageAt ?? null, labels: this.state.read().agents[id]?.labels ?? {},
       pendingPermissionKinds: pending.map(r => r.kind === 'user_input' ? 'question' : r.kind),
