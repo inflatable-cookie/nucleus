@@ -112,10 +112,14 @@ test('a bounded store-maintenance window is waited for by the roll, with one rep
   process.env.FIXTURE_GATE_PHASE = 'maintenance';
   process.env.FIXTURE_RELEASE_FILE = join(root, 'release');
   let spawns = 0, pid = 0, clock = Date.now(), clockReads = 0;
+  const secondClock = Date.now();
   const bridge = trackedBridge({ dataDir, paseoHome, readinessBudgetMs: 2_000, readinessPollMs: 10, readinessNow: () => { clockReads++; return clock; }, onSpawn: child => { pid = child; }, serviceCommand: () => { spawns++; return migratingService(); } });
   try {
     const forwarded = bridge.forward(entry, {});
-    const second = trackedBridge({ dataDir, paseoHome, readinessBudgetMs: 10_000, readinessPollMs: 10, serviceCommand: () => { spawns++; return migratingService(); } });
+    // Keep the competing bridge's bounded wait under test control too. Its
+    // real-time budget could expire under a loaded QA runner before the first
+    // service finished its admitted maintenance window.
+    const second = trackedBridge({ dataDir, paseoHome, readinessBudgetMs: 10_000, readinessPollMs: 10, readinessNow: () => secondClock, serviceCommand: () => { spawns++; return migratingService(); } });
     const secondForward = second.forward(entry, {});
     await waitFor(() => pid > 0 && existsSync(maintenanceMarkerPath(dataDir, pid)));
     const claimPath = join(dataDir, 'queue-service.claim.json');
