@@ -326,6 +326,15 @@ absence (not mine), while a failed inventory or projection is an unread read
 (unknown) and never absence. A native question about a thread T3 does not have
 therefore never makes a two-host origin lookup ambiguous.
 
+Observation reads are one-shot and per call: each sweep or reconcile takes a fresh
+snapshot, so an interrupted `subscribeThread` or `subscribeShell` stream ends that
+read only and never ends observation. T3 transport and timeout errors are an
+observation outage, classified as a transport failure: the lane defers and the next
+sweep re-reads, and the task is never marked idle or attention for it. A task
+quantum that does not return within two minutes (`TASK_QUANTUM_BOUND_MS`) no
+longer holds the sweep; the task records an `observation_outage` event and its
+lane stays held until the quantum returns (#1148, planner ruling).
+
 Report active run, idle, pending question/permission and archived state from
 positive native facts. A thread is gone only after a complete authoritative read
 proves absence/deletion. Partial reads reject or return the contract's unknown

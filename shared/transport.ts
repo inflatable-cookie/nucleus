@@ -11,5 +11,6 @@ import { isSshAuthExhausted } from './ssh-auth';
 export function isTransportFailure(error: unknown): boolean {
   if (isSshAuthExhausted(error)) return false;
   const message = error instanceof Error ? error.message : String(error);
-  return /Transport not connected|not connected|disconnected|ECONNREFUSED|ECONNRESET|EPIPE|socket hang up|Liveness check timed out|Daemon connection did not settle|Daemon client closed/i.test(message);
+  // T3Code transport and timeout errors are an observation outage: the read is retried on the next sweep, never attention.
+  return /Transport not connected|not connected|disconnected|ECONNREFUSED|ECONNRESET|EPIPE|socket hang up|Liveness check timed out|Daemon connection did not settle|Daemon client closed|T3Code (transport|timeout)|authenticated host connection is unavailable/i.test(message);
 }

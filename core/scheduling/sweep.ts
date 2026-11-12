@@ -12,6 +12,7 @@ import { pruneLiveDataHomeBackupCopies } from "../store/data-home-retention";
 import { resumeDispositions } from "../verbs/disposition";
 import { completionReportsPr } from "../recovery/worker-reconcile";
 import { LANE_PRIORITY_AUDIT, LANE_PRIORITY_TASK } from "./lane-priorities";
+import { TASK_QUANTUM_BOUND_MS, boundQuantum } from "./quantum-bound";
 import { startsNoRuns } from "../closeout/queue-drain";
 import { now, RECLAIM_DRAIN_BUDGET_MS, RECLAIM_DRAIN_FREE_PAGES, RECLAIM_DRAIN_MAX_PAGES } from "../store/store";
 
@@ -30,6 +31,14 @@ type DrainWaiter = { resolve: () => void; reject: (error: Error) => void };
 export type SweepContext = Pick<Engine, 'adapter' | 'applyDeferredOwnerVerbs' | 'archivePlannerGrants' | 'archiveRetiredErroredAgents' | 'auditPass' | 'clearRetiredInvalidations' | 'continueAwaitingReviewers' | 'dispatchQueued' | 'dispositionDeps' | 'drainProjections' | 'drainWaiters' | 'enqueueTitle' | 'ensureSweep' | 'flushPrerequisiteReleases' | 'host' | 'hostAvailable' | 'inventoryHostMatches' | 'lastHookCleanupAt' | 'lifecycle' | 'maxSweepWindows' | 'migrateProjectOwnersToPlanners' | 'noteStepFailure' | 'observeRetiredWorkers' | 'quiesce' | 'reconcile' | 'recoverExhaustedWorkers' | 'removeSiblings' | 'resumePausedStops' | 'retiredObservationKey' | 'retiredObservationPlan' | 'scheduleLane' | 'scheduleLifecycleFollowUp' | 'scheduleTaskQuantum' | 'settleQuiesce' | 'startSweepChain' | 'stopped' | 'store' | 'sweepChain' | 'sweepCursor' | 'sweepDeferred' | 'sweepDeferredCursor' | 'sweepMode' | 'sweepOrder' | 'sweepPending' | 'sweepStats' | 'sweepTicks' | 'taskHostAvailable' | 'wakeCapacityWaiter' | 'wakePreludes' | 'withHost'> & { readonly resolution: Pick<Resolution, 'checkpoints' | 'delegateNativeQuestions' | 'deliverDecisionNotices' | 'deliverDrainNotices' | 'deliverHoldNotices' | 'deliverNotices' | 'deliverQueuedMessages' | 'observationTargets' | 'observe' | 'origins' | 'raiseOperatorQuestions' | 'recovery' | 'resumeAskQuestions' | 'resumeResponsibleAnsweredQuestions'> };
 
 export class Sweep {
+  /**
+   * A task quantum that outlived its bound is that task's observation outage: the
+   * sweep moved on, the task's lane stays held by the running quantum, and the
+   * next sweep queues behind it. Recorded as a task event, not a phase change.
+   */
+  recordQuantumOutage(taskId: string): void {
+    this.engine.store.event(taskId, 'observation_outage', `Task quantum did not return within ${TASK_QUANTUM_BOUND_MS / 1000} s; the sweep moved on and this task's lane stays held until it returns`);
+  }
   lastHookCleanupAt = 0;
   /** Durable cursor for the bounded safety sweep: the last task identity reconciled. */
   sweepCursor: string | null = null;
@@ -244,12 +253,12 @@ export class Sweep {
       for (const task of (this.engine.adapter.findOpenBranchPr ? this.engine.store.activeCapacityTasks() : []).filter(task => this.engine.taskHostAvailable(task) && task.agentId && !completionReportsPr(task) && !task.prUrl && !task.prHead
         && !task.resumePrNumber && !this.engine.resolution.recovery.busy(task)
         && ["working", "blocked", "error", "needs_attention"].includes(task.phase))) {
-        await this.engine.scheduleLane(`task:${task.id}`, LANE_PRIORITY_TASK, async () => {
+        await boundQuantum(this.engine.scheduleLane(`task:${task.id}`, LANE_PRIORITY_TASK, async () => {
           try { await this.engine.reconcile(this.engine.store.task(task.id)); }
           catch (error) { this.engine.noteStepFailure(task.id, error); }
         // The quantum records its own faults; a lane-level failure here means
         // shutdown discarded the queued quantum, so the audit simply stops.
-        }).catch(() => {});
+        }).catch(() => {}), () => this.recordQuantumOutage(task.id));
       }
       // One lifecycle quantum per task on an exclusive key. A control or
       // operation for the same task queues behind this quantum instead of
@@ -280,7 +289,7 @@ export class Sweep {
           if (["done", "cancelled"].includes(task.phase)) continue;
           reconciled.add(task.id);
           if (releasedTasks.has(task.id)) continue; // The release already queued this task.
-          pending.push(this.engine.scheduleTaskQuantum(task.id).catch(() => {}));
+          pending.push(boundQuantum(this.engine.scheduleTaskQuantum(task.id), () => this.recordQuantumOutage(task.id)));
           // Independent lanes may await concurrently. Paseo and process
           // admission still bound the actual resources; same-task lanes stay FIFO.
           await new Promise<void>(resolve => setImmediate(resolve));
@@ -317,7 +326,7 @@ export class Sweep {
           const task = this.engine.store.task(candidate.id);
           if (["done", "cancelled"].includes(task.phase)) continue;
           reconciled.add(task.id);
-          if (!releasedTasks.has(task.id)) await this.engine.scheduleTaskQuantum(task.id).catch(() => {});
+          if (!releasedTasks.has(task.id)) await boundQuantum(this.engine.scheduleTaskQuantum(task.id), () => this.recordQuantumOutage(task.id));
         }
         this.engine.sweepDeferredCursor = start + window.length >= deferred.length ? null : window.at(-1)?.id ?? null;
       }
