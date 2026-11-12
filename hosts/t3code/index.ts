@@ -116,6 +116,7 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     workspaceIdAccepted(id: unknown) { return this.native.workspaceIdAccepted(id); }
     profiles() { return this.native.profiles(); }
     catalog() { return this.native.catalog(); }
+    get vocabulary() { return this.native.vocabulary; }
     notify(id: string, messageId: string, text: string) { return this.native.sendMessage(id, { messageId, text }); }
     stopAgentTurn(id: string) { return this.native.stopAgentTurn(id); }
     archiveAgent(id: string) { return this.native.archiveAgent(id); }

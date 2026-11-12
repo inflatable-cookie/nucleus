@@ -27,7 +27,6 @@ import { defaultDataDir, markMaintenance, markMigration, SPAWN_TOKEN_ENV } from 
  */
 import { readPrStates, type PrState } from '../core/forge/pr-status';
 import { type ProfileSettings } from "../shared/pool";
-import { type ProviderMap } from "../shared/profiles";
 
 import { join } from "node:path";
 import { existsSync, readFileSync, writeFileSync, statSync } from "node:fs";
@@ -1526,9 +1525,8 @@ export class QueueRuntime {
   profileCreate(input: z.infer<typeof import("../shared/contracts").createNucleusProfile.input>) { return this.settingsOperations.profileCreate(input); }
   profileUpdate(input: z.infer<typeof import("../shared/contracts").updateNucleusProfile.input>) { return this.settingsOperations.profileUpdate(input); }
   profileRemove(input: { id: string }) { return this.settingsOperations.profileRemove(input); }
-  profileProviders() { return this.settingsOperations.profileProviders(); }
+  profileVocabulary(input: { cwd?: string; refresh?: boolean }) { return this.settingsOperations.profileVocabulary(input); }
   profileCompatibility() { return this.settingsOperations.profileCompatibility(); }
-  profileSetProviders(input: { providers: ProviderMap }) { return this.settingsOperations.profileSetProviders(input); }
   async hostCatalog(input: { cwd?: string; refresh?: boolean }) { return this.settingsOperations.hostCatalog(input); }
   queueControl({ paused, dispatchHeld }: { paused?: boolean; dispatchHeld?: boolean }) { return this.settingsOperations.queueControl({ paused, dispatchHeld }); }
 

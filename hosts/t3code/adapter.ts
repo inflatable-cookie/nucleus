@@ -6,6 +6,7 @@ import type { Host, HostAgentSpec, HostWorkspaceSpec, HostMessage, HostGuardedMe
 import type { Task, Profile } from '../../shared/contracts';
 import { ProvenPreSendRefusalError, HostUnknownDeliveryError, sanitizeHostDeliveryDiagnostic } from '../../core/host';
 import { T3RpcClient, T3RpcError } from './rpc';
+import { t3codeVocabulary } from './vocabulary';
 import { T3StateFile, canonical, type T3SettleIntent, type T3State } from './state';
 import { decode, config, optionDescriptor, shellSnapshot, projection, threadSnapshot, shellThread, project, T3CompatibilityError, runtimeModes, defaultRuntimeMode, type RuntimeMode } from './contracts';
 
@@ -104,6 +105,7 @@ function responseIntents(state: T3State, agentId: string, requestId: string) {
 
 /** Native host boundary only. Workflow/reporting integration is deliberately unavailable. */
 export class T3CodeHost implements Host {
+  readonly vocabulary = t3codeVocabulary;
   readonly rpc: T3RpcClient;
   readonly state: T3StateFile;
   hostId = '';

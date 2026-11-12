@@ -20,6 +20,7 @@ import { PaseoWorkspaceHost } from './host-workspaces';
 import { PaseoMessageHost } from './host-messages';
 import { PaseoQuestionHost } from './host-questions';
 import { PaseoAskHost } from './host-asks';
+import { paseoVocabulary } from '../vocabulary';
 
 export type * from "../../../core/host";
 
@@ -69,6 +70,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 export function paseoAdapterClass(Policy: HostPolicyConstructor) {
 return class PaseoAdapter extends Policy {
   readonly supportsCoordinatorRecovery = true;
+  readonly vocabulary = paseoVocabulary;
   readonly client: DaemonClient;
   readonly provenanceClient: ProvenanceClient;
   readonly api;

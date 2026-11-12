@@ -17,9 +17,8 @@ import { SettingsTelemetry } from "./settings-telemetry";
 import { BackupsPanel } from "./backups-panel";
 import { DispatchLimits } from "./limits";
 import { ProjectsSection } from "./projects-settings";
-import { hostModelFor, hostProviderFor, normaliseProvider, profileAvailability, providerMapSuggestions, type NucleusProfile, type ProviderMap, type ProviderMapSuggestion } from "../shared/profiles";
+import { hostModelFor, profileAvailability, type NucleusProfile } from "../shared/profiles";
 import type { HostCatalog, HostFeature, HostModel, HostProvider, StoredHostCatalog } from "../shared/host";
-import { ProfileHostChips, ProfileHostEditor, type CompatibilityRead } from "./profile-hosts";
 /** A board from a service that predates Spec 052 carries no usage view. */
 
 /**
@@ -174,9 +173,29 @@ const profileDraft = (profile: Pick<NucleusProfile, "name" | "provider" | "model
 });
 
 
-/** The host provider a stored profile names, through the provider map, or null when this host lacks it. */
-function namedProvider(provider: string, catalog: HostCatalog | undefined, providerMap: ProviderMap | undefined) {
-  return catalog && providerMap && provider ? hostProviderFor(provider, catalog, providerMap) : null;
+/**
+ * The canonical provider a stored profile names in the form's vocabulary, or null
+ * when no registered host can run it. The vocabulary is every host's catalog in
+ * canonical values (`profile.vocabulary`, task 1158).
+ */
+function namedProvider(provider: string, catalog: HostCatalog | undefined) {
+  return catalog && provider ? catalog.providers.find(candidate => candidate.key === provider) ?? null : null;
+}
+
+/** Each profile on each registered host (`profile.compatibility`), the read the CLI shares. */
+type CompatibilityRead = { hosts: api.ProfileCompatibilityHost[]; rows: api.ProfileCompatibilityRow[] };
+
+/**
+ * The one quiet status a profile row may show for the hosts (task 1158): nothing
+ * while it runs on every registered host, else the hosts it can't run on with
+ * each reason, for the icon's popover. Only when Nucleus serves more than one host.
+ */
+export function hostCompatibilityNote(read: CompatibilityRead | undefined, profileId: string): string {
+  if (!read || read.hosts.length < 2) return "";
+  return read.hosts.flatMap(host => {
+    const row = read.rows.find(item => item.profileId === profileId && item.hostId === host.hostId);
+    return row?.status === "unavailable" ? [`Not on ${host.label}: ${row.reason}`] : [];
+  }).join("\n");
 }
 
 /**
@@ -228,8 +247,8 @@ function profileRowStatus(profile: Pick<Profile, "available">, entry: PoolEntry,
   return { problem: !profile.available ? "Unavailable" : activeGroupLimit(state.availability, entry.group) ? "Subscription paused" : "" };
 }
 
-function modelWords(profile: Pick<Profile, "provider" | "model">, catalog: HostCatalog | undefined, providerMap: ProviderMap | undefined): string {
-  const provider = namedProvider(profile.provider, catalog, providerMap);
+function modelWords(profile: Pick<Profile, "provider" | "model">, catalog: HostCatalog | undefined): string {
+  const provider = namedProvider(profile.provider, catalog);
   const model = provider ? hostModelFor(profile.model, provider) : null;
   return model?.label || profile.model || "no model";
 }
@@ -262,9 +281,9 @@ function identityValid(draft: ProfileDraft) {
 }
 
 /** One live profile row: name, labelled attention icons when needed, on/off and Edit. */
-function ProfileRow({ c, profile, board, stored, compatibility, catalog, catalogs, providerMap, directory, projects, repositories, state, busy, editing, poolSave, actionStatus, onEdit, onCreated, onDuplicate, onRemove, onChooseDirectory }: {
+function ProfileRow({ c, profile, board, stored, compatibility, catalog, catalogs, directory, projects, repositories, state, busy, editing, poolSave, actionStatus, onEdit, onCreated, onDuplicate, onRemove, onChooseDirectory }: {
   c: Colors; profile: NucleusProfile | Profile; board: Profile | null; stored: NucleusProfile | null; compatibility: CompatibilityRead | undefined; catalog: HostCatalog | undefined;
-  catalogs: CatalogRead[]; providerMap: ProviderMap | undefined; directory: string | null; projects: readonly Project[];
+  catalogs: CatalogRead[]; directory: string | null; projects: readonly Project[];
   repositories: readonly RepositorySettings[]; state: UiQueueState | null; busy: boolean; editing: boolean;
   poolSave: (entry: PoolEntry) => Promise<void>; actionStatus: string; onEdit: () => void; onCreated: (profile: NucleusProfile) => void;
   onDuplicate: () => void; onRemove: () => Promise<void>; onChooseDirectory: (cwd: string) => void;
@@ -282,18 +301,19 @@ function ProfileRow({ c, profile, board, stored, compatibility, catalog, catalog
     if (!next.group.trim()) { saver.current!.cancelPending(); setSaveStatus("Subscription is required"); return; }
     saver.current!.enqueue(next, delay);
   }
-  const availability = board ?? (catalog && providerMap ? { ...profile, ...profileAvailability(profile, catalog, providerMap) } : { ...profile, available: true, problem: "", supportedThinking: [] as string[] });
+  const availability = stored && catalog ? { ...stored, ...profileAvailability(stored, catalog) } : board ?? { ...profile, available: true, problem: "", supportedThinking: [] as string[] };
   const status = state ? profileRowStatus(availability, entry, state) : { problem: "" };
+  const hostNote = hostCompatibilityNote(compatibility, profile.id);
+  const attention = status.problem ? `${status.problem}${hostNote ? `\n${hostNote}` : ""}` : hostNote;
   return <View style={{ borderBottomWidth: 1, borderBottomColor: c.border, paddingVertical: space.xs, gap: space.xs }}>
     <View style={{ ...row, flexWrap: "nowrap" }}>
       <Text style={{ flex: 1, minWidth: 0, color: c.foreground, fontWeight: "600", fontSize: typeScale.body.fontSize }}>{profile.name}</Text>
-      <ProfileHostChips c={c} profileId={profile.id} name={profile.name} read={compatibility} />
-      {status.problem ? <StatusGlyph c={c} icon="TriangleAlert" color={c.statusWarning} text={status.problem} label={`${profile.name}: ${status.problem}`} /> : null}
+      {attention ? <StatusGlyph c={c} icon="TriangleAlert" color={c.statusWarning} text={attention} label={`${profile.name}: ${attention.split("\n")[0]}`} /> : null}
       <Button matchField c={c} text={entry.enabled ? "On" : "Off"} selected={entry.enabled} disabled={busy || !state} label={`${entry.enabled ? "Disable" : "Enable"} ${profile.name}`} onPress={() => change({ enabled: !entry.enabled })} />
       <ActionButton c={c} action={editing ? "close" : "edit"} label={`${editing ? "Close" : "Edit"} ${profile.name}`} onPress={() => { void saver.current!.flush(); onEdit(); }} />
     </View>
-    {editing && <ProfileEditor c={c} catalog={catalog} catalogs={catalogs} providerMap={providerMap} directory={directory}
-      stored={stored} compatibility={compatibility} projects={projects} repositories={repositories} initial={profile} entry={state ? entry : null} state={state}
+    {editing && <ProfileEditor c={c} catalog={catalog} catalogs={catalogs} directory={directory}
+      projects={projects} repositories={repositories} initial={profile} entry={state ? entry : null} state={state}
       busy={busy} poolSaveStatus={saveStatus} actionStatus={actionStatus} onChangePool={state ? change : undefined} onFlushPool={() => void saver.current!.flush()}
       onCreated={onCreated} onDuplicate={onDuplicate} onRemove={onRemove} onChooseDirectory={onChooseDirectory} />}
   </View>;
@@ -305,15 +325,14 @@ function quietSaveStatus(status: string) {
 }
 
 /**
- * Create or edit one stored profile from what the host reports. Provider, model,
+ * Create or edit one stored profile in Nucleus's canonical vocabulary, offering
+ * what at least one registered host can run (task 1158). Provider, model,
  * mode and thinking are dropdowns; a list that is only Host default is plain
  * text. Changes save on entry (Tom, 2026-11-08): text after a short pause,
  * choices at once. There is no Save or Cancel. Notes stay stored and unshown.
  */
-function ProfileEditor({ c, catalog, catalogs, providerMap, directory, stored, compatibility, projects, repositories, initial, entry, state, busy, poolSaveStatus, actionStatus, onChangePool, onFlushPool, onCreated, onDuplicate, onRemove, onChooseDirectory, onClose }: {
-  c: Colors; catalog: HostCatalog | undefined; catalogs: CatalogRead[]; providerMap: ProviderMap | undefined;
-  /** The stored record, for its per-host mapping (nucleus#1151); null for a new or host-only profile. */
-  stored?: NucleusProfile | null; compatibility?: CompatibilityRead;
+function ProfileEditor({ c, catalog, catalogs, directory, projects, repositories, initial, entry, state, busy, poolSaveStatus, actionStatus, onChangePool, onFlushPool, onCreated, onDuplicate, onRemove, onChooseDirectory, onClose }: {
+  c: Colors; catalog: HostCatalog | undefined; catalogs: CatalogRead[];
   directory: string | null; projects: readonly Project[]; repositories: readonly RepositorySettings[];
   initial: (NucleusProfile | Profile) | null; entry: PoolEntry | null; state: UiQueueState | null;
   busy: boolean; poolSaveStatus: string; actionStatus?: string; onChangePool?: (patch: Partial<PoolEntry>, delay?: number) => void; onFlushPool?: () => void;
@@ -360,15 +379,14 @@ function ProfileEditor({ c, catalog, catalogs, providerMap, directory, stored, c
     identitySaver.current!.enqueue(next, delay);
   }
   const providers = catalog?.providers ?? [];
-  const provider = namedProvider(draft.provider, catalog, providerMap);
+  const provider = namedProvider(draft.provider, catalog);
   const model = provider && draft.model ? hostModelFor(draft.model, provider) : null;
-  const availability = catalog && providerMap && draft.provider && draft.model
-    ? profileAvailability({ provider: draft.provider, model: draft.model, ...(draft.thinkingOptionId ? { thinkingOptionId: draft.thinkingOptionId } : {}) }, catalog, providerMap)
+  const availability = catalog && draft.provider && draft.model
+    ? profileAvailability({ provider: draft.provider, model: draft.model, ...(draft.thinkingOptionId ? { thinkingOptionId: draft.thinkingOptionId } : {}), ...(draft.modeId ? { modeId: draft.modeId } : {}) }, catalog)
     : null;
-  const selectedHostKey = providers.find(candidate => normaliseProvider(providerMap ?? {}, candidate.key) === draft.provider)?.key ?? draft.provider;
   const providerOptions = [
     ...providers.map(candidate => ({ value: candidate.key, label: providerOptionLabel(candidate) })),
-    ...(draft.provider && !providers.some(candidate => normaliseProvider(providerMap ?? {}, candidate.key) === draft.provider)
+    ...(draft.provider && !providers.some(candidate => candidate.key === draft.provider)
       ? [{ value: draft.provider, label: `${draft.provider} · unavailable` }] : []),
   ];
   const modelOptions = [
@@ -376,7 +394,7 @@ function ProfileEditor({ c, catalog, catalogs, providerMap, directory, stored, c
     ...(draft.model && !(provider?.models ?? []).some(candidate => candidate.id === draft.model || candidate.aliases.includes(draft.model))
       ? [{ value: draft.model, label: draft.model }] : []),
   ];
-  const chooseProvider = (key: string) => applyIdentity({ provider: normaliseProvider(providerMap ?? {}, key), model: "", modeId: null, thinkingOptionId: null, featureValues: {} });
+  const chooseProvider = (key: string) => applyIdentity({ provider: key, model: "", modeId: null, thinkingOptionId: null, featureValues: {} });
   const chooseModel = (id: string) => {
     const next = provider?.models.find(candidate => candidate.id === id);
     applyIdentity({
@@ -387,7 +405,7 @@ function ProfileEditor({ c, catalog, catalogs, providerMap, directory, stored, c
   const featureValue = (feature: HostFeature) => Object.prototype.hasOwnProperty.call(draft.featureValues, feature.id) ? draft.featureValues[feature.id] : feature.value;
   const setFeature = (feature: HostFeature, value: unknown) => applyIdentity({ featureValues: { ...draft.featureValues, [feature.id]: value } });
   const differing = catalogs.length > 1 ? [...new Set(catalogs.map(read => {
-    const host = namedProvider(draft.provider, read.catalog, providerMap);
+    const host = namedProvider(draft.provider, read.catalog);
     return featureFingerprint(host && draft.model ? hostModelFor(draft.model, host) : null);
   }))].length > 1 ? [...new Set(catalogs.map(read => projectNameForPath(read.cwd, projects, repositories)))] : [] : [];
   const identityQuiet = quietSaveStatus(identityStatus);
@@ -450,8 +468,8 @@ function ProfileEditor({ c, catalog, catalogs, providerMap, directory, stored, c
             onChange={weight => onChangePool({ weight })} onCommit={onFlushPool} style={{ minHeight: control.height, justifyContent: "center" }} />
       </View>
     </View>}
-    <View style={{ ...pair, alignItems: "stretch" }}><View style={half}><DropdownSelect label="Provider" value={selectedHostKey} options={providerOptions} onChange={chooseProvider} c={c} disabled={busy} placeholder="Choose a provider" emptyText={catalog ? "This host reports no providers." : "Reading the host catalog…"} /></View>
-      <View style={half}><DropdownSelect label="Model" value={draft.model} options={modelOptions} onChange={chooseModel} c={c} disabled={busy || !draft.provider} placeholder="Choose a model" emptyText={provider ? "This provider reports no models." : "Choose a provider first."} /></View></View>
+    <View style={{ ...pair, alignItems: "stretch" }}><View style={half}><DropdownSelect label="Provider" value={draft.provider} options={providerOptions} onChange={chooseProvider} c={c} disabled={busy} placeholder="Choose a provider" emptyText={catalog ? "No host reports a provider." : "Reading providers and models…"} /></View>
+      <View style={half}><DropdownSelect label="Model" value={draft.model} options={modelOptions} onChange={chooseModel} c={c} disabled={busy || !draft.provider} placeholder="Choose a model" emptyText={provider ? "No host reports a model for this provider." : "Choose a provider first."} /></View></View>
     {optionRows.map(cells => <View key={cells.map(cell => cell.key).join("|")} accessibilityLabel="Model options row" style={{ ...pair, alignItems: "flex-end" }}>
       {cells.map(cell => <View key={cell.key} style={half}>{cell.node}</View>)}
     </View>)}
@@ -463,7 +481,6 @@ function ProfileEditor({ c, catalog, catalogs, providerMap, directory, stored, c
         onChange={onChooseDirectory} c={c} />}
     </View>}
     {availability && !availability.available && <Text accessibilityLabel="Profile availability preview" style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize }}>{availability.problem}</Text>}
-    {stored && <ProfileHostEditor key={stored.id} c={c} profile={stored} read={compatibility} busy={busy} />}
     {entry && onChangePool && state && <View style={{ ...pair, alignItems: "flex-start" }}><View style={{ ...half, gap: space.xs }}>
         {sliderLabel("Cost", "Each cost step down doubles this profile's share. Above the usage level's ceiling it needs a request. Unset ranks as medium and is never cost-gated.", entry.cost)}
         <StopSlider captions={false} c={c} a11yLabel="Cost" stops={COST_LEVELS} value={entry.cost ?? null} labelFor={levelLabel} stopLabel={cost => `Cost ${cost.replaceAll("_", " ")}`} onChange={cost => onChangePool({ cost: entry.cost === cost ? null : cost })} />
@@ -491,12 +508,12 @@ function ProfilesPanel({ c, compact, inset, state, repositories, busy, savePool,
 }) {
   const queryClient = useQueryClient();
   const fetchCompatibility = useRpc(api.readProfileCompatibility);
-  const fetchProfiles = useRpc(api.listNucleusProfiles), fetchProviderMap = useRpc(api.readProviderMap), fetchCatalog = useRpc(api.readHostCatalog);
-  const createProfile = useRpc(api.createNucleusProfile), removeProfile = useRpc(api.removeNucleusProfile), saveProviderMap = useRpc(api.writeProviderMap);
+  // The form's choices: every registered host's catalog in canonical values (task 1158).
+  const fetchProfiles = useRpc(api.listNucleusProfiles), fetchCatalog = useRpc(api.readProfileVocabulary);
+  const createProfile = useRpc(api.createNucleusProfile), removeProfile = useRpc(api.removeNucleusProfile);
   const directories = [...new Set(repositories.map(row => row.repository.path).filter(path => path.length > 0))];
   const [lastUsed, setLastUsed] = useState<Record<string, string>>({});
   const [editor, setEditor] = useState<string | "new" | null>(null);
-  const [mapStatus, setMapStatus] = useState("");
   const [created, setCreated] = useState<NucleusProfile | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [actionStatus, setActionStatus] = useState("");
@@ -508,16 +525,14 @@ function ProfilesPanel({ c, compact, inset, state, repositories, busy, savePool,
   // Under the profiles key, so every profile write's invalidation refreshes it too.
   const compatibilityQuery = useQuery({ queryKey: ["nucleus", "profiles", "compatibility"], queryFn: () => fetchCompatibility({}), staleTime: 15_000 });
   const compatibility = compatibilityQuery.data;
-  const providerMapQuery = useQuery({ queryKey: ["nucleus", "provider-map"], queryFn: () => fetchProviderMap({}) });
-  const catalogQuery = useQuery({ queryKey: ["nucleus", "host-catalog", directory ?? ""], queryFn: () => fetchCatalog(directory ? { cwd: directory } : {}), staleTime: 30_000 });
+  const catalogQuery = useQuery({ queryKey: ["nucleus", "profile-vocabulary", directory ?? ""], queryFn: () => fetchCatalog(directory ? { cwd: directory } : {}), staleTime: 30_000 });
   const catalogsQuery = useQuery({
-    queryKey: ["nucleus", "host-catalogs", directories.join("|")],
+    queryKey: ["nucleus", "profile-vocabularies", directories.join("|")],
     queryFn: () => Promise.all(directories.map(async cwd => ({ cwd, catalog: await fetchCatalog({ cwd }) }))),
     enabled: editor !== null && directories.length > 1, staleTime: 30_000,
   });
   const catalog = catalogQuery.data;
   const catalogs = catalogsQuery.data ?? (directory && catalog ? [{ cwd: directory, catalog }] : []);
-  const providerMap = providerMapQuery.data?.providers;
   const stored = profilesQuery.data?.profiles ?? [];
   const boardProfiles = state?.profiles ?? [];
   const live: { id: string; name: string; stored: NucleusProfile | null; board: Profile | null }[] = (() => {
@@ -534,7 +549,7 @@ function ProfilesPanel({ c, compact, inset, state, repositories, busy, savePool,
   useEffect(() => {
     if (created && profilesQuery.data?.profiles.some(profile => profile.id === created.id)) setCreated(null);
   }, [created, profilesQuery.data]);
-  const panelBusy = busy || Boolean(removing) || mapStatus === "Saving…";
+  const panelBusy = busy || Boolean(removing);
   /**
    * Refresh reads the host live for every directory the page reads and replaces
    * Nucleus's stored catalog (nucleus#970). The stored lists stay usable while it
@@ -547,10 +562,10 @@ function ProfilesPanel({ c, compact, inset, state, repositories, busy, savePool,
     try {
       const cwds: (string | null)[] = directories.length ? directories : [null];
       const reads = await Promise.allSettled(cwds.map(async cwd => ({ cwd, catalog: await fetchCatalog(cwd ? { cwd, refresh: true } : { refresh: true }) })));
-      for (const read of reads) if (read.status === "fulfilled") queryClient.setQueryData(["nucleus", "host-catalog", read.value.cwd ?? ""], read.value.catalog);
+      for (const read of reads) if (read.status === "fulfilled") queryClient.setQueryData(["nucleus", "profile-vocabulary", read.value.cwd ?? ""], read.value.catalog);
       const failed = reads.find(read => read.status === "rejected");
       if (failed) setRefreshError(failureText(failed.reason));
-      await queryClient.invalidateQueries({ queryKey: ["nucleus", "host-catalogs"] });
+      await queryClient.invalidateQueries({ queryKey: ["nucleus", "profile-vocabularies"] });
     } finally { setRefreshing(false); }
   }
   const age = catalogAge(catalogQuery.data?.readAt);
@@ -582,110 +597,43 @@ function ProfilesPanel({ c, compact, inset, state, repositories, busy, savePool,
     } catch (error) { setActionStatus(`Not saved: ${failureText(error)}`); }
     finally { setRemoving(null); }
   }
-  async function writeProviderMap(next: ProviderMap) {
-    setMapStatus("Saving…");
-    try {
-      await saveProviderMap({ providers: next });
-      await queryClient.invalidateQueries({ queryKey: ["nucleus", "provider-map"] });
-      await queryClient.invalidateQueries({ queryKey: ["nucleus", "profiles", "compatibility"] });
-      setMapStatus("Saved");
-      return true;
-    } catch (error) { setMapStatus(`Not saved: ${failureText(error)}`); return false; }
-  }
   const stale = state ? stalePoolEntries(state.pool, state.connected ? state.profiles : []) : [];
-  // One catalog per host the page can read: the host.catalog read serves the one connected host.
-  const mapHosts = catalog ? [{ id: state?.hostId ?? "host", catalog }] : [];
-  const mapProfiles = live.map(item => item.stored ?? item.board!);
-  const mapShown = providerMapShown(mapHosts, mapProfiles, providerMap);
   const groups = state ? [...new Set(state.pool.map(entry => entry.group))] : [];
   // Profile and stale rows draw their own divider; a trailing loading or empty line does not.
   const profilesEndInRow = live.length > 0 || (stale.length > 0 && editor === "new" && !profilesQuery.isPending);
   return <ScrollView accessibilityLabel="Profiles page" style={{ flex: 1, minHeight: 0, width: compact ? "auto" : "100%", maxWidth: "100%" }} contentContainerStyle={{ paddingBottom: inset, width: "100%", maxWidth: 780 }}>
     {refreshError && <Text accessibilityRole="alert" style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize }}>Refresh failed: {refreshError}. The stored providers and models stay.</Text>}
-    {catalogQuery.error && <Text accessibilityRole="alert" style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize }}>The host catalog could not be read: {failureText(catalogQuery.error)}</Text>}
+    {catalogQuery.error && <Text accessibilityRole="alert" style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize }}>The providers and models could not be read: {failureText(catalogQuery.error)}</Text>}
     {profilesQuery.error && <Text accessibilityRole="alert" style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize }}>Could not read profiles: {failureText(profilesQuery.error)}</Text>}
-    {providerMapQuery.error && <Text accessibilityRole="alert" style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize }}>Could not read the provider map: {failureText(providerMapQuery.error)}</Text>}
     <Section c={c} title="Profiles" label="Stored profiles" status={quietSaveStatus(actionStatus) || null} endsInRow={profilesEndInRow}
-      description="A profile is a provider and model this host can run, and how Nucleus uses it for dispatch. Cost and capability sit in the editor."
+      description="A profile is a provider and model a registered host can run, and how Nucleus uses it for dispatch. Each host translates it to its own names. Cost and capability sit in the editor."
       action={<View style={{ ...row, flexWrap: "nowrap" }}>
         <ActionButton c={c} action="refresh" tip={refreshText} label="Refresh providers and models" busy={refreshing} onPress={() => void refreshCatalog()} />
         <ActionButton c={c} action="add" label="Add profile" disabled={panelBusy || editor === "new"} onPress={() => setEditor("new")} />
       </View>}>
-      {editor === "new" && <ProfileEditor key="new" c={c} catalog={catalog} catalogs={catalogs} providerMap={providerMap} directory={directory}
+      {editor === "new" && <ProfileEditor key="new" c={c} catalog={catalog} catalogs={catalogs} directory={directory}
         projects={state?.projects ?? []} repositories={repositories} initial={null} entry={null} state={state}
         busy={panelBusy} poolSaveStatus="" onCreated={profile => { setCreated(profile); setEditor(profile.id); }} onChooseDirectory={chooseDirectory}
         onClose={() => setEditor(null)} />}
       {live.map(item => <ProfileRow key={item.id} c={c} profile={item.stored ?? item.board!} board={item.board} stored={item.stored} compatibility={compatibility} catalog={catalog}
-        catalogs={catalogs} providerMap={providerMap} directory={directory} projects={state?.projects ?? []} repositories={repositories}
+        catalogs={catalogs} directory={directory} projects={state?.projects ?? []} repositories={repositories}
         state={state} busy={panelBusy} editing={editor === item.id} poolSave={savePool}
         onEdit={() => setEditor(editor === item.id ? null : item.id)} onCreated={profile => { setCreated(profile); setEditor(profile.id); }}
         onDuplicate={() => void duplicate(item.stored ?? item.board!)} onRemove={() => remove(item.id)} onChooseDirectory={chooseDirectory}
         actionStatus={actionStatus} />)}
       {stale.map(entry => <StalePoolEntry key={entry.profileId} c={c} entry={entry} busy={panelBusy} onRemove={() => void savePoolList(removePoolEntry(state!.pool, entry.profileId))} />)}
       {profilesQuery.isPending && !live.length && <Text style={muted(c)}>Reading profiles…</Text>}
-      {!live.length && !profilesQuery.isPending && editor !== "new" && <Text style={muted(c)}>No profiles yet. Add one from what this host can run.</Text>}
+      {!live.length && !profilesQuery.isPending && editor !== "new" && <Text style={muted(c)}>No profiles yet. Add one from what your hosts can run.</Text>}
     </Section>
     <View>
-      <Section c={c} title="Subscriptions" label="Subscriptions" last={!mapShown} endsInRow={Boolean(state && groups.length)}
+      <Section c={c} title="Subscriptions" label="Subscriptions" last endsInRow={Boolean(state && groups.length)}
         description="Profiles that share a provider subscription form one group. An unavailable group leaves selection until its retry time or a reset.">
         {!state && <Text style={muted(c)}>Reading subscriptions…</Text>}
         {state && !groups.length && <Text style={muted(c)}>None yet. Add a profile first.</Text>}
         {state && groups.map(group => <Availability key={`${group}-${JSON.stringify(state.availability.find(a => a.group === group))}`} c={c} group={group} state={state} busy={busy} save={saveAvailability} />)}
       </Section>
     </View>
-    <ProviderMapSection c={c} hosts={mapHosts} profiles={mapProfiles} providerMap={providerMap} busy={panelBusy}
-      status={quietSaveStatus(mapStatus) || null} onSave={next => writeProviderMap(next)} />
   </ScrollView>;
-}
-
-/**
- * The provider map shows only where it can help or already holds an entry
- * (Tom, 2026-11-08): a second host offers a profile's model under another
- * provider key, or a stored entry needs editing. Otherwise, including while the
- * map is still being read, there is no section. `hosts` carries one catalog per
- * host the page can read; today that is the one Paseo host.
- */
-export function ProviderMapSection({ c, hosts, profiles, providerMap, busy, status, onSave }: {
-  c: Colors; hosts: readonly { id: string; catalog: HostCatalog }[]; profiles: readonly Pick<NucleusProfile, "name" | "provider" | "model">[];
-  providerMap: ProviderMap | undefined; busy: boolean; status: string | null; onSave: (next: ProviderMap) => Promise<boolean>;
-}) {
-  if (!providerMap || !providerMapShown(hosts, profiles, providerMap)) return null;
-  const entries = Object.entries(providerMap);
-  const suggestion = providerMapSuggestions(hosts, profiles, providerMap)[0] ?? null;
-  return <Section c={c} title="Provider map" label="Provider map" status={status} last
-    description="A stored profile names a normalised provider key, so the same profile works on a host that spells a provider differently. Identity is the default: a host key with no entry maps to itself.">
-    <ProviderMapEditor key={suggestion ? `${suggestion.hostId}:${suggestion.hostKey}` : "manual"} c={c} entries={entries} providerMap={providerMap}
-      suggestion={suggestion} placeholder={hosts[0]?.catalog.providers[0]?.key ?? "openai-codex"} busy={busy} onSave={onSave} />
-  </Section>;
-}
-
-function providerMapShown(hosts: readonly { id: string; catalog: HostCatalog }[], profiles: readonly Pick<NucleusProfile, "name" | "provider" | "model">[], providerMap: ProviderMap | undefined) {
-  return Boolean(providerMap && (Object.keys(providerMap).length || providerMapSuggestions(hosts, profiles, providerMap).length));
-}
-
-/** The small provider-map editor: host provider key → the normalised key a profile names. */
-function ProviderMapEditor({ c, entries, providerMap, suggestion, placeholder, busy, onSave }: {
-  c: Colors; entries: [string, string][]; providerMap: ProviderMap; suggestion: ProviderMapSuggestion | null; placeholder: string;
-  busy: boolean; onSave: (next: ProviderMap) => Promise<boolean>;
-}) {
-  const [hostKey, setHostKey] = useState(suggestion?.hostKey ?? ""), [normalised, setNormalised] = useState(suggestion?.normalised ?? "");
-  const valid = hostKey.trim().length > 0 && normalised.trim().length > 0;
-  return <View style={{ gap: space.sm }}>
-    {entries.map(([key, value]) => <View key={key} style={{ ...row, flexWrap: "nowrap" }}>
-      <Text style={{ color: c.foreground, flex: 1, minWidth: 0, fontSize: typeScale.body.fontSize }}>{key} → {value}</Text>
-      <ActionButton c={c} action="remove" label={`Remove provider map entry ${key}`} disabled={busy}
-        onPress={() => onSave(Object.fromEntries(entries.filter(([candidate]) => candidate !== key)))} />
-    </View>)}
-    {suggestion && <Text accessibilityLabel="Provider map suggestion" style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
-      Mapping {suggestion.hostKey} to {suggestion.normalised} makes {suggestion.profileName} available on {suggestion.hostId}.
-    </Text>}
-    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.sm, alignItems: "flex-end" }}>
-      <View style={{ flexGrow: 1, flexBasis: 180, minWidth: 0 }}><Field c={c} label="Host provider key" value={hostKey} onChange={setHostKey} placeholder={placeholder} /></View>
-      <View style={{ flexGrow: 1, flexBasis: 180, minWidth: 0 }}><Field c={c} label="Normalised key" value={normalised} onChange={setNormalised} placeholder="openai" /></View>
-      <ActionButton c={c} action="add" label="Add provider map entry" disabled={busy || !valid}
-        onPress={() => void onSave({ ...providerMap, [hostKey.trim()]: normalised.trim() }).then(saved => { if (saved) { setHostKey(""); setNormalised(""); } })} />
-    </View>
-  </View>;
 }
 
 function StalePoolEntry({ c, entry, busy, onRemove }: { c: Colors; entry: PoolEntry; busy: boolean; onRemove: () => void }) {
