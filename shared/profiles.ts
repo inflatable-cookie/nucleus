@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { HostCatalog, HostProvider } from "./host";
-import { isCanonicalProvider, isRuntimeMode, isThinkingLevel, translateProfile, type HostVocabulary, type LaunchValues } from "./profile-vocabulary";
+import { isCanonicalProvider, isRuntimeMode, isThinkingLevel, canonicalThinkingLevels, translateProfile, type HostVocabulary, type LaunchValues } from "./profile-vocabulary";
 
 /**
  * A Nucleus-owned profile record. Nucleus keeps its own list; the host only
@@ -256,13 +256,20 @@ export function profileCompatibility(
   catalog: HostCatalog,
   vocabulary: HostVocabulary,
 ): ProfileCompatibility {
+  // The levels this host runs for the profile's model, canonical: a host that
+  // carries thinking as one of its own option values (T3's claude `effort`, its
+  // pi `thinking`) reports them from that option, not as the model's native
+  // levels, so a caller reading only the routing snapshot still sees them.
+  const supportedThinking = canonicalThinkingLevelsOn(profile.provider, profile.model, catalog, vocabulary);
+  const withLevels = (answer: Omit<ProfileCompatibility, 'status' | 'reason' | 'translated' | 'launch'>) =>
+    supportedThinking ? { ...answer, supportedThinking } : answer;
   const translation = translateProfile(vocabulary, profile);
   if (!translation.ok)
-    return { available: false, problem: translation.reason, supportedThinking: [], status: "unavailable",
+    return { ...withLevels({ available: false, problem: translation.reason, supportedThinking: [] }), status: "unavailable",
       reason: translation.reason, translated: [], launch: translation.launch };
   const launch = translation.launch;
   const provider = hostProviderFor(launch.provider, catalog);
-  const answer = availabilityOn(launch, provider, catalog);
+  const answer = withLevels(availabilityOn(launch, provider, catalog));
   return {
     ...answer,
     status: answer.available ? "works" : "unavailable",
@@ -270,6 +277,15 @@ export function profileCompatibility(
     translated: translation.translated,
     launch,
   };
+}
+
+/** The canonical levels this host can run for one provider's model; null when the host does not report it. */
+function canonicalThinkingLevelsOn(provider: string, modelId: string, catalog: HostCatalog, vocabulary: HostVocabulary) {
+  if (!isCanonicalProvider(provider)) return null;
+  const entry = vocabulary.providers[provider];
+  const host = entry && catalog.providers.find(candidate => candidate.key === entry.key);
+  const model = host && hostModelFor(modelId, host);
+  return entry && model ? canonicalThinkingLevels(entry, model) : null;
 }
 
 /** The availability problem with the host named. */
