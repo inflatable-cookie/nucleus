@@ -319,6 +319,46 @@ test("a run ticket asks and tells through the CLI with no MCP binding", async ()
   } finally { await f.close(); }
 });
 
+test("tell returns before a busy host exceeds the CLI timeout, then retry reads delivery without resending", async () => {
+  const f = await verbFixture();
+  try {
+    let release!: () => void;
+    const blockedHostSend = new Promise<void>(resolve => { release = resolve; });
+    f.adapter.notify = async (agentId, messageId, text) => {
+      await blockedHostSend;
+      f.notified.push({ agentId, messageId, text });
+    };
+    const args = { to: f.sibling.id, text: "The durable receipt is ready." };
+    const startedAt = Date.now();
+    const first = await f.cli("tell", args);
+    assert.equal(first.code, 0, first.stderr);
+    const receipt = JSON.parse(first.stdout) as { status: string; messageId: string; recordedAt: string };
+    assert.equal(receipt.status, "queued");
+    assert.ok(receipt.recordedAt);
+    assert.ok(Date.now() - startedAt < 5_000, "tell returns within its short inline window");
+    assert.equal(f.store.message(receipt.messageId)?.status, "uncertain", "the in-flight intent prevents an unsafe resend");
+
+    // Keep the host delivery pending beyond TELL_CALLBACK_TIMEOUT_MS (45 seconds).
+    await new Promise(resolve => setTimeout(resolve, 45_100));
+    release();
+    const deadline = Date.now() + 5_000;
+    while (f.store.message(receipt.messageId)?.status !== "delivered") {
+      if (Date.now() >= deadline) throw new Error("the background tell delivery did not settle");
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.equal(f.notified.length, 1);
+
+    const retry = await f.cli("tell", args);
+    assert.equal(retry.code, 0, retry.stderr);
+    const settled = JSON.parse(retry.stdout) as { status: string; messageId: string; recordedAt: string; deliveredAt: string };
+    assert.equal(settled.status, "delivered");
+    assert.equal(settled.messageId, receipt.messageId);
+    assert.equal(settled.recordedAt, receipt.recordedAt);
+    assert.ok(settled.deliveredAt);
+    assert.equal(f.notified.length, 1, "retry returns the settled receipt without a second send");
+  } finally { await f.close(); }
+});
+
 test("a Paseo planner's host identity resolves its participant ticket before nucleus tell", async () => {
   const f = await callerCliFixture();
   try {

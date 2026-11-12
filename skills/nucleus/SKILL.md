@@ -72,9 +72,14 @@ thread ID. `ask` is a question that waits for an answer and escalates; `tell` is
   as `effigy#590` with `role` (worker, reviewer or planner), `{"project": ...}` or
   `{"project": ..., "agent": ...}`.
 Nucleus delivers a `tell` labelled with your role and project, queues it for the recipient's next
-turn or the project inbox, or reports an uncertain delivery that must not be resent. Messages carry
-information only. Decisions still go through `ask` and the planner ladder. `nucleus_ask` and
-`nucleus_message` remain as aliases for retained sessions.
+turn or the project inbox, or reports an uncertain delivery that must not be resent. A tell is
+recorded before delivery and returns after at most a short inline delivery window; its receipt names
+the status and `recordedAt` time, plus `deliveredAt` when delivery is confirmed. If delivery is still
+running, retry the identical tell JSON to read the recorded outcome; it never sends the message
+twice. A callback timeout says the same. `ask` keeps its bounded in-turn wait because its purpose is
+to collect an answer or report that the question is pending. Messages carry information only.
+Decisions still go through `ask` and the planner ladder. `nucleus_ask` and `nucleus_message` remain
+as aliases for retained sessions.
 
 **Payloads:** pass JSON on stdin with `-`, for example
 `node bin/queue-cli.mjs METHOD - <<'JSON'`, then the JSON, then a closing `JSON`

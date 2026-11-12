@@ -118,7 +118,7 @@ async function tellCall(input,tool){
   if(runId!==undefined&&runId!==binding.runId)return{isError:true,content:[{type:'text',text:mismatchRefusal(tool,binding.runId,runId,'message')}]};
   const payload={taskId:binding.taskId,runId:binding.runId,...message};
   const eventId=createHash('sha256').update(JSON.stringify(payload)).digest('hex');
-  const result=await callbackRequest(binding,'/message',{eventId,...payload},{timeoutMessage:`Message timed out; retry identical ${tool} arguments`});
+  const result=await callbackRequest(binding,'/message',{eventId,...payload},{timeoutMessage:`Tell callback timed out; retrying the identical ${tool} arguments returns the recorded outcome and never sends the message twice`});
   return {content:[{type:'text',text:JSON.stringify(result)}]};
  }catch(error){return {isError:true,content:[{type:'text',text:error instanceof Error?error.message:'Message failed'}]};}
 }
