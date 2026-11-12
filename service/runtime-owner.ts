@@ -165,6 +165,8 @@ export interface RuntimeOwnerOptions {
    * shorten it so the decision is proved without waiting.
    */
   hostIdleGraceMs?: number;
+  /** Clock used only for host idle-grace bookkeeping; production uses wall time. */
+  hostNow?: () => number;
   /**
    * Grace after the last plugin presence closes while a host is still connected,
    * before the board fault; defaults to `PLUGIN_PRESENCE_GRACE_MS`. Fixtures
@@ -479,7 +481,7 @@ export class QueueRuntime {
       transaction: fn => this.store.transaction(fn),
       readDisconnectedAt: () => this.store.getMeta<number | null>("hostDisconnectedAt") ?? null,
       writeDisconnectedAt: at => this.store.setMeta("hostDisconnectedAt", at),
-    }, Date.now, options.hostIdleGraceMs ?? HOST_IDLE_GRACE_MS);
+    }, options.hostNow ?? Date.now, options.hostIdleGraceMs ?? HOST_IDLE_GRACE_MS);
     const createAdmission = () => new Admission({ ...options.admission, totalLimit: () => this.store.configuredPaseoCallLimit(), workspaceBudget: () => this.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT });
     this.t3Host = this.settings.t3code ? new T3HostConnection(this.settings.t3code, this.dataDir, this.hostRegistry, createAdmission) : null;
     const recordedHost = this.hostRegistry.known()[0]?.id;

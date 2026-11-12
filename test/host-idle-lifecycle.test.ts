@@ -71,17 +71,15 @@ function settledRun(runId: string) {
 test("the daemon closes only after the idle grace and a reconnect inside it cancels the shutdown", async () => {
   const dir = mkdtempSync(join(tmpdir(), "idle-grace-"));
   const graceMs = 150;
+  let now = Date.now();
   const host = hostFixture(dir);
   const runtime = new QueueRuntime({
     dataDir: dir,
     adapterFactory: () => host.raw,
     timers: false,
     hostIdleGraceMs: graceMs,
+    hostNow: () => now,
   });
-  const expireGrace = () => {
-    (runtime.hostRegistry as unknown as { lastDisconnect: number }).lastDisconnect =
-      Date.now() - graceMs - 1;
-  };
   try {
     await runtime.started;
     await runtime.bootstrap;
@@ -101,8 +99,8 @@ test("the daemon closes only after the idle grace and a reconnect inside it canc
       false,
       "the last host just left; the grace has not run out",
     );
-    expireGrace();
-    // Identity-proved reconnect cancels an already-expired clock; calling
+    now += graceMs + 1;
+    // Reconnect cancels the expired grace before shutdown is observed; calling
     // hostShutdownDue first would latch and ensureBootstrap would no-op.
     host.client.isConnected = true;
     await runtime.ensureBootstrap();
@@ -122,7 +120,7 @@ test("the daemon closes only after the idle grace and a reconnect inside it canc
       false,
       "the grace starts again from this close",
     );
-    expireGrace();
+    now += graceMs;
     assert.equal(
       runtime.hostShutdownDue(),
       true,
