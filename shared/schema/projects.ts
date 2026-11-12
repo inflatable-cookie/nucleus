@@ -27,6 +27,7 @@ export type ProjectReviewer = z.infer<typeof projectReviewerSchema>;
  * weakened: Queue discovers them from the forge for the exact base and head.
  */
 export const repositoryChecksPolicySchema = z.enum(["all", "required"]);
+export const repositoryAffectedTestsSchema = z.object({ command: z.string().trim().min(1).max(1000) }).strict();
 
 export type RepositoryChecksPolicy = z.infer<typeof repositoryChecksPolicySchema>;
 
@@ -39,6 +40,7 @@ export const repositorySettingsSchema = z.object({
   validation: projectValidationSchema.nullable().default(null),
   reviewer: projectReviewerSchema.nullable().default(null),
   qa: projectQaSchema.nullable().default(null),
+  affectedTests: repositoryAffectedTestsSchema.nullable().default(null),
   // Null is the unconfigured default, so existing rows keep the blocking policy.
   checksPolicy: repositoryChecksPolicySchema.nullable().default(null),
   /** Trial host opt-in. Existing rows without the field stay on Paseo. */
@@ -65,6 +67,7 @@ export const repositorySetInputSchema = z.object({
   validation: projectValidationSchema.nullable().optional(),
   reviewer: projectReviewerSchema.nullable().optional(),
   qa: projectQaSchema.nullable().optional(),
+  affectedTests: repositoryAffectedTestsSchema.nullable().optional(),
   // Parsed only so the refusal below names the replacement; no stored row keeps it.
   [RETIRED_VALIDATION_POLICY_FIELD]: z.unknown().optional(),
   checksPolicy: repositoryChecksPolicySchema.nullable().optional(),

@@ -214,6 +214,7 @@ the write if the desired title is already present.
 | Answer question or permission | `runtime-request.respond` through dispatch | Exact request, thread and workspace; typed answers or approval decision |
 | Stop | `thread.stop` through dispatch | Receipt followed by observation; never a replacement thread |
 | Archive | `thread.archive` through dispatch | Receipt followed by archived-state observation |
+| Remove | `thread.delete` through dispatch at closeout, never `onlyIfUnused` | Durable intent, then `deletedAt` or absence from a complete inventory proves removal; an unknown outcome is never resent |
 | Settle report | `thread.settle` through dispatch for any completed non-worker role | Immediately after the accepted Nucleus receipt; bind `expectedLatestRunId`, keep an uncertain intent and inspect `settledOverride` before retry |
 | Wake settled support thread | `thread.unsettle` through dispatch before a follow-up message | Stable command intent; a retained reviewer is active again for its next round |
 | Archive workspace | `projects.mutate` / `project.update` `archived: true` | The project is retired with threads and files kept; observation reads `archivedAt` from the inventory |
@@ -247,13 +248,19 @@ settles a worker thread after the task has moved to review, and keeps it active
 while the task is still in work. Each pass reads the T3 projection first; a
 live native run is never settled, and the command's `expectedLatestRunId` keeps
 a later run from being settled by an older completion. Failed settlements
-record a task event and are reconciled on a later pass. Unknown delivery is
-retried only after the projection proves the same run is still the latest and
-unsettled; worker handover unknown delivery remains unknown and is never
-resent. A new review message first sends `thread.unsettle` with
-`reason: "user"`; T3 does not clear a manual settled override on
-`message.dispatch`. Existing closeout and retention paths still decide when
-threads are archived.
+record a task event and are reconciled on a later pass; settlement failure never
+blocks the task report.
+
+Unknown settlement delivery is recorded. On the next host sweep,
+`settledOverride: "settled"` proves success, and a changed or active latest run
+retires the old intent without touching the new run. A support settlement is
+retried only when the projection proves the same completed run is still latest
+and unsettled, using the identical command. Worker handover unknown delivery
+remains unknown and is never resent. A new review message first sends
+`thread.unsettle` with `reason: "user"`; T3 does not clear a manual settled
+override on `message.dispatch`. Existing closeout and retention paths still
+decide when threads are archived or removed; the [thread
+lifecycle](#thread-lifecycle) is where that decision lives.
 
 ### Model options
 
@@ -398,9 +405,11 @@ longer holds the sweep; the task records an `observation_outage` event and its
 lane stays held until the quantum returns (#1148, planner ruling).
 
 Report active run, idle, pending question/permission and archived state from
-positive native facts. A thread is gone only after a complete authoritative read
-proves absence/deletion. Partial reads reject or return the contract's unknown
-result. A disconnected thread never becomes idle or gone by timeout. Timeline
+positive native facts. A removed thread has no projection; the origin read uses
+`deletedAt` or absence from a complete authoritative inventory to prove removal.
+It does not invent an observation with remembered workspace or ownership labels.
+Partial reads reject or return the contract's unknown result. A disconnected
+thread never becomes idle or gone by timeout. Timeline
 pages retain gap and coverage facts; a bounded tail is not full history.
 Active and archive snapshots must report the same application-event sequence;
 otherwise their union is refused as incomplete. This includes an unarchive
@@ -424,6 +433,62 @@ Read this capability from the fresh thread projection and answer through
 invent a second follow-up. Expired or nonresumable approvals cannot be answered
 again. An interrupted answer remains uncertain even if the request later expires;
 expiry is not evidence that the original answer was never delivered.
+
+## Thread lifecycle
+
+While a T3 task is open, its worker, reviewer, recovery, coordinator and executor
+threads are never archived or deleted. Released support threads stay settled
+(`thread.settle`, above), and the task keeps its retained reviewer and recovery
+bindings; the next round or fault continues the same thread through the host's
+follow-up helper, which sends `thread.unsettle` before the message. A new thread
+is needed only when the old one is gone or deleted, or the role's selected
+profile changes; displaced threads stay settled until closeout (Tom, 2026-11-12).
+
+Role detection reads the shared `WIRE_LABEL_KEYS` through the label helpers:
+`nucleus.role` identifies support threads, while the task's worker identity or a
+revision run identifies a worker without a role label. Tests copy the stored T3
+worker and recovery label shapes with synthetic IDs, including catch-up cleanup.
+
+A deliberate reviewer replacement stops the turn and observes it idle, then
+releases the displaced run. The existing released-run callback fence refuses a
+late report; it needs no in-flight deletion, archive or separate removal fence.
+The displaced thread stays settled for terminal cleanup. Decider threads keep
+their existing lifecycle and are outside this cleanup rule.
+
+At closeout after a merge, a completed proof task or a completed cancellation,
+archive the worker threads (`thread.archive`) and delete the task's reviewer,
+recovery, coordinator and executor threads (`thread.delete`). Use the existing
+terminal thread archive lane, with its ownership checks, released-run fence,
+observation-first handling and durable effects. Nothing durable lives only in a
+deleted thread: review text, verdicts, recovery reports and decisions are already
+in Nucleus's records and on the pull request before deletion.
+
+Deletion is the installed nightly's command `{type: "thread.delete", commandId,
+threadId}`. Never send `onlyIfUnused`: that option can return success while
+leaving a thread with runs or messages intact. Record intent before delivery and
+confirm deletion by `deletedAt` or absence from a complete inventory; an archived
+thread still owes deletion. A lost reply remains observation-only, including on
+the final attempt, and never authorizes resending an unknown effect. A failure
+proven to precede delivery stays retryable through the same terminal lane;
+cleanup failure never blocks task closeout. Connection preflight reads the
+existing deletion ledger first: absent or refused intents prove an unsent attempt,
+while an earlier unknown intent stays unknown even when disconnected. Receipt
+replay still requires the same authenticated host identity.
+
+The sweep directly selects already-finished T3 tasks that still owe a thread
+archive or deletion, including tasks closed before this rule existed. The query
+does not use the active-capacity index. A bounded rotating window schedules each
+selected task on its existing task lane; the host sweep never awaits its remote
+cleanup, and permanently pending candidates cannot hide later finished tasks.
+
+Ordinary closeout and catch-up use the same terminal effects and record completion
+per task in the common terminal lane after every thread effect is confirmed. A
+task cleaned before the catch-up query still has its completion record, so later
+sweeps do nothing; incomplete effects remain selectable.
+
+Paseo keeps its existing archive behaviour, including its reviewer-replacement
+fence and support-thread retirement after an episode. This T3 rule changes no
+Paseo lifecycle.
 
 ## Composition and unsupported capabilities
 
@@ -526,9 +591,25 @@ registration, a worker launch whose profile carries a thinking level (the
 launch carries `modelSelection.options`), a planner `tell` delivered mid-run,
 the worker's report through the packaged helper, an independent reviewer's
 launch and verdict, a revision round addressed on the retained worker, the
-accepted round-two verdict, the merge, closeout, and the archive of both
-threads and the native project, observed positively. The test fails on a tree
+accepted round-two verdict, the merge, closeout, the worker thread's archive, the
+removal of every support thread and the archive of the native project, observed
+positively (nucleus#1155). A second lifecycle test keeps a released recovery
+thread settled while the task is open and continues the same thread for the next
+fault instead of opening another. The test fails on a tree
 without the model-option, archive and steering work.
+
+The settlement sweep skips threads whose terminal archive or deletion is already
+confirmed in the durable cleanup lane, even if settling the thread previously
+needed no native receipt. Unresolved cleanup effects still get observation and
+settlement on later sweeps.
+Once Nucleus's own recorded delete is confirmed by its receipt or authoritative
+readback, unknown settle, unsettle and title intents for that thread become
+`moot`, linked to that delete. Their delivery is never recorded as successful,
+and they are never replayed. The adapter retires them before its presentation
+reconciliation reads, including after restart. An unknown delete remains unknown
+when readback proves its postcondition; external disappearance without Nucleus's
+own delete does not retire presentation intents. Regression tests instrument
+`readStream` and exercise repeated real sweeps alongside another task's cleanup.
 
 The private proof starts an unmodified checkout of the target nightly revision,
 or its bundled server copied into fresh run scratch, with separate home, data,

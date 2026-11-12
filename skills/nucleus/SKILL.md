@@ -579,12 +579,15 @@ resolves to. It grants no authority, and there is no project owner to claim or
 assign.
 Repository settings (`repository.set`, `repository.get`, `repositories`) carry
 closeout authority, the prospective-merge validation command, formal-review
-login, the optional milestone `qa`
+login, the optional `affectedTests: { command }` used for worker and reviewer
+validation prompts, and the optional milestone `qa`
 command and the optional hosted-check policy
 (`checksPolicy`: `all` by default, or `required` to gate only the checks GitHub
 requires for the PR's base branch and record the rest as advisory evidence).
 The operator edits these fields in Settings → Projects, inside each project's
-repository rows. Formal reviews need macOS: the reviewer token is read at call
+repository rows. Worker, revision and reviewer prompts include the affected-test
+rule only when `repository.get` shows an `affectedTests.command` for that repository.
+Formal reviews need macOS: the reviewer token is read at call
 time from the macOS login keychain (service `nucleus.github-reviewer`, account
 `<org>`; store it with `security add-generic-password -a <org> -s nucleus.github-reviewer -w`).
 A token kept under the legacy service `paseo-queue.github-reviewer` is still

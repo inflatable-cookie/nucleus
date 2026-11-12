@@ -7,13 +7,16 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { QueueRuntime } from '../service/runtime-owner';
 import { git } from '../core/git/index';
-import { leadSubmit, type Profile, type Run } from '../shared/contracts';
+import { leadSubmit, taskSchema, submissionSchema, type Profile, type Run } from '../shared/contracts';
 import { formatAgentId } from '../shared/agent-identity';
 import { fakeAdapter } from './support/fakes';
 import { plannerTicketKey } from '../core/dispatch/participant-tickets';
 import { digest } from '../core/store/store';
-import { t3Fake, STAMP } from './support/t3code-fake';
+import { t3Fake, threadProjection, STAMP } from './support/t3code-fake';
+import { storedT3Labels } from './support/t3code-labels';
+import { WIRE_LABEL_KEYS } from '../shared/wire-labels';
 import { createHost, createAdapter } from '../hosts/t3code';
+import { archiveFinishedThreads } from '../core/workspaces/thread-archive';
 import { HostPolicies } from '../core/host/host-policies';
 import type { HostPolicyConstructor, Adapter as HostAdapter } from '../core/host';
 
@@ -27,6 +30,7 @@ interface Fixture {
   repo: string;
   root: string;
   server: Awaited<ReturnType<typeof t3Fake>>;
+  host: ReturnType<typeof createHost>;
   t3: HostAdapter;
   planner: string;
   ticket: { participantId: string; token: string };
@@ -61,7 +65,8 @@ async function driveUntil(f: Fixture, ready: () => boolean, label: string, taskI
     } catch { /* a refused pass is the next pass's work */ }
     await pause(25);
   }
-  assert.ok(ready(), `${label} after ${passes} passes (phase ${f.runtime.store.task(taskId ?? '').phase}: ${f.runtime.store.task(taskId ?? '').reason})`);
+  const task = taskId ? f.runtime.store.task(taskId) : null;
+  assert.ok(ready(), `${label} after ${passes} passes${task ? ` (phase ${task.phase}: ${task.reason})` : ''}`);
 }
 
 const helperReport = (f: Fixture, ticketPath: string, payload: Record<string, unknown>) =>
@@ -112,7 +117,7 @@ async function fixture(t: TestContext): Promise<Fixture> {
     connect: async () => {}, close: async () => {},
     // The live daemon offers these models, so a host-context leak would reach the
     // reviewer's own observe here rather than stopping at its profile catalog.
-    catalog: async () => ({ providers: [{ key: 'synthetic-provider', label: 'Synthetic provider', available: true, problem: '',
+    catalog: async () => ({ providers: [{ key: 'codex', label: 'Synthetic provider', available: true, problem: '',
       models: [{ id: 'synthetic-model', label: 'Synthetic model', aliases: [], thinkingOptions: [], defaultThinkingOptionId: null, modes: [], features: [] },
         { id: 'synthetic-model-2', label: 'Synthetic model two', aliases: [], thinkingOptions: [], defaultThinkingOptionId: null, modes: [], features: [] }] }] }),
     validate: async (task: { planningCommit: string }) => task.planningCommit,
@@ -151,6 +156,11 @@ async function fixture(t: TestContext): Promise<Fixture> {
   const server = await t3Fake(t, repo);
   const host = createHost({ endpoint: server.endpoint, bearer: 'synthetic-bearer', probeThreadId: 'synthetic-probe',
     statePath: join(dataDir, 'hosts', 't3code.json'), timeoutMs: 5_000 });
+  await host.connect();
+  // Use a canonical provider with the fake Nightly's native model/option shape.
+  // The runtime now validates Nucleus vocabulary before selecting any profile.
+  const config = await host.rpc.call('server.getConfig', {}) as { providers: Array<Record<string, unknown>> };
+  server.controls.providers = config.providers.map(provider => ({ ...provider, instanceId: 'codex', displayName: 'Codex' }));
   await host.connect();
   const t3 = createAdapter(Policy, host, { socketPath, helperPath });
   // The forge is a fixture: the lifecycle proof is about the T3 paths, so the
@@ -191,8 +201,8 @@ async function fixture(t: TestContext): Promise<Fixture> {
   // The worker profile carries the trial's thinking level; the independent
   // reviewer's model lists no option descriptors at all.
   runtime.store.setProfiles([
-    { id: 'sol-grind', name: 'Sol grind', provider: 'synthetic-provider', model: 'synthetic-model', thinkingOptionId: 'high', notes: '' },
-    { id: 'luna-review', name: 'Luna review', provider: 'synthetic-provider', model: 'synthetic-model-2', notes: '' },
+    { id: 'sol-grind', name: 'Sol grind', provider: 'codex', model: 'synthetic-model', thinkingOptionId: 'high', notes: '' },
+    { id: 'luna-review', name: 'Luna review', provider: 'codex', model: 'synthetic-model-2', notes: '' },
   ]);
   runtime.store.setMeta('pool', [
     { profileId: 'sol-grind', enabled: true, group: 'sol', weight: 2, roles: ['worker' as const], scopes: ['general' as const], capability: 'medium' },
@@ -214,7 +224,7 @@ async function fixture(t: TestContext): Promise<Fixture> {
     await runtime.drain();
     host.close();
   };
-  return { runtime, repo, root, server, t3, planner, ticket: { participantId, token }, helperPath, merges, paseoObserves, close };
+  return { runtime, repo, root, server, host, t3, planner, ticket: { participantId, token }, helperPath, merges, paseoObserves, close };
 }
 
 test('an ordinary task runs its whole lifecycle on T3: thinking level, helper report, planner tell, review, revision, merge, closeout, archive', async t => {
@@ -341,13 +351,22 @@ test('an ordinary task runs its whole lifecycle on T3: thinking level, helper re
     }, 'task merged and done', task.id);
     assert.ok(f.merges.length >= 1, 'the merge gate ran');
 
-    // Closeout archive: threads archived, the native project archived once, observed positively.
+    // Closeout cleanup (nucleus#1155): the worker thread is archived, every
+    // support thread is removed, the native project is archived once.
     const workspaceId = f.runtime.store.task(task.id).workspaceId!;
     await driveUntil(f, () => f.runtime.store.task(task.id).resolution.archivedWorkspaceIds.includes(workspaceId), 'workspace archived', task.id);
     assert.equal(await (f.t3 as unknown as { taskWorkspaceArchived(id: string): Promise<boolean> }).taskWorkspaceArchived(workspaceId), true);
     const archiveCommands = f.server.commands.filter(command => command.type === 'thread.archive');
     assert.ok(archiveCommands.some(command => command.threadId === workerThreadId), 'the worker thread was archived');
-    assert.ok(archiveCommands.some(command => command.threadId === reviewerThreadId), 'the reviewer thread was archived');
+    assert.equal(archiveCommands.some(command => command.threadId === reviewerThreadId), false, 'a support thread is never archived');
+    const removals = f.server.commands.filter(command => command.type === 'thread.delete');
+    assert.equal(removals.filter(command => command.threadId === reviewerThreadId).length, 1, 'the reviewer thread was removed once');
+    assert.equal(removals.length, new Set(removals.map(command => command.threadId)).size, 'each support thread is removed once');
+    for (const command of removals) {
+      assert.notEqual(command.threadId, workerThreadId, 'the worker thread is archived, never removed');
+      assert.equal(command.onlyIfUnused, undefined, 'the removal is the real one, not the nightly no-op shape');
+    }
+    assert.equal(f.server.threads.get(reviewerThreadId)!.thread.deletedAt, STAMP);
     const projectArchive = f.server.commands.filter(command => command.method === 'projects.mutate' && command.type === 'project.update' && command.archived === true);
     assert.equal(projectArchive.length, 1, 'the native project archive was sent exactly once');
     assert.equal(projectArchive[0]!.projectId, 'synthetic-project');
@@ -370,7 +389,7 @@ async function taskWithWorker(f: Fixture): Promise<{ taskId: string; head: strin
   assert.ok('taskId' in result, JSON.stringify(result));
   const taskId = result.taskId;
   await f.runtime.engine.dispatchTask(taskId, false);
-  await driveUntil(f, () => Boolean(f.runtime.store.task(taskId).agentId), 'worker dispatched');
+  await driveUntil(f, () => Boolean(f.runtime.store.task(taskId).agentId), 'worker dispatched', taskId);
   const task = f.runtime.store.task(taskId);
   const head = (await git(task.directory!, 'rev-parse', 'HEAD')).trim();
   return { taskId, head, workerThreadId: task.agentId!, workerRunId: task.runId! };
@@ -580,5 +599,399 @@ test('the worker thread is watched and messaged on the task host, never the defa
 
     // None of it named a task agent on the default host.
     assert.deepEqual(f.paseoObserves.filter(id => id !== 'planner'), [], 'no task agent was looked up on the default host');
+  } finally { await f.close(); }
+});
+
+
+/**
+ * One real fault: a follow-up into the worker thread whose T3 send is cut before
+ * its reply. The send is unknown delivery, the run looks stalled, and the task
+ * raises the worker incident the ordinary recovery route answers.
+ */
+async function workerFault(f: Fixture, taskId: string, summary: string, role: 'worker' | 'reviewer' = 'worker'): Promise<void> {
+  const task = f.runtime.store.task(taskId);
+  const agentId = role === 'worker' ? task.agentId! : task.resolution.reviewerAgentId!;
+  const thread = f.server.threads.get(agentId)!;
+  // The worker is mid-turn, so the follow-up is delivered now rather than queued.
+  thread.runs = [{ id: `fault-turn-${randomUUID()}`, status: 'running', startedAt: STAMP }];
+  // The send lands and its reply is unreadable, so delivery is unknown and the
+  // socket stays up; whichever pass delivers it fails the same way.
+  f.server.controls.postEffectDefect = true;
+  try {
+    await f.runtime.engine.resolution.agentMessage({ eventId: randomUUID(), participantId: f.ticket.participantId,
+      to: { task: taskId, role }, text: summary }, f.ticket.token).catch(() => undefined);
+    await f.runtime.engine.wakeTask(taskId).catch(() => undefined);
+  } finally {
+    f.server.controls.postEffectDefect = false;
+    thread.runs = completedWorkerRun();
+  }
+}
+
+const launchesFor = (f: Fixture, threadId: string) =>
+  f.server.commands.filter(command => command.method === 'orchestration.launchThread' && command.threadId === threadId).length;
+const dispatchedInto = (f: Fixture, threadId: string) =>
+  f.server.commands.filter(command => command.type === 'message.dispatch' && command.threadId === threadId).length;
+
+/** The coordinator's attempt ended without a decision; the sweep owns the next one. */
+function endCoordinatorAttempt(f: Fixture, taskId: string, threadId: string): void {
+  const run = f.runtime.store.runs(taskId).findLast(item => item.role === 'recovery' && !item.released)!;
+  f.runtime.store.putRun({ ...run, released: true, status: 'superseded' });
+  f.server.threads.get(threadId)!.runs = [{ id: `attempt-${run.id}`, status: 'completed', startedAt: STAMP }];
+}
+
+/** Wait for the ordinary recovery route to dispatch another coordinator attempt. */
+async function nextCoordinatorAttempt(f: Fixture, taskId: string, ready: () => boolean): Promise<void> {
+  for (let pass = 0; pass < 40 && !ready(); pass++) await f.runtime.engine.wakeTask(taskId).catch(() => undefined);
+  assert.ok(ready(), `another coordinator attempt after 40 passes (${f.runtime.store.task(taskId).reason})`);
+}
+
+test('a second fault continues the retained T3 recovery coordinator instead of opening a new thread (#1155)', async t => {
+  const f = await fixture(t);
+  try {
+    const { taskId, workerThreadId } = await taskWithWorker(f);
+
+    // A real host fault: the ordinary recovery route launches a coordinator on T3.
+    await workerFault(f, taskId, 'The worker could not take the follow-up');
+    await driveUntil(f, () => Boolean(f.runtime.store.task(taskId).coordinatorAgentId), 'recovery coordinator dispatched', taskId);
+    const coordinatorThreadId = f.runtime.store.task(taskId).coordinatorAgentId!;
+    assert.notEqual(coordinatorThreadId, workerThreadId);
+    assert.equal(launchesFor(f, coordinatorThreadId), 1, 'the coordinator opened one thread');
+    const firstAttempt = f.runtime.store.runs(taskId).findLast(run => run.role === 'recovery')!;
+    assert.equal(firstAttempt.agentId, coordinatorThreadId);
+    const firstEpisodeId = f.runtime.store.task(taskId).resolution.recovery?.id;
+    assert.ok(firstEpisodeId, 'the first recovery episode is open');
+    const launchesBefore = f.server.commands.filter(command => command.method === 'orchestration.launchThread').length;
+    const dispatchesBefore = dispatchedInto(f, coordinatorThreadId);
+    // The coordinator's own turn ended before it reported.
+    f.server.threads.get(coordinatorThreadId)!.runs = [{ id: `nightly-${firstAttempt.id}`, status: 'completed', startedAt: STAMP }];
+
+    // Its recovered report is accepted (return the worker to work). The action's
+    // own T3 send lands with an unreadable reply, so the continuation is unknown
+    // delivery: a distinct second fault, after the first episode was accepted.
+    await reportAndWake(f, taskId, { eventId: randomUUID(), taskId, runId: firstAttempt.id, status: 'recovered',
+      summary: 'The retained worker can continue', coordinatorGeneration: firstAttempt.generation,
+      coordinatorAction: { verb: 'move', to: 'work', instruction: 'Continue the work', reason: 'The retained worker can continue' } },
+      ticketToken(f, firstAttempt));
+    // The accepted report's own settle lost its reply to the same defect; the host
+    // sweep reconciles it before the thread's next round, as for any support report.
+    for (let pass = 0; pass < 20 && !f.server.commands.some(command => command.type === 'thread.settle' && command.threadId === coordinatorThreadId); pass++) {
+      await (f.t3 as unknown as { reconcileReportedSettlements(): Promise<void> }).reconcileReportedSettlements().catch(() => undefined);
+      await pause(50);
+    }
+
+    await driveUntil(f, () => f.runtime.store.run(firstAttempt.id)?.released === true
+      && f.runtime.store.task(taskId).resolution.recovery === null,
+      'the first episode was accepted and completed', taskId);
+    assert.ok(f.runtime.store.eventsAll(taskId).some(event => event.kind === 'coordinator_action_applied'),
+      'the coordinator report was accepted, not refused');
+    assert.ok(f.server.commands.some(command => command.type === 'thread.settle' && command.threadId === coordinatorThreadId),
+      'the accepted report settles the retained coordinator thread');
+    await archiveFinishedThreads(f.runtime.store, f.t3, taskId);
+    assert.equal(f.server.commands.some(command => command.type === 'thread.archive' && command.threadId === coordinatorThreadId), false,
+      'the settled recovery thread is not archived while the task is open');
+    assert.equal(f.runtime.store.task(taskId).coordinatorAgentId, coordinatorThreadId, 'the task keeps its retained recovery thread');
+
+    // A distinct second fault: the restarted worker stopped without a result, so
+    // the task needs attention again and its own recovery route continues the
+    // kept thread. The route below is the engine's own (`recovery.route`), the
+    // same call the task quantum makes; the fixture only supplies the fault.
+    f.server.threads.get(workerThreadId)!.runs = completedWorkerRun();
+    const faulted = f.runtime.store.task(taskId);
+    f.runtime.store.update(taskId, { phase: 'needs_attention', reason: 'The retained worker stopped without a result',
+      resolution: { ...faulted.resolution, attention: true, recovery: null, recoveryActive: false, stop: null } },
+      'fixture_second_fault', 'The retained worker stopped without a result');
+    await f.runtime.engine.resolution.recovery.route(f.runtime.store.task(taskId)).catch(() => undefined);
+    await driveUntil(f, () => dispatchedInto(f, coordinatorThreadId) > dispatchesBefore,
+      'the second fault is dispatched into the retained coordinator', taskId);
+    assert.ok(f.server.commands.some(command => command.type === 'thread.unsettle' && command.threadId === coordinatorThreadId),
+      'the settled thread is explicitly unsettled before its next attempt');
+    assert.equal(f.server.commands.filter(command => command.method === 'orchestration.launchThread').length, launchesBefore,
+      'no new coordinator thread is opened');
+    assert.equal(launchesFor(f, coordinatorThreadId), 1, 'the retained thread served both faults');
+    const attempts = f.runtime.store.runs(taskId).filter(run => run.role === 'recovery');
+    assert.ok(attempts.length >= 2, 'a second recovery attempt was recorded');
+    assert.deepEqual(new Set(attempts.map(run => run.agentId)), new Set([coordinatorThreadId]),
+      'every attempt used the one retained coordinator thread');
+  } finally { await f.close(); }
+});
+
+test('a removed coordinator thread and a routed coordinator profile each open a fresh T3 thread (#1155)', async t => {
+  const f = await fixture(t);
+  try {
+    const { taskId } = await taskWithWorker(f);
+    await workerFault(f, taskId, 'The worker could not take the follow-up');
+    await driveUntil(f, () => Boolean(f.runtime.store.task(taskId).coordinatorAgentId), 'recovery coordinator dispatched', taskId);
+    const removed = f.runtime.store.task(taskId).coordinatorAgentId!;
+    const firstProfile = f.runtime.store.runs(taskId).findLast(run => run.role === 'recovery' && run.agentId === removed)?.profile?.id;
+
+    // The retained thread was removed (by hand or by a host change): the next
+    // attempt selects a fresh coordinator instead of waiting for it.
+    endCoordinatorAttempt(f, taskId, removed);
+    f.server.threads.delete(removed); // no inventory row and no readable projection
+    await nextCoordinatorAttempt(f, taskId, () => {
+      const bound = f.runtime.store.task(taskId).coordinatorAgentId;
+      return Boolean(bound && bound !== removed);
+    });
+    const replacement = f.runtime.store.task(taskId).coordinatorAgentId!;
+    assert.equal(launchesFor(f, replacement), 1, 'the replacement opened its own thread');
+
+    // A recorded coordinator route that names another profile needs a new thread.
+    endCoordinatorAttempt(f, taskId, replacement);
+    // The recorded route names a profile other than the retained thread's own.
+    const routed = firstProfile === 'sol-grind' ? 'luna-review' : 'sol-grind';
+    const current = f.runtime.store.task(taskId);
+    f.runtime.store.update(taskId, { resolution: { ...current.resolution, recovery: null, recoveryActive: false },
+      profileRequests: { ...current.profileRequests, coordinator: { profileId: routed, reason: 'Route the coordinator to the review profile',
+        required: true, ownerRoute: true, signoff: { status: 'approved', decisionId: null, by: 'operator (board)',
+          at: new Date().toISOString(), note: '' } } } }, 'fixture_coordinator_route');
+    await nextCoordinatorAttempt(f, taskId, () => {
+      const bound = f.runtime.store.task(taskId).coordinatorAgentId;
+      return Boolean(bound && bound !== replacement);
+    });
+    const routedThread = f.runtime.store.task(taskId).coordinatorAgentId!;
+    const routedRun = f.runtime.store.runs(taskId).findLast(run => run.role === 'recovery' && run.agentId === routedThread)!;
+    assert.equal(routedRun.profile?.id, routed, `the recorded route selected its profile (the first was ${firstProfile})`);
+    assert.equal(launchesFor(f, routedThread), 1);
+  } finally { await f.close(); }
+});
+
+test('a displaced reviewer stays settled until closeout and its late callback is refused (#1155)', async t => {
+  const f = await fixture(t);
+  try {
+    const { taskId, head, reviewerThreadId, reviewerRun } = await taskWithReviewer(f);
+    // The reviewer's turn ended before the owner deliberately replaces the reader.
+    f.server.threads.get(reviewerThreadId)!.runs = [{ id: `nightly-${reviewerRun.id}`, status: 'completed', startedAt: STAMP }];
+    const current = f.runtime.store.task(taskId);
+    await f.runtime.taskControl({ action: 'restart', taskId, version: current.version, role: 'reviewer', fresh: true,
+      reason: 'Replace the reader', caller: f.planner });
+
+    // A fresh reviewer reads the same head on its own thread.
+    await driveUntil(f, () => {
+      const next = f.runtime.store.task(taskId).resolution.reviewerAgentId;
+      return Boolean(next && next !== reviewerThreadId);
+    }, 'a fresh reviewer launched', taskId);
+    const replacement = f.runtime.store.task(taskId).resolution.reviewerAgentId!;
+    assert.equal(launchesFor(f, replacement), 1);
+    assert.equal(f.runtime.store.run(reviewerRun.id)?.released, true, 'the displaced run is released');
+
+    // Nothing is archived or removed while the task is open (brief v3): the
+    // displaced thread stays settled and visible.
+    assert.equal(f.server.commands.some(command => command.type === 'thread.archive' && command.threadId === reviewerThreadId), false);
+    assert.equal(f.server.commands.some(command => command.type === 'thread.delete' && command.threadId === reviewerThreadId), false);
+    assert.equal(f.server.threads.get(reviewerThreadId)!.thread.settledOverride, 'settled',
+      'the displaced thread is settled, not removed');
+
+    // A late callback from the displaced reader is refused, never applied.
+    assert.throws(() => f.runtime.engine.complete({ eventId: randomUUID(), taskId, runId: reviewerRun.id,
+      status: 'ready_to_merge', summary: 'Late verdict', reviewText: 'The displaced reader approves.', prNumber: 7, head },
+      ticketToken(f, reviewerRun)));
+
+    // It is removed at closeout like the rest of the support set, exactly once.
+    const latest = f.runtime.store.task(taskId);
+    f.runtime.store.update(taskId, { phase: 'done', resolution: { ...latest.resolution, mergedCommit: 'd'.repeat(40) } });
+    await archiveFinishedThreads(f.runtime.store, f.t3, taskId);
+    assert.equal(f.server.commands.filter(command => command.type === 'thread.delete' && command.threadId === reviewerThreadId).length, 1,
+      'the displaced thread is removed at closeout');
+    await archiveFinishedThreads(f.runtime.store, f.t3, taskId);
+    assert.equal(f.server.commands.filter(command => command.type === 'thread.delete' && command.threadId === reviewerThreadId).length, 1,
+      'and never twice');
+  } finally { await f.close(); }
+});
+
+test('a task that finished before this rule is cleaned up by the next sweep, exactly once (#1155 catch-up)', async t => {
+  const f = await fixture(t);
+  try {
+    const { taskId, head, reviewerThreadId, workerThreadId, reviewerRun } = await taskWithReviewer(f);
+    // The task closed out before the closeout-cleanup rule rolled: it is done and
+    // merged, and its threads were never archived or removed.
+    const current = f.runtime.store.task(taskId);
+    // Copied stored trial shapes: the worker has no role label, while the
+    // retained recovery thread carries nucleus.role=recovery. IDs are synthetic.
+    const workerLabels = f.host.state.read().agents[workerThreadId]!.labels;
+    assert.deepEqual(workerLabels, storedT3Labels('worker', { taskId, runId: current.runId! }));
+    assert.equal(Object.hasOwn(workerLabels, WIRE_LABEL_KEYS.role), false);
+    const recoveryRunId = randomUUID();
+    const recoveryLabels = storedT3Labels('recovery', { taskId, runId: recoveryRunId });
+    const recovery = await f.host.createAgent({ workspaceId: current.workspaceId!, profile: current.profile!,
+      title: 'Synthetic retained recovery', mcpBindingPath: null,
+      attempt: () => ({ requestId: recoveryRunId, prompt: 'Synthetic completed recovery', labels: recoveryLabels, environment: {} }) });
+    f.runtime.store.putRun({ id: recoveryRunId, taskId, hostId: t3Host, role: 'recovery', generation: current.coordinatorGeneration,
+      head, base: current.planningBase, workspaceId: current.workspaceId!, agentId: recovery.id, profile: current.profile,
+      status: 'finished', createdAt: STAMP, lastObservedAt: STAMP, active: false, idleSince: null, released: true,
+      completion: { taskId, runId: recoveryRunId, eventId: randomUUID(), status: 'recovered', head, summary: 'Recovery applied' } });
+    await f.host.settleReportedThread(recovery.id, recoveryRunId);
+    assert.deepEqual(f.host.state.read().agents[recovery.id]!.labels, recoveryLabels);
+    assert.equal(recoveryLabels[WIRE_LABEL_KEYS.role], 'recovery');
+    assert.equal(Object.values(f.host.state.read().intents).some(intent =>
+      intent.payload.includes('thread.settle') && intent.payload.includes(recovery.id)), false,
+      'an already settled recovery with no native run needs no settlement receipt');
+    const verdict = { taskId, runId: reviewerRun.id, eventId: randomUUID(), status: 'ready_to_merge' as const,
+      head, summary: 'Approved', reviewText: 'The reviewed change meets the brief.' };
+    f.runtime.store.putRun({ ...reviewerRun, status: 'finished', active: false, released: true, completion: verdict });
+    f.runtime.store.update(taskId, { phase: 'done', coordinatorAgentId: recovery.id, resolution: { ...current.resolution, currentRunId: null,
+      mergedCommit: head, review: verdict } });
+    assert.equal(f.runtime.store.getMeta(`finishedTaskThreadCleanup:${taskId}`), undefined);
+    assert.equal(f.server.commands.some(command => command.type === 'thread.archive' || command.type === 'thread.delete'), false,
+      'nothing has cleaned its threads yet');
+
+    // Older completed rows and permanently pending candidates must not hide the
+    // target behind a fixed prefix or a bounded earliest-pending batch.
+    const completed = f.runtime.store.task(taskId);
+    const insert = f.runtime.store.db.prepare('INSERT INTO tasks(id,submission,input_hash,data) VALUES(?,?,?,?)');
+    f.runtime.store.transaction(() => {
+      for (let index = 0; index < 505; index++) {
+        const id = `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
+        const agentId = index < 501 ? null : `unowned-history-${index}`;
+        const historical = { ...completed, id, agentId, retiredWorkers: [],
+          coordinatorAgentId: undefined, resolution: { ...completed.resolution,
+            reviewerAgentId: null, currentRunId: null } };
+        insert.run(id, `synthetic-history-${index}`, digest(id), JSON.stringify(taskSchema.parse(historical)));
+        if (index < 250) f.runtime.store.setMeta(`finishedTaskThreadCleanup:${id}`, STAMP);
+        if (agentId) f.server.threads.set(agentId, threadProjection(agentId, f.repo));
+      }
+    });
+
+    // The real safety sweep selects the finished task directly and applies the
+    // closeout rule: the worker archived, the support thread removed.
+    const sweep = await f.runtime.engine.auditPass(false);
+    assert.equal(sweep.fault, null, 'the real sweep completes without a fixture or host failure');
+    assert.ok(f.server.commands.some(command => command.type === 'thread.archive' && command.threadId === workerThreadId),
+      'the worker thread is archived');
+    assert.equal(f.server.commands.filter(command => command.type === 'thread.delete' && command.threadId === reviewerThreadId).length, 1,
+      'the reviewer thread is removed once');
+    assert.equal(f.server.commands.filter(command => command.type === 'thread.delete' && command.threadId === recovery.id).length, 1,
+      'the stored-shape recovery thread is removed once');
+    assert.equal(f.server.commands.filter(command => command.type === 'thread.delete' && command.threadId === workerThreadId).length, 0,
+      'the worker without a role label is archived, never deleted');
+    assert.ok(f.runtime.store.getMeta(`finishedTaskThreadCleanup:${taskId}`), 'completion is recorded per task');
+    for (let index = 501; index < 505; index++)
+      assert.equal(f.runtime.store.getMeta(`finishedTaskThreadCleanup:00000000-0000-4000-8000-${String(index).padStart(12, '0')}`),
+        undefined, 'an unowned historical candidate stays pending without starving later tasks');
+
+    // Finish presentation already queued by the first pass before measuring
+    // whether later passes add any work or history for the cleaned task.
+    await f.runtime.engine.drainProjections({ cleanup: false });
+    const commands = f.server.commands.length;
+    const history = f.runtime.store.eventsAll(taskId);
+    const nativeRead = f.host.rpc.readStream.bind(f.host.rpc);
+    const deletedReads: string[] = [];
+    f.host.rpc.readStream = (method, payload, accept) => {
+      const id = (payload as { threadId?: string }).threadId;
+      if (method === 'orchestration.subscribeThread' && (id === recovery.id || id === reviewerThreadId)) deletedReads.push(id);
+      return nativeRead(method, payload, accept);
+    };
+    for (let pass = 0; pass < 3; pass++) assert.equal((await f.runtime.engine.auditPass(false)).fault, null);
+    assert.deepEqual(deletedReads, [], 'later real sweeps never read a confirmed deleted thread');
+    assert.equal(f.server.commands.length, commands, 'later sweeps send no commands');
+    assert.deepEqual(f.runtime.store.eventsAll(taskId), history, 'later sweeps add no settlement warnings or task history');
+  } finally { await f.close(); }
+});
+
+for (const boundary of ['rpc', 'reservation'] as const)
+test(`the real sweep retries a deletion proven not sent at ${boundary} and records completion once`, async t => {
+  const f = await fixture(t);
+  try {
+    const head = (await git(f.repo, 'rev-parse', 'HEAD')).trim();
+    const initial = f.runtime.store.insert(submissionSchema.parse({ submissionId: randomUUID(), title: 'Synthetic finished recovery',
+      repoPath: f.repo, planningCommit: head, handoffPath: 'synthetic.md', originAgentId: f.planner }), t3Host, 'Synthetic handoff', head);
+    const task = f.runtime.store.update(initial.id, { phase: 'done',
+      resolution: { ...initial.resolution, mergedCommit: head } });
+    const workspace = await f.host.createWorkspace({ title: 'Synthetic recovery workspace', requestId: randomUUID(), directory: f.repo, project: { projectId: 'synthetic-project' } });
+    const profile: Profile = { id: 'sol-grind', name: 'Sol grind', provider: 'codex', model: 'synthetic-model',
+      available: true, problem: '', notes: '', supportedThinking: [] };
+    const runId = randomUUID();
+    const recovery = await f.host.createAgent({ workspaceId: workspace.id, profile, title: 'Synthetic recovery', mcpBindingPath: null,
+      attempt: () => ({ requestId: runId, prompt: 'Synthetic completed recovery',
+        labels: storedT3Labels('recovery', { taskId: task.id, runId }), environment: {} }) });
+    f.runtime.store.putRun({ id: runId, taskId: task.id, hostId: t3Host, role: 'recovery', generation: task.coordinatorGeneration,
+      head, base: head, workspaceId: workspace.id, agentId: recovery.id, profile, status: 'finished', createdAt: STAMP,
+      lastObservedAt: STAMP, active: false, idleSince: STAMP, completion: null, released: true });
+    const nativeCall = f.host.rpc.call.bind(f.host.rpc);
+    const nativeOrigin = f.host.originAgent.bind(f.host);
+    if (boundary === 'rpc') {
+      f.host.rpc.call = (method, payload) => {
+        if (method === 'orchestration.dispatchCommand' && (payload as { type?: string }).type === 'thread.delete') f.host.rpc.close();
+        return nativeCall(method, payload);
+      };
+    } else {
+      f.host.originAgent = async id => {
+        const origin = await nativeOrigin(id);
+        f.host.close(); // Successful terminal observation, but no intent reserved or command sent.
+        return origin;
+      };
+    }
+    assert.equal((await f.runtime.engine.auditPass(false)).fault, null);
+    const key = f.runtime.store.threadArchiveKey(recovery.id, t3Host)!;
+    assert.equal(f.runtime.store.getMeta<{ status: string }>(key)?.status, 'ready');
+    assert.equal(f.server.commands.filter(command => command.type === 'thread.delete').length, 0, 'the native boundary proved no write');
+    const nativeIntent = Object.values(f.host.state.read().intents).find(intent => JSON.parse(intent.payload).payload.type === 'thread.delete');
+    assert.equal(nativeIntent?.status, boundary === 'rpc' ? 'refused' : undefined, 'the native ledger proves this occurrence was unsent');
+    assert.equal(f.runtime.store.getMeta(`finishedTaskThreadCleanup:${task.id}`), undefined);
+
+    f.host.rpc.call = nativeCall;
+    f.host.originAgent = nativeOrigin;
+    await f.host.connect();
+    assert.equal((await f.runtime.engine.auditPass(false)).fault, null);
+    assert.equal(f.server.commands.filter(command => command.type === 'thread.delete').length, 1, 'the next sweep delivers it once');
+    const completed = f.runtime.store.getMeta(`finishedTaskThreadCleanup:${task.id}`);
+    assert.ok(completed);
+    assert.equal((await f.runtime.engine.auditPass(false)).fault, null);
+    assert.equal(f.server.commands.filter(command => command.type === 'thread.delete').length, 1);
+    assert.equal(f.runtime.store.getMeta(`finishedTaskThreadCleanup:${task.id}`), completed);
+  } finally { await f.close(); }
+});
+
+
+test('real sweeps retire a lost support settle after deletion without stream reads and let another task progress', async t => {
+  const f = await fixture(t);
+  try {
+    const { taskId, head, reviewerThreadId, reviewerRun } = await taskWithReviewer(f);
+    const reads: string[] = [], nativeRead = f.host.rpc.readStream.bind(f.host.rpc);
+    f.host.rpc.readStream = (method, payload, accept) => {
+      if (method === 'orchestration.subscribeThread') reads.push((payload as { threadId: string }).threadId);
+      return nativeRead(method, payload, accept);
+    };
+    f.server.threads.get(reviewerThreadId)!.runs.push({ id: 'lost-native-review', status: 'completed', startedAt: STAMP });
+    f.server.controls.disconnectAfterEffect = true;
+    await assert.rejects(f.host.settleReportedThread(reviewerThreadId, reviewerRun.id));
+    f.server.controls.disconnectAfterEffect = false;
+    await f.host.connect();
+    assert.ok(reads.includes(reviewerThreadId), 'the spy sees the real projection stream boundary before deletion');
+    const settleKey = Object.keys(f.host.state.read().intents).find(key => {
+      const wire = JSON.parse(f.host.state.read().intents[key].payload);
+      return wire.payload.type === 'thread.settle' && wire.payload.threadId === reviewerThreadId;
+    })!;
+    assert.equal(f.host.state.read().intents[settleKey].status, 'unknown');
+    const current = f.runtime.store.task(taskId);
+    const verdict = { taskId, runId: reviewerRun.id, eventId: randomUUID(), status: 'ready_to_merge' as const, head,
+      summary: 'Approved', reviewText: 'Accepted synthetic review' };
+    f.runtime.store.putRun({ ...reviewerRun, released: true, active: false, status: 'finished', completion: verdict });
+    f.runtime.store.update(taskId, { phase: 'done', resolution: { ...current.resolution, currentRunId: null, mergedCommit: head, review: verdict } });
+    // The terminal lane can finish before the next presentation reconciliation.
+    await archiveFinishedThreads(f.runtime.store, f.t3, taskId);
+    await f.runtime.engine.drainProjections({ cleanup: false });
+    assert.equal(f.host.state.read().intents[settleKey].status, 'moot');
+    assert.equal(f.host.state.read().intents[settleKey].result, undefined, 'retirement never invents successful delivery');
+    const beforeReads = reads.filter(id => id === reviewerThreadId).length;
+    const beforeCommands = f.server.commands.filter(command => command.threadId === reviewerThreadId).length;
+    const history = f.runtime.store.eventsAll(taskId);
+
+    const initial = f.runtime.store.insert(submissionSchema.parse({ submissionId: randomUUID(), title: 'Other finished task',
+      repoPath: f.repo, planningCommit: head, handoffPath: 'synthetic.md', originAgentId: f.planner }), t3Host, 'Synthetic handoff', head);
+    const other = f.runtime.store.update(initial.id, { phase: 'done', workspaceId: current.workspaceId,
+      resolution: { ...initial.resolution, mergedCommit: head } });
+    const otherRunId = randomUUID();
+    const otherAgent = await f.host.createAgent({ workspaceId: current.workspaceId!, profile: current.profile!,
+      title: 'Other finished recovery', mcpBindingPath: null,
+      attempt: () => ({ requestId: otherRunId, prompt: 'Completed synthetic recovery', environment: {},
+        labels: storedT3Labels('recovery', { taskId: other.id, runId: otherRunId }) }) });
+    f.runtime.store.putRun({ ...reviewerRun, id: otherRunId, taskId: other.id, role: 'recovery', agentId: otherAgent.id,
+      generation: other.coordinatorGeneration, status: 'finished', active: false, released: true, completion: null });
+    for (let pass = 0; pass < 3; pass++) assert.equal((await f.runtime.engine.auditPass(false)).fault, null);
+    assert.equal(reads.filter(id => id === reviewerThreadId).length, beforeReads, 'no later stream reads of the deleted thread');
+    assert.equal(f.server.commands.filter(command => command.threadId === reviewerThreadId).length, beforeCommands, 'no presentation replay');
+    assert.deepEqual(f.runtime.store.eventsAll(taskId), history, 'no repeated warnings or task history');
+    assert.ok(f.runtime.store.getMeta(`finishedTaskThreadCleanup:${other.id}`), 'the other task completes cleanup');
+    assert.equal(f.server.commands.filter(command => command.type === 'thread.delete' && command.threadId === otherAgent.id).length, 1);
   } finally { await f.close(); }
 });

@@ -45,6 +45,8 @@ export interface DispositionDeps {
   interruptTurn?(agentId: string, messageId: string, text: string): Promise<void>;
   /** Origin heads and tags at the task's git cwd. Thrown listing failures retry next pass. */
   listRemoteRefs?(task: Task): Promise<DispositionRef[]>;
+  /** Leave stopped threads for terminal cleanup after the disposition completes. */
+  retainThreadsUntilCloseout?(): boolean;
   archiveAgent(id: string): Promise<void>;
   /** Spec 027: remove the task's Queue-owned sibling worktrees. Best effort; never fails disposition. */
   archiveSiblings?(task: Task): Promise<void>;

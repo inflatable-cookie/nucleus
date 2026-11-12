@@ -39,7 +39,7 @@ const head = 'a'.repeat(40), base = 'b'.repeat(40);
 const CALLER = 'owner-thread';
 
 type Role = 'worker' | 'reviewer' | 'coordinator';
-const profile = (id: string, model: string, roles: Role[]): Profile => sharedProfile(id, model);
+const profile = (id: string, model: string, roles: Role[]): Profile => sharedProfile(id, model, { provider: 'codex' });
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'ns-restart-'));
@@ -58,7 +58,7 @@ function fixture() {
 
   const observations = new Map<string, { id: string; workspaceId: string | null; status: string; active: boolean; permissions: boolean; error: string; provider?: string; model?: string; activeTurnId?: string; updatedAt?: string }>();
   const idle = (id: string, model?: string, workspaceId = 'workspace') =>
-    observations.set(id, { id, workspaceId, status: 'idle', active: false, permissions: false, error: '', provider: 'test', model });
+    observations.set(id, { id, workspaceId, status: 'idle', active: false, permissions: false, error: '', provider: 'codex', model });
   idle('worker-agent', worker.model);
   idle('review-agent', reviewer.model);
   idle('coord-agent', coord.model);
@@ -67,7 +67,7 @@ function fixture() {
   const createdRunTokens = new Map<string, string>();
   const archived = new Set<string>();
   const adapter = fakeAdapter({
-    catalog: async () => ({ providers: [{ key: 'test', label: 'test', available: true, problem: '', models: all.map(p => ({ id: p.model, label: p.model, aliases: [], thinkingOptions: [], defaultThinkingOptionId: null, modes: [], features: [] })) }] }),
+    catalog: async () => ({ providers: [{ key: 'codex', label: 'Codex', available: true, problem: '', models: all.map(p => ({ id: p.model, label: p.model, aliases: [], thinkingOptions: [], defaultThinkingOptionId: null, modes: [], features: [] })) }] }),
     validate: async () => base,
     verifyWorkspace: async () => {},
     createWorkspace: async () => { throw new Error('restart fixtures do not create workspaces'); },
@@ -536,7 +536,7 @@ for (const fresh of [false, true]) test(`worker restart replaces an inactive err
       profile: f.profiles.worker, workerModel: f.profiles.worker.model, prUrl: 'https://github.com/example/repo/pull/7', prHead: head, resumePrNumber: 7,
       completion: { taskId: f.taskId, runId: 'worker-run', eventId: 'errored-worker', status: 'blocked', summary: 'Provider connection error' } });
     f.observations.set('worker-agent', { id: 'worker-agent', workspaceId: 'workspace', status: 'error', active: false, permissions: false,
-      error: 'Connection error', provider: 'test', model: f.profiles.worker.model });
+      error: 'Connection error', provider: 'codex', model: f.profiles.worker.model });
     await f.control({ role: 'worker', fresh });
     await f.engine.wake();
     const task = f.current();
@@ -1795,7 +1795,7 @@ for (const fresh of [false, true]) {
         ...f.current().resolution, currentRunId: run.id, reviewerAgentId: run.agentId, reviewerProfile: run.profile, attention: true,
         incident: { id: 'review-stall', role: 'reviewer', runId: run.id, turnId: 'review-turn', fingerprint: 'review-stall', attempt: 0, cause: 'stalled_turn', detail: 'looks stalled', action: '', status: 'reconciling', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
       } });
-      f.observations.set('review-agent', { id: 'review-agent', workspaceId: 'workspace', status: 'running', active: true, permissions: false, error: '', provider: 'test', model: f.profiles.reviewer.model, activeTurnId: 'review-turn' });
+      f.observations.set('review-agent', { id: 'review-agent', workspaceId: 'workspace', status: 'running', active: true, permissions: false, error: '', provider: 'codex', model: f.profiles.reviewer.model, activeTurnId: 'review-turn' });
       const stopped = await f.control({ role: 'reviewer', fresh, instruction: 'Finish the review' });
       assert.equal(stopped.resolution.stalledTurnStop?.restartFresh, fresh);
       assert.equal(f.observations.get('review-agent')!.activeTurnId, undefined, 'the confirmed ended turn has no live turn ID');

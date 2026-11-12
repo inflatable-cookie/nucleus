@@ -20,7 +20,7 @@ import { controlManifestSchema, hookEventV2Schema, hookEventV3Schema, anyHookEve
 import { submissionSchema, REVISION_BUDGET, type Profile, type Run } from '../shared/contracts';
 import type { Adapter, AgentObservation } from '../core/host';
 import type { ResolutionAdapter } from '../core/resolution';
-import { HOOK_TEST_TIMEOUT_MS } from './support/budgets';
+import { HOOK_TEST_TIMEOUT_MS, HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS } from './support/budgets';
 import { assertCompleted, cleanupDiagnostic, observeOutcome, type BackgroundOutcome } from './support/background-outcome';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -1124,8 +1124,19 @@ weighted(10)('project validation output past its limit keeps the tail and lets t
     const f = await prospectiveFixture(t, { manifest: 'none' });
     t.after(() => f.store.close());
     const task = grantIntegrationTurn(f.store, taskAtReviewedHead(f.store, f.repo, f.directory, f.head, f.base).id);
-    const outcome = await new RepositoryHooks(f.store).projectValidationGate(task, f.head, noisy(code));
+    const hooks = new RepositoryHooks(f.store), command = noisy(code);
+    let outcome = await hooks.projectValidationGate(task, f.head, command);
+    const hostRunId = f.store.task(task.id).resolution.projectValidation!.hostRunId;
+    // A live supervisor can outlast one observation. Reconcile the same durable
+    // run until it settles; a hold never grants another validation execution.
+    const deadline = Date.now() + HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS;
+    while (f.store.task(task.id).resolution.projectValidation?.state === 'running' && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 25));
+      outcome = await hooks.projectValidationGate(f.store.task(task.id), f.head, command);
+    }
     const recorded = f.store.task(task.id).resolution.projectValidation!;
+    assert.equal(recorded.hostRunId, hostRunId, 'observation preserves the original validation run');
+    assert.notEqual(recorded.state, 'running', `${validationEvidence(() => recorded)} gate=${JSON.stringify(outcome)}`);
     assert.equal(recorded.exitCode, code, validationEvidence(() => recorded));
     assert.equal(recorded.state, code === 0 ? 'passed' : 'refused', validationEvidence(() => recorded));
     assert.equal(outcome.kind, code === 0 ? 'ok' : 'refused', validationEvidence(() => recorded));

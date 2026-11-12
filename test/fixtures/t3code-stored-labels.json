@@ -1,0 +1,19 @@
+{
+  "worker": {
+    "nucleus.plugin": "nucleus",
+    "nucleus.task": "synthetic-task",
+    "nucleus.run": "synthetic-worker-run"
+  },
+  "recovery": {
+    "nucleus.plugin": "nucleus",
+    "nucleus.task": "synthetic-task",
+    "nucleus.run": "synthetic-recovery-run",
+    "nucleus.role": "recovery"
+  },
+  "reviewer": {
+    "nucleus.plugin": "nucleus",
+    "nucleus.task": "synthetic-task",
+    "nucleus.run": "synthetic-reviewer-run",
+    "nucleus.role": "reviewer"
+  }
+}

@@ -10,7 +10,11 @@ const diagnostic = z.object({ command: z.string().optional(), field: z.string().
   const clean = sanitizeHostDeliveryDiagnostic(value);
   return clean.command === value.command && clean.field === value.field && clean.reason === value.reason && clean.guidance === value.guidance;
 });
-const intent = z.object({ payload: z.string(), status: z.enum(['unknown', 'settled', 'refused']), result: z.unknown().optional(),
+const intent = z.object({ payload: z.string(), status: z.enum(['unknown', 'settled', 'refused', 'moot']), result: z.unknown().optional(),
+  // Deletion postcondition observed after our delete; this does not prove command delivery.
+  deletionObservedAt: z.string().optional(),
+  // Unknown presentation delivery stays unknown historically, but needs no more work.
+  retiredByDeletion: z.string().optional(),
   diagnostic: diagnostic.optional(),
   response: z.object({ agentId: z.string(), workspaceId: z.string(), requestId: z.string(), input: z.string() }).optional() });
 /**

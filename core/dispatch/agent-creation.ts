@@ -90,7 +90,7 @@ export function workerAgentSpec(owner: () => CreationOwner, task: Task, token: s
  * prompt is built per attempt, because it differs with MCP reporting.
  */
 export function runAgentSpec(owner: () => CreationOwner, task: Task, run: Run, token: string, profile: Profile,
-  guard: HostAgentSpec["guard"] | undefined, context: RunPromptContext, ownerContext: RunPromptOwnerContext): HostAgentSpec {
+  guard: HostAgentSpec["guard"] | undefined, context: RunPromptContext, ownerContext: RunPromptOwnerContext, affectedTestsCommand?: string): HostAgentSpec {
   const ticket = writeRunTicket(owner(), task, run, token);
   const mcpBindingPath = owner().reportingViaMcp ? writeMcpBinding(owner(), run.id, task, run.id, token) : null;
   return {
@@ -105,7 +105,7 @@ export function runAgentSpec(owner: () => CreationOwner, task: Task, run: Run, t
       materializeLaneDocuments(effectiveRun.temporaryDirectory, task.laneDocumentPins);
       return {
         requestId: retry ? `ns-run-${run.id}-socket` : `ns-run-${run.id}`,
-        prompt: runPrompt(task, effectiveRun, current.helperPath, ticket, mcp, context, ownerContext),
+        prompt: runPrompt(task, effectiveRun, current.helperPath, ticket, mcp, context, ownerContext, affectedTestsCommand),
         labels: wireLabels({ task: task.id, run: run.id, role: run.role, ...(mcp ? { mcpBinding: run.id, mcpBindingPath: mcpBindingPath ?? undefined } : {}) }),
         environment,
       };

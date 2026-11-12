@@ -43,7 +43,7 @@ const object = (value: unknown): value is Record<string, unknown> => value !== n
 const REMOTE_TAGS = new Set(SAFE_REMOTE_TAGS);
 const safeTag = (value: unknown): string | undefined => typeof value === 'string' && REMOTE_TAGS.has(value) ? value : undefined;
 const COMMANDS = new Set([
-  'thread.create', 'thread.stop', 'thread.archive', 'message.dispatch', 'project.create',
+  'thread.create', 'thread.stop', 'thread.archive', 'thread.delete', 'message.dispatch', 'project.create',
   'runtime-request.respond', 'thread.user-input.dismiss', 'orchestration.launchThread',
 ]);
 const safeCommand = (value: unknown): string | undefined => typeof value === 'string' && COMMANDS.has(value) ? value : undefined;

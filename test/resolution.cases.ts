@@ -3502,7 +3502,7 @@ test('coordinator resume replaces a freshly verified absent initial worker witho
 test('coordinator escalation is delivered once and includes the operator decision',async()=>{
  const f=fixture();try{
   const recipients=enableRecovery(f);attention(f);await f.engine.wake();await recoveryReport(f,'escalate');await f.engine.wake();
-  assert.deepEqual(recipients,['origin']);assert.match(f.store.notices(f.task.id)[0].text,/operator approval/);assert.equal(f.current().resolution.recovery?.status,'escalated');
+  assert.deepEqual(recipients,['origin']);assert.match(f.store.notices(f.task.id).find(notice=>notice.status==='delivered')!.text,/operator approval/);assert.equal(f.current().resolution.recovery?.status,'escalated');
  }finally{await f.close()}
 });
 test('paused recovery stores callbacks and defers both actions and origin messages',async()=>{
@@ -3825,9 +3825,9 @@ test('explicit coordinator escalation waits for a running Chatterbox turn to end
  const f=fixture(true);try{
   const recipients=enableRecovery(f);f.states.set('origin',{...f.states.get('origin')!,status:'running',active:true});attention(f);await f.engine.wake();await recoveryReport(f,'escalate');await f.engine.wake();
   assert.deepEqual(recipients,[],'a running Chatterbox is not interrupted');
-  const waiting=f.store.notices(f.task.id)[0];assert.equal(waiting.status,'pending');assert.match(waiting.error,/become idle \(escalation; running\)/);
+  const waiting=f.store.notices(f.task.id).find(notice=>notice.status==='pending')!;assert.ok(waiting);assert.equal(waiting.status,'pending');assert.match(waiting.error,/become idle \(escalation; running\)/);
   f.idle('origin','origin-workspace');await f.engine.resolution.deliverNotices();
-  assert.deepEqual(recipients,['origin']);assert.equal(f.store.notices(f.task.id)[0].status,'delivered');
+  assert.deepEqual(recipients,['origin']);assert.equal(f.store.notices(f.task.id).find(notice=>notice.id===waiting.id)?.status,'delivered');
   f.states.set('origin',{...f.states.get('origin')!,status:'running',active:true});
   f.store.update(f.task.id,{phase:'done',reason:'Closeout complete',resolution:{...f.current().resolution,attention:false}});await f.engine.resolution.deliverNotices();
   const pending=f.store.notices(f.task.id).find(n=>n.status==='pending')!;assert.match(pending.error,/completion recipient/);assert.deepEqual(recipients,['origin']);

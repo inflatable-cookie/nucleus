@@ -663,6 +663,37 @@ test('an active worker holds draining without relaunch; resume completes after i
   } finally { await f.close(); }
 });
 
+test('T3 cancellation drains and releases threads without archiving before closeout', async () => {
+  const f = fixture();
+  try {
+    const task = dispatched(f.store, 'Retained cancellation threads');
+    Object.assign(f.engine.adapter, { deleteAgent: async () => {} });
+    f.running(task.agentId!);
+    const run: Run = {
+      id: task.runId!, taskId: task.id, role: 'revision', generation: task.coordinatorGeneration,
+      head: base, base, agentId: task.agentId, workspaceId: task.workspaceId!, profile: null,
+      status: 'running', createdAt: new Date().toISOString(), lastObservedAt: null, active: true,
+      idleSince: null, completion: null, released: false,
+    };
+    f.store.putRun(run);
+    const deps = f.engine.dispositionDeps();
+    const draining = await requestDisposition(f.store, deps, {
+      taskId: task.id, version: task.version, action: 'cancel', reason: 'Duplicate', workDisposition: 'preserve',
+    });
+    assert.equal(draining.disposition?.status, 'draining');
+    assert.equal(f.interrupts.length, 1, 'the active turn still receives its stop');
+    assert.equal(f.store.run(run.id)?.released, false, 'the live turn retains its lease');
+    f.idle(task.agentId!);
+    await resumeDispositions(f.store, deps);
+    const done = f.store.task(task.id);
+    assert.equal(done.phase, 'cancelled');
+    assert.equal(done.disposition?.status, 'complete');
+    assert.equal(f.store.run(run.id)?.released, true, 'the stopped turn releases its lease');
+    assert.deepEqual(f.archived, [], 'terminal cleanup owns every thread archive or deletion');
+    assert.equal(done.disposition?.effects.some(effect => effect.kind === 'archive_thread'), false);
+  } finally { await f.close(); }
+});
+
 test('an errored worker with no live turn drains and archives without waiting on the dead session', async () => {
   const f = fixture();
   try {

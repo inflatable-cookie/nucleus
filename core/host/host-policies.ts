@@ -198,16 +198,16 @@ export abstract class HostPolicies extends MachinePorts {
   protected ticket(task: Task, run: Run, token: string) { return writeRunTicket(this.creationOwner(), task, run, token); }
 
   createRun(task: Task, run: Run, token: string, context: RecoveryDispatchSnapshot | null = null, ownerContext: OwnerReviewContext | null = null,
-    guard?: { allowed: () => Promise<boolean>; stillAllowed: () => boolean }) {
-    return createRunVia({ creationOwner: () => this.creationOwner(), guardedNativeAgentCreate: (spec, mcp, retry) => this.guardedNativeAgentCreate(spec, mcp, retry), unsupportedMcp: error => this.unsupportedMcp(error) }, task, run, token, context, ownerContext, guard);
+    guard?: { allowed: () => Promise<boolean>; stillAllowed: () => boolean }, affectedTestsCommand?: string) {
+    return createRunVia({ creationOwner: () => this.creationOwner(), guardedNativeAgentCreate: (spec, mcp, retry) => this.guardedNativeAgentCreate(spec, mcp, retry), unsupportedMcp: error => this.unsupportedMcp(error) }, task, run, token, context, ownerContext, guard, affectedTestsCommand);
   }
 
   /** One run attempt: a refused guard is a proven pre-send refusal, checked before the attempt facts are built. */
   guardedNativeAgentCreate(spec: HostAgentSpec, mcp: boolean, retry: boolean) { return this.agentPolicy.guardedNativeAgentCreate(spec,mcp,retry); }
 
-  sendRun(task: Task, run: Run, token: string, context: RecoveryDispatchSnapshot | null = null, ownerContext: OwnerReviewContext | null = null, guard?: { allowed: () => Promise<boolean>; stillAllowed: () => boolean }) {
+  sendRun(task: Task, run: Run, token: string, context: RecoveryDispatchSnapshot | null = null, ownerContext: OwnerReviewContext | null = null, guard?: { allowed: () => Promise<boolean>; stillAllowed: () => boolean }, affectedTestsCommand?: string) {
     const owner = this;
-    return sendRunVia({ get helperPath() { return owner.helperPath; }, scratchPlacement: task => this.scratchPlacement(task), retainedAgentRef: id => this.messageHost.retainedAgentRef(id), binding: (key, task, runId, token) => this.binding(key, task, runId, token), ticket: (task, run, token) => this.ticket(task, run, token), continueReviewer: (task, run, messageId, text, allowed, stillAllowed, beforeSend) => this.continueReviewer(task, run, messageId, text, allowed, stillAllowed, beforeSend) }, task, run, token, context, ownerContext, guard);
+    return sendRunVia({ get helperPath() { return owner.helperPath; }, scratchPlacement: task => this.scratchPlacement(task), retainedAgentRef: id => this.messageHost.retainedAgentRef(id), binding: (key, task, runId, token) => this.binding(key, task, runId, token), ticket: (task, run, token) => this.ticket(task, run, token), continueReviewer: (task, run, messageId, text, allowed, stillAllowed, beforeSend) => this.continueReviewer(task, run, messageId, text, allowed, stillAllowed, beforeSend) }, task, run, token, context, ownerContext, guard, affectedTestsCommand);
   }
 
   verifyReview(task: Task, run: Run, result: import("../../shared/contracts").Completion, reviewer?: import("../forge/index").ReviewerSetting) { return this.reviewPolicy.verifyReview(task,run,result,reviewer); }
