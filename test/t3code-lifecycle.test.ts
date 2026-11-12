@@ -78,7 +78,7 @@ const runTicketPath = (f: Fixture, run: Run | { id: string }) => join(dirname(f.
 const reportAndWake = async (
   f: Fixture, taskId: string, payload: Parameters<QueueRuntime['engine']['resolution']['complete']>[0], token: string,
 ): Promise<void> => {
-  await f.runtime.engine.resolution.complete(payload, token);
+  await f.runtime.engine.complete(payload, token);
   await f.runtime.engine.wakeTask(taskId).catch(() => {});
 };
 
@@ -256,11 +256,21 @@ test('an ordinary task runs its whole lifecycle on T3: thinking level, helper re
 
     // The review verdict requests changes; a revision round is reserved.
     const reviewerRun = f.runtime.store.runs(task.id).find(run => run.role === 'reviewer' && run.agentId === reviewerThreadId)!;
+    const reviewerProjection = f.server.threads.get(reviewerThreadId)!;
+    reviewerProjection.runs.push({ id: 'nightly-review-round-1', status: 'completed', startedAt: STAMP });
+    // The T3 write can fail after the Nucleus report receipt is committed. That
+    // uncertainty is adapter-owned and must not reject or hold the task report.
+    f.server.controls.refuseMutation = true;
     await reportAndWake(f, task.id, {
       eventId: randomUUID(), taskId: task.id, runId: reviewerRun.id, status: 'changes_required',
       summary: 'One finding', reviewText: 'Tighten the change set.', reviewResponsibility: 'author',
       prNumber: 7, head: worktreeHead,
     }, ticketToken(f, reviewerRun));
+    f.server.controls.refuseMutation = false;
+    assert.equal(f.runtime.store.run(reviewerRun.id)?.completion?.status, 'changes_required', 'the task accepts the reviewer report despite a failed settle');
+    assert.equal(reviewerProjection.thread.settledOverride, null, 'the refused settle made no T3 change');
+    await (f.t3 as unknown as { reconcileReportedSettlements(): Promise<void> }).reconcileReportedSettlements();
+    assert.equal(reviewerProjection.thread.settledOverride, 'settled', 'the durable intent retries on reconciliation');
     await driveUntil(f, () => f.runtime.store.runs(task.id).some(run => run.role === 'revision'), 'revision reserved', task.id);
     const revisionRun = f.runtime.store.runs(task.id).findLast(run => run.role === 'revision');
     assert.ok(revisionRun, 'revision reserved');
@@ -276,15 +286,18 @@ test('an ordinary task runs its whole lifecycle on T3: thinking level, helper re
     }, ticketToken(f, revisionRun));
     await driveUntil(f, () => f.server.commands.some(command => command.type === 'message.dispatch'
       && command.threadId === reviewerThreadId), 'retained reviewer consulted for round two', task.id);
+    assert.equal(reviewerProjection.thread.settledOverride, 'active', 'the retained reviewer is explicitly unsettled before its next round');
 
     // The verdict accepts: the reviewer reports ready to merge at the same head.
     const reviewerRunAfterRound = f.runtime.store.runs(task.id).find(run => run.role === 'reviewer' && run.agentId === reviewerThreadId && !run.released)
       ?? f.runtime.store.runs(task.id).find(run => run.role === 'reviewer' && run.agentId === reviewerThreadId)!;
+    reviewerProjection.runs.push({ id: 'nightly-review-round-2', status: 'completed', startedAt: STAMP });
     await reportAndWake(f, task.id, {
       eventId: randomUUID(), taskId: task.id, runId: reviewerRunAfterRound.id, status: 'ready_to_merge',
       summary: 'Findings addressed; approves', reviewText: 'The findings are addressed.',
       prNumber: 7, head: worktreeHead,
     }, ticketToken(f, reviewerRunAfterRound));
+    assert.equal(reviewerProjection.thread.settledOverride, 'settled', 'the retained reviewer is settled after its next report');
 
     // The closeout: this queue control closes Nucleus-owned at the merged
     // commit, so a coordinator closeout thread is optional; the task reaches
