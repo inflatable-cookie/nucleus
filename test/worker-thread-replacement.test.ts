@@ -196,7 +196,7 @@ test('a recovery remap on the same model continues the same agent', async () => 
   } finally { await f.close(); }
 });
 
-test('an errored retained worker is replaced by an alternate profile on the same workspace and PR', async () => {
+test('a worker with a connection error is replaced on its profile in the same workspace and PR', async () => {
   const f = sweepFixture(); try {
     f.working({ prUrl: 'https://github.com/example/repo/pull/1', prHead: head, resumePrNumber: 1 });
     f.states.set('worker', { id: 'worker', workspaceId: 'workspace', status: 'error', active: false, permissions: false, error: 'Connection error' });
@@ -210,7 +210,7 @@ test('an errored retained worker is replaced by an alternate profile on the same
     } });
     await f.engine.wake();
     const replaced = f.current();
-    assert.equal(replaced.profile?.id, 'sol', 'do not route the failure back to the same profile');
+    assert.equal(replaced.profile?.id, 'author', 'a connection error does not exclude the profile');
     assert.equal(replaced.retiredWorkers.length, 1, 'the failed resume causes one replacement');
     assert.equal(replaced.retiredWorkers[0]?.agentId, 'worker');
     assert.equal(replaced.workspaceId, 'workspace');
