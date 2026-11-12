@@ -11,7 +11,16 @@ with the run's ticket on stdin). Report with the exact run ID in the current ins
 report may also carry an optional bounded `verdicts` array (`id`, `subject`,
 `verdict` one of `pass`, `fail`, `insufficient` or `not_applicable`, `evidence`,
 optional `note`). Briefs do not require verdict entries or pass gates. A `ready_to_merge` report omits
-`reviewResponsibility`; `reviewer` belongs only to `review_in_progress`. Worker
+`reviewResponsibility`; `reviewer` belongs only to `review_in_progress`. A worker
+report may name local proof files (screenshots, rendered images, recordings the
+brief requires) as `proofFiles: [{label, path}]`, where each path is an absolute
+path to a real regular file inside that task's own scratch or worktree, at most
+12 files, 8 MiB each and 32 MiB total. Nucleus copies them into its own
+per-head evidence directory, records their hashes and lists them with paths and
+hashes in the retained reviewer's prompt for that head; nothing is uploaded to
+the forge, and no local path belongs in a PR body or comment. A report naming a
+path outside the task is refused and nothing is copied. The PR may say that
+evidence was delivered to the retained reviewer and give the hashes. Worker
 reporting keeps its authenticated run-bound callback socket. Report only through
 this run's own binding; never read or use another ticket file under the Nucleus
 data home. If a report is refused, report blocked with the refusal through your

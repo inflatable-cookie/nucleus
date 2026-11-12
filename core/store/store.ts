@@ -803,7 +803,7 @@ export class Store {
         creatorCompletionRecipients:[],completionSubscriptionOverrides:[],completionNotificationCohort:null,
         removedAt: null, finishedAt: null, queuePriority:0, prerequisiteWait: null, phase: "queued", reason: DISPATCH_WAIT_REASON,
         held: false, mergeHold: false, budgetSince: null, holdOwner: null, holdReason: null, holdAt: null, holdGeneration: 0, holdBlocking: null, holdUntil: null, holds: {},
-        lastSubstantiveVersion: 1, handoffText, planningBase, proofExecutions: [], proofExecutionRetired: false, proofOnlyResult: null, proofReceiptAcceptance: null,
+        lastSubstantiveVersion: 1, handoffText, planningBase, proofExecutions: [], proofFiles: [], proofExecutionRetired: false, proofOnlyResult: null, proofReceiptAcceptance: null,
         workspaceId: null, directory: null, branch: input.proofOnly ? "" : `ns-${id}`, agentId: null, runId: null,
         profile: null, profileGroup: null, failoverReason: "", replacementProfile:null, workerExclusions: [], resumePrNumber: null, retiredWorkers: [], workspaceIntent: false, agentIntent: false, lastAgentStatus: null,
         idleSince: null, completion: null, agentActive: null, lastObservedAt: null, prUrl: null, prHead: null, coordinatorGeneration: 1, resolution: resolutionSchema.parse({}), checkpoints: { records: [], intent: null }, workerModel: null, workerModels: [], briefVersions, briefRuns: [], siblingPins: [], siblingFindings: [], siblingIntent: false, checkoutSiblingFindings: [], stashBaseline: null,
@@ -1789,6 +1789,17 @@ export class Store {
   putOperation(operation: QueueOperation, payload?: unknown): QueueOperation { return this.operationsStore.putOperation(operation, payload); }
   acceptOperation(input: { key: string; kind: QueueOperation["kind"]; inputHash: string; taskId?: string | null; expectedVersion?: number | null; repoPath?: string | null; submissionId?: string | null; hostId?: string; hostSelection?: QueueOperation['hostSelection']; payload: unknown }, at = now()): OperationAcceptance { return this.operationsStore.acceptOperation(input, at); }
   receipt(input: Completion, token: string): { accepted: true; eventId: string } | null { return this.authStore.receipt(input, token); }
+  appendProofFiles(taskId: string, records: Task["proofFiles"]): Task {
+    if (!records.length) return this.task(taskId);
+    const task = this.task(taskId);
+    // A retried report (a fresh event ID for the same bytes) is the same evidence.
+    const key = (record: Task["proofFiles"][number]) => `${record.head}\0${record.label}\0${record.sha256}\0${record.bytes}\0${record.runId}`;
+    const seen = new Set(task.proofFiles.map(key));
+    const fresh = records.filter(record => !seen.has(key(record)));
+    if (!fresh.length) return task;
+    return this.update(taskId, { proofFiles: [...task.proofFiles, ...fresh] }, "proof_files",
+      fresh.map(record => `${record.label} ${record.sha256.slice(0, 12)} @ ${record.head}`).join("; "));
+  }
   acceptCompletion(input: Completion, token: string, pr: { url: string; head: string } | null, options: { armedReplacement?: boolean } = {}) {
     return this.transaction(() => {
       const duplicate = this.receipt(input, token); if (duplicate) return duplicate;

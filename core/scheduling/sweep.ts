@@ -7,6 +7,7 @@ import { isDispositionActive } from "../../shared/contracts";
 import type { ReconciliationSweep } from "../../shared/telemetry";
 import type { AgentObservation } from "../host/adapter";
 import { reapHookCheckouts } from "../hooks/hook-cleanup";
+import { removeTaskProofFiles } from "../intake/proof-files";
 import { pruneLiveDataHomeBackupCopies } from "../store/data-home-retention";
 import { resumeDispositions } from "../verbs/disposition";
 import { completionReportsPr } from "../recovery/worker-reconcile";
@@ -164,7 +165,7 @@ export class Sweep {
         // still owns an existing checkout keeps its whole history for the next pass.
         const candidates=this.engine.store.retentionCandidates(Date.now());
         if(candidates.length)await reapHookCheckouts(this.engine.store,{taskIds:new Set(candidates.map(task=>task.id))});
-        this.engine.store.purgeOldTasks(Date.now(),(taskId,runIds)=>{this.engine.adapter.purgeReportingFiles?.(taskId,runIds);void this.engine.removeSiblings(taskId);});
+        this.engine.store.purgeOldTasks(Date.now(),(taskId,runIds)=>{this.engine.adapter.purgeReportingFiles?.(taskId,runIds);void this.engine.removeSiblings(taskId);try{removeTaskProofFiles(this.engine.store.task(taskId));}catch{/* Evidence whose recorded paths cannot be proved is left in place. */}});
         // Lean store 2 (task 987): the same windows the schema-52 migration applied, so rows that
         // outlive their task or run are pruned as they age out, not only once.
         this.engine.store.transaction(()=>this.engine.store.pruneRetainedRows(Date.now()));
