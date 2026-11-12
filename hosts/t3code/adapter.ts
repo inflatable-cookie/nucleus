@@ -528,11 +528,13 @@ export class T3CodeHost implements Host {
   /** Settle a completed non-worker thread after Nucleus has durably accepted its report. */
   async settleReportedThread(agentId: string, runId: string): Promise<void> {
     this.requireConnection();
-    const commandId = identity('settle', canonical([this.hostId, agentId, runId]));
+    const baseCommandId = identity('settle', canonical([this.hostId, agentId, runId]));
+    let commandId = baseCommandId;
     const payload = { type: 'thread.settle', commandId, threadId: agentId } as {
       type: string; commandId: string; threadId: string; expectedLatestRunId?: string;
     };
-    const prior = this.state.read().intents[commandId];
+    let prior = this.state.read().intents[commandId];
+    if (prior?.status === 'settled') return;
     const projection = await this.readProjection(agentId);
     if (projection.thread.settledOverride === 'settled') {
       if (prior?.status === 'unknown') this.markSettleObserved(commandId);
@@ -541,6 +543,13 @@ export class T3CodeHost implements Host {
     const latest = projection.runs.reduce((best, run) => !best || (run.ordinal ?? -1) >= (best.ordinal ?? -1) ? run : best, undefined as Projection['runs'][number] | undefined);
     // A fresh run owns the thread now. Never settle it because an older report arrived late.
     if (!latest || activeStatuses.has(latest.status)) return;
+    // A proven pre-send refusal can be retried with a new command identity.
+    // Unknown delivery still goes through the projection reconciliation below.
+    for (let attempt = 1; prior?.status === 'refused'; attempt++) {
+      commandId = identity('settle', canonical([this.hostId, agentId, runId, attempt]));
+      prior = this.state.read().intents[commandId];
+    }
+    payload.commandId = commandId;
     if (prior) {
       await this.reconcileSettleIntent(commandId, prior.payload);
       return;
@@ -670,9 +679,13 @@ export class T3CodeHost implements Host {
    */
   async settleWorkerThread(agentId: string, runId: string): Promise<void> {
     this.requireConnection();
-    const commandId = identity('settle', canonical([this.hostId, agentId, runId]));
-    if (this.state.read().intents[commandId]) return;
-    await this.attemptWorkerSettle({ agentId, runId, commandId, recordedAt: new Date().toISOString() });
+    const baseCommandId = identity('settle', canonical([this.hostId, agentId, runId]));
+    const existing = this.state.read().pendingSettles?.[baseCommandId];
+    const commandId = this.workerSettleCommandId(agentId, runId);
+    const intent = this.state.read().intents[commandId];
+    if (intent?.status === 'unknown') throw new HostUnknownDeliveryError(intent.diagnostic);
+    if (intent && intent.status !== 'refused') return;
+    await this.attemptWorkerSettle(existing ?? { agentId, runId, commandId, recordedAt: new Date().toISOString() });
   }
 
   /** Retry durable worker settle intents during the ordinary host sweep. */
@@ -689,10 +702,14 @@ export class T3CodeHost implements Host {
 
   /** One worker settle: send when the handover's own run has ended, else retain the intent. */
   private async attemptWorkerSettle(entry: T3SettleIntent): Promise<void> {
-    // The delivery ledger owns every command id it has recorded. A settled one
-    // needs nothing more; an unknown one is never resent, so the pending record
-    // is retired either way.
-    if (this.state.read().intents[entry.commandId]) { this.forgetSettle(entry.commandId); return; }
+    // Unknown delivery is never resent for worker handovers. A proven refusal
+    // gets a new id on the next pass; it was known not to reach T3.
+    const intent = this.state.read().intents[entry.commandId];
+    if (intent && intent.status !== 'refused') { this.forgetSettle(entry.commandId); return; }
+    if (intent?.status === 'refused') {
+      this.forgetSettle(entry.commandId);
+      entry = { ...entry, commandId: this.workerSettleCommandId(entry.agentId, entry.runId) };
+    }
     if (Date.now() - Date.parse(entry.recordedAt) > SETTLE_INTENT_TTL_MS) { this.forgetSettle(entry.commandId); return; }
     const projection = await this.readProjection(entry.agentId);
     // Already settled, or retired: the handover needs no further presentation.
@@ -709,6 +726,18 @@ export class T3CodeHost implements Host {
     await this.effect(entry.commandId, 'orchestration.dispatchCommand',
       { type: 'thread.settle', commandId: entry.commandId, threadId: entry.agentId, expectedLatestRunId: latest.id });
     this.forgetSettle(entry.commandId);
+  }
+
+  /** First unused worker settle id, after any proven pre-send refusals. */
+  private workerSettleCommandId(agentId: string, runId: string): string {
+    const base = identity('settle', canonical([this.hostId, agentId, runId]));
+    const intents = this.state.read().intents;
+    if (!intents[base] || intents[base].status !== 'refused') return base;
+    for (let attempt = 1; ; attempt++) {
+      const candidate = identity('settle', canonical([this.hostId, agentId, runId, attempt]));
+      const prior = intents[candidate];
+      if (!prior || prior.status !== 'refused') return candidate;
+    }
   }
 
   /**
