@@ -670,7 +670,7 @@ test('T3 cancellation drains and releases threads without archiving before close
     Object.assign(f.engine.adapter, { deleteAgent: async () => {} });
     f.running(task.agentId!);
     const run: Run = {
-      id: task.runId!, taskId: task.id, role: 'worker', generation: task.coordinatorGeneration,
+      id: task.runId!, taskId: task.id, role: 'revision', generation: task.coordinatorGeneration,
       head: base, base, agentId: task.agentId, workspaceId: task.workspaceId!, profile: null,
       status: 'running', createdAt: new Date().toISOString(), lastObservedAt: null, active: true,
       idleSince: null, completion: null, released: false,
