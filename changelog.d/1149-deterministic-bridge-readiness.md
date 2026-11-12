@@ -1,0 +1,1 @@
+The reviewed handoff prompt snapshot now includes #1142's proof-file instructions. The bridge maintenance-window test controls both readiness clocks so QA host load cannot expire a competing bridge's wait early.
