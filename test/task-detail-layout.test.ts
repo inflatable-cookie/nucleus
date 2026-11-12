@@ -82,5 +82,5 @@ test('the old-lifecycle panels are gone from the task detail (Spec 058 step 4)',
 test('a board card shows the newest report headline where it used to show only the stored reason', () => {
   // Task 858 rebuilt the card; its snippet reads the report headline.
   const source = ui();
-  assert.match(source, /: task\.headline \? <Text numberOfLines=\{2\} ellipsizeMode="tail" style=\{\{ color: c\.foregroundMuted, fontSize: 12, lineHeight: 16 \}\}>\{task\.headline\}<\/Text>/);
+  assert.match(source, /:\s*task\.headline\s*\?\s*<Text\b(?=[^>]*numberOfLines=\{2\})[^>]*>\{task\.headline\}<\/Text>\s*:\s*<Text\b[^>]*>\{task\.reason\}<\/Text>/);
 });
