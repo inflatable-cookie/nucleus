@@ -175,11 +175,11 @@ test('decoder defects carrying secrets keep neither the value nor the bearer in 
   const { host, server, spec } = await fixture(t);
   const created = await host.createAgent(spec());
   server.controls.secretDefect = true;
-  // An unquoted secret in a defect retains no reason text at all; only the
-  // extracted field name survives.
+  // A secret in the decoder's expected-shape position canonicalizes to fixed
+  // wording; only the extracted field name survives beside it.
   await assert.rejects(host.sendMessage(created.id, { messageId: 'secret-defect', text: 'Synthetic' }), error => {
     assert.ok(error instanceof HostUnknownDeliveryError);
-    assert.deepEqual(error.diagnostic, { command: 'message.dispatch' });
+    assert.deepEqual(error.diagnostic, { command: 'message.dispatch', field: 'text', reason: 'Expected a different payload shape, got [value]' });
     assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic-secret/);
     return true;
   });
@@ -490,8 +490,9 @@ test('an unsupported registration method stays unknown delivery while naming the
   const key = Object.keys(host.state.read().intents).find(candidate => candidate.startsWith('nucleus-project-create-'))!;
   const intent = host.state.read().intents[key];
   assert.equal(intent?.status, 'unknown', 'the create is never marked refused on remote text');
-  assert.equal(intent?.diagnostic?.reason, 'Unknown request tag: projects.mutate');
-  assert.equal(intent?.diagnostic?.guidance, `T3Code cannot create a project for ${project.workspaceRoot}; add that folder as a project in T3Code, then restart the task`);
+  assert.equal(intent?.diagnostic?.reason, 'Unknown request tag');
+  assert.equal(intent?.diagnostic?.guidance, 'T3Code cannot create a project for the recorded repository root; add that folder as a project in T3Code, then restart the task');
+  assert.equal(intent?.diagnostic?.path, project.workspaceRoot, 'the complete repository root rides the diagnostic');
   // The unknown delivery still permits the owner path: the re-read finds
   // nothing, so the recorded create resends exactly once.
   await assert.rejects(host.createWorkspace({ title: 'Synthetic task', requestId: 'workspace-unsupported', directory: worktree, project }), /unknown/i);
@@ -499,11 +500,11 @@ test('an unsupported registration method stays unknown delivery while naming the
   assert.equal(server.projects.length, 0);
 });
 
-test('a long repository path cannot spend the remote-reason budget that the manual fix needs', async t => {
+test('a long repository path keeps its complete identity while the reason and fix stay bounded', async t => {
   const { host, server, root } = await fixture(t);
   server.projects.splice(0);
-  // Two near-maximum path components put the repository root far past the
-  // remote-reason cap.
+  // Two near-maximum path components put the repository root far past every
+  // bounded budget.
   const deep = join(root, 'long'.repeat(50), 'path'.repeat(50), 'repository');
   mkdirSync(deep, { recursive: true });
   const worktree = join(root, 'worktree');
@@ -514,11 +515,11 @@ test('a long repository path cannot spend the remote-reason budget that the manu
   await assert.rejects(host.createWorkspace({ title: 'Synthetic task', requestId: 'workspace-long-path', directory: worktree, project }), error => {
     assert.ok(error instanceof HostUnknownDeliveryError);
     const diagnostic = (error as HostUnknownDeliveryError).diagnostic;
-    assert.equal(diagnostic.reason, 'Unknown request tag: projects.mutate', 'the bounded remote reason is intact and uncapped');
-    const guidance = diagnostic.guidance ?? '';
-    assert.ok(guidance.startsWith('T3Code cannot create a project for '), 'the guidance names the repository');
-    assert.ok(guidance.endsWith('add that folder as a project in T3Code, then restart the task'), 'the manual fix survives a long path');
+    assert.equal(diagnostic.reason, 'Unknown request tag', 'the canonical remote reason is intact');
+    assert.equal(diagnostic.guidance, 'T3Code cannot create a project for the recorded repository root; add that folder as a project in T3Code, then restart the task', 'the manual fix survives intact');
+    assert.equal(diagnostic.path, project.workspaceRoot, 'the complete repository path is preserved outside every bounded budget');
     assert.match(String(error), /add that folder as a project in T3Code, then restart the task/);
+    assert.ok(String(error).includes(project.workspaceRoot!), 'the attention text carries the full path');
     return true;
   });
 });

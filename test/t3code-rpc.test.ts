@@ -192,7 +192,7 @@ test('schema diagnostics retain bounded field locations and defect shapes withou
     assert.equal(error.delivery, 'unknown');
     assert.equal(error.field, i ? undefined : 'modelSelection.options[0].value');
     assert.equal(error.command, i ? undefined : 'message.dispatch');
-    assert.equal(error.reason, i ? 'Missing key' : 'Expected string, got [value]');
+    assert.equal(error.reason, i ? 'Missing key' : 'Expected a different payload shape, got [value]');
     assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic-bearer|prompt secret|got "/);
     return true;
   });
@@ -213,8 +213,30 @@ test('the nightly dispatch union refuses project.create before any handler and t
     assert.equal(error.delivery, 'unknown');
     assert.equal(error.command, 'project.create');
     assert.equal(error.field, undefined);
-    assert.equal(error.reason, 'Expected union member, got [value]');
+    assert.equal(error.reason, 'Expected a different payload shape, got [value]');
     assert.doesNotMatch(String(error), /synthetic-project|synthetic-repository|private/);
+    return true;
+  });
+  // A secret in the decoder's expected-shape position canonicalizes away too.
+  const secretServer = await fakeServer(t, (request, send) => {
+    if (request._tag === 'Request') send(failure(request, { _tag: 'Die', defect: 'Expected synthetic-secret got value' }));
+  });
+  const secretClient = await clientFor(t, secretServer);
+  await assert.rejects(secretClient.call('projects.mutate', { type: 'project.create', commandId: 'stable' }), error => {
+    assert.ok(error instanceof T3RpcError);
+    assert.equal(error.reason, 'Expected a different payload shape, got [value]');
+    assert.doesNotMatch(String(error), /synthetic-secret/);
+    return true;
+  });
+  // The method-name position of the unknown-tag text is a variable as well.
+  const methodServer = await fakeServer(t, (request, send) => {
+    if (request._tag === 'Request') send(failure(request, { _tag: 'Die', defect: 'Unknown request tag: synthetic-secret' }));
+  });
+  const methodClient = await clientFor(t, methodServer);
+  await assert.rejects(methodClient.call('projects.mutate', { type: 'project.create', commandId: 'stable' }), error => {
+    assert.ok(error instanceof T3RpcError);
+    assert.equal(error.reason, 'Unknown request tag');
+    assert.doesNotMatch(String(error), /synthetic-secret/);
     return true;
   });
 });
@@ -255,6 +277,25 @@ test('typed project mutation failures retain the fixed wire message and drop arb
   assert.equal(calls, 2);
 });
 
+test('typed variable positions canonicalize away unquoted secrets', async t => {
+  let calls = 0;
+  const server = await fakeServer(t, (request, send) => {
+    if (request._tag !== 'Request') return;
+    const tag = ++calls === 1 ? 'ProjectMutationError' : 'EnvironmentAuthorizationError';
+    const message = calls === 1 ? 'Project synthetic-secret is not empty.' : 'The authenticated token is missing required scope: synthetic-secret.';
+    send(failure(request, { _tag: 'Fail', error: { _tag: tag, commandId: 'stable', message } }));
+  });
+  const client = await clientFor(t, server);
+  for (let i = 0; i < 2; i++) await assert.rejects(client.call('projects.mutate', { type: 'project.create', commandId: 'stable' }), error => {
+    assert.ok(error instanceof T3RpcError);
+    assert.equal(error.reason, i === 0
+      ? 'ProjectMutationError: Project is not empty.'
+      : 'EnvironmentAuthorizationError: The authenticated token is missing a required scope.');
+    assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic-secret/);
+    return true;
+  });
+});
+
 test('reasons stay bounded and nameless for unknown tags, giant defects and value dumps', async t => {
   let calls = 0;
   const server = await fakeServer(t, (request, send) => {
@@ -272,8 +313,7 @@ test('reasons stay bounded and nameless for unknown tags, giant defects and valu
   });
   await assert.rejects(client.call('projects.mutate', { type: 'project.create', commandId: 'stable-2' }), error => {
     assert.ok(error instanceof T3RpcError);
-    assert.ok((error.reason ?? '').length <= 243, `reason is capped, got ${error.reason?.length}`);
-    assert.ok((error.reason ?? '').endsWith('...'));
+    assert.equal(error.reason, 'Expected a different payload shape, got [value]', 'the giant defect canonicalizes to the fixed wording');
     assert.doesNotMatch(String(error), /xxxxx/);
     return true;
   });

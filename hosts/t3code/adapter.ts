@@ -13,9 +13,8 @@ export interface T3CodeConfig { endpoint: string; bearer: string; statePath: str
 const identity = (purpose: string, value: string) => `nucleus-${purpose}-${createHash('sha256').update(value).digest('hex').slice(0, 40)}`;
 const activeStatuses = new Set(['preparing', 'queued', 'starting', 'running', 'waiting']);
 const unsupported = (capability: string): never => { throw new ProvenPreSendRefusalError(`T3Code does not support ${capability}`); };
-/** The repository path is capped so the manual fix always survives the guidance bound (400). */
-const createWireRefusal = (repositoryRoot: string) =>
-  `T3Code cannot create a project for ${repositoryRoot.length > 280 ? `${repositoryRoot.slice(0, 280)}...` : repositoryRoot}; add that folder as a project in T3Code, then restart the task`;
+/** Fixed remediation text; the complete repository root rides the diagnostic's own path field. */
+const CREATE_PROJECT_GUIDANCE = 'T3Code cannot create a project for the recorded repository root; add that folder as a project in T3Code, then restart the task';
 type Projection = z.infer<typeof projection>;
 type ResponseBinding = NonNullable<T3State['intents'][string]['response']>;
 
@@ -172,11 +171,11 @@ export class T3CodeHost implements Host {
       const commandId = identity('project-create', canonical([this.hostId, repositoryRoot]));
       const created = await this.effect(commandId, 'projects.mutate', {
         type: 'project.create', commandId, projectId, title: basename(repositoryRoot), workspaceRoot: repositoryRoot,
-      }, undefined, undefined, { resendUnknownAfterInventory: true, unsupportedMethodGuidance: createWireRefusal(repositoryRoot) });
+      }, undefined, undefined, { resendUnknownAfterInventory: true, unsupportedMethodGuidance: CREATE_PROJECT_GUIDANCE, unsupportedMethodPath: repositoryRoot });
       decode(z.object({ id: z.literal(projectId), title: z.string(), workspaceRoot: z.string() }).passthrough(), created, 'projects.mutate');
       selected = { id: projectId, title: basename(repositoryRoot), workspaceRoot: repositoryRoot };
     }
-    if (!selected) throw new ProvenPreSendRefusalError(createWireRefusal(repositoryRoot ?? directory));
+    if (!selected) throw new ProvenPreSendRefusalError(`${CREATE_PROJECT_GUIDANCE} (the missing root is ${repositoryRoot ?? directory})`);
     const id = identity('worktree', canonical([selected.id, directory]));
     this.state.update(state => {
       const old = state.workspaces[id];
@@ -216,6 +215,8 @@ export class T3CodeHost implements Host {
       resendUnknownAfterInventory?: boolean;
       /** Guidance that rides an unknown delivery when the remote text names no known method. */
       unsupportedMethodGuidance?: string;
+      /** The task's own complete target identity, carried outside every bounded budget. */
+      unsupportedMethodPath?: string;
     } = {}): Promise<unknown> {
     if (!response) this.requireConnection();
     let encoded = canonical({ method, payload });
@@ -273,10 +274,11 @@ export class T3CodeHost implements Host {
       if (refusal) throw refusal;
       const guidance = !refusal && options.unsupportedMethodGuidance && error instanceof T3RpcError && error.code === 'unsupported_method'
         ? options.unsupportedMethodGuidance : undefined;
-      // The bounded remote reason and the Nucleus-authored guidance stay in
-      // separate fields, so a long repository path can never spend the
-      // remote-reason budget that the manual fix needs.
-      const diagnostic = sanitizeHostDeliveryDiagnostic(error instanceof T3RpcError ? { command: error.command, field: error.field, reason: error.reason, guidance }
+      const path = guidance ? options.unsupportedMethodPath : undefined;
+      // The bounded remote reason, the fixed guidance, and the complete
+      // repository root stay in separate fields, so no budget can cut off the
+      // manual fix or the repository identity.
+      const diagnostic = sanitizeHostDeliveryDiagnostic(error instanceof T3RpcError ? { command: error.command, field: error.field, reason: error.reason, guidance, path }
         : error instanceof HostUnknownDeliveryError ? error.diagnostic : undefined);
       const unknown = new HostUnknownDeliveryError(diagnostic);
       try { this.state.update(state => { state.intents[key] = { ...state.intents[key], diagnostic }; }); }

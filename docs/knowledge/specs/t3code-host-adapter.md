@@ -87,15 +87,19 @@ and is never resent. Only a local refusal before the socket write proves
 non-delivery (planner ruling, 2026-11-11). Sanitized reported command and field
 names remain diagnostic text, never proof of a decoder phase; raw error bodies,
 actual values and credentials are omitted. The recorded diagnostic also keeps
-the bounded why behind a remote failure: a whitelisted error tag — alone or
-beside the handlers' own fixed wire messages with bounded identifier
-parameters — a decoder defect in the nightly's own post-value-dropping shape,
-or the ticket exchange's HTTP status. Every branch that builds a reason strips
-the configured bearer first; arbitrary remote text, including any unquoted
-secret it carries, retains nothing; delivery classification is unchanged
-(nucleus#1136, review 2026-11-12). Nucleus-authored remediation text rides a
-separate bounded guidance field, so a long repository path can never spend the
-remote-reason budget that the manual fix needs.
+the bounded why behind a remote failure, restricted to fixed, value-free
+canonical strings: a whitelisted error tag alone or beside the handlers' fixed
+wire messages (`Failed to mutate project.`, `Project is not empty.`, `The
+authenticated token is missing a required scope.`), the decoder's canonical
+outcomes (`Missing key`, `Unknown request tag`, `Expected a different payload
+shape, got [value]`, the encoder-message prefix), or the ticket exchange's
+HTTP status. Every variable portion of remote text — identifiers, method and
+scope names, expected-shape text — is dropped at canonicalization, so an
+unquoted secret in any position retains nothing; the configured bearer is
+stripped first and delivery classification is unchanged (nucleus#1136, review
+2026-11-12). Nucleus-authored remediation rides a separate bounded guidance
+field, and the complete repository root rides a separate path field, so no
+budget can cut off the manual fix or the repository identity.
 Those names and the reason are stored on the durable unknown intent and returned
 on blocked repeats, including after reload. A registered permission failure also
 records them through the owning task's existing attention policy, selected by

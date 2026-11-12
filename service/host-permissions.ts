@@ -29,10 +29,10 @@ function ownerOf(context: HostPermissionOwnership, input: HostPermissionAnswerIn
 function reportUnknown(context: HostPermissionOwnership, owner: Task, input: HostPermissionAnswerInput, error: HostUnknownDeliveryError) {
   // The neutral error already restricts these names; validate again at the
   // durable attention boundary instead of persisting any remote error body.
-  const { command, field, reason, guidance } = sanitizeHostDeliveryDiagnostic(error.diagnostic);
-  const attention = `Native permission response delivery is unknown${command ? `; command ${command}` : ''}${field ? `; field ${field}` : ''}${reason ? `; reason ${reason}` : ''}${guidance ? `; guidance ${guidance}` : ''}; inspect the original request; no response was resent`;
+  const { command, field, reason, guidance, path } = sanitizeHostDeliveryDiagnostic(error.diagnostic);
+  const attention = `Native permission response delivery is unknown${command ? `; command ${command}` : ''}${field ? `; field ${field}` : ''}${reason ? `; reason ${reason}` : ''}${guidance ? `; guidance ${guidance}` : ''}${path ? `; path ${path}` : ''}; inspect the original request; no response was resent`;
   const detail = JSON.stringify({ hostId: input.hostId, agentId: input.agentId, workspaceId: input.workspaceId, requestId: input.requestId,
-    delivery: 'unknown', ...(command ? { command } : {}), ...(field ? { field } : {}), ...(reason ? { reason } : {}), ...(guidance ? { guidance } : {}) });
+    delivery: 'unknown', ...(command ? { command } : {}), ...(field ? { field } : {}), ...(reason ? { reason } : {}), ...(guidance ? { guidance } : {}), ...(path ? { path } : {}) });
   context.store.transaction(() => {
     let current: Task;
     try { current = context.store.task(owner.id); } catch { return; }

@@ -13,11 +13,13 @@ once on the new route. When the build's remote text names no known registration
 method, the create stays unknown delivery carrying the repository path and the
 manual setup steps as guidance; it is never marked refused on remote text.
 
-Host delivery diagnostics now keep the bounded why behind a remote failure:
-only demonstrably safe shapes survive — a whitelisted error tag (alone or
-beside the handlers' fixed wire messages), a decoder defect in the nightly's
-own post-value-dropping shape, or the ticket exchange's HTTP status. Arbitrary
-remote text, including any unquoted secret it carries, retains nothing; the
+Host delivery diagnostics now keep the bounded why behind a remote failure as
+fixed, value-free canonical strings only: a whitelisted error tag (alone or
+beside the handlers' fixed wire messages), the decoder's canonical outcomes,
+or the ticket exchange's HTTP status. Every variable portion of remote text —
+identifiers, method and scope names, expected-shape text — is dropped at
+canonicalization, so an unquoted secret in any position retains nothing; the
 configured bearer is stripped first and delivery classification is unchanged.
-Nucleus-authored remediation rides a separate bounded guidance field, so a
-long repository path can never cut off the manual setup steps.
+Nucleus-authored remediation rides a separate bounded guidance field and the
+complete repository root a separate path field, so no budget can cut off the
+manual setup steps or the repository identity.

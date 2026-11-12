@@ -1,4 +1,4 @@
-import { retainableRemoteMessage, sanitizeHostFailureReason } from '../../core/host';
+import { canonicalRemoteDefect, canonicalRemoteMessage, SAFE_REMOTE_TAGS, sanitizeHostFailureReason } from '../../core/host';
 
 export interface T3ConnectionConfig {
   endpoint: string;
@@ -43,11 +43,7 @@ type Pending = {
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 const MAX_STREAM_VALUES = 10_000;
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
-const REMOTE_TAGS = new Set([
-  'EnvironmentAuthorizationError', 'OrchestrationV2DispatchCommandError',
-  'OrchestrationV2GetThreadProjectionError', 'OrchestrationV2GetShellSnapshotError',
-  'OrchestrationV2ThreadLaunchError', 'ProjectMutationError',
-]);
+const REMOTE_TAGS = new Set(SAFE_REMOTE_TAGS);
 const safeTag = (value: unknown): string | undefined => typeof value === 'string' && REMOTE_TAGS.has(value) ? value : undefined;
 const COMMANDS = new Set([
   'thread.create', 'thread.stop', 'thread.archive', 'message.dispatch', 'project.create',
@@ -75,33 +71,35 @@ function schemaFieldDiagnostic(value: unknown): string | undefined {
   return undefined;
 }
 
-/** The nightly has no authenticated decode-phase tag; remote failure text cannot prove non-delivery. */
+/**
+ * The nightly has no authenticated decode-phase tag; remote failure text cannot prove non-delivery.
+ * Reasons are canonicalized to fixed value-free strings, so no remote text — bearer, identifier,
+ * method, scope or any unquoted secret — survives into diagnostics. The field check alone keeps
+ * the configured bearer out of a retained location name.
+ */
 function remoteFailure(method: string, cause: unknown, command?: string, bearer?: string): Error {
-  // Every reason text passes the bearer redaction before the bounded sanitizer,
-  // whichever branch builds it.
-  const redact = (text: string) => bearer ? text.split(bearer).join('[redacted]') : text;
   if (!Array.isArray(cause) || cause.length !== 1 || !object(cause[0])) return new T3RpcError('remote', method, undefined, 'unknown', { command });
   const reason = cause[0];
   if (reason._tag === 'Die') {
-    if (reason.defect === `Unknown request tag: ${method}`) return new T3RpcError('unsupported_method', method, undefined, 'unknown', { command, reason: redact(String(reason.defect)) });
+    if (reason.defect === `Unknown request tag: ${method}`) return new T3RpcError('unsupported_method', method, undefined, 'unknown', { command, reason: 'Unknown request tag' });
     const field = schemaFieldDiagnostic(reason.defect);
     return new T3RpcError('remote', method, undefined, 'unknown', {
       command,
       field: field && (!bearer || !field.includes(bearer)) ? field : undefined,
-      reason: typeof reason.defect === 'string' ? redact(reason.defect) : undefined,
+      reason: canonicalRemoteDefect(reason.defect),
     });
   }
   const tag = reason._tag === 'Fail' && object(reason.error) ? safeTag(reason.error._tag) : undefined;
   const message = reason._tag === 'Fail' && object(reason.error) && typeof reason.error.message === 'string' && reason.error.message.length <= 512
     ? reason.error.message : undefined;
   const reportedCommand = tag === 'OrchestrationV2DispatchCommandError' && object(reason.error) ? safeCommand(reason.error.commandType) : undefined;
-  // Only the handlers' own fixed wire messages may ride the reason beside the
+  // Only the handlers' own fixed wire messages may be canonicalized beside the
   // tag; arbitrary text — including any unquoted secret it carries — retains
   // the tag alone.
-  const retainedMessage = message !== undefined && retainableRemoteMessage(message) ? redact(message) : undefined;
+  const canonicalMessage = message !== undefined ? canonicalRemoteMessage(message) : undefined;
   return new T3RpcError('remote', method, tag, 'unknown', {
     command: reportedCommand ?? command,
-    reason: tag ? [tag, retainedMessage].filter(Boolean).join(': ') : undefined,
+    reason: tag ? [tag, canonicalMessage].filter(Boolean).join(': ') : undefined,
   });
 }
 
