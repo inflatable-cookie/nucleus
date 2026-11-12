@@ -1,0 +1,1 @@
+Recording a budget pause no longer moves a task's version, so an owner's control sent at the version it read is no longer refused as stale because a background pass saw the hold. A restart of a pre-PR task with released worker history replays validation on its retained workspace, as the restart shape already promised.

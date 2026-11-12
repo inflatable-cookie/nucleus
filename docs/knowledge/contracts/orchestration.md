@@ -2348,8 +2348,10 @@ movement invalidates source approval and preserves the normal readiness gates.
 - An escalation is answered by the owner's next verb; when nothing else
   applies, an owner `restart` answers it with its `reason`. A coordinator's
   restart never does.
-- `restart` replays validation for a settled pre-dispatch task with only
-  released recovery history. A parked restart's refusal is definite at
+- `restart` replays validation for a settled pre-dispatch task: no unreleased run,
+  live worker, worker intent, or PR. Released run history of any role does not block
+  it, and validation retry applies the same rule the restart shape uses (nucleus#1147,
+  #1163). A parked restart's refusal is definite at
   read-only verification; uncertain delivery still fences the control
   ([Spec 012](../specs/012-durable-asynchronous-operations.md)).
 - A `restart`, `route` or `move` whose launch is fenced or deferred names the

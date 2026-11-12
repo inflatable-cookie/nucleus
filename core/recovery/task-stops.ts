@@ -108,8 +108,9 @@ export class TaskStops {
       ? `${held}; the wall-time budget stops until the task can make progress again`
       : `the task can make progress again; ${Math.round(next.pausedMs / 60_000)} minutes of wall time stayed off its budget`;
     return this.store.transaction(() => {
-      const updated = this.store.update(current.id, { resolution: { ...current.resolution, budgetClock: next } },
-        opening ? 'budget_clock_paused' : 'budget_clock_resumed', detail);
+      // A Queue-owned record: it spends no task version (Store.setBudgetClock).
+      const updated = this.store.setBudgetClock(current.id, next);
+      this.store.event(current.id, opening ? 'budget_clock_paused' : 'budget_clock_resumed', detail);
       if (closingOutage) this.store.event(current.id, 'observation_resumed', `the task quantum returned after ${outage}; its lane moves again`);
       return updated;
     });

@@ -327,7 +327,7 @@ test('operator retry settles an escalated dispatch and reuses the recorded works
 });
 
 test('retained-workspace retry preserves the hold on proof failure, identity drift, or concurrent edits', async () => {
-  for (const mode of ['dirty', 'directory', 'absent', 'race', 'worker-run'] as const) {
+  for (const mode of ['dirty', 'directory', 'absent', 'race'] as const) {
     const f = fixture([{ id: 'retained', directory: '/worktree' }]);
     try {
       const task = f.uncertain({ workspaceId: 'retained', directory: '/worktree', held: true });
@@ -335,7 +335,6 @@ test('retained-workspace retry preserves the hold on proof failure, identity dri
       if (mode === 'directory') f.setWorkspaces([{ id: 'retained', directory: '/other' }]);
       if (mode === 'absent') f.setWorkspaces([]);
       if (mode === 'race') f.adapter.verifyWorkspace = async t => { f.store.update(t.id, { reason: 'concurrent edit' }); return t.branch; };
-      if (mode === 'worker-run') f.store.putRun({ id: 'old-worker', taskId: task.id, role: 'worker', released: true } as never);
       await assert.rejects(() => f.engine.performTaskControl({ taskId: task.id, version: task.version, action:'restart',reason:'Replay the pre-dispatch validation' }),
         /not clean|does not uniquely match|not visible|changed during|needs a restart/);
       assert.equal(f.store.task(task.id).phase, 'needs_attention', mode);
@@ -343,6 +342,22 @@ test('retained-workspace retry preserves the hold on proof failure, identity dri
       assert.equal(f.calls.agents, 0);
     } finally { await f.close(); }
   }
+});
+
+test('a released worker run from an earlier owner move does not block the retained-workspace replay (nucleus#1147)', async () => {
+  // 1147 returns a task with no live worker and no PR to dispatch, whatever released
+  // history it carries. Validation retry applies the same rule, so the replay verifies
+  // the retained workspace and queues it without creating one.
+  const f = fixture([{ id: 'retained', directory: '/worktree' }]);
+  try {
+    const task = f.uncertain({ workspaceId: 'retained', directory: '/worktree', held: true });
+    f.store.putRun({ id: 'old-worker', taskId: task.id, role: 'worker', released: true } as never);
+    const replayed = await f.engine.performTaskControl({ taskId: task.id, version: task.version, action: 'restart', reason: 'Replay the pre-dispatch validation' });
+    assert.equal(replayed.phase, 'queued');
+    assert.equal(replayed.workspaceId, 'retained');
+    assert.equal(f.calls.workspaces, 0, 'the retained workspace is reused, not created');
+    assert.equal(f.store.runs(task.id).find(run => run.id === 'old-worker')?.released, true, 'the released run stays history');
+  } finally { await f.close(); }
 });
 
 test('retained-workspace restart applies while paused; nothing is created until unpause (round 4)', async () => {
