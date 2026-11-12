@@ -416,7 +416,10 @@ expiry is not evidence that the original answer was never delivered.
 A task's worker thread is its history: at closeout it is archived
 (`thread.archive`) exactly as on Paseo. A task's support threads — reviewer,
 recovery coordinator, decider and proof executor — are removed instead
-(`thread.delete`, nucleus#1155). T3 has no plugin surface, so an archived support
+(`thread.delete`, nucleus#1155), for a merged task, a completed proof task and a
+completed cancellation alike. A decider is not a run, so its owned identity is
+recorded on the task (`decider_thread_owned`) when the decision ladder creates it
+and the terminal lane removes it like any other support thread. T3 has no plugin surface, so an archived support
 thread stays a row in the operator's sidebar, and a support thread that a later
 review round, recovery episode or proof head needs had to be reopened as a new
 one. Tom's ruling: "keep them settled until the task is done, then archive the
@@ -424,12 +427,17 @@ worker thread and delete the reviewer and recovery threads."
 
 While the task is open nothing is archived. A released support thread is settled
 (`thread.settle`, above) and the task keeps its binding to that thread, so the
-next round continues the same identity: the follow-up's own `thread.unsettle`
-makes it active again. A new thread is opened only when the host reports the old
-one archived or gone, or when the role's selection changed its profile; a thread
-replaced that way is removed at closeout like the rest. A deliberately replaced
-reviewer is still archived at replacement, because that archive is the proof that
-the displaced reader can never take another turn.
+next round or recovery attempt continues the same identity: the follow-up's own
+`thread.unsettle` wakes it. A new thread is opened only when the host reports the
+old one archived or gone, or when the role's recorded route names a different
+profile — a different model needs a new thread; a thread displaced that way is
+removed at closeout like the rest.
+
+A deliberately replaced reviewer is never archived while the task is open: the
+fence that lets the run be released is a stopped turn observed idle, with its
+credential revoked, and the displaced thread is removed at closeout. Its
+`replacedAt` record still lets a late checkpoint or verdict at the current head
+count as the rules say.
 
 Removal is the nightly's `thread.delete` command, `{type, commandId, threadId}`.
 `onlyIfUnused` is never sent: with it the nightly answers success without

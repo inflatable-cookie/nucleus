@@ -522,55 +522,115 @@ test('the worker thread is watched and messaged on the task host, never the defa
   } finally { await f.close(); }
 });
 
-test('a released recovery thread on T3 stays settled, not archived, and a second fault continues the same thread (#1155)', async t => {
+
+/**
+ * One real fault: a follow-up into the worker thread whose T3 send is cut before
+ * its reply. The send is unknown delivery, the run looks stalled, and the task
+ * raises the worker incident the ordinary recovery route answers.
+ */
+async function workerFault(f: Fixture, taskId: string, summary: string): Promise<void> {
+  const task = f.runtime.store.task(taskId);
+  const thread = f.server.threads.get(task.agentId!)!;
+  // The worker is mid-turn, so the follow-up is delivered now rather than queued.
+  thread.runs = [{ id: `fault-turn-${randomUUID()}`, status: 'running', startedAt: STAMP }];
+  await f.runtime.engine.resolution.agentMessage({ eventId: randomUUID(), participantId: f.ticket.participantId,
+    to: { task: taskId, role: 'worker' }, text: summary }, f.ticket.token).catch(() => undefined);
+  // The delivery pass runs with the transport cut: the send is never answered.
+  f.server.controls.disconnectMutation = true;
+  try { await f.runtime.engine.wakeTask(taskId).catch(() => undefined); }
+  finally {
+    f.server.controls.disconnectMutation = false;
+    thread.runs = completedWorkerRun();
+    await f.host.connect().catch(() => undefined);
+  }
+}
+
+const launchesFor = (f: Fixture, threadId: string) =>
+  f.server.commands.filter(command => command.method === 'orchestration.launchThread' && command.threadId === threadId).length;
+const dispatchedInto = (f: Fixture, threadId: string) =>
+  f.server.commands.filter(command => command.type === 'message.dispatch' && command.threadId === threadId).length;
+
+/** The coordinator's attempt ended without a decision; the sweep owns the next one. */
+function endCoordinatorAttempt(f: Fixture, taskId: string, threadId: string): void {
+  const run = f.runtime.store.runs(taskId).findLast(item => item.role === 'recovery' && !item.released)!;
+  f.runtime.store.putRun({ ...run, released: true, status: 'superseded' });
+  f.server.threads.get(threadId)!.runs = [{ id: `attempt-${run.id}`, status: 'completed', startedAt: STAMP }];
+}
+
+/** Wait for the ordinary recovery route to dispatch another coordinator attempt. */
+async function nextCoordinatorAttempt(f: Fixture, taskId: string, ready: () => boolean): Promise<void> {
+  for (let pass = 0; pass < 40 && !ready(); pass++) await f.runtime.engine.wakeTask(taskId).catch(() => undefined);
+  assert.ok(ready(), `another coordinator attempt after 40 passes (${f.runtime.store.task(taskId).reason})`);
+}
+
+test('a second fault continues the retained T3 recovery coordinator instead of opening a new thread (#1155)', async t => {
   const f = await fixture(t);
   try {
     const { taskId, workerThreadId } = await taskWithWorker(f);
-    const task = f.runtime.store.task(taskId);
-    const workerProfile = task.profile!;
 
-    // The recovery thread Nucleus created for the first fault, on the real adapter.
-    const created = await f.host.createAgent({
-      workspaceId: task.workspaceId!, profile: workerProfile, title: `nucleus#${taskId} · recovery`,
-      mcpBindingPath: null,
-      attempt: () => ({ requestId: 'lifecycle-recovery-intent', prompt: 'Recover the fault', environment: {},
-        labels: { 'nucleus.task': taskId, role: 'recovery' } }),
-    });
-    const recoveryThreadId = created.id;
-    f.server.threads.get(recoveryThreadId)!.runs = [{ id: 'recovery-run-1', status: 'completed', startedAt: STAMP }];
-    const recoveryRun: Run = { id: 'recovery-run-1-record', taskId, role: 'recovery', generation: task.coordinatorGeneration,
-      head: task.planningCommit, base: task.planningCommit, workspaceId: task.workspaceId!, agentId: recoveryThreadId,
-      profile: null, status: 'finished', createdAt: new Date().toISOString(), lastObservedAt: null, active: false,
-      idleSince: null, released: true, hostId: t3Host,
-      completion: { taskId, runId: 'recovery-run-1-record', eventId: 'recovery-event', status: 'recovered', summary: 'Recovered', head: task.planningCommit } };
-    f.runtime.store.putRun(recoveryRun);
-    f.runtime.store.update(taskId, { coordinatorAgentId: recoveryThreadId,
-      resolution: { ...f.runtime.store.task(taskId).resolution, recoveryActive: false, recoveryAttempts: 1,
-        recovery: { id: 'episode-1', key: 'fault', generation: task.coordinatorGeneration, runId: recoveryRun.id,
-          agentId: recoveryThreadId, status: 'resolved', summary: 'Recovered', idleSince: null, incidentId: null } } });
+    // A real host fault: the ordinary recovery route launches a coordinator on T3.
+    await workerFault(f, taskId, 'The worker could not take the follow-up');
+    await driveUntil(f, () => Boolean(f.runtime.store.task(taskId).coordinatorAgentId), 'recovery coordinator dispatched', taskId);
+    const coordinatorThreadId = f.runtime.store.task(taskId).coordinatorAgentId!;
+    assert.notEqual(coordinatorThreadId, workerThreadId);
+    assert.equal(launchesFor(f, coordinatorThreadId), 1, 'the coordinator opened one thread');
+    const firstAttempt = f.runtime.store.runs(taskId).findLast(run => run.role === 'recovery')!;
+    assert.equal(firstAttempt.agentId, coordinatorThreadId);
 
-    // The report is accepted and settled (the T3 report path), and the episode ends.
-    await (f.t3 as unknown as { settleReportedThread(agentId: string, runId: string): Promise<void> })
-      .settleReportedThread(recoveryThreadId, 'recovery-run-1');
-    assert.equal(f.server.threads.get(recoveryThreadId)!.thread.settledOverride, 'settled');
+    // The attempt ends without a decision; the fault still holds, so the sweep
+    // routes the next attempt through the same retained thread.
+    endCoordinatorAttempt(f, taskId, coordinatorThreadId);
+    await nextCoordinatorAttempt(f, taskId, () => dispatchedInto(f, coordinatorThreadId) > 0);
+    assert.equal(launchesFor(f, coordinatorThreadId), 1, 'no second coordinator thread is opened');
+    assert.equal(f.runtime.store.task(taskId).coordinatorAgentId, coordinatorThreadId, 'the binding is retained');
+    const attempts = f.runtime.store.runs(taskId).filter(run => run.role === 'recovery');
+    assert.ok(attempts.length >= 2, 'a second recovery attempt was recorded');
+    assert.deepEqual(new Set(attempts.map(run => run.agentId)), new Set([coordinatorThreadId]),
+      'every attempt used the one retained coordinator thread');
+
+    // Nothing archived while the task is open, and the thread is settled.
     await archiveFinishedThreads(f.runtime.store, f.t3, taskId);
+    assert.equal(f.server.commands.some(command => command.type === 'thread.archive' && command.threadId === coordinatorThreadId), false);
+    assert.equal(f.server.commands.some(command => command.type === 'thread.delete' && command.threadId === coordinatorThreadId), false);
+  } finally { await f.close(); }
+});
 
-    assert.equal(f.server.commands.some(command => command.type === 'thread.archive' && command.threadId === recoveryThreadId), false,
-      'the released recovery thread is not archived while the task is open');
-    assert.equal(f.server.commands.some(command => command.type === 'thread.delete' && command.threadId === recoveryThreadId), false,
-      'and it is not removed before closeout');
-    assert.equal(f.runtime.store.task(taskId).coordinatorAgentId, recoveryThreadId, 'the task keeps its retained recovery thread');
-    assert.equal(f.server.threads.get(workerThreadId)!.thread.archivedAt, null, 'nothing is archived while the task is open');
+test('a removed coordinator thread and a routed coordinator profile each open a fresh T3 thread (#1155)', async t => {
+  const f = await fixture(t);
+  try {
+    const { taskId } = await taskWithWorker(f);
+    await workerFault(f, taskId, 'The worker could not take the follow-up');
+    await driveUntil(f, () => Boolean(f.runtime.store.task(taskId).coordinatorAgentId), 'recovery coordinator dispatched', taskId);
+    const removed = f.runtime.store.task(taskId).coordinatorAgentId!;
+    const firstProfile = f.runtime.store.runs(taskId).findLast(run => run.role === 'recovery' && run.agentId === removed)?.profile?.id;
 
-    // A second fault continues the retained thread: it unsettles and dispatches
-    // into the same identity, and never opens another one.
-    const launches = f.server.commands.filter(command => command.method === 'orchestration.launchThread').length;
-    await f.host.sendMessage(recoveryThreadId, { text: 'A second fault needs recovery', messageId: 'second-fault-message' });
-    assert.ok(f.server.commands.some(command => command.type === 'thread.unsettle' && command.threadId === recoveryThreadId),
-      'the settled recovery thread is explicitly unsettled before its next turn');
-    assert.ok(f.server.commands.some(command => command.type === 'message.dispatch' && command.threadId === recoveryThreadId
-      && command.text === 'A second fault needs recovery'), 'the follow-up lands in the same thread');
-    assert.equal(f.server.commands.filter(command => command.method === 'orchestration.launchThread').length, launches,
-      'no new recovery thread is opened');
+    // The retained thread was removed (by hand or by a host change): the next
+    // attempt selects a fresh coordinator instead of waiting for it.
+    endCoordinatorAttempt(f, taskId, removed);
+    f.server.threads.get(removed)!.thread.deletedAt = STAMP;
+    await nextCoordinatorAttempt(f, taskId, () => {
+      const bound = f.runtime.store.task(taskId).coordinatorAgentId;
+      return Boolean(bound && bound !== removed);
+    });
+    const replacement = f.runtime.store.task(taskId).coordinatorAgentId!;
+    assert.equal(launchesFor(f, replacement), 1, 'the replacement opened its own thread');
+
+    // A recorded coordinator route that names another profile needs a new thread.
+    endCoordinatorAttempt(f, taskId, replacement);
+    // The recorded route names a profile other than the retained thread's own.
+    const routed = firstProfile === 'sol-grind' ? 'luna-review' : 'sol-grind';
+    const current = f.runtime.store.task(taskId);
+    f.runtime.store.update(taskId, { resolution: { ...current.resolution, recovery: null, recoveryActive: false },
+      profileRequests: { ...current.profileRequests, coordinator: { profileId: routed, reason: 'Route the coordinator to the review profile',
+        required: true, ownerRoute: true, signoff: { status: 'approved', decisionId: null, by: 'operator (board)',
+          at: new Date().toISOString(), note: '' } } } }, 'fixture_coordinator_route');
+    await nextCoordinatorAttempt(f, taskId, () => {
+      const bound = f.runtime.store.task(taskId).coordinatorAgentId;
+      return Boolean(bound && bound !== replacement);
+    });
+    const routedThread = f.runtime.store.task(taskId).coordinatorAgentId!;
+    const routedRun = f.runtime.store.runs(taskId).findLast(run => run.role === 'recovery' && run.agentId === routedThread)!;
+    assert.equal(routedRun.profile?.id, routed, `the recorded route selected its profile (the first was ${firstProfile})`);
+    assert.equal(launchesFor(f, routedThread), 1);
   } finally { await f.close(); }
 });

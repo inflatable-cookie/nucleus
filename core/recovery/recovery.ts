@@ -18,7 +18,7 @@ import {collectOwnerVerbFacts,ownerVerb,ownerVerbViews,restartShape} from '../ve
 import {COORDINATOR_LOOP_LIMIT,COORDINATOR_LOOP_SUMMARY,taskWorkIdentity,unproductiveCoordinatorRuns} from './recovery-bound';
 import {recoveryDispatchSnapshot, type RecoveryDispatchSnapshot} from './recovery-context';
 import type {ResolutionChanges} from './task-stops';
-import {frontierAllowed,groupIsUnavailable,withinUsage} from '../../shared/pool';
+import {frontierAllowed,groupIsUnavailable,supersedingRouteProfile,withinUsage} from '../../shared/pool';
 import {missingOriginHasPlanner} from '../questions/origin';
 import {RECOVERY_ESCALATION_FAILURE_PREFIX} from './task-reasons';
 export const RECOVERY_STOPPED_WITHOUT_RESULT = 'The recovery coordinator stopped without a result. Inspect its thread; the plugin has not repeated its prompt.';
@@ -746,9 +746,22 @@ export class Recovery {
    if(ownedRuns.length){this.wait(t,`Recovery coordinator is busy with unreleased run ${ownedRuns[0]!.id}`, 'route_unavailable');return null;}
    const state=await this.resolution.onTaskHost(t, () => this.resolution.host.observe(agentId!));
    if(state.active||state.permissions){this.wait(t,`Recovery coordinator is busy (${state.status})`, 'route_unavailable');return null;}
+    // A recorded coordinator route that names another profile, and a thread the
+    // host reports removed or archived, both need a new thread: a different model
+    // cannot continue this one, and a removed or archived one can never take
+    // another turn (nucleus#1155). The displaced thread is kept and removed at
+    // closeout, never archived here.
+    const request=t.profileRequests?.coordinator;
+    const recordedRoute=request?.ownerRoute===true ? request.profileId
+      : supersedingRouteProfile(request, profile?.id, this.store.pool(), this.store.usageLevel());
+    const superseded=Boolean(recordedRoute && (!profile || profile.id!==recordedRoute))||state.status==='gone'||state.status==='closed';
+    if(superseded){agentId=null;profile=null;group=null;workspaceId=t.workspaceId;}
+    else {
     if(state.status!=='idle'){this.wait(t,`The assigned recovery coordinator is not resumable (${state.status}); waiting for an available coordinator`, 'operator_needed');return null;}
     workspaceId=state.workspaceId!;
-   }else{
+    }
+   }
+   if(!agentId){
     const selection=this.resolution.select(t,'coordinator');if(!selection){this.wait(t,`No coordinator profile is available for recovery${this.resolution.requiredRouteNote(t,'coordinator')||this.resolution.usageCeilingNote(t,'coordinator')}. ${cause(t,this.store.runs(t.id))}`, 'route_unavailable');return null;}
     profile=selection.profile;group=selection.entry.group;
    }

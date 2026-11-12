@@ -136,6 +136,6 @@ export async function delegateQuestion<T>(resolution: Resolution, task: Task, in
     input.onMiss(`decider ${decided.agentId} gave no usable answer`);
     return null;
   } finally {
-    if (!input.retainDecider || !current() || !usable) await retireDeciderThread(resolution.host, resolution.adapter, decided.agentId);
+    if (!input.retainDecider || !current() || !usable) await retireDeciderThread(resolution.store, resolution.host, resolution.adapter, task, decided.agentId);
   }
 }

@@ -556,12 +556,12 @@ export class Ladder {
     }
     if (plannerEscalations(events() as LadderEvent[]).find(item => item.id === id)?.answered) return;
     if (!reply || !who) {
-      if (who?.startsWith('decider ')) await retireDeciderThread(this.resolution.host, this.resolution.adapter, who.slice(8));
+      if (who?.startsWith('decider ')) await retireDeciderThread(this.store, this.resolution.host, this.resolution.adapter, this.store.task(t.id), who.slice(8));
       this.store.event(t.id, 'planner_escalation_missed', `${id}: no delegated answer was produced; the escalation stays open for the planner`);
       return;
     }
     if (reply.kind === 'operator') {
-      if (who.startsWith('decider ')) await retireDeciderThread(this.resolution.host, this.resolution.adapter, who.slice(8));
+      if (who.startsWith('decider ')) await retireDeciderThread(this.store, this.resolution.host, this.resolution.adapter, this.store.task(t.id), who.slice(8));
       this.resolution.classifyEscalationToOperator(this.store.task(t.id), id, reply.reason, who);
       return;
     }
@@ -589,7 +589,7 @@ export class Ladder {
         this.store.event(t.id, 'planner_escalation_unknown', `${id}: refusal follow-up delivery: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));
       }
     }
-    if (who.startsWith('decider ')) await retireDeciderThread(this.resolution.host, this.resolution.adapter, who.slice(8));
+    if (who.startsWith('decider ')) await retireDeciderThread(this.store, this.resolution.host, this.resolution.adapter, this.store.task(t.id), who.slice(8));
   }
   /** A planner or decider that explicitly says it cannot decide reaches the operator: one Spec 032 decision. */
   classifyEscalationToOperator(t: Task, id: string, reason: string, who: string): void {

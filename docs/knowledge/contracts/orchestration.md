@@ -1802,12 +1802,16 @@ reports, grants or spends that history.
   valid one and a refused one (binding unprovable). A refused reader is never
   read as absent or displaced; the move refuses and names the deliberate
   replacement, `restart role=reviewer fresh` or `route role=reviewer now`.
-- A fresh reviewer restart or a reviewer route that replaces the reader archives
-  the replaced agent through its host before releasing the run. Saved checkpoints
+- A fresh reviewer restart or a reviewer route that replaces the reader fences the
+  replaced agent through its host before releasing the run. Saved checkpoints
   remain history and no longer pin ownership. A stop awaiting inactivity records a
   ready archive so observation can finish the replacement. An uncertain archive
   retains ownership until observation confirms the agent is archived or absent; it
-  is never blindly resent.
+  is never blindly resent. On a host that can remove a thread the fence is a
+  stopped turn observed idle, with the run released and its credential revoked, and
+  the displaced thread is removed at closeout with the rest of the support set
+  instead of being archived while the task is open (T3 adapter spec, [thread
+  lifecycle](../specs/t3code-host-adapter.md#thread-lifecycle)).
 - Other replacement paths allow a working reviewer to finish (Tom, 2026-10-19; planner ruling
   2026-11-09 "replaced is not released"): replacing a reviewer marks its run
   replaced (`replacedAt`) without releasing it or revoking its credential; its
@@ -2461,10 +2465,16 @@ movement invalidates source approval and preserves the normal readiness gates.
 - Exhausting the semantic budget, broader scope or an authority conflict
   escalates for coordinator judgment. A successful operator resume closes the
   prior incident and episode.
-- Recovery coordinators stay bound across attempts for one issue. On a host that
-  cannot remove a thread the one retained coordinator thread is archived after
-  the episode retires or the escalation is answered; on a host that can, it stays
-  settled, bound, and is removed at closeout.
+- Recovery coordinators stay bound across attempts for one issue, and the next
+  attempt is dispatched into the retained thread. A fresh coordinator is selected
+  only when the host reports the retained thread removed or archived, or when a
+  recorded coordinator route (`ownerRoute`, or a required request the operator
+  honoured) names a different profile than the bound one: a different model needs a
+  new thread. The displaced thread is kept and removed at closeout, never archived
+  while the task is open. On a host that cannot remove a thread the retained
+  coordinator thread is archived after the episode retires or the escalation is
+  answered; on a host that can, it stays settled, bound, and is removed at
+  closeout.
 - While two faults are open on one run, the first reason stays on the task and
   the later one is recorded as an event.
 
@@ -2586,16 +2596,20 @@ movement invalidates source approval and preserves the normal readiness gates.
   requires the same identity and workspace, idle or closed state, no active
   turn, permission or live owned tools, and at most three durable retries.
 
-- A done task's threads are cleaned up before its workspace: the worker threads
-  are archived and, on a host that can remove a thread, every support thread
-  (reviewer, recovery coordinator, decider, executor) of the task is removed
+- A task that has ended cleans up its threads before its workspace: a merged task,
+  a completed proof task and a completed cancellation alike (nucleus#1155 review).
+  The worker threads are archived and, on a host that can remove a thread, every
+  support thread (reviewer, recovery coordinator, decider, executor) of the task is
+  removed
   (`thread.delete`, Tom 2026-11-12; nucleus#1155). Removal loses nothing durable —
   those runs are released and their verdicts, reports and decisions are already
   in Nucleus's records and on the PR — and a removed thread is terminal
   everywhere a thread's liveness is decided, so it never holds the workspace
   archive. A removal whose reply is lost is checked against the thread's own
   archived, deleted or absent state before any resend, is retried on the sweep,
-  and never blocks closeout.
+  and never blocks closeout. A decider is not a run, so its owned identity is
+  recorded on the task when the decision ladder creates it, and it too is removed
+  at closeout rather than while the task is open.
 - A host that cannot remove a thread (Paseo) keeps its existing behaviour: a
   released support thread archives at once, and closeout archives every thread.
 - A done task's workspace is archived with every thread in it (Tom, 2026-09-27);

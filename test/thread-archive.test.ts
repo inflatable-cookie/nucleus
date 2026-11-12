@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Store, qualifiedThreadArchiveEffectKey } from '../core/store/store';
-import { archiveFinishedThreads } from '../core/workspaces/thread-archive';
+import { archiveFinishedThreads, archiveReplacedReviewer, deciderThreadOwners, retireDeciderThread } from '../core/workspaces/thread-archive';
+import { dispositionSchema } from '../shared/contracts';
 import { profileSchema, submissionSchema, type Run } from '../shared/contracts';
 import type { Adapter } from '../core/host';
 
@@ -17,7 +18,8 @@ function fixture() {
   const initial = store.insert(submissionSchema.parse({ submissionId: randomUUID(), title: 'Task', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'handoff.md', originAgentId: 'origin' }), 'host', 'handoff', 'a'.repeat(40));
   const task = store.update(initial.id, { phase: 'verifying', agentId: 'worker', workspaceId: 'workspace', coordinatorAgentId: 'coordinator' });
   const archived = new Set<string>(), deleted = new Set<string>(), calls: string[] = [];
-  const deletes: { id: string; options?: { resendUnknownAfterRead?: boolean } }[] = [];
+  type DeleteCall = { id: string; options?: { resendUnknownAfterRead?: boolean } };
+  const deletes: DeleteCall[] = [];
   const adapter = {
     originAgent: async (id: string) => ({ id, workspaceId: 'workspace', title: '', archived: archived.has(id), deleted: deleted.has(id) }),
     archiveAgent: async (id: string) => { calls.push(id); archived.add(id); },
@@ -300,7 +302,7 @@ test('a task whose host can remove threads keeps its released support threads se
     await archiveFinishedThreads(f.store, f.t3Adapter, f.task.id);
 
     assert.deepEqual(f.calls, [], 'nothing is archived while the task is open');
-    assert.deepEqual(f.deletes, [], 'nothing is removed while the task is open');
+    assert.equal(f.deletes.length, 0, 'nothing is removed while the task is open');
     const after = f.store.task(f.task.id);
     assert.equal(after.resolution.reviewerAgentId, 'reviewer-1', 'the retained reviewer binding stays, so the next round continues the same thread');
     assert.equal(after.coordinatorAgentId, 'coordinator', 'the retained recovery binding stays, so a second fault continues the same thread');
@@ -394,11 +396,107 @@ test('a Paseo-bound task keeps today\'s thread handling: released support thread
     // The adapter has no deleteAgent, so nothing changes for a host that cannot remove a thread.
     await archiveFinishedThreads(f.store, f.adapter, f.task.id);
     assert.deepEqual(f.calls, ['reviewer-1']);
-    assert.deepEqual(f.deletes, []);
+    assert.equal(f.deletes.length, 0);
 
     f.store.update(f.task.id, { phase: 'done', resolution: { ...f.store.task(f.task.id).resolution, mergedCommit: 'c'.repeat(40) } });
     await archiveFinishedThreads(f.store, f.adapter, f.task.id);
     assert.deepEqual([...f.calls].sort(), ['reviewer-1', 'worker']);
-    assert.deepEqual(f.deletes, [], 'a host without removal never deletes');
+    assert.equal(f.deletes.length, 0, 'a host without removal never deletes');
+  } finally { f.close(); }
+});
+
+test('a replaced reviewer is fenced by a stopped idle thread, never an archive, while a removable host keeps its task open (#1155 review)', async () => {
+  const f = fixture(); try {
+    ownedAndIdle(f);
+    const seeded = f.run('reviewer', 'reviewer-1');
+    // A displaced reader: no verdict, its turn already stopped by the verb.
+    f.store.putRun({ ...seeded, released: false, status: 'running', completion: null });
+    const reviewer = f.store.run(seeded.id)!;
+
+    assert.equal(await archiveReplacedReviewer(f.store, f.t3Adapter, reviewer), true,
+      'the stopped, idle thread is the fence');
+    assert.deepEqual(f.calls, [], 'nothing is archived while the task is open');
+    assert.equal(f.deletes.length, 0, 'nothing is removed while the task is open');
+    assert.equal(f.store.getMeta(qualifiedThreadArchiveEffectKey('host', 'reviewer-1')), undefined,
+      'a removable host records no archive effect for the replacement');
+
+    // A live turn is never fenced by observation alone.
+    Object.assign(f.t3Adapter, { observe: async (id: string) => ({ id, workspaceId: 'workspace', error: '',
+      labels: { 'nucleus.task': f.task.id }, status: 'running', active: true, permissions: false }) });
+    assert.equal(await archiveReplacedReviewer(f.store, f.t3Adapter, reviewer), false);
+    assert.deepEqual(f.calls, []);
+
+    // The displacement releases the run (the verb's own next step) and the
+    // displaced thread is removed at closeout like the rest of the support set.
+    f.store.putRun({ ...f.store.run('reviewer-1')!, released: true, status: 'superseded' });
+    ownedAndIdle(f);
+    f.store.update(f.task.id, { phase: 'done', resolution: { ...f.store.task(f.task.id).resolution, mergedCommit: 'c'.repeat(40) } });
+    await archiveFinishedThreads(f.store, f.t3Adapter, f.task.id);
+    assert.deepEqual(f.deletes.map(item => item.id), ['reviewer-1']);
+    assert.deepEqual(f.calls, ['worker']);
+  } finally { f.close(); }
+});
+
+test('a completed cancellation cleans up its threads like a merge: the worker archived and its support threads removed (#1155 review)', async () => {
+  const f = fixture(); try {
+    ownedAndIdle(f);
+    const reviewer = f.run('reviewer', 'reviewer-1'); f.store.putRun(reviewer);
+    const recovery = f.run('recovery', 'coordinator'); f.store.putRun(recovery);
+    f.store.update(f.task.id, { phase: 'cancelled', disposition: dispositionSchema.parse({ kind: 'cancel', status: 'complete',
+      requestedAt: new Date().toISOString(), requestedBy: 'operator (board)', reason: 'Superseded by another priority',
+      workDisposition: 'preserve', completedAt: new Date().toISOString() }),
+      resolution: { ...f.store.task(f.task.id).resolution, recovery: null, recoveryActive: false } });
+
+    await archiveFinishedThreads(f.store, f.t3Adapter, f.task.id);
+
+    assert.deepEqual(f.calls, ['worker'], 'a cancelled task archives its worker thread');
+    assert.deepEqual(f.deletes.map(item => item.id).sort(), ['coordinator', 'reviewer-1'],
+      'and removes every support thread');
+    // Nothing durable is lost and each effect is idempotent.
+    await archiveFinishedThreads(f.store, f.t3Adapter, f.task.id);
+    assert.deepEqual(f.calls, ['worker']);
+    assert.equal(f.deletes.length, 2);
+  } finally { f.close(); }
+});
+
+test('a decider thread is retained while the task is open and removed at closeout, a failed removal retried (#1155 review)', async () => {
+  const f = fixture(); try {
+    ownedAndIdle(f);
+    // A removable host never archives a decider: the ladder records its ownership
+    // and closeout removes it with the rest of the task's support threads.
+    const refusingHost = { archiveAgent: async () => { throw Error('a removable host archives no decider'); } };
+    await retireDeciderThread(f.store, refusingHost, f.t3Adapter, f.task, 'decider-1');
+    assert.deepEqual(f.calls, []);
+    assert.equal(f.deletes.length, 0);
+    assert.deepEqual(deciderThreadOwners(f.store, f.store.task(f.task.id)), ['decider-1']);
+    await retireDeciderThread(f.store, refusingHost, f.t3Adapter, f.task, 'decider-1');
+    assert.equal(f.store.eventsAll(f.task.id).filter(event => event.kind === 'decider_thread_owned').length, 1,
+      'an unchanged ownership record is the same intent');
+
+    await archiveFinishedThreads(f.store, f.t3Adapter, f.task.id);
+    assert.equal(f.deletes.length, 0, 'an open task removes no decider');
+
+    // The decider thread is a task-owned support thread; its first removal fails
+    // on the transport, so the sweep must retry it.
+    Object.assign(f.t3Adapter, { observe: async (id: string) => ({ id, workspaceId: 'workspace', error: '',
+      labels: id === 'decider-1' ? { 'nucleus.decider': f.task.id } : { 'nucleus.task': f.task.id },
+      status: 'idle', active: false, permissions: false }) });
+    f.store.update(f.task.id, { phase: 'done', resolution: { ...f.store.task(f.task.id).resolution, mergedCommit: 'c'.repeat(40) } });
+    const failing = { first: true };
+    const realDelete = f.t3Adapter.deleteAgent!;
+    f.t3Adapter.deleteAgent = async (id, options) => {
+      if (id === 'decider-1' && failing.first) { failing.first = false; throw Error('T3Code transport: connection lost'); }
+      return realDelete.call(f.t3Adapter, id, options);
+    };
+    await archiveFinishedThreads(f.store, f.t3Adapter, f.task.id, async () => null);
+    assert.equal(f.deleted.has('decider-1'), false);
+    assert.equal(f.store.getMeta<{ status: string }>(qualifiedThreadArchiveEffectKey('host', 'decider-1'))?.status, 'uncertain');
+
+    await archiveFinishedThreads(f.store, f.t3Adapter, f.task.id, async () => null);
+    assert.deepEqual(f.deletes.filter(item => item.id === 'decider-1').map(item => item.options),
+      [{ resendUnknownAfterRead: true }], 'the retry is the same command, marked as a proven reissue');
+    assert.equal(f.deleted.has('decider-1'), true);
+    await archiveFinishedThreads(f.store, f.t3Adapter, f.task.id, async () => null);
+    assert.equal(f.deletes.filter(item => item.id === 'decider-1').length, 1, 'nothing is sent after the removal is observed');
   } finally { f.close(); }
 });
