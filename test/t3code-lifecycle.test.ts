@@ -65,7 +65,8 @@ async function driveUntil(f: Fixture, ready: () => boolean, label: string, taskI
     } catch { /* a refused pass is the next pass's work */ }
     await pause(25);
   }
-  assert.ok(ready(), `${label} after ${passes} passes (phase ${f.runtime.store.task(taskId ?? '').phase}: ${f.runtime.store.task(taskId ?? '').reason})`);
+  const task = taskId ? f.runtime.store.task(taskId) : null;
+  assert.ok(ready(), `${label} after ${passes} passes${task ? ` (phase ${task.phase}: ${task.reason})` : ''}`);
 }
 
 const helperReport = (f: Fixture, ticketPath: string, payload: Record<string, unknown>) =>
@@ -116,7 +117,7 @@ async function fixture(t: TestContext): Promise<Fixture> {
     connect: async () => {}, close: async () => {},
     // The live daemon offers these models, so a host-context leak would reach the
     // reviewer's own observe here rather than stopping at its profile catalog.
-    catalog: async () => ({ providers: [{ key: 'synthetic-provider', label: 'Synthetic provider', available: true, problem: '',
+    catalog: async () => ({ providers: [{ key: 'codex', label: 'Synthetic provider', available: true, problem: '',
       models: [{ id: 'synthetic-model', label: 'Synthetic model', aliases: [], thinkingOptions: [], defaultThinkingOptionId: null, modes: [], features: [] },
         { id: 'synthetic-model-2', label: 'Synthetic model two', aliases: [], thinkingOptions: [], defaultThinkingOptionId: null, modes: [], features: [] }] }] }),
     validate: async (task: { planningCommit: string }) => task.planningCommit,
@@ -155,6 +156,11 @@ async function fixture(t: TestContext): Promise<Fixture> {
   const server = await t3Fake(t, repo);
   const host = createHost({ endpoint: server.endpoint, bearer: 'synthetic-bearer', probeThreadId: 'synthetic-probe',
     statePath: join(dataDir, 'hosts', 't3code.json'), timeoutMs: 5_000 });
+  await host.connect();
+  // Use a canonical provider with the fake Nightly's native model/option shape.
+  // The runtime now validates Nucleus vocabulary before selecting any profile.
+  const config = await host.rpc.call('server.getConfig', {}) as { providers: Array<Record<string, unknown>> };
+  server.controls.providers = config.providers.map(provider => ({ ...provider, instanceId: 'codex', displayName: 'Codex' }));
   await host.connect();
   const t3 = createAdapter(Policy, host, { socketPath, helperPath });
   // The forge is a fixture: the lifecycle proof is about the T3 paths, so the
@@ -195,8 +201,8 @@ async function fixture(t: TestContext): Promise<Fixture> {
   // The worker profile carries the trial's thinking level; the independent
   // reviewer's model lists no option descriptors at all.
   runtime.store.setProfiles([
-    { id: 'sol-grind', name: 'Sol grind', provider: 'synthetic-provider', model: 'synthetic-model', thinkingOptionId: 'high', notes: '' },
-    { id: 'luna-review', name: 'Luna review', provider: 'synthetic-provider', model: 'synthetic-model-2', notes: '' },
+    { id: 'sol-grind', name: 'Sol grind', provider: 'codex', model: 'synthetic-model', thinkingOptionId: 'high', notes: '' },
+    { id: 'luna-review', name: 'Luna review', provider: 'codex', model: 'synthetic-model-2', notes: '' },
   ]);
   runtime.store.setMeta('pool', [
     { profileId: 'sol-grind', enabled: true, group: 'sol', weight: 2, roles: ['worker' as const], scopes: ['general' as const], capability: 'medium' },
@@ -383,7 +389,7 @@ async function taskWithWorker(f: Fixture): Promise<{ taskId: string; head: strin
   assert.ok('taskId' in result, JSON.stringify(result));
   const taskId = result.taskId;
   await f.runtime.engine.dispatchTask(taskId, false);
-  await driveUntil(f, () => Boolean(f.runtime.store.task(taskId).agentId), 'worker dispatched');
+  await driveUntil(f, () => Boolean(f.runtime.store.task(taskId).agentId), 'worker dispatched', taskId);
   const task = f.runtime.store.task(taskId);
   const head = (await git(task.directory!, 'rev-parse', 'HEAD')).trim();
   return { taskId, head, workerThreadId: task.agentId!, workerRunId: task.runId! };
@@ -875,7 +881,7 @@ test(`the real sweep retries a deletion proven not sent at ${boundary} and recor
     const task = f.runtime.store.update(initial.id, { phase: 'done',
       resolution: { ...initial.resolution, mergedCommit: head } });
     const workspace = await f.host.createWorkspace({ title: 'Synthetic recovery workspace', requestId: randomUUID(), directory: f.repo, project: { projectId: 'synthetic-project' } });
-    const profile: Profile = { id: 'sol-grind', name: 'Sol grind', provider: 'synthetic-provider', model: 'synthetic-model',
+    const profile: Profile = { id: 'sol-grind', name: 'Sol grind', provider: 'codex', model: 'synthetic-model',
       available: true, problem: '', notes: '', supportedThinking: [] };
     const runId = randomUUID();
     const recovery = await f.host.createAgent({ workspaceId: workspace.id, profile, title: 'Synthetic recovery', mcpBindingPath: null,
