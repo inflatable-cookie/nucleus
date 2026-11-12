@@ -413,10 +413,13 @@ export class T3CodeHost implements Host {
   private numberedThreadTitle(taskNumber: number | null | undefined, role: string | undefined, title: string): string {
     if (!taskNumber) return title;
     const runRole = role && role !== 'worker' ? role : undefined;
-    const rolePrefix = runRole ? `${runRole}: ` : '';
-    const taskTitle = rolePrefix && title.startsWith(rolePrefix) ? title.slice(rolePrefix.length) : title;
     const titleRole = runRole === 'reviewer' ? 'review' : runRole;
-    return capPaseoTitle(`${formatTaskNumber(taskNumber)}${titleRole ? ` ${titleRole}` : ''}: ${taskTitle}`);
+    const numberedPrefix = `${formatTaskNumber(taskNumber)}${titleRole ? ` ${titleRole}` : ''}: `;
+    let taskTitle = title;
+    while (taskTitle.startsWith(numberedPrefix)) taskTitle = taskTitle.slice(numberedPrefix.length);
+    const legacyRolePrefix = runRole ? `${runRole}: ` : '';
+    if (legacyRolePrefix && taskTitle.startsWith(legacyRolePrefix)) taskTitle = taskTitle.slice(legacyRolePrefix.length);
+    return capPaseoTitle(`${numberedPrefix}${taskTitle}`);
   }
   /** The core title projection supplies the same phase-derived title used by Paseo. */
   async setTaskWorkspaceTitle(task: Task, title: string, requestId: string, _uncertain: boolean): Promise<void> {

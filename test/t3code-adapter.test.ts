@@ -93,6 +93,9 @@ test('real stored label keys locate a role-less worker and repair existing suppo
   assert.deepEqual(server.commands.filter(command => command.type === 'thread.metadata.update').map(command => [command.threadId, command.title]), [
     [worker.id, title], [reviewer.id, '225 review: Synthetic role'],
   ]);
+  await host.setTaskWorkspaceTitle(task, title, 'real-label-title', false);
+  assert.equal(server.commands.filter(command => command.type === 'thread.metadata.update').length, 2,
+    'a repeated sync leaves the already-numbered support title unchanged');
 });
 
 test('worker thread titles use the shared task state title once per change', async t => {
