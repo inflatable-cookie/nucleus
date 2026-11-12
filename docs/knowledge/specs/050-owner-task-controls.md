@@ -681,6 +681,18 @@ operation when that effect is no longer pending. A later `move` or `restart`
 settles the stale operation as superseded and records the owner control that
 replaced it. Merge and closeout waits name the blocking operation or participant
 and the reason, so a held integration turn always has an ordinary owner exit.
+
+Only a blocking uncertainty gates a phase (nucleus#1159). An uncertain operation
+whose host effect later evidence has answered — a workspace binding recorded
+after the control was accepted, then a run used in that workspace — is delivered
+with that evidence recorded, so it gates no review or merge and never needs a
+human step. `retry_effect effect=operation.<id>` applies the same observation and
+settles it without force; an operation nothing answers keeps its fence and
+refuses with what is still unknown, never by resending it. A review phase
+blocked on an uncertain effect past its bound (ten minutes, `blockedEffectAttentionMs`)
+is attention, not a quiet wait: its stop names the blocking set, suggests
+`retry_effect`, and the ordinary attention notice reaches the owner. The phase
+itself is kept, so the answer resumes the same review rather than parking it.
 Uncertain delivery observes the same intent. Only a positive present-workspace
 observation permits another guarded call with fresh proofs and the same native
 idempotency identity. Adapter refusals before the final archive boundary stay

@@ -10,6 +10,7 @@ import type { Adapter } from '../../host/adapter';
 import { proofExecutionRecord, recordProofExecution } from '../../qa/proof-execution';
 import { isPromptTooLargeError, redactDiagnostic } from '../../recovery/provider-refusal';
 import { BlockingRecoveryEffectsError, blockingRecoveryEffects, blockingRecoveryEffectsRefusal, recoveryEffectsRefusal } from '../../recovery/recovery-effects';
+import { settleObservedHostEffectOperations } from '../../recovery/effect-gates';
 import { assertReviewEntryWriterYielded, reviewEntryInputForTask, type ReviewEntryAdapter } from '../../review/review-entry';
 import { ABSENT_RESOLUTION_REASON, ProvenPreSendRefusalError, coordinative, message, proofExecutor } from '../../recovery/task-reasons';
 import { isDispositionActive, type Profile, type Run, type Task } from '../../../shared/contracts';
@@ -29,6 +30,11 @@ export class RunLaunchDeliver {
   async deliverLaunchRun(t:Task, role:Run['role'], context:{agentId:string|null;profile:Profile|null;group:string|null;workspaceId:string;firstReviewEntryWorker:boolean;nonDeliveryReplacement:boolean;run:Run;token:string}):Promise<void> {
     let {agentId, profile, group, workspaceId, firstReviewEntryWorker, nonDeliveryReplacement, run, token}=context;
     t = this.store.task(t.id);
+    // Observation before any refusal (nucleus#1159): an uncertain host-effect
+    // control whose effect later evidence has answered is settled here, so this
+    // launch gates only on uncertainty the task has yet to answer. Nothing is
+    // resent; the settlement is the observation's own record.
+    if (settleObservedHostEffectOperations(this.store, t.id).length) t = this.store.task(t.id);
     let dispatchInvoked = false;
     try {
       if (run.ordinaryDetached) {

@@ -605,8 +605,14 @@ const PARSED: ParsedText[] = [
   { site: 'proof hold', reads: ['`Proofs Queue cannot run, left for the planner or operator at ${pr.head}:`', 'proofHold.reason.startsWith(proofHoldPrefix)'],
     writers: ['`Proofs Queue cannot run, left for the planner or operator at ${head}: ${proofs}. Run them through the proof verb or accept the head, then release this merge hold.`'] },
   { site: 'auto-continue fence cleared', reads: ["refused?.detail.includes('unresolved task incident or recovery fence')"], writers: ['An unresolved task incident or recovery fence blocks reviewer continuation'] },
-  { site: 'review recovery wait', reads: ["['Ordinary review', 'Review-entry'].some(label =>", 't.reason === `${label} waits for ${refusal}; settle it with retry_effect before continuing`'],
+  { site: 'review recovery wait', reads: ["['Ordinary review', 'Review-entry'].some(label =>", 't.reason === `${label} waits for ${refusal}; settle it with retry_effect before continuing`',
+      '/^(Ordinary review|Review-entry) waits for .+; settle it with retry_effect before continuing$/'],
     writers: ["`${run.ordinaryDetached?'Ordinary review':'Review-entry'} waits for ${recoveryEffectsRefusal(error.effects)}; settle it with retry_effect before continuing`"] },
+  // Nucleus#1159: the blocked review's attention is one authored sentence; the
+  // stop classification and the reconciler's reader both key on its constant.
+  { site: 'blocked effect attention',
+    reads: ['detail.startsWith(BLOCKED_EFFECT_ATTENTION_PREFIX)', 'stop.detail.startsWith(BLOCKED_EFFECT_ATTENTION_PREFIX)'],
+    writers: ['BLOCKED_EFFECT_ATTENTION_PREFIX = "An uncertain side effect blocks review"', '`${BLOCKED_EFFECT_ATTENTION_PREFIX}: ${recoveryEffectsRefusal(blocked)}'] },
   { site: 'external merge check', reads: ['t.reason.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX) || t.reason === EXTERNAL_MERGE_CHECK_RECOVERED_REASON', 't.reason === ACCEPTED_PR_RECONCILIATION_REASON'] },
   { site: 'revision repair', reads: ["t.reason === 'PR must be open, ready, and match the task\\'s branch and base'"], writers: ['PR must be open, ready, and match the task\'s branch and base'] },
   { site: 'ready report checkout', re: /^(Worker must leave a clean worktree before review|Worker must remain on queue-owned branch )/, sample: 'Worker must remain on queue-owned branch ns-1',

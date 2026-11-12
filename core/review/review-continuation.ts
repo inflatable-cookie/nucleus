@@ -20,6 +20,7 @@ import type { ContinuationFences } from '../verbs/verb-fences';
 import { reviewerRuntimeChanged } from './reviewer-runtime';
 import { matchingInactiveParticipant } from '../intake/run-settlement';
 import { ProvenPreSendRefusalError } from '../recovery/task-reasons';
+import { blockingTaskOperations } from '../recovery/recovery-effects';
 
 export interface ReviewContinuationContext {
   readonly store: Store;
@@ -547,7 +548,7 @@ export function reviewContinuationLocalRefusal(store: Store, task: Task, run: Ru
       task.resolution.projectValidation && task.resolution.projectValidation.state !== 'passed' || task.resolution.pendingRevisionCause === 'continuation' ||
       store.getMeta(`reviewPublication:${run.id}`))
     return refuse('Merge, publication or validation intent blocks reviewer continuation');
-  const unsettledOperations = store.operations({ taskId: task.id, states: ['pending', 'running', 'needs_attention'], limit: 1000 }).filter(item => item.id !== options.operationId);
+  const unsettledOperations = blockingTaskOperations(store, task, { excludeId: options.operationId });
   if (unsettledOperations.length) return refuse('Another unresolved task operation fences reviewer continuation');
   if (store.hookEvents(task.id).some(hook => !['result', 'published'].includes(hook.state) || hook.result?.outcome !== 'ok'))
     return refuse('An unresolved repository effect fences reviewer continuation');

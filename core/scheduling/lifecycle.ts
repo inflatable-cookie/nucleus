@@ -1,5 +1,6 @@
 import { stages, ACCEPTED_PR_RECONCILIATION_REASON } from '../recovery/task-reasons';
 import { blockingRecoveryEffects, recoveryEffectsRefusal } from '../recovery/recovery-effects';
+import { blockedEffectAttentionRecorded } from '../recovery/effect-gates';
 import { proofWaitApplies } from '../qa/proof-execution';
 import { type Task } from '../../shared/contracts';
 import { isDispositionActive } from "../../shared/contracts";
@@ -177,6 +178,10 @@ export class SchedulingLifecycle {
       const refusal = recoveryEffectsRefusal(effects);
       if (refusal && ['Ordinary review', 'Review-entry'].some(label =>
         t.reason === `${label} waits for ${refusal}; settle it with retry_effect before continuing`)) return;
+      // Nucleus#1159: once this blocked phase is the recorded attention, only
+      // later evidence or the owner's observation-first retry changes it;
+      // relaunching would rewrite the wait and hide the attention again.
+      if (refusal && blockedEffectAttentionRecorded(t)) return;
       await this.context.launch(t, 'reviewer');
     }
     else if (t.phase === 'changes_requested') {
