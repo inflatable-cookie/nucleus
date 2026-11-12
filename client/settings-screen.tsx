@@ -19,6 +19,7 @@ import { DispatchLimits } from "./limits";
 import { ProjectsSection } from "./projects-settings";
 import { hostModelFor, hostProviderFor, normaliseProvider, profileAvailability, providerMapSuggestions, type NucleusProfile, type ProviderMap, type ProviderMapSuggestion } from "../shared/profiles";
 import type { HostCatalog, HostFeature, HostModel, HostProvider, StoredHostCatalog } from "../shared/host";
+import { ProfileHostChips, ProfileHostEditor, type CompatibilityRead } from "./profile-hosts";
 /** A board from a service that predates Spec 052 carries no usage view. */
 
 /**
@@ -261,8 +262,8 @@ function identityValid(draft: ProfileDraft) {
 }
 
 /** One live profile row: name, labelled attention icons when needed, on/off and Edit. */
-function ProfileRow({ c, profile, board, catalog, catalogs, providerMap, directory, projects, repositories, state, busy, editing, poolSave, actionStatus, onEdit, onCreated, onDuplicate, onRemove, onChooseDirectory }: {
-  c: Colors; profile: NucleusProfile | Profile; board: Profile | null; catalog: HostCatalog | undefined;
+function ProfileRow({ c, profile, board, stored, compatibility, catalog, catalogs, providerMap, directory, projects, repositories, state, busy, editing, poolSave, actionStatus, onEdit, onCreated, onDuplicate, onRemove, onChooseDirectory }: {
+  c: Colors; profile: NucleusProfile | Profile; board: Profile | null; stored: NucleusProfile | null; compatibility: CompatibilityRead | undefined; catalog: HostCatalog | undefined;
   catalogs: CatalogRead[]; providerMap: ProviderMap | undefined; directory: string | null; projects: readonly Project[];
   repositories: readonly RepositorySettings[]; state: UiQueueState | null; busy: boolean; editing: boolean;
   poolSave: (entry: PoolEntry) => Promise<void>; actionStatus: string; onEdit: () => void; onCreated: (profile: NucleusProfile) => void;
@@ -286,12 +287,13 @@ function ProfileRow({ c, profile, board, catalog, catalogs, providerMap, directo
   return <View style={{ borderBottomWidth: 1, borderBottomColor: c.border, paddingVertical: space.xs, gap: space.xs }}>
     <View style={{ ...row, flexWrap: "nowrap" }}>
       <Text style={{ flex: 1, minWidth: 0, color: c.foreground, fontWeight: "600", fontSize: typeScale.body.fontSize }}>{profile.name}</Text>
+      <ProfileHostChips c={c} profileId={profile.id} name={profile.name} read={compatibility} />
       {status.problem ? <StatusGlyph c={c} icon="TriangleAlert" color={c.statusWarning} text={status.problem} label={`${profile.name}: ${status.problem}`} /> : null}
       <Button matchField c={c} text={entry.enabled ? "On" : "Off"} selected={entry.enabled} disabled={busy || !state} label={`${entry.enabled ? "Disable" : "Enable"} ${profile.name}`} onPress={() => change({ enabled: !entry.enabled })} />
       <ActionButton c={c} action={editing ? "close" : "edit"} label={`${editing ? "Close" : "Edit"} ${profile.name}`} onPress={() => { void saver.current!.flush(); onEdit(); }} />
     </View>
     {editing && <ProfileEditor c={c} catalog={catalog} catalogs={catalogs} providerMap={providerMap} directory={directory}
-      projects={projects} repositories={repositories} initial={profile} entry={state ? entry : null} state={state}
+      stored={stored} compatibility={compatibility} projects={projects} repositories={repositories} initial={profile} entry={state ? entry : null} state={state}
       busy={busy} poolSaveStatus={saveStatus} actionStatus={actionStatus} onChangePool={state ? change : undefined} onFlushPool={() => void saver.current!.flush()}
       onCreated={onCreated} onDuplicate={onDuplicate} onRemove={onRemove} onChooseDirectory={onChooseDirectory} />}
   </View>;
@@ -308,8 +310,10 @@ function quietSaveStatus(status: string) {
  * text. Changes save on entry (Tom, 2026-11-08): text after a short pause,
  * choices at once. There is no Save or Cancel. Notes stay stored and unshown.
  */
-function ProfileEditor({ c, catalog, catalogs, providerMap, directory, projects, repositories, initial, entry, state, busy, poolSaveStatus, actionStatus, onChangePool, onFlushPool, onCreated, onDuplicate, onRemove, onChooseDirectory, onClose }: {
+function ProfileEditor({ c, catalog, catalogs, providerMap, directory, stored, compatibility, projects, repositories, initial, entry, state, busy, poolSaveStatus, actionStatus, onChangePool, onFlushPool, onCreated, onDuplicate, onRemove, onChooseDirectory, onClose }: {
   c: Colors; catalog: HostCatalog | undefined; catalogs: CatalogRead[]; providerMap: ProviderMap | undefined;
+  /** The stored record, for its per-host mapping (nucleus#1151); null for a new or host-only profile. */
+  stored?: NucleusProfile | null; compatibility?: CompatibilityRead;
   directory: string | null; projects: readonly Project[]; repositories: readonly RepositorySettings[];
   initial: (NucleusProfile | Profile) | null; entry: PoolEntry | null; state: UiQueueState | null;
   busy: boolean; poolSaveStatus: string; actionStatus?: string; onChangePool?: (patch: Partial<PoolEntry>, delay?: number) => void; onFlushPool?: () => void;
@@ -459,6 +463,7 @@ function ProfileEditor({ c, catalog, catalogs, providerMap, directory, projects,
         onChange={onChooseDirectory} c={c} />}
     </View>}
     {availability && !availability.available && <Text accessibilityLabel="Profile availability preview" style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize }}>{availability.problem}</Text>}
+    {stored && <ProfileHostEditor key={stored.id} c={c} profile={stored} read={compatibility} busy={busy} />}
     {entry && onChangePool && state && <View style={{ ...pair, alignItems: "flex-start" }}><View style={{ ...half, gap: space.xs }}>
         {sliderLabel("Cost", "Each cost step down doubles this profile's share. Above the usage level's ceiling it needs a request. Unset ranks as medium and is never cost-gated.", entry.cost)}
         <StopSlider captions={false} c={c} a11yLabel="Cost" stops={COST_LEVELS} value={entry.cost ?? null} labelFor={levelLabel} stopLabel={cost => `Cost ${cost.replaceAll("_", " ")}`} onChange={cost => onChangePool({ cost: entry.cost === cost ? null : cost })} />
@@ -485,6 +490,7 @@ function ProfilesPanel({ c, compact, inset, state, repositories, busy, savePool,
   saveAvailability: (value: UiQueueState["availability"][number]) => Promise<unknown>;
 }) {
   const queryClient = useQueryClient();
+  const fetchCompatibility = useRpc(api.readProfileCompatibility);
   const fetchProfiles = useRpc(api.listNucleusProfiles), fetchProviderMap = useRpc(api.readProviderMap), fetchCatalog = useRpc(api.readHostCatalog);
   const createProfile = useRpc(api.createNucleusProfile), removeProfile = useRpc(api.removeNucleusProfile), saveProviderMap = useRpc(api.writeProviderMap);
   const directories = [...new Set(repositories.map(row => row.repository.path).filter(path => path.length > 0))];
@@ -499,6 +505,9 @@ function ProfilesPanel({ c, compact, inset, state, repositories, busy, savePool,
   const editorKey = editor === "new" ? "new" : editor ?? "";
   const directory = lastUsed[editorKey] && directories.includes(lastUsed[editorKey]!) ? lastUsed[editorKey]! : directories[0] ?? null;
   const profilesQuery = useQuery({ queryKey: ["nucleus", "profiles"], queryFn: () => fetchProfiles({}) });
+  // Under the profiles key, so every profile write's invalidation refreshes it too.
+  const compatibilityQuery = useQuery({ queryKey: ["nucleus", "profiles", "compatibility"], queryFn: () => fetchCompatibility({}), staleTime: 15_000 });
+  const compatibility = compatibilityQuery.data;
   const providerMapQuery = useQuery({ queryKey: ["nucleus", "provider-map"], queryFn: () => fetchProviderMap({}) });
   const catalogQuery = useQuery({ queryKey: ["nucleus", "host-catalog", directory ?? ""], queryFn: () => fetchCatalog(directory ? { cwd: directory } : {}), staleTime: 30_000 });
   const catalogsQuery = useQuery({
@@ -578,6 +587,7 @@ function ProfilesPanel({ c, compact, inset, state, repositories, busy, savePool,
     try {
       await saveProviderMap({ providers: next });
       await queryClient.invalidateQueries({ queryKey: ["nucleus", "provider-map"] });
+      await queryClient.invalidateQueries({ queryKey: ["nucleus", "profiles", "compatibility"] });
       setMapStatus("Saved");
       return true;
     } catch (error) { setMapStatus(`Not saved: ${failureText(error)}`); return false; }
@@ -605,7 +615,7 @@ function ProfilesPanel({ c, compact, inset, state, repositories, busy, savePool,
         projects={state?.projects ?? []} repositories={repositories} initial={null} entry={null} state={state}
         busy={panelBusy} poolSaveStatus="" onCreated={profile => { setCreated(profile); setEditor(profile.id); }} onChooseDirectory={chooseDirectory}
         onClose={() => setEditor(null)} />}
-      {live.map(item => <ProfileRow key={item.id} c={c} profile={item.stored ?? item.board!} board={item.board} catalog={catalog}
+      {live.map(item => <ProfileRow key={item.id} c={c} profile={item.stored ?? item.board!} board={item.board} stored={item.stored} compatibility={compatibility} catalog={catalog}
         catalogs={catalogs} providerMap={providerMap} directory={directory} projects={state?.projects ?? []} repositories={repositories}
         state={state} busy={panelBusy} editing={editor === item.id} poolSave={savePool}
         onEdit={() => setEditor(editor === item.id ? null : item.id)} onCreated={profile => { setCreated(profile); setEditor(profile.id); }}

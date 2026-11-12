@@ -17,7 +17,7 @@ import type { createUiSnapshotFactsCache, UiSnapshotFacts } from "../telemetry/u
 /** Read dependencies and live lifecycle observations used by board projections. */
 export interface BoardContext {
   store: Store;
-  engine: Pick<Engine, "profiles" | "retiredObservationKey" | "queuedExternalWait"> & {
+  engine: Pick<Engine, "profiles" | "retiredObservationKey" | "queuedExternalWait"> & Partial<Pick<Engine, "profilesFor">> & {
     resolution: Pick<Engine["resolution"], "slotAdmissionReason" | "slotAdmissionReader">;
   };
   decisions: Decisions;
@@ -254,7 +254,9 @@ export class RuntimeBoard {
     const task = this.context.store.task(taskId);
     if (task.removedAt) throw new Error("Task was removed from the queue");
     try {
-      const facts = { ...this.ownerVerbFacts(task), operatorBoard: input.caller === "operator (board)" };
+      // The task host's own snapshot, as queue.detail reads it (nucleus#1151).
+      const hostProfiles = this.context.engine.profilesFor?.(task.hostId);
+      const facts = { ...this.ownerVerbFacts(task), operatorBoard: input.caller === "operator (board)", ...(hostProfiles ? { hostProfiles } : {}) };
       if (task.phase !== "queued") return ownerTaskNext(facts);
       const context = taskWaitStateContext(this.context.store, task, null, candidate => this.context.engine.resolution.slotAdmissionReason(candidate));
       const projected = queuedReason(this.context.store, task, context);

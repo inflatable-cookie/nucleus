@@ -1,5 +1,33 @@
 import { z } from "zod";
 import type { HostCatalog, HostProvider } from "./host";
+import type { HostKind } from "./host-kind";
+
+/**
+ * One profile's setting on one host kind (nucleus#1151). The pool's profiles were
+ * set up for Paseo; another host may spell the provider, model or mode
+ * differently, or not offer it at all. The operator maps the differing values
+ * once per host kind, or excludes the profile there. A value given here replaces
+ * the profile's own on that host only; `null` clears it there (for example, a
+ * thinking level the host carries as a feature value instead). `provider` is the
+ * host's own provider key, read directly, never through the provider map.
+ */
+export const profileHostSettingSchema = z
+  .object({
+    excluded: z.boolean().optional(),
+    provider: z.string().min(1).max(240).optional(),
+    model: z.string().min(1).max(240).optional(),
+    modeId: z.string().min(1).max(240).nullable().optional(),
+    thinkingOptionId: z.string().min(1).max(240).nullable().optional(),
+    featureValues: z.record(z.string(), z.unknown()).nullable().optional(),
+  })
+  .strict();
+export type ProfileHostSetting = z.infer<typeof profileHostSettingSchema>;
+
+/** Settings keyed by host kind: stable across a host's restarts and new instance ids. */
+export const profileHostsSchema = z
+  .object({ paseo: profileHostSettingSchema.optional(), t3code: profileHostSettingSchema.optional() })
+  .strict();
+export type ProfileHosts = z.infer<typeof profileHostsSchema>;
 
 /**
  * A Nucleus-owned profile record. Nucleus keeps its own list; the host only
@@ -22,6 +50,8 @@ export const nucleusProfileSchema = z
     thinkingOptionId: z.string().min(1).max(240).optional(),
     featureValues: z.record(z.string(), z.unknown()).optional(),
     notes: z.string().max(4000).default(""),
+    /** Per-host mapping or exclusion (nucleus#1151); absent means the profile's own values everywhere. */
+    hosts: profileHostsSchema.optional(),
   })
   .strict();
 export type NucleusProfile = z.infer<typeof nucleusProfileSchema>;
@@ -37,6 +67,7 @@ export const nucleusProfileInputSchema = z
     thinkingOptionId: z.string().min(1).max(240).optional(),
     featureValues: z.record(z.string(), z.unknown()).optional(),
     notes: z.string().max(4000).optional(),
+    hosts: profileHostsSchema.optional(),
   })
   .strict();
 export type NucleusProfileInput = z.infer<typeof nucleusProfileInputSchema>;
@@ -52,6 +83,7 @@ export const nucleusProfileUpdateSchema = z
     thinkingOptionId: z.string().min(1).max(240).nullable().optional(),
     featureValues: z.record(z.string(), z.unknown()).nullable().optional(),
     notes: z.string().max(4000).optional(),
+    hosts: profileHostsSchema.nullable().optional(),
   })
   .strict()
   .refine(
@@ -144,11 +176,21 @@ export interface ProfileAvailability {
  * at launch (nucleus#1139 review).
  */
 export function profileAvailability(
-  profile: Pick<NucleusProfile, "provider" | "model" | "thinkingOptionId" | "modeId" | "featureValues">,
+  profile: AvailabilityFields,
   catalog: HostCatalog,
   providerMap: ProviderMap = {},
 ): ProfileAvailability {
-  const provider = hostProviderFor(profile.provider, catalog, providerMap);
+  return availabilityOn(profile, hostProviderFor(profile.provider, catalog, providerMap), catalog);
+}
+
+type AvailabilityFields = Pick<NucleusProfile, "provider" | "model" | "thinkingOptionId" | "modeId" | "featureValues">;
+
+/** The availability answer for a profile whose host provider is already resolved (or absent). */
+function availabilityOn(
+  profile: AvailabilityFields,
+  provider: HostProvider | null,
+  catalog: HostCatalog,
+): ProfileAvailability {
   if (!provider)
     return {
       available: false,
@@ -231,13 +273,127 @@ export function routingProfiles(
   profiles: NucleusProfile[],
   catalog: HostCatalog,
   providerMap: ProviderMap = {},
+  hostKind?: HostKind,
 ): import('./contracts').Profile[] {
-  return profiles.map((profile) => ({
-    id: profile.id, name: profile.name, provider: profile.provider, model: profile.model,
-    modeId: profile.modeId, thinkingOptionId: profile.thinkingOptionId,
-    featureValues: profile.featureValues, notes: profile.notes,
-    ...profileAvailability(profile, catalog, providerMap),
-  }));
+  return profiles.map((profile) => {
+    if (!hostKind)
+      return {
+        id: profile.id, name: profile.name, provider: profile.provider, model: profile.model,
+        modeId: profile.modeId, thinkingOptionId: profile.thinkingOptionId,
+        featureValues: profile.featureValues, notes: profile.notes,
+        ...profileAvailability(profile, catalog, providerMap),
+      };
+    // On a named host kind the routing profile carries the values that host
+    // launches with: the operator's mapping applied, and the host's own provider
+    // key, so a mapped profile launches with the mapped values (nucleus#1151).
+    const answer = profileCompatibility(profile, catalog, providerMap, hostKind);
+    return {
+      id: profile.id, name: profile.name, provider: answer.launch.provider, model: answer.launch.model,
+      modeId: answer.launch.modeId, thinkingOptionId: answer.launch.thinkingOptionId,
+      featureValues: answer.launch.featureValues, notes: profile.notes,
+      available: answer.available, problem: answer.problem, supportedThinking: answer.supportedThinking,
+      ...(answer.status === "excluded" ? { excluded: true } : {}),
+      ...(answer.mapped.length ? { mapped: answer.mapped } : {}),
+    };
+  });
+}
+
+/** The host names an operator reads, by host kind. */
+export const HOST_KIND_LABELS: Record<HostKind, string> = { paseo: "Paseo", t3code: "T3Code" };
+
+/** The fields a host setting can replace, in the order the UI and reasons name them. */
+export const PROFILE_HOST_FIELDS = ["provider", "model", "modeId", "thinkingOptionId", "featureValues"] as const;
+
+/** A profile as one host kind runs it: its own values with that host's setting applied. */
+export interface ProfileOnHost {
+  values: AvailabilityFields;
+  /** The host provider key the setting names, read without the provider map; null when unmapped. */
+  hostProviderKey: string | null;
+  excluded: boolean;
+  /** The fields the setting replaces. */
+  mapped: (typeof PROFILE_HOST_FIELDS)[number][];
+}
+
+export function profileOnHost(profile: AvailabilityFields & Pick<NucleusProfile, "hosts">, hostKind: HostKind): ProfileOnHost {
+  const setting = profile.hosts?.[hostKind];
+  const values: AvailabilityFields = {
+    provider: profile.provider, model: profile.model,
+    ...(profile.modeId ? { modeId: profile.modeId } : {}),
+    ...(profile.thinkingOptionId ? { thinkingOptionId: profile.thinkingOptionId } : {}),
+    ...(profile.featureValues ? { featureValues: profile.featureValues } : {}),
+  };
+  const mapped: ProfileOnHost["mapped"] = [];
+  if (!setting) return { values, hostProviderKey: null, excluded: false, mapped };
+  for (const field of PROFILE_HOST_FIELDS) {
+    const value = setting[field];
+    if (value === undefined) continue;
+    mapped.push(field);
+    if (value === null) delete (values as Record<string, unknown>)[field];
+    else (values as Record<string, unknown>)[field] = value;
+  }
+  return { values, hostProviderKey: setting.provider ?? null, excluded: setting.excluded === true, mapped };
+}
+
+export type CompatibilityStatus = "works" | "unavailable" | "excluded";
+
+/** One profile on one host: whether it can run there, why not, and what it launches with. */
+export interface ProfileCompatibility extends ProfileAvailability {
+  status: CompatibilityStatus;
+  /** The problem in the operator's words, naming the host; empty when it works. */
+  reason: string;
+  mapped: ProfileOnHost["mapped"];
+  /** The values a launch on this host sends; `provider` is the host's own key. */
+  launch: { provider: string; model: string; modeId?: string; thinkingOptionId?: string; featureValues?: Record<string, unknown> };
+}
+
+/**
+ * Whether one profile can run on one host, computed from that host's catalog and
+ * the profile's setting for its kind (nucleus#1151). An excluded profile is never
+ * selected there. A mapped provider is the host's own key; otherwise the profile's
+ * normalised key is read through the provider map, and the launch carries the
+ * matched host key, which is what the host's create call names.
+ */
+export function profileCompatibility(
+  profile: AvailabilityFields & Pick<NucleusProfile, "hosts">,
+  catalog: HostCatalog,
+  providerMap: ProviderMap,
+  hostKind: HostKind,
+): ProfileCompatibility {
+  const label = HOST_KIND_LABELS[hostKind];
+  const onHost = profileOnHost(profile, hostKind);
+  const provider = onHost.hostProviderKey
+    ? catalog.providers.find((candidate) => candidate.key === onHost.hostProviderKey) ?? null
+    : hostProviderFor(onHost.values.provider, catalog, providerMap);
+  const launch = {
+    ...onHost.values,
+    provider: provider?.key ?? onHost.values.provider,
+  } as ProfileCompatibility["launch"];
+  if (onHost.excluded)
+    return { available: false, problem: `Excluded on ${label} in Settings`, supportedThinking: [], status: "excluded",
+      reason: `Excluded on ${label} in Settings`, mapped: onHost.mapped, launch };
+  const answer = availabilityOn(onHost.values, provider, catalog);
+  return {
+    ...answer,
+    status: answer.available ? "works" : "unavailable",
+    reason: answer.available ? "" : hostReason(answer.problem, label, provider?.key ?? onHost.values.provider, onHost.values),
+    mapped: onHost.mapped,
+    launch,
+  };
+}
+
+/** The availability problem with the host named, as the per-host chip shows it. */
+function hostReason(problem: string, label: string, providerKey: string, values: AvailabilityFields): string {
+  const missing = /^Provider (\S+) is not available on this host$/.exec(problem);
+  if (missing) return `${label} has no ${missing[1]} provider`;
+  const mode = /^Configured runtime mode (\S+) is not one of this host's modes(?: \((.*)\))?$/.exec(problem);
+  if (mode) return `${label}'s ${providerKey} has no mode ${mode[1]}${mode[2] ? ` (it offers ${mode[2]})` : ""}`;
+  if (problem === "Configured thinking level is not supported") return `${label}'s ${values.model} has no thinking level ${values.thinkingOptionId}`;
+  if (/^Model \S+ is not available from provider/.test(problem)) return `${label}'s ${providerKey} has no model ${values.model}`;
+  const option = /^Configured option (\S+) (is not supported|needs a boolean value|does not offer that value)$/.exec(problem);
+  if (option) return option[2] === "is not supported" ? `${label}'s ${values.model} has no option ${option[1]}`
+    : option[2] === "needs a boolean value" ? `${label}'s ${values.model} option ${option[1]} needs on or off`
+    : `${label}'s ${values.model} option ${option[1]} has no value ${String(values.featureValues?.[option[1]!])}`;
+  return problem.replace("this host", label);
 }
 
 /** One provider-map entry that would make a profile available on a host. */

@@ -293,9 +293,16 @@ catalog drift between refresh and send. Observation reports the thread's
 A repository's pool profiles are the same pool every host selects from, but each
 host answers availability from its own catalog. T3Code names its provider
 instances itself (`codex`, `claudeAgent`, `grok`, `pi`), so a pool profile using
-another spelling is ineligible on T3 with `Provider … is not available on this
-host` until the Nucleus provider map records the mapping; that mapping is the
-provider map's job, not a runtime-mode substitution.
+another spelling is ineligible on T3 with `T3Code has no … provider` until the
+operator maps it. The mapping is the profile's own `hosts.t3code` setting
+(nucleus#1151): the T3 provider key, model, mode, thinking level or option
+values that profile launches with on T3, or an exclusion. A mapped profile's T3
+routing snapshot carries T3's own provider key, which is the `instanceId` the
+launch sends. On the recorded nightly snapshot the Claude profiles need
+`provider: claudeAgent`, a T3 mode for `bypassPermissions` (`full-access`) and
+their thinking level as the `effort` option; Pi profiles need their thinking
+level as the `thinking` option; Grok needs its unreported `auto_accept` value
+cleared. `profile.compatibility` and Settings → Profiles show each answer.
 
 A creation refusal that is proven pre-send settles the run refused and the task
 in attention with the step that failed named — `Worker creation refused before

@@ -11,7 +11,10 @@ import { PlannerGrantCleanup } from './questions/planner-grants';
 import { intakeContext } from './intake/context';
 
 import { Dispatch } from "./dispatch/dispatch";
-import { routingProfiles } from "../shared/profiles";
+import { HOST_KIND_LABELS, profileCompatibility, routingProfiles } from "../shared/profiles";
+import { hostKindOf } from "../shared/host-kind";
+import type { HostCatalog } from "../shared/host";
+import type { ProfileCompatibilityHost, ProfileCompatibilityRow } from "../shared/rpc/settings";
 import { CreationRecovery } from "./recovery/creation-recovery";
 import type { GitTransientEpisode } from './git/git-transient-backoff';
 
@@ -124,6 +127,8 @@ import { TaskWakes } from './scheduling/task-wakes';
 import { CompletionFollowUps } from './closeout/completion-follow-ups';
 import { closeoutContext } from './closeout/context';
 import { TerminalWorkspaceRetirement } from './closeout/terminal-workspace-retirement';
+/** The primary host's catalog key, before (or without) a registered id for it. */
+const PRIMARY_CATALOG = "\u0000primary";
 
 export const STOPPED_BEFORE_DRAIN = () => new Error("Nucleus engine stopped before the requested reconciliation drain covered the fleet");
 
@@ -500,7 +505,7 @@ export class Engine {
   async refresh() {
     if (!this.adapter.catalog) throw new Error("Host profile catalog is unavailable");
     const catalog = await this.adapter.catalog();
-    this.profiles = routingProfiles(this.store.profiles(), catalog, this.store.providerMap());
+    this.hostCatalogs.set(PRIMARY_CATALOG, { catalog, readAt: new Date().toISOString() });
     this.profileCatalogRefreshed = true;
     // Each secondary host's availability is its own catalog's answer: a profile
     // whose thinking level or feature values that host does not report stays
@@ -511,11 +516,50 @@ export class Engine {
       if (!selected || !selected.catalog) continue;
       // The primary host's catalog is the profile set read above; only a
       // secondary host reads its own.
-      if (selected === this.primaryAdapter) { this.hostCatalogRefreshed.add(id); continue; }
-      try { this.hostProfiles.set(id, routingProfiles(this.store.profiles(), await selected.catalog(), this.store.providerMap())); this.hostCatalogRefreshed.add(id); }
+      if (selected === this.primaryAdapter) { this.primaryHostId = id; this.hostCatalogRefreshed.add(id); continue; }
+      try { this.hostCatalogs.set(id, { catalog: await selected.catalog(), readAt: new Date().toISOString() }); this.hostCatalogRefreshed.add(id); }
       catch { /* keep any previous snapshot; dispatch waits through its own gates */ }
     }
+    this.rebuildProfiles();
   }
+  /**
+   * The routing snapshots from the catalogs last read and the stored profiles,
+   * with each host kind's mapping and exclusions applied (nucleus#1151). A
+   * Settings edit calls this so selection follows it at once; no host is read.
+   */
+  rebuildProfiles(): void {
+    const profiles = this.store.profiles(), providerMap = this.store.providerMap();
+    const primary = this.hostCatalogs.get(PRIMARY_CATALOG);
+    if (primary) this.profiles = routingProfiles(profiles, primary.catalog, providerMap, hostKindOf(this.primaryHostId));
+    for (const [id, read] of this.hostCatalogs)
+      if (id !== PRIMARY_CATALOG) this.hostProfiles.set(id, routingProfiles(profiles, read.catalog, providerMap, hostKindOf(id)));
+  }
+  /**
+   * Each stored profile on each known host (nucleus#1151): computed on read from
+   * the catalog Nucleus last read from that host, so a catalog change or a
+   * Settings edit shows at once. A host never read answers `unknown`.
+   */
+  profileCompatibility(): { hosts: ProfileCompatibilityHost[]; rows: ProfileCompatibilityRow[] } {
+    const profiles = this.store.profiles(), providerMap = this.store.providerMap();
+    const ids = [...new Set([...(this.primaryHostId ? [this.primaryHostId] : []), ...this.hostIds()])];
+    const hosts: ProfileCompatibilityHost[] = [], rows: ProfileCompatibilityRow[] = [];
+    for (const id of ids) {
+      const selected = this.resolveHostAdapter(id);
+      const primary = id === this.primaryHostId || (selected !== undefined && selected === this.primaryAdapter);
+      const read = this.hostCatalogs.get(primary ? PRIMARY_CATALOG : id) ?? null;
+      const kind = hostKindOf(id);
+      hosts.push({ hostId: id, kind, label: HOST_KIND_LABELS[kind], online: this.hostOnline(id), readAt: read?.readAt ?? null, catalog: read?.catalog ?? null });
+      for (const profile of profiles) {
+        if (!read) { rows.push({ profileId: profile.id, hostId: id, status: "unknown", reason: `${HOST_KIND_LABELS[kind]}'s catalog has not been read yet`, mapped: [], launch: null }); continue; }
+        const answer = profileCompatibility(profile, read.catalog, providerMap, kind);
+        rows.push({ profileId: profile.id, hostId: id, status: answer.status, reason: answer.reason, mapped: answer.mapped, launch: answer.launch });
+      }
+    }
+    return { hosts, rows };
+  }
+  /** The last catalog read per host; the primary host's under its own key until its id is known. */
+  private readonly hostCatalogs = new Map<string, { catalog: HostCatalog; readAt: string }>();
+  private primaryHostId: string | undefined;
   private profileCatalogRefreshed = false;
   /**
    * Whether the daemon profile catalog is known. A service starts with an empty
