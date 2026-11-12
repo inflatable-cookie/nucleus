@@ -175,15 +175,17 @@ test('decoder defects carrying secrets keep neither the value nor the bearer in 
   const { host, server, spec } = await fixture(t);
   const created = await host.createAgent(spec());
   server.controls.secretDefect = true;
+  // An unquoted secret in a defect retains no reason text at all; only the
+  // extracted field name survives.
   await assert.rejects(host.sendMessage(created.id, { messageId: 'secret-defect', text: 'Synthetic' }), error => {
     assert.ok(error instanceof HostUnknownDeliveryError);
-    assert.deepEqual(error.diagnostic, { command: 'message.dispatch', field: 'text', reason: 'Expected string, got [value]' });
-    assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /prompt secret|synthetic-bearer/);
+    assert.deepEqual(error.diagnostic, { command: 'message.dispatch' });
+    assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic-secret/);
     return true;
   });
   assert.equal(host.state.read().intents['secret-defect']?.status, 'unknown');
   const durable = JSON.stringify(host.state.read().intents['secret-defect']);
-  assert.doesNotMatch(durable, /prompt secret|synthetic-bearer/);
+  assert.doesNotMatch(durable, /synthetic-secret/);
 });
 
 test('observations distinguish idle, active run, permissions, archived and explicit deletion', async t => {
@@ -480,12 +482,16 @@ test('an unsupported registration method stays unknown delivery while naming the
   await assert.rejects(host.createWorkspace({ title: 'Synthetic task', requestId: 'workspace-unsupported', directory: worktree, project }), error => {
     assert.ok(error instanceof HostUnknownDeliveryError, 'remote unknown-method text is not a proven pre-send refusal');
     assert.ok(String(error).includes(project.workspaceRoot!));
+    assert.match(String(error), /guidance T3Code cannot create a project for/);
     assert.match(String(error), /add that folder as a project in T3Code, then restart the task/);
+    assert.match(String(error), /unknown.*not resent/);
     return true;
   });
   const key = Object.keys(host.state.read().intents).find(candidate => candidate.startsWith('nucleus-project-create-'))!;
-  assert.equal(host.state.read().intents[key]?.status, 'unknown', 'the create is never marked refused on remote text');
-  assert.match(JSON.stringify(host.state.read().intents[key]?.diagnostic), /add that folder as a project in T3Code/);
+  const intent = host.state.read().intents[key];
+  assert.equal(intent?.status, 'unknown', 'the create is never marked refused on remote text');
+  assert.equal(intent?.diagnostic?.reason, 'Unknown request tag: projects.mutate');
+  assert.equal(intent?.diagnostic?.guidance, `T3Code cannot create a project for ${project.workspaceRoot}; add that folder as a project in T3Code, then restart the task`);
   // The unknown delivery still permits the owner path: the re-read finds
   // nothing, so the recorded create resends exactly once.
   await assert.rejects(host.createWorkspace({ title: 'Synthetic task', requestId: 'workspace-unsupported', directory: worktree, project }), /unknown/i);
@@ -493,7 +499,31 @@ test('an unsupported registration method stays unknown delivery while naming the
   assert.equal(server.projects.length, 0);
 });
 
-test('a refused remote mutation keeps its bounded reason in the durable intent and attention detail', async t => {
+test('a long repository path cannot spend the remote-reason budget that the manual fix needs', async t => {
+  const { host, server, root } = await fixture(t);
+  server.projects.splice(0);
+  // Two near-maximum path components put the repository root far past the
+  // remote-reason cap.
+  const deep = join(root, 'long'.repeat(50), 'path'.repeat(50), 'repository');
+  mkdirSync(deep, { recursive: true });
+  const worktree = join(root, 'worktree');
+  mkdirSync(worktree);
+  const project = await host.repositoryProject(deep);
+  assert.ok(project.workspaceRoot && project.workspaceRoot.length > 420, 'the fixture path is longer than the reason cap');
+  server.controls.unsupportedProjectCreate = true;
+  await assert.rejects(host.createWorkspace({ title: 'Synthetic task', requestId: 'workspace-long-path', directory: worktree, project }), error => {
+    assert.ok(error instanceof HostUnknownDeliveryError);
+    const diagnostic = (error as HostUnknownDeliveryError).diagnostic;
+    assert.equal(diagnostic.reason, 'Unknown request tag: projects.mutate', 'the bounded remote reason is intact and uncapped');
+    const guidance = diagnostic.guidance ?? '';
+    assert.ok(guidance.startsWith('T3Code cannot create a project for '), 'the guidance names the repository');
+    assert.ok(guidance.endsWith('add that folder as a project in T3Code, then restart the task'), 'the manual fix survives a long path');
+    assert.match(String(error), /add that folder as a project in T3Code, then restart the task/);
+    return true;
+  });
+});
+
+test('a typed failure keeps its fixed wire message as the reason in the durable intent and attention detail', async t => {
   const { host, server, root } = await fixture(t);
   server.projects.splice(0);
   const repository = join(root, 'repository');
@@ -501,21 +531,37 @@ test('a refused remote mutation keeps its bounded reason in the durable intent a
   mkdirSync(repository); mkdirSync(worktree);
   const project = await host.repositoryProject(repository);
   server.controls.projectMutationFailure = true;
-  // The typed failure's message carries the configured bearer unquoted; the
-  // durable intent and the attention text must both carry the redacted reason.
   await assert.rejects(host.createWorkspace({ title: 'Synthetic task', requestId: 'workspace-reason', directory: worktree, project }), error => {
     assert.ok(error instanceof HostUnknownDeliveryError);
-    assert.deepEqual(error.diagnostic, { command: 'project.create', reason: 'ProjectMutationError: Failed to mutate project for [redacted].' });
-    assert.match(error.message, /unknown.*not resent.*command project\.create.*reason ProjectMutationError: Failed to mutate project for \[redacted\]\./);
-    assert.doesNotMatch(String(error), /synthetic-bearer/);
+    assert.deepEqual(error.diagnostic, { command: 'project.create', reason: 'ProjectMutationError: Failed to mutate project.' });
+    assert.match(error.message, /unknown.*not resent.*command project\.create.*reason ProjectMutationError: Failed to mutate project\./);
     return true;
   });
   const key = Object.keys(host.state.read().intents).find(candidate => candidate.startsWith('nucleus-project-create-'))!;
   assert.equal(host.state.read().intents[key]?.status, 'unknown');
-  assert.deepEqual(host.state.read().intents[key]?.diagnostic, { command: 'project.create', reason: 'ProjectMutationError: Failed to mutate project for [redacted].' });
-  assert.doesNotMatch(JSON.stringify(host.state.read().intents[key]), /synthetic-bearer/);
-  // The refused reason is diagnostic evidence only: the delivery stays unknown and is never resent.
+  assert.deepEqual(host.state.read().intents[key]?.diagnostic, { command: 'project.create', reason: 'ProjectMutationError: Failed to mutate project.' });
+  // The reason is diagnostic evidence only: the delivery stays unknown and is never resent.
   server.controls.projectMutationFailure = false;
   const sent = server.commands.filter(command => command.method === 'projects.mutate');
   assert.equal(sent.length, 1);
+});
+
+test('arbitrary typed-failure text retains only the tag, never its unquoted secrets', async t => {
+  const { host, server, root } = await fixture(t);
+  server.projects.splice(0);
+  const repository = join(root, 'repository');
+  const worktree = join(root, 'worktree');
+  mkdirSync(repository); mkdirSync(worktree);
+  const project = await host.repositoryProject(repository);
+  server.controls.projectMutationSecretFailure = true;
+  await assert.rejects(host.createWorkspace({ title: 'Synthetic task', requestId: 'workspace-secret', directory: worktree, project }), error => {
+    assert.ok(error instanceof HostUnknownDeliveryError);
+    assert.deepEqual(error.diagnostic, { command: 'project.create', reason: 'ProjectMutationError' });
+    assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /api_key|synthetic-secret/);
+    return true;
+  });
+  const key = Object.keys(host.state.read().intents).find(candidate => candidate.startsWith('nucleus-project-create-'))!;
+  const durable = JSON.stringify(host.state.read().intents[key]);
+  assert.equal(host.state.read().intents[key]?.status, 'unknown');
+  assert.doesNotMatch(durable, /api_key|synthetic-secret/);
 });

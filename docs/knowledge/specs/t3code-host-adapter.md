@@ -87,12 +87,15 @@ and is never resent. Only a local refusal before the socket write proves
 non-delivery (planner ruling, 2026-11-11). Sanitized reported command and field
 names remain diagnostic text, never proof of a decoder phase; raw error bodies,
 actual values and credentials are omitted. The recorded diagnostic also keeps
-the bounded why behind a remote failure: a whitelisted error tag, a defect
-message with quoted spans, JSON structures, decoder location segments and the
-decoder's value clause replaced by `[value]`, or the ticket exchange's HTTP
-status. Every branch that builds a reason strips the configured bearer first;
-no branch keeps a remote value; delivery classification is unchanged
-(nucleus#1136, review 2026-11-12).
+the bounded why behind a remote failure: a whitelisted error tag — alone or
+beside the handlers' own fixed wire messages with bounded identifier
+parameters — a decoder defect in the nightly's own post-value-dropping shape,
+or the ticket exchange's HTTP status. Every branch that builds a reason strips
+the configured bearer first; arbitrary remote text, including any unquoted
+secret it carries, retains nothing; delivery classification is unchanged
+(nucleus#1136, review 2026-11-12). Nucleus-authored remediation text rides a
+separate bounded guidance field, so a long repository path can never spend the
+remote-reason budget that the manual fix needs.
 Those names and the reason are stored on the durable unknown intent and returned
 on blocked repeats, including after reload. A registered permission failure also
 records them through the owning task's existing attention policy, selected by

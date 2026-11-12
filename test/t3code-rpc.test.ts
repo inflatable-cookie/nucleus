@@ -219,22 +219,40 @@ test('the nightly dispatch union refuses project.create before any handler and t
   });
 });
 
-test('typed project mutation failures keep their tag and message as the redacted reason', async t => {
+test('unquoted Die secrets retain no reason text at all', async t => {
   const server = await fakeServer(t, (request, send) => {
-    if (request._tag === 'Request') send(failure(request, { _tag: 'Fail', error: {
-      _tag: 'ProjectMutationError', commandId: 'stable', message: 'Failed to mutate project for synthetic-bearer.' } }));
+    if (request._tag === 'Request') send(failure(request, { _tag: 'Die', defect: 'Authentication failed: synthetic-secret' }));
   });
   const client = await clientFor(t, server);
-  await assert.rejects(client.call('projects.mutate', { type: 'project.create', commandId: 'stable',
+  await assert.rejects(client.call('projects.mutate', { type: 'project.create', commandId: 'stable' }), error => {
+    assert.ok(error instanceof T3RpcError);
+    assert.equal(error.delivery, 'unknown');
+    assert.equal(error.reason, undefined, 'arbitrary handler text retains nothing');
+    assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic-secret|Authentication failed/);
+    return true;
+  });
+});
+
+test('typed project mutation failures retain the fixed wire message and drop arbitrary text to the tag', async t => {
+  let calls = 0;
+  const server = await fakeServer(t, (request, send) => {
+    if (request._tag === 'Request') send(failure(request, { _tag: 'Fail', error: {
+      _tag: 'ProjectMutationError', commandId: 'stable',
+      // Call 1 is the handler's own fixed wire message; call 2 carries an
+      // unquoted secret that no template names, so only the tag may survive.
+      message: ++calls === 1 ? 'Failed to mutate project.' : 'Failed for api_key=synthetic-secret' } }));
+  });
+  const client = await clientFor(t, server);
+  for (let i = 0; i < 2; i++) await assert.rejects(client.call('projects.mutate', { type: 'project.create', commandId: 'stable',
     projectId: 'synthetic-project', title: 'synthetic-repository', workspaceRoot: '/private/synthetic/repository' }), error => {
     assert.ok(error instanceof T3RpcError);
     assert.equal(error.delivery, 'unknown');
     assert.equal(error.command, 'project.create');
-    assert.equal(error.reason, 'ProjectMutationError: Failed to mutate project for [redacted].');
-    assert.match(String(error), /reason ProjectMutationError: Failed to mutate project for \[redacted\]\./);
-    assert.doesNotMatch(String(error), /synthetic-bearer/);
+    assert.equal(error.reason, i === 0 ? 'ProjectMutationError: Failed to mutate project.' : 'ProjectMutationError');
+    assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /api_key|synthetic-secret/);
     return true;
   });
+  assert.equal(calls, 2);
 });
 
 test('reasons stay bounded and nameless for unknown tags, giant defects and value dumps', async t => {
@@ -243,7 +261,7 @@ test('reasons stay bounded and nameless for unknown tags, giant defects and valu
     if (request._tag !== 'Request') return;
     send(failure(request, ++calls === 1
       ? { _tag: 'Fail', error: { _tag: 'SomethingUnrecognized', detail: 'synthetic-bearer prompt secret' } }
-      : { _tag: 'Die', defect: `Expected ${'{"a":1}, '.repeat(600)}got "${'x'.repeat(500)}"` }));
+      : { _tag: 'Die', defect: `Expected ${'{"a":1}, '.repeat(300)}got "${'x'.repeat(500)}"` }));
   });
   const client = await clientFor(t, server);
   await assert.rejects(client.call('projects.mutate', { type: 'project.create', commandId: 'stable' }), error => {

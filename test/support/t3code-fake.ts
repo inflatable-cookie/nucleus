@@ -26,7 +26,7 @@ export async function t3Fake(t: TestContext, directory: string) {
     synchronized: true, incompleteThread: false, enrichment: false, shellMissingField: '',
     snapshotSequence: 1, threadCoverage: {} as Record<string, unknown>, beforeArchiveRead: (() => {}) as () => void,
     disconnectMutation: false, disconnectAfterEffect: false, refuseMutation: false, postEffectDefect: false,
-    unsupportedProjectCreate: false, projectMutationFailure: false, secretDefect: false, mutationObserver: (() => {}) as () => void };
+    unsupportedProjectCreate: false, projectMutationFailure: false, projectMutationSecretFailure: false, secretDefect: false, mutationObserver: (() => {}) as () => void };
   /** Command receipts make a replayed project mutation answer with its recorded outcome. */
   const projectReceipts = new Map<string, { type: string; projectId: string }>();
   const sockets = new Set<Socket>();
@@ -128,7 +128,7 @@ export async function t3Fake(t: TestContext, directory: string) {
           }
           if (controls.disconnectAfterEffect) return socket.destroy();
           if (controls.postEffectDefect) return failure({ _tag: 'Die', defect: contract.boundaryDecodeExample });
-          if (controls.secretDefect) return failure({ _tag: 'Die', defect: 'Expected string, got "synthetic-bearer prompt secret"\n  at ["text"]' });
+          if (controls.secretDefect) return failure({ _tag: 'Die', defect: 'Authentication failed: synthetic-secret\n  at ["text"]' });
           return success({ sequence: 1 });
         }
         case 'projects.mutate': {
@@ -139,7 +139,8 @@ export async function t3Fake(t: TestContext, directory: string) {
           if (controls.refuseMutation) return failure({ _tag: 'Die', defect: contract.boundaryDecodeExample });
           if (controls.disconnectMutation) return socket.destroy();
           if (controls.unsupportedProjectCreate) return failure({ _tag: 'Die', defect: `Unknown request tag: ${mutation.method}` });
-          if (controls.projectMutationFailure) return failure({ _tag: 'Fail', error: { _tag: 'ProjectMutationError', commandId: payload.commandId, message: `Failed to mutate project for ${'synthetic-bearer'}.` } });
+          if (controls.projectMutationFailure) return failure({ _tag: 'Fail', error: { _tag: 'ProjectMutationError', commandId: payload.commandId, message: 'Failed to mutate project.' } });
+          if (controls.projectMutationSecretFailure) return failure({ _tag: 'Fail', error: { _tag: 'ProjectMutationError', commandId: payload.commandId, message: 'Failed for api_key=synthetic-secret' } });
           const project = (id: string, title: string, workspaceRoot: string) => ({ id, title, workspaceRoot,
             repositoryIdentity: null, defaultModelSelection: null, scripts: [], createdAt: STAMP, updatedAt: STAMP, deletedAt: null });
           const receipt = projectReceipts.get(payload.commandId);

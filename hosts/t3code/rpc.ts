@@ -1,4 +1,4 @@
-import { sanitizeHostFailureReason } from '../../core/host';
+import { retainableRemoteMessage, sanitizeHostFailureReason } from '../../core/host';
 
 export interface T3ConnectionConfig {
   endpoint: string;
@@ -95,9 +95,13 @@ function remoteFailure(method: string, cause: unknown, command?: string, bearer?
   const message = reason._tag === 'Fail' && object(reason.error) && typeof reason.error.message === 'string' && reason.error.message.length <= 512
     ? reason.error.message : undefined;
   const reportedCommand = tag === 'OrchestrationV2DispatchCommandError' && object(reason.error) ? safeCommand(reason.error.commandType) : undefined;
+  // Only the handlers' own fixed wire messages may ride the reason beside the
+  // tag; arbitrary text — including any unquoted secret it carries — retains
+  // the tag alone.
+  const retainedMessage = message !== undefined && retainableRemoteMessage(message) ? redact(message) : undefined;
   return new T3RpcError('remote', method, tag, 'unknown', {
     command: reportedCommand ?? command,
-    reason: tag ? [tag, message !== undefined ? redact(message) : undefined].filter(Boolean).join(': ') : undefined,
+    reason: tag ? [tag, retainedMessage].filter(Boolean).join(': ') : undefined,
   });
 }
 
