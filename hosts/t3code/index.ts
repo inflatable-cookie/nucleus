@@ -2,6 +2,7 @@ import type { Adapter, HostPolicyConstructor, HostPolicyPort, HostWorktreeWorksp
 import { ProvenPreSendRefusalError } from '../../core/host';
 import type { HostAgentSpec, HostCapabilities, HostPermissionDecision, HostWorkspaceSpec } from '../../shared/host';
 import type { Run, Task } from '../../shared/contracts';
+import { WIRE_LABEL_KEYS } from '../../shared/wire-labels';
 import { T3CodeHost, type T3CodeConfig } from './adapter';
 
 export { T3CodeHost, type T3CodeConfig } from './adapter';
@@ -96,8 +97,8 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
       return { retainedAgentRef: (id: string) => native.retainedAgentRef(id) };
     }
     findWorkspaces = (task: Task) => this.native.findWorkspaces(task);
-    findAgents(task: Task) { return this.native.findAgents({ 'nucleus.task': task.id }); }
-    findRunAgents(run: Run) { return this.native.findAgents({ 'nucleus.run': run.id, 'nucleus.task': run.taskId }); }
+    findAgents(task: Task) { return this.native.findAgents({ [WIRE_LABEL_KEYS.task]: task.id }); }
+    findRunAgents(run: Run) { return this.native.findAgents({ [WIRE_LABEL_KEYS.run]: run.id, [WIRE_LABEL_KEYS.task]: run.taskId }); }
     /**
      * T3 has no Paseo identity. Core's consult prompt names `question.answer`
      * with the reissued run ticket; this send does not rewrite it. T3-hosted

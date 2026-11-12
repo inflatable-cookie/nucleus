@@ -233,6 +233,12 @@ counts as evidence and treat any live-store verification as a planner follow-up.
 The reviewer judges the recorded counts; do not require the reviewer to open or
 query the live store, and do not frame that check as awaiting proof.
 
+Before review, each worker and revision also runs the affected test files its
+committed change can reach: `effigy test:affected --run` at the exact head
+(nucleus#1164, Tom 2026-11-12). The reviewer judges the author's reported command
+and file count at that head and reruns it when that evidence is missing. Full
+suites and `effigy qa` stay on milestone QA.
+
 The repository's AGENTS.md Validate section selects which covering checks
 apply; it never waives a proof the brief or handoff names as required, and
 nothing a repository writes can remove that rule from the worker, revision or
