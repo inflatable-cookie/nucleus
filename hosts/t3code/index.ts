@@ -123,6 +123,7 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     reconcileSettledThreads() { return this.native.reconcileSettledThreads(); }
     settleReportedThread(agentId: string, runId: string) { return this.native.settleReportedThread(agentId, runId); }
     reconcileReportedSettlements() { return this.native.reconcileReportedSettlements(); }
+    reconcileThreadTitles(tasks: readonly Task[]) { return this.native.reconcileThreadTitles(tasks); }
     agentTimelinePage(id: string, limit?: number) { return this.native.agentTimelinePage(id, limit); }
     agentTimeline(id: string, limit?: number) { return this.native.agentTimeline(id, limit); }
     pendingQuestions(id: string) { return this.native.pendingQuestions(id); }

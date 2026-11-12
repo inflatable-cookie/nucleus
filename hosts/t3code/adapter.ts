@@ -4,6 +4,8 @@ import { basename } from 'node:path';
 import { z } from 'zod';
 import type { Host, HostAgentSpec, HostWorkspaceSpec, HostMessage, HostGuardedMessage, HostSendGuard, HostAsk, HostWorkspaceRef, HostRetainedAgentRef, HostCatalog, HostTimelinePage, HostThread, NativeDecisionInput, NativeDecisionAnswer } from '../../shared/host';
 import type { Task, Profile } from '../../shared/contracts';
+import { formatTaskNumber } from '../../shared/contracts';
+import { capPaseoTitle } from '../../shared/paseo-title';
 import { ProvenPreSendRefusalError, HostUnknownDeliveryError, sanitizeHostDeliveryDiagnostic } from '../../core/host';
 import { T3RpcClient, T3RpcError } from './rpc';
 import { T3StateFile, canonical, type T3SettleIntent, type T3State } from './state';
@@ -387,21 +389,62 @@ export class T3CodeHost implements Host {
     const options = this.modelSelectionOptions(spec.profile, provider.models.find(m => m.slug === spec.profile.model)!);
     const runtimeMode = this.launchRuntimeMode(spec.profile, provider.supportedRuntimeModes);
     const id = identity('thread', attempt.requestId);
-    const payload = { commandId: attempt.requestId, threadId: id, projectId: workspace.projectId, title: spec.title,
+    const payload = { commandId: attempt.requestId, threadId: id, projectId: workspace.projectId, title: this.numberedThreadTitle(spec.taskNumber, attempt.labels.role, spec.title),
       modelSelection: { instanceId: spec.profile.provider, model: spec.profile.model, ...(options.length ? { options } : {}) }, runtimeMode, interactionMode: 'default',
       workspaceStrategy: { type: 'existing_worktree', worktreePath: workspace.directory },
       initialMessage: { messageId: identity('message', attempt.requestId), text: attempt.prompt, attachments: [] } };
     this.state.update(state => {
       const old = state.agents[id], record = { id, workspaceId: spec.workspaceId, labels: attempt.labels };
-      if (old && canonical(old) !== canonical(record)) throw new ProvenPreSendRefusalError('T3Code retained identity changed');
-      state.agents[id] = record;
+      if (old && canonical({ id: old.id, workspaceId: old.workspaceId, labels: old.labels }) !== canonical(record))
+        throw new ProvenPreSendRefusalError('T3Code retained identity changed');
+      state.agents[id] = { ...old, ...record };
     });
     const result = await this.effect(attempt.requestId, 'orchestration.launchThread', payload, () => {
       if (spec.guard && !spec.guard.stillAllowed()) throw new ProvenPreSendRefusalError('T3Code launch guard changed');
     });
     if (decode(z.object({ threadId: z.literal(id) }), result, 'launchThread').threadId !== id) throw new T3CompatibilityError('launchThread.threadId');
+    this.state.update(state => { if (state.agents[id]) state.agents[id].title = payload.title; });
     if (this.pendingThreadShape) await this.readProjection(id);
     return { id, workspaceId: spec.workspaceId };
+  }
+  private numberedThreadTitle(taskNumber: number | null | undefined, role: string | undefined, title: string): string {
+    if (!taskNumber) return title;
+    const runRole = role && role !== 'worker' ? role : undefined;
+    const rolePrefix = runRole ? `${runRole}: ` : '';
+    const taskTitle = rolePrefix && title.startsWith(rolePrefix) ? title.slice(rolePrefix.length) : title;
+    const titleRole = runRole === 'reviewer' ? 'review' : runRole;
+    return capPaseoTitle(`${formatTaskNumber(taskNumber)}${titleRole ? ` ${titleRole}` : ''}: ${taskTitle}`);
+  }
+  /** Rename known live task threads. Unknown updates are read back before a same-id retry. */
+  async reconcileThreadTitles(tasks: readonly Task[]): Promise<void> {
+    const byId = new Map(tasks.map(task => [task.id, task]));
+    const candidates = Object.entries(this.state.read().agents).flatMap(([threadId, agent]) => {
+      const task = agent.labels.task ? byId.get(agent.labels.task) : undefined;
+      if (!task) return [];
+      const title = this.numberedThreadTitle(task.number, agent.labels.role, agent.labels.role && agent.labels.role !== 'worker' ? `${agent.labels.role}: ${task.title}` : task.title);
+      return agent.title === title ? [] : [{ threadId, agent, task, title }];
+    });
+    if (!candidates.length) return;
+    const threads = await this.inventory();
+    const live = new Map(threads.threads.filter(thread => !thread.archivedAt && !thread.deletedAt).map(thread => [thread.id, thread]));
+    for (const { threadId, agent, title } of candidates) {
+      const thread = live.get(threadId);
+      if (!thread) continue;
+      if (thread.title === title) {
+        const key = identity('thread-title', canonical({ threadId, title }));
+        const prior = this.state.read().intents[key];
+        this.state.update(state => {
+          if (prior?.status === 'unknown') state.intents[key] = { ...prior, status: 'settled', result: { title } };
+          if (state.agents[threadId]) state.agents[threadId].title = title;
+        });
+        continue;
+      }
+      const key = identity('thread-title', canonical({ threadId, title }));
+      const commandId = key;
+      await this.effect(key, 'orchestration.dispatchCommand', { type: 'thread.metadata.update', commandId, threadId, title }, undefined, undefined,
+        { resendUnknownAfterRead: true });
+      this.state.update(state => { if (state.agents[threadId]) state.agents[threadId].title = title; });
+    }
   }
   /**
    * The profile's `modeId` as the thread's runtime mode. Nucleus profiles name the

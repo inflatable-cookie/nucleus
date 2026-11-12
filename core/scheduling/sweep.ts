@@ -206,6 +206,7 @@ export class Sweep {
       for (const host of hosts) await this.engine.withHost(host, async () => {
         if (!this.engine.hostAvailable(host)) return;
         try { await this.engine.adapter.reconcileReportedSettlements?.(); } catch { /* durable host intents remain for the next sweep */ }
+        try { await this.engine.adapter.reconcileThreadTitles?.(this.engine.store.tasks().filter(task => task.hostId === host)); } catch { /* title intents remain for the next sweep */ }
         const retiredPlan = this.engine.retiredObservationPlan();
         const inventoryIds = [...new Set([...retiredPlan.due, ...this.engine.resolution.observationTargets()])];
         let observed: ReadonlyMap<string, AgentObservation> | null = null;

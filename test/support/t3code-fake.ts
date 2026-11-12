@@ -170,6 +170,7 @@ export async function t3Fake(t: TestContext, directory: string) {
                 return failure({ _tag: 'Die', defect: 'Latest run changed before thread settlement.' });
               p.thread.settledOverride = 'settled'; p.thread.settledAt = payload.settledAt ?? STAMP; break;
             case 'thread.unsettle': p.thread.settledOverride = 'active'; p.thread.settledAt = null; break;
+            case 'thread.metadata.update': if (payload.title !== undefined) p.thread.title = payload.title; break;
             case 'runtime-request.respond': {
               const item = p.runtimeRequests.find((r: Value) => r.id === payload.requestId)!;
               item.status = 'resolved'; if (payload.answers) item.answers = payload.answers;

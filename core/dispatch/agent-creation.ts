@@ -65,7 +65,7 @@ export function workerAgentSpec(owner: () => CreationOwner, task: Task, token: s
   const ticket = writeRunTicket(owner(), task, { id: runId, role: "worker", generation: 0 }, token);
   const mcpBindingPath = owner().reportingViaMcp ? writeMcpBinding(owner(), runId, task, runId, token) : null;
   return {
-    workspaceId: task.workspaceId!, profile: task.profile!, title: task.title, mcpBindingPath,
+    workspaceId: task.workspaceId!, profile: task.profile!, title: task.title, taskNumber: task.number, mcpBindingPath,
     attempt: (mcp, retry): HostAgentAttempt => {
       const current = owner();
       // A host that takes no per-thread environment (T3) gets an empty one and
@@ -94,7 +94,7 @@ export function runAgentSpec(owner: () => CreationOwner, task: Task, run: Run, t
   const ticket = writeRunTicket(owner(), task, run, token);
   const mcpBindingPath = owner().reportingViaMcp ? writeMcpBinding(owner(), run.id, task, run.id, token) : null;
   return {
-    workspaceId: run.workspaceId, profile, title: `${run.role}: ${task.title}`, mcpBindingPath, guard,
+    workspaceId: run.workspaceId, profile, title: `${run.role}: ${task.title}`, taskNumber: task.number, mcpBindingPath, guard,
     attempt: (mcp, retry): HostAgentAttempt => {
       const current = owner();
       // Same task 1105 shape as the worker spec: no per-thread environment, no
