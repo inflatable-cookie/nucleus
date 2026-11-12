@@ -18,6 +18,15 @@
       "required": ["type", "commandId", "threadId"],
       "optional": []
     },
+    "thread.settle": {
+      "required": ["type", "commandId", "threadId"],
+      "optional": ["expectedLatestRunId", "settledAt"]
+    },
+    "thread.unsettle": {
+      "required": ["type", "commandId", "threadId", "reason"],
+      "optional": [],
+      "reasons": ["user"]
+    },
     "runtime-request.respond": {
       "required": ["type", "commandId", "threadId", "requestId"],
       "optional": ["decision", "feedback", "answers", "attachmentsByQuestionId"],

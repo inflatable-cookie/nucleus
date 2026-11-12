@@ -18,7 +18,7 @@ const READ_ONLY_METHODS = new Set(['caller.resolve', 'host.run.list', 'host.run.
   'queue.review-entry-preview', 'queue.bulk-disposition-detail', 'queue.capacity-state',
   'task.next',
   // Nucleus's own profile list is read through these; the host catalog is the host's report.
-  'profile.list', 'profile.providers', 'host.catalog',
+  'profile.list', 'profile.providers', 'profile.compatibility', 'host.catalog',
   // Read-only on the catalogue since ed40faa8; its deliberate read-only entry landed late (2026-10-14).
   'project.management-preview', 'project.qa.request-status', 'project.qa.fence-status',
   // Spec 059: the usage gauge reads stored readings and projections only; reads are paced by the service.

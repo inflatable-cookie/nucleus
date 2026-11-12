@@ -239,7 +239,7 @@ export class T3CodeHost implements Host {
       const commandId = identity('project-create', canonical([this.hostId, repositoryRoot]));
       const created = await this.effect(commandId, 'projects.mutate', {
         type: 'project.create', commandId, projectId, title: basename(repositoryRoot), workspaceRoot: repositoryRoot,
-      }, undefined, undefined, { resendUnknownAfterInventory: true, unsupportedMethodGuidance: createWireGuidance(repositoryRoot) });
+      }, undefined, undefined, { resendUnknownAfterRead: true, unsupportedMethodGuidance: createWireGuidance(repositoryRoot) });
       decode(z.object({ id: z.literal(projectId), title: z.string(), workspaceRoot: z.string() }).passthrough(), created, 'projects.mutate');
       selected = { id: projectId, title: basename(repositoryRoot), workspaceRoot: repositoryRoot };
     }
@@ -297,7 +297,8 @@ export class T3CodeHost implements Host {
   async activeThreads() { return (await this.activeAndArchivedThreads()).filter(t => !t.archived && t.status !== 'gone'); }
   private async effect(key: string, method: string, payload: unknown, beforeSend?: () => void,
     response?: { binding: ResponseBinding; prepare(): Promise<unknown> }, options: {
-      resendUnknownAfterInventory?: boolean;
+      /** Caller completed a fresh positive read that reconciles the unknown remote effect. */
+      resendUnknownAfterRead?: boolean;
       /** Guidance that rides an unknown delivery when the remote text names no known method. */
       unsupportedMethodGuidance?: string;
     } = {}): Promise<unknown> {
@@ -309,7 +310,7 @@ export class T3CodeHost implements Host {
       if (possibleWrites.length > 1) throw new HostUnknownDeliveryError(possibleWrites.find(([, intent]) => intent.diagnostic)?.[1].diagnostic);
       const [boundKey, old] = possibleWrites[0] ?? matches.find(([id]) => id === key) ?? [key, state.intents[key]];
       // Inspect the original outcome before payload checks or native status reads.
-      if (old?.status === 'unknown' && !options.resendUnknownAfterInventory || old?.status === 'refused' && matches.length && !old.response)
+      if (old?.status === 'unknown' && !options.resendUnknownAfterRead || old?.status === 'refused' && matches.length && !old.response)
         throw new HostUnknownDeliveryError(old.diagnostic);
       if (old && matches.length) {
         const wire = JSON.parse(old.payload).payload;
@@ -332,7 +333,7 @@ export class T3CodeHost implements Host {
     key = reserved.key; const prior = reserved.prior;
     if (prior?.status === 'settled') return prior.result;
     if (prior?.status === 'refused') throw new ProvenPreSendRefusalError('T3Code command was refused; no retry');
-    if (prior && !(prior.status === 'unknown' && options.resendUnknownAfterInventory)) throw new HostUnknownDeliveryError(prior.diagnostic);
+    if (prior && !(prior.status === 'unknown' && options.resendUnknownAfterRead)) throw new HostUnknownDeliveryError(prior.diagnostic);
     let wrote = false;
     try {
       if (response) {
@@ -476,6 +477,63 @@ export class T3CodeHost implements Host {
       pendingPermissionKinds: pending.map(r => r.kind === 'user_input' ? 'question' : r.kind),
       ...(pending[0] ? { pendingRequest: { id: pending[0].id, kind: pending[0].kind === 'user_input' ? 'question' : pending[0].kind, firstLine: null } } : {}) };
   }
+  /** Settle a completed non-worker thread after Nucleus has durably accepted its report. */
+  async settleReportedThread(agentId: string, runId: string): Promise<void> {
+    this.requireConnection();
+    const commandId = identity('settle', canonical([this.hostId, agentId, runId]));
+    const payload = { type: 'thread.settle', commandId, threadId: agentId } as {
+      type: string; commandId: string; threadId: string; expectedLatestRunId?: string;
+    };
+    const prior = this.state.read().intents[commandId];
+    const projection = await this.readProjection(agentId);
+    if (projection.thread.settledOverride === 'settled') {
+      if (prior?.status === 'unknown') this.markSettleObserved(commandId);
+      return;
+    }
+    const latest = projection.runs.reduce((best, run) => !best || (run.ordinal ?? -1) >= (best.ordinal ?? -1) ? run : best, undefined as Projection['runs'][number] | undefined);
+    // A fresh run owns the thread now. Never settle it because an older report arrived late.
+    if (!latest || activeStatuses.has(latest.status)) return;
+    if (prior) {
+      await this.reconcileSettleIntent(commandId, prior.payload);
+      return;
+    }
+    payload.expectedLatestRunId = latest.id;
+    await this.effect(commandId, 'orchestration.dispatchCommand', payload);
+  }
+  /** Called by the ordinary host sweep; unknown delivery is checked against T3 before reuse. */
+  async reconcileReportedSettlements(): Promise<void> {
+    const pending = Object.entries(this.state.read().intents).filter(([, intent]) => {
+      if (intent.status !== 'unknown') return false;
+      try {
+        const wire = JSON.parse(intent.payload);
+        return wire.method === 'orchestration.dispatchCommand' && wire.payload?.type === 'thread.settle';
+      } catch { throw new HostUnknownDeliveryError(); }
+    });
+    for (const [key, intent] of pending) {
+      try { await this.reconcileSettleIntent(key, intent.payload); } catch { /* retain unknown delivery for the next sweep */ }
+    }
+  }
+  private markSettleObserved(key: string, result: unknown = { settled: true }) {
+    this.state.update(state => {
+      const intent = state.intents[key];
+      if (intent?.status === 'unknown') state.intents[key] = { ...intent, status: 'settled', result };
+    });
+  }
+  private async reconcileSettleIntent(key: string, encoded: string): Promise<void> {
+    const wire = JSON.parse(encoded) as { method?: string; payload?: { type?: string; threadId?: string; expectedLatestRunId?: string } };
+    const payload = wire.payload;
+    if (wire.method !== 'orchestration.dispatchCommand' || payload?.type !== 'thread.settle' || !payload.threadId || !payload.expectedLatestRunId)
+      throw new HostUnknownDeliveryError();
+    const projection = await this.readProjection(payload.threadId);
+    if (projection.thread.settledOverride === 'settled') { this.markSettleObserved(key); return; }
+    const latest = projection.runs.reduce((best, run) => !best || (run.ordinal ?? -1) >= (best.ordinal ?? -1) ? run : best, undefined as Projection['runs'][number] | undefined);
+    if (latest?.id !== payload.expectedLatestRunId || activeStatuses.has(latest.status)) {
+      // The old report no longer owns the latest run; retire this intent without touching it.
+      this.markSettleObserved(key, { settled: false, superseded: true });
+      return;
+    }
+    await this.effect(key, 'orchestration.dispatchCommand', payload, undefined, undefined, { resendUnknownAfterRead: true });
+  }
   async observationInventory(ids: readonly string[]) { try { return new Map(await Promise.all(ids.map(async id => [id, await this.observe(id)] as const))); } catch { return null; } }
   /**
    * The origin-agent read distinguishes authoritative absence from an unread
@@ -506,11 +564,18 @@ export class T3CodeHost implements Host {
     } catch { return null; }
   }
   async agentTimeline(id: string, limit?: number) { return (await this.agentTimelinePage(id, limit))?.entries ?? null; }
-  async sendMessage(id: string, input: HostMessage) { await this.effect(input.messageId, 'orchestration.dispatchCommand', { type: 'message.dispatch', commandId: input.messageId, threadId: id, messageId: identity('message', input.messageId), text: input.text, attachments: [], createdBy: 'user', creationSource: 'server', dispatchMode: { type: 'queue_after_active' } }); }
+  private async unsettleBeforeMessage(id: string, messageId: string) {
+    const projection = await this.readProjection(id);
+    if (projection.thread.settledOverride !== 'settled') return;
+    const commandId = identity('unsettle', canonical([this.hostId, id, messageId]));
+    await this.effect(commandId, 'orchestration.dispatchCommand', { type: 'thread.unsettle', commandId, threadId: id, reason: 'user' });
+  }
+  async sendMessage(id: string, input: HostMessage) { await this.unsettleBeforeMessage(id, input.messageId); await this.effect(input.messageId, 'orchestration.dispatchCommand', { type: 'message.dispatch', commandId: input.messageId, threadId: id, messageId: identity('message', input.messageId), text: input.text, attachments: [], createdBy: 'user', creationSource: 'server', dispatchMode: { type: 'queue_after_active' } }); }
   async enqueueMessage(id: string, input: HostMessage): Promise<void> { await this.sendMessage(id, input); }
   async sendGuarded(id: string, input: HostGuardedMessage, guard: HostSendGuard) {
     const observed = await this.observe(id);
     if (observed.workspaceId !== input.expectedWorkspaceId || observed.active || observed.permissions || observed.archived || observed.status === 'gone' || !await guard.allowed()) return { sent: false as const, reason: 'T3Code retained-thread guard refused' };
+    await this.unsettleBeforeMessage(id, input.messageId);
     await this.effect(input.messageId, 'orchestration.dispatchCommand', { type: 'message.dispatch', commandId: input.messageId, threadId: id, messageId: identity('message', input.messageId), text: input.text, attachments: [], createdBy: 'user', creationSource: 'server', dispatchMode: { type: 'queue_after_active' } }, () => {
       if (!guard.stillAllowed()) throw new ProvenPreSendRefusalError('T3Code send guard changed'); guard.beforeSend?.();
     }); return { sent: true as const };
@@ -527,6 +592,7 @@ export class T3CodeHost implements Host {
     const native = (await this.inventory()).threads.find(t => t.id === id);
     const runId = projection.runs.find(r => activeStatuses.has(r.status))?.id ?? native?.activeRunId ?? null;
     if (!runId) throw new ProvenPreSendRefusalError('T3Code thread has no active run to steer');
+    await this.unsettleBeforeMessage(id, messageId);
     await this.effect(messageId, 'orchestration.dispatchCommand', { type: 'message.dispatch', commandId: messageId, threadId: id, messageId: identity('message', messageId), text, attachments: [], createdBy: 'user', creationSource: 'server', dispatchMode: { type: 'steer_active', targetRunId: runId } });
   }
   async stopAgentTurn(id: string) { const p = await this.readProjection(id); const runs = p.runs.filter(r => activeStatuses.has(r.status)).map(r => r.id).sort(); if (!runs.length) return;

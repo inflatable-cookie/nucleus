@@ -3,6 +3,7 @@ import { recoveryEffects, isBlockingRecoveryEffect, recoveryEffectsRefusal } fro
 import { executionParticipants } from '../machine/execution-participants';
 import { runBindsCurrentWork, type Run, type Task } from '../../shared/contracts';
 import { STALE_INTEGRATION_BASE_PROOF } from '../hooks/hooks';
+import { formatHostProcessSweepEvent, reapHostProcesses, recordedProcessGroupsForTask } from '../machine/host-process-reap';
 import type { Adapter } from '../host/adapter';
 import type { VerifiedEnclosingOperation } from '../planning/enclosing-operation';
 import type { Resolution } from '../resolution';
@@ -12,6 +13,64 @@ export class ParticipantLease {
   constructor(readonly resolution: Resolution) {}
   get store() { return this.resolution.store; }
   get adapter() { return this.resolution.adapter; }
+
+  private async settleStrayTool(t: Task, agentId: string, workspaceId: string, runIds: string[], issue: string): Promise<string | null> {
+    const runId = runIds[0];
+    if (!runId) return issue;
+    const hold = this.store.eventsAll(t.id).findLast(event => event.kind === 'owned_tool_hold' && (() => {
+      try { return JSON.parse(event.detail).runId === runId; } catch { return false; }
+    })());
+    if (!hold) return issue;
+    const deadline = Date.parse(hold.at) + Math.max(0, this.resolution.graceMs);
+    if (Date.now() < deadline) return `${issue}; stray-tool grace ends at ${new Date(deadline).toISOString()}`;
+
+    // A live turn owns its tools. Recheck immediately before the host sweep so
+    // a turn that resumed during the grace is never stopped.
+    // The task process sweep can cover the shared task worktree and recorded
+    // run groups, so all bound participants must still be settled before it is
+    // allowed to stop anything.
+    for (const [id, workspace] of executionParticipants(t, this.store.runs(t.id))) {
+      let state: Awaited<ReturnType<Adapter['observe']>>;
+      try { state = await this.resolution.host.observe(id); }
+      catch { return `${issue}; participant ${id} identity could not be rechecked before reaping`; }
+      if (state.id !== id || state.workspaceId !== workspace || active(state) || !['idle', 'closed', 'error'].includes(state.status))
+        return `${issue}; participant ${id} resumed or its identity changed before reaping`;
+    }
+
+    let processes: Awaited<ReturnType<NonNullable<Adapter['hostProcessListing']>>> | undefined;
+    try { processes = this.adapter.hostProcessListing ? await this.adapter.hostProcessListing() : undefined; }
+    catch { processes = null; }
+    let result: Awaited<ReturnType<typeof reapHostProcesses>>;
+    try {
+      result = await reapHostProcesses({
+        directory: t.directory,
+        recordedGroups: recordedProcessGroupsForTask(this.store, t),
+        processes,
+      });
+    } catch (error) {
+      return `${issue}; host-process reap failed: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    if (result.failed.length) return `${issue}; host-process reap could not prove or stop every target: ${result.failed.map(target => target.reason).join('; ')}`;
+    if (result.skippedPaseo.length) {
+      const skipped = `Skipped ${result.skippedPaseo.length} Paseo-owned process${result.skippedPaseo.length === 1 ? '' : 'es'}: ${result.skippedPaseo.map(target => `pid=${target.pid} pgid=${target.pgid} cwd=${target.cwd || '-'} command=${target.command || '-'}`).join('; ')}`;
+      this.store.event(t.id, 'participant_tool_reap_skipped', skipped);
+      return `${issue}; host-process reap ${skipped}`;
+    }
+    if (result.terminated.length) this.store.event(t.id, 'participant_tool_reaped',
+      `Stopped participant ${agentId} after its reported turn ended and stray-tool grace elapsed: ${formatHostProcessSweepEvent(result)}`);
+    else this.store.event(t.id, 'participant_tool_reap_empty',
+      `Participant ${agentId} still reported ${issue}, but the host-process reap found no live task process after the grace`);
+    return await this.resolution.ownedToolHold(agentId, {
+      requireCompleteEvidence: true, runId, runIds, taskId: t.id, workspaceId,
+    });
+  }
+
+  private yieldIntegrationTurn(t: Task): void {
+    // A merge request with unknown delivery must retain its turn. Before merge
+    // intent, a participant wait yields its FIFO place so another task can land.
+    if (!t.resolution.integrationTurn || t.resolution.mergeIntent || t.resolution.mergedCommit) return;
+    this.resolution.update(t, { integrationTurn: null }, { reason: t.reason }, 'integration_turn_yielded_for_participant');
+  }
 
   async idle(agentId: string, workspaceId?: string, onBusy?: (state: Awaited<ReturnType<Adapter['observe']>>) => void) {
     const state = await this.resolution.host.observe(agentId);
@@ -167,7 +226,12 @@ export class ParticipantLease {
         const participantRunIds=participantToolRunIds(t,runs,id,workspace);
         const why=await this.resolution.ownedToolHold(id,{requireCompleteEvidence:true,runId:participantRunIds[0],runIds:participantRunIds,taskId:t.id,workspaceId:workspace});
         if (why) {
-          if (!probe) this.resolution.waiting(t, `Merge waits for participant ${id}: ${why}`, 'lifecycle');
+          const stray = !probe && !syncing && !t.resolution.mergeIntent && !t.resolution.mergedCommit
+            ? await this.settleStrayTool(t, id, workspace, participantRunIds, why)
+            : why;
+          if (!stray) continue;
+          if (!probe) this.yieldIntegrationTurn(t);
+          if (!probe) this.resolution.waiting(t, `Merge waits for participant ${id}: ${stray}`, 'lifecycle');
           return false;
         }
       }

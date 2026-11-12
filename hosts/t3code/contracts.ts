@@ -37,6 +37,8 @@ export const threadRecord = z.object({
   id, projectId: id, title: z.string(), providerInstanceId: id, modelSelection,
   /** The thread's runtime mode. The nightly always reports it; retained only when present for older shapes. */
   runtimeMode: runtimeMode.optional(),
+  /** Nightly's manual settled marker; a new message dispatch clears it. */
+  settledOverride: z.enum(['settled', 'active']).nullable(), settledAt: date.nullable(),
   worktreePath: z.string().nullable(), branch: z.string().nullable(),
   archivedAt: date.nullable(), deletedAt: date.nullable(), updatedAt: date,
 });
@@ -67,7 +69,7 @@ export const turnItem = z.object({ id, type: id, requestId: id.optional(),
 });
 export const projection = z.object({
   thread: threadRecord,
-  runs: z.array(z.object({ id, status: shellThread.shape.status, startedAt: date.nullable() })),
+  runs: z.array(z.object({ id, status: shellThread.shape.status, startedAt: date.nullable(), ordinal: z.number().int().nonnegative().optional() })),
   runtimeRequests: z.array(runtimeRequest), turnItems: z.array(turnItem),
   messages: z.array(z.object({ id, role: id, text: z.string() })), updatedAt: date,
 });

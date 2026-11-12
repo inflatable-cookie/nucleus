@@ -1,0 +1,1 @@
+Completed T3 support threads now move out of the sidebar as soon as Nucleus accepts their report. Settlement uses the completed native run ID, survives uncertain delivery, and retries after checking T3 state. A later reviewer round explicitly reactivates the retained thread. Worker threads and existing archive timing are unchanged.

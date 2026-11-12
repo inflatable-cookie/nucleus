@@ -83,7 +83,8 @@ export class AgentControls {
   recoveryTaskNextFromAgent(caller: { taskId: string; runId: string; token: string }) {
     this.engine.authenticateAgentControl(caller.taskId, caller.runId, caller.token);
     if (this.store.run(caller.runId)?.role !== 'recovery') throw Error('Only the recovery coordinator reads the task plan with its run credential');
-    return ownerTaskNext(collectOwnerVerbFacts(this.store, this.store.task(caller.taskId), null, caller.runId));
+    const task = this.store.task(caller.taskId);
+    return ownerTaskNext({ ...collectOwnerVerbFacts(this.store, task, null, caller.runId), hostProfiles: this.engine.profilesFor(task.hostId) });
   }
   updateDependenciesFromAgent(caller:{taskId:string;runId:string;token:string},input:{taskId:string;version:number;dependsOn:string[]}) {
     return this.store.transaction(()=>{

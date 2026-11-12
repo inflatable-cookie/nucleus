@@ -119,6 +119,8 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     notify(id: string, messageId: string, text: string) { return this.native.sendMessage(id, { messageId, text }); }
     stopAgentTurn(id: string) { return this.native.stopAgentTurn(id); }
     archiveAgent(id: string) { return this.native.archiveAgent(id); }
+    settleReportedThread(agentId: string, runId: string) { return this.native.settleReportedThread(agentId, runId); }
+    reconcileReportedSettlements() { return this.native.reconcileReportedSettlements(); }
     agentTimelinePage(id: string, limit?: number) { return this.native.agentTimelinePage(id, limit); }
     agentTimeline(id: string, limit?: number) { return this.native.agentTimeline(id, limit); }
     pendingQuestions(id: string) { return this.native.pendingQuestions(id); }
