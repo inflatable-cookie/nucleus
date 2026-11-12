@@ -1,4 +1,5 @@
 import { parseAgentId, sameCallerIdentity } from '../../shared/agent-identity';
+import { hostKindOf } from '../../shared/host-kind';
 import type { IdentitySource } from '../../shared/host-kind';
 
 /** Ten minutes after the last host closes (Tom, 2026-11-08, `vision.md` "Split
@@ -71,9 +72,18 @@ const answered = (value: unknown): OriginLookup => value === 'unknown' ? 'unknow
 export async function resolveOriginHost<T>(registry: HostRegistry<T>, agentId: string,
   lookup: (host: T, id: string) => Promise<OriginLookup | unknown | null>,
   evidence?: OriginHostEvidence): Promise<string | undefined> {
-  const online = registry.onlineIds(), known = registry.known().map(entry => entry.id);
+  const qualified = parseAgentId(agentId);
+  const known = registry.known().map(entry => entry.id);
+  // Bare caller fields predate host-qualified identities and belong to Paseo.
+  // An unrelated T3 host must not make a legacy Paseo identity ambiguous or
+  // prevent its checks while T3 is offline.
+  const candidates = qualified ? known : known.filter(id => hostKindOf(id) === 'paseo');
+  const online = registry.onlineIds().filter(id => candidates.includes(id));
   // Stale evidence (a host this registry never knew) decides nothing.
   const named = evidence && known.includes(evidence.hostId) ? evidence.hostId : undefined;
+  // Evidence from a known host of another kind contradicts a bare identity's
+  // legacy Paseo meaning; do not silently resolve it elsewhere.
+  if (named && !candidates.includes(named)) return undefined;
   if (online.length === 1 && known.length === 1) return online[0];
   const claimants: string[] = [];
   let undecided = false;
@@ -92,7 +102,7 @@ export async function resolveOriginHost<T>(registry: HostRegistry<T>, agentId: s
   // belongs to, so a claimant elsewhere contradicts it.
   if (named) return named === claimant ? claimant : undefined;
   // Without that evidence an offline or undecided host leaves the answer unknown.
-  if (undecided || online.length !== known.length) return undefined;
+  if (undecided || online.length !== candidates.length) return undefined;
   return claimant;
 }
 

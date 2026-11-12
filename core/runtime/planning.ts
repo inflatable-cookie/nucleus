@@ -514,7 +514,9 @@ ${cut!.impact}${cut!.fix?`\n\n## Fix\n\n${cut!.fix}`:""}
   private async lookupCompletionRecipient(id: string, submission: import("../../shared/contracts").Submission) {
     const identitySource = id === submission.originAgentId ? submission.originIdentity : undefined;
     const hostId = await this.context.engine.identifyOriginHost(id, identitySource);
-    if (!hostId) throw new Error(`Completion recipient host is unknown or ambiguous: ${id}`);
+    if (!hostId) throw new Error(id === submission.originAgentId
+      ? 'Origin host is unknown or ambiguous'
+      : `Completion recipient host is unknown or ambiguous: ${id}`);
     return this.context.engine.withHost(hostId, () => this.context.host.originAgent(id));
   }
 }
