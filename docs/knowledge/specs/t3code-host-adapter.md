@@ -205,6 +205,8 @@ pretend to be a Paseo workspace.
 | Answer question or permission | `runtime-request.respond` through dispatch | Exact request, thread and workspace; typed answers or approval decision |
 | Stop | `thread.stop` through dispatch | Receipt followed by observation; never a replacement thread |
 | Archive | `thread.archive` through dispatch | Receipt followed by archived-state observation |
+| Settle report | `thread.settle` through dispatch for any completed non-worker role | Immediately after the accepted Nucleus receipt; bind `expectedLatestRunId`, keep an uncertain intent and inspect `settledOverride` before retry |
+| Wake settled support thread | `thread.unsettle` through dispatch before a follow-up message | Stable command intent; a retained reviewer is active again for its next round |
 | Archive workspace | `projects.mutate` / `project.update` `archived: true` | The project is retired with threads and files kept; observation reads `archivedAt` from the inventory |
 | Atomic interrupt and continue | `message.dispatch` `steer_active` with the live run's `targetRunId` | The message injects into the active turn; with no active run the refusal is proven before send |
 
@@ -214,6 +216,30 @@ operation binds a stable command ID, native target and canonical payload to the
 existing durable intent before send. Launch also binds its explicit thread and
 initial-message IDs. Persist the mapping before remote creation so a lost reply
 cannot produce an unowned thread.
+
+Nightly `0.1.10-nightly.20261111.4529`'s installed bundle defines the command
+shape used for report settlement as:
+
+```ts
+{
+  type: "thread.settle",
+  commandId: CommandId,
+  threadId: ThreadId,
+  expectedLatestRunId?: RunId,
+  settledAt?: DateTimeUtc
+}
+```
+
+After Nucleus accepts a completion from any support role, T3 settles that
+thread using the latest completed native run ID. Workers are unchanged. A new
+review message first sends `thread.unsettle` with `reason: "user"`; T3 does not
+clear a manual settled override on `message.dispatch`. Unknown settlement
+delivery is recorded. On the next host sweep, Nucleus reads the thread's
+`settledOverride` first: `settled` proves success, a changed or active latest
+run retires the old intent without touching the new run, and only the same
+completed latest run permits replay of the identical command. Settlement
+failure never blocks the task report. Existing closeout and retention paths
+still decide when threads are archived.
 
 ### Model options
 
@@ -280,9 +306,16 @@ catalog drift between refresh and send. Observation reports the thread's
 A repository's pool profiles are the same pool every host selects from, but each
 host answers availability from its own catalog. T3Code names its provider
 instances itself (`codex`, `claudeAgent`, `grok`, `pi`), so a pool profile using
-another spelling is ineligible on T3 with `Provider … is not available on this
-host` until the Nucleus provider map records the mapping; that mapping is the
-provider map's job, not a runtime-mode substitution.
+another spelling is ineligible on T3 with `T3Code has no … provider` until the
+operator maps it. The mapping is the profile's own `hosts.t3code` setting
+(nucleus#1151): the T3 provider key, model, mode, thinking level or option
+values that profile launches with on T3, or an exclusion. A mapped profile's T3
+routing snapshot carries T3's own provider key, which is the `instanceId` the
+launch sends. On the recorded nightly snapshot the Claude profiles need
+`provider: claudeAgent`, a T3 mode for `bypassPermissions` (`full-access`) and
+their thinking level as the `effort` option; Pi profiles need their thinking
+level as the `thinking` option; Grok needs its unreported `auto_accept` value
+cleared. `profile.compatibility` and Settings → Profiles show each answer.
 
 A creation refusal that is proven pre-send settles the run refused and the task
 in attention with the step that failed named — `Worker creation refused before
@@ -459,14 +492,16 @@ and the task moves to review, guarded by `expectedLatestRunId` so a thread a
 later run already owns is never settled (nucleus#1154). The accepted receipt is
 durable first; the settle is presentation only, so a refused or unknown send
 changes nothing and leaves the thread as it was. The handover's turn may still
-be ending when the report arrives, and a live run is never settled — the next
-turn would clear the marker anyway — so the intent is recorded in the adapter's
-own state (`pendingSettles`) and the ordinary host sweep retries it once that run
-has ended, naming it in `expectedLatestRunId`; an intent whose run never ends is
-retired after 24 hours, and one that a later run replaced is retired without
-touching the thread. The nightly clears the manual settled marker on a new
-message dispatch, so a revision round wakes the worker and its next handover
-settles it again under that run's own command id.
+be ending when the report arrives, and a live run is never settled, so the intent
+is recorded in the adapter's own state (`pendingSettles`) and the ordinary host
+sweep retries it once that run has ended, naming it in `expectedLatestRunId`; an
+intent whose run never ends is retired after 24 hours, and one that a later run
+replaced is retired without touching the thread. A revision round wakes the
+worker through the same explicit `thread.unsettle` every follow-up send uses, and
+its next handover settles it again under that run's own command id. A worker
+handover and a support-thread report share the `thread.settle` command and the
+`expectedLatestRunId` guard; only the worker's own handover settles the worker
+thread, and only a support role's report settles its thread.
 
 One end-to-end test drives an ordinary task's whole lifecycle on the fake
 Nightly transport (nucleus#1139): promotion onto the T3 host, workspace

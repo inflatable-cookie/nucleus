@@ -190,6 +190,14 @@ test('the budget reads as two bounded bars and the elapsed clock starts at the f
   assert.equal(bars[1].ratio, 1);
   assert.deepEqual(budgetBars(null), []);
 
+  // nucleus#1153: time held on a Nucleus-side cause is named on the time bar, so the
+  // board says why the elapsed clock and the budget disagree.
+  const paused = budgetBars(taskBudgetViewSchema.parse({ ...budget, level: 'medium',
+    effectiveTokens: { used: 1_250_000, limit: 5_000_000, evidence: 'exact' },
+    wallMs: { used: 40 * 60_000, limit: 180 * 60_000, pausedMs: 110 * 60_000 } }));
+  assert.equal(paused[1].text, '40m / 3h · 1h 50m held on Nucleus faults');
+  assert.equal(paused[1].used, 40 * 60_000, 'the bar measures the task\'s own work, not the held time');
+
   assert.equal(formatTokenCount(950), '950');
   assert.equal(formatTokenCount(12_400), '12.4k');
   assert.equal(formatTokenCount(1_200_000), '1.2M');

@@ -1283,8 +1283,13 @@ test('a stale-version control refusal names the current version and the read to 
   const f = fixture(); try {
     const stale = f.task().version;
     await f.engine.performTaskControl(taskControlInputSchema.parse({ taskId: f.taskId, version: stale, action: 'hold', reason: 'First hold' }));
-    await assert.rejects(f.engine.performTaskControl(taskControlInputSchema.parse({ taskId: f.taskId, version: stale, action: 'release' })),
-      new RegExp(`the task is now version ${f.task().version}; read next again and reassess before retrying`));
+    // The refusal names the version the store holds when it refuses, which can move
+    // past the version read above (a pass may settle the task's budget clock), so
+    // the message is judged against the current read rather than a captured one.
+    const refusal = await f.engine.performTaskControl(taskControlInputSchema.parse({ taskId: f.taskId, version: stale, action: 'release' }))
+      .then(() => null, (error: Error) => error);
+    assert.ok(refusal, 'the stale control is refused');
+    assert.match(refusal.message, new RegExp(`the task is now version ${f.task().version}; read next again and reassess before retrying`));
   } finally { await f.close(); }
 });
 

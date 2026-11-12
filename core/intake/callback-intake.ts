@@ -79,7 +79,7 @@ export function completionRefusal(input: Completion, run: Run, task: Task, revis
  * methods delegate here. `store`, `adapter` and `resolution` read the engine
  * per call: tests replace the adapter.
  */
-export type CallbackIntakeContext = Pick<Engine, 'adapter' | 'cleanContext' | 'completeCheckpoint' | 'completeReviewProgress' | 'control' | 'host' | 'rejectCheckpoint' | 'rejectReviewProgress' | 'reviewContinuationLimit' | 'reviewerContinuationInFlight' | 'onTaskHost' | 'stopped' | 'store' | 'wake' | 'wakeTask'> & { readonly resolution: Pick<Resolution, 'attention' | 'complete' | 'settleCompletedExecutorBlocker'> };
+export type CallbackIntakeContext = Pick<Engine, 'adapter' | 'cleanContext' | 'completeCheckpoint' | 'completeReviewProgress' | 'control' | 'host' | 'rejectCheckpoint' | 'rejectReviewProgress' | 'reviewContinuationLimit' | 'reviewerContinuationInFlight' | 'onTaskHost' | 'stopped' | 'store' | 'wake' | 'wakeTask' | 'withHost'> & { readonly resolution: Pick<Resolution, 'attention' | 'complete' | 'settleCompletedExecutorBlocker'> };
 
 export class CallbackIntake {
   constructor(readonly engine: CallbackIntakeContext) {}
@@ -127,7 +127,7 @@ export class CallbackIntake {
     if (sourceRun ? sourceRun.taskId !== identityTask.id : identityTask.runId !== input.runId)
       throw new Error('Stale report: task and run identity do not match');
     const priorReceipt = this.store.receipt(proofFilesRemoved(input), token);
-    if (priorReceipt) { await this.settleHandedOverWorker(input.taskId, sourceRun, input.status); return priorReceipt; }
+    if (priorReceipt) { await this.settleHandedOverWorker(input.taskId, sourceRun, input.status); await this.settleReportedThread(sourceRun); return priorReceipt; }
     let verifiedPr: { url: string; head: string } | null = null;
     if (!sourceRun || sourceRun.role === 'revision') {
       const branches = `${input.headline ?? ''} ${input.summary}`.match(/\bns-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi) ?? [];
@@ -176,6 +176,7 @@ export class CallbackIntake {
       }
       const receipt = this.resolution.complete(input, token, startEvidence);
       await this.settleHandedOverWorker(input.taskId, sourceRun, input.status);
+      await this.settleReportedThread(sourceRun);
       await this.resolution.settleCompletedExecutorBlocker(input);
       void this.engine.cleanContext(() => this.engine.wakeTask(input.taskId));
       return receipt;
@@ -190,7 +191,9 @@ export class CallbackIntake {
     // Queue #691: a report from a run under way when its task finished is evidence only, so it
     // skips the live source gates (PR identity, workspace binding) that would refuse it.
     if (sourceRun && sourceRun.taskId === input.taskId && sourceRun.role !== 'executor' && ['done', 'cancelled'].includes(this.store.task(input.taskId).phase)) {
-      return acceptRunCompletion();
+      const receipt = this.resolution.complete(input, token);
+      await this.settleReportedThread(sourceRun);
+      return receipt;
     }
     if (input.sourceApproved || input.awaitingProofs) {
       if (sourceRun?.role !== 'reviewer' || input.status !== 'blocked' || input.reviewResponsibility !== 'environment'
@@ -238,7 +241,11 @@ export class CallbackIntake {
     else if (input.sourceApproved && sourceRun) await ordinaryReviewSource(this.store.task(input.taskId), sourceRun.head, false);
     const runRoute = completionRoute(input.status, this.store.run(input.runId) ?? null);
     if (runRoute === 'run' || runRoute === 'reviewer') {
-      if (isDispositionActive(this.store.task(input.taskId))) return recordLateCallbackEvidence(this.store, input, token);
+      if (isDispositionActive(this.store.task(input.taskId))) {
+        const receipt = recordLateCallbackEvidence(this.store, input, token);
+        await this.settleReportedThread(sourceRun);
+        return receipt;
+      }
       if (completionRoute(input.status, this.store.run(input.runId) ?? null) === 'reviewer') {
         const apply = acceptRunCompletion;
         return this.engine.reviewerContinuationInFlight(input.taskId, input.runId) ? this.engine.control(apply, `task:${input.taskId}`) : apply();
@@ -290,6 +297,16 @@ export class CallbackIntake {
       this.store.event(task.id, 'unfinished_continuation', JSON.stringify(unfinished));
     await this.settleHandedOverWorker(input.taskId, this.store.run(input.runId) ?? null, input.status);
     void this.engine.cleanContext(() => this.engine.wakeTask(input.taskId)); return response;
+  }
+  /** The accepted receipt is durable before the best-effort host presentation effect. */
+  private async settleReportedThread(run: Run | null | undefined): Promise<void> {
+    if (!run || run.role === 'revision' || !run.agentId || !run.hostId) return;
+    try {
+      await this.engine.withHost(run.hostId, async () => {
+        await this.adapter.settleReportedThread?.(run.agentId!, run.id);
+      });
+    }
+    catch { /* T3 records the uncertain intent; a later host sweep retries it. */ }
   }
   /**
    * Bounded worker checkpoint. Identity, cleanliness, pushed-head and budget

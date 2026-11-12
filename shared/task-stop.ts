@@ -66,10 +66,15 @@ export function isTransientExternalFailure(detail: string): boolean {
     || /unexpected end of JSON input|Integration checkout changed while fetching|ETIMEDOUT|EAI_AGAIN|ECONNRESET/.test(detail));
 }
 
-export const taskStopVerbs = ["restart", "route", "move", "proof"] as const;
+/**
+ * Stop verbs name the existing owner verbs an owner can run from the stop. A
+ * budget stop names `extend_budget` (nucleus#1153): the pause is answered by an
+ * extension, and a stop that listed nothing left the task reading as stranded.
+ */
+export const taskStopVerbs = ["restart", "route", "move", "proof", "extend_budget"] as const;
 /** Owner verbs that can advance a stop of this reason; a wait clears on its own. */
-export const taskStopVerbsFor = (reason: TaskStopReason): ("restart" | "route" | "move" | "proof")[] =>
-  reason === "operator_needed" ? ["restart", "route", "move"] : reason === "run_stalled" ? ["restart"] : [];
+export const taskStopVerbsFor = (reason: TaskStopReason): TaskStopVerb[] =>
+  reason === "operator_needed" ? ["restart", "route", "move"] : reason === "run_stalled" ? ["restart"] : reason === "budget" ? ["extend_budget"] : [];
 export const taskStopVerbSchema = z.enum(taskStopVerbs);
 export type TaskStopVerb = z.infer<typeof taskStopVerbSchema>;
 

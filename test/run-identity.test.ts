@@ -391,6 +391,14 @@ test('nucleus#1139: a proven refusal at worker creation names the step and skips
     assert.equal(f.creates.length, 1, 'exactly one creation was attempted');
     const event = f.store.events(task.id).find(candidate => candidate.kind === 'worker_creation_refused_before_send');
     assert.ok(event, 'the refusal is recorded as its own event kind');
+    // Spec 058 budgets (nucleus#1153): a proven pre-send refusal is the host's cause,
+    // so the task's wall clock stops while it waits for the Nucleus fix. The launch
+    // that refuses runs after this pass's quanta, so the next sweep visit settles it
+    // exactly as core/scheduling/sweep.ts does.
+    f.engine.resolution.settleBudgetClock(f.store.task(task.id));
+    const held = f.store.task(task.id).resolution.budgetClock!;
+    assert.ok(held.since, 'the refusal pauses the wall clock');
+    assert.match(held.reason ?? '', /refusal stopped the task before any send/);
     // A later dispatch reselects; no stale run identity blocks it.
     assert.equal(current.resolution.currentRunId ?? null, null);
   } finally { await f.close(); }

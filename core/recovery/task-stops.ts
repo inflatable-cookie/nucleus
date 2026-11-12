@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import type { Incident, Run, Task } from '../../shared/contracts';
 import type { IncidentCause } from '../../shared/incident';
 import { isTransientExternalFailure, taskStopClassification, taskStopRecord, taskStopVerbsFor, type TaskStopReason, type TaskStopVerb } from '../../shared/task-stop';
+import { NUCLEUS_HELD_REFUSAL_EVENTS, nucleusHeldReason, type BudgetClock } from '../../shared/task-budget';
+import { holdsOf } from '../../shared/holds';
 import { incidentKey } from './incident';
 import { isRepositoryContention, repositoryContentionNeedsAttention } from '../scheduling/repository-contention';
 import type { Resolution } from '../resolution';
@@ -32,6 +34,85 @@ export class TaskStops {
       || patch.phase !== undefined && patch.phase !== current.phase;
     const stop = changes.stop !== undefined ? changes.stop : reasonOrPhaseChanged ? null : current.resolution.stop;
     return this.store.update(t.id, { ...patch, resolution: { ...current.resolution, ...changes, stop } }, event, detail ?? patch.reason ?? patch.phase ?? event);
+  }
+  /**
+   * Spec 058 budgets (nucleus#1153): charge the wall clock for the task's own work
+   * only. Called once per task quantum and once per task visit in the sweep — the
+   * two places that observe every live task each pass — it opens a pause interval
+   * while the task is held for a Nucleus-side cause and closes it when the task can
+   * make progress again, so the budget is not spent on Nucleus's downtime.
+   * Intervals are durable on the task (`resolution.budgetClock`) and recorded as
+   * events for the board's telemetry; the budget read subtracts them.
+   *
+   * A wedged or failed sweep is one cause: the sweep records `observation_outage`
+   * when a task quantum overruns its bound. An interval opened for an outage is
+   * dated from that observation, not from the visit that noticed it, so the whole
+   * outage is discounted whether a sweep visit or the returned quantum gets there
+   * first. Only `options.returned` (the wedged quantum's own finish) closes it, with
+   * `observation_resumed`: a sweep visiting a still-running lane never claims it
+   * returned.
+   */
+  settleBudgetClock(task: Task, options: { returned?: boolean } = {}): Task {
+    const current = this.store.task(task.id);
+    const at = Date.parse(now());
+    const clock: BudgetClock = current.resolution.budgetClock ?? { pausedMs: 0, pauses: 0, since: null, reason: null };
+    const terminal = current.phase === 'done' || current.phase === 'cancelled';
+    const events = this.store.eventsAll(current.id);
+    // The earliest outage the lane has not yet returned from; repeated observations
+    // of one wedged quantum never move its start forward.
+    const resumedAt = events.findLastIndex(event => event.kind === 'observation_resumed');
+    const outageAt = events.findIndex((event, index) => index > resumedAt && event.kind === 'observation_outage');
+    const outage = outageAt >= 0 ? events[outageAt]!.at : null;
+    // A proven pre-send refusal holds the task while the attention it set is still
+    // the current episode: an owner resume writes `attention_episode_resolved`. The
+    // task's own reason is checked too, so a later, different fault can never read
+    // as a stale refusal.
+    const refusalAt = events.findLastIndex(event => (NUCLEUS_HELD_REFUSAL_EVENTS as readonly string[]).includes(event.kind));
+    const presendRefusal = refusalAt >= 0 && refusalAt > events.findLastIndex(event => event.kind === 'attention_episode_resolved')
+      && current.resolution.attention === true && /refused before send/i.test(current.reason);
+    const closingOutage = Boolean(outage) && Boolean(options.returned);
+    const held = terminal ? null : nucleusHeldReason({
+      stopReason: current.resolution.stop?.reason ?? null,
+      dispatchHeld: Boolean(holdsOf(current).dispatch),
+      incidentCause: current.resolution.incident && current.resolution.incident.status !== 'resolved'
+        ? current.resolution.incident.cause : null,
+      presendRefusal,
+      // While the lane is wedged only the outage may hold it; the returned quantum
+      // has to be able to close the interval.
+      observationOutage: Boolean(outage) && !closingOutage,
+    });
+    const opening = !clock.since && Boolean(held);
+    const running = Boolean(clock.since);
+    // Nothing to close and nothing to open: the usual pass writes nothing.
+    if (running && held && !closingOutage) return current;
+    if (!running && !held && !closingOutage) return current;
+    // A segment closes when its cause ends or when its outage returns. Its start is
+    // the open `since`, and for an outage the observation itself — so an interval
+    // opened for an outage is dated from the observation, and a return that beats
+    // every visit still books the outage time.
+    const starts = [clock.since, outage]
+      .map(value => (value ? Date.parse(value) : Number.NaN))
+      .filter(started => Number.isFinite(started) && started <= at);
+    const pausedTo = starts.length ? Math.min(...starts) : at;
+    const next: BudgetClock = opening
+      // An interval that starts now books nothing yet; an outage one is dated from
+      // the observation that caused it, so the read discounts it immediately.
+      ? { ...clock, since: new Date(starts.length ? pausedTo : at).toISOString(), reason: held }
+      : {
+          pausedMs: clock.pausedMs + Math.max(0, at - pausedTo),
+          pauses: clock.pauses + (starts.length ? 1 : 0),
+          since: held ? new Date(at).toISOString() : null,
+          reason: held,
+        };
+    const detail = opening
+      ? `${held}; the wall-time budget stops until the task can make progress again`
+      : `the task can make progress again; ${Math.round(next.pausedMs / 60_000)} minutes of wall time stayed off its budget`;
+    return this.store.transaction(() => {
+      const updated = this.store.update(current.id, { resolution: { ...current.resolution, budgetClock: next } },
+        opening ? 'budget_clock_paused' : 'budget_clock_resumed', detail);
+      if (closingOutage) this.store.event(current.id, 'observation_resumed', `the task quantum returned after ${outage}; its lane moves again`);
+      return updated;
+    });
   }
   /** Record one stop or wait on the task; matching observations retain their first timestamp. */
   recordStop(task: Task, reason: TaskStopReason, detail: string, suggestedVerbs?: TaskStopVerb[], phase?: Task['phase']): Task {

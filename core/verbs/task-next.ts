@@ -271,7 +271,7 @@ export function assembleOwnerTaskNext(facts: OwnerVerbFacts, ownerVerbViews: (fa
     ...(task.resolution.noAutomaticRetry
       ? { noAutomaticRetry: true as const, noAutomaticRetryProvenance: task.resolution.noAutomaticRetryProvenance }
       : {}),
-    routingPolicy: facts.store.routingPolicy(task),
+    routingPolicy: facts.store.routingPolicy(task, Date.now(), facts.hostProfiles ?? []),
     workerDemandStep: workerStepLabel(facts.store.usageLevel(), false),
     ...(task.proofExecutionRetired ? { proofExecutionRetired: true as const } : {}),
     // Spec 050: the real retirement count and ceiling, from the same store

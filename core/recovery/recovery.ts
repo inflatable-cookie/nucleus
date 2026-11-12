@@ -562,6 +562,10 @@ export class Recovery {
   if(reviewContinuationState(t,this.store)==='closed'){this.resolution.openReviewContinuationEscalation(this.store.task(t.id),'closed');return null;}
   if(reviewFenceHoldsCoordinators(t,this.store))return null;
   if(isDispositionActive(t)||isDispositionComplete(t))return null;
+  // Spec 058 budgets (nucleus#1153): a budget pause asks its own question through
+  // the planner ladder. Its `extend_budget` suggestion is an owner verb, not work
+  // a coordinator can settle, so it never opens a coordinator episode.
+  if(t.resolution.stop?.reason==='budget')return null;
   if(t.resolution.stop&&!t.resolution.stop.suggestedVerbs.length){
    const stop=t.resolution.stop;
    // A wait on progressing work belongs to the loop that recorded it (dispatch,

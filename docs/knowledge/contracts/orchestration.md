@@ -1061,10 +1061,18 @@ request identities and submitted handoffs are not rewritten.
   Tom, 2026-11-06/07): durable records with id, name, normalised provider, model,
   mode, thinking option, feature values and notes. `profile.list`,
   `profile.create`, `profile.update`, `profile.remove`, `profile.providers`,
-  `profile.providers.set` and `host.catalog` are the surface
+  `profile.providers.set`, `profile.compatibility` and `host.catalog` are the surface
   (`shared/profiles.ts`, `shared/host.ts`, `core/planning/profile-import.ts`). Each host
   reports its own catalog; the provider map normalises its keys, identity by
-  default, and Settings → Profiles edits it beside the list. An earlier migration
+  default, and Settings → Profiles edits it beside the list. A profile's
+  per-host-kind setting maps or excludes it on one host (nucleus#1151); each
+  host's routing snapshot carries that host's launch values (the host's own
+  provider key included), and a task's `routingPolicy` (on `queue.detail` and
+  `next`, both read against the task host's snapshot) lists the enabled pool
+  profiles its host rules out or maps (`host.effects`) and how automatic worker
+  selection reads now (`selection`: complexity, role and usage offsets, the
+  first-attempt step, the demand, the profiles meeting it ordered by recent use
+  over effective weight, and why the leader wins). An earlier migration
   copied the host's profile list once with ids unchanged without overwriting
   a Nucleus profile; routing does not re-import it. A stored profile's availability is read against one host's
   catalog and a missing provider or model is a refusal, never a fallback to
@@ -2280,7 +2288,27 @@ movement invalidates source approval and preserves the normal readiness gates.
   (one default increment), change the approach (the answer is the worker's next
   instruction, with the same increment) or stop and keep the work (owner `stop`).
   An interrupted observation is `operator_question_unknown` and is never resent. A
+  budget stop always names `extend_budget` in its `suggestedVerbs`, and its question
+  is raised from the task's own pass as well as the sweep's question step: a phase
+  that records the pause, a task host that is offline (the question then goes to the
+  board), or a support step that failed earlier in that sweep cannot leave it silent
+  (nucleus#1153).
   Every task is subject to the responsible budget.
+- Wall time charges the task's own work (nucleus#1153). Each task quantum settles
+  `resolution.budgetClock`: it opens an interval while the task waits on a
+  Nucleus-side cause — a recorded `external_unavailable`, `workspace_unavailable`,
+  `route_unavailable` or `provider_unavailable` stop, an unresolved
+  `workspace_state`/`uncertain_delivery` incident, a proven pre-send refusal that
+  parked the task in attention (held until an owner resume resolves the episode), a
+  dispatch hold (which blocks every run the task could start), or a sweep
+  `observation_outage` on its lane — and closes it when the task can make progress
+  again. An outage pause opens on the first observation, while the lane is still
+  wedged, is dated from that observation, and only that quantum's own return closes
+  it, so a return that beats every sweep visit still books the whole outage. Closed pauses are durable, recorded
+  as `budget_clock_paused`/`budget_clock_resumed` (and `observation_resumed`) events,
+  reported as `wallMs.pausedMs` on the detail and named on the budget's time bar, and
+  subtracted from the wall figure, so a defect never spends a task's budget. A budget
+  pause, a merge hold, capacity queueing and the task's own validation keep charging.
 - Any thread registers itself with `task.register` (Spec 058 slice 4): the worker
   is the calling thread, bound to its own live worktree, always responsible, with
   no planner, owner or coordinator. Identity comes from the authenticated thread,
@@ -2806,6 +2834,14 @@ movement invalidates source approval and preserves the normal readiness gates.
   turn proof is read after the evidence it settles, so a turn that started
   during pagination still holds. Nucleus never reads provider files to settle a
   call.
+- A participant's non-turn-bound tool keeps a pre-merge lease only for the
+  configured `graceMs` after its first durable hold. Once that grace expires,
+  Nucleus rechecks that the same participant is idle in the same workspace,
+  then uses the host-process reap path and records the stopped processes on the
+  task. While the participant wait is open, the task yields its repository
+  integration turn; after the wait clears it rejoins through the existing FIFO
+  turn mechanism. A live or changed participant is never reaped, and an
+  uncertain merge intent continues to retain its turn.
 
 ### History retention
 

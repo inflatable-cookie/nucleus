@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EMPTY_RUN_USAGE } from '../core/telemetry/run-usage';
-import { budgetPauseDetail, effectiveTokens, taskBudget, taskBudgetLevel, TASK_BUDGET_DEFAULTS } from '../shared/task-budget';
+import { budgetClockPaused, budgetPauseDetail, effectiveTokens, nucleusHeldReason, taskBudget, taskBudgetLevel, taskBudgetViewSchema, TASK_BUDGET_DEFAULTS } from '../shared/task-budget';
 import type { Run, Task } from '../shared/contracts';
 
 /**
@@ -68,7 +68,7 @@ test('a legacy converted task uses its responsible_converted event timestamp', (
 });
 
 test('no dispatch yet means no wall time used, and tokens are checked before time', () => {
-  assert.deepEqual(taskBudget(budgeted('low'), [], start).wallMs, { used: 0, limit: 60 * MINUTE });
+  assert.deepEqual(taskBudget(budgeted('low'), [], start).wallMs, { used: 0, limit: 60 * MINUTE, pausedMs: 0 });
   const both = taskBudget(budgeted('low'), [run(new Date(start - 90 * MINUTE).toISOString(), { inputTokens: 3_000_000 })], start);
   assert.equal(both.exhausted, 'effective_tokens');
 });
@@ -98,6 +98,55 @@ test('each extension adds one default increment to both limits', () => {
   assert.equal(extended.wallMs.limit, 120 * MINUTE);
   assert.equal(extended.exhausted, null);
   assert.equal(taskBudget(budgeted('low', 2), runs, start).effectiveTokens.limit, 6_000_000);
+});
+
+/** A responsible task with the wall clock partly paused on a Nucleus-side cause. */
+const held = (budgetClock: { pausedMs: number; pauses: number; since: string | null; reason: string | null }, budgetExtensions = 0) =>
+  ({ complexity: 'low', budgetSince: null, resolution: { budgetExtensions, budgetClock } }) as unknown as Pick<Task, 'complexity' | 'resolution'>;
+
+test('closed paused time is discounted from the wall clock, so a Nucleus fault does not spend the budget', () => {
+  const first = new Date(start - 70 * MINUTE).toISOString();
+  const clock = { pausedMs: 60 * MINUTE, pauses: 1, since: null, reason: null };
+  const budget = taskBudget(held(clock), [run(first)], start);
+  assert.equal(budget.wallMs.used, 10 * MINUTE, 'only the task\'s own work is charged');
+  assert.equal(budget.wallMs.pausedMs, 60 * MINUTE);
+  assert.equal(budget.exhausted, null, 'the held hour never reaches the 60-minute low limit');
+  const unpaused = taskBudget(budgeted('low'), [run(first)], start);
+  assert.equal(unpaused.exhausted, 'wall_time', 'the same span without a pause is over the limit');
+});
+
+test('an open interval counts until it closes, and never overcharges an earlier lifecycle', () => {
+  const first = new Date(start - 90 * MINUTE).toISOString();
+  const open = { pausedMs: 20 * MINUTE, pauses: 1, since: new Date(start - 30 * MINUTE).toISOString(), reason: 'the task waits on Nucleus: route_unavailable' };
+  assert.equal(budgetClockPaused(open, start), 50 * MINUTE, 'closed intervals plus the one still open');
+  const budget = taskBudget(held(open), [run(first)], start);
+  assert.equal(budget.wallMs.used, 40 * MINUTE);
+  assert.equal(budget.wallMs.pausedMs, 50 * MINUTE);
+  // A clock left over from a longer earlier lifecycle is clamped to this span.
+  const stale = taskBudget(held({ pausedMs: 10 * 60 * MINUTE, pauses: 4, since: null, reason: null }), [run(new Date(start - 5 * MINUTE).toISOString())], start);
+  assert.equal(stale.wallMs.used, 0);
+  assert.equal(stale.wallMs.pausedMs, 5 * MINUTE);
+  // The wire view keeps reading when a stored row carries no clock at all.
+  assert.equal(taskBudgetViewSchema.parse({ level: 'low', effectiveTokens: { used: 0, limit: 1, evidence: 'none' },
+    wallMs: { used: 0, limit: 60 * MINUTE }, exhausted: null }).wallMs.pausedMs, 0);
+});
+
+test('only a Nucleus-side hold stops the clock; the task\'s own waits keep charging', () => {
+  assert.match(nucleusHeldReason({ stopReason: 'route_unavailable', dispatchHeld: false })!, /waits on Nucleus: route_unavailable/);
+  assert.match(nucleusHeldReason({ stopReason: 'external_unavailable', dispatchHeld: false })!, /external_unavailable/);
+  assert.match(nucleusHeldReason({ stopReason: null, dispatchHeld: true })!, /dispatch hold blocks every run/);
+  assert.match(nucleusHeldReason({ stopReason: 'operator_needed', dispatchHeld: false, incidentCause: 'workspace_state' })!, /host fault: workspace_state/);
+  assert.match(nucleusHeldReason({ stopReason: 'operator_needed', dispatchHeld: false, incidentCause: 'uncertain_delivery' })!, /host fault: uncertain_delivery/);
+  assert.match(nucleusHeldReason({ stopReason: 'operator_needed', dispatchHeld: false, presendRefusal: true })!, /refusal stopped the task before any send/);
+  assert.match(nucleusHeldReason({ stopReason: null, dispatchHeld: false, observationOutage: true })!, /could not observe this task/);
+  assert.equal(nucleusHeldReason({ stopReason: 'operator_needed', dispatchHeld: false, incidentCause: 'hook_failure' }), null,
+    'a hook the change broke is the task\'s own work');
+  assert.equal(nucleusHeldReason({ stopReason: 'operator_needed', dispatchHeld: false, incidentCause: 'worker_blocked' }), null);
+  assert.equal(nucleusHeldReason({ stopReason: null, dispatchHeld: false, presendRefusal: false, observationOutage: false }), null);
+  assert.equal(nucleusHeldReason({ stopReason: 'budget', dispatchHeld: false }), null, 'a budget pause is already spent');
+  assert.equal(nucleusHeldReason({ stopReason: 'validation', dispatchHeld: false }), null, 'a worktree validation is the task\'s own work');
+  assert.equal(nucleusHeldReason({ stopReason: 'capacity', dispatchHeld: false }), null, 'queueing for a slot is not a fault');
+  assert.equal(nucleusHeldReason({ stopReason: null, dispatchHeld: false }), null);
 });
 
 test('the pause detail names the limit, so it does not change while the task waits', () => {

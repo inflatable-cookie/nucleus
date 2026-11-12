@@ -13,7 +13,7 @@ import { participantToolRunIds } from "../recovery/task-reasons";
 import { hookHoldReason } from "../hooks/hooks";
 import type { Engine } from '../engine';
 
-export type TaskQuantumContext = Pick<Engine, 'adapter' | 'cleanContext' | 'enqueueTitle' | 'hooks' | 'launchAgent' | 'launchProofOnly' | 'note' | 'noteStepFailure' | 'prerequisiteWaitYieldsToLiveWork' | 'profileCatalogKnown' | 'profiles' | 'quantumFinish' | 'quantumSteps' | 'reconcile' | 'reconcileClosedRetainedReviewer' | 'recover' | 'routeTask' | 'settleFinishedRuns' | 'settleHistoricalProofExecutions' | 'settleRunBuildOutputs' | 'settleSupersededIdleRuns' | 'signoffDecisions' | 'stopped' | 'store' | 'wakeRepository'> & { readonly resolution: Pick<Resolution, 'advance' | 'beginValidationScanPass' | 'holdProofOnlyGoWait' | 'ownedToolHold' | 'owns' | 'reconcileHoldUntil' | 'recordStop' | 'recoverExternalMerge' | 'recovery' | 'resumeClearedAttention'> };
+export type TaskQuantumContext = Pick<Engine, 'adapter' | 'cleanContext' | 'enqueueTitle' | 'hooks' | 'launchAgent' | 'launchProofOnly' | 'note' | 'noteStepFailure' | 'prerequisiteWaitYieldsToLiveWork' | 'profileCatalogKnown' | 'profiles' | 'quantumFinish' | 'quantumSteps' | 'reconcile' | 'reconcileClosedRetainedReviewer' | 'recover' | 'routeTask' | 'settleFinishedRuns' | 'settleHistoricalProofExecutions' | 'settleRunBuildOutputs' | 'settleSupersededIdleRuns' | 'signoffDecisions' | 'stopped' | 'store' | 'wakeRepository'> & { readonly resolution: Pick<Resolution, 'advance' | 'beginValidationScanPass' | 'holdProofOnlyGoWait' | 'ownedToolHold' | 'owns' | 'raiseOperatorQuestions' | 'reconcileHoldUntil' | 'recordStop' | 'recoverExternalMerge' | 'recovery' | 'resumeClearedAttention' | 'settleBudgetClock'> };
 
 export class TaskQuantum {
   constructor(readonly context: TaskQuantumContext) {}
@@ -144,6 +144,17 @@ export class TaskQuantum {
     if (!this.context.stopped) {
       try {
         let current = this.context.store.task(taskId);
+        // Spec 058 budgets (nucleus#1153): this pass is where every live task is
+        // observed, so the wall clock's pause intervals are settled here first —
+        // a task held on a Nucleus-side cause must not spend its budget on it.
+        current = this.context.resolution.settleBudgetClock(current, { returned: true });
+        // A budget stop always asks its question (nucleus#1153). Asking from the
+        // task's own pass means a phase that records the stop, a task host that is
+        // offline and a support step that failed earlier in the sweep cannot leave
+        // the pause silent; the recorded intent still makes the raise idempotent.
+        if (current.resolution.stop?.reason === 'budget' && !current.removedAt && !this.context.store.getMeta('paused'))
+          await this.context.resolution.raiseOperatorQuestions(taskId);
+        current = this.context.store.task(taskId);
         // effigy#697: a release-GO wait is the operator's whatever a later write did to the stop.
         if (!current.removedAt && this.context.resolution.holdProofOnlyGoWait(current)) current = this.context.store.task(taskId);
         if (!this.context.store.getMeta("paused") && !current.resolution.stop && !current.removedAt && (current.originError&&!missingOriginHasPlanner(this.context.store,current) || current.resolution.attention

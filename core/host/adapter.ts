@@ -110,6 +110,10 @@ export interface Adapter extends RunUsageSource {
   settleWorkerThread?(agentId: string, runId: string): Promise<void>;
   /** Retry recorded worker settles during the ordinary host sweep. */
   reconcileSettledThreads?(): Promise<void>;
+  /** Settle a completed support thread in hosts that expose that presentation state. */
+  settleReportedThread?(agentId: string, runId: string): Promise<void>;
+  /** Retry durable, uncertain report-settlement intents during the host sweep. */
+  reconcileReportedSettlements?(): Promise<void>;
   runTemporaryDirectory?(runId: string, task?: Task): string;
   workspaceAvailable?(id:string):Promise<boolean>;
   profiles?(): Promise<Profile[]>;

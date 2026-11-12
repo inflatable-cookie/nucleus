@@ -1527,6 +1527,7 @@ export class QueueRuntime {
   profileUpdate(input: z.infer<typeof import("../shared/contracts").updateNucleusProfile.input>) { return this.settingsOperations.profileUpdate(input); }
   profileRemove(input: { id: string }) { return this.settingsOperations.profileRemove(input); }
   profileProviders() { return this.settingsOperations.profileProviders(); }
+  profileCompatibility() { return this.settingsOperations.profileCompatibility(); }
   profileSetProviders(input: { providers: ProviderMap }) { return this.settingsOperations.profileSetProviders(input); }
   async hostCatalog(input: { cwd?: string; refresh?: boolean }) { return this.settingsOperations.hostCatalog(input); }
   queueControl({ paused, dispatchHeld }: { paused?: boolean; dispatchHeld?: boolean }) { return this.settingsOperations.queueControl({ paused, dispatchHeld }); }
