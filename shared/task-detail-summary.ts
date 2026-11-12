@@ -226,7 +226,10 @@ export function budgetBars(budget: TaskBudgetView | null | undefined): BudgetBar
       key: "tokens", label: "Tokens", used: tokens.used, limit: tokens.limit, ratio: ratio(tokens.used, tokens.limit),
       text: `${formatTokenCount(tokens.used)} / ${formatTokenCount(tokens.limit)}${tokens.evidence === "none" ? " · usage not reported" : tokens.evidence === "partial" ? " · at least" : ""}`,
     },
-    { key: "time", label: "Time", used: wall.used, limit: wall.limit, ratio: ratio(wall.used, wall.limit), text: `${formatSpan(wall.used)} / ${formatSpan(wall.limit)}` },
+    { key: "time", label: "Time", used: wall.used, limit: wall.limit, ratio: ratio(wall.used, wall.limit),
+      // nucleus#1153: time held on a Nucleus-side cause stays off both the budget and
+      // this bar, and the paused figure says why the elapsed clock and the budget differ.
+      text: `${formatSpan(wall.used)} / ${formatSpan(wall.limit)}${wall.pausedMs >= 60_000 ? ` · ${formatSpan(wall.pausedMs)} held on Nucleus faults` : ""}` },
   ];
 }
 

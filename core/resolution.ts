@@ -533,6 +533,8 @@ export class Resolution {
   retainedWorkerAdvancedReviewHead(t: Task): { review: Completion; head: string } | null { return this.retryRoutes.retainedWorkerAdvancedReviewHead(t); }
   update(t: Task, changes: ResolutionChanges, patch?: Partial<Task>, event?: string, detail?: string) { return this.taskStops.update(t, changes, patch, event, detail); }
   recordStop(task: Task, reason: TaskStopReason, detail: string, suggestedVerbs?: TaskStopVerb[], phase?: Task['phase']): Task { return this.taskStops.recordStop(task, reason, detail, suggestedVerbs, phase); }
+  /** Spec 058 budgets (nucleus#1153): open or close the wall-clock pause interval for one task. */
+  settleBudgetClock(task: Task, options: { returned?: boolean } = {}): Task { return this.taskStops.settleBudgetClock(task, options); }
   ensureIncident(task: Task, run: Run | null, reason: string, action?: Incident['action'], cause?: IncidentCause): Incident { return this.taskStops.ensureIncident(task, run, reason, action, cause); }
   recordIncidentEvent(taskId: string, incident: Incident) { return this.taskStops.recordIncidentEvent(taskId, incident); }
   saveIncident(task: Task, patch: Partial<Incident>) { return this.taskStops.saveIncident(task, patch); }
@@ -880,7 +882,8 @@ export class Resolution {
    * or a decider, answers once the thread presents the question. Proof-only release GO, the one
    * operator-only kind Nucleus raises, goes straight to the board and never comes here.
    */
-  raiseDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }, signal: AbortSignal): Promise<string> { return this.questions.raiseDecision(task, decision, signal); }
+  raiseDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }, signal: AbortSignal,
+    options: { boardOnly?: boolean; why?: string } = {}): Promise<string> { return this.questions.raiseDecision(task, decision, signal, options); }
   /**
    * Spec 058 (task 550): raise one Queue question on a thread with no native
    * question surface. It goes to the planner, then a decider, and a routing miss

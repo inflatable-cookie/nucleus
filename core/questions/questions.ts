@@ -113,9 +113,14 @@ export class Questions {
   }
   async raiseOperatorQuestions(scopedTaskId?: string): Promise<void> {
     if (!scopedTaskId) {
-      for (const task of this.store.maintenanceTasks(true))
-        if (task.hostId && this.resolution.hostAvailable(task))
-          await this.resolution.withHost(task.hostId, () => this.raiseOperatorQuestions(task.id));
+      for (const task of this.store.maintenanceTasks(true)) {
+        // A task host that is offline (or whose runs carry another host's identity)
+        // cannot take a native prompt, but the board can still record the question.
+        // Skipping the task here silenced a budget pause for its whole life
+        // (nucleus#1153), so the raise always runs and the route decides.
+        if (!task.hostId) { await this.raiseOperatorQuestions(task.id); continue; }
+        await this.resolution.withHost(task.hostId, () => this.raiseOperatorQuestions(task.id));
+      }
       return;
     }
     if (this.resolution.paused()) return;
@@ -162,7 +167,14 @@ export class Questions {
       });
       const controller = new AbortController();
       this.resolution.responsibleQuestions.set(question.id, controller);
-      void this.resolution.raiseDecision(this.store.task(task.id), { id: question.id, kind: question.kind, question: question.question, options }, controller.signal)
+      // A question is recorded for every phase and every host state; only native
+      // delivery needs a reachable host, so an offline host routes the question to
+      // the board instead of leaving the pause silent (nucleus#1153). The check is
+      // host availability, not the stricter task/run identity: a run that records
+      // another host's identity must still be asked.
+      const hostReachable = !task.hostId || this.resolution.originHostAvailable(task.hostId);
+      void this.resolution.raiseDecision(this.store.task(task.id), { id: question.id, kind: question.kind, question: question.question, options }, controller.signal,
+        hostReachable ? {} : { boardOnly: true, why: `the task host ${task.hostId} is offline, so the question waits on the board` })
         .then(answer => this.resolution.settleOperatorQuestion(task.id, question, answer))
         .catch(error => {
           // A stop that interrupted the observation wrote what it could before the
@@ -404,10 +416,11 @@ export class Questions {
     const current = operatorQuestionFor(this.store, this.store.task(taskId));
     return current?.id === decision.id && current.kind === decision.kind;
   }
-  raiseDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }, signal: AbortSignal): Promise<string> {
+  raiseDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }, signal: AbortSignal,
+    options: { boardOnly?: boolean; why?: string } = {}): Promise<string> {
     if (!this.resolution.queueBudgetQuestionCurrent(task.id, decision)) return Promise.reject(Error('Budget question no longer matches the current stop'));
     const route = questionRoute(this.adapter, task.profile?.provider);
-    if (route === 'board') return this.raiseBoardDecision(task, decision, signal);
+    if (options.boardOnly || route === 'board') return this.raiseBoardDecision(task, decision, signal, options.why);
     // The native prompt carries the full text when the producer kept one; the
     // bounded surfaces (the board decision, the ask tool and its exact-text
     // join) carry the short canonical question. Delegation prefers the full
@@ -420,7 +433,8 @@ export class Questions {
       onRequested: request => { void this.resolution.delegateDecision(task.id, decision, request, signal,
         (fresh, answer) => this.adapter.answerTaskDecision!(fresh, { requestId: request.requestId, header: request.header, answer })); } });
   }
-  raiseBoardDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }, signal: AbortSignal): Promise<string> {
+  raiseBoardDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }, signal: AbortSignal,
+    why = 'the task host cannot take a native question'): Promise<string> {
     let resolve!: (answer: string) => void;
     let reject!: (error: Error) => void;
     const promise = new Promise<string>((res, rej) => { resolve = res; reject = rej; });
@@ -429,7 +443,7 @@ export class Questions {
       const raise = this.resolution.queueAskRaises.get(decision.id);
       if (raise) { this.resolution.queueAskRaises.delete(decision.id); this.resolution.queueAskRaiseAnsweredBy.delete(decision.id); raise.reject(Error('Nucleus board question observation cancelled; delivery or answer may be unknown')); }
     }, { once: true });
-    this.resolution.ensureQueueRaiseDecision(task, decision, 'the task host cannot take a native question');
+    this.resolution.ensureQueueRaiseDecision(task, decision, why);
     void this.notifyPlannerOfBoardQuestion(task, decision);
     return promise;
   }
