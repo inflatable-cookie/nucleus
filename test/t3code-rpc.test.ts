@@ -177,7 +177,7 @@ test('all remote Die failures stay unknown even when their text matches the RPC 
   assert.equal(server.frames.filter(frame => frame._tag === 'Request').length, 2);
 });
 
-test('schema diagnostics retain bounded field locations and defect shapes without actual values or invalid paths', async t => {
+test('schema diagnostics name only our own payload fields and defect shapes without actual values or foreign locations', async t => {
   let calls = 0;
   const server = await fakeServer(t, (request, send) => {
     if (request._tag !== 'Request') return;
@@ -190,13 +190,33 @@ test('schema diagnostics retain bounded field locations and defect shapes withou
   for (let i = 0; i < 2; i++) await assert.rejects(client.call('orchestration.dispatchCommand', { type: i ? 'synthetic-bearer prompt secret' : 'message.dispatch' }), error => {
     assert.ok(error instanceof T3RpcError);
     assert.equal(error.delivery, 'unknown');
-    assert.equal(error.field, i ? undefined : 'modelSelection.options[0].value');
+    // Only our own payload field name survives, first segment only; deeper
+    // segments and foreign names are remote text and retain nothing.
+    assert.equal(error.field, i ? undefined : 'modelSelection');
     assert.equal(error.command, i ? undefined : 'message.dispatch');
     assert.equal(error.reason, i ? 'schema_missing_key' : 'schema_expected');
-    assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic-bearer|prompt secret|got "/);
+    assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic-bearer|prompt secret|got "|options|value/);
     return true;
   });
   assert.equal(calls, 2);
+});
+
+test('a secret in a schema location or beyond the first segment retains nothing', async t => {
+  let calls = 0;
+  const server = await fakeServer(t, (request, send) => {
+    if (request._tag !== 'Request') return;
+    const defect = ++calls === 1
+      ? 'Missing key\n  at ["synthetic_secret"]'
+      : 'Missing key\n  at ["commandId"]["synthetic_secret"]';
+    send(failure(request, { _tag: 'Die', defect }));
+  });
+  const client = await clientFor(t, server);
+  for (let i = 0; i < 2; i++) await assert.rejects(client.call('orchestration.dispatchCommand', { type: 'thread.stop' }), error => {
+    assert.ok(error instanceof T3RpcError);
+    assert.equal(error.field, i ? 'commandId' : undefined, 'foreign location names nothing; own field names keep their first segment');
+    assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic_secret/);
+    return true;
+  });
 });
 
 test('the nightly dispatch union refuses project.create before any handler and the reason stays bounded', async t => {

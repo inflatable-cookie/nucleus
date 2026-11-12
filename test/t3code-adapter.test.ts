@@ -186,6 +186,19 @@ test('decoder defects carrying secrets keep neither the value nor the bearer in 
   assert.equal(host.state.read().intents['secret-defect']?.status, 'unknown');
   const durable = JSON.stringify(host.state.read().intents['secret-defect']);
   assert.doesNotMatch(durable, /synthetic-secret/);
+  // A secret sitting in the defect's location position retains no field name
+  // at all: only the adapter's own payload field names may be named.
+  server.controls.secretDefect = false;
+  server.controls.secretLocationDefect = true;
+  await assert.rejects(host.sendMessage(created.id, { messageId: 'secret-location', text: 'Synthetic' }), error => {
+    assert.ok(error instanceof HostUnknownDeliveryError);
+    assert.deepEqual(error.diagnostic, { command: 'message.dispatch', reason: 'schema_missing_key' });
+    assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic_secret/);
+    return true;
+  });
+  const durableLocation = JSON.stringify(host.state.read().intents['secret-location']);
+  assert.equal(host.state.read().intents['secret-location']?.status, 'unknown');
+  assert.doesNotMatch(durableLocation, /synthetic_secret/);
 });
 
 test('observations distinguish idle, active run, permissions, archived and explicit deletion', async t => {
@@ -563,4 +576,23 @@ test('arbitrary typed-failure text retains only the tag, never its unquoted secr
   const durable = JSON.stringify(host.state.read().intents[key]);
   assert.equal(host.state.read().intents[key]?.status, 'unknown');
   assert.doesNotMatch(durable, /api_key|synthetic-secret/);
+});
+
+test('guidance preserves a repository path with repeated whitespace exactly', async t => {
+  const { host, server, root } = await fixture(t);
+  server.projects.splice(0);
+  const repository = join(root, 'my  repository');
+  const worktree = join(root, 'worktree');
+  mkdirSync(repository); mkdirSync(worktree);
+  const project = await host.repositoryProject(repository);
+  assert.ok(project.workspaceRoot && project.workspaceRoot.includes('  '), 'the fixture path carries repeated whitespace');
+  server.controls.unsupportedProjectCreate = true;
+  await assert.rejects(host.createWorkspace({ title: 'Synthetic task', requestId: 'workspace-whitespace', directory: worktree, project }), error => {
+    assert.ok(error instanceof HostUnknownDeliveryError);
+    const guidance = (error as HostUnknownDeliveryError).diagnostic.guidance ?? '';
+    assert.equal(guidance, `T3Code cannot create a project for ${project.workspaceRoot}; add that folder as a project in T3Code, then restart the task`,
+      'the guidance preserves the local path exactly, whitespace included');
+    assert.ok(String(error).includes(project.workspaceRoot!), 'the attention text carries the path byte-exactly');
+    return true;
+  });
 });

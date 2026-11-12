@@ -94,13 +94,15 @@ adapter defines (`unknown_request_tag`, `schema_missing_key`, `schema_expected`,
 `encoder_rejected`, `remote_failure`, `project_mutation_failed`,
 `project_not_empty`, `scope_missing`), the ticket exchange's HTTP status, and
 method and command names from the adapter's own constants. No remote string,
-and no part of one, is copied into a diagnostic, intent or attention text; a
-secret in any position of any remote failure retains nothing. The token shapes
-make that structural: reasons admit no spaces, quotes or punctuation beyond the
+and no part of one, is copied into a diagnostic, intent or attention text; the
+schema-location rule names only the adapter's own payload field names (first
+segment only), so a secret in any position of any remote failure — message
+body, identifier, location segment — retains nothing. The token shapes make
+that structural: reasons admit no spaces, quotes or punctuation beyond the
 tag/shape separator, and delivery classification is unchanged (nucleus#1136).
-The manual-fix guidance is Nucleus-authored and names the repository path in
-full, untruncated, straight from Nucleus's own record; only remote-derived
-fields are bounded.
+The manual-fix guidance is Nucleus-authored and names the repository path
+exactly as recorded — whitespace included, untruncated — straight from
+Nucleus's own record; only remote-derived fields are bounded.
 Those names and the reason are stored on the durable unknown intent and returned
 on blocked repeats, including after reload. A registered permission failure also
 records them through the owning task's existing attention policy, selected by

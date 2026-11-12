@@ -7,6 +7,14 @@ export interface T3ConnectionConfig {
 }
 
 /** Errors deliberately exclude remote error bodies, request data and ticket URLs. */
+/** The adapter's own payload field names: the only remote locations that may be named. */
+const OWN_FIELD_NAMES = new Set([
+  'type', 'commandId', 'threadId', 'messageId', 'requestId', 'projectId', 'title', 'workspaceRoot',
+  'text', 'dispatchMode', 'modelSelection', 'workspaceStrategy', 'initialMessage', 'decision', 'answers',
+]);
+const ownFieldName = (value: unknown): string | undefined =>
+  typeof value === 'string' && OWN_FIELD_NAMES.has(value) ? value : undefined;
+
 export class T3RpcError extends Error {
   readonly command?: string;
   readonly field?: string;
@@ -21,7 +29,7 @@ export class T3RpcError extends Error {
     diagnostic?: { command?: unknown; field?: unknown; reason?: unknown },
   ) {
     const command = safeCommand(diagnostic?.command);
-    const field = safeField(diagnostic?.field);
+    const field = ownFieldName(diagnostic?.field);
     const reason = sanitizeHostFailureReason(diagnostic?.reason);
     super(`T3Code ${code}${method ? `: ${method}` : ''}${remoteTag ? ` (${remoteTag})` : ''}${command ? `, command ${command}` : ''}${field ? `, field ${field}` : ''}${reason ? `, reason ${reason}` : ''}`);
     this.name = 'T3RpcError';
@@ -50,23 +58,21 @@ const COMMANDS = new Set([
   'runtime-request.respond', 'thread.user-input.dismiss', 'orchestration.launchThread',
 ]);
 const safeCommand = (value: unknown): string | undefined => typeof value === 'string' && COMMANDS.has(value) ? value : undefined;
-function safeField(value: unknown): string | undefined {
-  if (typeof value !== 'string' || value.length > 128 || !/^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[\d{1,6}\])*$/.test(value)) return undefined;
-  return value.split(/\.|\[/).length <= 8 ? value : undefined;
-}
 
-/** Extract locations only; the formatted expected/actual value is never retained. */
+/**
+ * Names only a payload field of our own when the defect's location starts with
+ * one of the adapter's own field names. The location is remote text, so it is
+ * never copied: any other first segment — an identifier, a scope name, a
+ * secret — retains nothing, and segments beyond the first are always dropped.
+ */
 function schemaFieldDiagnostic(value: unknown): string | undefined {
   if (typeof value !== 'string' || value.length > 32_768) return undefined;
   const lines = value.split('\n');
   for (let i = 1; i < lines.length; i++) {
     if (!/^(?:Missing key|Expected [^\n]+)$/.test(lines[i - 1]!)) continue;
-    const location = /^  at ((?:\["[A-Za-z_][A-Za-z0-9_]{0,63}"\]|\[\d{1,6}\])+)$/.exec(lines[i]!);
+    const location = /^  at ((?:\["[^"]{0,80}"\]|\[\d{1,6}\])+)$/.exec(lines[i]!);
     if (!location) continue;
-    const parts = [...location[1]!.matchAll(/\["([A-Za-z_][A-Za-z0-9_]{0,63})"\]|\[(\d{1,6})\]/g)];
-    const field = parts.map((part, index) => part[1] === undefined ? `[${part[2]}]` : `${index ? '.' : ''}${part[1]}`).join('');
-    const safe = safeField(field);
-    if (safe) return safe;
+    return ownFieldName(/\["([^"]{1,80})"\]/.exec(location[1]!)?.[1]);
   }
   return undefined;
 }
@@ -90,7 +96,7 @@ const TYPED_SHAPES: readonly { tag: string; shape: RegExp; name: string }[] = [
   { tag: 'ProjectMutationError', shape: /^Project .* is not empty\.$/, name: 'project_not_empty' },
   { tag: 'EnvironmentAuthorizationError', shape: /^The authenticated token is missing required scope:/, name: 'scope_missing' },
 ];
-function remoteFailure(method: string, cause: unknown, command?: string, bearer?: string): Error {
+function remoteFailure(method: string, cause: unknown, command?: string): Error {
   if (!Array.isArray(cause) || cause.length !== 1 || !object(cause[0])) return new T3RpcError('remote', method, undefined, 'unknown', { command });
   const reason = cause[0];
   if (reason._tag === 'Die') {
@@ -100,7 +106,7 @@ function remoteFailure(method: string, cause: unknown, command?: string, bearer?
     const shape = defect ? DEFECT_SHAPES.find(entry => entry.shape.test(defect))?.name ?? 'remote_failure' : 'remote_failure';
     return new T3RpcError('remote', method, undefined, 'unknown', {
       command,
-      field: field && (!bearer || !field.includes(bearer)) ? field : undefined,
+      field,
       reason: shape,
     });
   }
@@ -289,7 +295,7 @@ export class T3RpcClient {
       return;
     }
     if (frame._tag === 'Exit' && object(frame.exit)) {
-      if (frame.exit._tag === 'Failure') return this.settle(id, remoteFailure(pending.method, frame.exit.cause, pending.command, this.#bearer), true);
+      if (frame.exit._tag === 'Failure') return this.settle(id, remoteFailure(pending.method, frame.exit.cause, pending.command), true);
       if (frame.exit._tag === 'Success') return this.settle(id, pending.accept ? new T3RpcError('protocol', pending.method) : frame.exit.value, Boolean(pending.accept));
     }
     if (frame._tag === 'Interrupt') return this.settle(id, new T3RpcError('transport', pending.method), true);

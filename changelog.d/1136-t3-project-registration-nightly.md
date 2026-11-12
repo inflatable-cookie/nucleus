@@ -19,6 +19,8 @@ failure-shape name the adapter defines (`unknown_request_tag`,
 `schema_missing_key`, `schema_expected`, `encoder_rejected`, `remote_failure`,
 `project_mutation_failed`, `project_not_empty`, `scope_missing`), the ticket
 exchange's HTTP status, and method and command names from the adapter's own
-constants. A secret in any position of any remote failure retains nothing.
-The manual-fix guidance is Nucleus-authored and names the repository path in
-full, untruncated; only remote-derived fields are bounded.
+constants. The schema-location rule names only the adapter's own payload field
+names, first segment only, so a secret in any position of any remote failure —
+message body, identifier, location segment — retains nothing. The manual-fix
+guidance is Nucleus-authored and names the repository path exactly as recorded,
+whitespace included, untruncated; only remote-derived fields are bounded.

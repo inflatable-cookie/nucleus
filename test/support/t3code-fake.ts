@@ -26,7 +26,7 @@ export async function t3Fake(t: TestContext, directory: string) {
     synchronized: true, incompleteThread: false, enrichment: false, shellMissingField: '',
     snapshotSequence: 1, threadCoverage: {} as Record<string, unknown>, beforeArchiveRead: (() => {}) as () => void,
     disconnectMutation: false, disconnectAfterEffect: false, refuseMutation: false, postEffectDefect: false,
-    unsupportedProjectCreate: false, projectMutationFailure: false, projectMutationSecretFailure: false, projectMutationIdSecretFailure: false, secretDefect: false, mutationObserver: (() => {}) as () => void };
+    unsupportedProjectCreate: false, projectMutationFailure: false, projectMutationSecretFailure: false, projectMutationIdSecretFailure: false, secretDefect: false, secretLocationDefect: false, mutationObserver: (() => {}) as () => void };
   /** Command receipts make a replayed project mutation answer with its recorded outcome. */
   const projectReceipts = new Map<string, { type: string; projectId: string }>();
   const sockets = new Set<Socket>();
@@ -129,6 +129,7 @@ export async function t3Fake(t: TestContext, directory: string) {
           if (controls.disconnectAfterEffect) return socket.destroy();
           if (controls.postEffectDefect) return failure({ _tag: 'Die', defect: contract.boundaryDecodeExample });
           if (controls.secretDefect) return failure({ _tag: 'Die', defect: 'Expected synthetic-secret got value\n  at ["text"]' });
+          if (controls.secretLocationDefect) return failure({ _tag: 'Die', defect: 'Missing key\n  at ["synthetic_secret"]' });
           return success({ sequence: 1 });
         }
         case 'projects.mutate': {

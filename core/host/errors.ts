@@ -44,14 +44,12 @@ export function sanitizeHostFailureReason(input: unknown): string | undefined {
 
 /**
  * Nucleus-authored remediation text, never remote content. The repository root
- * it names comes from Nucleus's own record, not from T3, so it carries the full
- * untruncated path next to the manual fix; only remote-derived fields are
- * bounded, and this is not one.
+ * it names comes from Nucleus's own record, not from T3, so it is preserved
+ * exactly — including any whitespace, untruncated — next to the manual fix;
+ * only remote-derived fields are bounded, and this is not one.
  */
 export function sanitizeHostGuidance(input: unknown): string | undefined {
-  if (typeof input !== 'string') return undefined;
-  const text = input.replace(/\s+/g, ' ').trim();
-  return text || undefined;
+  return typeof input === 'string' && input ? input : undefined;
 }
 
 /** Native names plus a bounded, shape-restricted reason and bounded guidance: never arbitrary remote text. */
