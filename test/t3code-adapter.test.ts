@@ -275,23 +275,27 @@ test('coverage fields are strictly decoded before observation or timeline comple
   assert.equal((await host.observe(created.id)).active, false);
 });
 
-test('an unarchive between live and archive reads refuses complete inventory instead of losing the live thread', async t => {
+test('inventory repeats moving live/archive snapshot pairs and succeeds when the sequence settles', async t => {
   const { host, server, workspace, spec } = await fixture(t);
   const created = await host.createAgent(spec());
-  const p = server.threads.get(created.id)!;
-  for (const read of [
-    () => host.listLiveAgents(), () => host.activeThreads(), () => host.workspaceThreads([workspace.id]),
-  ]) {
-    p.thread.archivedAt = STAMP;
-    server.controls.beforeArchiveRead = () => {
-      p.thread.archivedAt = null;
-      server.controls.snapshotSequence++;
-      server.controls.beforeArchiveRead = () => {};
-    };
-    await assert.rejects(read(), /inventory.snapshotSequence changed/);
-  }
+  let movingReads = 0;
+  server.controls.beforeArchiveRead = () => {
+    if (movingReads++ < 2) server.controls.snapshotSequence++;
+  };
+  assert.ok((await host.listLiveAgents()).some(agent => agent.id === created.id));
+  assert.equal(movingReads, 3, 'two mismatched pairs are followed by the consistent third pair');
   assert.ok((await host.listLiveAgents()).some(agent => agent.id === created.id));
   assert.ok((await host.activeThreads()).some(agent => agent.id === created.id));
+});
+
+test('inventory refuses an unstable snapshot after the bounded number of read pairs', async t => {
+  const { host, server } = await fixture(t);
+  const shellReads = server.requests.filter(request => request.tag === 'orchestration.subscribeShell').length;
+  const archiveReads = server.requests.filter(request => request.tag === 'orchestration.getArchivedShellSnapshot').length;
+  server.controls.beforeArchiveRead = () => { server.controls.snapshotSequence++; };
+  await assert.rejects(host.listLiveAgents(), /inventory kept moving.*5 attempts/);
+  assert.equal(server.requests.filter(request => request.tag === 'orchestration.subscribeShell').length - shellReads, 5);
+  assert.equal(server.requests.filter(request => request.tag === 'orchestration.getArchivedShellSnapshot').length - archiveReads, 5);
 });
 
 test('questions and approvals answer exact runtime requests and refuse wrong kinds or workspaces', async t => {
