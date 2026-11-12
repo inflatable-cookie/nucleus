@@ -987,3 +987,92 @@ test('an unknown thread.delete outcome is never resent; the thread is read back 
   assert.equal(server.commands.filter(command => command.type === 'thread.delete').length, 1);
   assert.equal(await host.originAgent(created.id), null, 'the removal is read back as authoritative absence');
 });
+
+
+for (const lostDeleteReply of [false, true])
+test(`confirmed own deletion retires unknown presentation intents without replay (lost delete reply: ${lostDeleteReply})`, async t => {
+  const { host, server, options, spec } = await fixture(t);
+  const created = await host.createAgent(spec('deleted-presentations'));
+  const p = server.threads.get(created.id)!;
+  p.runs.push({ id: 'completed-native-run', status: 'completed', startedAt: STAMP });
+  const task = { id: 'synthetic-task', agentId: created.id, runId: 'worker-run', number: 225,
+    title: 'Updated title', phase: 'working', held: false, hostId: host.hostId } as Task;
+  for (const operation of [
+    () => host.setTaskWorkspaceTitle(task, 'Updated title', 'lost-title', false),
+    () => { p.thread.settledOverride = 'settled'; return host.sendMessage(created.id, { messageId: 'lost-unsettle', text: 'Continue' }); },
+    () => host.settleReportedThread(created.id, 'lost-settle'),
+  ]) {
+    server.controls.disconnectAfterEffect = true;
+    await assert.rejects(operation(), HostUnknownDeliveryError);
+    server.controls.disconnectAfterEffect = false;
+    await host.connect();
+  }
+  const presentationKeys = Object.entries(host.state.read().intents).filter(([, entry]) => entry.status === 'unknown').map(([key]) => key);
+  assert.equal(presentationKeys.length, 3, 'title, unsettle and settle delivery are all unknown');
+  host.state.update(state => {
+    state.intents['unrelated-message'] = { status: 'unknown', payload: JSON.stringify({ method: 'orchestration.dispatchCommand',
+      payload: { type: 'message.dispatch', threadId: created.id, commandId: 'unrelated-message' } }) };
+  });
+  server.controls.disconnectAfterEffect = lostDeleteReply;
+  if (lostDeleteReply) {
+    await assert.rejects(host.deleteAgent(created.id), HostUnknownDeliveryError);
+    assert.ok(presentationKeys.every(key => host.state.read().intents[key].status === 'unknown'), 'unknown delete delivery alone retires nothing');
+    server.controls.disconnectAfterEffect = false;
+    await host.connect();
+    assert.equal(await host.originAgent(created.id), null, 'complete inventory confirms our delete postcondition');
+  } else await host.deleteAgent(created.id);
+  const deleted = host.state.read();
+  const deleteKey = Object.keys(deleted.intents).find(key => JSON.parse(deleted.intents[key].payload).payload.type === 'thread.delete')!;
+  assert.equal(deleted.intents[deleteKey].status, lostDeleteReply ? 'unknown' : 'settled', 'observing deletion does not invent a reply');
+  assert.equal(Boolean(deleted.intents[deleteKey].deletionObservedAt), lostDeleteReply);
+  for (const key of presentationKeys) {
+    assert.equal(deleted.intents[key].status, 'moot');
+    assert.equal(deleted.intents[key].retiredByDeletion, deleteKey);
+    assert.equal(deleted.intents[key].result, undefined);
+  }
+  assert.equal(deleted.intents['unrelated-message'].status, 'unknown', 'non-presentation effects retain unknown delivery');
+  // Simulate interruption after recording the delete but before presentation
+  // retirement. A reload must reconstruct retirement from that durable proof.
+  host.state.update(state => {
+    for (const key of presentationKeys) { state.intents[key].status = 'unknown'; delete state.intents[key].retiredByDeletion; }
+    state.pendingSettles = { queued: { agentId: created.id, runId: 'queued-worker', commandId: 'queued', recordedAt: STAMP } };
+  });
+  host.close();
+  const reloaded = new T3CodeHost(options); t.after(() => reloaded.close());
+  const nativeRead = reloaded.rpc.readStream.bind(reloaded.rpc), reads: string[] = [];
+  reloaded.rpc.readStream = (method, payload, accept) => {
+    if (method === 'orchestration.subscribeThread') reads.push((payload as { threadId: string }).threadId);
+    return nativeRead(method, payload, accept);
+  };
+  await reloaded.connect();
+  const commands = server.commands.length;
+  for (let pass = 0; pass < 3; pass++) {
+    await reloaded.reconcileReportedSettlements();
+    await reloaded.reconcileSettledThreads();
+    await reloaded.settleReportedThread(created.id, 'lost-settle');
+    await reloaded.settleWorkerThread(created.id, 'queued-worker');
+    await reloaded.setTaskWorkspaceTitle(task, 'Updated title', 'lost-title', true);
+  }
+  await assert.rejects(reloaded.sendMessage(created.id, { messageId: 'lost-unsettle', text: 'Continue' }), ProvenPreSendRefusalError);
+  assert.equal(reads.filter(id => id === created.id).length, 0, 'the real stream boundary never reads the deleted projection');
+  assert.equal(server.commands.length, commands, 'no effect is replayed');
+  assert.deepEqual(reloaded.state.read().pendingSettles, {});
+  assert.ok(presentationKeys.every(key => reloaded.state.read().intents[key].status === 'moot'));
+});
+
+test('external deletion without our recorded delete leaves unknown presentation delivery untouched', async t => {
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec('external-deletion'));
+  const p = server.threads.get(created.id)!;
+  p.runs.push({ id: 'finished-native', status: 'completed', startedAt: STAMP });
+  server.controls.disconnectAfterEffect = true;
+  await assert.rejects(host.settleReportedThread(created.id, 'unknown-support'), HostUnknownDeliveryError);
+  server.controls.disconnectAfterEffect = false;
+  await host.connect();
+  const key = Object.keys(host.state.read().intents).find(key => host.state.read().intents[key].status === 'unknown')!;
+  p.thread.deletedAt = STAMP;
+  assert.equal(await host.originAgent(created.id), null);
+  await host.reconcileReportedSettlements();
+  assert.equal(host.state.read().intents[key].status, 'unknown');
+  assert.equal(host.state.read().intents[key].retiredByDeletion, undefined);
+});

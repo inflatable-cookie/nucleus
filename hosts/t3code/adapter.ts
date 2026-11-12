@@ -15,6 +15,15 @@ import { decode, config, optionDescriptor, shellSnapshot, projection, threadSnap
 
 export interface T3CodeConfig { endpoint: string; bearer: string; statePath: string; timeoutMs?: number; probeThreadId?: string }
 const identity = (purpose: string, value: string) => `nucleus-${purpose}-${createHash('sha256').update(value).digest('hex').slice(0, 40)}`;
+const presentationThread = (encoded: string): string | undefined => {
+  try {
+    const wire = JSON.parse(encoded), payload = wire.payload;
+    if (wire.method !== 'orchestration.dispatchCommand' || typeof payload?.threadId !== 'string') return;
+    if (payload.type === 'thread.settle' || payload.type === 'thread.unsettle'
+        || payload.type === 'thread.metadata.update' && typeof payload.title === 'string'
+          && Object.keys(payload).every(key => ['type', 'commandId', 'threadId', 'title'].includes(key))) return payload.threadId;
+  } catch { /* Malformed or non-presentation intents remain untouched. */ }
+};
 const activeStatuses = new Set(['preparing', 'queued', 'starting', 'running', 'waiting']);
 /** A handover settle that never found an ended turn is retired rather than retried forever. */
 const SETTLE_INTENT_TTL_MS = 24 * 60 * 60_000;
@@ -305,6 +314,56 @@ export class T3CodeHost implements Host {
       activeTurn: !!t.activeRunId || activeStatuses.has(t.status), pendingPermissionKinds: t.pendingRuntimeRequest ? [t.pendingRuntimeRequest.kind === 'user_input' ? 'question' : t.pendingRuntimeRequest.kind] : [] }));
   }
   async activeThreads() { return (await this.activeAndArchivedThreads()).filter(t => !t.archived && t.status !== 'gone'); }
+  /** Only our recorded delete can retire presentation work; external disappearance cannot. */
+  private confirmedDeletion(state: T3State, id: string): string | undefined {
+    const key = identity('delete', id), intent = state.intents[key];
+    if (!intent || intent.status !== 'settled' && !(intent.status === 'unknown' && intent.deletionObservedAt)) return;
+    try {
+      const wire = JSON.parse(intent.payload);
+      if (wire.method === 'orchestration.dispatchCommand' && wire.payload?.type === 'thread.delete'
+          && wire.payload.threadId === id && wire.payload.commandId === key) return key;
+    } catch { /* An unreadable intent proves no deletion. */ }
+  }
+
+  /** Presentation has no remaining target after confirmed deletion, not a successful delivery. */
+  private retireDeletedPresentationIntents(observedId?: string): void {
+    const snapshot = this.state.read();
+    const observeKey = observedId ? identity('delete', observedId) : undefined;
+    const observedIntent = observeKey ? snapshot.intents[observeKey] : undefined;
+    let observeDelete = false;
+    if (observedIntent?.status === 'unknown' && !observedIntent.deletionObservedAt) {
+      try {
+        const wire = JSON.parse(observedIntent.payload);
+        observeDelete = wire.method === 'orchestration.dispatchCommand' && wire.payload?.type === 'thread.delete'
+          && wire.payload.threadId === observedId && wire.payload.commandId === observeKey;
+      } catch { /* No recorded delete to confirm. */ }
+    }
+    const retire = (state: T3State): boolean => {
+      let changed = false;
+      for (const [key, intent] of Object.entries(state.intents)) {
+        if (intent.status !== 'unknown') continue;
+        const id = presentationThread(intent.payload);
+        const deletion = id ? this.confirmedDeletion(state, id) : undefined;
+        if (!deletion) continue;
+        state.intents[key] = { ...intent, status: 'moot', retiredByDeletion: deletion };
+        changed = true;
+      }
+      for (const [key, entry] of Object.entries(state.pendingSettles ?? {})) {
+        if (!this.confirmedDeletion(state, entry.agentId)) continue;
+        delete state.pendingSettles![key];
+        changed = true;
+      }
+      return changed;
+    };
+    if (!observeDelete && !retire(snapshot)) return;
+    this.state.update(state => {
+      if (observeDelete && state.intents[observeKey!]?.payload === observedIntent!.payload
+          && state.intents[observeKey!].status === 'unknown')
+        state.intents[observeKey!].deletionObservedAt ??= new Date().toISOString();
+      retire(state);
+    });
+  }
+
   private async effect(key: string, method: string, payload: unknown, beforeSend?: () => void,
     response?: { binding: ResponseBinding; prepare(): Promise<unknown> }, options: {
       /** Caller completed a fresh positive read that reconciles the unknown remote effect. */
@@ -321,6 +380,7 @@ export class T3CodeHost implements Host {
       const possibleWrites = matches.filter(([, intent]) => intent.status !== 'refused' || !intent.response);
       if (possibleWrites.length > 1) throw new HostUnknownDeliveryError(possibleWrites.find(([, intent]) => intent.diagnostic)?.[1].diagnostic);
       const [boundKey, old] = possibleWrites[0] ?? matches.find(([id]) => id === key) ?? [key, state.intents[key]];
+      if (old?.status === 'moot') throw new ProvenPreSendRefusalError('T3Code presentation intent retired after confirmed deletion');
       // Inspect the original outcome before payload checks or native status reads.
       if (old?.status === 'unknown' && !options.resendUnknownAfterRead || old?.status === 'refused' && matches.length && !old.response)
         throw new HostUnknownDeliveryError(old.diagnostic);
@@ -369,7 +429,7 @@ export class T3CodeHost implements Host {
       beforeSend?.();
       wrote = true;
       const result = await this.rpc.call(method, payload);
-      this.state.update(state => { state.intents[key] = { ...state.intents[key], payload: encoded, status: 'settled', result }; });
+      this.state.update(state => { if (state.intents[key]?.status !== 'moot') state.intents[key] = { ...state.intents[key], payload: encoded, status: 'settled', result }; });
       return result;
     } catch (error) {
       // Only a local fence proves non-delivery. The remote text that names no known
@@ -379,14 +439,14 @@ export class T3CodeHost implements Host {
       const refusal = error instanceof ProvenPreSendRefusalError ? error
         : !wrote || error instanceof T3RpcError && error.delivery === 'not_sent'
           ? new ProvenPreSendRefusalError(error instanceof T3RpcError ? error.message : 'T3Code send fence refused before delivery') : null;
-      if (refusal) this.state.update(state => { state.intents[key] = { ...state.intents[key], payload: encoded, status: 'refused' }; });
+      if (refusal) this.state.update(state => { if (state.intents[key]?.status !== 'moot') state.intents[key] = { ...state.intents[key], payload: encoded, status: 'refused' }; });
       if (refusal) throw refusal;
       const guidance = !refusal && options.unsupportedMethodGuidance && error instanceof T3RpcError && error.code === 'unsupported_method'
         ? options.unsupportedMethodGuidance : undefined;
       const diagnostic = sanitizeHostDeliveryDiagnostic(error instanceof T3RpcError ? { command: error.command, reason: error.reason, guidance }
         : error instanceof HostUnknownDeliveryError ? error.diagnostic : undefined);
       const unknown = new HostUnknownDeliveryError(diagnostic);
-      try { this.state.update(state => { state.intents[key] = { ...state.intents[key], diagnostic }; }); }
+      try { this.state.update(state => { if (state.intents[key]?.status !== 'moot') state.intents[key] = { ...state.intents[key], diagnostic }; }); }
       catch (persistenceError) { unknown.cause = persistenceError; }
       throw unknown;
     }
@@ -438,6 +498,7 @@ export class T3CodeHost implements Host {
   }
   /** The core title projection supplies the same phase-derived title used by Paseo. */
   async setTaskWorkspaceTitle(task: Task, title: string, requestId: string, _uncertain: boolean): Promise<void> {
+    this.retireDeletedPresentationIntents();
     title = capPaseoTitle(title);
     const state = this.state.read();
     const taskLabel = WIRE_LABEL_KEYS.task, runLabel = WIRE_LABEL_KEYS.run, roleLabel = WIRE_LABEL_KEYS.role;
@@ -447,6 +508,7 @@ export class T3CodeHost implements Host {
       : taskAgents.find(([id, agent]) => agent.labels[roleLabel] === 'worker'
         || agent.labels[roleLabel] === undefined && (id === task.agentId || task.runId !== undefined && agent.labels[runLabel] === task.runId))?.[0];
     if (!threadId) throw Error('Task worker thread is missing');
+    if (this.confirmedDeletion(state, threadId)) return;
     const projection = await this.readProjection(threadId);
     const key = identity('thread-title', canonical({ threadId, requestId }));
     if (!projection.thread.archivedAt && !projection.thread.deletedAt && projection.thread.title === title) {
@@ -466,7 +528,7 @@ export class T3CodeHost implements Host {
     // restart can safely catch up threads created before numbered titles landed.
     if (task.number) for (const [supportId, agent] of taskAgents) {
       const role = agent.labels[roleLabel];
-      if (!role || role === 'worker') continue;
+      if (!role || role === 'worker' || this.confirmedDeletion(this.state.read(), supportId)) continue;
       const support = await this.readProjection(supportId);
       if (support.thread.archivedAt || support.thread.deletedAt) continue;
       const supportTitle = this.numberedThreadTitle(task.number, role, support.thread.title);
@@ -560,6 +622,7 @@ export class T3CodeHost implements Host {
   /** Settle a completed non-worker thread after Nucleus has durably accepted its report. */
   async settleReportedThread(agentId: string, runId: string): Promise<void> {
     this.requireConnection();
+    if (this.confirmedDeletion(this.state.read(), agentId)) { this.retireDeletedPresentationIntents(); return; }
     const baseCommandId = identity('settle', canonical([this.hostId, agentId, runId]));
     let commandId = baseCommandId;
     const payload = { type: 'thread.settle', commandId, threadId: agentId } as {
@@ -591,6 +654,7 @@ export class T3CodeHost implements Host {
   }
   /** Called by the ordinary host sweep; unknown delivery is checked against T3 before reuse. */
   async reconcileReportedSettlements(): Promise<void> {
+    this.retireDeletedPresentationIntents();
     const state = this.state.read();
     const workerSettles = state.workerSettles ?? {};
     const pending = Object.entries(state.intents).filter(([key, intent]) => {
@@ -640,12 +704,15 @@ export class T3CodeHost implements Host {
     this.requireConnection();
     const { threads } = await this.inventory();
     const found = threads.find(t => t.id === id);
-    if (!found) return null;
+    if (!found) { this.retireDeletedPresentationIntents(id); return null; }
     // A deleted thread may no longer have a readable projection. The complete
     // shell inventory's tombstone is already positive proof of the deletion.
-    if (found.deletedAt) return { id, workspaceId: this.workspaceFor(found), title: found.title,
-      archived: !!found.archivedAt, deleted: true };
+    if (found.deletedAt) {
+      this.retireDeletedPresentationIntents(id);
+      return { id, workspaceId: this.workspaceFor(found), title: found.title, archived: !!found.archivedAt, deleted: true };
+    }
     const p = await this.readProjection(id);
+    if (p.thread.deletedAt) this.retireDeletedPresentationIntents(id);
     return { id, workspaceId: this.workspaceFor(p.thread), title: p.thread.title, archived: !!p.thread.archivedAt,
       deleted: !!p.thread.deletedAt };
   }
@@ -666,6 +733,7 @@ export class T3CodeHost implements Host {
   }
   async agentTimeline(id: string, limit?: number) { return (await this.agentTimelinePage(id, limit))?.entries ?? null; }
   private async unsettleBeforeMessage(id: string, messageId: string) {
+    if (this.confirmedDeletion(this.state.read(), id)) throw new ProvenPreSendRefusalError('T3Code thread deletion is confirmed');
     const projection = await this.readProjection(id);
     if (projection.thread.settledOverride !== 'settled') return;
     const commandId = identity('unsettle', canonical([this.hostId, id, messageId]));
@@ -717,6 +785,7 @@ export class T3CodeHost implements Host {
     try {
       await this.effect(key, 'orchestration.dispatchCommand', { type: 'thread.delete', commandId: key, threadId: id },
         undefined, undefined, { retryRefusedBeforeSend: true });
+      this.retireDeletedPresentationIntents();
     } catch (error) {
       // A local not-sent result leaves the terminal effect ready for the next
       // sweep. Unknown outcomes retain their intent and remain observation-only.
@@ -741,6 +810,7 @@ export class T3CodeHost implements Host {
    */
   async settleWorkerThread(agentId: string, runId: string): Promise<void> {
     this.requireConnection();
+    if (this.confirmedDeletion(this.state.read(), agentId)) { this.retireDeletedPresentationIntents(); return; }
     const baseCommandId = identity('settle', canonical([this.hostId, agentId, runId]));
     const existing = this.state.read().pendingSettles?.[baseCommandId];
     const commandId = this.workerSettleCommandId(agentId, runId);
@@ -752,6 +822,7 @@ export class T3CodeHost implements Host {
 
   /** Retry durable worker settle intents during the ordinary host sweep. */
   async reconcileSettledThreads(): Promise<void> {
+    this.retireDeletedPresentationIntents();
     this.pruneWorkerSettles();
     const pending = Object.values(this.state.read().pendingSettles ?? {});
     if (!pending.length) return;
@@ -764,6 +835,7 @@ export class T3CodeHost implements Host {
 
   /** One worker settle: send when the handover's own run has ended, else retain the intent. */
   private async attemptWorkerSettle(entry: T3SettleIntent): Promise<void> {
+    if (this.confirmedDeletion(this.state.read(), entry.agentId)) { this.retireDeletedPresentationIntents(); return; }
     // Unknown delivery is never resent for worker handovers. A proven refusal
     // gets a new id on the next pass; it was known not to reach T3.
     const intent = this.state.read().intents[entry.commandId];

@@ -602,6 +602,14 @@ The settlement sweep skips threads whose terminal archive or deletion is already
 confirmed in the durable cleanup lane, even if settling the thread previously
 needed no native receipt. Unresolved cleanup effects still get observation and
 settlement on later sweeps.
+Once Nucleus's own recorded delete is confirmed by its receipt or authoritative
+readback, unknown settle, unsettle and title intents for that thread become
+`moot`, linked to that delete. Their delivery is never recorded as successful,
+and they are never replayed. The adapter retires them before its presentation
+reconciliation reads, including after restart. An unknown delete remains unknown
+when readback proves its postcondition; external disappearance without Nucleus's
+own delete does not retire presentation intents. Regression tests instrument
+`readStream` and exercise repeated real sweeps alongside another task's cleanup.
 
 The private proof starts an unmodified checkout of the target nightly revision,
 or its bundled server copied into fresh run scratch, with separate home, data,

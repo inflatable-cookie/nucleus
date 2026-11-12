@@ -873,12 +873,12 @@ test('a task that finished before this rule is cleaned up by the next sweep, exa
     await f.runtime.engine.drainProjections({ cleanup: false });
     const commands = f.server.commands.length;
     const history = f.runtime.store.eventsAll(taskId);
-    const nativeCall = f.host.rpc.call.bind(f.host.rpc);
+    const nativeRead = f.host.rpc.readStream.bind(f.host.rpc);
     const deletedReads: string[] = [];
-    f.host.rpc.call = (method, payload) => {
+    f.host.rpc.readStream = (method, payload, accept) => {
       const id = (payload as { threadId?: string }).threadId;
       if (method === 'orchestration.subscribeThread' && (id === recovery.id || id === reviewerThreadId)) deletedReads.push(id);
-      return nativeCall(method, payload);
+      return nativeRead(method, payload, accept);
     };
     for (let pass = 0; pass < 3; pass++) assert.equal((await f.runtime.engine.auditPass(false)).fault, null);
     assert.deepEqual(deletedReads, [], 'later real sweeps never read a confirmed deleted thread');
@@ -938,5 +938,60 @@ test(`the real sweep retries a deletion proven not sent at ${boundary} and recor
     assert.equal((await f.runtime.engine.auditPass(false)).fault, null);
     assert.equal(f.server.commands.filter(command => command.type === 'thread.delete').length, 1);
     assert.equal(f.runtime.store.getMeta(`finishedTaskThreadCleanup:${task.id}`), completed);
+  } finally { await f.close(); }
+});
+
+
+test('real sweeps retire a lost support settle after deletion without stream reads and let another task progress', async t => {
+  const f = await fixture(t);
+  try {
+    const { taskId, head, reviewerThreadId, reviewerRun } = await taskWithReviewer(f);
+    const reads: string[] = [], nativeRead = f.host.rpc.readStream.bind(f.host.rpc);
+    f.host.rpc.readStream = (method, payload, accept) => {
+      if (method === 'orchestration.subscribeThread') reads.push((payload as { threadId: string }).threadId);
+      return nativeRead(method, payload, accept);
+    };
+    f.server.threads.get(reviewerThreadId)!.runs.push({ id: 'lost-native-review', status: 'completed', startedAt: STAMP });
+    f.server.controls.disconnectAfterEffect = true;
+    await assert.rejects(f.host.settleReportedThread(reviewerThreadId, reviewerRun.id));
+    f.server.controls.disconnectAfterEffect = false;
+    await f.host.connect();
+    assert.ok(reads.includes(reviewerThreadId), 'the spy sees the real projection stream boundary before deletion');
+    const settleKey = Object.keys(f.host.state.read().intents).find(key => {
+      const wire = JSON.parse(f.host.state.read().intents[key].payload);
+      return wire.payload.type === 'thread.settle' && wire.payload.threadId === reviewerThreadId;
+    })!;
+    assert.equal(f.host.state.read().intents[settleKey].status, 'unknown');
+    const current = f.runtime.store.task(taskId);
+    const verdict = { taskId, runId: reviewerRun.id, eventId: randomUUID(), status: 'ready_to_merge' as const, head,
+      summary: 'Approved', reviewText: 'Accepted synthetic review' };
+    f.runtime.store.putRun({ ...reviewerRun, released: true, active: false, status: 'finished', completion: verdict });
+    f.runtime.store.update(taskId, { phase: 'done', resolution: { ...current.resolution, currentRunId: null, mergedCommit: head, review: verdict } });
+    // The terminal lane can finish before the next presentation reconciliation.
+    await archiveFinishedThreads(f.runtime.store, f.t3, taskId);
+    await f.runtime.engine.drainProjections({ cleanup: false });
+    assert.equal(f.host.state.read().intents[settleKey].status, 'moot');
+    assert.equal(f.host.state.read().intents[settleKey].result, undefined, 'retirement never invents successful delivery');
+    const beforeReads = reads.filter(id => id === reviewerThreadId).length;
+    const beforeCommands = f.server.commands.filter(command => command.threadId === reviewerThreadId).length;
+    const history = f.runtime.store.eventsAll(taskId);
+
+    const initial = f.runtime.store.insert(submissionSchema.parse({ submissionId: randomUUID(), title: 'Other finished task',
+      repoPath: f.repo, planningCommit: head, handoffPath: 'synthetic.md', originAgentId: f.planner }), t3Host, 'Synthetic handoff', head);
+    const other = f.runtime.store.update(initial.id, { phase: 'done', workspaceId: current.workspaceId,
+      resolution: { ...initial.resolution, mergedCommit: head } });
+    const otherRunId = randomUUID();
+    const otherAgent = await f.host.createAgent({ workspaceId: current.workspaceId!, profile: current.profile!,
+      title: 'Other finished recovery', mcpBindingPath: null,
+      attempt: () => ({ requestId: otherRunId, prompt: 'Completed synthetic recovery', environment: {},
+        labels: storedT3Labels('recovery', { taskId: other.id, runId: otherRunId }) }) });
+    f.runtime.store.putRun({ ...reviewerRun, id: otherRunId, taskId: other.id, role: 'recovery', agentId: otherAgent.id,
+      generation: other.coordinatorGeneration, status: 'finished', active: false, released: true, completion: null });
+    for (let pass = 0; pass < 3; pass++) assert.equal((await f.runtime.engine.auditPass(false)).fault, null);
+    assert.equal(reads.filter(id => id === reviewerThreadId).length, beforeReads, 'no later stream reads of the deleted thread');
+    assert.equal(f.server.commands.filter(command => command.threadId === reviewerThreadId).length, beforeCommands, 'no presentation replay');
+    assert.deepEqual(f.runtime.store.eventsAll(taskId), history, 'no repeated warnings or task history');
+    assert.ok(f.runtime.store.getMeta(`finishedTaskThreadCleanup:${other.id}`), 'the other task completes cleanup');
+    assert.equal(f.server.commands.filter(command => command.type === 'thread.delete' && command.threadId === otherAgent.id).length, 1);
   } finally { await f.close(); }
 });
