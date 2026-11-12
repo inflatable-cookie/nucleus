@@ -191,7 +191,7 @@ type CompatibilityRead = { hosts: api.ProfileCompatibilityHost[]; rows: api.Prof
  * each reason, for the icon's popover. Only when Nucleus serves more than one host.
  */
 export function hostCompatibilityNote(read: CompatibilityRead | undefined, profileId: string): string {
-  if (!read || read.hosts.length < 2) return "";
+  if (!read?.hosts || read.hosts.length < 2) return "";
   return read.hosts.flatMap(host => {
     const row = read.rows.find(item => item.profileId === profileId && item.hostId === host.hostId);
     return row?.status === "unavailable" ? [`Not on ${host.label}: ${row.reason}`] : [];

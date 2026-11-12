@@ -1153,3 +1153,13 @@ allow = [
   "CHANGELOG.md",
   "changelog.d/",
 ]
+
+[[retired]]
+id = "profile-host-mapping-and-provider-map"
+retired = "2026-11-12"
+replacement = "Profiles store one canonical vocabulary (`shared/profile-vocabulary.ts`), and each host adapter translates it in code with one table (`hosts/paseo/vocabulary.ts`, `hosts/t3code/vocabulary.ts`), task 1158. Tom, 2026-11-12: \"that's a horrible way to do it in the Profiles page ... It shouldn't touch the profiles themselves.. we might just need to hard code the mapping that each host gives to each provider and have them converge on one canonical corpus that we use in the settings form\". The per-profile host setting (`hosts.paseo`, `hosts.t3code`: mapping or exclusion, nucleus#1151) and its Settings chips and editor are gone, and so is the operator provider map (2026-11-08: its RPCs, store methods, suggestions and Settings section). A host's spelling is a fact about that host, so it lives in that host's adapter code."
+owner = "docs/knowledge/specs/052-usage-level.md"
+terms = ["providerMap", "ProviderMap", "providerMapSuggestions", "profile.providers", "ProfileHostSetting", "profileHostSettingSchema", "ProfileHostEditor", "ProfileHostChips", "HostChip", "profile-hosts"]
+paths = ["client/profile-hosts.tsx"]
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "docs/knowledge/specs/", "changelog.d/", "CHANGELOG.md", "test/"]

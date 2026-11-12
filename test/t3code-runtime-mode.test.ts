@@ -10,19 +10,12 @@ import { Engine } from '../core/engine';
 import type { Adapter } from '../core/host';
 import { Store } from '../core/store/store';
 import { chooseProfile } from '../core/dispatch/routing';
-import { nucleusProfileSchema, profileAvailability, routingProfiles, type NucleusProfile, type ProviderMap } from '../shared/profiles';
+import { nucleusProfileSchema, routingProfiles } from '../shared/profiles';
+import { t3codeVocabulary } from '../hosts/t3code/vocabulary';
 import { poolSchema, submissionSchema, type PoolEntry, type Profile, type Task } from '../shared/contracts';
 import type { HostAgentSpec, HostCatalog } from '../shared/host';
 import { t3Fake } from './support/t3code-fake';
 import { nightlyProviders, poolShapes } from './support/pool-shapes';
-
-/**
- * The live pool's provider spellings against this host's own: T3 names the
- * provider instance `claudeAgent`, so the pool's `claude` shapes are ineligible
- * on it until an operator maps the key. That is the provider map's job, not the
- * runtime mode's, so the sweep reads the pool as stored.
- */
-const t3ProviderMap: ProviderMap = {};
 
 const stored = (index: number) => nucleusProfileSchema.parse({ id: `shape-${index}`, name: `shape-${index}`,
   ...Object.fromEntries(Object.entries(poolShapes[index]!.profile).filter(([key]) => key !== 'label')) });
@@ -108,7 +101,7 @@ test('every enabled pool profile shape launches on T3 or is ineligible with a na
   const workspace = await host.createWorkspace({ title: 'Synthetic worktree', requestId: 'workspace-intent', directory, project: { projectId: 'synthetic-project' } });
   const root2 = await realpath(root);
   assert.equal(workspace.directory, root2);
-  const profiles = routingProfiles(poolShapes.map((_, index) => stored(index)), await host.catalog(), t3ProviderMap);
+  const profiles = routingProfiles(poolShapes.map((_, index) => stored(index)), await host.catalog(), t3codeVocabulary);
   const pool = storedPool();
   const launchedModes = new Map<string, string>();
   for (const [index, shape] of poolShapes.entries()) {
@@ -138,25 +131,18 @@ test('every enabled pool profile shape launches on T3 or is ineligible with a na
   assert.equal(launchedModes.get('Codex oracle (full-access)'), 'full-access');
   assert.equal(launchedModes.get('Codex worker (full-access)'), 'full-access');
   assert.equal(launchedModes.get('Mode-only (auto)'), 'auto');
-  // A mode T3 does not have is ineligible at selection with the mode named,
-  // and never reaches createAgent.
-  const bypass = profiles[10]!;
-  assert.equal(bypass.available, false);
-  assert.equal(bypass.problem, 'Configured runtime mode bypassPermissions is not one of this host\'s modes (approval-required, auto-accept-edits, auto, full-access)');
-  assert.equal(launchedModes.has('Mode-only (bypassPermissions)'), false);
-  // The field shapes the adapter cannot carry yet are ineligible with reasons,
-  // not silent launch refusals: Grok's auto_accept toggle is not reported by the
-  // nightly's Grok driver, and its reasoning control is spelled `thinking` on Pi.
-  assert.match(profiles[6]!.problem, /Configured option auto_accept is not supported/);
-  assert.match(profiles[7]!.problem, /Configured thinking level is not supported/);
-  assert.match(profiles[8]!.problem, /Configured thinking level is not supported/);
-  // The pool's Claude shapes stop at the provider spelling, truthfully: T3 names
-  // the instance `claudeAgent`, and Nucleus's provider map is the one place that
-  // spelling is mapped. A named reason, not a launch refusal.
-  assert.equal(profiles[3]!.available, false);
-  assert.match(profiles[3]!.problem, /Provider claude is not available on this host/);
-  assert.equal(profiles[4]!.available, false);
-  assert.match(profiles[4]!.problem, /Provider claude is not available on this host/);
+  // The canonical pool translates through T3's table (task 1158): Claude, Grok
+  // and Pi shapes launch, each with its mode carried as T3's own.
+  assert.equal(launchedModes.get('Claude opus (full-access)'), 'full-access');
+  assert.equal(launchedModes.get('Claude haiku (auto)'), 'auto');
+  assert.equal(launchedModes.get('Grok (full-access)'), 'full-access');
+  assert.equal(launchedModes.get('Pi muse (no mode)'), 'full-access');
+  // A canonical mode T3's table can't express is ineligible at selection with
+  // the mode named, and never reaches createAgent.
+  const plan = profiles[10]!;
+  assert.equal(plan.available, false);
+  assert.equal(plan.problem, "T3Code can't run codex in mode plan");
+  assert.equal(launchedModes.has('Mode-only (plan)'), false);
 });
 
 const taskOf = (more: Partial<Task> = {}): Task => submissionSchema.parse({
@@ -166,12 +152,12 @@ const taskOf = (more: Partial<Task> = {}): Task => submissionSchema.parse({
 
 test('worker, reviewer and coordinator selection for a T3-bound task each find an eligible profile', async t => {
   const { catalog } = await fixture(t);
-  const profiles = routingProfiles(poolShapes.map((_, index) => stored(index)), catalog, t3ProviderMap);
+  const profiles = routingProfiles(poolShapes.map((_, index) => stored(index)), catalog, t3codeVocabulary);
   const pool = storedPool();
   const dir = mkdtempSync(join(tmpdir(), 't3code-selection-'));
   const store = new Store(join(dir, 'db'));
   const notMine = { profiles: async () => [], observe: async () => { throw Error('not observed'); }, catalog: async () => ({ providers: [] }) } as unknown as Adapter;
-  const t3Adapter = { profiles: async () => [], observe: async () => { throw Error('not observed'); }, catalog: async () => catalog } as unknown as Adapter;
+  const t3Adapter = { profiles: async () => [], observe: async () => { throw Error('not observed'); }, catalog: async () => catalog, vocabulary: t3codeVocabulary } as unknown as Adapter;
   const engine = new Engine(store, notMine, 0);
   engine.hostIds = () => ['t3code:env'];
   engine.resolveHostAdapter = id => id === 't3code:env' ? t3Adapter : notMine;
@@ -203,7 +189,7 @@ test('worker, reviewer and coordinator selection for a T3-bound task each find a
     store.update(retained.id, { phase: 'queued', reason: 'Queued for dispatch', profile: profiles[10]! });
     const policy = store.routingPolicy(store.task(retained.id), Date.now(), hostProfiles);
     const row = policy.profiles.find(candidate => candidate.profileId === 'shape-10')!;
-    assert.deepEqual(row.gates, ['unavailable on this host: Configured runtime mode bypassPermissions is not one of this host\'s modes (approval-required, auto-accept-edits, auto, full-access)']);
+    assert.deepEqual(row.gates, ["unavailable on this host: T3Code can't run codex in mode plan"]);
     assert.match(row.explanation, /unavailable on this host/);
   } finally { await engine.stop(); store.close(); rmSync(dir, { recursive: true, force: true }); }
 });

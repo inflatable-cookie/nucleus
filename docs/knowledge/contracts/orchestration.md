@@ -1058,18 +1058,20 @@ request identities and submitted handoffs are not rewritten.
 ### Profile selection
 
 - Nucleus keeps its own profile list ([Spec 052](../specs/052-usage-level.md),
-  Tom, 2026-11-06/07): durable records with id, name, normalised provider, model,
-  mode, thinking option, feature values and notes. `profile.list`,
-  `profile.create`, `profile.update`, `profile.remove`, `profile.providers`,
-  `profile.providers.set`, `profile.compatibility` and `host.catalog` are the surface
+  Tom, 2026-11-06/07): durable records with id, name, provider, model, mode,
+  thinking level, feature values and notes, all in one canonical vocabulary
+  (`shared/profile-vocabulary.ts`, task 1158). `profile.list`, `profile.create`,
+  `profile.update`, `profile.remove`, `profile.vocabulary`,
+  `profile.compatibility` and `host.catalog` are the surface
   (`shared/profiles.ts`, `shared/host.ts`, `core/planning/profile-import.ts`). Each host
-  reports its own catalog; the provider map normalises its keys, identity by
-  default, and Settings → Profiles edits it beside the list. A profile's
-  per-host-kind setting maps or excludes it on one host (nucleus#1151); each
-  host's routing snapshot carries that host's launch values (the host's own
-  provider key included), and a task's `routingPolicy` (on `queue.detail` and
-  `next`, both read against the task host's snapshot) lists the enabled pool
-  profiles its host rules out or maps (`host.effects`) and how automatic worker
+  reports its own catalog in its own spelling, and its adapter owns one
+  translation table from the canonical vocabulary (`hosts/<host>/vocabulary.ts`);
+  nothing is mapped per profile. Each host's routing snapshot carries the values
+  its table translates to (the host's own provider key included), and a value a
+  table can't express makes the profile unavailable there with the reason. A
+  task's `routingPolicy` (on `queue.detail` and `next`, both read against the
+  task host's snapshot) lists the enabled pool profiles its host rules out or
+  translates (`host.effects`) and how automatic worker
   selection reads now (`selection`: complexity, role and usage offsets, the
   first-attempt step, the demand, the profiles meeting it ordered by recent use
   over effective weight, and why the leader wins). An earlier migration

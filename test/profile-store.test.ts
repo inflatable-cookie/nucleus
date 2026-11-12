@@ -79,12 +79,11 @@ const hostProfile = (overrides: Record<string, unknown> = {}) => ({
 /* Availability: a stored profile read against one host's catalog              */
 /* ------------------------------------------------------------------------- */
 
-test("Spec 052 availability: a table of profiles, catalogs and provider maps", () => {
+test("Spec 052 availability: a table of launch values and catalogs", () => {
   const table: {
     label: string;
     profile: NucleusProfile;
     catalog: HostCatalog;
-    map?: Record<string, string>;
     available: boolean;
     problem: string;
     supportedThinking?: string[];
@@ -150,35 +149,10 @@ test("Spec 052 availability: a table of profiles, catalogs and provider maps", (
       problem: "API key missing",
       supportedThinking: [],
     },
-    {
-      label: "the provider map normalises the host key",
-      profile: profile({ provider: "openai" }),
-      catalog: catalog(provider({ key: "openai-codex" })),
-      map: { "openai-codex": "openai" },
-      available: true,
-      problem: "",
-      supportedThinking: ["low", "high"],
-    },
-    {
-      label: "without the map the same host key does not match",
-      profile: profile({ provider: "openai" }),
-      catalog: catalog(provider({ key: "openai-codex" })),
-      available: false,
-      problem: "Provider openai is not available on this host",
-      supportedThinking: [],
-    },
-    {
-      label: "an unmapped host key is its own normalised key",
-      profile: profile({ provider: "openai-codex" }),
-      catalog: catalog(provider({ key: "openai-codex" })),
-      available: true,
-      problem: "",
-      supportedThinking: ["low", "high"],
-    },
   ];
   for (const row of table) {
     assert.deepEqual(
-      profileAvailability(row.profile, row.catalog, row.map ?? {}),
+      profileAvailability(row.profile, row.catalog),
       {
         available: row.available,
         problem: row.problem,
@@ -199,7 +173,6 @@ test("Spec 052 import: a fresh store copies the host list with ids unchanged and
     const result = importHostProfiles(store, {
       source: "host",
       at: "2026-11-07T00:00:00.000Z",
-      providerMap: {},
       hostProfiles: [
         hostProfile(),
         hostProfile({ id: "paseo-luna", name: "Luna", model: undefined }),
@@ -241,7 +214,6 @@ test("Spec 052 import: a second run does nothing, and a later host change import
     const first = importHostProfiles(store, {
       source: "host",
       at: "2026-11-07T00:00:00.000Z",
-      providerMap: {},
       hostProfiles: [hostProfile()],
     });
     assert.equal(first?.record.imported, 1);
@@ -249,8 +221,7 @@ test("Spec 052 import: a second run does nothing, and a later host change import
     assert.equal(
       importHostProfiles(store, {
         source: "host",
-        providerMap: {},
-        hostProfiles: [
+          hostProfiles: [
           hostProfile({ name: "Sol (renamed in Paseo)" }),
           hostProfile({ id: "paseo-new", name: "New" }),
         ],
@@ -276,7 +247,6 @@ test("Spec 052 import: a Nucleus edit survives a later Paseo change, and an exis
     ]);
     const result = importHostProfiles(store, {
       source: "host",
-      providerMap: {},
       hostProfiles: [
         hostProfile({ name: "Paseo Sol" }),
         hostProfile({ id: "paseo-luna", name: "Luna" }),
@@ -301,8 +271,7 @@ test("Spec 052 import: a Nucleus edit survives a later Paseo change, and an exis
     assert.equal(
       importHostProfiles(store, {
         source: "host",
-        providerMap: {},
-        hostProfiles: [hostProfile({ name: "Paseo Sol again" })],
+          hostProfiles: [hostProfile({ name: "Paseo Sol again" })],
       }),
       null,
     );
@@ -315,17 +284,21 @@ test("Spec 052 import: a Nucleus edit survives a later Paseo change, and an exis
   }
 });
 
-test("Spec 052 import: the provider map is applied to each copied profile, and an invalid host entry is left out", (t) => {
+test("task 1158 import: Paseo's spellings move to canonical values, an unknown one is kept, and an invalid host entry is left out", (t) => {
   const store = new Store(join(fixture(t), "queue.sqlite"));
   try {
     const result = importHostProfiles(store, {
       source: "host",
-      providerMap: { "openai-codex": "openai" },
-      hostProfiles: [hostProfile(), hostProfile({ id: "broken", name: "" })],
+      hostProfiles: [
+        hostProfile({ provider: "claude", model: "claude-opus-5-5", modeId: "bypassPermissions" }),
+        hostProfile({ id: "grok", provider: "grok", model: "grok-4.6", featureValues: { auto_accept: true } }),
+        hostProfile({ id: "broken", name: "" }),
+      ],
     });
     assert.ok(result);
-    assert.deepEqual([result.record.imported, result.record.skipped], [1, 1]);
-    assert.equal(store.profiles()[0]?.provider, "openai");
+    assert.deepEqual([result.record.imported, result.record.skipped], [2, 1]);
+    assert.deepEqual(store.profiles().map(item => [item.provider, item.modeId, item.featureValues]),
+      [["claude", "full-access", undefined], ["grok", "full-access", undefined]]);
   } finally {
     store.close();
   }
@@ -354,7 +327,7 @@ function fakeAdapter(
   } as unknown as Adapter;
 }
 
-test("Spec 052: the profile RPCs list, create, update and remove stored records, and read the provider map and catalog", async (t) => {
+test("Spec 052: the profile RPCs list, create, update and remove stored records, and read the catalog and the canonical vocabulary", async (t) => {
   const dir = fixture(t);
   const listed: string[] = [];
   const catalogReads: ({ cwd?: string } | undefined)[] = [];
@@ -388,7 +361,7 @@ test("Spec 052: the profile RPCs list, create, update and remove stored records,
 
     const created = runtime.profileCreate({
       name: "Luna",
-      provider: "openai",
+      provider: "codex",
       model: "gpt-5",
       thinkingOptionId: "low",
     });
@@ -396,7 +369,7 @@ test("Spec 052: the profile RPCs list, create, update and remove stored records,
     assert.deepEqual(created.profile, {
       id: created.profile.id,
       name: "Luna",
-      provider: "openai",
+      provider: "codex",
       model: "gpt-5",
       thinkingOptionId: "low",
       notes: "",
@@ -407,7 +380,7 @@ test("Spec 052: the profile RPCs list, create, update and remove stored records,
         runtime.profileCreate({
           id: "paseo-sol",
           name: "Duplicate",
-          provider: "openai",
+          provider: "codex",
         }),
       /already exists/,
     );
@@ -421,7 +394,7 @@ test("Spec 052: the profile RPCs list, create, update and remove stored records,
     assert.deepEqual(updated.profile, {
       id: created.profile.id,
       name: "Luna Two",
-      provider: "openai",
+      provider: "codex",
       model: "gpt-5",
       notes: "note",
     });
@@ -430,25 +403,14 @@ test("Spec 052: the profile RPCs list, create, update and remove stored records,
       /does not exist/,
     );
 
-    assert.deepEqual(runtime.profileProviders(), { providers: {} });
-    assert.deepEqual(
-      runtime.profileSetProviders({ providers: { "openai-codex": "openai" } }),
-      { providers: { "openai-codex": "openai" } },
-    );
-    assert.deepEqual(runtime.profileProviders(), {
-      providers: { "openai-codex": "openai" },
-    });
-    // Identity is the default shape: clearing the map restores it.
-    assert.deepEqual(runtime.profileSetProviders({ providers: {} }), {
-      providers: {},
-    });
-    assert.deepEqual(runtime.profileProviders(), { providers: {} });
-
     const { readAt, ...read } = await runtime.hostCatalog({});
     assert.deepEqual(read, catalog(provider()));
     assert.ok(Number.isFinite(Date.parse(readAt)));
     await runtime.hostCatalog({ cwd: "/repo" });
     assert.deepEqual(catalogReads.slice(-2), [{}, { cwd: "/repo" }]);
+    // The form's vocabulary (task 1158): a host key outside the canonical corpus
+    // is not offered, and a canonical one carries canonical levels and labels.
+    assert.deepEqual((await runtime.profileVocabulary({})).providers, []);
 
     assert.deepEqual(runtime.profileRemove({ id: created.profile.id }), {
       removed: true,

@@ -304,18 +304,20 @@ catalog drift between refresh and send. Observation reports the thread's
 `runtimeMode`, so a reviewer's mode evidence is the thread's own fact.
 
 A repository's pool profiles are the same pool every host selects from, but each
-host answers availability from its own catalog. T3Code names its provider
-instances itself (`codex`, `claudeAgent`, `grok`, `pi`), so a pool profile using
-another spelling is ineligible on T3 with `T3Code has no … provider` until the
-operator maps it. The mapping is the profile's own `hosts.t3code` setting
-(nucleus#1151): the T3 provider key, model, mode, thinking level or option
-values that profile launches with on T3, or an exclusion. A mapped profile's T3
-routing snapshot carries T3's own provider key, which is the `instanceId` the
-launch sends. On the recorded nightly snapshot the Claude profiles need
-`provider: claudeAgent`, a T3 mode for `bypassPermissions` (`full-access`) and
-their thinking level as the `effort` option; Pi profiles need their thinking
-level as the `thinking` option; Grok needs its unreported `auto_accept` value
-cleared. `profile.compatibility` and Settings → Profiles show each answer.
+host answers availability from its own catalog. Profiles store Nucleus's
+canonical vocabulary (task 1158, Tom 2026-11-12: "hard code the mapping that each
+host gives to each provider and have them converge on one canonical corpus"), and
+this adapter owns T3's translation table, `hosts/t3code/vocabulary.ts`: canonical
+`claude` is T3's `claudeAgent` instance with its thinking level as the `effort`
+option (`ultra` is `ultrathink`); Pi's thinking rides the `thinking` option and
+FX's `effort`; Codex, Grok and the rest ride the reasoning option. Canonical
+`supervised`, `accept-edits`, `auto` and `full-access` are T3's
+`approval-required`, `auto-accept-edits`, `auto` and `full-access`; `plan` and
+`auto-review` have no T3 form, so a profile naming one is unavailable on T3 with
+the reason. The T3 routing snapshot carries the translated values, so the launch
+sends T3's own `instanceId`, options and runtime mode. On the recorded nightly
+snapshot every enabled pool shape runs on T3 (`test/profile-vocabulary.test.ts`).
+Nothing is configured per profile; `profile.compatibility` shows each answer.
 
 A creation refusal that is proven pre-send settles the run refused and the task
 in attention with the step that failed named — `Worker creation refused before
