@@ -62,7 +62,7 @@ export class PausedStops {
         const role = run ? run.role : "worker" as const;
         const runId = run?.id ?? task.runId ?? null;
         let observed: AgentObservation | null = null;
-        try { observed = await this.engine.host.observe(agentId); } catch { observed = null; }
+        try { observed = await this.engine.onTaskHost({ hostId: task.hostId }, () => this.engine.host.observe(agentId)); } catch { observed = null; }
         // Only a matching observation proves a live turn; an unreadable or
         // mismatched identity is never stopped and never marked.
         if (!observed || observed.id !== agentId || observed.workspaceId !== workspaceId) continue;
@@ -180,7 +180,7 @@ export class PausedStops {
       const text = `Nucleus paused-stop continuation for task ${taskId}, worker run ${latest.runId ?? "unknown"}, planning head ${latest.planningBase}. Nucleus was paused and the operator stopped this thread while it was mid-turn; Nucleus is running again. Pick up where you left off in this same workspace and on the task branch; report via your existing authenticated callback for this same run. Do not start a new run or change the requested head or task branch.`;
       this.store.event(taskId, "paused_resume_intent", JSON.stringify({ runId: null, agentId: marker.agentId, role: "worker", attempt: attempts + 1 }));
       try {
-        await this.adapter.continueWorker(latest, `paused-${taskId}`, text);
+        await this.engine.onTaskHost(latest, () => this.adapter.continueWorker!(latest, `paused-${taskId}`, text));
       } catch (error) {
         if (error instanceof ProvenPreSendRefusalError) {
           this.dropPausedStopWithReplacement(taskId, marker, `same-thread continuation was refused before send: ${error.message}`);
@@ -213,7 +213,7 @@ export class PausedStops {
     const text = `Nucleus paused-stop continuation for task ${taskId}, run ${run.id}, exact head ${run.head}. Nucleus was paused and the operator stopped this thread while it was mid-turn; Nucleus is running again. Continue where you left off; report via your existing authenticated callback for this same run. Do not start a new run or change the requested head.`;
     this.store.event(taskId, "paused_resume_intent", JSON.stringify({ runId: run.id, agentId: marker.agentId, role: run.role, attempt: attempts + 1 }));
     try {
-      await this.adapter.continueRun(run, `ns-paused-resume-${run.id}`, text);
+      await this.engine.onTaskHost(run, () => this.adapter.continueRun!(run, `ns-paused-resume-${run.id}`, text));
     } catch (error) {
       if (error instanceof ProvenPreSendRefusalError) {
         this.dropPausedStopCoordinatorRun(taskId, run, marker, `same-thread continuation was refused before send: ${error.message}`);

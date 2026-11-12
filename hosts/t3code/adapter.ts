@@ -532,6 +532,37 @@ export class T3CodeHost implements Host {
   async stopAgentTurn(id: string) { const p = await this.readProjection(id); const runs = p.runs.filter(r => activeStatuses.has(r.status)).map(r => r.id).sort(); if (!runs.length) return;
     const key = identity('stop', canonical([id, runs])); await this.effect(key, 'orchestration.dispatchCommand', { type: 'thread.stop', commandId: key, threadId: id }); }
   async archiveAgent(id: string) { const key = identity('archive', id); await this.effect(key, 'orchestration.dispatchCommand', { type: 'thread.archive', commandId: key, threadId: id }); }
+  /**
+   * Settle a worker thread once Nucleus accepted its handover and moved the task
+   * to review (Tom, 2026-11-12). `expectedLatestRunId` names the run this
+   * handover ended, so a thread a later run already owns is never settled. A
+   * recorded intent is left exactly as recorded: an unknown delivery is not
+   * permission to resend, and a settled one is the same settle again. T3 clears
+   * the marker when a new message wakes the thread, so a revision round makes
+   * the worker active and its next handover settles it again under that run's
+   * own command id.
+   */
+  async settleWorkerThread(agentId: string, runId: string): Promise<void> {
+    this.requireConnection();
+    const commandId = identity('settle', canonical([this.hostId, agentId, runId]));
+    if (this.state.read().intents[commandId]) return;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const projection = await this.readProjection(agentId);
+      if (projection.thread.archivedAt || projection.thread.deletedAt) return;
+      const latest = projection.runs.reduce((best: Projection['runs'][number] | undefined, run) =>
+        !best || String(run.startedAt ?? '') >= String(best.startedAt ?? '') ? run : best, undefined);
+      // A thread with no run has nothing the settle's own guard could name.
+      if (!latest) return;
+      if (!activeStatuses.has(latest.status)) {
+        await this.effect(commandId, 'orchestration.dispatchCommand', { type: 'thread.settle', commandId, threadId: agentId, expectedLatestRunId: latest.id });
+        return;
+      }
+      // The report is usually the turn's last act, but the run may still be
+      // ending; settling is presentation, so it waits rather than settling a
+      // live run a later turn would immediately clear.
+      if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 200));
+    }
+  }
   private async request(agent: string, workspace: string, id: string) {
     this.requireConnection();
     const p = await this.readProjection(agent); if (this.workspaceFor(p.thread) !== workspace) throw new ProvenPreSendRefusalError('T3Code runtime request workspace changed');

@@ -6,7 +6,7 @@ import { missingOriginHasPlanner } from '../questions/origin';
 import { isStaleIntegrationBaseRefusal } from '../hooks/hooks';
 import { consumerBlockAdvance, isConsumerDeclaredBlock } from './closeout-renewal';
 
-export type CloseoutRecoveryContext = Pick<Engine, 'adapter' | 'host' | 'stopped' | 'store'> & {
+export type CloseoutRecoveryContext = Pick<Engine, 'adapter' | 'host' | 'onTaskHost' | 'stopped' | 'store'> & {
   readonly resolution: Pick<Resolution, 'adapter' | 'closeoutAuthority' | 'hasEarlierIntegrationTurn' | 'lease' | 'update'>;
 };
 
@@ -29,7 +29,7 @@ export class CloseoutRecovery {
     const run=task.resolution.currentRunId?this.store.run(task.resolution.currentRunId):null;
     if(run && (run.role!=='closeout' || run.completion))return;
     let currentId=run?.workspaceId??task.resolution.coordinatorWorkspaceId??task.workspaceId;
-    if(!run && task.coordinatorAgentId){const state=await this.engine.host.observe(task.coordinatorAgentId);currentId=state.workspaceId;}
+    if(!run && task.coordinatorAgentId){const state=await this.engine.onTaskHost(task, () => this.engine.host.observe(task.coordinatorAgentId!));currentId=state.workspaceId;}
     if(!currentId || await this.adapter.workspaceAvailable(currentId))return;
     if(run && !run.agentId){
       const matches=await this.engine.resolution.adapter.findRunAgents!(run);

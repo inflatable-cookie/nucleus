@@ -75,7 +75,7 @@ export const INTERACTIVE_WAIT_REASON = "Interactive session: waiting for the ope
  * here. `store`, `adapter` and `resolution` read the engine per call: tests
  * replace the adapter.
  */
-export type WorkerReconcileContext = Pick<Engine, 'acceptWorkerResult' | 'adapter' | 'admission' | 'branchPrLookupDue' | 'compareSiblings' | 'continuationOwnsReturn' | 'hooks' | 'host' | 'idleGraceMs' | 'note' | 'reconcileBlockedReturn' | 'reconcileBranchPr' | 'reconcileObservation' | 'reconcileReportingBinding' | 'recordObservation' | 'reportingBindingRecheckDue' | 'stopped' | 'store' | 'updateAfterOperatorRemap'>
+export type WorkerReconcileContext = Pick<Engine, 'acceptWorkerResult' | 'adapter' | 'admission' | 'branchPrLookupDue' | 'compareSiblings' | 'continuationOwnsReturn' | 'hooks' | 'host' | 'idleGraceMs' | 'note' | 'onTaskHost' | 'reconcileBlockedReturn' | 'reconcileBranchPr' | 'reconcileObservation' | 'reconcileReportingBinding' | 'recordObservation' | 'reportingBindingRecheckDue' | 'stopped' | 'store' | 'updateAfterOperatorRemap'>
   & { readonly resolution: Pick<Resolution, 'adoptReplacementPr' | 'attention' | 'extendCallbackReminder' | 'heavyRunAlive' | 'identifyOriginHost' | 'withHost' | 'reconcileStalledTurnStop' | 'recovery' | 'remindStoppedWorker' | 'resolveIncident' | 'responsiblePrReportRefused' | 'settleAutomaticReplayHold' | 'stalls' | 'suppressAutomaticRetry' | 'update' | 'waiting'> };
 
 export class WorkerReconcile {
@@ -182,7 +182,7 @@ export class WorkerReconcile {
     // g05.222 from cancelled to blocked.
     const terminal = (t: Task) => Boolean(t.removedAt) || ["done", "cancelled"].includes(t.phase) || isDispositionActive(t) || isDispositionComplete(t);
     if (terminal(this.store.task(task.id))) return null;
-    const state = await this.engine.host.observe(task.agentId!);
+    const state = await this.engine.onTaskHost(task, () => this.engine.host.observe(task.agentId!));
     if (this.engine.stopped) return null;
     let current = this.store.task(task.id);
     if (terminal(current)) return null;
@@ -350,7 +350,7 @@ export class WorkerReconcile {
     try {
       this.engine.admission?.invalidate(current.agentId!);
       this.store.event(current.id, 'reporting_binding_recheck', 'Re-reading the retained worker binding and stopped state before a mismatch escalation');
-      fresh = await this.engine.host.observe(current.agentId!);
+      fresh = await this.engine.onTaskHost(current, () => this.engine.host.observe(current.agentId!));
     } catch (error) { confirmError = error; }
     if (this.engine.stopped) return;
     if (confirmError !== null) {
@@ -549,7 +549,7 @@ export class WorkerReconcile {
     this.store.update(task.id, { lastAgentStatus: state.status, agentActive: active, lastObservedAt: now(), ...(modelChanged ? { workerModel: state.model, workerModels: [...new Set([...task.workerModels, state.model!])] } : {}) }, changed ? "agent_state" : undefined, state.status);
   }
   async observeOnly(task: Task) {
-    const state = await this.engine.host.observe(task.agentId!);
+    const state = await this.engine.onTaskHost(task, () => this.engine.host.observe(task.agentId!));
     if (this.engine.stopped) return;
     if (state.workspaceId !== task.workspaceId) throw new Error("Worker placement changed; inspect ownership before resuming");
     this.engine.recordObservation(this.store.task(task.id), state);

@@ -38,7 +38,7 @@ export function reminderDecision(facts: {
 }
 
 /** One bounded reminder to a run that stopped without a result. */
-export type CallbackRemindersContext = Pick<Resolution, 'adapter' | 'attention' | 'ensureIncident' | 'extendCallbackReminder' | 'graceMs' | 'heavyRunAlive' | 'host' | 'saveIncident' | 'store' | 'validationEvidence' | 'waiting'>;
+export type CallbackRemindersContext = Pick<Resolution, 'adapter' | 'attention' | 'ensureIncident' | 'extendCallbackReminder' | 'graceMs' | 'heavyRunAlive' | 'host' | 'onTaskHost' | 'saveIncident' | 'store' | 'validationEvidence' | 'waiting'>;
 
 export class CallbackReminders {
   constructor(readonly resolution: CallbackRemindersContext) {}
@@ -97,7 +97,7 @@ export class CallbackReminders {
     const escalated = incident.status === 'escalated';
     let dispatch: 'delivered' | 'absent' | 'unverified' | null = null;
     if (!(blocked || reviewAuth || escalated) && role === 'reviewer' && run?.agentId && this.adapter.agentTimelinePage) {
-      try { dispatch = timelineDispatchState(await this.resolution.host.agentTimelinePage(run.agentId, 100), run.id); }
+      try { dispatch = timelineDispatchState(await this.resolution.onTaskHost(run, () => this.resolution.host.agentTimelinePage(run.agentId!, 100)), run.id); }
       catch { dispatch = 'unverified'; }
     }
     let validationAbsent: boolean | undefined;
@@ -109,7 +109,7 @@ export class CallbackReminders {
     let bindingOutside: boolean | undefined;
     if (!(blocked || reviewAuth || escalated) && agentId) {
       try {
-        const state = await this.resolution.host.observe(agentId);
+        const state = await this.resolution.onTaskHost(run ?? { hostId: t.hostId }, () => this.resolution.host.observe(agentId));
         let bindingPath = state.mcpBindingPath ?? mcpBindingPathFromHostRecord(state);
         const bindingKey = wireLabel(state.labels, 'mcpBinding');
         if (!bindingPath && bindingKey) {

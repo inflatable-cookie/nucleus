@@ -1,0 +1,1 @@
+T3 work now runs every task-owned host call on the task's own host, and a T3 worker thread settles once its handover is accepted and the task moves to review. A retired reviewer no longer stops with no verdict because a continuation was addressed to the default host.

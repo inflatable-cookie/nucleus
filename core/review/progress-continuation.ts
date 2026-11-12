@@ -9,7 +9,7 @@ import { matchingInactiveParticipant } from '../intake/run-settlement';
 import { dispatchBlocked, DISPATCH_HELD_REASON } from '../dispatch/capacity';
 import type { Resolution } from '../resolution';
 
-export type ProgressContinuationContext = Pick<Resolution, 'adapter' | 'host' | 'ownedToolHold' | 'progressEffectsPending' | 'startsNoRuns' | 'store'>;
+export type ProgressContinuationContext = Pick<Resolution, 'adapter' | 'host' | 'onTaskHost' | 'ownedToolHold' | 'progressEffectsPending' | 'startsNoRuns' | 'store'>;
 
 export class ProgressContinuation {
   constructor(readonly context: ProgressContinuationContext) {}
@@ -51,7 +51,7 @@ export class ProgressContinuation {
     const participants=new Set([t.agentId,t.resolution.reviewerAgentId,...t.retiredWorkers.map(worker=>worker.agentId)].filter((id):id is string=>Boolean(id)));
     const observe=async():Promise<string|null>=>{
       for(const id of participants){
-        const state=await this.context.host.observe(id);
+        const state=await this.context.onTaskHost(t, () => this.context.host.observe(id));
         if(!matchingInactiveParticipant({agentId:id,workspaceId:t.workspaceId},state))return `participant ${id} is not idle`;
         const participantRunIds=participantToolRunIds(t,this.context.store.runs(t.id),id,t.workspaceId!);
         const issue=await this.context.ownedToolHold(id,{requireCompleteEvidence:true,runId:participantRunIds[0],runIds:participantRunIds,taskId:t.id,workspaceId:t.workspaceId!});

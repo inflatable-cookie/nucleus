@@ -12,6 +12,7 @@ export const STAMP = '2026-01-01T00:00:00.000Z';
 export function threadProjection(id: string, directory: string): Value {
   return { thread: { id, projectId: 'synthetic-project', title: 'Synthetic thread', providerInstanceId: 'synthetic-provider',
     modelSelection: { instanceId: 'synthetic-provider', model: 'synthetic-model' }, worktreePath: directory, branch: 'synthetic',
+    settledOverride: null, settledAt: null,
     archivedAt: null, deletedAt: null, updatedAt: STAMP },
     runs: [], runtimeRequests: [], turnItems: [], messages: [], updatedAt: STAMP };
 }
@@ -162,7 +163,9 @@ export async function t3Fake(t: TestContext, directory: string) {
           if (controls.disconnectMutation) return socket.destroy();
           const p = threads.get(payload.threadId)!;
           switch (payload.type) {
-            case 'message.dispatch': p.messages.push({ id: payload.messageId, role: 'user', text: payload.text }); break;
+            // A new message wakes the thread: the nightly clears its manual settled marker.
+            case 'message.dispatch': p.messages.push({ id: payload.messageId, role: 'user', text: payload.text }); p.thread.settledOverride = null; p.thread.settledAt = null; break;
+            case 'thread.settle': p.thread.settledOverride = 'settled'; p.thread.settledAt = STAMP; break;
             case 'thread.stop': for (const run of p.runs) run.status = 'cancelled'; break;
             case 'thread.archive': p.thread.archivedAt = STAMP; break;
             case 'runtime-request.respond': {

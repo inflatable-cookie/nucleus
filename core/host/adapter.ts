@@ -102,6 +102,12 @@ export interface Adapter extends RunUsageSource {
   /** Engine hook for per-step creation timings and the visible wait reason. */
   workspaceCreationProgress?: (taskId: string, step: string, status: "started" | "finished" | "skipped", elapsedMs?: number, outcome?: "ok" | "failed") => void;
   purgeReportingFiles?(taskId:string,runIds:string[]):void;
+  /**
+   * Settle a worker thread whose handover Nucleus accepted and moved to review
+   * (#1154). Presentation only: the receipt is already durable, and an unknown
+   * or refused settle never changes the task or retries blindly.
+   */
+  settleWorkerThread?(agentId: string, runId: string): Promise<void>;
   runTemporaryDirectory?(runId: string, task?: Task): string;
   workspaceAvailable?(id:string):Promise<boolean>;
   profiles?(): Promise<Profile[]>;
