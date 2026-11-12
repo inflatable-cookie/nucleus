@@ -152,11 +152,11 @@ test('decoder-formatted defects keep durable diagnostics while remaining unknown
   server.controls.postEffectDefect = true;
   await assert.rejects(host.sendMessage(created.id, { messageId: 'schema-refusal', text: 'Synthetic' }), error => {
     assert.ok(error instanceof HostUnknownDeliveryError);
-    assert.deepEqual(error.diagnostic, { command: 'message.dispatch', field: 'commandId' });
+    assert.deepEqual(error.diagnostic, { command: 'message.dispatch', field: 'commandId', reason: 'Missing key at ["commandId"]' });
     return true;
   });
   assert.equal(host.state.read().intents['schema-refusal']?.status, 'unknown');
-  assert.deepEqual(host.state.read().intents['schema-refusal']?.diagnostic, { command: 'message.dispatch', field: 'commandId' });
+  assert.deepEqual(host.state.read().intents['schema-refusal']?.diagnostic, { command: 'message.dispatch', field: 'commandId', reason: 'Missing key at ["commandId"]' });
   assert.ok(server.threads.get(created.id)!.messages.some((message: { text: string }) => message.text === 'Synthetic'), 'handler performed the effect before the identical defect');
   const sent = server.commands.length;
   server.controls.postEffectDefect = false;
@@ -164,7 +164,7 @@ test('decoder-formatted defects keep durable diagnostics while remaining unknown
   const reloaded = new T3CodeHost(options); t.after(() => reloaded.close()); await reloaded.connect();
   await assert.rejects(reloaded.sendMessage(created.id, { messageId: 'schema-refusal', text: 'Synthetic' }), error => {
     assert.ok(error instanceof HostUnknownDeliveryError);
-    assert.deepEqual(error.diagnostic, { command: 'message.dispatch', field: 'commandId' });
+    assert.deepEqual(error.diagnostic, { command: 'message.dispatch', field: 'commandId', reason: 'Missing key at ["commandId"]' });
     assert.match(error.message, /unknown.*not resent.*message.dispatch.*commandId/);
     return true;
   });
@@ -352,7 +352,7 @@ test('host identity conflicts and unsupported per-thread bindings refuse before 
   assert.equal(server.commands.length, 0);
   const absent = join(root, 'missing'); mkdirSync(absent);
   await assert.rejects(host.createWorkspace({ title: 'Unknown project', requestId: 'unknown', directory: absent, project: { projectId: 'absent-project' } }), error => {
-    assert.match(String(error), /T3Code has no project for/);
+    assert.match(String(error), /T3Code cannot create a project for/);
     assert.ok(String(error).includes(absent), 'the refusal names the repository path');
     assert.match(String(error), /add that folder as a project in T3Code, then restart the task/);
     return true;
@@ -381,7 +381,7 @@ test('the origin read answers authoritative absence, and only an unread inventor
   await assert.rejects(host.originAgent(created.id), /authenticated host connection/);
 });
 
-test('workspace creation registers a missing repository project once and binds its existing worktree', async t => {
+test('workspace creation registers a missing repository project once through the nightly projects.mutate route', async t => {
   const { host, server, root } = await fixture(t);
   server.projects.splice(0);
   const repository = join(root, 'repository');
@@ -390,8 +390,12 @@ test('workspace creation registers a missing repository project once and binds i
   const project = await host.repositoryProject(repository);
   assert.equal(project.workspaceRoot, await realpath(repository));
   const workspace = await host.createWorkspace({ title: 'Synthetic task', requestId: 'workspace-create', directory: worktree, project });
-  const creation = server.commands.find(command => command.type === 'project.create');
-  assert.ok(creation, 'project.create was sent');
+  const creation = server.commands.find(command => command.method === 'projects.mutate');
+  assert.ok(creation, 'projects.mutate carried the project.create mutation');
+  assert.equal(creation!.type, 'project.create');
+  for (const field of ['type', 'commandId', 'projectId', 'title', 'workspaceRoot']) assert.ok(Object.hasOwn(creation!, field), field);
+  assert.equal(server.commands.filter(command => command.method === 'orchestration.dispatchCommand' && command.type === 'project.create').length, 0,
+    'the nightly dispatch union has no project.create; registration never rides it');
   assert.equal(creation!.workspaceRoot, await realpath(repository));
   assert.equal(creation!.title, 'repository');
   assert.equal(server.projects.length, 1);
@@ -400,7 +404,7 @@ test('workspace creation registers a missing repository project once and binds i
   assert.equal(await workspaceRef.refresh(), true);
   assert.equal(workspaceRef.current()?.projectId, creation!.projectId);
   await host.createWorkspace({ title: 'Retry', requestId: 'workspace-create-again', directory: worktree, project });
-  assert.equal(server.commands.filter(command => command.type === 'project.create').length, 1, 'the same root is not duplicated');
+  assert.equal(server.commands.filter(command => command.method === 'projects.mutate').length, 1, 'the same root is not duplicated');
 });
 
 test('unknown project creation delivery is reconciled from inventory before retry', async t => {
@@ -412,7 +416,7 @@ test('unknown project creation delivery is reconciled from inventory before retr
   const project = await host.repositoryProject(repository);
   server.controls.disconnectAfterEffect = true;
   await assert.rejects(host.createWorkspace({ title: 'Synthetic task', requestId: 'workspace-lost', directory: worktree, project }), /unknown/i);
-  assert.equal(server.commands.filter(command => command.type === 'project.create').length, 1);
+  assert.equal(server.commands.filter(command => command.method === 'projects.mutate').length, 1);
   host.close();
   server.controls.disconnectAfterEffect = false;
   const reloaded = new T3CodeHost(options); t.after(() => reloaded.close());
@@ -421,7 +425,33 @@ test('unknown project creation delivery is reconciled from inventory before retr
   const workspaceRef = reloaded.workspaceRef(workspace.id);
   await workspaceRef.refresh();
   assert.equal(workspaceRef.current()?.projectId, server.projects[0]!.id);
-  assert.equal(server.commands.filter(command => command.type === 'project.create').length, 1, 'inventory adoption avoids a second create');
+  assert.equal(server.commands.filter(command => command.method === 'projects.mutate').length, 1, 'inventory adoption avoids a second create');
+});
+
+test('a lost registration resends once with its recorded command id after the inventory re-read', async t => {
+  const { host, server, options, root } = await fixture(t);
+  server.projects.splice(0);
+  const repository = join(root, 'repository');
+  const worktree = join(root, 'worktree');
+  mkdirSync(repository); mkdirSync(worktree);
+  const project = await host.repositoryProject(repository);
+  server.controls.disconnectMutation = true;
+  await assert.rejects(host.createWorkspace({ title: 'Synthetic task', requestId: 'workspace-lost', directory: worktree, project }));
+  const lost = server.commands.filter(command => command.method === 'projects.mutate');
+  assert.equal(lost.length, 1);
+  assert.equal(server.projects.length, 0, 'the lost request created nothing');
+  host.close();
+  server.controls.disconnectMutation = false;
+  const reloaded = new T3CodeHost(options); t.after(() => reloaded.close());
+  await reloaded.connect();
+  const workspace = await reloaded.createWorkspace({ title: 'Synthetic task', requestId: 'workspace-lost', directory: worktree, project });
+  assert.equal(workspace.directory, await realpath(worktree));
+  const sent = server.commands.filter(command => command.method === 'projects.mutate');
+  assert.equal(sent.length, 2, 'the re-read found no project, so the recorded create resent exactly once');
+  assert.equal(sent[0]!.commandId, sent[1]!.commandId, 'the resend uses the recorded command id, so the receipt keeps it idempotent');
+  assert.equal(sent[0]!.projectId, sent[1]!.projectId);
+  assert.equal(server.projects.length, 1);
+  assert.equal((await reloaded.workspaceRef(workspace.id).refresh()), true);
 });
 
 test('an unsupported T3 project-create command names the manual project setup', async t => {
@@ -437,4 +467,28 @@ test('an unsupported T3 project-create command names the manual project setup', 
     assert.match(String(error), /add that folder as a project in T3Code, then restart the task/);
     return true;
   });
+  assert.equal(host.state.read().intents[Object.keys(host.state.read().intents).find(key => key.startsWith('nucleus-project-create-')) ?? '']?.status, 'refused');
+});
+
+test('a refused remote mutation keeps its bounded reason in the durable intent and attention detail', async t => {
+  const { host, server, root } = await fixture(t);
+  server.projects.splice(0);
+  const repository = join(root, 'repository');
+  const worktree = join(root, 'worktree');
+  mkdirSync(repository); mkdirSync(worktree);
+  const project = await host.repositoryProject(repository);
+  server.controls.projectMutationFailure = true;
+  await assert.rejects(host.createWorkspace({ title: 'Synthetic task', requestId: 'workspace-reason', directory: worktree, project }), error => {
+    assert.ok(error instanceof HostUnknownDeliveryError);
+    assert.deepEqual(error.diagnostic, { command: 'project.create', reason: 'ProjectMutationError: Failed to mutate project.' });
+    assert.match(error.message, /unknown.*not resent.*command project\.create.*reason ProjectMutationError: Failed to mutate project\./);
+    return true;
+  });
+  const key = Object.keys(host.state.read().intents).find(candidate => candidate.startsWith('nucleus-project-create-'))!;
+  assert.equal(host.state.read().intents[key]?.status, 'unknown');
+  assert.deepEqual(host.state.read().intents[key]?.diagnostic, { command: 'project.create', reason: 'ProjectMutationError: Failed to mutate project.' });
+  // The refused reason is diagnostic evidence only: the delivery stays unknown and is never resent.
+  server.controls.projectMutationFailure = false;
+  const sent = server.commands.filter(command => command.method === 'projects.mutate');
+  assert.equal(sent.length, 1);
 });

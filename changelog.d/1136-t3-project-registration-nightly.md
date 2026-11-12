@@ -1,0 +1,19 @@
+Project registration on T3 Code Nightly now works, and a refused remote
+command keeps its reason.
+
+The T3Code adapter registers a missing repository project through the
+`projects.mutate` RPC with a `project.create` mutation — the route the shipped
+nightly actually implements — instead of a `project.create` command inside
+`orchestration.dispatchCommand`, which the nightly's command union rejects
+before any handler runs. Registration keeps its deterministic project and
+command IDs, adopts a project that appeared after an unknown delivery, and
+resends at most once with the recorded IDs so T3's command receipt answers
+idempotently; an unknown intent recorded on the retired dispatch route resends
+once on the new route. A build without the route still refuses with the
+repository path and the manual setup steps.
+
+Host delivery diagnostics now keep the bounded why behind a remote failure: a
+whitelisted error tag, a defect message with quoted values and JSON structures
+replaced by `[value]`, or the ticket exchange's HTTP status, in the durable
+intent and the task's attention detail. The configured bearer is stripped and
+delivery classification is unchanged.

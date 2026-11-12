@@ -269,7 +269,7 @@ test('reported command and field enter the exact owning task attention and survi
   server.controls.postEffectDefect = true;
   await assert.rejects(runtime.answerHostPermission(input), error => {
     assert.ok(error instanceof HostUnknownDeliveryError);
-    assert.deepEqual(error.diagnostic, { command: 'runtime-request.respond', field: 'commandId' });
+    assert.deepEqual(error.diagnostic, { command: 'runtime-request.respond', field: 'commandId', reason: 'Missing key at ["commandId"]' });
     return true;
   });
   const attention = store.task(task.id);
@@ -284,7 +284,8 @@ test('reported command and field enter the exact owning task attention and survi
   assert.equal(deliveryEvents.length, 1);
   const evidence = JSON.parse(deliveryEvents[0]!.detail);
   assert.equal(evidence.command, 'runtime-request.respond'); assert.equal(evidence.field, 'commandId'); assert.equal(evidence.delivery, 'unknown');
-  assert.doesNotMatch(JSON.stringify({ reason: attention.reason, evidence, intent: host.state.read().intents[input.intentId]!.diagnostic }), /synthetic-bearer|Missing key|\n  at|synthetic-ticket/);
+  assert.doesNotMatch(JSON.stringify({ reason: attention.reason, evidence, intent: host.state.read().intents[input.intentId]!.diagnostic }), /synthetic-bearer|synthetic-ticket|prompt secret|\n  at/);
+  assert.match(attention.reason, /reason Missing key at \["commandId"\]/);
   for (const item of untouched) assert.deepEqual(store.task(item.id), item.task, 'colliding, foreign, origin-only and terminal tasks are untouched');
   const storePath = store.path;
   await runtime.drain(); host.close();
@@ -308,7 +309,7 @@ test('reported command and field enter the exact owning task attention and survi
         attention: (current, reason) => engine.withHost(current.hostId, () => engine.resolution.attention(current, reason, 'uncertain_delivery')),
       }), error => {
         assert.ok(error instanceof HostUnknownDeliveryError);
-        assert.deepEqual(error.diagnostic, { command: 'runtime-request.respond', field: 'commandId' });
+        assert.deepEqual(error.diagnostic, { command: 'runtime-request.respond', field: 'commandId', reason: 'Missing key at ["commandId"]' });
         return true;
       });
     }

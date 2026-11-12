@@ -1,3 +1,5 @@
+import { sanitizeHostFailureReason } from '../../core/host';
+
 export interface T3ConnectionConfig {
   endpoint: string;
   bearer: string;
@@ -8,20 +10,24 @@ export interface T3ConnectionConfig {
 export class T3RpcError extends Error {
   readonly command?: string;
   readonly field?: string;
+  /** The bounded, sanitized why: a whitelisted tag, a defect shape or an HTTP status. */
+  readonly reason?: string;
 
   constructor(
     readonly code: 'auth' | 'transport' | 'timeout' | 'protocol' | 'remote' | 'unsupported_method',
     readonly method?: string,
     readonly remoteTag?: string,
     readonly delivery: 'not_sent' | 'unknown' = 'unknown',
-    diagnostic?: { command?: unknown; field?: unknown },
+    diagnostic?: { command?: unknown; field?: unknown; reason?: unknown },
   ) {
     const command = safeCommand(diagnostic?.command);
     const field = safeField(diagnostic?.field);
-    super(`T3Code ${code}${method ? `: ${method}` : ''}${remoteTag ? ` (${remoteTag})` : ''}${command ? `, command ${command}` : ''}${field ? `, field ${field}` : ''}`);
+    const reason = sanitizeHostFailureReason(diagnostic?.reason);
+    super(`T3Code ${code}${method ? `: ${method}` : ''}${remoteTag ? ` (${remoteTag})` : ''}${command ? `, command ${command}` : ''}${field ? `, field ${field}` : ''}${reason ? `, reason ${reason}` : ''}`);
     this.name = 'T3RpcError';
     this.command = command;
     this.field = field;
+    this.reason = reason;
   }
 }
 
@@ -40,7 +46,7 @@ const object = (value: unknown): value is Record<string, unknown> => value !== n
 const REMOTE_TAGS = new Set([
   'EnvironmentAuthorizationError', 'OrchestrationV2DispatchCommandError',
   'OrchestrationV2GetThreadProjectionError', 'OrchestrationV2GetShellSnapshotError',
-  'OrchestrationV2ThreadLaunchError',
+  'OrchestrationV2ThreadLaunchError', 'ProjectMutationError',
 ]);
 const safeTag = (value: unknown): string | undefined => typeof value === 'string' && REMOTE_TAGS.has(value) ? value : undefined;
 const COMMANDS = new Set([
@@ -76,11 +82,20 @@ function remoteFailure(method: string, cause: unknown, command?: string, bearer?
   if (reason._tag === 'Die') {
     if (reason.defect === `Unknown request tag: ${method}`) return new T3RpcError('unsupported_method', method, undefined, 'unknown', { command });
     const field = schemaFieldDiagnostic(reason.defect);
-    return new T3RpcError('remote', method, undefined, 'unknown', { command, field: field && (!bearer || !field.includes(bearer)) ? field : undefined });
+    return new T3RpcError('remote', method, undefined, 'unknown', {
+      command,
+      field: field && (!bearer || !field.includes(bearer)) ? field : undefined,
+      reason: typeof reason.defect === 'string' ? reason.defect.split(bearer ?? '\u0000').join('[redacted]') : undefined,
+    });
   }
   const tag = reason._tag === 'Fail' && object(reason.error) ? safeTag(reason.error._tag) : undefined;
+  const message = reason._tag === 'Fail' && object(reason.error) && typeof reason.error.message === 'string' && reason.error.message.length <= 512
+    ? reason.error.message : undefined;
   const reportedCommand = tag === 'OrchestrationV2DispatchCommandError' && object(reason.error) ? safeCommand(reason.error.commandType) : undefined;
-  return new T3RpcError('remote', method, tag, 'unknown', { command: reportedCommand ?? command });
+  return new T3RpcError('remote', method, tag, 'unknown', {
+    command: reportedCommand ?? command,
+    reason: tag ? [tag, message].filter(Boolean).join(': ') : undefined,
+  });
 }
 
 /** Small, non-retrying client for the nightly's Effect RPC JSON transport. */
@@ -126,8 +141,8 @@ export class T3RpcClient {
       const response = await fetch(new URL('/api/auth/websocket-ticket/rpc', this.base), {
         method: 'POST', headers: { Authorization: `Bearer ${this.#bearer}` }, signal: controller.signal,
       });
-      if (response.status === 401 || response.status === 403) throw new T3RpcError('auth', undefined, undefined, 'not_sent');
-      if (!response.ok) throw new T3RpcError('transport', undefined, undefined, 'not_sent');
+      if (response.status === 401 || response.status === 403) throw new T3RpcError('auth', undefined, undefined, 'not_sent', { reason: `HTTP ${response.status}` });
+      if (!response.ok) throw new T3RpcError('transport', undefined, undefined, 'not_sent', { reason: `HTTP ${response.status}` });
       if (!response.body) throw new T3RpcError('protocol', undefined, undefined, 'not_sent');
       const reader = response.body.getReader();
       const chunks: Uint8Array[] = [];

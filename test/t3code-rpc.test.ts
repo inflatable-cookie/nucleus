@@ -177,7 +177,7 @@ test('all remote Die failures stay unknown even when their text matches the RPC 
   assert.equal(server.frames.filter(frame => frame._tag === 'Request').length, 2);
 });
 
-test('schema diagnostics retain bounded field locations without actual values or invalid paths', async t => {
+test('schema diagnostics retain bounded field locations and defect shapes without actual values or invalid paths', async t => {
   let calls = 0;
   const server = await fakeServer(t, (request, send) => {
     if (request._tag !== 'Request') return;
@@ -192,10 +192,87 @@ test('schema diagnostics retain bounded field locations without actual values or
     assert.equal(error.delivery, 'unknown');
     assert.equal(error.field, i ? undefined : 'modelSelection.options[0].value');
     assert.equal(error.command, i ? undefined : 'message.dispatch');
-    assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic-bearer|prompt secret|Expected string|got/);
+    assert.equal(error.reason, i
+      ? 'Missing key at [value]'
+      : 'Expected string, got [value] at ["modelSelection"]["options"][0]["value"]');
+    assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`, /synthetic-bearer|prompt secret|got "/);
     return true;
   });
   assert.equal(calls, 2);
+});
+
+test('the nightly dispatch union refuses project.create before any handler and the reason stays bounded', async t => {
+  const server = await fakeServer(t, (request, send) => {
+    if (request._tag === 'Request') send(failure(request, { _tag: 'Die',
+      defect: 'Expected union member, got {"type":"project.create","commandId":"stable","projectId":"synthetic-project","title":"synthetic-repository","workspaceRoot":"/private/synthetic/repository"}' }));
+  });
+  const client = await clientFor(t, server);
+  // Swallowtail #225's observed failure: the command never reached a handler, so
+  // delivery stays unknown and the recorded names stay diagnostic text only.
+  await assert.rejects(client.call('orchestration.dispatchCommand', { type: 'project.create', commandId: 'stable',
+    projectId: 'synthetic-project', title: 'synthetic-repository', workspaceRoot: '/private/synthetic/repository' }), error => {
+    assert.ok(error instanceof T3RpcError);
+    assert.equal(error.delivery, 'unknown');
+    assert.equal(error.command, 'project.create');
+    assert.equal(error.field, undefined);
+    assert.equal(error.reason, 'Expected union member, got [value]');
+    assert.doesNotMatch(String(error), /synthetic-project|synthetic-repository|private/);
+    return true;
+  });
+});
+
+test('typed project mutation failures keep their tag and message as the reason', async t => {
+  const server = await fakeServer(t, (request, send) => {
+    if (request._tag === 'Request') send(failure(request, { _tag: 'Fail', error: {
+      _tag: 'ProjectMutationError', commandId: 'stable', message: 'Failed to mutate project.' } }));
+  });
+  const client = await clientFor(t, server);
+  await assert.rejects(client.call('projects.mutate', { type: 'project.create', commandId: 'stable',
+    projectId: 'synthetic-project', title: 'synthetic-repository', workspaceRoot: '/private/synthetic/repository' }), error => {
+    assert.ok(error instanceof T3RpcError);
+    assert.equal(error.delivery, 'unknown');
+    assert.equal(error.command, 'project.create');
+    assert.equal(error.reason, 'ProjectMutationError: Failed to mutate project.');
+    assert.match(String(error), /reason ProjectMutationError: Failed to mutate project\./);
+    return true;
+  });
+});
+
+test('reasons stay bounded and nameless for unknown tags, giant defects and value dumps', async t => {
+  let calls = 0;
+  const server = await fakeServer(t, (request, send) => {
+    if (request._tag !== 'Request') return;
+    send(failure(request, ++calls === 1
+      ? { _tag: 'Fail', error: { _tag: 'SomethingUnrecognized', detail: 'synthetic-bearer prompt secret' } }
+      : { _tag: 'Die', defect: `Expected ${'{"a":1}, '.repeat(600)}got "${'x'.repeat(500)}"` }));
+  });
+  const client = await clientFor(t, server);
+  await assert.rejects(client.call('projects.mutate', { type: 'project.create', commandId: 'stable' }), error => {
+    assert.ok(error instanceof T3RpcError);
+    assert.equal(error.reason, undefined, 'an unrecognized tag contributes no reason text');
+    assert.doesNotMatch(String(error), /prompt secret/);
+    return true;
+  });
+  await assert.rejects(client.call('projects.mutate', { type: 'project.create', commandId: 'stable-2' }), error => {
+    assert.ok(error instanceof T3RpcError);
+    assert.ok((error.reason ?? '').length <= 243, `reason is capped, got ${error.reason?.length}`);
+    assert.ok((error.reason ?? '').endsWith('...'));
+    assert.doesNotMatch(String(error), /xxxxx/);
+    return true;
+  });
+});
+
+async function failingTicketServer(t: TestContext, status: number) {
+  return fakeServer(t, () => assert.fail('no WebSocket request expected'), status);
+}
+
+test('the ticket exchange names its HTTP status in the refusal', async t => {
+  const server = await failingTicketServer(t, 403);
+  const client = new T3RpcClient({ endpoint: server.endpoint, bearer: 'synthetic-bearer' });
+  t.after(() => client.close());
+  await assert.rejects(client.connect(), error => error instanceof T3RpcError && error.code === 'auth' && error.reason === 'HTTP 403'
+    && String(error).includes('reason HTTP 403') && !String(error).includes('synthetic-bearer'));
+  assert.equal(server.upgrades, 0);
 });
 
 test('a schema location containing the configured bearer is discarded even when it is a valid identifier', async t => {

@@ -26,7 +26,9 @@ export async function t3Fake(t: TestContext, directory: string) {
     synchronized: true, incompleteThread: false, enrichment: false, shellMissingField: '',
     snapshotSequence: 1, threadCoverage: {} as Record<string, unknown>, beforeArchiveRead: (() => {}) as () => void,
     disconnectMutation: false, disconnectAfterEffect: false, refuseMutation: false, postEffectDefect: false,
-    unsupportedProjectCreate: false, mutationObserver: (() => {}) as () => void };
+    unsupportedProjectCreate: false, projectMutationFailure: false, mutationObserver: (() => {}) as () => void };
+  /** Command receipts make a replayed project mutation answer with its recorded outcome. */
+  const projectReceipts = new Map<string, { type: string; projectId: string }>();
   const sockets = new Set<Socket>();
   const server = createServer((request, response) => {
     assert.equal(request.url, '/api/auth/websocket-ticket/rpc');
@@ -100,7 +102,10 @@ export async function t3Fake(t: TestContext, directory: string) {
         }
         case 'orchestration.dispatchCommand': {
           const definition = contract.commands[payload.type];
-          if (definition) for (const field of definition.required) assert.ok(Object.hasOwn(payload, field), `${payload.type}.${field}`);
+          // The nightly decodes the command union before any handler runs, so an
+          // unknown command type is a decoder defect with no effect and no span.
+          if (!definition) return failure({ _tag: 'Die', defect: contract.dispatchUnknownCommandExample });
+          for (const field of definition.required) assert.ok(Object.hasOwn(payload, field), `${payload.type}.${field}`);
           if (payload.type === 'message.dispatch') assert.ok(definition.dispatchModes.includes(payload.dispatchMode.type));
           if (payload.type === 'runtime-request.respond') {
             if (payload.decision) assert.ok(definition.decisions.includes(payload.decision));
@@ -109,12 +114,6 @@ export async function t3Fake(t: TestContext, directory: string) {
           commands.push({ method: request.tag, ...payload }); controls.mutationObserver();
           if (controls.refuseMutation) return failure({ _tag: 'Die', defect: contract.boundaryDecodeExample });
           if (controls.disconnectMutation) return socket.destroy();
-          if (payload.type === 'project.create') {
-            if (controls.unsupportedProjectCreate) return failure({ _tag: 'Die', defect: 'Unknown request tag: orchestration.dispatchCommand' });
-            projectRows.push({ id: payload.projectId, title: payload.title, workspaceRoot: payload.workspaceRoot });
-            if (controls.disconnectAfterEffect) return socket.destroy();
-            return success({ sequence: 1 });
-          }
           const p = threads.get(payload.threadId)!;
           switch (payload.type) {
             case 'message.dispatch': p.messages.push({ id: payload.messageId, role: 'user', text: payload.text }); break;
@@ -130,6 +129,30 @@ export async function t3Fake(t: TestContext, directory: string) {
           if (controls.disconnectAfterEffect) return socket.destroy();
           if (controls.postEffectDefect) return failure({ _tag: 'Die', defect: contract.boundaryDecodeExample });
           return success({ sequence: 1 });
+        }
+        case 'projects.mutate': {
+          const mutation = contract.projectMutation;
+          assert.equal(payload.type, 'project.create', 'only project.create mutations are exercised');
+          for (const field of mutation.createRequired) assert.ok(Object.hasOwn(payload, field), `projects.mutate.${field}`);
+          commands.push({ method: request.tag, ...payload }); controls.mutationObserver();
+          if (controls.refuseMutation) return failure({ _tag: 'Die', defect: contract.boundaryDecodeExample });
+          if (controls.disconnectMutation) return socket.destroy();
+          if (controls.unsupportedProjectCreate) return failure({ _tag: 'Die', defect: `Unknown request tag: ${mutation.method}` });
+          if (controls.projectMutationFailure) return failure({ _tag: 'Fail', error: { _tag: 'ProjectMutationError', commandId: payload.commandId, message: 'Failed to mutate project.' } });
+          const project = (id: string, title: string, workspaceRoot: string) => ({ id, title, workspaceRoot,
+            repositoryIdentity: null, defaultModelSelection: null, scripts: [], createdAt: STAMP, updatedAt: STAMP, deletedAt: null });
+          const receipt = projectReceipts.get(payload.commandId);
+          if (receipt) {
+            assert.equal(receipt.type, payload.type, 'a command id is never reused for another mutation');
+            const settled = projectRows.find((row: Value) => row.id === receipt.projectId)!;
+            return success(project(settled.id, settled.title, settled.workspaceRoot));
+          }
+          const owner = projectRows.find((row: Value) => row.workspaceRoot === payload.workspaceRoot);
+          if (owner) return failure({ _tag: 'Fail', error: { _tag: 'ProjectMutationError', commandId: payload.commandId, message: 'Failed to mutate project.' } });
+          projectRows.push({ id: payload.projectId, title: payload.title, workspaceRoot: payload.workspaceRoot });
+          projectReceipts.set(payload.commandId, { type: payload.type, projectId: payload.projectId });
+          if (controls.disconnectAfterEffect) return socket.destroy();
+          return success(project(payload.projectId, payload.title, payload.workspaceRoot));
         }
         default: return failure({ _tag: 'Die', defect: `Unknown request tag: ${request.tag}` });
       }

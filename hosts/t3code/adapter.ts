@@ -13,8 +13,33 @@ export interface T3CodeConfig { endpoint: string; bearer: string; statePath: str
 const identity = (purpose: string, value: string) => `nucleus-${purpose}-${createHash('sha256').update(value).digest('hex').slice(0, 40)}`;
 const activeStatuses = new Set(['preparing', 'queued', 'starting', 'running', 'waiting']);
 const unsupported = (capability: string): never => { throw new ProvenPreSendRefusalError(`T3Code does not support ${capability}`); };
+const createWireRefusal = (repositoryRoot: string) =>
+  `T3Code cannot create a project for ${repositoryRoot}; add that folder as a project in T3Code, then restart the task`;
 type Projection = z.infer<typeof projection>;
 type ResponseBinding = NonNullable<T3State['intents'][string]['response']>;
+
+interface ProjectCreateWire { method?: string; payload?: { type?: unknown; commandId?: unknown; projectId?: unknown; workspaceRoot?: unknown; title?: unknown } }
+/**
+ * Nightly moved project registration from a `project.create` command inside
+ * `orchestration.dispatchCommand` to a `projects.mutate` mutation. An unknown
+ * intent recorded before that change may carry the identical create on the old
+ * route; the command and project IDs are unchanged, so the inventory re-read
+ * adopts a landed project and T3's command receipt keeps a resend idempotent.
+ * Nothing else may change an intent's payload.
+ */
+function projectCreateRouteMigrated(previous: string, current: string): boolean {
+  try {
+    const before = JSON.parse(previous) as ProjectCreateWire, after = JSON.parse(current) as ProjectCreateWire;
+    const route = (wire: ProjectCreateWire) => wire.method === 'projects.mutate' || wire.method === 'orchestration.dispatchCommand' ? wire.method : null;
+    const create = (wire: ProjectCreateWire) => wire.payload && wire.payload.type === 'project.create'
+      && typeof wire.payload.commandId === 'string' && typeof wire.payload.projectId === 'string'
+      && typeof wire.payload.workspaceRoot === 'string' && typeof wire.payload.title === 'string'
+      ? { commandId: wire.payload.commandId, projectId: wire.payload.projectId, workspaceRoot: wire.payload.workspaceRoot, title: wire.payload.title } : null;
+    const beforeRoute = route(before), afterRoute = route(after), beforeCreate = create(before), afterCreate = create(after);
+    if (!beforeRoute || !afterRoute || !beforeCreate || !afterCreate || beforeRoute === afterRoute) return false;
+    return canonical(beforeCreate) === canonical(afterCreate);
+  } catch { return false; }
+}
 
 /** Includes pre-binding ledgers so upgrading cannot permit a second response. */
 function responseIntents(state: T3State, agentId: string, requestId: string) {
@@ -144,13 +169,13 @@ export class T3CodeHost implements Host {
     if (!selected && repositoryRoot) {
       const projectId = identity('project', canonical([this.hostId, repositoryRoot]));
       const commandId = identity('project-create', canonical([this.hostId, repositoryRoot]));
-      await this.effect(commandId, 'orchestration.dispatchCommand', {
+      const created = await this.effect(commandId, 'projects.mutate', {
         type: 'project.create', commandId, projectId, title: basename(repositoryRoot), workspaceRoot: repositoryRoot,
-      }, undefined, undefined, { resendUnknownAfterInventory: true,
-        unsupportedMethodMessage: `T3Code cannot create a project for ${repositoryRoot}; add that folder as a project in T3Code, then restart the task` });
+      }, undefined, undefined, { resendUnknownAfterInventory: true, unsupportedMethodMessage: createWireRefusal(repositoryRoot) });
+      decode(z.object({ id: z.literal(projectId), title: z.string(), workspaceRoot: z.string() }).passthrough(), created, 'projects.mutate');
       selected = { id: projectId, title: basename(repositoryRoot), workspaceRoot: repositoryRoot };
     }
-    if (!selected) throw new ProvenPreSendRefusalError(`T3Code has no project for ${repositoryRoot ?? directory}; add that folder as a project in T3Code, then restart the task`);
+    if (!selected) throw new ProvenPreSendRefusalError(createWireRefusal(repositoryRoot ?? directory));
     const id = identity('worktree', canonical([selected.id, directory]));
     this.state.update(state => {
       const old = state.workspaces[id];
@@ -208,7 +233,8 @@ export class T3CodeHost implements Host {
           workspaceId: state.agents[wire.threadId]?.workspaceId, input: legacyInput };
         if (original.workspaceId !== response!.binding.workspaceId || original.input !== response!.binding.input)
           throw new ProvenPreSendRefusalError(`T3Code original runtime response is ${old.status}; changed answer was not sent`);
-      } else if (old && old.payload !== encoded) throw new ProvenPreSendRefusalError('T3Code intent payload changed');
+      } else if (old && old.payload !== encoded && !projectCreateRouteMigrated(old.payload, encoded))
+        throw new ProvenPreSendRefusalError('T3Code intent payload changed');
       if (!old) {
         this.requireConnection();
         state.intents[boundKey] = { payload: encoded, status: 'unknown', ...(response ? { response: response.binding } : {}) };
@@ -241,7 +267,7 @@ export class T3CodeHost implements Host {
           ? new ProvenPreSendRefusalError(error instanceof T3RpcError ? error.message : 'T3Code send fence refused before delivery') : null;
       if (refusal) this.state.update(state => { state.intents[key] = { ...state.intents[key], payload: encoded, status: 'refused' }; });
       if (refusal) throw refusal;
-      const diagnostic = sanitizeHostDeliveryDiagnostic(error instanceof T3RpcError ? { command: error.command, field: error.field }
+      const diagnostic = sanitizeHostDeliveryDiagnostic(error instanceof T3RpcError ? { command: error.command, field: error.field, reason: error.reason }
         : error instanceof HostUnknownDeliveryError ? error.diagnostic : undefined);
       const unknown = new HostUnknownDeliveryError(diagnostic);
       try { this.state.update(state => { state.intents[key] = { ...state.intents[key], diagnostic }; }); }
