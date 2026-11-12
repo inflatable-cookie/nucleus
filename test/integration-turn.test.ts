@@ -1,7 +1,9 @@
 import { fakeAdapter, profile } from './support/fakes';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -15,10 +17,11 @@ import { requiredCheckPollMetaKey } from '../core/forge/index';
 import { ownerRevisionFixture } from './support/review-entry-fixture';
 import { observedParticipantTimeline } from './support/tool-timeline';
 import { waitFor } from './support/budgets';
+import { listHostUidProcesses } from '../core/machine/host-process-reap';
 
 const head = 'a'.repeat(40), base = 'b'.repeat(40), merged = 'c'.repeat(40);
 
-function fixture(realSource=false) {
+function fixture(realSource=false, graceMs=0) {
   const source=realSource?ownerRevisionFixture():null;
   const head=source?.oldHead??'a'.repeat(40), base=source?.planningCommit??'b'.repeat(40);
   const dir=source?.root??mkdtempSync(join(tmpdir(),'ns-turn-')), store=source?.store??new Store(join(dir,'queue.sqlite'));
@@ -69,7 +72,7 @@ function fixture(realSource=false) {
     merge:async t=>{merges++;mergedTasks.add(t.id)},
     merged:async t=>({merged:mergedTasks.has(t.id),commit:merged,head:heads.get(t.id)??head,base:'main'}),syncMain:async()=>{syncs++;return source?.planningCommit??merged},verifyCloseout:async()=>{},notify:async()=>{},
   });
-  const engine=new Engine(store,adapter,0);engine.profiles=[worker,reviewer,coordinator];
+  const engine=new Engine(store,adapter,graceMs);engine.profiles=[worker,reviewer,coordinator];
   const current=(id:string)=>store.task(id);
   const run=(id:string)=>store.run(current(id).resolution.currentRunId!)!;
   async function report(id:string,status:Completion['status']) {
@@ -87,6 +90,73 @@ function fixture(realSource=false) {
   const moveHead=(id:string, h:string)=>{const next=source?source.pushRevision(h):h;heads.set(id,next);return next};
   return {states,dir,store,engine,adapter,add,moveHead,current,run,report,idle,tokens,creates,sends,heads,bases,gates,roleCounts,counts:()=>({merges,syncs,reviewChecks}),close:async()=>{await engine.stop();if(source)source.close();else{store.close();rmSync(dir,{recursive:true,force:true})}}};
 }
+
+test('a reported participant stray tool is reaped after grace and the merge lease proceeds',async()=>{
+ const f=fixture(false,100);let childPid:number|null=null;try{
+  const task=f.add();
+  const workspace=join(f.dir,'reported-worktree');mkdirSync(workspace);
+  f.store.update(task.id,{directory:workspace,phase:'verifying',reason:'Mechanical verification satisfied the merge gates'});
+  const orphanScript=join(f.dir,'launch-orphan.mjs'),pidFile=join(f.dir,'orphan.pid');
+  writeFileSync(orphanScript,"import {spawn} from 'node:child_process';import {writeFileSync} from 'node:fs';const child=spawn(process.execPath,['-e','setInterval(() => {}, 1000)'],{cwd:process.argv[2],stdio:'ignore',detached:true});child.unref();writeFileSync(process.argv[3],String(child.pid));");
+  const launcher=spawn(process.execPath,[orphanScript,workspace,pidFile],{cwd:f.dir,stdio:'ignore'});
+  await once(launcher,'exit');
+  childPid=Number(readFileSync(pidFile,'utf8'));
+  const facts=await listHostUidProcesses();
+  const childFact=facts?.find(fact=>fact.pid===childPid);
+  assert.ok(childFact,'the host listing sees the started worktree process');
+  assert.equal(childFact.cwd,workspace);
+  assert.equal(f.current(task.id).directory,workspace);
+  f.adapter.hostProcessListing=async()=>facts;
+  let checks=0;
+  f.engine.resolution.ownedToolHold=async()=>++checks===1
+   ? 'an owned tool is still live: observed tool Bash (shell) is running; descendant pid 123 remains under provider pid 45'
+   : null;
+  const current=f.current(task.id);
+  f.store.event(task.id,'owned_tool_hold',JSON.stringify({runId:current.runId,reason:'stray shell'}));
+  await new Promise(resolve=>setTimeout(resolve,120));
+  f.engine.resolution.assignIntegrationTurn(f.current(task.id));
+  assert.equal(await f.engine.resolution.executionLease(f.current(task.id)),true);
+  assert.ok(f.store.eventsAll(task.id).some(event=>event.kind==='participant_tool_reaped'), JSON.stringify(f.store.eventsAll(task.id).filter(event=>event.kind.startsWith('participant_tool_'))));
+  assert.throws(()=>process.kill(childPid!,0),{code:'ESRCH'});
+  assert.equal(f.store.task(task.id).resolution.integrationTurn?.sequence,1);
+ }finally{if(childPid){try{process.kill(childPid,'SIGKILL')}catch{}}await f.close()}
+});
+
+test('another approved task merges while the first waits on its participant tool',async()=>{
+ const f=fixture(false,60_000);try{
+  const waiting=f.add(),later=f.add();
+  f.store.event(waiting.id,'owned_tool_hold',JSON.stringify({runId:f.current(waiting.id).runId,reason:'stray shell'}));
+  f.engine.resolution.ownedToolHold=async(_agentId,options)=>options?.taskId===waiting.id
+   ? 'an owned tool is still live: observed tool Bash (shell) is running'
+   : null;
+  await f.engine.wake();
+  await f.report(waiting.id,'ready_to_merge');
+  assert.equal(f.current(waiting.id).resolution.integrationTurn,null,'the blocked task yields its FIFO place');
+  assert.match(f.current(waiting.id).reason,/stray-tool grace ends at/);
+  await f.engine.wake();
+  await f.report(later.id,'ready_to_merge');
+  await f.engine.wake();await f.engine.wake();
+  assert.equal(f.counts().merges,1,'the later reviewed task merges while the first participant wait is open');
+  assert.ok(f.current(later.id).resolution.mergedCommit,'the later task records its landed merge');
+  assert.equal(f.current(waiting.id).resolution.mergedCommit,null,'the task waiting on its participant has not merged');
+ }finally{await f.close()}
+});
+
+test('a tool belonging to a live participant turn is never reaped',async()=>{
+ const f=fixture();try{
+  const task=f.add(),worker=f.current(task.id).agentId!;
+  f.states.set(worker,{...f.states.get(worker)!,status:'running',active:true});
+  let listings=0;
+  f.adapter.hostProcessListing=async()=>{listings++;return[];};
+  f.engine.resolution.ownedToolHold=async()=> 'an owned tool is still live: observed tool Bash (shell) is running';
+  const current=f.current(task.id);
+  f.store.update(task.id,{phase:'verifying',reason:'Mechanical verification satisfied the merge gates'});
+  f.engine.resolution.assignIntegrationTurn(f.current(task.id));
+  assert.equal(await f.engine.resolution.executionLease(f.current(task.id)),false);
+  assert.equal(listings,0,'the host sweep is unreachable while a participant turn is live');
+  assert.equal(f.store.eventsAll(task.id).some(event=>event.kind==='participant_tool_reaped'),false);
+ }finally{await f.close()}
+});
 
 test('a merge-held reviewed task does not keep the integration turn from later tasks',async()=>{
  const f=fixture();try{
