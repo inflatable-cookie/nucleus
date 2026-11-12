@@ -39,7 +39,7 @@ import { EMPTY_RUN_USAGE } from "../telemetry/run-usage";
 import { papercutFromLead } from "../../shared/papercut-lead";
 import { purgeReleasedRunTicket } from "../intake/reporting-files";
 
-import { type NucleusProfile,type ProfileImportRecord,type ProviderMap } from "../../shared/profiles";
+import { type NucleusProfile,type ProfileImportRecord } from "../../shared/profiles";
 
 import { runBuildOutputIntent } from "../hooks/build-output-records";
 import { removeRecordedRunScratchDirectory } from "../workspaces/run-scratch";
@@ -1087,8 +1087,6 @@ export class Store {
   profileImportRecord(): ProfileImportRecord | null { return this.configStore.profileImportRecord(); }
   recordProfileImport(record: ProfileImportRecord) { return this.configStore.recordProfileImport(record); }
   /** Each host's provider key to the normalised key a profile names; identity when absent. */
-  providerMap(): ProviderMap { return this.configStore.providerMap(); }
-  setProviderMap(providerMap: ProviderMap) { return this.configStore.setProviderMap(providerMap); }
   counts(): Record<string, number> { return this.configStore.counts(); }
   recentCounts(limit=50):Record<string,number>{ return this.configStore.recentCounts(limit); }
   chargeAssignment(group:string,profileId:string){ return this.configStore.chargeAssignment(group, profileId); }

@@ -2,17 +2,16 @@ import { z } from "zod";
 import type { PoolEntry, Profile } from "../../shared/contracts";
 import { availabilitySchema,demandRoleOffsetsSchema,poolSchema,routingGrantSchema,usageSettingSchema,type DemandRoleOffsets,type RoutingGrant,type RoutingPolicy,type Task,type UsageLevel,type UsageSetting,type UsageView } from "../../shared/contracts";
 import { DEMAND_ROLE_OFFSETS } from "../../shared/demand";
-import { nucleusProfileSchema,profileImportRecordSchema,providerMapSchema,type NucleusProfile,type ProfileImportRecord,type ProviderMap } from "../../shared/profiles";
+import { nucleusProfileSchema,profileImportRecordSchema,type NucleusProfile,type ProfileImportRecord } from "../../shared/profiles";
 import { taskRoutingPolicy } from "../dispatch/routing";
 import { now,StoreCore } from "./store-core";
 import { ASSIGNMENT_HISTORY_KEEP } from "./store-maintenance";
 
-/** Nucleus's own profile list, its provider map and the one-time import record (Spec 052). */
+/** Nucleus's own profile list and the one-time import record (Spec 052). */
 const PROFILES_META_KEY = "profiles";
 
 const PROFILE_IMPORT_META_KEY = "profileImport";
 
-const PROVIDER_MAP_META_KEY = "providerMap";
 interface Ports {
   availability: () => Array<z.infer<typeof availabilitySchema>>;
 }
@@ -42,14 +41,6 @@ export class StoreConfig {
   }
 
   recordProfileImport(record: ProfileImportRecord) { this.setMeta(PROFILE_IMPORT_META_KEY, profileImportRecordSchema.parse(record)); }
-
-  /** Each host's provider key to the normalised key a profile names; identity when absent. */
-  providerMap(): ProviderMap {
-    const parsed = providerMapSchema.safeParse(this.getMeta<unknown>(PROVIDER_MAP_META_KEY) ?? {});
-    return parsed.success ? parsed.data : {};
-  }
-
-  setProviderMap(providerMap: ProviderMap) { this.setMeta(PROVIDER_MAP_META_KEY, providerMapSchema.parse(providerMap)); }
 
   counts(): Record<string, number> { return Object.fromEntries(this.db.prepare("SELECT * FROM assignments").all().map(r => [String(r.group_id), Number(r.count)])); }
 

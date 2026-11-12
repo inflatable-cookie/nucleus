@@ -112,7 +112,6 @@ function durableState(dataDir: string) {
       credentials: store.db.prepare('SELECT run, hash FROM credentials ORDER BY run').all().map(row => ({ ...row })),
       profiles: store.profiles(),
       pool: store.pool(),
-      providerMap: store.providerMap(),
       paused: store.getMeta<boolean>('paused'),
       capacity: Object.fromEntries(Object.keys(CAPACITY).map(key => [key, store.getMeta<number>(key)])),
       settings: readFileSync(join(dataDir, 'settings.json'), 'utf8'),
@@ -178,7 +177,6 @@ test('the live leftover layout survives two service restarts through the post-mo
     for (const [key, value] of Object.entries(CAPACITY)) seeding.setMeta(key, value);
     seeding.setProfiles(PROFILES.map(profile => nucleusProfileSchema.parse(profile)));
     seeding.setMeta('pool', POOL);
-    seeding.setMeta('providerMap', { fixtureHost: 'fixture' });
     const task = seeding.insert(submissionSchema.parse({
       submissionId: 'old-store-task', title: 'Recorded before the move', repoPath: '/fixture/repo',
       planningCommit: base, handoffPath: 'docs/handoffs/old-store.md', originAgentId: 'origin',

@@ -1,6 +1,8 @@
 import { checkPoolEntries, normalizeRetryAt, saveProfileSettings, type ProfileSettings } from "../../shared/pool";
-import { nucleusProfileSchema, type ProviderMap } from "../../shared/profiles";
-import { hostCatalogSchema, storedHostCatalogSchema } from "../../shared/host";
+import { nucleusProfileSchema } from "../../shared/profiles";
+import { hostCatalogSchema, storedHostCatalogSchema, type HostCatalog } from "../../shared/host";
+import { canonicalCatalog, canonicalVocabulary, mergeCanonicalCatalogs } from "../../shared/profile-vocabulary";
+import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { Store, StoreMaintenanceError } from "../store/store";
@@ -18,13 +20,13 @@ const HOST_CATALOG_META_PREFIX = "hostCatalog:";
 /** Narrow dependencies; construction and lifecycle remain runtime-owned. */
 export interface SettingsContext {
   store: Store;
-  engine: Pick<Engine, "profiles" | "wake" | "resumePausedStops"> & Partial<Pick<Engine, "rebuildProfiles" | "profileCompatibility">>;
+  engine: Pick<Engine, "profiles" | "wake" | "resumePausedStops"> & Partial<Pick<Engine, "rebuildProfiles" | "profileCompatibility" | "secondaryCanonicalCatalogs">>;
   decisions: Decisions;
   capacityChanges: CapacityChangeJournal;
   readonly started: Promise<void>;
   readonly hostId: string;
   readonly startError: string;
-  readonly adapter: Pick<Adapter, "catalog">;
+  readonly adapter: Pick<Adapter, "catalog" | "vocabulary">;
   connected(): boolean;
   wakeAndSettlePostBootstrapTimeout(): Promise<void>;
   markStoreAccess(): void;
@@ -85,7 +87,7 @@ export class RuntimeSettings {
   }
 
   /**
-   * A profile edit, a per-host mapping or exclusion included, reaches selection
+   * A profile edit reaches selection
    * at once: the routing snapshots are rebuilt from the catalogs already read,
    * without a host read, and the board revision moves (nucleus#1151).
    */
@@ -100,17 +102,22 @@ export class RuntimeSettings {
     return this.context.engine.profileCompatibility();
   }
 
-  /** The host provider key to normalised key map a profile's provider is read through. */
-  profileProviders() { return { providers: this.context.store.providerMap() }; }
-
   /**
-   * Settings' provider-map editor replaces the whole map; `{}` restores identity,
-   * so a host that spells a provider differently needs only the differing keys.
+   * Settings' profile form choices (task 1158): the primary host's catalog for
+   * this directory (stored or refreshed, as `host.catalog`) and every secondary
+   * host's last catalog, each in canonical values through its adapter's table,
+   * merged. With no primary read and no secondary catalog, the primary read's
+   * failure is the answer.
    */
-  profileSetProviders(input: { providers: ProviderMap }) {
-    this.context.store.setProviderMap(input.providers);
-    this.profilesChanged();
-    return { providers: this.context.store.providerMap() };
+  async profileVocabulary(input: { cwd?: string; refresh?: boolean }) {
+    const secondaries = this.context.engine.secondaryCanonicalCatalogs?.() ?? [];
+    let primary: (HostCatalog & { readAt: string }) | null = null;
+    try { primary = await this.hostCatalog(input); }
+    catch (error) { if (!secondaries.length) throw error; }
+    const kind = hostKindOf(this.context.hostId);
+    const vocabulary = this.context.adapter.vocabulary ?? canonicalVocabulary(kind, HOST_KIND_LABELS[kind]);
+    const merged = mergeCanonicalCatalogs([...(primary ? [canonicalCatalog(vocabulary, primary)] : []), ...secondaries]);
+    return storedHostCatalogSchema.parse({ ...merged, readAt: primary?.readAt ?? new Date().toISOString() });
   }
 
   /**

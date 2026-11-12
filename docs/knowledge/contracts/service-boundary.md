@@ -98,7 +98,7 @@ clock still rebuilds projections after writes outside those funnels.
 rows and run observation comparison. `store-submissions.ts` owns submission identity,
 replay matching, dependency validation and queue promotion. `store-outcomes.ts` owns
 permanent outcomes, their search and lane indexes, telemetry fact reads and control
-outcomes. `store-config.ts` owns profiles, provider mapping, assignment counts and
+outcomes. `store-config.ts` owns profiles, assignment counts and
 routing usage configuration. Their callbacks preserve shared projection state in `Store`.
 
 `Store` retains task insertion, task updates and run writes: their ordering of row

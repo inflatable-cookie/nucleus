@@ -294,7 +294,7 @@ Profiles are central (Tom, same day): "a profile list created on one host should
 
 The profile manager comes first in the split (Tom, 2026-11-07, in the Nucleus planner thread):
 - The profile list set up in Nucleus is the one that's kept. Tom trims Paseo's own profiles to the few he uses for new planner threads, which stay useful in the composer's model picker.
-- Hosts may name the same provider differently, so Nucleus keeps a provider map that normalises provider keys. A profile names the normalised key.
+- Hosts may name the same provider differently. Profiles use one canonical vocabulary, and each host's adapter translates it in code (Tom, 2026-11-12: "we might just need to hard code the mapping that each host gives to each provider and have them converge on one canonical corpus that we use in the settings form"). Nothing is mapped per profile; the 2026-11-07 provider map is retired.
 - Options don't vary by host: "Let's go with no for now and look at it again if the need arises".
 
 The UI for other hosts (Tom, 2026-11-07, in the Nucleus planner thread): T3Code has no plugins yet, so the daemon serves the board over HTTP, to open in T3Code's browser pane or a real browser. "It's the best we can do until T3 adds plugins, and can be a useful central interface."

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { NucleusProfile } from "./profiles";
+import type { HostVocabulary } from "./profile-vocabulary";
 import type { Profile, Task } from "./contracts";
 
 /**
@@ -30,6 +31,13 @@ export interface Host {
    * (nucleus#1139 review).
    */
   catalog(options?: HostCatalogOptions): Promise<HostCatalog>;
+  /**
+   * This host's translation table from Nucleus's profile vocabulary to its own
+   * spellings (`shared/profile-vocabulary.ts`, Tom 2026-11-12). Routing
+   * translates each canonical profile with it; the catalog stays in the host's
+   * own spelling.
+   */
+  readonly vocabulary?: HostVocabulary;
   /** The host's own profile list, read once into Nucleus's store (Spec 052). Optional: a host without one has no method. */
   hostProfiles?(): Promise<NucleusProfile[]>;
   /** Transitional: the host's profile reads until the profile-store transition completes. */

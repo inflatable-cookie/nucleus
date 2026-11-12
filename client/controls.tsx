@@ -131,28 +131,8 @@ export function StatusGlyph({ c, icon, color, text, label }: { c: Colors; icon: 
     style={{ width: 20, height: 20, alignItems: "center", justifyContent: "center", borderRadius: radius.control, ...noOutline() }}>
     <FocusRing c={c} visible={focus.visible} corner={10} />
     <Icon name={icon} size={16} color={color} />
-    {showHint && <Popover anchor={anchor} align="end" pointerEvents="none" inlineStyle={{ top: 20 + space.xxs, right: 0 }}><View pointerEvents="none" style={{ paddingHorizontal: space.xs, paddingVertical: space.xxs, borderRadius: radius.control, ...popover(c) }}><Text numberOfLines={1} style={{ color: r.foreground, fontSize: type.metadata.fontSize }}>{text}</Text></View></Popover>}
-  </Pressable>;
-}
-/**
- * A compact host status pill (nucleus#1151): the host's name with a check or a
- * warning. Hover, focus or press shows the reason in a popover; the pill itself
- * carries no description (Tom's UI rules).
- */
-export function HostChip({ c, text, ok, detail, label }: { c: Colors; text: string; ok: boolean; detail: string; label: string }) {
-  const [showHint, setShowHint] = useState(false);
-  const focus = useFocusVisible();
-  const anchor = useRef<View | null>(null);
-  const r = roles(c);
-  const color = ok ? r.success : r.warning;
-  return <Pressable ref={anchor} accessibilityRole="button" accessibilityLabel={label} accessibilityHint={detail} onPress={() => setShowHint(open => !open)}
-    hitSlop={touchSlop(22)} onHoverIn={() => setShowHint(true)} onHoverOut={() => setShowHint(false)}
-    onFocus={() => { focus.onFocus(); setShowHint(true); }} onBlur={() => { focus.onBlur(); setShowHint(false); }}
-    style={{ flexDirection: "row", alignItems: "center", gap: space.xxs, height: 22, paddingHorizontal: space.xs, borderRadius: 11, borderWidth: 1, borderColor: r.border, ...noOutline() }}>
-    <FocusRing c={c} visible={focus.visible} corner={11} />
-    <Icon name={ok ? "CircleCheck" : "TriangleAlert"} size={12} color={color} />
-    <Text numberOfLines={1} style={{ color: r.muted, fontSize: type.metadata.fontSize }}>{text}</Text>
-    {showHint && <Popover anchor={anchor} align="end" pointerEvents="none" maxWidth={360} inlineStyle={{ top: 22 + space.xxs, right: 0, maxWidth: 360 }}><View pointerEvents="none" style={{ padding: space.xs, borderRadius: radius.control, ...popover(c) }}><Text style={{ color: r.foreground, fontSize: type.metadata.fontSize, lineHeight: type.metadata.lineHeight }}>{detail}</Text></View></Popover>}
+    {/* A long reason wraps inside a bounded popover rather than running off one line. */}
+    {showHint && <Popover anchor={anchor} align="end" pointerEvents="none" maxWidth={360} inlineStyle={{ top: 20 + space.xxs, right: 0, maxWidth: 360 }}><View pointerEvents="none" style={{ paddingHorizontal: space.xs, paddingVertical: space.xxs, borderRadius: radius.control, ...popover(c) }}><Text style={{ color: r.foreground, fontSize: type.metadata.fontSize, lineHeight: type.metadata.lineHeight }}>{text}</Text></View></Popover>}
   </Pressable>;
 }
 /**

@@ -354,9 +354,10 @@ export function workerSelectionExplanation(task: Task, pool: readonly PoolEntry[
 }
 
 /**
- * Every enabled pool profile the host snapshot rules out or launches with
- * mapped values (nucleus#1151). Disabled entries are left out: they never
- * dispatch anywhere, so the host is not why they were passed over.
+ * Every enabled pool profile the host snapshot rules out, or launches with
+ * values the host's table spells differently (nucleus#1151, task 1158). Disabled
+ * entries are left out: they never dispatch anywhere, so the host is not why
+ * they were passed over.
  */
 export function hostEffects(pool: readonly PoolEntry[], profiles: readonly Profile[]): HostEffect[] {
   const effects: HostEffect[] = [];
@@ -364,10 +365,9 @@ export function hostEffects(pool: readonly PoolEntry[], profiles: readonly Profi
     if (!entry.enabled) continue;
     const profile = profiles.find(candidate => candidate.id === entry.profileId);
     if (!profile) continue;
-    if (profile.excluded) effects.push({ profileId: profile.id, name: profile.name, effect: "excluded", reason: profile.problem });
-    else if (!profile.available) effects.push({ profileId: profile.id, name: profile.name, effect: "unavailable", reason: profile.problem });
-    else if (profile.mapped?.length) effects.push({ profileId: profile.id, name: profile.name, effect: "mapped",
-      reason: `launches as ${profile.provider}/${profile.model}${profile.modeId ? `, mode ${profile.modeId}` : ""}${profile.thinkingOptionId ? `, thinking ${profile.thinkingOptionId}` : ""} (mapped: ${profile.mapped.join(", ")})` });
+    if (!profile.available) effects.push({ profileId: profile.id, name: profile.name, effect: "unavailable", reason: profile.problem });
+    else if (profile.translated?.length) effects.push({ profileId: profile.id, name: profile.name, effect: "translated",
+      reason: `launches as ${profile.provider}/${profile.model}${profile.modeId ? `, mode ${profile.modeId}` : ""}${profile.thinkingOptionId ? `, thinking ${profile.thinkingOptionId}` : ""}${profile.featureValues && Object.keys(profile.featureValues).length ? `, options ${Object.entries(profile.featureValues).map(([key, value]) => `${key}=${String(value)}`).join(", ")}` : ""}` });
   }
   return effects;
 }

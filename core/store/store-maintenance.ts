@@ -10,6 +10,7 @@ import { hookRetentionBlocksPurge } from "../hooks/hook-retention";
 import { digest,HOST_RUN_SELECTOR,qualifiedThreadArchiveEffectKey,StoreCore,StoreMaintenanceError } from "./store-core";
 import { FRESH_STORE_SCHEMA } from "./store-schema";
 import type { StoreTasks } from "./store-tasks";
+import { migrateProfileVocabulary } from "./profile-vocabulary-migration";
 
 /** Task control outcomes are kept 30 days. */
 export const VERB_OUTCOME_RETENTION_MS = 30 * 86_400_000;
@@ -44,6 +45,8 @@ export interface RetainedRowPrune {
 // Schema 57 (task 1010): one row stores independent publication counters.
 // Schema 58 (task 1112): the usage gauge's stored samples and per-subscription read state.
 export const CURRENT_SCHEMA = 58;
+/** The record that the one-time canonical profile migration ran (task 1158). */
+export const PROFILE_VOCABULARY_MIGRATION_KEY = "profileVocabularyMigration";
 
 /**
  * Spec 028 revision "Store compaction" (audit B9): the WAL file is bounded after a
@@ -374,6 +377,10 @@ export class StoreMaintenance {
       // Task 1002: By request is retired (Tom, 2026-11-09) and capability `very_low`
       // reads as `low`. Strip the stored flags on every open, idempotently.
       this.stripRetiredPoolFields();
+      // Task 1158: stored profiles move to the canonical vocabulary once; a
+      // profile with a value the migration doesn't know stays as stored and is
+      // reported in the record.
+      this.migrateProfileVocabulary();
       // Schema 54 (task 989): the retired row fields and the workspace creation-step
       // events go. The strip runs on every open so rows a rolled-back build wrote
       // during its window parse the current strict schema, exactly like the
@@ -935,6 +942,17 @@ export class StoreMaintenance {
    * scanned and left byte-identical. The old reader functions went with the step: the
    * outcome `routing.capability` → `scope` rewrite above is the last legacy reader.
    */
+  /** The one-time canonical profile migration (task 1158), recorded under its meta key. */
+  migrateProfileVocabulary(): void {
+    if (this.getMeta<unknown>(PROFILE_VOCABULARY_MIGRATION_KEY) !== undefined) return;
+    const stored = this.getMeta<unknown[]>("profiles");
+    const { profiles, record } = migrateProfileVocabulary(Array.isArray(stored) ? stored : []);
+    if (record.changes.length) this.setMeta("profiles", profiles);
+    this.setMeta(PROFILE_VOCABULARY_MIGRATION_KEY, record);
+    for (const item of record.unknown)
+      console.warn(`[nucleus] profile ${item.profileId} keeps ${item.field} ${JSON.stringify(item.value)}: not in Nucleus's vocabulary, left as stored`);
+  }
+
   stripRetiredRowFields(): void {
     this.db.exec("UPDATE outcomes SET data=json_remove(json_set(data,'$.routing.scope',json_extract(data,'$.routing.capability')),'$.routing.capability')\n      WHERE json_type(data,'$.routing.capability') IS NOT NULL");
     this.db.exec("UPDATE outcomes SET data=json_remove(data,'$.stageRuns') WHERE json_type(data,'$.stageRuns') IS NOT NULL");
