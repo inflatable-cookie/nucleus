@@ -3,7 +3,8 @@ import type { Profile, Task } from "../../shared/contracts";
 import { formatAgentId } from '../../shared/agent-identity';
 import { WORKER_REPLACEMENT_CEILING, workerExclusionFor, workerProfileIsExcluded } from "../../shared/contracts";
 import { isTransportFailure } from "../../shared/transport";
-import { groupIsUnavailable, honouredWorkerThinking } from "../../shared/pool";
+import { demandRank, groupIsUnavailable, honouredWorkerThinking } from "../../shared/pool";
+import { runDemand } from "../../shared/demand";
 import { occupiesSlot } from "../dispatch/capacity";
 import type { Engine } from "../engine";
 import { isQuotaExhaustion, isRateLimitError, providerRetryAt, rateLimitCooldownData } from "./exhaustion";
@@ -31,6 +32,11 @@ const LIFECYCLE_INVALIDATION_LIMIT = 512;
  */
 function observationMapDigest(records: Record<string,{active:boolean;at:string}>): string {
   return JSON.stringify(Object.keys(records).sort().map(key => [key, records[key]!.active, records[key]!.at]));
+}
+
+/** Only explicit model/configuration failures blame a profile; transport and provider errors do not. */
+function profileFailure(error: string): boolean {
+  return /\b(?:model (?:refused|refusal|not found|does not exist|unsupported)|invalid (?:model|profile|configuration)|unsupported (?:model|configuration))\b/i.test(error);
 }
 
 /** What the failover sweep does with one observed worker once its arm and any rate-limit pacing are recorded. */
@@ -96,6 +102,7 @@ type WorkerFailoverReaders = {
   suppressed: () => boolean;
   unavailableGroups: () => Set<string>;
   retainedProfileIssue: () => string | null;
+  providerUnavailable: () => boolean;
 };
 /**
  * The failover sweep's decision for one armed worker: wait, skip, refuse with
@@ -121,18 +128,32 @@ function planWorkerFailover(task: Task, state: AgentObservation, erroredWithoutT
   const catalog = decideWorkerFailover({ stage: 'catalog', known: facts.catalogKnown() });
   if (catalog.kind !== 'continue') return catalog;
   const unavailable = facts.unavailableGroups();
-  const replacingErroredWorker=erroredWithoutTurn;
   const replacingStoppedRevision=task.failoverReason.startsWith(OPERATOR_STOPPED_REVISION_REMAP_REASON);
   const replacingStoppedWorker=task.failoverReason.startsWith(OPERATOR_STOPPED_WORKER_REMAP_REASON);
   const replacingRetainedWorker=task.failoverReason.startsWith(OPERATOR_RETAINED_WORKER_REPLACEMENT_REASON);
   const replacingReassignedWorker=task.failoverReason.startsWith(OPERATOR_ROLE_REASSIGNMENT_REASON);
-  const profiles = facts.profiles.filter(p=>!workerProfileIsExcluded(task,p.id)&&(!replacingErroredWorker&&!replacingStoppedRevision&&!replacingStoppedWorker&&!replacingRetainedWorker&&!replacingReassignedWorker||p.id!==task.profile?.id)&&!reviewerFiltersWorker(task.resolution.reviewerProfile, p));
   const requested=task.replacementProfile;
+  // An errored process is not evidence against its profile. Profile failures
+  // are represented by the durable exclusions that an owner can inspect/lift.
+  const profiles = facts.profiles.filter(p=>!workerProfileIsExcluded(task,p.id)
+    && (!(replacingStoppedRevision||replacingStoppedWorker||replacingRetainedWorker||replacingReassignedWorker)
+      || p.id!==task.profile?.id || requested?.profileId===p.id || erroredWithoutTurn)
+    && !reviewerFiltersWorker(task.resolution.reviewerProfile, p));
   // The replaced worker request keeps the worker's effective thinking level (review #547).
   // A pin on the worker's own requested profile keeps that request (its owner reason and thinking level).
   const ownRequest=requested&&task.profileRequests?.worker?.profileId===requested.profileId?task.profileRequests.worker:undefined;
   const replacementTask=requested?{...task,thinkingOptionId:honouredWorkerThinking(task,store.pool(),store.usageLevel()),preferredProfileId:requested.profileId,requirePreferred:true,profileRequests:{...task.profileRequests,worker:ownRequest?{...ownRequest,required:true}:{profileId:requested.profileId,reason:requested.reason,required:true}}}:task;
-  const selected = chooseProfile(replacementTask,profiles,store.pool(),store.counts(),unavailable,'worker',store.recentCounts(),store.usageLevel(), store.demandRoleOffsets());
+  const pool=store.pool();
+  const assignedGroup=task.profileGroup ?? pool.find(entry=>entry.profileId===task.profile?.id)?.group;
+  const catalogOutage=facts.providerUnavailable();
+  const outage=Boolean(assignedGroup && unavailable.has(assignedGroup)) || catalogOutage;
+  const demand=runDemand(task.complexity,'worker',store.usageLevel(),store.demandRoleOffsets());
+  // An outage alone must not promote work to a stronger fallback. An explicit
+  // request is already subject to the normal route/sign-off rules.
+  const explicitlyRequested=requested?.profileId ?? task.profileRequests?.worker?.profileId;
+  const selectionPool=outage
+    ? pool.filter(entry=>entry.profileId===explicitlyRequested || demandRank(entry.capability ?? 'medium')<=demandRank(demand)) : pool;
+  const selected = chooseProfile(replacementTask,profiles,selectionPool,store.counts(),unavailable,'worker',store.recentCounts(),store.usageLevel(), store.demandRoleOffsets());
   if (!selected) {
     // Spec 036 durable continuation (also papercut bdd9307a): an
     // operator-accepted instruction is never dropped silently. When the
@@ -141,7 +162,7 @@ function planWorkerFailover(task: Task, state: AgentObservation, erroredWithoutT
     // recorded refused with the specific reason and the task parks in
     // needs_attention. Automatic exhaustion failover keeps retrying; an
     // operator decision parks visibly instead.
-    if (replacingRetainedWorker||replacingReassignedWorker) {
+    if ((replacingRetainedWorker||replacingReassignedWorker) && !outage) {
       const availability=store.db.prepare("SELECT data FROM availability").all().map(row=>{const entry=JSON.parse(String(row.data));return{group:String(entry.group),unavailable:groupIsUnavailable(entry),reason:String(entry.reason??''),retryAt:(entry.retryAt??null) as string|null};});
       const excludedProfiles=task.workerExclusions.filter(exclusion=>exclusion.profileId).map(exclusion=>exclusion.profileId);
       const cause=`${eligibilityReasons(replacementTask,profiles,store.pool(),availability,store.usageLevel(),facts.profiles)}${excludedProfiles.length?`; excluded profiles: ${[...new Set(excludedProfiles)].join(', ')}`:''}`;
@@ -150,7 +171,9 @@ function planWorkerFailover(task: Task, state: AgentObservation, erroredWithoutT
     // Type the stop from the eligibility result. Blocked only by an
     // unavailable group, failover owns the wait and retries each sweep;
     // otherwise only a routing change helps, so the owner verbs apply.
-    if(chooseProfile(replacementTask,profiles,store.pool(),store.counts(),new Set(),'worker',store.recentCounts(),store.usageLevel(), store.demandRoleOffsets())){
+    const restoredProfiles=catalogOutage ? profiles.map(profile => profile.provider === task.profile?.provider
+      ? {...profile, available: true} : profile) : profiles;
+    if(chooseProfile(replacementTask,restoredProfiles,selectionPool,store.counts(),new Set(),'worker',store.recentCounts(),store.usageLevel(), store.demandRoleOffsets())){
       return decideWorkerFailover({ stage: 'unselected', instruction: false, alternate: true, cause: '' }) as WorkerFailoverDecision;
     }
     const availability=store.db.prepare("SELECT data FROM availability").all().map(row=>JSON.parse(String(row.data)));
@@ -216,7 +239,7 @@ function planWorkerFailover(task: Task, state: AgentObservation, erroredWithoutT
  * agents. Same-name `Engine` methods delegate here. `store`, `adapter` and
  * `resolution` read the engine per call: tests replace the adapter.
  */
-export type WorkerFailoverContext = Pick<Engine, 'activeHostId' | 'adapter' | 'host' | 'launchAgent' | 'note' | 'profileCatalogKnown' | 'profiles' | 'replacementCeilingRefusal' | 'retiredObservationKey' | 'stopped' | 'store' | 'taskHostAvailable' | 'unavailableGroups' | 'withHost'>
+export type WorkerFailoverContext = Pick<Engine, 'activeHostId' | 'adapter' | 'host' | 'launchAgent' | 'note' | 'profileCatalogKnown' | 'profiles' | 'workerProviderUnavailable' | 'replacementCeilingRefusal' | 'retiredObservationKey' | 'stopped' | 'store' | 'taskHostAvailable' | 'unavailableGroups' | 'withHost'>
   & { readonly resolution: Pick<Resolution, 'recordStop' | 'resumeTransientProviderThread' | 'resumeTransientWorker' | 'retainedWorkerProfileIssue' | 'suppressAutomaticRetry' | 'transportDeferred' | 'waiting'> };
 
 export class WorkerFailover {
@@ -425,12 +448,31 @@ export class WorkerFailover {
         // Resolution owns worker revisions; the initial worker has no Run row
         // and keeps its bounded continuation state on the task itself.
         const erroredWithoutTurn = state.status === "error" && !state.active && !state.activeTurnId && !state.permissions;
-        if (!pausedStopHeld && revision && state.status === 'error' && !original.failoverReason &&
+        // The event identifies this observation so an owner route can lift the
+        // exclusion without the same failed run immediately recreating it.
+        const retry = revision?.transientProviderRetry ?? original.transientProviderRetry;
+        const deliveryUnsettled = retry && ['intent', 'sent', 'uncertain'].includes(retry.status);
+        const seenProfileFailure = this.store.eventsAll(original.id).some(event => {
+          if (event.kind !== 'worker_excluded') return false;
+          try { const detail = JSON.parse(event.detail); return detail.authority === 'profile failure' && detail.runId === (revision?.id ?? original.runId); }
+          catch { return false; }
+        });
+        if (!pausedStopHeld && erroredWithoutTurn && !deliveryUnsettled && !original.failoverReason &&
+            profileFailure(state.error) && !seenProfileFailure && !workerProfileIsExcluded(original, original.profile.id)) {
+          const reason = `Profile failure: ${state.error}`.slice(0, 2000);
+          const profileId = original.profile.id;
+          this.store.update(original.id, {
+            workerExclusions: [...original.workerExclusions, { agentId: null, profileId, reason, createdAt: now() }],
+            failoverReason: reason,
+          }, 'worker_excluded', JSON.stringify({ agentId: null, profileId, reason, authority: 'profile failure', runId: revision?.id ?? original.runId }));
+        }
+        const armed = this.store.task(original.id);
+        if (!pausedStopHeld && revision && state.status === 'error' && !armed.failoverReason &&
             await this.resolution.resumeTransientProviderThread(original, revision, state)) continue;
         // An errored retained worker gets the same-thread transient continuation
         // opportunity before the no-active-turn observation arms failover. The
         // error status alone does not prove that the existing thread cannot resume.
-        if (!pausedStopHeld && !revision && await this.resolution.resumeTransientWorker(original, state)) continue;
+        if (!pausedStopHeld && !revision && !armed.failoverReason && await this.resolution.resumeTransientWorker(armed, state)) continue;
         const assignedGroup = original.profileGroup ?? this.store.pool().find(p=>p.profileId===original.profile!.id)?.group;
         const availabilityRow = assignedGroup
           ? this.store.db.prepare("SELECT data FROM availability WHERE group_id=?").get(assignedGroup)
@@ -473,6 +515,7 @@ export class WorkerFailover {
             task.completion?.summary ?? task.failoverReason, task.runId),
           unavailableGroups: () => this.engine.unavailableGroups(),
           retainedProfileIssue: () => this.resolution.retainedWorkerProfileIssue(task),
+          providerUnavailable: () => this.engine.workerProviderUnavailable(task),
         });
         if (failover.kind === "skip") continue;
         if (failover.kind === "workspace_changed") throw new Error("Exhausted worker workspace changed");

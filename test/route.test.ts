@@ -170,6 +170,34 @@ test('route worker to the same profile continues the retained worker (Spec 058 t
   } finally { await f.close(); }
 });
 
+test('profile failure records an exclusion in next and an owner route lifts it', async () => {
+  const f=fixture(); try {
+    f.store.update(f.task.id,{phase:'working',completion:null,profileRequests:{worker:{profileId:'author',reason:'Required',required:true}}});
+    f.observations.set('worker',{id:'worker',workspaceId:'workspace',status:'error',active:false,permissions:false,error:'Model refused the request'});
+    await (f.engine as any).recoverExhaustedWorkers();
+    assert.equal(f.current().agentId,'worker');
+    assert.match(JSON.stringify(ownerTaskNext(collectOwnerVerbFacts(f.store,f.current()))),/Model refused/);
+    assert.equal(f.current().workerExclusions[0]?.profileId,'author');
+    const routed=await f.control({role:'worker',profileId:'author',now:true,reason:'Retry the profile'});
+    assert.deepEqual(routed.workerExclusions,[]);
+    await (f.engine as any).recoverExhaustedWorkers();
+    assert.equal(f.current().agentId,'agent-author');
+    assert.deepEqual(f.current().workerExclusions,[]);
+  } finally { await f.close(); }
+});
+
+test('route to an errored worker profile is honoured on replacement', async () => {
+  const f=fixture(); try {
+    f.store.update(f.task.id,{phase:'working',completion:null});
+    f.observations.set('worker',{id:'worker',workspaceId:'workspace',status:'error',active:false,permissions:false,error:'Pi RPC process is closed'});
+    const routed=await f.control({role:'worker',profileId:'author',now:true,reason:'Use the same profile'});
+    assert.equal(routed.profileRequests?.worker?.profileId,'author');
+    await (f.engine as any).recoverExhaustedWorkers();
+    assert.equal(f.current().profile?.id,'author');
+    assert.equal(f.current().agentId,'agent-author');
+  } finally { await f.close(); }
+});
+
 test('move to work launches the pending worker route from verifying and keeps the merge hold', async () => {
   const f = fixture(); try {
     const at = new Date().toISOString();
@@ -415,6 +443,7 @@ test('a non-now reviewer route on a merging task only records the request and le
 test('route lifts a matching worker exclusion and records the lift', async () => {
   const f = fixture(); try {
     f.store.update(f.task.id, { workerExclusions: [{ agentId: null, profileId: 'sol', reason: 'Earlier trouble', createdAt: new Date().toISOString() }] as never });
+    assert.match(JSON.stringify(ownerTaskNext(collectOwnerVerbFacts(f.store, f.current()))), /Earlier trouble/);
     const routed = await f.control({ role: 'worker', profileId: 'sol', reason: 'Tom reinstated Sol' });
     assert.deepEqual(routed.workerExclusions, [], 'the matching profile exclusion is lifted');
     const detail = JSON.parse(f.events('route_changed').at(-1)!.detail);

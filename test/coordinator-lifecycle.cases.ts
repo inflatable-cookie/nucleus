@@ -174,6 +174,17 @@ async function settle(f: ReturnType<typeof fixture>, passes = 2) {
   for (let pass = 0; pass < passes; pass++) { await f.engine.wake(); await f.engine.quiesce(); }
 }
 
+test('coordinator launches recorded during an outage do not spend the recovery bound', async () => {
+  const f=fixture(); try {
+    f.legacyRun(1);
+    f.legacyRun(2);
+    f.store.event(f.submitted.id,'telemetry_recovery',JSON.stringify({runId:'legacy-2',outage:true,work:taskWorkIdentity(f.current(),f.store)}));
+    assert.equal(unproductiveCoordinatorRuns(f.store,f.submitted.id),1);
+    f.legacyRun(3);
+    assert.equal(unproductiveCoordinatorRuns(f.store,f.submitted.id),2,'an outage does not reset earlier charged launches');
+  } finally { await f.close(); }
+});
+
 /**
  * A retained worker error on the PR: a stop the task's coordinator is asked
  * about. A reviewer checkpoint no longer is one, because Queue continues it
@@ -191,6 +202,29 @@ async function workerErrorEpisode(f: ReturnType<typeof fixture>, runId = 'failed
   assert.equal(f.current().resolution.recovery?.runId, episode.id, 'the worker error opened one coordinator episode');
   return episode;
 }
+
+test('a coordinator actually launched during a worker provider outage is not charged', async () => {
+  const f=fixture(); try {
+    f.store.setAvailability('author',JSON.stringify({group:'author',unavailable:true,reason:'Provider down',retryAt:null}));
+    const run=await workerErrorEpisode(f);
+    const launch=f.events('telemetry_recovery').find(event=>JSON.parse(event.detail).runId===run.id)!;
+    assert.equal(JSON.parse(launch.detail).outage,true);
+    assert.equal(unproductiveCoordinatorRuns(f.store,f.submitted.id),0);
+    assert.equal(f.current().resolution.recoveryAttempts,0);
+  } finally { await f.close(); }
+});
+
+test('a coordinator launched during a catalog provider outage is not charged', async () => {
+  const f=fixture(); try {
+    f.store.update(f.submitted.id,{profile:{...worker,provider:'pi'}});
+    (f.engine as any).hostCatalogs.set('\u0000primary',{catalog:{providers:[{key:'pi',label:'Pi',available:false,problem:'Provider offline',models:[]}]},readAt:new Date().toISOString()});
+    const run=await workerErrorEpisode(f);
+    const launch=f.events('telemetry_recovery').find(event=>JSON.parse(event.detail).runId===run.id)!;
+    assert.equal(JSON.parse(launch.detail).outage,true);
+    assert.equal(unproductiveCoordinatorRuns(f.store,f.submitted.id),0);
+    assert.equal(f.current().resolution.recoveryAttempts,0);
+  } finally { await f.close(); }
+});
 
 /** The reader's delivered turn runs, as a real Paseo turn does, until the test ends it. */
 function readerRunsDeliveredTurns(f: ReturnType<typeof fixture>) {

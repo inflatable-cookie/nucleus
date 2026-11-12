@@ -268,7 +268,7 @@ export class Resolution {
     resolvePassedUnchangedCheckEscalation: (...args) => owner.resolvePassedUnchangedCheckEscalation(...args),
   }))(this));
   readonly origins = new OriginRouting(this);
-  readonly recovery = new Recovery(recoveryContext(this, ['adapter', 'attention', 'automaticHookReplayPending', 'ensureIncident', 'escalateRefusedCoordinator', 'extendCallbackReminder', 'graceMs', 'host', 'idle', 'lease', 'onTaskHost', 'openReviewContinuationEscalation', 'recordStop', 'requiredRouteNote', 'responsibleBlockerLadder', 'resumeTransientProviderThread', 'select', 'slotAdmissionReason', 'startsNoRuns', 'stopped', 'store', 'suppressAutomaticRetry', 'update', 'usageCeilingNote', 'validationEvidence', 'waiting']));
+  readonly recovery = new Recovery(recoveryContext(this, ['adapter', 'attention', 'automaticHookReplayPending', 'ensureIncident', 'escalateRefusedCoordinator', 'extendCallbackReminder', 'graceMs', 'host', 'hostAvailable', 'workerProviderUnavailable', 'idle', 'lease', 'onTaskHost', 'openReviewContinuationEscalation', 'recordStop', 'requiredRouteNote', 'responsibleBlockerLadder', 'resumeTransientProviderThread', 'select', 'slotAdmissionReason', 'startsNoRuns', 'stopped', 'store', 'suppressAutomaticRetry', 'update', 'usageCeilingNote', 'validationEvidence', 'waiting']));
   readonly checkpoints = new Checkpoints(intakeContext(this, ['adapter', 'attention', 'hostAvailable', 'paused', 'store', 'withHost']));
   readonly stalls = new Stalls(recoveryContext(this, ['adapter', 'attention', 'host', 'onTaskHost', 'paused', 'profiles', 'recordStop', 'recovery', 'saveIncident', 'store', 'update', 'waiting']));
   readonly ownedTools = new OwnedTools(this);
@@ -433,6 +433,7 @@ export class Resolution {
   }))(this));
   readonly adapter: Adapter & Partial<ResolutionAdapter>;
   hostAvailable: (task: Task, run?: Run) => boolean = () => true;
+  workerProviderUnavailable: (task: Task) => boolean = () => false;
   withHost: <T>(id: string, fn: () => T) => T = (_id, fn) => fn();
   /** The task-owner host binding every agent-naming call reads (#1154); same rule as `Engine.onTaskHost`. */
   onTaskHost<T>(owner: { hostId?: string | null } | null | undefined, work: () => T): T {

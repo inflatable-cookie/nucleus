@@ -579,6 +579,8 @@ replacement.
     send;
   - three coordinator launches that move no work still stop the loop, and no
     routine retained restart, route change or bookkeeping success refills it;
+    a launch recorded while the task's host or worker subscription group is
+    unavailable is not charged, and does not reset earlier charged launches;
     only progress against the measured work — a higher cross-reader checkpoint
     maximum at the same head, a new head, changed instructions or a merge — does.
     A launch from before the work identity existed stays charged while a

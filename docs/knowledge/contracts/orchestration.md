@@ -1670,6 +1670,16 @@ archive the same decider again. An unknown send is never blindly retried. See
 
 ### Worker replacement ceiling
 
+An inactive errored worker's profile remains eligible for replacement: a
+process or host failure is not a profile exclusion. An explicit model refusal
+or invalid model configuration records a profile exclusion, visible in `next`;
+an owner route lifts it. The same failed run does not recreate a lifted
+exclusion. While the worker's subscription group or host catalog provider is
+unavailable, automatic fallback stays at or
+below the task's worker demand; an explicit route keeps its usual authorization.
+If the required route is unavailable, failover records a provider wait and
+retries when it returns.
+
 Eight worker retirements is the automatic replacement ceiling and loop breaker.
 Automatic failover, ordinary fresh worker restarts and `route role=worker now`
 stop at that count. The operator can pass the ceiling by directly issuing or

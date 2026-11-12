@@ -11,7 +11,7 @@ import { PlannerGrantCleanup } from './questions/planner-grants';
 import { intakeContext } from './intake/context';
 
 import { Dispatch } from "./dispatch/dispatch";
-import { profileCompatibility, routingProfiles } from "../shared/profiles";
+import { hostProviderFor, profileCompatibility, routingProfiles } from "../shared/profiles";
 import { canonicalCatalog, canonicalVocabulary, type HostVocabulary } from "../shared/profile-vocabulary";
 import { HOST_KIND_LABELS, hostKindOf } from "../shared/host-kind";
 import type { HostCatalog } from "../shared/host";
@@ -459,6 +459,7 @@ export class Engine {
     };
     this.resolution.turnReleased = repoPath => this.wakeIntegrationSuccessor(repoPath);
     this.resolution.catalogKnown = () => this.profileCatalogKnownFor(this.activeHostId);
+    this.resolution.workerProviderUnavailable = task => this.workerProviderUnavailable(task);
     // Spec 058 (task 523): an operator's answer to Queue's own question applies
     // through the ordinary owner controls, with that answer as the authority.
     this.resolution.applyOperatorControl = (input) =>
@@ -501,7 +502,7 @@ export class Engine {
       get withHost() { return engine.withHost.bind(engine); },
       get resolution() { return intakeContext(engine.resolution, ['attention', 'complete', 'settleCompletedExecutorBlocker']); },
     });
-    this.workerFailover = new WorkerFailover(recoveryEngineContext(this, ['activeHostId', 'adapter', 'host', 'launchAgent', 'note', 'profileCatalogKnown', 'profiles', 'replacementCeilingRefusal', 'retiredObservationKey', 'stopped', 'store', 'taskHostAvailable', 'unavailableGroups', 'withHost'], ['recordStop', 'resumeTransientProviderThread', 'resumeTransientWorker', 'retainedWorkerProfileIssue', 'suppressAutomaticRetry', 'transportDeferred', 'waiting']));
+    this.workerFailover = new WorkerFailover(recoveryEngineContext(this, ['activeHostId', 'adapter', 'host', 'launchAgent', 'note', 'profileCatalogKnown', 'profiles', 'workerProviderUnavailable', 'replacementCeilingRefusal', 'retiredObservationKey', 'stopped', 'store', 'taskHostAvailable', 'unavailableGroups', 'withHost'], ['recordStop', 'resumeTransientProviderThread', 'resumeTransientWorker', 'retainedWorkerProfileIssue', 'suppressAutomaticRetry', 'transportDeferred', 'waiting']));
     this.taskControlDispatcher = new TaskControlDispatcher(this);
     this.recoverySettlement = new RecoverySettlement(recoveryEngineContext(this, ['coordinatorActionRunId', 'host', 'onTaskHost', 'performTaskControl', 'store'], ['attention', 'recovery', 'update']));
     this.pausedStops = new PausedStops(this);
@@ -613,6 +614,17 @@ export class Engine {
    * after a roll parked "profile Sol oracle is unavailable").
    */
   profileCatalogKnown(): boolean { return this.profileCatalogRefreshed || this.profiles.length > 0; }
+  /** A known host catalog distinguishes provider loss from an invalid model or configuration. */
+  workerProviderUnavailable(task: Task): boolean {
+    if (!task.profile) return false;
+    const selected = task.hostId ? this.resolveHostAdapter(task.hostId) : this.primaryAdapter;
+    const primary = !task.hostId || !selected || selected === this.primaryAdapter;
+    const read = this.hostCatalogs.get(primary ? PRIMARY_CATALOG : task.hostId!);
+    if (!read) return false;
+    const vocabulary = primary ? this.primaryAdapter.vocabulary ?? this.vocabularyFor(task.hostId ?? undefined) : this.vocabularyFor(task.hostId!);
+    const provider = hostProviderFor(task.profile.provider, canonicalCatalog(vocabulary, read.catalog));
+    return !provider || !provider.available;
+  }
   /** The routing profiles a task's own host reports; a host without a snapshot reads the primary set. */
   profilesFor(hostId?: string | null): Profile[] { return hostId ? this.hostProfiles.get(hostId) ?? this.profiles : this.profiles; }
   /**
