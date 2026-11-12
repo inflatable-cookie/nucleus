@@ -309,7 +309,7 @@ export class T3CodeHost implements Host {
       /** Guidance that rides an unknown delivery when the remote text names no known method. */
       unsupportedMethodGuidance?: string;
     } = {}): Promise<unknown> {
-    if (!response) this.requireConnection();
+    if (!response && !options.retryRefusedBeforeSend) this.requireConnection();
     let encoded = canonical({ method, payload });
     const reserved = this.state.update(state => {
       const matches = response ? responseIntents(state, response.binding.agentId, response.binding.requestId) : [];
@@ -319,6 +319,18 @@ export class T3CodeHost implements Host {
       // Inspect the original outcome before payload checks or native status reads.
       if (old?.status === 'unknown' && !options.resendUnknownAfterRead || old?.status === 'refused' && matches.length && !old.response)
         throw new HostUnknownDeliveryError(old.diagnostic);
+      if (!response && options.retryRefusedBeforeSend) {
+        // Read the ledger before connection preflight: a prior unknown effect
+        // stays unknown even offline. Only an absent or refused intent proves
+        // this failure preceded any possible delivery. Settled receipts still
+        // require the same authenticated host before they can be replayed.
+        try { this.requireConnection(); }
+        catch (error) {
+          if (error instanceof T3CompatibilityError && (!old || old.status === 'refused'))
+            throw new ProvenPreSendRefusalError('T3Code connection unavailable before effect reservation');
+          throw error;
+        }
+      }
       if (old && matches.length) {
         const wire = JSON.parse(old.payload).payload;
         const legacyInput = canonical({ type: wire.type, response: wire.type === 'runtime-request.respond'
@@ -330,7 +342,7 @@ export class T3CodeHost implements Host {
       } else if (old && old.payload !== encoded && !projectCreateRouteMigrated(old.payload, encoded))
         throw new ProvenPreSendRefusalError('T3Code intent payload changed');
       if (!old || old.status === 'refused' && options.retryRefusedBeforeSend) {
-        this.requireConnection();
+        if (response || !options.retryRefusedBeforeSend) this.requireConnection();
         state.intents[boundKey] = { ...old, payload: encoded, status: 'unknown', ...(response ? { response: response.binding } : {}) };
       } else if (response && (!this.hostId || state.hostId !== this.hostId)) {
         throw Error('T3Code prior response requires its recorded host identity; no command was resent');

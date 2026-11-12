@@ -449,7 +449,10 @@ confirm deletion by `deletedAt` or absence from a complete inventory; an archive
 thread still owes deletion. A lost reply remains observation-only, including on
 the final attempt, and never authorizes resending an unknown effect. A failure
 proven to precede delivery stays retryable through the same terminal lane;
-cleanup failure never blocks task closeout.
+cleanup failure never blocks task closeout. Connection preflight reads the
+existing deletion ledger first: absent or refused intents prove an unsent attempt,
+while an earlier unknown intent stays unknown even when disconnected. Receipt
+replay still requires the same authenticated host identity.
 
 The sweep directly selects already-finished T3 tasks that still owe a thread
 archive or deletion, including tasks closed before this rule existed. The query

@@ -793,7 +793,8 @@ test('a task that finished before this rule is cleaned up by the next sweep, exa
   } finally { await f.close(); }
 });
 
-test('the real sweep retries a native deletion proven not sent and records completion once', async t => {
+for (const boundary of ['rpc', 'reservation'] as const)
+test(`the real sweep retries a deletion proven not sent at ${boundary} and records completion once`, async t => {
   const f = await fixture(t);
   try {
     const head = (await git(f.repo, 'rev-parse', 'HEAD')).trim();
@@ -812,17 +813,29 @@ test('the real sweep retries a native deletion proven not sent and records compl
       head, base: head, workspaceId: workspace.id, agentId: recovery.id, profile, status: 'finished', createdAt: STAMP,
       lastObservedAt: STAMP, active: false, idleSince: STAMP, completion: null, released: true });
     const nativeCall = f.host.rpc.call.bind(f.host.rpc);
-    f.host.rpc.call = (method, payload) => {
-      if (method === 'orchestration.dispatchCommand' && (payload as { type?: string }).type === 'thread.delete') f.host.rpc.close();
-      return nativeCall(method, payload);
-    };
+    const nativeOrigin = f.host.originAgent.bind(f.host);
+    if (boundary === 'rpc') {
+      f.host.rpc.call = (method, payload) => {
+        if (method === 'orchestration.dispatchCommand' && (payload as { type?: string }).type === 'thread.delete') f.host.rpc.close();
+        return nativeCall(method, payload);
+      };
+    } else {
+      f.host.originAgent = async id => {
+        const origin = await nativeOrigin(id);
+        f.host.close(); // Successful terminal observation, but no intent reserved or command sent.
+        return origin;
+      };
+    }
     assert.equal((await f.runtime.engine.auditPass(false)).fault, null);
     const key = f.runtime.store.threadArchiveKey(recovery.id, t3Host)!;
     assert.equal(f.runtime.store.getMeta<{ status: string }>(key)?.status, 'ready');
-    assert.equal(f.server.commands.filter(command => command.type === 'thread.delete').length, 0, 'the native RPC proved no write');
+    assert.equal(f.server.commands.filter(command => command.type === 'thread.delete').length, 0, 'the native boundary proved no write');
+    const nativeIntent = Object.values(f.host.state.read().intents).find(intent => JSON.parse(intent.payload).payload.type === 'thread.delete');
+    assert.equal(nativeIntent?.status, boundary === 'rpc' ? 'refused' : undefined, 'the native ledger proves this occurrence was unsent');
     assert.equal(f.runtime.store.getMeta(`finishedTaskThreadCleanup:${task.id}`), undefined);
 
     f.host.rpc.call = nativeCall;
+    f.host.originAgent = nativeOrigin;
     await f.host.connect();
     assert.equal((await f.runtime.engine.auditPass(false)).fault, null);
     assert.equal(f.server.commands.filter(command => command.type === 'thread.delete').length, 1, 'the next sweep delivers it once');

@@ -830,6 +830,9 @@ test('a support thread is removed once through the nightly thread.delete command
   await host.deleteAgent(created.id);
   assert.equal(server.commands.filter(command => command.type === 'thread.delete').length, 1);
   assert.ok(server.commands.length > before);
+  host.state.update(state => { state.hostId = 't3code:other-environment'; });
+  await assert.rejects(host.deleteAgent(created.id), /durable host identity changed/);
+  assert.equal(server.commands.filter(command => command.type === 'thread.delete').length, 1, 'receipt replay still proves its host identity');
 });
 
 test('a native not_sent delete stays ready in the terminal lane and succeeds on the next attempt', async t => {
@@ -849,7 +852,7 @@ test('a native not_sent delete stays ready in the terminal lane and succeeds on 
   store.putRun({ id: 'recovery-run', taskId: task.id, hostId: host.hostId, role: 'recovery', generation: 1,
     head: 'b'.repeat(40), base: 'a'.repeat(40), agentId: created.id, workspaceId: workspace.id, profile: null,
     status: 'finished', createdAt: STAMP, lastObservedAt: STAMP, active: false, idleSince: STAMP, completion: null, released: true });
-  const adapter = { hostId: host.hostId, observe: host.observe.bind(host), originAgent: host.originAgent.bind(host),
+  const adapter = { hostId: host.hostId, observe: host.observe.bind(host), originAgent: (id: string) => host.originAgent(id),
     archiveAgent: host.archiveAgent.bind(host), deleteAgent: host.deleteAgent.bind(host) } as unknown as Adapter;
   const nativeCall = host.rpc.call.bind(host.rpc);
   host.rpc.call = (method, payload) => {
@@ -868,6 +871,19 @@ test('a native not_sent delete stays ready in the terminal lane and succeeds on 
 
   host.rpc.call = nativeCall;
   await host.connect();
+  const nativeOrigin = host.originAgent.bind(host);
+  host.originAgent = async id => {
+    const origin = await nativeOrigin(id);
+    host.close(); // A known-refused attempt now loses its connection before reservation.
+    return origin;
+  };
+  await archiveFinishedThreads(store, adapter, task.id);
+  assert.equal(store.getMeta<{ status: string }>(key)?.status, 'ready');
+  assert.equal(server.commands.filter(command => command.type === 'thread.delete').length, 0);
+  assert.equal(Object.values(host.state.read().intents).find(intent => JSON.parse(intent.payload).payload.type === 'thread.delete')?.status,
+    'refused', 'a refused intent remains known-unsent across connection preflight failure');
+  host.originAgent = nativeOrigin;
+  await host.connect();
   await archiveFinishedThreads(store, adapter, task.id);
   assert.equal(store.getMeta<{ status: string }>(key)?.status, 'archived');
   assert.equal(server.commands.filter(command => command.type === 'thread.delete').length, 1, 'the same deletion is delivered once');
@@ -885,6 +901,11 @@ test('an unknown thread.delete outcome is never resent; the thread is read back 
   assert.equal(server.threads.get(created.id)!.thread.deletedAt, STAMP, 'the removal landed');
   const sent = server.commands.filter(command => command.type === 'thread.delete');
   assert.equal(sent.length, 1);
+  host.close();
+  await assert.rejects(host.deleteAgent(created.id), HostUnknownDeliveryError,
+    'an offline connection cannot turn an earlier unknown delivery into a pre-send refusal');
+  assert.equal(Object.values(host.state.read().intents).find(intent => JSON.parse(intent.payload).payload.type === 'thread.delete')?.status,
+    'unknown');
 
   // The outcome stays unknown: nothing re-sends it, with or without a fresh read,
   // and the host's own inventory is the proof the caller reads instead.
