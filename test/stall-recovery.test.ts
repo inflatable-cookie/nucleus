@@ -543,3 +543,36 @@ test('an observation outage on a thread with recent projection activity never st
   assert.equal(f.stopRequests.length, 0);
   assert.deepEqual(f.createdRuns, []);
 });
+
+test('a host without thread removal keeps today\'s coordinator binding rule: a closed coordinator waits, it is never replaced (#1155 review)', async t => {
+  const f = await fixture(t);
+  t.after(() => f.store.close());
+  // A retained coordinator from an earlier attempt, archived on the host.
+  f.store.update(f.task.id, { coordinatorAgentId: 'agent-coord' });
+  f.setAgentObservation('agent-coord', { ...running({}), workspaceId: `ws-${f.task.id}`, status: 'closed', active: false });
+  f.setObservation(running({ updatedAt: minutesAgo(35), turnStartedAt: minutesAgo(36) }));
+  await f.engine.wake();
+  await f.engine.resolution.recovery.route(f.store.task(f.task.id));
+  assert.equal(f.store.task(f.task.id).resolution.recovery?.runId ?? null, null,
+    'Paseo still waits for an assigned coordinator that is not idle');
+  assert.equal(f.createdRuns.includes('recovery'), false, 'no fresh coordinator is launched on a host without removal');
+});
+
+test('a host without thread removal never displaces a retained coordinator for a recorded route (#1155 review)', async t => {
+  const f = await fixture(t);
+  t.after(() => f.store.close());
+  // An idle retained coordinator and a recorded route naming that same profile:
+  // the host cannot remove threads, so the binding is kept as it is today.
+  f.store.update(f.task.id, { coordinatorAgentId: 'agent-coord',
+    profileRequests: { ...f.store.task(f.task.id).profileRequests,
+      coordinator: { profileId: 'coordinator', reason: 'Route the coordinator', required: true, ownerRoute: true } } });
+  f.setAgentObservation('agent-coord', { ...running({}), workspaceId: `ws-${f.task.id}`, status: 'idle', active: false });
+  f.setObservation(running({ updatedAt: minutesAgo(35), turnStartedAt: minutesAgo(36) }));
+  await f.engine.wake();
+  await f.engine.resolution.recovery.route(f.store.task(f.task.id));
+  assert.equal(f.store.task(f.task.id).coordinatorAgentId, 'agent-coord', 'the retained coordinator binding is kept');
+  assert.equal(f.createdRuns.includes('recovery'), false, 'a recorded route never opens a new coordinator thread on Paseo');
+  const attempt = f.store.task(f.task.id).resolution.recovery;
+  if (attempt?.runId) assert.equal(f.store.run(attempt.runId)?.agentId, 'agent-coord',
+    'any attempt on this host continues the retained coordinator');
+});

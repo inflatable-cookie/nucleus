@@ -2466,15 +2466,15 @@ movement invalidates source approval and preserves the normal readiness gates.
   escalates for coordinator judgment. A successful operator resume closes the
   prior incident and episode.
 - Recovery coordinators stay bound across attempts for one issue, and the next
-  attempt is dispatched into the retained thread. A fresh coordinator is selected
-  only when the host reports the retained thread removed or archived, or when a
-  recorded coordinator route (`ownerRoute`, or a required request the operator
-  honoured) names a different profile than the bound one: a different model needs a
-  new thread. The displaced thread is kept and removed at closeout, never archived
-  while the task is open. On a host that cannot remove a thread the retained
-  coordinator thread is archived after the episode retires or the escalation is
-  answered; on a host that can, it stays settled, bound, and is removed at
-  closeout.
+  attempt is dispatched into the retained thread. On a host that can remove a
+  thread, a fresh coordinator is selected only when that host reports the retained
+  thread removed or archived, or when a recorded coordinator route (`ownerRoute`,
+  or a required request the operator honoured) names a different profile than the
+  bound one: a different model needs a new thread. The displaced thread is kept
+  and removed at closeout, never archived while the task is open. On a host that
+  cannot remove a thread nothing changes: a bound coordinator that is not idle
+  waits, a recorded route never displaces the binding, the retained thread is
+  archived after the episode retires or the escalation is answered.
 - While two faults are open on one run, the first reason stays on the task and
   the later one is recorded as an event.
 
@@ -2608,8 +2608,10 @@ movement invalidates source approval and preserves the normal readiness gates.
   archive. A removal whose reply is lost is checked against the thread's own
   archived, deleted or absent state before any resend, is retried on the sweep,
   and never blocks closeout. A decider is not a run, so its owned identity is
-  recorded on the task when the decision ladder creates it, and it too is removed
-  at closeout rather than while the task is open.
+  recorded on the task at the same durable step that opens its delegation window,
+  read from the complete history at closeout (so a long task or an interrupted
+  delegation still removes it), and it too is removed at closeout rather than
+  while the task is open.
 - A host that cannot remove a thread (Paseo) keeps its existing behaviour: a
   released support thread archives at once, and closeout archives every thread.
 - A done task's workspace is archived with every thread in it (Tom, 2026-09-27);

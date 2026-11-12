@@ -103,7 +103,23 @@ export async function archiveReplacedReviewer(store: Store, adapter: Adapter, ru
       && !state.permissions && settledThreadStatuses.includes(state.status);
   };
   if (removesThreads(adapter)) {
-    try { return await stoppedAndIdle(); } catch { return false; }
+    // The fence is the displaced thread's removal, recorded durably: an idle
+    // observation alone would let it take another turn, and an archive would
+    // break the "nothing archived while the task is open" lifecycle
+    // (nucleus#1155 review). The verb has already stopped the turn, and every
+    // attempt re-proves it idle before anything is sent.
+    let effect = store.getMeta<ArchiveEffect>(key);
+    if (effect?.status === 'archived') return true;
+    if (!effect) {
+      store.putThreadArchiveEffect(key, run.agentId, { status: 'ready', at: now(), op: 'delete' } satisfies ArchiveEffect);
+      store.event(run.taskId, 'thread_delete_intent', `replaced reviewer: ${run.agentId}`);
+      effect = store.getMeta<ArchiveEffect>(key);
+      if (!effect) return false;
+    }
+    if ((effect.retries ?? 0) >= 3) return false;
+    try { if (!await stoppedAndIdle()) return false; } catch { return false; }
+    await settleArchive(store, adapter, run.taskId, run.agentId, key, effect.status === 'ready', effect, effect.status !== 'ready');
+    return store.getMeta<ArchiveEffect>(key)?.status === 'archived';
   }
   let effect = store.getMeta<ArchiveEffect>(key);
   const fresh = !effect;
@@ -480,7 +496,9 @@ async function archiveTerminalTaskThreads(store: Store, adapter: Adapter, task: 
  */
 export function deciderThreadOwners(store: Store, task: Task): string[] {
   const ids = new Set<string>();
-  for (const event of store.events(task.id)) {
+  // The complete history, not the recent-events window: a decider recorded early
+  // in a long task's life must still be found at closeout (nucleus#1155 review).
+  for (const event of store.eventsAll(task.id)) {
     if (event.kind !== 'decider_thread_owned') continue;
     try {
       const record = JSON.parse(event.detail) as { agentId?: unknown; hostId?: unknown };
@@ -492,9 +510,14 @@ export function deciderThreadOwners(store: Store, task: Task): string[] {
   return [...ids];
 }
 
-/** Record one decider thread's ownership once; an unchanged record is the same intent. */
-function recordDeciderThread(store: Store, task: Task, agentId: string): void {
-  if (deciderThreadOwners(store, task).includes(agentId)) return;
+/**
+ * Record one decider thread's ownership once; an unchanged record is the same
+ * intent. Written when creation is established (the same durable step that opens
+ * the delegation window) and again, idempotently, by the resume path and by the
+ * ladder's own retirement, so an interrupted delegation still reaches closeout.
+ */
+export function recordDeciderThread(store: Store, task: Task, agentId: string): void {
+  if (!agentId || deciderThreadOwners(store, task).includes(agentId)) return;
   store.event(task.id, 'decider_thread_owned', JSON.stringify({ agentId, hostId: task.hostId ?? null }));
 }
 

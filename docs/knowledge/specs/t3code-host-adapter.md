@@ -384,7 +384,10 @@ longer holds the sweep; the task records an `observation_outage` event and its
 lane stays held until the quantum returns (#1148, planner ruling).
 
 Report active run, idle, pending question/permission and archived state from
-positive native facts. A thread is gone only after a complete authoritative read
+positive native facts. A removed thread has no projection at all — the nightly
+refuses that read — so only the complete inventory's own absence may answer it,
+and that answer is the terminal `gone` state with the workspace and labels it was
+recorded with, so closeout's participant and ownership proofs still read it. A thread is gone only after a complete authoritative read
 proves absence/deletion. Partial reads reject or return the contract's unknown
 result. A disconnected thread never becomes idle or gone by timeout. Timeline
 pages retain gap and coverage facts; a bounded tail is not full history.
@@ -433,11 +436,20 @@ old one archived or gone, or when the role's recorded route names a different
 profile — a different model needs a new thread; a thread displaced that way is
 removed at closeout like the rest.
 
-A deliberately replaced reviewer is never archived while the task is open: the
-fence that lets the run be released is a stopped turn observed idle, with its
-credential revoked, and the displaced thread is removed at closeout. Its
-`replacedAt` record still lets a late checkpoint or verdict at the current head
-count as the rules say.
+A deliberately replaced reviewer is never archived while the task is open, and an
+idle observation alone is not a fence: the displaced thread could still be
+resumed. Its fence is the removal itself, recorded as the same durable effect
+(after the verb has stopped its turn and proved it idle, and only for an owned
+thread), so the run is released once the host reports the thread gone. A host
+that cannot remove a thread keeps the archive fence it has today, and a late
+callback from a displaced run is governed by the replaced-run rules, unchanged by
+this lifecycle.
+
+The terminal lifecycle covers a merged task, a completed proof task and a
+completed cancellation alike, and a decider's owned identity is recorded when the
+ladder opens its delegation window — with the complete ownership history read at
+closeout, not the recent-events window — so a long task or an interrupted
+delegation still removes it.
 
 Removal is the nightly's `thread.delete` command, `{type, commandId, threadId}`.
 `onlyIfUnused` is never sent: with it the nightly answers success without

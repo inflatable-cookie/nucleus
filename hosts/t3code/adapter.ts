@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { z } from 'zod';
-import type { Host, HostAgentSpec, HostWorkspaceSpec, HostMessage, HostGuardedMessage, HostSendGuard, HostAsk, HostWorkspaceRef, HostRetainedAgentRef, HostCatalog, HostTimelinePage, HostThread, NativeDecisionInput, NativeDecisionAnswer } from '../../shared/host';
+import type { Host, HostObservation, HostAgentSpec, HostWorkspaceSpec, HostMessage, HostGuardedMessage, HostSendGuard, HostAsk, HostWorkspaceRef, HostRetainedAgentRef, HostCatalog, HostTimelinePage, HostThread, NativeDecisionInput, NativeDecisionAnswer } from '../../shared/host';
 import type { Task, Profile } from '../../shared/contracts';
 import { ProvenPreSendRefusalError, HostUnknownDeliveryError, sanitizeHostDeliveryDiagnostic } from '../../core/host';
 import { T3RpcClient, T3RpcError } from './rpc';
@@ -466,7 +466,26 @@ export class T3CodeHost implements Host {
     }));
   }
   async observe(id: string) {
-    this.requireConnection(); const detail = await this.readProjection(id), { thread } = detail;
+    this.requireConnection();
+    let detail: Projection;
+    try { detail = await this.readProjection(id); }
+    catch (error) {
+      // A removed thread has no projection at all (the nightly refuses the read
+      // with its typed ThreadNotFoundError). Only that answer, the complete
+      // inventory's own absence and a thread this adapter recorded may describe a
+      // removal; a transport or incomplete read still fails, and an unknown
+      // identity is never invented. The answer is the terminal `gone` state with
+      // the workspace and labels the thread was created with, so closeout's
+      // participant and ownership proofs still read it (nucleus#1155 review).
+      const known = this.state.read().agents[id];
+      if (!(error instanceof T3RpcError) || error.code !== 'remote' || !known) throw error;
+      const found = (await this.inventory()).threads.find(t => t.id === id);
+      if (found) throw error;
+      const gone: HostObservation = { id, workspaceId: known.workspaceId, archived: true, status: 'gone',
+        active: false, permissions: false, error: '', labels: known.labels, pendingPermissionKinds: [] };
+      return gone;
+    }
+    const { thread } = detail;
     const active = detail.runs.find(r => activeStatuses.has(r.status));
     const pending = detail.runtimeRequests.filter(r => r.status === 'pending');
     const native = (await this.inventory()).threads.find(t => t.id === id);
@@ -783,7 +802,7 @@ export class T3CodeHost implements Host {
     const host = this; let observed: Awaited<ReturnType<T3CodeHost['observe']>> | null = null;
     return { get workspaceId() { return observed?.workspaceId ?? null; }, get archivedAt() { return observed?.archived || observed?.status === 'archived' ? true : null; },
       get status() { return observed?.status ?? null; }, get activeTurn() { return observed?.active ? { turnId: observed.activeTurnId } : null; },
-      get pendingPermissions() { return observed ? observed.pendingPermissionKinds : null; }, get runtimeInfo() { return observed ? { provider: observed.provider, model: observed.model } : null; },
+      get pendingPermissions() { return observed ? observed.pendingPermissionKinds ?? null : null; }, get runtimeInfo() { return observed ? { provider: observed.provider, model: observed.model } : null; },
       async refresh() { observed = await host.observe(id); return observed; }, current() { return observed; }, async send(text, options) { await host.sendMessage(id, { text, messageId: options.messageId }); } };
   }
 }

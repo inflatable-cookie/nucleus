@@ -116,7 +116,8 @@ export async function t3Fake(t: TestContext, directory: string) {
           return success({ schemaVersion: 1, snapshotSequence: controls.snapshotSequence, projects: projects(), threads: [...threads.values()].filter(p => p.thread.archivedAt && !p.thread.deletedAt).map(shell) });
         case 'orchestration.subscribeThread': {
           const p = threads.get(payload.threadId);
-          if (!p) return failure({ _tag: 'Fail', error: { _tag: 'ThreadNotFoundError' } });
+          // The nightly refuses a removed thread's projection outright.
+          if (!p || p.thread.deletedAt !== null) return failure({ _tag: 'Fail', error: { _tag: 'ThreadNotFoundError' } });
           if (controls.interruptThreadReads > 0) { controls.interruptThreadReads--; return send({ _tag: 'Interrupt', requestId: request.id }); }
           return stream([{ kind: 'snapshot', snapshotSequence: controls.snapshotSequence, projection: p, ...(controls.incompleteThread ? { hasMoreHistory: true } : {}), ...controls.threadCoverage }, ...marker()]);
         }

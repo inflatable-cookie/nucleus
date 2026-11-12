@@ -7,7 +7,7 @@ import { groupIsUnavailable } from '../../shared/pool';
 import { currentBrief } from '../planning/brief';
 import { parseNativeDelegatedReply } from './question-delegation';
 import type { Resolution } from '../resolution';
-import { retireDeciderThread } from '../workspaces/thread-archive';
+import { recordDeciderThread, retireDeciderThread } from '../workspaces/thread-archive';
 import { chooseProfile } from '../dispatch/routing';
 import { plannerParticipantTicketPath } from '../dispatch/participant-tickets';
 import { runTicketPath, writeRunTicket } from '../dispatch/agent-creation';
@@ -112,6 +112,10 @@ export class Delegation {
       ...(hostId ? { hostId, recipientRef: qualifyLegacyAgentId(recipient, hostId) } : {}),
       ...(rung ? { rung } : {}),
       deadline: Date.now() + Math.min(timeoutMs, this.delegatedAnswerWaitMs) }));
+    // A decider is not a run, so its thread's durable ownership is recorded at the
+    // same step that opens its delegation window, before any answer can arrive
+    // (nucleus#1155 review). A host that removes threads deletes it at closeout.
+    if (role === 'decider') recordDeciderThread(this.store, this.store.task(task.id), recipient);
   }
   /** A restart may resume observation, never delivery. Unknown sends remain fenced. */
   delegatedDelivery(id: string): { taskId: string; recipient: string; role: string; deadline: number; hostId?: string; recipientRef?: string; rung?: PlannerRungName } | null {
@@ -289,7 +293,12 @@ export class Delegation {
   async deciderBound(task: Task, input: { prompt: string; profile: Profile | null; signal: AbortSignal; timeoutMs: number; decisionId: string; sourceAgentId?: string }): Promise<{ agentId: string; text: string | null }> {
     const id = `ns-decider-${input.decisionId}`;
     const existing = this.resolution.delegatedDelivery(id);
-    if (existing) return { agentId: existing.recipient, text: await this.resolution.waitDelegatedAnswer(id, input.signal) };
+    if (existing) {
+      // A resumed window still owns the thread it created: re-record the durable
+      // ownership so closeout can remove it (nucleus#1155 review).
+      recordDeciderThread(this.store, task, existing.recipient);
+      return { agentId: existing.recipient, text: await this.resolution.waitDelegatedAnswer(id, input.signal) };
+    }
     if (!input.profile) throw Error('No eligible decider profile');
     if (!task.hostId || !this.resolution.withHost(task.hostId, () => this.resolution.originHostAvailable(task.hostId)))
       throw new DelegatedHostUnavailable('Decider host is unavailable or unknown');

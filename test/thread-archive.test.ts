@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Store, qualifiedThreadArchiveEffectKey } from '../core/store/store';
-import { archiveFinishedThreads, archiveReplacedReviewer, deciderThreadOwners, retireDeciderThread } from '../core/workspaces/thread-archive';
+import { archiveFinishedThreads, archiveReplacedReviewer, deciderThreadOwners, recordDeciderThread, retireDeciderThread } from '../core/workspaces/thread-archive';
 import { dispositionSchema } from '../shared/contracts';
 import { profileSchema, submissionSchema, type Run } from '../shared/contracts';
 import type { Adapter } from '../core/host';
@@ -405,7 +405,7 @@ test('a Paseo-bound task keeps today\'s thread handling: released support thread
   } finally { f.close(); }
 });
 
-test('a replaced reviewer is fenced by a stopped idle thread, never an archive, while a removable host keeps its task open (#1155 review)', async () => {
+test('a replaced reviewer is fenced by its removal on a removable host, and by an archive on Paseo (#1155 review)', async () => {
   const f = fixture(); try {
     ownedAndIdle(f);
     const seeded = f.run('reviewer', 'reviewer-1');
@@ -413,27 +413,30 @@ test('a replaced reviewer is fenced by a stopped idle thread, never an archive, 
     f.store.putRun({ ...seeded, released: false, status: 'running', completion: null });
     const reviewer = f.store.run(seeded.id)!;
 
-    assert.equal(await archiveReplacedReviewer(f.store, f.t3Adapter, reviewer), true,
-      'the stopped, idle thread is the fence');
-    assert.deepEqual(f.calls, [], 'nothing is archived while the task is open');
-    assert.equal(f.deletes.length, 0, 'nothing is removed while the task is open');
-    assert.equal(f.store.getMeta(qualifiedThreadArchiveEffectKey('host', 'reviewer-1')), undefined,
-      'a removable host records no archive effect for the replacement');
-
-    // A live turn is never fenced by observation alone.
+    // A live turn is never fenced: the verb stops it first.
     Object.assign(f.t3Adapter, { observe: async (id: string) => ({ id, workspaceId: 'workspace', error: '',
       labels: { 'nucleus.task': f.task.id }, status: 'running', active: true, permissions: false }) });
     assert.equal(await archiveReplacedReviewer(f.store, f.t3Adapter, reviewer), false);
-    assert.deepEqual(f.calls, []);
+    assert.equal(f.deletes.length, 0, 'a live displaced turn is never removed');
+    assert.deepEqual(f.calls, [], 'and never archived');
 
-    // The displacement releases the run (the verb's own next step) and the
-    // displaced thread is removed at closeout like the rest of the support set.
-    f.store.putRun({ ...f.store.run('reviewer-1')!, released: true, status: 'superseded' });
+    // The durable fence is the removal itself: an idle observation alone would
+    // leave the displaced thread able to take another turn.
     ownedAndIdle(f);
-    f.store.update(f.task.id, { phase: 'done', resolution: { ...f.store.task(f.task.id).resolution, mergedCommit: 'c'.repeat(40) } });
-    await archiveFinishedThreads(f.store, f.t3Adapter, f.task.id);
+    assert.equal(await archiveReplacedReviewer(f.store, f.t3Adapter, reviewer), true);
     assert.deepEqual(f.deletes.map(item => item.id), ['reviewer-1']);
-    assert.deepEqual(f.calls, ['worker']);
+    assert.deepEqual(f.calls, [], 'nothing is archived while the task is open');
+    assert.equal(f.store.getMeta<{ status: string; op?: string }>(qualifiedThreadArchiveEffectKey('host', 'reviewer-1'))?.op, 'delete');
+    // The fence is durable and idempotent.
+    assert.equal(await archiveReplacedReviewer(f.store, f.t3Adapter, reviewer), true);
+    assert.equal(f.deletes.length, 1, 'a removed thread is never removed twice');
+
+    // Paseo keeps the archive fence it has today.
+    const seededPaseo = f.run('reviewer', 'reviewer-2');
+    f.store.putRun({ ...seededPaseo, released: false, status: 'running', completion: null });
+    assert.equal(await archiveReplacedReviewer(f.store, f.adapter, f.store.run(seededPaseo.id)!), true);
+    assert.deepEqual(f.calls, ['reviewer-2'], 'a host without removal archives the displaced thread');
+    assert.deepEqual(f.deletes.map(item => item.id), ['reviewer-1']);
   } finally { f.close(); }
 });
 
@@ -498,5 +501,23 @@ test('a decider thread is retained while the task is open and removed at closeou
     assert.equal(f.deleted.has('decider-1'), true);
     await archiveFinishedThreads(f.store, f.t3Adapter, f.task.id, async () => null);
     assert.equal(f.deletes.filter(item => item.id === 'decider-1').length, 1, 'nothing is sent after the removal is observed');
+  } finally { f.close(); }
+});
+
+test('a decider ownership record stays discoverable after a long task and still reaches closeout (#1155 review)', async () => {
+  const f = fixture(); try {
+    ownedAndIdle(f);
+    recordDeciderThread(f.store, f.store.task(f.task.id), 'decider-1');
+    // A long task writes far more than the recent-events window after the record.
+    for (let index = 0; index < 140; index++) f.store.event(f.task.id, 'telemetry_progress', String(index));
+    assert.deepEqual(deciderThreadOwners(f.store, f.store.task(f.task.id)), ['decider-1'],
+      'the complete ownership history is read, not the recent-events window');
+
+    Object.assign(f.t3Adapter, { observe: async (id: string) => ({ id, workspaceId: 'workspace', error: '',
+      labels: id === 'decider-1' ? { 'nucleus.decider': f.task.id } : { 'nucleus.task': f.task.id },
+      status: 'idle', active: false, permissions: false }) });
+    f.store.update(f.task.id, { phase: 'done', resolution: { ...f.store.task(f.task.id).resolution, mergedCommit: 'c'.repeat(40) } });
+    await archiveFinishedThreads(f.store, f.t3Adapter, f.task.id);
+    assert.equal(f.deleted.has('decider-1'), true, 'the aged decider thread is still removed at closeout');
   } finally { f.close(); }
 });

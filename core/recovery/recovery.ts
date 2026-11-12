@@ -746,15 +746,16 @@ export class Recovery {
    if(ownedRuns.length){this.wait(t,`Recovery coordinator is busy with unreleased run ${ownedRuns[0]!.id}`, 'route_unavailable');return null;}
    const state=await this.resolution.onTaskHost(t, () => this.resolution.host.observe(agentId!));
    if(state.active||state.permissions){this.wait(t,`Recovery coordinator is busy (${state.status})`, 'route_unavailable');return null;}
-    // A recorded coordinator route that names another profile, and a thread the
-    // host reports removed or archived, both need a new thread: a different model
-    // cannot continue this one, and a removed or archived one can never take
-    // another turn (nucleus#1155). The displaced thread is kept and removed at
-    // closeout, never archived here.
+    // Only a host that can remove a thread keeps its coordinator threads settled
+    // between attempts, so only there may a recorded route or a removed/archived
+    // thread displace the binding (nucleus#1155). Paseo keeps its existing rule:
+    // an assigned coordinator that is not idle waits, and an idle one is resumed.
+    const removable=typeof this.resolution.adapter.deleteAgent==='function';
     const request=t.profileRequests?.coordinator;
-    const recordedRoute=request?.ownerRoute===true ? request.profileId
-      : supersedingRouteProfile(request, profile?.id, this.store.pool(), this.store.usageLevel());
-    const superseded=Boolean(recordedRoute && (!profile || profile.id!==recordedRoute))||state.status==='gone'||state.status==='closed';
+    const recordedRoute=removable && (request?.ownerRoute===true ? request.profileId
+      : supersedingRouteProfile(request, profile?.id, this.store.pool(), this.store.usageLevel()));
+    const superseded=removable&&(Boolean(recordedRoute && (!profile || profile.id!==recordedRoute))
+      ||state.status==='gone'||state.status==='closed');
     if(superseded){agentId=null;profile=null;group=null;workspaceId=t.workspaceId;}
     else {
     if(state.status!=='idle'){this.wait(t,`The assigned recovery coordinator is not resumable (${state.status}); waiting for an available coordinator`, 'operator_needed');return null;}

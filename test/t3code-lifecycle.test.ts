@@ -528,20 +528,22 @@ test('the worker thread is watched and messaged on the task host, never the defa
  * its reply. The send is unknown delivery, the run looks stalled, and the task
  * raises the worker incident the ordinary recovery route answers.
  */
-async function workerFault(f: Fixture, taskId: string, summary: string): Promise<void> {
+async function workerFault(f: Fixture, taskId: string, summary: string, role: 'worker' | 'reviewer' = 'worker'): Promise<void> {
   const task = f.runtime.store.task(taskId);
-  const thread = f.server.threads.get(task.agentId!)!;
+  const agentId = role === 'worker' ? task.agentId! : task.resolution.reviewerAgentId!;
+  const thread = f.server.threads.get(agentId)!;
   // The worker is mid-turn, so the follow-up is delivered now rather than queued.
   thread.runs = [{ id: `fault-turn-${randomUUID()}`, status: 'running', startedAt: STAMP }];
-  await f.runtime.engine.resolution.agentMessage({ eventId: randomUUID(), participantId: f.ticket.participantId,
-    to: { task: taskId, role: 'worker' }, text: summary }, f.ticket.token).catch(() => undefined);
-  // The delivery pass runs with the transport cut: the send is never answered.
-  f.server.controls.disconnectMutation = true;
-  try { await f.runtime.engine.wakeTask(taskId).catch(() => undefined); }
-  finally {
-    f.server.controls.disconnectMutation = false;
+  // The send lands and its reply is unreadable, so delivery is unknown and the
+  // socket stays up; whichever pass delivers it fails the same way.
+  f.server.controls.postEffectDefect = true;
+  try {
+    await f.runtime.engine.resolution.agentMessage({ eventId: randomUUID(), participantId: f.ticket.participantId,
+      to: { task: taskId, role }, text: summary }, f.ticket.token).catch(() => undefined);
+    await f.runtime.engine.wakeTask(taskId).catch(() => undefined);
+  } finally {
+    f.server.controls.postEffectDefect = false;
     thread.runs = completedWorkerRun();
-    await f.host.connect().catch(() => undefined);
   }
 }
 
@@ -576,22 +578,60 @@ test('a second fault continues the retained T3 recovery coordinator instead of o
     assert.equal(launchesFor(f, coordinatorThreadId), 1, 'the coordinator opened one thread');
     const firstAttempt = f.runtime.store.runs(taskId).findLast(run => run.role === 'recovery')!;
     assert.equal(firstAttempt.agentId, coordinatorThreadId);
+    const firstEpisodeId = f.runtime.store.task(taskId).resolution.recovery?.id;
+    assert.ok(firstEpisodeId, 'the first recovery episode is open');
+    const launchesBefore = f.server.commands.filter(command => command.method === 'orchestration.launchThread').length;
+    const dispatchesBefore = dispatchedInto(f, coordinatorThreadId);
+    // The coordinator's own turn ended before it reported.
+    f.server.threads.get(coordinatorThreadId)!.runs = [{ id: `nightly-${firstAttempt.id}`, status: 'completed', startedAt: STAMP }];
 
-    // The attempt ends without a decision; the fault still holds, so the sweep
-    // routes the next attempt through the same retained thread.
-    endCoordinatorAttempt(f, taskId, coordinatorThreadId);
-    await nextCoordinatorAttempt(f, taskId, () => dispatchedInto(f, coordinatorThreadId) > 0);
-    assert.equal(launchesFor(f, coordinatorThreadId), 1, 'no second coordinator thread is opened');
-    assert.equal(f.runtime.store.task(taskId).coordinatorAgentId, coordinatorThreadId, 'the binding is retained');
+    // Its recovered report is accepted (return the worker to work). The action's
+    // own T3 send lands with an unreadable reply, so the continuation is unknown
+    // delivery: a distinct second fault, after the first episode was accepted.
+    await reportAndWake(f, taskId, { eventId: randomUUID(), taskId, runId: firstAttempt.id, status: 'recovered',
+      summary: 'The retained worker can continue', coordinatorGeneration: firstAttempt.generation,
+      coordinatorAction: { verb: 'move', to: 'work', instruction: 'Continue the work', reason: 'The retained worker can continue' } },
+      ticketToken(f, firstAttempt));
+    // The accepted report's own settle lost its reply to the same defect; the host
+    // sweep reconciles it before the thread's next round, as for any support report.
+    for (let pass = 0; pass < 20 && !f.server.commands.some(command => command.type === 'thread.settle' && command.threadId === coordinatorThreadId); pass++) {
+      await (f.t3 as unknown as { reconcileReportedSettlements(): Promise<void> }).reconcileReportedSettlements().catch(() => undefined);
+      await pause(50);
+    }
+
+    await driveUntil(f, () => f.runtime.store.run(firstAttempt.id)?.released === true
+      && f.runtime.store.task(taskId).resolution.recovery === null,
+      'the first episode was accepted and completed', taskId);
+    assert.ok(f.runtime.store.eventsAll(taskId).some(event => event.kind === 'coordinator_action_applied'),
+      'the coordinator report was accepted, not refused');
+    assert.ok(f.server.commands.some(command => command.type === 'thread.settle' && command.threadId === coordinatorThreadId),
+      'the accepted report settles the retained coordinator thread');
+    await archiveFinishedThreads(f.runtime.store, f.t3, taskId);
+    assert.equal(f.server.commands.some(command => command.type === 'thread.archive' && command.threadId === coordinatorThreadId), false,
+      'the settled recovery thread is not archived while the task is open');
+    assert.equal(f.runtime.store.task(taskId).coordinatorAgentId, coordinatorThreadId, 'the task keeps its retained recovery thread');
+
+    // A distinct second fault: the restarted worker stopped without a result, so
+    // the task needs attention again and its own recovery route continues the
+    // kept thread. The route below is the engine's own (`recovery.route`), the
+    // same call the task quantum makes; the fixture only supplies the fault.
+    f.server.threads.get(workerThreadId)!.runs = completedWorkerRun();
+    const faulted = f.runtime.store.task(taskId);
+    f.runtime.store.update(taskId, { phase: 'needs_attention', reason: 'The retained worker stopped without a result',
+      resolution: { ...faulted.resolution, attention: true, recovery: null, recoveryActive: false, stop: null } },
+      'fixture_second_fault', 'The retained worker stopped without a result');
+    await f.runtime.engine.resolution.recovery.route(f.runtime.store.task(taskId)).catch(() => undefined);
+    await driveUntil(f, () => dispatchedInto(f, coordinatorThreadId) > dispatchesBefore,
+      'the second fault is dispatched into the retained coordinator', taskId);
+    assert.ok(f.server.commands.some(command => command.type === 'thread.unsettle' && command.threadId === coordinatorThreadId),
+      'the settled thread is explicitly unsettled before its next attempt');
+    assert.equal(f.server.commands.filter(command => command.method === 'orchestration.launchThread').length, launchesBefore,
+      'no new coordinator thread is opened');
+    assert.equal(launchesFor(f, coordinatorThreadId), 1, 'the retained thread served both faults');
     const attempts = f.runtime.store.runs(taskId).filter(run => run.role === 'recovery');
     assert.ok(attempts.length >= 2, 'a second recovery attempt was recorded');
     assert.deepEqual(new Set(attempts.map(run => run.agentId)), new Set([coordinatorThreadId]),
       'every attempt used the one retained coordinator thread');
-
-    // Nothing archived while the task is open, and the thread is settled.
-    await archiveFinishedThreads(f.runtime.store, f.t3, taskId);
-    assert.equal(f.server.commands.some(command => command.type === 'thread.archive' && command.threadId === coordinatorThreadId), false);
-    assert.equal(f.server.commands.some(command => command.type === 'thread.delete' && command.threadId === coordinatorThreadId), false);
   } finally { await f.close(); }
 });
 
@@ -632,5 +672,37 @@ test('a removed coordinator thread and a routed coordinator profile each open a 
     const routedRun = f.runtime.store.runs(taskId).findLast(run => run.role === 'recovery' && run.agentId === routedThread)!;
     assert.equal(routedRun.profile?.id, routed, `the recorded route selected its profile (the first was ${firstProfile})`);
     assert.equal(launchesFor(f, routedThread), 1);
+  } finally { await f.close(); }
+});
+
+test('a fresh reviewer restart removes the displaced T3 thread and refuses its late callback (#1155 review)', async t => {
+  const f = await fixture(t);
+  try {
+    const { taskId, head, reviewerThreadId, reviewerRun } = await taskWithReviewer(f);
+    // The reviewer's turn ended before the owner deliberately replaces the reader.
+    f.server.threads.get(reviewerThreadId)!.runs = [{ id: `nightly-${reviewerRun.id}`, status: 'completed', startedAt: STAMP }];
+    const current = f.runtime.store.task(taskId);
+    await f.runtime.taskControl({ action: 'restart', taskId, version: current.version, role: 'reviewer', fresh: true,
+      reason: 'Replace the reader', caller: f.planner });
+
+    // The fence is the displaced thread's removal, recorded durably.
+    await driveUntil(f, () => f.server.commands.some(command => command.type === 'thread.delete' && command.threadId === reviewerThreadId),
+      'the displaced reviewer thread is removed', taskId);
+    assert.equal(f.server.commands.some(command => command.type === 'thread.archive' && command.threadId === reviewerThreadId), false,
+      'a displaced reader is never archived while the task is open');
+    assert.equal(f.runtime.store.run(reviewerRun.id)?.released, true, 'the displaced run is released after the fence');
+
+    // A fresh reviewer reads the same head on its own thread.
+    await driveUntil(f, () => {
+      const next = f.runtime.store.task(taskId).resolution.reviewerAgentId;
+      return Boolean(next && next !== reviewerThreadId);
+    }, 'a fresh reviewer launched', taskId);
+    const replacement = f.runtime.store.task(taskId).resolution.reviewerAgentId!;
+    assert.equal(launchesFor(f, replacement), 1);
+
+    // A late callback from the displaced reader is refused, never applied.
+    assert.throws(() => f.runtime.engine.complete({ eventId: randomUUID(), taskId, runId: reviewerRun.id,
+      status: 'ready_to_merge', summary: 'Late verdict', reviewText: 'The displaced reader approves.', prNumber: 7, head },
+      ticketToken(f, reviewerRun)));
   } finally { await f.close(); }
 });
