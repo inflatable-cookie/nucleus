@@ -133,25 +133,30 @@ export function selectAffected({ changed, files, sources }) {
     const segments = path.split('/');
     const names = segments.slice(0, -1).map((_, index) => segments.slice(index).join('/'))
       .flatMap(name => [name, name.replace(/\.[^/.]+$/, '')]);
-    // A test that walks a directory names it as a whole literal, not the file.
-    const dir = posix.dirname(path);
-    const directoryLiterals = dir === '.' ? [] : [`'${dir}'`, `"${dir}"`, `\`${dir}\``, `'${dir}/'`, `"${dir}/"`];
+    // A test that walks a directory names it as a whole literal, not the file. Any
+    // ancestor directory counts: a test that recurses `client/` reads `client/board/x.tsx`.
+    const ancestors = segments.slice(0, -1).map((_, index) => segments.slice(0, index + 1).join('/'));
+    const directoryLiterals = ancestors.flatMap(dir => [`'${dir}'`, `"${dir}"`, `\`${dir}\``, `'${dir}/'`, `"${dir}/"`].map(literal => [dir, literal]));
     let named = false;
     for (const test of tests) {
       const text = scope.get(test);
       if (names.some(name => text.includes(name))) {
         named = true;
         add(test, `names ${path}`);
-      } else if (directoryLiterals.some(literal => text.includes(literal))) {
-        named = true;
-        add(test, `reads directory ${dir}`);
+      } else {
+        const hit = directoryLiterals.find(([, literal]) => text.includes(literal));
+        if (hit) {
+          named = true;
+          add(test, `reads directory ${hit[0]}`);
+        }
       }
     }
     if (!graphReached && !named && !isGraphNode(path) && !DOCS.test(path) && !isTestFile(path)) unmapped.push(path);
   }
 
   const selected = [...reasons.keys()].sort();
-  const serial = selected.filter(test => sources.get(test)?.includes(SERIAL_LANE_SOURCE));
+  // Scope text folds in the `.cases` files a shard entry requires, as timing-source.mjs does.
+  const serial = selected.filter(test => scope.get(test)?.includes(SERIAL_LANE_SOURCE));
   return {
     tests: selected.map(file => ({ file, reasons: reasons.get(file) })),
     unmapped: unmapped.sort(),

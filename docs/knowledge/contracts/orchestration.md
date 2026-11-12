@@ -2913,8 +2913,9 @@ bundled shell imports to the same host hooks and native stand-ins.
   imports a changed file (through `.js`/`.mjs` emitted specifiers, index files and
   `.d.mts` declarations of their implementation), when it names a changed path or a
   path suffix of two or more segments as a string literal in its own source or in
-  the `test/` helpers it reaches, or when it quotes the changed file's immediate
-  directory as a whole literal (directory walkers). A changed test file always
+  the `test/` helpers it reaches, or when it quotes any ancestor directory of the
+  changed file as a whole literal (directory walkers recurse, so `client/` covers
+  `client/board/x.tsx`). A changed test file always
   runs. Paths outside the graph and the docs (`package.json`, `effigy.toml`,
   `tsconfig*.json`) are reported as unmapped, never expanded to a full suite.
 - Test races are fixed as a class (Tom, 2026-10-15): a milestone failure that

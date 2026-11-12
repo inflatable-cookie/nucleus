@@ -108,7 +108,7 @@ guard, proof tuple or exception-specific control is never the fix.
 Run `effigy check` once. Then, at the committed head, run the affected test files
 once with `effigy test:affected --run` (Tom, 2026-11-12). It selects every
 `test/**/*.test.ts` that transitively imports a changed file, plus any test that
-names a changed file's path, or reads its directory, as a string literal, and
+names a changed file's path, or reads one of its ancestor directories, as a string literal, and
 runs them through the unit runner. Run `effigy test:affected` without `--run` to
 see the list and each file's reason. Run `effigy qa:docs` if docs changed.
 Wall-clock oracles in the selection skip in the parallel lane and run in milestone

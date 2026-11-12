@@ -145,3 +145,25 @@ test('the graph covers the source trees and the test tree only', () => {
   assert.equal(isTestFile('test/store-compaction-bench.test.ts'), false);
   assert.equal(isTestFile('test/support/a.test.ts'), true);
 });
+
+test('a test that recurses an ancestor directory is selected for a nested change', () => {
+  const { files, sources } = tree({
+    'client/board/cards.tsx': 'export const cards = 1;',
+    'test/recurse.test.ts': "const dirs = [join(root, 'client')];\n",
+    'test/nested-only.test.ts': "const dirs = [join(root, 'client/board')];\n",
+    'test/lookalike.test.ts': "const dirs = [join(root, 'clientele')];\n",
+  });
+  const result = selectAffected({ changed: ['client/board/cards.tsx'], files, sources });
+  assert.deepEqual(selected(result), ['test/nested-only.test.ts', 'test/recurse.test.ts']);
+  assert.deepEqual(result.tests.find(entry => entry.file === 'test/recurse.test.ts')?.reasons, ['reads directory client']);
+});
+
+test('a serial oracle that a shard entry reaches through its required case file is reported serial', () => {
+  const { files, sources } = tree({
+    'test/shard.test.ts': "require('./shard.cases');\nimport { x } from '../core/x';\n",
+    'test/shard.cases.ts': "import { timingTest } from './support/timing';\n",
+    'test/support/timing.ts': 'export function timingTest() {}',
+    'core/x.ts': 'export const x = 1;',
+  });
+  assert.deepEqual(selectAffected({ changed: ['core/x.ts'], files, sources }).serial, ['test/shard.test.ts']);
+});
