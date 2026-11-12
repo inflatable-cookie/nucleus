@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { PaseoAdapter } from "../service/paseo-composition";
 import { hostCatalogSchema } from "../shared/host";
 import { nucleusProfileSchema, profileAvailability, routingProfiles } from "../shared/profiles";
+import { sameLevels, type HostVocabulary } from "../shared/profile-vocabulary";
 
 /**
  * Spec 052, step 1 of the Paseo split: the Paseo adapter's host catalog lists
@@ -285,7 +286,13 @@ test("imported profile projection matches the former Paseo routing list", async 
       thinkingOptionId: p.thinkingOptionId, featureValues: p.featureValues, notes: p.notes ?? "",
       available: true, problem: "", supportedThinking };
   });
-  assert.deepEqual(routingProfiles(hostProfiles.map(p => nucleusProfileSchema.parse(p)), catalog), legacy);
+  // The stored profiles are canonical (task 1158); a synthetic host table spells
+  // `codex` as this fixture's `openai` and `auto` as its `agent`, so the routing
+  // list carries the host's own values, as the former Paseo list did.
+  const vocabulary: HostVocabulary = { kind: "paseo", label: "Paseo", providers: {
+    codex: { key: "openai", thinking: sameLevels("low", "high"), modes: { auto: { modeId: "agent" } } } } };
+  const canonical = hostProfiles.map(p => nucleusProfileSchema.parse({ ...p, provider: "codex", ...(p.modeId ? { modeId: "auto" } : {}) }));
+  assert.deepEqual(routingProfiles(canonical, catalog, vocabulary), legacy.map(p => ({ ...Object.fromEntries(Object.entries(p).filter(([, value]) => value !== undefined)), translated: p.modeId ? ["provider", "mode"] : ["provider"] })));
 });
 
 test("nucleus#1139 review: availability answers the configured runtime mode and feature values", () => {

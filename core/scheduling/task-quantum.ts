@@ -13,7 +13,7 @@ import { participantToolRunIds } from "../recovery/task-reasons";
 import { hookHoldReason } from "../hooks/hooks";
 import type { Engine } from '../engine';
 
-export type TaskQuantumContext = Pick<Engine, 'adapter' | 'cleanContext' | 'enqueueTitle' | 'hooks' | 'launchAgent' | 'launchProofOnly' | 'note' | 'noteStepFailure' | 'prerequisiteWaitYieldsToLiveWork' | 'profileCatalogKnown' | 'profiles' | 'quantumFinish' | 'quantumSteps' | 'reconcile' | 'reconcileClosedRetainedReviewer' | 'recover' | 'routeTask' | 'settleFinishedRuns' | 'settleHistoricalProofExecutions' | 'settleRunBuildOutputs' | 'settleSupersededIdleRuns' | 'signoffDecisions' | 'stopped' | 'store' | 'wakeRepository'> & { readonly resolution: Pick<Resolution, 'advance' | 'beginValidationScanPass' | 'holdProofOnlyGoWait' | 'ownedToolHold' | 'owns' | 'raiseOperatorQuestions' | 'reconcileHoldUntil' | 'recordStop' | 'recoverExternalMerge' | 'recovery' | 'resumeClearedAttention' | 'settleBudgetClock'> };
+export type TaskQuantumContext = Pick<Engine, 'adapter' | 'cleanContext' | 'enqueueTitle' | 'hooks' | 'launchAgent' | 'launchProofOnly' | 'note' | 'noteStepFailure' | 'prerequisiteWaitYieldsToLiveWork' | 'profileCatalogKnown' | 'profiles' | 'quantumFinish' | 'quantumSteps' | 'reconcile' | 'reconcileBlockedEffects' | 'reconcileClosedRetainedReviewer' | 'recover' | 'routeTask' | 'settleFinishedRuns' | 'settleHistoricalProofExecutions' | 'settleRunBuildOutputs' | 'settleSupersededIdleRuns' | 'signoffDecisions' | 'stopped' | 'store' | 'wakeRepository'> & { readonly resolution: Pick<Resolution, 'advance' | 'beginValidationScanPass' | 'holdProofOnlyGoWait' | 'ownedToolHold' | 'owns' | 'raiseOperatorQuestions' | 'reconcileHoldUntil' | 'recordStop' | 'recoverExternalMerge' | 'recovery' | 'resumeClearedAttention' | 'settleBudgetClock'> };
 
 export class TaskQuantum {
   constructor(readonly context: TaskQuantumContext) {}
@@ -176,6 +176,10 @@ export class TaskQuantum {
         // from its own timeline before the release sweep reads it, so
         // history is truthful at rest; a late report still upgrades it.
         await this.context.settleHistoricalProofExecutions(taskId, "reconciler historical proof settlement");
+        // Nucleus#1159: later task evidence answers an uncertain host effect, and
+        // a phase still blocked on one past its bound becomes attention rather
+        // than staying the quiet wait nobody sees.
+        this.context.reconcileBlockedEffects(taskId);
         // Superseded idle runs release before recovery observes: a stale
         // run whose episode was cleared must not hold the recovery busy
         // wait or fence the next dispatch. Holds write nothing, so a pass

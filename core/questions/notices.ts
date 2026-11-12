@@ -222,9 +222,14 @@ export class Notices {
         && (recovery!.status === 'escalated' || recovery!.status !== 'pending' && recovery!.action?.status === 'refused');
       const awaitingProof = stop?.reason === 'awaiting_proof';
       const locallyActionable = awaitingProof || isCloseoutHookHold(task) || isSshAuthExhausted(task.reason);
+      // A recorded stop whose reason is not a wait is attention whatever the
+      // phase says: Queue has stopped and named an owner verb it cannot apply
+      // itself (nucleus#1159: a review blocked on an uncertain side effect keeps
+      // its phase, so the phase alone would leave the owner uninformed).
+      const actionableStop = Boolean(stop && stop.reason !== 'held' && !isWaitingTaskStop(stop.reason));
       const legacyAttention = !this.adapter.supportsCoordinatorRecovery
         && Boolean(task.originError&&!missingOriginHasPlanner(this.store,task) || task.resolution.attention || ['blocked', 'error', 'needs_attention'].includes(task.phase));
-      if (!coordinatorNeedsOwner && !locallyActionable && !legacyAttention) continue;
+      if (!coordinatorNeedsOwner && !locallyActionable && !legacyAttention && !actionableStop) continue;
       // A wait clears on its own and a hold has its own owner reminders (Spec 040).
       if (this.adapter.supportsCoordinatorRecovery && stop && (isWaitingTaskStop(stop.reason) || stop.reason === 'held')
         && !coordinatorNeedsOwner && !locallyActionable) continue;

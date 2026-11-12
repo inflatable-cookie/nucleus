@@ -12,11 +12,13 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Store, digest } from '../core/store/store';
 import { Engine } from '../core/engine';
-import { submissionSchema, type Completion, type Profile, type Run } from '../shared/contracts';
+import { submissionSchema, runSchema, type Completion, type Profile, type Run } from '../shared/contracts';
 import type { Adapter, AgentObservation } from '../core/host';
 import type { ResolutionAdapter } from '../core/resolution';
 import { ABSENT_RESOLUTION_REASON, ProvenPreSendRefusalError } from '../core/recovery/task-reasons';
 import { queueOperationSchema } from '../shared/operations';
+import { taskStopKind } from '../shared/task-view';
+import { blockingRecoveryEffects, recoveryEffectsRefusal } from '../core/recovery/recovery-effects';
 
 const head = 'a'.repeat(40), base = 'b'.repeat(40);
 const prUrl = 'https://github.com/example/repo/pull/1';
@@ -202,6 +204,89 @@ test('a blocking recovery effect settles the run as superseded and hands the wai
     assert.equal(f.current().resolution.attention, false);
     assert.ok(f.store.eventsAll(f.task.id).some(event => event.kind === 'review_waiting_on_effects'));
     assert.match(f.current().reason, /settle it with retry_effect/);
+  } finally { await f.close(); }
+});
+
+test('an uncertain project create the task has since answered lets review dispatch and settles by evidence', async () => {
+  const f = fixture();
+  try {
+    // The swallowtail#225 shape: a restart's `project.create` delivery was never
+    // observed, so the control stayed needs_attention while the task moved on.
+    const accepted = new Date(Date.now() - 60_000).toISOString();
+    const operationId = 'e'.repeat(64);
+    f.store.putOperation(queueOperationSchema.parse({
+      id: operationId, key: 'restart-control', kind: 'task_control', inputHash: 'a'.repeat(64), state: 'needs_attention',
+      taskId: f.task.id, expectedVersion: null, repoPath: '/repo', submissionId: null, createdAt: accepted,
+      startedAt: accepted, settledAt: accepted, attempts: 1,
+      diagnostic: 'Host delivery is unknown; command was not resent; command project.create', result: null,
+      effect: { kind: 'task_control', target: 'restart', intentAt: accepted, status: 'uncertain', result: null, resultAt: null },
+    }));
+    // The wait the trial recorded for two hours: the phase holds this exact
+    // sentence against the current blocking set and dispatches nothing. It is
+    // read before the later evidence exists, so the same sentence describes the
+    // state on either side of this change.
+    const blocked = recoveryEffectsRefusal(blockingRecoveryEffects(f.store, f.current(), { noticeKinds: 'all' }))!;
+    assert.match(blocked, new RegExp(`operation ${operationId} is uncertain`), 'the operation is what blocks the review');
+    f.store.update(f.task.id, { phase: 'reviewing', reason: `Ordinary review waits for ${blocked}; settle it with retry_effect before continuing` },
+      'review_waiting_on_effects', blocked);
+    // Later evidence, exactly as the trial produced it: the project exists for
+    // the root, the workspace is bound to it and the task's own runs have used
+    // it since.
+    f.store.event(f.task.id, 'workspace_created', 'workspace');
+    f.store.putRun(runSchema.parse({
+      id: 'revision-after-restart', taskId: f.task.id, role: 'revision', generation: 1, head, base,
+      agentId: 'revision-agent', workspaceId: 'workspace', profile: f.worker, status: 'finished',
+      createdAt: new Date().toISOString(), lastObservedAt: null, active: false, idleSince: null, completion: null, released: true,
+    }));
+    const launched: string[] = [];
+    const launch = async (_task: unknown, role: string) => { launched.push(role); };
+    f.engine.resolution.launch = launch as unknown as typeof f.engine.resolution.launch;
+    // One ordinary pass: the reconciler settles the answered control...
+    f.engine.reconcileBlockedEffects(f.task.id);
+    const settled = f.store.operation(operationId)!;
+    assert.equal(settled.state, 'succeeded');
+    assert.equal(settled.effect?.status, 'reconciled');
+    assert.match(settled.effect?.result ?? '', /workspace workspace was bound at \/worktree/);
+    assert.match(settled.effect?.result ?? '', /revision-after-restart/);
+    assert.ok(f.store.eventsAll(f.task.id).some(event => event.kind === 'operation_settled_by_evidence'
+      && event.detail.startsWith(`${operationId}: `)), 'the settlement records its own evidence');
+    // ...and the review phase then dispatches instead of waiting.
+    await f.engine.resolution.advancePhase(f.current());
+    assert.deepEqual(launched, ['reviewer'], 'the review dispatched with no human step');
+  } finally { await f.close(); }
+});
+
+test('a review still blocked on an unresolved uncertain effect becomes attention past the bound', async () => {
+  const f = fixture();
+  try {
+    const prior = earlierRound(f);
+    const { run, context } = reserved(f, { ordinaryDetached: true, priorRunId: prior.id });
+    const operationId = 'f'.repeat(64);
+    f.store.putOperation(queueOperationSchema.parse({
+      id: operationId, key: 'settle-control', kind: 'task_control', inputHash: 'b'.repeat(64), state: 'needs_attention',
+      taskId: f.task.id, expectedVersion: null, repoPath: '/repo', submissionId: null, createdAt: new Date().toISOString(),
+      startedAt: new Date().toISOString(), settledAt: new Date().toISOString(), attempts: 1,
+      diagnostic: 'Host delivery is unknown; command was not resent; command thread.settle',
+      result: null, effect: { kind: 'task_control', target: 'restart', intentAt: new Date().toISOString(), status: 'uncertain', result: null, resultAt: null },
+    }));
+    // No later evidence answers this one: nothing in the task's own record shows
+    // the unknown settle landed, so the review waits as it did in #225.
+    await f.engine.resolution.deliverLaunchRun(f.current(), 'reviewer', context);
+    assert.equal(f.store.run(run.id)?.status, 'superseded');
+    assert.equal(f.current().resolution.stop?.reason, 'lifecycle');
+    assert.equal(taskStopKind(f.current(), f.store.runs(f.task.id)), 'wait', 'inside the bound it is still the quiet wait');
+    // Past the bound the same blocked phase is attention, with the owner's exit.
+    f.store.setMeta('blockedEffectAttentionMs', 0);
+    f.engine.reconcileBlockedEffects(f.task.id);
+    const stop = f.current().resolution.stop!;
+    assert.equal(stop.reason, 'operator_needed');
+    assert.deepEqual(stop.suggestedVerbs, ['retry_effect']);
+    assert.match(stop.detail, /^An uncertain side effect blocks review: operation .+ is uncertain/);
+    assert.equal(taskStopKind(f.current(), f.store.runs(f.task.id)), 'attention', 'the board reads attention, not a wait');
+    assert.equal(f.store.operation(operationId)?.state, 'needs_attention', 'an unanswered effect is never assumed delivered');
+    await f.engine.resolution.deliverNotices();
+    assert.ok(f.store.notices(f.task.id).some(notice => notice.kind === 'attention' && notice.status === 'pending'
+      && /Suggested verbs: retry_effect/.test(notice.text)), 'the planner is told, with the exit named');
   } finally { await f.close(); }
 });
 

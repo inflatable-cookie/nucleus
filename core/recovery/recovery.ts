@@ -22,6 +22,7 @@ import type {ResolutionChanges} from './task-stops';
 import {frontierAllowed,groupIsUnavailable,supersedingRouteProfile,withinUsage} from '../../shared/pool';
 import {missingOriginHasPlanner} from '../questions/origin';
 import {RECOVERY_ESCALATION_FAILURE_PREFIX} from './task-reasons';
+import {requiredCheckPollMetaKey} from '../forge/checks';
 export const RECOVERY_STOPPED_WITHOUT_RESULT = 'The recovery coordinator stopped without a result. Inspect its thread; the plugin has not repeated its prompt.';
 export const ACCEPTED_RECOVERY_NOT_APPLIED_PREFIX = 'Accepted recovery report was not applied: ';
 const RECOVERY_CREATION_FAILURE_PREFIX = 'Coordinator recovery unavailable: ';
@@ -549,6 +550,10 @@ export class Recovery {
   if(!this.resolution.adapter.supportsCoordinatorRecovery)return undefined;
   if(this.resolution.startsNoRuns())return null;
   let t=this.store.task(original.id);
+  const pendingCheck=t.prHead?this.store.getMeta<{head:string;overdueCheck?:{key:string};recoveryRunId?:string|null;attentionRaisedAt?:number|null}>(requiredCheckPollMetaKey(t.id,t.prHead)):null;
+  // One recovery run belongs to an unchanged required check at an exact head.
+  // Polls and the later planner attention stay owned by the check wait.
+  if(pendingCheck?.head===t.prHead&&pendingCheck.overdueCheck&&(pendingCheck.recoveryRunId||pendingCheck.attentionRaisedAt))return null;
   if(t.entrypoint==='proof'&&t.proofOnly)return null;
   // Spec 058 slice 2: an opted-in responsible task settles its mechanical faults
   // by code before any coordinator episode opens. Only a fault code cannot settle
@@ -792,6 +797,10 @@ export class Recovery {
     if(waitingForCapacity){this.wait(this.store.task(t.id),waitingForCapacity, 'capacity');return;}
     // Taken before this run is recorded: the plan describes the stop the coordinator was asked about, not its own pending launch.
     context=this.launchSnapshot(current,run,previousRefusal ? `Previous coordinator action was refused: ${previousRefusal}` : cause(current,this.store.runs(t.id)),target);
+    const checkPoll=current.prHead?this.store.getMeta<{head:string;overdueCheck?:{key:string};firstOverdueAt?:number;incidentId?:string|null;recoveryRunId?:string|null;attentionRaisedAt?:number|null}>(requiredCheckPollMetaKey(current.id,current.prHead)):null;
+    if(checkPoll?.head===current.prHead&&checkPoll.overdueCheck&&checkPoll.firstOverdueAt!==undefined&&!checkPoll.recoveryRunId&&!checkPoll.attentionRaisedAt
+      &&(!checkPoll.incidentId||checkPoll.incidentId===incident?.incidentId))
+      this.store.setMeta(requiredCheckPollMetaKey(current.id,current.prHead!),{...checkPoll,recoveryRunId:run.id});
     this.store.setCredential(run.id,token);this.store.putRun(run);this.store.event(t.id,'telemetry_recovery',JSON.stringify({runId:run.id,targetRole:target,cause:cause(t,this.store.runs(t.id)),work:taskWorkIdentity(current,this.store)}));this.save(t,{runId:run.id,agentId,status:'running',...(current.resolution.recovery?.action ? {action:null} : {})});this.resolution.update(t,{recoveryActive:true,recoveryAttempts:t.resolution.recoveryAttempts+1});
     if(group)this.store.chargeAssignment(group,profile!.id);
    });

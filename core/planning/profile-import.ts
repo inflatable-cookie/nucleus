@@ -1,10 +1,9 @@
 import {
-  normaliseProvider,
   nucleusProfileSchema,
   type NucleusProfile,
   type ProfileImportRecord,
-  type ProviderMap,
 } from "../../shared/profiles";
+import { canonicalProfile } from "../store/profile-vocabulary-migration";
 import type { Store } from "../store/store";
 
 /**
@@ -21,7 +20,6 @@ export interface HostProfileImport {
   /** Names the host list this came from in the durable record. */
   source: string;
   hostProfiles: readonly unknown[];
-  providerMap: ProviderMap;
   at?: string;
 }
 
@@ -48,16 +46,15 @@ export function importHostProfiles(
   let imported = 0,
     skipped = 0;
   for (const raw of input.hostProfiles) {
-    const parsed = nucleusProfileSchema.safeParse(raw);
+    // The host's own spellings move to canonical values (task 1158); a value the
+    // migration doesn't know is kept as the host gave it.
+    const canonical = raw && typeof raw === "object" ? canonicalProfile(raw as Record<string, unknown>).profile : raw;
+    const parsed = nucleusProfileSchema.safeParse(canonical);
     if (!parsed.success) {
       skipped++;
       continue;
     }
-    const profile: NucleusProfile = {
-      ...parsed.data,
-      // The profile names the normalised key; a host's own spelling stays the host's.
-      provider: normaliseProvider(input.providerMap, parsed.data.provider),
-    };
+    const profile: NucleusProfile = parsed.data;
     if (existing.has(profile.id)) {
       kept.push(profile.id);
       continue;

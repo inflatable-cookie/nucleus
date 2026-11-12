@@ -23,13 +23,20 @@ export function incidentRole(task: Task, run: Run | null): Incident["role"] {
   return "unknown";
 }
 
+/** Pending-check wording changes as GitHub moves a job between queued and running.
+ * Bind those observations to the reviewed head, not incidental status text. */
+function requiredCheckCause(task: Task, reason: string): string | null {
+  if (!task.prHead || !/(?:PR checks are pending|required checks? .*pending|required check .*pending past its deadline)/i.test(reason)) return null;
+  return `required_check_pending:${task.prHead}`;
+}
+
 /** Derive the stable identity parts for one fault: task, lifecycle role, run and normalized cause. */
 export function incidentKey(task: Task, run: Run | null, reason: string, runs: Run[] = [], explicitCause?: IncidentCause): { role: Incident["role"]; runId: string | null; cause: string; id: string } {
   const role = incidentRole(task, run);
   const runId = run?.id ?? task.runId ?? null;
   // An accepted blocked or error result is the cause; its absence of a callback is not.
   const result = latestRunCompletion(runs, ["blocked", "error"]) ?? (task.completion && ["blocked", "error"].includes(task.completion.status) ? task.completion : null);
-  const cause = result && role === "worker" ? `worker_${result.status}` : explicitCause ?? normalizeTelemetryCause(reason);
+  const cause = result && role === "worker" ? `worker_${result.status}` : explicitCause ?? requiredCheckCause(task, reason) ?? normalizeTelemetryCause(reason);
   return { role, runId, cause, id: digest(`${task.id}:${role}:${runId ?? ""}:${cause}`) };
 }
 

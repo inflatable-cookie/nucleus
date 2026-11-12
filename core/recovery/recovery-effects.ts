@@ -1,4 +1,5 @@
 import type { Task } from '../../shared/contracts';
+import type { QueueOperation } from '../../shared/operations';
 import type { VerifiedEnclosingOperation } from '../planning/enclosing-operation';
 import { classifyReviewPublication, reviewPublicationKey, type ReviewPublicationClassification } from '../review/review-publication';
 import { reviewCheckpointRefusal } from '../review/review-continuation';
@@ -108,6 +109,16 @@ export function recoveryEffects(store: Store, task: Task, options: RecoveryEffec
     for (const operation of store.operations({ taskId: task.id, states: ['pending', 'running', 'needs_attention'], limit: 1000 })) {
       if (options.enclosing && operation.id === options.enclosing.operationId) continue;
       if (historicalFenceRefusal(operation)) continue;
+      // A control whose host effect later evidence has answered is history for
+      // this projection: it gates no phase, so it cannot hold review or merge
+      // behind an uncertainty the task itself has already settled
+      // (nucleus#1159). The reconciler records the same settlement.
+      const answered = observedHostEffectEvidence(store, task, operation);
+      if (answered) {
+        push({ kind: 'operation', identity: operation.id, taskId: task.id, runId: null, state: 'superseded',
+          reason: `task operation ${operation.id} was answered by later evidence: ${answered}`, publication: null });
+        continue;
+      }
       push({ kind: 'operation', identity: operation.id, taskId: task.id, runId: null,
         state: operation.state === 'needs_attention' ? 'uncertain' : 'in-flight',
         reason: `task operation ${operation.id} (${operation.kind}) is ${operation.state}${operation.state === 'needs_attention' && operation.diagnostic ? `: ${operation.diagnostic}` : ''}`, publication: null });
@@ -240,6 +251,79 @@ export function recoverySettlementKey(task: Task, effect: RecoveryEffect): strin
 /** Every blocking effect, in the same stable order. */
 export function blockingRecoveryEffects(store: Store, task: Task, options: RecoveryEffectsOptions = {}): RecoveryEffect[] {
   return recoveryEffects(store, task, options).filter(isBlockingRecoveryEffect);
+}
+
+/**
+ * Nucleus#1159: later evidence that one uncertain host-effect control landed.
+ *
+ * Queue records the native command before sending it, so an unknown delivery is
+ * never a resend. But the control's *creation* effects — the project
+ * registration, the workspace and the thread in it — leave their own durable
+ * record on the task: a binding event after the control was accepted, and a run
+ * created in that workspace afterwards. When both exist the uncertainty is
+ * already answered, and the honest answer is "delivered, with this evidence",
+ * never "still unknown". Store reads only, so the reconciler can apply it on
+ * every pass and while a host is offline.
+ *
+ * Only creation-class controls are answered this way. A control whose unknown
+ * command has no visible artefact in the task's own record (a settle or a
+ * rename, say) keeps its unchanged fence and reaches `retry_effect`, or the
+ * blocked-effect bound, instead of being assumed delivered.
+ */
+export function observedHostEffectEvidence(store: Store, task: Task, operation: QueueOperation): string | null {
+  if (operation.kind !== 'task_control' || operation.taskId !== task.id || operation.state !== 'needs_attention') return null;
+  // A promotion, submission or removal owns its own reconciler and effect shape.
+  if (operation.effect && operation.effect.kind !== 'task_control') return null;
+  if (!task.workspaceId || !task.directory) return null;
+  const accepted = Date.parse(operation.createdAt);
+  if (!Number.isFinite(accepted)) return null;
+  const binding = store.eventsAll(task.id)
+    .find(event => Date.parse(event.at) > accepted && boundWorkspaceId(event) === task.workspaceId);
+  if (!binding) return null;
+  const boundAt = Date.parse(binding.at);
+  const used = store.runs(task.id).find(run => run.agentId && run.workspaceId === task.workspaceId
+    && Number.isFinite(Date.parse(run.createdAt)) && Date.parse(run.createdAt) >= boundAt);
+  if (!used) return null;
+  return `workspace ${task.workspaceId} was bound at ${task.directory} after this control was accepted (${binding.at}) and ${used.role} run ${used.id} started there at ${used.createdAt} with agent ${used.agentId}`;
+}
+
+/** The workspace id one binding event records, or null for any other event. */
+function boundWorkspaceId(event: { kind: string; detail: string }): string | null {
+  if (event.kind === 'workspace_created') return event.detail.trim() || null;
+  if (event.kind !== 'dispatch_workspace_rebound') return null;
+  try {
+    const rebound = JSON.parse(event.detail) as { to?: { id?: unknown } };
+    return typeof rebound.to?.id === 'string' ? rebound.to.id : null;
+  } catch { return null; }
+}
+
+/**
+ * Every task operation that still owes work: one that is pending or running, or
+ * one whose uncertainty no later evidence has answered. A phase gate uses this
+ * rather than the raw operation rows, so a superseded control the task has moved
+ * past cannot hold review or merge (nucleus#1159).
+ */
+export function blockingTaskOperations(store: Store, task: Task, options: { excludeId?: string | null } = {}): QueueOperation[] {
+  return store.operations({ taskId: task.id, states: ['pending', 'running', 'needs_attention'], limit: 1000 })
+    .filter(operation => !options.excludeId || operation.id !== options.excludeId)
+    .filter(operation => operation.state !== 'needs_attention' || !observedHostEffectEvidence(store, task, operation));
+}
+
+/** The two labels the review-dispatch wait records for itself, in that writer's terms. */
+const REVIEW_EFFECT_WAIT = /^(Ordinary review|Review-entry) waits for .+; settle it with retry_effect before continuing$/;
+
+/**
+ * The review-dispatch wait this task still records: the first moment it was
+ * written, and the text it was written with. It is Queue's own sentence on both
+ * sides — the writer is `RunLaunchDeliver`, the reader is the blocked-effect
+ * bound — so a reworded writer cannot silently stop the bound from counting.
+ * `since` is the lifecycle wait's own start, which a later lifecycle wait
+ * inherits: that errs toward telling the owner sooner, never toward silence.
+ */
+export function reviewEffectWait(task: Task): { since: string; detail: string } | null {
+  const stop = task.resolution.stop;
+  if (!stop || stop.reason !== 'lifecycle' || !REVIEW_EFFECT_WAIT.test(stop.detail)) return null;
+  return { since: stop.since, detail: stop.detail };
 }
 
 /** Refusal text for the complete blocking set, in projection order. */

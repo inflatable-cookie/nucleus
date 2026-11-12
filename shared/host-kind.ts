@@ -4,6 +4,8 @@ import { z } from 'zod';
 export const hostKindSchema = z.enum(['paseo', 't3code']);
 export type HostKind = z.infer<typeof hostKindSchema>;
 export const DEFAULT_HOST_KIND: HostKind = 'paseo';
+/** The host names an operator reads, by host kind. */
+export const HOST_KIND_LABELS: Record<HostKind, string> = { paseo: 'Paseo', t3code: 'T3Code' };
 
 export function hostKindOf(hostId: string | null | undefined): HostKind {
   return typeof hostId === 'string' && hostId.startsWith('t3code:') ? 't3code' : 'paseo';

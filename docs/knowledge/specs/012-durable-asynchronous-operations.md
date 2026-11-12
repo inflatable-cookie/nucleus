@@ -68,6 +68,16 @@ events now name their workspace. Nothing is re-enqueued or replayed natively,
 and without that proof the stale version still refuses.
 Concurrent identical retries reopen a failure once. Reusing the key with
 different input fails.
+A `needs_attention` operation is not automatically a permanent fence. Later
+evidence the task itself recorded answers a creation-class host effect: a
+workspace binding event after the control was accepted, then a run created and
+used in that workspace, proves the project registration and the thread in it
+landed. That operation settles as `succeeded` with its effect `reconciled` and the
+evidence recorded on it and in the task timeline, and the shared effect
+projection reports it superseded rather than blocking, so no phase waits on an
+uncertainty the task has already answered (nucleus#1159). Observation settles;
+it never resends. A control whose unknown command has no such artefact in the task
+record keeps its fence.
 Acceptance returns the operation identity and observed task version without
 waiting for an engine pass, provider call, Git operation or hook execution.
 Brief-bearing lead checks use the same operation record, fenced by lead ID,

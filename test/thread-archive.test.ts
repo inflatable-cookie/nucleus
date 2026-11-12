@@ -10,7 +10,7 @@ import { dispositionSchema } from '../shared/contracts';
 import { profileSchema, submissionSchema, type Run } from '../shared/contracts';
 import type { Adapter } from '../core/host';
 import { storedT3Labels } from './support/t3code-labels';
-import { NUCLEUS_LABEL_KEYS } from '../shared/wire-labels';
+import { WIRE_LABEL_KEYS } from '../shared/wire-labels';
 
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), 'ns-thread-archive-'));
@@ -384,7 +384,7 @@ test('terminal cleanup archives a historical revision worker missing from curren
     const workerState = await f.t3Adapter.observe(revision.agentId!);
     assert.deepEqual(workerState.labels, storedT3Labels('worker', { taskId: f.task.id, runId: revision.id }),
       'the historical worker carries the stored worker shape with no role');
-    assert.ok(!Object.hasOwn(workerState.labels!, NUCLEUS_LABEL_KEYS.role));
+    assert.ok(!Object.hasOwn(workerState.labels!, WIRE_LABEL_KEYS.role));
     const recoveryState = await f.t3Adapter.observe(recovery.agentId!);
     assert.deepEqual(recoveryState.labels, storedT3Labels('recovery', { taskId: f.task.id, runId: recovery.id }));
 

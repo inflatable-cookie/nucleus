@@ -2,6 +2,7 @@ import type { OrphanWorkspace, WorkspaceCreationState, HostProcessFact, BuildOut
 import type { Run, Profile, ReviewEntryInput, StashEntry, Task } from "../../shared/contracts";
 import type { HostCatalog, HostCatalogOptions, NativeDecisionInput, HostPermissionDecision } from "../../shared/host";
 import type { NucleusProfile } from "../../shared/profiles";
+import type { HostVocabulary } from "../../shared/profile-vocabulary";
 
 export type OriginAgent = import('../../shared/host').OriginAgent;
 /**
@@ -114,11 +115,15 @@ export interface Adapter extends RunUsageSource {
   settleReportedThread?(agentId: string, runId: string): Promise<void>;
   /** Retry durable, uncertain report-settlement intents during the host sweep. */
   reconcileReportedSettlements?(): Promise<void>;
+  /** Reconcile native thread titles from task identity during the ordinary host sweep. */
+  reconcileThreadTitles?(tasks: readonly Task[]): Promise<void>;
   runTemporaryDirectory?(runId: string, task?: Task): string;
   workspaceAvailable?(id:string):Promise<boolean>;
   profiles?(): Promise<Profile[]>;
   /** The host catalog: the first method of the `Host` interface in `shared/host.ts`. */
   catalog?(options?: HostCatalogOptions): Promise<HostCatalog>;
+  /** The host's profile vocabulary table (`shared/profile-vocabulary.ts`); absent on test doubles, which speak canonical values. */
+  readonly vocabulary?: HostVocabulary;
   /**
    * The host's own profile list, read once into Nucleus's store (Spec 052). A
    * host with its own profile system answers with it; a host without one has no

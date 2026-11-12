@@ -4,8 +4,12 @@ import { basename } from 'node:path';
 import { z } from 'zod';
 import type { Host, HostAgentSpec, HostWorkspaceSpec, HostMessage, HostGuardedMessage, HostSendGuard, HostAsk, HostWorkspaceRef, HostRetainedAgentRef, HostCatalog, HostTimelinePage, HostThread, NativeDecisionInput, NativeDecisionAnswer } from '../../shared/host';
 import type { Task, Profile } from '../../shared/contracts';
+import { formatTaskNumber } from '../../shared/contracts';
+import { capPaseoTitle } from '../../shared/paseo-title';
+import { WIRE_LABEL_KEYS } from '../../shared/wire-labels';
 import { ArchiveNotDeliveredError, ProvenPreSendRefusalError, HostUnknownDeliveryError, sanitizeHostDeliveryDiagnostic } from '../../core/host';
 import { T3RpcClient, T3RpcError } from './rpc';
+import { t3codeVocabulary } from './vocabulary';
 import { T3StateFile, canonical, type T3SettleIntent, type T3State } from './state';
 import { decode, config, optionDescriptor, shellSnapshot, projection, threadSnapshot, shellThread, project, T3CompatibilityError, runtimeModes, defaultRuntimeMode, type RuntimeMode } from './contracts';
 
@@ -104,6 +108,7 @@ function responseIntents(state: T3State, agentId: string, requestId: string) {
 
 /** Native host boundary only. Workflow/reporting integration is deliberately unavailable. */
 export class T3CodeHost implements Host {
+  readonly vocabulary = t3codeVocabulary;
   readonly rpc: T3RpcClient;
   readonly state: T3StateFile;
   hostId = '';
@@ -402,21 +407,76 @@ export class T3CodeHost implements Host {
     const options = this.modelSelectionOptions(spec.profile, provider.models.find(m => m.slug === spec.profile.model)!);
     const runtimeMode = this.launchRuntimeMode(spec.profile, provider.supportedRuntimeModes);
     const id = identity('thread', attempt.requestId);
-    const payload = { commandId: attempt.requestId, threadId: id, projectId: workspace.projectId, title: spec.title,
+    const payload = { commandId: attempt.requestId, threadId: id, projectId: workspace.projectId, title: this.numberedThreadTitle(spec.taskNumber, attempt.labels[WIRE_LABEL_KEYS.role], spec.title),
       modelSelection: { instanceId: spec.profile.provider, model: spec.profile.model, ...(options.length ? { options } : {}) }, runtimeMode, interactionMode: 'default',
       workspaceStrategy: { type: 'existing_worktree', worktreePath: workspace.directory },
       initialMessage: { messageId: identity('message', attempt.requestId), text: attempt.prompt, attachments: [] } };
     this.state.update(state => {
       const old = state.agents[id], record = { id, workspaceId: spec.workspaceId, labels: attempt.labels };
-      if (old && canonical(old) !== canonical(record)) throw new ProvenPreSendRefusalError('T3Code retained identity changed');
-      state.agents[id] = record;
+      if (old && canonical({ id: old.id, workspaceId: old.workspaceId, labels: old.labels }) !== canonical(record))
+        throw new ProvenPreSendRefusalError('T3Code retained identity changed');
+      state.agents[id] = { ...old, ...record };
     });
     const result = await this.effect(attempt.requestId, 'orchestration.launchThread', payload, () => {
       if (spec.guard && !spec.guard.stillAllowed()) throw new ProvenPreSendRefusalError('T3Code launch guard changed');
     });
     if (decode(z.object({ threadId: z.literal(id) }), result, 'launchThread').threadId !== id) throw new T3CompatibilityError('launchThread.threadId');
+    this.state.update(state => { if (state.agents[id]) state.agents[id].title = payload.title; });
     if (this.pendingThreadShape) await this.readProjection(id);
     return { id, workspaceId: spec.workspaceId };
+  }
+  private numberedThreadTitle(taskNumber: number | null | undefined, role: string | undefined, title: string): string {
+    if (!taskNumber) return title;
+    const runRole = role && role !== 'worker' ? role : undefined;
+    const titleRole = runRole === 'reviewer' ? 'review' : runRole;
+    const numberedPrefix = `${formatTaskNumber(taskNumber)}${titleRole ? ` ${titleRole}` : ''}: `;
+    let taskTitle = title;
+    while (taskTitle.startsWith(numberedPrefix)) taskTitle = taskTitle.slice(numberedPrefix.length);
+    const legacyRolePrefix = runRole ? `${runRole}: ` : '';
+    if (legacyRolePrefix && taskTitle.startsWith(legacyRolePrefix)) taskTitle = taskTitle.slice(legacyRolePrefix.length);
+    return capPaseoTitle(`${numberedPrefix}${taskTitle}`);
+  }
+  /** The core title projection supplies the same phase-derived title used by Paseo. */
+  async setTaskWorkspaceTitle(task: Task, title: string, requestId: string, _uncertain: boolean): Promise<void> {
+    title = capPaseoTitle(title);
+    const state = this.state.read();
+    const taskLabel = WIRE_LABEL_KEYS.task, runLabel = WIRE_LABEL_KEYS.run, roleLabel = WIRE_LABEL_KEYS.role;
+    const taskAgents = Object.entries(state.agents).filter(([, agent]) => agent.labels[taskLabel] === task.id);
+    const threadId = task.agentId && state.agents[task.agentId]?.labels[taskLabel] === task.id
+      ? task.agentId
+      : taskAgents.find(([id, agent]) => agent.labels[roleLabel] === 'worker'
+        || agent.labels[roleLabel] === undefined && (id === task.agentId || task.runId !== undefined && agent.labels[runLabel] === task.runId))?.[0];
+    if (!threadId) throw Error('Task worker thread is missing');
+    const projection = await this.readProjection(threadId);
+    const key = identity('thread-title', canonical({ threadId, requestId }));
+    if (!projection.thread.archivedAt && !projection.thread.deletedAt && projection.thread.title === title) {
+      this.state.update(current => {
+        const prior = current.intents[key];
+        if (prior?.status === 'unknown') current.intents[key] = { ...prior, status: 'settled', result: { title } };
+        if (current.agents[threadId]) current.agents[threadId].title = title;
+      });
+    } else if (!projection.thread.archivedAt && !projection.thread.deletedAt) {
+      await this.effect(key, 'orchestration.dispatchCommand', { type: 'thread.metadata.update', commandId: key, threadId, title }, undefined, undefined,
+        { resendUnknownAfterRead: true });
+      this.state.update(current => { if (current.agents[threadId]) current.agents[threadId].title = title; });
+    }
+
+    // Task state sync also repairs the number-and-role prefix on existing support
+    // threads. Their current remote title is the source of the task title, so a
+    // restart can safely catch up threads created before numbered titles landed.
+    if (task.number) for (const [supportId, agent] of taskAgents) {
+      const role = agent.labels[roleLabel];
+      if (!role || role === 'worker') continue;
+      const support = await this.readProjection(supportId);
+      if (support.thread.archivedAt || support.thread.deletedAt) continue;
+      const supportTitle = this.numberedThreadTitle(task.number, role, support.thread.title);
+      if (support.thread.title === supportTitle) continue;
+      const supportKey = identity('thread-title', canonical({ threadId: supportId, requestId, title: supportTitle }));
+      await this.effect(supportKey, 'orchestration.dispatchCommand', {
+        type: 'thread.metadata.update', commandId: supportKey, threadId: supportId, title: supportTitle,
+      }, undefined, undefined, { resendUnknownAfterRead: true });
+      this.state.update(current => { if (current.agents[supportId]) current.agents[supportId].title = supportTitle; });
+    }
   }
   /**
    * The profile's `modeId` as the thread's runtime mode. Nucleus profiles name the
@@ -500,11 +560,13 @@ export class T3CodeHost implements Host {
   /** Settle a completed non-worker thread after Nucleus has durably accepted its report. */
   async settleReportedThread(agentId: string, runId: string): Promise<void> {
     this.requireConnection();
-    const commandId = identity('settle', canonical([this.hostId, agentId, runId]));
+    const baseCommandId = identity('settle', canonical([this.hostId, agentId, runId]));
+    let commandId = baseCommandId;
     const payload = { type: 'thread.settle', commandId, threadId: agentId } as {
       type: string; commandId: string; threadId: string; expectedLatestRunId?: string;
     };
-    const prior = this.state.read().intents[commandId];
+    let prior = this.state.read().intents[commandId];
+    if (prior?.status === 'settled') return;
     const projection = await this.readProjection(agentId);
     if (projection.thread.settledOverride === 'settled') {
       if (prior?.status === 'unknown') this.markSettleObserved(commandId);
@@ -513,6 +575,13 @@ export class T3CodeHost implements Host {
     const latest = projection.runs.reduce((best, run) => !best || (run.ordinal ?? -1) >= (best.ordinal ?? -1) ? run : best, undefined as Projection['runs'][number] | undefined);
     // A fresh run owns the thread now. Never settle it because an older report arrived late.
     if (!latest || activeStatuses.has(latest.status)) return;
+    // A proven pre-send refusal can be retried with a new command identity.
+    // Unknown delivery still goes through the projection reconciliation below.
+    for (let attempt = 1; prior?.status === 'refused'; attempt++) {
+      commandId = identity('settle', canonical([this.hostId, agentId, runId, attempt]));
+      prior = this.state.read().intents[commandId];
+    }
+    payload.commandId = commandId;
     if (prior) {
       await this.reconcileSettleIntent(commandId, prior.payload);
       return;
@@ -672,9 +741,13 @@ export class T3CodeHost implements Host {
    */
   async settleWorkerThread(agentId: string, runId: string): Promise<void> {
     this.requireConnection();
-    const commandId = identity('settle', canonical([this.hostId, agentId, runId]));
-    if (this.state.read().intents[commandId]) return;
-    await this.attemptWorkerSettle({ agentId, runId, commandId, recordedAt: new Date().toISOString() });
+    const baseCommandId = identity('settle', canonical([this.hostId, agentId, runId]));
+    const existing = this.state.read().pendingSettles?.[baseCommandId];
+    const commandId = this.workerSettleCommandId(agentId, runId);
+    const intent = this.state.read().intents[commandId];
+    if (intent?.status === 'unknown') throw new HostUnknownDeliveryError(intent.diagnostic);
+    if (intent && intent.status !== 'refused') return;
+    await this.attemptWorkerSettle(existing ?? { agentId, runId, commandId, recordedAt: new Date().toISOString() });
   }
 
   /** Retry durable worker settle intents during the ordinary host sweep. */
@@ -691,10 +764,14 @@ export class T3CodeHost implements Host {
 
   /** One worker settle: send when the handover's own run has ended, else retain the intent. */
   private async attemptWorkerSettle(entry: T3SettleIntent): Promise<void> {
-    // The delivery ledger owns every command id it has recorded. A settled one
-    // needs nothing more; an unknown one is never resent, so the pending record
-    // is retired either way.
-    if (this.state.read().intents[entry.commandId]) { this.forgetSettle(entry.commandId); return; }
+    // Unknown delivery is never resent for worker handovers. A proven refusal
+    // gets a new id on the next pass; it was known not to reach T3.
+    const intent = this.state.read().intents[entry.commandId];
+    if (intent && intent.status !== 'refused') { this.forgetSettle(entry.commandId); return; }
+    if (intent?.status === 'refused') {
+      this.forgetSettle(entry.commandId);
+      entry = { ...entry, commandId: this.workerSettleCommandId(entry.agentId, entry.runId) };
+    }
     if (Date.now() - Date.parse(entry.recordedAt) > SETTLE_INTENT_TTL_MS) { this.forgetSettle(entry.commandId); return; }
     const projection = await this.readProjection(entry.agentId);
     // Already settled, or retired: the handover needs no further presentation.
@@ -711,6 +788,18 @@ export class T3CodeHost implements Host {
     await this.effect(entry.commandId, 'orchestration.dispatchCommand',
       { type: 'thread.settle', commandId: entry.commandId, threadId: entry.agentId, expectedLatestRunId: latest.id });
     this.forgetSettle(entry.commandId);
+  }
+
+  /** First unused worker settle id, after any proven pre-send refusals. */
+  private workerSettleCommandId(agentId: string, runId: string): string {
+    const base = identity('settle', canonical([this.hostId, agentId, runId]));
+    const intents = this.state.read().intents;
+    if (!intents[base] || intents[base].status !== 'refused') return base;
+    for (let attempt = 1; ; attempt++) {
+      const candidate = identity('settle', canonical([this.hostId, agentId, runId, attempt]));
+      const prior = intents[candidate];
+      if (!prior || prior.status !== 'refused') return candidate;
+    }
   }
 
   /**

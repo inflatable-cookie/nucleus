@@ -194,6 +194,15 @@ archive is a catalog operation, not evidence that a folder was removed. Native
 workspace operations without an equivalent must explicitly refuse rather than
 pretend to be a Paseo workspace.
 
+Core derives the worker thread title with `taskWorkspaceTitle`, the same
+projection and cap used for Paseo workspace titles. It sends the current title through
+`thread.metadata.update`; support threads keep their task-number and role title.
+The core title projection coalesces queued changes and records failed writes on
+the task for sweep retry. Each title-change request has its own durable command
+identity, so returning to a prior state still updates the thread. Before
+retrying an uncertain T3 update, the adapter reads the thread title and settles
+the write if the desired title is already present.
+
 ## Operations and delivery
 
 | Host operation | T3 RPC or command | Required result |
@@ -232,15 +241,25 @@ shape used for report settlement as:
 ```
 
 After Nucleus accepts a completion from any support role, T3 settles that
-thread using the latest completed native run ID. Workers are unchanged. A new
-review message first sends `thread.unsettle` with `reason: "user"`; T3 does not
-clear a manual settled override on `message.dispatch`. Unknown settlement
-delivery is recorded. On the next host sweep, Nucleus reads the thread's
-`settledOverride` first: `settled` proves success, a changed or active latest
-run retires the old intent without touching the new run, and only the same
-completed latest run permits replay of the identical command. Settlement
-failure never blocks the task report. Existing closeout and retention paths
-still decide when threads are archived or removed; the [thread
+thread using the latest completed native run ID. The host sweep enforces the
+same rule for every T3-bound task, so recorded-completion releases and other
+finish paths settle support threads even when no callback report arrived. It
+settles a worker thread after the task has moved to review, and keeps it active
+while the task is still in work. Each pass reads the T3 projection first; a
+live native run is never settled, and the command's `expectedLatestRunId` keeps
+a later run from being settled by an older completion. Failed settlements
+record a task event and are reconciled on a later pass; settlement failure never
+blocks the task report.
+
+Unknown settlement delivery is recorded. On the next host sweep,
+`settledOverride: "settled"` proves success, and a changed or active latest run
+retires the old intent without touching the new run. A support settlement is
+retried only when the projection proves the same completed run is still latest
+and unsettled, using the identical command. Worker handover unknown delivery
+remains unknown and is never resent. A new review message first sends
+`thread.unsettle` with `reason: "user"`; T3 does not clear a manual settled
+override on `message.dispatch`. Existing closeout and retention paths still
+decide when threads are archived or removed; the [thread
 lifecycle](#thread-lifecycle) is where that decision lives.
 
 ### Model options
@@ -306,18 +325,20 @@ catalog drift between refresh and send. Observation reports the thread's
 `runtimeMode`, so a reviewer's mode evidence is the thread's own fact.
 
 A repository's pool profiles are the same pool every host selects from, but each
-host answers availability from its own catalog. T3Code names its provider
-instances itself (`codex`, `claudeAgent`, `grok`, `pi`), so a pool profile using
-another spelling is ineligible on T3 with `T3Code has no … provider` until the
-operator maps it. The mapping is the profile's own `hosts.t3code` setting
-(nucleus#1151): the T3 provider key, model, mode, thinking level or option
-values that profile launches with on T3, or an exclusion. A mapped profile's T3
-routing snapshot carries T3's own provider key, which is the `instanceId` the
-launch sends. On the recorded nightly snapshot the Claude profiles need
-`provider: claudeAgent`, a T3 mode for `bypassPermissions` (`full-access`) and
-their thinking level as the `effort` option; Pi profiles need their thinking
-level as the `thinking` option; Grok needs its unreported `auto_accept` value
-cleared. `profile.compatibility` and Settings → Profiles show each answer.
+host answers availability from its own catalog. Profiles store Nucleus's
+canonical vocabulary (task 1158, Tom 2026-11-12: "hard code the mapping that each
+host gives to each provider and have them converge on one canonical corpus"), and
+this adapter owns T3's translation table, `hosts/t3code/vocabulary.ts`: canonical
+`claude` is T3's `claudeAgent` instance with its thinking level as the `effort`
+option (`ultra` is `ultrathink`); Pi's thinking rides the `thinking` option and
+FX's `effort`; Codex, Grok and the rest ride the reasoning option. Canonical
+`supervised`, `accept-edits`, `auto` and `full-access` are T3's
+`approval-required`, `auto-accept-edits`, `auto` and `full-access`; `plan` and
+`auto-review` have no T3 form, so a profile naming one is unavailable on T3 with
+the reason. The T3 routing snapshot carries the translated values, so the launch
+sends T3's own `instanceId`, options and runtime mode. On the recorded nightly
+snapshot every enabled pool shape runs on T3 (`test/profile-vocabulary.test.ts`).
+Nothing is configured per profile; `profile.compatibility` shows each answer.
 
 A creation refusal that is proven pre-send settles the run refused and the task
 in attention with the step that failed named — `Worker creation refused before
@@ -423,7 +444,7 @@ follow-up helper, which sends `thread.unsettle` before the message. A new thread
 is needed only when the old one is gone or deleted, or the role's selected
 profile changes; displaced threads stay settled until closeout (Tom, 2026-11-12).
 
-Role detection reads the shared `NUCLEUS_LABEL_KEYS` through the label helpers:
+Role detection reads the shared `WIRE_LABEL_KEYS` through the label helpers:
 `nucleus.role` identifies support threads, while the task's worker identity or a
 revision run identifies a worker without a role label. Tests copy the stored T3
 worker and recovery label shapes with synthetic IDs, including catch-up cleanup.
@@ -550,25 +571,19 @@ question ownership separate.
 A T3 worker thread is settled with `thread.settle` once its handover is accepted
 and the task moves to review, guarded by `expectedLatestRunId` so a thread a
 later run already owns is never settled (nucleus#1154). The accepted receipt is
-durable first; the settle is presentation only, so a refused or unknown send
-changes nothing and leaves the thread as it was. The handover's turn may still
+durable first; the settle is presentation only. The handover's turn may still
 be ending when the report arrives, and a live run is never settled, so the intent
 is recorded in the adapter's own state (`pendingSettles`) and the ordinary host
 sweep retries it once that run has ended, naming it in `expectedLatestRunId`; an
 intent whose run never ends is retired after 24 hours, and one that a later run
 replaced is retired without touching the thread. A revision round wakes the
 worker through the same explicit `thread.unsettle` every follow-up send uses, and
-its next handover settles it again under that run's own command id. A worker
-handover and a support-thread report share the `thread.settle` command and the
-`expectedLatestRunId` guard; only the worker's own handover settles the worker
-thread, and only a support role's report settles its thread. The adapter records
-each worker settle's command id in its state before the send
-(`workerSettles`), because the support report's reconciler checks unknown settle
-intents against a fresh read and may resend them: a worker settle is a separate
-rule — an unknown outcome stays unknown and is never sent again, while only a
-settle that has not been sent is retried from `pendingSettles`. The mark retires
-with its command's outcome, so an unknown worker settle is never picked up by the
-resend path.
+its next handover settles it again under that run's own command id. A proven
+pre-send refusal can retry under a new command ID. Worker unknown delivery stays
+unknown and is never resent, while an unrecorded settle is retried from
+`pendingSettles`. The adapter records each worker settle's command id before the
+send (`workerSettles`) so the support reconciler cannot resend a worker's
+unknown mutation.
 
 One end-to-end test drives an ordinary task's whole lifecycle on the fake
 Nightly transport (nucleus#1139): promotion onto the T3 host, workspace

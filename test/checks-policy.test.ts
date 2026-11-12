@@ -229,13 +229,16 @@ test('required checks still block under an advisory policy: failed, pending, ove
   assert.match(failed.wait, /build/);
   assert.doesNotMatch(failed.wait, /macos-gateway/);
 
-  const pending = await observePolicy([{__typename: 'CheckRun', name: 'build', status: 'IN_PROGRESS', detailsUrl: job, checkSuite: {app: {databaseId: actionsApp}}}], undefined, 'required', requirements);
-  assert.equal(pending.pendingCheck, true);
-  assert.equal(pending.checksFailed, false);
+  for (const status of ['QUEUED', 'IN_PROGRESS'] as const) {
+    const pending = await observePolicy([{__typename: 'CheckRun', name: 'build', status, detailsUrl: job, checkSuite: {app: {databaseId: actionsApp}}}], undefined, 'required', requirements);
+    assert.equal(pending.pendingCheck, true, `${status} is a pending wait`);
+    assert.equal(pending.checksFailed, false, `${status} is not a failed check`);
+    assert.equal(pending.overdue, undefined, `${status} is not attention before its bound`);
+  }
 
   const overdue = await observePolicy([{__typename: 'CheckRun', name: 'build', status: 'IN_PROGRESS', startedAt: '2026-10-05T00:00:00.000Z', detailsUrl: job, checkSuite: {app: {databaseId: actionsApp}}}], {now: Date.parse('2026-10-05T01:00:00.000Z')}, 'required', requirements);
   assert.equal(overdue.overdue, true);
-  assert.match(overdue.wait, /Required check 'build' has been pending past its deadline/);
+  assert.match(overdue.wait, /Required check 'build'.*has been pending past its deadline/);
 
   // A required context nobody reported remains a visible pending requirement with
   // its bounded deadline, never an absent requirement that merges by default.

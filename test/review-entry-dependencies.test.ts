@@ -98,7 +98,10 @@ test('a queued review-entry task bound to an external workspace corrects prerequ
     assert.equal(after.holdOwner,before.holdOwner);assert.equal(after.holdReason,before.holdReason);assert.equal(after.holdGeneration,before.holdGeneration);
     assert.equal(after.holdUntil,before.holdUntil);assert.equal(after.phase,'queued');
     assert.equal(after.agentId,null);assert.equal(after.runId,null);assert.equal(after.completion,null);
-    const unexpected=Object.keys(after).filter(key=>!['dependsOn','reason','version','updatedAt','lastSubstantiveVersion'].includes(key)
+    // nucleus#1153: the held task opens its Queue-owned budget pause interval. That is the
+    // only resolution field a correction may move; every other resolution field stays exact.
+    assert.deepEqual({...after.resolution,budgetClock:null},{...before.resolution,budgetClock:null});
+    const unexpected=Object.keys(after).filter(key=>!['dependsOn','reason','version','updatedAt','lastSubstantiveVersion','resolution'].includes(key)
       && JSON.stringify(after[key as keyof Task])!==JSON.stringify(before[key as keyof Task]));
     assert.deepEqual(unexpected,[]);
 

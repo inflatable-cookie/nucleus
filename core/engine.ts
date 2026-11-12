@@ -11,8 +11,9 @@ import { PlannerGrantCleanup } from './questions/planner-grants';
 import { intakeContext } from './intake/context';
 
 import { Dispatch } from "./dispatch/dispatch";
-import { HOST_KIND_LABELS, profileCompatibility, routingProfiles } from "../shared/profiles";
-import { hostKindOf } from "../shared/host-kind";
+import { profileCompatibility, routingProfiles } from "../shared/profiles";
+import { canonicalCatalog, canonicalVocabulary, type HostVocabulary } from "../shared/profile-vocabulary";
+import { HOST_KIND_LABELS, hostKindOf } from "../shared/host-kind";
 import type { HostCatalog } from "../shared/host";
 import type { ProfileCompatibilityHost, ProfileCompatibilityRow } from "../shared/rpc/settings";
 import { CreationRecovery } from "./recovery/creation-recovery";
@@ -122,6 +123,7 @@ import type { ReconciliationSweep } from '../shared/telemetry';
 
 import { ownerPendingEffects, type OwnerEffect, type RouteRole, type RestartRole } from './verbs/owner-verbs';
 import { RunRelease } from './recovery/fence-settlement';
+import { blockedEffectAttentionReason, settleObservedHostEffectOperations } from './recovery/effect-gates';
 import { Sweep } from "./scheduling/sweep";
 import { TaskWakes } from './scheduling/task-wakes';
 import { CompletionFollowUps } from './closeout/completion-follow-ups';
@@ -143,7 +145,7 @@ export class Engine {
 
   readonly prerequisiteReleases = new PrerequisiteReleases(schedulingContext(this, ['cleanContext', 'pendingPrerequisiteReleases', 'prerequisiteReleaseWork', 'refreshCheckoutSiblings', 'scheduleLane', 'stopped', 'store', 'wakeRepository', 'wakeTask']));
 
-  readonly taskQuantumOwner = new TaskQuantum(schedulingEngineContext(this, ['adapter', 'cleanContext', 'enqueueTitle', 'hooks', 'launchAgent', 'launchProofOnly', 'note', 'noteStepFailure', 'prerequisiteWaitYieldsToLiveWork', 'profileCatalogKnown', 'profiles', 'quantumFinish', 'quantumSteps', 'reconcile', 'reconcileClosedRetainedReviewer', 'recover', 'routeTask', 'settleFinishedRuns', 'settleHistoricalProofExecutions', 'settleRunBuildOutputs', 'settleSupersededIdleRuns', 'signoffDecisions', 'stopped', 'store', 'wakeRepository'], ['advance', 'beginValidationScanPass', 'holdProofOnlyGoWait', 'ownedToolHold', 'owns', 'raiseOperatorQuestions', 'reconcileHoldUntil', 'recordStop', 'recoverExternalMerge', 'recovery', 'resumeClearedAttention', 'settleBudgetClock']));
+  readonly taskQuantumOwner = new TaskQuantum(schedulingEngineContext(this, ['adapter', 'cleanContext', 'enqueueTitle', 'hooks', 'launchAgent', 'launchProofOnly', 'note', 'noteStepFailure', 'prerequisiteWaitYieldsToLiveWork', 'profileCatalogKnown', 'profiles', 'quantumFinish', 'quantumSteps', 'reconcile', 'reconcileBlockedEffects', 'reconcileClosedRetainedReviewer', 'recover', 'routeTask', 'settleFinishedRuns', 'settleHistoricalProofExecutions', 'settleRunBuildOutputs', 'settleSupersededIdleRuns', 'signoffDecisions', 'stopped', 'store', 'wakeRepository'], ['advance', 'beginValidationScanPass', 'holdProofOnlyGoWait', 'ownedToolHold', 'owns', 'raiseOperatorQuestions', 'reconcileHoldUntil', 'recordStop', 'recoverExternalMerge', 'recovery', 'resumeClearedAttention', 'settleBudgetClock']));
 
   readonly plannerGrantCleanup = new PlannerGrantCleanup(recoveryContext(this, ['adapter', 'host', 'signoffDecisions', 'store', 'withHost', 'hostAvailable']));
 
@@ -550,24 +552,38 @@ export class Engine {
     this.rebuildProfiles();
   }
   /**
-   * The routing snapshots from the catalogs last read and the stored profiles,
-   * with each host kind's mapping and exclusions applied (nucleus#1151). A
-   * Settings edit calls this so selection follows it at once; no host is read.
+   * One host's profile vocabulary table: the adapter's own (Tom, 2026-11-12). An
+   * adapter without one, a test double, speaks canonical values as they are.
    */
-  rebuildProfiles(): void {
-    const profiles = this.store.profiles(), providerMap = this.store.providerMap();
-    const primary = this.hostCatalogs.get(PRIMARY_CATALOG);
-    if (primary) this.profiles = routingProfiles(profiles, primary.catalog, providerMap, hostKindOf(this.primaryHostId));
-    for (const [id, read] of this.hostCatalogs)
-      if (id !== PRIMARY_CATALOG) this.hostProfiles.set(id, routingProfiles(profiles, read.catalog, providerMap, hostKindOf(id)));
+  vocabularyFor(id: string | undefined): HostVocabulary {
+    const selected = id ? this.resolveHostAdapter(id) : this.primaryAdapter;
+    const kind = hostKindOf(id);
+    return (selected ?? this.primaryAdapter).vocabulary ?? canonicalVocabulary(kind, HOST_KIND_LABELS[kind]);
   }
   /**
-   * Each stored profile on each known host (nucleus#1151): computed on read from
-   * the catalog Nucleus last read from that host, so a catalog change or a
-   * Settings edit shows at once. A host never read answers `unknown`.
+   * The routing snapshots from the catalogs last read and the stored canonical
+   * profiles, each translated with its host's table. A Settings edit calls this so
+   * selection follows it at once; no host is read.
+   */
+  rebuildProfiles(): void {
+    const profiles = this.store.profiles();
+    const primary = this.hostCatalogs.get(PRIMARY_CATALOG);
+    if (primary) this.profiles = routingProfiles(profiles, primary.catalog, this.primaryAdapter.vocabulary ?? this.vocabularyFor(this.primaryHostId));
+    for (const [id, read] of this.hostCatalogs)
+      if (id !== PRIMARY_CATALOG) this.hostProfiles.set(id, routingProfiles(profiles, read.catalog, this.vocabularyFor(id)));
+  }
+  /** Each secondary host's last catalog in canonical values, for Settings' profile form. */
+  secondaryCanonicalCatalogs(): HostCatalog[] {
+    return [...this.hostCatalogs].filter(([id]) => id !== PRIMARY_CATALOG && this.resolveHostAdapter(id) !== this.primaryAdapter)
+      .map(([id, read]) => canonicalCatalog(this.vocabularyFor(id), read.catalog));
+  }
+  /**
+   * Each stored profile on each known host: computed on read from the catalog
+   * Nucleus last read from that host and that host's table, so a catalog change or
+   * a Settings edit shows at once. A host never read answers `unknown`.
    */
   profileCompatibility(): { hosts: ProfileCompatibilityHost[]; rows: ProfileCompatibilityRow[] } {
-    const profiles = this.store.profiles(), providerMap = this.store.providerMap();
+    const profiles = this.store.profiles();
     const ids = [...new Set([...(this.primaryHostId ? [this.primaryHostId] : []), ...this.hostIds()])];
     const hosts: ProfileCompatibilityHost[] = [], rows: ProfileCompatibilityRow[] = [];
     for (const id of ids) {
@@ -575,11 +591,12 @@ export class Engine {
       const primary = id === this.primaryHostId || (selected !== undefined && selected === this.primaryAdapter);
       const read = this.hostCatalogs.get(primary ? PRIMARY_CATALOG : id) ?? null;
       const kind = hostKindOf(id);
-      hosts.push({ hostId: id, kind, label: HOST_KIND_LABELS[kind], online: this.hostOnline(id), readAt: read?.readAt ?? null, catalog: read?.catalog ?? null });
+      const vocabulary = primary ? this.primaryAdapter.vocabulary ?? this.vocabularyFor(id) : this.vocabularyFor(id);
+      hosts.push({ hostId: id, kind, label: vocabulary.label, online: this.hostOnline(id), readAt: read?.readAt ?? null });
       for (const profile of profiles) {
-        if (!read) { rows.push({ profileId: profile.id, hostId: id, status: "unknown", reason: `${HOST_KIND_LABELS[kind]}'s catalog has not been read yet`, mapped: [], launch: null }); continue; }
-        const answer = profileCompatibility(profile, read.catalog, providerMap, kind);
-        rows.push({ profileId: profile.id, hostId: id, status: answer.status, reason: answer.reason, mapped: answer.mapped, launch: answer.launch });
+        if (!read) { rows.push({ profileId: profile.id, hostId: id, status: "unknown", reason: `${vocabulary.label}'s catalog has not been read yet`, translated: [], launch: null }); continue; }
+        const answer = profileCompatibility(profile, read.catalog, vocabulary);
+        rows.push({ profileId: profile.id, hostId: id, status: answer.status, reason: answer.reason, translated: answer.translated, launch: answer.launch });
       }
     }
     return { hosts, rows };
@@ -1060,6 +1077,17 @@ export class Engine {
   settleTerminalIntentRuns(taskId: string): number { return this.runRelease.settleTerminalIntentRuns(taskId); }
   settleSupersededIdleRuns(taskId: string, detail: string): Promise<number> { return this.runRelease.settleSupersededIdleRuns(taskId, detail); }
   settleHistoricalProofExecutions(taskId: string, detail: string): Promise<number> { return this.runRelease.settleHistoricalProofExecutions(taskId, detail); }
+  /**
+   * Nucleus#1159: the ordinary pass observes before it gates. An uncertain
+   * host-effect control whose effect later evidence has answered is settled (and
+   * recorded), and a phase still blocked on an uncertain effect past its bound
+   * becomes attention with `retry_effect` suggested instead of a quiet wait.
+   */
+  reconcileBlockedEffects(taskId: string): void {
+    settleObservedHostEffectOperations(this.store, taskId);
+    const reason = blockedEffectAttentionReason(this.store, this.store.task(taskId));
+    if (reason) this.note(taskId, reason, 'classify');
+  }
   supersededIdleFence(run: Run): Promise<string | null> { return this.runRelease.supersededIdleFence(run); }
   ownedToolHold(agentId: string, runId?: string, taskId?: string): Promise<string | null> { return this.runRelease.ownedToolHold(agentId, runId, taskId); }
   observedRunLiveness(run: Run): Promise<boolean | null> { return this.runRelease.observedRunLiveness(run); }

@@ -14,7 +14,7 @@ import { plannerTicketKey } from '../core/dispatch/participant-tickets';
 import { digest } from '../core/store/store';
 import { t3Fake, threadProjection, STAMP } from './support/t3code-fake';
 import { storedT3Labels } from './support/t3code-labels';
-import { NUCLEUS_LABEL_KEYS } from '../shared/wire-labels';
+import { WIRE_LABEL_KEYS } from '../shared/wire-labels';
 import { createHost, createAdapter } from '../hosts/t3code';
 import { archiveFinishedThreads } from '../core/workspaces/thread-archive';
 import { HostPolicies } from '../core/host/host-policies';
@@ -405,6 +405,78 @@ async function taskWithReviewer(f: Fixture): Promise<{ taskId: string; head: str
   return { taskId, head, workerThreadId, workerRunId, reviewerThreadId, reviewerRun };
 }
 
+function releasedRecoveryRun(taskId: string, source: Run, agentId: string, runId = randomUUID()): Run {
+  return { ...source, id: runId, taskId, role: 'recovery', agentId, status: 'finished', released: true, active: false,
+    completion: { eventId: randomUUID(), taskId, runId, status: 'recovered', summary: 'Recovery action was accepted',
+      coordinatorAction: { verb: 'restart', reason: 'Synthetic recorded completion for settlement coverage' } } };
+}
+
+test('the sweep settles a recovery thread released from recorded completion without a callback report', async t => {
+  const f = await fixture(t);
+  try {
+    const { taskId, reviewerThreadId, reviewerRun } = await taskWithReviewer(f);
+    const projection = f.server.threads.get(reviewerThreadId)!;
+    projection.runs.push({ id: 'nightly-recovery-run-1', status: 'completed', startedAt: STAMP });
+    const recoveryRun = releasedRecoveryRun(taskId, reviewerRun, reviewerThreadId);
+    f.runtime.store.putRun(recoveryRun);
+
+    await f.runtime.engine.auditPass(false);
+
+    const settle = f.server.commands.find(command => command.type === 'thread.settle' && command.threadId === reviewerThreadId);
+    assert.equal(settle?.expectedLatestRunId, 'nightly-recovery-run-1', 'the sweep uses T3 projection RunId, not the Nucleus run id');
+    assert.equal(projection.thread.settledOverride, 'settled');
+  } finally { await f.close(); }
+});
+
+test('a support thread stays active during a later run and settles that run when it finishes', async t => {
+  const f = await fixture(t);
+  try {
+    const { taskId, reviewerThreadId, reviewerRun } = await taskWithReviewer(f);
+    const projection = f.server.threads.get(reviewerThreadId)!;
+    projection.runs.push({ id: 'nightly-recovery-run-1', status: 'completed', startedAt: STAMP });
+    f.runtime.store.putRun(releasedRecoveryRun(taskId, reviewerRun, reviewerThreadId));
+    await f.runtime.engine.auditPass(false);
+    assert.equal(projection.thread.settledOverride, 'settled');
+
+    projection.thread.settledOverride = 'active';
+    projection.runs.push({ id: 'nightly-recovery-run-2', status: 'running', startedAt: STAMP });
+    f.runtime.store.putRun(releasedRecoveryRun(taskId, reviewerRun, reviewerThreadId));
+    const before = f.server.commands.filter(command => command.type === 'thread.settle' && command.threadId === reviewerThreadId).length;
+    await f.runtime.engine.auditPass(false);
+    assert.equal(f.server.commands.filter(command => command.type === 'thread.settle' && command.threadId === reviewerThreadId).length, before,
+      'the active T3 run is never settled');
+    assert.equal(projection.thread.settledOverride, 'active');
+
+    projection.runs.at(-1)!.status = 'completed';
+    await f.runtime.engine.auditPass(false);
+    const settles = f.server.commands.filter(command => command.type === 'thread.settle' && command.threadId === reviewerThreadId);
+    assert.equal(settles.length, before + 1);
+    assert.equal(settles.at(-1)!.expectedLatestRunId, 'nightly-recovery-run-2');
+    assert.equal(projection.thread.settledOverride, 'settled');
+  } finally { await f.close(); }
+});
+
+test('a refused support settle records a task event and retries on the next sweep', async t => {
+  const f = await fixture(t);
+  try {
+    const { taskId, reviewerThreadId, reviewerRun } = await taskWithReviewer(f);
+    const projection = f.server.threads.get(reviewerThreadId)!;
+    projection.runs.push({ id: 'nightly-recovery-run-1', status: 'completed', startedAt: STAMP });
+    const recoveryRun = releasedRecoveryRun(taskId, reviewerRun, reviewerThreadId);
+    f.runtime.store.putRun(recoveryRun);
+    f.server.controls.refuseMutation = true;
+
+    await f.runtime.engine.auditPass(false);
+    assert.equal(projection.thread.settledOverride, null, 'the failed settle did not change T3');
+    assert.ok(f.runtime.store.events(taskId).some(event => event.kind === 'thread_settlement_warning'
+      && event.detail.includes(recoveryRun.id)), 'the task records why this settle failed');
+
+    f.server.controls.refuseMutation = false;
+    await f.runtime.engine.auditPass(false);
+    assert.equal(projection.thread.settledOverride, 'settled', 'the sweep reconciles the prior intent and settles on retry');
+  } finally { await f.close(); }
+});
+
 test('a T3-bound reviewer checkpoint auto-continues on the T3 host (#226)', async t => {
   const f = await fixture(t);
   try {
@@ -731,7 +803,7 @@ test('a task that finished before this rule is cleaned up by the next sweep, exa
     // retained recovery thread carries nucleus.role=recovery. IDs are synthetic.
     const workerLabels = f.host.state.read().agents[workerThreadId]!.labels;
     assert.deepEqual(workerLabels, storedT3Labels('worker', { taskId, runId: current.runId! }));
-    assert.equal(Object.hasOwn(workerLabels, NUCLEUS_LABEL_KEYS.role), false);
+    assert.equal(Object.hasOwn(workerLabels, WIRE_LABEL_KEYS.role), false);
     const recoveryRunId = randomUUID();
     const recoveryLabels = storedT3Labels('recovery', { taskId, runId: recoveryRunId });
     const recovery = await f.host.createAgent({ workspaceId: current.workspaceId!, profile: current.profile!,
@@ -743,7 +815,7 @@ test('a task that finished before this rule is cleaned up by the next sweep, exa
       completion: { taskId, runId: recoveryRunId, eventId: randomUUID(), status: 'recovered', head, summary: 'Recovery applied' } });
     await f.host.settleReportedThread(recovery.id, recoveryRunId);
     assert.deepEqual(f.host.state.read().agents[recovery.id]!.labels, recoveryLabels);
-    assert.equal(recoveryLabels[NUCLEUS_LABEL_KEYS.role], 'recovery');
+    assert.equal(recoveryLabels[WIRE_LABEL_KEYS.role], 'recovery');
     const verdict = { taskId, runId: reviewerRun.id, eventId: randomUUID(), status: 'ready_to_merge' as const,
       head, summary: 'Approved', reviewText: 'The reviewed change meets the brief.' };
     f.runtime.store.putRun({ ...reviewerRun, status: 'finished', active: false, released: true, completion: verdict });

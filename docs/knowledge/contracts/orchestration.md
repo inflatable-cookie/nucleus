@@ -1058,18 +1058,20 @@ request identities and submitted handoffs are not rewritten.
 ### Profile selection
 
 - Nucleus keeps its own profile list ([Spec 052](../specs/052-usage-level.md),
-  Tom, 2026-11-06/07): durable records with id, name, normalised provider, model,
-  mode, thinking option, feature values and notes. `profile.list`,
-  `profile.create`, `profile.update`, `profile.remove`, `profile.providers`,
-  `profile.providers.set`, `profile.compatibility` and `host.catalog` are the surface
+  Tom, 2026-11-06/07): durable records with id, name, provider, model, mode,
+  thinking level, feature values and notes, all in one canonical vocabulary
+  (`shared/profile-vocabulary.ts`, task 1158). `profile.list`, `profile.create`,
+  `profile.update`, `profile.remove`, `profile.vocabulary`,
+  `profile.compatibility` and `host.catalog` are the surface
   (`shared/profiles.ts`, `shared/host.ts`, `core/planning/profile-import.ts`). Each host
-  reports its own catalog; the provider map normalises its keys, identity by
-  default, and Settings → Profiles edits it beside the list. A profile's
-  per-host-kind setting maps or excludes it on one host (nucleus#1151); each
-  host's routing snapshot carries that host's launch values (the host's own
-  provider key included), and a task's `routingPolicy` (on `queue.detail` and
-  `next`, both read against the task host's snapshot) lists the enabled pool
-  profiles its host rules out or maps (`host.effects`) and how automatic worker
+  reports its own catalog in its own spelling, and its adapter owns one
+  translation table from the canonical vocabulary (`hosts/<host>/vocabulary.ts`);
+  nothing is mapped per profile. Each host's routing snapshot carries the values
+  its table translates to (the host's own provider key included), and a value a
+  table can't express makes the profile unavailable there with the reason. A
+  task's `routingPolicy` (on `queue.detail` and `next`, both read against the
+  task host's snapshot) lists the enabled pool profiles its host rules out or
+  translates (`host.effects`) and how automatic worker
   selection reads now (`selection`: complexity, role and usage offsets, the
   first-attempt step, the demand, the profiles meeting it ordered by recent use
   over effective weight, and why the leader wins). An earlier migration
@@ -2033,7 +2035,9 @@ movement invalidates source approval and preserves the normal readiness gates.
   a total run count at one head does not distinguish those useful rounds.
 - A pending check is re-observed every minute at the same head and yields the
   integration turn; when checks settle, Nucleus reacquires a turn and reruns every
-  gate. An overdue check raises one attention episode.
+  gate. An overdue check gets one coordinator recovery look per check and head,
+  then remains a visible wait. A queued job still without a runner after an hour
+  raises planner attention once; repeats do not reopen recovery.
 - A QUEUED check stays a pending poll. A CANCELLED check is infrastructure only
   with positive pre-run evidence (empty Actions step list or a
   runner-acquisition annotation); the first proven runnerless cancellation
@@ -2352,8 +2356,10 @@ movement invalidates source approval and preserves the normal readiness gates.
 - An escalation is answered by the owner's next verb; when nothing else
   applies, an owner `restart` answers it with its `reason`. A coordinator's
   restart never does.
-- `restart` replays validation for a settled pre-dispatch task with only
-  released recovery history. A parked restart's refusal is definite at
+- `restart` replays validation for a settled pre-dispatch task: no unreleased run,
+  live worker, worker intent, or PR. Released run history of any role does not block
+  it, and validation retry applies the same rule the restart shape uses (nucleus#1147,
+  #1163). A parked restart's refusal is definite at
   read-only verification; uncertain delivery still fences the control
   ([Spec 012](../specs/012-durable-asynchronous-operations.md)).
 - A `restart`, `route` or `move` whose launch is fenced or deferred names the

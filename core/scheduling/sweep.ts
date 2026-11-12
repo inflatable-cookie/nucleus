@@ -7,6 +7,7 @@ import { isDispositionActive } from "../../shared/contracts";
 import type { ReconciliationSweep } from "../../shared/telemetry";
 import type { AgentObservation } from "../host/adapter";
 import { catchUpFinishedTaskThreads, finishedThreadCleanupCatchUp, removesThreads } from '../workspaces/thread-archive';
+import { sanitizeHostFailureReason } from "../host";
 import { reapHookCheckouts } from "../hooks/hook-cleanup";
 import { removeTaskProofFiles } from "../intake/proof-files";
 import { pruneLiveDataHomeBackupCopies } from "../store/data-home-retention";
@@ -29,9 +30,54 @@ const DEFERRED_SWEEP_EVERY = 5;
 const MAX_SWEEP_WINDOWS = 400;
 type DrainWaiter = { resolve: () => void; reject: (error: Error) => void };
 
+function threadSettlementFailureReason(error: unknown): string {
+  if (!(error instanceof Error)) return 'unknown error';
+  const record = error as Error & { reason?: unknown; diagnostic?: { reason?: unknown } };
+  const reason = sanitizeHostFailureReason(record.reason ?? record.diagnostic?.reason);
+  return `${error.name}${reason ? `: ${reason}` : ''}`;
+}
+
 export type SweepContext = Pick<Engine, 'adapter' | 'applyDeferredOwnerVerbs' | 'archivePlannerGrants' | 'archiveRetiredErroredAgents' | 'auditPass' | 'clearRetiredInvalidations' | 'continueAwaitingReviewers' | 'dispatchQueued' | 'dispositionDeps' | 'drainProjections' | 'drainWaiters' | 'enqueueTitle' | 'ensureSweep' | 'flushPrerequisiteReleases' | 'host' | 'hostAvailable' | 'hostIds' | 'inventoryHostMatches' | 'lastHookCleanupAt' | 'lifecycle' | 'maxSweepWindows' | 'migrateProjectOwnersToPlanners' | 'noteStepFailure' | 'observeRetiredWorkers' | 'quiesce' | 'reconcile' | 'recoverExhaustedWorkers' | 'removeSiblings' | 'resumePausedStops' | 'retiredObservationKey' | 'retiredObservationPlan' | 'scheduleLane' | 'scheduleLifecycleFollowUp' | 'scheduleTaskQuantum' | 'settleQuiesce' | 'startSweepChain' | 'stopped' | 'store' | 'sweepChain' | 'sweepCursor' | 'sweepDeferred' | 'sweepDeferredCursor' | 'sweepMode' | 'sweepOrder' | 'sweepPending' | 'sweepStats' | 'sweepTicks' | 'taskHostAvailable' | 'wakeCapacityWaiter' | 'wakePreludes' | 'withHost'> & { readonly resolution: Pick<Resolution, 'checkpoints' | 'delegateNativeQuestions' | 'deliverDecisionNotices' | 'deliverDrainNotices' | 'deliverHoldNotices' | 'deliverNotices' | 'deliverQueuedMessages' | 'observationTargets' | 'observe' | 'origins' | 'raiseOperatorQuestions' | 'recovery' | 'resumeAskQuestions' | 'resumeResponsibleAnsweredQuestions' | 'settleBudgetClock'> };
 
 export class Sweep {
+  /**
+   * Thread settlement is a sweep invariant, not a callback side effect. Reports
+   * are only one way a run finishes; recorded-completion release and other
+   * owner paths must settle the same retained T3 thread too.
+   */
+  private async settleFinishedT3Threads(hostId: string): Promise<void> {
+    const adapter = this.engine.adapter;
+    const settleSupport = adapter.settleReportedThread;
+    const settleWorker = adapter.settleWorkerThread;
+    if (!settleSupport && !settleWorker) return;
+    const reviewPhases = new Set(['awaiting_review', 'report_ready', 'reviewing', 'changes_requested', 'verifying', 'merging', 'syncing', 'closing', 'done']);
+    const supportRoles = new Set(['reviewer', 'recovery', 'coordinator', 'decider', 'executor']);
+    for (const task of this.engine.store.tasks()) {
+      if (task.hostId !== hostId || task.removedAt != null) continue;
+      const runs = this.engine.store.runs(task.id);
+      for (const run of runs) {
+        if (run.hostId !== hostId || !run.agentId || (!run.released && !run.completion)) continue;
+        const settle = run.role === 'revision' && reviewPhases.has(task.phase)
+          ? settleWorker : supportRoles.has(run.role) ? settleSupport : undefined;
+        if (!settle) continue;
+        try { await settle.call(adapter, run.agentId, run.id); }
+        catch (error) {
+          this.engine.store.event(task.id, 'thread_settlement_warning',
+            `${run.role} thread ${run.agentId} settle for run ${run.id} failed: ${threadSettlementFailureReason(error)}`.slice(0, 4000));
+        }
+      }
+      // The initial worker run predates the role run ledger on legacy tasks.
+      // The task only reaches these phases after its handover was accepted.
+      if (settleWorker && reviewPhases.has(task.phase) && task.agentId && task.runId && !runs.some(run => run.id === task.runId)) {
+        try { await settleWorker.call(adapter, task.agentId, task.runId); }
+        catch (error) {
+          this.engine.store.event(task.id, 'thread_settlement_warning',
+            `worker thread ${task.agentId} settle for run ${task.runId} failed: ${threadSettlementFailureReason(error)}`.slice(0, 4000));
+        }
+      }
+    }
+  }
+
   /**
    * A task quantum that outlived its bound is that task's observation outage: the
    * sweep moved on, the task's lane stays held by the running quantum, and the
@@ -208,6 +254,8 @@ export class Sweep {
       for (const host of hosts) await this.engine.withHost(host, async () => {
         if (!this.engine.hostAvailable(host)) return;
         try { await this.engine.adapter.reconcileReportedSettlements?.(); } catch { /* durable host intents remain for the next sweep */ }
+        try { await this.settleFinishedT3Threads(host); } catch { /* one host's settlement pass never stalls the fleet sweep */ }
+        try { await this.engine.adapter.reconcileThreadTitles?.(this.engine.store.tasks().filter(task => task.hostId === host)); } catch { /* title intents remain for the next sweep */ }
         const retiredPlan = this.engine.retiredObservationPlan();
         const inventoryIds = [...new Set([...retiredPlan.due, ...this.engine.resolution.observationTargets()])];
         let observed: ReadonlyMap<string, AgentObservation> | null = null;

@@ -2,7 +2,7 @@ import { defineRpc } from "../rpc";
 import { telemetryFilterSchema, telemetrySnapshotSchema } from "../telemetry";
 import { z } from "zod";
 import { capacityAuthorityStateSchema, capacitySchema, demandRoleOffsetsSchema, poolRecordFromLegacy, poolSchema, routingGrantViewSchema, usageLevelSchema, usageViewSchema } from "../schema/settings";
-import { nucleusProfileInputSchema, nucleusProfileSchema, nucleusProfileUpdateSchema, providerMapSchema } from "../profiles";
+import { nucleusProfileInputSchema, nucleusProfileSchema, nucleusProfileUpdateSchema } from "../profiles";
 import { hostCatalogSchema, storedHostCatalogSchema } from "../host";
 import { hostKindSchema } from "../host-kind";
 import { availabilityMarkSchema } from "../schema/state";
@@ -24,38 +24,38 @@ export const updateNucleusProfile = defineRpc({ name: "profile.update", input: n
 
 export const removeNucleusProfile = defineRpc({ name: "profile.remove", input: z.object({ id: z.string().min(1).max(240) }).strict(), output: z.object({ removed: z.boolean() }) });
 
-/** The host provider key to normalised key map a profile's provider is read through. */
-export const readProviderMap = defineRpc({ name: "profile.providers", input: z.object({}).strict(), output: z.object({ providers: providerMapSchema }) });
-
-/**
- * Replace that map from Settings' small editor; `{}` is identity, which is what
- * Paseo's own keys are, so a host only needs an entry when it spells a provider
- * differently (Tom, 2026-11-07).
- */
-export const writeProviderMap = defineRpc({ name: "profile.providers.set", input: z.object({ providers: providerMapSchema }).strict(), output: z.object({ providers: providerMapSchema }) });
-
 /** The host catalog: every provider it reports, with models, thinking options, modes and features. */
 export const readHostCatalog = defineRpc({ name: "host.catalog", input: z.object({ cwd: z.string().min(1).max(4000).optional(), refresh: z.boolean().optional() }).strict(), output: storedHostCatalogSchema });
 
 /**
- * Each profile on each registered host (nucleus#1151): works or not, the host's
- * reason, the fields the operator mapped, and the values a launch there sends.
- * Computed from the catalog Nucleus last read from that host and the stored
- * profiles, so it follows a catalog change and a Settings edit at once. A host
- * whose catalog was never read answers `unknown`. Each host's catalog rides along
- * so Settings' mapping editor offers that host's own providers, models and modes.
+ * Settings' profile form choices (task 1158): every registered host's catalog in
+ * Nucleus's canonical vocabulary, merged, so each dropdown offers what at least
+ * one host can run. Providers, thinking levels and modes are canonical; models are
+ * the provider's own ids; features are the provider's own options, less those a
+ * host's table uses to carry thinking or a mode. `cwd` and `refresh` read the
+ * primary host as `host.catalog` does.
+ */
+export const readProfileVocabulary = defineRpc({ name: "profile.vocabulary", input: z.object({ cwd: z.string().min(1).max(4000).optional(), refresh: z.boolean().optional() }).strict(), output: storedHostCatalogSchema });
+
+/**
+ * Each profile on each registered host (nucleus#1151, task 1158): works or not,
+ * the host's reason, the fields that host's table spells differently, and the
+ * values a launch there sends. Computed from the catalog Nucleus last read from
+ * that host, its adapter's translation table and the stored canonical profiles,
+ * so it follows a catalog change and a Settings edit at once. A host whose
+ * catalog was never read answers `unknown`.
  */
 export const profileCompatibilityRowSchema = z.object({
   profileId: z.string(), hostId: z.string(),
-  status: z.enum(["works", "unavailable", "excluded", "unknown"]),
+  status: z.enum(["works", "unavailable", "unknown"]),
   reason: z.string(),
-  mapped: z.array(z.string()),
+  translated: z.array(z.string()),
   launch: z.object({ provider: z.string(), model: z.string(), modeId: z.string().optional(), thinkingOptionId: z.string().optional(), featureValues: z.record(z.string(), z.unknown()).optional() }).strict().nullable(),
 }).strict();
 export type ProfileCompatibilityRow = z.infer<typeof profileCompatibilityRowSchema>;
 export const profileCompatibilityHostSchema = z.object({
   hostId: z.string(), kind: hostKindSchema, label: z.string(), online: z.boolean(),
-  readAt: z.string().nullable(), catalog: hostCatalogSchema.nullable(),
+  readAt: z.string().nullable(),
 }).strict();
 export type ProfileCompatibilityHost = z.infer<typeof profileCompatibilityHostSchema>;
 export const readProfileCompatibility = defineRpc({ name: "profile.compatibility", input: z.object({}).strict(),

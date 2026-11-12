@@ -4,14 +4,14 @@ import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { PluginRpcProvider } from '@getpaseo/plugin/client/host';
 import { mount, useNativeStubs } from './support/render';
-import { providerMapSuggestions, type NucleusProfile, type ProviderMap } from '../shared/profiles';
-import type { HostCatalog, StoredHostCatalog } from '../shared/host';
+import type { NucleusProfile } from '../shared/profiles';
+import type { StoredHostCatalog } from '../shared/host';
 
 /**
  * Spec 052, step 2 of the Paseo split: Settings' Profiles section creates and
- * edits Nucleus's own profiles from what the host reports, shows each one's
- * availability on this host with its plain reason, and edits the provider map.
- * Routing uses the stored profiles.
+ * edits Nucleus's own profiles from the canonical vocabulary every registered
+ * host's catalog converges on (`profile.vocabulary`, task 1158), and shows each
+ * one's availability with its plain reason. Routing uses the stored profiles.
  */
 
 useNativeStubs();
@@ -34,29 +34,29 @@ async function settle(probe: () => boolean) {
   assert.fail('the profiles panel did not settle');
 }
 
-/** The host's report as Nucleus stored it: two available providers with models, modes, thinking and features. */
+/** The form's vocabulary as `profile.vocabulary` answers it: two available providers with models, modes, thinking and features. */
 const catalog: StoredHostCatalog = {
   readAt: '2026-11-09T09:00:00.000Z',
   providers: [
     {
-      key: 'openai', label: 'OpenAI', available: true, problem: '',
+      key: 'codex', label: 'Codex', available: true, problem: '',
       models: [
         {
           id: 'gpt-5', label: 'GPT-5', aliases: ['gpt-5-latest'],
           thinkingOptions: [{ id: 'low', label: 'Low' }, { id: 'high', label: 'High', isDefault: true }],
           defaultThinkingOptionId: 'high',
-          modes: [{ id: 'agent', label: 'Agent', description: 'Full agent work' }, { id: 'plan', label: 'Plan' }],
+          modes: [{ id: 'auto', label: 'Auto', description: 'Full agent work' }, { id: 'plan', label: 'Plan' }],
           features: [
             { type: 'toggle', id: 'web', label: 'Web search', value: false },
             { type: 'select', id: 'permissions', label: 'Permissions', value: 'ask', options: [{ id: 'ask', label: 'Ask' }, { id: 'allow', label: 'Allow', isDefault: true }] },
           ],
         },
-        { id: 'gpt-5-mini', label: 'GPT-5 mini', aliases: [], thinkingOptions: [], defaultThinkingOptionId: null, modes: [{ id: 'agent', label: 'Agent' }], features: [] },
+        { id: 'gpt-5-mini', label: 'GPT-5 mini', aliases: [], thinkingOptions: [], defaultThinkingOptionId: null, modes: [{ id: 'auto', label: 'Auto' }], features: [] },
       ],
     },
     {
-      key: 'openai-codex', label: 'Codex', available: true, problem: '',
-      models: [{ id: 'codex-1', label: 'Codex 1', aliases: [], thinkingOptions: [], defaultThinkingOptionId: null, modes: [], features: [] }],
+      key: 'claude', label: 'Claude', available: true, problem: '',
+      models: [{ id: 'claude-1', label: 'Claude 1', aliases: [], thinkingOptions: [], defaultThinkingOptionId: null, modes: [], features: [] }],
     },
     {
       key: 'cursor', label: 'Cursor', available: false, problem: 'Sign in required to use Cursor.',
@@ -82,13 +82,13 @@ const board = () => ({
 
 interface Fixture {
   profiles: NucleusProfile[];
-  providerMap: ProviderMap;
   creates: unknown[];
   updates: unknown[];
   removes: unknown[];
-  mapWrites: ProviderMap[];
   catalogReads: { cwd?: string; refresh?: boolean }[];
-  /** Answers `host.catalog` instead of the fixed catalog when set. */
+  /** `profile.compatibility`'s answer; no hosts when unset. */
+  compatibility?: { hosts: unknown[]; rows: unknown[] };
+  /** Answers `profile.vocabulary` instead of the fixed catalog when set. */
   catalogAnswer?: (input: { cwd?: string; refresh?: boolean }) => Promise<unknown>;
 }
 
@@ -98,13 +98,8 @@ function screenTree(fixture: Fixture, compact = false) {
     if (method === 'backup.list') return { snapshots: [], localError: null };
     if (method === 'repositories') return [{ repository: { origin: 'acme/app', path: '/app' }, closeout: null, validation: null, reviewer: null, qa: null, note: '', updatedAt: '2026-11-07T00:00:00.000Z', revision: 1 }];
     if (method === 'profile.list') return { profiles: fixture.profiles };
-    if (method === 'profile.providers') return { providers: fixture.providerMap };
-    if (method === 'profile.providers.set') {
-      fixture.providerMap = (input as { providers: ProviderMap }).providers;
-      fixture.mapWrites.push(fixture.providerMap);
-      return { providers: fixture.providerMap };
-    }
-    if (method === 'host.catalog') {
+    if (method === 'profile.compatibility') return fixture.compatibility ?? { hosts: [], rows: [] };
+    if (method === 'profile.vocabulary') {
       fixture.catalogReads.push(input as { cwd?: string });
       return fixture.catalogAnswer ? fixture.catalogAnswer(input as { cwd?: string; refresh?: boolean }) : catalog;
     }
@@ -141,7 +136,7 @@ function screenTree(fixture: Fixture, compact = false) {
   });
 }
 
-const fixture = (): Fixture => ({ profiles: [imported()], providerMap: {}, creates: [], updates: [], removes: [], mapWrites: [], catalogReads: [] });
+const fixture = (): Fixture => ({ profiles: [imported()], creates: [], updates: [], removes: [], catalogReads: [] });
 
 test('Settings Profiles creates a profile from the host catalog and shows the unavailable one with its reason', async () => {
   await load();
@@ -167,11 +162,11 @@ test('Settings Profiles creates a profile from the host catalog and shows the un
     assert.equal(ui.query('Create profile'), undefined);
     assert.equal(ui.query('Save'), undefined);
     ui.type('Name', 'Fast worker');
-    choose(ui, 'Provider', 'OpenAI', 'Choose a provider');
+    choose(ui, 'Provider', 'Codex', 'Choose a provider');
     choose(ui, 'Model', 'GPT-5', 'Choose a model');
     await settle(() => state.creates.length === 1);
     assert.deepEqual(state.creates[0], {
-      name: 'Fast worker', provider: 'openai', model: 'gpt-5',
+      name: 'Fast worker', provider: 'codex', model: 'gpt-5',
       thinkingOptionId: 'high', featureValues: { web: false, permissions: 'ask' },
     });
     assert.equal(Object.prototype.hasOwnProperty.call(state.creates[0] as object, 'notes'), false, 'notes stay stored and unsent');
@@ -220,8 +215,7 @@ test('Settings Profiles keeps a draft on a refused save and names the reason', a
         if (method === 'backup.list') return { snapshots: [], localError: null };
         if (method === 'repositories') return [{ repository: { origin: 'acme/app', path: '/app' }, closeout: null, validation: null, reviewer: null, qa: null, note: '', updatedAt: '2026-11-07T00:00:00.000Z', revision: 1 }];
         if (method === 'profile.list') return { profiles: state.profiles };
-        if (method === 'profile.providers') return { providers: state.providerMap };
-        if (method === 'host.catalog') return catalog;
+        if (method === 'profile.vocabulary') return catalog;
         return {};
       },
       children: h(settings.QueueSettingsScreen as never, {
@@ -237,8 +231,8 @@ test('Settings Profiles keeps a draft on a refused save and names the reason', a
     await settle(() => Boolean(ui.query('Close new profile')) && Boolean(ui.query('Provider, Choose a provider')));
     ui.type('Name', 'Doomed');
     ui.press('Provider, Choose a provider');
-    await settle(() => Boolean(ui.query('Provider: OpenAI')));
-    ui.press('Provider: OpenAI');
+    await settle(() => Boolean(ui.query('Provider: Codex')));
+    ui.press('Provider: Codex');
     await settle(() => Boolean(ui.query('Model, Choose a model')));
     choose(ui, 'Model', 'GPT-5', 'Choose a model');
     await settle(() => /Not saved: the profile store is unavailable/.test(ui.text()));
@@ -301,8 +295,7 @@ test('Profiles shows loading, an empty list, a catalog error, and long names wit
         if (method === 'queue.ui-snapshot') return board();
         if (method === 'backup.list') return { snapshots: [], localError: null };
         if (method === 'profile.list') return pending;
-        if (method === 'profile.providers') return { providers: {} };
-        if (method === 'host.catalog') return catalog;
+        if (method === 'profile.vocabulary') return catalog;
         if (method === 'repositories') return [];
         return {};
       },
@@ -317,7 +310,7 @@ test('Profiles shows loading, an empty list, a catalog error, and long names wit
     await settle(() => loading.text().includes('Reading profiles…'));
     assert.equal(loading.get('Stored profiles').props.style.borderBottomWidth, 1, 'a loading line keeps the section divider');
     resolveList!({ profiles: [] });
-    await settle(() => loading.text().includes('No profiles yet. Add one from what this host can run.'));
+    await settle(() => loading.text().includes('No profiles yet. Add one from what your hosts can run.'));
     assert.equal(loading.get('Stored profiles').props.style.borderBottomWidth, 1, 'an empty line keeps the section divider');
   } finally { loading.update(h('View', null)); }
 
@@ -328,8 +321,7 @@ test('Profiles shows loading, an empty list, a catalog error, and long names wit
         if (method === 'queue.ui-snapshot') return board();
         if (method === 'backup.list') return { snapshots: [], localError: null };
         if (method === 'profile.list') throw new Error('profile store offline');
-        if (method === 'host.catalog') throw new Error('catalog offline');
-        if (method === 'profile.providers') return { providers: {} };
+        if (method === 'profile.vocabulary') throw new Error('catalog offline');
         return {};
       },
       children: h(settings.QueueSettingsScreen as never, {
@@ -341,13 +333,13 @@ test('Profiles shows loading, an empty list, a catalog error, and long names wit
     await settle(() => failed.text().includes('Profiles'));
     failed.press('Profiles');
     await settle(() => failed.text().includes('Could not read profiles: profile store offline'));
-    assert.match(failed.text(), /The host catalog could not be read: catalog offline/);
+    assert.match(failed.text(), /The providers and models could not be read: catalog offline/);
     assert.equal(failed.get('Stored profiles').props.style.borderBottomWidth, 1, 'an unreadable list with no rows keeps the section divider');
   } finally { failed.update(h('View', null)); }
 
   const longName = 'A very long profile name that would otherwise truncate across a narrow settings column';
   const long = fixture();
-  long.profiles = [{ id: 'long', name: longName, provider: 'openai', model: 'gpt-5', notes: 'secret', featureValues: undefined } as NucleusProfile];
+  long.profiles = [{ id: 'long', name: longName, provider: 'codex', model: 'gpt-5', notes: 'secret', featureValues: undefined } as NucleusProfile];
   const ui = mount(screenTree(long));
   try {
     await settle(() => ui.text().includes('Profiles'));
@@ -361,7 +353,7 @@ test('Profiles shows loading, an empty list, a catalog error, and long names wit
     ui.press(`Edit ${longName}`);
     await settle(() => Boolean(ui.query('Name')));
     assert.equal(ui.query('Notes'), undefined);
-    assert.ok(ui.get('Provider, OpenAI'));
+    assert.ok(ui.get('Provider, Codex'));
     assert.ok(ui.get('Model, GPT-5'));
   } finally { ui.update(h('View', null)); }
 });
@@ -371,7 +363,7 @@ test('nucleus#998: Profiles and Subscriptions are separated by a gap, not a seco
   const longName = 'A very long profile name that keeps going so the last row wraps on a narrow settings column';
   for (const compact of [false, true]) {
     const state = fixture();
-    state.profiles = [imported(), { id: 'long', name: longName, provider: 'openai', model: 'gpt-5', featureValues: undefined } as NucleusProfile];
+    state.profiles = [imported(), { id: 'long', name: longName, provider: 'codex', model: 'gpt-5', featureValues: undefined } as NucleusProfile];
     const ui = mount(screenTree(state, compact));
     try {
       await settle(() => ui.text().includes('Profiles'));
@@ -385,10 +377,9 @@ test('nucleus#998: Profiles and Subscriptions are separated by a gap, not a seco
   }
 });
 
-test('nucleus#998: Subscriptions ending in group rows drop the line above the provider map', async () => {
+test('nucleus#998: Subscriptions ending in group rows is the last section, with no divider', async () => {
   await load();
   const state = fixture();
-  state.providerMap = { 'openai-codex': 'openai' };
   const ui = mount(h(QueryClientProvider, {
     client: new QueryClient({ defaultOptions: { queries: { retry: false } } }),
     children: h(PluginRpcProvider, {
@@ -404,10 +395,9 @@ test('nucleus#998: Subscriptions ending in group rows drop the line above the pr
   try {
     await settle(() => ui.text().includes('Profiles'));
     ui.press('Profiles');
-    await settle(() => Boolean(ui.query('Provider map')) && ui.text().includes('anthropic'));
-    assert.equal(ui.get('Subscriptions').props.style.borderBottomWidth, 0);
-    assert.equal(ui.get('Subscriptions').props.style.paddingBottom, 24);
-    assert.equal(ui.get('Provider map').props.style.borderBottomWidth, 0, 'the last section has no divider');
+    await settle(() => ui.text().includes('anthropic'));
+    assert.equal(ui.get('Subscriptions').props.style.borderBottomWidth, 0, 'the last section has no divider');
+    assert.equal(ui.query('Provider map'), undefined, 'the provider map is retired (task 1158)');
   } finally { ui.update(h('View', null)); }
 });
 
@@ -417,7 +407,7 @@ test('when registered projects disagree on feature values, Profiles names the pr
   const other: StoredHostCatalog = {
     readAt: '2026-11-09T09:00:00.000Z',
     providers: [{
-      key: 'openai', label: 'OpenAI', available: true, problem: '',
+      key: 'codex', label: 'Codex', available: true, problem: '',
       models: [{
         id: 'gpt-5', label: 'GPT-5', aliases: [],
         thinkingOptions: [{ id: 'low', label: 'Low' }],
@@ -444,8 +434,7 @@ test('when registered projects disagree on feature values, Profiles names the pr
           { repository: { origin: 'acme/other', path: '/other' }, closeout: null, validation: null, reviewer: null, qa: null, note: '', updatedAt: '2026-11-07T00:00:00.000Z', revision: 1 },
         ];
         if (method === 'profile.list') return { profiles: state.profiles };
-        if (method === 'profile.providers') return { providers: {} };
-        if (method === 'host.catalog') {
+        if (method === 'profile.vocabulary') {
           const cwd = (input as { cwd?: string }).cwd;
           return cwd === '/other' ? other : catalog;
         }
@@ -462,7 +451,7 @@ test('when registered projects disagree on feature values, Profiles names the pr
     await settle(() => ui.text().includes('Imported Sol'));
     ui.press('Add profile');
     await settle(() => Boolean(ui.query('Provider, Choose a provider')));
-    choose(ui, 'Provider', 'OpenAI', 'Choose a provider');
+    choose(ui, 'Provider', 'Codex', 'Choose a provider');
     choose(ui, 'Model', 'GPT-5', 'Choose a model');
     await settle(() => /Feature values differ for App and Other/.test(ui.text()) || /Feature values differ for Other and App/.test(ui.text()));
     assert.doesNotMatch(ui.text(), /\/app|\/other/);
@@ -484,7 +473,7 @@ test('removing a profile added this session leaves no ghost row', async () => {
     ui.press('Add profile');
     await settle(() => Boolean(ui.query('Close new profile')) && Boolean(ui.query('Provider, Choose a provider')));
     ui.type('Name', 'Fast worker');
-    choose(ui, 'Provider', 'OpenAI', 'Choose a provider');
+    choose(ui, 'Provider', 'Codex', 'Choose a provider');
     choose(ui, 'Model', 'GPT-5', 'Choose a model');
     await settle(() => state.creates.length === 1 && Boolean(ui.query('Close Fast worker') || ui.query('Edit Fast worker')));
     if (ui.query('Edit Fast worker')) ui.press('Edit Fast worker');
@@ -544,6 +533,8 @@ for (const compact of [false, true]) test(`nucleus#999: Profiles uses the shared
 test('a refused Remove or Duplicate names the reason and keeps the profile', async () => {
   await load();
   const state = fixture();
+  // A canonical profile, so the duplicate passes the form's own check and reaches the store.
+  state.profiles = [{ ...imported(), provider: 'codex', model: 'gpt-5' }];
   let failRemove = true;
   let failDuplicate = true;
   const ui = mount(h(QueryClientProvider, {
@@ -556,8 +547,7 @@ test('a refused Remove or Duplicate names the reason and keeps the profile', asy
         if (method === 'backup.list') return { snapshots: [], localError: null };
         if (method === 'repositories') return [{ repository: { origin: 'acme/app', path: '/app' }, closeout: null, validation: null, reviewer: null, qa: null, note: '', updatedAt: '2026-11-07T00:00:00.000Z', revision: 1 }];
         if (method === 'profile.list') return { profiles: state.profiles };
-        if (method === 'profile.providers') return { providers: state.providerMap };
-        if (method === 'host.catalog') return catalog;
+        if (method === 'profile.vocabulary') return catalog;
         if (method === 'profile.create') {
           state.creates.push(input);
           const profile = { ...(input as NucleusProfile), id: 'created-1', model: (input as NucleusProfile).model ?? '', notes: (input as NucleusProfile).notes ?? '' };
@@ -597,102 +587,29 @@ test('a refused Remove or Duplicate names the reason and keeps the profile', asy
 });
 
 
-/** A second host that offers OpenAI's models under its own key, and Anthropic's `opus` under `claude`. */
-const second: HostCatalog = {
-  providers: [
-    { key: 'claude', label: 'Claude', available: true, problem: '', models: [{ id: 'opus', label: 'Opus', aliases: [], thinkingOptions: [], defaultThinkingOptionId: null, modes: [], features: [] }] },
-    { key: 'oai', label: 'OpenAI', available: true, problem: '', models: [{ id: 'gpt-5', label: 'GPT-5', aliases: [], thinkingOptions: [], defaultThinkingOptionId: null, modes: [], features: [] }] },
-  ],
-};
-const noMatch: HostCatalog = { providers: [{ key: 'gemini', label: 'Gemini', available: true, problem: '', models: [{ id: 'gemini-3', label: 'Gemini 3', aliases: [], thinkingOptions: [], defaultThinkingOptionId: null, modes: [], features: [] }] }] };
-
-test('provider map suggestions need a second host offering the model under another key', () => {
-  const profiles = [{ name: 'Sol', provider: 'anthropic', model: 'opus' }, { name: 'Fast', provider: 'openai', model: 'gpt-5' }];
-  assert.deepEqual(providerMapSuggestions([{ id: 'paseo', catalog }], profiles), [], 'one host suggests nothing');
-  assert.deepEqual(providerMapSuggestions([{ id: 'paseo', catalog }, { id: 'other', catalog: noMatch }], profiles), [], 'no model match suggests nothing');
-  assert.deepEqual(providerMapSuggestions([{ id: 'paseo', catalog }, { id: 'other', catalog: second }], profiles), [
-    { hostId: 'other', hostKey: 'claude', normalised: 'anthropic', profileName: 'Sol' },
-    { hostId: 'other', hostKey: 'oai', normalised: 'openai', profileName: 'Fast' },
-  ]);
-  assert.deepEqual(providerMapSuggestions([{ id: 'paseo', catalog }, { id: 'other', catalog: second }], profiles, { claude: 'anthropic', oai: 'openai' }), [], 'mapped keys suggest nothing');
-  assert.deepEqual(providerMapSuggestions([{ id: 'paseo', catalog }, { id: 'other', catalog: second }], profiles, { claude: 'something-else' })
-    .map(entry => entry.hostKey), ['oai'], 'a key already mapped elsewhere is never repointed');
-});
-
-const sectionTree = (props: Partial<Parameters<SettingsModule['ProviderMapSection']>[0]> & { saves?: ProviderMap[] }) => h(settings.ProviderMapSection, {
-  c, hosts: [], profiles: [], providerMap: {}, busy: false, status: null,
-  onSave: async (next: ProviderMap) => { props.saves?.push(next); return true; }, ...props,
-});
-
-test('the provider map section is hidden with one host, or two hosts and no match, and while the map is read', async () => {
-  await load();
-  const profiles = [{ name: 'Sol', provider: 'anthropic', model: 'opus' }];
-  for (const props of [
-    { hosts: [{ id: 'paseo', catalog }], profiles },
-    { hosts: [{ id: 'paseo', catalog }, { id: 'other', catalog: noMatch }], profiles },
-    { hosts: [{ id: 'paseo', catalog }, { id: 'other', catalog: second }], profiles, providerMap: undefined },
-    { hosts: [], profiles },
-  ]) {
-    const ui = mount(sectionTree(props));
-    assert.equal(ui.query('Provider map'), undefined);
-    assert.equal(ui.text(), '');
-  }
-});
-
-test('a second host offering the model under another key shows the suggestion prefilled', async () => {
-  await load();
-  const saves: ProviderMap[] = [];
-  const longName = 'A very long profile name that keeps going so the suggestion line has to wrap on a narrow settings column';
-  const ui = mount(sectionTree({ hosts: [{ id: 'paseo', catalog }, { id: 'other-host', catalog: second }], profiles: [{ name: longName, provider: 'anthropic', model: 'opus' }], saves }));
-  assert.ok(ui.get('Provider map'));
-  assert.equal(ui.get('Provider map suggestion').children.join(''), `Mapping claude to anthropic makes ${longName} available on other-host.`);
-  assert.equal(ui.get('Host provider key').props.value, 'claude');
-  assert.equal(ui.get('Normalised key').props.value, 'anthropic');
-  assert.doesNotMatch(ui.text(), /None\./);
-  ui.press('Add provider map entry');
-  await tick();
-  assert.deepEqual(saves, [{ claude: 'anthropic' }]);
-});
-
-test('a stored entry keeps the provider map visible for editing and removal', async () => {
-  await load();
+test('task 1158: a profile shows one quiet icon naming the hosts it cannot run on, and nothing with one host', async () => {
+  const { hostCompatibilityNote } = await load();
+  const hosts = [{ hostId: 'paseo:1', kind: 'paseo', label: 'Paseo', online: true, readAt: null }, { hostId: 't3code:1', kind: 't3code', label: 'T3Code', online: true, readAt: null }];
+  const rows = [
+    { profileId: 'imported', hostId: 'paseo:1', status: 'works', reason: '', translated: [], launch: null },
+    { profileId: 'imported', hostId: 't3code:1', status: 'unavailable', reason: "T3Code can't run claude in mode plan", translated: [], launch: null },
+  ];
+  assert.equal(hostCompatibilityNote({ hosts: hosts.slice(0, 1), rows } as never, 'imported'), '', 'one host shows nothing');
+  assert.equal(hostCompatibilityNote({ hosts, rows } as never, 'imported'), "Not on T3Code: T3Code can't run claude in mode plan");
+  assert.equal(hostCompatibilityNote({ hosts, rows: rows.slice(0, 1) } as never, 'imported'), '', 'works everywhere shows nothing');
   const state = fixture();
-  state.providerMap = { 'openai-codex': 'openai' };
+  state.profiles = [{ id: 'imported', name: 'Imported Sol', provider: 'codex', model: 'gpt-5', notes: '' } as NucleusProfile];
+  state.compatibility = { hosts, rows };
   const ui = mount(screenTree(state));
   try {
     await settle(() => ui.text().includes('Profiles'));
     ui.press('Profiles');
-    await settle(() => Boolean(ui.query('Provider map')));
-    assert.match(ui.text(), /openai-codex → openai/);
-    assert.equal(ui.query('Provider map suggestion'), undefined, 'one host suggests nothing');
-    assert.equal(ui.get('Host provider key').props.value, '');
-    ui.press('Remove provider map entry openai-codex');
-    await settle(() => state.mapWrites.length === 1);
-    assert.deepEqual(state.mapWrites[0], {});
-    await settle(() => !ui.query('Provider map'));
-  } finally { ui.update(h('View', null)); }
-});
-
-test('an unreadable provider map names the reason and shows no section', async () => {
-  await load();
-  const state = fixture();
-  const ui = mount(h(QueryClientProvider, {
-    client: new QueryClient({ defaultOptions: { queries: { retry: false } } }),
-    children: h(PluginRpcProvider, {
-      invoke: async (method: string, input: unknown) => {
-        if (method === 'profile.providers') throw new Error('the profile store is unavailable');
-        return (screenTree(state).props as { children: { props: { invoke: (m: string, i: unknown) => Promise<unknown> } } }).children.props.invoke(method, input);
-      },
-      children: h(settings.QueueSettingsScreen as never, {
-        theme: { colors: c }, host: { id: 'host', label: 'Host' }, layout: { compact: true, platform: 'ios' as const },
-      }),
-    }),
-  }));
-  try {
-    await settle(() => ui.text().includes('Profiles'));
-    ui.press('Profiles');
-    await settle(() => ui.text().includes('Could not read the provider map: the profile store is unavailable'));
-    assert.equal(ui.query('Provider map'), undefined);
+    await settle(() => Boolean(ui.query("Imported Sol: Not on T3Code: T3Code can't run claude in mode plan")));
+    assert.equal(ui.query('Imported Sol hosts'), undefined, 'no per-host chips');
+    ui.press('Edit Imported Sol');
+    await settle(() => Boolean(ui.query('Imported Sol editor')));
+    assert.equal(ui.query('Profile hosts'), undefined, 'no host mapping in the editor');
+    assert.equal(ui.query('T3Code mapping'), undefined);
   } finally { ui.update(h('View', null)); }
 });
 
@@ -710,8 +627,7 @@ test('the dispatch row and sliders wait for the board: absent while it loads or 
         if (method === 'backup.list') return { snapshots: [], localError: null };
         if (method === 'repositories') return [];
         if (method === 'profile.list') return { profiles: state.profiles };
-        if (method === 'profile.providers') return { providers: {} };
-        if (method === 'host.catalog') return catalog;
+        if (method === 'profile.vocabulary') return catalog;
         return {};
       },
       children: h(settings.QueueSettingsScreen as never, {
@@ -765,7 +681,7 @@ test('model option fields flow two to a row, an odd last one spans the row, and 
     const rows = () => (ui.all('Model options row') as Node[]).map(row => row.children.filter((cell): cell is Node => typeof cell !== 'string'));
     assert.equal(rows().length, 0, 'no option rows before a model is chosen');
     layout(688);
-    choose(ui, 'Provider', 'OpenAI', 'Choose a provider');
+    choose(ui, 'Provider', 'Codex', 'Choose a provider');
     choose(ui, 'Model', 'GPT-5', 'Choose a model');
     await settle(() => rows().length === 2);
     const order = rows().map(cells => cells.map(cell => labelsIn(cell).find(label => /^(Mode|Thinking|Permissions), |^Feature Web search on$/.test(label))));
@@ -778,8 +694,8 @@ test('model option fields flow two to a row, an odd last one spans the row, and 
     await settle(() => rows().length === 1 && rows()[0].length === 2);
     assert.ok(labelsIn(rows()[0][0]).includes('Mode, Host default'));
     assert.match(ui.text(), /Host default/, 'an empty thinking list stays plain text beside Mode');
-    choose(ui, 'Provider', 'Codex', 'OpenAI');
-    choose(ui, 'Model', 'Codex 1', 'Choose a model');
+    choose(ui, 'Provider', 'Claude', 'Codex');
+    choose(ui, 'Model', 'Claude 1', 'Choose a model');
     await settle(() => rows().length === 1 && rows()[0].length === 1);
     assert.equal(rows()[0][0].props.style.flex, 1, 'a lone option spans the row');
   } finally { ui.update(h('View', null)); }
@@ -811,8 +727,7 @@ test('a Profiles card shows Name, Subscription, Weight, Provider and Model at on
         if (method === 'backup.list') return { snapshots: [], localError: null };
         if (method === 'repositories') return [];
         if (method === 'profile.list') return { profiles: state.profiles };
-        if (method === 'profile.providers') return { providers: {} };
-        if (method === 'host.catalog') return catalog;
+        if (method === 'profile.vocabulary') return catalog;
         return {};
       },
       children: h(settings.QueueSettingsScreen as never, {
@@ -872,9 +787,9 @@ test('nucleus#970: the Refresh tooltip names the stored catalog\'s age', async (
 for (const compact of [false, true]) test(`nucleus#970: Profiles opens on the stored catalog; Refresh replaces it, or keeps it and names the reason once (${compact ? 'narrow' : 'wide'})`, async () => {
   await load();
   const state = fixture();
-  state.profiles = [{ id: 'sol', name: 'Sol', provider: 'openai', model: 'gpt-5', notes: '' } as NucleusProfile];
+  state.profiles = [{ id: 'sol', name: 'Sol', provider: 'codex', model: 'gpt-5', notes: '' } as NucleusProfile];
   const readAt = new Date(Date.now() - 5 * 60_000).toISOString();
-  const renamed = { providers: catalog.providers.map(provider => provider.key === 'openai' ? { ...provider, label: 'OpenAI Next' } : provider) };
+  const renamed = { providers: catalog.providers.map(provider => provider.key === 'codex' ? { ...provider, label: 'Codex Next' } : provider) };
   let release: (() => void) | null = null;
   let refreshFailure = '';
   state.catalogAnswer = async input => {
@@ -892,18 +807,18 @@ for (const compact of [false, true]) test(`nucleus#970: Profiles opens on the st
     assert.equal(ui.query('Sol: Unavailable'), undefined);
     assert.ok(state.catalogReads.every(read => !read.refresh), 'opening the page never refreshes');
     ui.press('Edit Sol');
-    await settle(() => Boolean(ui.query('Provider, OpenAI')));
+    await settle(() => Boolean(ui.query('Provider, Codex')));
 
     ui.press('Refresh providers and models');
     await settle(() => refresh().props.accessibilityHint === 'Refreshing providers and models…');
     assert.equal(refresh().props.accessibilityState.disabled, true);
     await settle(() => state.catalogReads.some(read => read.refresh));
     assert.deepEqual(state.catalogReads.filter(read => read.refresh), [{ cwd: '/app', refresh: true }]);
-    assert.ok(ui.query('Provider, OpenAI'), 'the stored lists stay usable while Refresh runs');
+    assert.ok(ui.query('Provider, Codex'), 'the stored lists stay usable while Refresh runs');
     assert.equal(ui.query('Sol: Unavailable'), undefined, 'a read in flight never reads as unavailable');
 
     release!();
-    await settle(() => Boolean(ui.query('Provider, OpenAI Next')));
+    await settle(() => Boolean(ui.query('Provider, Codex Next')));
     await settle(() => refresh().props.accessibilityHint === 'Refresh providers and models · read just now');
     assert.equal(refresh().props.accessibilityState.disabled, false);
 
@@ -911,7 +826,7 @@ for (const compact of [false, true]) test(`nucleus#970: Profiles opens on the st
     ui.press('Refresh providers and models');
     await settle(() => ui.text().includes('Refresh failed: Daemon is disconnected. The stored providers and models stay.'));
     assert.equal(ui.text().split('Refresh failed').length - 1, 1, 'the reason shows once');
-    assert.ok(ui.query('Provider, OpenAI Next'), 'a failed refresh keeps the stored catalog');
+    assert.ok(ui.query('Provider, Codex Next'), 'a failed refresh keeps the stored catalog');
     await settle(() => refresh().props.accessibilityState.disabled === false);
 
     refreshFailure = '';
@@ -924,7 +839,7 @@ for (const compact of [false, true]) test(`nucleus#970: Profiles opens on the st
 test('nucleus#970: while the first catalog read is in flight, no row reads unavailable', async () => {
   await load();
   const state = fixture();
-  state.profiles = [{ id: 'sol', name: 'Sol', provider: 'openai', model: 'gpt-5', notes: '' } as NucleusProfile];
+  state.profiles = [{ id: 'sol', name: 'Sol', provider: 'codex', model: 'gpt-5', notes: '' } as NucleusProfile];
   state.catalogAnswer = () => new Promise(() => {});
   const ui = mount(screenTree(state));
   try {

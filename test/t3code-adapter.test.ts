@@ -8,13 +8,15 @@ import { T3CodeHost } from '../hosts/t3code/adapter';
 import { ProvenPreSendRefusalError, HostUnknownDeliveryError } from '../core/host';
 import { isTransportFailure } from '../shared/transport';
 import type { HostAgentSpec } from '../shared/host';
-import { submissionSchema, type Profile } from '../shared/contracts';
+import { submissionSchema, type Profile, type Task } from '../shared/contracts';
 import { Store, qualifiedThreadArchiveEffectKey } from '../core/store/store';
 import { archiveFinishedThreads } from '../core/workspaces/thread-archive';
 import type { Adapter } from '../core/host';
+import { taskWorkspaceTitle } from '../core/workspaces/workspace-title';
+import { capPaseoTitle } from '../shared/paseo-title';
+import { WIRE_LABEL_KEYS, WIRE_PLUGIN_LABEL_KEY } from '../shared/wire-labels';
 import { t3Fake, STAMP, threadProjection } from './support/t3code-fake';
 import { storedT3Labels } from './support/t3code-labels';
-import { NUCLEUS_LABEL_KEYS } from '../shared/wire-labels';
 
 const profile: Profile = { id: 'synthetic-profile', name: 'Synthetic', provider: 'synthetic-provider', model: 'synthetic-model',
   available: true, problem: '', notes: '', supportedThinking: [] };
@@ -27,8 +29,8 @@ async function fixture(t: TestContext) {
   t.after(() => host.close());
   await host.connect();
   const workspace = await host.createWorkspace({ title: 'Synthetic worktree', requestId: 'workspace-intent', directory, project: { projectId: 'synthetic-project' } });
-  const spec = (requestId = 'launch-intent', prompt = 'Synthetic prompt'): HostAgentSpec => ({ workspaceId: workspace.id, profile, title: 'Synthetic role', mcpBindingPath: null,
-    attempt: () => ({ requestId, prompt, labels: storedT3Labels('worker'), environment: {} }) });
+  const spec = (requestId = 'launch-intent', prompt = 'Synthetic prompt', role = 'worker'): HostAgentSpec => ({ workspaceId: workspace.id, profile, title: role === 'worker' ? 'Synthetic role' : `${role}: Synthetic role`, taskNumber: 225, mcpBindingPath: null,
+    attempt: () => ({ requestId, prompt, labels: storedT3Labels(role, { runId: role === 'worker' ? 'worker-run' : `${role}-run` }), environment: {} }) });
   return { root, directory, server, options, host, workspace, spec };
 }
 
@@ -54,6 +56,7 @@ test('create uses an existing canonical worktree and explicit top-level provider
   assert.deepEqual(command.modelSelection, { instanceId: 'synthetic-provider', model: 'synthetic-model' });
   assert.deepEqual(command.workspaceStrategy, { type: 'existing_worktree', worktreePath: directory });
   assert.equal(command.initialMessage.text, 'Synthetic prompt');
+  assert.equal(command.title, '225: Synthetic role');
   assert.equal(command.initialMessage.attachments.length, 0);
   // A profile with no mode launches in T3's own default runtime mode, so an
   // unattended thread never stops at every approval prompt (nucleus#1143).
@@ -62,7 +65,75 @@ test('create uses an existing canonical worktree and explicit top-level provider
   assert.equal(created.workspaceId, workspace.id);
   for (const field of ['parentThreadId', 'parentRunId', 'delegatedFrom', 'environment', 'mcpServers']) assert.equal(Object.hasOwn(command, field), false, field);
   assert.equal((await host.observe(created.id)).workspaceId, workspace.id);
-  assert.deepEqual(await host.findAgents({ [NUCLEUS_LABEL_KEYS.task]: 'synthetic-task' }), [created]);
+  assert.deepEqual(await host.findAgents({ [WIRE_LABEL_KEYS.task]: 'synthetic-task' }), [created]);
+});
+
+test('new T3 worker, reviewer and recovery threads use task number and role titles', async t => {
+  const { host, server, spec } = await fixture(t);
+  await host.createAgent(spec('worker-title', 'Worker', 'worker'));
+  await host.createAgent(spec('review-title', 'Review', 'reviewer'));
+  await host.createAgent(spec('recovery-title', 'Recovery', 'recovery'));
+  assert.deepEqual(server.commands.filter(command => command.method === 'orchestration.launchThread').map(command => command.title), [
+    '225: Synthetic role', '225 review: Synthetic role', '225 recovery: Synthetic role',
+  ]);
+});
+
+test('real stored label keys locate a role-less worker and repair existing support titles', async t => {
+  const { host, server, spec } = await fixture(t);
+  const worker = await host.createAgent(spec('worker-run', 'Worker'));
+  const reviewer = await host.createAgent(spec('reviewer-run', 'Review', 'reviewer'));
+  const workerLabels = host.state.read().agents[worker.id]!.labels;
+  assert.deepEqual(workerLabels, { [WIRE_PLUGIN_LABEL_KEY]: 'nucleus', [WIRE_LABEL_KEYS.task]: 'synthetic-task', [WIRE_LABEL_KEYS.run]: 'worker-run' });
+  assert.equal(workerLabels[WIRE_LABEL_KEYS.role], undefined, 'the worker label shape omits nucleus.role');
+  assert.ok(Object.keys(host.state.read().agents[reviewer.id]!.labels).every(key =>
+    key === WIRE_PLUGIN_LABEL_KEY || Object.values(WIRE_LABEL_KEYS).includes(key as typeof WIRE_LABEL_KEYS[keyof typeof WIRE_LABEL_KEYS])),
+  'every created fixture uses the shared wire label keys');
+
+  server.threads.get(reviewer.id)!.thread.title = 'reviewer: Synthetic role';
+  const task = { id: 'synthetic-task', number: 225, title: 'Synthetic role', held: false, hostId: host.hostId,
+    workspaceId: worker.workspaceId, runId: 'worker-run', phase: 'working' } as Task;
+  const title = taskWorkspaceTitle(task);
+  await host.setTaskWorkspaceTitle(task, title, 'real-label-title', false);
+  assert.deepEqual(server.commands.filter(command => command.type === 'thread.metadata.update').map(command => [command.threadId, command.title]), [
+    [worker.id, title], [reviewer.id, '225 review: Synthetic role'],
+  ]);
+  await host.setTaskWorkspaceTitle(task, title, 'real-label-title', false);
+  assert.equal(server.commands.filter(command => command.type === 'thread.metadata.update').length, 2,
+    'a repeated sync leaves the already-numbered support title unchanged');
+});
+
+test('worker thread titles use the shared task state title once per change', async t => {
+  const { host, server, options, spec } = await fixture(t);
+  const created = await host.createAgent(spec('rename-title'));
+  const task = { id: 'synthetic-task', number: 225, title: 'Synthetic role', held: false, hostId: host.hostId,
+    workspaceId: created.workspaceId, agentId: created.id, phase: 'working' } as Task;
+  const states = ['working', 'awaiting_review', 'merging', 'working', 'awaiting_review', 'working'] as const;
+  const titles = states.map(phase => taskWorkspaceTitle({ ...task, phase }));
+  for (const [index, phase] of states.entries())
+    await host.setTaskWorkspaceTitle({ ...task, phase }, titles[index]!, `request-${index + 1}`, false);
+  await host.setTaskWorkspaceTitle(task, titles.at(-1)!, `request-${states.length}`, false);
+  assert.deepEqual(server.commands.filter(command => command.type === 'thread.metadata.update').map(command => command.title), titles);
+  const longTitle = taskWorkspaceTitle({ ...task, title: 'Long task '.repeat(100) });
+  await host.setTaskWorkspaceTitle(task, longTitle, 'long-title', false);
+  assert.equal(server.commands.filter(command => command.type === 'thread.metadata.update').at(-1)?.title, capPaseoTitle(longTitle));
+});
+
+test('an uncertain worker title write is read before retry and is not resent when already applied', async t => {
+  const { host, server, options, spec } = await fixture(t);
+  const created = await host.createAgent(spec('rename-title'));
+  const task = { id: 'synthetic-task', number: 225, title: 'Synthetic role', held: false, hostId: host.hostId,
+    workspaceId: created.workspaceId, agentId: created.id, phase: 'working' } as Task;
+  const title = taskWorkspaceTitle(task);
+  server.controls.disconnectAfterEffect = true;
+  await assert.rejects(host.setTaskWorkspaceTitle(task, title, 'title-request', false));
+  assert.equal(server.threads.get(created.id)!.thread.title, title, 'the server applied the title before the reply was lost');
+  host.close();
+  server.controls.disconnectAfterEffect = false;
+  const reloaded = new T3CodeHost(options); t.after(() => reloaded.close());
+  await reloaded.connect();
+  await reloaded.setTaskWorkspaceTitle(task, title, 'title-request', true);
+  assert.equal(server.commands.filter(command => command.type === 'thread.metadata.update').length, 1,
+    'a read confirming the current title settles the unknown write without resending');
 });
 
 test('connect refuses incompatible protocol and missing probe coverage without a canary mutation', async t => {
@@ -132,7 +203,7 @@ test('durable create replay survives reload and refuses changed payload or label
   assert.deepEqual(await reloaded.createAgent(spec()), first);
   assert.equal(server.commands.length, 1);
   await assert.rejects(reloaded.createAgent(spec('launch-intent', 'Changed prompt')), /payload changed/);
-  const changed = spec(); changed.attempt = () => ({ requestId: 'launch-intent', prompt: 'Synthetic prompt', labels: storedT3Labels('worker', { taskId: 'other-task' }), environment: {} });
+  const changed = spec(); changed.attempt = () => ({ requestId: 'launch-intent', prompt: 'Synthetic prompt', labels: storedT3Labels('worker', { taskId: 'other-task', runId: 'worker-run' }), environment: {} });
   await assert.rejects(reloaded.createAgent(changed), /retained identity changed/);
   assert.equal(server.commands.length, 1);
 });
@@ -200,6 +271,8 @@ test('an unknown worker handover settle is never resent by either reconciler', a
   assert.equal(reloaded.state.read().intents[commandId]?.status, 'unknown', 'the recorded intent stays unknown');
   await reloaded.reconcileSettledThreads();
   await reloaded.reconcileReportedSettlements();
+  await assert.rejects(reloaded.settleWorkerThread('synthetic-probe', 'nucleus-worker-run'), HostUnknownDeliveryError,
+    'the sweep can record the unresolved failure without authorizing a resend');
   assert.equal(server.commands.filter(command => command.type === 'thread.settle').length, 1, 'neither reconciler resends an unknown worker settle');
   assert.equal(projection.thread.settledOverride, null, 'the thread is not settled by a resent command');
   assert.equal(reloaded.state.read().intents[commandId]?.status, 'unknown');
@@ -462,7 +535,7 @@ test('host identity conflicts and unsupported per-thread bindings refuse before 
   const { host, server, options, workspace, spec, root } = await fixture(t);
   const mcp = spec(); mcp.mcpBindingPath = 'synthetic-binding';
   await assert.rejects(host.createAgent(mcp), /MCP reporting/);
-  const environment = spec(); environment.attempt = () => ({ requestId: 'environment', prompt: 'Synthetic', labels: storedT3Labels('worker'), environment: { SYNTHETIC: 'value' } });
+  const environment = spec(); environment.attempt = () => ({ requestId: 'environment', prompt: 'Synthetic', labels: storedT3Labels('worker', { runId: 'worker-run' }), environment: { SYNTHETIC: 'value' } });
   await assert.rejects(host.createAgent(environment), /launch environment/);
   const guarded = spec(); guarded.guard = { async allowed() { return true; }, stillAllowed() { return false; } };
   await assert.rejects(host.createAgent(guarded), /guard changed/);
@@ -486,7 +559,7 @@ test('the origin read answers authoritative absence, and only an unread inventor
   const { host, server, workspace, spec } = await fixture(t);
   const created = await host.createAgent(spec());
   assert.deepEqual(await host.originAgent(created.id),
-    { id: created.id, workspaceId: workspace.id, title: 'Synthetic role', archived: false, deleted: false });
+    { id: created.id, workspaceId: workspace.id, title: '225: Synthetic role', archived: false, deleted: false });
   // T3 has no such thread: a complete shell plus archive read proves absence, so
   // the lookup answers not-mine instead of throwing.
   assert.equal(await host.originAgent('native-id-t3-does-not-have'), null);

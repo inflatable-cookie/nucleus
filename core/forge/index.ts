@@ -28,6 +28,7 @@ export {
   workflowJobRefFromJobUrl,
   enrichPendingCheckEvidence,
   REQUIRED_CHECK_POLL_INTERVAL_MS,
+  REQUIRED_CHECK_ESCALATION_MS,
   PENDING_CHECK_FALLBACK_MS,
   requiredCheckPollMetaKey,
   type CheckHistory,

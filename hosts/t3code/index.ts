@@ -2,6 +2,7 @@ import type { Adapter, HostPolicyConstructor, HostPolicyPort, HostWorktreeWorksp
 import { ProvenPreSendRefusalError } from '../../core/host';
 import type { HostAgentSpec, HostCapabilities, HostPermissionDecision, HostWorkspaceSpec } from '../../shared/host';
 import type { Run, Task } from '../../shared/contracts';
+import { WIRE_LABEL_KEYS } from '../../shared/wire-labels';
 import { T3CodeHost, type T3CodeConfig } from './adapter';
 
 export { T3CodeHost, type T3CodeConfig } from './adapter';
@@ -96,8 +97,8 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
       return { retainedAgentRef: (id: string) => native.retainedAgentRef(id) };
     }
     findWorkspaces = (task: Task) => this.native.findWorkspaces(task);
-    findAgents(task: Task) { return this.native.findAgents({ 'nucleus.task': task.id }); }
-    findRunAgents(run: Run) { return this.native.findAgents({ 'nucleus.run': run.id, 'nucleus.task': run.taskId }); }
+    findAgents(task: Task) { return this.native.findAgents({ [WIRE_LABEL_KEYS.task]: task.id }); }
+    findRunAgents(run: Run) { return this.native.findAgents({ [WIRE_LABEL_KEYS.run]: run.id, [WIRE_LABEL_KEYS.task]: run.taskId }); }
     /**
      * T3 has no Paseo identity. Core's consult prompt names `question.answer`
      * with the reissued run ticket; this send does not rewrite it. T3-hosted
@@ -110,12 +111,16 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     observe(id: string) { return this.native.observe(id); }
     observationInventory(ids: readonly string[]) { return this.native.observationInventory(ids); }
     taskWorkspaceArchived(id: string) { return this.native.workspaceArchived(id); }
+    setTaskWorkspaceTitle(task: Task, title: string, requestId: string, uncertain: boolean) {
+      return this.native.setTaskWorkspaceTitle(task, title, requestId, uncertain);
+    }
     originAgent(id: string) { return this.native.originAgent(id); }
     listLiveAgents() { return this.native.listLiveAgents(); }
     workspaceAvailable(id: string) { return this.native.workspaceAvailable(id); }
     workspaceIdAccepted(id: unknown) { return this.native.workspaceIdAccepted(id); }
     profiles() { return this.native.profiles(); }
     catalog() { return this.native.catalog(); }
+    get vocabulary() { return this.native.vocabulary; }
     notify(id: string, messageId: string, text: string) { return this.native.sendMessage(id, { messageId, text }); }
     stopAgentTurn(id: string) { return this.native.stopAgentTurn(id); }
     archiveAgent(id: string) { return this.native.archiveAgent(id); }

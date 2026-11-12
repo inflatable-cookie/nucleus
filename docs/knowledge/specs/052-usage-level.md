@@ -23,36 +23,46 @@ profiles.
   provide a list of all the providers and models, then allow the operator to
   create profiles based on their selections"; 2026-11-07: the list set up in
   Nucleus is the one that is kept, and hosts may name a provider differently).
-  Nucleus stores its own profile records — id, name, normalised provider, model,
-  mode, thinking option, feature values and notes — read and edited with
+  Nucleus stores its own profile records — id, name, provider, model, mode,
+  thinking level, feature values and notes — read and edited with
   `profile.list`, `profile.create`, `profile.update` and `profile.remove`. Each
   host reports what it can run through `host.catalog` (every provider, its
   models with thinking options, and the modes and feature values each model
-  offers); `profile.providers` reads the provider map that normalises host keys,
-  identity by default, which is Paseo's shape today, and
-  `profile.providers.set` replaces it from the small editor beside the list.
-  That editor shows only when it can help or holds an entry (Tom, 2026-11-08):
-  Nucleus serves more than one host and one offers a profile's model under an
-  unmapped key other than the profile's, which it prefills with the profile and
-  host it would serve; otherwise it is hidden.
-- **Each profile per host** (nucleus#1151, Tom 2026-11-12: "make sure all of the
-  profiles set up in Nucleus actually work in T3 ... so an operator can make
-  decisions about it in the UI"). A profile may carry a setting per host kind
-  (`hosts.paseo`, `hosts.t3code`): either `excluded`, or replacement values for
-  that host only — the host's own provider key, a model, a mode, a thinking
-  level or feature values, `null` clearing one there (a thinking level that host
-  carries as an option, say). `profile.compatibility` answers, for every stored
-  profile and every known host, `works`, `unavailable`, `excluded` or `unknown`
-  (catalog never read) with the reason naming the host, the mapped fields and
-  the values a launch there sends; it computes on read from the catalog Nucleus
-  last read from each host, so a catalog change or a Settings edit shows at once.
-  Each host's routing snapshot applies the same setting, so a mapped profile
-  launches with the mapped values and an excluded or incompatible one is never
-  selected for that host's tasks. A profile edit rebuilds the snapshots from the
-  catalogs already read. Settings → Profiles shows a host chip per host on each
-  row (reason in its popover) and, in the editor, one block per non-primary host:
-  Use or Exclude, then Provider, Model, Mode, Thinking and Options, each starting
-  at "Same as profile".
+  offers), in its own spelling.
+- **One canonical vocabulary; each host translates it in code** (task 1158,
+  Tom 2026-11-12: "It shouldn't touch the profiles themselves.. feels like we
+  might just need to hard code the mapping that each host gives to each provider
+  and have them converge on one canonical corpus that we use in the settings
+  form"). `shared/profile-vocabulary.ts` owns the corpus: providers (`codex`,
+  `claude`, `pi`, `grok` and the others hosts report), the provider's own model
+  ids, one ordered thinking scale (`off` … `ultra`) and one set of runtime modes
+  (`plan`, `supervised`, `accept-edits`, `auto`, `auto-review`, `full-access`).
+  Feature values are the provider's own options. Profiles store only canonical
+  values; create and update refuse anything else. Each host adapter owns one
+  table (`hosts/paseo/vocabulary.ts`, `hosts/t3code/vocabulary.ts`) that
+  translates canonical values to its own: Paseo spells Claude's `full-access` as
+  `bypassPermissions` and `supervised` as `default`, and carries Grok's
+  `full-access` as its `auto_accept` option; T3Code names Claude `claudeAgent`
+  and carries its thinking as the `effort` option (`ultra` is `ultrathink`) and
+  Pi's as `thinking`. A value a host's table can't express makes the profile
+  unavailable on that host with the reason computed (`T3Code can't run codex in
+  mode plan`); nothing is configured per profile and nothing is guessed. Each
+  host's routing snapshot carries the translated launch values, judged against
+  that host's catalog, and a profile edit rebuilds the snapshots from the
+  catalogs already read. `profile.compatibility` answers, for every stored
+  profile and every known host, `works`, `unavailable` or `unknown` (catalog
+  never read) with the reason naming the host, the fields that host spells
+  differently and the values a launch there sends; `routingPolicy.host.effects`
+  lists each enabled profile a task's host rules out or translates.
+  `profile.vocabulary` answers Settings' form: every registered host's catalog in
+  canonical values, merged, so each dropdown offers what at least one host can
+  run. Settings → Profiles edits canonical values only; a row shows one quiet
+  warning icon when Nucleus serves more than one host and the profile can't run
+  on one, with each host's reason in its popover. Stored profiles moved to the
+  canonical vocabulary once on open (`profileVocabularyMigration` records what
+  changed); a profile with a value the migration doesn't know is left as stored
+  and reported. The per-profile host setting (nucleus#1151) and the provider map
+  (2026-11-08) are retired.
 - The
   earlier migration copied Paseo's `config.agentProfiles` once with
   ids unchanged and records that it ran, so the pool, routing requests, grants

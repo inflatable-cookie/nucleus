@@ -165,7 +165,7 @@ test('an empty or disconnected catalog marks nothing stale', async () => {
   const pool = [entry('live'), { ...entry('opencode-go', 'opencode-go'), enabled: false }];
   const empty = mount(screenTree(board({ connected: true, profiles: [], pool })));
   selectSettingsTab(empty, 'Profiles');
-  await settle(() => empty.text().includes('No profiles yet. Add one from what this host can run.'));
+  await settle(() => empty.text().includes('No profiles yet. Add one from what your hosts can run.'));
   assert.equal(empty.text().includes('This profile is gone'), false);
   assert.equal(empty.query('Remove opencode-go'), undefined);
   unmount(empty);
