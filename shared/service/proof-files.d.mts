@@ -1,0 +1,10 @@
+export const PROOF_FILE_SHAPE: string;
+export const PROOF_FILES_RESEND_RULE: string;
+export const MAX_PROOF_FILES: number;
+export const MAX_PROOF_FILE_LABEL: number;
+export const MAX_PROOF_FILE_PATH: number;
+export const MAX_PROOF_FILE_BYTES: number;
+export const MAX_PROOF_FILES_TOTAL_BYTES: number;
+export function proofFileEntryRefusal(entry: unknown): string | null;
+export function dedupeProofFiles<T>(rows: T[]): T[];
+export function proofFileListRefusals(rows: unknown): { path: (string | number)[]; message: string }[];

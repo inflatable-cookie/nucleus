@@ -1,7 +1,7 @@
 import { hostSelectionSchema } from "../host-selection";
 import { z } from "zod";
 import { holdKindSchema, taskPhaseSchema } from "../schema/task-primitives";
-import { checkpointStateSchema, completionSchema, proofExecutionRecordSchema, proofOnlyResultSchema, proofReceiptAcceptanceSchema, reportAcceptanceSchema, reviewEntryRecordSchema, submissionSchema } from "./review";
+import { checkpointStateSchema, completionSchema, proofExecutionRecordSchema, proofFileRecordSchema, proofOnlyResultSchema, proofReceiptAcceptanceSchema, reportAcceptanceSchema, reviewEntryRecordSchema, submissionSchema } from "./review";
 import { capabilityLevelSchema, completionCohortMemberSchema, completionRecipientSchema, completionSubscriptionSchema, profileSchema } from "./settings";
 import { holdBlockingSchema, holdUntilSchema, retainedPrerequisiteWaitSchema, stashEntrySchema, taskHoldsSchema, workerExclusionSchema } from "./task-holds";
 import { checkoutSiblingFindingSchema, pausedStopSchema, siblingFindingSchema, siblingPinSchema, worktreeLinksSchema } from "./workspace";
@@ -86,6 +86,8 @@ export const taskSchema = submissionSchema.extend({
   resolution: resolutionSchema.default(() => resolutionSchema.parse({})),
   /** Task 405: append-only author-side proof execution evidence; the task allowance is one. */
   proofExecutions: z.array(proofExecutionRecordSchema).default([]),
+  /** nucleus#1142: append-only worker proof files delivered for a head, copied into Nucleus's own scratch. */
+  proofFiles: z.array(proofFileRecordSchema).default([]),
   /** Task 662: an owner may retire a spent brief proof declaration once; it can never be named again. */
   proofExecutionRetired: z.boolean().default(false),
   proofOnlyResult: proofOnlyResultSchema.nullable().default(null),

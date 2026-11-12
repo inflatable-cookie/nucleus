@@ -73,5 +73,11 @@ export function OverviewNext({ task, detailTab, nextQuery, state, busy, pendingO
       <Text selectable style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>Operator {task.proofReceiptAcceptance.acceptedBy} accepted receipt {task.proofReceiptAcceptance.runId} as release evidence: {task.proofReceiptAcceptance.reason}</Text>
       <Text selectable style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>Original failed qualification and reviewer verdict: {task.proofReceiptAcceptance.originalResult.evidence}</Text>
     </DetailSection>}
+    {(task.proofFiles ?? []).length > 0 && <DetailSection title="Proof files" c={c}>
+      <Text selectable style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>Local evidence the worker delivered for the retained reviewer. It is copied into Nucleus's own scratch and never uploaded to the forge; no local path belongs in a PR body or comment.</Text>
+      {(task.proofFiles ?? []).map(file => <Text key={`${file.eventId}:${file.head}:${file.name}`} selectable style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
+        {file.label} · head {file.head.slice(0, 7)} · {file.name} · {file.bytes} bytes · sha256 {file.sha256}{`\n${file.path}`}
+      </Text>)}
+    </DetailSection>}
   </View>;
 }

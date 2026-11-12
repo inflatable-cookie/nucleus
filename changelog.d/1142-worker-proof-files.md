@@ -1,0 +1,1 @@
+A worker report can name local proof files as `proofFiles: [{label, path}]`. Nucleus copies each into its own per-head evidence directory, records the SHA-256, and lists the copies with paths and hashes in the retained reviewer's prompt for that exact head; nothing is uploaded to the GitHub PR, and a path outside the task's own scratch or worktree is refused.

@@ -81,7 +81,7 @@ const fields={...input,coordinatorGeneration:input.coordinatorGeneration??ticket
 // Every result field is forwarded: the authenticated completion schema owns acceptance, so a field it
 // accepts is never dropped here and an unknown one is refused there. Fields keep their historical order
 // so an identical retry keeps its event ID; the ticket owns task and run identity.
-const order=['status','summary','closeoutCommit','replacementAgentId','recoveryAction','prNumber','head','reviewCommentId','coordinatorGeneration','providerUnavailable','providerRetryAt','reviewText','reviewedInputs','verdicts','checkpoint'];
+const order=['status','summary','closeoutCommit','replacementAgentId','recoveryAction','prNumber','head','reviewCommentId','coordinatorGeneration','providerUnavailable','providerRetryAt','reviewText','reviewedInputs','verdicts','checkpoint','proofFiles'];
 const payload={taskId,runId};
 for(const key of order)if(fields[key]!==undefined)payload[key]=fields[key];
 for(const [key,value] of Object.entries(fields))if(!order.includes(key)&&!['taskId','runId','eventId'].includes(key)&&value!==undefined)payload[key]=value;

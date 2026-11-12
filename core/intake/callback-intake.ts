@@ -21,8 +21,21 @@ import { REVIEW_AUTHORIZATION_REQUIRED, REVIEW_BUDGET_EXHAUSTED, reviewCheckpoin
 import { assertReviewEntryExecutionSource, reviewEntryInputForTask, type ReviewEntryAdapter, verifyReviewEntryCanonicalAuthor } from '../review/review-entry';
 import { assertReviewResponsibility } from '../review/review-verdicts';
 import { digest, now } from '../store/store';
+import { recordWorkerProofFiles } from './proof-files';
 import { recordSupersededRunRefusal, supersededByPendingResume, supersededResumeRefusal } from '../recovery/superseded-resume';
 import { coordinatorActionShapeRefusal, coordinative, ownerArmedRetainedWorker } from '../recovery/task-reasons';
+
+/**
+ * A report's receipt hash is the accepted completion's own bytes, so the local
+ * proof-file request is removed before both the receipt lookup and acceptance.
+ * The copies and their hashes are recorded on the task before either write, and
+ * an identical retry resolves to the first receipt instead of a hash conflict.
+ */
+function proofFilesRemoved(input: Completion): Completion {
+  if (!input.proofFiles) return input;
+  const { proofFiles: _proofFiles, ...rest } = input;
+  return rest as Completion;
+}
 
 /** Select the receipt path for a checkpoint or a live resolution run. */
 export function completionRoute(status: Completion['status'], run: Run | null): 'checkpoint' | 'review_progress' | 'reviewer' | 'run' | 'worker' {
@@ -87,8 +100,9 @@ export class CallbackIntake {
     const identityTask = this.store.task(input.taskId);
     if (sourceRun ? sourceRun.taskId !== identityTask.id : identityTask.runId !== input.runId)
       throw new Error('Stale report: task and run identity do not match');
-    const priorReceipt = this.store.receipt(input, token);
+    const priorReceipt = this.store.receipt(proofFilesRemoved(input), token);
     if (priorReceipt) return priorReceipt;
+    let verifiedPr: { url: string; head: string } | null = null;
     if (!sourceRun || sourceRun.role === 'revision') {
       const branches = `${input.headline ?? ''} ${input.summary}`.match(/\bns-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi) ?? [];
       if (branches.some(branch => branch !== identityTask.branch)) throw new Error('Report names another task branch');
@@ -97,7 +111,21 @@ export class CallbackIntake {
           ? await this.adapter.verifyPrIdentity(identityTask, input.prNumber, {allowDraft: input.status !== 'ready_for_review'})
           : await this.adapter.verifyPr(identityTask, input.prNumber);
         assertCanonicalPrSource(pr, input.prNumber);
+        verifiedPr = { url: pr.url, head: pr.head };
       }
+    }
+    // nucleus#1142: a worker's proof files are copied into Nucleus's own
+    // per-head evidence directory before the result is accepted, and the copied
+    // records are what the retained reviewer's prompt lists. The report's local
+    // source paths never enter the stored completion; only the copies, their
+    // hashes and their labels do. A refused path copies nothing.
+    if (input.proofFiles?.length) {
+      if (sourceRun && sourceRun.role !== 'revision')
+        throw new Error('proofFiles is only accepted on a worker or revision report; no other role delivers author evidence');
+      const head = sourceRun?.head ?? verifiedPr?.head ?? input.head;
+      const records = recordWorkerProofFiles({ task: identityTask, run: sourceRun, files: input.proofFiles, head, eventId: input.eventId });
+      this.store.appendProofFiles(identityTask.id, records);
+      input = proofFilesRemoved(input);
     }
     const acceptRunCompletion = async () => {
       let startEvidence: string | undefined;
