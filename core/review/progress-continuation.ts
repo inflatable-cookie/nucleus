@@ -1,6 +1,6 @@
 import { participantToolRunIds } from '../recovery/task-reasons';
 import { retainedProgressRun, retainedWorkHeads } from '../dispatch/retained-work';
-import { blockingRecoveryEffectsRefusal, recoveryEffects, isBlockingRecoveryEffect } from '../recovery/recovery-effects';
+import { blockingRecoveryEffectsRefusal, blockingTaskOperations, recoveryEffects, isBlockingRecoveryEffect } from '../recovery/recovery-effects';
 import { taskPrNumber } from '../forge/index';
 import { isDeepStrictEqual } from 'node:util';
 import { type Task } from '../../shared/contracts';
@@ -15,7 +15,7 @@ export class ProgressContinuation {
   constructor(readonly context: ProgressContinuationContext) {}
   progressEffectsPending(t:Task): boolean {
     return recoveryEffects(this.context.store,t,{noticeKinds:'all'}).some(isBlockingRecoveryEffect)
-      || this.context.store.operations({taskId:t.id,states:['pending','running','needs_attention'],limit:1000}).length > 0
+      || blockingTaskOperations(this.context.store,t).length > 0
       || this.context.store.hookEvents(t.id).some(hook => !['result','published'].includes(hook.state) || hook.result?.outcome !== 'ok')
       || this.context.store.notices(t.id).some(notice => ['intent','uncertain'].includes(notice.status));
   }

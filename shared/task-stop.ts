@@ -71,10 +71,16 @@ export function isTransientExternalFailure(detail: string): boolean {
  * budget stop names `extend_budget` (nucleus#1153): the pause is answered by an
  * extension, and a stop that listed nothing left the task reading as stranded.
  */
-export const taskStopVerbs = ["restart", "route", "move", "proof", "extend_budget"] as const;
+export const taskStopVerbs = ["restart", "route", "move", "proof", "extend_budget", "retry_effect"] as const;
 /** Owner verbs that can advance a stop of this reason; a wait clears on its own. */
 export const taskStopVerbsFor = (reason: TaskStopReason): TaskStopVerb[] =>
   reason === "operator_needed" ? ["restart", "route", "move"] : reason === "run_stalled" ? ["restart"] : reason === "budget" ? ["extend_budget"] : [];
+/**
+ * Nucleus#1159: a phase blocked on an uncertain side effect past its bound is
+ * attention, not a quiet wait. The detail this prefix opens names the blocking
+ * effects, and the owner's one exit is the observation-first `retry_effect`.
+ */
+export const BLOCKED_EFFECT_ATTENTION_PREFIX = "An uncertain side effect blocks review";
 export const taskStopVerbSchema = z.enum(taskStopVerbs);
 export type TaskStopVerb = z.infer<typeof taskStopVerbSchema>;
 
@@ -92,6 +98,10 @@ export function taskStopClassification(detail: string): Pick<TaskStopRecord, "re
   // A hold is its owner's gate: release (or keep_hold) clears it, never a coordinator.
   if (/^(?:Merge|Dispatch) held\b/.test(detail))
     return { reason: "held", suggestedVerbs: [] };
+  // Nucleus#1159: the blocked review's one supported exit is the owner's
+  // observation-first retry, so it is attention with that verb suggested.
+  if (detail.startsWith(BLOCKED_EFFECT_ATTENTION_PREFIX))
+    return { reason: "operator_needed", suggestedVerbs: ["retry_effect"] };
   if (isTransientExternalFailure(detail))
     return { reason: "external_unavailable", suggestedVerbs: [] };
   if (/Origin author thread .+ (active|uncertain) turn|origin author.*busy/i.test(detail))

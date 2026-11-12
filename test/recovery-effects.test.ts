@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Store, digest, operationIdForKey, operationInputHash } from '../core/store/store';
 import { classifyReviewPublication, reviewPublicationKey } from '../core/review/review-publication';
-import { recoveryEffects, blockingRecoveryEffects, blockingRecoveryEffectsRefusal, isBlockingRecoveryEffect } from '../core/recovery/recovery-effects';
+import { recoveryEffects, blockingRecoveryEffects, blockingRecoveryEffectsRefusal, isBlockingRecoveryEffect, blockingTaskOperations, observedHostEffectEvidence, reviewEffectWait } from '../core/recovery/recovery-effects';
 import { verifyEnclosingOperation } from '../core/planning/enclosing-operation';
 import { taskControlOperation } from '../core/verbs/task-control-key';
 import { reviewPublicationBody } from '../core/forge/index';
@@ -311,3 +311,62 @@ test('the shared enclosing-operation verifier excludes only the exact running co
   } finally { store.close(); }
 });
 
+
+/**
+ * Nucleus#1159: an uncertain host-effect control the task has since answered is
+ * not a blocker. Later evidence (a binding after the control was accepted, then
+ * a run used in that workspace) answers it; nothing else does.
+ */
+test('a host-effect operation answered by later evidence stops blocking, and nothing else does', () => {
+  const { store, task: inserted } = fixture();
+  try {
+    const accepted = new Date(Date.now() - 60_000).toISOString();
+    const task = store.update(inserted.id, { workspaceIntent: true, workspaceId: 'workspace', directory: '/worktree' });
+    const input = taskControlInputSchema.parse({ taskId: task.id, version: task.version, action: 'restart', reason: 'Recover the worker' });
+    const { key, payload } = taskControlOperation(input), id = operationIdForKey(key);
+    store.putOperation(queueOperationSchema.parse({ id, key, kind: 'task_control', inputHash: operationInputHash(payload),
+      state: 'needs_attention', taskId: task.id, expectedVersion: input.version, repoPath: null, submissionId: null,
+      createdAt: accepted, startedAt: accepted, settledAt: accepted, attempts: 1,
+      diagnostic: 'Host delivery is unknown; command was not resent; command project.create', result: null,
+      effect: { kind: 'task_control', target: 'restart', intentAt: accepted, status: 'uncertain', result: null, resultAt: null } }), payload);
+    // Unknown delivery with no later evidence is a blocker, and a gate reads it.
+    assert.equal(observedHostEffectEvidence(store, store.task(task.id), store.operation(id)!), null);
+    assert.deepEqual(blockingRecoveryEffects(store, store.task(task.id), { kinds: ['operation'] }).map(effect => effect.identity), [id]);
+    assert.deepEqual(blockingTaskOperations(store, store.task(task.id)).map(operation => operation.id), [id],
+      'a phase gate refuses on it');
+    // A binding alone is not proof the thread in it was created.
+    store.event(task.id, 'workspace_created', 'workspace');
+    assert.equal(observedHostEffectEvidence(store, store.task(task.id), store.operation(id)!), null);
+    assert.equal(blockingTaskOperations(store, store.task(task.id)).length, 1);
+    // A run created in that workspace afterwards is.
+    store.putRun(runSchema.parse({ id: 'revision-used', taskId: task.id, role: 'revision', generation: 1, head, base,
+      agentId: 'revision-agent', workspaceId: 'workspace', profile: null, status: 'finished', createdAt: new Date().toISOString(),
+      lastObservedAt: null, active: false, idleSince: null, completion: null, released: true }));
+    const evidence = observedHostEffectEvidence(store, store.task(task.id), store.operation(id)!)!;
+    assert.match(evidence, /workspace workspace was bound at \/worktree after this control was accepted/);
+    assert.match(evidence, /revision run revision-used started there/);
+    const projected = recoveryEffects(store, store.task(task.id), { kinds: ['operation'] })[0]!;
+    assert.equal(projected.state, 'superseded', 'the projection is history, not a fence');
+    assert.match(projected.reason, /answered by later evidence/);
+    assert.deepEqual(blockingRecoveryEffects(store, store.task(task.id), { kinds: ['operation'] }), []);
+    assert.deepEqual(blockingTaskOperations(store, store.task(task.id)), []);
+    // The projection is a read: the operation row keeps its own recorded state.
+    assert.equal(store.operation(id)?.state, 'needs_attention');
+  } finally { store.close(); }
+});
+
+/** The blocked-review wait is Queue's own sentence on both sides, so the reader tracks it. */
+test('the blocked-review wait is read from the stop Queue itself records', () => {
+  const { store, task } = fixture();
+  try {
+    const refusal = 'operation a is uncertain: task operation a (task_control) is needs_attention: Host delivery is unknown';
+    const stopFor = (detail: string, reason: 'lifecycle' | 'operator_needed' = 'lifecycle') => store.update(task.id,
+      { resolution: { ...store.task(task.id).resolution, stop: { reason, detail, since: at, suggestedVerbs: [] } } }, 'fixture_stop', detail);
+    assert.deepEqual(reviewEffectWait(stopFor(`Ordinary review waits for ${refusal}; settle it with retry_effect before continuing`)),
+      { since: at, detail: `Ordinary review waits for ${refusal}; settle it with retry_effect before continuing` });
+    assert.ok(reviewEffectWait(stopFor(`Review-entry waits for ${refusal}; settle it with retry_effect before continuing`)));
+    assert.equal(reviewEffectWait(stopFor(`Ordinary review waits for ${refusal}; settle it with retry_effect before continuing`, 'operator_needed')), null,
+      'the attention record is not the wait it replaced');
+    assert.equal(reviewEffectWait(stopFor('Another unresolved task operation fences reviewer continuation')), null);
+  } finally { store.close(); }
+});

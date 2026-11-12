@@ -12,6 +12,7 @@ import { workspaceDiscardKey } from "../workspaces/orphan-worktree";
 import type { OwnerEffect } from "./owner-verbs";
 import { ownerPendingEffects, collectOwnerVerbFacts } from "./owner-verbs";
 import { blockingRecoveryEffects } from "../recovery/recovery-effects";
+import { settleObservedHostEffectOperations } from "../recovery/effect-gates";
 import { DurableFenceRefusal } from "../intake/run-settlement";
 import { now } from "../store/store";
 import { participantToolRunIds } from "../recovery/task-reasons";
@@ -69,6 +70,11 @@ export class RetryEffectControls {
     this.engine.requireOwnerControlCurrent(task,input.version,'Task changed; refresh before retrying');
     const beforeSettlement=this.engine.retryEffectBeforeSettlement(task,input);
     if(beforeSettlement)return beforeSettlement;
+    // An uncertain host-effect control the task has since answered settles by
+    // observation, without force: the owner asked for the effect to be observed,
+    // and the task's own later record is that observation (nucleus#1159).
+    const observed=this.retryEffectByObservation(task,input);
+    if(observed)return observed;
     // Spec 050 terminal-cleanup liveness (papercut b87375b0): apply the same
     // observed-liveness settlement the verbs use before deriving the effect, so
     // an idle never-reporting run cannot fence the retry it holds. A live agent
@@ -97,6 +103,24 @@ export class RetryEffectControls {
     const expected=this.store.task(task.id).version;
     const current=this.store.task(task.id);
     return this.engine.retryOrdinaryEffect(task,input,{effect:found.effect,kind:found.kind},current,expected);
+  }
+  /**
+   * The observation half of `retry_effect` for a named task operation: the owner
+   * names `operation.<id>`, and a later-evidence settlement is recorded and
+   * returned. An unanswered operation keeps its fence with the reason the
+   * projection gives, never a resend. Anything not named as an operation is left
+   * to the ordinary pending-effect list.
+   */
+  retryEffectByObservation(task:Task,input:TaskControlInput):Task|null{
+    const named=input.effect?.startsWith('operation.')?input.effect.slice('operation.'.length):null;
+    const candidate=named?this.store.operation(named):null;
+    if(!candidate||candidate.kind!=='task_control'||candidate.taskId!==task.id||candidate.state!=='needs_attention')return null;
+    const settled=settleObservedHostEffectOperations(this.store,task.id);
+    if(settled.some(operation=>operation.id===candidate.id))return this.store.task(task.id);
+    const blocked=blockingRecoveryEffects(this.store,this.store.task(task.id),{noticeKinds:'all'})
+      .find(effect=>effect.kind==='operation'&&effect.identity===candidate.id);
+    if(!blocked)return this.store.task(task.id);
+    throw new DurableFenceRefusal(`operation ${candidate.id} remains ${blocked.state}: ${blocked.reason}; no later task evidence answers its host effect yet`);
   }
   /**
    * The branches that answer before observed-idle settlement, on purpose: a

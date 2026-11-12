@@ -123,6 +123,7 @@ import type { ReconciliationSweep } from '../shared/telemetry';
 
 import { ownerPendingEffects, type OwnerEffect, type RouteRole, type RestartRole } from './verbs/owner-verbs';
 import { RunRelease } from './recovery/fence-settlement';
+import { blockedEffectAttentionReason, settleObservedHostEffectOperations } from './recovery/effect-gates';
 import { Sweep } from "./scheduling/sweep";
 import { TaskWakes } from './scheduling/task-wakes';
 import { CompletionFollowUps } from './closeout/completion-follow-ups';
@@ -144,7 +145,7 @@ export class Engine {
 
   readonly prerequisiteReleases = new PrerequisiteReleases(schedulingContext(this, ['cleanContext', 'pendingPrerequisiteReleases', 'prerequisiteReleaseWork', 'refreshCheckoutSiblings', 'scheduleLane', 'stopped', 'store', 'wakeRepository', 'wakeTask']));
 
-  readonly taskQuantumOwner = new TaskQuantum(schedulingEngineContext(this, ['adapter', 'cleanContext', 'enqueueTitle', 'hooks', 'launchAgent', 'launchProofOnly', 'note', 'noteStepFailure', 'prerequisiteWaitYieldsToLiveWork', 'profileCatalogKnown', 'profiles', 'quantumFinish', 'quantumSteps', 'reconcile', 'reconcileClosedRetainedReviewer', 'recover', 'routeTask', 'settleFinishedRuns', 'settleHistoricalProofExecutions', 'settleRunBuildOutputs', 'settleSupersededIdleRuns', 'signoffDecisions', 'stopped', 'store', 'wakeRepository'], ['advance', 'beginValidationScanPass', 'holdProofOnlyGoWait', 'ownedToolHold', 'owns', 'raiseOperatorQuestions', 'reconcileHoldUntil', 'recordStop', 'recoverExternalMerge', 'recovery', 'resumeClearedAttention', 'settleBudgetClock']));
+  readonly taskQuantumOwner = new TaskQuantum(schedulingEngineContext(this, ['adapter', 'cleanContext', 'enqueueTitle', 'hooks', 'launchAgent', 'launchProofOnly', 'note', 'noteStepFailure', 'prerequisiteWaitYieldsToLiveWork', 'profileCatalogKnown', 'profiles', 'quantumFinish', 'quantumSteps', 'reconcile', 'reconcileBlockedEffects', 'reconcileClosedRetainedReviewer', 'recover', 'routeTask', 'settleFinishedRuns', 'settleHistoricalProofExecutions', 'settleRunBuildOutputs', 'settleSupersededIdleRuns', 'signoffDecisions', 'stopped', 'store', 'wakeRepository'], ['advance', 'beginValidationScanPass', 'holdProofOnlyGoWait', 'ownedToolHold', 'owns', 'raiseOperatorQuestions', 'reconcileHoldUntil', 'recordStop', 'recoverExternalMerge', 'recovery', 'resumeClearedAttention', 'settleBudgetClock']));
 
   readonly plannerGrantCleanup = new PlannerGrantCleanup(recoveryContext(this, ['adapter', 'host', 'signoffDecisions', 'store', 'withHost', 'hostAvailable']));
 
@@ -1076,6 +1077,17 @@ export class Engine {
   settleTerminalIntentRuns(taskId: string): number { return this.runRelease.settleTerminalIntentRuns(taskId); }
   settleSupersededIdleRuns(taskId: string, detail: string): Promise<number> { return this.runRelease.settleSupersededIdleRuns(taskId, detail); }
   settleHistoricalProofExecutions(taskId: string, detail: string): Promise<number> { return this.runRelease.settleHistoricalProofExecutions(taskId, detail); }
+  /**
+   * Nucleus#1159: the ordinary pass observes before it gates. An uncertain
+   * host-effect control whose effect later evidence has answered is settled (and
+   * recorded), and a phase still blocked on an uncertain effect past its bound
+   * becomes attention with `retry_effect` suggested instead of a quiet wait.
+   */
+  reconcileBlockedEffects(taskId: string): void {
+    settleObservedHostEffectOperations(this.store, taskId);
+    const reason = blockedEffectAttentionReason(this.store, this.store.task(taskId));
+    if (reason) this.note(taskId, reason, 'classify');
+  }
   supersededIdleFence(run: Run): Promise<string | null> { return this.runRelease.supersededIdleFence(run); }
   ownedToolHold(agentId: string, runId?: string, taskId?: string): Promise<string | null> { return this.runRelease.ownedToolHold(agentId, runId, taskId); }
   observedRunLiveness(run: Run): Promise<boolean | null> { return this.runRelease.observedRunLiveness(run); }

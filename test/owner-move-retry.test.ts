@@ -1672,6 +1672,65 @@ test('retry_effect settles an uncertain retry operation after its named effect i
   } finally { await f.close(); }
 });
 
+test('retry_effect settles an uncertain host-effect control later evidence answered, without force', async () => {
+  const f = fixture(); try {
+    dispatched(f);
+    // A restart whose project create was never observed, accepted before the
+    // workspace existed (the swallowtail#225 shape).
+    const accepted = new Date(Date.now() - 60_000).toISOString();
+    const control = taskControlInputSchema.parse({ action: 'restart', taskId: f.taskId, version: f.task().version, role: 'worker', reason: 'Recover the worker' });
+    const { key, payload } = taskControlOperation(control), id = operationIdForKey(key);
+    f.store.putOperation(queueOperationSchema.parse({ id, key, kind: 'task_control', inputHash: operationInputHash(payload),
+      state: 'needs_attention', taskId: f.taskId, expectedVersion: control.version, repoPath: null, submissionId: null,
+      createdAt: accepted, startedAt: accepted, settledAt: accepted, attempts: 1,
+      diagnostic: 'Host delivery is unknown; command was not resent; command project.create', result: null,
+      effect: { kind: 'task_control', target: 'restart', intentAt: accepted, status: 'uncertain', result: null, resultAt: null } }), payload);
+    // Later evidence: the workspace is bound to the project and a run has used it.
+    f.store.event(f.taskId, 'workspace_created', 'workspace');
+    f.store.putRun(runSchema.parse({ id: 'revision-after-restart', taskId: f.taskId, role: 'revision', generation: 1, head, base,
+      agentId: 'revision-agent', workspaceId: 'workspace', profile: workerProfile, status: 'finished',
+      createdAt: new Date().toISOString(), lastObservedAt: null, active: false, idleSince: null, completion: null, released: true }));
+    // An answered control is history, not a fence: `next` no longer offers it.
+    assert.equal(f.next().verbs.some(view => view.verb === 'retry_effect' && JSON.stringify(view.args ?? {}).includes(`operation.${id}`)),
+      false, 'an answered operation does not block');
+    const settled = await f.engine.performTaskControl(taskControlInputSchema.parse({ action: 'retry_effect', taskId: f.taskId,
+      version: f.task().version, effect: `operation.${id}`, reason: 'Observe whether the recorded host effect landed', caller: CALLER }));
+    assert.equal(settled.id, f.taskId);
+    const operation = f.store.operation(id)!;
+    assert.equal(operation.state, 'succeeded');
+    assert.equal(operation.effect?.status, 'reconciled');
+    assert.match(operation.effect?.result ?? '', /workspace workspace was bound at \/worktree/);
+    assert.match(operation.effect?.result ?? '', /revision-after-restart/);
+    assert.ok(f.events('operation_settled_by_evidence').length === 1);
+    // A second call has nothing left to observe: no resend, no new settlement.
+    await assert.rejects(f.engine.performTaskControl(taskControlInputSchema.parse({ action: 'retry_effect', taskId: f.taskId,
+      version: f.task().version, effect: `operation.${id}`, reason: 'Observe again', caller: CALLER })), /No recorded side effect/);
+    assert.equal(f.events('operation_settled_by_evidence').length, 1);
+  } finally { await f.close(); }
+});
+
+test('retry_effect names what keeps an unanswered host-effect control uncertain instead of settling it', async () => {
+  const f = fixture(); try {
+    dispatched(f);
+    const accepted = new Date().toISOString();
+    const control = taskControlInputSchema.parse({ action: 'restart', taskId: f.taskId, version: f.task().version, role: 'worker', reason: 'Recover the worker' });
+    const { key, payload } = taskControlOperation(control), id = operationIdForKey(key);
+    f.store.putOperation(queueOperationSchema.parse({ id, key, kind: 'task_control', inputHash: operationInputHash(payload),
+      state: 'needs_attention', taskId: f.taskId, expectedVersion: control.version, repoPath: null, submissionId: null,
+      createdAt: accepted, startedAt: accepted, settledAt: accepted, attempts: 1,
+      diagnostic: 'Host delivery is unknown; command was not resent; command thread.settle', result: null,
+      effect: { kind: 'task_control', target: 'restart', intentAt: accepted, status: 'uncertain', result: null, resultAt: null } }), payload);
+    // Nothing in the task's own record shows the unknown command landed.
+    assert.ok(f.next().verbs.some(view => view.verb === 'retry_effect' && JSON.stringify(view.args ?? {}).includes(`operation.${id}`)),
+      'an unanswered operation is still offered');
+    await assert.rejects(f.engine.performTaskControl(taskControlInputSchema.parse({ action: 'retry_effect', taskId: f.taskId,
+      version: f.task().version, effect: `operation.${id}`, reason: 'Observe the recorded host effect', caller: CALLER })),
+      /no later task evidence answers its host effect yet/);
+    assert.equal(f.store.operation(id)?.state, 'needs_attention', 'observation never assumes delivery');
+    assert.equal(f.events('operation_settled_by_evidence').length, 0);
+  } finally { await f.close(); }
+});
+
 test('a merge lease records a wait naming the blocking retry operation and diagnostic', async () => {
   const f = fixture(); try {
     f.store.update(f.taskId, { phase: 'merging', reason: 'Waiting to merge' });
