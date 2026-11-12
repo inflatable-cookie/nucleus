@@ -1,5 +1,5 @@
 import { writeAtomicOwnedFile } from "../machine/owned-file.mjs";
-import { projectQaNotice } from "./project-qa-notice";
+import { projectQaNotice, uniqueProjectQaRecipients } from "./project-qa-notice";
 import { ProjectQaInspection, projectQaRunReads, type SupervisorInspection } from "./project-qa-inspection";
 import { projectQaEscapees } from "./project-qa-escapees";
 import { projectQaFilePruning } from "./project-qa-supervision-files";
@@ -1520,7 +1520,7 @@ export class ProjectQaRunner {
       let planner: string | undefined;
       try { planner = this.store.projectFor(saved.repository.path, saved.repository.origin)?.planner?.agentId; }
       catch { /* the submitter is still told */ }
-      const recipients = [...new Set([planner, saved.submitterAgentId].filter((id): id is string => Boolean(id)))];
+      const recipients = uniqueProjectQaRecipients([planner, saved.submitterAgentId]);
       const message = projectQaNotice(saved);
       await Promise.all(recipients.map(agentId => this.options!.notify!(agentId, `project-qa-settled-${saved.id}-${agentId}`, message).catch(() => undefined)));
     }

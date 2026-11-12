@@ -1,4 +1,28 @@
 import type { ProjectQaRun } from "../../shared/contracts";
+import { parseAgentId } from "../../shared/agent-identity";
+import { hostKindOf } from "../../shared/host-kind";
+
+/** Bare historical thread IDs are Paseo IDs; qualified identities retain their host boundary. */
+export function projectQaRecipientKey(agentId: string): string {
+  const qualified = parseAgentId(agentId);
+  if (!qualified) return `paseo:${agentId}`;
+  if (hostKindOf(qualified.hostId) === "paseo") return `paseo:${qualified.nativeAgentId}`;
+  return `${qualified.hostId}:${qualified.nativeAgentId}`;
+}
+
+/** Preserve the first spelling while collapsing qualified and bare forms of one thread. */
+export function uniqueProjectQaRecipients(agentIds: Array<string | undefined>): string[] {
+  const seen = new Set<string>();
+  const recipients: string[] = [];
+  for (const agentId of agentIds) {
+    if (!agentId) continue;
+    const key = projectQaRecipientKey(agentId);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    recipients.push(agentId);
+  }
+  return recipients;
+}
 
 /** A successful timing stage may retain inconclusive performance failures. */
 export function projectQaNotice(run: Pick<ProjectQaRun, "id" | "state" | "failureIndexes">): string {

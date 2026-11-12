@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { projectQaNotice } from '../core/qa/project-qa-notice';
+import { projectQaNotice, uniqueProjectQaRecipients } from '../core/qa/project-qa-notice';
+import { formatAgentId } from '../shared/agent-identity';
 
 const index = { stage: 'test:timing', tests: 3, failed: 2, cancelled: 0, skipped: 0,
   identities: [{ id: 1, title: 'timing: CPU budget', location: 'test/cost.ts:2:3', status: 'failed' as const },
@@ -21,4 +22,17 @@ test('failed timing QA counts functional failures and cancellation as blocking',
   assert.match(notice, /Milestone QA failed: 2 failed, 1 cancelled/);
   assert.match(notice, /test:timing: 2 failed, 1 cancelled/);
   assert.doesNotMatch(notice, /inconclusive/);
+});
+
+test('QA settlement fan-out sends one notice for qualified and bare forms of a Paseo thread', () => {
+  const qualified = formatAgentId('paseo:fixture', 'planner-thread');
+  assert.deepEqual(uniqueProjectQaRecipients([qualified, 'planner-thread']), [qualified]);
+});
+
+test('QA settlement fan-out keeps equal native IDs on different hosts distinct', () => {
+  assert.deepEqual(uniqueProjectQaRecipients([
+    formatAgentId('paseo:fixture', 'same-thread'),
+    formatAgentId('t3code:fixture', 'same-thread'),
+    'same-thread',
+  ]), [formatAgentId('paseo:fixture', 'same-thread'), formatAgentId('t3code:fixture', 'same-thread')]);
 });
