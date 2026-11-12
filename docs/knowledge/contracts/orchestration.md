@@ -1061,10 +1061,17 @@ request identities and submitted handoffs are not rewritten.
   Tom, 2026-11-06/07): durable records with id, name, normalised provider, model,
   mode, thinking option, feature values and notes. `profile.list`,
   `profile.create`, `profile.update`, `profile.remove`, `profile.providers`,
-  `profile.providers.set` and `host.catalog` are the surface
+  `profile.providers.set`, `profile.compatibility` and `host.catalog` are the surface
   (`shared/profiles.ts`, `shared/host.ts`, `core/planning/profile-import.ts`). Each host
   reports its own catalog; the provider map normalises its keys, identity by
-  default, and Settings → Profiles edits it beside the list. An earlier migration
+  default, and Settings → Profiles edits it beside the list. A profile's
+  per-host-kind setting maps or excludes it on one host (nucleus#1151); each
+  host's routing snapshot carries that host's launch values (the host's own
+  provider key included), and a task's `routingPolicy` lists the enabled pool
+  profiles its host rules out or maps (`host.effects`) and how automatic worker
+  selection reads now (`selection`: complexity, role and usage offsets, the
+  first-attempt step, the demand, the profiles meeting it ordered by recent use
+  over effective weight, and why the leader wins). An earlier migration
   copied the host's profile list once with ids unchanged without overwriting
   a Nucleus profile; routing does not re-import it. A stored profile's availability is read against one host's
   catalog and a missing provider or model is a refusal, never a fallback to

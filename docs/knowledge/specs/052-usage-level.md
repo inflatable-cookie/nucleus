@@ -34,7 +34,26 @@ profiles.
   That editor shows only when it can help or holds an entry (Tom, 2026-11-08):
   Nucleus serves more than one host and one offers a profile's model under an
   unmapped key other than the profile's, which it prefills with the profile and
-  host it would serve; otherwise it is hidden. The
+  host it would serve; otherwise it is hidden.
+- **Each profile per host** (nucleus#1151, Tom 2026-11-12: "make sure all of the
+  profiles set up in Nucleus actually work in T3 ... so an operator can make
+  decisions about it in the UI"). A profile may carry a setting per host kind
+  (`hosts.paseo`, `hosts.t3code`): either `excluded`, or replacement values for
+  that host only — the host's own provider key, a model, a mode, a thinking
+  level or feature values, `null` clearing one there (a thinking level that host
+  carries as an option, say). `profile.compatibility` answers, for every stored
+  profile and every known host, `works`, `unavailable`, `excluded` or `unknown`
+  (catalog never read) with the reason naming the host, the mapped fields and
+  the values a launch there sends; it computes on read from the catalog Nucleus
+  last read from each host, so a catalog change or a Settings edit shows at once.
+  Each host's routing snapshot applies the same setting, so a mapped profile
+  launches with the mapped values and an excluded or incompatible one is never
+  selected for that host's tasks. A profile edit rebuilds the snapshots from the
+  catalogs already read. Settings → Profiles shows a host chip per host on each
+  row (reason in its popover) and, in the editor, one block per non-primary host:
+  Use or Exclude, then Provider, Model, Mode, Thinking and Options, each starting
+  at "Same as profile".
+- The
   earlier migration copied Paseo's `config.agentProfiles` once with
   ids unchanged and records that it ran, so the pool, routing requests, grants
   and history keep matching; a Nucleus profile is never overwritten and a later

@@ -135,6 +135,27 @@ export function StatusGlyph({ c, icon, color, text, label }: { c: Colors; icon: 
   </Pressable>;
 }
 /**
+ * A compact host status pill (nucleus#1151): the host's name with a check or a
+ * warning. Hover, focus or press shows the reason in a popover; the pill itself
+ * carries no description (Tom's UI rules).
+ */
+export function HostChip({ c, text, ok, detail, label }: { c: Colors; text: string; ok: boolean; detail: string; label: string }) {
+  const [showHint, setShowHint] = useState(false);
+  const focus = useFocusVisible();
+  const anchor = useRef<View | null>(null);
+  const r = roles(c);
+  const color = ok ? r.success : r.warning;
+  return <Pressable ref={anchor} accessibilityRole="button" accessibilityLabel={label} accessibilityHint={detail} onPress={() => setShowHint(open => !open)}
+    hitSlop={touchSlop(22)} onHoverIn={() => setShowHint(true)} onHoverOut={() => setShowHint(false)}
+    onFocus={() => { focus.onFocus(); setShowHint(true); }} onBlur={() => { focus.onBlur(); setShowHint(false); }}
+    style={{ flexDirection: "row", alignItems: "center", gap: space.xxs, height: 22, paddingHorizontal: space.xs, borderRadius: 11, borderWidth: 1, borderColor: r.border, ...noOutline() }}>
+    <FocusRing c={c} visible={focus.visible} corner={11} />
+    <Icon name={ok ? "CircleCheck" : "TriangleAlert"} size={12} color={color} />
+    <Text numberOfLines={1} style={{ color: r.muted, fontSize: type.metadata.fontSize }}>{text}</Text>
+    {showHint && <Popover anchor={anchor} align="end" pointerEvents="none" maxWidth={360} inlineStyle={{ top: 22 + space.xxs, right: 0, maxWidth: 360 }}><View pointerEvents="none" style={{ padding: space.xs, borderRadius: radius.control, ...popover(c) }}><Text style={{ color: r.foreground, fontSize: type.metadata.fontSize, lineHeight: type.metadata.lineHeight }}>{detail}</Text></View></Popover>}
+  </Pressable>;
+}
+/**
  * A small (?) beside a label; its owner renders the explanation (`HelpPopover`)
  * anchored to the label's row. Hover or focus opens it, press toggles it, and a press that
  * closes it keeps hover from reopening it until the pointer leaves (review #600).

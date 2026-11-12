@@ -82,7 +82,8 @@ export class StoreConfig {
    * reason (nucleus#1143).
    */
   routingPolicy(task: Task, at = Date.now(), profiles: readonly Profile[] = []): RoutingPolicy {
-    return taskRoutingPolicy(task, this.pool(), this.usageView(at), this.availability(), at, profiles);
+    return taskRoutingPolicy(task, this.pool(), this.usageView(at), this.availability(), at, profiles,
+      { counts: this.counts(), recent: this.recentCounts(), offsets: this.demandRoleOffsets() });
   }
 
   /** Spec 053: the host-wide role offsets, defaulting to worker 0, reviewer 0, coordinator −2. */

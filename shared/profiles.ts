@@ -389,6 +389,10 @@ function hostReason(problem: string, label: string, providerKey: string, values:
   if (mode) return `${label}'s ${providerKey} has no mode ${mode[1]}${mode[2] ? ` (it offers ${mode[2]})` : ""}`;
   if (problem === "Configured thinking level is not supported") return `${label}'s ${values.model} has no thinking level ${values.thinkingOptionId}`;
   if (/^Model \S+ is not available from provider/.test(problem)) return `${label}'s ${providerKey} has no model ${values.model}`;
+  const option = /^Configured option (\S+) (is not supported|needs a boolean value|does not offer that value)$/.exec(problem);
+  if (option) return option[2] === "is not supported" ? `${label}'s ${values.model} has no option ${option[1]}`
+    : option[2] === "needs a boolean value" ? `${label}'s ${values.model} option ${option[1]} needs on or off`
+    : `${label}'s ${values.model} option ${option[1]} has no value ${String(values.featureValues?.[option[1]!])}`;
   return problem.replace("this host", label);
 }
 

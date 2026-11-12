@@ -1,10 +1,10 @@
-import type { Task, Run, Profile, PoolEntry, DemandRoleOffsets, RoutePolicy, RoutingPolicy, UsageLevel, UsageView, HostEffect } from "../../shared/contracts";
+import type { Task, Run, Profile, PoolEntry, DemandRoleOffsets, RoutePolicy, RoutingPolicy, UsageLevel, UsageView, HostEffect, SelectionExplanation } from "../../shared/contracts";
 import type { Resolution } from "../resolution";
 import { authorModelKey, queueAuthorModelKey, taskAuthorModelKeys } from "../../shared/authors";
 import {demandRank,workerThinking} from '../../shared/pool';
 export {workerThinking};
 import {automaticSelection, requestOnly, describeRoutePolicy, honouredRequest, requestReaches, groupIsUnavailable, withinUsage} from '../../shared/pool';
-import {DEMAND_ROLE_OFFSETS, demandTier, effectiveWeight, runDemand, workerDemandStep, workerStepDown} from '../../shared/demand';
+import {DEMAND_ROLE_OFFSETS, DEMAND_USAGE_OFFSETS, demandTier, effectiveWeight, runDemand, workerDemandStep, workerStepDown, workerStepLabel} from '../../shared/demand';
 type Role = "worker"|"reviewer"|"coordinator";
 /** The normalized model key Spec 036 compares: the last path segment, lower-cased. */
 export function modelKey(model: string): string {
@@ -290,7 +290,8 @@ export function chooseProfile(task: Task, profiles: Profile[], pool: PoolEntry[]
  * task's own requests, preference and recorded runs, never the whole pool.
  * Read-only: no selection, gate or setting depends on it.
  */
-export function taskRoutingPolicy(task: Task, pool: readonly PoolEntry[], usage: UsageView, availability: readonly { group: string; unavailable: boolean; reason: string; retryAt: string | null }[], at = Date.now(), profiles: readonly Profile[] = []): RoutingPolicy {
+export interface SelectionCounts { counts: Record<string, number>; recent: Record<string, number>; offsets: DemandRoleOffsets }
+export function taskRoutingPolicy(task: Task, pool: readonly PoolEntry[], usage: UsageView, availability: readonly { group: string; unavailable: boolean; reason: string; retryAt: string | null }[], at = Date.now(), profiles: readonly Profile[] = [], selectionCounts?: SelectionCounts): RoutingPolicy {
   const named: Array<{ role: Role; profileId: string; source: RoutePolicy["source"] }> = [];
   const add = (role: Role, profileId: string | null | undefined, source: RoutePolicy["source"]) => {
     if (profileId && !named.some(item => item.role === role && item.profileId === profileId)) named.push({ role, profileId, source });
@@ -319,7 +320,37 @@ export function taskRoutingPolicy(task: Task, pool: readonly PoolEntry[], usage:
       automatic: entry ? automaticSelection(entry, usage.level) : null, gates,
       ...(requested ? { signoff: { status: requested.status, decisionId: requested.decisionId, note: requested.note, ...(requested.grantId ? { grantId: requested.grantId } : {}), ...(requested.endedGrantId ? { endedGrantId: requested.endedGrantId } : {}) } } : {}) };
     return { ...policy, explanation: describeRoutePolicy(policy, usage) };
-  }), ...(task.hostId && profiles.length ? { host: { hostId: task.hostId, effects: hostEffects(pool, profiles) } } : {}) };
+  }), ...(profiles.length && selectionCounts ? { selection: workerSelectionExplanation(task, pool, profiles, usage.level,
+    new Set(availability.filter(item => groupIsUnavailable(item, at)).map(item => item.group)), selectionCounts) } : {}),
+  ...(task.hostId && profiles.length ? { host: { hostId: task.hostId, effects: hostEffects(pool, profiles) } } : {}) };
+}
+
+/**
+ * Why automatic worker selection lands where it does for this task
+ * (nucleus#1151, "why did this get Luna?"): the same demand, tier and rotation
+ * `chooseProfile` uses at first dispatch, against the task host's snapshot.
+ */
+export function workerSelectionExplanation(task: Task, pool: readonly PoolEntry[], profiles: readonly Profile[], usage: UsageLevel,
+  unavailableGroups: ReadonlySet<string>, { counts, recent, offsets }: SelectionCounts): SelectionExplanation {
+  const complexity = task.complexity ?? "medium";
+  const fullDemand = runDemand(complexity, "worker", usage, offsets);
+  const demand = workerDemandStep(fullDemand, workerStepDown(usage, false));
+  const eligible = pool.filter(entry => entry.enabled && !unavailableGroups.has(entry.group) && requestReaches(entry, usage, null)
+    && profiles.some(profile => profile.id === entry.profileId && profile.available));
+  const { tier, shortfall } = demandTier(demand, eligible);
+  const nameOf = (id: string) => profiles.find(profile => profile.id === id)?.name ?? id;
+  const met = tier.map(entry => ({ profileId: entry.profileId, name: nameOf(entry.profileId), capability: entry.capability ?? null, cost: entry.cost ?? null,
+    weight: entry.weight, effectiveWeight: effectiveWeight(entry.weight, entry.cost), recent: recent[`profile:${entry.profileId}`] ?? 0 }))
+    .sort((a, b) => a.recent / a.effectiveWeight - b.recent / b.effectiveWeight || a.profileId.localeCompare(b.profileId));
+  const picked = chooseProfile(task, [...profiles], [...pool], counts, new Set(unavailableGroups), "worker", recent, usage, offsets, true);
+  const named = task.profileRequests?.worker?.profileId ?? task.preferredProfileId;
+  const row = picked && met.find(item => item.profileId === picked.profile.id);
+  const reason = !picked ? "no eligible profile on this host"
+    : picked.profile.id === named ? "named by the task's request or preference"
+    : row ? `fewest recent assignments per effective weight in the set: ${row.recent} of the last 50 over weight ${row.weight} × cost lean ${row.effectiveWeight / row.weight} (cost ${row.cost ?? "unset"})${met.length > 1 ? `; next ${met.filter(item => item.profileId !== row.profileId).slice(0, 2).map(item => `${item.name} ${item.recent} over ${item.effectiveWeight}`).join(", ")}` : ""}`
+    : "outside the demand set";
+  return { role: "worker", complexity, roleOffset: offsets.worker, usageOffset: DEMAND_USAGE_OFFSETS[usage], step: workerStepLabel(usage, false),
+    fullDemand, demand, shortfall, met, choice: picked ? { profileId: picked.profile.id, name: picked.profile.name, reason } : null };
 }
 
 /**

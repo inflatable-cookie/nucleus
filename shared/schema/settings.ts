@@ -172,7 +172,32 @@ export const hostEffectSchema = z.object({
 }).strict();
 export type HostEffect = z.infer<typeof hostEffectSchema>;
 
+/**
+ * How automatic worker selection reads for this task now (nucleus#1151): the
+ * demand it computes, the profiles that meet it on the task's host, and why the
+ * leading one wins. Read-only: selection itself is `chooseProfile`.
+ */
+export const selectionExplanationSchema = z.object({
+  role: z.literal("worker"),
+  complexity: capabilityLevelSchema,
+  roleOffset: z.number().int(),
+  usageOffset: z.number().int(),
+  /** The first-attempt rule as it applies at dispatch (`workerStepLabel`). */
+  step: z.string(),
+  fullDemand: z.enum(["very_low", "low", "medium", "high", "very_high", "frontier"]),
+  demand: z.enum(["very_low", "low", "medium", "high", "very_high", "frontier"]),
+  /** No eligible profile met the demand, so the most capable eligible ones form the set. */
+  shortfall: z.boolean(),
+  /** The set rotation chooses from, best placed first: recent use over effective weight. */
+  met: z.array(z.object({ profileId: z.string(), name: z.string(), capability: z.string().nullable(), cost: z.string().nullable(),
+    weight: z.number(), effectiveWeight: z.number(), recent: z.number() }).strict()),
+  /** The profile selection would choose now, and why; null when none is eligible. */
+  choice: z.object({ profileId: z.string(), name: z.string(), reason: z.string() }).strict().nullable(),
+}).strict();
+export type SelectionExplanation = z.infer<typeof selectionExplanationSchema>;
+
 export const routingPolicySchema = z.object({ usage: usageViewSchema, scope: scopeSchema, profiles: z.array(routePolicySchema),
+  selection: selectionExplanationSchema.optional(),
   /** The task's host and the pool profiles it rules out or maps; absent when no host snapshot was read. */
   host: z.object({ hostId: z.string(), effects: z.array(hostEffectSchema) }).strict().optional(),
 }).strict();
