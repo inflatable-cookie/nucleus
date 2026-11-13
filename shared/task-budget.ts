@@ -131,31 +131,57 @@ function recordedWaitIntervals(events: BudgetEvent[], at: number): BudgetInterva
     const from = Date.parse(start ?? ""), to = Math.min(at, end ? Date.parse(end) : at);
     if (Number.isFinite(from) && to > from) intervals.push({ start: from, end: to });
   };
-  const endFor = (event: BudgetEvent, kinds: string[], id?: string, holdKind?: "dispatch" | "merge") => events.find(next => kinds.includes(next.kind)
-    && Date.parse(next.at) >= Date.parse(event.at) && (!id || next.detail.startsWith(`${id}:`))
-    && (next.kind !== "hold_auto_released" || !holdKind || next.detail.startsWith(`${holdKind};`)))?.at;
-
+  let dispatchHold: string | null = null, mergeHold: string | null = null, prerequisiteWait: string | null = null;
+  const escalations = new Map<string, { at: string; target?: string }>();
+  const questions = new Map<string, { at: string }>();
   for (const event of events) {
-    if (event.kind === "hold" || event.kind === "merge_hold") {
-      const merge = event.kind === "merge_hold";
-      add(event.at, endFor(event, merge ? ["merge_release", "hold_auto_released"] : ["release", "hold_auto_released"], undefined, merge ? "merge" : "dispatch"));
+    if (event.kind === "hold") dispatchHold ??= event.at;
+    else if (event.kind === "merge_hold") mergeHold ??= event.at;
+    else if (event.kind === "release") {
+      if (dispatchHold) add(dispatchHold, event.at);
+      dispatchHold = null;
+    } else if (event.kind === "merge_release") {
+      if (mergeHold) add(mergeHold, event.at);
+      mergeHold = null;
+    } else if (event.kind === "hold_auto_released") {
+      if (event.detail.startsWith("dispatch;") && dispatchHold) { add(dispatchHold, event.at); dispatchHold = null; }
+      if (event.detail.startsWith("merge;") && mergeHold) { add(mergeHold, event.at); mergeHold = null; }
     } else if (event.kind === "prerequisite_wait_set") {
-      add(event.at, endFor(event, ["prerequisite_wait_released", "prerequisite_wait_resumed"]));
+      prerequisiteWait ??= event.at;
+    } else if (event.kind === "prerequisite_wait_released" || event.kind === "prerequisite_wait_resumed") {
+      if (prerequisiteWait) add(prerequisiteWait, event.at);
+      prerequisiteWait = null;
     } else if (event.kind === "planner_escalation_wait") {
       const id = event.detail.split(":", 1)[0]!;
       let wait: { kind?: string; target?: string } = {};
       try { wait = JSON.parse(event.detail.slice(id.length + 2)); } catch { /* Historical malformed event is not a proven wait interval. */ }
-      const end = wait.kind === "time" && wait.target ? wait.target : endFor(event,
-        ["planner_escalation_wake_intent", "planner_escalation_wait_superseded", "planner_escalation_refused"], id);
-      add(event.at, end);
+      escalations.set(id, { at: event.at, ...(wait.kind === "time" && wait.target ? { target: wait.target } : {}) });
+    } else if (["planner_escalation_wake_intent", "planner_escalation_wait_superseded", "planner_escalation_refused"].includes(event.kind)) {
+      const id = event.detail.split(":", 1)[0]!;
+      const wait = escalations.get(id);
+      if (wait) {
+        const targetAt = Date.parse(wait.target ?? "");
+        const closedAt = Number.isFinite(targetAt) && targetAt < Date.parse(event.at) ? wait.target : event.at;
+        add(wait.at, closedAt);
+      }
+      escalations.delete(id);
     } else if (event.kind === "operator_question" || event.kind === "responsible_question") {
       const id = event.detail.split(":", 1)[0]!;
       if (event.kind === "operator_question" && /kind budget\b/.test(event.detail)) continue;
-      add(event.at, endFor(event, event.kind === "operator_question"
-        ? ["operator_question_answered", "operator_question_superseded"]
-        : ["responsible_question_answered", "responsible_question_superseded"], id));
+      questions.set(`${event.kind}:${id}`, { at: event.at });
+    } else if (["operator_question_answered", "operator_question_superseded", "responsible_question_answered", "responsible_question_superseded"].includes(event.kind)) {
+      const id = event.detail.split(":", 1)[0]!;
+      const kind = event.kind.startsWith("operator_question") ? "operator_question" : "responsible_question";
+      const question = questions.get(`${kind}:${id}`);
+      if (question) add(question.at, event.at);
+      questions.delete(`${kind}:${id}`);
     }
   }
+  add(dispatchHold ?? undefined, undefined);
+  add(mergeHold ?? undefined, undefined);
+  add(prerequisiteWait ?? undefined, undefined);
+  for (const wait of escalations.values()) add(wait.at, wait.target);
+  for (const question of questions.values()) add(question.at, undefined);
   return intervals;
 }
 
@@ -171,7 +197,8 @@ function unionDuration(intervals: BudgetInterval[]): number {
 }
 
 /** Paused time from stored interval events plus the Nucleus-owned clock's live segment. */
-export function recordedBudgetPaused(events: BudgetEvent[], task: Pick<Task, "resolution">, at: number): number {
+export function recordedBudgetPaused(events: BudgetEvent[], task: Pick<Task, "resolution">, at: number,
+  budgetStart = Number.NEGATIVE_INFINITY, additionalIntervals: BudgetInterval[] = []): number {
   const intervals = recordedWaitIntervals(events, at);
   const clock = task.resolution.budgetClock;
   if (clock?.since) intervals.push({ start: Date.parse(clock.since), end: at });
@@ -187,7 +214,10 @@ export function recordedBudgetPaused(events: BudgetEvent[], task: Pick<Task, "re
     // Older rows may have a folded clock without its audit events.
     intervals.push({ start: at - clock.pausedMs, end: at });
   }
-  return unionDuration(intervals);
+  intervals.push(...additionalIntervals);
+  return unionDuration(intervals.map(interval => ({
+    start: Math.max(interval.start, budgetStart), end: Math.min(interval.end, at),
+  })));
 }
 
 /** Paused time at `at`: closed intervals plus the one still open. */
@@ -231,13 +261,13 @@ export function taskBudget(task: Pick<Task, "complexity" | "resolution"> & Parti
   const wallSpan = Number.isFinite(wallStart) ? Math.max(0, at - wallStart) : 0;
   // A pause is charged only against time inside this task's own wall span, so a
   // clock from an earlier lifecycle can never drive the figure negative.
-  const recorded = recordedBudgetPaused(events, task, at);
   // Legacy rows can predate hold events. The current fence carries its original start.
   const fences = task.held ? [task.holds?.dispatch, task.holds?.merge].filter((fence): fence is HoldFence => Boolean(fence)) : [];
   const legacyHoldStart = task.held && !fences.length ? task.holdAt : null;
   const holdIntervals = [...fences.map(fence => ({ start: Date.parse(fence.at), end: at })),
     ...(legacyHoldStart ? [{ start: Date.parse(legacyHoldStart), end: at }] : [])];
-  const paused = Math.min(wallSpan, Math.max(recorded, budgetClockPaused(task.resolution.budgetClock, at), unionDuration(holdIntervals)));
+  const paused = Math.min(wallSpan, Number.isFinite(wallStart)
+    ? recordedBudgetPaused(events, task, at, wallStart, holdIntervals) : 0);
   const wallUsed = wallSpan - paused;
   const exhausted = tokensUsed >= tokenLimit ? "effective_tokens" : wallUsed >= wallLimit ? "wall_time" : null;
   return {

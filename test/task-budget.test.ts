@@ -134,13 +134,42 @@ test('dependency and escalation waits are excluded while the live run span still
   const from = '2026-11-01T10:00:00.000Z';
   const to = '2026-11-01T11:00:00.000Z';
   const events = [
+    { at: from, kind: 'planner_escalation_wait', detail: 'escalation-id: {"kind":"time","target":"2026-11-01T11:00:00.000Z"}' },
+    { at: from, kind: 'planner_escalation_wait', detail: 'decision-id: {"kind":"decision","target":"planner"}' },
     { at: from, kind: 'prerequisite_wait_set', detail: 'dependency-id; waiting' },
     { at: to, kind: 'prerequisite_wait_released', detail: '{"waitId":"dependency-id"}' },
-    { at: from, kind: 'planner_escalation_wait', detail: 'escalation-id: {"kind":"time","target":"2026-11-01T11:00:00.000Z"}' },
+    { at: to, kind: 'planner_escalation_wake_intent', detail: 'decision-id: planner answered' },
   ];
   const budget = taskBudget(budgeted('low'), [run(from)], Date.parse('2026-11-01T11:30:00.000Z'), null, events);
   assert.equal(budget.wallMs.used, 30 * MINUTE);
   assert.equal(budget.wallMs.pausedMs, 60 * MINUTE);
+});
+
+test('an early decision change ends a timed escalation wait at its recorded close', () => {
+  const from = '2026-11-01T10:00:00.000Z';
+  const closedAt = '2026-11-01T10:20:00.000Z';
+  const events = [
+    { at: from, kind: 'planner_escalation_wait', detail: 'escalation-id: {"kind":"time","target":"2026-11-01T11:00:00.000Z"}' },
+    { at: closedAt, kind: 'planner_escalation_wait_superseded', detail: 'escalation-id: owner resumed task' },
+  ];
+  const budget = taskBudget(budgeted('low'), [run(from)], Date.parse('2026-11-01T10:30:00.000Z'), null, events);
+  assert.equal(budget.wallMs.used, 10 * MINUTE);
+  assert.equal(budget.wallMs.pausedMs, 20 * MINUTE);
+});
+
+test('holds before the budget starts do not erase time from the eligible run span', () => {
+  const heldAt = '2026-11-01T09:00:00.000Z';
+  const releasedAt = '2026-11-01T10:00:00.000Z';
+  const firstRun = '2026-11-01T10:00:00.000Z';
+  const at = Date.parse('2026-11-01T11:01:00.000Z');
+  const events = [
+    { at: heldAt, kind: 'hold', detail: 'hold' },
+    { at: releasedAt, kind: 'release', detail: 'release' },
+  ];
+  const budget = taskBudget(budgeted('low'), [run(firstRun)], at, null, events);
+  assert.equal(budget.wallMs.used, 61 * MINUTE);
+  assert.equal(budget.wallMs.pausedMs, 0);
+  assert.equal(budget.exhausted, 'wall_time');
 });
 
 test('an open interval counts until it closes, and never overcharges an earlier lifecycle', () => {
