@@ -539,7 +539,7 @@ export class Questions {
         const choices = decision.options.length ? ` Choices: ${decision.options.join(' | ')}.` : '';
         const reference = this.store.task(task.id).reference ?? task.title;
         await this.resolution.host.sendMessage(planner, { messageId: `ns-queue-question-${decision.id}`,
-          text: `Nucleus raised a question on ${reference} (kind ${decision.kind}) because ${why}. It is on the board for the operator; answer it there. Do not use question.answer unless Nucleus delegated this question to you. Question: ${decision.question}${choices}` });
+          text: `Nucleus raised a question on ${reference} (kind ${decision.kind}) because ${why}. It is on the board for the operator; answer it there. Question: ${decision.question}${choices}` });
         if (!noticed()) this.store.event(task.id, 'operator_question_planner_notice', `${decision.id}: planner ${planner}`);
       });
     })().catch(error => {
