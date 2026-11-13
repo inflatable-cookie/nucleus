@@ -6,8 +6,10 @@ import type { TaskStopReason } from "./task-stop";
  * Spec 058 budgets: a safety net on each responsible task, not something to tune.
  * Effective tokens and wall time include only runs at or after conversion when
  * the task carries a responsible start. Otherwise they use the first dispatch.
- * The defaults are provisional until a shadow period sets
- * each size near 1.5x the observed 75th percentile.
+ * Every gate and view measures through this one function (nucleus#1187), and wall
+ * time never starts before the lifecycle's first recorded run. The defaults are
+ * provisional until a shadow period sets each size near 1.5x the observed 75th
+ * percentile.
  */
 const MINUTE_MS = 60_000;
 export const TASK_BUDGET_DEFAULTS = {
@@ -125,6 +127,14 @@ export type BudgetClock = z.infer<typeof budgetClockSchema>;
 export type BudgetEvent = { at: string; kind: string; detail: string };
 type BudgetInterval = { start: number; end: number };
 
+/**
+ * The events that record a run's start. A task's initial worker is stored on the
+ * task row (`runId`, `agentId`) and never as a run row, so its dispatch intent and
+ * its `agent_created` event are the only durable record of when its first run
+ * began — the shape a task dispatched once has (nucleus#1187).
+ */
+export const BUDGET_RUN_START_EVENTS = ["dispatch_intent", "agent_intent", "run_intent", "agent_created"] as const;
+
 function recordedWaitIntervals(events: BudgetEvent[], at: number): BudgetInterval[] {
   const intervals: BudgetInterval[] = [];
   const add = (start: string | undefined, end: string | undefined) => {
@@ -201,22 +211,30 @@ export function recordedBudgetPaused(events: BudgetEvent[], task: Pick<Task, "re
   budgetStart = Number.NEGATIVE_INFINITY, additionalIntervals: BudgetInterval[] = []): number {
   const intervals = recordedWaitIntervals(events, at);
   const clock = task.resolution.budgetClock;
-  const eventClock = events.filter(event => event.kind === "budget_clock_paused" || event.kind === "budget_clock_resumed");
-  if (eventClock.length) {
-    if (clock?.since) intervals.push({ start: Date.parse(clock.since), end: at });
-    let opened: string | null = null;
-    for (const event of eventClock) {
-      if (event.kind === "budget_clock_paused") opened ??= event.at;
-      else if (opened) { intervals.push({ start: Date.parse(opened), end: Date.parse(event.at) }); opened = null; }
+  // The clock's events place its closed intervals; its folded `pausedMs` is the
+  // durable count of that same time. They disagree when the pause is dated from the
+  // fault it observed rather than from the pass that noticed it (an observation
+  // outage, a dispatch hold), so the fold is authoritative: whatever the events do
+  // not account for is booked adjacent to the read, and is never counted twice
+  // (nucleus#1187: a folded pause was ignored whenever its events existed, so a held
+  // task was charged for its own hold).
+  const placed: BudgetInterval[] = [];
+  let opened: string | null = null;
+  for (const event of events) {
+    if (event.kind === "budget_clock_paused") opened ??= event.at;
+    else if (event.kind === "budget_clock_resumed" && opened) {
+      placed.push({ start: Date.parse(opened), end: Date.parse(event.at) }); opened = null;
     }
-    if (opened && !clock?.since) intervals.push({ start: Date.parse(opened), end: at });
-  } else {
-    // Older rows may have a folded clock without its audit events. Its closed
-    // total has no exact placement, so keep it adjacent to the open segment.
-    const open = clock?.since ? Math.max(0, at - Date.parse(clock.since)) : 0;
-    const total = (clock?.pausedMs ?? 0) + open;
-    if (total > 0) intervals.push({ start: at - total, end: at });
   }
+  intervals.push(...placed);
+  const running = Number.isFinite(Date.parse(clock?.since ?? ""));
+  const open = running ? Math.max(0, at - Date.parse(clock!.since!)) : 0;
+  // The fold's remainder is booked just before the segment still open, so the two
+  // never overlap each other and the clock's own total is what the budget shows.
+  const unplaced = Math.max(0, (clock?.pausedMs ?? 0) - unionDuration(placed));
+  if (unplaced > 0) intervals.push({ start: at - open - unplaced, end: at - open });
+  if (running) intervals.push({ start: Date.parse(clock!.since!), end: at });
+  else if (opened) intervals.push({ start: Date.parse(opened), end: at });
   intervals.push(...additionalIntervals);
   return unionDuration(intervals.map(interval => ({
     start: Math.max(interval.start, budgetStart), end: Math.min(interval.end, at),
@@ -232,23 +250,30 @@ export function budgetClockPaused(clock: BudgetClock | null | undefined, at: num
 }
 
 /**
- * A responsible task's budget at `at` (epoch ms). A legacy conversion timestamp
- * is supplied by callers that can read the event store. Each extension adds one default
- * increment, so the limits grow by the size's default per answer. A run without a
- * usage record adds no tokens: an unobserved turn never pauses the task, though
- * wall time still runs. Partial usage is a lower bound, so reaching the limit on it
- * is still a real pause. Time the task spent held on a Nucleus-side cause is
+ * A responsible task's budget at `at` (epoch ms). Every caller passes the same
+ * inputs — the task row, its runs and its events — so the dispatch gate, the
+ * board, task detail and `task.next` measure one figure (nucleus#1187). The
+ * lifecycle start is the task's own `budgetSince`, else its legacy
+ * `responsible_converted` event, both read from those events rather than chosen
+ * per caller. Each extension adds one default increment, so the limits grow by
+ * the size's default per answer. A run without a usage record adds no tokens: an
+ * unobserved turn never pauses the task, though wall time still runs. Partial
+ * usage is a lower bound, so reaching the limit on it is still a real pause. Wall
+ * time starts at the lifecycle's first recorded run start and time before it is
+ * never charged, whatever the conversion time or `budgetSince`, so a task that
+ * has never run reads 0 used. Time the task spent held on a Nucleus-side cause is
  * discounted from wall time and reported as `pausedMs`, so held time never spends
  * the task's budget.
  */
 export function taskBudget(task: Pick<Task, "complexity" | "resolution"> & Partial<Pick<Task, "budgetSince" | "holds" | "held" | "mergeHold" | "holdAt" | "holdUntil" | "holdOwner" | "holdReason" | "holdGeneration" | "holdBlocking" | "phase">>, runs: Run[], at: number,
-  legacyBudgetSince?: string | null, events: BudgetEvent[] = []): TaskBudgetView {
+  events: BudgetEvent[] = []): TaskBudgetView {
   const level = taskBudgetLevel(task.complexity);
   const steps = 1 + (task.resolution.budgetExtensions ?? 0);
   const tokenLimit = TASK_BUDGET_DEFAULTS[level].effectiveTokens * steps;
   const wallLimit = TASK_BUDGET_DEFAULTS[level].wallMs * steps;
-  const since = Date.parse(task.budgetSince ?? legacyBudgetSince ?? "");
-  const eligibleRuns = Number.isFinite(since) ? runs.filter(run => Date.parse(run.createdAt) >= since) : runs;
+  const lifecycleStart = Date.parse(task.budgetSince ?? events.find(event => event.kind === "responsible_converted")?.at ?? "");
+  const inLifecycle = (iso: string) => !Number.isFinite(lifecycleStart) || Date.parse(iso) >= lifecycleStart;
+  const eligibleRuns = Number.isFinite(lifecycleStart) ? runs.filter(run => inLifecycle(run.createdAt)) : runs;
   const dispatched = eligibleRuns.filter(run => run.agentId || run.usage);
   const measured = dispatched.filter(run => run.usage);
   const evidence = measured.length === 0 ? "none" : measured.length === dispatched.length && measured.every(run => !run.usage!.partial) ? "exact" : "partial";
@@ -258,9 +283,12 @@ export function taskBudget(task: Pick<Task, "complexity" | "resolution"> & Parti
     outputTokens: sum.outputTokens + run.usage!.outputTokens,
   }), { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 });
   const tokensUsed = effectiveTokens(totals);
-  const starts = eligibleRuns.map(run => Date.parse(run.createdAt)).filter(Number.isFinite);
-  const firstStart = starts.length ? Math.min(...starts) : Number.NaN;
-  const wallStart = Number.isFinite(since) ? Math.max(since, Number.isFinite(firstStart) ? firstStart : since) : firstStart;
+  // The first recorded run start: an eligible run row, or the dispatch and
+  // agent-creation events of a run that has no row. Nothing before it is charged.
+  const starts = [...eligibleRuns.map(run => Date.parse(run.createdAt)),
+    ...events.filter(event => (BUDGET_RUN_START_EVENTS as readonly string[]).includes(event.kind) && inLifecycle(event.at))
+      .map(event => Date.parse(event.at))].filter(Number.isFinite);
+  const wallStart = starts.length ? Math.min(...starts) : Number.NaN;
   const wallSpan = Number.isFinite(wallStart) ? Math.max(0, at - wallStart) : 0;
   // A pause is charged only against time inside this task's own wall span, so a
   // clock from an earlier lifecycle can never drive the figure negative.

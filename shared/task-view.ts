@@ -4,8 +4,8 @@ import type { Incident } from "./incident";
 import { isDispositionComplete } from "./disposition";
 import { holdsOf, syncHoldProjection, taskHoldKind, holdOwnerOf, taskOwner, holdFencesView, holdEscalated, isOperatorOrigin } from "./holds";
 import { deriveWaitState, type WaitStateContext } from "./wait-state";
-import { taskBudget, taskBudgetBoardView, type BudgetEvent } from "./task-budget";
-import { reportHeadline } from "./task-detail-summary";
+import { taskBudget, taskBudgetBoardView, type BudgetEvent, type TaskBudgetView } from "./task-budget";
+import { reportHeadline, TASK_PROGRESSING_REASON } from "./task-detail-summary";
 import { taskSummarySchema } from "./schema/task-view";
 import { isWaitingTaskStop, type TaskStopRecord, type TaskStopKind } from "./task-stop";
 export * from "./task-stop";
@@ -145,11 +145,26 @@ export function mergeReviewEvidenceAt(task: AcceptanceTask, head: string): { kin
  * precedence shows instead. Release retires it in the same write; rows released
  * before that read the same way without being rewritten.
  */
-export function currentTaskStop(task: Task): TaskStopRecord | null {
+export function currentTaskStop(task: Task, budget?: TaskBudgetView | null): TaskStopRecord | null {
   const stop = task.resolution.stop;
+  // A budget pause is current only while the measured budget still shows it: the
+  // pause's condition is the figure every gate and view reads (nucleus#1187), so a
+  // pause the figure no longer supports is not the task's stop.
+  if (stop?.reason === "budget" && budget && !budget.exhausted) return null;
   if (stop?.reason !== "held") return stop;
   const fences = holdsOf(task);
   return fences.dispatch || fences.merge ? stop : null;
+}
+
+/**
+ * The reason a read shows for the task's current state (papercut 703b4aa3). A
+ * recorded budget pause the measured budget no longer shows is not the task's
+ * reason any more: oxide#083 kept reading "Budget reached" after the pause's own
+ * figure had cleared, so the read states the task is progressing instead.
+ */
+export function taskVisibleReason(task: Task, budget: TaskBudgetView | null | undefined): string {
+  const stop = task.resolution.stop;
+  return stop?.reason === "budget" && budget && !budget.exhausted ? TASK_PROGRESSING_REASON : task.reason;
 }
 
 /**
@@ -187,10 +202,10 @@ export function episodeBindsCurrentWork(task: Task): boolean {
  * checkpointed run, then a wait. Null while the task progresses. The full
  * reason, owner and evidence live in `task.next`; this names the category.
  */
-export function taskStopKind(task: Task, runs: Run[] = []): TaskStopKind | null {
+export function taskStopKind(task: Task, runs: Run[] = [], budget?: TaskBudgetView | null): TaskStopKind | null {
   const fences = holdsOf(task);
   if (fences.dispatch || fences.merge) return "hold";
-  const stop = currentTaskStop(task);
+  const stop = currentTaskStop(task, budget);
   if (stop) {
     if (stop.reason === "run_stalled") return "run";
     if (isWaitingTaskStop(stop.reason)) return "wait";
@@ -214,15 +229,17 @@ export function taskStopKind(task: Task, runs: Run[] = []): TaskStopKind | null 
  */
 export function taskDetailView(task: Task, context: WaitStateContext = {}, runs: Run[] = [], events: BudgetEvent[] = []): TaskDetail {
   const holds = holdsOf(task);
+  // One measurement: the budget this view shows is the one the gates read, and the
+  // stop and reason it reports follow that same figure (nucleus#1187).
+  const budget = !['done', 'cancelled'].includes(task.phase) ? taskBudget(task, runs, Date.now(), events) : null;
+  const reason = taskVisibleReason(task, budget);
   const holdKind = taskHoldKind(task);
   const waitState = deriveWaitState({
-    phase: task.phase, reason: task.reason, holdKind, holdOwner: holdOwnerOf(task, holds.merge?.owner ?? task.holdOwner),
+    phase: task.phase, reason, holdKind, holdOwner: holdOwnerOf(task, holds.merge?.owner ?? task.holdOwner),
     originAgentId: taskOwner(task), mergeHeld: Boolean(holds.merge),
   }, context);
-  const stop = currentTaskStop(task);
-  // Spec 058: every task carries the responsible budget; finished tasks show none.
-  const budget = !['done', 'cancelled'].includes(task.phase) ? taskBudget(task, runs, Date.now(), undefined, events) : null;
-  return { ...task, resolution: stop === task.resolution.stop ? task.resolution : { ...task.resolution, stop }, holds: syncHoldProjection(holds).holds, ...(holdKind ? { holdKind } : {}), ...(waitState ? { waitState } : {}), ...(budget ? { budget } : {}) };
+  const stop = currentTaskStop(task, budget);
+  return { ...task, reason, resolution: stop === task.resolution.stop ? task.resolution : { ...task.resolution, stop }, holds: syncHoldProjection(holds).holds, ...(holdKind ? { holdKind } : {}), ...(waitState ? { waitState } : {}), ...(budget ? { budget } : {}) };
 }
 
 export function taskHasUnreleasedRun(task: Task, hasUnreleasedResolutionRun = false): boolean {
@@ -264,9 +281,13 @@ export const taskNumberLabel = (task: Pick<Task, "number" | "reference">, reposi
 
 export function summarizeTask(task: Task, includeRepository = false, hasUnreleasedResolutionRun = false, waitContext: WaitStateContext = {}, taskRuns: Run[] = [], waitingOn?: string, defaultHostId?: string, events: BudgetEvent[] = []): TaskSummary {
   const holds = holdsOf(task);
-  const stop = taskStopKind(task, taskRuns), stopRecord = currentTaskStop(task);
+  // The board reads the same budget figure the gates do, and its stop and reason
+  // follow that figure (nucleus#1187).
+  const budget = !["done", "cancelled"].includes(task.phase) ? taskBudget(task, taskRuns, Date.now(), events) : null;
+  const reason = taskVisibleReason(task, budget);
+  const stop = taskStopKind(task, taskRuns, budget), stopRecord = currentTaskStop(task, budget);
   const waitState = deriveWaitState({
-    phase: task.phase, reason: task.reason, holdKind: taskHoldKind(task), holdOwner: holdOwnerOf(task, holds.merge?.owner ?? task.holdOwner),
+    phase: task.phase, reason, holdKind: taskHoldKind(task), holdOwner: holdOwnerOf(task, holds.merge?.owner ?? task.holdOwner),
     originAgentId: taskOwner(task), mergeHeld: Boolean(holds.merge),
   }, waitContext);
   // Keep a short board reason plus the wait label and actor class. Full stop,
@@ -288,7 +309,7 @@ export function summarizeTask(task: Task, includeRepository = false, hasUnreleas
     ...(defaultHostId && task.hostId === defaultHostId ? {} : { hostId: task.hostId }),
     ...((() => { const ids = [...new Set([task.agentId, ...taskRuns.filter(run => !run.released && run.role === "reviewer" && (!run.hostId || run.hostId === task.hostId)).map(run => run.agentId)].filter((id): id is string => Boolean(id)))]; return ids.length ? { questionAgentIds: ids } : {}; })()),
     ...(task.interactive ? { interactive: true as const } : {}),
-    phase: task.phase, reason: task.reason.slice(0, 160), held: task.held,
+    phase: task.phase, reason: reason.slice(0, 160), held: task.held,
     ...(taskHoldKind(task) ? { holdKind: taskHoldKind(task)! } : {}),
     ...(fences ? { holds: fences } : {}),
     ...(task.held ? { hold: { owner: holdOwnerOf(task, task.holdOwner).slice(0, 80), reason: (task.holdReason ?? "not recorded").slice(0, 160), since: task.holdAt, ...(task.holdBlocking ? { blockingSince: task.holdBlocking.since } : {}) } } : {}),
@@ -296,7 +317,7 @@ export function summarizeTask(task: Task, includeRepository = false, hasUnreleas
     ...(stop ? { stop } : {}),
     ...(stopRecord ? { stopRecord: { ...stopRecord, detail: stopRecord.detail.slice(0, 160) } } : {}),
     ...(task.completion ? { headline: reportHeadline(task.completion) } : {}),
-    ...(!["done", "cancelled"].includes(task.phase) ? { budget: taskBudgetBoardView(taskBudget(task, taskRuns, Date.now(), undefined, events)) } : {}),
+    ...(budget ? { budget: taskBudgetBoardView(budget) } : {}),
     parked: isParkedTask(task, hasUnreleasedResolutionRun),
     dependsOn: task.dependsOn, queuePriority: task.queuePriority,
     ...(task.profile ? { profile: { name: task.profile.name } } : {}), ...(task.prUrl ? { prUrl: task.prUrl } : {}),

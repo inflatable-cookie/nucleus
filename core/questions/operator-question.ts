@@ -243,8 +243,7 @@ function proofWaitQuestion(store: Store, task: Task, stop: TaskStopRecord, facts
  */
 function budgetQuestion(store: Store, task: Task, stop: TaskStopRecord, now: number, legacy: boolean): OperatorQuestion {
   const events = store.eventsAll(task.id);
-  const legacyBudgetSince = events.find(event => event.kind === 'responsible_converted')?.at;
-  const budget = taskBudget(task, store.runs(task.id), now, legacyBudgetSince, events);
+  const budget = taskBudget(task, store.runs(task.id), now, events);
   const reached = budget.exhausted === 'wall_time'
     ? `${Math.round(budget.wallMs.used / 60_000)} of ${budget.wallMs.limit / 60_000} minutes of wall time since the responsible lifecycle began`
     : `${budget.effectiveTokens.used.toLocaleString('en-US')} of ${budget.effectiveTokens.limit.toLocaleString('en-US')} effective tokens`;

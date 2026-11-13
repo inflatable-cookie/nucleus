@@ -62,9 +62,28 @@ test('a converted task starts token and wall budgets at conversion, ignoring ear
 test('a legacy converted task uses its responsible_converted event timestamp', () => {
   const before = run('2026-11-01T10:00:00.000Z', { inputTokens: 2_500_000 });
   const after = run('2026-11-01T10:45:00.000Z', { inputTokens: 200 });
-  const budget = taskBudget(budgeted('low'), [before, after], Date.parse('2026-11-01T11:31:00.000Z'), '2026-11-01T10:30:00.000Z');
+  const conversion = [{ at: '2026-11-01T10:30:00.000Z', kind: 'responsible_converted', detail: 'converted' }];
+  const budget = taskBudget(budgeted('low'), [before, after], Date.parse('2026-11-01T11:31:00.000Z'), conversion);
   assert.equal(budget.effectiveTokens.used, 200);
   assert.equal(budget.wallMs.used, 46 * MINUTE);
+});
+
+test('wall time starts at the lifecycle\'s first recorded run, never at its conversion', () => {
+  // oxide#083: a legacy conversion twelve days before the only run, which has no run
+  // row — the initial worker's `agent_created` event is its one recorded start.
+  const conversion = [{ at: '2026-11-01T20:17:34.000Z', kind: 'responsible_converted', detail: 'converted' }];
+  const at = Date.parse('2026-11-13T15:50:13.000Z');
+  const runStart = [...conversion, { at: '2026-11-13T15:20:13.000Z', kind: 'agent_created', detail: 'fc221b00' }];
+  const budget = taskBudget(budgeted('high'), [], at, runStart);
+  assert.equal(budget.wallMs.used, 30 * MINUTE, 'only the recorded run is charged');
+  assert.equal(budget.exhausted, null);
+  assert.equal(budget.effectiveTokens.used, 0);
+  assert.equal(budget.effectiveTokens.evidence, 'none');
+  // No recorded run at all: nothing to charge, whatever the conversion time says.
+  assert.deepEqual(taskBudget(budgeted('high'), [], at, conversion).wallMs, { used: 0, limit: 480 * MINUTE, pausedMs: 0 });
+  assert.equal(taskBudget(budgeted('high'), [], at, conversion).exhausted, null);
+  // A run that predates the lifecycle does not start the clock either.
+  assert.equal(taskBudget(budgeted('high'), [run('2026-11-01T19:00:00.000Z')], at, conversion).wallMs.used, 0);
 });
 
 test('no dispatch yet means no wall time used, and tokens are checked before time', () => {
@@ -124,10 +143,10 @@ test('recorded holds are discounted from the historical wall span without changi
     { at: heldAt, kind: 'hold', detail: 'hold' },
     { at: releasedAt, kind: 'release', detail: 'release' },
   ];
-  const budget = taskBudget(budgeted('high'), [run(runAt)], at, null, events);
+  const budget = taskBudget(budgeted('high'), [run(runAt)], at, events);
   assert.equal(budget.wallMs.used, 90 * MINUTE);
   assert.equal(budget.exhausted, null);
-  assert.equal(taskBudget(budgeted('low'), [run(runAt)], Date.parse('2026-11-13T00:40:00.000Z'), null, events).wallMs.used, 40 * MINUTE);
+  assert.equal(taskBudget(budgeted('low'), [run(runAt)], Date.parse('2026-11-13T00:40:00.000Z'), events).wallMs.used, 40 * MINUTE);
 });
 
 test('dependency and escalation waits are excluded while the live run span still counts', () => {
@@ -140,7 +159,7 @@ test('dependency and escalation waits are excluded while the live run span still
     { at: to, kind: 'prerequisite_wait_released', detail: '{"waitId":"dependency-id"}' },
     { at: to, kind: 'planner_escalation_wake_intent', detail: 'decision-id: planner answered' },
   ];
-  const budget = taskBudget(budgeted('low'), [run(from)], Date.parse('2026-11-01T11:30:00.000Z'), null, events);
+  const budget = taskBudget(budgeted('low'), [run(from)], Date.parse('2026-11-01T11:30:00.000Z'), events);
   assert.equal(budget.wallMs.used, 30 * MINUTE);
   assert.equal(budget.wallMs.pausedMs, 60 * MINUTE);
 });
@@ -152,7 +171,7 @@ test('an early decision change ends a timed escalation wait at its recorded clos
     { at: from, kind: 'planner_escalation_wait', detail: 'escalation-id: {"kind":"time","target":"2026-11-01T11:00:00.000Z"}' },
     { at: closedAt, kind: 'planner_escalation_wait_superseded', detail: 'escalation-id: owner resumed task' },
   ];
-  const budget = taskBudget(budgeted('low'), [run(from)], Date.parse('2026-11-01T10:30:00.000Z'), null, events);
+  const budget = taskBudget(budgeted('low'), [run(from)], Date.parse('2026-11-01T10:30:00.000Z'), events);
   assert.equal(budget.wallMs.used, 10 * MINUTE);
   assert.equal(budget.wallMs.pausedMs, 20 * MINUTE);
 });
@@ -166,7 +185,7 @@ test('holds before the budget starts do not erase time from the eligible run spa
     { at: heldAt, kind: 'hold', detail: 'hold' },
     { at: releasedAt, kind: 'release', detail: 'release' },
   ];
-  const budget = taskBudget(budgeted('low'), [run(firstRun)], at, null, events);
+  const budget = taskBudget(budgeted('low'), [run(firstRun)], at, events);
   assert.equal(budget.wallMs.used, 61 * MINUTE);
   assert.equal(budget.wallMs.pausedMs, 0);
   assert.equal(budget.exhausted, 'wall_time');

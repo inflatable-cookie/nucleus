@@ -222,8 +222,7 @@ export class Questions {
   extendTaskBudget(taskId: string, detail: string, by = 'The operator'): Task | null {
     const current = this.store.task(taskId);
     const events = this.store.eventsAll(taskId);
-    const legacyBudgetSince = events.find(event => event.kind === 'responsible_converted')?.at;
-    if (!taskBudget(current, this.store.runs(taskId), Date.now(), legacyBudgetSince, events).exhausted) return null;
+    if (!taskBudget(current, this.store.runs(taskId), Date.now(), events).exhausted) return null;
     const marked = (kind: string, id: string) => events.some(event => event.kind === kind && event.detail.startsWith(`${id}:`));
     // Papercut 7cb34906 (2026-11-10): a budget extended through a verb left
     // Nucleus's own budget questions pending on the worker thread; launches then
