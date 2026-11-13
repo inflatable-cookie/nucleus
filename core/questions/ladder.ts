@@ -554,8 +554,7 @@ export class Ladder {
       this.store.event(t.id, 'planner_escalation_answered', `${id}: answered by ordinary progress: the task merged or ended first`);
       return;
     }
-    if (plannerEscalations(events() as LadderEvent[]).find(item => item.id === id)?.answered
-      || events().some(event => event.kind === 'planner_escalation_answer_refused' && event.detail.startsWith(`${id}:`))) return;
+    if (plannerEscalations(events() as LadderEvent[]).find(item => item.id === id)?.answered) return;
     if (!reply || !who) {
       if (who?.startsWith('decider ')) await this.resolution.host.archiveAgent(who.slice(8)).catch(() => {});
       this.store.event(t.id, 'planner_escalation_missed', `${id}: no delegated answer was produced; the escalation stays open for the planner`);
@@ -567,11 +566,15 @@ export class Ladder {
       return;
     }
     const answer = reply.kind === 'choice' ? `${reply.choice} — ${reply.reason}`.trim() : reply.answer;
-    let refusal = await this.resolution.settlePlannerEscalation(this.store.task(t.id), id, answer, who, offered);
-    if (refusal && !events().some(event => event.kind === 'planner_escalation_refusal_sent' && event.detail.startsWith(`${id}:`))) {
+    const recordedRefusal = events().findLast(event => event.kind === 'planner_escalation_answer_refused' && event.detail.startsWith(`${id}:`));
+    let refusal = recordedRefusal
+      ? recordedRefusal.detail.slice(`${id}:`.length).trim()
+      : await this.resolution.settlePlannerEscalation(this.store.task(t.id), id, answer, who, offered);
+    if (refusal) {
       const currentOffers = escalationVerbChoices(ownerVerbViews(collectOwnerVerbFacts(this.store, this.store.task(t.id))));
       const retryChoices = [...plannerEscalationChoicesFor(this.store.task(t.id)), ...currentOffers.map(item => item.label)];
-      this.store.event(t.id, 'planner_escalation_refusal_sent', `${id}: ${refusal}`.slice(0, 4000));
+      if (!events().some(event => event.kind === 'planner_escalation_refusal_sent' && event.detail.startsWith(`${id}:`)))
+        this.store.event(t.id, 'planner_escalation_refusal_sent', `${id}: ${refusal}`.slice(0, 4000));
       try {
         const recipient = who.replace(/^(?:planner|decider) /, '');
         const followup = await this.resolution.askBound(this.store.task(t.id), recipient, {
@@ -622,6 +625,11 @@ export class Ladder {
     return settlement;
   }
   private async settlePlannerEscalationOnce(t: Task, id: string, answer: string, who: string, offered: EscalationVerbChoice[]): Promise<string | null> {
+    const delegatedAnswer = /^(?:planner|decider) /.test(who);
+    if (plannerEscalations(this.store.eventsAll(t.id) as LadderEvent[]).find(item => item.id === id)?.answered) {
+      if (delegatedAnswer) throw Error(`Escalation ${id} is already settled; read next again`);
+      return null;
+    }
     this.store.event(t.id, 'planner_escalation_answer_pending', `${id}: action pending`);
     if (escalationOutlived(this.store.task(t.id))) {
       this.store.event(t.id, 'planner_escalation_answered', `${id}: answered by ${who}: ${answer.slice(0, 4000)}`);
@@ -632,7 +640,6 @@ export class Ladder {
     const choice = offered.find(item => answer === item.label || answer.startsWith(`${item.label} — `));
     const reason = answer.includes(' — ') ? answer.slice(answer.indexOf(' — ') + 3).trim() : answer.trim();
     const current = this.store.task(t.id);
-    const delegatedAnswer = /^(?:planner|decider) /.test(who);
     const grant = delegatedAnswer
       ? { caller: who.split(' ')[1] ?? 'unknown', delegated: true, note: `Delegated answer to escalation ${id} by ${who}: ${answer.slice(0, 1200)}` }
       : { caller: current.agentId ?? undefined, relayed: true, note: `The operator answered escalation ${id}: ${answer}`.slice(0, 4000) };

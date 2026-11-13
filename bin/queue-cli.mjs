@@ -323,6 +323,8 @@ if (method === 'question.answer') {
   const identity = cliCallerSource();
   if (identity.source === 'ticket') {
     const ticket = JSON.parse(await readFile(identity.path, 'utf8'));
+    if (process.env.NUCLEUS_CONTINUATION_RUN_ID && ticket.runId !== process.env.NUCLEUS_CONTINUATION_RUN_ID)
+      throw new Error(`Continuation ticket is for run ${ticket.runId ?? 'unknown'}, not current run ${process.env.NUCLEUS_CONTINUATION_RUN_ID}; use the ticket path supplied in the continuation prompt`);
     if (ticket.participantId) {
       const resolved = await resolveCliCaller({ viaPaseo, source: identity });
       input.caller = resolved.caller;

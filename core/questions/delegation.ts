@@ -6,6 +6,7 @@ import { normalizeRepositoryOrigin } from '../../shared/lanes';
 import { groupIsUnavailable } from '../../shared/pool';
 import { currentBrief } from '../planning/brief';
 import { parseNativeDelegatedReply } from './question-delegation';
+import { plannerEscalations, type LadderEvent } from './blocker-ladder';
 import type { Resolution } from '../resolution';
 import { chooseProfile } from '../dispatch/routing';
 import { plannerParticipantTicketPath } from '../dispatch/participant-tickets';
@@ -18,6 +19,12 @@ export class DelegatedHostUnavailable extends Error {}
 
 /** Which planner rung a question is on: the task's own planner, or the project's. */
 export type PlannerRungName = 'task' | 'project';
+
+function escalationIdForQuestion(questionId: string): string {
+  return questionId.replace(/^ns-decider-/, '')
+    .replace(/^ns-escalation-(?:refusal-)?/, '')
+    .replace(/-project$/, '');
+}
 
 /** One planner rung, with the message window its question travels on. */
 export interface PlannerRung {
@@ -206,10 +213,53 @@ export class Delegation {
     if (!caller || ![caller, qualified?.nativeAgentId].includes(authority.recipient) || (qualified && qualified.hostId !== recordedHost)) throw Error('Only the delegated recipient thread may answer this question');
     const recorded = events.find(event => event.kind === 'delegated_answer');
     if (recorded) {
-      const refused = events.findLast(event => event.kind === 'planner_escalation_answer_refused'
-        && event.detail.startsWith(`${input.questionId.replace(/^(?:ns-escalation-|ns-decider-)/, '').replace(/-project$/, '')}:`));
-      if (refused) return Promise.reject(Error(refused.detail.slice(refused.detail.indexOf(':') + 2)));
-      return JSON.parse(recorded.detail);
+      const receipt = JSON.parse(recorded.detail) as { questionId: string; caller: string; answer?: string; reason: string; decision?: 'operator'; overtakes?: string[] };
+      const isEscalation = input.questionId.startsWith('ns-escalation-') || input.questionId.startsWith('ns-decider-');
+      const escalationId = escalationIdForQuestion(input.questionId);
+      const outcome = events.findLast(event => event.kind === 'delegated_command_applied' || event.kind === 'delegated_command_refused');
+      if (outcome?.kind === 'delegated_command_applied') return receipt;
+      if (outcome?.kind === 'delegated_command_refused') return Promise.reject(Error(outcome.detail.slice(outcome.detail.indexOf(':') + 2)));
+      const taskEvents = isEscalation ? this.store.eventsAll(authority.taskId) : [];
+      const hasEscalation = taskEvents.some(event => event.kind === 'planner_escalation' && event.detail.startsWith(`${escalationId}:`));
+      if (!hasEscalation) return receipt;
+      const refused = taskEvents.findLast(event => event.kind === 'planner_escalation_answer_refused'
+        && event.detail.startsWith(`${escalationId}:`) && event.id > recorded.id);
+      if (refused) {
+        const message = refused.detail.slice(refused.detail.indexOf(':') + 2);
+        this.store.event(key, 'delegated_command_refused', `${escalationId}: ${message}`.slice(0, 4000));
+        return Promise.reject(Error(message));
+      }
+      if (taskEvents.some(event => (event.kind === 'planner_escalation_applied'
+        || event.kind === 'planner_escalation_decision' || event.kind === 'planner_escalation_resolved')
+        && event.detail.startsWith(`${escalationId}:`) && event.id > recorded.id)) {
+        this.store.event(key, 'delegated_command_applied', `${escalationId}: applied`);
+        return receipt;
+      }
+      if (plannerEscalations(taskEvents as LadderEvent[]).find(item => item.id === escalationId)?.answered) {
+        const message = `Escalation ${escalationId} is already settled; read next again`;
+        this.store.event(key, 'delegated_command_refused', `${escalationId}: ${message}`);
+        return Promise.reject(Error(message));
+      }
+      // A service roll can preserve the delegated answer intent while interrupting
+      // its ordinary owner action. Do not replay that intent as a successful
+      // answer until the replacement has applied it or recorded a refusal.
+      const choices = authority.prompt.split('\n').filter(line => line.startsWith('- ')).map(line => line.slice(2));
+      const replay = {
+        questionId: input.questionId,
+        ...(receipt.answer !== undefined ? (choices.includes(receipt.answer)
+          ? { choice: receipt.answer } : { answer: receipt.answer }) : {}),
+        reason: receipt.reason,
+        ...(receipt.decision ? { decision: receipt.decision } : {}),
+        ...(receipt.overtakes ? { overtakes: receipt.overtakes } : {}),
+      };
+      return this.applyEscalationAnswer(authority.taskId, replay, receipt.caller, authority.role, receipt.reason).then(() => {
+        this.store.event(key, 'delegated_command_applied', `${escalationId}: applied`);
+        return receipt;
+      }, error => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.store.event(key, 'delegated_command_refused', `${escalationId}: ${message}`.slice(0, 4000));
+        throw error;
+      });
     }
     if (events.some(event => event.kind === 'delegated_closed') || Date.now() > authority.deadline) throw Error('This delegated answer window has closed');
     const answer = (input.answer ?? input.choice)?.trim();
@@ -218,19 +268,29 @@ export class Delegation {
     if (input.decision !== 'operator' && (!answer || answer.length > 4000 || /[\r\n]/.test(answer))) throw Error('An answer or choice is required (one line, up to 4000 characters)');
     const choices = authority.prompt.split('\n').filter(line => line.startsWith('- ')).map(line => line.slice(2));
     if (input.decision !== 'operator' && choices.length && (input.choice || input.questionId.startsWith('queue-delegate-')) && !choices.includes(answer!)) throw Error('Choice must match an offered choice');
+    const isEscalation = input.questionId.startsWith('ns-escalation-') || input.questionId.startsWith('ns-decider-');
+    const escalationId = escalationIdForQuestion(input.questionId);
+    const taskEvents = isEscalation ? this.store.eventsAll(authority.taskId) : [];
+    const escalation = isEscalation ? plannerEscalations(taskEvents as LadderEvent[]).find(item => item.id === escalationId) : undefined;
+    if (escalation?.answered) throw Error(`Escalation ${escalationId} is already settled; read next again`);
     const receipt = { questionId: input.questionId, caller, answer, reason, ...(input.decision ? { decision: input.decision } : {}),
       ...(authority.role === 'planner' && input.overtakes?.length ? { overtakes: [...new Set(input.overtakes)].slice(0, 100) } : {}) };
     this.store.event(key, 'delegated_answer', JSON.stringify(receipt));
     this.store.event(authority.taskId, 'delegated_command_answered', `${input.questionId}: ${caller}`);
-    if (input.questionId.startsWith('ns-escalation-') || input.questionId.startsWith('ns-decider-')) {
-      const escalationId = input.questionId.replace(/^(?:ns-escalation-|ns-decider-)/, '').replace(/-project$/, '');
-      const exists = this.store.eventsAll(authority.taskId).some(event => event.kind === 'planner_escalation' && event.detail.startsWith(`${escalationId}:`));
-      if (exists) return this.applyEscalationAnswer(authority.taskId, input, caller, authority.role, reason).then(() => receipt);
+    if (escalation) {
+      return this.applyEscalationAnswer(authority.taskId, input, caller, authority.role, reason).then(() => {
+        this.store.event(key, 'delegated_command_applied', `${escalationId}: applied`);
+        return receipt;
+      }, error => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.store.event(key, 'delegated_command_refused', `${escalationId}: ${message}`.slice(0, 4000));
+        throw error;
+      });
     }
     return receipt;
   }
   private async applyEscalationAnswer(taskId: string, input: { questionId: string; answer?: string; choice?: string; decision?: 'operator' }, caller: string, role: string, reason: string) {
-    const escalationId = input.questionId.replace(/^(?:ns-escalation-|ns-decider-)/, '').replace(/-project$/, '');
+    const escalationId = escalationIdForQuestion(input.questionId);
     try {
       if (input.decision === 'operator') {
         this.resolution.ladder.classifyEscalationToOperator(this.store.task(taskId), escalationId, reason, `${role} ${caller}`);
@@ -252,6 +312,23 @@ export class Delegation {
       const receipt = events.find(event => event.kind === 'delegated_answer');
       if (receipt) {
         const value = JSON.parse(receipt.detail) as { answer?: string; reason: string; decision?: string; overtakes?: string[] };
+        const delivered = events.findLast(event => event.kind === 'delegated_delivery');
+        const taskId = delivered && (JSON.parse(delivered.detail) as { taskId: string }).taskId;
+        const escalationId = escalationIdForQuestion(id);
+        if ((id.startsWith('ns-escalation-') || id.startsWith('ns-decider-')) && taskId
+          && this.store.eventsAll(taskId).some(event => event.kind === 'planner_escalation' && event.detail.startsWith(`${escalationId}:`))) {
+          const answerer = JSON.parse(receipt.detail) as { caller: string };
+          try {
+            await this.answerDelegatedQuestion({ questionId: id, ...(value.answer ? { answer: value.answer } : {}),
+              ...(value.decision === 'operator' ? { decision: 'operator' as const } : {}), reason: value.reason,
+              ...(value.overtakes ? { overtakes: value.overtakes } : {}) }, answerer.caller);
+          } catch (error) {
+            const refused = this.store.eventsAll(key).some(event => event.kind === 'delegated_command_refused');
+            if (!refused) throw error;
+            // The CLI caller already received the refusal. Return the recorded
+            // answer to the route so it can ask for a valid replacement choice.
+          }
+        }
         // Existing route parsers consume this serialization of structured command input only.
         return [value.decision === 'operator' ? 'Decision: operator' : `Answer: ${value.answer}\nChoice: ${value.answer}`,
           `Reason: ${value.reason}`, ...(value.overtakes ? [`Overtakes: ${value.overtakes.join(',')}`] : [])].join('\n');

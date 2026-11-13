@@ -8,10 +8,10 @@ export function fixtureReply(prompt: string, reply: string | null): string | nul
 }
 
 /** Simulate the recipient executing question.answer; returned chat is not an answer. */
-export function answerFixturePrompt(
+export async function answerFixturePrompt(
   resolution: { answerDelegatedQuestion: (input: { questionId: string; answer?: string; choice?: string; reason: string; decision?: 'operator'; overtakes?: string[] }, caller: string) => unknown },
   recipient: string, prompt: string, legacyText: string | null,
-): null {
+): Promise<null> {
   if (!legacyText) return null;
   const questionId = prompt.match(/^Question id: (.+)$/m)?.[1];
   if (!questionId) return null;
@@ -23,7 +23,7 @@ export function answerFixturePrompt(
   const answer = field('Answer') ?? (!choice && !decision ? legacyText.trim() : undefined);
   const reason = field('Reason') ?? 'Fixture reviewer advice';
   const overtakes = field('Overtakes')?.split(',').map(id => id.trim()).filter(Boolean);
-  resolution.answerDelegatedQuestion({ questionId, ...(decision ? { decision } : choice ? { choice } : { answer }), reason, ...(overtakes ? { overtakes } : {}) }, recipient);
+  await resolution.answerDelegatedQuestion({ questionId, ...(decision ? { decision } : choice ? { choice } : { answer }), reason, ...(overtakes ? { overtakes } : {}) }, recipient);
   return null;
 }
 

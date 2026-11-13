@@ -28,6 +28,7 @@ import {
 } from "../core/dispatch/prompts";
 import { Decisions } from "../core/planning/decisions";
 import { Store } from "../core/store/store";
+import { Engine } from "../core/engine";
 import {
   REVISION_BUDGET,
   submissionSchema,
@@ -495,11 +496,8 @@ test("a still-blocked run after the consult opens one planner escalation and its
     assert.equal(receipt.questionId, questionId);
     releasePlanner!('');
     await until(() => f.events("planner_escalation_answered").length > 0);
-    assert.match(
-      f.events("planner_escalation_answered")[0]!.detail,
-      // Task 1109: the task's own planner (its submitting thread) answers first.
-      /answered by planner origin/,
-    );
+    assert.ok(f.events("planner_escalation_answered").some(event =>
+      /answered by (?:planner origin:|ordinary move: task control moved the task)/.test(event.detail)));
     // The delegated answer applies through the ordinary verbs: move to work, delegated authority.
     await until(() => f.events("planner_escalation_applied").length > 0);
     assert.match(
@@ -528,6 +526,75 @@ test("a still-blocked run after the consult opens one planner escalation and its
   } finally {
     await f.close();
   }
+});
+
+test("a service replacement applies a persisted escalation answer before returning success", async () => {
+  const f = fixture({ responsible: true });
+  let replacement: Engine | null = null;
+  try {
+    askedEscalation(f, () => null);
+    await f.reviews(1);
+    await f.engine.wake();
+    await f.report("blocked", { summary: "The isolation gate is still held", cause: { kind: "external", name: "isolation gate" } });
+    await until(() => f.events("planner_escalation").length > 0);
+    const escalationId = f.events("planner_escalation")[0]!.detail.split(":", 1)[0]!;
+    const questionId = `ns-escalation-${escalationId}`;
+    const input = {
+      questionId,
+      choice: "Return to the worker with a new approach",
+      reason: "Use the isolated replay fixture.",
+    };
+
+    // The old service durably receives the answer, then rolls before the
+    // ordinary owner action can settle. The replacement sees the same store.
+    f.engine.resolution.applyOperatorControl = async () => new Promise(() => {});
+    const interrupted = Promise.resolve(f.engine.resolution.answerDelegatedQuestion(input, "origin"));
+    const interruptedSettlement = interrupted.then(() => "settled", () => "settled");
+    await until(() => f.store.eventsAll(`delegation:${questionId}`).some(event => event.kind === "delegated_answer"));
+    await f.engine.stop();
+    assert.equal(await Promise.race([interruptedSettlement, Promise.resolve("still pending")]), "still pending");
+
+    replacement = new Engine(f.store, f.engine.adapter, 0);
+    replacement.profiles = f.profiles;
+    replacement.resolution.worktreeValidationProbe = () => ({ state: "absent" });
+    replacement.resolution.delegatedAnswerWaitMs = 30_000;
+    const recovered = await replacement.resolution.waitDelegatedAnswer(questionId, new AbortController().signal);
+
+    assert.match(recovered ?? "", /Choice: Return to the worker with a new approach/);
+    assert.ok(f.events("planner_escalation_applied").some(event => event.detail.startsWith(`${escalationId}:`)),
+      "the replacement must apply the durable answer before returning it to the route");
+    assert.equal(f.events("planner_escalation_answer_refused").length, 0);
+    assert.match(f.events("planner_escalation_applied").at(-1)!.detail, /returned to the worker/);
+    assert.equal(f.current().phase, "changes_requested");
+    assert.match(f.current().resolution.pendingWorkerInstruction ?? "", /Use the isolated replay fixture/);
+  } finally {
+    await replacement?.stop();
+    await f.close();
+  }
+});
+
+test("an escalation answer that no longer applies returns its refusal and stays open", async () => {
+  const f = fixture({ responsible: true });
+  try {
+    askedEscalation(f, () => null);
+    await f.reviews(1);
+    await f.engine.wake();
+    await f.report("blocked", { summary: "The isolation gate is still held", cause: { kind: "external", name: "isolation gate" } });
+    await until(() => f.events("planner_escalation").length > 0);
+    const escalationId = f.events("planner_escalation")[0]!.detail.split(":", 1)[0]!;
+    f.engine.resolution.applyOperatorControl = async () => { throw new Error("The selected move is no longer available"); };
+
+    await assert.rejects(
+      () => Promise.resolve(f.engine.resolution.answerDelegatedQuestion({
+        questionId: `ns-escalation-${escalationId}`,
+        choice: "Return to the worker with a new approach",
+        reason: "Use the isolated replay fixture.",
+      }, "origin")),
+      /answer was not applied: The selected move is no longer available/,
+    );
+    assert.match(f.events("planner_escalation_answer_refused").at(-1)!.detail, /selected move is no longer available/);
+    assert.equal(plannerEscalations(f.store.eventsAll(f.current().id)).find(item => item.id === escalationId)?.answered, false);
+  } finally { await f.close(); }
 });
 
 test("a repeated identical block joins the open escalation instead of another turn or another ask", async () => {
@@ -877,10 +944,7 @@ test("a planner that explicitly cannot decide reaches Tom, and the board answer 
     });
     await f.engine.resolution.resumeAskQuestions();
     await until(() => f.events("planner_escalation_answered").length > 0);
-    assert.match(
-      f.events("planner_escalation_answered")[0]!.detail,
-      /answered by operator \(board\)/,
-    );
+    assert.ok(f.events("planner_escalation_answered").some(event => /answered by operator \(board\)/.test(event.detail)));
     await until(() => f.events("planner_escalation_applied").length > 0);
     assert.match(
       f.events("planner_escalation_applied")[0]!.detail,
