@@ -1,12 +1,30 @@
 import { listHostUidProcesses, ownedToolAgentProcessTreeVerdict } from './host-process-reap';
 import type { Resolution } from '../resolution';
-import { turnBoundTool, liveToolIssue, noTurnLive, observedTurnState, readToolTimeline, type TimelineEntry } from '../recovery/stall';
+import { turnBoundTool, liveToolIssue, noTurnLive, observedTurnState, readToolTimeline, runningOwnedTool, type TimelineEntry } from '../recovery/stall';
 
 /** Proves no live tool holds a run, and records the `owned_tool_*` events that say so. */
 export class OwnedTools {
   constructor(readonly resolution: Resolution) {}
   get store() { return this.resolution.store; }
   get adapter() { return this.resolution.adapter; }
+
+  /**
+   * The agent's own long-running job, as one readable reason, or null.
+   *
+   * A stopped thread whose provider timeline still shows its own non-turn-bound
+   * tool running is waiting on that job, not a missing callback. This is the
+   * reading half of the owned-tool proof: it never settles anything and never
+   * reads absent, unreadable or inconclusive evidence as a live job.
+   */
+  async ownedJobWait(agentId: string): Promise<string | null> {
+    if (!this.adapter.agentTimelinePage) return null;
+    let read: Awaited<ReturnType<typeof readToolTimeline>>;
+    try { read = await readToolTimeline(this.resolution.host, agentId); }
+    catch { return null; }
+    if ('issue' in read) return null;
+    const running = runningOwnedTool(read.entries);
+    return running ? `${running.name} (${running.kind}) has been running since ${running.since}` : null;
+  }
 
   /**
    * The existing owned-tool proof, for a delivered turn that is claimed stopped

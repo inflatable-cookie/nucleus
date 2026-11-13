@@ -56,6 +56,11 @@ sends the next review to the reviewer agent that issued it.
     is fresh, then the count restarts). Tom kept this rotation when workers
     became single-thread (Spec 058, task 577): "Keep the rotation" (2026-11-02);
   - the provider reports the reviewer out of context.
+  A swap by any of these conditions records which one failed — `round`,
+  `participant`, `runtime`, `context` or `error` — with the observed evidence in
+  its `reviewer_fresh_agent` event, and `task.next` reports the same
+  `reviewerSwap` observation so the project can judge whether the replacement's
+  verdict is its one counted review (papercut 8fffbf59).
 - **Revision budgets are unchanged.** The six-round cap counts review rounds, not
   reviewers; Spec 058 cutover 3 routes non-converging reviews to the planner and
   removes automatic author upgrades.

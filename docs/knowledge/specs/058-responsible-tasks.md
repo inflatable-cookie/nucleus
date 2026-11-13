@@ -156,6 +156,13 @@ Nucleus-raised decisions, native questions and planner escalations. It records
 intent before delivery and uses one reply parser; AgentAsks and Ladder own their
 respective resume logic.
 
+A Nucleus-raised question whose native delivery goes unknown still reaches the
+planner ladder. The same question id is delegated to the task's planner rungs,
+whose `question.answer` settles it, so a short transport drop no longer strands
+a task that was ready to continue (papercut a1bc9fe5). A late native answer
+reconciles with that same question and applies no second answer or control;
+the recorded answer remains the question's one outcome.
+
 After unknown planner delivery, Nucleus never asks the decider or resends the
 question. The question stays pending through the bounded in-turn wait and is
 reported as uncertain for the planner (planner ruling, 2026-11-09). A known unanswered planner
@@ -180,6 +187,13 @@ Mechanical faults are handled by code where possible: a model out of usage is sw
 capacity; a crashed agent is restarted on the same task. Only when code cannot settle the fault does
 one retained recovery thread take over, with the authority to do what is needed. It escalates to the
 operator only when genuinely stuck.
+
+A recovery episode that records `recovery_pending` and then starts no run reaches people anyway: a
+pending episode with no run, no accepted action and no paused or dispatch-held wait escalates to the
+task's planner ladder after three minutes, naming the stop and the verbs that exit it (papercut
+0489ea25: nucleus#1166 sat pending for 2h14m because the stalled run still held its lease and no
+launch, wait or escalation followed). A legitimate capacity, dispatch, route or environment wait
+clears the pending episode instead, so it is not escalated by this bound.
 
 ### Capacity counts live agents (Tom, 2026-11-03)
 

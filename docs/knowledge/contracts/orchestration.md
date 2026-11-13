@@ -1455,6 +1455,12 @@ review or merge credit; live participants and unsettled effects remain fences.
   persisted callback reminder. A live `effigy qa` or repository QA process in
   the worktree is liveness: the reminder is withheld and its grace extended
   (`callback_reminder_extended`). An incomplete process scan is `unverified`.
+  The thread's own provider timeline is liveness too: a run whose latest
+  non-turn-bound tool call is still running (a background shell, a timed test
+  run under a Monitor, a worktree setup) is waiting on that job, not missing a
+  callback. The task shows the wait, no incident or reminder is recorded, the
+  reminder grace is extended, and no recovery run starts over it. Unreadable
+  or inconclusive tool evidence is not liveness (papercut 6895edaa).
 - Observation releases a superseded or replaced run whose thread its host
   reports archived or gone, using the same per-agent proof the archive path
   accepts. An unreadable read, a host without that answer or an inventory that
@@ -1581,6 +1587,16 @@ review or merge credit; live participants and unsettled effects remain fences.
   remote and base checks, and must confirm it through a read-only
   identity-confirmation run and a fresh `ready_for_review`. Restarting that run
   re-arms the same read-only intent.
+- A superseded run can leave a clean, pushed head behind. When the open PR and
+  the clean task checkout both report that exact head and no work is unresolved
+  (no unreleased or uncertain run, no blocked or errored latest result), the
+  differing forge head is adopted as observation: `prHead` is refreshed with a
+  `pushed_head_adopted` event instead of refusing the restart as unbound
+  retained progress. The underlying work still needs its own author readiness
+  and an independent exact-head review; `next` offers `move to=review` at the
+  adopted head. A dirty, unpublished or unconvincing checkout keeps the
+  refusal, whose text names `move to=review` and `move to=work` as the exits
+  (papercut b7a6fb99).
 - Before returning a retained worker to revise its own bound PR, Nucleus verifies
   the PR is open on the task branch and base; a draft is allowed.
 - PR branch mismatch recovery enters revision before mutation, and an existing
@@ -2846,6 +2862,11 @@ movement invalidates source approval and preserves the normal readiness gates.
 - The shared stopped-run and cleanup reader proves coverage through widening
   tail reads: 200 entries, then doubling, at most six reads with a 10-second
   deadline each, retaining every earlier entry as the suffix.
+- The same reader answers the waiting question: `runningOwnedTool` returns the
+  oldest call whose latest state is still `running` and whose kind can outlive
+  its turn, and `ownedJobWait` turns that into the task's visible wait. It never
+  settles anything; a turn-bound kind, a terminal or unrecognised status,
+  ambiguous simultaneous states or an unreadable page returns no job.
 - Every response needs coverage flags, an epoch and matching cursors. Gaps,
   resets, missing facts, read failures and exhausted budgets refuse. Partial
   history needs turn IDs and a dated boundary into an earlier turn; a partial

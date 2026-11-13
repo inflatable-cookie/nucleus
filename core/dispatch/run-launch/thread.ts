@@ -72,6 +72,9 @@ export function reviewerRoundEligible(prior: { released?: boolean; status?: stri
     || (prior.status === 'superseded' && !prior.completion && prior.head === prHead)));
 }
 
+/** The one condition that made a retained reviewer ineligible for another round. */
+export type ReviewerSwapCondition = 'round' | 'participant' | 'runtime' | 'context' | 'error';
+
 /**
  * Select the thread a run is launched on: the retained agent when it is still
  * eligible, or a fresh one from the pool, then hand the selection to reserve.
@@ -244,7 +247,9 @@ export class RunLaunchThread {
         // profile behind: the next selection below waits visibly instead of
         // launching a fresh agent on it, and a later run honours the route.
         else if(authorDecision === 'fresh' && supersedingReviewer){profile=null;group=null;}
-        this.store.event(t.id,'reviewer_fresh_agent',`Recorded reviewer ${agentId} authored task work; launching a fresh independent agent on ${profile?.name ?? profile?.id ?? 'the retained reviewer profile'}`);
+        this.store.event(t.id,'reviewer_fresh_agent', JSON.stringify({ fromAgentId: agentId, condition: 'participant',
+          detail: `the recorded reviewer authored task work, so it cannot review its own changes; launching a fresh independent agent on ${profile?.name ?? profile?.id ?? 'the retained reviewer profile'}`,
+          head: t.prHead ?? null, at: new Date().toISOString() }));
         agentId=null;
       }else{
       const issue=this.resolution.retainedProfileIssue(profile)??this.resolution.signoffIssue(t,profile,'reviewer')
@@ -261,22 +266,53 @@ export class RunLaunchThread {
       const prior = this.store.runs(t.id).findLast(run => run.role === 'reviewer' && run.agentId === agentId);
       // A settled verdict advances to a new head; an explicitly stopped reader
       // may also restart on the same head without inventing a completed verdict.
-      let eligible = reviewerRoundEligible(prior, t.prHead);
+      let round = reviewerRoundEligible(prior, t.prHead);
+      let participant = true;
+      let runtime = true;
+      let context = true;
+      const swapDetail: Partial<Record<ReviewerSwapCondition, string>> = {};
+      if (!round) swapDetail.round = `its prior reviewer round at ${prior?.head ?? 'no head'} is not settled for another round at ${t.prHead ?? 'no head'}`;
       try {
         const consultBound = !prior && this.store.eventsAll(t.id).some(event => event.kind === 'reviewer_consult_reviewer' && event.detail.endsWith(`: ${agentId}`));
         const state = await this.resolution.host.observe(agentId);
         if (consultBound && profile) {
+          // A consult-bound reviewer is judged by independence and its inactive
+          // participant state, not by a prior review round it never ran.
+          round = true;
           const authors = taskAuthorModelKeys(t, this.store.runs(t.id).filter(run => run.role === 'revision'));
-          eligible = reviewerIndependence({ site: 'consult', authors, reviewerModel: authorModelKey(profile.model) }) === 'independent'
-            && state.workspaceId === t.workspaceId && state.status === 'idle' && !state.active && !state.permissions;
+          const independent = reviewerIndependence({ site: 'consult', authors, reviewerModel: authorModelKey(profile.model) }) === 'independent';
+          const inactive = state.workspaceId === t.workspaceId && state.status === 'idle' && !state.active && !state.permissions;
+          participant = independent && inactive;
+          if (!independent) swapDetail.participant = 'its model is not independent of the task authors';
+          else if (!inactive) swapDetail.participant = `it is not an inactive participant in ${t.workspaceId ?? 'the task workspace'} (observed ${state.status}${state.active ? ', active' : ''}${state.permissions ? ', permission pending' : ''})`;
         } else {
           this.resolution.assertReviewProfileIndependent(t, prior!);
-          eligible &&= matchingInactiveParticipant(prior!, state, ['idle']);
+          participant = matchingInactiveParticipant(prior!, state, ['idle']);
+          if (!participant) swapDetail.participant = `it is not an inactive participant in its recorded workspace (observed ${state.status}${state.active ? ', active' : ''}${state.activeTurnId ? `, turn ${state.activeTurnId}` : ''}${state.permissions === false ? '' : ', permission pending'})`;
         }
-        eligible &&= !reviewerRuntimeChanged(profile!, state)
-          && !/context_length_exceeded|maximum context length|context window (?:is )?exhausted/i.test(state.error);
-      } catch (error) { eligible = false; this.store.event(t.id, 'reviewer_retention_refused', message(error)); }
-      if (reviewerThreadDecision({ stage: 'round', eligible }) === 'fresh') { this.store.event(t.id, 'reviewer_fresh_agent', `Retained reviewer ${agentId} is not eligible for another round`); agentId = null; }
+        runtime = !reviewerRuntimeChanged(profile!, state);
+        if (!runtime) swapDetail.runtime = `the observed runtime (${state.provider ?? 'unknown provider'}/${state.model ?? 'unknown model'}) differs from the pinned profile ${profile?.provider ?? 'unknown'}/${profile?.model ?? 'unknown'}`;
+        context = !/context_length_exceeded|maximum context length|context window (?:is )?exhausted/i.test(state.error ?? '');
+        if (!context) swapDetail.context = `its provider reported context exhaustion: ${state.error}`;
+      } catch (error) {
+        participant = false;
+        delete swapDetail.participant;
+        swapDetail.error = message(error);
+        this.store.event(t.id, 'reviewer_retention_refused', message(error));
+      }
+      const eligible = round && participant && runtime && context && !swapDetail.error;
+      if (reviewerThreadDecision({ stage: 'round', eligible }) === 'fresh') {
+        const swap = !round && swapDetail.round ? { condition: 'round' as const, detail: swapDetail.round }
+          : swapDetail.participant ? { condition: 'participant' as const, detail: swapDetail.participant }
+            : !runtime && swapDetail.runtime ? { condition: 'runtime' as const, detail: swapDetail.runtime }
+              : !context && swapDetail.context ? { condition: 'context' as const, detail: swapDetail.context }
+                : swapDetail.error ? { condition: 'error' as const, detail: swapDetail.error }
+                  : { condition: 'round' as const, detail: 'the retained reviewer is not eligible for another round' };
+        // Papercut 8fffbf59: the swap names the condition that failed, in its
+        // event and in `next`, so the project can judge the new reviewer.
+        this.store.event(t.id, 'reviewer_fresh_agent', JSON.stringify({ fromAgentId: agentId, condition: swap.condition, detail: swap.detail, head: t.prHead ?? null, at: new Date().toISOString() }));
+        agentId = null;
+      }
     }
     if (role === 'reviewer' && !agentId && profile && reviewerThreadDecision({
       stage: 'unbound_profile',

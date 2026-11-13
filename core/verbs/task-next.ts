@@ -29,6 +29,28 @@ const recordedVerdict = (task: Task, run: Run): RecordedVerdict | null => {
 const headLabel = (head: string | null): string => head ? head.slice(0, 12) : 'no recorded head';
 
 /**
+ * Papercut 8fffbf59: the newest retained-reviewer swap with the condition that
+ * failed (round, participant, runtime, context or error). The same reason is on
+ * the swap event; an older prose-only event carries no condition and reads null.
+ */
+function reviewerSwapView(facts: OwnerVerbFacts): TaskNext['reviewerSwap'] {
+  const event = facts.events.findLast(item => item.kind === 'reviewer_fresh_agent' && item.detail.startsWith('{'));
+  if (!event) return null;
+  try {
+    const detail = JSON.parse(event.detail) as { fromAgentId?: unknown; condition?: unknown; detail?: unknown; head?: unknown; at?: unknown };
+    if (detail.condition !== 'round' && detail.condition !== 'participant' && detail.condition !== 'runtime'
+      && detail.condition !== 'context' && detail.condition !== 'error') return null;
+    return {
+      fromAgentId: typeof detail.fromAgentId === 'string' ? detail.fromAgentId : null,
+      condition: detail.condition,
+      detail: typeof detail.detail === 'string' ? detail.detail : '',
+      head: typeof detail.head === 'string' ? detail.head : null,
+      at: typeof detail.at === 'string' ? detail.at : event.at,
+    };
+  } catch { return null; }
+}
+
+/**
  * The task's current review outcome, its exact source and the decision still
  * outstanding (Queue #477). One derivation from the task's own records, shared
  * by `task.next`, the recovery launch snapshot and an authenticated refresh, so
@@ -235,6 +257,7 @@ export function assembleOwnerTaskNext(facts: OwnerVerbFacts, ownerVerbViews: (fa
   const fences = holdsOf(task);
   const verbs = [...ownerVerbViews(planned), ...holdViews(task)];
   const stop = ownerTaskStop(facts);
+  const reviewerSwap = reviewerSwapView(facts);
   const checkpointWait = stop?.reason === 'lifecycle' && Boolean(retainedCheckpointRun(facts.runs));
   const threshold = (facts.store.getMeta<number>('stallThresholdMinutes') ?? DEFAULT_STALL_THRESHOLD_MINUTES) * 60_000;
   if (stop && stop.suggestedVerbs.length === 0 && stop.kind !== 'hold'
@@ -271,6 +294,7 @@ export function assembleOwnerTaskNext(facts: OwnerVerbFacts, ownerVerbViews: (fa
     ...(task.resolution.noAutomaticRetry
       ? { noAutomaticRetry: true as const, noAutomaticRetryProvenance: task.resolution.noAutomaticRetryProvenance }
       : {}),
+    ...(reviewerSwap ? { reviewerSwap } : {}),
     routingPolicy: facts.store.routingPolicy(task, Date.now(), facts.hostProfiles ?? []),
     ...(task.workerExclusions.length ? { workerExclusions: task.workerExclusions } : {}),
     workerDemandStep: workerStepLabel(facts.store.usageLevel(), false),

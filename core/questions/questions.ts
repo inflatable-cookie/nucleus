@@ -182,6 +182,11 @@ export class Questions {
           if (this.resolution.stopped()) return;
           if (this.store.eventsAll(task.id).some(event => event.kind === 'operator_question_superseded' && event.detail.startsWith(`${question.id}:`))) return;
           this.store.event(task.id, 'operator_question_unknown', `${question.id}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));
+          // Papercut a1bc9fe5: a native delivery that went unknown used to strand
+          // the question with nobody able to answer it. The same question id falls
+          // back to the task's planner ladder, whose answer comes through
+          // question.answer; a late native answer settles the same question once.
+          this.delegateUnknownDeliveryQuestion(task.id, { id: question.id, kind: question.kind, question: question.question, options }, options);
         })
         .finally(() => this.resolution.responsibleQuestions.delete(question.id));
     }
@@ -344,6 +349,33 @@ export class Questions {
     add(task.resolution.reviewerAgentId, runs.find(run => run.role === 'reviewer' && run.agentId === task.resolution.reviewerAgentId)?.workspaceId ?? task.workspaceId);
     return [...out].map(([agentId, workspaceId]) => ({ agentId, workspaceId }));
   }
+  /**
+   * Papercut a1bc9fe5: a native question whose delivery went unknown never
+   * reached the planner, so `question.answer` refused every planner. The same
+   * question id is delegated to the task's planner rungs; its answer settles
+   * through the ordinary settlement, so a late native answer reconciles with
+   * the one question instead of opening a second one.
+   */
+  delegateUnknownDeliveryQuestion(taskId: string, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[] }, options: string[]): void {
+    if (!isDelegableQuestionKind(decision.kind) || this.resolution.stopped()) return;
+    const events = this.store.eventsAll(taskId);
+    if (events.some(event => ['operator_question_answered', 'operator_question_stale_answered', 'delegated_decision_route'].some(kind =>
+      event.kind === kind && event.detail.startsWith(`${decision.id}:`)))) return;
+    // The stop may have moved while the delivery failed: a delegate must answer
+    // the state its question names, never a later one.
+    const current = operatorQuestionFor(this.store, this.store.task(taskId));
+    if (current?.id !== decision.id) return;
+    if (this.resolution.recoveringQueueAsks.has(decision.id)) return;
+    this.resolution.recoveringQueueAsks.add(decision.id);
+    this.store.event(taskId, 'operator_question_unknown_delegated', `${decision.id}: native delivery was unknown; the question falls back to the planner ladder`);
+    void this.delegateDecision(taskId, { id: decision.id, kind: decision.kind, question: decision.question, options },
+      null, new AbortController().signal, async (fresh, answer) => {
+        const question = operatorQuestionFor(this.store, fresh);
+        if (question?.id === decision.id) await this.resolution.settleOperatorQuestion(taskId, question, answer);
+      })
+      .catch(error => { if (!this.resolution.stopped()) this.store.event(taskId, 'operator_question_delegation_unknown', `${decision.id}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000)); })
+      .finally(() => this.resolution.recoveringQueueAsks.delete(decision.id));
+  }
   async settleOperatorQuestion(taskId: string, question: OperatorQuestion, answer: string, recordAnswer = true): Promise<void> {
     if (this.resolution.stopped()) return;
     if (!this.resolution.queueBudgetQuestionCurrent(taskId, question)) {
@@ -358,6 +390,13 @@ export class Questions {
     this.resolution.delegatedAnswers.delete(question.id);
     const answeredBy = this.resolution.queueAskRaiseAnsweredBy.get(question.id);
     this.resolution.queueAskRaiseAnsweredBy.delete(question.id);
+    // The one recorded answer is the question's outcome: a later native answer to
+    // a question already settled by the planner ladder is recorded and applied
+    // nowhere (papercut a1bc9fe5), never a second question or a second control.
+    if (recordAnswer && this.store.eventsAll(taskId).some(event => event.kind === 'operator_question_answered' && event.detail.startsWith(`${question.id}:`))) {
+      this.store.event(taskId, 'operator_question_late_answer', `${question.id}: ${answer} — answered by ${delegated ? `delegated ${delegated.role} ${delegated.agentId}` : answeredBy ?? 'operator'}; no effect because the question was already answered`);
+      return;
+    }
     if (recordAnswer && !this.store.eventsAll(taskId).some(event => event.kind === 'operator_question_answered' && event.detail.startsWith(`${question.id}:`)))
       this.store.event(taskId, 'operator_question_answered', `${question.id}: ${answer} — answered by ${delegated ? `delegated ${delegated.role} ${delegated.agentId}` : answeredBy ?? 'operator'}`);
     const text = answer.trim();
