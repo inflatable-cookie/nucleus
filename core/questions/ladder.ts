@@ -138,6 +138,44 @@ export class Ladder {
         .finally(() => this.routingEscalations.delete(escalation.id));
     }
   }
+  private escalationWaitState(id: string, wait: { kind: 'time' | 'decision'; target: string; stopDetail?: string; stopReason?: 'lifecycle' | 'escalated' }) {
+    const stopDetail = wait.stopDetail ?? (wait.kind === 'time'
+      ? `Escalation ${id}: waiting until ${wait.target}`
+      : `Escalation ${id}: waiting for operator decision ${wait.target}`);
+    const stopReason = wait.stopReason ?? (wait.kind === 'time' ? 'lifecycle' : 'escalated');
+    return { stopDetail, stopReason };
+  }
+  /** The wait event and the actual task stop are one durable state transition. */
+  private establishEscalationWait(taskId: string, id: string, wait: { kind: 'time' | 'decision'; target: string; stopDetail?: string; stopReason?: 'lifecycle' | 'escalated' }, afterEventId = 0): boolean {
+    return this.store.transaction(() => {
+      const current = this.store.task(taskId);
+      if (['done', 'cancelled'].includes(current.phase)) return false;
+      const events = this.store.eventsAll(taskId);
+      if (afterEventId > 0 && events.some(event => event.id > afterEventId && event.kind === 'operator_control' && event.detail !== 'note')) return false;
+      if (wait.kind === 'decision') {
+        let decision: DecisionView;
+        try { decision = new Decisions(this.store).get({ id: wait.target }); } catch { return false; }
+        if (!['open', 'answered'].includes(decision.status)) return false;
+      }
+      const { stopDetail, stopReason } = this.escalationWaitState(id, wait);
+      const expected = this.escalationWaitState(id, wait);
+      const recordedWait = events.findLast(event => event.kind === 'planner_escalation_wait' && event.detail.startsWith(`${id}:`)
+        && (() => {
+          try {
+            const value = JSON.parse(event.detail.slice(id.length + 2)) as { kind?: string; target?: string; stopDetail?: string; stopReason?: string };
+            const prior = this.escalationWaitState(id, { ...wait, stopDetail: value.stopDetail, stopReason: value.stopReason as 'lifecycle' | 'escalated' | undefined });
+            return value.kind === wait.kind && value.target === wait.target
+              && prior.stopDetail === expected.stopDetail && prior.stopReason === expected.stopReason;
+          } catch { return false; }
+        })());
+      if (!recordedWait) this.store.event(taskId, 'planner_escalation_wait', `${id}: ${JSON.stringify({ ...wait, stopDetail, stopReason })}`);
+      const stop = this.store.task(taskId).resolution.stop;
+      if (stop?.reason !== stopReason || stop.detail !== stopDetail)
+        this.resolution.waiting(this.store.task(taskId), stopDetail, stopReason);
+      const established = this.store.task(taskId).resolution.stop;
+      return established?.reason === stopReason && established.detail === stopDetail;
+    });
+  }
   async resumeEscalationWaits(task: Task): Promise<void> {
     const events = this.store.eventsAll(task.id);
     for (const event of events.filter(item => item.kind === 'planner_escalation_wait')) {
@@ -149,7 +187,7 @@ export class Ladder {
         if (!finished && !this.resolution.wakingEscalations.has(id)) this.resolution.waiting(this.store.task(task.id), `Escalation ${id} wake outcome is unknown; inspect before retrying`, 'escalated');
         continue;
       }
-      const wait = JSON.parse(event.detail.slice(id.length + 2)) as { kind: 'task' | 'time' | 'decision'; target: string; waitId?: string };
+      const wait = JSON.parse(event.detail.slice(id.length + 2)) as { kind: 'task' | 'time' | 'decision'; target: string; waitId?: string; stopDetail?: string; stopReason?: 'lifecycle' | 'escalated' };
       if (events.some(item => item.id > event.id && item.kind === 'operator_control' && item.detail !== 'note')) {
         this.store.event(task.id, 'planner_escalation_wait_superseded', `${id}: a later owner control changed the task`);
         continue;
@@ -163,9 +201,29 @@ export class Ladder {
         this.store.event(task.id, 'planner_escalation_wait_superseded', `${id}: prerequisite wait changed`);
         continue;
       }
-      if (wait.kind !== 'task' && !current.resolution.stop?.detail.includes(`Escalation ${id}: waiting`)) {
-        this.store.event(task.id, 'planner_escalation_wait_superseded', `${id}: task stop changed`);
-        continue;
+      if (wait.kind !== 'task') {
+        const waitControl = { kind: wait.kind as 'time' | 'decision', target: wait.target,
+          stopDetail: wait.stopDetail, stopReason: wait.stopReason };
+        const expected = this.escalationWaitState(id, waitControl);
+        if (current.resolution.stop?.reason !== expected.stopReason || current.resolution.stop.detail !== expected.stopDetail) {
+          const pending = events.findLast(item => item.kind === 'planner_escalation_answer_pending' && item.detail.startsWith(`${id}:`)
+            && item.id < event.id && (() => {
+              try {
+                const answer = JSON.parse(item.detail.slice(id.length + 1).trim()) as { control?: { kind?: string; target?: string } };
+                return answer.control?.kind === waitControl.kind && answer.control.target === waitControl.target;
+              } catch { return false; }
+            })());
+          const linkedClassification = waitControl.kind === 'decision'
+            && expected.stopDetail === escalationWaitDetail.operator(id, waitControl.target)
+            && events.some(item => item.kind === 'planner_escalation_decision_linked' && item.detail === `${id}: decision ${waitControl.target}`);
+          const repaired = (pending || linkedClassification)
+            && this.establishEscalationWait(task.id, id, waitControl, pending?.id ?? 0);
+          current = this.store.task(task.id);
+          if (!repaired || current.resolution.stop?.reason !== expected.stopReason || current.resolution.stop.detail !== expected.stopDetail) {
+            this.store.event(task.id, 'planner_escalation_wait_superseded', `${id}: task stop changed and the recorded wait could not be restored`);
+            continue;
+          }
+        }
       }
       if (wait.kind === 'task' && !current.prerequisiteWait?.releasedAt) continue;
       if (wait.kind === 'time' && Date.parse(wait.target) > Date.now()) continue;
@@ -606,23 +664,62 @@ export class Ladder {
     if (who.startsWith('decider ')) await this.resolution.host.archiveAgent(who.slice(8)).catch(() => {});
   }
   /** A planner or decider that explicitly says it cannot decide reaches the operator: one Spec 032 decision. */
+  operatorDecisionApplied(taskId: string, id: string): boolean {
+    const events = this.store.eventsAll(taskId);
+    const linked = events.findLast(event => event.kind === 'planner_escalation_decision_linked' && event.detail.startsWith(`${id}:`));
+    const decisionId = linked?.detail.match(/decision ([0-9a-f-]{36})/)?.[1];
+    if (!linked || !decisionId) return false;
+    const waitEvent = events.findLast(event => event.kind === 'planner_escalation_wait' && event.detail.startsWith(`${id}:`) && event.id > linked.id && (() => {
+      try {
+        const wait = JSON.parse(event.detail.slice(id.length + 2)) as { kind?: string; target?: string; stopDetail?: string };
+        return wait.kind === 'decision' && wait.target === decisionId && wait.stopDetail === escalationWaitDetail.operator(id, decisionId);
+      } catch { return false; }
+    })());
+    if (!waitEvent) return false;
+    const stopDetail = escalationWaitDetail.operator(id, decisionId);
+    const stop = this.store.task(taskId).resolution.stop;
+    if (stop?.reason !== 'escalated' || stop.detail !== stopDetail) return false;
+    try { return new Decisions(this.store).get({ id: decisionId }).links.tasks.includes(taskId); }
+    catch { return false; }
+  }
   classifyEscalationToOperator(t: Task, id: string, reason: string, who: string): void {
-    const events = this.store.eventsAll(t.id);
-    if (events.some(event => event.kind === 'planner_escalation_decision' && event.detail.startsWith(`${id}:`))) return;
-    const payloadEvent = events.find(event => event.kind === 'planner_escalation_payload' && event.detail.startsWith(`${id}:`));
-    let question = `The blocker escalation ${id} on "${t.title}" needs the operator.`;
-    try { if (payloadEvent) question = (JSON.parse(payloadEvent.detail.slice(payloadEvent.detail.indexOf(':') + 1)) as { question?: string }).question ?? question; } catch { /* unreadable payload keeps the plain question */ }
-    // A delegated payload's question is unbounded; the view limit still holds.
-    question = clipDecisionQuestion(question);
-    this.store.event(t.id, 'planner_escalation_decision', `${id}: the ${who} said it cannot decide: ${reason.slice(0, 300)}`.slice(0, 4000));
-    const view = new Decisions(this.store).add({
-      question, headline: `Blocker escalation on ${t.reference ?? t.id} needs the operator`,
-      context: `The blocker ladder's escalation ${id} was classified as the operator's by the ${who}. Its one-line reason: ${reason}`.slice(0, 4000),
-      askedBy: t.agentId ?? 'nucleus', project: { origin: normalizeRepositoryOrigin(t.repository ?? '') ?? t.repoPath, path: t.repoPath },
-      tasks: [t.id], by: 'nucleus',
-    });
-    this.store.event(t.id, 'planner_escalation_decision_linked', `${id}: decision ${view.id}`);
-    this.resolution.waiting(this.store.task(t.id), escalationWaitDetail.operator(id, view.id), 'escalated');
+    if (this.operatorDecisionApplied(t.id, id)) return;
+      const current = this.store.task(t.id);
+      let events = this.store.eventsAll(t.id);
+      if (this.operatorDecisionApplied(t.id, id)) return;
+      if (!events.some(event => event.kind === 'planner_escalation_decision' && event.detail.startsWith(`${id}:`)))
+        this.store.event(t.id, 'planner_escalation_decision', `${id}: the ${who} said it cannot decide: ${reason.slice(0, 300)}`.slice(0, 4000));
+      const classification = this.store.eventsAll(t.id).findLast(event => event.kind === 'planner_escalation_decision' && event.detail.startsWith(`${id}:`));
+      const payloadEvent = events.find(event => event.kind === 'planner_escalation_payload' && event.detail.startsWith(`${id}:`));
+      let question = `The blocker escalation ${id} on "${current.title}" needs the operator.`;
+      try { if (payloadEvent) question = (JSON.parse(payloadEvent.detail.slice(payloadEvent.detail.indexOf(':') + 1)) as { question?: string }).question ?? question; } catch { /* unreadable payload keeps the plain question */ }
+      question = clipDecisionQuestion(question);
+      const decisions = new Decisions(this.store);
+      const linkedEvent = events.findLast(event => event.kind === 'planner_escalation_decision_linked' && event.detail.startsWith(`${id}:`));
+      const linkedId = linkedEvent?.detail.match(/decision ([0-9a-f-]{36})/)?.[1];
+      let decision: DecisionView | null = null;
+      if (linkedId) {
+        try {
+          const candidate = decisions.get({ id: linkedId });
+          if (candidate.links.tasks.includes(t.id)) decision = candidate;
+        } catch { /* a lost target is repaired with a fresh linked decision below */ }
+      }
+      // A previous implementation could commit the decision row before recording
+      // its link. Reuse that exact escalation decision if it is still present.
+      if (!decision) decision = decisions.list({ task: t.id }).find(candidate => candidate.links.tasks.includes(t.id)
+        && Boolean(candidate.context?.includes(`escalation ${id} was classified as the operator's`))) ?? null;
+      if (!decision) decision = decisions.add({
+        question, headline: `Blocker escalation on ${current.reference ?? current.id} needs the operator`,
+        context: `The blocker ladder's escalation ${id} was classified as the operator's by the ${who}. Its one-line reason: ${reason}`.slice(0, 4000),
+        askedBy: current.agentId ?? 'nucleus', project: { origin: normalizeRepositoryOrigin(current.repository ?? '') ?? current.repoPath, path: current.repoPath },
+        tasks: [current.id], by: 'nucleus',
+      });
+      events = this.store.eventsAll(t.id);
+      if (!events.some(event => event.kind === 'planner_escalation_decision_linked' && event.detail === `${id}: decision ${decision!.id}`))
+        this.store.event(t.id, 'planner_escalation_decision_linked', `${id}: decision ${decision.id}`);
+      const wait = { kind: 'decision' as const, target: decision.id, stopDetail: escalationWaitDetail.operator(id, decision.id), stopReason: 'escalated' as const };
+      if (!this.establishEscalationWait(t.id, id, wait, classification?.id ?? 0))
+        throw Error(`Escalation ${id} could not establish its operator decision wait`);
   }
   /** Record the answer before applying it; a refusal remains open. */
   settlePlannerEscalation(t: Task, id: string, answer: string, who: string, offered: EscalationVerbChoice[] = [], questionId = `ns-escalation-${id}`): Promise<string | null> {
@@ -633,6 +730,19 @@ export class Ladder {
     this.escalationSettlements.set(key, settlement);
     void settlement.finally(() => { if (this.escalationSettlements.get(key) === settlement) this.escalationSettlements.delete(key); });
     return settlement;
+  }
+  /** Share a live route settlement with a duplicate receipt observer instead of declaring it uncertain. */
+  async awaitDelegatedEscalationSettlement(taskId: string, id: string, questionId: string): Promise<{ status: 'applied' } | { status: 'refused'; reason: string } | null> {
+    const settlement = this.escalationSettlements.get(`${taskId}:${id}`);
+    if (!settlement) return null;
+    const pending = this.store.eventsAll(taskId).findLast(event => event.kind === 'planner_escalation_answer_pending' && event.detail.startsWith(`${id}:`));
+    if (!pending) return null;
+    try {
+      const intent = JSON.parse(pending.detail.slice(id.length + 1).trim()) as { questionId?: string };
+      if (intent.questionId !== questionId) return null;
+    } catch { return null; }
+    const refusal = await settlement;
+    return refusal ? { status: 'refused', reason: refusal } : { status: 'applied' };
   }
   private async settlePlannerEscalationOnce(t: Task, id: string, answer: string, who: string, offered: EscalationVerbChoice[], questionId: string): Promise<string | null> {
     const delegatedAnswer = /^(?:planner|decider) /.test(who);
@@ -688,8 +798,8 @@ export class Ladder {
         if (!Number.isFinite(at) || at <= Date.now() || !/(?:Z|[+-]\d\d:\d\d)$/i.test(reason)) throw Error('Name a future ISO timestamp with a timezone');
         const target = new Date(at).toISOString();
         this.store.event(t.id, 'planner_escalation_answer_pending', `${id}: ${JSON.stringify({ questionId, who, answer, control: { kind: 'time', target } })}`);
-        this.store.event(current.id, 'planner_escalation_wait', `${id}: ${JSON.stringify({ kind: 'time', target })}`);
-        this.resolution.waiting(current, `Escalation ${id}: waiting until ${target}`, 'lifecycle');
+        if (!this.establishEscalationWait(current.id, id, { kind: 'time', target }))
+          throw Error('The time wait could not be established against the current task');
         this.store.event(current.id, 'planner_escalation_answered', `${id}: answered by ${who}: ${answer.slice(0, 4000)}`);
         this.store.event(current.id, 'planner_escalation_applied', `${id}: waiting until ${target}`);
         return null;
@@ -698,8 +808,8 @@ export class Ladder {
         const decision = new Decisions(this.store).get({ id: reason });
         if (decision.status !== 'open') throw Error('Name an open operator decision ID');
         this.store.event(t.id, 'planner_escalation_answer_pending', `${id}: ${JSON.stringify({ questionId, who, answer, control: { kind: 'decision', target: decision.id } })}`);
-        this.store.event(current.id, 'planner_escalation_wait', `${id}: ${JSON.stringify({ kind: 'decision', target: decision.id })}`);
-        this.resolution.waiting(current, `Escalation ${id}: waiting for operator decision ${decision.id}`, 'escalated');
+        if (!this.establishEscalationWait(current.id, id, { kind: 'decision', target: decision.id }))
+          throw Error('The operator decision wait could not be established against the current task');
         this.store.event(current.id, 'planner_escalation_answered', `${id}: answered by ${who}: ${answer.slice(0, 4000)}`);
         this.store.event(current.id, 'planner_escalation_applied', `${id}: waiting for operator decision ${decision.id}`);
         return null;
@@ -764,16 +874,20 @@ export class Ladder {
     }
     if (control && !('action' in control)) {
       const waitControl = control as { kind: 'time' | 'decision'; target: string };
-      const target = waitControl.target;
-      const waited = events.some(event => event.kind === 'planner_escalation_wait' && event.id > pending.id && (() => {
+      const waitEvent = events.findLast(event => event.kind === 'planner_escalation_wait' && event.detail.startsWith(`${id}:`) && (() => {
         try {
           const wait = JSON.parse(event.detail.slice(id.length + 2)) as { kind?: string; target?: string };
-          return wait.kind === waitControl.kind && wait.target === target;
+          return wait.kind === waitControl.kind && wait.target === waitControl.target;
         } catch { return false; }
       })());
-      if (!waited) return 'unknown';
-      this.store.event(taskId, 'planner_escalation_answered', `${id}: answered by ${intent.who ?? 'delegated planner'}: recovered ${waitControl.kind} wait ${target}`);
-      this.store.event(taskId, 'planner_escalation_applied', `${id}: waiting for ${waitControl.kind} ${target}`);
+      let recordedWait: { stopDetail?: string; stopReason?: 'lifecycle' | 'escalated' } = {};
+      try { if (waitEvent) recordedWait = JSON.parse(waitEvent.detail.slice(id.length + 2)) as typeof recordedWait; } catch { return 'unknown'; }
+      const established = this.establishEscalationWait(taskId, id, { ...waitControl, ...recordedWait }, pending.id);
+      if (!established) return 'unknown';
+      if (!events.some(event => event.kind === 'planner_escalation_answered' && event.detail.startsWith(`${id}:`) && event.id > pending.id))
+        this.store.event(taskId, 'planner_escalation_answered', `${id}: answered by ${intent.who ?? 'delegated planner'}: recovered ${waitControl.kind} wait ${waitControl.target}`);
+      if (!events.some(event => event.kind === 'planner_escalation_applied' && event.detail.startsWith(`${id}:`) && event.id > pending.id))
+        this.store.event(taskId, 'planner_escalation_applied', `${id}: waiting for ${waitControl.kind} ${waitControl.target}`);
       return 'applied';
     }
     if (!control || !('action' in control)) return 'unknown';
