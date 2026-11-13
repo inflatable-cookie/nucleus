@@ -210,6 +210,12 @@ test('a failing selected file still fails the selector run', () => {
   const result = runUnitSelector(root, ['test/failing.test.mjs']);
   assert.equal(result.status, 1, `${result.stdout}${result.stderr}`);
   assert.equal(existsSync(join(root, 'failing-ran.txt')), true);
+  const output = `${result.stdout}${result.stderr}`;
+  assert.match(output, /Test failure summary \(1\)/);
+  assert.match(output, /failing\.test\.mjs: failing body/);
+  const summaryPath = output.match(/Failure summary file: (.+)$/m)?.[1];
+  assert.ok(summaryPath, 'the failure summary is saved as a scratch artifact');
+  assert.match(readFileSync(summaryPath!, 'utf8'), /failing\.test\.mjs: failing body/);
 });
 
 test('serial wall-clock oracles are classified by the support/timing marker', () => {

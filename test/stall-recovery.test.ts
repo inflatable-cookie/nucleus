@@ -159,6 +159,19 @@ test('a running agent with a stale activity timestamp goes to coordinator attent
   assert.equal(f.store.run(recovered.resolution.recovery!.runId!)?.role, 'recovery');
 });
 
+test('a live process in the task workspace prevents a stale turn from being flagged as a stall', async t => {
+  const f = await fixture(t);
+  t.after(() => f.store.close());
+  f.setObservation(running({ updatedAt: minutesAgo(35), turnStartedAt: minutesAgo(36) }));
+  f.adapter.hostProcessListing = async () => [{ pid: 901, ppid: 900, pgid: 900, uid: 1, startIdentity: 'test-process',
+    command: 'node --test test/example.test.ts', cwd: f.directory }];
+  await f.engine.wake();
+  const current = f.store.task(f.task.id);
+  assert.equal(current.resolution.incident, null);
+  assert.equal(current.resolution.attention, false);
+  assert.match(current.reason, /running a long command.*task workspace process tree/);
+});
+
 test('a live queued or running validation process does not mask a stale worker turn', async t => {
   const f = await fixture(t);
   t.after(() => f.store.close());

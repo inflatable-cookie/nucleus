@@ -124,9 +124,12 @@ export class Stalls {
     if (!runId) return null;
     const shellNotice = await this.shellNotice(current, role, state);
     // No activity timestamp is no evidence of staleness; never judge without it.
-    if (!state.updatedAt || !Number.isFinite(Date.parse(state.updatedAt))) return shellNotice;
+    if (!state.updatedAt || !Number.isFinite(Date.parse(state.updatedAt)))
+      return shellNotice ?? await this.ownedProcessNotice(current, run, role, runId);
     const quietMs = Date.now() - Date.parse(state.updatedAt);
     if (quietMs < this.thresholdMs()) return shellNotice;
+    const toolNotice = shellNotice ?? await this.ownedProcessNotice(current, run, role, runId);
+    if (toolNotice) return toolNotice;
     const turn = state.activeTurnId ? `, active turn ${state.activeTurnId}` : '';
     const pending = state.pendingRequest;
     const stalled = state.permissions
@@ -139,7 +142,24 @@ export class Stalls {
     this.resolution.recordStop(this.store.task(current.id), 'run_stalled', reason, ['restart']);
     if (state.activeTurnId && !this.store.task(current.id).resolution.incident?.turnId)
       this.resolution.saveIncident(this.store.task(current.id), { turnId: state.activeTurnId });
-    return shellNotice;
+    return toolNotice;
+  }
+
+  /** A live process in this run's workspace or scratch is owned-tool activity. */
+  private async ownedProcessNotice(t: Task, run: Run | null, role: string, runId: string): Promise<string | null> {
+    if (!this.resolution.adapter.hostProcessListing) return null;
+    let processes: Awaited<ReturnType<NonNullable<typeof this.resolution.adapter.hostProcessListing>>>;
+    try { processes = await this.resolution.adapter.hostProcessListing(); }
+    catch { return null; }
+    if (!processes) return null;
+    const runIds = [runId];
+    const roots = [t.directory, run?.temporaryDirectory].filter((root): root is string => Boolean(root));
+    for (const root of roots) {
+      const issue = workspaceToolProcessIssue(processes, root, runIds);
+      if (issue && issue.includes('remains in the task workspace process tree'))
+        return `${role} is running a long command (${issue})`;
+    }
+    return null;
   }
 
   /**
