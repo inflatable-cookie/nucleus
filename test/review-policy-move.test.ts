@@ -40,7 +40,7 @@ test('worker continuation uses the latest preflight and sends only after binding
   await policy.continueWorker(task, 'intent', 'text', () => { calls.push('issue'); return { runId: 'new', token: 'token' }; });
   assert.deepEqual(calls, ['preflight', 'refresh', 'issue', 'binding', 'send']);
   assert.match(sent, /NUCLEUS_CONTINUATION_RUN_ID=new/);
-  assert.match(sent, /NUCLEUS_CONTINUATION_TICKET="\/nucleus\/tickets\/new\.json"/);
+  assert.match(sent, /NUCLEUS_CONTINUATION_TICKET='\/nucleus\/tickets\/new\.json'/);
   assert.match(sent, /\n\ntext$/);
   host.preflightWorkerContinuation = async () => ({ available: false, reason: 'changed' });
   calls.length = 0;
