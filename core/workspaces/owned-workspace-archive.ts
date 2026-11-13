@@ -255,14 +255,8 @@ export class OwnedWorkspaceArchive {
           throw Error('the worktree is no longer orphaned');
         if(!allowed())return false;
         // Under the discard, the canonical path is re-proved and read-only
-        // directories inside it are opened for removal, synchronously, with no
-        // await before the removal starts. A normalization failure stops removal.
-        // The proven directory is then moved, still synchronously, to a sibling
-        // quarantine name in the same parent: a rename follows no symlink and cannot
-        // interleave with other JS, so the tree the asynchronous walk removes is
-        // exactly the tree the proof validated. Deleting it in place would let a
-        // path-based readdir/unlink meet a path a later writer changed after the
-        // proof (nucleus#1179 review 5890172363).
+        // directories inside it are opened for removal, synchronously. A
+        // normalization failure stops removal.
         if(discarding){assertCanonicalOwnedPath(directory,ownedData,commonDir,task.id);normalizeOwnedDirectoryPermissions(directory);}
         // The path was re-proved synchronously just above; the removal is issued
         // against that same proven path and runs its walk off this thread. An
