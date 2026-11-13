@@ -857,6 +857,8 @@ let raw='';process.stdin.on('data',d=>raw+=d);process.stdin.on('end',()=>{
   const engine = new Engine(store, adapter, 0);
   const terminalTask = store.update(inserted.id, { phase: 'done', directory: repo, branch: 'main', workspaceId: 'finished-ws',
     resolution: { ...store.task(inserted.id).resolution, mergedCommit: repoHead, syncedCommit: repoHead } });
+  const stopped = engine.resolution.recordStop(terminalTask, 'operator_needed', 'Recovery could not safely settle the finished-task cleanup', ['retry_effect']);
+  engine.resolution.recovery.escalate(stopped, 'Coordinator recovery could not safely continue: the cleanup hook failed');
   const first = await engine.hooks.finished(terminalTask);
   assert.equal(first.hold, false);
   assert.equal(first.records[0]!.state, 'failed');
@@ -867,6 +869,7 @@ let raw='';process.stdin.on('data',d=>raw+=d);process.stdin.on('end',()=>{
   const next = () => taskNextSchema.parse(ownerTaskNext(facts()));
   const effectViews = next().verbs.filter(entry => entry.verb === 'retry_effect');
   assert.equal(effectViews.length, 1);
+  assert.equal(store.task(inserted.id).resolution.stop?.reason, 'operator_needed');
   const view = effectViews[0]!;
   assert.equal(view.available, true, JSON.stringify(view));
   assert.deepEqual(view.args, {
@@ -889,6 +892,8 @@ let raw='';process.stdin.on('data',d=>raw+=d);process.stdin.on('end',()=>{
   assert.equal(audit.verb, 'retry_effect');
   assert.equal(audit.identities.effect, `hook.${first.records[0].eventId}`);
   assert.equal(retried.phase, 'done', 'retrying cleanup keeps the finished task terminal');
+  assert.equal(retried.resolution.stop, null, 'the retry clears the obsolete recovery stop');
+  assert.equal(retried.resolution.recovery?.status, 'resolved');
   await engine.stop();
   store.close();
 });
