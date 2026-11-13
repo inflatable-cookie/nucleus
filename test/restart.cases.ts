@@ -1,5 +1,6 @@
 import { fakeAdapter } from './support/fakes';
 import { profile as sharedProfile } from './support/fakes';
+import { paseoCatalog } from './support/pool-shapes';
 import { holdLifecycleFollowUps } from './support/hold-lifecycle-follow-ups';
 import { waitFor } from './support/budgets';
 import { test } from './support/sharded-test';
@@ -45,9 +46,12 @@ function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'ns-restart-'));
   const store = new Store(join(dir, 'queue.sqlite'));
   store.setMeta('paused', false);
-  const worker = profile('worker', 'test/worker', ['worker']);
-  const reviewer = profile('reviewer', 'test/reviewer', ['reviewer']);
-  const coord = profile('coord', 'test/coord', ['coordinator']);
+  // The recorded Paseo catalog (#1143's shared shape) names the models and
+  // thinking levels each profile runs: a fixture model the host does not report is
+  // unavailable here instead of passing on an invented catalog.
+  const worker = profile('worker', 'gpt-6-luna', ['worker']);
+  const reviewer = profile('reviewer', 'gpt-6.1-sol', ['reviewer']);
+  const coord = profile('coord', 'gpt-6.1-terra', ['coordinator']);
   const all = [worker, reviewer, coord];
   store.setProfiles(all.map(({ available, problem, supportedThinking, ...p }) => p));
   store.setMeta('pool', all.map(item => ({ profileId: item.id, enabled: true, group: item.id, roles: [item.id === 'reviewer' ? 'reviewer' : item.id === 'coord' ? 'coordinator' : 'worker'], weight: 1, scopes: ['general'] })));
@@ -67,7 +71,7 @@ function fixture() {
   const createdRunTokens = new Map<string, string>();
   const archived = new Set<string>();
   const adapter = fakeAdapter({
-    catalog: async () => ({ providers: [{ key: 'codex', label: 'Codex', available: true, problem: '', models: all.map(p => ({ id: p.model, label: p.model, aliases: [], thinkingOptions: [], defaultThinkingOptionId: null, modes: [], features: [] })) }] }),
+    catalog: async () => paseoCatalog(),
     validate: async () => base,
     verifyWorkspace: async () => {},
     createWorkspace: async () => { throw new Error('restart fixtures do not create workspaces'); },
@@ -526,7 +530,7 @@ test('explicit worker restart delivers its instruction at the bound PR without i
 
 for (const fresh of [false, true]) test(`worker restart replaces an inactive errored worker on the existing workspace and PR (fresh=${fresh})`, async () => {
   const f = fixture(); try {
-    const alternate = profile('worker-alt', 'test/worker-alt', ['worker']);
+    const alternate = profile('worker-alt', 'gpt-6-luna', ['worker']);
     f.engine.profiles = [f.profiles.worker, f.profiles.reviewer, f.profiles.coord, alternate];
     f.store.setMeta('pool', [
       { profileId: f.profiles.worker.id, enabled: true, group: f.profiles.worker.id, roles: ['worker'], weight: 1, scopes: ['general'] },

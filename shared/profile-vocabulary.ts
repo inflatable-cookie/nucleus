@@ -149,6 +149,21 @@ const hasOption = (feature: HostFeature | undefined, value: string) =>
   feature?.type === "select" && feature.options.some(option => option.id === value);
 
 /**
+ * The canonical thinking levels one provider's model on this host can express:
+ * the table's level for it and the host's own option for it. A provider whose
+ * table carries its thinking as an option value (T3's claude `effort`) reports
+ * them from that option, so a caller that only reads the routing snapshot still
+ * sees the levels this host really runs (nucleus#1169).
+ */
+export function canonicalThinkingLevels(entry: ProviderTranslation, model: HostModel): ThinkingLevel[] {
+  const carrier = entry.thinkingOption ? model.features.find(feature => feature.id === entry.thinkingOption) : undefined;
+  return THINKING_LEVELS.filter(level => {
+    const value = entry.thinking[level];
+    return value !== undefined && (entry.thinkingOption ? hasOption(carrier, value) : model.thinkingOptions.some(option => option.id === value));
+  });
+}
+
+/**
  * One host's catalog in canonical values: only the providers its table names,
  * and per model only the thinking levels and modes the table can express and
  * the host reports. Options a table uses to carry thinking or a mode are left
@@ -165,10 +180,7 @@ export function canonicalCatalog(vocabulary: HostVocabulary, catalog: HostCatalo
       key: canonical, label: PROVIDER_LABELS[canonical], available: native.available, problem: native.problem,
       models: native.models.map((model): HostModel => {
         const carrier = entry.thinkingOption ? model.features.find(feature => feature.id === entry.thinkingOption) : undefined;
-        const levels = THINKING_LEVELS.filter(level => {
-          const value = entry.thinking[level];
-          return value !== undefined && (entry.thinkingOption ? hasOption(carrier, value) : model.thinkingOptions.some(option => option.id === value));
-        });
+        const levels = canonicalThinkingLevels(entry, model);
         const nativeDefault = entry.thinkingOption
           ? (carrier?.type === "select" ? carrier.options.find(option => option.isDefault)?.id ?? (typeof carrier.value === "string" ? carrier.value : null) : null)
           : model.defaultThinkingOptionId;

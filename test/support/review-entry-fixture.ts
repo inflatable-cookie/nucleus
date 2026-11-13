@@ -1,4 +1,5 @@
 import { toolTimelinePage } from './tool-timeline';
+import { paseoCatalog } from './pool-shapes';
 import assert from "node:assert/strict";
 import {mkdirSync,mkdtempSync,realpathSync,rmSync,writeFileSync} from "node:fs";
 import {execFileSync} from "node:child_process";
@@ -89,7 +90,7 @@ export function ownerRevisionFixture(){
   const oldHead=runGit(workspace,'rev-parse','HEAD');runGit(workspace,'push','-u','origin','feature/external');
   const githubRemote='ssh://git@github.com/example/repo.git';runGit(repo,'config','remote.origin.url',githubRemote);runGit(repo,'config',`url.${origin}.insteadOf`,githubRemote);
   const reviewInput=reviewEntryInputSchema.parse({submission:{submissionId:'owner-revision',title:'Owner revision fixture',repoPath:repo,planningCommit,handoffPath:'docs/handoff.md',originAgentId:'origin'},workspaceId:'workspace',prNumber:41,expectedBranch:'feature/external',expectedHead:oldHead,expectedBaseCommit:planningCommit,authority:'Operator approved takeover',authorDeclaration:{models:['openai/gpt-5'],githubAuthor:'external-author',authoringSystem:'external-agent',attestedBy:'operator',provenance:'Fixture attestation'}});
-  const owner='owner-thread',reviewer:Profile={id:'reviewer',name:'Reviewer',provider:'test',model:'reviewer-model',notes:'',available:true,problem:'',supportedThinking:[]};
+  const owner='owner-thread',reviewer:Profile={id:'reviewer',name:'Reviewer',provider:'codex',model:'gpt-6-luna',notes:'',available:true,problem:'',supportedThinking:[]};
   // Task 408: the same PR may be merged outside Queue. `mergeCommit` is the
   // merge commit the forge reports while merged; `onMerge`/`onObserve` let a
   // test mutate one fact inside an awaited proof.
@@ -128,8 +129,9 @@ export function ownerRevisionFixture(){
         if(args[1]?.includes('/pulls/')){state.onPull?.();return prResponse();}
         state.onRepo?.();return JSON.stringify({permissions:{push:true}});
       },
-      // Profiles route from the Queue store through the host catalog (#870): the catalog lists the reviewer's model.
-      catalog:async()=>({providers:[{key:reviewer.provider,label:'test',available:true,problem:'',models:[{id:reviewer.model,label:reviewer.model,aliases:[],thinkingOptions:[],defaultThinkingOptionId:null,modes:[],features:[]}]}]}),
+      // Profiles route from the Queue store through the host catalog (#870); the recorded
+      // Paseo catalog lists the reviewer's canonical provider and model.
+      catalog:async()=>paseoCatalog(),
       validate:async()=>planningCommit,
       createWorkspace:async()=>{throw Error('must preserve workspace')},findWorkspaces:async()=>[],verifyWorkspace:async()=>'feature/external',
       createAgent:async()=>{throw Error('no initial worker')},findAgents:async()=>[],
@@ -152,7 +154,7 @@ export function ownerRevisionFixture(){
       archiveAgent:async id=>{archivedAgents.add(id);},verifyPr:async()=>({url:'https://github.com/example/repo/pull/41',head:workspaceHead(),repository:'example/repo',headRepository:'example/repo'}),
       verifyPrIdentity:async()=>({url:'https://github.com/example/repo/pull/41',head:workspaceHead(),repository:'example/repo',headRepository:'example/repo'}),
       coveringEvidence:async t=>({head:t.prHead!,base:t.resolution.mergeBase??t.planningBase,wait:''}),
-      createRun:async(_task,run,token)=>{tokens.set(run.id,token);const id=creates.length ? `review-agent-${run.id}` : 'review-agent';creates.push(run);states.set(id,{id,workspaceId:run.workspaceId,status:'running',active:true,permissions:false,error:'',model:'reviewer-model'});if(state.loseAgentReply){state.loseAgentReply=false;throw Error('lost agent reply');}return{id,workspaceId:run.workspaceId}},
+      createRun:async(_task,run,token)=>{tokens.set(run.id,token);const id=creates.length ? `review-agent-${run.id}` : 'review-agent';creates.push(run);states.set(id,{id,workspaceId:run.workspaceId,status:'running',active:true,permissions:false,error:'',model:reviewer.model});if(state.loseAgentReply){state.loseAgentReply=false;throw Error('lost agent reply');}return{id,workspaceId:run.workspaceId}},
       sendRun:async()=>{},findRunAgents:async run=>creates.filter(created=>created.id===run.id).map(created=>({id:creates.indexOf(created) ? `review-agent-${run.id}` : 'review-agent',workspaceId:run.workspaceId})),verifyReview:async()=>{},
       mergeGate:async()=>({head:workspaceHead(),base:planningCommit,wait:''}),merge:async()=>{},
       merged:async()=>({merged:false,commit:null,head:workspaceHead(),base:'main'}),syncMain:async()=>planningCommit,

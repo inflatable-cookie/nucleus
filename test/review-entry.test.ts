@@ -174,7 +174,7 @@ test('review admission rechecks dependencies after the awaited pre-dispatch hook
   const parent=store.insert(submissionSchema.parse({...fixture.reviewInput.submission,submissionId:'proof-parent',title:'Proof parent',dependsOn:[]}), 'host','fixture handoff',fixture.planningCommit,{phase:'done'});
   const reviewInput=reviewEntryInputSchema.parse({...fixture.reviewInput,submission:{...fixture.reviewInput.submission,dependsOn:[parent.id]}});
   const operation=queueOperationSchema.parse({id:operationId,key:'dependency-race',kind:'review_entry',inputHash:'e'.repeat(64),state:'running',taskId:null,expectedVersion:null,repoPath:fixture.repo,submissionId:'proof-fixture',createdAt:new Date().toISOString(),startedAt:new Date().toISOString(),settledAt:null,attempts:1,diagnostic:'',result:null,effect:null});
-  const reviewer:Profile={id:'reviewer',name:'Reviewer',provider:'test',model:'reviewer-model',notes:'',available:true,problem:'',supportedThinking:[]};
+  const reviewer:Profile={id:'reviewer',name:'Reviewer',provider:'codex',model:'gpt-6-luna',notes:'',available:true,problem:'',supportedThinking:[]};
   store.setMeta('paused',false);store.setMeta('pool',[{profileId:'reviewer',enabled:true,group:'reviewers',roles:['reviewer'],weight:1,scopes:['general']}]);
   const engine=new Engine(store,fixture.adapter as Adapter&ReviewEntryAdapter,0);engine.profiles=[reviewer];
   try{
@@ -249,8 +249,8 @@ test('legacy owner-revision task rows and events remain readable',()=>{
 
 test('changes requested creates the first worker in the retained workspace and records its real identity',async()=>{
   const dir=mkdtempSync(join(tmpdir(),'ns-review-entry-')),store=new Store(join(dir,'queue.sqlite'));
-  const worker:Profile={id:'worker',name:'Worker',provider:'test',model:'worker-model',notes:'',available:true,problem:'',supportedThinking:[]};
-  const reviewer:Profile={id:'reviewer',name:'Reviewer',provider:'test',model:'reviewer-model',notes:'',available:true,problem:'',supportedThinking:[]};
+  const worker:Profile={id:'worker',name:'Worker',provider:'codex',model:'gpt-6.1-terra',notes:'',available:true,problem:'',supportedThinking:[]};
+  const reviewer:Profile={id:'reviewer',name:'Reviewer',provider:'codex',model:'gpt-6-luna',notes:'',available:true,problem:'',supportedThinking:[]};
   store.setMeta('paused',false);store.setMeta('pool',[{profileId:'worker',enabled:true,group:'workers',roles:['worker'],weight:1,scopes:['general']},{profileId:'reviewer',enabled:true,group:'reviewers',roles:['reviewer'],weight:1,scopes:['general']}]);
   const inserted=store.insert(submission(),'host','handoff',base,{entrypoint:'review',reviewEntry:record(),phase:'changes_requested',reason:'Fix review findings',workspaceId:'workspace',directory:'/worktree',branch:'feature/external',workspaceIntent:true,prHead:head,prUrl:'https://github.com/example/repo/pull/41',resumePrNumber:41,
     resolution:resolutionSchema.parse({review:{eventId:'review-result',taskId:'placeholder',runId:'review-run',status:'changes_required',summary:'Fix one issue',head,reviewCommentId:9},reviewerAgentId:'review-agent',reviewerProfile:reviewer})});
@@ -262,14 +262,14 @@ test('changes requested creates the first worker in the retained workspace and r
   try{
     await engine.wake();const current=store.task(task.id),run=store.run(current.resolution.currentRunId!);
     assert.equal(creates.length,1,`revision dispatch should proceed in the task workspace: ${current.phase} · ${current.reason}`);assert.equal(run?.role,'revision');assert.equal(run?.workspaceId,'workspace');
-    assert.equal(current.agentId,'first-worker');assert.equal(current.profile?.id,'worker');assert.equal(current.workerModel,'worker-model');
+    assert.equal(current.agentId,'first-worker');assert.equal(current.profile?.id,'worker');assert.equal(current.workerModel,'gpt-6.1-terra');
     assert.equal(current.completion,null);assert.equal(current.reviewEntry?.verifiedHead,head);
   }finally{await engine.stop();store.close();rmSync(dir,{recursive:true,force:true});}
 });
 
 test('a review-entry callback from outside the task workspace cannot gain approval',async()=>{
   const dir=mkdtempSync(join(tmpdir(),'ns-review-entry-approval-')),store=new Store(join(dir,'queue.sqlite'));
-  const reviewer:Profile={id:'reviewer',name:'Reviewer',provider:'test',model:'reviewer-model',notes:'',available:true,problem:'',supportedThinking:[]};
+  const reviewer:Profile={id:'reviewer',name:'Reviewer',provider:'codex',model:'gpt-6-luna',notes:'',available:true,problem:'',supportedThinking:[]};
   store.setMeta('paused',false);store.setMeta('pool',[{profileId:'reviewer',enabled:true,group:'reviewers',roles:['reviewer'],weight:1,scopes:['general']}]);
   const task=store.insert(submission(),'host','handoff',base,{entrypoint:'review',reviewEntry:record(),phase:'awaiting_review',reason:'Awaiting independent review',workspaceId:'workspace',directory:'/worktree',branch:'feature/external',workspaceIntent:true,prHead:head,prUrl:'https://github.com/example/repo/pull/41',resumePrNumber:41});
   const states=new Map<string,AgentObservation>();const tokens=new Map<string,string>();const creates:Run[]=[];

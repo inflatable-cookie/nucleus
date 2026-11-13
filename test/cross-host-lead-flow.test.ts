@@ -11,6 +11,7 @@ import { formatAgentId } from '../shared/agent-identity';
 import { taskPlannerTicketKey } from '../core/dispatch/participant-tickets';
 import { writeRunTicket } from '../core/dispatch/agent-creation';
 import { fakeAdapter } from './support/fakes';
+import { paseoCatalog } from './support/pool-shapes';
 import type { Adapter } from '../core/host';
 
 const paseoHost = 'paseo:primary';
@@ -32,11 +33,12 @@ interface HostRecording {
 
 const recording = () => ({ workspaces: [], agents: [], asks: [], notifications: [], origins: [] } as HostRecording);
 
-const testProfile: Profile = { id: 'worker', name: 'Worker', provider: 'codex', model: 'test', notes: '', available: true, problem: '', supportedThinking: ['low'] };
+// The recorded Paseo catalog (#1143's shared shape): the profile names a model it
+// really reports, so selection judges the real translation. A provider key the
+// canonical vocabulary does not name is invisible here, never a passing fixture.
+const testProfile: Profile = { id: 'worker', name: 'Worker', provider: 'codex', model: 'gpt-6-luna', notes: '', available: true, problem: '', supportedThinking: ['low'] };
 
-const catalog = {
-  providers: [{ key: 'codex', label: 'Codex', available: true, problem: '', models: [{ id: 'test', label: 'test', aliases: [], thinkingOptions: [{ id: 'low', label: 'low' }], defaultThinkingOptionId: null, modes: [], features: [] }] }],
-};
+const catalog = paseoCatalog();
 
 interface Fixture {
   runtime: QueueRuntime;
