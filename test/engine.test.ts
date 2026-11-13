@@ -1378,14 +1378,16 @@ test('required worker survives an RPC crash and waits for its provider before sa
 });
 test('catalog provider outage waits for required worker and does not promote fallback',async()=>{
  const f=fixture();try{
-  const pi={...profile,provider:'pi'}, strong={...profile,id:'strong',provider:'codex',model:'strong'};
+  const pi={...profile,provider:'pi',model:'opencode-go/muse-spark-1.3-contributor'}, strong={...profile,id:'strong',provider:'codex',model:'gpt-6.1-sol'};
   f.store.setProfiles([pi,strong].map(({id,name,provider,model,notes})=>({id,name,provider,model,notes})));
   f.store.setMeta('pool',[{profileId:pi.id,enabled:true,group:'test',weight:1,capability:'medium',roles:['worker'],scopes:['general']},
     {profileId:strong.id,enabled:true,group:'strong',weight:1,capability:'very_high',roles:['worker'],scopes:['general']}]);
-  const model=(id:string)=>({id,label:id,aliases:[],thinkingOptions:[{id:'low',label:'low'}],defaultThinkingOptionId:null,modes:[],features:[]});
   let available=true;
-  f.adapter.catalog=async()=>({providers:[{key:'pi',label:'Pi',available,problem:'Provider offline',models:[model('test')]},
-    {key:'codex',label:'Codex',available:true,problem:'',models:[model('strong')]}]});
+  f.adapter.catalog=async()=>{
+    const catalog=paseoCatalog();
+    return {providers:catalog.providers.map(provider=>provider.key==='pi'
+      ? {...provider,available,problem:available?'':'Provider offline'} : provider)};
+  };
   await f.engine.refresh();
   const task=f.add();f.store.update(task.id,{complexity:'medium',profileRequests:{worker:{profileId:pi.id,reason:'Required',required:true}}});
   f.store.setMeta('paused',false);await f.engine.wake();const old=f.store.task(task.id);
@@ -1404,14 +1406,16 @@ test('catalog provider outage waits for required worker and does not promote fal
 
 test('catalog provider outage prevents a stronger fallback',async()=>{
  const f=fixture();try{
-  const pi={...profile,provider:'pi'}, strong={...profile,id:'strong',provider:'codex',model:'strong'};
+  const pi={...profile,provider:'pi',model:'opencode-go/muse-spark-1.3-contributor'}, strong={...profile,id:'strong',provider:'codex',model:'gpt-6.1-sol'};
   f.store.setProfiles([pi,strong].map(({id,name,provider,model,notes})=>({id,name,provider,model,notes})));
   f.store.setMeta('pool',[{profileId:pi.id,enabled:true,group:'test',weight:1,capability:'medium',roles:['worker'],scopes:['general']},
     {profileId:strong.id,enabled:true,group:'strong',weight:1,capability:'very_high',roles:['worker'],scopes:['general']}]);
-  const model=(id:string)=>({id,label:id,aliases:[],thinkingOptions:[{id:'low',label:'low'}],defaultThinkingOptionId:null,modes:[],features:[]});
   let available=true;
-  f.adapter.catalog=async()=>({providers:[{key:'pi',label:'Pi',available,problem:'Provider offline',models:[model('test')]},
-    {key:'codex',label:'Codex',available:true,problem:'',models:[model('strong')]}]});
+  f.adapter.catalog=async()=>{
+    const catalog=paseoCatalog();
+    return {providers:catalog.providers.map(provider=>provider.key==='pi'
+      ? {...provider,available,problem:available?'':'Provider offline'} : provider)};
+  };
   await f.engine.refresh();
   const task=f.add();f.store.update(task.id,{complexity:'medium',preferredProfileId:pi.id});
   f.store.setMeta('paused',false);await f.engine.wake();const old=f.store.task(task.id);
