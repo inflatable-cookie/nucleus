@@ -883,6 +883,33 @@ test('a T3 scope question remains a board decision', async () => {
   } finally { controller.abort(); await f.close(); }
 });
 
+test('an exhausted T3 planner ladder opens a board decision with the exhaustion reason', async () => {
+  const f = lifecycleFixture({ responsible: true, provider: 'pi', hostId: 't3code:synthetic-environment', delegates: { planner: null, decider: null } });
+  f.engine.resolution.delegatedAnswerWaitMs = 10;
+  Object.assign(f.adapter, {
+    capabilities: () => ({ nativeDecisions: false, reportingViaMcp: false }),
+    reportingViaMcp: false,
+  });
+  f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: join(f.dir, 'repo') }] });
+  f.store.setProjectPlanner({ key: 'app', agentId: 'planner-1', setBy: 'operator' });
+  const controller = new AbortController();
+  const pending = f.engine.resolution.raiseDecision(f.store.task(f.submitted.id), {
+    id: 'review-ladder-exhausted', kind: 'review', question: 'How should the review proceed?',
+    options: ['Continue the current approach', 'Change the approach', 'Stop and keep the work'],
+  }, controller.signal);
+  void pending.catch(() => {});
+  try {
+    await until(() => new Decisions(f.store).list({ task: f.submitted.id, status: 'open' }).length === 1);
+    await until(() => f.prompts.some(prompt => prompt.agentId === 'planner-1' && prompt.messageId === 'ns-queue-question-review-ladder-exhausted'));
+    const view = new Decisions(f.store).list({ task: f.submitted.id, status: 'open' })[0]!;
+    assert.match(view.context ?? '', /planner ladder ran out without an answer/);
+    const notice = f.prompts.find(prompt => prompt.agentId === 'planner-1' && prompt.messageId === 'ns-queue-question-review-ladder-exhausted')!.text;
+    assert.match(notice, /planner ladder ran out/);
+    assert.match(notice, /on the board for the operator/);
+    assert.doesNotMatch(notice, /question\.answer/);
+  } finally { controller.abort(); await f.close(); }
+});
+
 
 test("a fresh engine routes durable agent asks and never repeats an uncertain delegate send", async () => {
   const f = await askFixture({ waitMs: 300 });
