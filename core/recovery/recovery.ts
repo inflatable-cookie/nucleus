@@ -1,5 +1,5 @@
 import { resultApplied, recordResultApplied } from '../intake/applied-result';
-import { taskStopVerbsFor, type TaskStopReason } from '../../shared/task-stop';
+import { isWaitingTaskStop, taskStopVerbsFor, type TaskStopReason } from '../../shared/task-stop';
 import { reviewContinuationState, reviewFenceHoldsCoordinators } from '../review/review-continuation';
 import { isSshAuthExhausted } from '../../shared/ssh-auth';
 import {randomBytes,randomUUID} from 'node:crypto';
@@ -432,8 +432,11 @@ export class Recovery {
      // own wait or owner owns them and moves no escalation here.
      const pendingSince = incident?.status === 'pending' && !incident.action
        ? this.store.eventsAll(t.id).findLast(event => event.kind === 'recovery_pending')?.at ?? null : null;
+     // A planner's recorded task, time or decision wait owns the next action.
+     // It is not an empty recovery episode waiting for a coordinator launch.
+     const ownerWaitActive = Boolean(t.resolution.stop && isWaitingTaskStop(t.resolution.stop.reason));
      if (incident && pendingSince && !this.resolution.startsNoRuns() && !dispatchBlocked(t)
-       && Date.now() - Date.parse(pendingSince) >= this.pendingBoundMs) {
+       && !ownerWaitActive && Date.now() - Date.parse(pendingSince) >= this.pendingBoundMs) {
        const summary = recoveryPendingEscalation(t);
        this.escalate(t, summary);
        this.resolution.openPlannerEscalation(this.store.task(t.id), {

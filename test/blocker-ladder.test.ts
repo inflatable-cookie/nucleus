@@ -1782,6 +1782,44 @@ test('a time wait wakes once when the named time arrives', async () => {
   } finally { await f.close(); }
 });
 
+test("a planner's recorded time wait prevents pending recovery from re-escalating until it wakes", async () => {
+  const f = fixture({ responsible: true });
+  f.engine.resolution.delegatedAnswerWaitMs = 5000;
+  let when = '';
+  (f.adapter as unknown as Record<string, unknown>).askPlanner = async () => {
+    when = new Date(Date.now() + 10_000).toISOString();
+    return `Choice: Wait until a time (put an ISO timestamp in Reason)\nReason: ${when}`;
+  };
+  try {
+    f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: join(f.dir, 'repo') }] });
+    f.store.setProjectPlanner({ key: 'app', agentId: 'planner-1', setBy: 'operator' });
+    await f.reviews(1); await f.engine.wake();
+    await f.report('blocked', { summary: 'Try after the window', cause: { kind: 'external', name: 'window' } });
+    await until(() => f.events('planner_escalation_applied').some(event => event.detail.includes('waiting until')));
+    assert.match(f.current().resolution.stop?.detail ?? '', /waiting until/i);
+
+    const task = f.current();
+    f.store.update(task.id, { resolution: { ...task.resolution, recovery: {
+      id: 'recovery-pending-wait', key: 'stalled-episode', generation: task.coordinatorGeneration,
+      runId: null, agentId: null, status: 'pending', summary: '', idleSince: null, incidentId: null, progress: null,
+    } } }, 'test_recovery_pending', 'stalled turn recorded a pending recovery episode');
+    f.store.event(task.id, 'recovery_pending', 'stalled turn episode');
+    (f.engine.resolution.recovery as unknown as { pendingBoundMs: number }).pendingBoundMs = 0;
+    const escalationCount = f.events('planner_escalation').length;
+    await f.engine.resolution.recovery.pass(task.id);
+    assert.equal(f.events('planner_escalation').length, escalationCount,
+      'the planner wait owns the task while the timed condition is active');
+
+    await new Promise(resolve => setTimeout(resolve, Math.max(0, Date.parse(when) - Date.now()) + 10));
+    await f.engine.resolution.resumeAskQuestions();
+    assert.equal(f.events('planner_escalation_woke').length, 1, JSON.stringify(f.events('planner_escalation_wake_refused')));
+    const afterWake = f.events('planner_escalation').length;
+    await f.engine.resolution.recovery.pass(task.id);
+    assert.equal(f.events('planner_escalation').length, afterWake,
+      'waking the recorded wait resumes the task instead of reopening the stale recovery episode');
+  } finally { await f.close(); }
+});
+
 test('an operator decision wait applies its answer on wake', async () => {
   const f = fixture({ responsible: true });
   f.engine.resolution.delegatedAnswerWaitMs = 5000;
