@@ -149,13 +149,15 @@ export async function handleDebug(runtime: QueueRuntime, op: unknown, state: Fix
   if (request.target === "runtime") {
     const method = (runtime as unknown as Record<string, unknown>)[request.method!];
     if (typeof method !== "function") throw new Error(`Runtime has no method ${request.method}`);
-    return (method as () => unknown).apply(runtime);
+    // Arguments ride through so a fixture can drive one production method with its
+    // own identity (for example the task whose siblings to remove).
+    return (method as (...args: unknown[]) => unknown).apply(runtime, request.args ?? []);
   }
   if (request.target === "engine") {
     const engine = (runtime as unknown as Record<string, unknown>).engine as Record<string, unknown> | undefined;
     const method = engine?.[request.method!];
     if (typeof method !== "function") throw new Error(`Engine has no method ${request.method}`);
-    return (method as () => unknown).call(engine);
+    return (method as (...args: unknown[]) => unknown).apply(engine, request.args ?? []);
   }
   throw new Error(`Unknown debug target ${JSON.stringify(request.target)}`);
 }

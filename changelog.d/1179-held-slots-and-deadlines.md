@@ -20,7 +20,8 @@ every held slot is named with an owner, an age and a deadline.
   wait for a slot is logged with the oldest holder and its age.
 - Removing a populated checkout — a sibling worktree, an orphan checkout or an
   archived owned worktree — runs on libuv's pool instead of synchronously on the
-  thread that serves reads. An archived orphan is renamed to a deterministic
-  quarantine sibling first, so the walk removes exactly the tree the synchronous
-  proof validated, and an interrupted walk is finished by the next pass instead
-  of being reported as a completed archive.
+  thread that serves reads. An archived orphan is recorded and then renamed to a
+  deterministic quarantine sibling, so the walk removes exactly the tree the
+  synchronous proof validated, and an interrupted walk is finished by the next
+  pass only when its detach record names the same task and workspace; an
+  unrecorded sibling is left alone and the archive fails closed.

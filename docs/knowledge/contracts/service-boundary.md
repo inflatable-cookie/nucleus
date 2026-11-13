@@ -795,13 +795,17 @@ admission deadline is abandoned rather than waited on. The removals that delete 
 whole populated checkout go through `removeTree`
 (`core/workspaces/tree-removal.ts`), which runs node's walk on libuv's pool:
 sibling worktrees, orphan checkouts and an archived owned worktree. An archived
-orphan is first moved to a deterministic quarantine sibling by a synchronous
-rename, so the tree the asynchronous walk removes is exactly the tree the
-synchronous proof validated. A walk that fails or is interrupted leaves that
-sibling with the original path gone, so the next pass for the same directory
-finishes it before proving anything and never reports the archive complete while
-it survives; anything but a real directory at that name is refused, not followed
-(nucleus#1179 review 5890648389). Two bounded synchronous removals remain and say so where they are:
+orphan is first recorded and then moved to a deterministic quarantine sibling by a
+synchronous rename, so the tree the asynchronous walk removes is exactly the tree
+the synchronous proof validated. The record names the task, the workspace and the
+head, and it is written between the re-proof and the rename, so it is durable
+evidence of what was detached before the rename happened. A walk that fails or is
+interrupted leaves that sibling with the original path gone; the next pass finds
+it only after proving this task's ownership of the recorded directory, and
+finishes it only when the record names that same task and workspace. An
+unrecorded sibling — or a symlink or file at the name — is left alone and the
+archive fails closed, so a name can never authorize a deletion
+(nucleus#1179 acceptance 2b, planner ruling 2026-11-13). Two bounded synchronous removals remain and say so where they are:
 one run's recorded TMPDIR leaf in the store's retention and release paths, one
 recorded evidence head under the report's 32 MiB proof budget, and the private
 directory holding one migration snapshot. `service.health.requestTimings.held`

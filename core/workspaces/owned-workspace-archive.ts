@@ -1,6 +1,6 @@
 import { historicalWireLabel } from "../../shared/wire-labels";
 import { existsSync, renameSync } from "node:fs";
-import { removeTree, finishInterruptedRemoval, removalQuarantinePath } from "./tree-removal";
+import { removeTree, finishInterruptedRemoval, recordRemovalDetach, removalQuarantinePath } from "./tree-removal";
 import type { Run, Task } from "../../shared/contracts";
 import type { AgentObservation, OriginAgent } from "../host/adapter";
 import type { WorkspaceContinuationHost } from "./workspace-continuation";
@@ -195,14 +195,21 @@ export class OwnedWorkspaceArchive {
       if(!discarding&&(await git(directory,'rev-parse','HEAD')!==actualHead||await queueCheckoutStatus(directory,'status','--porcelain')))throw Error('Preserving workspace with uncommitted files or unexpected commits before teardown');
       return {foreignAgentIds,actualHead,origin,publication,current,orphan};
     };
-    // An interrupted detach leaves its tree under the deterministic quarantine
-    // sibling with the original path gone; a retry that only looked at the
-    // original path would report the archive complete while that tree survives.
-    // Finish it before proving anything, so the proofs below see a settled world
-    // (nucleus#1179 review 5890648389).
-    await finishInterruptedRemoval(directory);
+    // A previous attempt may have detached the checkout and been interrupted, so
+    // the recorded path is gone and its tree survives under the quarantine name.
+    // `prove` has already established this task's ownership of `directory` before
+    // it reports the absence, and the recovery itself re-proves that ownership and
+    // requires the detach record written before the rename to name this exact task
+    // and workspace. The quarantine name and the directory type are never the
+    // authority; an unrecorded sibling is left for a human (nucleus#1179
+    // acceptance 2b, planner ruling 2026-11-13).
     const initial=await prove(false);
-    if(!initial)return [];
+    if(!initial){
+      if(!await this.host.ownedDataDirFor(task,directory))throw Error(`worktree.teardown failed: ${directory} is not a Queue-owned checkout`);
+      if(!allowed())return [];
+      await finishInterruptedRemoval(directory,{taskId:task.id,workspaceId:id});
+      return [];
+    }
     if(buildOutputCleanup){
       try{
         const cleanup=buildOutputCleanup.begin();
@@ -272,6 +279,10 @@ export class OwnedWorkspaceArchive {
         if(discarding){assertCanonicalOwnedPath(directory,ownedData,commonDir,task.id);normalizeOwnedDirectoryPermissions(directory);}
         if(initial.orphan.orphaned){
           const quarantine=removalQuarantinePath(directory);
+          // The detach record is written synchronously, between the re-proof above
+          // and the rename: it is the durable evidence a later pass needs to know
+          // this tree is this task's checkout (nucleus#1179 review 5891444157).
+          recordRemovalDetach(directory,{taskId:task.id,workspaceId:id,head:initial.actualHead,at:new Date().toISOString()});
           renameSync(directory,quarantine);
           await removeTree(quarantine,{force:false});
         }
