@@ -831,7 +831,7 @@ export class Resolution {
   openPlannerEscalation(t: Task, input: { cause: string; runId: string | null; question: string; payload: object; suggestedVerbs?: TaskStopVerb[]; causeDetail?: string }): void { return this.ladder.openPlannerEscalation(t, input); }
   routePlannerEscalation(t: Task, id: string, question: string): Promise<void> { return this.ladder.routePlannerEscalation(t, id, question); }
   classifyEscalationToOperator(t: Task, id: string, reason: string, who: string): void { return this.ladder.classifyEscalationToOperator(t, id, reason, who); }
-  settlePlannerEscalation(t: Task, id: string, answer: string, who: string, offered?: EscalationVerbChoice[]): Promise<string | null> { return this.ladder.settlePlannerEscalation(t, id, answer, who, offered); }
+  settlePlannerEscalation(t: Task, id: string, answer: string, who: string, offered?: EscalationVerbChoice[], questionId?: string): Promise<string | null> { return this.ladder.settlePlannerEscalation(t, id, answer, who, offered, questionId); }
   continueWorkerAfterLadder(t: Task, input: { instruction: string; event: string; reason: string; detail: string }): void { return this.ladder.continueWorkerAfterLadder(t, input); }
   /**
    * Spec 058 (task 523): a responsible task parked on a wait only a person can

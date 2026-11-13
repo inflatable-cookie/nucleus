@@ -28,18 +28,39 @@ test('registration and review entry read current host seams in their original or
 
 test('worker continuation uses the latest preflight and sends only after binding', async () => {
   const calls: string[] = [];
+  let sent = '';
   const host = {
+    helperPath: '/nucleus/worker-report.mjs',
     preflightWorkerContinuation: async () => { calls.push('preflight'); return { available: true }; },
-    messageHost: { retainedAgentRef: () => ({ workspaceId: 'ws', archivedAt: null, refresh: async () => { calls.push('refresh'); }, current: () => ({ labels: { 'nucleus.mcpBinding': 'old' } }), send: async () => { calls.push('send'); } }) },
+    messageHost: { retainedAgentRef: () => ({ workspaceId: 'ws', archivedAt: null, refresh: async () => { calls.push('refresh'); }, current: () => ({ labels: { 'nucleus.mcpBinding': 'old' } }), send: async (text: string) => { sent = text; calls.push('send'); } }) },
+    writeWorkerTicket: () => { calls.push('ticket'); },
     binding: () => { calls.push('binding'); },
   } as unknown as ReviewPolicyHost;
   const policy = new ReviewPolicy(host);
   const task = { agentId: 'worker', workspaceId: 'ws', runId: 'new' } as Task;
   await policy.continueWorker(task, 'intent', 'text', () => { calls.push('issue'); return { runId: 'new', token: 'token' }; });
-  assert.deepEqual(calls, ['preflight', 'refresh', 'issue', 'binding', 'send']);
+  assert.deepEqual(calls, ['preflight', 'refresh', 'issue', 'ticket', 'binding', 'send']);
+  assert.match(sent, /NUCLEUS_CONTINUATION_RUN_ID=new/);
+  assert.match(sent, /NUCLEUS_CONTINUATION_TICKET='\/nucleus\/tickets\/new\.json'/);
+  assert.match(sent, /\n\ntext$/);
   host.preflightWorkerContinuation = async () => ({ available: false, reason: 'changed' });
   calls.length = 0;
   await assert.rejects(policy.continueWorker(task, 'intent', 'text'), /changed/);
+  assert.deepEqual(calls, []);
+});
+
+test('worker continuation refuses a rotated credential for a different run before writing or sending', async () => {
+  const calls: string[] = [];
+  const host = {
+    helperPath: '/nucleus/worker-report.mjs',
+    preflightWorkerContinuation: async () => ({ available: true }),
+    messageHost: { retainedAgentRef: () => ({ workspaceId: 'ws', archivedAt: null, refresh: async () => {}, current: () => ({ labels: { 'nucleus.mcpBinding': 'old' } }), send: async () => { calls.push('send'); } }) },
+    writeWorkerTicket: () => { calls.push('ticket'); },
+    binding: () => { calls.push('binding'); },
+  } as unknown as ReviewPolicyHost;
+  const policy = new ReviewPolicy(host);
+  const task = { agentId: 'worker', workspaceId: 'ws', runId: 'current' } as Task;
+  await assert.rejects(policy.continueWorker(task, 'intent', 'text', () => ({ runId: 'other', token: 'token' })), /does not match the current task run/);
   assert.deepEqual(calls, []);
 });
 

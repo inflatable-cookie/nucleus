@@ -1509,7 +1509,7 @@ test('a reviewer answers with a command once and its chat output is ignored', as
     const adapter = f.engine.adapter as unknown as { askReviewer: (agent: string, input: { prompt: string }) => Promise<string> };
     adapter.askReviewer = async (agent, input) => {
       count++;
-      answerFixturePrompt(f.engine.resolution, agent, input.prompt, 'Advice for this task');
+      await answerFixturePrompt(f.engine.resolution, agent, input.prompt, 'Advice for this task');
       return 'Unrelated conversation output';
     };
     const resolution = f.engine.resolution as unknown as {

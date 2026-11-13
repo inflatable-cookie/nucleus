@@ -181,10 +181,10 @@ function transitionFixture(
         throw Error("Never resend to planner");
       if (route === "reviewer" && recipient === "origin") {
         // The task planner answers the escalated reviewer miss.
-        current.resolution.answerDelegatedQuestion({ questionId: input.prompt.match(/^Question id: (.+)$/m)![1], answer: "Continue", reason: "Within the brief" }, recipient);
+        await current.resolution.answerDelegatedQuestion({ questionId: input.prompt.match(/^Question id: (.+)$/m)![1], answer: "Continue", reason: "Within the brief" }, recipient);
         return null;
       }
-      current.resolution.answerDelegatedQuestion(
+      await current.resolution.answerDelegatedQuestion(
         {
           questionId: input.prompt.match(/^Question id: (.+)$/m)![1],
           answer: route === "escalation" ? "Wait until a time (put an ISO timestamp in Reason)" : "Continue",

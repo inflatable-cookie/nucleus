@@ -23,14 +23,14 @@ test("command answers each delegated route; repeat returns recorded answer; anot
   try {
     for (const id of [
       "ns-agent-ask-test",
-      "ns-escalation-test",
+      "ns-planner-delegate-test",
       "queue-delegate-test",
       "ns-agent-ask-reviewer-test",
     ]) {
       const role = id.includes("reviewer") ? "reviewer" : "planner";
       (r.adapter as any)[role === "reviewer" ? "askReviewer" : "askPlanner"] =
         async (_recipient: string, input: { prompt: string; sourceAgentId?: string }) => {
-          assert.equal(input.sourceAgentId, id === 'ns-escalation-test' ? 'recovery-thread' : 'asking-thread');
+          assert.equal(input.sourceAgentId, 'asking-thread');
           const questionId = idFrom(input.prompt);
           assert.throws(
             () =>
@@ -61,7 +61,7 @@ test("command answers each delegated route; repeat returns recorded answer; anot
           signal: new AbortController().signal,
           timeoutMs: ANSWERING_WINDOW_MS,
           messageId: id,
-          sourceAgentId: id === 'ns-escalation-test' ? 'recovery-thread' : 'asking-thread',
+          sourceAgentId: 'asking-thread',
         },
         role,
       );
@@ -320,7 +320,7 @@ for (const route of ["ask", "escalation", "consult", "operator"] as const) {
         reason: route === "escalation" ? "2099-01-01T00:00:00Z" : "Within brief",
       };
       if (timing === "before restart")
-        f.engine.resolution.answerDelegatedQuestion(input, "planner-1");
+        await f.engine.resolution.answerDelegatedQuestion(input, "planner-1");
       const adapter = {
         ...f.adapter,
         askPlanner: async () => {
@@ -343,7 +343,7 @@ for (const route of ["ask", "escalation", "consult", "operator"] as const) {
       try {
         await recovered.resolution.resumeAskQuestions();
         if (timing === "after restart")
-          recovered.resolution.answerDelegatedQuestion(input, "planner-1");
+          await recovered.resolution.answerDelegatedQuestion(input, "planner-1");
         await waitFor(() => f.store.eventsAll(task.id).some((e) => e.kind === eventKind), ANSWERING_WINDOW_MS, "the answer event");
         assert.equal(
           f.store.eventsAll(task.id).filter((e) => e.kind === eventKind).length,
@@ -362,8 +362,8 @@ for (const route of ["ask", "escalation", "consult", "operator"] as const) {
           1,
         );
         assert.deepEqual(
-          recovered.resolution.answerDelegatedQuestion(input, "planner-1"),
-          f.engine.resolution.answerDelegatedQuestion(input, "planner-1"),
+          await recovered.resolution.answerDelegatedQuestion(input, "planner-1"),
+          await f.engine.resolution.answerDelegatedQuestion(input, "planner-1"),
         );
       } finally {
         await recovered.stop();

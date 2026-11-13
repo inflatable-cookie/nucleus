@@ -50,6 +50,29 @@ test('a refused participant ticket cannot fall through to host identity or send 
   } finally {await f.close();}
 });
 
+test('CLI helpers prefer the current continuation ticket and refuse a mismatched run', async () => {
+  const { writeFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const f = await callerCliFixture();
+  try {
+    const currentTicket = join(f.dir, 'current-run.json');
+    writeFileSync(currentTicket, JSON.stringify({ socketPath: join(f.dir, 'c'), token: 'synthetic-secret', taskId: 'task', runId: 'new-run' }));
+    const request = { questionId: 'question', answer: 'Continue', reason: 'Within scope' };
+    const accepted = await f.invoke('run', 'queue-cli.mjs', ['question.answer', '-'], request, {
+      NUCLEUS_CONTINUATION_RUN_ID: 'new-run', NUCLEUS_CONTINUATION_TICKET: currentTicket,
+    });
+    assert.equal(accepted.code, 0, accepted.stderr);
+    assert.equal(f.callbacks.at(-1)!.input.runId, 'new-run');
+    const before = f.callbacks.length;
+    const refused = await f.invoke('run', 'queue-cli.mjs', ['question.answer', '-'], request, {
+      NUCLEUS_CONTINUATION_RUN_ID: 'new-run', NUCLEUS_CONTINUATION_TICKET: join(f.dir, 'run.json'),
+    });
+    assert.notEqual(refused.code, 0);
+    assert.match(refused.stderr, /Continuation ticket is for run run, not current run new-run/);
+    assert.equal(f.callbacks.length, before, 'a stale ticket is refused before any callback');
+  } finally { await f.close(); }
+});
+
 test('a ticket-based control reports the active roll before caller resolution and sends nothing', async () => {
   const f = await callerCliFixture();
   try {

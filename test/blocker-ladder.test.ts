@@ -27,7 +27,9 @@ import {
   RESPONSIBLE_BLOCKER_LADDER_RULE,
 } from "../core/dispatch/prompts";
 import { Decisions } from "../core/planning/decisions";
+import { collectOwnerVerbFacts, ownerVerbViews } from "../core/verbs/owner-verbs";
 import { Store } from "../core/store/store";
+import { Engine } from "../core/engine";
 import {
   REVISION_BUDGET,
   submissionSchema,
@@ -35,6 +37,7 @@ import {
   type Completion,
   type Run,
   type Task,
+  type TaskControlInput,
 } from "../shared/contracts";
 import { fixture, head, tick } from "./support/responsible-lifecycle-fixture";
 
@@ -481,15 +484,25 @@ test("a still-blocked run after the consult opens one planner escalation and its
       f.current().resolution.stop!.detail,
       /Waiting with the planner/,
     );
-    releasePlanner!(
-      "Choice: Return to the worker with a new approach\nReason: Try the staging tenant for the isolation gate.",
-    );
+    // A brief amendment between the planner's offer and its command answer bumps the task version.
+    const beforeAmendment = f.current();
+    const priorBrief = beforeAmendment.brief!;
+    f.store.update(beforeAmendment.id, { brief: { ...priorBrief, text: `${priorBrief.text}\nClarification after escalation offer.\n` } });
+    assert.ok(f.current().version > beforeAmendment.version, "the planner amendment advances the task version");
+    const escalationId = f.events('planner_escalation')[0]!.detail.split(':', 1)[0]!;
+    const questionId = `ns-escalation-${escalationId}`;
+    const receipt = await f.engine.resolution.answerDelegatedQuestion({
+      questionId,
+      choice: 'Return to the worker with a new approach',
+      reason: 'Try the staging tenant for the isolation gate.',
+    }, 'origin');
+    assert.equal(receipt.questionId, questionId);
+    assert.ok(f.store.eventsAll(`delegation:${questionId}`).some(event => event.kind === "delegated_command_applied"),
+      "a successful question.answer response has a durable applied marker before it returns");
+    releasePlanner!('');
     await until(() => f.events("planner_escalation_answered").length > 0);
-    assert.match(
-      f.events("planner_escalation_answered")[0]!.detail,
-      // Task 1109: the task's own planner (its submitting thread) answers first.
-      /answered by planner origin/,
-    );
+    assert.ok(f.events("planner_escalation_answered").some(event =>
+      /answered by (?:planner origin:|ordinary move: task control moved the task)/.test(event.detail)));
     // The delegated answer applies through the ordinary verbs: move to work, delegated authority.
     await until(() => f.events("planner_escalation_applied").length > 0);
     assert.match(
@@ -518,6 +531,364 @@ test("a still-blocked run after the consult opens one planner escalation and its
   } finally {
     await f.close();
   }
+});
+
+test("a service roll replacement applies a persisted escalation answer before returning success", async () => {
+  const f = fixture({ responsible: true });
+  let replacement: Engine | null = null;
+  try {
+    askedEscalation(f, () => null);
+    await f.reviews(1);
+    await f.engine.wake();
+    await f.report("blocked", { summary: "The isolation gate is still held", cause: { kind: "external", name: "isolation gate" } });
+    await until(() => f.events("planner_escalation").length > 0 && f.events("planner_escalation_offered").length > 0);
+    const escalationId = f.events("planner_escalation")[0]!.detail.split(":", 1)[0]!;
+    const questionId = `ns-escalation-${escalationId}`;
+    const input = {
+      questionId,
+      choice: "Return to the worker with a new approach",
+      reason: "Use the isolated replay fixture.",
+    };
+
+    // Persist the authenticated receipt before an action has started. A service
+    // replacement may safely apply this known-unstarted answer exactly once.
+    const originalQuestion = f.engine.resolution.delegation as unknown as { openDelegatedQuestion: (...args: any[]) => void };
+    originalQuestion.openDelegatedQuestion(f.current(), questionId, "origin", `Question: Continue?\n- ${input.choice}`, 30_000, "planner");
+    f.store.event(`delegation:${questionId}`, "delegated_answer", JSON.stringify({ questionId, caller: "origin", answer: input.choice, reason: input.reason }));
+    f.store.event(f.current().id, "delegated_command_answered", `${questionId}: origin`);
+    assert.equal(f.events("planner_escalation_answer_pending").length, 0);
+
+    // A replacement sees the receipt but no action-pending event, so it can
+    // still apply the selected owner action through the normal verb.
+    await f.engine.stop();
+    replacement = new Engine(f.store, f.engine.adapter, 0);
+    replacement.profiles = f.profiles;
+    replacement.resolution.worktreeValidationProbe = () => ({ state: "absent" });
+    const receipt = await replacement.resolution.answerDelegatedQuestion(input, "origin");
+    assert.equal(receipt.questionId, questionId);
+    assert.equal(f.events("planner_escalation_applied").length, 1);
+    assert.equal(f.events("planner_escalation_answer_refused").length, 0);
+    assert.equal(f.current().phase, "changes_requested");
+    assert.match(f.current().resolution.pendingWorkerInstruction ?? "", /Use the isolated replay fixture/);
+  } finally {
+    await replacement?.stop();
+    await f.close();
+  }
+});
+
+test("a service roll after the owner action but before its escalation marker reconciles the durable control", async () => {
+  const f = fixture({ responsible: true });
+  let replacement: Engine | null = null;
+  try {
+    askedEscalation(f, () => null);
+    await f.reviews(1);
+    await f.engine.wake();
+    await f.report("blocked", { summary: "The isolation gate is still held", cause: { kind: "external", name: "isolation gate" } });
+    await until(() => f.events("planner_escalation").length > 0 && f.events("planner_escalation_offered").length > 0);
+    const escalationId = f.events("planner_escalation")[0]!.detail.split(":", 1)[0]!;
+    const questionId = `ns-escalation-${escalationId}`;
+    const input = { questionId, choice: "Return to the worker with a new approach", reason: "Use the isolated replay fixture." };
+
+    const apply = f.engine.resolution.applyOperatorControl!;
+    let actions = 0;
+    // Complete the real move (including its durable owner_control record), then
+    // model a roll before Ladder can record planner_escalation_applied.
+    f.engine.resolution.applyOperatorControl = async control => {
+      actions++;
+      await apply(control);
+      return new Promise(() => {});
+    };
+    const interrupted = Promise.resolve(f.engine.resolution.answerDelegatedQuestion(input, "origin"));
+    const interruptedSettlement = interrupted.then(() => "settled", () => "settled");
+    await until(() => f.store.eventsAll(`delegation:${questionId}`).some(event => event.kind === "delegated_answer")
+      && f.events("owner_control").some(event => {
+        try { return JSON.parse(event.detail).reason === input.reason; } catch { return false; }
+      }));
+    await f.engine.stop();
+    assert.equal(await Promise.race([interruptedSettlement, Promise.resolve("still pending")]), "still pending");
+
+    replacement = new Engine(f.store, f.engine.adapter, 0);
+    replacement.profiles = f.profiles;
+    replacement.resolution.worktreeValidationProbe = () => ({ state: "absent" });
+    const recovered = await replacement.resolution.answerDelegatedQuestion(input, "origin");
+    assert.equal(recovered.questionId, questionId);
+    assert.equal(actions, 1, "the durable owner action is never replayed");
+    assert.ok(f.events("planner_escalation_applied").some(event => event.detail.startsWith(`${escalationId}:`)),
+      "the replacement reconciles the durable action before returning success");
+    assert.equal(f.events("planner_escalation_answer_refused").length, 0);
+    assert.match(f.events("planner_escalation_applied").at(-1)!.detail, /recovered from owner_control event/);
+    assert.equal(f.current().phase, "changes_requested");
+  } finally {
+    await replacement?.stop();
+    await f.close();
+  }
+});
+
+test("a service roll with a pending action and unknown outcome refuses instead of replaying it", async () => {
+  const f = fixture({ responsible: true });
+  let replacement: Engine | null = null;
+  try {
+    askedEscalation(f, () => null);
+    await f.reviews(1);
+    await f.engine.wake();
+    await f.report("blocked", { summary: "The isolation gate is still held", cause: { kind: "external", name: "isolation gate" } });
+    await until(() => f.events("planner_escalation").length > 0 && f.events("planner_escalation_offered").length > 0);
+    const escalationId = f.events("planner_escalation")[0]!.detail.split(":", 1)[0]!;
+    const questionId = `ns-escalation-${escalationId}`;
+    let actions = 0;
+    f.engine.resolution.applyOperatorControl = async () => { actions++; return new Promise(() => {}); };
+    const input = { questionId, choice: "Return to the worker with a new approach", reason: "Use the isolated replay fixture." };
+    const pending = Promise.resolve(f.engine.resolution.answerDelegatedQuestion(input, "origin"));
+    await until(() => f.events("planner_escalation_answer_pending").length > 0);
+    await f.engine.stop();
+
+    replacement = new Engine(f.store, f.engine.adapter, 0);
+    replacement.profiles = f.profiles;
+    await assert.rejects(Promise.resolve(replacement.resolution.answerDelegatedQuestion(input, "origin")), /owner action outcome is unknown; Nucleus did not replay/);
+    assert.equal(actions, 1);
+    assert.equal(f.events("planner_escalation_action_uncertain").length, 1);
+    assert.match(f.current().resolution.stop?.detail ?? "", /owner action outcome is unknown/);
+    void pending;
+  } finally {
+    await replacement?.stop();
+    await f.close();
+  }
+});
+
+test("a route poll waits for the live escalation action instead of refusing its pending receipt", async () => {
+  const f = fixture({ responsible: true });
+  let finishAction!: () => void;
+  try {
+    askedEscalation(f, () => null);
+    await f.reviews(1);
+    await f.engine.wake();
+    await f.report("blocked", { summary: "The isolation gate is still held", cause: { kind: "external", name: "isolation gate" } });
+    await until(() => f.events("planner_escalation").length > 0 && f.events("planner_escalation_offered").length > 0);
+    const escalationId = f.events("planner_escalation")[0]!.detail.split(":", 1)[0]!;
+    const questionId = `ns-escalation-${escalationId}`;
+    const apply = f.engine.resolution.applyOperatorControl!;
+    let actions = 0;
+    const actionGate = new Promise<void>(resolve => { finishAction = resolve; });
+    f.engine.resolution.applyOperatorControl = async control => {
+      actions++;
+      await actionGate;
+      return apply(control);
+    };
+    let answerSettled = false;
+    const answer = Promise.resolve(f.engine.resolution.answerDelegatedQuestion({
+      questionId, choice: "Return to the worker with a new approach", reason: "Use the isolated replay fixture.",
+    }, "origin")).finally(() => { answerSettled = true; });
+    await until(() => f.events("planner_escalation_answer_pending").length > 0);
+    await new Promise(resolve => setTimeout(resolve, 150));
+    assert.equal(answerSettled, false, "the answer stays pending until the owner action finishes");
+    assert.equal(f.events("planner_escalation_action_uncertain").length, 0);
+    assert.equal(f.store.eventsAll(`delegation:${questionId}`).some(event => event.kind === "delegated_command_refused"), false);
+
+    finishAction();
+    const receipt = await answer;
+    assert.equal(receipt.questionId, questionId);
+    await until(() => f.events("planner_escalation_applied").length > 0);
+    assert.equal(actions, 1, "the live ordinary action is shared by the route poll");
+    assert.equal(f.events("planner_escalation_action_uncertain").length, 0);
+    assert.equal(f.store.eventsAll(`delegation:${questionId}`).filter(event => event.kind === "delegated_command_applied").length, 1);
+    assert.equal(f.store.eventsAll(`delegation:${questionId}`).some(event => event.kind === "delegated_command_refused"), false);
+  } finally { finishAction?.(); await f.close(); }
+});
+
+for (const kind of ["time", "decision"] as const) {
+  test(`a rolled ${kind} wait rebuilds its task stop from the durable escalation intent`, async () => {
+    const f = fixture({ responsible: true });
+    try {
+      askedEscalation(f, () => null);
+      await f.reviews(1);
+      await f.engine.wake();
+      await f.report("blocked", { summary: "The isolation gate is still held", cause: { kind: "external", name: "isolation gate" } });
+      await until(() => f.events("planner_escalation").length > 0 && f.events("planner_escalation_offered").length > 0);
+      const task = f.current();
+      const escalationId = f.events("planner_escalation")[0]!.detail.split(":", 1)[0]!;
+      const questionId = `ns-escalation-${escalationId}`;
+      const decision = kind === "decision" ? new Decisions(f.store).add({ question: "What next?", askedBy: "origin" }) : null;
+      const target = kind === "time" ? "2099-01-01T00:00:00.000Z" : decision!.id;
+      const choice = kind === "time" ? "Wait until a time (put an ISO timestamp in Reason)" : "Wait for an operator decision (put its ID in Reason)";
+      const reason = kind === "time" ? "2099-01-01T00:00:00Z" : decision!.id;
+      const receiptKey = `delegation:${questionId}`;
+      f.store.event(receiptKey, "delegated_answer", JSON.stringify({ questionId, caller: "origin", answer: choice, reason }));
+      const receiptEvent = f.store.eventsAll(receiptKey).find(event => event.kind === "delegated_answer")!;
+      f.store.event(task.id, "delegated_command_answered", `${questionId}: origin`);
+      f.store.event(task.id, "planner_escalation_answer_pending", `${escalationId}: ${JSON.stringify({
+        questionId, who: "planner origin", answer: `${choice} — ${reason}`, control: { kind, target },
+      })}`);
+      // Reproduce a roll after the wait intent was journaled but before the task
+      // stop and settlement markers were made durable.
+      f.store.event(task.id, "planner_escalation_wait", `${escalationId}: ${JSON.stringify({ kind, target })}`);
+      assert.match(f.current().resolution.stop?.detail ?? "", /Waiting with the planner/);
+
+      await f.engine.resolution.ladder.resumeEscalationWaits(f.current());
+      assert.equal(f.current().resolution.stop?.detail, kind === "time"
+        ? `Escalation ${escalationId}: waiting until ${target}`
+        : `Escalation ${escalationId}: waiting for operator decision ${target}`);
+      assert.equal(f.events("planner_escalation_wait_superseded").length, 0);
+
+      const recovered = await f.engine.resolution.answerDelegatedQuestion({ questionId, choice, reason }, "origin");
+      assert.equal(recovered.questionId, questionId);
+      assert.ok(f.store.eventsAll(receiptKey).some(event => event.kind === "delegated_command_applied"));
+      assert.equal(f.store.eventsAll(receiptKey).some(event => event.kind === "delegated_command_refused"), false);
+      assert.ok(receiptEvent.id < f.events("planner_escalation_answered").at(-1)!.id);
+    } finally { await f.close(); }
+  });
+}
+
+test("a service roll completes a partial operator classification before returning success", async () => {
+  const f = fixture({ responsible: true });
+  try {
+    askedEscalation(f, () => null);
+    await f.reviews(1);
+    await f.engine.wake();
+    await f.report("blocked", { summary: "The isolation gate is still held", cause: { kind: "external", name: "isolation gate" } });
+    await until(() => f.events("planner_escalation").length > 0 && f.events("planner_escalation_offered").length > 0);
+    const task = f.current();
+    const escalationId = f.events("planner_escalation")[0]!.detail.split(":", 1)[0]!;
+    const questionId = `ns-escalation-${escalationId}`;
+    const receiptKey = `delegation:${questionId}`;
+    const reason = "The planner cannot decide within the approved outcome.";
+    f.store.event(receiptKey, "delegated_answer", JSON.stringify({ questionId, caller: "origin", decision: "operator", reason }));
+    f.store.event(task.id, "delegated_command_answered", `${questionId}: origin`);
+    // Preserve evidence from the old crash window: the classification marker
+    // existed, but neither the decision nor its task wait had been linked.
+    f.store.event(task.id, "planner_escalation_decision", `${escalationId}: the planner origin said it cannot decide: ${reason}`);
+
+    const answer = await f.engine.resolution.answerDelegatedQuestion({ questionId, decision: "operator", reason }, "origin");
+    assert.equal(answer.questionId, questionId);
+    const linked = f.events("planner_escalation_decision_linked").find(event => event.detail.startsWith(`${escalationId}:`));
+    assert.ok(linked, "recovery creates or finds the linked decision");
+    const decisionId = linked.detail.match(/decision ([0-9a-f-]{36})/)![1]!;
+    assert.ok(new Decisions(f.store).get({ id: decisionId }).links.tasks.includes(task.id));
+    assert.ok(f.events("planner_escalation_wait").some(event => {
+      try { const wait = JSON.parse(event.detail.slice(escalationId.length + 2)); return wait.kind === "decision" && wait.target === decisionId; }
+      catch { return false; }
+    }));
+    assert.match(f.current().resolution.stop?.detail ?? "", /Waiting with the operator/);
+    assert.ok(f.store.eventsAll(receiptKey).some(event => event.kind === "delegated_command_applied"));
+  } finally { await f.close(); }
+});
+
+test("a duplicate answer repairs an operator wait before reporting the classification applied", async () => {
+  const f = fixture({ responsible: true });
+  try {
+    askedEscalation(f, () => null);
+    await f.reviews(1);
+    await f.engine.wake();
+    await f.report("blocked", { summary: "The isolation gate is still held", cause: { kind: "external", name: "isolation gate" } });
+    await until(() => f.events("planner_escalation").length > 0 && f.events("planner_escalation_offered").length > 0);
+    const task = f.current();
+    const escalationId = f.events("planner_escalation")[0]!.detail.split(":", 1)[0]!;
+    const questionId = `ns-escalation-${escalationId}`;
+    const receiptKey = `delegation:${questionId}`;
+    const reason = "The planner cannot decide within the approved outcome.";
+    const decision = new Decisions(f.store).add({ question: "What next?", askedBy: "origin", tasks: [task.id] });
+    f.store.event(receiptKey, "delegated_answer", JSON.stringify({ questionId, caller: "origin", decision: "operator", reason }));
+    f.store.event(task.id, "delegated_command_answered", `${questionId}: origin`);
+    f.store.event(task.id, "planner_escalation_decision", `${escalationId}: the planner origin said it cannot decide: ${reason}`);
+    f.store.event(task.id, "planner_escalation_decision_linked", `${escalationId}: decision ${decision.id}`);
+    f.store.event(task.id, "planner_escalation_wait", `${escalationId}: ${JSON.stringify({ kind: "decision", target: decision.id })}`);
+    assert.equal(f.engine.resolution.ladder.operatorDecisionApplied(task.id, escalationId), false,
+      "event markers are not enough while the task is not stopped on that decision");
+    assert.match(f.current().resolution.stop?.detail ?? "", /Waiting with the planner or task owner/);
+
+    const answer = await f.engine.resolution.answerDelegatedQuestion({ questionId, decision: "operator", reason }, "origin");
+    assert.equal(answer.questionId, questionId);
+    assert.equal(f.current().resolution.stop?.detail, escalationWaitDetail.operator(escalationId, decision.id));
+    assert.equal(f.engine.resolution.ladder.operatorDecisionApplied(task.id, escalationId), true);
+    assert.ok(f.store.eventsAll(receiptKey).some(event => event.kind === "delegated_command_applied"));
+    assert.equal(f.store.eventsAll(receiptKey).some(event => event.kind === "delegated_command_refused"), false);
+  } finally { await f.close(); }
+});
+
+test("a refusal follow-up applies only the refreshed owner verb recorded for that question", async () => {
+  const f = fixture({ responsible: true });
+  try {
+    const task = f.current();
+    const id = "changed-followup-offer";
+    const questionId = `ns-escalation-refusal-${id}`;
+    const route = escalationVerbChoices(ownerVerbViews(collectOwnerVerbFacts(f.store, task))).find(item => item.verb === "route");
+    assert.ok(route, "the current task has a route owner verb to offer");
+    f.store.event(task.id, "planner_escalation", `${id}: cause ${"c".repeat(64)}; run worker; question pending`);
+    f.store.event(task.id, "planner_escalation_offered", `${id}: []`);
+    f.store.event(task.id, "planner_escalation_followup_offered", `${id}: ${JSON.stringify({
+      questionId, choices: [route.label], ownerChoices: [route],
+    })}`);
+    const applied: TaskControlInput[] = [];
+    f.engine.resolution.applyOperatorControl = async input => { applied.push(input); return f.current(); };
+
+    const refusal = await f.engine.resolution.ladder.applyDelegatedEscalationAnswer(
+      task.id, id, questionId, `${route.label} — route the worker through the current profile`, "planner planner-1");
+    assert.equal(refusal, null);
+    assert.equal(applied[0]?.action, "route", "the follow-up answer selects the recorded route, not default move-to-work");
+    assert.equal(applied[0]?.role, route.args.role);
+    assert.equal(applied[0]?.profileId, route.args.profileId);
+  } finally { await f.close(); }
+});
+
+test("a refusal follow-up answer is recovered across a service roll without resending its delivery", async () => {
+  const f = fixture({ responsible: true });
+  try {
+    askedEscalation(f, () => { throw new Error("an existing delegated delivery must never be sent again"); });
+    const initial = f.current();
+    f.store.update(initial.id, { plannerAgentId: "planner-1" });
+    const task = f.current();
+    const id = "followup-roll";
+    const initialQuestionId = `ns-escalation-${id}`;
+    const followupQuestionId = `ns-escalation-refusal-${id}`;
+    const route = escalationVerbChoices(ownerVerbViews(collectOwnerVerbFacts(f.store, task))).find(item => item.verb === "route");
+    assert.ok(route, "the refreshed offer includes a route action");
+    const cause = "d".repeat(64);
+    f.store.event(task.id, "planner_escalation", `${id}: cause ${cause}; run worker; question ${"a".repeat(24)} (100 chars)`);
+    f.store.event(task.id, "planner_escalation_payload", `${id}: ${JSON.stringify({ question: "How should the task proceed?", runId: task.runId })}`);
+    f.store.event(task.id, "planner_escalation_offered", `${id}: []`);
+    f.store.event(task.id, "planner_escalation_answer_refused", `${id}: The original action is no longer available`);
+    f.store.event(task.id, "planner_escalation_refusal_sent", `${id}: The original action is no longer available`);
+    const originalPrompt = "Question: Continue?\n- Return to the worker with a new approach";
+    f.engine.resolution.openDelegatedQuestion(task, initialQuestionId, "planner-1", originalPrompt, 30_000, "planner", undefined, "task");
+    f.store.event(`delegation:${initialQuestionId}`, "delegated_answer", JSON.stringify({ questionId: initialQuestionId, caller: "planner-1", answer: "Return to the worker with a new approach", reason: "Try the current fixture" }));
+    f.store.event(`delegation:${initialQuestionId}`, "delegated_command_refused", `${id}: The original action is no longer available`);
+    f.store.event(task.id, "planner_escalation_followup_offered", `${id}: ${JSON.stringify({
+      questionId: followupQuestionId, choices: [route.label], ownerChoices: [route],
+    })}`);
+    f.engine.resolution.openDelegatedQuestion(task, followupQuestionId, "planner-1", `Question: Choose again\n- ${route.label}`, 30_000, "planner", undefined, "task");
+    f.store.event(`delegation:${followupQuestionId}`, "delegated_answer", JSON.stringify({ questionId: followupQuestionId, caller: "planner-1", answer: route.label, reason: "Use the refreshed route" }));
+    const applied: TaskControlInput[] = [];
+    f.engine.resolution.applyOperatorControl = async input => { applied.push(input); return task; };
+
+    await f.engine.resolution.ladder.routePlannerEscalation(task, id, "How should the task proceed?");
+    assert.equal(applied[0]?.action, "route", "the recovered answer uses the offer recorded for its own question");
+    assert.equal(applied[0]?.profileId, route.args.profileId);
+    assert.equal(f.store.eventsAll(`delegation:${followupQuestionId}`).filter(event => event.kind === "delegated_delivery").length, 1);
+    assert.equal(f.events("planner_escalation_applied").length, 1);
+  } finally { await f.close(); }
+});
+
+test("an escalation answer that no longer applies returns its refusal and stays open", async () => {
+  const f = fixture({ responsible: true });
+  try {
+    askedEscalation(f, () => null);
+    await f.reviews(1);
+    await f.engine.wake();
+    await f.report("blocked", { summary: "The isolation gate is still held", cause: { kind: "external", name: "isolation gate" } });
+    await until(() => f.events("planner_escalation").length > 0);
+    const escalationId = f.events("planner_escalation")[0]!.detail.split(":", 1)[0]!;
+    f.engine.resolution.applyOperatorControl = async () => { throw new Error("The selected move is no longer available"); };
+
+    await assert.rejects(
+      () => Promise.resolve(f.engine.resolution.answerDelegatedQuestion({
+        questionId: `ns-escalation-${escalationId}`,
+        choice: "Return to the worker with a new approach",
+        reason: "Use the isolated replay fixture.",
+      }, "origin")),
+      /answer was not applied: The selected move is no longer available/,
+    );
+    assert.match(f.events("planner_escalation_answer_refused").at(-1)!.detail, /selected move is no longer available/);
+    assert.equal(plannerEscalations(f.store.eventsAll(f.current().id)).find(item => item.id === escalationId)?.answered, false);
+  } finally { await f.close(); }
 });
 
 test("a repeated identical block joins the open escalation instead of another turn or another ask", async () => {
@@ -867,10 +1238,7 @@ test("a planner that explicitly cannot decide reaches Tom, and the board answer 
     });
     await f.engine.resolution.resumeAskQuestions();
     await until(() => f.events("planner_escalation_answered").length > 0);
-    assert.match(
-      f.events("planner_escalation_answered")[0]!.detail,
-      /answered by operator \(board\)/,
-    );
+    assert.ok(f.events("planner_escalation_answered").some(event => /answered by operator \(board\)/.test(event.detail)));
     await until(() => f.events("planner_escalation_applied").length > 0);
     assert.match(
       f.events("planner_escalation_applied")[0]!.detail,

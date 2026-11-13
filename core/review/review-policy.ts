@@ -12,14 +12,17 @@ import { assertOrdinaryReviewIdentity, ordinaryReviewSource } from "./ordinary-r
 import { readGitCheckout } from "../git/git-identity";
 import { repoCommonDir } from "../workspaces/workspace-allocation";
 import * as forge from "../forge/index";
+import { runTicketPath } from "../dispatch/agent-creation";
 
 export interface ReviewPolicyHost {
+  readonly helperPath: string;
   readonly workspaceHost: { workspaceRef(id:string): HostWorkspaceRef; activeThreads(): Promise<HostThread[]> };
   readonly messageHost: { retainedAgentRef(id:string): HostRetainedAgentRef };
   observe(id:string): Promise<AgentObservation>;
   originAgent(id:string): Promise<OriginAgent | null>;
   preflightWorkerContinuation(task:Task): Promise<{available:true}|{available:false;reason:string}>;
   binding(key:string,task:Task,runId:string,token:string): unknown;
+  writeWorkerTicket(task:Task,runId:string,token:string): unknown;
 }
 export class ReviewPolicy {
   constructor(private readonly host: ReviewPolicyHost) {}
@@ -116,10 +119,18 @@ export class ReviewPolicy {
     const key = wireLabel(agent.current()?.labels, "mcpBinding");
     if (key && key !== task.runId && issueBinding) {
       const issued = issueBinding();
+      if (issued.runId !== task.runId)
+        throw new ProvenPreSendRefusalError('Rotated worker credential does not match the current task run; no continuation was sent');
+      // The continuation prompt points the CLI helper at this run ticket. Keep
+      // it in step with the rotated MCP binding before delivering the prompt.
+      this.host.writeWorkerTicket(task, task.runId, issued.token);
       this.host.binding(key, task, issued.runId, issued.token);
     }
     // The durable intent id is the message identity: an at-most-once replay reuses it.
-    await agent.send(text, { messageId: `ns-checkpoint-${intentId}` });
+    const ticketPath = runTicketPath({ helperPath: this.host.helperPath }, task.runId);
+    const quotedTicketPath = `'${ticketPath.replaceAll("'", "'\\''")}'`;
+    const identity = `Current continuation identity: run ${task.runId}; ticket ${ticketPath}. The retained shell may have stale NUCLEUS_RUN_ID and NUCLEUS_TICKET values. For every Nucleus CLI command or helper in this continuation, set NUCLEUS_CONTINUATION_RUN_ID=${task.runId} and NUCLEUS_CONTINUATION_TICKET=${quotedTicketPath}. Helpers prefer this continuation identity and refuse if the ticket names another run.`;
+    await agent.send(`${identity}\n\n${text}`, { messageId: `ns-checkpoint-${intentId}` });
   }
 
   /** Resume one retained reviewer/coordinator run in place; its existing callback binding stays intact. */

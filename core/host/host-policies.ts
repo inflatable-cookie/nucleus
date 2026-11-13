@@ -197,6 +197,11 @@ export abstract class HostPolicies extends MachinePorts {
 
   protected ticket(task: Task, run: Run, token: string) { return writeRunTicket(this.creationOwner(), task, run, token); }
 
+  /** Refresh the CLI helper's worker ticket when a retained MCP binding rotates. */
+  writeWorkerTicket(task: Task, runId: string, token: string) {
+    return writeRunTicket(this.creationOwner(), task, { id: runId, role: 'worker', generation: 0 }, token);
+  }
+
   createRun(task: Task, run: Run, token: string, context: RecoveryDispatchSnapshot | null = null, ownerContext: OwnerReviewContext | null = null,
     guard?: { allowed: () => Promise<boolean>; stillAllowed: () => boolean }, affectedTestsCommand?: string) {
     return createRunVia({ creationOwner: () => this.creationOwner(), guardedNativeAgentCreate: (spec, mcp, retry) => this.guardedNativeAgentCreate(spec, mcp, retry), unsupportedMcp: error => this.unsupportedMcp(error) }, task, run, token, context, ownerContext, guard, affectedTestsCommand);
