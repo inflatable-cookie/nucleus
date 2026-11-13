@@ -739,7 +739,9 @@ test('worktree-facing prompts confine fixtures to a fresh temp directory',()=>{
   assert.match(WORKSPACE_RULE,/Put fixtures in a fresh mktemp -d directory under/);
   assert.match(WORKSPACE_RULE,/never link to real checkouts/);
   assert.match(WORKSPACE_RULE,/Use this run's TMPDIR, TMP and TEMP/);
-  assert.match(WORKSPACE_RULE,/Never delete it, its parent, or a temporary root you did not create/);
+  assert.match(WORKSPACE_RULE,/must not remove this run's recorded temporary root, its parent, or any directory created outside this run by another task, planner or Nucleus/);
+  assert.match(WORKSPACE_RULE,/A test, fixture or selector may remove temporary directories it created during this run inside this run's \$TMPDIR/);
+  assert.match(WORKSPACE_RULE,/A tool that would delete outside \$TMPDIR or a root it did not create is a finding to report, not a reason to skip the selector/);
 });
 
 test('run prompt names the current TMPDIR and tells retained agents to prefix commands',()=>{
@@ -766,7 +768,25 @@ test('the clean-environment retry defers to this run\'s temporary directory, nev
   assert.match(prompt,/Clean-environment retry \(this is the one allowance\)[\s\S]*mktemp -d under this run's temporary directory/);
   assert.match(prompt,/TMPDIR='\/Volumes\/retired-volume\/scratch\/effigy\/q\/0123456789ab' TMP='\/Volumes\/retired-volume\/scratch\/effigy\/q\/0123456789ab' TEMP='\/Volumes\/retired-volume\/scratch\/effigy\/q\/0123456789ab'; your launch environment may still name an earlier run/);
   assert.doesNotMatch(prompt,/Keep TMPDIR, TMP and TEMP unchanged/);
-  assert.match(prompt,/Never delete this run's temporary directory, its parent, or a root you did not create/);
+  assert.match(prompt,/You must not remove this run's recorded temporary root, its parent, or a root you did not create/);
+  assert.match(prompt,/A test, fixture or selector may remove temporary directories it created during this run inside this run's \$TMPDIR/);
+});
+
+test('worker, reviewer and proof executor prompts distinguish run scratch from selector teardown and protect tracked files from formatting',()=>{
+  const task={id:'task',title:'Check',originAgentId:'origin',repoPath:'/repo',workspaceId:'workspace',directory:'/worktree',branch:'ns-task',baseBranch:'main',handoffPath:'handoff.md',planningCommit:head,skipPRReview:false,prUrl:null,reason:'Verify',completion:{status:'ready_for_review',prNumber:1},resolution:{},entrypoint:'proof',proofOnly:{commit:head,selector:'effigy test unit -- test/proof.test.ts'},proofExecutions:[]} as unknown as Task;
+  const worker=workerPrompt({id:'worker-task',runId:'initial',title:'Check',originAgentId:'origin',coordinatorAgentId:null,dependsOn:[],branch:'ns-task',baseBranch:'main',repoPath:'/repo',workspaceId:'workspace',directory:'/worktree',handoffPath:'handoff.md',planningCommit:head,retiredWorkers:[],skipPRReview:false,prUrl:null,reason:'Verify',completion:{status:'ready_for_review',prNumber:1},resolution:{}} as unknown as Task,true);
+  const reviewer=runPrompt(task,{id:'review',role:'reviewer',generation:1,head,temporaryDirectory:'/scratch/run'} as Run,'/helper','/ticket',true);
+  const executor=runPrompt(task,{id:'executor',role:'executor',generation:1,head,temporaryDirectory:'/scratch/run',proofExecution:{selector:'effigy test unit -- test/proof.test.ts',inputs:[]}} as unknown as Run,'/helper','/ticket',true);
+  for(const [role,prompt] of Object.entries({worker,reviewer,executor})){
+    assert.match(prompt,/Nucleus owns this run's recorded temporary root/,`${role} keeps the recorded root under Nucleus ownership`);
+    assert.match(prompt,/may remove temporary directories it created during this run inside this run's \$TMPDIR/,`${role} allows selector-owned teardown`);
+    assert.match(prompt,/delete outside \$TMPDIR or a root it did not create is a finding to report, not a reason to skip the selector/,`${role} reports unsafe deletion without skipping selectors`);
+  }
+  for(const [role,prompt] of Object.entries({reviewer,executor})){
+    assert.match(prompt,/Source-immutable roles \(reviewer and proof executor\) must run the check-only form of any formatter that writes tracked files/,`${role} uses check-only formatting`);
+    assert.match(prompt,/report a selector gap with the formatter command and still run the other required selectors/,`${role} reports formatter gaps and continues`);
+  }
+  assert.doesNotMatch(worker,/Source-immutable roles \(reviewer and proof executor\) must run the check-only form/);
 });
 
 test('worker and revision prompts require foreground validation and forbid ending the turn while it runs',()=>{
