@@ -794,20 +794,13 @@ live host call and no mutating operation, and a host call that outlives its
 admission deadline is abandoned rather than waited on. The removals that delete a
 whole populated checkout go through `removeTree`
 (`core/workspaces/tree-removal.ts`), which runs node's walk on libuv's pool:
-sibling worktrees, orphan checkouts and an archived owned worktree. An archived
-orphan is detached synchronously immediately after its re-proof: one call records
-the tree's task, workspace, device, inode and canonical parent in a marker created
-exclusively (`wx`, so an existing file or symlink is refused rather than followed)
-and fsyncs it, then renames the tree to a deterministic quarantine sibling. A
-rename carries the inode the record names, so a later pass can prove that the
-directory standing at the quarantine name is that same object. The next pass looks
-at the quarantine only after proving this task owns the recorded directory, and it
-finishes the tree only when the record names this task and workspace *and* the
-device, inode and canonical parent still match. An unrecorded sibling, a
-replacement with a different inode, a changed parent, a symlink, or a marker name
-that already exists is refused and left for a human; the archive fails closed and
-never reports completion while a quarantine survives (nucleus#1179 acceptance 2b,
-planner ruling 2026-11-13).
+sibling worktrees, orphan checkouts and an archived owned worktree. The caller
+re-proves the exact path it may remove immediately before issuing the removal, and
+the removal runs its walk off the thread that serves reads; nothing is renamed and
+no side record is written, so the safety is the same as the synchronous removal
+that did the same check and then deleted in place. An interrupted walk leaves a
+partial directory that the next archive attempt re-proves and removes
+(nucleus#1179; planner ruling 2026-11-13 withdrew the quarantine scheme).
 Two bounded synchronous removals remain and say so where they are:
 one run's recorded TMPDIR leaf in the store's retention and release paths, one
 recorded evidence head under the report's 32 MiB proof budget, and the private

@@ -1,6 +1,6 @@
 import { historicalWireLabel } from "../../shared/wire-labels";
 import { existsSync } from "node:fs";
-import { removeTree, detachForRemoval, finishInterruptedRemoval, removalQuarantinePath } from "./tree-removal";
+import { removeTree } from "./tree-removal";
 import type { Run, Task } from "../../shared/contracts";
 import type { AgentObservation, OriginAgent } from "../host/adapter";
 import type { WorkspaceContinuationHost } from "./workspace-continuation";
@@ -195,25 +195,8 @@ export class OwnedWorkspaceArchive {
       if(!discarding&&(await git(directory,'rev-parse','HEAD')!==actualHead||await queueCheckoutStatus(directory,'status','--porcelain')))throw Error('Preserving workspace with uncommitted files or unexpected commits before teardown');
       return {foreignAgentIds,actualHead,origin,publication,current,orphan};
     };
-    // A previous attempt may have detached the checkout and been interrupted, so
-    // the recorded path is gone and its tree survives under the quarantine name.
-    // The recovery re-proves this task's ownership of `directory` and requires the
-    // detach record written before the rename to name this exact task and
-    // workspace; the quarantine name and the directory type are never the
-    // authority, and an unrecorded sibling is left for a human. It is the tail of
-    // an attempt that already passed its fences, so a gone directory still repeats
-    // no local intent (nucleus#1179 acceptance 2b, planner ruling 2026-11-13).
     const initial=await prove(false);
-    if(!initial){
-      // Only a Queue-owned checkout can have been detached by an earlier attempt,
-      // so only that case may finish a leftover. A preserved external directory
-      // keeps its established "gone" outcome, and a quarantine sibling beside a
-      // directory this pass cannot prove it owns fails closed instead of being
-      // deleted or silently ignored.
-      if(await this.host.ownedDataDirFor(task,directory))await finishInterruptedRemoval(directory,{taskId:task.id,workspaceId:id});
-      else if(existsSync(removalQuarantinePath(directory)))throw Error(`worktree.teardown failed: ${removalQuarantinePath(directory)} exists but ${directory} is not a Queue-owned checkout; inspect it before retrying`);
-      return [];
-    }
+    if(!initial)return [];
     if(buildOutputCleanup){
       try{
         const cleanup=buildOutputCleanup.begin();
@@ -281,19 +264,16 @@ export class OwnedWorkspaceArchive {
         // path-based readdir/unlink meet a path a later writer changed after the
         // proof (nucleus#1179 review 5890172363).
         if(discarding){assertCanonicalOwnedPath(directory,ownedData,commonDir,task.id);normalizeOwnedDirectoryPermissions(directory);}
-        if(initial.orphan.orphaned){
-          // Record the tree's task, workspace and filesystem identity, then rename
-          // it, all synchronously and immediately after the re-proof above: the
-          // record is fsynced before the rename, and the rename carries the inode
-          // the record names, so a later pass can prove this exact tree
-          // (nucleus#1179 reviews 5891444157 and 5893989674).
-          const quarantine=detachForRemoval(directory,{taskId:task.id,workspaceId:id,head:initial.actualHead});
-          await removeTree(quarantine,{force:false});
-        }
+        // The path was re-proved synchronously just above; the removal is issued
+        // against that same proven path and runs its walk off this thread. An
+        // interrupted walk leaves a partial directory that the next archive attempt
+        // re-proves and removes, exactly as the synchronous removal did
+        // (nucleus#1179; planner ruling 2026-11-13).
+        if(initial.orphan.orphaned)await removeTree(directory,{force:false});
         else await removeOwnedWorktree(task.repoPath,directory,discarding);
       }
       catch(error){throw Error(`worktree.teardown failed: ${error instanceof Error?error.message:String(error)}`);}
-      if(existsSync(directory)||existsSync(removalQuarantinePath(directory)))throw Error(`worktree.teardown failed: Queue-owned worktree directory remains after archive: ${[directory,removalQuarantinePath(directory)].filter(path=>existsSync(path)).join(', ')}`);
+      if(existsSync(directory))throw Error(`worktree.teardown failed: Queue-owned worktree directory remains after archive: ${directory}`);
     }
     return initial.foreignAgentIds;
   }
