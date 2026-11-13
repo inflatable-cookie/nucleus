@@ -540,11 +540,16 @@ const BREAKER_EXEMPT: ReadonlySet<string> = new Set(["archiveTaskWorkspace", "ar
 
 export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
   const held = raw as unknown as Record<string, unknown>;
-  const call = <T>(cls: AdmissionClass, name: string, key: (args: unknown[]) => string | undefined, invalidate?: (args: unknown[], result: T) => void) => {
+  const call = <T>(cls: AdmissionClass, name: string, key: (args: unknown[]) => string | undefined, invalidate?: (args: unknown[], result: T) => void, orderedTarget?: (args: unknown[]) => string | undefined) => {
     const fn = held[name];
     if (typeof fn !== "function") return undefined;
-    return (...args: unknown[]) => admission.run(cls, () => (fn as (...a: unknown[]) => Promise<T>).apply(raw, args), key(args), { innerTiming: INNER_TIMED.has(name), breakerExempt: BREAKER_EXEMPT.has(name) })
-      .then(result => { invalidate?.(args, result); return result; });
+    return (...args: unknown[]) => {
+      const requestKey = key(args);
+      const invoke = () => admission.run(cls, () => (fn as (...a: unknown[]) => Promise<T>).apply(raw, args), requestKey, { innerTiming: INNER_TIMED.has(name), breakerExempt: BREAKER_EXEMPT.has(name) });
+      const target = orderedTarget?.(args);
+      return (target === undefined ? invoke() : admission.notify(target, requestKey, invoke))
+        .then(result => { invalidate?.(args, result); return result; });
+    };
   };
   const overrides: Record<string, unknown> = {};
   const set = (name: string, fn: unknown) => { if (fn) overrides[name] = fn; };
@@ -637,6 +642,9 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
   set("interruptAndContinue", call("control", "interruptAndContinue", args => requestIdentity("interruptAndContinue", args), (args) => {
     if (typeof args[0] === "string") admission.invalidate(args[0]);
   }));
+  set("steerOrNotify", call("callback", "steerOrNotify", args => requestIdentity("steerOrNotify", args), (args) => {
+    if (typeof args[0] === "string") admission.invalidate(args[0]);
+  }, args => typeof args[0] === "string" ? args[0] : undefined));
   const rawNotify = held.notify;
   if (typeof rawNotify === "function") set("notify", (agentId: string, messageId: string, text: string, sourceAgentId?: string) =>
     admission.notify(agentId, requestIdentity("notify", [agentId, messageId, text, sourceAgentId]),

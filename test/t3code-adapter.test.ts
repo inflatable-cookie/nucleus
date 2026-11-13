@@ -1,10 +1,11 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { T3CodeHost } from '../hosts/t3code/adapter';
+import { T3RpcError } from '../hosts/t3code/rpc';
 import { ProvenPreSendRefusalError, HostUnknownDeliveryError } from '../core/host';
 import { isTransportFailure } from '../shared/transport';
 import type { HostAgentSpec } from '../shared/host';
@@ -858,6 +859,68 @@ test('atomic interrupt and continue steers the live run through steer_active', a
   p.runs = [];
   await assert.rejects(host.interruptAndContinue(created.id, 'ns-steer-idle', 'Change course: Y'), /no active run to steer/);
   assert.equal(server.commands.filter(c => c.type === 'message.dispatch').length, 1);
+});
+
+// The recorded projection is what the adapter's own read path returns for a thread with a live run
+// (synthetic IDs, recorded by running readProjection against the fake transport). Feeding it back
+// through the same read path must return it unchanged, so a decode drift fails here.
+test('the recorded projection passes through the adapter read path unchanged, with its live run', async t => {
+  const { host, server } = await fixture(t);
+  const recorded = JSON.parse(readFileSync(new URL('./fixtures/t3code-projection.json', import.meta.url), 'utf8'));
+  server.threads.set('synthetic-probe', recorded);
+  const read = await (host as unknown as { readProjection(id: string): Promise<unknown> }).readProjection('synthetic-probe');
+  assert.deepEqual(read, recorded);
+});
+
+// Tom, 2026-11-13: a tell to a working thread steers into its live run; an idle
+// thread takes the ordinary queued send, as it always did.
+test('a tell to a thread with a live run steers into that run, and an idle thread queues', async t => {
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const p = server.threads.get(created.id)!;
+  p.runs = [{ id: 'run-1', status: 'running', startedAt: STAMP }];
+  // The run the steer targets must be the one the adapter's own read path decodes from the thread projection.
+  const read = await (host as unknown as { readProjection(id: string): Promise<{ runs: { id: string; status: string }[] }> }).readProjection(created.id);
+  assert.deepEqual(read.runs.map(run => [run.id, run.status]), [['run-1', 'running']], 'the adapter reads the live run from the projection');
+  await host.steerOrNotify(created.id, { messageId: 'ns-tell-live', text: 'Planner: keep the change set narrow.' });
+  const steer = server.commands.at(-1)!;
+  assert.equal(steer.type, 'message.dispatch');
+  assert.deepEqual(steer.dispatchMode, { type: 'steer_active', targetRunId: 'run-1' });
+  assert.equal(steer.text, 'Planner: keep the change set narrow.');
+  p.runs = [];
+  await host.steerOrNotify(created.id, { messageId: 'ns-tell-idle', text: 'Planner: next step.' });
+  const queued = server.commands.at(-1)!;
+  assert.deepEqual(queued.dispatchMode, { type: 'queue_after_active' });
+  assert.equal(queued.text, 'Planner: next step.');
+});
+
+// The run ends between the read and the steer. A proven not-sent steer falls back
+// to one queued send; a remote refusal is unknown delivery and is never resent.
+test('a steer the adapter proves unsent falls back to one queued send, and an unknown steer is never resent', async t => {
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const p = server.threads.get(created.id)!;
+  p.runs = [{ id: 'run-1', status: 'running', startedAt: STAMP }];
+  const sent = host.rpc.call.bind(host.rpc);
+  host.rpc.call = (method: string, payload: unknown) => {
+    const wire = payload as { type?: string; dispatchMode?: { type?: string } };
+    if (wire.type === 'message.dispatch' && wire.dispatchMode?.type === 'steer_active')
+      return Promise.reject(new T3RpcError('transport', method, undefined, 'not_sent'));
+    return sent(method, payload);
+  };
+  await host.steerOrNotify(created.id, { messageId: 'ns-tell-race', text: 'Planner: one more check.' });
+  host.rpc.call = sent;
+  const dispatches = server.commands.filter(c => c.type === 'message.dispatch' && c.text === 'Planner: one more check.');
+  assert.equal(dispatches.length, 1, 'the proven-unsent steer left no command, and the queued send delivered once');
+  assert.deepEqual(dispatches[0]!.dispatchMode, { type: 'queue_after_active' });
+
+  p.runs = [{ id: 'run-2', status: 'running', startedAt: STAMP }];
+  server.controls.refuseMutation = true;
+  await assert.rejects(host.steerOrNotify(created.id, { messageId: 'ns-tell-unknown', text: 'Planner: stop.' }), HostUnknownDeliveryError);
+  server.controls.refuseMutation = false;
+  const attempts = server.commands.filter(c => c.text === 'Planner: stop.');
+  assert.equal(attempts.length, 1, 'an unknown steer is never resent as a queued send');
+  assert.deepEqual(attempts[0]!.dispatchMode, { type: 'steer_active', targetRunId: 'run-2' });
 });
 
 // #1148: a thread read cut mid-turn is an observation outage, not a verdict on the

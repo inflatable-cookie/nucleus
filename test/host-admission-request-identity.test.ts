@@ -26,6 +26,24 @@ test('different notifications to one agent wait in order; identical requests mer
   assert.deepEqual(started, ['one', 'two']);
 });
 
+test('steer-or-notify shares per-agent message order and merges identical requests', async () => {
+  const firstGate = deferred();
+  const started: string[] = [];
+  const raw = {
+    notify: async (_agent: string, id: string) => { started.push(`notify:${id}`); await firstGate.promise; },
+    steerOrNotify: async (_agent: string, id: string) => { started.push(`steer:${id}`); },
+  };
+  const adapter = admitAdapter(raw as unknown as Adapter, new Admission({ startIntervalMs: 0 }));
+  const first = adapter.notify!('agent', 'one', 'first');
+  const second = adapter.steerOrNotify!('agent', 'two', 'second');
+  const duplicate = adapter.steerOrNotify!('agent', 'two', 'second');
+  await tick();
+  assert.deepEqual(started, ['notify:one']);
+  firstGate.resolve();
+  await Promise.all([first, second, duplicate]);
+  assert.deepEqual(started, ['notify:one', 'steer:two']);
+});
+
 test('different worker continuations reach the host; identical requests merge', async () => {
   const firstGate = deferred();
   const seen: string[] = [];

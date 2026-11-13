@@ -376,7 +376,7 @@ export class Engine {
           agentTimeline: [0], agentTimelinePage: [0], pendingQuestions: [0],
           answeredQuestions: [0], dismissNativeQuestion: [0], answerNativeQuestion: [0],
           answerNativePermission: [0], subscribeRunUsage: [0],
-          notify: [0, 3], enqueueMessage: [0, 3], interruptAndContinue: [0],
+          notify: [0, 3], enqueueMessage: [0, 3], steerOrNotify: [0, 3], interruptAndContinue: [0],
           askPlanner: [0], askReviewer: [0],
         };
         const positions = agentArgs[String(property)];

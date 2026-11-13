@@ -121,6 +121,7 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     catalog() { return this.native.catalog(); }
     get vocabulary() { return this.native.vocabulary; }
     notify(id: string, messageId: string, text: string) { return this.native.sendMessage(id, { messageId, text }); }
+    steerOrNotify(id: string, messageId: string, text: string) { return this.native.steerOrNotify(id, { messageId, text }); }
     stopAgentTurn(id: string) { return this.native.stopAgentTurn(id); }
     archiveAgent(id: string) { return this.native.archiveAgent(id); }
     deleteAgent(id: string) { return this.native.deleteAgent(id); }

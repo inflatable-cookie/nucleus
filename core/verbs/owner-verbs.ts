@@ -155,7 +155,7 @@ const extendBudget: OwnerVerb = {
     relayed: z.boolean().optional(),
     note: z.string().trim().min(1).max(4000).optional(),
   }),
-  applicable: ({ task, runs, events }) => taskBudget(task, runs, Date.now(), events.find(event => event.kind === 'responsible_converted')?.at).exhausted
+  applicable: ({ task, runs, events }) => taskBudget(task, runs, Date.now(), events.find(event => event.kind === 'responsible_converted')?.at, events).exhausted
     ? { available: true, args: { taskId: task.id, version: task.version } }
     : { available: false, refusal: "The task budget is not exhausted" },
   apply: applyMapped("extend_budget"),
