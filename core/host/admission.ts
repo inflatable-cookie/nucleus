@@ -14,6 +14,7 @@
  */
 import type { Adapter } from "./adapter";
 import { isTransportFailure } from "../../shared/transport";
+import { HostCallAbandonedError } from "./errors";
 import { withPaseoCallTiming, type PaseoCallRecorder } from "../../shared/host-call-timing";
 import { DEFAULT_GLOBAL_LIMIT } from "../../shared/contracts";
 import {
@@ -39,6 +40,18 @@ export interface AdmissionOptions {
   degradedCooldownMs?: number;
   /** Queue-owned nonterminal workspaces admitted before new creation waits. */
   workspaceBudget?: number | (() => number);
+  /**
+   * Bound on one admitted host call. Past it the call is abandoned as unknown,
+   * its slot is freed, and the caller hears the abandonment instead of waiting
+   * forever (see `HostCallAbandonedError`). Defaults to sixty seconds.
+   */
+  callDeadlineMs?: number;
+  /** Classes whose calls legitimately run for minutes and are never abandoned. */
+  deadlineExemptClasses?: readonly AdmissionClass[];
+  /** An in-flight call older than this is named in the snapshot and logged. */
+  heldSlotWarnMs?: number;
+  /** Where a queued or held-slot line goes; the service log by default. */
+  log?: (line: string) => void;
   now?: () => number;
 }
 
@@ -53,6 +66,18 @@ const PRIORITY: Record<AdmissionClass, number> = {
 const CRITICAL: readonly AdmissionClass[] = ["observation", "workspace", "title", "cleanup", "inventory"];
 const SLOW_WINDOW_MS = 60_000;
 const SLOW_TRIP_SAMPLES = 3;
+const DEFAULT_CALL_DEADLINE_MS = 60_000;
+const DEFAULT_HELD_SLOT_WARN_MS = 5_000;
+/**
+ * Effects that legitimately hold their slot for minutes: a workspace archive
+ * (median 238 s on 2026-11-05) and a workspace creation/clone. Abandoning one
+ * mid-flight would free a bound that is protecting Paseo, so they keep their
+ * slot until the effect settles. Everything else — a read, a control, a
+ * callback, a title — must answer or be abandoned.
+ */
+const DEADLINE_EXEMPT: readonly AdmissionClass[] = ["cleanup", "workspace"];
+/** How often one still-held slot is re-logged while it keeps holding its slot. */
+const HELD_SLOT_LOG_INTERVAL_MS = 30_000;
 
 /** Typed refusal the engine converts into "wait and retry", never operator attention. */
 export class AdmissionDeferred extends Error {
@@ -65,7 +90,7 @@ export const isBackpressureDeferral = (reason: string | null | undefined) => Boo
 
 interface CacheEntry { at: number; value: unknown; workspaceId: string }
 /** One pending Paseo request. `breaker` is false for work the breaker never reads as pressure. */
-interface ActiveCall { cls: AdmissionClass; started: number; breaker: boolean }
+interface ActiveCall { cls: AdmissionClass; holder: string; started: number; breaker: boolean; deadlineMs: number | null }
 interface SlowSample { cls: AdmissionClass; ms: number; at: number; breaker: boolean }
 
 interface Gate { limit: number; running: number; waiting: ((release: () => void) => void)[]; completed: number; coalesced: number }
@@ -94,6 +119,10 @@ export class Admission {
   private healthySamples = 0;
   private recoveryAfter = 0;
   private readonly activeCalls = new Set<ActiveCall>();
+  private abandonedCount = 0;
+  private lastAbandoned: ActiveCall | null = null;
+  private abandonedAt = 0;
+  private readonly heldSlotLoggedAt = new Map<string, number>();
   private cacheHits = 0;
   private workspaceDeferrals = 0;
   private lifecycleSignals = 0;
@@ -118,6 +147,10 @@ export class Admission {
   get workspaceBudget(): number {
     return typeof this.workspaceBudgetSource === "function" ? this.workspaceBudgetSource() : this.workspaceBudgetSource;
   }
+  private readonly callDeadlineMs: number;
+  private readonly deadlineExempt: ReadonlySet<AdmissionClass>;
+  private readonly heldSlotWarnMs: number;
+  private readonly log: (line: string) => void;
   private readonly now: () => number;
 
   constructor(options: AdmissionOptions = {}) {
@@ -130,6 +163,10 @@ export class Admission {
     this.degradedExitSamples = options.degradedExitSamples ?? 3;
     this.degradedCooldownMs = options.degradedCooldownMs ?? 30_000;
     this.workspaceBudgetSource = options.workspaceBudget ?? DEFAULT_GLOBAL_LIMIT;
+    this.callDeadlineMs = options.callDeadlineMs ?? DEFAULT_CALL_DEADLINE_MS;
+    this.deadlineExempt = new Set(options.deadlineExemptClasses ?? DEADLINE_EXEMPT);
+    this.heldSlotWarnMs = options.heldSlotWarnMs ?? DEFAULT_HELD_SLOT_WARN_MS;
+    this.log = options.log ?? (line => console.error(line));
     this.now = options.now ?? Date.now;
     for (const cls of Object.keys(this.limits) as AdmissionClass[]) {
       this.gates.set(cls, { limit: this.limits[cls], running: 0, waiting: [], completed: 0, coalesced: 0 });
@@ -239,18 +276,77 @@ export class Admission {
   }
 
   /** One Paseo request's latency sample and pending call, settled on every outcome. */
-  private async sample<T>(cls: AdmissionClass, request: () => Promise<T>, breaker = true): Promise<T> {
-    const call: ActiveCall = { cls, started: this.now(), breaker };
+  private async sample<T>(cls: AdmissionClass, request: () => Promise<T>, breaker = true, holder: string = cls): Promise<T> {
+    const call: ActiveCall = { cls, holder, started: this.now(), breaker, deadlineMs: this.deadlineFor(cls) };
     this.activeCalls.add(call);
     let successful = false;
     try {
-      const result = await request();
+      const result = await this.withinDeadline(call, request);
       successful = true;
       return result;
     } finally {
       this.activeCalls.delete(call);
       this.record(cls, this.now() - call.started, successful, breaker);
     }
+  }
+
+  /** The deadline for one class, or null when its effects legitimately run for minutes. */
+  private deadlineFor(cls: AdmissionClass): number | null {
+    return this.deadlineExempt.has(cls) ? null : this.callDeadlineMs;
+  }
+
+  /**
+   * Hold one pending call under its deadline. A call past the bound is abandoned
+   * as unknown — never resent, never read as success — and the slot it holds is
+   * released when the caller's own `finally` runs. The abandoned request may
+   * still settle later on the host; that late answer is not this caller's.
+   */
+  private withinDeadline<T>(call: ActiveCall, work: () => Promise<T>): Promise<T> {
+    const deadlineMs = call.deadlineMs;
+    if (deadlineMs === null) return work();
+    let timer: NodeJS.Timeout | null = null;
+    const expiry = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        timer = null;
+        const ageMs = this.now() - call.started;
+        this.abandonedCount++;
+        this.lastAbandoned = call;
+        this.abandonedAt = this.now();
+        this.log(`Paseo ${call.cls} call ${call.holder} abandoned as unknown after ${Math.round(ageMs)} ms (deadline ${deadlineMs} ms): its admission slot is free and the call is not resent`);
+        reject(new HostCallAbandonedError({ call: call.cls, holder: call.holder, ageMs, deadlineMs }));
+      }, deadlineMs);
+      timer.unref?.();
+    });
+    return Promise.race([work(), expiry]).finally(() => { if (timer) clearTimeout(timer); });
+  }
+
+  /** Active calls at or past `thresholdMs`, oldest first, bounded to five. */
+  private heldSlots(thresholdMs = this.heldSlotWarnMs): ActiveCall[] {
+    return [...this.activeCalls]
+      .filter(call => this.now() - call.started >= thresholdMs)
+      .sort((left, right) => left.started - right.started)
+      .slice(0, 5);
+  }
+
+  private heldSlotView(call: ActiveCall, at = this.now()) {
+    return { cls: call.cls, holder: call.holder, ageMs: Math.max(0, at - call.started), deadlineMs: call.deadlineMs, breaker: call.breaker };
+  }
+
+  /**
+   * Log one wait for a slot, naming who was holding it when the caller queued and
+   * for how long. Bounded per holder, and silent for waits under the threshold.
+   */
+  private noteWait(cls: AdmissionClass, holder: string, waitMs: number, blockedBy: ActiveCall | undefined, queuedAtWait: number, runningAtWait: number) {
+    if (waitMs < this.heldSlotWarnMs) return;
+    const key = `${cls}:${holder}`;
+    const at = this.now();
+    const last = this.heldSlotLoggedAt.get(key) ?? 0;
+    if (at - last < HELD_SLOT_LOG_INTERVAL_MS) return;
+    if (this.heldSlotLoggedAt.size > 64) this.heldSlotLoggedAt.clear();
+    this.heldSlotLoggedAt.set(key, at);
+    this.log(`Paseo ${cls} call ${holder} waited ${Math.round(waitMs)} ms for a slot`
+      + `${blockedBy ? `; oldest held slot: ${blockedBy.cls} ${blockedBy.holder} for ${Math.round(at - blockedBy.started)} ms${blockedBy.deadlineMs === null ? " (no deadline: it is never abandoned)" : ` (deadline ${blockedBy.deadlineMs} ms)`}` : ""}`
+      + `; ${queuedAtWait} queued behind ${runningAtWait}/${this.totalLimit} in flight when it queued`);
   }
 
   /**
@@ -265,27 +361,37 @@ export class Admission {
    * them: a workspace archive legitimately runs for minutes, so its duration is
    * not evidence about whether Paseo is answering (Tom, 2026-11-05).
    */
-  run<T>(cls: AdmissionClass, work: () => Promise<T>, key?: string, options: { innerTiming?: boolean; breakerExempt?: boolean; onWaiting?: () => void; onAdmitted?: (waitMs: number) => void } = {}): Promise<T> {
+  run<T>(cls: AdmissionClass, work: () => Promise<T>, key?: string, options: { innerTiming?: boolean; breakerExempt?: boolean; holder?: string; onWaiting?: () => void; onAdmitted?: (waitMs: number) => void } = {}): Promise<T> {
     const breaker = options.breakerExempt !== true;
+    // The holder names the effect and its identity, so a stuck slot is attributable.
+    const holder = options.holder ?? key ?? cls;
     return this.withKey(cls, key, async () => {
       options.onWaiting?.();
       const waitingAt = this.now();
+      // Capture who this call would wait behind before the release that admits it
+      // removes the holder from the ledger.
+      const blockedBy = this.heldSlots()[0];
+      const queuedAtWait = this.totalWaiting.length;
+      const runningAtWait = this.totalRunning;
       const releaseClass = await this.acquire(cls);
       const releaseTotal = await this.acquireTotal(cls);
       try {
         options.onAdmitted?.(this.now() - waitingAt);
+        this.noteWait(cls, holder, this.now() - waitingAt, blockedBy, queuedAtWait, runningAtWait);
         // Recheck after waiting for admission. No effect started yet.
         this.admitHousekeeping(cls);
-        const call: ActiveCall = { cls, started: this.now(), breaker };
+        const call: ActiveCall = { cls, holder, started: this.now(), breaker, deadlineMs: this.deadlineFor(cls) };
         let open = true;
         // A request started after the effect settles is not this effect's.
         const record: PaseoCallRecorder | undefined = options.innerTiming
-          ? request => (open ? this.sample(cls, request, breaker) : request())
+          ? request => (open ? this.sample(cls, request, breaker, holder) : request())
           : undefined;
         if (!record) this.activeCalls.add(call);
         let successful = false;
         try {
-          const result = await withPaseoCallTiming(record, work);
+          // A tracked effect is bounded as a whole; an inner-timed one is bounded
+          // per Paseo request inside it (`sample`), never on its own Git work.
+          const result = record ? await withPaseoCallTiming(record, work) : await this.withinDeadline(call, () => withPaseoCallTiming(undefined, work));
           successful = true;
           return result;
         } catch (error) {
@@ -427,6 +533,8 @@ export class Admission {
       observationCacheEntries: this.cache.size, observationCacheHits: this.cacheHits,
       workspaceBudget: this.workspaceBudget, workspaces: this.workspaces, workspaceDeferrals: this.workspaceDeferrals,
       lifecycleSignals: this.lifecycleSignals,
+      heldSlots: this.heldSlots().map(call => this.heldSlotView(call)),
+      abandoned: { count: this.abandonedCount, last: this.lastAbandoned ? this.heldSlotView(this.lastAbandoned, this.abandonedAt) : null },
       backpressure: { degraded: this.degraded, since: this.degradedSince, reason: this.degradedReason, warning, healthySamples: this.healthySamples, thresholdMs: this.degradedLatencyMs },
     };
   }
@@ -467,8 +575,11 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
   const call = <T>(cls: AdmissionClass, name: string, key: (args: unknown[]) => string | undefined, invalidate?: (args: unknown[], result: T) => void) => {
     const fn = held[name];
     if (typeof fn !== "function") return undefined;
-    return (...args: unknown[]) => admission.run(cls, () => (fn as (...a: unknown[]) => Promise<T>).apply(raw, args), key(args), { innerTiming: INNER_TIMED.has(name), breakerExempt: BREAKER_EXEMPT.has(name) })
-      .then(result => { invalidate?.(args, result); return result; });
+    return (...args: unknown[]) => {
+      const identity = key(args);
+      return admission.run(cls, () => (fn as (...a: unknown[]) => Promise<T>).apply(raw, args), identity, { innerTiming: INNER_TIMED.has(name), breakerExempt: BREAKER_EXEMPT.has(name), holder: identity ?? name })
+        .then(result => { invalidate?.(args, result); return result; });
+    };
   };
   const taskKey = (prefix: string) => (args: unknown[]) => {
     const task = args[0] as { id?: string; workspaceId?: string | null } | undefined;
@@ -517,6 +628,7 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
     return admission.run("workspace", () => (held.createWorkspace as (...input: unknown[]) => Promise<{ id?: string } | undefined>).apply(raw, [task, ...args]),
       task?.id ? `createWorkspace:${task.id}` : undefined, {
         innerTiming: true,
+        holder: task?.id ? `createWorkspace ${task.id}` : "createWorkspace",
         onWaiting: () => { startedAt = Date.now(); if (task?.id) report?.(task.id, "paseo_admission_wait", "started"); },
         onAdmitted: waitMs => { admitted = true; if (task?.id) report?.(task.id, "paseo_admission_wait", "finished", waitMs, "ok"); },
       }).then(result => {

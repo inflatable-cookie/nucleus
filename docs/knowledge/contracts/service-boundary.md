@@ -787,6 +787,18 @@ observation registers at once and an elapsed boundary needs no write. Workspace
 lifecycle signals invalidate matching cached availability, and an in-flight
 read cannot repopulate across an invalidation.
 
+The executor serves every catalogue read on its one thread, so nothing running
+there may hold that thread unbounded. A board, `queue.snapshot`, `task.next` or
+`queue.detail` read takes the store and cached host views only: it awaits no
+live host call and no mutating operation, and a host call that outlives its
+admission deadline is abandoned rather than waited on. Recursive directory
+removal goes through `removeTree` (`core/workspaces/tree-removal.ts`), which
+runs node's walk on libuv's pool: a synchronous `rmSync` recursion over one
+populated checkout held the thread inside `lstat`/`unlink`/`rmdir` for minutes
+while every read timed out at the client (the 2026-11-13 09:55Z wedge,
+nucleus#1179). `service.health.requestTimings.held` names a request that still
+does hold the thread, with its age.
+
 An observation pass reads Paseo through one bounded inventory: one
 `agents.list` over the Nucleus label set, live threads only, walked to the
 daemon's positive end. Archived history never enters the walk. A listed identity
@@ -1008,6 +1020,19 @@ observations; failed probes do not count, and a timeout never implies success.
 A workspace admission budget equal to the global task-slot limit delays only new
 creation and says so; retained workspaces and stored limits are untouched.
 
+**Held slots have a deadline and an owner.** Every admitted host call is a
+named holder for its class and identity. A call past its deadline — 60 seconds,
+unless its class is one that legitimately runs for minutes (a workspace archive
+or creation) — is abandoned as unknown: the caller receives an unknown-delivery
+answer naming the holder and how long it held, the class and total slots are
+released, and the call is never resent. A late answer from the host belongs to
+nothing and is discarded. `service.health.admission` names every call held past
+five seconds (`heldSlots`: class, holder, age, deadline) and the last abandoned
+call, and logs a wait for a slot with the oldest holder and its age. The freed
+bound keeps bounding instead of shrinking to nothing because one host call
+never returned. An abandoned call is reconciled from recorded state, exactly
+like any other unknown delivery (nucleus#1179).
+
 Nucleus has no global lane cap (Tom, 2026-09-27). One active quantum per key
 still holds, so no task or repository races itself, and per-repository
 integration effects stay FIFO. Spawned processes (Git, hooks) share a fixed
@@ -1046,7 +1071,14 @@ SQLite and releases its lease. Both directions reject concurrent ownership.
 last 32 settled requests: method, timestamp, outcome, `queueMs`, `handlerMs`
 (including async waits), `publicationMs`, `returnMs` and `totalMs` (the executor
 round trip, excluding final output validation, socket delivery and client
-parsing). Parent-served cached health and board responses make no sample.
+parsing). It also reports `held`: the requests outstanding past a five-second
+threshold with their method, age and start time, the in-flight total, and how
+many arrived after the oldest one started. `held` is read on the request loop,
+so it answers while the executor thread is blocked: a read that had to queue
+behind an unyielding request is named with its holder and age in
+`service.health`, and the same holder is logged once per 30 seconds while it
+keeps the thread (nucleus#1179). Parent-served cached health and board responses
+make no sample.
 Timeouts and unavailable-worker failures carry total time with null stages.
 Samples hold no inputs, task IDs, paths, credentials or error messages, are
 memory-only and reset with the service. Successful replies clear their timeout
