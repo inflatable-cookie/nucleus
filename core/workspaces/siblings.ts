@@ -1,6 +1,7 @@
 import { basename, join } from "node:path";
-import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { git as defaultGit } from "../git/index";
+import { removeTree } from "./tree-removal";
 import type { Project, SiblingFinding, SiblingPin, Task } from "../../shared/contracts";
 
 type GitFn = (cwd: string, ...args: string[]) => Promise<string>;
@@ -185,16 +186,17 @@ export async function removeSiblingWorktrees(dataDir: string, taskId: string, gi
       const common = toplevel ? await git(path, "rev-parse", "--path-format=absolute", "--git-common-dir").catch(() => null) : null;
       if (toplevel && common) {
         const admin = join(common, "worktrees", basename(path));
-        await git(toplevel, "worktree", "remove", "--force", path).catch(() => rmSync(path, { recursive: true, force: true }));
+        await git(toplevel, "worktree", "remove", "--force", path).catch(() => removeTree(path));
         void admin;
       } else {
-        rmSync(path, { recursive: true, force: true });
+        await removeTree(path);
       }
     } catch {
-      rmSync(path, { recursive: true, force: true });
+      // A checkout's own removal must never starve the reads this thread serves.
+      await removeTree(path);
     }
     removed.push(path);
   }
-  rmSync(root, { recursive: true, force: true });
+  await removeTree(root);
   return { removed };
 }

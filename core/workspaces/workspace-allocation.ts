@@ -5,8 +5,9 @@ export type { OrphanWorkspace, WorkspaceCreationState } from '../host/types';
  * under the bulk ceiling; Paseo then registers the existing directory. A
  * timeout is a partial leftover, never absence and never permission to replay.
  */
-import { existsSync, mkdirSync, realpathSync, rmSync, statSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, statSync, symlinkSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
+import { removeTree } from "./tree-removal";
 import type { Task } from "../../shared/contracts";
 import { GIT_SLOW_TIMEOUT_MS, git, gitBulk, gitSlow, queueCheckoutStatus } from "../git/index";
 import { findGitWorktreeAdd, type ProcessSearch } from "../machine/process-identity";
@@ -321,7 +322,9 @@ export async function removeOrphanCheckout(
       try { await gitSlow(task.repoPath, "worktree", "remove", "--force", orphan.directory); }
       catch (error) {
         if (!owned) throw error;
-        rmSync(orphan.directory, { recursive: true, force: true });
+        // An orphan checkout can be a whole populated worktree; its removal
+        // must yield so queued reads keep answering (2026-11-13 wedge).
+        await removeTree(orphan.directory);
       }
     } else await git(task.repoPath, "worktree", "prune");
   }

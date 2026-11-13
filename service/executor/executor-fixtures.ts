@@ -12,6 +12,8 @@ export interface FixtureState {
   projectionDelayMs?: number;
   /** The fixture host connection is down: the runtime sees a host that left. */
   hostOffline?: boolean;
+  /** The fixture host's catalog read never settles: the admission slot is held until its deadline. */
+  hostHang?: boolean;
 }
 
 const fixtureProfile: Profile = { id: "worker", name: "Worker", provider: "test", model: "test", notes: "", available: true, problem: "", supportedThinking: [] };
@@ -99,6 +101,17 @@ export const FIXTURES: Record<string, {
       };
     },
   },
+  /** A host call that never returns: the admission slot's deadline is what frees it. */
+  hang: {
+    adapter: (state, context) => {
+      const adapter = richAdapter(context);
+      return { ...adapter, catalog: async () => {
+        if (state.hostHang) await new Promise<never>(() => {});
+        return (adapter.catalog as () => Promise<unknown>)();
+      } } as unknown as Adapter;
+    },
+    instrumentStore: (_state, store) => store.setProfiles([storedFixtureProfile]),
+  },
 };
 
 /** Bounded fixture-only debug surface: store methods plus runtime wake/bootstrap. */
@@ -106,6 +119,7 @@ export async function handleDebug(runtime: QueueRuntime, op: unknown, state: Fix
   const request = op as { target: "store" | "runtime" | "engine" | "fixture"; method?: string; args?: unknown[]; action?: string; value?: unknown };
   if (request.target === "fixture") {
     if (request.action === "set-stall") { state.stalled = Boolean(request.value); return { ok: true }; }
+    if (request.action === "set-host-hang") { state.hostHang = Boolean(request.value); return { ok: true }; }
     if (request.action === "set-host-offline") { state.hostOffline = Boolean(request.value); return { ok: true }; }
     if (request.action === "set-slow-db") { state.slowDbMs = Number(request.value) || 0; return { ok: true }; }
     if (request.action === "ordinary-review-source") {
@@ -135,13 +149,15 @@ export async function handleDebug(runtime: QueueRuntime, op: unknown, state: Fix
   if (request.target === "runtime") {
     const method = (runtime as unknown as Record<string, unknown>)[request.method!];
     if (typeof method !== "function") throw new Error(`Runtime has no method ${request.method}`);
-    return (method as () => unknown).apply(runtime);
+    // Arguments ride through so a fixture can drive one production method with its
+    // own identity (for example the task whose siblings to remove).
+    return (method as (...args: unknown[]) => unknown).apply(runtime, request.args ?? []);
   }
   if (request.target === "engine") {
     const engine = (runtime as unknown as Record<string, unknown>).engine as Record<string, unknown> | undefined;
     const method = engine?.[request.method!];
     if (typeof method !== "function") throw new Error(`Engine has no method ${request.method}`);
-    return (method as () => unknown).call(engine);
+    return (method as (...args: unknown[]) => unknown).apply(engine, request.args ?? []);
   }
   throw new Error(`Unknown debug target ${JSON.stringify(request.target)}`);
 }

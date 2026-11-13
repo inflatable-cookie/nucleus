@@ -44,6 +44,10 @@ export interface ExecutorOptions {
   debug?: boolean;
   /** Warm standby: the worker loads its modules, prewarms the store read-only, then waits for this service pid to exit before it opens the store writable. */
   standbyFor?: number;
+  /** A request outstanding longer than this is named in health and logged. Defaults to five seconds. */
+  heldSlotWarnMs?: number;
+  /** Where a held-slot line goes; the service log by default. */
+  log?: (line: string) => void;
 }
 
 export interface ExecutorSnapshot {
@@ -81,6 +85,21 @@ export interface ExecutorRequestTiming {
   totalMs: number; queueMs: number | null; handlerMs: number | null; publicationMs: number | null; returnMs: number | null;
 }
 
+/**
+ * One request still holding the executor's single thread, with the age that
+ * makes a starved read diagnosable. The executor serves every catalogue read on
+ * that thread, so this is the slot a read waits behind.
+ */
+export interface ExecutorHeldSlot { method: string; ageMs: number; startedAt: string }
+export interface ExecutorHeldSlots {
+  /** Requests outstanding past the warning threshold, oldest first, bounded to five. */
+  held: ExecutorHeldSlot[];
+  /** Requests outstanding right now and how many arrived after the oldest one started. */
+  inFlight: number;
+  waiting: number;
+  thresholdMs: number;
+}
+
 type RequestKind = "rpc" | "call" | "drain" | "debug";
 
 const BOOT_TIMEOUT_MS = 60_000;
@@ -89,9 +108,22 @@ const DRAIN_TIMEOUT_MS = 45_000;
 const MAX_EXECUTOR_IN_FLIGHT = 96;
 const MAX_FAULT_MESSAGE = 512;
 const MAX_FAULT_STACK = 2_000;
+const DEFAULT_HELD_SLOT_WARN_MS = 5_000;
+/** One still-held request is re-logged at most this often while it keeps the thread. */
+const HELD_SLOT_LOG_INTERVAL_MS = 30_000;
 
 function boundedText(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+/** The label one request is named by in health and in the held-slot log. */
+function debugLabel(payload: { op?: unknown }, kind: RequestKind): string {
+  const op = payload.op as { target?: unknown; method?: unknown; action?: unknown } | undefined;
+  if (kind === "debug" && op && typeof op.target === "string") {
+    const detail = typeof op.method === "string" ? op.method : typeof op.action === "string" ? op.action : "";
+    return detail ? `debug:${op.target}.${detail}` : `debug:${op.target}`;
+  }
+  return kind;
 }
 
 /** The bounded stack retained with a fault, appended to the refusal so the cause survives the RPC reply. */
@@ -110,7 +142,31 @@ export class PersistenceExecutor {
   private nextId = 1;
   private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: unknown) => void; startedAt: number; method: string; timer?: NodeJS.Timeout }>();
   private readonly recentTimings: ExecutorRequestTiming[] = [];
-  requestTimings() { return { inFlight: this.inFlight, recent: [...this.recentTimings] }; }
+  private readonly heldSlotLoggedAt = new Map<string, number>();
+  private readonly heldSlotWarnMs: number;
+  private readonly log: (line: string) => void;
+  private heldSlotTimer: NodeJS.Timeout | null = null;
+
+  /**
+   * What is holding the executor right now, and what is queued behind it. This
+   * is read on the service request loop, so it stays answerable even while the
+   * executor thread is blocked: `service.health` names the holder and its age.
+   */
+  heldSlotEvidence(): ExecutorHeldSlots {
+    const at = performance.now();
+    const outstanding = [...this.pending.values()]
+      .map(entry => ({ method: entry.method, ageMs: Math.max(0, at - entry.startedAt), startedAt: new Date(performance.timeOrigin + entry.startedAt).toISOString() }))
+      .sort((left, right) => right.ageMs - left.ageMs);
+    const oldestAge = outstanding[0]?.ageMs ?? 0;
+    return {
+      held: outstanding.filter(slot => slot.ageMs >= this.heldSlotWarnMs).slice(0, 5),
+      inFlight: outstanding.length,
+      waiting: outstanding.filter(slot => slot.ageMs < oldestAge).length,
+      thresholdMs: this.heldSlotWarnMs,
+    };
+  }
+
+  requestTimings() { return { inFlight: this.inFlight, recent: [...this.recentTimings], held: this.heldSlotEvidence() }; }
   private recordTiming(pending: { startedAt: number; method: string }, outcome: ExecutorRequestTiming["outcome"], timing?: { queueMs: number; handlerMs: number; publicationMs: number }) {
     const totalMs=performance.now()-pending.startedAt;
     this.recentTimings.push({ method: pending.method, at: new Date().toISOString(), outcome, totalMs,
@@ -128,7 +184,31 @@ export class PersistenceExecutor {
   /** Called after every executor-pushed snapshot; the web board's live channel subscribes here. */
   private readonly snapshotListeners = new Set<() => void>();
 
-  constructor(private readonly options: ExecutorOptions) {}
+  constructor(private readonly options: ExecutorOptions) {
+    this.heldSlotWarnMs = options.heldSlotWarnMs ?? DEFAULT_HELD_SLOT_WARN_MS;
+    this.log = options.log ?? (line => console.error(line));
+  }
+
+  /**
+   * Say who is holding the executor and for how long, once per holder per
+   * interval. A read that has to queue is otherwise silent until the client's
+   * own timeout, which is what made the 2026-11-13 wedge need a restart to
+   * diagnose.
+   */
+  private noteHeldSlots(): void {
+    const evidence = this.heldSlotEvidence();
+    if (!evidence.held.length) return;
+    const at = Date.now();
+    for (const slot of evidence.held) {
+      const last = this.heldSlotLoggedAt.get(slot.method) ?? 0;
+      if (at - last < HELD_SLOT_LOG_INTERVAL_MS) continue;
+      if (this.heldSlotLoggedAt.size > 64) this.heldSlotLoggedAt.clear();
+      this.heldSlotLoggedAt.set(slot.method, at);
+      this.log(`Queue service request ${slot.method} has held the executor for ${Math.round(slot.ageMs)} ms`
+        + `${evidence.waiting ? `; ${evidence.waiting} request(s) are queued behind it` : ""}`
+        + `; service.health.requestTimings.held names it`);
+    }
+  }
 
   /** Spawn the executor and wait for its first published snapshot. */
   boot(): Promise<void> {
@@ -137,6 +217,9 @@ export class PersistenceExecutor {
 
   private startWorker(): Promise<void> {
     return new Promise((resolve, reject) => {
+      // While the executor thread is blocked, this loop is the only thing still
+      // running: it is what can say who is holding the thread and for how long.
+      this.startHeldSlotWatch();
       const worker = new Worker(new URL(runtimeEntry("./executor-worker.ts"), import.meta.url), {
         workerData: {
           owner: { ...this.options.owner, admission: this.options.owner.admission },
@@ -281,7 +364,7 @@ export class PersistenceExecutor {
     const id = this.nextId++;
     this.inFlight++;
     return new Promise((resolve, reject) => {
-      const pendingEntry = { resolve, reject, startedAt: performance.now(), method: payload.method ?? payload.handler ?? kind, timer: undefined as NodeJS.Timeout | undefined };
+      const pendingEntry = { resolve, reject, startedAt: performance.now(), method: payload.method ?? payload.handler ?? debugLabel(payload, kind), timer: undefined as NodeJS.Timeout | undefined };
       this.pending.set(id, pendingEntry);
       const timer = kind === "rpc" && waitsForSettlement(payload.method, payload.input) ? undefined : setTimeout(() => {
         const pending = this.pending.get(id);
@@ -336,6 +419,7 @@ export class PersistenceExecutor {
 
   terminate() {
     this.dead = true;
+    this.stopHeldSlotWatch();
     const worker = this.worker;
     this.worker = null;
     for (const [id, pending] of [...this.pending]) {
@@ -351,6 +435,18 @@ export class PersistenceExecutor {
   /** Latest executor-published snapshot. */
   current(): ExecutorSnapshot {
     return this.snapshot;
+  }
+
+  private startHeldSlotWatch(): void {
+    if (this.heldSlotTimer) return;
+    this.heldSlotTimer = setInterval(() => this.noteHeldSlots(), Math.max(50, Math.min(1_000, this.heldSlotWarnMs)));
+    if (typeof this.heldSlotTimer.unref === "function") this.heldSlotTimer.unref();
+  }
+
+  private stopHeldSlotWatch(): void {
+    if (!this.heldSlotTimer) return;
+    clearInterval(this.heldSlotTimer);
+    this.heldSlotTimer = null;
   }
 }
 

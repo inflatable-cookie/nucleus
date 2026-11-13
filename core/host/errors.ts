@@ -88,3 +88,25 @@ export class HostUnknownDeliveryError extends Error {
     this.diagnostic = clean;
   }
 }
+
+/**
+ * One host call outlived its admission deadline and was abandoned as unknown.
+ *
+ * The slot it held is freed so the bound keeps bounding, and the call is never
+ * resent: the durable intent that asked for it stays the authority, and the
+ * ordinary unknown-delivery paths reconcile the late or missing answer. This is
+ * a {"kind":"unknown"} outcome for its caller, never a failure to retry now.
+ */
+export class HostCallAbandonedError extends HostUnknownDeliveryError {
+  readonly cls: string;
+  readonly holder: string;
+  readonly deadlineMs: number;
+  constructor(input: { call: string; holder: string; ageMs: number; deadlineMs: number }) {
+    super({ command: `paseo.${input.call}`, reason: 'host_call_past_deadline',
+      guidance: `${input.holder} held its admission slot for ${Math.round(input.ageMs)} ms, past its ${input.deadlineMs} ms deadline. The outcome is unknown and the call was not resent; reconcile it from recorded state before asking again.` });
+    this.name = 'HostCallAbandonedError';
+    this.cls = input.call;
+    this.holder = input.holder;
+    this.deadlineMs = input.deadlineMs;
+  }
+}

@@ -71,6 +71,8 @@ export interface ServiceOptions {
   debug?: boolean;
   /** The persistence worker has died. Its state is lost, so the process should go and let the bridge replace it. */
   onExecutorDeath?: () => void;
+  /** A service request outstanding longer than this is named in health and logged. Fixture override; production uses five seconds. */
+  heldSlotWarnMs?: number;
   /** Warm standby: wait for this old service pid to exit before opening the store writable. */
   standbyFor?: number;
   /** Local web board overrides: a fixture clock for token expiry, or a bundle directory (null for none). */
@@ -174,6 +176,7 @@ export class QueueService {
       fixtureState: this.options.fixtureState ?? {},
       debug: this.options.debug === true,
       ...(this.options.standbyFor ? { standbyFor: this.options.standbyFor } : {}),
+      ...(this.options.heldSlotWarnMs !== undefined ? { heldSlotWarnMs: this.options.heldSlotWarnMs } : {}),
     };
   }
 

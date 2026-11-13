@@ -1,5 +1,6 @@
 import { historicalWireLabel } from "../../shared/wire-labels";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { removeTree } from "./tree-removal";
 import type { Run, Task } from "../../shared/contracts";
 import type { AgentObservation, OriginAgent } from "../host/adapter";
 import type { WorkspaceContinuationHost } from "./workspace-continuation";
@@ -254,10 +255,15 @@ export class OwnedWorkspaceArchive {
           throw Error('the worktree is no longer orphaned');
         if(!allowed())return false;
         // Under the discard, the canonical path is re-proved and read-only
-        // directories inside it are opened for removal, synchronously, with no
-        // await before the removal. A normalization failure stops removal.
+        // directories inside it are opened for removal, synchronously. A
+        // normalization failure stops removal.
         if(discarding){assertCanonicalOwnedPath(directory,ownedData,commonDir,task.id);normalizeOwnedDirectoryPermissions(directory);}
-        if(initial.orphan.orphaned)rmSync(directory,{recursive:true});
+        // The path was re-proved synchronously just above; the removal is issued
+        // against that same proven path and runs its walk off this thread. An
+        // interrupted walk leaves a partial directory that the next archive attempt
+        // re-proves and removes, exactly as the synchronous removal did
+        // (nucleus#1179; planner ruling 2026-11-13).
+        if(initial.orphan.orphaned)await removeTree(directory,{force:false});
         else await removeOwnedWorktree(task.repoPath,directory,discarding);
       }
       catch(error){throw Error(`worktree.teardown failed: ${error instanceof Error?error.message:String(error)}`);}
