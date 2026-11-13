@@ -41,3 +41,35 @@ test('8fffbf59: a reviewer swap records the condition that failed', async () => 
       { fromAgentId: retainedAgent, condition: 'runtime' }, 'next carries the same swap reason');
   } finally { await f.close(); }
 });
+
+/**
+ * The consult-bound path (reviewer 5884638293): a reviewer created by a
+ * reviewer consult has no prior review run, so its round check is replaced by
+ * the consult independence check. A reviewer whose model collides with the
+ * task authors must still be swapped, with the same recorded condition.
+ */
+test('8fffbf59: a non-independent consult-bound reviewer is swapped, not kept', async () => {
+  const f = fixture();
+  try {
+    const consultAgent = 'agent-consult';
+    const current = f.current();
+    // The recorded shape: a consult created and retained this reviewer before
+    // any review run existed, and its model collides with the source author's.
+    f.store.update(f.submitted.id, {
+      workerModel: f.reviewer.model, workerModels: [f.reviewer.model],
+      resolution: { ...current.resolution, reviewerAgentId: consultAgent, reviewerProfile: f.reviewer },
+    }, 'test_consult_reviewer', 'a consult retained this reviewer before any review run');
+    f.store.event(f.submitted.id, 'reviewer_consult_reviewer', `consult-1: ${consultAgent}`);
+    f.states.set(consultAgent, {
+      id: consultAgent, workspaceId: 'workspace', status: 'idle', active: false, activeTurnId: null,
+      permissions: false, error: '', provider: 'codex', model: f.reviewer.model,
+    });
+    await f.engine.wake();
+    const swapEvent = f.events('reviewer_fresh_agent').at(-1)!;
+    const swap = JSON.parse(swapEvent.detail) as { fromAgentId: string; condition: string; detail: string };
+    assert.equal(swap.fromAgentId, consultAgent, 'the consult-bound reviewer is the thread the swap names');
+    assert.equal(swap.condition, 'participant');
+    assert.match(swap.detail, /not independent/);
+    assert.notEqual(f.current().resolution.reviewerAgentId, undefined);
+  } finally { await f.close(); }
+});

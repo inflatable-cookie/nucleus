@@ -247,7 +247,9 @@ export class RunLaunchThread {
         // profile behind: the next selection below waits visibly instead of
         // launching a fresh agent on it, and a later run honours the route.
         else if(authorDecision === 'fresh' && supersedingReviewer){profile=null;group=null;}
-        this.store.event(t.id,'reviewer_fresh_agent',`Recorded reviewer ${agentId} authored task work; launching a fresh independent agent on ${profile?.name ?? profile?.id ?? 'the retained reviewer profile'}`);
+        this.store.event(t.id,'reviewer_fresh_agent', JSON.stringify({ fromAgentId: agentId, condition: 'participant',
+          detail: `the recorded reviewer authored task work, so it cannot review its own changes; launching a fresh independent agent on ${profile?.name ?? profile?.id ?? 'the retained reviewer profile'}`,
+          head: t.prHead ?? null, at: new Date().toISOString() }));
         agentId=null;
       }else{
       const issue=this.resolution.retainedProfileIssue(profile)??this.resolution.signoffIssue(t,profile,'reviewer')
@@ -279,9 +281,10 @@ export class RunLaunchThread {
           round = true;
           const authors = taskAuthorModelKeys(t, this.store.runs(t.id).filter(run => run.role === 'revision'));
           const independent = reviewerIndependence({ site: 'consult', authors, reviewerModel: authorModelKey(profile.model) }) === 'independent';
-          participant = state.workspaceId === t.workspaceId && state.status === 'idle' && !state.active && !state.permissions;
+          const inactive = state.workspaceId === t.workspaceId && state.status === 'idle' && !state.active && !state.permissions;
+          participant = independent && inactive;
           if (!independent) swapDetail.participant = 'its model is not independent of the task authors';
-          else if (!participant) swapDetail.participant = `it is not an inactive participant in ${t.workspaceId ?? 'the task workspace'} (observed ${state.status}${state.active ? ', active' : ''}${state.permissions ? ', permission pending' : ''})`;
+          else if (!inactive) swapDetail.participant = `it is not an inactive participant in ${t.workspaceId ?? 'the task workspace'} (observed ${state.status}${state.active ? ', active' : ''}${state.permissions ? ', permission pending' : ''})`;
         } else {
           this.resolution.assertReviewProfileIndependent(t, prior!);
           participant = matchingInactiveParticipant(prior!, state, ['idle']);
