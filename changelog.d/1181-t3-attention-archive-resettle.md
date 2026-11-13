@@ -9,4 +9,7 @@
   mid-task archive the open-task rule allows.
 - A retained reviewer continued for a second round is settled again after that
   round: the adapter tracks which thread it settled, and an unsettle since earns
-  a fresh settle command instead of early-returning on the old receipt.
+  a fresh settle command instead of early-returning on the old receipt. A settle
+  bind the Nightly rejects as stale retires and the current latest run is settled
+  under a fresh command; compatibility failures keep their exact field in the
+  settlement warning and retry on the next pass.

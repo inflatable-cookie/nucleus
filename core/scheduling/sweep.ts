@@ -7,7 +7,7 @@ import { isDispositionActive } from "../../shared/contracts";
 import type { ReconciliationSweep } from "../../shared/telemetry";
 import type { AgentObservation } from "../host/adapter";
 import { catchUpFinishedTaskThreads, finishedThreadCleanupCatchUp, removesThreads } from '../workspaces/thread-archive';
-import { sanitizeHostFailureReason } from "../host";
+import { sanitizeHostFailureDetail, sanitizeHostFailureReason } from "../host";
 import { reapHookCheckouts } from "../hooks/hook-cleanup";
 import { removeTaskProofFiles } from "../intake/proof-files";
 import { pruneLiveDataHomeBackupCopies } from "../store/data-home-retention";
@@ -32,9 +32,13 @@ type DrainWaiter = { resolve: () => void; reject: (error: Error) => void };
 
 function threadSettlementFailureReason(error: unknown): string {
   if (!(error instanceof Error)) return 'unknown error';
-  const record = error as Error & { reason?: unknown; diagnostic?: { reason?: unknown } };
+  const record = error as Error & { reason?: unknown; diagnostic?: { reason?: unknown }; field?: unknown };
   const reason = sanitizeHostFailureReason(record.reason ?? record.diagnostic?.reason);
-  return `${error.name}${reason ? `: ${reason}` : ''}`;
+  // A compatibility failure's field names the exact structural mismatch (a
+  // snapshot name, a dotted decode path, a connection state); the name alone
+  // never did. Every field is an adapter-authored constant, never remote text.
+  const detail = sanitizeHostFailureDetail(record.field);
+  return `${error.name}${reason ? `: ${reason}` : ''}${detail ? ` (${detail})` : ''}`;
 }
 
 export type SweepContext = Pick<Engine, 'adapter' | 'applyDeferredOwnerVerbs' | 'archivePlannerGrants' | 'archiveRetiredErroredAgents' | 'auditPass' | 'clearRetiredInvalidations' | 'continueAwaitingReviewers' | 'dispatchQueued' | 'dispositionDeps' | 'drainProjections' | 'drainWaiters' | 'enqueueTitle' | 'ensureSweep' | 'flushPrerequisiteReleases' | 'host' | 'hostAvailable' | 'hostIds' | 'inventoryHostMatches' | 'lastHookCleanupAt' | 'lifecycle' | 'maxSweepWindows' | 'migrateProjectOwnersToPlanners' | 'noteStepFailure' | 'observeRetiredWorkers' | 'quiesce' | 'reconcile' | 'recoverExhaustedWorkers' | 'removeSiblings' | 'resumePausedStops' | 'retiredObservationKey' | 'retiredObservationPlan' | 'scheduleLane' | 'scheduleLifecycleFollowUp' | 'scheduleTaskQuantum' | 'settleQuiesce' | 'startSweepChain' | 'stopped' | 'store' | 'sweepChain' | 'sweepCursor' | 'sweepDeferred' | 'sweepDeferredCursor' | 'sweepMode' | 'sweepOrder' | 'sweepPending' | 'sweepStats' | 'sweepTicks' | 'taskHostAvailable' | 'wakeCapacityWaiter' | 'wakePreludes' | 'withHost'> & { readonly resolution: Pick<Resolution, 'checkpoints' | 'delegateNativeQuestions' | 'deliverDecisionNotices' | 'deliverDrainNotices' | 'deliverHoldNotices' | 'deliverNotices' | 'deliverQueuedMessages' | 'observationTargets' | 'observe' | 'origins' | 'raiseOperatorQuestions' | 'recovery' | 'resumeAskQuestions' | 'resumeResponsibleAnsweredQuestions' | 'settleBudgetClock'> };

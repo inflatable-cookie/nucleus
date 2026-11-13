@@ -245,9 +245,15 @@ finish paths settle support threads even when no callback report arrived. It
 settles a worker thread after the task has moved to review, and keeps it active
 while the task is still in work. Each pass reads the T3 projection first; a
 live native run is never settled, and the command's `expectedLatestRunId` keeps
-a later run from being settled by an older completion. Failed settlements
-record a task event and are reconciled on a later pass; settlement failure never
-blocks the task report.
+a later run from being settled by an older completion. A bind the Nightly
+rejected as stale (its latest run moved on, `OrchestrationV2DispatchCommandError`)
+retires without touching the thread, and the next pass settles the current
+latest run under a fresh command instead of leaving the thread unsettled
+(nucleus#1181; that retire-then-stop is what stranded swallowtail#227's
+reviewer thread). A compatibility failure keeps its exact field in the
+settlement warning and retries on the next pass, never just once. Failed
+settlements record a task event and are reconciled on a later pass; settlement
+failure never blocks the task report.
 
 Unknown settlement delivery is recorded. On the next host sweep,
 `settledOverride: "settled"` proves success, and a changed or active latest run

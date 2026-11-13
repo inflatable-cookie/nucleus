@@ -1138,3 +1138,30 @@ test('a retained reviewer continued for a second round is settled again after th
   assert.equal(settlements.at(-1)!.expectedLatestRunId, 'nightly-review-run-2');
   assert.equal(projection.thread.settledOverride, 'settled');
 });
+
+test('a stale settle bind retires and the current latest run is settled under a fresh command (#1181, #227)', async t => {
+  const { host, server, options } = await fixture(t);
+  const projection = server.threads.get('synthetic-probe')!;
+  // The first round's settle is rejected by the Nightly after it lands: the
+  // reply is lost, so the intent stays unknown while the thread shows settled.
+  projection.runs.push({ id: 'nightly-review-run-1', status: 'completed', startedAt: STAMP });
+  server.controls.disconnectAfterEffect = true;
+  await assert.rejects(host.settleReportedThread('synthetic-probe', 'nucleus-review-run'), HostUnknownDeliveryError);
+  server.controls.disconnectAfterEffect = false;
+  host.close();
+  const reloaded = new T3CodeHost(options); t.after(() => reloaded.close()); await reloaded.connect();
+  // A second round runs and finishes; the thread is active again.
+  projection.thread.settledOverride = 'active';
+  projection.runs.push({ id: 'nightly-review-run-2', status: 'completed', startedAt: STAMP });
+  // The sweep reconciles the stale bind: the latest run moved on, so the
+  // intent retires without touching the thread.
+  await reloaded.reconcileReportedSettlements();
+  // The next settle binds the current latest run under a fresh command instead
+  // of early-returning on the retired receipt, which is what stranded #227.
+  await reloaded.settleReportedThread('synthetic-probe', 'nucleus-review-run');
+  const settlements = server.commands.filter(command => command.type === 'thread.settle');
+  assert.equal(settlements.length, 2);
+  assert.equal(settlements.at(-1)!.expectedLatestRunId, 'nightly-review-run-2');
+  assert.notEqual(settlements[0]!.commandId, settlements[1]!.commandId);
+  assert.equal(projection.thread.settledOverride, 'settled');
+});
