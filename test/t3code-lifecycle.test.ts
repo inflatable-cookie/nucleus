@@ -474,7 +474,10 @@ test('a support thread stays active during a later run and settles that run when
     await f.runtime.engine.auditPass(false);
     assert.equal(projection.thread.settledOverride, 'settled');
 
-    projection.thread.settledOverride = 'active';
+    // The retained thread wakes for its next fault through a follow-up message,
+    // which explicitly unsettles it first; a later run is never settled live.
+    await f.t3.notify(reviewerThreadId, 'retained-recovery-round-2', 'Second fault into the retained thread');
+    assert.equal(projection.thread.settledOverride, 'active');
     projection.runs.push({ id: 'nightly-recovery-run-2', status: 'running', startedAt: STAMP });
     f.runtime.store.putRun(releasedRecoveryRun(taskId, reviewerRun, reviewerThreadId));
     const before = f.server.commands.filter(command => command.type === 'thread.settle' && command.threadId === reviewerThreadId).length;
