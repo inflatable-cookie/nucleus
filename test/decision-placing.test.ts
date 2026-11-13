@@ -174,6 +174,32 @@ test("1183 linked tasks place a decision when the caller has no scope, and a spl
   } finally { f.close(); }
 });
 
+test("1183 supersede names the superseding thread and keeps its placing rules", () => {
+  const f = setup(); try {
+    const repo = { origin: "owner/swallowtail", path: join(f.dir, "swallowtail") };
+    const other = { origin: "owner/other", path: join(f.dir, "other") };
+    const task = addTask(f, repo.origin, repo.path);
+    addTask(f, other.origin, other.path, "Other work");
+    const caller = formatAgentId("paseo:beta", "worker-1");
+    f.store.update(task.id, { phase: "working", runId: "run-1", agentId: caller, workspaceId: "ws" });
+    const project = f.store.projectFor(repo.path, repo.origin)!;
+    const open = f.decisions.add({ question: "Which branch?", askedBy: "operator (board)",
+      project: { origin: repo.origin, path: repo.path } });
+    assert.equal(open.askerLabel, "operator");
+    const replacement = f.decisions.supersede({ id: open.id, version: 1, by: caller,
+      question: "Which branch now?", askedBy: caller });
+    assert.equal(replacement.askedBy.agentId, caller, "the superseding thread asks the replacement");
+    assert.equal(replacement.projectKey, project.key);
+    assert.deepEqual(replacement.links.tasks, [task.id], "the superseding thread's task links");
+    assert.equal(replacement.askerLabel, `${f.store.task(task.id).reference} worker`);
+    const foreign = f.decisions.add({ question: "Other question?", askedBy: "operator (board)",
+      project: { origin: other.origin, path: other.path } });
+    assert.throws(() => f.decisions.supersede({ id: foreign.id, version: 1, by: caller,
+      question: "Take over?", askedBy: caller }), /contradicts the asking thread/,
+      "a carried project that contradicts the new asker is refused");
+  } finally { f.close(); }
+});
+
 test("1183 the backfill retargets project-less decisions where the asker resolves, and leaves the rest", () => {
   const f = setup(); try {
     const repo = { origin: "owner/swallowtail", path: join(f.dir, "swallowtail") };

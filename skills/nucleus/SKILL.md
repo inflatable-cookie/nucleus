@@ -1212,7 +1212,8 @@ task link) from that identity, and refuses a decision it cannot place. Omit
 leads or papercuts you are not placed on. A `project` that contradicts the
 calling thread is refused, as is an asker Nucleus cannot place — the refusal
 says to pass `project` or link the task. An operator adding a decision at the
-board picks its project.
+board picks its project. Superseding names the superseding thread the same way:
+a typed or inherited asker is never reused.
 
 `queue.outcome-search`
 answers "what landed for X" and "why does this code look like this" before reading

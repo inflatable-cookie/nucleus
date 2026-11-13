@@ -166,7 +166,7 @@ test('CLI forwards --wait in either position and submits an authorized brief in 
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });
 
-test('1183 decision.add records the authenticated calling thread as the asker, never a typed name', async () => {
+test('1183 decision.add and decision.supersede record the authenticated calling thread as the asker, never a typed name', async () => {
   const { createServer: createSocketServer } = await import('node:net');
   const { createFrameReader, encodeFrame, PROTOCOL_VERSION } = await import('../shared/service/protocol');
   const { rpcContractDigests } = await import('../shared/rpc-contracts');
@@ -227,6 +227,24 @@ test('1183 decision.add records the authenticated calling thread as the asker, n
     assert.equal(t3.code, 0, t3.stderr);
     assert.equal(calls.at(-1)!.input.askedBy, t3Caller);
     assert.equal(calls.at(-1)!.input.question, 'Which branch for T3?');
+    // Superseding names the superseding thread: a typed or inherited asker is never reused.
+    const invokeMethod = (method: string, input: unknown, env: Record<string, string>) => new Promise<{ code: number | null; stdout: string; stderr: string }>(resolve => {
+      const child = spawn(process.execPath, [new URL('../bin/queue-cli.mjs', import.meta.url).pathname, method, '-'], {
+        env: { ...process.env, NUCLEUS_DATA_HOME: dir, PASEO_AGENT_ID: '', NUCLEUS_TICKET: '', ...env },
+      });
+      let stdout = '', stderr = '';
+      child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
+      child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
+      child.on('close', code => resolve({ code, stdout, stderr }));
+      child.stdin.end(JSON.stringify(input));
+    });
+    const superseded = await invokeMethod('decision.supersede',
+      { id: 'dec-1', version: 1, question: 'Which branch now?', askedBy: 'forged-id', by: 'forged-author' },
+      { PASEO_AGENT_ID: 'fixture-planner' });
+    assert.equal(superseded.code, 0, superseded.stderr);
+    assert.equal(calls.at(-1)!.method, 'decision.supersede');
+    assert.equal(calls.at(-1)!.input.askedBy, 'nucleus-agent:v1:["paseo-fixture","fixture-planner"]');
+    assert.equal(calls.at(-1)!.input.by, 'nucleus-agent:v1:["paseo-fixture","fixture-planner"]');
   } finally {
     await new Promise<void>(resolve => frameServer.close(() => resolve()));
     await new Promise<void>(resolve => callback.close(() => resolve()));
