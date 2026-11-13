@@ -320,7 +320,7 @@ for (const route of ["ask", "escalation", "consult", "operator"] as const) {
         reason: route === "escalation" ? "2099-01-01T00:00:00Z" : "Within brief",
       };
       if (timing === "before restart")
-        f.engine.resolution.answerDelegatedQuestion(input, "planner-1");
+        await f.engine.resolution.answerDelegatedQuestion(input, "planner-1");
       const adapter = {
         ...f.adapter,
         askPlanner: async () => {
@@ -343,7 +343,7 @@ for (const route of ["ask", "escalation", "consult", "operator"] as const) {
       try {
         await recovered.resolution.resumeAskQuestions();
         if (timing === "after restart")
-          recovered.resolution.answerDelegatedQuestion(input, "planner-1");
+          await recovered.resolution.answerDelegatedQuestion(input, "planner-1");
         await waitFor(() => f.store.eventsAll(task.id).some((e) => e.kind === eventKind), ANSWERING_WINDOW_MS, "the answer event");
         assert.equal(
           f.store.eventsAll(task.id).filter((e) => e.kind === eventKind).length,
@@ -362,8 +362,8 @@ for (const route of ["ask", "escalation", "consult", "operator"] as const) {
           1,
         );
         assert.deepEqual(
-          recovered.resolution.answerDelegatedQuestion(input, "planner-1"),
-          f.engine.resolution.answerDelegatedQuestion(input, "planner-1"),
+          await recovered.resolution.answerDelegatedQuestion(input, "planner-1"),
+          await f.engine.resolution.answerDelegatedQuestion(input, "planner-1"),
         );
       } finally {
         await recovered.stop();

@@ -122,7 +122,8 @@ export class ReviewPolicy {
     }
     // The durable intent id is the message identity: an at-most-once replay reuses it.
     const ticketPath = runTicketPath({ helperPath: this.host.helperPath }, task.runId);
-    const identity = `Current continuation identity: run ${task.runId}; ticket ${ticketPath}. The retained shell may have stale NUCLEUS_RUN_ID and NUCLEUS_TICKET values. For every Nucleus CLI command or helper in this continuation, set NUCLEUS_CONTINUATION_RUN_ID=${task.runId} and NUCLEUS_CONTINUATION_TICKET=${JSON.stringify(ticketPath)}. Helpers prefer this continuation identity and refuse if the ticket names another run.`;
+    const quotedTicketPath = `'${ticketPath.replaceAll("'", "'\\''")}'`;
+    const identity = `Current continuation identity: run ${task.runId}; ticket ${ticketPath}. The retained shell may have stale NUCLEUS_RUN_ID and NUCLEUS_TICKET values. For every Nucleus CLI command or helper in this continuation, set NUCLEUS_CONTINUATION_RUN_ID=${task.runId} and NUCLEUS_CONTINUATION_TICKET=${quotedTicketPath}. Helpers prefer this continuation identity and refuse if the ticket names another run.`;
     await agent.send(`${identity}\n\n${text}`, { messageId: `ns-checkpoint-${intentId}` });
   }
 

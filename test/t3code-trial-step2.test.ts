@@ -414,7 +414,10 @@ test('T3 adapter verifies reviews and continues retained threads without a fresh
   const preflight = await adapter.preflightWorkerContinuation(task);
   assert.deepEqual(preflight, { available: true });
   await adapter.continueWorker(task, 'checkpoint-1', 'Continue the retained T3 worker.');
-  assert.ok(server.commands.some(command => command.type === 'message.dispatch' && command.threadId === worker.id && command.text === 'Continue the retained T3 worker.'));
+  const continuedWorker = server.commands.find(command => command.type === 'message.dispatch' && command.threadId === worker.id);
+  assert.ok(continuedWorker);
+  assert.match(continuedWorker.text, /NUCLEUS_CONTINUATION_RUN_ID=run-t3/);
+  assert.match(continuedWorker.text, /Continue the retained T3 worker\.$/);
   await adapter.continueRun(run, 'ns-run-continue', 'Continue the retained T3 run.');
   assert.ok(server.commands.some(command => command.type === 'message.dispatch' && command.text === 'Continue the retained T3 run.'));
   await adapter.sendRun(task, run, 'token');

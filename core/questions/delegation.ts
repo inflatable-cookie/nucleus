@@ -295,7 +295,7 @@ export class Delegation {
       if (input.decision === 'operator') {
         this.resolution.ladder.classifyEscalationToOperator(this.store.task(taskId), escalationId, reason, `${role} ${caller}`);
       } else {
-        const answer = input.choice ? `${input.choice} — ${reason}` : input.answer!;
+        const answer = `${input.choice ?? input.answer!} — ${reason}`;
         const refusal = await this.resolution.ladder.applyDelegatedEscalationAnswer(taskId, escalationId, answer, `${role} ${caller}`);
         if (refusal) throw Error(refusal);
       }

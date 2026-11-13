@@ -528,7 +528,7 @@ test("a still-blocked run after the consult opens one planner escalation and its
   }
 });
 
-test("a service replacement applies a persisted escalation answer before returning success", async () => {
+test("a service roll replacement applies a persisted escalation answer before returning success", async () => {
   const f = fixture({ responsible: true });
   let replacement: Engine | null = null;
   try {
