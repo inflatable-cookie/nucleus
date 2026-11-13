@@ -38,6 +38,7 @@ function fixture() {
   }), "host", "handoff", base);
   const taskId = submitted.id, runId = "initial-run", token = "proof-files-token";
   let reportingRunId = runId;
+  let reportingToken = token;
   store.update(taskId, {
     phase: "working", planningBase: base, workspaceId: "workspace", directory: worktree, branch: submitted.branch,
     temporaryDirectory: scratch, agentId: "worker-thread", runId, profile: worker, workerModel: worker.model,
@@ -63,20 +64,21 @@ function fixture() {
   const reports = new Reports(engine);
   const complete = (status: string, extra: Record<string, unknown> = {}) => reports.report(reportSchema.parse({
     eventId: randomUUID(), taskId, runId: reportingRunId, status, summary: "Visual proof delivered", prNumber: 1, ...extra,
-  }), token);
+  }), reportingToken);
   // The CLI fallback posts one parsed completion straight to the callback; it has
   // no report wrapper, so an identical retry must resolve through intake alone.
   const cliReport = (eventId: string, extra: Record<string, unknown> = {}) => engine.complete(completionSchema.parse({
     eventId, taskId, runId: reportingRunId, status: "ready_for_review", summary: "Visual proof delivered", prNumber: 1, ...extra,
-  }), token);
+  }), reportingToken);
   const reportOnce = (eventId: string, extra: Record<string, unknown> = {}) => reports.report(reportSchema.parse({
     eventId, taskId, runId: reportingRunId, status: "ready_for_review", summary: "Visual proof delivered", prNumber: 1, ...extra,
-  }), token);
+  }), reportingToken);
   const startRevision = () => {
     reportingRunId = "revision-run";
+    reportingToken = "proof-files-revision-token";
     const task = store.task(taskId);
     store.update(taskId, { runId: reportingRunId, resolution: { ...task.resolution, currentRunId: reportingRunId } });
-    store.setCredential(reportingRunId, token);
+    store.setCredential(reportingRunId, reportingToken);
     store.putRun(runSchema.parse({ id: reportingRunId, taskId, role: "revision", generation: 1, head: base, base,
       agentId: "worker-thread", workspaceId: "workspace", profile: worker, status: "running", createdAt: new Date().toISOString(),
       lastObservedAt: null, active: true, idleSince: null, completion: null, released: false, temporaryDirectory: scratch }));
