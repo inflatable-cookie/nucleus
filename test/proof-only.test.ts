@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { hostRunRecordSchema, submissionSchema, taskControlInputSchema, type Profile, type Run, type Task } from '../shared/contracts';
 import { Store } from '../core/store/store';
-import { Decisions } from '../core/planning/decisions';
+import { Decisions, decisionHeadline } from '../core/planning/decisions';
 import { Engine } from '../core/engine';
 import { Reports } from '../core/intake/report';
 import type { Adapter, AgentObservation } from '../core/host';
@@ -616,9 +616,11 @@ test('a lost native release question is restored as one board decision and its a
     assert.equal(decision.status, 'open');
     assert.equal(decision.question, question.question);
     assert.deepEqual(decision.options, question.choices.map(choice => choice.label));
-    // Tom, 2026-11-13: a headline never starts mid-sentence; the first sentence wins.
+    // Planner ruling (brief v3): the headline is the question up to the first `?`
+    // (the whole text here), clipped at a word boundary — it never starts mid-text.
     assert.match(decision.headline ?? '', /· The proof-only qualification for merged commit/);
-    assert.doesNotMatch(decision.headline ?? '', /Should .* run the qualification\?$/);
+    const reference = f.store.task(f.task().id).reference;
+    assert.equal(decision.headline, decisionHeadline(decision.question, reference));
     assert.deepEqual(decision.choices?.map(choice => choice.consequence), [
       'Runs once on the existing qualification workspace; no install or consumer.',
       'Keeps the proof-only task from running this qualification.',
