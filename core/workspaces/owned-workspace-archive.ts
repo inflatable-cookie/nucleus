@@ -205,8 +205,13 @@ export class OwnedWorkspaceArchive {
     // no local intent (nucleus#1179 acceptance 2b, planner ruling 2026-11-13).
     const initial=await prove(false);
     if(!initial){
-      if(!await this.host.ownedDataDirFor(task,directory))throw Error(`worktree.teardown failed: ${directory} is not a Queue-owned checkout`);
-      await finishInterruptedRemoval(directory,{taskId:task.id,workspaceId:id});
+      // Only a Queue-owned checkout can have been detached by an earlier attempt,
+      // so only that case may finish a leftover. A preserved external directory
+      // keeps its established "gone" outcome, and a quarantine sibling beside a
+      // directory this pass cannot prove it owns fails closed instead of being
+      // deleted or silently ignored.
+      if(await this.host.ownedDataDirFor(task,directory))await finishInterruptedRemoval(directory,{taskId:task.id,workspaceId:id});
+      else if(existsSync(removalQuarantinePath(directory)))throw Error(`worktree.teardown failed: ${removalQuarantinePath(directory)} exists but ${directory} is not a Queue-owned checkout; inspect it before retrying`);
       return [];
     }
     if(buildOutputCleanup){
