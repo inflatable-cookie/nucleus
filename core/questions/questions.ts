@@ -853,7 +853,7 @@ export class Questions {
     }
     if (answered()) return false;
     if (!answer) {
-      this.store.event(taskId, 'operator_question_delegation_missed', `${decision.id}: no delegated answer was produced in time`);
+      this.store.event(taskId, 'operator_question_delegation_missed', `${decision.id}: no delegated answer was produced; the question stays on its existing surface`);
       return false;
     }
     if (!this.resolution.queueBudgetQuestionCurrent(taskId, decision)) {
