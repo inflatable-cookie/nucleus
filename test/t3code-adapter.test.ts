@@ -1,6 +1,6 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -859,6 +859,17 @@ test('atomic interrupt and continue steers the live run through steer_active', a
   p.runs = [];
   await assert.rejects(host.interruptAndContinue(created.id, 'ns-steer-idle', 'Change course: Y'), /no active run to steer/);
   assert.equal(server.commands.filter(c => c.type === 'message.dispatch').length, 1);
+});
+
+// The recorded projection is what the adapter's own read path returns for a thread with a live run
+// (synthetic IDs, recorded by running readProjection against the fake transport). Feeding it back
+// through the same read path must return it unchanged, so a decode drift fails here.
+test('the recorded projection passes through the adapter read path unchanged, with its live run', async t => {
+  const { host, server } = await fixture(t);
+  const recorded = JSON.parse(readFileSync(new URL('./fixtures/t3code-projection.json', import.meta.url), 'utf8'));
+  server.threads.set('synthetic-probe', recorded);
+  const read = await (host as unknown as { readProjection(id: string): Promise<unknown> }).readProjection('synthetic-probe');
+  assert.deepEqual(read, recorded);
 });
 
 // Tom, 2026-11-13: a tell to a working thread steers into its live run; an idle
