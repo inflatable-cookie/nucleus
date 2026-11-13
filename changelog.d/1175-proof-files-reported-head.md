@@ -1,0 +1,1 @@
+Worker proof files now bind to the exact head named in the report and are refused unless it matches the pushed PR head. Reviewer prompts also show proof files from the latest author run with their recorded head, including evidence previously filed under an earlier head.

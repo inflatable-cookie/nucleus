@@ -136,11 +136,13 @@ export const REQUIRED_PROOF_REVIEWER_NOTE = `${REQUIRED_PROOF_AUTHOR_NOTE} For a
 export const PROOF_FILES_RULE = "Proof files for the retained reviewer. When the brief requires visual or rendered proof — screenshots, rendered images, recordings — never put the files or their local paths in the PR body, a PR comment or your report summary. Save them under this run's scratch or the task worktree, then name each file in your report as proofFiles: [{label: a short description, path: the file's absolute local path}]. Nucleus proves each path is a real regular file inside this task's own scratch or worktree (at most 12 files, 8 MiB each, 32 MiB total), copies it into its own per-head evidence directory and records its SHA-256; the retained reviewer's prompt for that head lists the copies with their paths and hashes. Your PR may say that evidence was delivered to the retained reviewer and give the hashes. Nucleus refuses a report naming a path outside this task's own scratch or worktree and copies nothing.";
 export const PROOF_FILES_REVIEWER_RULE = "Worker proof files delivered for this exact head are listed below with their local paths and SHA-256 hashes. Open them from this session (images can be viewed directly); they are Nucleus's own local copies and are never uploaded to the forge. Judge them as the brief's required proof, and never copy a local path into a PR body or comment. A missing file or a hash that differs from the list is insufficient evidence.";
 
-/** The worker proof files recorded for one exact head, or '' when there are none. */
+/** Proof files for the exact head plus the latest author run, preserving each recorded head. */
 export function proofFilesBlock(task: Pick<Task, 'proofFiles'>, head: string): string {
-  const files = (task.proofFiles ?? []).filter(file => file.head === head);
+  const allFiles = task.proofFiles ?? [];
+  const latestAuthorRunId = allFiles.at(-1)?.runId;
+  const files = allFiles.filter(file => file.head === head || file.runId === latestAuthorRunId);
   if (!files.length) return '';
-  return `Proof files recorded for this exact head ${head} (local copies under Nucleus's own scratch; never uploaded to the forge):\n${files.map(file => `- ${file.label}: ${file.path} (sha256 ${file.sha256}, ${file.bytes} bytes, delivered by run ${file.runId})`).join('\n')}\n`;
+  return `Proof files recorded for exact head ${head} and the latest author run (local copies under Nucleus's own scratch; never uploaded to the forge):\n${files.map(file => `- ${file.label} (recorded head ${file.head}): ${file.path} (sha256 ${file.sha256}, ${file.bytes} bytes, delivered by run ${file.runId})`).join('\n')}\n`;
 }
 /** The role's Spec 054 instruction as its own rendered line, or '' for a role it does not address. */
 function requiredProofNote(role: Run['role']): string {
