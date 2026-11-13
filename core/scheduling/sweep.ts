@@ -58,6 +58,11 @@ export class Sweep {
     const supportRoles = new Set(['reviewer', 'recovery', 'coordinator', 'decider', 'executor']);
     for (const task of this.engine.store.tasks()) {
       if (task.hostId !== hostId || task.removedAt != null) continue;
+      // While attention is active the worker thread stays surfaced: settling
+      // it here would only make the attention pass unsettle it again, one
+      // settle/unsettle pair per sweep. The ordinary settle resumes when
+      // attention clears (nucleus#1181 review).
+      const attentionActive = task.resolution.attention || ['blocked', 'error', 'needs_attention'].includes(task.phase);
       const runs = this.engine.store.runs(task.id);
       for (const run of runs) {
         if (run.hostId !== hostId || !run.agentId || (!run.released && !run.completion)) continue;
@@ -65,7 +70,7 @@ export class Sweep {
         // settling it previously needed no native receipt. An unresolved effect
         // still needs observation and settlement on the next pass.
         if (this.engine.store.threadArchiveEffect(run.agentId, hostId)?.status === 'archived') continue;
-        const settle = run.role === 'revision' && reviewPhases.has(task.phase)
+        const settle = run.role === 'revision' && reviewPhases.has(task.phase) && !attentionActive
           ? settleWorker : supportRoles.has(run.role) ? settleSupport : undefined;
         if (!settle) continue;
         try { await settle.call(adapter, run.agentId, run.id); }
@@ -76,7 +81,7 @@ export class Sweep {
       }
       // The initial worker run predates the role run ledger on legacy tasks.
       // The task only reaches these phases after its handover was accepted.
-      if (settleWorker && reviewPhases.has(task.phase) && task.agentId && task.runId && !runs.some(run => run.id === task.runId)
+      if (settleWorker && !attentionActive && reviewPhases.has(task.phase) && task.agentId && task.runId && !runs.some(run => run.id === task.runId)
         && this.engine.store.threadArchiveEffect(task.agentId, hostId)?.status !== 'archived') {
         try { await settleWorker.call(adapter, task.agentId, task.runId); }
         catch (error) {

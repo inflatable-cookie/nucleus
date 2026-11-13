@@ -476,7 +476,7 @@ test('a support thread stays active during a later run and settles that run when
 
     // The retained thread wakes for its next fault through a follow-up message,
     // which explicitly unsettles it first; a later run is never settled live.
-    await f.t3.notify(reviewerThreadId, 'retained-recovery-round-2', 'Second fault into the retained thread');
+    await f.t3.notify!(reviewerThreadId, 'retained-recovery-round-2', 'Second fault into the retained thread');
     assert.equal(projection.thread.settledOverride, 'active');
     projection.runs.push({ id: 'nightly-recovery-run-2', status: 'running', startedAt: STAMP });
     f.runtime.store.putRun(releasedRecoveryRun(taskId, reviewerRun, reviewerThreadId));
@@ -1062,6 +1062,39 @@ test('attention surfaces the worker thread and the return to review settles it a
     await f.runtime.engine.auditPass(false);
     assert.equal(settles().length, settledCount + 1, 'the return to review settles the worker thread again');
     assert.equal(f.server.threads.get(workerThreadId)!.thread.settledOverride, 'settled');
+    // Let the pass's scheduled task quanta finish before the store closes.
+    await f.runtime.engine.quiesce().catch(() => {});
+  } finally { await f.close(); }
+});
+
+test('attention during review neither settles nor unsettles the worker twice (#1181 review)', async t => {
+  const f = await fixture(t);
+  try {
+    const { taskId, head, workerThreadId, workerRunId } = await taskWithWorker(f);
+    // The worker's own turn, ended by the time its handover is accepted.
+    f.server.threads.get(workerThreadId)!.runs = completedWorkerRun();
+    const workerReport = await helperReport(f, runTicketPath(f, { id: workerRunId }), {
+      status: 'ready_for_review', summary: 'Change set ready', prNumber: 7, head,
+    });
+    assert.equal(workerReport.code, 0, workerReport.err);
+    await f.runtime.engine.wakeTask(taskId).catch(() => {});
+    await driveUntil(f, () => f.server.commands.some(command => command.type === 'thread.settle' && command.threadId === workerThreadId),
+      'worker settled on handover', taskId);
+    assert.equal(f.server.threads.get(workerThreadId)!.thread.settledOverride, 'settled');
+
+    // A review-phase escalation keeps the phase but raises attention (a
+    // reviewer reminder while awaiting review). The worker surfaces once, and
+    // later sweeps must not settle-then-unsettle it again every pass.
+    const settles = () => f.server.commands.filter(command => command.type === 'thread.settle' && command.threadId === workerThreadId);
+    const unsettles = () => f.server.commands.filter(command => command.type === 'thread.unsettle' && command.threadId === workerThreadId);
+    f.runtime.store.update(taskId, { phase: 'awaiting_review', reason: 'Reviewer reminder raised attention',
+      resolution: { ...f.runtime.store.task(taskId).resolution, attention: true } });
+    await f.runtime.engine.auditPass(false);
+    assert.equal(f.server.threads.get(workerThreadId)!.thread.settledOverride, 'active');
+    const settledCount = settles().length, unsettledCount = unsettles().length;
+    await f.runtime.engine.auditPass(false);
+    assert.equal(settles().length, settledCount, 'no fresh worker settle while attention is active');
+    assert.equal(unsettles().length, unsettledCount, 'no fresh worker unsettle while already surfaced');
     // Let the pass's scheduled task quanta finish before the store closes.
     await f.runtime.engine.quiesce().catch(() => {});
   } finally { await f.close(); }
