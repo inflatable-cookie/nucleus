@@ -81,13 +81,28 @@ const recommendedFirst = (choices: NonNullable<Decision["choices"]>, recommended
 /**
  * Tom, 2026-11-13: a headline never starts mid-sentence. The first sentence
  * is the headline: a sentence ends only at `.`, `!` or `?` followed by
- * whitespace or the end of the text, so dots inside tokens (`.md`, `7.0.0`,
- * `e.g.`) never split it and a later question mark never wins over the start.
+ * whitespace or the end of the text, so dots inside tokens (`.md`, `7.0.0`)
+ * never split it and a later question mark never wins over the start. A dot
+ * that finishes a known abbreviation (`e.g.`, `i.e.`) never ends the sentence
+ * even before whitespace.
  */
+const SENTENCE_ABBREVIATIONS = new Set([
+  "e.g", "eg", "i.e", "ie", "etc", "vs", "mr", "mrs", "ms", "dr", "prof",
+  "sr", "jr", "st", "fig", "cf", "ex", "approx", "appt", "dept", "est",
+]);
+const endsAbbreviation = (normalized: string, dot: number): boolean => {
+  const token = normalized.slice(0, dot).match(/[A-Za-z][A-Za-z.]*$/)?.[0] ?? "";
+  return SENTENCE_ABBREVIATIONS.has(token.toLowerCase());
+};
 const questionSentence = (question: string): string => {
   const normalized = question.replace(/\s+/g, " ").trim();
-  const end = normalized.search(/[.!?](?=\s|$)/);
-  return (end < 0 ? normalized : normalized.slice(0, end + 1)).trim();
+  const boundary = /[.!?](?=\s|$)/g;
+  let match: RegExpExecArray | null;
+  while ((match = boundary.exec(normalized)) !== null) {
+    if (match[0] === "." && endsAbbreviation(normalized, match.index)) continue;
+    return normalized.slice(0, match.index + 1).trim();
+  }
+  return normalized;
 };
 /** The sentence the retired headline derived, kept only to recognize stored headlines it produced. */
 const retiredQuestionSentence = (question: string): string => {

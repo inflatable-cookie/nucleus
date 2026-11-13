@@ -94,6 +94,9 @@ test("1183 a headline never starts mid-sentence: the first sentence wins, and do
     assert.equal(decisionHeadline("Rename docs/handbook.md to the new layout?", null),
       "Rename docs/handbook.md to the new layout?", "dots inside a file name never split the sentence");
     assert.equal(decisionHeadline("The setup is unclear. Should we keep the API?", null), "The setup is unclear.");
+    assert.equal(decisionHeadline("Use e.g. three examples. Should we proceed?", null), "Use e.g. three examples.",
+      "a dot finishing an abbreviation never ends the sentence, even before whitespace");
+    assert.equal(decisionHeadline("Pick one format, i.e. the stable one. Which is it?", null), "Pick one format, i.e. the stable one.");
     // An existing mid-sentence headline refreshes on read from the stored question, which never changes.
     const broken = "md, merged in PR 1236) so the refactor can be briefed?";
     f.store.updateDecision({ ...f.store.decision(created.id), headline: broken });
