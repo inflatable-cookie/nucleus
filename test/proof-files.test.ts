@@ -220,6 +220,21 @@ test("a pre-PR report keeps its proof files against the pushed branch head", asy
   } finally { await f.close(); }
 });
 
+test("a failed open-PR lookup refuses proof files instead of falling back to the branch head", async () => {
+  const f = fixture();
+  try {
+    // Review 5891487030: an unreadable forge is unverified, never proof that no
+    // PR exists, so the branch-head fallback must not run.
+    f.adapter.findOpenBranchPr = async () => { throw new Error("forge unreachable"); };
+    writeFileSync(join(f.scratch, "proof.png"), png("proof"));
+    await assert.rejects(f.complete("blocked", {
+      prNumber: undefined, head, proofFiles: [{ label: "Proof", path: join(f.scratch, "proof.png") }],
+    }), /cannot verify the task branch PR head/);
+    assert.equal(f.task().proofFiles.length, 0, "a refused report copies nothing");
+    assert.equal(f.task().completion, null, "the refused report records no completion");
+  } finally { await f.close(); }
+});
+
 test("the reviewer at B sees latest author-run proof stored under A with its recorded head", async () => {
   const f = fixture();
   try {

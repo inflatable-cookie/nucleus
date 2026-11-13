@@ -314,17 +314,23 @@ export class CallbackIntake {
    * carries no PR number. The task branch's open PR head comes first — the same
    * branch-PR observation recovery and the board already use — so a missing or
    * stale recorded PR head never refuses files the forge already shows pushed.
-   * With no PR yet the pushed branch head read with `git ls-remote` proves the
-   * head is published. A null head refuses below naming the observed side; a
-   * failing branch read propagates its own cause instead of binding evidence
-   * to an unproved head.
+   * Only an empty lookup proves no PR exists: a failed lookup refuses as
+   * unverified (review 5891487030) instead of falling through to the branch
+   * head, so an unobserved PR head can never pass as a proven absence. With no
+   * PR yet the pushed branch head read with `git ls-remote` proves the head is
+   * published. A null head refuses below naming the observed side; a failing
+   * branch read propagates its own cause instead of binding evidence to an
+   * unproved head.
    */
   private async proofFilesForgeHead(task: Task): Promise<{ kind: 'PR' | 'branch'; head: string | null }> {
     if (this.adapter.findOpenBranchPr) {
-      let matches: { number: number; url: string; head: string }[] | null = null;
+      let matches: { number: number; url: string; head: string }[];
       try { matches = await this.adapter.findOpenBranchPr(task); }
-      catch { matches = null; }
-      const first = matches?.[0];
+      catch (error) {
+        const cause = (error instanceof Error ? error.message : String(error)).slice(0, 300);
+        throw new Error(`The proof-files head check cannot verify the task branch PR head: the open-PR lookup for ${task.branch} failed (${cause}); retry the report once the forge is reachable`);
+      }
+      const first = matches[0];
       if (first && /^[a-f0-9]{40}$/.test(first.head)) return { kind: 'PR', head: first.head };
     }
     const advertised = await git(task.repoPath, 'ls-remote', 'origin', `refs/heads/${task.branch}`);
