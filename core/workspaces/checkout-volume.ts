@@ -242,6 +242,12 @@ export function removeCheckoutRunScratchDirectory(input: {
     const targetStat = lstatSync(target);
     if (targetStat.isSymbolicLink() || !targetStat.isDirectory() || targetStat.dev !== mountStat.dev || realpathSync(target) !== target)
       throw Error("recorded run temp path is not a real directory");
+    // The one synchronous recursive removal left on the executor thread, and it
+    // is bounded: this is one run's recorded TMPDIR leaf, removed from the store
+    // retention and release paths that must answer a boolean synchronously. It is
+    // not an archived checkout; those go through `removeTree`
+    // (core/workspaces/tree-removal.ts) so they never hold the read thread
+    // (nucleus#1179).
     rmSync(target, { recursive: true, force: false });
     return true;
   } catch (error) {

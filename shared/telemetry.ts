@@ -300,6 +300,16 @@ const admissionLatencyFields = {
 };
 export const admissionClassStateSchema = z.object(admissionClassStateFields).strict();
 export const admissionLatencySchema = z.object(admissionLatencyFields).strict();
+/**
+ * One outbound host call that is still holding its admission slot. `holder`
+ * names the effect and its identity, so a stuck call is attributable without a
+ * restart; `deadlineMs` is the bound it will be abandoned at — the ordinary one,
+ * or the longer bound for the effects that legitimately run for minutes.
+ */
+const heldHostSlotSchema = z.object({
+  cls: admissionClassSchema, holder: z.string(), ageMs: z.number().nonnegative(),
+  deadlineMs: z.number().nonnegative(), breaker: z.boolean(),
+}).strict();
 export const paseoAdmissionSchema = z.object({
   callback: admissionClassStateSchema, control: admissionClassStateSchema, observation: admissionClassStateSchema,
   title: admissionClassStateSchema, cleanup: admissionClassStateSchema, inventory: admissionClassStateSchema, workspace: admissionClassStateSchema,
@@ -307,6 +317,10 @@ export const paseoAdmissionSchema = z.object({
     callback: admissionLatencySchema, control: admissionLatencySchema, observation: admissionLatencySchema,
     title: admissionLatencySchema, cleanup: admissionLatencySchema, inventory: admissionLatencySchema, workspace: admissionLatencySchema,
   }).strict(),
+  /** Host calls that passed the held-slot threshold, oldest first, bounded to five. */
+  heldSlots: z.array(heldHostSlotSchema).max(5),
+  /** Host calls abandoned as unknown at their deadline, and the most recent one. */
+  abandoned: z.object({ count: z.number().int().nonnegative(), last: heldHostSlotSchema.nullable() }).strict(),
   observationCacheEntries: z.number().int().nonnegative(), observationCacheHits: z.number().int().nonnegative(),
   workspaceBudget: z.number().int().nonnegative(), workspaces: z.number().int().nonnegative(), workspaceDeferrals: z.number().int().nonnegative(),
   lifecycleSignals: z.number().int().nonnegative(),
@@ -323,6 +337,7 @@ export const emptyPaseoAdmission: PaseoAdmission = {
   title: { ...emptyAdmissionClass }, cleanup: { ...emptyAdmissionClass }, inventory: { ...emptyAdmissionClass }, workspace: { ...emptyAdmissionClass },
   latency: { callback: { ...emptyAdmissionLatency }, control: { ...emptyAdmissionLatency }, observation: { ...emptyAdmissionLatency },
     title: { ...emptyAdmissionLatency }, cleanup: { ...emptyAdmissionLatency }, inventory: { ...emptyAdmissionLatency }, workspace: { ...emptyAdmissionLatency } },
+  heldSlots: [], abandoned: { count: 0, last: null },
   observationCacheEntries: 0, observationCacheHits: 0, workspaceBudget: 0, workspaces: 0, workspaceDeferrals: 0, lifecycleSignals: 0,
   backpressure: { degraded: false, since: null, reason: "", warning: "", healthySamples: 0, thresholdMs: 0 },
 };

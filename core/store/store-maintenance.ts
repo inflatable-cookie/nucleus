@@ -315,6 +315,10 @@ export class StoreMaintenance {
             finally { snapshot.close(); }
             checkSource();
             backupOutage = backupBeforeMigration(snapshotPath, backupDir ?? backupDirForDataDir(dirname(path)), { sourcePath: path, sourceFd });
+            // Bounded: one private directory holding the migration snapshot file and
+            // its verification copy, removed from the synchronous admission path.
+            // The unbounded trees (checkouts) go through `removeTree` instead
+            // (nucleus#1179).
           } finally { rmSync(privateDir, { recursive: true, force: true }); }
         }
         checkSource();
