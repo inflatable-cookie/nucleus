@@ -36,8 +36,9 @@ export class DispatchLaunch {
     // a stop the operator answers; the run in flight, if any, already finished.
     {
       const current = this.context.store.task(t.id);
-      const legacyBudgetSince = this.context.store.eventsAll(t.id).find(event => event.kind === 'responsible_converted')?.at;
-      const budget = taskBudget(current, this.context.store.runs(t.id), Date.now(), legacyBudgetSince);
+      const events = this.context.store.eventsAll(t.id);
+      const legacyBudgetSince = events.find(event => event.kind === 'responsible_converted')?.at;
+      const budget = taskBudget(current, this.context.store.runs(t.id), Date.now(), legacyBudgetSince, events);
       if (budget.exhausted) { this.context.waiting(t, budgetPauseDetail(budget), 'budget'); return; }
     }
     if (reviewAuthorizationRequired(this.context.store.task(t.id), this.context.store)) { const wait = reviewContinuationWait(this.context.store.task(t.id), this.context.store); this.context.waiting(t, wait.reason, wait.stop); return; }
