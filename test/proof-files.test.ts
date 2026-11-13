@@ -74,7 +74,8 @@ function fixture() {
   }), token);
   const startRevision = () => {
     reportingRunId = "revision-run";
-    store.update(taskId, { runId: reportingRunId });
+    const task = store.task(taskId);
+    store.update(taskId, { runId: reportingRunId, resolution: { ...task.resolution, currentRunId: reportingRunId } });
     store.setCredential(reportingRunId, token);
     store.putRun(runSchema.parse({ id: reportingRunId, taskId, role: "revision", generation: 1, head: base, base,
       agentId: "worker-thread", workspaceId: "workspace", profile: worker, status: "running", createdAt: new Date().toISOString(),
