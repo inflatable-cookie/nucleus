@@ -79,6 +79,7 @@ function percentile(values: number[], fraction: number): number | null {
 export class Admission {
   private readonly gates = new Map<AdmissionClass, Gate>();
   private readonly inflight = new Map<string, Promise<unknown>>();
+  private readonly notifyTails = new Map<string, Promise<unknown>>();
   private readonly cache = new Map<string, CacheEntry>();
   private observationEpoch = 0;
   private readonly latencies = new Map<AdmissionClass, number[]>();
@@ -236,6 +237,21 @@ export class Admission {
     const promise = work().finally(() => { this.inflight.delete(key); });
     this.inflight.set(key, promise);
     return promise;
+  }
+
+  /** Serialize distinct messages to one retained thread, while identical calls still coalesce above. */
+  private orderedNotify<T>(agentId: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.notifyTails.get(agentId) ?? Promise.resolve();
+    const current = previous.catch(() => undefined).then(work);
+    this.notifyTails.set(agentId, current);
+    void current.finally(() => { if (this.notifyTails.get(agentId) === current) this.notifyTails.delete(agentId); }).catch(() => undefined);
+    return current;
+  }
+
+  /** Coalesce an identical notification, then admit distinct notifications in target order. */
+  notify<T>(agentId: string, requestIdentity: string, work: () => Promise<T>): Promise<T> {
+    return this.withKey("callback", `notify:${requestIdentity}`,
+      () => this.orderedNotify(agentId, () => this.run("callback", work)));
   }
 
   /** One Paseo request's latency sample and pending call, settled on every outcome. */
@@ -530,7 +546,10 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
   });
   set("recoverTaskWorkspace", call("workspace", "recoverTaskWorkspace", taskKey("recoverTaskWorkspace")));
   set("createCloseoutWorkspace", call("workspace", "createCloseoutWorkspace", taskKey("createCloseoutWorkspace")));
-  set("setTaskWorkspaceTitle", call("title", "setTaskWorkspaceTitle", taskKey("title"), (args) => {
+  set("setTaskWorkspaceTitle", call("title", "setTaskWorkspaceTitle", (args) => {
+    const task = args[0] as { id?: string } | undefined;
+    return task?.id ? `title:${JSON.stringify([task.id, args[1], args[2], args[3]])}` : undefined;
+  }, (args) => {
     const task = args[0] as { workspaceId?: string | null } | undefined;
     if (task?.workspaceId) admission.invalidateWorkspace(task.workspaceId);
   }));
@@ -567,7 +586,10 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
     const run = args[1] as { agentId?: string | null } | undefined;
     if (run?.agentId) admission.invalidate(run.agentId);
   }));
-  set("continueWorker", call("callback", "continueWorker", taskKey("continueWorker"), (args) => {
+  set("continueWorker", call("callback", "continueWorker", (args) => {
+    const task = args[0] as { id?: string } | undefined;
+    return task?.id ? `continueWorker:${JSON.stringify([task.id, args[1], args[2]])}` : undefined;
+  }, (args) => {
     const task = args[0] as { agentId?: string | null } | undefined;
     if (task?.agentId) admission.invalidate(task.agentId);
   }));
@@ -586,9 +608,13 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
   }, (args) => {
     if (typeof args[0] === "string") admission.invalidate(args[0]);
   }));
-  set("notify", call("callback", "notify", idKey("notify"), (args) => {
-    if (typeof args[0] === "string") admission.invalidate(args[0]);
-  }));
+  const rawNotify = held.notify;
+  if (typeof rawNotify === "function") set("notify", (agentId: string, messageId: string, text: string, sourceAgentId?: string) =>
+    admission.notify(agentId, JSON.stringify([agentId, messageId, text, sourceAgentId]),
+      () => (rawNotify as (...args: unknown[]) => Promise<void>).apply(raw, [agentId, messageId, text, sourceAgentId])).then(result => {
+      admission.invalidate(agentId);
+      return result;
+    }));
   for (const name of [
     "validate", "verifyWorkspace", "verifyResume", "verifyCheckpoint", "verifyCleanQueueWorktree",
     "verifyPr", "verifyPrIdentity", "verifyInspectedRevisionHead", "verifyReview",

@@ -1,0 +1,1 @@
+Host-call admission now merges only identical notifications, worker continuations, and workspace title updates. Distinct notifications to one agent run in order. Owner restart reports unknown delivery after an interrupted instruction send instead of resending blindly.
