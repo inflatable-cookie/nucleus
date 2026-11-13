@@ -24,6 +24,22 @@ import {missingOriginHasPlanner} from '../questions/origin';
 import {RECOVERY_ESCALATION_FAILURE_PREFIX} from './task-reasons';
 import {requiredCheckPollMetaKey} from '../forge/checks';
 export const RECOVERY_STOPPED_WITHOUT_RESULT = 'The recovery coordinator stopped without a result. Inspect its thread; the plugin has not repeated its prompt.';
+/**
+ * How long a recovery episode may sit pending with no run before it escalates.
+ *
+ * Papercut 0489ea25: nucleus#1166's stalled turn recorded `recovery_pending` and
+ * then nothing for 2h14m, because the stalled worker still held the workspace
+ * lease and no launch, wait or escalation followed. A pending episode that
+ * starts no run inside this bound reaches the task's planner ladder instead.
+ */
+export const RECOVERY_PENDING_BOUND_MS = 3 * 60_000;
+/** The pending episode's escalation, naming the stop and the verb that exits it. */
+export const recoveryPendingEscalation = (t: Task): string => {
+ const stop = t.resolution.stop;
+ const verbs = stop?.suggestedVerbs?.length ? stop.suggestedVerbs.join(', ') : 'next';
+ const detail = (stop?.detail ?? t.reason).slice(0, 1200);
+ return `Recovery was requested for this task but started no run within ${Math.round(RECOVERY_PENDING_BOUND_MS / 60_000)} minutes: ${stop ? `stop ${stop.reason} — ${detail}` : detail}. Nothing else followed, so Nucleus asks the planner ladder which owner action continues it. The exit is ${verbs}; next lists every verb with its refusal.`;
+};
 export const ACCEPTED_RECOVERY_NOT_APPLIED_PREFIX = 'Accepted recovery report was not applied: ';
 const RECOVERY_CREATION_FAILURE_PREFIX = 'Coordinator recovery unavailable: ';
 type Incident=NonNullable<Task['resolution']['recovery']>;
@@ -123,10 +139,12 @@ export function coordinatorReportMatches(t:Task):boolean{
  const progress=t.resolution.recovery?.progress;
  return Boolean(progress&&progress===taskProgressDigest(t));
 }
-export type RecoveryContext = Pick<Resolution, 'adapter' | 'attention' | 'automaticHookReplayPending' | 'ensureIncident' | 'escalateRefusedCoordinator' | 'extendCallbackReminder' | 'graceMs' | 'host' | 'hostAvailable' | 'workerProviderUnavailable' | 'idle' | 'lease' | 'onTaskHost' | 'openReviewContinuationEscalation' | 'recordStop' | 'requiredRouteNote' | 'responsibleBlockerLadder' | 'resumeTransientProviderThread' | 'select' | 'slotAdmissionReason' | 'startsNoRuns' | 'stopped' | 'store' | 'suppressAutomaticRetry' | 'update' | 'usageCeilingNote' | 'validationEvidence' | 'waiting'>;
+export type RecoveryContext = Pick<Resolution, 'adapter' | 'attention' | 'automaticHookReplayPending' | 'ensureIncident' | 'escalateRefusedCoordinator' | 'extendCallbackReminder' | 'graceMs' | 'host' | 'hostAvailable' | 'workerProviderUnavailable' | 'idle' | 'lease' | 'onTaskHost' | 'openPlannerEscalation' | 'openReviewContinuationEscalation' | 'recordStop' | 'requiredRouteNote' | 'responsibleBlockerLadder' | 'resumeTransientProviderThread' | 'select' | 'slotAdmissionReason' | 'startsNoRuns' | 'stopped' | 'store' | 'suppressAutomaticRetry' | 'update' | 'usageCeilingNote' | 'validationEvidence' | 'waiting'>;
 
 export class Recovery {
  constructor(readonly resolution:RecoveryContext){}
+ /** Tests shorten this to drive the pending-episode bound without waiting minutes. */
+ pendingBoundMs = RECOVERY_PENDING_BOUND_MS;
  private coordinatorActionHandler:((task:Task,run:Run,action:RecoveryActionBinding)=>Promise<void>)|null=null;
  setCoordinatorActionHandler(handler:(task:Task,run:Run,action:RecoveryActionBinding)=>Promise<void>){this.coordinatorActionHandler=handler;}
  /** Engine-provided Spec 058 mechanical settlement for an opted-in responsible task. */
@@ -406,7 +424,27 @@ export class Recovery {
     }
     continue;
    }
-   if(!incident?.runId)continue;
+   if(!incident?.runId){
+     // Papercut 0489ea25: a pending episode with no run is invisible unless it
+     // reaches someone. The pending event is its clock; a legitimate capacity,
+     // dispatch or route wait clears the episode (`wait`) instead of leaving it.
+     // Paused, dispatch-held and accepted-action episodes are not silent: their
+     // own wait or owner owns them and moves no escalation here.
+     const pendingSince = incident?.status === 'pending' && !incident.action
+       ? this.store.eventsAll(t.id).findLast(event => event.kind === 'recovery_pending')?.at ?? null : null;
+     if (incident && pendingSince && !this.resolution.startsNoRuns() && !dispatchBlocked(t)
+       && Date.now() - Date.parse(pendingSince) >= this.pendingBoundMs) {
+       const summary = recoveryPendingEscalation(t);
+       this.escalate(t, summary);
+       this.resolution.openPlannerEscalation(this.store.task(t.id), {
+         cause: digest(`recovery-pending:${t.id}:${incident.id}`), runId: null, question: summary,
+         payload: { cause: 'recovery-pending', taskId: t.id, runId: null, question: summary },
+         suggestedVerbs: t.resolution.stop?.suggestedVerbs,
+       });
+       continue;
+     }
+     continue;
+   }
    if(isDispositionActive(t)||isDispositionComplete(t)||dispatchBlocked(t))continue;
    // Queue #691: a finished task's coordinator gets no further authority. Its silence never escalates
    // the done task, and its report is evidence (Resolution.complete); terminal cleanup releases the run.

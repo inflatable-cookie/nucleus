@@ -134,11 +134,22 @@ export class RunLaunchSource {
       if (role !== 'revision') throw new Error('PR head changed; a new worker report and review are required');
       const revisions = this.store.runs(t.id).filter(run => run.role === 'revision');
       const latestResult = revisions.findLast(run => run.completion)?.completion;
-      if (revisions.some(run => !run.released || ['intent','uncertain'].includes(run.status))
-        || latestResult && ['blocked','error'].includes(latestResult.status)
-        || t.completion?.runId === t.runId && ['blocked','error'].includes(t.completion.status)
-        || Boolean(t.resumePrNumber && t.runId && (!t.completion || t.completion.runId !== t.runId) && !this.store.run(t.runId)))
-        throw new Error('Retained progress cannot be bound without its authenticated released author report and source proof');
+      const unresolved = revisions.some(run => !run.released || ['intent','uncertain'].includes(run.status))
+        || Boolean(latestResult && ['blocked','error'].includes(latestResult.status))
+        || Boolean(t.completion?.runId === t.runId && ['blocked','error'].includes(t.completion.status));
+      if (unresolved)
+        throw new Error('Retained progress cannot be bound without its authenticated released author report and source proof. Its pushed head is judged instead: move to=review reviews the current PR head, or move to=work returns the task to the worker with the new head');
+      // Papercut b7a6fb99: a superseded run can leave a clean, pushed head behind.
+      // When the forge and the task checkout both prove that exact head and no
+      // work is unresolved, the head is observation rather than retained progress
+      // needing a report; the stale record is refreshed instead of refusing.
+      const staleBookkeeping = Boolean(t.resumePrNumber && t.runId && (!t.completion || t.completion.runId !== t.runId) && !this.store.run(t.runId));
+      if (staleBookkeeping) {
+        const pushed = await this.pushedHeadProof(t, pr.head);
+        if (!pushed)
+          throw new Error('Retained progress cannot be bound without its authenticated released author report and source proof. Its pushed head is judged instead: move to=review reviews the current PR head, or move to=work returns the task to the worker with the new head');
+        this.store.event(t.id, 'pushed_head_adopted', `Recorded head ${t.prHead ?? 'none'} → ${pr.head}: the open PR and the clean task checkout both report the pushed head, so the superseded run's work is observed rather than re-reported`);
+      }
       t = this.store.update(t.id, { prHead: pr.head }, 'revision_head', pr.head);
     }
     // Task 405: the proof executor observes the exact published head after the
@@ -151,5 +162,18 @@ export class RunLaunchSource {
       options = { ...options, proof: { ...options.proof, tree: source.tree } };
     }
     return await this.resolution.selectLaunchThread(t, role, options, {firstReviewEntryWorker, firstWorkerSelection, prePrWorkerResume, retainedPrePrHead, resumingUnpublished, continuedPr});
+  }
+  /**
+   * The forge's clean, pushed copy of one observed head, or null. `verifyPr`
+   * proves the PR is open and canonical, the worktree is on the queue branch and
+   * clean, and its HEAD is exactly the PR head; a dirty or unpublished checkout
+   * never proves a pushed head.
+   */
+  private async pushedHeadProof(t: Task, head: string): Promise<boolean> {
+    if (!this.machine.verifyPr) return false;
+    try {
+      const proof = await this.machine.verifyPr(t, taskPrNumber(t));
+      return proof.head === head;
+    } catch { return false; }
   }
 }

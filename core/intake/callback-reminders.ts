@@ -38,7 +38,7 @@ export function reminderDecision(facts: {
 }
 
 /** One bounded reminder to a run that stopped without a result. */
-export type CallbackRemindersContext = Pick<Resolution, 'adapter' | 'attention' | 'ensureIncident' | 'extendCallbackReminder' | 'graceMs' | 'heavyRunAlive' | 'host' | 'onTaskHost' | 'saveIncident' | 'store' | 'validationEvidence' | 'waiting'>;
+export type CallbackRemindersContext = Pick<Resolution, 'adapter' | 'attention' | 'ensureIncident' | 'extendCallbackReminder' | 'graceMs' | 'heavyRunAlive' | 'host' | 'onTaskHost' | 'ownedJobWait' | 'saveIncident' | 'store' | 'validationEvidence' | 'waiting'>;
 
 export class CallbackReminders {
   constructor(readonly resolution: CallbackRemindersContext) {}
@@ -53,6 +53,10 @@ export class CallbackReminders {
     if (run.pausedStop) { this.resolution.waiting(this.store.task(t.id), pausedStopWaitReason(run.role), 'paused_stop'); return; }
     if (isDispositionActive(t) || dispatchBlocked(this.store.task(t.id)) || reviewAuthorizationRequired(this.store.task(t.id), this.store) || run.completion) return;
     if (await this.resolution.heavyRunAlive(t)) { this.resolution.extendCallbackReminder(this.store.task(t.id), run.id); return; }
+    // Papercut 6895edaa: a thread waiting on its own detached job is working, not
+    // stopped. The live tool is the wait, and no coordinator is launched over it.
+    const job = run.agentId ? await this.resolution.ownedJobWait(run.agentId) : null;
+    if (job) { this.resolution.waiting(this.store.task(t.id), `${run.role} is waiting on its own running job: ${job}`, 'lifecycle'); this.resolution.extendCallbackReminder(this.store.task(t.id), run.id); return; }
     const incident = this.resolution.ensureIncident(t, run, `The ${run.role} thread stopped without a callback; inspect the thread`, '', 'missing_callback');
     await this.deliverCallbackReminder(this.store.task(t.id), incident, run.agentId!, run.id, run.role, run);
   }
@@ -63,6 +67,11 @@ export class CallbackReminders {
     if (t.pausedStop) { this.resolution.waiting(t, pausedStopWaitReason('worker'), 'paused_stop'); return; }
     if (isDispositionActive(t) || dispatchBlocked(this.store.task(t.id)) || !t.runId || !t.agentId || t.completion || latestRunCompletion(this.store.runs(t.id))) return;
     if (await this.resolution.heavyRunAlive(t)) { this.resolution.extendCallbackReminder(this.store.task(t.id), t.runId); return; }
+    // Papercut 6895edaa: the worker ended its turn to wait on its own timed run.
+    // Its provider timeline still shows that tool running, so the thread is
+    // waiting on the job rather than stopped without a callback.
+    const job = await this.resolution.ownedJobWait(t.agentId);
+    if (job) { this.resolution.waiting(this.store.task(t.id), `Worker is waiting on its own running job: ${job}`, 'lifecycle'); this.resolution.extendCallbackReminder(this.store.task(t.id), t.runId); return; }
     const incident = this.resolution.ensureIncident(t, null, 'Worker stopped without a completion callback; inspect the thread');
     await this.deliverCallbackReminder(this.store.task(t.id), incident, t.agentId, t.runId, 'worker', null);
   }

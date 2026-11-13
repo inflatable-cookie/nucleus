@@ -338,6 +338,42 @@ export class Stalls {
 /** A tool in a terminal state owns no live effect, whatever its renderer type. */
 export const TERMINAL_TOOL_STATUSES = new Set(['completed', 'failed', 'canceled', 'cancelled']);
 /**
+ * The oldest tool call whose latest observed state is still running, or null.
+ *
+ * This is positive evidence only: a call whose latest state is terminal, whose
+ * kind cannot outlive its turn, whose status is unrecognised, or whose states
+ * disagree at one instant is never returned. Unreadable evidence is the
+ * caller's `readToolTimeline` issue, not a live job.
+ *
+ * It answers the one question a stopped thread raises before its callback
+ * reminder: is the agent's own long-running job visibly still running, so the
+ * thread is waiting rather than stopped? (Papercut 6895edaa: a worker waiting
+ * on its one timed run of 541 test files looked like a missing callback and
+ * spent three coordinators.)
+ */
+export function runningOwnedTool(entries: TimelineEntry[]): { callId: string; name: string; kind: string; since: string } | null {
+  const calls = new Map<string, TimelineEntry[]>();
+  for (const entry of entries) {
+    if (entry.item.type !== 'tool_call') continue;
+    const callId = entry.item.callId ? String(entry.item.callId) : '';
+    if (!callId || !Number.isFinite(Date.parse(entry.timestamp))) continue;
+    calls.set(callId, [...(calls.get(callId) ?? []), entry]);
+  }
+  let found: { callId: string; name: string; kind: string; since: string } | null = null;
+  for (const [callId, states] of calls) {
+    const latestAt = Math.max(...states.map(entry => Date.parse(entry.timestamp)));
+    const latest = states.filter(entry => Date.parse(entry.timestamp) === latestAt);
+    // Two different states at one instant is ambiguous evidence, never a live job.
+    if (latest.length !== 1) continue;
+    const entry = latest[0]!;
+    const status = String(entry.item.status ?? '');
+    if (status !== 'running' || TERMINAL_TOOL_STATUSES.has(status) || turnBoundTool(entry)) continue;
+    if (!found || Date.parse(entry.timestamp) < Date.parse(found.since))
+      found = { callId, name: String(entry.item.name ?? 'call'), kind: String(entry.item.detail?.type ?? 'unknown'), since: entry.timestamp };
+  }
+  return found;
+}
+/**
  * Tool kinds whose effect cannot outlive the provider turn that started it:
  * once no turn is live, a call of one of these kinds owns no live effect even
  * if the provider never wrote a terminal status for its entry. Everything else

@@ -829,6 +829,18 @@ export type TaskNextStop = z.infer<typeof taskNextStopSchema>;
 
 const taskNextFenceSchema = z.object({ owner: z.string(), reason: z.string(), since: z.string() }).strict();
 
+/**
+ * Papercut 8fffbf59: a retained reviewer was swapped without which eligibility
+ * condition failed. Observation only; the swap event carries the same reason.
+ */
+const taskNextReviewerSwapSchema = z.object({
+  fromAgentId: z.string().nullable(),
+  condition: z.enum(['round', 'participant', 'runtime', 'context', 'error']),
+  detail: z.string(),
+  head: z.string().nullable(),
+  at: z.string(),
+}).strict();
+
 /** Spec 050 read verb: what an owner reads before steering one stuck task. */
 export const taskNextInputSchema = z.object({
   caller: z.literal("operator (board)").optional(),
@@ -875,6 +887,8 @@ export const taskNextSchema = z.object({
   /** Task 645: the durable owner no-automatic-retry rule and the control that recorded it. */
   noAutomaticRetry: z.boolean().optional(),
   noAutomaticRetryProvenance: z.string().nullable().optional(),
+  /** Papercut 8fffbf59: the newest retained-reviewer swap and the condition that failed. */
+  reviewerSwap: taskNextReviewerSwapSchema.nullable().optional(),
   /** Task 662: present when the owner retired the spent author-side proof declaration. */
   proofExecutionRetired: z.literal(true).optional(),
   workerDemandStep: z.string().optional(),
