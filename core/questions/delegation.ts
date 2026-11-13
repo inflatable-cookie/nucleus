@@ -38,12 +38,14 @@ export class Delegation {
   get store() { return this.resolution.store; }
   get adapter() { return this.resolution.adapter; }
   get profiles() { return this.resolution.profiles; }
-  private recordCommandApplied(key: string, escalationId: string): void {
-    if (this.store.eventsAll(key).some(event => event.kind === 'delegated_command_applied' || event.kind === 'delegated_command_refused')) return;
-    this.store.event(key, 'delegated_command_applied', `${escalationId}: applied`);
+  private recordCommandApplied(key: string, escalationId: string, answerEventId: number): void {
+    if (this.store.eventsAll(key).some(event => event.id > answerEventId
+      && (event.kind === 'delegated_command_applied' || event.kind === 'delegated_command_refused'))) return;
+    this.store.event(key, 'delegated_command_applied', `${escalationId}: applied after answer event ${answerEventId}`);
   }
-  private recordCommandRefused(key: string, escalationId: string, message: string): void {
-    if (this.store.eventsAll(key).some(event => event.kind === 'delegated_command_applied' || event.kind === 'delegated_command_refused')) return;
+  private recordCommandRefused(key: string, escalationId: string, message: string, answerEventId: number): void {
+    if (this.store.eventsAll(key).some(event => event.id > answerEventId
+      && (event.kind === 'delegated_command_applied' || event.kind === 'delegated_command_refused'))) return;
     this.store.event(key, 'delegated_command_refused', `${escalationId}: ${message}`.slice(0, 4000));
   }
   get stopped() { return this.resolution.stopped; }
@@ -219,32 +221,46 @@ export class Delegation {
     const qualified = parseAgentId(caller);
     const recordedHost = authority.hostId ?? (this.store.getMeta<Array<{ id: string }>>('hostRegistry')?.length === 1 ? this.store.getMeta<Array<{ id: string }>>('hostRegistry')?.[0]?.id : undefined);
     if (!caller || ![caller, qualified?.nativeAgentId].includes(authority.recipient) || (qualified && qualified.hostId !== recordedHost)) throw Error('Only the delegated recipient thread may answer this question');
-    const recorded = events.find(event => event.kind === 'delegated_answer');
+    const isEscalation = input.questionId.startsWith('ns-escalation-') || input.questionId.startsWith('ns-decider-');
+    const choices = authority.prompt.split('\n').filter(line => line.startsWith('- ')).map(line => line.slice(2));
+    const submittedAnswer = (input.answer ?? input.choice)?.trim();
+    const shortWaitChoices = isEscalation && submittedAnswer
+      ? choices.filter(choice => {
+        const shortLabel = choice.replace(/\s*\([^)]*\)$/, '');
+        return shortLabel === submittedAnswer && /^(?:Wait for a task|Wait until a time|Wait for an operator decision)$/.test(shortLabel);
+      })
+      : [];
+    const answer = shortWaitChoices.length === 1 ? shortWaitChoices[0] : submittedAnswer;
+    const normalizedInput = shortWaitChoices.length === 1
+      ? input.choice ? { ...input, choice: answer } : { ...input, answer }
+      : input;
+    const recorded = events.findLast(event => event.kind === 'delegated_answer');
     if (recorded) {
       const receipt = JSON.parse(recorded.detail) as { questionId: string; caller: string; answer?: string; reason: string; decision?: 'operator'; overtakes?: string[] };
-      const isEscalation = input.questionId.startsWith('ns-escalation-') || input.questionId.startsWith('ns-decider-');
       const escalationId = escalationIdForQuestion(input.questionId);
-      const outcome = events.findLast(event => event.kind === 'delegated_command_applied' || event.kind === 'delegated_command_refused');
+      const outcome = events.findLast(event => event.id > recorded.id && (event.kind === 'delegated_command_applied' || event.kind === 'delegated_command_refused'));
       if (outcome?.kind === 'delegated_command_applied') return receipt;
-      if (outcome?.kind === 'delegated_command_refused') return Promise.reject(Error(outcome.detail.slice(outcome.detail.indexOf(':') + 2)));
-      if (!isEscalation) return receipt;
-      const taskEvents = isEscalation ? this.store.eventsAll(authority.taskId) : [];
-      const hasEscalation = taskEvents.some(event => event.kind === 'planner_escalation' && event.detail.startsWith(`${escalationId}:`));
-      if (!hasEscalation) {
-        const message = `Escalation ${escalationId} is no longer recorded; the answer was not applied. Read task next before answering again`;
-        this.store.event(key, 'delegated_command_refused', `${escalationId}: ${message}`.slice(0, 4000));
-        return Promise.reject(Error(message));
+      if (outcome?.kind === 'delegated_command_refused') {
+        if (answer === receipt.answer && input.reason?.trim() === receipt.reason && input.decision === receipt.decision)
+          return Promise.reject(Error(outcome.detail.slice(outcome.detail.indexOf(':') + 2)));
+        // Keep the refused receipt as history and accept a distinct correction.
+      } else {
+        if (!isEscalation) return receipt;
+        const taskEvents = this.store.eventsAll(authority.taskId);
+        const hasEscalation = taskEvents.some(event => event.kind === 'planner_escalation' && event.detail.startsWith(`${escalationId}:`));
+        if (!hasEscalation) {
+          const message = `Escalation ${escalationId} is no longer recorded; the answer was not applied. Read task next before answering again`;
+          this.store.event(key, 'delegated_command_refused', `${escalationId}: ${message}`.slice(0, 4000));
+          return Promise.reject(Error(message));
+        }
+        return this.recoverRecordedEscalationAnswer(key, authority, receipt, escalationId, input.questionId, recorded.id);
       }
-      return this.recoverRecordedEscalationAnswer(key, authority, receipt, escalationId, input.questionId, recorded.id);
     }
     if (events.some(event => event.kind === 'delegated_closed') || Date.now() > authority.deadline) throw Error('This delegated answer window has closed');
-    const answer = (input.answer ?? input.choice)?.trim();
     const reason = input.reason?.trim();
     if (!reason || /[\r\n]/.test(reason) || reason.length > 500) throw Error('A one-line reason is required (up to 500 characters)');
     if (input.decision !== 'operator' && (!answer || answer.length > 4000 || /[\r\n]/.test(answer))) throw Error('An answer or choice is required (one line, up to 4000 characters)');
-    const choices = authority.prompt.split('\n').filter(line => line.startsWith('- ')).map(line => line.slice(2));
     if (input.decision !== 'operator' && choices.length && (input.choice || input.questionId.startsWith('queue-delegate-')) && !choices.includes(answer!)) throw Error('Choice must match an offered choice');
-    const isEscalation = input.questionId.startsWith('ns-escalation-') || input.questionId.startsWith('ns-decider-');
     const escalationId = escalationIdForQuestion(input.questionId);
     const taskEvents = isEscalation ? this.store.eventsAll(authority.taskId) : [];
     const escalation = isEscalation ? plannerEscalations(taskEvents as LadderEvent[]).find(item => item.id === escalationId) : undefined;
@@ -252,14 +268,15 @@ export class Delegation {
     const receipt = { questionId: input.questionId, caller, answer, reason, ...(input.decision ? { decision: input.decision } : {}),
       ...(authority.role === 'planner' && input.overtakes?.length ? { overtakes: [...new Set(input.overtakes)].slice(0, 100) } : {}) };
     this.store.event(key, 'delegated_answer', JSON.stringify(receipt));
+    const receiptEventId = this.store.eventsAll(key).findLast(event => event.kind === 'delegated_answer')!.id;
     this.store.event(authority.taskId, 'delegated_command_answered', `${input.questionId}: ${caller}`);
     if (escalation) {
-      return this.applyEscalationAnswer(authority.taskId, input, caller, authority.role, reason).then(() => {
-        this.recordCommandApplied(key, escalationId);
+      return this.applyEscalationAnswer(authority.taskId, normalizedInput, caller, authority.role, reason).then(() => {
+        this.recordCommandApplied(key, escalationId, receiptEventId);
         return receipt;
       }, error => {
         const message = error instanceof Error ? error.message : String(error);
-        this.recordCommandRefused(key, escalationId, message);
+        this.recordCommandRefused(key, escalationId, message, receiptEventId);
         throw error;
       });
     }
@@ -278,32 +295,32 @@ export class Delegation {
         authority.taskId, escalationId, questionId,
       );
       if (inProcess?.status === 'applied') {
-        this.recordCommandApplied(key, escalationId);
+        this.recordCommandApplied(key, escalationId, recordedId);
         return receipt;
       }
       if (inProcess?.status === 'refused') {
         const message = `Escalation ${escalationId} answer was not applied: ${inProcess.reason}`;
-        this.recordCommandRefused(key, escalationId, message);
+        this.recordCommandRefused(key, escalationId, message, recordedId);
         return Promise.reject(Error(message));
       }
       const refused = taskEvents.findLast(event => event.kind === 'planner_escalation_answer_refused'
         && event.detail.startsWith(`${escalationId}:`) && event.id > recordedId);
       if (refused) {
         const message = refused.detail.slice(refused.detail.indexOf(':') + 2);
-        this.recordCommandRefused(key, escalationId, message);
+        this.recordCommandRefused(key, escalationId, message, recordedId);
         return Promise.reject(Error(message));
       }
       if (taskEvents.some(event => (event.kind === 'planner_escalation_applied'
         || event.kind === 'planner_escalation_resolved')
         && event.detail.startsWith(`${escalationId}:`) && event.id > recordedId)
         || this.resolution.ladder.operatorDecisionApplied(authority.taskId, escalationId)) {
-        this.recordCommandApplied(key, escalationId);
+        this.recordCommandApplied(key, escalationId, recordedId);
         return receipt;
       }
       const reconciled = this.resolution.ladder.reconcileDelegatedEscalationAnswer(
         authority.taskId, escalationId, questionId, recordedId);
       if (reconciled === 'applied') {
-        this.recordCommandApplied(key, escalationId);
+        this.recordCommandApplied(key, escalationId, recordedId);
         return receipt;
       }
       if (reconciled === 'unknown') {
@@ -311,7 +328,7 @@ export class Delegation {
         this.store.event(authority.taskId, 'planner_escalation_action_uncertain', `${escalationId}: ${message}`.slice(0, 4000));
         this.store.event(authority.taskId, 'planner_escalation_answer_refused', `${escalationId}: ${message}`.slice(0, 4000));
         this.resolution.waiting(this.store.task(authority.taskId), `Escalation ${escalationId} is unresolved: ${message}`, 'escalated');
-        this.recordCommandRefused(key, escalationId, message);
+        this.recordCommandRefused(key, escalationId, message, recordedId);
         return Promise.reject(Error(message));
       }
       if (plannerEscalations(taskEvents as LadderEvent[]).find(item => item.id === escalationId)?.answered) {
@@ -332,11 +349,11 @@ export class Delegation {
         ...(receipt.overtakes ? { overtakes: receipt.overtakes } : {}),
       };
       return this.applyEscalationAnswer(authority.taskId, replay, receipt.caller, authority.role, receipt.reason).then(() => {
-        this.recordCommandApplied(key, escalationId);
+        this.recordCommandApplied(key, escalationId, recordedId);
         return receipt;
       }, error => {
         const message = error instanceof Error ? error.message : String(error);
-        this.recordCommandRefused(key, escalationId, message);
+        this.recordCommandRefused(key, escalationId, message, recordedId);
         throw error;
       });
   }
@@ -351,16 +368,17 @@ export class Delegation {
         if (refusal) throw Error(refusal);
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const detail = error instanceof Error ? error.message : String(error);
+      const message = `Escalation ${escalationId} answer was not applied: ${detail}. Read task next, then answer this same question with a corrected choice or reason.`;
       this.store.event(taskId, 'planner_escalation_answer_refused', `${escalationId}: ${message}`.slice(0, 4000));
-      throw Error(`Escalation ${escalationId} answer was not applied: ${message}`);
+      throw Error(message);
     }
   }
   async waitDelegatedAnswer(id: string, signal: AbortSignal): Promise<string | null> {
     const key = `delegation:${id}`;
     while (true) {
       const events = this.store.eventsAll(key);
-      const receipt = events.find(event => event.kind === 'delegated_answer');
+      const receipt = events.findLast(event => event.kind === 'delegated_answer');
       if (receipt) {
         const value = JSON.parse(receipt.detail) as { answer?: string; reason: string; decision?: string; overtakes?: string[] };
         const delivered = events.findLast(event => event.kind === 'delegated_delivery');

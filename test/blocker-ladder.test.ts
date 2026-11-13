@@ -148,6 +148,16 @@ test("an escalation delegate reply parses in its three shapes and maps onto ordi
   );
   assert.equal(parseEscalationReply(null, choices), null);
 
+  assert.deepEqual(parseEscalationReply('Choice: Wait for a task\nReason: nucleus#123', choices), {
+    kind: 'choice', choice: 'Wait for a task (put its reference in Reason)', reason: 'nucleus#123',
+  });
+  assert.deepEqual(parseEscalationReply('Choice: Wait until a time\nReason: 2099-01-01T00:00:00Z', choices), {
+    kind: 'choice', choice: 'Wait until a time (put an ISO timestamp in Reason)', reason: '2099-01-01T00:00:00Z',
+  });
+  assert.deepEqual(parseEscalationReply('Choice: Wait for an operator decision\nReason: decision-123', choices), {
+    kind: 'choice', choice: 'Wait for an operator decision (put its ID in Reason)', reason: 'decision-123',
+  });
+
   assert.deepEqual(escalationAnswerControl("Stop and keep the work"), {
     action: "stop",
   });
@@ -709,7 +719,7 @@ for (const kind of ["time", "decision"] as const) {
       const questionId = `ns-escalation-${escalationId}`;
       const decision = kind === "decision" ? new Decisions(f.store).add({ question: "What next?", askedBy: "origin" }) : null;
       const target = kind === "time" ? "2099-01-01T00:00:00.000Z" : decision!.id;
-      const choice = kind === "time" ? "Wait until a time (put an ISO timestamp in Reason)" : "Wait for an operator decision (put its ID in Reason)";
+      const choice = kind === "time" ? "Wait until a time" : "Wait for an operator decision";
       const reason = kind === "time" ? "2099-01-01T00:00:00Z" : decision!.id;
       const receiptKey = `delegation:${questionId}`;
       f.store.event(receiptKey, "delegated_answer", JSON.stringify({ questionId, caller: "origin", answer: choice, reason }));
@@ -884,10 +894,20 @@ test("an escalation answer that no longer applies returns its refusal and stays 
         choice: "Return to the worker with a new approach",
         reason: "Use the isolated replay fixture.",
       }, "origin")),
-      /answer was not applied: The selected move is no longer available/,
+      /answer was not applied: The selected move is no longer available\. Read task next, then answer this same question with a corrected choice or reason\./,
     );
-    assert.match(f.events("planner_escalation_answer_refused").at(-1)!.detail, /selected move is no longer available/);
+    assert.match(f.events("planner_escalation_answer_refused").at(-1)!.detail, /Read task next, then answer this same question with a corrected choice or reason/);
     assert.equal(plannerEscalations(f.store.eventsAll(f.current().id)).find(item => item.id === escalationId)?.answered, false);
+
+    f.engine.resolution.applyOperatorControl = async () => f.current();
+    const corrected = await f.engine.resolution.answerDelegatedQuestion({
+      questionId: `ns-escalation-${escalationId}`,
+      choice: "Return to the worker with a new approach",
+      reason: "Use the corrected, current worktree instruction.",
+    }, "origin");
+    assert.equal(corrected.questionId, `ns-escalation-${escalationId}`);
+    assert.equal(plannerEscalations(f.store.eventsAll(f.current().id)).find(item => item.id === escalationId)?.answered, true);
+    assert.equal(f.store.eventsAll(`delegation:ns-escalation-${escalationId}`).filter(event => event.kind === "delegated_answer").length, 2);
   } finally { await f.close(); }
 });
 
@@ -1648,7 +1668,7 @@ test('a named task wait wakes the parked escalation when its prerequisite settle
   const f = fixture({ responsible: true });
   f.engine.resolution.delegatedAnswerWaitMs = 5000;
   const prerequisite = f.store.insert(submissionSchema.parse({ submissionId: randomUUID(), title: 'Upstream', repoPath: join(f.dir, 'upstream'), planningCommit: 'b'.repeat(40), brief: { text: 'Upstream' }, originAgentId: 'origin' }), 'host', 'brief', 'b'.repeat(40));
-  (f.adapter as unknown as Record<string, unknown>).askPlanner = async () => `Choice: Wait for a task (put its reference in Reason)\nReason: ${prerequisite.id}`;
+  (f.adapter as unknown as Record<string, unknown>).askPlanner = async () => `Choice: Wait for a task\nReason: ${prerequisite.id}`;
   try {
     f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: join(f.dir, 'repo') }] });
     f.store.setProjectPlanner({ key: 'app', agentId: 'planner-1', setBy: 'operator' });
@@ -1746,7 +1766,30 @@ test('a time wait wakes once when the named time arrives', async () => {
   const f = fixture({ responsible: true });
   f.engine.resolution.delegatedAnswerWaitMs = 5000;
   let when = '';
-  (f.adapter as unknown as Record<string, unknown>).askPlanner = async () => { when = new Date(Date.now() + 1000).toISOString(); return `Choice: Wait until a time (put an ISO timestamp in Reason)\nReason: ${when}`; };
+  (f.adapter as unknown as Record<string, unknown>).askPlanner = async () => { when = new Date(Date.now() + 10_000).toISOString(); return `Choice: Wait until a time\nReason: ${when}`; };
+  try {
+    f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: join(f.dir, 'repo') }] });
+    f.store.setProjectPlanner({ key: 'app', agentId: 'planner-1', setBy: 'operator' });
+    await f.reviews(1); await f.engine.wake();
+    await f.report('blocked', { summary: 'Try after the window', cause: { kind: 'external', name: 'window' } });
+    await until(() => f.events('planner_escalation_applied').some(event => event.detail.includes('waiting until'))
+      || f.events('planner_escalation_answer_refused').length > 0);
+    assert.equal(f.events('planner_escalation_answer_refused').length, 0, JSON.stringify(f.events('planner_escalation_answer_refused')));
+    assert.match(f.current().resolution.stop?.detail ?? '', /waiting until/i);
+    await new Promise(resolve => setTimeout(resolve, Math.max(0, Date.parse(when) - Date.now()) + 10));
+    await f.engine.resolution.resumeAskQuestions();
+    assert.equal(f.events('planner_escalation_woke').length, 1, JSON.stringify(f.events('planner_escalation_wake_refused')));
+  } finally { await f.close(); }
+});
+
+test("a planner's recorded time wait prevents pending recovery from re-escalating until it wakes", async () => {
+  const f = fixture({ responsible: true });
+  f.engine.resolution.delegatedAnswerWaitMs = 5000;
+  let when = '';
+  (f.adapter as unknown as Record<string, unknown>).askPlanner = async () => {
+    when = new Date(Date.now() + 10_000).toISOString();
+    return `Choice: Wait until a time (put an ISO timestamp in Reason)\nReason: ${when}`;
+  };
   try {
     f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: join(f.dir, 'repo') }] });
     f.store.setProjectPlanner({ key: 'app', agentId: 'planner-1', setBy: 'operator' });
@@ -1754,9 +1797,26 @@ test('a time wait wakes once when the named time arrives', async () => {
     await f.report('blocked', { summary: 'Try after the window', cause: { kind: 'external', name: 'window' } });
     await until(() => f.events('planner_escalation_applied').some(event => event.detail.includes('waiting until')));
     assert.match(f.current().resolution.stop?.detail ?? '', /waiting until/i);
+
+    const task = f.current();
+    f.store.update(task.id, { resolution: { ...task.resolution, recovery: {
+      id: 'recovery-pending-wait', key: 'stalled-episode', generation: task.coordinatorGeneration,
+      runId: null, agentId: null, status: 'pending', summary: '', idleSince: null, incidentId: null, progress: null,
+    } } }, 'test_recovery_pending', 'stalled turn recorded a pending recovery episode');
+    f.store.event(task.id, 'recovery_pending', 'stalled turn episode');
+    (f.engine.resolution.recovery as unknown as { pendingBoundMs: number }).pendingBoundMs = 0;
+    const escalationCount = f.events('planner_escalation').length;
+    await f.engine.resolution.recovery.pass(task.id);
+    assert.equal(f.events('planner_escalation').length, escalationCount,
+      'the planner wait owns the task while the timed condition is active');
+
     await new Promise(resolve => setTimeout(resolve, Math.max(0, Date.parse(when) - Date.now()) + 10));
     await f.engine.resolution.resumeAskQuestions();
     assert.equal(f.events('planner_escalation_woke').length, 1, JSON.stringify(f.events('planner_escalation_wake_refused')));
+    const afterWake = f.events('planner_escalation').length;
+    await f.engine.resolution.recovery.pass(task.id);
+    assert.equal(f.events('planner_escalation').length, afterWake,
+      'waking the recorded wait resumes the task instead of reopening the stale recovery episode');
   } finally { await f.close(); }
 });
 
@@ -1765,7 +1825,7 @@ test('an operator decision wait applies its answer on wake', async () => {
   f.engine.resolution.delegatedAnswerWaitMs = 5000;
   const decisions = new Decisions(f.store);
   const decision = decisions.add({ question: 'What should happen next?', askedBy: 'origin' });
-  (f.adapter as unknown as Record<string, unknown>).askPlanner = async () => `Choice: Wait for an operator decision (put its ID in Reason)\nReason: ${decision.id}`;
+  (f.adapter as unknown as Record<string, unknown>).askPlanner = async () => `Choice: Wait for an operator decision\nReason: ${decision.id}`;
   try {
     f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: join(f.dir, 'repo') }] });
     f.store.setProjectPlanner({ key: 'app', agentId: 'planner-1', setBy: 'operator' });

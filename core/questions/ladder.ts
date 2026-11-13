@@ -781,7 +781,9 @@ export class Ladder {
         return null;
       }
       if (answer.startsWith('Wait for a task (')) {
-        const prerequisite = this.resolution.messageRecipientTask(current, reason);
+        let prerequisite: Task;
+        try { prerequisite = this.resolution.messageRecipientTask(current, reason); }
+        catch (error) { throw Error(`Wait for a task (put its reference in Reason) could not read target "${reason}": ${error instanceof Error ? error.message : String(error)}`); }
         const controlInput = taskControlInputSchema.parse({ taskId: current.id, version: current.version,
           action: 'set_prerequisite_wait', waitsFor: [prerequisite.id], reason: `Escalation ${id}: waiting for ${prerequisite.reference ?? prerequisite.id}` });
         this.store.event(t.id, 'planner_escalation_answer_pending', `${id}: ${JSON.stringify({ questionId, who, answer, control: controlInput })}`);
@@ -795,7 +797,8 @@ export class Ladder {
       }
       if (answer.startsWith('Wait until a time (')) {
         const at = Date.parse(reason);
-        if (!Number.isFinite(at) || at <= Date.now() || !/(?:Z|[+-]\d\d:\d\d)$/i.test(reason)) throw Error('Name a future ISO timestamp with a timezone');
+        if (!Number.isFinite(at) || at <= Date.now() || !/(?:Z|[+-]\d\d:\d\d)$/i.test(reason))
+          throw Error(`Wait until a time (put an ISO timestamp in Reason) could not read target "${reason}": name a future ISO timestamp with a timezone`);
         const target = new Date(at).toISOString();
         this.store.event(t.id, 'planner_escalation_answer_pending', `${id}: ${JSON.stringify({ questionId, who, answer, control: { kind: 'time', target } })}`);
         if (!this.establishEscalationWait(current.id, id, { kind: 'time', target }))
@@ -805,8 +808,13 @@ export class Ladder {
         return null;
       }
       if (answer.startsWith('Wait for an operator decision (')) {
-        const decision = new Decisions(this.store).get({ id: reason });
-        if (decision.status !== 'open') throw Error('Name an open operator decision ID');
+        let decision: DecisionView;
+        try {
+          decision = new Decisions(this.store).get({ id: reason });
+          if (decision.status !== 'open') throw Error('the decision is not open');
+        } catch (error) {
+          throw Error(`Wait for an operator decision (put its ID in Reason) could not read target "${reason}": ${error instanceof Error ? error.message : String(error)}`);
+        }
         this.store.event(t.id, 'planner_escalation_answer_pending', `${id}: ${JSON.stringify({ questionId, who, answer, control: { kind: 'decision', target: decision.id } })}`);
         if (!this.establishEscalationWait(current.id, id, { kind: 'decision', target: decision.id }))
           throw Error('The operator decision wait could not be established against the current task');

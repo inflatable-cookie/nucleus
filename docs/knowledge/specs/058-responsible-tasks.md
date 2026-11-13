@@ -201,7 +201,10 @@ pending episode with no run, no accepted action and no paused or dispatch-held w
 task's planner ladder after three minutes, naming the stop and the verbs that exit it (papercut
 0489ea25: nucleus#1166 sat pending for 2h14m because the stalled run still held its lease and no
 launch, wait or escalation followed). A legitimate capacity, dispatch, route or environment wait
-clears the pending episode instead, so it is not escalated by this bound.
+clears the pending episode instead, so it is not escalated by this bound. A planner-selected task,
+time or operator-decision wait is also an owned wait: while its typed stop is active, the no-run bound
+stands down. The wait's wake path resumes the task when its condition settles; recovery can act again
+only if the resumed task still has an unresolved fault.
 
 ### Capacity counts live agents (Tom, 2026-11-03)
 

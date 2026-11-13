@@ -113,6 +113,8 @@ export function parseDelegateReply(text: string | null | undefined, mode: 'nativ
     if (!value) return undefined;
     if (choices.includes(value)) return value;
     if (mode !== 'escalation') return undefined;
+    const shortLabels = choices.filter(item => item.replace(/\s*\([^)]*\)$/, '') === value);
+    if (shortLabels.length === 1) return shortLabels[0];
     const matches = choices.filter(item => item.startsWith(`${value}: `));
     return matches.length === 1 ? matches[0] : undefined;
   };

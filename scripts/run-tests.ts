@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runnerFlags } from './test-runner-flags.mjs';
 import durations from './test-durations.json';
-import { durationReporterArgs, durationTablePath, flushDurationTable } from './duration-reporter.mjs';
+import { durationReporterArgs, durationTablePath, failureSummaryPath, flushDurationTable, flushFailureSummary } from './duration-reporter.mjs';
 
 /**
  * Node test-runner options that take their value as the next argv entry rather
@@ -107,11 +107,13 @@ function run() {
     installEnv.NUCLEUS_INSTALL_RUNTIME_CACHE = cache;
   }
   const table = durationTablePath();
+  const failureSummary = failureSummaryPath();
   const result = spawnSync(process.execPath, [
     require.resolve('tsx/cli'),
     ...testRunnerArgs(options, files),
-  ], { stdio: 'inherit', env: { ...installEnv, QUEUE_QA_DURATIONS_FILE: table } });
+  ], { stdio: 'inherit', env: { ...installEnv, QUEUE_QA_DURATIONS_FILE: table, QUEUE_TEST_FAILURES_FILE: failureSummary } });
   flushDurationTable(table);
+  flushFailureSummary(failureSummary);
 
   if (result.error) {
     console.error(result.error);
