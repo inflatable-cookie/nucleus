@@ -1,7 +1,6 @@
 import { historicalWireLabel } from "../../shared/wire-labels";
 import { existsSync, renameSync } from "node:fs";
-import { randomUUID } from "node:crypto";
-import { removeTree } from "./tree-removal";
+import { removeTree, finishInterruptedRemoval, removalQuarantinePath } from "./tree-removal";
 import type { Run, Task } from "../../shared/contracts";
 import type { AgentObservation, OriginAgent } from "../host/adapter";
 import type { WorkspaceContinuationHost } from "./workspace-continuation";
@@ -196,6 +195,12 @@ export class OwnedWorkspaceArchive {
       if(!discarding&&(await git(directory,'rev-parse','HEAD')!==actualHead||await queueCheckoutStatus(directory,'status','--porcelain')))throw Error('Preserving workspace with uncommitted files or unexpected commits before teardown');
       return {foreignAgentIds,actualHead,origin,publication,current,orphan};
     };
+    // An interrupted detach leaves its tree under the deterministic quarantine
+    // sibling with the original path gone; a retry that only looked at the
+    // original path would report the archive complete while that tree survives.
+    // Finish it before proving anything, so the proofs below see a settled world
+    // (nucleus#1179 review 5890648389).
+    await finishInterruptedRemoval(directory);
     const initial=await prove(false);
     if(!initial)return [];
     if(buildOutputCleanup){
@@ -266,14 +271,14 @@ export class OwnedWorkspaceArchive {
         // proof (nucleus#1179 review 5890172363).
         if(discarding){assertCanonicalOwnedPath(directory,ownedData,commonDir,task.id);normalizeOwnedDirectoryPermissions(directory);}
         if(initial.orphan.orphaned){
-          const quarantine=`${directory}.queue-removing-${process.pid}-${randomUUID().slice(0,8)}`;
+          const quarantine=removalQuarantinePath(directory);
           renameSync(directory,quarantine);
           await removeTree(quarantine,{force:false});
         }
         else await removeOwnedWorktree(task.repoPath,directory,discarding);
       }
       catch(error){throw Error(`worktree.teardown failed: ${error instanceof Error?error.message:String(error)}`);}
-      if(existsSync(directory))throw Error(`worktree.teardown failed: Queue-owned worktree directory remains after archive: ${directory}`);
+      if(existsSync(directory)||existsSync(removalQuarantinePath(directory)))throw Error(`worktree.teardown failed: Queue-owned worktree directory remains after archive: ${[directory,removalQuarantinePath(directory)].filter(path=>existsSync(path)).join(', ')}`);
     }
     return initial.foreignAgentIds;
   }
