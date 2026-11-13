@@ -328,7 +328,11 @@ test("032-9 a decision view names its Queue project, and agent-projects maps a t
     const owning = f.store.projectFor(project.path, project.origin)!;
     assert.ok(owning, "the task's repository has a Queue project");
     assert.equal(add(f).projectKey, owning.key);
-    assert.equal(add(f, { project: null }).projectKey, null, "a General decision has no project");
+    // Task 1183 refuses new project-less decisions; a legacy General row still reads with no project.
+    const legacy = f.store.addDecision({ id: "legacy-general", version: 1, question: "Old general question?",
+      askedBy: { agentId: "agent-asker", project: null }, links: { tasks: [], leads: [], papercuts: [] },
+      status: "open", createdAt: "2026-11-01T00:00:00.000Z", updatedAt: "2026-11-01T00:00:00.000Z", versions: [] });
+    assert.equal(f.decisions.get({ id: legacy.id }).projectKey, null, "a General decision has no project");
     f.store.update(task.id, { agentId: "worker-1" });
     assert.deepEqual(f.decisions.agentProjects({ agents: [
       { agentId: "worker-1", cwd: "/somewhere/worktrees/ns-task" },

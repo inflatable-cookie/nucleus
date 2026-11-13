@@ -165,3 +165,71 @@ test('CLI forwards --wait in either position and submits an authorized brief in 
     assert.equal(calls.length, 3, 'each command makes one mutation request');
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });
+
+test('1183 decision.add records the authenticated calling thread as the asker, never a typed name', async () => {
+  const { createServer: createSocketServer } = await import('node:net');
+  const { createFrameReader, encodeFrame, PROTOCOL_VERSION } = await import('../shared/service/protocol');
+  const { rpcContractDigests } = await import('../shared/rpc-contracts');
+  const { createServer } = await import('node:http');
+  const dir = mkdtempSync(join(tmpdir(), 'cli-decision-'));
+  const socketPath = join(dir, 's');
+  const calls: { method: string; input: any }[] = [];
+  const stamp = new Date().toISOString();
+  const frameServer = createSocketServer(socket => {
+    const reader = createFrameReader((frame: any) => {
+      let result: unknown = {};
+      if (frame.method === 'caller.resolve') result = { caller: 'nucleus-agent:v1:["paseo-fixture","fixture-planner"]', hostId: 'paseo-fixture', source: 'host' };
+      if (frame.method === 'service.health') result = { protocolVersion: PROTOCOL_VERSION, rpcContracts: rpcContractDigests() };
+      else if (!['service.auth', 'caller.resolve'].includes(frame.method)) {
+        calls.push({ method: frame.method, input: frame.input });
+        result = { id: 'dec-1', version: 1, question: frame.input.question, askedBy: { agentId: frame.input.askedBy, project: null },
+          links: { tasks: [], leads: [], papercuts: [] }, status: 'open',
+          createdAt: stamp, updatedAt: stamp, versions: [], stale: false, projectKey: null, askerLabel: 'an earlier thread' };
+      }
+      socket.write(encodeFrame({ v: PROTOCOL_VERSION, id: frame.id, result }));
+    }, error => { throw error; });
+    socket.on('data', chunk => reader.feed(chunk));
+  });
+  await new Promise<void>(resolve => frameServer.listen(socketPath, resolve));
+  writeFileSync(join(dir, 'queue-service.json'), JSON.stringify({ protocolVersion: PROTOCOL_VERSION, buildId: 'fixture-build', socketPath,
+    credential: 'a'.repeat(64), pid: process.pid, startedAt: new Date().toISOString() }));
+  // A T3 worker's CLI-helper run ticket, resolved through the callback like the helper's own reports.
+  const callbackSock = join(dir, 'callback.sock'), ticketPath = join(dir, 'run.json');
+  writeFileSync(ticketPath, JSON.stringify({ socketPath: callbackSock, taskId: 'task-1', runId: 'run-1', token: 'ticket-secret' }));
+  const t3Caller = 'nucleus-agent:v1:["t3code:alpha","thread-t3"]';
+  const callback = createServer((request, response) => {
+    assert.equal(request.url, '/caller');
+    assert.equal(request.headers.authorization, 'Bearer ticket-secret');
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ caller: t3Caller, hostId: 't3code:alpha', source: 'run-ticket' }));
+  });
+  await new Promise<void>(resolve => callback.listen(callbackSock, resolve));
+  const invoke = (input: unknown, env: Record<string, string>) => new Promise<{ code: number | null; stdout: string; stderr: string }>(resolve => {
+    const child = spawn(process.execPath, [new URL('../bin/queue-cli.mjs', import.meta.url).pathname, 'decision.add', '-'], {
+      env: { ...process.env, NUCLEUS_DATA_HOME: dir, PASEO_AGENT_ID: '', NUCLEUS_TICKET: '', ...env },
+    });
+    let stdout = '', stderr = '';
+    child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
+    child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
+    child.on('close', code => resolve({ code, stdout, stderr }));
+    child.stdin.end(JSON.stringify(input));
+  });
+  try {
+    // A Paseo worker calling through host identity: the typed name is replaced by the resolved caller.
+    const paseo = await invoke({ question: 'Which branch?', askedBy: 'forged-id' }, { PASEO_AGENT_ID: 'fixture-planner' });
+    assert.equal(paseo.code, 0, paseo.stderr);
+    assert.equal(JSON.parse(paseo.stdout).id, 'dec-1');
+    assert.equal(calls.at(-1)!.method, 'decision.add');
+    assert.equal(calls.at(-1)!.input.askedBy, 'nucleus-agent:v1:["paseo-fixture","fixture-planner"]');
+    assert.equal(calls.at(-1)!.input.question, 'Which branch?');
+    // A T3 worker calling with its CLI-helper run ticket: same binding, no typed name.
+    const t3 = await invoke({ question: 'Which branch for T3?' }, { NUCLEUS_TICKET: ticketPath });
+    assert.equal(t3.code, 0, t3.stderr);
+    assert.equal(calls.at(-1)!.input.askedBy, t3Caller);
+    assert.equal(calls.at(-1)!.input.question, 'Which branch for T3?');
+  } finally {
+    await new Promise<void>(resolve => frameServer.close(() => resolve()));
+    await new Promise<void>(resolve => callback.close(() => resolve()));
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

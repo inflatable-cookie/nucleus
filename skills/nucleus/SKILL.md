@@ -1171,7 +1171,7 @@ Coordination (recovery, review routing, merge, closeout) is Nucleus's job.
 Papercuts, leads, decisions and plans are Nucleus records:
 `papercut.add|list|get|edit|promote|promote-task|close|set-lanes`,
 `lead.add|submit|edit|get|version|list|set-lanes|set-tags|drop|reopen|promote|check|approve|promote-task|import`,
-`decision.add|get|list|answer|withdraw|link|supersede`, and `plan.get|plan.set`.
+`decision.add|get|list|answer|withdraw|link|supersede|backfill`, and `plan.get|plan.set`.
 Record small recurring friction as a papercut and carry on; list existing items before filing duplicates. The planner can attach it to lanes, promote it, or close it as completed or deprecated.
 A papercut needs `repository` (an origin string or `{origin, path}`), `title`,
 `happened` and `impact`; `papercut.promote-task` also needs `complexity`, since
@@ -1200,11 +1200,19 @@ Link decisions to related tasks, leads or papercuts. Withdraw an overtaken quest
 
 ```sh
 node bin/queue-cli.mjs decision.add - <<'JSON'
-{"question": "...", "askedBy": "<your agent ID>", "options": ["A", "B"],
- "recommendation": "A, because ...", "context": "...",
- "project": {"origin": "owner/name", "path": "/abs/checkout"}}
+{"question": "...", "options": ["A", "B"],
+ "recommendation": "A, because ...", "context": "..."}
 JSON
 ```
+
+Nucleus ties every board decision to a project and names who asked: the CLI
+records the calling thread as the asker, derives the project (and the caller's
+task link) from that identity, and refuses a decision it cannot place. Omit
+`project` and `tasks` when asking about your own work; link related tasks,
+leads or papercuts you are not placed on. A `project` that contradicts the
+calling thread is refused, as is an asker Nucleus cannot place — the refusal
+says to pass `project` or link the task. An operator adding a decision at the
+board picks its project.
 
 `queue.outcome-search`
 answers "what landed for X" and "why does this code look like this" before reading

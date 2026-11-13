@@ -10,6 +10,13 @@ export const decisionAdd = defineRpc({ name: "decision.add", input: z.object(dec
 
 export const decisionGet = defineRpc({ name: "decision.get", input: z.object({ id: z.string().min(1) }).strict(), output: decisionViewSchema });
 
+/** Task 1183: retarget project-less decisions at the asker's project. The planner runs the real backfill after merge. */
+export const decisionBackfill = defineRpc({ name: "decision.backfill",
+  input: z.object({ dryRun: z.boolean().default(true) }).strict(),
+  output: z.object({ total: z.number().int().nonnegative(), resolved: z.number().int().nonnegative(),
+    ambiguous: z.number().int().nonnegative(), unresolvable: z.number().int().nonnegative(),
+    updated: z.number().int().nonnegative() }).strict() });
+
 export const decisionAgentProjects = defineRpc({ name: "decision.agent-projects", input: decisionAgentProjectsInputSchema,
   output: z.array(z.object({ agentId: z.string(), project: z.object({ key: z.string(), name: z.string() }).nullable() }).strict()) });
 

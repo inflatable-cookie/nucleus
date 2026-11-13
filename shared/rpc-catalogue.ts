@@ -70,6 +70,7 @@ export const RPC_CATALOGUE: RpcCatalogueEntry[] = [
   { name: "decision.withdraw", contract: contracts.decisionWithdraw, method: "withdrawDecision", mutating: true },
   { name: "decision.link", contract: contracts.decisionLink, method: "linkDecision", mutating: true },
   { name: "decision.supersede", contract: contracts.decisionSupersede, method: "supersedeDecision", mutating: true },
+  { name: "decision.backfill", contract: contracts.decisionBackfill, method: "backfillDecisions", mutating: true },
   { name: "lane.document.get", contract: contracts.laneDocumentGet, method: "getLaneDocument", mutating: false },
   { name: "lane.document.edit", contract: contracts.laneDocumentEdit, method: "editLaneDocument", mutating: true },
   { name: "plan.get", contract: contracts.planGet, method: "getPlan", mutating: false },

@@ -11,7 +11,7 @@ import { phaseBadgeTone, recordBadgeTone } from "../../shared/badge-tones";
 import { waitStateLabels } from "../../shared/wait-state";
 import { isWaitingTaskStop, taskStopClassification } from "../../shared/task-stop";
 import { decisionAge } from "../../shared/pipeline-board";
-import { decisionProjectLabel, isGeneralDecision } from "../../shared/decision-project";
+import { UNKNOWN_ASKER_LABEL, decisionProjectLabel, isGeneralDecision } from "../../shared/decision-project";
 import { taskWaitCardLabel } from "../../shared/task-detail-summary";
 import { projectName, plainCardText, plainCardNode, phaseLabel, phaseIcon, attention, holdKindLabel, presentHoldKinds, stopBadgeLabel, prerequisiteLine, holdReasonPreview, budgetFields, interactiveBadgeLabel, elapsedRun, longShellCommandStart } from "./text";
 import { useTick } from "../use-tick";
@@ -182,7 +182,10 @@ export const DecisionCard = React.memo(function DecisionCard({decision,selected,
   const links = decision.links.tasks.length + decision.links.leads.length + decision.links.papercuts.length;
   const {choices, recommended} = decisionChoicePresentation(decision);
   const headline = decision.headline ?? decision.question;
-  return <BoardCard label={`Decision: ${headline}`} onPress={onPress} selected={selected} c={c} board={board}
+  // Task 1183: the card names who asked — the task reference and role, or the
+  // planner or agent name — never a bare agent or thread ID.
+  const asker = decision.askerLabel ?? UNKNOWN_ASKER_LABEL;
+  return <BoardCard label={`Decision: ${headline}, asked by ${asker}`} onPress={onPress} selected={selected} c={c} board={board}
     eyebrow={<><Icon name="Folder" size={12} color={c.foregroundMuted}/><Text numberOfLines={1} ellipsizeMode="tail" style={{...muted(c),fontSize:typeScale.metadata.fontSize,flexShrink:1}}>{decisionProjectLabel(decision)}</Text></>}
     title={<Text numberOfLines={2} style={{color:c.foreground,fontWeight:"600",fontSize:typeScale.body.fontSize,lineHeight:typeScale.body.lineHeight}}>{headline}</Text>}
     chips={<RecordChips c={c} chips={["Decision", ...(decision.stale ? ["Stale"] : []), ...((decision.overtakenBy?.length ?? 0) > 0 ? ["Probably overtaken"] : [])]}/>}
@@ -191,7 +194,7 @@ export const DecisionCard = React.memo(function DecisionCard({decision,selected,
       {linkedTaskLabels.length > 0 && <Text numberOfLines={1} ellipsizeMode="tail" style={{...muted(c),fontSize:typeScale.metadata.fontSize}}>Task · {linkedTaskLabels.join(", ")}</Text>}
       {isGeneralDecision(decision) && linkedTaskProjects.length > 0 && <Text numberOfLines={1} ellipsizeMode="tail" style={{...muted(c),fontSize:typeScale.metadata.fontSize}}>linked: {linkedTaskProjects.join(', ')}</Text>}
     </View> : undefined}
-    footer={<Text numberOfLines={1} ellipsizeMode="tail" style={{...muted(c),fontSize:typeScale.metadata.fontSize,flex:1,minWidth:0}}>Asked {decisionAge(decision.createdAt)}{links?` · ${links} link${links===1?"":"s"}`:""}</Text>} />;
+    footer={<Text numberOfLines={1} ellipsizeMode="tail" style={{...muted(c),fontSize:typeScale.metadata.fontSize,flex:1,minWidth:0}}>Asked {asker} · {decisionAge(decision.createdAt)}{links?` · ${links} link${links===1?"":"s"}`:""}</Text>} />;
 });
 /**
  * Spec 032: Queue's own escalation — a task in needs_attention or carrying an

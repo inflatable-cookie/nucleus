@@ -342,9 +342,10 @@ test('Spec 027 removal: an open decision linked only to a purged task outcome st
       brief: { digest: briefDigest('Brief'), mediaType: 'text/markdown', text: 'Brief', source: 'handoff', version: null, earlierDigests: [] },
       workers: [], reviewers: [], startedAt: stamp, finishedAt: stamp, backfilled: false,
     }));
+    // Task 1183: the decision is recorded while its task still exists, then the task is purged.
+    new Decisions(store).add({ question: 'Purged link?', askedBy: 'agent', tasks: [task.id] });
     store.db.prepare('DELETE FROM tasks WHERE id=?').run(task.id);
     assert.equal(store.allTasks().some(item => item.id === task.id), false, 'the task is purged, only its outcome remains');
-    new Decisions(store).add({ question: 'Purged link?', askedBy: 'agent', tasks: [task.id] });
     assert.throws(() => store.removeProject({ key: 'inuse', version: project.version, reason: 'cleanup' }),
       /1 open decision \(Purged link\?\)/);
   } finally { store.close(); }
@@ -581,10 +582,11 @@ test('Spec 027 removal: an open decision linked only to a purged task without an
   try {
     const project = store.upsertProject({ key: 'inuse', name: 'In use', repositories: [alpha], primary: alpha });
     const task = submit(store, alpha.path, alpha.origin, 'purged');
+    // Task 1183: the decision is recorded while its task still exists, then the task is purged.
+    new Decisions(store).add({ question: 'Purged without outcome?', askedBy: 'agent', tasks: [task.id] });
     store.db.prepare('DELETE FROM tasks WHERE id=?').run(task.id);
     assert.equal(store.allTasks().some(item => item.id === task.id), false, 'the task row is gone');
     assert.equal(store.outcome(task.id), null, 'no outcome survives');
-    new Decisions(store).add({ question: 'Purged without outcome?', askedBy: 'agent', tasks: [task.id] });
     assert.throws(() => store.removeProject({ key: 'inuse', version: project.version, reason: 'cleanup' }),
       /1 open decision \(Purged without outcome\?\)/);
     assert.ok(store.projectByKey('inuse'));

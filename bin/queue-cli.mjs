@@ -230,6 +230,13 @@ if (method === 'lead.approve') {
   input.relayed = true;
   input.approver = await callingThread();
 }
+if (method === 'decision.add') {
+  // Task 1183: a board decision is tied to the authenticated calling thread,
+  // never a typed name. The CLI records the caller as the asker; Nucleus
+  // derives the project (and the caller's task link) from that identity.
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('CLI decision.add takes {question, ...}');
+  input.askedBy = await callingThread();
+}
 if (method === 'decision.answer') {
   if (!input || typeof input !== 'object' || Array.isArray(input) || input.relayed === false || input.answeredBy === 'operator (board)' || input.answeredBy === 'operator')
     throw new Error('CLI decision.answer must identify the relaying agent and be relayed');

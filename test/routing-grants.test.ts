@@ -35,6 +35,9 @@ function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'ns-grants-'));
   const store = new Store(join(dir, 'queue.sqlite'));
   store.setMeta('pool', pool);
+  // Task 1183: the requesting planner belongs to the repo's project, as in production.
+  const repo = store.projectFor('/repo', null) ?? store.ensureProject('/repo', null);
+  store.setProjectPlanner({ key: repo.key, agentId: 'planner', setBy: 'operator' });
   const decisions = new Decisions(store);
   const submit = (extra: Record<string, unknown> = {}) => store.insert(submissionSchema.parse({
     submissionId: `grant-${Math.random()}`, title: 'Granted task',
@@ -426,6 +429,9 @@ test('queue.routing-grant and the board snapshot keep grants across a runtime re
   const first = new QueueRuntime({ dataDir: dir, timers: false });
   t.after(() => first.stop());
   first.store.setMeta('pool', pool);
+  // Task 1183: the requesting planner belongs to the repo's project, as in production.
+  const repo = first.store.projectFor('/repo', null) ?? first.store.ensureProject('/repo', null);
+  first.store.setProjectPlanner({ key: repo.key, agentId: 'planner', setBy: 'operator' });
   const asked = first.routingGrant({ action: 'request', caller: 'planner', reason: 'block of work needs frontier' });
   assert.equal(asked.grant.status, 'pending');
   const decision = first.decisions.get({ id: asked.grant.decisionId! });
