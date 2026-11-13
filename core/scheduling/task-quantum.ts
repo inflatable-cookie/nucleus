@@ -1,6 +1,6 @@
 import { onCheckoutVolume } from "../workspaces/checkout-volume";
 import { reconcileRoutingSignoffs } from "../dispatch/routing-signoff";
-import { archiveFinishedThreads } from '../workspaces/thread-archive';
+import { archiveFinishedThreads, archiveSupersededWorkers } from '../workspaces/thread-archive';
 import type { Task } from "../../shared/contracts";
 import { missingOriginHasPlanner } from '../questions/origin';
 import { taskStopClassification, taskStopVerbsFor } from "../../shared/task-stop";
@@ -199,6 +199,12 @@ export class TaskQuantum {
       const runIds = participantToolRunIds(task, runs, agentId, workspaceId);
       return this.context.resolution.ownedToolHold(agentId, { requireCompleteEvidence: true, runId: runIds[0], runIds, taskId, workspaceId });
     }).catch(error => {
+      this.context.store.event(taskId, 'thread_archive_reconcile_error', String(error));
+    });
+    // A superseded worker is archived straight away (nucleus#1181), not at
+    // closeout: its replacement already runs on a new thread, and the old one
+    // must leave T3's main list. T3-only; Paseo keeps its existing handling.
+    await archiveSupersededWorkers(this.context.store, this.context.adapter, taskId).catch(error => {
       this.context.store.event(taskId, 'thread_archive_reconcile_error', String(error));
     });
     // Title projection is enqueued on its own serial lane: a slow Paseo

@@ -55,8 +55,11 @@ import {fileURLToPath} from 'node:url';
 const invokedAsScript=(()=>{try{return Boolean(process.argv[1])&&realpathSync(process.argv[1])===realpathSync(fileURLToPath(${'import.meta'}.url));}catch{return false;}})();
 if(invokedAsScript)await reportFromStdin();
 async function reportFromStdin(){
-const ticketPath=process.argv[2]??callbackEnvValue('TICKET');
+const continuationTicket=process.env.NUCLEUS_CONTINUATION_TICKET;
+const ticketPath=process.argv[2]??continuationTicket??callbackEnvValue('TICKET');
 const ticket=ticketPath?JSON.parse(readFileSync(ticketPath,'utf8')):null;
+const currentRun=process.env.NUCLEUS_CONTINUATION_RUN_ID;
+if(currentRun&&ticket?.runId!==currentRun) throw new Error('Continuation ticket does not match the current run; use the ticket path supplied in the continuation prompt');
 const socketPath=ticket?ticket.socketPath:callbackEnvValue('SOCKET'),token=ticket?ticket.token:callbackEnvValue('RUN_TOKEN'),taskId=ticket?ticket.taskId:callbackEnvValue('TASK_ID'),runId=ticket?ticket.runId:callbackEnvValue('RUN_ID');
 if(!socketPath||!token||!taskId||!runId) throw new Error('Missing Nucleus callback environment');
 // The next argument reads the task-scoped plan the recovery coordinator launched with; it sends no report and takes no stdin.
@@ -114,7 +117,7 @@ export async function startCallbacks(socketPath: string, helperPath: string, eng
       else if(req.url==="/report")receipt=await reports.report(reportSchema.parse(input),auth.slice(7));
       else if(req.url==="/ask")receipt=await engine.resolution.agentAsk(agentAskSchema.parse(input),auth.slice(7));
       else if(req.url==="/message")receipt=await engine.resolution.agentMessage(agentMessageSchema.parse(input),auth.slice(7));
-      else if(req.url==="/answer")receipt=engine.resolution.answerDelegatedQuestionFromTicket(helperAnswerSchema.parse(input),auth.slice(7));
+      else if(req.url==="/answer")receipt=await engine.resolution.answerDelegatedQuestionFromTicket(helperAnswerSchema.parse(input),auth.slice(7));
       else if(req.url==="/task-control"){
         const request=selfControlSchema.parse(input);
         receipt=await engine.taskControlFromAgent({taskId:request.callerTaskId,runId:request.callerRunId,token:auth.slice(7)},request.input);

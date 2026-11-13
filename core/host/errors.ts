@@ -52,6 +52,20 @@ export function sanitizeHostGuidance(input: unknown): string | undefined {
   return typeof input === 'string' && input ? input : undefined;
 }
 
+/**
+ * An adapter-authored compatibility detail, never remote text: every
+ * T3CompatibilityError field is a constant the adapter defines (a connection
+ * state, a snapshot name, a dotted decode path). Bounded sentence-case words
+ * with dots, digits and separators; anything else is not a fact we can name,
+ * so task events never carry it. The field is what makes a compatibility
+ * warning actionable (nucleus#1181: `thread_settlement_warning` used to keep
+ * only the error name).
+ */
+export function sanitizeHostFailureDetail(input: unknown): string | undefined {
+  if (typeof input !== 'string' || !input || input.length > 200) return undefined;
+  return /^[A-Za-z][A-Za-z0-9 .:_\-]{0,199}$/.test(input) ? input : undefined;
+}
+
 /** Native names plus a bounded, shape-restricted reason and bounded guidance: never arbitrary remote text. */
 export function sanitizeHostDeliveryDiagnostic(input: unknown): HostDeliveryDiagnostic {
   const value = input && typeof input === 'object' ? input as Record<string, unknown> : {};

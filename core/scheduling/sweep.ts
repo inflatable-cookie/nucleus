@@ -7,7 +7,7 @@ import { isDispositionActive } from "../../shared/contracts";
 import type { ReconciliationSweep } from "../../shared/telemetry";
 import type { AgentObservation } from "../host/adapter";
 import { catchUpFinishedTaskThreads, finishedThreadCleanupCatchUp, removesThreads } from '../workspaces/thread-archive';
-import { sanitizeHostFailureReason } from "../host";
+import { sanitizeHostFailureDetail, sanitizeHostFailureReason } from "../host";
 import { reapHookCheckouts } from "../hooks/hook-cleanup";
 import { removeTaskProofFiles } from "../intake/proof-files";
 import { pruneLiveDataHomeBackupCopies } from "../store/data-home-retention";
@@ -32,9 +32,13 @@ type DrainWaiter = { resolve: () => void; reject: (error: Error) => void };
 
 function threadSettlementFailureReason(error: unknown): string {
   if (!(error instanceof Error)) return 'unknown error';
-  const record = error as Error & { reason?: unknown; diagnostic?: { reason?: unknown } };
+  const record = error as Error & { reason?: unknown; diagnostic?: { reason?: unknown }; field?: unknown };
   const reason = sanitizeHostFailureReason(record.reason ?? record.diagnostic?.reason);
-  return `${error.name}${reason ? `: ${reason}` : ''}`;
+  // A compatibility failure's field names the exact structural mismatch (a
+  // snapshot name, a dotted decode path, a connection state); the name alone
+  // never did. Every field is an adapter-authored constant, never remote text.
+  const detail = sanitizeHostFailureDetail(record.field);
+  return `${error.name}${reason ? `: ${reason}` : ''}${detail ? ` (${detail})` : ''}`;
 }
 
 export type SweepContext = Pick<Engine, 'adapter' | 'applyDeferredOwnerVerbs' | 'archivePlannerGrants' | 'archiveRetiredErroredAgents' | 'auditPass' | 'clearRetiredInvalidations' | 'continueAwaitingReviewers' | 'dispatchQueued' | 'dispositionDeps' | 'drainProjections' | 'drainWaiters' | 'enqueueTitle' | 'ensureSweep' | 'flushPrerequisiteReleases' | 'host' | 'hostAvailable' | 'hostIds' | 'inventoryHostMatches' | 'lastHookCleanupAt' | 'lifecycle' | 'maxSweepWindows' | 'migrateProjectOwnersToPlanners' | 'noteStepFailure' | 'observeRetiredWorkers' | 'quiesce' | 'reconcile' | 'recoverExhaustedWorkers' | 'removeSiblings' | 'resumePausedStops' | 'retiredObservationKey' | 'retiredObservationPlan' | 'scheduleLane' | 'scheduleLifecycleFollowUp' | 'scheduleTaskQuantum' | 'settleQuiesce' | 'startSweepChain' | 'stopped' | 'store' | 'sweepChain' | 'sweepCursor' | 'sweepDeferred' | 'sweepDeferredCursor' | 'sweepMode' | 'sweepOrder' | 'sweepPending' | 'sweepStats' | 'sweepTicks' | 'taskHostAvailable' | 'wakeCapacityWaiter' | 'wakePreludes' | 'withHost'> & { readonly resolution: Pick<Resolution, 'checkpoints' | 'delegateNativeQuestions' | 'deliverDecisionNotices' | 'deliverDrainNotices' | 'deliverHoldNotices' | 'deliverNotices' | 'deliverQueuedMessages' | 'observationTargets' | 'observe' | 'origins' | 'raiseOperatorQuestions' | 'recovery' | 'resumeAskQuestions' | 'resumeResponsibleAnsweredQuestions' | 'settleBudgetClock'> };
@@ -54,6 +58,11 @@ export class Sweep {
     const supportRoles = new Set(['reviewer', 'recovery', 'coordinator', 'decider', 'executor']);
     for (const task of this.engine.store.tasks()) {
       if (task.hostId !== hostId || task.removedAt != null) continue;
+      // While attention is active the worker thread stays surfaced: settling
+      // it here would only make the attention pass unsettle it again, one
+      // settle/unsettle pair per sweep. The ordinary settle resumes when
+      // attention clears (nucleus#1181 review).
+      const attentionActive = task.resolution.attention || ['blocked', 'error', 'needs_attention'].includes(task.phase);
       const runs = this.engine.store.runs(task.id);
       for (const run of runs) {
         if (run.hostId !== hostId || !run.agentId || (!run.released && !run.completion)) continue;
@@ -61,7 +70,7 @@ export class Sweep {
         // settling it previously needed no native receipt. An unresolved effect
         // still needs observation and settlement on the next pass.
         if (this.engine.store.threadArchiveEffect(run.agentId, hostId)?.status === 'archived') continue;
-        const settle = run.role === 'revision' && reviewPhases.has(task.phase)
+        const settle = run.role === 'revision' && reviewPhases.has(task.phase) && !attentionActive
           ? settleWorker : supportRoles.has(run.role) ? settleSupport : undefined;
         if (!settle) continue;
         try { await settle.call(adapter, run.agentId, run.id); }
@@ -72,13 +81,40 @@ export class Sweep {
       }
       // The initial worker run predates the role run ledger on legacy tasks.
       // The task only reaches these phases after its handover was accepted.
-      if (settleWorker && reviewPhases.has(task.phase) && task.agentId && task.runId && !runs.some(run => run.id === task.runId)
+      if (settleWorker && !attentionActive && reviewPhases.has(task.phase) && task.agentId && task.runId && !runs.some(run => run.id === task.runId)
         && this.engine.store.threadArchiveEffect(task.agentId, hostId)?.status !== 'archived') {
         try { await settleWorker.call(adapter, task.agentId, task.runId); }
         catch (error) {
           this.engine.store.event(task.id, 'thread_settlement_warning',
             `worker thread ${task.agentId} settle for run ${task.runId} failed: ${threadSettlementFailureReason(error)}`.slice(0, 4000));
         }
+      }
+    }
+  }
+
+  /**
+   * Attention surfaces the worker thread (nucleus#1181): while a T3-bound task
+   * is blocked, errored, needs attention or carries an attention flag (planner
+   * or operator escalation), its worker thread is unsettled so it shows in
+   * T3's main list instead of the settled list. Only the worker thread
+   * surfaces, never support threads. When the task leaves attention the
+   * ordinary settlement sweep puts the thread back; this pass sends nothing
+   * more. A host without the presentation method (Paseo) keeps its behaviour.
+   */
+  private async surfaceAttentionT3Threads(hostId: string): Promise<void> {
+    const adapter = this.engine.adapter;
+    const unsettle = adapter.unsettleWorkerThread;
+    if (!unsettle) return;
+    for (const task of this.engine.store.tasks()) {
+      if (task.hostId !== hostId || task.removedAt != null) continue;
+      if (!task.agentId || ['done', 'cancelled'].includes(task.phase)) continue;
+      if (!['blocked', 'error', 'needs_attention'].includes(task.phase) && !task.resolution.attention) continue;
+      // The terminal lane owns archived threads; support threads never surface.
+      if (this.engine.store.threadArchiveEffect(task.agentId, hostId)?.status === 'archived') continue;
+      try { await unsettle.call(adapter, task.agentId, task.id); }
+      catch (error) {
+        this.engine.store.event(task.id, 'thread_attention_warning',
+          `worker thread ${task.agentId} attention surfacing failed: ${threadSettlementFailureReason(error)}`.slice(0, 4000));
       }
     }
   }
@@ -260,6 +296,7 @@ export class Sweep {
         if (!this.engine.hostAvailable(host)) return;
         try { await this.engine.adapter.reconcileReportedSettlements?.(); } catch { /* durable host intents remain for the next sweep */ }
         try { await this.settleFinishedT3Threads(host); } catch { /* one host's settlement pass never stalls the fleet sweep */ }
+        try { await this.surfaceAttentionT3Threads(host); } catch { /* one host's attention pass never stalls the fleet sweep */ }
         try { await this.engine.adapter.reconcileThreadTitles?.(this.engine.store.tasks().filter(task => task.hostId === host)); } catch { /* title intents remain for the next sweep */ }
         const retiredPlan = this.engine.retiredObservationPlan();
         const inventoryIds = [...new Set([...retiredPlan.due, ...this.engine.resolution.observationTargets()])];

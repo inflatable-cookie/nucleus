@@ -14,7 +14,7 @@ import { ownerPendingEffects, collectOwnerVerbFacts } from "./owner-verbs";
 import { blockingRecoveryEffects } from "../recovery/recovery-effects";
 import { settleObservedHostEffectOperations } from "../recovery/effect-gates";
 import { DurableFenceRefusal } from "../intake/run-settlement";
-import { now } from "../store/store";
+import { digest, now } from "../store/store";
 import { participantToolRunIds } from "../recovery/task-reasons";
 import { canRetireCancelledWorkspace, recordWorkspaceRetirement } from "../workspaces/terminal-workspace-retirement";
 import { archiveFinishedThreads, exhaustedThreadArchives } from "../workspaces/thread-archive";
@@ -291,6 +291,16 @@ export class RetryEffectControls {
       :settled;
     const remaining=blockingRecoveryEffects(this.store,this.store.task(current.id),{noticeKinds:'all'}).find(effect=>effect.kind==='hook'&&effect.identity===record.id);
     if(remaining)throw Error(`hook ${eventId} remains ${remaining.state}: ${remaining.reason}`);
+    const latest=this.store.task(current.id);
+    const stop=latest.resolution.stop, recovery=latest.resolution.recovery;
+    const terminal=latest.phase==='done'||latest.phase==='cancelled';
+    const blockers=blockingRecoveryEffects(this.store,latest,{noticeKinds:'all'});
+    // A successful terminal cleanup can settle the operator stop that was
+    // opened for this recovery episode. Keep the stop if any effect remains,
+    // and bind the clear to the exact stop key the resolved recovery owned.
+    if(terminal&&!blockers.length&&stop?.reason==='operator_needed'&&recovery?.status==='resolved'
+      &&recovery.key===digest(`stop:${stop.reason}:${stop.since}`))
+      return this.resolution.update(latest,{stop:null},{},'finished_hook_retry_cleared_recovery_stop',eventId);
     return next;
   }
   async reconcilePublicationEffect(input:TaskControlInput,current:Task,runId:string):Promise<Task>{
