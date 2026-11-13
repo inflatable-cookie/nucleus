@@ -18,7 +18,7 @@ import { REVIEW_AUTHORIZATION_REQUIRED, reviewCheckpointPathFor, writeReviewChec
 import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
 import { runFenceRefusal } from '../core/intake/run-settlement';
 import { recoveryEffects } from '../core/recovery/recovery-effects';
-import { holdPatch, OWNER_STOP_HOLD_PREFIX } from '../core/merge/merge-hold';
+import { restartShape } from '../core/verbs/owner-restart';
 import { taskProgressDigest } from '../core/recovery/recovery';
 import { runPrompt } from '../core/dispatch/prompts';
 import { queueOperationSchema } from '../shared/operations';
@@ -819,14 +819,17 @@ test('unobservable worker restart is a definite refused operation with no lifecy
 test('an owner restart with an intent but no sent receipt reports unknown delivery and never resends', async () => {
   const f = fixture(); try {
     retainedWorker(f, 'retained_worker', false);
-    f.store.update(f.taskId, holdPatch(f.current(), 'dispatch', 'owner', `${OWNER_STOP_HOLD_PREFIX} test stop`));
+    f.store.update(f.taskId, { phase: 'working', agentActive: false, lastAgentStatus: 'idle' });
     f.store.event(f.taskId, 'owner_stopped', JSON.stringify({ runIds: ['worker-run'] }));
+    assert.equal(restartShape(f.current(), f.store.runs(f.taskId), 'worker', f.store.eventsAll(f.taskId)), 'owner_stopped_worker');
     let sends = 0;
     f.setNotify(async () => { sends++; throw new Error('reply lost after send'); });
-    await assert.rejects(f.control({ instruction: 'Continue the approved task' }), /reply lost after send/);
+    const request = () => taskControlInputSchema.parse({ taskId: f.taskId, version: f.current().version,
+      action: 'restart', reason: 'Owner restart', instruction: 'Continue the approved task', caller: CALLER });
+    await assert.rejects(f.engine.restartTask(request()), /reply lost after send/);
     assert.equal(f.events('owner_restart_instruction_intent').length, 1);
     assert.equal(f.events('owner_restart_instruction_sent').length, 0);
-    await assert.rejects(f.control({ instruction: 'Continue the approved task' }), /delivery is unknown/);
+    await assert.rejects(f.engine.restartTask(request()), /delivery is unknown/);
     assert.equal(sends, 1);
     assert.equal(f.events('owner_restart_instruction_intent').length, 1);
   } finally { await f.close(); }

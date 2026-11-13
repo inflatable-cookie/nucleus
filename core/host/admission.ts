@@ -12,6 +12,7 @@
  * timeout and never lengthens an RPC window to hide pressure. See
  * `docs/knowledge/contracts/service-boundary.md`.
  */
+import { createHash } from "node:crypto";
 import type { Adapter } from "./adapter";
 import { isTransportFailure } from "../../shared/transport";
 import { withPaseoCallTiming, type PaseoCallRecorder } from "../../shared/host-call-timing";
@@ -74,6 +75,65 @@ function percentile(values: number[], fraction: number): number | null {
   if (!values.length) return null;
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[Math.max(0, Math.ceil(sorted.length * fraction) - 1)]!;
+}
+
+const unsupportedRequestPart = Symbol("unsupported request identity part");
+const functionIdentities = new WeakMap<Function, number>();
+let nextFunctionIdentity = 0;
+
+/** Encode every request argument, retaining opaque callback identity without retaining payload text in the admission map. */
+function requestIdentityValue(value: unknown, ancestors = new WeakSet<object>()): unknown | typeof unsupportedRequestPart {
+  if (value === undefined) return ["undefined"];
+  if (value === null) return ["null"];
+  if (typeof value === "string") return ["string", value];
+  if (typeof value === "boolean") return ["boolean", value];
+  if (typeof value === "number") return ["number", Object.is(value, -0) ? "-0" : String(value)];
+  if (typeof value === "bigint") return ["bigint", value.toString()];
+  if (typeof value === "function") {
+    let identity = functionIdentities.get(value);
+    if (identity === undefined) { identity = ++nextFunctionIdentity; functionIdentities.set(value, identity); }
+    return ["function", identity];
+  }
+  if (typeof value !== "object") return unsupportedRequestPart;
+  if (ancestors.has(value)) return unsupportedRequestPart;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? unsupportedRequestPart : ["date", value.toISOString()];
+
+  ancestors.add(value);
+  let encoded: unknown | typeof unsupportedRequestPart = undefined;
+  if (Array.isArray(value)) {
+    const items = value.map(item => requestIdentityValue(item, ancestors));
+    encoded = items.includes(unsupportedRequestPart) ? unsupportedRequestPart : ["array", items];
+  } else if (value instanceof Set) {
+    const items = [...value].map(item => requestIdentityValue(item, ancestors));
+    encoded = items.includes(unsupportedRequestPart) ? unsupportedRequestPart
+      : ["set", items.map(item => JSON.stringify(item)).sort()];
+  } else if (value instanceof Map) {
+    const entries = [...value].map(([key, item]) => [requestIdentityValue(key, ancestors), requestIdentityValue(item, ancestors)] as const);
+    encoded = entries.some(([key, item]) => key === unsupportedRequestPart || item === unsupportedRequestPart) ? unsupportedRequestPart
+      : ["map", entries.map(([key, item]) => JSON.stringify([key, item])).sort()];
+  } else {
+    const prototype = Object.getPrototypeOf(value);
+    const keys = Reflect.ownKeys(value);
+    if (prototype !== Object.prototype && prototype !== null || keys.some(key => typeof key !== "string")) {
+      encoded = unsupportedRequestPart;
+    } else {
+      const record: [string, unknown][] = [];
+      for (const key of (keys as string[]).sort()) {
+        const item = requestIdentityValue((value as Record<string, unknown>)[key], ancestors);
+        if (item === unsupportedRequestPart) { encoded = unsupportedRequestPart; break; }
+        record.push([key, item]);
+      }
+      if (encoded === undefined) encoded = ["object", record];
+    }
+  }
+  ancestors.delete(value);
+  return encoded;
+}
+
+function requestIdentity(prefix: string, args: unknown[]): string | undefined {
+  const value = requestIdentityValue(args);
+  if (value === unsupportedRequestPart) return undefined;
+  return `${prefix}:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
 }
 
 export class Admission {
@@ -249,8 +309,8 @@ export class Admission {
   }
 
   /** Coalesce an identical notification, then admit distinct notifications in target order. */
-  notify<T>(agentId: string, requestIdentity: string, work: () => Promise<T>): Promise<T> {
-    return this.withKey("callback", `notify:${requestIdentity}`,
+  notify<T>(agentId: string, requestIdentity: string | undefined, work: () => Promise<T>): Promise<T> {
+    return this.withKey("callback", requestIdentity,
       () => this.orderedNotify(agentId, () => this.run("callback", work)));
   }
 
@@ -486,44 +546,36 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
     return (...args: unknown[]) => admission.run(cls, () => (fn as (...a: unknown[]) => Promise<T>).apply(raw, args), key(args), { innerTiming: INNER_TIMED.has(name), breakerExempt: BREAKER_EXEMPT.has(name) })
       .then(result => { invalidate?.(args, result); return result; });
   };
-  const taskKey = (prefix: string) => (args: unknown[]) => {
-    const task = args[0] as { id?: string; workspaceId?: string | null } | undefined;
-    return task?.id ? `${prefix}:${task.id}` : undefined;
-  };
-  const idKey = (prefix: string) => (args: unknown[]) => (typeof args[0] === "string" ? `${prefix}:${args[0]}` : undefined);
   const overrides: Record<string, unknown> = {};
   const set = (name: string, fn: unknown) => { if (fn) overrides[name] = fn; };
 
   set("observe", (id: string) => admission.observe(id, () => raw.observe(id)));
   // Spec 058 slice 1: establishing a run's usage stream is one observation-class Paseo call.
-  set("subscribeRunUsage", call("observation", "subscribeRunUsage", idKey("subscribeRunUsage")));
+  set("subscribeRunUsage", call("observation", "subscribeRunUsage", args => requestIdentity("subscribeRunUsage", args)));
   // Audit A6: the pass inventory is one inventory-class read, admitted and
   // measured like every other bounded Paseo call.
-  set("observationInventory", call("inventory", "observationInventory", () => "observationInventory"));
+  set("observationInventory", call("inventory", "observationInventory", args => requestIdentity("observationInventory", args)));
   set("workspaceAvailable", raw.workspaceAvailable && ((id: string) => admission.observeWorkspace(id, () => raw.workspaceAvailable!(id))));
-  set("preflightWorkerContinuation", call("observation", "preflightWorkerContinuation", taskKey("preflightWorkerContinuation")));
-  set("profiles", call("inventory", "profiles", () => "profiles"));
+  set("preflightWorkerContinuation", call("observation", "preflightWorkerContinuation", args => requestIdentity("preflightWorkerContinuation", args)));
+  set("profiles", call("inventory", "profiles", args => requestIdentity("profiles", args)));
   // The host catalog and the one-time host-profile import are the same class of
   // bounded host inventory read as `profiles`.
-  set("catalog", call("inventory", "catalog", () => "catalog"));
-  set("hostProfiles", call("inventory", "hostProfiles", () => "hostProfiles"));
+  set("catalog", call("inventory", "catalog", args => requestIdentity("catalog", args)));
+  set("hostProfiles", call("inventory", "hostProfiles", args => requestIdentity("hostProfiles", args)));
   set('answerNativePermission', call('control', 'answerNativePermission', args =>
-    typeof args[4] === 'string' ? `answerNativePermission:${JSON.stringify(args)}` : undefined,
+    typeof args[4] === 'string' ? requestIdentity('answerNativePermission', args) : undefined,
   args => { if (typeof args[0] === 'string') admission.invalidate(args[0]); }));
-  set("originAgent", call("inventory", "originAgent", idKey("originAgent"), (_args, result) => {
+  set("originAgent", call("inventory", "originAgent", args => requestIdentity("originAgent", args), (_args, result) => {
     const agent = result as { workspaceId?: string | null } | null;
     if (agent?.workspaceId) admission.invalidateWorkspace(agent.workspaceId);
   }));
-  set("listLiveAgents", call("inventory", "listLiveAgents", () => "listLiveAgents"));
-  set("findWorkspaces", call("inventory", "findWorkspaces", taskKey("findWorkspaces")));
-  set("findCloseoutWorkspaces", call("inventory", "findCloseoutWorkspaces", taskKey("findCloseoutWorkspaces")));
-  set("findAgents", call("inventory", "findAgents", taskKey("findAgents")));
-  set("findRunAgents", call("inventory", "findRunAgents", (args) => {
-    const run = args[0] as { id?: string } | undefined;
-    return run?.id ? `findRunAgents:${run.id}` : undefined;
-  }));
-  set("findOpenBranchPr", call("control", "findOpenBranchPr", taskKey("findOpenBranchPr")));
-  set("findAnyOpenBranchPr", call("control", "findAnyOpenBranchPr", taskKey("findAnyOpenBranchPr")));
+  set("listLiveAgents", call("inventory", "listLiveAgents", args => requestIdentity("listLiveAgents", args)));
+  set("findWorkspaces", call("inventory", "findWorkspaces", args => requestIdentity("findWorkspaces", args)));
+  set("findCloseoutWorkspaces", call("inventory", "findCloseoutWorkspaces", args => requestIdentity("findCloseoutWorkspaces", args)));
+  set("findAgents", call("inventory", "findAgents", args => requestIdentity("findAgents", args)));
+  set("findRunAgents", call("inventory", "findRunAgents", args => requestIdentity("findRunAgents", args)));
+  set("findOpenBranchPr", call("control", "findOpenBranchPr", args => requestIdentity("findOpenBranchPr", args)));
+  set("findAnyOpenBranchPr", call("control", "findAnyOpenBranchPr", args => requestIdentity("findAnyOpenBranchPr", args)));
   // populateTaskWorktree is Git bulk work and stays unwrapped: wrapping it as
   // class workspace would hold the sole slot for minutes and trip the Paseo
   // degraded breaker on a healthy large checkout.
@@ -531,7 +583,7 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
     let startedAt = 0, admitted = false;
     const report = raw.workspaceCreationProgress;
     return admission.run("workspace", () => (held.createWorkspace as (...input: unknown[]) => Promise<{ id?: string } | undefined>).apply(raw, [task, ...args]),
-      task?.id ? `createWorkspace:${task.id}` : undefined, {
+      task?.id ? requestIdentity("createWorkspace", [task, ...args]) : undefined, {
         innerTiming: true,
         onWaiting: () => { startedAt = Date.now(); if (task?.id) report?.(task.id, "paseo_admission_wait", "started"); },
         onAdmitted: waitMs => { admitted = true; if (task?.id) report?.(task.id, "paseo_admission_wait", "finished", waitMs, "ok"); },
@@ -544,73 +596,50 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
         throw error;
       });
   });
-  set("recoverTaskWorkspace", call("workspace", "recoverTaskWorkspace", taskKey("recoverTaskWorkspace")));
-  set("createCloseoutWorkspace", call("workspace", "createCloseoutWorkspace", taskKey("createCloseoutWorkspace")));
-  set("setTaskWorkspaceTitle", call("title", "setTaskWorkspaceTitle", (args) => {
-    const task = args[0] as { id?: string } | undefined;
-    return task?.id ? `title:${JSON.stringify([task.id, args[1], args[2], args[3]])}` : undefined;
-  }, (args) => {
+  set("recoverTaskWorkspace", call("workspace", "recoverTaskWorkspace", args => requestIdentity("recoverTaskWorkspace", args)));
+  set("createCloseoutWorkspace", call("workspace", "createCloseoutWorkspace", args => requestIdentity("createCloseoutWorkspace", args)));
+  set("setTaskWorkspaceTitle", call("title", "setTaskWorkspaceTitle", args => requestIdentity("setTaskWorkspaceTitle", args), (args) => {
     const task = args[0] as { workspaceId?: string | null } | undefined;
     if (task?.workspaceId) admission.invalidateWorkspace(task.workspaceId);
   }));
-  set("archiveTaskWorkspace", call("cleanup", "archiveTaskWorkspace", (args) => (typeof args[1] === "string" ? `archiveWorkspace:${args[1]}` : undefined), (args) => {
+  set("archiveTaskWorkspace", call("cleanup", "archiveTaskWorkspace", args => requestIdentity("archiveTaskWorkspace", args), (args) => {
     const id = args[1];
     if (typeof id === "string") admission.invalidateWorkspace(id);
   }));
-  set("archiveExternalWorkspace", call("cleanup", "archiveExternalWorkspace", (args) => {
-    const input = args[0] as { workspaceId?: string } | undefined;
-    return input?.workspaceId ? `archiveWorkspace:${input.workspaceId}` : undefined;
-  }, (args) => {
+  set("archiveExternalWorkspace", call("cleanup", "archiveExternalWorkspace", args => requestIdentity("archiveExternalWorkspace", args), (args) => {
     const input = args[0] as { workspaceId?: string } | undefined;
     if (input?.workspaceId) admission.invalidateWorkspace(input.workspaceId);
   }));
-  set("reconcileSettledThreads", call("cleanup", "reconcileSettledThreads", () => "reconcileSettledThreads"));
-  set("archiveAgent", call("cleanup", "archiveAgent", idKey("archiveAgent"), (args) => {
+  set("reconcileSettledThreads", call("cleanup", "reconcileSettledThreads", args => requestIdentity("reconcileSettledThreads", args)));
+  set("archiveAgent", call("cleanup", "archiveAgent", args => requestIdentity("archiveAgent", args), (args) => {
     if (typeof args[0] === "string") admission.invalidate(args[0]);
   }));
-  set("createAgent", call("control", "createAgent", taskKey("createAgent"), (_args, result) => {
+  set("createAgent", call("control", "createAgent", args => requestIdentity("createAgent", args), (_args, result) => {
     const agent = result as { id?: string } | undefined;
     if (agent?.id) admission.invalidate(agent.id);
   }));
-  set("createRun", call("control", "createRun", (args) => {
-    const run = args[1] as { id?: string } | undefined;
-    return run?.id ? `createRun:${run.id}` : undefined;
-  }, (_args, result) => {
+  set("createRun", call("control", "createRun", args => requestIdentity("createRun", args), (_args, result) => {
     const agent = result as { id?: string } | undefined;
     if (agent?.id) admission.invalidate(agent.id);
   }));
-  set("sendRun", call("callback", "sendRun", (args) => {
-    const run = args[1] as { id?: string } | undefined;
-    return run?.id ? `sendRun:${run.id}` : undefined;
-  }, (args) => {
+  set("sendRun", call("callback", "sendRun", args => requestIdentity("sendRun", args), (args) => {
     const run = args[1] as { agentId?: string | null } | undefined;
     if (run?.agentId) admission.invalidate(run.agentId);
   }));
-  set("continueWorker", call("callback", "continueWorker", (args) => {
-    const task = args[0] as { id?: string } | undefined;
-    return task?.id ? `continueWorker:${JSON.stringify([task.id, args[1], args[2]])}` : undefined;
-  }, (args) => {
+  set("continueWorker", call("callback", "continueWorker", args => requestIdentity("continueWorker", args), (args) => {
     const task = args[0] as { agentId?: string | null } | undefined;
     if (task?.agentId) admission.invalidate(task.agentId);
   }));
-  set("continueRun", call("callback", "continueRun", (args) => {
-    const run = args[0] as { id?: string; agentId?: string | null } | undefined;
-    const messageId = args[1];
-    return run?.id && typeof messageId === "string" ? `continueRun:${run.id}:${messageId}` : undefined;
-  }, (args) => {
+  set("continueRun", call("callback", "continueRun", args => requestIdentity("continueRun", args), (args) => {
     const run = args[0] as { agentId?: string | null } | undefined;
     if (run?.agentId) admission.invalidate(run.agentId);
   }));
-  set("interruptAndContinue", call("control", "interruptAndContinue", (args) => {
-    const agentId = args[0];
-    const messageId = args[1];
-    return typeof agentId === "string" && typeof messageId === "string" ? `interruptAndContinue:${agentId}:${messageId}` : undefined;
-  }, (args) => {
+  set("interruptAndContinue", call("control", "interruptAndContinue", args => requestIdentity("interruptAndContinue", args), (args) => {
     if (typeof args[0] === "string") admission.invalidate(args[0]);
   }));
   const rawNotify = held.notify;
   if (typeof rawNotify === "function") set("notify", (agentId: string, messageId: string, text: string, sourceAgentId?: string) =>
-    admission.notify(agentId, JSON.stringify([agentId, messageId, text, sourceAgentId]),
+    admission.notify(agentId, requestIdentity("notify", [agentId, messageId, text, sourceAgentId]),
       () => (rawNotify as (...args: unknown[]) => Promise<void>).apply(raw, [agentId, messageId, text, sourceAgentId])).then(result => {
       admission.invalidate(agentId);
       return result;
