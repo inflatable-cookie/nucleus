@@ -351,30 +351,20 @@ test('an ordinary task runs its whole lifecycle on T3: thinking level, helper re
     }, 'task merged and done', task.id);
     assert.ok(f.merges.length >= 1, 'the merge gate ran');
 
-    // A separate live T3 task has its own worktree handle under the same
-    // repository project. It must not hold this task's workspace archive.
-    const siblingDirectory = join(f.root, 'sibling-worktree');
-    await git(f.repo, 'worktree', 'add', '--detach', siblingDirectory, 'main');
-    const siblingWorkspace = await f.host.createWorkspace({ title: 'Sibling task workspace', requestId: 'sibling-workspace',
-      directory: siblingDirectory, project: { projectId: 'synthetic-project', workspaceRoot: f.repo } });
-    const siblingInitial = f.runtime.store.insert(submissionSchema.parse({ submissionId: randomUUID(), title: 'Live sibling task',
-      repoPath: f.repo, planningCommit: base, handoffPath: 'sibling.md', originAgentId: f.planner }), t3Host, 'Sibling handoff', base);
-    const siblingWorkerRunId = 'sibling-worker-run';
-    const siblingProfile = f.runtime.store.task(task.id).profile!;
-    const siblingWorker = await f.host.createAgent({ workspaceId: siblingWorkspace.id, profile: siblingProfile,
-      title: 'Sibling worker', taskNumber: 998, mcpBindingPath: null,
-      attempt: () => ({ requestId: siblingWorkerRunId, prompt: 'Continue the sibling task',
-        labels: storedT3Labels('worker', { taskId: siblingInitial.id, runId: siblingWorkerRunId }), environment: {} }) });
-    f.server.threads.get(siblingWorker.id)!.runs = [{ id: siblingWorkerRunId, status: 'running', startedAt: STAMP }];
-    const sibling = f.runtime.store.update(siblingInitial.id, { phase: 'working', workspaceId: siblingWorkspace.id,
-      directory: siblingDirectory, agentId: siblingWorker.id, runId: siblingWorkerRunId });
+    // A separate dispatched T3 task has its own worktree handle under the
+    // same repository project. It must not hold this task's workspace archive.
+    const { taskId: siblingId } = await taskWithWorker(f);
+    const sibling = f.runtime.store.task(siblingId);
+    const siblingWorkspaceId = sibling.workspaceId!;
+    assert.equal(sibling.phase, 'working', 'the sibling task is live before closeout');
+    assert.equal(await f.host.workspaceAvailable(siblingWorkspaceId), true, 'the sibling worktree handle is available');
 
     // Closeout cleanup (nucleus#1155): the worker thread is archived, every
     // support thread is removed, and only the task worktree handle is archived.
     const workspaceId = f.runtime.store.task(task.id).workspaceId!;
     await driveUntil(f, () => f.runtime.store.task(task.id).resolution.archivedWorkspaceIds.includes(workspaceId), 'workspace archived', task.id);
     assert.equal(f.runtime.store.task(sibling.id).phase, 'working', 'the sibling task stays live');
-    assert.equal(await f.host.workspaceAvailable(siblingWorkspace.id), true, 'the sibling worktree handle stays available');
+    assert.equal(await f.host.workspaceAvailable(siblingWorkspaceId), true, 'the sibling worktree handle stays available');
     assert.equal(await (f.t3 as unknown as { taskWorkspaceArchived(id: string): Promise<boolean> }).taskWorkspaceArchived(workspaceId), true);
     const archiveCommands = f.server.commands.filter(command => command.type === 'thread.archive');
     assert.ok(archiveCommands.some(command => command.threadId === workerThreadId), 'the worker thread was archived');
