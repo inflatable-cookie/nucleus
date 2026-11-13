@@ -1,1 +1,1 @@
-Failed finished hooks with recorded errors can be retried through the ordinary owner verb. Retained worker continuations receive the current run ticket, and escalation answers apply against current task state or return a refusal.
+Failed finished hooks with recorded errors can be retried through the ordinary owner verb. Rotated worker continuations write the current run ticket before delivery. Escalation follow-up choices stay bound to their question across service rolls; completed owner actions are reconciled, and uncertain outcomes are refused without replay.

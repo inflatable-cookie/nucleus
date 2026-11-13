@@ -221,7 +221,11 @@ export class Delegation {
       if (outcome?.kind === 'delegated_command_refused') return Promise.reject(Error(outcome.detail.slice(outcome.detail.indexOf(':') + 2)));
       const taskEvents = isEscalation ? this.store.eventsAll(authority.taskId) : [];
       const hasEscalation = taskEvents.some(event => event.kind === 'planner_escalation' && event.detail.startsWith(`${escalationId}:`));
-      if (!hasEscalation) return receipt;
+      if (!hasEscalation) {
+        const message = `Escalation ${escalationId} is no longer recorded; the answer was not applied. Read task next before answering again`;
+        this.store.event(key, 'delegated_command_refused', `${escalationId}: ${message}`.slice(0, 4000));
+        return Promise.reject(Error(message));
+      }
       const refused = taskEvents.findLast(event => event.kind === 'planner_escalation_answer_refused'
         && event.detail.startsWith(`${escalationId}:`) && event.id > recorded.id);
       if (refused) {
@@ -234,6 +238,20 @@ export class Delegation {
         && event.detail.startsWith(`${escalationId}:`) && event.id > recorded.id)) {
         this.store.event(key, 'delegated_command_applied', `${escalationId}: applied`);
         return receipt;
+      }
+      const reconciled = this.resolution.ladder.reconcileDelegatedEscalationAnswer(
+        authority.taskId, escalationId, input.questionId, recorded.id);
+      if (reconciled === 'applied') {
+        this.store.event(key, 'delegated_command_applied', `${escalationId}: applied`);
+        return receipt;
+      }
+      if (reconciled === 'unknown') {
+        const message = `Escalation ${escalationId} answer was not confirmed as applied because its owner action outcome is unknown; Nucleus did not replay it. Read task next and reconcile its effects before answering again.`;
+        this.store.event(authority.taskId, 'planner_escalation_action_uncertain', `${escalationId}: ${message}`.slice(0, 4000));
+        this.store.event(authority.taskId, 'planner_escalation_answer_refused', `${escalationId}: ${message}`.slice(0, 4000));
+        this.resolution.waiting(this.store.task(authority.taskId), `Escalation ${escalationId} is unresolved: ${message}`, 'escalated');
+        this.store.event(key, 'delegated_command_refused', `${escalationId}: ${message}`.slice(0, 4000));
+        return Promise.reject(Error(message));
       }
       if (plannerEscalations(taskEvents as LadderEvent[]).find(item => item.id === escalationId)?.answered) {
         const message = `Escalation ${escalationId} is already settled; read next again`;
@@ -296,7 +314,7 @@ export class Delegation {
         this.resolution.ladder.classifyEscalationToOperator(this.store.task(taskId), escalationId, reason, `${role} ${caller}`);
       } else {
         const answer = `${input.choice ?? input.answer!} — ${reason}`;
-        const refusal = await this.resolution.ladder.applyDelegatedEscalationAnswer(taskId, escalationId, answer, `${role} ${caller}`);
+        const refusal = await this.resolution.ladder.applyDelegatedEscalationAnswer(taskId, escalationId, input.questionId, answer, `${role} ${caller}`);
         if (refusal) throw Error(refusal);
       }
     } catch (error) {

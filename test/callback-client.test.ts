@@ -2,7 +2,7 @@ import { observeIdle } from './support/fakes';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
-import {mkdtempSync,writeFileSync,rmSync,realpathSync} from 'node:fs';
+import {mkdtempSync,writeFileSync,readFileSync,rmSync,realpathSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawn} from 'node:child_process';
@@ -72,6 +72,43 @@ test('T3 report helper prefers the current continuation ticket and refuses a sta
   assert.notEqual(refused.code,0);
   assert.match(refused.err,/Continuation ticket does not match the current run/);
   assert.equal(requests.length,1,'the stale continuation ticket sent no report');
+ } finally {server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));rmSync(dir,{recursive:true,force:true});}
+});
+
+test('rotated continuation ticket is written before delivery and authenticates the helper as the current run', async () => {
+ const { ReviewPolicy } = await import('../core/review/review-policy');
+ const { writeMcpBinding, writeRunTicket } = await import('../core/dispatch/agent-creation');
+ const dir=realpathSync(mkdtempSync(join(tmpdir(),'ns-helper-rotated-continuation-'))),socketPath=join(dir,'s');
+ const requests:{path:string|undefined;auth:string|undefined;body:any}[]=[];
+ const server=createServer(async(req,res)=>{let body='';for await(const chunk of req)body+=chunk;requests.push({path:req.url,auth:req.headers.authorization,body:JSON.parse(body)});res.end('{"ok":true}');});
+ await new Promise<void>(resolve=>server.listen(socketPath,resolve));
+ const helper=join(dir,'worker-report.mjs'),paths={socketPath,helperPath:helper};
+ writeFileSync(helper,workerHelper);
+ const staleTicket=join(dir,'stale.json');
+ writeFileSync(staleTicket,JSON.stringify({socketPath,token:'stale-secret',taskId:'task',runId:'old-run'}));
+ let continuation='';
+ const host={
+  helperPath:helper,
+  preflightWorkerContinuation:async()=>({available:true as const}),
+  messageHost:{retainedAgentRef:()=>({workspaceId:'ws',archivedAt:null,refresh:async()=>{},current:()=>({labels:{'nucleus.mcpBinding':'old-run'}}),send:async(text:string)=>{continuation=text;}})},
+  writeWorkerTicket:(task:any,runId:string,token:string)=>writeRunTicket(paths,task,{id:runId,role:'worker',generation:0},token),
+  binding:(key:string,task:any,runId:string,token:string)=>writeMcpBinding(paths,key,task,runId,token),
+ };
+ try {
+  await new ReviewPolicy(host as any).continueWorker({id:'task',agentId:'worker',workspaceId:'ws',runId:'new-run'} as any,'checkpoint','Continue',()=>({runId:'new-run',token:'fresh-secret'}));
+  const ticketPath=continuation.match(/NUCLEUS_CONTINUATION_TICKET='([^']+)'/)?.[1];
+  assert.ok(ticketPath,'the delivered prompt names its continuation ticket');
+  assert.deepEqual(JSON.parse(readFileSync(ticketPath,'utf8')),{socketPath,taskId:'task',runId:'new-run',token:'fresh-secret'});
+  assert.deepEqual(JSON.parse(readFileSync(join(dir,'tickets','mcp-old-run.json'),'utf8')),{socketPath,taskId:'task',runId:'new-run',token:'fresh-secret'});
+  const child=spawn(process.execPath,[helper],{stdio:['pipe','ignore','pipe'],env:{...process.env,NUCLEUS_TICKET:staleTicket,NUCLEUS_CONTINUATION_TICKET:ticketPath,NUCLEUS_CONTINUATION_RUN_ID:'new-run',NUCLEUS_RUN_ID:'old-run'}});
+  let error='';child.stderr.on('data',chunk=>error+=chunk);
+  const exit=new Promise<number|null>((resolve,reject)=>{child.on('error',reject);child.on('close',resolve);});
+  child.stdin.end(JSON.stringify({status:'blocked',summary:'Continued under the current run'}));
+  assert.equal(await exit,0,error);
+  assert.equal(requests.length,1);
+  assert.equal(requests[0]!.auth,'Bearer fresh-secret');
+  assert.equal(requests[0]!.body.taskId,'task');
+  assert.equal(requests[0]!.body.runId,'new-run');
  } finally {server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));rmSync(dir,{recursive:true,force:true});}
 });
 

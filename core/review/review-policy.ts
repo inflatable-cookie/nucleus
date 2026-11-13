@@ -22,6 +22,7 @@ export interface ReviewPolicyHost {
   originAgent(id:string): Promise<OriginAgent | null>;
   preflightWorkerContinuation(task:Task): Promise<{available:true}|{available:false;reason:string}>;
   binding(key:string,task:Task,runId:string,token:string): unknown;
+  writeWorkerTicket(task:Task,runId:string,token:string): unknown;
 }
 export class ReviewPolicy {
   constructor(private readonly host: ReviewPolicyHost) {}
@@ -118,6 +119,11 @@ export class ReviewPolicy {
     const key = wireLabel(agent.current()?.labels, "mcpBinding");
     if (key && key !== task.runId && issueBinding) {
       const issued = issueBinding();
+      if (issued.runId !== task.runId)
+        throw new ProvenPreSendRefusalError('Rotated worker credential does not match the current task run; no continuation was sent');
+      // The continuation prompt points the CLI helper at this run ticket. Keep
+      // it in step with the rotated MCP binding before delivering the prompt.
+      this.host.writeWorkerTicket(task, task.runId, issued.token);
       this.host.binding(key, task, issued.runId, issued.token);
     }
     // The durable intent id is the message identity: an at-most-once replay reuses it.
