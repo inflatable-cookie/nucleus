@@ -9,6 +9,7 @@ import { recordLateCallbackEvidence } from '../verbs/disposition';
 import type { Engine } from '../engine';
 import { releaseRunFromRecordedCompletion } from '../recovery/fence-settlement';
 import { assertCanonicalPrSource, reviewPublicationBody, taskPrNumber } from '../forge/index';
+import { git } from '../git/index';
 import { heldBriefQueuePolicy } from '../planning/handoff';
 import { supersededWorkerResult } from '../recovery/incident';
 import { interactiveSessionOpen } from '../dispatch/interactive';
@@ -148,8 +149,16 @@ export class CallbackIntake {
     if (input.proofFiles?.length) {
       if (sourceRun && sourceRun.role !== 'revision')
         throw new Error('proofFiles is only accepted on a worker or revision report; no other role delivers author evidence');
-      if (!input.head || !verifiedPr || input.head !== verifiedPr.head)
-        throw new Error(`The reported head for proofFiles must match the pushed PR head (reported ${JSON.stringify(input.head ?? null)}; PR ${JSON.stringify(verifiedPr?.head ?? null)})`);
+      // nucleus#1180: the reported head binds against the forge, never against
+      // Nucleus's recorded PR head. A report-carried PR number verifies as
+      // before; otherwise the task branch's open PR head is read from the forge
+      // (a missing or stale recording is not compared), and a report with no PR
+      // yet binds against the pushed branch head read with `git ls-remote`.
+      // Nothing already recorded is relabelled: the observed head only gates
+      // this report's files.
+      const observed = verifiedPr ? { kind: 'PR' as const, head: verifiedPr.head } : await this.proofFilesForgeHead(identityTask);
+      if (!input.head || !observed.head || input.head !== observed.head)
+        throw new Error(`The reported head for proofFiles must match the pushed ${observed.kind} head (reported ${JSON.stringify(input.head ?? null)}; ${observed.kind} ${JSON.stringify(observed.head ?? null)})`);
       const head = input.head;
       const records = recordWorkerProofFiles({ task: identityTask, run: sourceRun, files: input.proofFiles, head, eventId: input.eventId });
       this.store.appendProofFiles(identityTask.id, records);
@@ -299,6 +308,28 @@ export class CallbackIntake {
       this.store.event(task.id, 'unfinished_continuation', JSON.stringify(unfinished));
     await this.settleHandedOverWorker(input.taskId, this.store.run(input.runId) ?? null, input.status);
     void this.engine.cleanContext(() => this.engine.wakeTask(input.taskId)); return response;
+  }
+  /**
+   * nucleus#1180: the forge head a report's proof files bind to when the report
+   * carries no PR number. The task branch's open PR head comes first — the same
+   * branch-PR observation recovery and the board already use — so a missing or
+   * stale recorded PR head never refuses files the forge already shows pushed.
+   * With no PR yet the pushed branch head read with `git ls-remote` proves the
+   * head is published. A null head refuses below naming the observed side; a
+   * failing branch read propagates its own cause instead of binding evidence
+   * to an unproved head.
+   */
+  private async proofFilesForgeHead(task: Task): Promise<{ kind: 'PR' | 'branch'; head: string | null }> {
+    if (this.adapter.findOpenBranchPr) {
+      let matches: { number: number; url: string; head: string }[] | null = null;
+      try { matches = await this.adapter.findOpenBranchPr(task); }
+      catch { matches = null; }
+      const first = matches?.[0];
+      if (first && /^[a-f0-9]{40}$/.test(first.head)) return { kind: 'PR', head: first.head };
+    }
+    const advertised = await git(task.repoPath, 'ls-remote', 'origin', `refs/heads/${task.branch}`);
+    const remote = advertised.split(/\s+/)[0] ?? '';
+    return { kind: 'branch', head: /^[a-f0-9]{40}$/.test(remote) ? remote : null };
   }
   /** The accepted receipt is durable before the best-effort host presentation effect. */
   private async settleReportedThread(run: Run | null | undefined): Promise<void> {

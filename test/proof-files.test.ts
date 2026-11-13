@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,7 +24,7 @@ function png(seed: string): Buffer {
   return Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...Buffer.from(seed)]);
 }
 
-function fixture() {
+function fixture(options: { branchPrs?: { number: number; url: string; head: string }[] } = {}) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "ns-proof-files-")));
   const worktree = join(dir, "worktree"), scratchRoot = join(dir, "scratch", "nucleus"), scratch = join(scratchRoot, "ab12cd34");
   mkdirSync(worktree, { recursive: true });
@@ -52,7 +53,7 @@ function fixture() {
     observe: async (id: string) => ({ id, workspaceId: "workspace", status: "idle", active: false, permissions: false, error: "" }),
     verifyPr: async () => ({ url: prUrl, head, repository: "example/repo", headRepository: "example/repo" }),
     verifyPrIdentity: async () => ({ url: prUrl, head, repository: "example/repo", headRepository: "example/repo" }),
-    verifyCleanQueueWorktree: async () => {}, findOpenBranchPr: async () => [],
+    verifyCleanQueueWorktree: async () => {}, findOpenBranchPr: async () => options.branchPrs ?? [],
     mergeGate: async () => ({ head, base: "main", wait: "" }), merge: async () => {},
     merged: async () => ({ merged: false, commit: null, head, base: "main" }), syncMain: async () => base,
     verifyCloseout: async () => {}, notify: async () => {},
@@ -86,7 +87,7 @@ function fixture() {
     assert.equal(store.run(reportingRunId)?.released, false);
   };
   const task = () => store.task(taskId);
-  return { dir, worktree, scratch, scratchRoot, store, engine, taskId, runId, token, complete, reportOnce, cliReport, startRevision, task,
+  return { dir, worktree, scratch, scratchRoot, store, engine, adapter, taskId, runId, token, complete, reportOnce, cliReport, startRevision, task,
     close: async () => { await engine.stop(); store.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 
@@ -149,6 +150,73 @@ test("proof files are refused when the reported head does not match the pushed P
     }), /reported head for proofFiles must match the pushed PR head/);
     assert.equal(f.task().proofFiles.length, 0);
     assert.equal(existsSync(join(f.scratchRoot, "evidence")), false);
+  } finally { await f.close(); }
+});
+
+test("a null recorded prHead reads the task branch PR head from the forge", async () => {
+  const openHead = "c".repeat(40);
+  const f = fixture({ branchPrs: [{ number: 268, url: "https://github.com/example/repo/pull/268", head: openHead }] });
+  try {
+    assert.equal(f.task().prHead, null, "nothing recorded the PR head yet");
+    writeFileSync(join(f.scratch, "proof.png"), png("proof"));
+    const files = [{ label: "Proof", path: join(f.scratch, "proof.png") }];
+    f.startRevision();
+    // A different head refuses first (a refusal stores nothing, so the run stays
+    // reportable), naming the reported and the observed forge head.
+    await assert.rejects(f.reportOnce("proof-forge-head-wrong", {
+      status: "blocked", prNumber: undefined, head: base, proofFiles: files,
+    }), (error: unknown) => {
+      assert.match(String((error as Error).message), /reported head for proofFiles must match the pushed PR head/);
+      assert.ok(String((error as Error).message).includes(base), "the refusal names the reported head");
+      assert.ok(String((error as Error).message).includes(openHead), "the refusal names the observed forge head");
+      return true;
+    });
+    assert.equal(f.task().proofFiles.length, 0, "a refused report copies nothing");
+    // The oxide#309 shape: a blocked revision report carries proof files at the
+    // open PR head but no PR number, while Nucleus recorded no PR head.
+    const receipt = await f.reportOnce("proof-forge-head-1", {
+      status: "blocked", prNumber: undefined, head: openHead, proofFiles: files,
+    }) as { accepted?: boolean };
+    assert.equal(receipt.accepted, true);
+    const recorded = f.task().proofFiles;
+    assert.equal(recorded.length, 1);
+    assert.equal(recorded[0]!.head, openHead, "the files are recorded under the forge head");
+    assert.equal(f.task().prHead, null, "the check observes the forge head without relabelling the task");
+  } finally { await f.close(); }
+});
+
+test("a pre-PR report keeps its proof files against the pushed branch head", async () => {
+  const f = fixture();
+  try {
+    // No PR on the forge: findOpenBranchPr stays empty, so the check falls back
+    // to the pushed branch head read with `git ls-remote` from a real origin.
+    const branch = f.task().branch;
+    const remote = join(f.dir, "origin.git");
+    execFileSync("git", ["init", "--bare", "--quiet", remote]);
+    execFileSync("git", ["-C", f.worktree, "init", "--quiet", "-b", branch]);
+    execFileSync("git", ["-C", f.worktree, "config", "user.email", "proof-files@example.com"]);
+    execFileSync("git", ["-C", f.worktree, "config", "user.name", "Proof Files"]);
+    execFileSync("git", ["-C", f.worktree, "remote", "add", "origin", remote]);
+    writeFileSync(join(f.worktree, "source.txt"), "source\n");
+    execFileSync("git", ["-C", f.worktree, "add", "source.txt"]);
+    execFileSync("git", ["-C", f.worktree, "commit", "--quiet", "-m", "source"]);
+    execFileSync("git", ["-C", f.worktree, "-c", "protocol.file.allow=always", "push", "--quiet", "origin", branch]);
+    const pushed = execFileSync("git", ["-C", f.worktree, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    assert.match(pushed, /^[a-f0-9]{40}$/);
+    writeFileSync(join(f.scratch, "proof.png"), png("proof"));
+    const files = [{ label: "Proof", path: join(f.scratch, "proof.png") }];
+    // An unpushed head refuses first (a refusal stores nothing) against the
+    // observed pushed branch head.
+    await assert.rejects(f.complete("blocked", {
+      prNumber: undefined, head: base, proofFiles: files,
+    }), /reported head for proofFiles must match the pushed branch head/);
+    assert.equal(f.task().proofFiles.length, 0, "a refused report copies nothing");
+    const receipt = await f.complete("blocked", { prNumber: undefined, head: pushed, proofFiles: files }) as { accepted?: boolean };
+    assert.equal(receipt.accepted, true);
+    const recorded = f.task().proofFiles;
+    assert.equal(recorded.length, 1);
+    assert.equal(recorded[0]!.head, pushed, "the files are recorded under the pushed branch head");
+    assert.ok(recorded[0]!.path.startsWith(join(f.scratchRoot, "evidence", f.taskId, pushed)));
   } finally { await f.close(); }
 });
 
