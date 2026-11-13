@@ -214,7 +214,7 @@ the write if the desired title is already present.
 | Remove | `thread.delete` through dispatch at closeout, never `onlyIfUnused` | Durable intent, then `deletedAt` or absence from a complete inventory proves removal; an unknown outcome is never resent |
 | Settle report | `thread.settle` through dispatch for any completed non-worker role | Immediately after the accepted Nucleus receipt; bind `expectedLatestRunId`, keep an uncertain intent and inspect `settledOverride` before retry |
 | Wake settled support thread | `thread.unsettle` through dispatch before a follow-up message | Stable command intent; a retained reviewer is active again for its next round |
-| Archive workspace | `projects.mutate` / `project.update` `archived: true` | The project is retired with threads and files kept; observation reads `archivedAt` from the inventory |
+| Archive workspace | Mark the task's T3 worktree handle archived in adapter state | Observation reads the handle's `archivedAt`; the shared project registration remains registered and available |
 | Atomic interrupt and continue | `message.dispatch` `steer_active` with the live run's `targetRunId` | The message injects into the active turn; with no active run the refusal is proven before send |
 
 Use `launchThread` for creation because it supplies the native workspace strategy
@@ -589,8 +589,9 @@ launch carries `modelSelection.options`), a planner `tell` delivered mid-run,
 the worker's report through the packaged helper, an independent reviewer's
 launch and verdict, a revision round addressed on the retained worker, the
 accepted round-two verdict, the merge, closeout, the worker thread's archive, the
-removal of every support thread and the archive of the native project, observed
-positively (nucleus#1155). A second lifecycle test keeps a released recovery
+removal of every support thread and the archive of only that task's T3 worktree
+handle while its shared project registration remains registered (nucleus#1155).
+A second lifecycle test keeps a released recovery
 thread settled while the task is open and continues the same thread for the next
 fault instead of opening another. The test fails on a tree
 without the model-option, archive and steering work.
