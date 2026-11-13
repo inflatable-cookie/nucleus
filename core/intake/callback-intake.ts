@@ -148,7 +148,9 @@ export class CallbackIntake {
     if (input.proofFiles?.length) {
       if (sourceRun && sourceRun.role !== 'revision')
         throw new Error('proofFiles is only accepted on a worker or revision report; no other role delivers author evidence');
-      const head = sourceRun?.head ?? verifiedPr?.head ?? input.head;
+      if (!input.head || !verifiedPr || input.head !== verifiedPr.head)
+        throw new Error(`The reported head for proofFiles must match the pushed PR head (reported ${JSON.stringify(input.head ?? null)}; PR ${JSON.stringify(verifiedPr?.head ?? null)})`);
+      const head = input.head;
       const records = recordWorkerProofFiles({ task: identityTask, run: sourceRun, files: input.proofFiles, head, eventId: input.eventId });
       this.store.appendProofFiles(identityTask.id, records);
       input = proofFilesRemoved(input);
