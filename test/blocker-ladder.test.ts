@@ -1766,13 +1766,15 @@ test('a time wait wakes once when the named time arrives', async () => {
   const f = fixture({ responsible: true });
   f.engine.resolution.delegatedAnswerWaitMs = 5000;
   let when = '';
-  (f.adapter as unknown as Record<string, unknown>).askPlanner = async () => { when = new Date(Date.now() + 1000).toISOString(); return `Choice: Wait until a time\nReason: ${when}`; };
+  (f.adapter as unknown as Record<string, unknown>).askPlanner = async () => { when = new Date(Date.now() + 10_000).toISOString(); return `Choice: Wait until a time\nReason: ${when}`; };
   try {
     f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: join(f.dir, 'repo') }] });
     f.store.setProjectPlanner({ key: 'app', agentId: 'planner-1', setBy: 'operator' });
     await f.reviews(1); await f.engine.wake();
     await f.report('blocked', { summary: 'Try after the window', cause: { kind: 'external', name: 'window' } });
-    await until(() => f.events('planner_escalation_applied').some(event => event.detail.includes('waiting until')));
+    await until(() => f.events('planner_escalation_applied').some(event => event.detail.includes('waiting until'))
+      || f.events('planner_escalation_answer_refused').length > 0);
+    assert.equal(f.events('planner_escalation_answer_refused').length, 0, JSON.stringify(f.events('planner_escalation_answer_refused')));
     assert.match(f.current().resolution.stop?.detail ?? '', /waiting until/i);
     await new Promise(resolve => setTimeout(resolve, Math.max(0, Date.parse(when) - Date.now()) + 10));
     await f.engine.resolution.resumeAskQuestions();

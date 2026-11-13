@@ -3,3 +3,5 @@ export default function durations(source: AsyncIterable<{ type: string; data?: R
 export function durationTablePath(): string;
 export function durationReporterArgs(tty?: boolean): string[];
 export function flushDurationTable(destination: string): void;
+export function failureSummaryPath(): string;
+export function flushFailureSummary(destination: string): void;
