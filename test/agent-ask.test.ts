@@ -836,6 +836,53 @@ test("the joint review question on a provider without native questions goes thro
   }
 });
 
+test('a T3-bound third-round review question goes to the task planner through question.answer', async () => {
+  const delegated = { planner: null as string | null, decider: null as string | null };
+  const f = lifecycleFixture({ responsible: true, provider: 'pi', delegates: delegated });
+  f.engine.resolution.delegatedAnswerWaitMs = 30_000;
+  Object.assign(f.adapter, {
+    capabilities: () => ({ nativeDecisions: false, reportingViaMcp: false }),
+    reportingViaMcp: false,
+  });
+  const prior = new Decisions(f.store).add({ question: 'Earlier planner question?', askedBy: 'planner' });
+  delegated.planner = `Choice: Continue the current approach\nReason: The current approach remains safe\nOvertakes: ${prior.id}`;
+  f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: join(f.dir, 'repo') }] });
+  f.store.setProjectPlanner({ key: 'app', agentId: 'planner-1', setBy: 'operator' });
+  f.store.update(f.submitted.id, { hostId: 't3code:synthetic-environment', plannerAgentId: 'task-planner-1' });
+  try {
+    await f.reviews(3);
+    await f.engine.wake();
+    await until(() => f.events('responsible_question_answered').length > 0);
+    assert.equal(f.delegated.planner.length, 1);
+    assert.equal(f.delegated.planner[0]!.agentId, 'task-planner-1', 'the task planner is the first rung');
+    assert.match(f.delegated.planner[0]!.prompt, /question\.answer/);
+    assert.match(f.delegated.planner[0]!.prompt, /Three review rounds have not converged/);
+    assert.equal(new Decisions(f.store).list({ task: f.submitted.id, status: 'open' }).length, 0,
+      'planner-ladder questions do not become board decisions when the task host lacks native questions');
+    assert.match(f.events('responsible_question_answered')[0]!.detail, /Continue the current approach — answered by delegated planner/);
+    assert.ok(f.events('responsible_question_resumed').length > 0, 'the review round continues after the planner answer');
+  } finally { await f.close(); }
+});
+
+test('a T3 scope question remains a board decision', async () => {
+  const f = lifecycleFixture({ responsible: true, provider: 'pi', delegates: { planner: null } });
+  Object.assign(f.adapter, {
+    capabilities: () => ({ nativeDecisions: false, reportingViaMcp: false }),
+    reportingViaMcp: false,
+  });
+  const controller = new AbortController();
+  const pending = f.engine.resolution.raiseDecision(f.store.task(f.submitted.id), {
+    id: 'scope-question', kind: 'scope', question: 'Should the task change its scope?', options: ['Change scope', 'Keep scope'],
+  }, controller.signal);
+  void pending.catch(() => {});
+  try {
+    await until(() => new Decisions(f.store).list({ task: f.submitted.id, status: 'open' }).length === 1);
+    assert.equal(f.delegated.planner.length, 0, 'operator-only scope questions skip the planner ladder');
+    assert.match(f.store.eventsAll(f.submitted.id).find(event => event.kind === 'operator_question_decision')!.detail,
+      /the task host cannot take a native question/);
+  } finally { controller.abort(); await f.close(); }
+});
+
 
 test("a fresh engine routes durable agent asks and never repeats an uncertain delegate send", async () => {
   const f = await askFixture({ waitMs: 300 });

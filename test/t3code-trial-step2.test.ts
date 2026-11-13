@@ -167,7 +167,7 @@ test('workerAgentSpec writes no MCP binding on T3 and an empty environment', t =
   assert.match(paseo.mcpBindingPath, /mcp-run-t3\.json$/);
 });
 
-test('a T3 budget question lands on the board and recovery keeps it off the MCP route', async () => {
+test('a T3 scope question lands on the board and recovery keeps it off the MCP route', async () => {
   const store = new Store(':memory:');
   store.setMeta('paused', false);
   store.setMeta('hostId', 't3code:synthetic-environment');
@@ -200,10 +200,14 @@ test('a T3 budget question lands on the board and recovery keeps it off the MCP 
   store.upsertProject({ key: 'trial', name: 'Trial', repositories: [{ origin: null, path: '/repo' }] });
   store.setProjectPlanner({ key: 'trial', agentId: 'planner', setBy: 'test' });
   try {
-    await engine.resolution.raiseOperatorQuestions(task.id);
+    const controller = new AbortController();
+    const pending = engine.resolution.raiseDecision(store.task(task.id), {
+      id: 't3-scope-question', kind: 'scope', question: 'Should the task scope change?', options: ['Change scope', 'Keep scope'],
+    }, controller.signal);
+    void pending.catch(() => {});
     const decisions = store.listDecisions({ status: 'open', task: task.id });
     assert.equal(decisions.length, 1);
-    assert.match(decisions[0]!.question, /reached its budget/);
+    assert.match(decisions[0]!.question, /Should the task scope change/);
     assert.match(decisions[0]!.context ?? '', /the task host cannot take a native question/);
     await settle(() => store.eventsAll(task.id).some(event => event.kind === 'operator_question_planner_missed'), 'planner miss');
     assert.equal(notices.length, 0);
@@ -216,14 +220,10 @@ test('a T3 budget question lands on the board and recovery keeps it off the MCP 
     assert.match(notices[0]!.messageId, /^ns-queue-question-/);
     assert.match(notices[0]!.text, /cannot take a native question/);
     assert.ok(store.eventsAll(task.id).some(event => event.kind === 'operator_question_planner_notice'));
-    const questionId = store.eventsAll(task.id).find(event => event.kind === 'operator_question')!.detail.split(':')[0]!;
-    store.event(task.id, 'queue_ask_payload', JSON.stringify({
-      id: questionId, kind: 'budget', question: decisions[0]!.question,
-      options: ['Extend the budget', 'Change the approach', 'Stop and keep the work'],
-    }));
     await engine.resolution.resumeAskQuestions();
     assert.equal(store.eventsAll(task.id).some(event => event.kind === 'queue_ask_delivery'), false, 'recovery never tells the T3 worker to call MCP');
     assert.equal(notices.some(notice => notice.id === 'worker' || notice.text.includes('Call the question MCP tool')), false);
+    controller.abort();
   } finally { await engine.stop(); store.close(); }
 });
 
