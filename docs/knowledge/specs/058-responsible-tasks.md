@@ -163,6 +163,14 @@ a task that was ready to continue (papercut a1bc9fe5). A late native answer
 reconciles with that same question and applies no second answer or control;
 the recorded answer remains the question's one outcome.
 
+When the task host has no native question surface, Nucleus-raised planner-ladder
+questions (review, proof acceptance, budget and process) still go through the
+task planner, project planner and decider before opening a board decision. A
+board decision in that route means the ladder ran out without a usable answer;
+the planner notice says so and directs the recipient to the board. It never asks
+the planner to answer with `question.answer` after delegation has ended. Scope
+and release questions remain operator-only and go directly to the board.
+
 After unknown planner delivery, Nucleus never asks the decider or resends the
 question. The question stays pending through the bounded in-turn wait and is
 reported as uncertain for the planner (planner ruling, 2026-11-09). A known unanswered planner

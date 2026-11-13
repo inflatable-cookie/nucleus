@@ -459,7 +459,11 @@ export class Questions {
     options: { boardOnly?: boolean; why?: string } = {}): Promise<string> {
     if (!this.resolution.queueBudgetQuestionCurrent(task.id, decision)) return Promise.reject(Error('Budget question no longer matches the current stop'));
     const route = questionRoute(this.adapter, task.profile?.provider);
-    if (options.boardOnly || route === 'board') return this.raiseBoardDecision(task, decision, signal, options.why);
+    if (options.boardOnly || route === 'board') {
+      if (isDelegableQuestionKind(decision.kind))
+        return this.raiseLadderDecision(task, decision, signal, options.why ?? 'the task host cannot take a native question');
+      return this.raiseBoardDecision(task, decision, signal, options.why);
+    }
     // The native prompt carries the full text when the producer kept one; the
     // bounded surfaces (the board decision, the ask tool and its exact-text
     // join) carry the short canonical question. Delegation prefers the full
@@ -486,7 +490,36 @@ export class Questions {
     void this.notifyPlannerOfBoardQuestion(task, decision);
     return promise;
   }
-  private notifyPlannerOfBoardQuestion(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }): void {
+  /** A host without native questions asks the planner ladder before opening a board decision. */
+  private raiseLadderDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }, signal: AbortSignal,
+    why: string): Promise<string> {
+    let resolve!: (answer: string) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<string>((res, rej) => { resolve = res; reject = rej; });
+    this.resolution.queueAskRaises.set(decision.id, { resolve, reject });
+    signal.addEventListener('abort', () => {
+      const raise = this.resolution.queueAskRaises.get(decision.id);
+      if (raise) { this.resolution.queueAskRaises.delete(decision.id); this.resolution.queueAskRaiseAnsweredBy.delete(decision.id); raise.reject(Error('Nucleus planner question observation cancelled; delivery or answer may be unknown')); }
+    }, { once: true });
+    void this.delegateDecision(task.id, decision, null, signal, async (_fresh, answer) => {
+      this.resolution.resolveQueueRaise(decision.id, answer);
+    }).then(delivered => {
+      if (delivered || signal.aborted || !this.resolution.queueAskRaises.has(decision.id)) return;
+      const events = this.store.eventsAll(task.id);
+      // Unknown delivery must stay unknown; only an observed exhausted ladder
+      // can turn this into a board decision.
+      if (events.some(event => event.kind === 'operator_question_delegation_unknown' && event.detail.startsWith(`${decision.id}:`))) return;
+      const existingLink = this.store.eventsAll(task.id).find(event => event.kind === 'operator_question_decision' && event.detail.startsWith(`${decision.id}: decision `));
+      const reason = existingLink?.detail.split('; ').slice(1).join('; ') || `${why}; the planner ladder ran out without an answer`;
+      this.resolution.ensureQueueRaiseDecision(task, decision, reason);
+      this.notifyPlannerOfBoardQuestion(task, decision, reason);
+    }).catch(error => {
+      if (this.resolution.stopped() || signal.aborted) return;
+      this.store.event(task.id, 'operator_question_delegation_unknown', `${decision.id}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));
+    });
+    return promise;
+  }
+  private notifyPlannerOfBoardQuestion(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }, why = 'the task host cannot take a native question'): void {
     const noticed = () => {
       try { return this.store.eventsAll(task.id).some(event => event.kind === 'operator_question_planner_notice' && event.detail.startsWith(`${decision.id}:`)); }
       catch { return true; }
@@ -506,7 +539,7 @@ export class Questions {
         const choices = decision.options.length ? ` Choices: ${decision.options.join(' | ')}.` : '';
         const reference = this.store.task(task.id).reference ?? task.title;
         await this.resolution.host.sendMessage(planner, { messageId: `ns-queue-question-${decision.id}`,
-          text: `Nucleus raised a question on ${reference} (kind ${decision.kind}) because the task host cannot take a native question. Answer it on the board (question.answer) or through nucleus_ask. Question: ${decision.question}${choices}` });
+          text: `Nucleus raised a question on ${reference} (kind ${decision.kind}) because ${why}. It is on the board for the operator; answer it there. Question: ${decision.question}${choices}` });
         if (!noticed()) this.store.event(task.id, 'operator_question_planner_notice', `${decision.id}: planner ${planner}`);
       });
     })().catch(error => {
@@ -742,8 +775,10 @@ export class Questions {
           if (['operator_question_answered', 'responsible_question_answered', 'operator_question_superseded']
             .some(kind => events.some(item => item.kind === kind && item.detail.startsWith(`${id}:`)))) continue;
           const current = operatorQuestionFor(this.store, this.store.task(task.id));
-          if (current?.id === id)
-            this.notifyPlannerOfBoardQuestion(task, { id: current.id, kind: current.kind, question: current.question, options: current.choices.map(choice => choice.label) });
+          if (current?.id === id) {
+            const reason = link.detail.split('; ').slice(1).join('; ') || undefined;
+            this.notifyPlannerOfBoardQuestion(task, { id: current.id, kind: current.kind, question: current.question, options: current.choices.map(choice => choice.label) }, reason);
+          }
         }
       }
     }
@@ -799,7 +834,7 @@ export class Questions {
           this.store.event(taskId, 'operator_question_delegation_unknown', `${decision.id}: ${role}${agentId ? ` ${agentId}` : ''}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));
         },
         onUnavailable: planner => {
-          this.resolution.ensureQueueRaiseDecision(task, decision, `Selected planner ${planner} cannot be asked on its host; the planner message is on the board.`);
+          this.resolution.ensureQueueRaiseDecision(task, decision, `the planner ladder ran out because selected planner ${planner} cannot be asked on its host`);
         },
       });
     } catch (error) {

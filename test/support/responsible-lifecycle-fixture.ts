@@ -60,6 +60,7 @@ export function fixture(
   options: {
     responsible?: boolean;
     provider?: string;
+    hostId?: string;
     delegates?: {
       planner?: string | null;
       plannerArchived?: boolean;
@@ -71,6 +72,7 @@ export function fixture(
   } = {},
 ) {
   const provider = options.provider ?? "codex";
+  const hostId = options.hostId ?? "host";
   const dir = mkdtempSync(join(tmpdir(), "ns-responsible-"));
   const store = new Store(join(dir, "queue.sqlite"));
   const profiles = ["author", "higher", "reviewer", "coordinator"].map((id) =>
@@ -125,7 +127,7 @@ export function fixture(
   });
   store.setMeta("paused", false);
   // #912: the single registered host ingress and delegated routing select.
-  store.setMeta("hostId", "host");
+  store.setMeta("hostId", hostId);
   const submitted = store.insert(
     submissionSchema.parse({
       submissionId: randomUUID(),
@@ -138,7 +140,7 @@ export function fixture(
         ? {}
         : { responsible: options.responsible }),
     }),
-    "host",
+    hostId,
     "brief",
     base,
   );
@@ -201,7 +203,7 @@ export function fixture(
   idle("worker");
   const adapter = {
     // #912: the single host this fixture registers; Resolution identifies origin hosts from it.
-    hostId: "host",
+    hostId,
     profiles: async () => profiles,
     validate: async () => base,
     verifyWorkspace: async () => submitted.branch,
