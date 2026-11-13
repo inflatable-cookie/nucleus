@@ -783,7 +783,9 @@ test('a previously recorded budget question still applies its board answer', asy
   const f = fixture({ responsible: true });
   try {
     const task = f.current();
-    f.store.update(task.id, { budgetSince: new Date(Date.now() - 20 * 60 * 60 * 1000).toISOString() });
+    const startedAt = new Date(Date.now() - 20 * 60 * 60 * 1000).toISOString();
+    f.store.update(task.id, { budgetSince: startedAt });
+    f.recordRunStart(startedAt);
     f.engine.resolution.recordStop(f.current(), 'budget', 'Budget reached: wall-time limit');
     const question = operatorQuestionFor(f.store, f.current())!;
     const legacy = question.question.replace('Nucleus starts no new run', 'Queue starts no new run');
@@ -805,7 +807,9 @@ test('extend_budget uses the owner extension path and requires board, relayed or
   const f = fixture({ responsible: true });
   try {
     const task = f.store.task(f.submitted.id);
-    f.store.update(task.id, { budgetSince: new Date(Date.now() - 20 * 60 * 60 * 1000).toISOString() });
+    const startedAt = new Date(Date.now() - 20 * 60 * 60 * 1000).toISOString();
+    f.store.update(task.id, { budgetSince: startedAt });
+    f.recordRunStart(startedAt);
     const exhaustedTask = f.store.task(task.id);
     f.engine.resolution.recordStop(exhaustedTask, 'budget', 'Budget reached: 3 hours');
     const question = operatorQuestionFor(f.store, f.current())!;
@@ -838,6 +842,8 @@ test('extend_budget uses the owner extension path and requires board, relayed or
     assert.equal(f.current().resolution.stop, null);
     assert.equal(f.events('budget_extended').length, 2);
 
+    // Nothing has run since the last increment, so no recorded run start spends it.
+    f.clearRunStarts();
     const underBudget = f.store.update(f.current().id, { budgetSince: new Date().toISOString() });
     assert.equal(ownerTaskNext(collectOwnerVerbFacts(f.store, underBudget)).verbs.find(view => view.verb === 'extend_budget')?.available, false);
     await assert.rejects(f.engine.performTaskControl({ taskId: underBudget.id, version: underBudget.version,
@@ -849,7 +855,9 @@ test('extend_budget applies to an exhausted awaiting_proof task without starting
   const f = fixture({ responsible: true });
   try {
     const task = f.store.task(f.submitted.id);
-    f.store.update(task.id, { budgetSince: new Date(Date.now() - 10 * 60 * 60 * 1000).toISOString() });
+    const startedAt = new Date(Date.now() - 10 * 60 * 60 * 1000).toISOString();
+    f.store.update(task.id, { budgetSince: startedAt });
+    f.recordRunStart(startedAt);
     f.engine.resolution.recordStop(f.store.task(task.id), 'awaiting_proof', 'Waiting for the declared proof');
     const beforeRuns = f.store.runs(task.id).length;
     const next = ownerTaskNext(collectOwnerVerbFacts(f.store, f.current()));
@@ -886,7 +894,9 @@ test('a planner answer arriving after extend_budget is not sent to the task thre
     f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: join(f.dir, 'repo') }] });
     f.store.setProjectPlanner({ key: 'app', agentId: 'planner-1', setBy: 'operator' });
     // Task 1109: the task's planner is the thread whose answer arrives in this window.
-    f.store.update(f.current().id, { budgetSince: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(), plannerAgentId: 'planner-1' });
+    const startedAt = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
+    f.store.update(f.current().id, { budgetSince: startedAt, plannerAgentId: 'planner-1' });
+    f.recordRunStart(startedAt);
     (f.adapter as Adapter & { askPlanner: (planner: string, input: { prompt: string }) => Promise<string | null> }).askPlanner = async () =>
       await new Promise<string>(resolve => { finishPlanner = resolve; });
     f.engine.resolution.recordStop(f.current(), 'budget', 'Budget reached: 3 hours');

@@ -8,6 +8,7 @@ import { submissionSchema, summarizeTask } from '../shared/contracts';
 import { formatAgentId } from '../shared/agent-identity';
 import type { Adapter } from '../core/host/adapter';
 import { mount, useNativeStubs } from './support/render';
+import { recordRunStart } from './support/run-start';
 useNativeStubs();
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -258,10 +259,14 @@ test('extend_budget dismisses Nucleus budget questions still pending on the work
     submissionId: 'budget', title: 'Budget', repoPath: '/repo', planningCommit: 'a'.repeat(40),
     handoffPath: 'handoff.md', originAgentId: 'origin',
   }), 'host', 'handoff', 'a'.repeat(40));
+  const startedAt = new Date(Date.now() - 20 * 60 * 60 * 1000).toISOString();
   const queued = store.update(task.id, {
     phase: 'blocked', reason: 'Budget reached', agentId: 'worker', workspaceId: 'workspace',
-    budgetSince: new Date(Date.now() - 20 * 60 * 60 * 1000).toISOString(),
+    budgetSince: startedAt,
   });
+  // The budget measures from the task's first recorded run (nucleus#1187); this
+  // worker's run lives on the task row, so its creation event is that record.
+  recordRunStart(store, queued.id, startedAt);
   // Three recorded budget questions: one from the current stop, two older ones whose
   // native prompts are still pending on the thread.
   for (const id of ['budget-1', 'budget-2', 'budget-3'])

@@ -17,6 +17,7 @@ import {
 import type { Adapter, AgentObservation } from "../../core/host";
 import type { Task as ParameterTask } from "../../shared/contracts";
 import { toolTimelinePage } from "./tool-timeline";
+import { clearRunStarts, recordRunStart } from "./run-start";
 
 /**
  * The ordinary responsible-lifecycle fixture (Spec 058): a responsible task at its
@@ -426,19 +427,10 @@ export function fixture(
   const run = () => store.run(current().resolution.currentRunId!)!;
   const events = (kind: string) =>
     store.eventsAll(submitted.id).filter((event) => event.kind === kind);
-  /**
-   * The recorded start of the initial worker's run (nucleus#1187). The worker run
-   * lives on the task row and never as a run row, so its dispatch intent and its
-   * `agent_created` event are the only durable evidence of when it began. The rows
-   * are written through the store and then dated, exactly as the real launch wrote
-   * them, so a budget measures from a recorded run start rather than a conversion.
-   */
-  function recordRunStart(at: string) {
-    store.event(submitted.id, "agent_intent", current().runId ?? "initial");
-    store.event(submitted.id, "agent_created", "worker");
-    for (const row of store.db.prepare("SELECT id FROM events WHERE taskId=? AND kind IN ('agent_intent','agent_created') ORDER BY id DESC LIMIT 2").all(submitted.id) as { id: number }[])
-      store.db.prepare("UPDATE events SET at=? WHERE id=?").run(at, row.id);
-  }
+  /** The recorded start of the initial worker's run (nucleus#1187); see `./run-start`. */
+  const startRun = (at: string) => recordRunStart(store, submitted.id, at, current().runId ?? "initial", "worker");
+  /** Forget the recorded run start, so the task reads as never dispatched again. */
+  const forgetRunStart = () => clearRunStarts(store, submitted.id);
   const coordinatorRuns = () =>
     store.runs(submitted.id).filter((item) => item.role === "recovery");
   const reviewerRuns = () =>
@@ -509,7 +501,8 @@ export function fixture(
     current,
     run,
     events,
-    recordRunStart,
+    recordRunStart: startRun,
+    clearRunStarts: forgetRunStart,
     coordinatorRuns,
     reviewerRuns,
     report,
