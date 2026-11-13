@@ -100,6 +100,11 @@ test("a revision starting at A records two proof files under its reported PR hea
       { label: "After (dark theme)", path: join(f.worktree, "after.png") },
     ];
     f.startRevision();
+    const revisionRun = f.store.run("revision-run")!;
+    const authorPrompt = runPrompt(f.task(), revisionRun, "/helper", "/ticket", true);
+    assert.match(authorPrompt, /top-level head equal to the current pushed PR HEAD/);
+    assert.match(authorPrompt, /report the head it now pushed, not the run's starting head/);
+    assert.doesNotMatch(authorPrompt, /bridge supplies exact head/);
     // The report schema and the report bridge accept the same two entries.
     assert.equal(completionSchema.parse({ eventId: "e", taskId: f.taskId, runId: f.runId, status: "ready_for_review", summary: "Ready", prNumber: 1, proofFiles: files }).proofFiles?.length, 2);
     assert.equal(reportSchema.parse({ eventId: "e", taskId: f.taskId, runId: f.runId, status: "ready_for_review", summary: "Ready", prNumber: 1, proofFiles: files }).proofFiles?.length, 2);
@@ -163,6 +168,7 @@ test("the reviewer at B sees latest author-run proof stored under A with its rec
     assert.ok(prompt.includes(oldRecord.path));
     assert.ok(prompt.includes("recorded head " + base));
     assert.ok(prompt.includes("Earlier revision screenshot"));
+    assert.match(prompt, /never relabel earlier-head evidence as delivered for the current head/);
   } finally { await f.close(); }
 });
 
