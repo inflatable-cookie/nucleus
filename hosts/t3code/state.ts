@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { sanitizeHostDeliveryDiagnostic } from '../../core/host';
 
-const workspace = z.object({ id: z.string(), directory: z.string(), projectId: z.string(), title: z.string() });
+const workspace = z.object({ id: z.string(), directory: z.string(), projectId: z.string(), title: z.string(), archivedAt: z.string().optional() });
 const agent = z.object({ id: z.string(), workspaceId: z.string(), labels: z.record(z.string(), z.string()), title: z.string().optional() });
 const diagnostic = z.object({ command: z.string().optional(), field: z.string().optional(), reason: z.string().optional(), guidance: z.string().optional() }).strict().refine(value => {
   const clean = sanitizeHostDeliveryDiagnostic(value);

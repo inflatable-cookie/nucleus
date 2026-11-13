@@ -67,7 +67,7 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     get workspaceHost() {
       const native = this.native;
       return {
-        workspaceInventory: async () => Object.values(native.state.read().workspaces).map(w => ({
+        workspaceInventory: async () => Object.values(native.state.read().workspaces).filter(w => !w.archivedAt).map(w => ({
           id: w.id, projectRootPath: w.directory, workspaceDirectory: w.directory,
         })),
         repositoryProject: (root: string) => native.repositoryProject(root),

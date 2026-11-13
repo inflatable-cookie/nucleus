@@ -172,15 +172,17 @@ path-and-manual-fix guidance inside that unknown, never a refused mark
 (review ruling, 2026-11-12). Nucleus does not rename or remove projects.
 
 Closing a task retires its task-specific worktree handle from the adapter's
-stored state and tears down its owned Git worktree. It does not mutate the
+stored state and tears down its owned Git worktree. The adapter keeps an
+archived marker on the handle so archived threads retain their workspace
+mapping for lifecycle reconciliation. It does not mutate the
 native project registration: that registration is shared by every task in the
 repository, and a finished task's archive must proceed while another task is
 live. Nucleus currently leaves the shared project registered; if a future
 project-level retirement is added, it must wait until no task uses the
 registration. A new task reuses the still-registered project directly.
 Workspace archive observation is positive from the stored adapter state: a
-missing task worktree handle is archived, while the shared project remains
-available.
+missing or marked task worktree handle is archived, while the shared project
+remains available.
 
 Nucleus prepares and verifies the Git worktree before handing it to T3. Creation
 uses only `existing_worktree`; T3 must confirm it belongs to the selected project.

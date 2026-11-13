@@ -832,7 +832,8 @@ test('one task worktree archives while another T3 task keeps the repository proj
   assert.ok(archived.archivedAt);
   assert.equal(await host.workspaceArchived(workspace.id), true);
   assert.equal(await host.workspaceAvailable(second.id), true);
-  assert.deepEqual(Object.keys(host.state.read().workspaces), [second.id]);
+  assert.equal(host.state.read().workspaces[workspace.id]?.archivedAt !== undefined, true, 'the archived record retains thread-to-worktree ownership');
+  assert.equal(host.state.read().workspaces[second.id]?.archivedAt, undefined, 'the other task handle stays active');
   assert.equal(server.commands.some(c => c.method === 'projects.mutate'), false, 'individual worktree archive never mutates the shared registration');
 });
 

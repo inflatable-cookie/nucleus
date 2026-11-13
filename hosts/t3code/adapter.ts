@@ -275,27 +275,32 @@ export class T3CodeHost implements Host {
     const workspaceRoot = await realpath(root);
     return { projectId: (await this.inventory()).projects.find(p => p.workspaceRoot === workspaceRoot)?.id, workspaceRoot };
   }
-  async findWorkspaces(task: Task) { return Object.values(this.state.read().workspaces).filter(w => w.directory === task.directory).map(w => ({ id: w.id, directory: w.directory })); }
-  async workspaceAvailable(id: string) { const w = this.state.read().workspaces[id]; return !!w && (await this.inventory()).projects.some(p => p.id === w.projectId && p.archivedAt == null); }
+  async findWorkspaces(task: Task) { return Object.values(this.state.read().workspaces).filter(w => !w.archivedAt && w.directory === task.directory).map(w => ({ id: w.id, directory: w.directory })); }
+  async workspaceAvailable(id: string) { const w = this.state.read().workspaces[id]; return !!w && !w.archivedAt && (await this.inventory()).projects.some(p => p.id === w.projectId && p.archivedAt == null); }
   workspaceIdAccepted(id: unknown) { return typeof id === 'string' && /^nucleus-worktree-[a-f0-9]{40}$/.test(id); }
   workspaceRef(id: string): HostWorkspaceRef {
     const host = this; let available = false;
     return { get directory() { return host.state.read().workspaces[id]?.directory; },
       async refresh() { available = await host.workspaceAvailable(id); return available; },
       current() { const w = host.state.read().workspaces[id]; return available && w ? { projectRootPath: w.directory, workspaceDirectory: w.directory, projectId: w.projectId, workspaceKind: 'external' } : null; },
-      /** A task archive retires only Nucleus's worktree handle; the T3 project is shared by the repository. */
+      /** A task archive marks only Nucleus's worktree handle; the record stays to map archived threads. */
       async archive(requestId: string) {
         void requestId;
-        host.state.update(state => { delete state.workspaces[id]; });
-        return { archivedAt: new Date().toISOString(), error: null };
+        const archivedAt = host.state.update(state => {
+          const workspace = state.workspaces[id];
+          if (!workspace) return new Date().toISOString();
+          workspace.archivedAt ??= new Date().toISOString();
+          return workspace.archivedAt;
+        });
+        return { archivedAt, error: null };
       } };
   }
   async workspaceCatalog(_directory: string) { return { ok: false as const, reason: 'T3Code does not expose a native workspace registration inventory' }; }
   async setWorkspaceTitle(_id: string, _title: string, _request: string, _uncertain: boolean): Promise<void> { unsupported('native workspace titles'); }
-  /** Archived is a positive native fact: the project is gone from the inventory or carries `archivedAt`. */
+  /** The stored task marker retires this handle; native project archive also counts as absent. */
   async workspaceArchived(id: string): Promise<boolean> {
     const workspace = this.state.read().workspaces[id];
-    if (!workspace) return true;
+    if (!workspace || workspace.archivedAt) return true;
     const found = (await this.inventory()).projects.find(p => p.id === workspace.projectId);
     return !found || found.archivedAt != null;
   }
@@ -452,7 +457,7 @@ export class T3CodeHost implements Host {
     if (spec.mcpBindingPath) unsupported('per-thread MCP reporting');
     if (spec.guard && !await spec.guard.allowed()) throw new ProvenPreSendRefusalError('T3Code launch guard refused');
     const attempt = spec.attempt(false, false), workspace = this.state.read().workspaces[spec.workspaceId];
-    if (!workspace) throw new ProvenPreSendRefusalError('T3Code workspace is not registered');
+    if (!workspace || workspace.archivedAt) throw new ProvenPreSendRefusalError('T3Code workspace is not registered');
     if (Object.keys(attempt.environment).length) unsupported('per-thread launch environment');
     // One config read answers every launch fact: the model's options, the
     // runtime mode the provider offers and the provider's own existence.
