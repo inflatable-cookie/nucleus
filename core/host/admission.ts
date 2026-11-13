@@ -90,7 +90,7 @@ export const isBackpressureDeferral = (reason: string | null | undefined) => Boo
 
 interface CacheEntry { at: number; value: unknown; workspaceId: string }
 /** One pending Paseo request. `breaker` is false for work the breaker never reads as pressure. */
-interface ActiveCall { cls: AdmissionClass; holder: string; started: number; breaker: boolean; deadlineMs: number }
+interface ActiveCall { cls: AdmissionClass; holder: string; started: number; breaker: boolean; deadlineMs: number; abandoned?: boolean }
 interface SlowSample { cls: AdmissionClass; ms: number; at: number; breaker: boolean }
 
 interface Gate { limit: number; running: number; waiting: ((release: () => void) => void)[]; completed: number; coalesced: number }
@@ -310,6 +310,7 @@ export class Admission {
       timer = setTimeout(() => {
         timer = null;
         const ageMs = this.now() - call.started;
+        call.abandoned = true;
         this.abandonedCount++;
         this.lastAbandoned = call;
         this.abandonedAt = this.now();
@@ -361,15 +362,20 @@ export class Admission {
    * their slot and pending state, but the breaker neither trips nor recovers on
    * them: a workspace archive legitimately runs for minutes, so its duration is
    * not evidence about whether Paseo is answering (Tom, 2026-11-05).
-   * With `longRunning`, the effect and its own requests keep their slot under the
-   * long bound instead of the ordinary one. Every effect has a deadline; only its
-   * bound differs, so no class is exempt from the rule.
+   * With `longRunning`, the effect keeps its slot under the long bound instead of
+   * the ordinary one: the effects that legitimately accumulate bulk local or
+   * native work, and the observation pass, which walks many pages. With
+   * `ordinaryInnerDeadlines`, the requests inside still keep the ordinary bound,
+   * so one stuck page is abandoned in a minute while the pass itself is allowed
+   * to run (the `observationInventory` walk). Every effect has a deadline; only
+   * its bound differs, so no class is exempt from the rule.
    */
-  run<T>(cls: AdmissionClass, work: () => Promise<T>, key?: string, options: { innerTiming?: boolean; breakerExempt?: boolean; longRunning?: boolean; holder?: string; onWaiting?: () => void; onAdmitted?: (waitMs: number) => void } = {}): Promise<T> {
+  run<T>(cls: AdmissionClass, work: () => Promise<T>, key?: string, options: { innerTiming?: boolean; breakerExempt?: boolean; longRunning?: boolean; ordinaryInnerDeadlines?: boolean; holder?: string; onWaiting?: () => void; onAdmitted?: (waitMs: number) => void } = {}): Promise<T> {
     const breaker = options.breakerExempt !== true;
     // The holder names the effect and its identity, so a stuck slot is attributable.
     const holder = options.holder ?? key ?? cls;
     const deadlineMs = options.longRunning === true ? this.longCallDeadlineMs : this.callDeadlineMs;
+    const innerDeadlineMs = options.ordinaryInnerDeadlines === true ? this.callDeadlineMs : deadlineMs;
     return this.withKey(cls, key, async () => {
       options.onWaiting?.();
       const waitingAt = this.now();
@@ -387,9 +393,14 @@ export class Admission {
         this.admitHousekeeping(cls);
         const call: ActiveCall = { cls, holder, started: this.now(), breaker, deadlineMs };
         let open = true;
-        // A request started after the effect settles is not this effect's.
+        // A request started after the effect settles is not this effect's sample;
+        // after the effect was abandoned as unknown it is not sent at all, because
+        // the slot the bound protected is free and no admission would cover it.
         const record: PaseoCallRecorder | undefined = options.innerTiming
-          ? request => (open ? this.sample(cls, request, breaker, holder, deadlineMs) : request())
+          ? request => {
+            if (call.abandoned) return Promise.reject(new HostCallAbandonedError({ call: cls, holder, ageMs: this.now() - call.started, deadlineMs }));
+            return open ? this.sample(cls, request, breaker, holder, innerDeadlineMs) : request();
+          }
           : undefined;
         if (!record) this.activeCalls.add(call);
         this.heldSlotCalls.add(call);
@@ -588,9 +599,26 @@ const BREAKER_EXEMPT: ReadonlySet<string> = new Set(["archiveTaskWorkspace", "ar
  * effect, never per class, so no class escapes the deadline (nucleus#1179
  * review 5889669364).
  */
+/**
+ * The effects that legitimately accumulate bulk local or native work, and so are
+ * bounded by the long deadline rather than the ordinary one: a workspace archive
+ * (median 238 s, max 1,432 s on 2026-11-05), workspace creation, recovery and
+ * closeout (each includes a populate under the ten-minute bulk Git budget), and
+ * the observation inventory pass (one walk of many pages). Every other admitted
+ * effect — including the archive threads and settled-thread reconciliation in the
+ * same cleanup class, and every read — is abandoned at the ordinary bound. The
+ * exemption is per effect, never per class, so no class escapes the deadline
+ * (nucleus#1179).
+ */
 const LONG_RUNNING: ReadonlySet<string> = new Set([
-  "archiveTaskWorkspace", "archiveExternalWorkspace", "createWorkspace", "recoverTaskWorkspace", "createCloseoutWorkspace",
+  "archiveTaskWorkspace", "archiveExternalWorkspace", "createWorkspace", "recoverTaskWorkspace", "createCloseoutWorkspace", "observationInventory",
 ]);
+/**
+ * Long effects whose own requests are still single daemon calls: the inventory
+ * pass may walk many pages, but one page is one request and keeps the ordinary
+ * bound, so a stuck page is abandoned in a minute instead of holding the pass.
+ */
+const ORDINARY_INNER_DEADLINES: ReadonlySet<string> = new Set(["observationInventory"]);
 
 export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
   const held = raw as unknown as Record<string, unknown>;
@@ -599,7 +627,7 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
     if (typeof fn !== "function") return undefined;
     return (...args: unknown[]) => {
       const identity = key(args);
-      return admission.run(cls, () => (fn as (...a: unknown[]) => Promise<T>).apply(raw, args), identity, { innerTiming: INNER_TIMED.has(name), breakerExempt: BREAKER_EXEMPT.has(name), longRunning: LONG_RUNNING.has(name), holder: identity ?? name })
+      return admission.run(cls, () => (fn as (...a: unknown[]) => Promise<T>).apply(raw, args), identity, { innerTiming: INNER_TIMED.has(name), breakerExempt: BREAKER_EXEMPT.has(name), longRunning: LONG_RUNNING.has(name), ordinaryInnerDeadlines: ORDINARY_INNER_DEADLINES.has(name), holder: identity ?? name })
         .then(result => { invalidate?.(args, result); return result; });
     };
   };

@@ -794,14 +794,24 @@ live host call and no mutating operation, and a host call that outlives its
 admission deadline is abandoned rather than waited on. The removals that delete a
 whole populated checkout go through `removeTree`
 (`core/workspaces/tree-removal.ts`), which runs node's walk on libuv's pool:
-sibling worktrees, orphan checkouts and an archived owned worktree. A synchronous
-`rmSync` recursion over one populated checkout held the thread inside
-`lstat`/`unlink`/`rmdir` for minutes while every read timed out at the client (the
-2026-11-13 09:55Z wedge, nucleus#1179). Two bounded synchronous removals remain
-and say so where they are: one run's recorded TMPDIR leaf in the store's
-retention and release paths, and one recorded evidence head under the report's
-32 MiB proof budget. `service.health.requestTimings.held` names a request that
-still does hold the thread, with its age.
+sibling worktrees, orphan checkouts and an archived owned worktree. An archived
+orphan is first moved to a quarantine sibling by a synchronous rename, so the
+tree the asynchronous walk removes is exactly the tree the synchronous proof
+validated. Two bounded synchronous removals remain and say so where they are:
+one run's recorded TMPDIR leaf in the store's retention and release paths, one
+recorded evidence head under the report's 32 MiB proof budget, and the private
+directory holding one migration snapshot. `service.health.requestTimings.held`
+names a request that still does hold the thread, with its age.
+
+The 2026-11-13 09:55Z sample is consistent with that shape rather than proof of
+it: its only busy thread was a worker in the service process, inside node's
+synchronous `lstat`/`unlink`/`rmdir` recursion (the V8 frames are unresolved),
+while the request loop sat idle in `kevent` and every read timed out at the
+client. The sample names no call site. Reads are served on the persistence
+executor thread, so a blocking removal there explains the timeouts, and that is
+the candidate the read path implicates; the other recursive-removal holders in
+the repository run in a separate process (the backup CLI) or a different worker
+(the host-run front) and cannot block a read (nucleus#1179).
 
 An observation pass reads Paseo through one bounded inventory: one
 `agents.list` over the Nucleus label set, live threads only, walked to the
@@ -1029,14 +1039,19 @@ named holder for its class and identity, and every one of them has a deadline:
 the ordinary 60 seconds, or the long bound for the effects that legitimately
 hold a slot while bulk local or native work runs — a workspace archive, creation,
 recovery or closeout, which are bounded by 30 minutes, above the ten-minute bulk
-Git budget and the 1,432-second archive maximum. The exemption is per effect,
-never per class, so `archiveAgent` and `reconcileSettledThreads` (cleanup) and
-`recoverTaskWorkspace` and `createCloseoutWorkspace` (workspace) are abandoned at
-the ordinary bound like every other effect (nucleus#1179 review 5889669364). A
-call past its deadline is abandoned as unknown: the caller receives an
-unknown-delivery answer naming the holder and how long it held, the class and
-total slots are released, and the call is never resent. A late answer from the
-host belongs to nothing and is discarded.
+Git budget and the 1,432-second archive maximum. The observation inventory pass
+gets the long bound as a whole because a legitimate walk accumulates pages, while
+each page keeps the ordinary bound, so one stuck page is abandoned in a minute
+and the pass itself may finish (nucleus#1179 review 5890172363). The exemption is
+per effect, never per class, so `archiveAgent` and `reconcileSettledThreads`
+(cleanup) and `recoverTaskWorkspace` and `createCloseoutWorkspace` (workspace)
+are abandoned at the ordinary bound like every other effect (nucleus#1179 review
+5889669364). A call past its deadline is abandoned as unknown: the caller
+receives an unknown-delivery answer naming the holder and how long it held, the
+class and total slots are released, and the call is never resent. A late answer
+from the host belongs to nothing and is discarded, and an abandoned effect that
+starts another request has it refused rather than sent outside the admission it
+no longer holds.
 `service.health.admission` names every held slot past five seconds (`heldSlots`:
 class, holder, age, deadline) and the last abandoned call, and logs a wait for a
 slot with the oldest holder and its age. `heldSlots` names the admitted effect

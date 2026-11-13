@@ -1,5 +1,6 @@
 import { historicalWireLabel } from "../../shared/wire-labels";
-import { existsSync } from "node:fs";
+import { existsSync, renameSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { removeTree } from "./tree-removal";
 import type { Run, Task } from "../../shared/contracts";
 import type { AgentObservation, OriginAgent } from "../host/adapter";
@@ -257,11 +258,18 @@ export class OwnedWorkspaceArchive {
         // Under the discard, the canonical path is re-proved and read-only
         // directories inside it are opened for removal, synchronously, with no
         // await before the removal starts. A normalization failure stops removal.
-        // The removal itself runs off this thread (`rm`'s walk is on libuv's
-        // pool), so one archived checkout cannot starve the reads this thread
-        // serves; nothing else may run between the proof above and the call.
+        // The proven directory is then moved, still synchronously, to a sibling
+        // quarantine name in the same parent: a rename follows no symlink and cannot
+        // interleave with other JS, so the tree the asynchronous walk removes is
+        // exactly the tree the proof validated. Deleting it in place would let a
+        // path-based readdir/unlink meet a path a later writer changed after the
+        // proof (nucleus#1179 review 5890172363).
         if(discarding){assertCanonicalOwnedPath(directory,ownedData,commonDir,task.id);normalizeOwnedDirectoryPermissions(directory);}
-        if(initial.orphan.orphaned)await removeTree(directory,{force:false});
+        if(initial.orphan.orphaned){
+          const quarantine=`${directory}.queue-removing-${process.pid}-${randomUUID().slice(0,8)}`;
+          renameSync(directory,quarantine);
+          await removeTree(quarantine,{force:false});
+        }
         else await removeOwnedWorktree(task.repoPath,directory,discarding);
       }
       catch(error){throw Error(`worktree.teardown failed: ${error instanceof Error?error.message:String(error)}`);}

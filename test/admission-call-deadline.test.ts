@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Admission, admitAdapter, type AdmissionOptions } from '../core/host/admission';
+import { paseoCall } from '../shared/host-call-timing';
 import { HostCallAbandonedError, HostUnknownDeliveryError } from '../core/host/errors';
 import type { Adapter } from '../core/host/adapter';
 
@@ -24,17 +25,17 @@ function admissionWith(options: AdmissionOptions = {}) {
 }
 
 test('a host call past its deadline is abandoned as unknown and its slot is freed', async () => {
-  const { admission, lines } = admissionWith({ callDeadlineMs: 80, heldSlotWarnMs: 20 });
+  const { admission, lines } = admissionWith({ callDeadlineMs: 400, heldSlotWarnMs: 20 });
   let attempts = 0;
   const abandoned = admission.run('inventory', () => { attempts++; return never(); }, 'catalog:fixture', { holder: 'catalog fixture' })
     .then(() => assert.fail('the call must not answer'), error => error);
 
-  await sleep(35);
+  await sleep(60);
   const held = admission.snapshot();
   assert.equal(held.heldSlots.length, 1, 'the held slot is named while it holds');
   assert.deepEqual(
     { cls: held.heldSlots[0]!.cls, holder: held.heldSlots[0]!.holder, deadlineMs: held.heldSlots[0]!.deadlineMs },
-    { cls: 'inventory', holder: 'catalog fixture', deadlineMs: 80 },
+    { cls: 'inventory', holder: 'catalog fixture', deadlineMs: 400 },
   );
   assert.ok(held.heldSlots[0]!.ageMs >= 20, `the held slot reports its age (${held.heldSlots[0]!.ageMs} ms)`);
   assert.equal(held.inventory.running, 1, 'it holds its class slot while it waits');
@@ -50,7 +51,7 @@ test('a host call past its deadline is abandoned as unknown and its slot is free
   assert.equal(settled.inventory.running, 0, 'the abandoned call freed its class slot');
   assert.equal(settled.abandoned.count, 1);
   assert.equal(settled.abandoned.last?.holder, 'catalog fixture');
-  assert.equal(settled.abandoned.last?.ageMs >= 80, true, `the abandonment records the age it reached (${settled.abandoned.last?.ageMs} ms)`);
+  assert.equal(settled.abandoned.last?.ageMs >= 400, true, `the abandonment records the age it reached (${settled.abandoned.last?.ageMs} ms)`);
   assert.equal(attempts, 1, 'the abandoned call was never resent');
   assert.ok(lines.some(line => line.includes('catalog fixture') && line.includes('abandoned as unknown')), `the service log names the abandonment: ${lines.join(' | ')}`);
 
@@ -91,7 +92,7 @@ test('a long effect is still abandoned at its own bound and frees its slot', asy
 });
 
 test('a queued call logs who holds the slot and for how long', async () => {
-  const { admission, lines } = admissionWith({ callDeadlineMs: 200, heldSlotWarnMs: 20 });
+  const { admission, lines } = admissionWith({ callDeadlineMs: 500, heldSlotWarnMs: 20 });
   const holder = admission.run('inventory', never, 'catalog:holder', { holder: 'catalog holder' }).catch(() => undefined);
   await sleep(40);
   const queued = await admission.run('inventory', async () => 'queued', 'catalog:queued').catch(error => error);
@@ -101,7 +102,7 @@ test('a queued call logs who holds the slot and for how long', async () => {
   assert.ok(waitLine, `a wait past the threshold is logged: ${lines.join(' | ')}`);
   assert.match(waitLine!, /catalog:queued/);
   assert.match(waitLine!, /oldest held slot: inventory catalog holder for \d+ ms/);
-  assert.match(waitLine!, /deadline 200 ms/);
+  assert.match(waitLine!, /deadline 500 ms/);
 });
 
 /**
@@ -181,4 +182,57 @@ test('workspace-class creation and recovery are abandoned at the long bound, and
   await sleep(20);
   assert.equal(admission.snapshot().heldSlots.find(slot => slot.holder.includes('archiveWorkspace'))?.deadlineMs, 300);
   assert.ok(await archive instanceof HostCallAbandonedError);
+});
+
+test('an abandoned inner-timed effect never issues another request outside admission', async () => {
+  const { admission } = admissionWith({ callDeadlineMs: 80, longCallDeadlineMs: 80, heldSlotWarnMs: 10 });
+  let sent = 0;
+  let late: unknown;
+  let finished = false;
+  const work = async () => {
+    // The first request is the one the effect's deadline outlives.
+    await paseoCall(() => { sent++; return new Promise<never>(() => {}); }).catch(() => undefined);
+    // The effect has been abandoned by now; a request it starts from here must be
+    // refused, not sent after its slot is gone.
+    await sleep(40);
+    await paseoCall(() => { sent++; return Promise.resolve('sent'); }).catch(error => { late = error; });
+    finished = true;
+  };
+  const effect = admission.run('cleanup', work, 'archiveWorkspace:fixture', { innerTiming: true, breakerExempt: true, longRunning: true, holder: 'archiveWorkspace fixture' })
+    .then(() => assert.fail('the effect must be abandoned'), error => error);
+  const error = await effect;
+  assert.ok(error instanceof HostCallAbandonedError, `the effect is abandoned (${error})`);
+  // The effect's own work keeps running after the abandonment; let it reach its
+  // late request so the refusal is observed rather than asserted too early.
+  for (let wait = 0; wait < 50 && !finished; wait++) await sleep(10);
+  assert.equal(finished, true, "the effect's work reached its late request");
+  assert.equal(sent, 1, 'only the request issued while the effect held its slot reached the host');
+  assert.ok(late instanceof HostCallAbandonedError, `the later request is refused (${late})`);
+  const settled = admission.snapshot();
+  assert.equal(settled.cleanup.running, 0);
+  assert.deepEqual(settled.heldSlots, []);
+  assert.equal(settled.cleanup.completed, 1, 'the refused request was never admitted');
+});
+
+test('the observation pass gets the long bound while each page keeps the ordinary one', async () => {
+  const { admission } = admissionWith({ callDeadlineMs: 50, longCallDeadlineMs: 400, heldSlotWarnMs: 10 });
+  const pages: number[] = [];
+  const work = async () => {
+    // Three pages of 20 ms: the pass is past the ordinary bound and inside the long one.
+    for (let page = 0; page < 3; page++) await paseoCall(async () => { pages.push(page); await sleep(20); return page; });
+    // Then one page that never returns is abandoned at the ordinary bound.
+    await paseoCall(() => new Promise<never>(() => {}));
+  };
+  const pass = admission.run('inventory', work, 'observationInventory', { innerTiming: true, longRunning: true, ordinaryInnerDeadlines: true, holder: 'observationInventory' })
+    .then(() => assert.fail('the stuck page must abandon the pass'), error => error);
+  await sleep(75);
+  assert.equal(admission.snapshot().abandoned.count, 0, 'a pass past the ordinary bound is not abandoned at it');
+  assert.equal(admission.snapshot().heldSlots[0]?.deadlineMs, 400, 'the pass reports the long bound');
+  assert.equal(pages.length, 3, 'the accumulated pages ran');
+  const error = await pass;
+  assert.ok(error instanceof HostCallAbandonedError);
+  assert.equal((error as HostCallAbandonedError).deadlineMs, 50, 'the stuck page kept the ordinary bound');
+  const settled = admission.snapshot();
+  assert.equal(settled.abandoned.count, 1);
+  assert.equal(settled.inventory.running, 0, 'the abandoned pass freed its slot');
 });
