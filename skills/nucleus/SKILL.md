@@ -61,6 +61,22 @@ For a repository change, add a Markdown changelog fragment under
 `CHANGELOG.md`'s `[Unreleased]` section; release preparation folds fragments
 there.
 
+## Workspace scratch and selector teardown
+
+Use the current run's `TMPDIR`, `TMP` and `TEMP`. Nucleus owns the recorded
+temporary root and removes it after release; never remove that root, its parent
+or any directory created outside this run by another task, planner or Nucleus.
+Put fixtures in fresh directories under the run's `TMPDIR`. Tests, fixtures
+and selectors may remove temporary directories they created during the run
+inside that `TMPDIR`. A tool that would delete
+outside `TMPDIR` or a root it did not create is a finding to report, not a reason
+to skip the selector.
+
+In source-immutable roles (reviewer and proof executor), use a formatter's
+check-only form when it would write tracked files. If the repository has no
+check-only form, report a selector gap with the formatter command and still run
+the other required selectors.
+
 The two agent verbs (task 1108). Name recipients by role, task or project; never an agent or
 thread ID. `ask` is a question that waits for an answer and escalates; `tell` is information only.
 - `ask` `to`: `"reviewer"` (your task's retained reviewer; falls through to the planner ladder),
