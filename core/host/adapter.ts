@@ -197,6 +197,14 @@ export interface Adapter extends RunUsageSource {
    * the live turn.
    */
   enqueueMessage?(agentId: string, messageId: string, text: string, sourceAgentId?: string): Promise<void>;
+  /**
+   * A message to a participant (tell, relayed answer): steers into the agent's
+   * live turn when one is active, otherwise delivers as `notify` does. A host
+   * without steering omits it and callers fall back to `notify`. A proven
+   * not-sent steer is retried once as a queued send; an unknown outcome throws
+   * and is never resent.
+   */
+  steerOrNotify?(agentId: string, messageId: string, text: string): Promise<void>;
   /** Stop the assigned agent's current turn without delivering a follow-up message. */
   stopAgentTurn?(agentId: string): Promise<void>;
   /** One newest page of the agent's timeline, or null when the read fails; a failed read is never evidence. */

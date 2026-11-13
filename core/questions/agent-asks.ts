@@ -331,7 +331,7 @@ export class AgentAsks {
       if (!this.resolution.withHost(hostId, () => this.resolution.originHostAvailable(hostId) && Boolean(this.adapter.notify))) return;
       const text = `Your Nucleus question ${askId} was answered by ${who}: ${answer}. Continue the work with this answer.`;
       this.store.event(taskId, 'agent_ask_resume_intent', `${askId}: host ${hostId}; agent ${agentId}; run ${match![1]}`);
-      void this.resolution.withHost(hostId, () => this.adapter.notify!(agentId, `ns-agent-ask-answered-${askId}`, text.slice(0, 4000)))
+      void this.resolution.withHost(hostId, () => this.resolution.host.steerOrNotify(agentId, { messageId: `ns-agent-ask-answered-${askId}`, text: text.slice(0, 4000) }))
         .then(() => {
           if (!this.stopped() && !this.store.eventsAll(taskId).some(event => event.kind === 'agent_ask_resumed' && event.detail.startsWith(`${askId}:`)))
             this.store.event(taskId, 'agent_ask_resumed', `${askId}: resumed ${agentId}; answered by ${who}`);

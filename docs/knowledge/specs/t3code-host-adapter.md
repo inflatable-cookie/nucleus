@@ -216,6 +216,7 @@ the write if the desired title is already present.
 | Wake settled support thread | `thread.unsettle` through dispatch before a follow-up message | Stable command intent; a retained reviewer is active again for its next round |
 | Archive workspace | Mark the task's T3 worktree handle archived in adapter state | Observation reads the handle's `archivedAt`; the shared project registration remains registered and available |
 | Atomic interrupt and continue | `message.dispatch` `steer_active` with the live run's `targetRunId` | The message injects into the active turn; with no active run the refusal is proven before send |
+| Tell or relayed answer (`steerOrNotify`) | `message.dispatch` `steer_active` when the thread has a live run, read immediately before send; otherwise `queue_after_active` as `notify` | A proven not-sent steer falls back to one queued send under its own command identity; a remote steer failure is unknown delivery and is never resent. Nucleus's own reminders and notices keep `queue_after_active` |
 
 Use `launchThread` for creation because it supplies the native workspace strategy
 and initial-message preparation. Other mutations use `dispatchCommand`. Each

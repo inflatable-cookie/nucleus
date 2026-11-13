@@ -113,6 +113,12 @@ export interface Host {
    */
   enqueueMessage(id: AgentId, input: HostMessage): Promise<void>;
   /**
+   * A tell or relayed answer: steers into the live turn when the agent is
+   * mid-turn, else sends as `sendMessage` does. Hosts without steering deliver
+   * as `sendMessage`.
+   */
+  steerOrNotify(id: AgentId, input: HostMessage): Promise<void>;
+  /**
    * A send guarded by Queue fences. The host checks the agent and workspace it
    * refreshes against `expectedWorkspaceId`, awaits `guard.allowed` where the
    * code awaits it, and calls `guard.stillAllowed` and `guard.beforeSend`

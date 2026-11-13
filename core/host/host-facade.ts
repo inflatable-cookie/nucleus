@@ -244,6 +244,15 @@ export class HostFacade implements Pick<Host, HostFacadeMethod> {
     });
   }
 
+  steerOrNotify(id: AgentId, input: HostMessage): Promise<void> {
+    return this.#route(id, (adapter, nativeId) => {
+      const read = adapter.steerOrNotify ?? adapter.notify;
+      if (!read) return refused('This host cannot send messages');
+      const source = this.#sourceForHost(input.sourceAgentId, adapter);
+      return read.call(adapter, nativeId, input.messageId, input.text, source);
+    });
+  }
+
   interruptAndContinue(id: AgentId, messageId: RequestId, text: string): Promise<void> {
     return this.#route(id, (adapter, nativeId) => {
       const read = adapter.interruptAndContinue;
@@ -312,7 +321,7 @@ export type HostFacadeMethod =
   | 'findWorkspaces' | 'workspaceAvailable' | 'workspaceCatalog' | 'workspaceArchived'
   | 'originAgent' | 'observe' | 'observationInventory' | 'listLiveAgents'
   | 'agentTimelinePage' | 'agentTimeline' | 'stopAgentTurn' | 'archiveAgent' | 'deleteAgent' | 'subscribeRunUsage'
-  | 'sendMessage' | 'enqueueMessage' | 'interruptAndContinue'
+  | 'sendMessage' | 'enqueueMessage' | 'steerOrNotify' | 'interruptAndContinue'
   | 'pendingQuestions' | 'answeredQuestions' | 'answerNativeQuestion' | 'answerNativePermission' | 'dismissNativeQuestion';
 
 function refused(reason: string): Promise<never> {

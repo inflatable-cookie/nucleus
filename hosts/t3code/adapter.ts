@@ -752,18 +752,49 @@ export class T3CodeHost implements Host {
   }
   async sendWhenIdle(_id: string, _input: HostAsk): Promise<string | null> { return unsupported('in-thread Nucleus questions'); }
   /**
+   * The run a message would steer: the projection's live run, or the thread
+   * shell's active run when the projection has none. Read immediately before
+   * every steer.
+   */
+  private async activeRunId(id: string): Promise<string | null> {
+    const projection = await this.readProjection(id);
+    const native = (await this.inventory()).threads.find(t => t.id === id);
+    return projection.runs.find(r => activeStatuses.has(r.status))?.id ?? native?.activeRunId ?? null;
+  }
+  /**
    * One atomic interrupt and continue: the nightly's `steer_active` dispatch
    * mode injects the message into the thread's live run. The run id is read
    * immediately before the send; with no active run there is nothing to steer
    * and the refusal is proven before the socket write.
    */
   async interruptAndContinue(id: string, messageId: string, text: string): Promise<void> {
-    const projection = await this.readProjection(id);
-    const native = (await this.inventory()).threads.find(t => t.id === id);
-    const runId = projection.runs.find(r => activeStatuses.has(r.status))?.id ?? native?.activeRunId ?? null;
+    const runId = await this.activeRunId(id);
     if (!runId) throw new ProvenPreSendRefusalError('T3Code thread has no active run to steer');
     await this.unsettleBeforeMessage(id, messageId);
     await this.effect(messageId, 'orchestration.dispatchCommand', { type: 'message.dispatch', commandId: messageId, threadId: id, messageId: identity('message', messageId), text, attachments: [], createdBy: 'user', creationSource: 'server', dispatchMode: { type: 'steer_active', targetRunId: runId } });
+  }
+  /**
+   * A message to a participant (Tom, 2026-11-13): steers into the thread's live
+   * run with `steer_active`, the run read immediately before the send. With no
+   * live run it is the ordinary queued send, as `notify` always was.
+   *
+   * A steer the adapter proves was not sent (a local fence or a not-sent
+   * transport failure) falls back to the queued send once, under its own
+   * command identity. Any other steer failure is unknown delivery: a remote
+   * refusal cannot prove it stayed unsent (planner ruling, 2026-11-11), so it
+   * is never resent.
+   */
+  async steerOrNotify(id: string, input: HostMessage): Promise<void> {
+    const { messageId, text } = input;
+    const runId = await this.activeRunId(id);
+    if (!runId) return this.sendMessage(id, input);
+    try {
+      await this.unsettleBeforeMessage(id, messageId);
+      await this.effect(identity('steer', messageId), 'orchestration.dispatchCommand', { type: 'message.dispatch', commandId: identity('steer', messageId), threadId: id, messageId: identity('message', messageId), text, attachments: [], createdBy: 'user', creationSource: 'server', dispatchMode: { type: 'steer_active', targetRunId: runId } });
+    } catch (error) {
+      if (!(error instanceof ProvenPreSendRefusalError)) throw error;
+      return this.sendMessage(id, input);
+    }
   }
   async stopAgentTurn(id: string) { const p = await this.readProjection(id); const runs = p.runs.filter(r => activeStatuses.has(r.status)).map(r => r.id).sort(); if (!runs.length) return;
     const key = identity('stop', canonical([id, runs])); await this.effect(key, 'orchestration.dispatchCommand', { type: 'thread.stop', commandId: key, threadId: id }); }

@@ -378,10 +378,10 @@ export class AgentMessages {
     const intent = { ...record, status: "uncertain" as const, deliveryIntentAt: now(), deliveryHostId: hostId, deliveryIntentState: "intent" as const };
     try {
       store.putMessage(intent);
-      await this.resolution.withHost(hostId, () => this.adapter.notify!(identity.agentId!, `ns-agent-message-${record.id}`, agentMessageDeliveryText({
-        fromReference: record.fromReference, fromTaskId: record.fromTaskId, fromRole: record.fromRole,
-        fromProject: record.fromProject, text: record.text,
-      })));
+      await this.resolution.withHost(hostId, () => this.resolution.host.steerOrNotify(identity.agentId!, {
+        messageId: `ns-agent-message-${record.id}`,
+        text: agentMessageDeliveryText({ fromReference: record.fromReference, fromTaskId: record.fromTaskId, fromRole: record.fromRole, fromProject: record.fromProject, text: record.text }),
+      }));
       const delivered: AgentMessageRecord = { ...intent, status: "delivered", toAgentId: identity.agentId, deliveredAt: now(), error: "" };
       store.transaction(() => {
         store.putMessage(delivered);
@@ -470,7 +470,7 @@ export class AgentMessages {
     this.deliveringMessages.add(record.id);
     try {
       store.putMessage(intent);
-      await this.resolution.withHost(hostId, () => this.resolution.host.sendMessage(agentId, {
+      await this.resolution.withHost(hostId, () => this.resolution.host.steerOrNotify(agentId, {
         messageId: `ns-agent-message-${record.id}`,
         text: agentMessageDeliveryText({ fromReference: record.fromReference, fromTaskId: record.fromTaskId, fromRole: record.fromRole, fromProject: record.fromProject, text: record.text }),
       }));
