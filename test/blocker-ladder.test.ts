@@ -488,6 +488,7 @@ test("a still-blocked run after the consult opens one planner escalation and its
     const beforeAmendment = f.current();
     const priorBrief = beforeAmendment.brief!;
     f.store.update(beforeAmendment.id, { brief: { ...priorBrief, text: `${priorBrief.text}\nClarification after escalation offer.\n` } });
+    assert.ok(f.current().version > beforeAmendment.version, "the planner amendment advances the task version");
     const escalationId = f.events('planner_escalation')[0]!.detail.split(':', 1)[0]!;
     const questionId = `ns-escalation-${escalationId}`;
     const receipt = await f.engine.resolution.answerDelegatedQuestion({
@@ -496,6 +497,8 @@ test("a still-blocked run after the consult opens one planner escalation and its
       reason: 'Try the staging tenant for the isolation gate.',
     }, 'origin');
     assert.equal(receipt.questionId, questionId);
+    assert.ok(f.store.eventsAll(`delegation:${questionId}`).some(event => event.kind === "delegated_command_applied"),
+      "a successful question.answer response has a durable applied marker before it returns");
     releasePlanner!('');
     await until(() => f.events("planner_escalation_answered").length > 0);
     assert.ok(f.events("planner_escalation_answered").some(event =>
