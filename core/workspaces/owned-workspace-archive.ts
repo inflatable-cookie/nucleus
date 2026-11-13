@@ -197,16 +197,15 @@ export class OwnedWorkspaceArchive {
     };
     // A previous attempt may have detached the checkout and been interrupted, so
     // the recorded path is gone and its tree survives under the quarantine name.
-    // `prove` has already established this task's ownership of `directory` before
-    // it reports the absence, and the recovery itself re-proves that ownership and
-    // requires the detach record written before the rename to name this exact task
-    // and workspace. The quarantine name and the directory type are never the
-    // authority; an unrecorded sibling is left for a human (nucleus#1179
-    // acceptance 2b, planner ruling 2026-11-13).
+    // The recovery re-proves this task's ownership of `directory` and requires the
+    // detach record written before the rename to name this exact task and
+    // workspace; the quarantine name and the directory type are never the
+    // authority, and an unrecorded sibling is left for a human. It is the tail of
+    // an attempt that already passed its fences, so a gone directory still repeats
+    // no local intent (nucleus#1179 acceptance 2b, planner ruling 2026-11-13).
     const initial=await prove(false);
     if(!initial){
       if(!await this.host.ownedDataDirFor(task,directory))throw Error(`worktree.teardown failed: ${directory} is not a Queue-owned checkout`);
-      if(!allowed())return [];
       await finishInterruptedRemoval(directory,{taskId:task.id,workspaceId:id});
       return [];
     }
