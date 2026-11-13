@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { writeFileSync } from 'node:fs';
 import { callerCliFixture } from './support/caller-cli-fixture';
 
 const commands = [
@@ -47,6 +48,25 @@ test('a refused participant ticket cannot fall through to host identity or send 
     const result=await f.invoke('participant','queue-cli.mjs',['project.set-planner','-'],{key:'project',agentId:'thread'},{PASEO_AGENT_ID:'host-fallback-thread'});
     assert.notEqual(result.code,0);assert.match(result.stderr,/revoked or invalid/);assert.equal(f.calls.length,0);assert.equal(f.hostResolutions.length,0);
   } finally {await f.close();}
+});
+
+test('a ticket-based control reports the active roll before caller resolution and sends nothing', async () => {
+  const f = await callerCliFixture();
+  try {
+    writeFileSync(`${f.dir}/queue-service-roll.json`, JSON.stringify({
+      status: 'replacing', fromBuild: 'old-build', toBuild: 'new-build', digest: 'd'.repeat(16),
+      at: new Date().toISOString(), detail: 'Replacing the service', deferrals: [],
+    }));
+    const result = await f.invoke('run', 'queue-cli.mjs', ['task', '-'], {
+      taskId: 'task', action: 'complete', reason: 'Synthetic completion',
+    });
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /service roll in progress \(replacing, 0s elapsed\); retry shortly/);
+    assert.match(result.stderr, /requested control was not applied/);
+    assert.equal(f.callbacks.length, 0, 'the stale callback socket was not contacted');
+    assert.equal(f.calls.length, 0, 'no service request was sent');
+    assert.equal(f.hostResolutions.length, 0, 'ticket identity did not fall through to host lookup');
+  } finally { await f.close(); }
 });
 
 

@@ -670,6 +670,11 @@ being replaced is the everyday case, and it keeps its answer:
   bounded, for the service's own daemon connection to answer again instead of
   refusing as unavailable or ambiguous; only a bridge still unavailable after
   the bound refuses, bounded as before.
+- **Ticket caller resolution reports the handover.** CLI identity resolution
+  uses a callback socket pinned to the old service, so during the replacing or
+  retrying handover it reports the stage and elapsed time immediately. Build
+  preparation still serves calls. No CLI control is sent until caller identity
+  has been resolved.
 - **Both direct surfaces share it.** The CLI client (`localQueueClient`) and
   the Paseo plugin bridge (`ServiceBridge.forward`) recover through one module
   (`shared/service/roll-recovery.ts`), so the operator's shell and the board

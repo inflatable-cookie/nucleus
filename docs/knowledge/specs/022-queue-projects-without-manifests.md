@@ -211,6 +211,9 @@ with task, PR and merge identities from outcomes. Notifications wait for an
 idle owner, preserve uncertain delivery and follow ownership changes. Disable
 or dormancy prevents delivery. Unresolved admission is reconciled under its
 original request ID; neither a lost reply nor restart authorizes resubmission.
+A milestone settlement notice addressed to both the project's planner and its
+submitter is fanned out once per thread; a qualified Paseo identity and its
+legacy bare thread ID resolve to the same recipient.
 A definitely refused unchanged batch remains diagnosed until its configuration
 or merge batch changes. A refusal caused solely by a post-fetch lifecycle fence
 proves no admission: once eligible, Nucleus uses a new durable request generation
