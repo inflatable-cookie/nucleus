@@ -28,7 +28,12 @@ import { readServiceInfo } from '../service/transport/identity';
 
 const planningCommit = 'b'.repeat(40);
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
-const READ_BOUND_MS = 400;
+/**
+ * A prompt read here answers in milliseconds; a read queued behind the walk waits
+ * for the rest of it (4,928 ms on the baseline run below). 1.5 s separates the two
+ * while absorbing parallel-lane load, which pushed one read to 558 ms.
+ */
+const READ_BOUND_MS = 1_500;
 /**
  * A deep, wide tree: the walk has to readdir every directory, which takes seconds
  * on the configured volume, so the reads below overlap it with room to spare.
