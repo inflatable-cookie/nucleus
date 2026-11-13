@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { finishInterruptedRemoval, recordRemovalDetach, removalDetachMarkerPath, removalQuarantinePath, removeTree } from '../core/workspaces/tree-removal';
+import { detachForRemoval, finishInterruptedRemoval, readRemovalDetach, removalDetachMarkerPath, removalQuarantinePath, removeTree } from '../core/workspaces/tree-removal';
 
 /**
  * Removing a checkout must not hold the thread that serves reads (nucleus#1179).
@@ -37,61 +37,89 @@ test('removing a populated tree yields the thread instead of blocking it', async
 });
 
 /**
- * An interrupted detach stays recoverable, and only under the authority that
- * detached it (nucleus#1179 reviews 5890648389 and 5891444157).
+ * An interrupted detach is finished only for the exact tree it recorded
+ * (nucleus#1179 reviews 5891444157 and 5893989674).
  *
- * The detach records what it is about to detach, renames the checkout to a
- * deterministic sibling, then walks it. A walk that fails or a process that dies
- * leaves the sibling with the original path gone; the next pass finds it by name,
- * but the name and the type are not authority: the record must name this task and
- * workspace, or nothing is deleted.
+ * The detach records the tree's task, workspace, device, inode and canonical
+ * parent and fsyncs the record, then renames. A later pass finishes the
+ * quarantine only when the directory standing there is that recorded object; an
+ * unrecorded sibling, a replacement with a different inode, a symlink or a marker
+ * name that already exists is refused and left for a human.
  */
-test('an interrupted detach is finished by the next pass, and a tree that is not this task\'s detach is refused', async () => {
+const authority = { taskId: 'task-1', workspaceId: 'ws-1' };
+const populate = (path: string) => {
+  mkdirSync(join(path, 'node_modules'), { recursive: true });
+  writeFileSync(join(path, 'node_modules', 'file.js'), 'module.exports = 1;\n');
+};
+
+test('an unrecorded quarantine sibling is refused and left for a human', async () => {
   const root = mkdtempSync(join(tmpdir(), 'nucleus-quarantine-'));
   const checkout = join(root, 'checkout');
   const quarantine = removalQuarantinePath(checkout);
-  const detach = (record: { taskId: string; workspaceId: string }) => recordRemovalDetach(checkout, { ...record, head: null, at: new Date().toISOString() });
-  const populate = () => {
-    mkdirSync(join(quarantine, 'node_modules'), { recursive: true });
-    writeFileSync(join(quarantine, 'node_modules', 'file.js'), 'module.exports = 1;\n');
-  };
-  const authority = { taskId: 'task-1', workspaceId: 'ws-1' };
-
-  // No detach record: the name alone proves nothing, so nothing is removed.
-  populate();
+  populate(quarantine);
   await assert.rejects(() => finishInterruptedRemoval(checkout, authority), /has no detach record naming this task and workspace/);
-  assert.equal(existsSync(quarantine), true, 'a tree with no detach record is left for a human');
+  assert.equal(existsSync(join(quarantine, 'node_modules', 'file.js')), true, 'the unrelated tree is untouched');
+  rmSync(root, { recursive: true, force: true });
+});
 
-  // A record for another task or workspace is equally no authority.
-  detach({ taskId: 'task-1', workspaceId: 'other-workspace' });
-  await assert.rejects(() => finishInterruptedRemoval(checkout, authority), /has no detach record naming this task and workspace/);
-  assert.equal(existsSync(quarantine), true, 'another workspace\'s detach is not this pass\'s to delete');
+test('a recorded detach carries the tree identity and is finished only for that tree', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'nucleus-quarantine-'));
+  const checkout = join(root, 'checkout');
+  const quarantine = removalQuarantinePath(checkout);
+  populate(checkout);
+  assert.equal(detachForRemoval(checkout, { ...authority, head: null }), quarantine);
+  const record = readRemovalDetach(checkout)!;
+  assert.equal(record.taskId, 'task-1');
+  assert.equal(record.workspaceId, 'ws-1');
+  assert.ok(record.inode > 0 && record.device >= 0, 'the record carries the tree filesystem identity');
+  assert.equal(record.parent, root, 'and its canonical parent');
 
-  // This task's own detach is finished, and its record goes with it.
-  detach(authority);
-  assert.equal(await finishInterruptedRemoval(checkout, authority), true, 'the next pass finishes its own detach');
-  assert.equal(existsSync(quarantine), false, 'the detached tree is gone');
-  assert.equal(existsSync(removalDetachMarkerPath(checkout)), false, 'the detach record is gone with it');
-  assert.equal(await finishInterruptedRemoval(checkout, authority), false, 'with nothing detached there, the pass does nothing');
+  // A replacement at the quarantine name has a different inode: not this detach.
+  rmSync(quarantine, { recursive: true, force: true });
+  populate(quarantine);
+  await assert.rejects(() => finishInterruptedRemoval(checkout, authority), /is not the directory this task detached/);
+  assert.equal(existsSync(quarantine), true, 'a replacement tree is left for a human');
+  rmSync(quarantine, { recursive: true, force: true });
 
-  // Anything but a real directory is never followed or removed, even with a record.
-  detach(authority);
-  writeFileSync(quarantine, 'not a directory');
-  await assert.rejects(() => finishInterruptedRemoval(checkout, authority), /is not a directory this Queue removal could have detached/);
-  assert.equal(existsSync(quarantine), true, 'the unexpected entry is left for a human');
-  rmSync(quarantine, { force: true });
-  mkdirSync(join(root, 'real'), { recursive: true });
-  symlinkSync(join(root, 'real'), removalQuarantinePath(join(root, 'link')));
-  recordRemovalDetach(join(root, 'link'), { taskId: 'task-1', workspaceId: 'ws-1', head: null, at: new Date().toISOString() });
-  await assert.rejects(() => finishInterruptedRemoval(join(root, 'link'), authority), /is not a directory this Queue removal could have detached/);
-  assert.equal(existsSync(join(root, 'real')), true, 'a symlink target is untouched');
+  // Finish a freshly recorded detach: the tree and its record both go.
+  rmSync(removalDetachMarkerPath(checkout), { force: true });
+  populate(checkout);
+  detachForRemoval(checkout, { ...authority, head: null });
+  assert.equal(await finishInterruptedRemoval(checkout, authority), true, 'the recorded tree is finished');
+  assert.equal(existsSync(quarantine), false);
+  assert.equal(existsSync(removalDetachMarkerPath(checkout)), false, 'the record goes with the tree');
+  assert.equal(await finishInterruptedRemoval(checkout, authority), false, 'nothing detached there now');
+  rmSync(root, { recursive: true, force: true });
+});
 
-  // A record whose tree is already gone is cleaned up only when it is this pass's.
-  recordRemovalDetach(join(root, 'settled'), { taskId: 'task-1', workspaceId: 'ws-1', head: null, at: new Date().toISOString() });
-  assert.equal(await finishInterruptedRemoval(join(root, 'settled'), authority), false);
-  assert.equal(existsSync(removalDetachMarkerPath(join(root, 'settled'))), false, 'a finished detach leaves no record');
-  recordRemovalDetach(join(root, 'foreign'), { taskId: 'task-2', workspaceId: 'ws-9', head: null, at: new Date().toISOString() });
-  assert.equal(await finishInterruptedRemoval(join(root, 'foreign'), authority), false);
-  assert.equal(existsSync(removalDetachMarkerPath(join(root, 'foreign'))), true, 'another task\'s record is not deleted');
+test('the detach record is created exclusively and never follows a symlink', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'nucleus-quarantine-'));
+  const checkout = join(root, 'checkout');
+  populate(checkout);
+  mkdirSync(join(root, 'target'), { recursive: true });
+  writeFileSync(join(root, 'target', 'keep.txt'), 'keep');
+  symlinkSync(join(root, 'target', 'keep.txt'), removalDetachMarkerPath(checkout));
+  assert.throws(() => detachForRemoval(checkout, { ...authority, head: null }), /EEXIST|file already exists/);
+  assert.equal(readFileSync(join(root, 'target', 'keep.txt'), 'utf8'), 'keep', 'the symlink target is untouched');
+  assert.equal(existsSync(checkout), true, 'and the tree was not renamed');
+  assert.equal(existsSync(removalQuarantinePath(checkout)), false);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("a record whose tree is already gone is cleaned up only when it is this pass's", async () => {
+  const root = mkdtempSync(join(tmpdir(), 'nucleus-quarantine-'));
+  const settled = join(root, 'settled');
+  populate(settled);
+  detachForRemoval(settled, { ...authority, head: null });
+  rmSync(removalQuarantinePath(settled), { recursive: true, force: true });
+  assert.equal(await finishInterruptedRemoval(settled, authority), false);
+  assert.equal(existsSync(removalDetachMarkerPath(settled)), false, 'a finished detach leaves no record');
+
+  const foreign = join(root, 'foreign');
+  populate(foreign);
+  detachForRemoval(foreign, { taskId: 'task-2', workspaceId: 'ws-9', head: null });
+  rmSync(removalQuarantinePath(foreign), { recursive: true, force: true });
+  assert.equal(await finishInterruptedRemoval(foreign, authority), false);
+  assert.equal(existsSync(removalDetachMarkerPath(foreign)), true, "another task's record is not deleted");
   rmSync(root, { recursive: true, force: true });
 });

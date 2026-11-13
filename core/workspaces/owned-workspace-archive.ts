@@ -1,6 +1,6 @@
 import { historicalWireLabel } from "../../shared/wire-labels";
-import { existsSync, renameSync } from "node:fs";
-import { removeTree, finishInterruptedRemoval, recordRemovalDetach, removalQuarantinePath } from "./tree-removal";
+import { existsSync } from "node:fs";
+import { removeTree, detachForRemoval, finishInterruptedRemoval, removalQuarantinePath } from "./tree-removal";
 import type { Run, Task } from "../../shared/contracts";
 import type { AgentObservation, OriginAgent } from "../host/adapter";
 import type { WorkspaceContinuationHost } from "./workspace-continuation";
@@ -282,12 +282,12 @@ export class OwnedWorkspaceArchive {
         // proof (nucleus#1179 review 5890172363).
         if(discarding){assertCanonicalOwnedPath(directory,ownedData,commonDir,task.id);normalizeOwnedDirectoryPermissions(directory);}
         if(initial.orphan.orphaned){
-          const quarantine=removalQuarantinePath(directory);
-          // The detach record is written synchronously, between the re-proof above
-          // and the rename: it is the durable evidence a later pass needs to know
-          // this tree is this task's checkout (nucleus#1179 review 5891444157).
-          recordRemovalDetach(directory,{taskId:task.id,workspaceId:id,head:initial.actualHead,at:new Date().toISOString()});
-          renameSync(directory,quarantine);
+          // Record the tree's task, workspace and filesystem identity, then rename
+          // it, all synchronously and immediately after the re-proof above: the
+          // record is fsynced before the rename, and the rename carries the inode
+          // the record names, so a later pass can prove this exact tree
+          // (nucleus#1179 reviews 5891444157 and 5893989674).
+          const quarantine=detachForRemoval(directory,{taskId:task.id,workspaceId:id,head:initial.actualHead});
           await removeTree(quarantine,{force:false});
         }
         else await removeOwnedWorktree(task.repoPath,directory,discarding);

@@ -795,17 +795,20 @@ admission deadline is abandoned rather than waited on. The removals that delete 
 whole populated checkout go through `removeTree`
 (`core/workspaces/tree-removal.ts`), which runs node's walk on libuv's pool:
 sibling worktrees, orphan checkouts and an archived owned worktree. An archived
-orphan is first recorded and then moved to a deterministic quarantine sibling by a
-synchronous rename, so the tree the asynchronous walk removes is exactly the tree
-the synchronous proof validated. The record names the task, the workspace and the
-head, and it is written between the re-proof and the rename, so it is durable
-evidence of what was detached before the rename happened. A walk that fails or is
-interrupted leaves that sibling with the original path gone; the next pass finds
-it only after proving this task's ownership of the recorded directory, and
-finishes it only when the record names that same task and workspace. An
-unrecorded sibling — or a symlink or file at the name — is left alone and the
-archive fails closed, so a name can never authorize a deletion
-(nucleus#1179 acceptance 2b, planner ruling 2026-11-13). Two bounded synchronous removals remain and say so where they are:
+orphan is detached synchronously immediately after its re-proof: one call records
+the tree's task, workspace, device, inode and canonical parent in a marker created
+exclusively (`wx`, so an existing file or symlink is refused rather than followed)
+and fsyncs it, then renames the tree to a deterministic quarantine sibling. A
+rename carries the inode the record names, so a later pass can prove that the
+directory standing at the quarantine name is that same object. The next pass looks
+at the quarantine only after proving this task owns the recorded directory, and it
+finishes the tree only when the record names this task and workspace *and* the
+device, inode and canonical parent still match. An unrecorded sibling, a
+replacement with a different inode, a changed parent, a symlink, or a marker name
+that already exists is refused and left for a human; the archive fails closed and
+never reports completion while a quarantine survives (nucleus#1179 acceptance 2b,
+planner ruling 2026-11-13).
+Two bounded synchronous removals remain and say so where they are:
 one run's recorded TMPDIR leaf in the store's retention and release paths, one
 recorded evidence head under the report's 32 MiB proof budget, and the private
 directory holding one migration snapshot. `service.health.requestTimings.held`

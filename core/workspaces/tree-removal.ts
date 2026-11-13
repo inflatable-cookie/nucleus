@@ -1,5 +1,6 @@
-import { lstatSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeSync } from "node:fs";
 import { rm } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { z } from "zod";
 
 /**
@@ -33,26 +34,26 @@ export function removalDetachMarkerPath(path: string): string {
 }
 
 /**
- * What a detach leaves behind. It is the durable evidence that the tree under the
- * quarantine name is this task's checkout and not a directory that merely shares
- * the name, so a later pass can finish the removal without trusting the name.
+ * What a detach leaves behind.
+ *
+ * It is durable evidence of two things a name cannot carry: which task and
+ * workspace detached the tree, and which filesystem object it was. `device` and
+ * `inode` are the detached directory's own identity, taken immediately before the
+ * rename, and a rename preserves them — so a later pass can prove that the
+ * directory standing at the quarantine name is the very object this record
+ * describes, not an unrelated directory that happens to share the name. `parent`
+ * is the canonical parent both names must still resolve to.
  */
 const removalDetachRecordSchema = z.object({
   taskId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/),
   workspaceId: z.string().min(1).max(200),
   head: z.string().nullable(),
   at: z.string(),
+  device: z.number(),
+  inode: z.number(),
+  parent: z.string().min(1),
 }).strict();
 export type RemovalDetachRecord = z.infer<typeof removalDetachRecordSchema>;
-
-/**
- * Record the detach right before it happens. Synchronous on purpose: the caller
- * has just re-proved ownership, so nothing may interleave between the proof, this
- * record and the rename.
- */
-export function recordRemovalDetach(path: string, record: RemovalDetachRecord): void {
-  writeFileSync(removalDetachMarkerPath(path), `${JSON.stringify(record)}\n`, { mode: 0o600 });
-}
 
 /** The recorded detach, or null when there is none or it does not parse. */
 export function readRemovalDetach(path: string): RemovalDetachRecord | null {
@@ -64,18 +65,49 @@ export function readRemovalDetach(path: string): RemovalDetachRecord | null {
 }
 
 /**
+ * Record the tree's identity and detach it, all synchronously.
+ *
+ * The caller has just re-proved ownership of `path`; nothing may interleave
+ * between that proof, this record and the rename. The record is created
+ * exclusively (`wx`), so an existing file or symlink at the marker name is
+ * refused instead of followed and truncated, and it is fsynced before the rename
+ * so the evidence is on disk before the tree can disappear under it. The rename
+ * carries the same inode the record names, which is what lets a later pass tell
+ * this tree apart from any other directory at the quarantine name
+ * (nucleus#1179, planner ruling 2026-11-13).
+ */
+export function detachForRemoval(path: string, input: { taskId: string; workspaceId: string; head: string | null }): string {
+  if (resolve(path) !== path) throw new Error(`${path} is not a canonical absolute path; refusing to detach it`);
+  const info = lstatSync(path, { throwIfNoEntry: false });
+  if (!info) throw new Error(`${path} is gone; there is nothing to detach`);
+  if (info.isSymbolicLink() || !info.isDirectory()) throw new Error(`${path} is not a directory a Queue removal can detach`);
+  const parent = realpathSync(dirname(path));
+  const quarantine = removalQuarantinePath(path);
+  const record: RemovalDetachRecord = {
+    taskId: input.taskId, workspaceId: input.workspaceId, head: input.head, at: new Date().toISOString(),
+    device: info.dev, inode: info.ino, parent,
+  };
+  const marker = removalDetachMarkerPath(path);
+  const fd = openSync(marker, "wx", 0o600);
+  try {
+    writeSync(fd, `${JSON.stringify(record)}\n`);
+    fsyncSync(fd);
+  } finally { closeSync(fd); }
+  renameSync(path, quarantine);
+  return quarantine;
+}
+
+/**
  * Remove the tree an interrupted detach left behind, under the same authority the
  * teardown itself needs.
  *
- * A detach records what it is about to detach, renames the checkout to the
- * deterministic sibling name and then walks it. If the walk fails or the process
- * dies, the original path is gone and the sibling survives: a retry that only
- * looked at the original path would report the archive complete while that tree
- * still holds the storage the archive was meant to release. The name and the type
- * are not authority — `authority` is the task and workspace this pass has already
- * proved own the checkout, and the record must name exactly those. A symlink, a
- * file, or a tree without this pass's record is refused, never followed and never
- * deleted (nucleus#1179 reviews 5890648389 and 5891444157).
+ * The caller has already proved this task owns the recorded directory. Beyond
+ * that, the detach record must name this task and workspace *and* the filesystem
+ * object standing at the quarantine name: same device, same inode, and the same
+ * canonical parent. A pre-existing unrelated sibling, a replacement, a symlink or
+ * a tree with no record is refused, never followed and never deleted, and the
+ * archive fails closed for a human to inspect (nucleus#1179 acceptance 2b,
+ * reviews 5890648389, 5891444157 and 5893989674).
  */
 export async function finishInterruptedRemoval(path: string, authority: { taskId: string; workspaceId: string }): Promise<boolean> {
   const quarantine = removalQuarantinePath(path);
@@ -92,6 +124,10 @@ export async function finishInterruptedRemoval(path: string, authority: { taskId
   const record = readRemovalDetach(path);
   if (!record || record.taskId !== authority.taskId || record.workspaceId !== authority.workspaceId)
     throw new Error(`${quarantine} has no detach record naming this task and workspace; refusing to remove a directory this pass did not detach — inspect it before retrying`);
+  if (record.device !== info.dev || record.inode !== info.ino)
+    throw new Error(`${quarantine} is not the directory this task detached (recorded identity ${record.device}:${record.inode}, found ${info.dev}:${info.ino}); refusing to remove it`);
+  if (realpathSync(dirname(path)) !== record.parent)
+    throw new Error(`${dirname(path)} is no longer the canonical parent recorded for ${quarantine}; refusing to remove it`);
   await removeTree(quarantine, { force: false });
   rmSync(removalDetachMarkerPath(path), { force: true });
   return true;

@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, renameSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { terminalArchiveFixture } from './support/terminal-archive-fixture';
-import { recordRemovalDetach, removalDetachMarkerPath, removalQuarantinePath } from '../core/workspaces/tree-removal';
+import { join } from 'node:path';
+import { detachForRemoval, removalDetachMarkerPath, removalQuarantinePath } from '../core/workspaces/tree-removal';
 
 /**
  * A recovered removal finishes only a detach it recorded durably (nucleus#1179
@@ -15,15 +16,11 @@ import { recordRemovalDetach, removalDetachMarkerPath, removalQuarantinePath } f
  * this task and workspace is, and an unrecorded sibling is left alone so the
  * archive fails closed instead of deleting someone else's directory.
  */
-const detach = (fixture: Awaited<ReturnType<typeof terminalArchiveFixture>>) => {
-  renameSync(fixture.directory, removalQuarantinePath(fixture.directory));
-};
-
 test('an archive finishes an interrupted detach that recorded this task and workspace', async t => {
   const fixture = await terminalArchiveFixture(t);
   const task = fixture.task();
-  detach(fixture);
-  recordRemovalDetach(fixture.directory, { taskId: task.id, workspaceId: 'ws', head: fixture.head, at: new Date().toISOString() });
+  // The production pair: record the tree's identity, then rename it.
+  detachForRemoval(fixture.directory, { taskId: task.id, workspaceId: 'ws', head: fixture.head });
   assert.equal(existsSync(fixture.directory), false, 'the checkout is detached under the quarantine name');
 
   await fixture.retry();
@@ -32,13 +29,28 @@ test('an archive finishes an interrupted detach that recorded this task and work
   assert.equal(existsSync(removalDetachMarkerPath(fixture.directory)), false, 'and its detach record went with it');
 });
 
-test('an archive leaves an unrecorded quarantine sibling alone and fails closed', async t => {
+test('an archive leaves a pre-existing unrelated quarantine sibling alone and fails closed', async t => {
   const fixture = await terminalArchiveFixture(t);
-  detach(fixture);
-  assert.equal(existsSync(removalQuarantinePath(fixture.directory)), true);
+  // A sibling that was never this archive's detach, beside the live checkout.
+  const sibling = removalQuarantinePath(fixture.directory);
+  mkdirSync(sibling, { recursive: true });
+  writeFileSync(join(sibling, 'unrelated.txt'), "not this task's tree");
+
+  await assert.rejects(() => fixture.retry(), /Queue-owned worktree directory remains after archive/);
+
+  assert.equal(existsSync(join(sibling, 'unrelated.txt')), true, 'a directory this pass did not detach is never removed');
+  assert.equal(existsSync(removalDetachMarkerPath(fixture.directory)), false, 'and no record is invented for it');
+});
+
+test('an archive refuses a quarantine that carries no detach record', async t => {
+  const fixture = await terminalArchiveFixture(t);
+  const task = fixture.task();
+  // A torn detach: the tree was moved aside (as `detachForRemoval` does) but its
+  // record is missing, so the identity cannot be proved.
+  detachForRemoval(fixture.directory, { taskId: task.id, workspaceId: 'ws', head: fixture.head });
+  rmSync(removalDetachMarkerPath(fixture.directory), { force: true });
 
   await assert.rejects(() => fixture.retry(), /has no detach record naming this task and workspace/);
 
-  assert.equal(existsSync(removalQuarantinePath(fixture.directory)), true, 'a directory this pass did not detach is never removed');
-  assert.equal(existsSync(removalDetachMarkerPath(fixture.directory)), false, 'and no record is invented for it');
+  assert.equal(existsSync(removalQuarantinePath(fixture.directory)), true, 'the unproven tree is left for a human');
 });

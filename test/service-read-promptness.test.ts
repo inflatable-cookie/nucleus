@@ -58,19 +58,32 @@ test('a long removal on the executor does not stop board, task.next or queue.det
     }
     assert.ok(existsSync(checkout), 'the removal target exists');
 
-    // Start the production removal and read immediately: message order puts the
-    // reads behind the removal on the executor, so this is exactly the shape the
-    // 09:55 sample shows. No timer decides the overlap.
-    const removal = service.debug({ target: 'engine', method: 'removeSiblings', args: [task.id] });
+    // Start the production removal, then keep reading until it settles. The
+    // removal spends part of its life in an async Git call and part of it inside
+    // the walk itself, so a single burst can slip between the two; repeating the
+    // reads guarantees some of them start while the walk is holding the thread.
+    let removing = true;
+    const removalStartedAt = Date.now();
+    const removal = service.debug({ target: 'engine', method: 'removeSiblings', args: [task.id] })
+      .then(value => { removing = false; return value; }, error => { removing = false; throw error; });
     const named = ['queue.ui-snapshot', 'queue.snapshot', 'task.next', 'queue.detail'] as const;
-    const reads = await Promise.all(named.map(async method => {
-      const input = method === 'task.next' || method === 'queue.detail' ? { taskId: task.id } : {};
-      const startedAt = Date.now();
-      await client.request(method, input);
-      return { method, ms: Date.now() - startedAt };
-    }));
-    for (const row of reads)
-      assert.ok(row.ms < READ_BOUND_MS, `${row.method} answered in ${row.ms} ms while the executor removed a 2,000-file checkout`);
+    const observed: Array<{ method: string; ms: number; startedWhileRemoving: boolean }> = [];
+    while (removing && observed.length < 240) {
+      for (const method of named) {
+        const input = method === 'task.next' || method === 'queue.detail' ? { taskId: task.id } : {};
+        const startedWhileRemoving = removing;
+        const startedAt = Date.now();
+        await client.request(method, input);
+        observed.push({ method, ms: Date.now() - startedAt, startedWhileRemoving });
+        if (!removing) break;
+      }
+    }
+    const removalMs = Date.now() - removalStartedAt;
+    const duringRemoval = observed.filter(row => row.startedWhileRemoving);
+    assert.ok(duringRemoval.length >= 2, `reads ran while the removal was in flight (${duringRemoval.length} of ${observed.length})`);
+    for (const row of duringRemoval)
+      assert.ok(row.ms < READ_BOUND_MS, `${row.method} answered in ${row.ms} ms while the executor removed a 2,000-file checkout (${removalMs} ms removal)`);
+
     await removal;
     assert.equal(existsSync(siblingRoot), false, 'the production removal finished');
     const after = Date.now();
