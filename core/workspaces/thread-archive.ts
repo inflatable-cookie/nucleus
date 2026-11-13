@@ -288,12 +288,14 @@ export async function archiveFinishedThreads(store: Store, adapter: Adapter, tas
  * never resent, and each thread is archived exactly once.
  */
 export async function archiveSupersededWorkers(store: Store, adapter: Adapter, taskId: string): Promise<void> {
-  const host = new HostFacade({ adapter });
-  if (!adapter.originAgent || !removesThreads(adapter)) return;
   const task = store.task(taskId);
   if (task.removedAt || store.getMeta('paused')) return;
   // Terminal tasks belong to the closeout lane, which archives every worker.
   if (terminalThreadCleanup(task, true) || ['done', 'cancelled'].includes(task.phase)) return;
+  // T3-only from here: check the host kind before touching its reads, so
+  // other hosts (and their pinned quantum order) see no new adapter access.
+  if (!removesThreads(adapter) || !adapter.originAgent) return;
+  const host = new HostFacade({ adapter });
   const live = new Set([task.agentId, task.coordinatorAgentId, task.resolution.reviewerAgentId].filter((id): id is string => Boolean(id)));
   for (const worker of task.retiredWorkers) {
     const agentId = worker.agentId;
