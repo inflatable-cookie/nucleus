@@ -282,7 +282,7 @@ test('an ordinary task runs its whole lifecycle on T3: thinking level, helper re
     assert.equal(sibling.phase, 'working', 'the sibling task is live before closeout');
     assert.equal(await f.host.workspaceAvailable(siblingWorkspaceId), true, 'the sibling worktree handle is available');
 
-    // A planner tell arrives mid-run: the worker thread is live and the message queues behind its turn.
+    // A planner tell arrives mid-run: the worker thread is live and the message steers into its turn.
     const workerProjection = f.server.threads.get(workerThreadId)!;
     workerProjection.runs = [{ id: 'worker-run-1', status: 'running', startedAt: STAMP }];
     const tell = await f.runtime.engine.resolution.agentMessage({
@@ -292,7 +292,7 @@ test('an ordinary task runs its whole lifecycle on T3: thinking level, helper re
     assert.equal(tell.status, 'delivered');
     const tellCommand = f.server.commands.filter(command => command.type === 'message.dispatch').at(-1)!;
     assert.equal(tellCommand.threadId, workerThreadId);
-    assert.deepEqual(tellCommand.dispatchMode, { type: 'queue_after_active' });
+    assert.deepEqual(tellCommand.dispatchMode, { type: 'steer_active', targetRunId: 'worker-run-1' });
     assert.match(tellCommand.text, /Queue message from the lifecycle planner/);
     workerProjection.runs = [];
 

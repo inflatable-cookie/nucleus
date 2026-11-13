@@ -589,6 +589,9 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
   set("notify", call("callback", "notify", idKey("notify"), (args) => {
     if (typeof args[0] === "string") admission.invalidate(args[0]);
   }));
+  set("steerOrNotify", call("callback", "steerOrNotify", idKey("steerOrNotify"), (args) => {
+    if (typeof args[0] === "string") admission.invalidate(args[0]);
+  }));
   for (const name of [
     "validate", "verifyWorkspace", "verifyResume", "verifyCheckpoint", "verifyCleanQueueWorktree",
     "verifyPr", "verifyPrIdentity", "verifyInspectedRevisionHead", "verifyReview",

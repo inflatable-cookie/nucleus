@@ -33,7 +33,7 @@ const FACADE_METHODS: HostFacadeMethod[] = [
   "findWorkspaces", "workspaceAvailable", "workspaceCatalog", "workspaceArchived",
   "originAgent", "observe", "observationInventory", "listLiveAgents",
   "agentTimelinePage", "agentTimeline", "stopAgentTurn", "archiveAgent", "deleteAgent", "subscribeRunUsage",
-  "sendMessage", "enqueueMessage", "interruptAndContinue",
+  "sendMessage", "enqueueMessage", "steerOrNotify", "interruptAndContinue",
   "pendingQuestions", "answeredQuestions", "answerNativeQuestion", "answerNativePermission", "dismissNativeQuestion",
 ];
 

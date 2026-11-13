@@ -1,0 +1,30 @@
+{
+  "thread": {
+    "id": "synthetic-probe",
+    "projectId": "synthetic-project",
+    "title": "Synthetic thread",
+    "providerInstanceId": "synthetic-provider",
+    "modelSelection": {
+      "instanceId": "synthetic-provider",
+      "model": "synthetic-model"
+    },
+    "settledOverride": null,
+    "settledAt": null,
+    "worktreePath": "/synthetic/worktree",
+    "branch": "synthetic",
+    "archivedAt": null,
+    "deletedAt": null,
+    "updatedAt": "2026-01-01T00:00:00.000Z"
+  },
+  "runs": [
+    {
+      "id": "run-1",
+      "status": "running",
+      "startedAt": "2026-01-01T00:00:00.000Z"
+    }
+  ],
+  "runtimeRequests": [],
+  "turnItems": [],
+  "messages": [],
+  "updatedAt": "2026-01-01T00:00:00.000Z"
+}
