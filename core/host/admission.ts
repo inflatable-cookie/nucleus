@@ -545,8 +545,8 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
     if (typeof fn !== "function") return undefined;
     return (...args: unknown[]) => {
       const requestKey = key(args);
-      const invoke = () => admission.run(cls, () => (fn as (...a: unknown[]) => Promise<T>).apply(raw, args), requestKey, { innerTiming: INNER_TIMED.has(name), breakerExempt: BREAKER_EXEMPT.has(name) });
       const target = orderedTarget?.(args);
+      const invoke = () => admission.run(cls, () => (fn as (...a: unknown[]) => Promise<T>).apply(raw, args), target === undefined ? requestKey : undefined, { innerTiming: INNER_TIMED.has(name), breakerExempt: BREAKER_EXEMPT.has(name) });
       return (target === undefined ? invoke() : admission.notify(target, requestKey, invoke))
         .then(result => { invalidate?.(args, result); return result; });
     };
