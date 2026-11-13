@@ -1,0 +1,1 @@
+Failed finished hooks with recorded errors can be retried through the ordinary owner verb. Retained worker continuations receive the current run ticket, and escalation answers apply against current task state or return a refusal.

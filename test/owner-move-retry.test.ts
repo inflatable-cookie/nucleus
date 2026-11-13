@@ -830,7 +830,7 @@ let raw='';process.stdin.on('data',d=>raw+=d);process.stdin.on('end',()=>{
   process.stdout.write(JSON.stringify({schema:'paseo.queue.hook-result.v1',eventId:event.eventId,outcome:first?'blocked':'ok',summary:first?'hold once':'retried',metadata:{},changedPaths:[],commitSubjectSuffix:null}));
 });
 `;
-  const manifest = JSON.stringify({ schema: 'paseo.queue.control.v1', hooks: [{ id: 'ledger', events: ['task.pre_dispatch'], mode: 'read_only', delivery: 'required', executable: '.paseo/hooks/ledger', argv: [], timeoutMs: HOOK_TEST_TIMEOUT_MS, maxOutputBytes: 65536, allowedPaths: [], commitSubject: null }] }, null, 2);
+  const manifest = JSON.stringify({ schema: 'paseo.queue.control.v7', hooks: [{ id: 'ledger', events: ['task.finished'], target: 'integration_base', mode: 'read_only', delivery: 'advisory', program: { kind: 'repository', executable: '.paseo/hooks/ledger', argv: [] }, timeoutMs: HOOK_TEST_TIMEOUT_MS, maxOutputBytes: 65536, allowedPaths: [], commitSubject: null }] }, null, 2);
   for (const [path, spec] of [['.paseo/queue.json', manifest], ['.paseo/hooks/ledger', hookScript]] as const) {
     const full = join(repo, path);
     await mkdir(join(full, '..'), { recursive: true });
@@ -855,10 +855,13 @@ let raw='';process.stdin.on('data',d=>raw+=d);process.stdin.on('end',()=>{
     verifyWorkspace: async () => {}, findWorkspaces: async () => [], verifyPr: async () => ({ url: 'u', head: repoHead }), sendRun: async () => {},
   } as unknown as Adapter & ResolutionAdapter;
   const engine = new Engine(store, adapter, 0);
-  const delivery = { prUrl: 'https://example.invalid/pull/9', prNumber: 9, head: '1'.repeat(40), review: 'reviewed head', mergeCommit: '2'.repeat(40), integrationCommit: '3'.repeat(40), summary: 'first delivery' };
-  const first = await engine.hooks.emit('task.pre_dispatch', store.task(inserted.id), { event: 'task.pre_dispatch', baseCommit: repoHead, delivery });
-  assert.equal(first.hold, true, first.records[0].error);
-  assert.equal(first.records[0].state, 'blocked');
+  const terminalTask = store.update(inserted.id, { phase: 'done', directory: repo, branch: 'main', workspaceId: 'finished-ws',
+    resolution: { ...store.task(inserted.id).resolution, mergedCommit: repoHead, syncedCommit: repoHead } });
+  const first = await engine.hooks.finished(terminalTask);
+  assert.equal(first.hold, false);
+  assert.equal(first.records[0]!.state, 'failed');
+  // Reproduce the stored-shape failure: cleanup never started, so its durable intent has an error.
+  store.putHookEvent({ ...first.records[0]!, state: 'intent', error: 'runtime stop failed before execution', summary: 'runtime stop failed before execution' });
 
   const facts = () => collectOwnerVerbFacts(store, store.task(inserted.id));
   const next = () => taskNextSchema.parse(ownerTaskNext(facts()));
@@ -868,7 +871,7 @@ let raw='';process.stdin.on('data',d=>raw+=d);process.stdin.on('end',()=>{
   assert.equal(view.available, true, JSON.stringify(view));
   assert.deepEqual(view.args, {
     action: 'retry_effect', effect: `hook.${first.records[0].eventId}`, taskId: inserted.id, version: store.task(inserted.id).version,
-    summary: `task.pre_dispatch hook ledger occurrence is blocked`,
+    summary: `task.finished hook ledger occurrence is intent`,
   });
   assert.deepEqual(view.fill, ['reason']);
 
@@ -880,12 +883,12 @@ let raw='';process.stdin.on('data',d=>raw+=d);process.stdin.on('end',()=>{
   assert.equal(stored.eventId, first.records[0].eventId, 'the occurrence identity is kept');
   const lines = (await readFile(ledgerPath, 'utf8')).trim().split('\n').filter(Boolean);
   assert.equal(lines.length, 2);
-  assert.deepEqual(JSON.parse(lines[1]).delivery, delivery, 'the retry reproduced the immutable delivery');
+  assert.equal(JSON.parse(lines[1]).attempt, 2, 'the retried hook receives its next recorded attempt number');
   assert.equal(store.eventsAll(inserted.id).filter(event => event.kind === 'owner_control').length, 1);
   const audit = JSON.parse(store.eventsAll(inserted.id).find(event => event.kind === 'owner_control')!.detail);
   assert.equal(audit.verb, 'retry_effect');
   assert.equal(audit.identities.effect, `hook.${first.records[0].eventId}`);
-  assert.equal(retried.phase, 'queued', 'the task keeps waiting to dispatch');
+  assert.equal(retried.phase, 'done', 'retrying cleanup keeps the finished task terminal');
   await engine.stop();
   store.close();
 });

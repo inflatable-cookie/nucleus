@@ -19,7 +19,9 @@ export function callerRollProgress(dataDir = dataHome(), now = Date.now()) {
 
 /** Select a source without reading another thread's ticket or falling past a refused ticket. */
 export function callerSource(env = process.env, hostIdentity = () => null) {
-  const path = typeof env.NUCLEUS_TICKET === 'string' ? env.NUCLEUS_TICKET.trim() : '';
+  const continuationPath = typeof env.NUCLEUS_CONTINUATION_TICKET === 'string' ? env.NUCLEUS_CONTINUATION_TICKET.trim() : '';
+  const path = continuationPath || (typeof env.NUCLEUS_TICKET === 'string' ? env.NUCLEUS_TICKET.trim() : '');
+  if (continuationPath) return { source: 'ticket', path: continuationPath };
   if (path && existsSync(path)) return { source: 'ticket', path };
   const host = hostIdentity(env);
   if (host) return { source: 'host', ...host };
@@ -52,6 +54,9 @@ export async function resolveCaller({ env = process.env, hostIdentity, resolveHo
   const rollProgress = callerRollProgress(dataHome(env));
   if (rollProgress) throw new Error(rollProgress);
   const ticket = JSON.parse(readFileSync(selected.path, 'utf8'));
+  const expectedRunId = typeof env.NUCLEUS_CONTINUATION_RUN_ID === 'string' ? env.NUCLEUS_CONTINUATION_RUN_ID.trim() : '';
+  if (expectedRunId && ticket.runId !== expectedRunId)
+    throw new Error(`Continuation ticket is for run ${ticket.runId ?? 'unknown'}, not current run ${expectedRunId}; use the ticket path supplied in the continuation prompt`);
   if (typeof ticket.socketPath !== 'string' || !ticket.socketPath || typeof ticket.token !== 'string' || !ticket.token)
     throw new Error('The Nucleus caller ticket is incomplete');
   const payload = typeof ticket.participantId === 'string' && ticket.participantId

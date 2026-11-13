@@ -205,7 +205,12 @@ export class Delegation {
     const recordedHost = authority.hostId ?? (this.store.getMeta<Array<{ id: string }>>('hostRegistry')?.length === 1 ? this.store.getMeta<Array<{ id: string }>>('hostRegistry')?.[0]?.id : undefined);
     if (!caller || ![caller, qualified?.nativeAgentId].includes(authority.recipient) || (qualified && qualified.hostId !== recordedHost)) throw Error('Only the delegated recipient thread may answer this question');
     const recorded = events.find(event => event.kind === 'delegated_answer');
-    if (recorded) return JSON.parse(recorded.detail);
+    if (recorded) {
+      const refused = events.findLast(event => event.kind === 'planner_escalation_answer_refused'
+        && event.detail.startsWith(`${input.questionId.replace(/^(?:ns-escalation-|ns-decider-)/, '').replace(/-project$/, '')}:`));
+      if (refused) return Promise.reject(Error(refused.detail.slice(refused.detail.indexOf(':') + 2)));
+      return JSON.parse(recorded.detail);
+    }
     if (events.some(event => event.kind === 'delegated_closed') || Date.now() > authority.deadline) throw Error('This delegated answer window has closed');
     const answer = (input.answer ?? input.choice)?.trim();
     const reason = input.reason?.trim();
@@ -217,7 +222,28 @@ export class Delegation {
       ...(authority.role === 'planner' && input.overtakes?.length ? { overtakes: [...new Set(input.overtakes)].slice(0, 100) } : {}) };
     this.store.event(key, 'delegated_answer', JSON.stringify(receipt));
     this.store.event(authority.taskId, 'delegated_command_answered', `${input.questionId}: ${caller}`);
+    if (input.questionId.startsWith('ns-escalation-') || input.questionId.startsWith('ns-decider-')) {
+      const escalationId = input.questionId.replace(/^(?:ns-escalation-|ns-decider-)/, '').replace(/-project$/, '');
+      const exists = this.store.eventsAll(authority.taskId).some(event => event.kind === 'planner_escalation' && event.detail.startsWith(`${escalationId}:`));
+      if (exists) return this.applyEscalationAnswer(authority.taskId, input, caller, authority.role, reason).then(() => receipt);
+    }
     return receipt;
+  }
+  private async applyEscalationAnswer(taskId: string, input: { questionId: string; answer?: string; choice?: string; decision?: 'operator' }, caller: string, role: string, reason: string) {
+    const escalationId = input.questionId.replace(/^(?:ns-escalation-|ns-decider-)/, '').replace(/-project$/, '');
+    try {
+      if (input.decision === 'operator') {
+        this.resolution.ladder.classifyEscalationToOperator(this.store.task(taskId), escalationId, reason, `${role} ${caller}`);
+      } else {
+        const answer = input.choice ? `${input.choice} — ${reason}` : input.answer!;
+        const refusal = await this.resolution.ladder.applyDelegatedEscalationAnswer(taskId, escalationId, answer, `${role} ${caller}`);
+        if (refusal) throw Error(refusal);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.store.event(taskId, 'planner_escalation_answer_refused', `${escalationId}: ${message}`.slice(0, 4000));
+      throw Error(`Escalation ${escalationId} answer was not applied: ${message}`);
+    }
   }
   async waitDelegatedAnswer(id: string, signal: AbortSignal): Promise<string | null> {
     const key = `delegation:${id}`;

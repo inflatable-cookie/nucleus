@@ -48,6 +48,33 @@ test('generated CLI helper remains standalone and preserves callback identity an
  }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));rmSync(dir,{recursive:true,force:true});}
 });
 
+test('T3 report helper prefers the current continuation ticket and refuses a stale one', async () => {
+ const dir=realpathSync(mkdtempSync(join(tmpdir(),'ns-helper-continuation-'))),socketPath=join(dir,'s');
+ const requests:{body:any}[]=[];
+ const server=createServer(async(req,res)=>{let body='';for await(const chunk of req)body+=chunk;requests.push({body:JSON.parse(body)});res.end('{"ok":true}');});
+ await new Promise<void>(resolve=>server.listen(socketPath,resolve));
+ const helper=join(dir,'worker-report.mjs'),stale=join(dir,'stale.json'),current=join(dir,'current.json');
+ writeFileSync(helper,workerHelper);
+ writeFileSync(stale,JSON.stringify({socketPath,token:'stale-secret',taskId:'task',runId:'old-run'}));
+ writeFileSync(current,JSON.stringify({socketPath,token:'current-secret',taskId:'task',runId:'new-run'}));
+ const run=(ticket:string,currentRun:string)=>new Promise<{code:number|null;err:string}>((resolve,reject)=>{
+  const child=spawn(process.execPath,[helper],{stdio:['pipe','ignore','pipe'],env:{...process.env,NUCLEUS_TICKET:stale,NUCLEUS_CONTINUATION_TICKET:ticket,NUCLEUS_CONTINUATION_RUN_ID:currentRun,NUCLEUS_RUN_ID:'old-run'}});
+  let err='';child.stderr.on('data',chunk=>err+=chunk);child.on('error',reject);child.on('close',code=>resolve({code,err}));
+  child.stdin.end(JSON.stringify({status:'blocked',summary:'Current retained run'}));
+ });
+ try {
+  const accepted=await run(current,'new-run');
+  assert.equal(accepted.code,0,accepted.err);
+  assert.equal(requests.length,1);
+  assert.equal(requests[0]!.body.runId,'new-run');
+  assert.equal(requests[0]!.body.taskId,'task');
+  const refused=await run(stale,'new-run');
+  assert.notEqual(refused.code,0);
+  assert.match(refused.err,/Continuation ticket does not match the current run/);
+  assert.equal(requests.length,1,'the stale continuation ticket sent no report');
+ } finally {server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));rmSync(dir,{recursive:true,force:true});}
+});
+
 test('generated CLI helper carries reviewedInputs through authenticated completion and leaves omitted or invalid receipts alone',async()=>{
  const dir=realpathSync(mkdtempSync(join(tmpdir(),'ns-helper-reviewed-inputs-'))),store=new Store(join(dir,'queue.sqlite'));
  const engine=new Engine(store,{observe:observeIdle('ws', 'worker')} as unknown as Adapter);

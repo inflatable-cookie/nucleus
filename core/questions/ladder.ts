@@ -32,6 +32,7 @@ function plannerEscalationSuggestedVerbs(t: Task): TaskStopVerb[] | undefined {
 
 /** The blocker ladder: worker, reviewer consult, planner, operator. */
 export class Ladder {
+  private readonly escalationSettlements = new Map<string, Promise<string | null>>();
   constructor(readonly resolution: Resolution) {}
   get store() { return this.resolution.store; }
   get adapter() { return this.resolution.adapter; }
@@ -507,7 +508,7 @@ export class Ladder {
     if (events().some(event => event.kind === 'planner_escalation_missed' && event.detail.startsWith(`${id}: no delegated answer was produced;`))) return;
     const recoverable = this.resolution.recoverableDelegation([`ns-escalation-${id}`, `ns-decider-${id}`]);
     const observing = this.resolution.recoverableDelegation([`ns-escalation-${id}`, `ns-decider-${id}`], false);
-    if (events().some(event => (['planner_escalation_answered', 'planner_escalation_resolved'].includes(event.kind) || (!observing && event.kind === 'planner_escalation_unknown')) && event.detail.startsWith(`${id}:`))) return;
+    if (events().some(event => (['planner_escalation_answered', 'planner_escalation_resolved', 'planner_escalation_answer_refused'].includes(event.kind) || (!observing && event.kind === 'planner_escalation_unknown')) && event.detail.startsWith(`${id}:`))) return;
     if (!recoverable && events().some(event => event.kind === 'planner_escalation_sent' && event.detail.startsWith(`${id}:`))) {
       this.store.event(t.id, 'planner_escalation_unknown', `${id}: a previous delegate delivery could not be observed; Nucleus never re-asks it`);
       this.resolution.waiting(this.store.task(t.id), escalationWaitDetail.unknown(id), 'escalated');
@@ -553,7 +554,8 @@ export class Ladder {
       this.store.event(t.id, 'planner_escalation_answered', `${id}: answered by ordinary progress: the task merged or ended first`);
       return;
     }
-    if (plannerEscalations(events() as LadderEvent[]).find(item => item.id === id)?.answered) return;
+    if (plannerEscalations(events() as LadderEvent[]).find(item => item.id === id)?.answered
+      || events().some(event => event.kind === 'planner_escalation_answer_refused' && event.detail.startsWith(`${id}:`))) return;
     if (!reply || !who) {
       if (who?.startsWith('decider ')) await this.resolution.host.archiveAgent(who.slice(8)).catch(() => {});
       this.store.event(t.id, 'planner_escalation_missed', `${id}: no delegated answer was produced; the escalation stays open for the planner`);
@@ -610,10 +612,19 @@ export class Ladder {
     this.resolution.waiting(this.store.task(t.id), escalationWaitDetail.operator(id, view.id), 'escalated');
   }
   /** Record the answer before applying it; a refusal remains open. */
-  async settlePlannerEscalation(t: Task, id: string, answer: string, who: string, offered: EscalationVerbChoice[] = []): Promise<string | null> {
+  settlePlannerEscalation(t: Task, id: string, answer: string, who: string, offered: EscalationVerbChoice[] = []): Promise<string | null> {
+    const key = `${t.id}:${id}`;
+    const existing = this.escalationSettlements.get(key);
+    if (existing) return existing;
+    const settlement = this.settlePlannerEscalationOnce(t, id, answer, who, offered);
+    this.escalationSettlements.set(key, settlement);
+    void settlement.finally(() => { if (this.escalationSettlements.get(key) === settlement) this.escalationSettlements.delete(key); });
+    return settlement;
+  }
+  private async settlePlannerEscalationOnce(t: Task, id: string, answer: string, who: string, offered: EscalationVerbChoice[]): Promise<string | null> {
     this.store.event(t.id, 'planner_escalation_answer_pending', `${id}: action pending`);
-    this.store.event(t.id, 'planner_escalation_answered', `${id}: answered by ${who}: ${answer.slice(0, 4000)}`);
     if (escalationOutlived(this.store.task(t.id))) {
+      this.store.event(t.id, 'planner_escalation_answered', `${id}: answered by ${who}: ${answer.slice(0, 4000)}`);
       this.store.event(t.id, 'planner_escalation_applied', `${id}: nothing to apply; the task merged or ended first`);
       return null;
     }
@@ -630,11 +641,13 @@ export class Ladder {
       if (choice) {
         // Re-read `next` and match the offered identity, never accepting new fields,
         // force or an operator-only qualification from the delegate.
+        const withoutVersion = (args: Record<string, unknown>) => Object.fromEntries(Object.entries(args).filter(([key]) => key !== 'version'));
         const fresh = escalationVerbChoices(ownerVerbViews(collectOwnerVerbFacts(this.store, current)))
-          .find(item => item.verb === choice.verb && JSON.stringify(item.args) === JSON.stringify(choice.args));
+          .find(item => item.verb === choice.verb && JSON.stringify(withoutVersion(item.args)) === JSON.stringify(withoutVersion(choice.args)));
         if (!fresh) throw Error(`The selected ${choice.verb} is no longer available; read next again`);
         await this.resolution.applyOperatorControl(taskControlInputSchema.parse({ ...fresh.args, taskId: current.id, version: current.version,
           action: fresh.verb, reason, ...grant }));
+        this.store.event(current.id, 'planner_escalation_answered', `${id}: answered by ${who}: ${answer.slice(0, 4000)}`);
         this.store.event(current.id, 'planner_escalation_applied', `${id}: ${fresh.label}`);
         return null;
       }
@@ -645,6 +658,7 @@ export class Ladder {
         const waiting = this.store.task(current.id);
         this.store.event(current.id, 'planner_escalation_wait', `${id}: ${JSON.stringify({ kind: 'task', target: prerequisite.id, waitId: waiting.prerequisiteWait?.id })}`);
         this.resolution.waiting(waiting, `Escalation ${id}: waiting for task ${prerequisite.reference ?? prerequisite.id} to settle`, 'prerequisite');
+        this.store.event(current.id, 'planner_escalation_answered', `${id}: answered by ${who}: ${answer.slice(0, 4000)}`);
         this.store.event(current.id, 'planner_escalation_applied', `${id}: waiting for task ${prerequisite.reference ?? prerequisite.id}`);
         return null;
       }
@@ -654,6 +668,7 @@ export class Ladder {
         const target = new Date(at).toISOString();
         this.store.event(current.id, 'planner_escalation_wait', `${id}: ${JSON.stringify({ kind: 'time', target })}`);
         this.resolution.waiting(current, `Escalation ${id}: waiting until ${target}`, 'lifecycle');
+        this.store.event(current.id, 'planner_escalation_answered', `${id}: answered by ${who}: ${answer.slice(0, 4000)}`);
         this.store.event(current.id, 'planner_escalation_applied', `${id}: waiting until ${target}`);
         return null;
       }
@@ -662,6 +677,7 @@ export class Ladder {
         if (decision.status !== 'open') throw Error('Name an open operator decision ID');
         this.store.event(current.id, 'planner_escalation_wait', `${id}: ${JSON.stringify({ kind: 'decision', target: decision.id })}`);
         this.resolution.waiting(current, `Escalation ${id}: waiting for operator decision ${decision.id}`, 'escalated');
+        this.store.event(current.id, 'planner_escalation_answered', `${id}: answered by ${who}: ${answer.slice(0, 4000)}`);
         this.store.event(current.id, 'planner_escalation_applied', `${id}: waiting for operator decision ${decision.id}`);
         return null;
       }
@@ -671,6 +687,7 @@ export class Ladder {
         : { taskId: current.id, version: current.version, action: 'move', to: 'work',
           instruction: escalationContinuationInstruction(id, who, control.instruction).slice(0, 12000), reason, ...grant };
       await this.resolution.applyOperatorControl(taskControlInputSchema.parse(input));
+      this.store.event(current.id, 'planner_escalation_answered', `${id}: answered by ${who}: ${answer.slice(0, 4000)}`);
       this.store.event(current.id, 'planner_escalation_applied', `${id}: ${control.action === 'stop' ? 'stop and keep the work' : 'returned to the worker with the delegated direction'}`);
       if (control.action === 'work') {
         const after = this.store.task(current.id);
@@ -684,6 +701,12 @@ export class Ladder {
       this.resolution.waiting(this.store.task(current.id), `Escalation ${id} is unresolved: ${message}`, 'escalated');
       return message;
     }
+  }
+  async applyDelegatedEscalationAnswer(taskId: string, id: string, answer: string, who: string): Promise<string | null> {
+    const task = this.store.task(taskId);
+    const offer = this.store.eventsAll(taskId).find(event => event.kind === 'planner_escalation_offered' && event.detail.startsWith(`${id}: `));
+    const offered = offer ? JSON.parse(offer.detail.slice(id.length + 2)) as EscalationVerbChoice[] : [];
+    return this.settlePlannerEscalation(task, id, answer, who, offered);
   }
   /** The one continuation shape both ladder exits use: the same retained worker continues with the recorded direction. */
   continueWorkerAfterLadder(t: Task, input: { instruction: string; event: string; reason: string; detail: string }): void {

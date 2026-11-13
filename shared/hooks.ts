@@ -675,9 +675,10 @@ export function supersededRetentionReconciliation(records: Pick<HookRecord, "eve
 }
 
 /** Hook outcomes that hold the triggering transition until an operator resolves them. */
-export function hookHoldsTransition(record: Pick<HookRecord, "delivery" | "state">): boolean {
+export function hookHoldsTransition(record: Pick<HookRecord, "delivery" | "state" | "error">): boolean {
   if (record.state === "blocked") return true;
   if (record.state === "uncertain") return true;
   if (record.state === "failed" && record.delivery === "required") return true;
+  if (record.state === "intent" && Boolean(record.error)) return true;
   return false;
 }

@@ -481,9 +481,19 @@ test("a still-blocked run after the consult opens one planner escalation and its
       f.current().resolution.stop!.detail,
       /Waiting with the planner/,
     );
-    releasePlanner!(
-      "Choice: Return to the worker with a new approach\nReason: Try the staging tenant for the isolation gate.",
-    );
+    // A brief amendment between the planner's offer and its command answer bumps the task version.
+    const beforeAmendment = f.current();
+    const priorBrief = beforeAmendment.brief!;
+    f.store.update(beforeAmendment.id, { brief: { ...priorBrief, text: `${priorBrief.text}\nClarification after escalation offer.\n` } });
+    const escalationId = f.events('planner_escalation')[0]!.detail.split(':', 1)[0]!;
+    const questionId = `ns-escalation-${escalationId}`;
+    const receipt = await f.engine.resolution.answerDelegatedQuestion({
+      questionId,
+      choice: 'Return to the worker with a new approach',
+      reason: 'Try the staging tenant for the isolation gate.',
+    }, 'origin');
+    assert.equal(receipt.questionId, questionId);
+    releasePlanner!('');
     await until(() => f.events("planner_escalation_answered").length > 0);
     assert.match(
       f.events("planner_escalation_answered")[0]!.detail,

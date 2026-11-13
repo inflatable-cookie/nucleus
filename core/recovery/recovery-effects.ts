@@ -140,8 +140,9 @@ export function recoveryEffects(store: Store, task: Task, options: RecoveryEffec
     for (const hook of hooks) latestGateOccurrence.set(`${hook.event}:${hook.hookId}`, hook.id);
     for (const hook of hooks) {
       if (hook.baseAdvance && latestGateOccurrence.get(`${hook.event}:${hook.hookId}`) !== hook.id) continue;
+      const settledFailure = hook.state === 'intent' && Boolean(hook.error);
       const state = hook.result?.outcome === 'ok' && ['result', 'published'].includes(hook.state) ? 'settled'
-        : ['blocked', 'failed'].includes(hook.state) ? 'uncertain'
+        : ['blocked', 'failed'].includes(hook.state) || settledFailure ? 'uncertain'
           : ['result', 'published'].includes(hook.state) ? 'invalid' : 'in-flight';
       if (state === 'settled') continue;
       push({ kind: 'hook', identity: hook.id, taskId: task.id, runId: null, state,

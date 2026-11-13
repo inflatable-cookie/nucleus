@@ -12,8 +12,10 @@ import { assertOrdinaryReviewIdentity, ordinaryReviewSource } from "./ordinary-r
 import { readGitCheckout } from "../git/git-identity";
 import { repoCommonDir } from "../workspaces/workspace-allocation";
 import * as forge from "../forge/index";
+import { runTicketPath } from "../dispatch/agent-creation";
 
 export interface ReviewPolicyHost {
+  readonly helperPath: string;
   readonly workspaceHost: { workspaceRef(id:string): HostWorkspaceRef; activeThreads(): Promise<HostThread[]> };
   readonly messageHost: { retainedAgentRef(id:string): HostRetainedAgentRef };
   observe(id:string): Promise<AgentObservation>;
@@ -119,7 +121,9 @@ export class ReviewPolicy {
       this.host.binding(key, task, issued.runId, issued.token);
     }
     // The durable intent id is the message identity: an at-most-once replay reuses it.
-    await agent.send(text, { messageId: `ns-checkpoint-${intentId}` });
+    const ticketPath = runTicketPath({ helperPath: this.host.helperPath }, task.runId);
+    const identity = `Current continuation identity: run ${task.runId}; ticket ${ticketPath}. The retained shell may have stale NUCLEUS_RUN_ID and NUCLEUS_TICKET values. For every Nucleus CLI command or helper in this continuation, set NUCLEUS_CONTINUATION_RUN_ID=${task.runId} and NUCLEUS_CONTINUATION_TICKET=${JSON.stringify(ticketPath)}. Helpers prefer this continuation identity and refuse if the ticket names another run.`;
+    await agent.send(`${identity}\n\n${text}`, { messageId: `ns-checkpoint-${intentId}` });
   }
 
   /** Resume one retained reviewer/coordinator run in place; its existing callback binding stays intact. */

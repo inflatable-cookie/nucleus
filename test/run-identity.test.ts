@@ -238,7 +238,9 @@ test('continueWorker re-issues a rotated retained binding on the same path and l
     await adapter.continueWorker(task, 'intent-1', 'continue', () => { issued++; return { runId: 'new-run', token: 'fresh-token' }; });
     assert.equal(issued, 1);
     assert.deepEqual(JSON.parse(readFileSync(join(dir, 'tickets', 'mcp-old-run.json'), 'utf8')), { socketPath: join(dir, 'callback.sock'), taskId: 'task', runId: 'new-run', token: 'fresh-token' });
-    assert.deepEqual(sends, [{ text: 'continue', messageId: 'ns-checkpoint-intent-1' }]);
+    assert.equal(sends[0]!.messageId, 'ns-checkpoint-intent-1');
+    assert.match(sends[0]!.text, /Current continuation identity: run new-run; ticket .*\/tickets\/new-run\.json/);
+    assert.match(sends[0]!.text, /continue$/);
     // A binding that already names the durable run is not rotated.
     labels = { 'nucleus.mcpBinding': 'new-run' };
     await adapter.continueWorker(task, 'intent-2', 'continue again', () => { throw new Error('a matched binding must not be re-issued'); });

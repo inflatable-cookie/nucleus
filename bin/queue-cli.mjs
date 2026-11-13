@@ -265,8 +265,11 @@ if (method === 'agent.unregister' && input && typeof input === 'object' && !Arra
   input.caller = await callingThread();
 }
 // Self-force is authenticated by this run's ticket, never a typed caller.
-if (['task', 'queue.task'].includes(method) && input?.force && process.env.NUCLEUS_TICKET) {
-  const ticket = JSON.parse(await readFile(process.env.NUCLEUS_TICKET, 'utf8'));
+if (['task', 'queue.task'].includes(method) && input?.force && (process.env.NUCLEUS_CONTINUATION_TICKET || process.env.NUCLEUS_TICKET)) {
+  const ticketPath = process.env.NUCLEUS_CONTINUATION_TICKET || process.env.NUCLEUS_TICKET;
+  const ticket = JSON.parse(await readFile(ticketPath, 'utf8'));
+  if (process.env.NUCLEUS_CONTINUATION_RUN_ID && ticket.runId !== process.env.NUCLEUS_CONTINUATION_RUN_ID)
+    throw new Error('Continuation ticket does not match the current run; use the ticket path supplied in the continuation prompt');
   if (!ticket.participantId) {
     if (typeof ticket.token !== 'string' || typeof ticket.socketPath !== 'string' ||
         typeof ticket.taskId !== 'string' || typeof ticket.runId !== 'string')
