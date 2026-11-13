@@ -80,6 +80,8 @@ function fixture() {
     store.putRun(runSchema.parse({ id: reportingRunId, taskId, role: "revision", generation: 1, head: base, base,
       agentId: "worker-thread", workspaceId: "workspace", profile: worker, status: "running", createdAt: new Date().toISOString(),
       lastObservedAt: null, active: true, idleSince: null, completion: null, released: false, temporaryDirectory: scratch }));
+    assert.equal(store.task(taskId).resolution.currentRunId, reportingRunId);
+    assert.equal(store.run(reportingRunId)?.released, false);
   };
   const task = () => store.task(taskId);
   return { dir, worktree, scratch, scratchRoot, store, engine, taskId, runId, token, complete, reportOnce, cliReport, startRevision, task,
