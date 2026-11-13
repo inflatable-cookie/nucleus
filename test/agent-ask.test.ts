@@ -838,7 +838,7 @@ test("the joint review question on a provider without native questions goes thro
 
 test('a T3-bound third-round review question goes to the task planner through question.answer', async () => {
   const delegated = { planner: null as string | null, decider: null as string | null };
-  const f = lifecycleFixture({ responsible: true, provider: 'pi', delegates: delegated });
+  const f = lifecycleFixture({ responsible: true, provider: 'pi', hostId: 't3code:synthetic-environment', delegates: delegated });
   f.engine.resolution.delegatedAnswerWaitMs = 30_000;
   Object.assign(f.adapter, {
     capabilities: () => ({ nativeDecisions: false, reportingViaMcp: false }),
@@ -848,7 +848,7 @@ test('a T3-bound third-round review question goes to the task planner through qu
   delegated.planner = `Choice: Continue the current approach\nReason: The current approach remains safe\nOvertakes: ${prior.id}`;
   f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: join(f.dir, 'repo') }] });
   f.store.setProjectPlanner({ key: 'app', agentId: 'planner-1', setBy: 'operator' });
-  f.store.update(f.submitted.id, { hostId: 't3code:synthetic-environment', plannerAgentId: 'task-planner-1' });
+  f.store.update(f.submitted.id, { plannerAgentId: 'task-planner-1' });
   try {
     await f.reviews(3);
     await f.engine.wake();
