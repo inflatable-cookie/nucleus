@@ -78,7 +78,19 @@ const recommendedFirst = (choices: NonNullable<Decision["choices"]>, recommended
   const picked = choices.find(choice => choice.label === recommended);
   return picked ? [picked, ...choices.filter(choice => choice !== picked)] : choices;
 };
+/**
+ * Tom, 2026-11-13: a headline never starts mid-sentence. The first sentence
+ * is the headline: a sentence ends only at `.`, `!` or `?` followed by
+ * whitespace or the end of the text, so dots inside tokens (`.md`, `7.0.0`,
+ * `e.g.`) never split it and a later question mark never wins over the start.
+ */
 const questionSentence = (question: string): string => {
+  const normalized = question.replace(/\s+/g, " ").trim();
+  const end = normalized.search(/[.!?](?=\s|$)/);
+  return (end < 0 ? normalized : normalized.slice(0, end + 1)).trim();
+};
+/** The sentence the retired headline derived, kept only to recognize stored headlines it produced. */
+const retiredQuestionSentence = (question: string): string => {
   const normalized = question.replace(/\s+/g, " ").trim();
   const matches = [...normalized.matchAll(/[^.!?]+[!?](?=\s|$)/g)];
   return (matches.at(-1)?.[0] ?? normalized).trim();
@@ -329,7 +341,14 @@ export class Decisions {
       : undefined;
     const taskReference = decision.links.tasks[0] ? this.taskReference(decision.links.tasks[0]) : null;
     const legacyHeadline = decision.question.replace(/\s+/g, " ").trim().slice(0, 140);
-    const headline = !decision.headline || decision.headline === legacyHeadline
+    // Existing decisions get a fresh headline on read from their stored
+    // question: a stored headline the retired mid-sentence derivation produced
+    // is recognized and re-derived. The stored question is never changed, and
+    // an explicitly set headline that the retired derivation could not have
+    // produced is kept.
+    const prefix = taskReference ? `${taskReference} · ` : "";
+    const retiredHeadline = boundedHeadline(prefix + retiredQuestionSentence(decision.question), 140);
+    const headline = !decision.headline || decision.headline === legacyHeadline || decision.headline === retiredHeadline
       ? headlineFor(undefined, decision.question, taskReference) : decision.headline;
     const normalized = { ...decision };
     if (!choices.length) delete normalized.choices;
