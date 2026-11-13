@@ -900,10 +900,10 @@ test('an exhausted T3 planner ladder opens a board decision with the exhaustion 
   void pending.catch(() => {});
   try {
     await until(() => new Decisions(f.store).list({ task: f.submitted.id, status: 'open' }).length === 1);
-    await until(() => f.prompts.some(prompt => prompt.agentId === 'planner-1' && prompt.messageId === 'ns-queue-question-review-ladder-exhausted'));
+    await until(() => f.prompts.some(prompt => prompt.agentId === 'origin' && prompt.messageId === 'ns-queue-question-review-ladder-exhausted'));
     const view = new Decisions(f.store).list({ task: f.submitted.id, status: 'open' })[0]!;
     assert.match(view.context ?? '', /planner ladder ran out without an answer/);
-    const notice = f.prompts.find(prompt => prompt.agentId === 'planner-1' && prompt.messageId === 'ns-queue-question-review-ladder-exhausted')!.text;
+    const notice = f.prompts.find(prompt => prompt.agentId === 'origin' && prompt.messageId === 'ns-queue-question-review-ladder-exhausted')!.text;
     assert.match(notice, /planner ladder ran out/);
     assert.match(notice, /on the board for the operator/);
     assert.doesNotMatch(notice, /question\.answer/);
