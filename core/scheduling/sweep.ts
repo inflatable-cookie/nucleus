@@ -84,6 +84,33 @@ export class Sweep {
   }
 
   /**
+   * Attention surfaces the worker thread (nucleus#1181): while a T3-bound task
+   * is blocked, errored, needs attention or carries an attention flag (planner
+   * or operator escalation), its worker thread is unsettled so it shows in
+   * T3's main list instead of the settled list. Only the worker thread
+   * surfaces, never support threads. When the task leaves attention the
+   * ordinary settlement sweep puts the thread back; this pass sends nothing
+   * more. A host without the presentation method (Paseo) keeps its behaviour.
+   */
+  private async surfaceAttentionT3Threads(hostId: string): Promise<void> {
+    const adapter = this.engine.adapter;
+    const unsettle = adapter.unsettleWorkerThread;
+    if (!unsettle) return;
+    for (const task of this.engine.store.tasks()) {
+      if (task.hostId !== hostId || task.removedAt != null) continue;
+      if (!task.agentId || ['done', 'cancelled'].includes(task.phase)) continue;
+      if (!['blocked', 'error', 'needs_attention'].includes(task.phase) && !task.resolution.attention) continue;
+      // The terminal lane owns archived threads; support threads never surface.
+      if (this.engine.store.threadArchiveEffect(task.agentId, hostId)?.status === 'archived') continue;
+      try { await unsettle.call(adapter, task.agentId, task.id); }
+      catch (error) {
+        this.engine.store.event(task.id, 'thread_attention_warning',
+          `worker thread ${task.agentId} attention surfacing failed: ${threadSettlementFailureReason(error)}`.slice(0, 4000));
+      }
+    }
+  }
+
+  /**
    * A task quantum that outlived its bound is that task's observation outage: the
    * sweep moved on, the task's lane stays held by the running quantum, and the
    * next sweep queues behind it. Recorded as a task event, not a phase change.
@@ -260,6 +287,7 @@ export class Sweep {
         if (!this.engine.hostAvailable(host)) return;
         try { await this.engine.adapter.reconcileReportedSettlements?.(); } catch { /* durable host intents remain for the next sweep */ }
         try { await this.settleFinishedT3Threads(host); } catch { /* one host's settlement pass never stalls the fleet sweep */ }
+        try { await this.surfaceAttentionT3Threads(host); } catch { /* one host's attention pass never stalls the fleet sweep */ }
         try { await this.engine.adapter.reconcileThreadTitles?.(this.engine.store.tasks().filter(task => task.hostId === host)); } catch { /* title intents remain for the next sweep */ }
         const retiredPlan = this.engine.retiredObservationPlan();
         const inventoryIds = [...new Set([...retiredPlan.due, ...this.engine.resolution.observationTargets()])];

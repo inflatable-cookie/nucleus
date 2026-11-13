@@ -1025,3 +1025,41 @@ test('real sweeps retire a lost support settle after deletion without stream rea
     assert.equal(f.server.commands.filter(command => command.type === 'thread.delete' && command.threadId === otherAgent.id).length, 1);
   } finally { await f.close(); }
 });
+
+test('attention surfaces the worker thread and the return to review settles it again (#1181)', async t => {
+  const f = await fixture(t);
+  try {
+    const { taskId, head, workerThreadId, workerRunId } = await taskWithWorker(f);
+    // The worker's own turn, ended by the time its handover is accepted.
+    f.server.threads.get(workerThreadId)!.runs = completedWorkerRun();
+    const workerReport = await helperReport(f, runTicketPath(f, { id: workerRunId }), {
+      status: 'ready_for_review', summary: 'Change set ready', prNumber: 7, head,
+    });
+    assert.equal(workerReport.code, 0, workerReport.err);
+    await f.runtime.engine.wakeTask(taskId).catch(() => {});
+    await driveUntil(f, () => f.server.commands.some(command => command.type === 'thread.settle' && command.threadId === workerThreadId),
+      'worker settled on handover', taskId);
+    assert.equal(f.server.threads.get(workerThreadId)!.thread.settledOverride, 'settled');
+
+    // The task needs attention: the sweep unsettles the worker thread so it
+    // shows in T3's main list. Only the worker thread surfaces.
+    const unsettles = () => f.server.commands.filter(command => command.type === 'thread.unsettle' && command.threadId === workerThreadId);
+    const unsettledCount = unsettles().length;
+    f.runtime.store.update(taskId, { phase: 'needs_attention', reason: 'The retained worker stopped without a result',
+      resolution: { ...f.runtime.store.task(taskId).resolution, attention: true, recovery: null, recoveryActive: false, stop: null } });
+    await f.runtime.engine.auditPass(false);
+    assert.equal(unsettles().length, unsettledCount + 1, 'attention unsettles the worker thread exactly once');
+    assert.equal(f.server.threads.get(workerThreadId)!.thread.settledOverride, 'active');
+
+    // The task returns to review: the ordinary settle puts the thread back.
+    const settles = () => f.server.commands.filter(command => command.type === 'thread.settle' && command.threadId === workerThreadId);
+    const settledCount = settles().length;
+    f.runtime.store.update(taskId, { phase: 'awaiting_review', reason: 'Attention cleared; back to review',
+      resolution: { ...f.runtime.store.task(taskId).resolution, attention: false } });
+    await f.runtime.engine.auditPass(false);
+    assert.equal(settles().length, settledCount + 1, 'the return to review settles the worker thread again');
+    assert.equal(f.server.threads.get(workerThreadId)!.thread.settledOverride, 'settled');
+    // Let the pass's scheduled task quanta finish before the store closes.
+    await f.runtime.engine.quiesce().catch(() => {});
+  } finally { await f.close(); }
+});

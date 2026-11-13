@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Store, qualifiedThreadArchiveEffectKey } from '../core/store/store';
-import { archiveFinishedThreads, archiveReplacedReviewer, finishedThreadCleanupCatchUp, finishedThreadCleanupKey } from '../core/workspaces/thread-archive';
+import { archiveFinishedThreads, archiveReplacedReviewer, archiveSupersededWorkers, finishedThreadCleanupCatchUp, finishedThreadCleanupKey } from '../core/workspaces/thread-archive';
 import { dispositionSchema } from '../shared/contracts';
 import { profileSchema, submissionSchema, type Run } from '../shared/contracts';
 import type { Adapter } from '../core/host';
@@ -529,5 +529,46 @@ test('a completed Paseo cancellation keeps the existing support-only archive pat
     await archiveFinishedThreads(f.store, f.adapter, f.task.id);
     assert.deepEqual(f.calls, ['reviewer-1'], 'the terminal lane does not add a worker archive on Paseo');
     assert.deepEqual(f.deletes, []);
+  } finally { f.close(); }
+});
+
+test('a superseded worker is archived at once on a host that can remove threads, and never on Paseo (#1181)', async () => {
+  const f = fixture(); try {
+    ownedAndIdle(f);
+    f.store.update(f.task.id, { retiredWorkers: [{ agentId: 'old-worker', runId: 'old-run',
+      profile: profileSchema.parse({ id: 'worker-profile', name: 'Worker', provider: 'test', model: 'test/worker', notes: '', available: true, problem: '', supportedThinking: [] }), reason: 'route now to another profile' }] });
+
+    await archiveSupersededWorkers(f.store, f.t3Adapter, f.task.id);
+
+    assert.deepEqual(f.calls, ['old-worker'], 'the superseded worker thread is archived while the task is open');
+    assert.deepEqual(f.deletes, [], 'a worker thread is archived, never removed');
+    assert.equal(f.archived.has('worker'), false, 'the current worker thread stays');
+    assert.equal(f.store.getMeta<{ status: string }>(qualifiedThreadArchiveEffectKey('host', 'old-worker'))?.status, 'archived');
+
+    await archiveSupersededWorkers(f.store, f.t3Adapter, f.task.id);
+    assert.deepEqual(f.calls, ['old-worker'], 'each superseded worker is archived exactly once');
+
+    await archiveSupersededWorkers(f.store, f.adapter, f.task.id);
+    assert.deepEqual(f.calls, ['old-worker'], 'Paseo keeps its existing handling: nothing is archived mid-task');
+  } finally { f.close(); }
+});
+
+test('a superseded worker waits while its run is unreleased or its turn is still live (#1181)', async () => {
+  const f = fixture(); try {
+    ownedAndIdle(f, { 'old-worker': { status: 'running', active: true } });
+    f.store.update(f.task.id, { retiredWorkers: [{ agentId: 'old-worker', runId: 'old-run',
+      profile: profileSchema.parse({ id: 'worker-profile', name: 'Worker', provider: 'test', model: 'test/worker', notes: '', available: true, problem: '', supportedThinking: [] }), reason: 'route now to another profile' }] });
+    f.store.putRun({ ...f.run('revision', 'old-run'), agentId: 'old-worker', released: false, completion: null });
+
+    await archiveSupersededWorkers(f.store, f.t3Adapter, f.task.id);
+    assert.deepEqual(f.calls, [], 'an unreleased run fences the archive');
+
+    f.store.putRun({ ...f.store.run('old-run')!, released: true });
+    await archiveSupersededWorkers(f.store, f.t3Adapter, f.task.id);
+    assert.deepEqual(f.calls, [], 'a live turn still waits for the next pass');
+
+    ownedAndIdle(f);
+    await archiveSupersededWorkers(f.store, f.t3Adapter, f.task.id);
+    assert.deepEqual(f.calls, ['old-worker'], 'the released, idle thread is archived once its run ends');
   } finally { f.close(); }
 });

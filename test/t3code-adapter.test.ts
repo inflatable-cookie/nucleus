@@ -1088,3 +1088,53 @@ test('external deletion without our recorded delete leaves unknown presentation 
   assert.equal(host.state.read().intents[key].status, 'unknown');
   assert.equal(host.state.read().intents[key].retiredByDeletion, undefined);
 });
+
+test('attention surfaces a settled worker thread and the return to review settles it again (#1181)', async t => {
+  const { host, server } = await fixture(t);
+  const projection = server.threads.get('synthetic-probe')!;
+  projection.runs.push({ id: 'nightly-worker-run-1', status: 'completed', startedAt: STAMP });
+  await host.settleWorkerThread('synthetic-probe', 'nucleus-worker-run');
+  assert.equal(projection.thread.settledOverride, 'settled');
+  const settles = () => server.commands.filter(command => command.type === 'thread.settle');
+  const unsettles = () => server.commands.filter(command => command.type === 'thread.unsettle');
+  assert.equal(settles().length, 1);
+
+  // The task needs attention: the worker thread surfaces in the main list.
+  await host.unsettleWorkerThread('synthetic-probe', 'synthetic-task');
+  assert.equal(unsettles().length, 1);
+  assert.equal(projection.thread.settledOverride, 'active');
+
+  // An already-active thread sends nothing more, even across episodes.
+  await host.unsettleWorkerThread('synthetic-probe', 'synthetic-task');
+  assert.equal(unsettles().length, 1);
+
+  // The return to review settles again, under a fresh command identity.
+  await host.settleWorkerThread('synthetic-probe', 'nucleus-worker-run');
+  assert.equal(settles().length, 2);
+  assert.equal(settles().at(-1)!.expectedLatestRunId, 'nightly-worker-run-1');
+  assert.equal(projection.thread.settledOverride, 'settled');
+
+  // A settled thread with no unsettle since sends nothing more.
+  await host.settleWorkerThread('synthetic-probe', 'nucleus-worker-run');
+  assert.equal(settles().length, 2);
+  await host.settleReportedThread('synthetic-probe', 'nucleus-worker-run');
+  assert.equal(settles().length, 2);
+});
+
+test('a retained reviewer continued for a second round is settled again after that round (#1181, #227)', async t => {
+  const { host, server } = await fixture(t);
+  const projection = server.threads.get('synthetic-probe')!;
+  projection.runs.push({ id: 'nightly-review-run-1', status: 'completed', startedAt: STAMP });
+  await host.settleReportedThread('synthetic-probe', 'nucleus-review-run');
+  await host.sendMessage('synthetic-probe', { messageId: 'review-round-2', text: 'Please address the finding.' });
+  assert.equal(projection.thread.settledOverride, 'active');
+  projection.runs.push({ id: 'nightly-review-run-2', status: 'completed', startedAt: STAMP });
+  // The same retained reviewer run serves both rounds: the second settle must
+  // still settle the thread. Without the resettle the first receipt
+  // early-returns and the thread stays unsettled, as #227's reviewer thread did.
+  await host.settleReportedThread('synthetic-probe', 'nucleus-review-run');
+  const settlements = server.commands.filter(command => command.type === 'thread.settle');
+  assert.equal(settlements.length, 2);
+  assert.equal(settlements.at(-1)!.expectedLatestRunId, 'nightly-review-run-2');
+  assert.equal(projection.thread.settledOverride, 'settled');
+});

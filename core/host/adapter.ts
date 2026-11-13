@@ -109,6 +109,14 @@ export interface Adapter extends RunUsageSource {
    * or refused settle never changes the task or retries blindly.
    */
   settleWorkerThread?(agentId: string, runId: string): Promise<void>;
+  /**
+   * Surface a stuck task's worker thread once its task needs attention
+   * (#1181). Presentation only: the thread is unsettled so it shows in the
+   * host's main list, and the ordinary settles put it back when the task
+   * leaves attention. Unknown delivery is reconciled by re-read, never resent
+   * blindly.
+   */
+  unsettleWorkerThread?(agentId: string, taskId: string): Promise<void>;
   /** Retry recorded worker settles during the ordinary host sweep. */
   reconcileSettledThreads?(): Promise<void>;
   /** Settle a completed support thread in hosts that expose that presentation state. */

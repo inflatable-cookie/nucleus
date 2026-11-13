@@ -214,6 +214,7 @@ the write if the desired title is already present.
 | Remove | `thread.delete` through dispatch at closeout, never `onlyIfUnused` | Durable intent, then `deletedAt` or absence from a complete inventory proves removal; an unknown outcome is never resent |
 | Settle report | `thread.settle` through dispatch for any completed non-worker role | Immediately after the accepted Nucleus receipt; bind `expectedLatestRunId`, keep an uncertain intent and inspect `settledOverride` before retry |
 | Wake settled support thread | `thread.unsettle` through dispatch before a follow-up message | Stable command intent; a retained reviewer is active again for its next round |
+| Surface a stuck worker thread | `thread.unsettle` through dispatch while the task needs attention | Per-episode command identity; only the worker thread surfaces, and the ordinary settles put it back when attention clears |
 | Archive workspace | Mark the task's T3 worktree handle archived in adapter state | Observation reads the handle's `archivedAt`; the shared project registration remains registered and available |
 | Atomic interrupt and continue | `message.dispatch` `steer_active` with the live run's `targetRunId` | The message injects into the active turn; with no active run the refusal is proven before send |
 
@@ -434,12 +435,19 @@ expiry is not evidence that the original answer was never delivered.
 ## Thread lifecycle
 
 While a T3 task is open, its worker, reviewer, recovery, coordinator and executor
-threads are never archived or deleted. Released support threads stay settled
+threads are never archived or deleted, with one exception: a superseded worker
+is archived at once (Tom, 2026-11-13; nucleus#1181). Released support threads stay settled
 (`thread.settle`, above), and the task keeps its retained reviewer and recovery
 bindings; the next round or fault continues the same thread through the host's
-follow-up helper, which sends `thread.unsettle` before the message. A new thread
+follow-up helper, which sends `thread.unsettle` before the message. Every
+finished native turn of a reused thread ends settled: the adapter remembers
+which thread it settled, an unsettle clears that mark, and a later settle
+settles the latest finished run under a fresh command identity instead of
+early-returning on the old receipt (nucleus#1181; swallowtail#227's reviewer
+thread stayed unsettled after its second round because the second settle
+reused the first round's settled key). A new thread
 is needed only when the old one is gone or deleted, or the role's selected
-profile changes; displaced threads stay settled until closeout (Tom, 2026-11-12).
+profile changes; other displaced threads stay settled until closeout (Tom, 2026-11-12).
 
 Role detection reads the shared `WIRE_LABEL_KEYS` through the label helpers:
 `nucleus.role` identifies support threads, while the task's worker identity or a
@@ -451,6 +459,20 @@ releases the displaced run. The existing released-run callback fence refuses a
 late report; it needs no in-flight deletion, archive or separate removal fence.
 The displaced thread stays settled for terminal cleanup. Decider threads keep
 their existing lifecycle and are outside this cleanup rule.
+
+Attention surfaces the worker thread (Tom, 2026-11-13; nucleus#1181): while a
+T3-bound task is blocked, errored, needs attention or carries an attention flag
+(a planner or operator escalation), the sweep unsettles the task's worker
+thread (`thread.unsettle`) so it shows in T3's main list instead of the settled
+list. Only the worker thread surfaces, never support threads, and the title
+already shows the state. When the task leaves attention the ordinary settles
+put the thread back under a fresh command. A superseded worker is archived at
+once: when a worker run is replaced on a different profile — an owner
+`route now`, an approval reroute or failover to another profile — the old worker
+thread is archived as soon as its run is released and no live T3 run remains on
+it, through the same durable, idempotent observation-first archive effect the
+terminal lane uses, with the lost-reply check. That archive is the one
+mid-task archive the open-task rule allows.
 
 At closeout after a merge, a completed proof task or a completed cancellation,
 archive the worker threads (`thread.archive`) and delete the task's reviewer,
