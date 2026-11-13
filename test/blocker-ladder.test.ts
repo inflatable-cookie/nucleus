@@ -894,9 +894,9 @@ test("an escalation answer that no longer applies returns its refusal and stays 
         choice: "Return to the worker with a new approach",
         reason: "Use the isolated replay fixture.",
       }, "origin")),
-      /answer was not applied: The selected move is no longer available/,
+      /answer was not applied: The selected move is no longer available\. Read task next, then answer this same question with a corrected choice or reason\./,
     );
-    assert.match(f.events("planner_escalation_answer_refused").at(-1)!.detail, /selected move is no longer available/);
+    assert.match(f.events("planner_escalation_answer_refused").at(-1)!.detail, /Read task next, then answer this same question with a corrected choice or reason/);
     assert.equal(plannerEscalations(f.store.eventsAll(f.current().id)).find(item => item.id === escalationId)?.answered, false);
 
     f.engine.resolution.applyOperatorControl = async () => f.current();

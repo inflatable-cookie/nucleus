@@ -368,9 +368,10 @@ export class Delegation {
         if (refusal) throw Error(refusal);
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const detail = error instanceof Error ? error.message : String(error);
+      const message = `Escalation ${escalationId} answer was not applied: ${detail}. Read task next, then answer this same question with a corrected choice or reason.`;
       this.store.event(taskId, 'planner_escalation_answer_refused', `${escalationId}: ${message}`.slice(0, 4000));
-      throw Error(`Escalation ${escalationId} answer was not applied: ${message}`);
+      throw Error(message);
     }
   }
   async waitDelegatedAnswer(id: string, signal: AbortSignal): Promise<string | null> {
