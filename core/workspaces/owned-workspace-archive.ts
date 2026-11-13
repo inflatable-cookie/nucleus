@@ -1,5 +1,6 @@
 import { historicalWireLabel } from "../../shared/wire-labels";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { removeTree } from "./tree-removal";
 import type { Run, Task } from "../../shared/contracts";
 import type { AgentObservation, OriginAgent } from "../host/adapter";
 import type { WorkspaceContinuationHost } from "./workspace-continuation";
@@ -255,9 +256,12 @@ export class OwnedWorkspaceArchive {
         if(!allowed())return false;
         // Under the discard, the canonical path is re-proved and read-only
         // directories inside it are opened for removal, synchronously, with no
-        // await before the removal. A normalization failure stops removal.
+        // await before the removal starts. A normalization failure stops removal.
+        // The removal itself runs off this thread (`rm`'s walk is on libuv's
+        // pool), so one archived checkout cannot starve the reads this thread
+        // serves; nothing else may run between the proof above and the call.
         if(discarding){assertCanonicalOwnedPath(directory,ownedData,commonDir,task.id);normalizeOwnedDirectoryPermissions(directory);}
-        if(initial.orphan.orphaned)rmSync(directory,{recursive:true});
+        if(initial.orphan.orphaned)await removeTree(directory,{force:false});
         else await removeOwnedWorktree(task.repoPath,directory,discarding);
       }
       catch(error){throw Error(`worktree.teardown failed: ${error instanceof Error?error.message:String(error)}`);}

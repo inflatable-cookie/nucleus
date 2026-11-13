@@ -303,12 +303,12 @@ export const admissionLatencySchema = z.object(admissionLatencyFields).strict();
 /**
  * One outbound host call that is still holding its admission slot. `holder`
  * names the effect and its identity, so a stuck call is attributable without a
- * restart; `deadlineMs` is null for the effects that legitimately run for
- * minutes and are never abandoned (an archive, a workspace creation).
+ * restart; `deadlineMs` is the bound it will be abandoned at — the ordinary one,
+ * or the longer bound for the effects that legitimately run for minutes.
  */
 const heldHostSlotSchema = z.object({
   cls: admissionClassSchema, holder: z.string(), ageMs: z.number().nonnegative(),
-  deadlineMs: z.number().nonnegative().nullable(), breaker: z.boolean(),
+  deadlineMs: z.number().nonnegative(), breaker: z.boolean(),
 }).strict();
 export const paseoAdmissionSchema = z.object({
   callback: admissionClassStateSchema, control: admissionClassStateSchema, observation: admissionClassStateSchema,

@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Admission, type AdmissionOptions } from '../core/host/admission';
+import { Admission, admitAdapter, type AdmissionOptions } from '../core/host/admission';
 import { HostCallAbandonedError, HostUnknownDeliveryError } from '../core/host/errors';
+import type { Adapter } from '../core/host/adapter';
 
 /**
  * Every held host-call slot has a deadline and an owner (nucleus#1179).
@@ -59,19 +60,34 @@ test('a host call past its deadline is abandoned as unknown and its slot is free
   assert.equal(admission.snapshot().inventory.running, 0);
 });
 
-test('an effect that legitimately runs for minutes keeps its slot and is never abandoned', async () => {
-  const { admission } = admissionWith({ callDeadlineMs: 30, heldSlotWarnMs: 10 });
+test('an effect that legitimately runs for minutes keeps its slot under the long bound', async () => {
+  const { admission, lines } = admissionWith({ callDeadlineMs: 30, longCallDeadlineMs: 4_000, heldSlotWarnMs: 10 });
   let release: (value: string) => void = () => {};
-  const archive = admission.run('cleanup', () => new Promise<string>(resolve => { release = resolve; }), 'archiveWorkspace:fixture', { breakerExempt: true });
-  await sleep(60);
+  const archive = admission.run('cleanup', () => new Promise<string>(resolve => { release = resolve; }), 'archiveWorkspace:fixture', { breakerExempt: true, longRunning: true });
+  await sleep(80);
   const held = admission.snapshot();
   assert.equal(held.heldSlots.length, 1);
   assert.equal(held.heldSlots[0]!.cls, 'cleanup');
-  assert.equal(held.heldSlots[0]!.deadlineMs, null, 'an archive reports that it has no deadline');
-  assert.equal(held.abandoned.count, 0, 'an archive is not abandoned');
+  assert.equal(held.heldSlots[0]!.deadlineMs, 4_000, 'a long effect reports its own deadline, never no deadline');
+  assert.equal(held.abandoned.count, 0, 'a long effect past the ordinary bound is not abandoned at it');
   release('done');
   assert.equal(await archive, 'done');
   assert.equal(admission.snapshot().cleanup.running, 0);
+  assert.equal(lines.filter(line => line.includes('abandoned as unknown')).length, 0);
+});
+
+test('a long effect is still abandoned at its own bound and frees its slot', async () => {
+  const { admission } = admissionWith({ callDeadlineMs: 5_000, longCallDeadlineMs: 120, heldSlotWarnMs: 10 });
+  const abandoned = admission.run('cleanup', never, 'archiveWorkspace:fixture', { breakerExempt: true, longRunning: true })
+    .then(() => assert.fail('the long call must not answer'), error => error);
+  await sleep(40);
+  assert.equal(admission.snapshot().heldSlots[0]!.deadlineMs, 120, 'the long bound is named while it holds');
+  const error = await abandoned;
+  assert.ok(error instanceof HostCallAbandonedError);
+  const settled = admission.snapshot();
+  assert.equal(settled.cleanup.running, 0, 'the abandoned long call freed its cleanup slot');
+  assert.equal(settled.abandoned.count, 1);
+  assert.equal(settled.abandoned.last?.deadlineMs, 120);
 });
 
 test('a queued call logs who holds the slot and for how long', async () => {
@@ -86,4 +102,83 @@ test('a queued call logs who holds the slot and for how long', async () => {
   assert.match(waitLine!, /catalog:queued/);
   assert.match(waitLine!, /oldest held slot: inventory catalog holder for \d+ ms/);
   assert.match(waitLine!, /deadline 200 ms/);
+});
+
+/**
+ * The bound is per effect, never per class (review 5889669364).
+ *
+ * `archiveAgent` and `reconcileSettledThreads` share the cleanup class with the
+ * minutes-long workspace archive; `recoverTaskWorkspace` and
+ * `createCloseoutWorkspace` share the workspace class with creation. Only the
+ * effects that legitimately run for minutes get the long bound; every other
+ * effect in those classes is abandoned at the ordinary one, so a class can never
+ * hold its slots without a deadline.
+ */
+function hangingAdapter(hang: ReadonlySet<string>): Adapter {
+  const method = (name: string) => async (..._args: unknown[]) => {
+    if (hang.has(name)) return new Promise<never>(() => {});
+    return name.startsWith('archive') ? [] : { id: 'ws', directory: '/fixture/ws' };
+  };
+  const adapter = {
+    archiveAgent: method('archiveAgent'),
+    reconcileSettledThreads: method('reconcileSettledThreads'),
+    recoverTaskWorkspace: method('recoverTaskWorkspace'),
+    createCloseoutWorkspace: method('createCloseoutWorkspace'),
+    createWorkspace: method('createWorkspace'),
+    archiveTaskWorkspace: method('archiveTaskWorkspace'),
+  };
+  return adapter as unknown as Adapter;
+}
+
+test('cleanup-class callers that are not archives are abandoned at the ordinary bound', async () => {
+  const { admission } = admissionWith({ callDeadlineMs: 80, longCallDeadlineMs: 5_000, heldSlotWarnMs: 10 });
+  const wrapped = admitAdapter(hangingAdapter(new Set(['archiveAgent', 'reconcileSettledThreads'])), admission);
+  const outcome = (call: Promise<unknown>) => call.then(() => assert.fail('the hung call must not answer'), error => error);
+  // The cleanup class admits four; the fifth waits behind them.
+  const held = [0, 1, 2, 3].map(index => outcome(wrapped.archiveAgent!(`agent-${index}`)));
+  await sleep(20);
+  const queued = outcome(wrapped.reconcileSettledThreads!());
+  const results = await Promise.all([...held, queued]);
+  for (const [index, error] of results.entries()) {
+    assert.ok(error instanceof HostCallAbandonedError, `cleanup call ${index} hears the abandonment (${error})`);
+    assert.equal((error as HostCallAbandonedError).deadlineMs, 80, 'every non-archive cleanup call keeps the ordinary bound');
+  }
+  const settled = admission.snapshot();
+  assert.equal(settled.cleanup.running, 0, 'the cleanup slots are free again');
+  assert.equal(settled.cleanup.waiting, 0, 'the queued fifth call was admitted and settled');
+  assert.equal(settled.abandoned.count, 5);
+});
+
+test('workspace-class creation and recovery are abandoned at the long bound, and only archives get it', async () => {
+  const { admission } = admissionWith({ callDeadlineMs: 80, longCallDeadlineMs: 300, heldSlotWarnMs: 10 });
+  const wrapped = admitAdapter(hangingAdapter(new Set(['recoverTaskWorkspace', 'createCloseoutWorkspace', 'archiveTaskWorkspace'])), admission) as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
+  const outcome = (call: Promise<unknown>) => call.then(() => assert.fail('the hung call must not answer'), error => error);
+  const task = { id: 'task-fixture', repoPath: '/fixture', branch: 'ns-branch' } as never;
+
+  const recovery = outcome(wrapped.recoverTaskWorkspace!(task));
+  await sleep(20);
+  const closeout = outcome(wrapped.createCloseoutWorkspace!(task));
+  await sleep(140);
+  assert.equal(admission.snapshot().abandoned.count, 0, 'the long bound is not the ordinary bound');
+  assert.equal(admission.snapshot().heldSlots[0]?.deadlineMs, 300, 'a workspace creation call reports the long deadline');
+
+  const [recoveryError, closeoutError] = await Promise.all([recovery, closeout]);
+  for (const error of [recoveryError, closeoutError]) {
+    assert.ok(error instanceof HostCallAbandonedError, `the workspace call hears its abandonment (${error})`);
+    assert.equal((error as HostCallAbandonedError).deadlineMs, 300);
+  }
+  const settled = admission.snapshot();
+  assert.equal(settled.workspace.running, 0, 'the workspace slot is free again');
+  assert.equal(settled.abandoned.count, 2);
+
+  // A fresh effect of the same class runs in the freed slot.
+  const free = admitAdapter(hangingAdapter(new Set()), admission);
+  assert.deepEqual(await free.recoverTaskWorkspace!(task), { id: 'ws', directory: '/fixture/ws' });
+
+  // The archive itself is the one effect allowed the long bound, and being
+  // inner-timed it is still the named holder of its slot.
+  const archive = outcome(wrapped.archiveTaskWorkspace!(task, 'ws-1', '/fixture/ws', 'a'.repeat(40), () => true, false));
+  await sleep(20);
+  assert.equal(admission.snapshot().heldSlots.find(slot => slot.holder.includes('archiveWorkspace'))?.deadlineMs, 300);
+  assert.ok(await archive instanceof HostCallAbandonedError);
 });

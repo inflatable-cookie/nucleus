@@ -791,13 +791,17 @@ The executor serves every catalogue read on its one thread, so nothing running
 there may hold that thread unbounded. A board, `queue.snapshot`, `task.next` or
 `queue.detail` read takes the store and cached host views only: it awaits no
 live host call and no mutating operation, and a host call that outlives its
-admission deadline is abandoned rather than waited on. Recursive directory
-removal goes through `removeTree` (`core/workspaces/tree-removal.ts`), which
-runs node's walk on libuv's pool: a synchronous `rmSync` recursion over one
-populated checkout held the thread inside `lstat`/`unlink`/`rmdir` for minutes
-while every read timed out at the client (the 2026-11-13 09:55Z wedge,
-nucleus#1179). `service.health.requestTimings.held` names a request that still
-does hold the thread, with its age.
+admission deadline is abandoned rather than waited on. The removals that delete a
+whole populated checkout go through `removeTree`
+(`core/workspaces/tree-removal.ts`), which runs node's walk on libuv's pool:
+sibling worktrees, orphan checkouts and an archived owned worktree. A synchronous
+`rmSync` recursion over one populated checkout held the thread inside
+`lstat`/`unlink`/`rmdir` for minutes while every read timed out at the client (the
+2026-11-13 09:55Z wedge, nucleus#1179). Two bounded synchronous removals remain
+and say so where they are: one run's recorded TMPDIR leaf in the store's
+retention and release paths, and one recorded evidence head under the report's
+32 MiB proof budget. `service.health.requestTimings.held` names a request that
+still does hold the thread, with its age.
 
 An observation pass reads Paseo through one bounded inventory: one
 `agents.list` over the Nucleus label set, live threads only, walked to the
@@ -1021,17 +1025,25 @@ A workspace admission budget equal to the global task-slot limit delays only new
 creation and says so; retained workspaces and stored limits are untouched.
 
 **Held slots have a deadline and an owner.** Every admitted host call is a
-named holder for its class and identity. A call past its deadline — 60 seconds,
-unless its class is one that legitimately runs for minutes (a workspace archive
-or creation) — is abandoned as unknown: the caller receives an unknown-delivery
-answer naming the holder and how long it held, the class and total slots are
-released, and the call is never resent. A late answer from the host belongs to
-nothing and is discarded. `service.health.admission` names every call held past
-five seconds (`heldSlots`: class, holder, age, deadline) and the last abandoned
-call, and logs a wait for a slot with the oldest holder and its age. The freed
-bound keeps bounding instead of shrinking to nothing because one host call
-never returned. An abandoned call is reconciled from recorded state, exactly
-like any other unknown delivery (nucleus#1179).
+named holder for its class and identity, and every one of them has a deadline:
+the ordinary 60 seconds, or the long bound for the effects that legitimately
+hold a slot while bulk local or native work runs — a workspace archive, creation,
+recovery or closeout, which are bounded by 30 minutes, above the ten-minute bulk
+Git budget and the 1,432-second archive maximum. The exemption is per effect,
+never per class, so `archiveAgent` and `reconcileSettledThreads` (cleanup) and
+`recoverTaskWorkspace` and `createCloseoutWorkspace` (workspace) are abandoned at
+the ordinary bound like every other effect (nucleus#1179 review 5889669364). A
+call past its deadline is abandoned as unknown: the caller receives an
+unknown-delivery answer naming the holder and how long it held, the class and
+total slots are released, and the call is never resent. A late answer from the
+host belongs to nothing and is discarded.
+`service.health.admission` names every held slot past five seconds (`heldSlots`:
+class, holder, age, deadline) and the last abandoned call, and logs a wait for a
+slot with the oldest holder and its age. `heldSlots` names the admitted effect
+that holds the slot, including an inner-timed one whose individual requests are
+the pending calls. The freed bound keeps bounding instead of shrinking to nothing
+because one host call never returned. An abandoned call is reconciled from
+recorded state, exactly like any other unknown delivery (nucleus#1179).
 
 Nucleus has no global lane cap (Tom, 2026-09-27). One active quantum per key
 still holds, so no task or repository races itself, and per-repository

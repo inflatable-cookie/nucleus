@@ -162,6 +162,10 @@ export function removeTaskProofFiles(task: Pick<Task, "id" | "proofFiles">): num
   for (const headDirectory of heads) {
     try {
       if (!realDirectory(headDirectory)) continue;
+      // One recorded evidence head, bounded by the report's own 32 MiB proof
+      // budget, removed from the synchronous retention pass. Archived checkouts
+      // are the unbounded case and go through `removeTree`
+      // (core/workspaces/tree-removal.ts) instead (nucleus#1179).
       rmSync(headDirectory, { recursive: true, force: false });
       removed++;
     } catch { /* Retention leaves unknown or occupied evidence in place. */ }
