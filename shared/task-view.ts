@@ -4,7 +4,7 @@ import type { Incident } from "./incident";
 import { isDispositionComplete } from "./disposition";
 import { holdsOf, syncHoldProjection, taskHoldKind, holdOwnerOf, taskOwner, holdFencesView, holdEscalated, isOperatorOrigin } from "./holds";
 import { deriveWaitState, type WaitStateContext } from "./wait-state";
-import { taskBudget, taskBudgetBoardView } from "./task-budget";
+import { taskBudget, taskBudgetBoardView, type BudgetEvent } from "./task-budget";
 import { reportHeadline } from "./task-detail-summary";
 import { taskSummarySchema } from "./schema/task-view";
 import { isWaitingTaskStop, type TaskStopRecord, type TaskStopKind } from "./task-stop";
@@ -212,7 +212,7 @@ export function taskStopKind(task: Task, runs: Run[] = []): TaskStopKind | null 
  * Add the bounded, derived hold and wait fields at the task detail boundary.
  * Spec 043 (a): the wait state is a read, never a scheduling decision.
  */
-export function taskDetailView(task: Task, context: WaitStateContext = {}, runs: Run[] = []): TaskDetail {
+export function taskDetailView(task: Task, context: WaitStateContext = {}, runs: Run[] = [], events: BudgetEvent[] = []): TaskDetail {
   const holds = holdsOf(task);
   const holdKind = taskHoldKind(task);
   const waitState = deriveWaitState({
@@ -221,7 +221,7 @@ export function taskDetailView(task: Task, context: WaitStateContext = {}, runs:
   }, context);
   const stop = currentTaskStop(task);
   // Spec 058: every task carries the responsible budget; finished tasks show none.
-  const budget = !['done', 'cancelled'].includes(task.phase) ? taskBudget(task, runs, Date.now()) : null;
+  const budget = !['done', 'cancelled'].includes(task.phase) ? taskBudget(task, runs, Date.now(), undefined, events) : null;
   return { ...task, resolution: stop === task.resolution.stop ? task.resolution : { ...task.resolution, stop }, holds: syncHoldProjection(holds).holds, ...(holdKind ? { holdKind } : {}), ...(waitState ? { waitState } : {}), ...(budget ? { budget } : {}) };
 }
 
@@ -262,7 +262,7 @@ export const formatTaskNumber = (number: number) => String(number).padStart(3, "
 export const taskNumberLabel = (task: Pick<Task, "number" | "reference">, repositoryNeeded: boolean) =>
   task.number ? repositoryNeeded ? task.reference ?? `#${formatTaskNumber(task.number)}` : `#${formatTaskNumber(task.number)}` : "";
 
-export function summarizeTask(task: Task, includeRepository = false, hasUnreleasedResolutionRun = false, waitContext: WaitStateContext = {}, taskRuns: Run[] = [], waitingOn?: string, defaultHostId?: string): TaskSummary {
+export function summarizeTask(task: Task, includeRepository = false, hasUnreleasedResolutionRun = false, waitContext: WaitStateContext = {}, taskRuns: Run[] = [], waitingOn?: string, defaultHostId?: string, events: BudgetEvent[] = []): TaskSummary {
   const holds = holdsOf(task);
   const stop = taskStopKind(task, taskRuns), stopRecord = currentTaskStop(task);
   const waitState = deriveWaitState({
@@ -296,7 +296,7 @@ export function summarizeTask(task: Task, includeRepository = false, hasUnreleas
     ...(stop ? { stop } : {}),
     ...(stopRecord ? { stopRecord: { ...stopRecord, detail: stopRecord.detail.slice(0, 160) } } : {}),
     ...(task.completion ? { headline: reportHeadline(task.completion) } : {}),
-    ...(!["done", "cancelled"].includes(task.phase) ? { budget: taskBudgetBoardView(taskBudget(task, taskRuns, Date.now())) } : {}),
+    ...(!["done", "cancelled"].includes(task.phase) ? { budget: taskBudgetBoardView(taskBudget(task, taskRuns, Date.now(), undefined, events)) } : {}),
     parked: isParkedTask(task, hasUnreleasedResolutionRun),
     dependsOn: task.dependsOn, queuePriority: task.queuePriority,
     ...(task.profile ? { profile: { name: task.profile.name } } : {}), ...(task.prUrl ? { prUrl: task.prUrl } : {}),
@@ -328,6 +328,7 @@ export function visibleTaskSummaries(
   decisionByTask: ReadonlyMap<string, string> = new Map(),
   waitContextByTask: ReadonlyMap<string, WaitStateContext> = new Map(),
   defaultHostId?: string,
+  eventsByTask: ReadonlyMap<string, BudgetEvent[]> = new Map(),
 ): TaskSummary[] {
   const visible = tasks.filter(task => !["done", "cancelled"].includes(task.phase) || Boolean(task.originError || task.originLookupError || task.resolution.workspaceArchiveRetries.length));
   const identities = new Map<string, Set<string>>();
@@ -352,7 +353,7 @@ export function visibleTaskSummaries(
     const firstWaitingId = waitContext?.dependencyWait ? reasonText.match(/\(([0-9a-f-]{36})\):/i)?.[1] : undefined;
     const dependency = firstWaitingId ? references.get(firstWaitingId) : waitContext?.dependencyWait ? task.dependsOn.map(id => references.get(id)).find(Boolean) : undefined;
     const summary = summarizeTask(task, !pathIdentifiesMember || (identities.get(task.repoPath)?.size ?? 0) > 1, hasUnreleasedRun,
-      { ...waitContext, decisionId: decisionByTask.get(task.id) ?? null }, taskRuns, until || reasonRef || dependency || undefined, defaultHostId);
+      { ...waitContext, decisionId: decisionByTask.get(task.id) ?? null }, taskRuns, until || reasonRef || dependency || undefined, defaultHostId, eventsByTask.get(task.id) ?? []);
     const owner = summary.waitState?.state === "merge_hold"
       ? summary.holds?.merge?.owner ?? summary.holds?.dispatch?.owner
       : summary.holds?.dispatch?.owner ?? summary.holds?.merge?.owner;

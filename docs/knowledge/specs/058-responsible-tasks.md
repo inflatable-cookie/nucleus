@@ -83,7 +83,10 @@ way as a submitted one; see [Spec 050](050-owner-task-controls.md#report-only-de
   is not permission to resend.
 - Each task has a visible budget, a safety net rather than something to tune (Tom, 2026-11-02:
   "it will vary for every task"). Measure effective tokens across worker, reviewer and subagents
-  (uncached input + output + 10% of cached input) and wall time. Default by complexity, provisional
+  (uncached input + output + 10% of cached input) and wall time while the task can progress.
+  Dispatch and merge holds, dependency waits, escalation waits, operator or planner questions,
+  and timed waits do not spend wall time. Reads derive these intervals from task history, including
+  intervals recorded before this rule, so no history rewrite is needed. Default by complexity, provisional
   until a short shadow period sets each to about 1.5× the observed 75th percentile: low 2M / 1 h,
   medium 5M / 3 h, high 12M / 8 h, very_high 25M / 16 h. The planner sets it from complexity; a
   self-registered worker picks a size. Reaching it pauses the task with a pill: extend, change
@@ -436,7 +439,8 @@ lifecycle; use a direct PR with operator source acceptance. Historical task rows
   retained as stale-answer history and cannot change the task or its continuation.
 - **Unknown usage.** A run with no usage record adds no tokens, and the card reports
   the token figure as not reported rather than zero. Such a run never pauses the task on
-  tokens; wall time still does. Partial usage is a lower bound, so reaching the limit on
+  tokens; wall time still does while the task can progress. Recorded holds and decision waits
+  are removed from the wall span. Partial usage is a lower bound, so reaching the limit on
   it is a real pause.
 - **Board and detail.** The card and task detail show `used / limit` for tokens and time
   for a responsible task that is not finished, and the card names the limit reached.

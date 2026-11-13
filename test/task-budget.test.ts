@@ -115,6 +115,34 @@ test('closed paused time is discounted from the wall clock, so a Nucleus fault d
   assert.equal(unpaused.exhausted, 'wall_time', 'the same span without a pause is over the limit');
 });
 
+test('recorded holds are discounted from the historical wall span without changing task history', () => {
+  const heldAt = '2026-10-18T00:00:00.000Z';
+  const releasedAt = '2026-11-13T00:00:00.000Z';
+  const runAt = heldAt;
+  const at = Date.parse('2026-11-13T01:30:00.000Z');
+  const events = [
+    { at: heldAt, kind: 'hold', detail: 'hold' },
+    { at: releasedAt, kind: 'release', detail: 'release' },
+  ];
+  const budget = taskBudget(budgeted('high'), [run(runAt)], at, null, events);
+  assert.equal(budget.wallMs.used, 90 * MINUTE);
+  assert.equal(budget.exhausted, null);
+  assert.equal(taskBudget(budgeted('low'), [run(runAt)], Date.parse('2026-11-13T00:40:00.000Z'), null, events).wallMs.used, 40 * MINUTE);
+});
+
+test('dependency and escalation waits are excluded while the live run span still counts', () => {
+  const from = '2026-11-01T10:00:00.000Z';
+  const to = '2026-11-01T11:00:00.000Z';
+  const events = [
+    { at: from, kind: 'prerequisite_wait_set', detail: 'dependency-id; waiting' },
+    { at: to, kind: 'prerequisite_wait_released', detail: '{"waitId":"dependency-id"}' },
+    { at: from, kind: 'planner_escalation_wait', detail: 'escalation-id: {"kind":"time","target":"2026-11-01T11:00:00.000Z"}' },
+  ];
+  const budget = taskBudget(budgeted('low'), [run(from)], Date.parse('2026-11-01T11:30:00.000Z'), null, events);
+  assert.equal(budget.wallMs.used, 30 * MINUTE);
+  assert.equal(budget.wallMs.pausedMs, 60 * MINUTE);
+});
+
 test('an open interval counts until it closes, and never overcharges an earlier lifecycle', () => {
   const first = new Date(start - 90 * MINUTE).toISOString();
   const open = { pausedMs: 20 * MINUTE, pauses: 1, since: new Date(start - 30 * MINUTE).toISOString(), reason: 'the task waits on Nucleus: route_unavailable' };

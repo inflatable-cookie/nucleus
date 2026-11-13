@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { CapabilityLevel, Run, Task } from "./contracts";
+import type { CapabilityLevel, HoldFence, Run, Task } from "./contracts";
 import type { TaskStopReason } from "./task-stop";
 
 /**
@@ -36,7 +36,7 @@ export const taskBudgetViewSchema = z.object({
     /** `none`: no run reported usage, so the token figure is unknown rather than zero. */
     evidence: z.enum(["exact", "partial", "none"]),
   }).strict(),
-  /** `pausedMs` is time already discounted because the task was held for a Nucleus-side cause. */
+  /** `pausedMs` is time already discounted because the task was held or waiting. */
   wallMs: z.object({ used: z.number().min(0), limit: z.number().positive(), pausedMs: z.number().min(0).default(0) }).strict(),
   /** The limit reached, if any. Tokens are checked first. */
   exhausted: z.enum(["effective_tokens", "wall_time"]).nullable(),
@@ -122,6 +122,74 @@ export const budgetClockSchema = z.object({
 }).strict();
 export type BudgetClock = z.infer<typeof budgetClockSchema>;
 
+export type BudgetEvent = { at: string; kind: string; detail: string };
+type BudgetInterval = { start: number; end: number };
+
+function recordedWaitIntervals(events: BudgetEvent[], at: number): BudgetInterval[] {
+  const intervals: BudgetInterval[] = [];
+  const add = (start: string | undefined, end: string | undefined) => {
+    const from = Date.parse(start ?? ""), to = Math.min(at, end ? Date.parse(end) : at);
+    if (Number.isFinite(from) && to > from) intervals.push({ start: from, end: to });
+  };
+  const endFor = (event: BudgetEvent, kinds: string[], id?: string, holdKind?: "dispatch" | "merge") => events.find(next => kinds.includes(next.kind)
+    && Date.parse(next.at) >= Date.parse(event.at) && (!id || next.detail.startsWith(`${id}:`))
+    && (next.kind !== "hold_auto_released" || !holdKind || next.detail.startsWith(`${holdKind};`)))?.at;
+
+  for (const event of events) {
+    if (event.kind === "hold" || event.kind === "merge_hold") {
+      const merge = event.kind === "merge_hold";
+      add(event.at, endFor(event, merge ? ["merge_release", "hold_auto_released"] : ["release", "hold_auto_released"], undefined, merge ? "merge" : "dispatch"));
+    } else if (event.kind === "prerequisite_wait_set") {
+      add(event.at, endFor(event, ["prerequisite_wait_released", "prerequisite_wait_resumed"]));
+    } else if (event.kind === "planner_escalation_wait") {
+      const id = event.detail.split(":", 1)[0]!;
+      let wait: { kind?: string; target?: string } = {};
+      try { wait = JSON.parse(event.detail.slice(id.length + 2)); } catch { /* Historical malformed event is not a proven wait interval. */ }
+      const end = wait.kind === "time" && wait.target ? wait.target : endFor(event,
+        ["planner_escalation_wake_intent", "planner_escalation_wait_superseded", "planner_escalation_refused"], id);
+      add(event.at, end);
+    } else if (event.kind === "operator_question" || event.kind === "responsible_question") {
+      const id = event.detail.split(":", 1)[0]!;
+      if (event.kind === "operator_question" && /kind budget\b/.test(event.detail)) continue;
+      add(event.at, endFor(event, event.kind === "operator_question"
+        ? ["operator_question_answered", "operator_question_superseded"]
+        : ["responsible_question_answered", "responsible_question_superseded"], id));
+    }
+  }
+  return intervals;
+}
+
+function unionDuration(intervals: BudgetInterval[]): number {
+  const sorted = intervals.filter(interval => interval.end > interval.start).sort((a, b) => a.start - b.start);
+  let total = 0, start = Number.NaN, end = Number.NaN;
+  for (const interval of sorted) {
+    if (!Number.isFinite(start)) { start = interval.start; end = interval.end; }
+    else if (interval.start <= end) end = Math.max(end, interval.end);
+    else { total += end - start; start = interval.start; end = interval.end; }
+  }
+  return Number.isFinite(start) ? total + end - start : total;
+}
+
+/** Paused time from stored interval events plus the Nucleus-owned clock's live segment. */
+export function recordedBudgetPaused(events: BudgetEvent[], task: Pick<Task, "resolution">, at: number): number {
+  const intervals = recordedWaitIntervals(events, at);
+  const clock = task.resolution.budgetClock;
+  if (clock?.since) intervals.push({ start: Date.parse(clock.since), end: at });
+  const eventClock = events.filter(event => event.kind === "budget_clock_paused" || event.kind === "budget_clock_resumed");
+  if (eventClock.length) {
+    let opened: string | null = null;
+    for (const event of eventClock) {
+      if (event.kind === "budget_clock_paused") opened ??= event.at;
+      else if (opened) { intervals.push({ start: Date.parse(opened), end: Date.parse(event.at) }); opened = null; }
+    }
+    if (opened && !clock?.since) intervals.push({ start: Date.parse(opened), end: at });
+  } else if (clock?.pausedMs) {
+    // Older rows may have a folded clock without its audit events.
+    intervals.push({ start: at - clock.pausedMs, end: at });
+  }
+  return unionDuration(intervals);
+}
+
 /** Paused time at `at`: closed intervals plus the one still open. */
 export function budgetClockPaused(clock: BudgetClock | null | undefined, at: number): number {
   if (!clock) return 0;
@@ -137,11 +205,11 @@ export function budgetClockPaused(clock: BudgetClock | null | undefined, at: num
  * usage record adds no tokens: an unobserved turn never pauses the task, though
  * wall time still runs. Partial usage is a lower bound, so reaching the limit on it
  * is still a real pause. Time the task spent held on a Nucleus-side cause is
- * discounted from wall time and reported as `pausedMs`, so a defect never spends
+ * discounted from wall time and reported as `pausedMs`, so held time never spends
  * the task's budget.
  */
-export function taskBudget(task: Pick<Task, "complexity" | "resolution"> & Partial<Pick<Task, "budgetSince">>, runs: Run[], at: number,
-  legacyBudgetSince?: string | null): TaskBudgetView {
+export function taskBudget(task: Pick<Task, "complexity" | "resolution"> & Partial<Pick<Task, "budgetSince" | "holds" | "held" | "mergeHold" | "holdAt" | "holdUntil" | "holdOwner" | "holdReason" | "holdGeneration" | "holdBlocking" | "phase">>, runs: Run[], at: number,
+  legacyBudgetSince?: string | null, events: BudgetEvent[] = []): TaskBudgetView {
   const level = taskBudgetLevel(task.complexity);
   const steps = 1 + (task.resolution.budgetExtensions ?? 0);
   const tokenLimit = TASK_BUDGET_DEFAULTS[level].effectiveTokens * steps;
@@ -163,7 +231,13 @@ export function taskBudget(task: Pick<Task, "complexity" | "resolution"> & Parti
   const wallSpan = Number.isFinite(wallStart) ? Math.max(0, at - wallStart) : 0;
   // A pause is charged only against time inside this task's own wall span, so a
   // clock from an earlier lifecycle can never drive the figure negative.
-  const paused = Math.min(wallSpan, budgetClockPaused(task.resolution.budgetClock, at));
+  const recorded = recordedBudgetPaused(events, task, at);
+  // Legacy rows can predate hold events. The current fence carries its original start.
+  const fences = task.held ? [task.holds?.dispatch, task.holds?.merge].filter((fence): fence is HoldFence => Boolean(fence)) : [];
+  const legacyHoldStart = task.held && !fences.length ? task.holdAt : null;
+  const holdIntervals = [...fences.map(fence => ({ start: Date.parse(fence.at), end: at })),
+    ...(legacyHoldStart ? [{ start: Date.parse(legacyHoldStart), end: at }] : [])];
+  const paused = Math.min(wallSpan, Math.max(recorded, budgetClockPaused(task.resolution.budgetClock, at), unionDuration(holdIntervals)));
   const wallUsed = wallSpan - paused;
   const exhausted = tokensUsed >= tokenLimit ? "effective_tokens" : wallUsed >= wallLimit ? "wall_time" : null;
   return {
