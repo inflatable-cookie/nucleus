@@ -326,6 +326,21 @@ export class T3CodeHost implements Host {
     } catch { /* An unreadable intent proves no deletion. */ }
   }
 
+  /** One thread Nucleus settled, by the command that settled it. The sweep
+   * early-returns on it without a projection read; any unsettle clears it. */
+  private noteThreadSettled(agentId: string, commandId: string): void {
+    if (this.state.read().settledThreads?.[agentId] === commandId) return;
+    this.state.update(state => {
+      state.settledThreads = { ...state.settledThreads, [agentId]: commandId };
+    });
+  }
+  /** An unsettle clears the settled marker before the send, so a later settle
+   * re-reads the thread even when this send's own reply is lost. A spurious
+   * clear only costs one extra projection read on the next settle. */
+  private clearThreadSettled(agentId: string): void {
+    if (!this.state.read().settledThreads?.[agentId]) return;
+    this.state.update(state => { if (state.settledThreads) delete state.settledThreads[agentId]; });
+  }
   /** Presentation has no remaining target after confirmed deletion, not a successful delivery. */
   private retireDeletedPresentationIntents(observedId?: string): void {
     const snapshot = this.state.read();
@@ -352,6 +367,11 @@ export class T3CodeHost implements Host {
       for (const [key, entry] of Object.entries(state.pendingSettles ?? {})) {
         if (!this.confirmedDeletion(state, entry.agentId)) continue;
         delete state.pendingSettles![key];
+        changed = true;
+      }
+      for (const agentId of Object.keys(state.settledThreads ?? {})) {
+        if (!this.confirmedDeletion(state, agentId)) continue;
+        delete state.settledThreads![agentId];
         changed = true;
       }
       return changed;
@@ -620,38 +640,59 @@ export class T3CodeHost implements Host {
       pendingPermissionKinds: pending.map(r => r.kind === 'user_input' ? 'question' : r.kind),
       ...(pending[0] ? { pendingRequest: { id: pending[0].id, kind: pending[0].kind === 'user_input' ? 'question' : pending[0].kind, firstLine: null } } : {}) };
   }
-  /** Settle a completed non-worker thread after Nucleus has durably accepted its report. */
+  /** Settle a completed non-worker thread after Nucleus has durably accepted its report.
+   *
+   * The settle key names the reporting run, but one retained thread serves many
+   * native turns under one run: a reviewer continued for a second round, or a
+   * worker surfaced for attention, unsettles the thread after its settle. The
+   * settled marker tells a later settle the thread needs settling again; the
+   * fresh command settles the latest finished native run under a new identity, so a
+   * second finished round ends settled (nucleus#1181). A bind the Nightly
+   * rejected as stale (its latest run moved on) retires the same way: the next
+   * pass settles the current latest run under a fresh command instead of
+   * leaving the thread unsettled, which is what stranded #227's reviewer
+   * thread after its second round.
+   */
   async settleReportedThread(agentId: string, runId: string): Promise<void> {
     this.requireConnection();
     if (this.confirmedDeletion(this.state.read(), agentId)) { this.retireDeletedPresentationIntents(); return; }
-    const baseCommandId = identity('settle', canonical([this.hostId, agentId, runId]));
-    let commandId = baseCommandId;
-    const payload = { type: 'thread.settle', commandId, threadId: agentId } as {
-      type: string; commandId: string; threadId: string; expectedLatestRunId?: string;
-    };
-    let prior = this.state.read().intents[commandId];
-    if (prior?.status === 'settled') return;
-    const projection = await this.readProjection(agentId);
-    if (projection.thread.settledOverride === 'settled') {
-      if (prior?.status === 'unknown') this.markSettleObserved(commandId);
+    // Settled, and no unsettle since: no projection read, no second command.
+    if (this.state.read().settledThreads?.[agentId]) return;
+    // At most one stale bind retires per call; the fresh bind for the current
+    // latest run follows in the same pass.
+    for (let round = 0; round < 2; round++) {
+      const baseCommandId = identity('settle', canonical([this.hostId, agentId, runId]));
+      let commandId = baseCommandId;
+      let prior = this.state.read().intents[commandId];
+      const projection = await this.readProjection(agentId);
+      if (projection.thread.settledOverride === 'settled') {
+        if (prior?.status === 'unknown') this.markSettleObserved(commandId);
+        this.noteThreadSettled(agentId, prior?.status === 'settled' ? commandId : baseCommandId);
+        return;
+      }
+      // An archived thread is hidden; settling it is pointless and the Nightly
+      // may refuse it. The terminal lane owns archived threads.
+      if (projection.thread.archivedAt || projection.thread.deletedAt) return;
+      const latest = latestRun(projection);
+      // A fresh run owns the thread now. Never settle it because an older report arrived late.
+      if (!latest || activeStatuses.has(latest.status)) return;
+      // A settled or refused command never runs again: the unsettled thread gets
+      // a fresh command identity. Unknown delivery still goes through the
+      // projection reconciliation below.
+      for (let attempt = 1; prior && prior.status !== 'unknown'; attempt++) {
+        commandId = identity('settle', canonical([this.hostId, agentId, runId, attempt]));
+        prior = this.state.read().intents[commandId];
+      }
+      if (prior) {
+        const outcome = await this.reconcileSettleIntent(commandId, prior.payload).catch(() => null);
+        if (outcome !== 'retired') return;
+        continue; // Stale bind retired; re-read and settle the current latest.
+      }
+      await this.effect(commandId, 'orchestration.dispatchCommand',
+        { type: 'thread.settle', commandId, threadId: agentId, expectedLatestRunId: latest.id });
+      this.noteThreadSettled(agentId, commandId);
       return;
     }
-    const latest = projection.runs.reduce((best, run) => !best || (run.ordinal ?? -1) >= (best.ordinal ?? -1) ? run : best, undefined as Projection['runs'][number] | undefined);
-    // A fresh run owns the thread now. Never settle it because an older report arrived late.
-    if (!latest || activeStatuses.has(latest.status)) return;
-    // A proven pre-send refusal can be retried with a new command identity.
-    // Unknown delivery still goes through the projection reconciliation below.
-    for (let attempt = 1; prior?.status === 'refused'; attempt++) {
-      commandId = identity('settle', canonical([this.hostId, agentId, runId, attempt]));
-      prior = this.state.read().intents[commandId];
-    }
-    payload.commandId = commandId;
-    if (prior) {
-      await this.reconcileSettleIntent(commandId, prior.payload);
-      return;
-    }
-    payload.expectedLatestRunId = latest.id;
-    await this.effect(commandId, 'orchestration.dispatchCommand', payload);
   }
   /** Called by the ordinary host sweep; unknown delivery is checked against T3 before reuse. */
   async reconcileReportedSettlements(): Promise<void> {
@@ -680,20 +721,36 @@ export class T3CodeHost implements Host {
       if (intent?.status === 'unknown') state.intents[key] = { ...intent, status: 'settled', result };
     });
   }
-  private async reconcileSettleIntent(key: string, encoded: string): Promise<void> {
+  /**
+   * Reconcile one uncertain settle against T3, and report what it proves.
+   * `settled` means the thread is settled (or the resend landed) and there is
+   * nothing more to do; `retired` means this command no longer owns the latest
+   * run — the caller settles the current latest run under a fresh command
+   * instead of leaving the thread unsettled (nucleus#1181; #227's reviewer
+   * thread). A bind that never named a latest run cannot be verified either
+   * way, so it retires the same way instead of looping invisibly; a malformed
+   * intent with no thread stays unknown delivery and is never resent.
+   */
+  private async reconcileSettleIntent(key: string, encoded: string): Promise<'settled' | 'retired'> {
     const wire = JSON.parse(encoded) as { method?: string; payload?: { type?: string; threadId?: string; expectedLatestRunId?: string } };
     const payload = wire.payload;
-    if (wire.method !== 'orchestration.dispatchCommand' || payload?.type !== 'thread.settle' || !payload.threadId || !payload.expectedLatestRunId)
+    if (wire.method !== 'orchestration.dispatchCommand' || payload?.type !== 'thread.settle' || !payload.threadId)
       throw new HostUnknownDeliveryError();
     const projection = await this.readProjection(payload.threadId);
-    if (projection.thread.settledOverride === 'settled') { this.markSettleObserved(key); return; }
-    const latest = projection.runs.reduce((best, run) => !best || (run.ordinal ?? -1) >= (best.ordinal ?? -1) ? run : best, undefined as Projection['runs'][number] | undefined);
-    if (latest?.id !== payload.expectedLatestRunId || activeStatuses.has(latest.status)) {
+    if (projection.thread.settledOverride === 'settled') { this.markSettleObserved(key); this.noteThreadSettled(payload.threadId, key); return 'settled'; }
+    if (projection.thread.archivedAt || projection.thread.deletedAt) {
+      // Hidden threads are the terminal lane's; this bind can prove nothing more.
+      this.markSettleObserved(key, { settled: false, superseded: true });
+      return 'retired';
+    }
+    const latest = latestRun(projection);
+    if (!payload.expectedLatestRunId || !latest || latest.id !== payload.expectedLatestRunId || activeStatuses.has(latest.status)) {
       // The old report no longer owns the latest run; retire this intent without touching it.
       this.markSettleObserved(key, { settled: false, superseded: true });
-      return;
+      return 'retired';
     }
     await this.effect(key, 'orchestration.dispatchCommand', payload, undefined, undefined, { resendUnknownAfterRead: true });
+    return 'settled';
   }
   async observationInventory(ids: readonly string[]) { try { return new Map(await Promise.all(ids.map(async id => [id, await this.observe(id)] as const))); } catch { return null; } }
   /**
@@ -735,10 +792,48 @@ export class T3CodeHost implements Host {
   async agentTimeline(id: string, limit?: number) { return (await this.agentTimelinePage(id, limit))?.entries ?? null; }
   private async unsettleBeforeMessage(id: string, messageId: string) {
     if (this.confirmedDeletion(this.state.read(), id)) throw new ProvenPreSendRefusalError('T3Code thread deletion is confirmed');
+    // A message wakes the thread: a later settle must re-read and settle again.
+    this.clearThreadSettled(id);
     const projection = await this.readProjection(id);
     if (projection.thread.settledOverride !== 'settled') return;
     const commandId = identity('unsettle', canonical([this.hostId, id, messageId]));
     await this.effect(commandId, 'orchestration.dispatchCommand', { type: 'thread.unsettle', commandId, threadId: id, reason: 'user' });
+  }
+  /**
+   * Surface a stuck task's worker thread (nucleus#1181): when a T3-bound task
+   * enters `blocked`, `needs_attention` or an escalation, its worker thread is
+   * unsettled so it shows in T3's main list instead of the settled list. Only
+   * the worker thread surfaces; support threads keep their settled state and
+   * the title already shows the task state. When the task leaves attention the
+   * sweep's ordinary settles put the thread back, under a fresh command (the
+   * settled marker was cleared here). Idempotent: an already-active thread
+   * sends nothing, and each attention episode gets its own command identity.
+   */
+  async unsettleWorkerThread(agentId: string, taskId: string): Promise<void> {
+    this.requireConnection();
+    if (this.confirmedDeletion(this.state.read(), agentId)) { this.retireDeletedPresentationIntents(); return; }
+    // Clear before the read: a later settle re-reads even when this send's
+    // own reply is lost.
+    this.clearThreadSettled(agentId);
+    const projection = await this.readProjection(agentId);
+    if (projection.thread.settledOverride !== 'settled' || projection.thread.archivedAt || projection.thread.deletedAt) return;
+    const commandId = this.attentionUnsettleCommandId(agentId, taskId);
+    await this.effect(commandId, 'orchestration.dispatchCommand',
+      { type: 'thread.unsettle', commandId, threadId: agentId, reason: 'user' },
+      undefined, undefined, { resendUnknownAfterRead: true });
+  }
+  /** First unused attention-unsettle id for this thread and task. Settled and
+   * refused commands never run again, so each attention episode after a
+   * re-settle gets its own identity; an unknown one is reconciled by re-read. */
+  private attentionUnsettleCommandId(agentId: string, taskId: string): string {
+    const intents = this.state.read().intents;
+    const unused = (key: string) => { const prior = intents[key]; return !prior || (prior.status !== 'refused' && prior.status !== 'settled'); };
+    const base = identity('attention-unsettle', canonical([this.hostId, agentId, taskId]));
+    if (unused(base)) return base;
+    for (let attempt = 1; ; attempt++) {
+      const candidate = identity('attention-unsettle', canonical([this.hostId, agentId, taskId, attempt]));
+      if (unused(candidate)) return candidate;
+    }
   }
   async sendMessage(id: string, input: HostMessage) { await this.unsettleBeforeMessage(id, input.messageId); await this.effect(input.messageId, 'orchestration.dispatchCommand', { type: 'message.dispatch', commandId: input.messageId, threadId: id, messageId: identity('message', input.messageId), text: input.text, attachments: [], createdBy: 'user', creationSource: 'server', dispatchMode: { type: 'queue_after_active' } }); }
   async enqueueMessage(id: string, input: HostMessage): Promise<void> { await this.sendMessage(id, input); }
@@ -806,12 +901,15 @@ export class T3CodeHost implements Host {
    * A recorded command is left exactly as recorded — an unknown delivery is not
    * permission to resend, and a settled one is the same settle again. T3 clears
    * the marker when a new message wakes the thread, so a revision round makes the
-   * worker active and its next handover settles it again under that run's own
-   * command id.
+   * worker active and its next handover settles it again; an attention surfacing
+   * in between clears the marker too, so the return to review settles again
+   * under a fresh command identity (nucleus#1181).
    */
   async settleWorkerThread(agentId: string, runId: string): Promise<void> {
     this.requireConnection();
     if (this.confirmedDeletion(this.state.read(), agentId)) { this.retireDeletedPresentationIntents(); return; }
+    // Settled, and no unsettle since: no projection read, no second command.
+    if (this.state.read().settledThreads?.[agentId]) return;
     const baseCommandId = identity('settle', canonical([this.hostId, agentId, runId]));
     const existing = this.state.read().pendingSettles?.[baseCommandId];
     const commandId = this.workerSettleCommandId(agentId, runId);
@@ -837,18 +935,33 @@ export class T3CodeHost implements Host {
   /** One worker settle: send when the handover's own run has ended, else retain the intent. */
   private async attemptWorkerSettle(entry: T3SettleIntent): Promise<void> {
     if (this.confirmedDeletion(this.state.read(), entry.agentId)) { this.retireDeletedPresentationIntents(); return; }
-    // Unknown delivery is never resent for worker handovers. A proven refusal
-    // gets a new id on the next pass; it was known not to reach T3.
     const intent = this.state.read().intents[entry.commandId];
-    if (intent && intent.status !== 'refused') { this.forgetSettle(entry.commandId); return; }
-    if (intent?.status === 'refused') {
+    if (intent?.status === 'settled') {
+      const hadPending = Boolean(this.state.read().pendingSettles?.[entry.commandId]);
       this.forgetSettle(entry.commandId);
+      // The send landed: a pending record is the crash window between the
+      // receipt and its cleanup. Without one this handover already settled,
+      // and only an unsettle since (attention, revision message) earns a
+      // fresh command below.
+      if (hadPending || this.state.read().settledThreads?.[entry.agentId] === entry.commandId) {
+        this.noteThreadSettled(entry.agentId, entry.commandId);
+        return;
+      }
       entry = { ...entry, commandId: this.workerSettleCommandId(entry.agentId, entry.runId) };
+    } else {
+      // Unknown delivery is never resent for worker handovers. A proven refusal
+      // gets a new id on the next pass; it was known not to reach T3.
+      if (intent && intent.status !== 'refused') { this.forgetSettle(entry.commandId); return; }
+      if (intent?.status === 'refused') {
+        this.forgetSettle(entry.commandId);
+        entry = { ...entry, commandId: this.workerSettleCommandId(entry.agentId, entry.runId) };
+      }
     }
     if (Date.now() - Date.parse(entry.recordedAt) > SETTLE_INTENT_TTL_MS) { this.forgetSettle(entry.commandId); return; }
     const projection = await this.readProjection(entry.agentId);
     // Already settled, or retired: the handover needs no further presentation.
     if (projection.thread.settledOverride === 'settled' || projection.thread.archivedAt || projection.thread.deletedAt) {
+      this.noteThreadSettled(entry.agentId, entry.commandId);
       this.forgetSettle(entry.commandId); return;
     }
     const latest = latestRun(projection);
@@ -860,18 +973,21 @@ export class T3CodeHost implements Host {
     this.markWorkerSettle(entry.commandId, entry.recordedAt);
     await this.effect(entry.commandId, 'orchestration.dispatchCommand',
       { type: 'thread.settle', commandId: entry.commandId, threadId: entry.agentId, expectedLatestRunId: latest.id });
+    this.noteThreadSettled(entry.agentId, entry.commandId);
     this.forgetSettle(entry.commandId);
   }
 
-  /** First unused worker settle id, after any proven pre-send refusals. */
+  /** First unused worker settle id: after a proven pre-send refusal, or after an
+   * unsettle cleared the settled marker (attention, revision message), so the
+   * return to review settles again under a fresh command. */
   private workerSettleCommandId(agentId: string, runId: string): string {
     const base = identity('settle', canonical([this.hostId, agentId, runId]));
     const intents = this.state.read().intents;
-    if (!intents[base] || intents[base].status !== 'refused') return base;
+    const used = (key: string) => { const prior = intents[key]; return Boolean(prior) && (prior.status === 'refused' || prior.status === 'settled'); };
+    if (!used(base)) return base;
     for (let attempt = 1; ; attempt++) {
       const candidate = identity('settle', canonical([this.hostId, agentId, runId, attempt]));
-      const prior = intents[candidate];
-      if (!prior || prior.status !== 'refused') return candidate;
+      if (!used(candidate)) return candidate;
     }
   }
 

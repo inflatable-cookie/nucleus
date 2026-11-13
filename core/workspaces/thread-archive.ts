@@ -276,6 +276,57 @@ export async function archiveFinishedThreads(store: Store, adapter: Adapter, tas
   }
 }
 
+/**
+ * Archive a superseded worker thread at once (Tom, 2026-11-13; nucleus#1181),
+ * as an exception to #1155's "nothing archived while open": when a worker run
+ * is replaced on a different profile — an owner `route now`, an approval
+ * reroute or failover to another profile — the old worker thread is archived
+ * as soon as its run is released and no live run remains on it. Only a host
+ * that can remove a thread (T3Code) archives mid-task; Paseo keeps its
+ * existing behaviour. The archive is the same durable, idempotent
+ * observation-first effect the terminal lane uses: an unknown outcome is
+ * never resent, and each thread is archived exactly once.
+ */
+export async function archiveSupersededWorkers(store: Store, adapter: Adapter, taskId: string): Promise<void> {
+  const task = store.task(taskId);
+  if (task.removedAt || store.getMeta('paused')) return;
+  // Terminal tasks belong to the closeout lane, which archives every worker.
+  if (terminalThreadCleanup(task, true) || ['done', 'cancelled'].includes(task.phase)) return;
+  // T3-only from here: check the host kind before touching its reads, so
+  // other hosts (and their pinned quantum order) see no new adapter access.
+  if (!removesThreads(adapter) || !adapter.originAgent) return;
+  const host = new HostFacade({ adapter });
+  const live = new Set([task.agentId, task.coordinatorAgentId, task.resolution.reviewerAgentId].filter((id): id is string => Boolean(id)));
+  for (const worker of task.retiredWorkers) {
+    const agentId = worker.agentId;
+    // The current worker, or a thread still serving an unreleased run, stays.
+    if (!agentId || live.has(agentId)) continue;
+    if (store.unreleasedRunsForAgent(agentId, task.hostId).length) continue;
+    const key = store.threadArchiveKey(agentId, task.hostId);
+    if (!key) continue;
+    const effect = store.getMeta<ArchiveEffect>(key);
+    if (effect?.status === 'archived' && (effect.op ?? 'archive') === 'archive') continue;
+    // Archive only what this task owns and what has already ended its turn:
+    // a live run or a pending permission waits for the next pass.
+    let observed;
+    try { observed = await host.observe(agentId); }
+    catch { continue; }
+    if (!observed || !ownedByTask(observed.labels, task.id)) continue;
+    if (observed.active || observed.activeTurnId || observed.permissions || !['idle', 'error', 'closed'].includes(observed.status)) continue;
+    const fresh = !effect || effect.status === 'archived';
+    if (!effect || fresh) {
+      if (store.unreleasedRunsForAgent(agentId, task.hostId).length
+        || store.tasks().some(other => other.id !== task.id && (!other.hostId || !task.hostId || other.hostId === task.hostId) && !['done', 'cancelled'].includes(other.phase) && !other.removedAt
+          && [other.agentId, other.coordinatorAgentId, other.resolution.reviewerAgentId].includes(agentId))) continue;
+      store.putThreadArchiveEffect(key, agentId, { status: 'intent', at: now(), op: 'archive' } satisfies ArchiveEffect);
+      store.event(taskId, 'thread_archive_intent', `superseded worker: archive ${agentId}`);
+    }
+    const current = store.getMeta<ArchiveEffect>(key);
+    if (!current) continue;
+    await settleArchive(store, adapter, taskId, agentId, key, fresh, current);
+  }
+}
+
 /** Observe, then archive or remove at most once, one thread whose cleanup intent is recorded. */
 async function settleArchive(store: Store, adapter: Adapter, taskId: string, agentId: string, key: string, fresh: boolean, effect: ArchiveEffect, retry = false): Promise<void> {
   const host = new HostFacade({ adapter });

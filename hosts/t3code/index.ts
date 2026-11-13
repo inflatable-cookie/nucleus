@@ -126,6 +126,7 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     deleteAgent(id: string) { return this.native.deleteAgent(id); }
     settleWorkerThread(id: string, runId: string) { return this.native.settleWorkerThread(id, runId); }
     reconcileSettledThreads() { return this.native.reconcileSettledThreads(); }
+    unsettleWorkerThread(agentId: string, taskId: string) { return this.native.unsettleWorkerThread(agentId, taskId); }
     settleReportedThread(agentId: string, runId: string) { return this.native.settleReportedThread(agentId, runId); }
     reconcileReportedSettlements() { return this.native.reconcileReportedSettlements(); }
     agentTimelinePage(id: string, limit?: number) { return this.native.agentTimelinePage(id, limit); }

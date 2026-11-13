@@ -29,6 +29,14 @@ const schema = z.object({ version: z.literal(1), hostId: z.string(), lastPassedV
   workspaces: z.record(z.string(), workspace), agents: z.record(z.string(), agent), intents: z.record(z.string(), intent),
   pendingSettles: z.record(z.string(), settleIntent).optional(),
   /**
+   * One thread Nucleus last settled, by the command that settled it. An
+   * unsettle clears the entry, so a later settle re-reads the thread and
+   * settles it again under a fresh command instead of early-returning on the
+   * old receipt (nucleus#1181: a retained reviewer continued for a second
+   * round, or a worker surfaced for attention and returned to review).
+   */
+  settledThreads: z.record(z.string(), z.string()).optional(),
+  /**
    * Worker handover settle command ids, recorded before the send. A worker settle
    * whose delivery is unknown is never resent (nucleus#1154), so the support-thread
    * reconciler must be able to tell it apart from a support report's settle.
