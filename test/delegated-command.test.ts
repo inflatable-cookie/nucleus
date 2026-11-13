@@ -23,14 +23,14 @@ test("command answers each delegated route; repeat returns recorded answer; anot
   try {
     for (const id of [
       "ns-agent-ask-test",
-      "ns-escalation-test",
+      "ns-planner-delegate-test",
       "queue-delegate-test",
       "ns-agent-ask-reviewer-test",
     ]) {
       const role = id.includes("reviewer") ? "reviewer" : "planner";
       (r.adapter as any)[role === "reviewer" ? "askReviewer" : "askPlanner"] =
         async (_recipient: string, input: { prompt: string; sourceAgentId?: string }) => {
-          assert.equal(input.sourceAgentId, id === 'ns-escalation-test' ? 'recovery-thread' : 'asking-thread');
+          assert.equal(input.sourceAgentId, 'asking-thread');
           const questionId = idFrom(input.prompt);
           assert.throws(
             () =>
@@ -61,7 +61,7 @@ test("command answers each delegated route; repeat returns recorded answer; anot
           signal: new AbortController().signal,
           timeoutMs: ANSWERING_WINDOW_MS,
           messageId: id,
-          sourceAgentId: id === 'ns-escalation-test' ? 'recovery-thread' : 'asking-thread',
+          sourceAgentId: 'asking-thread',
         },
         role,
       );

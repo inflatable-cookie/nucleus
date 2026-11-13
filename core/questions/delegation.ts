@@ -219,6 +219,7 @@ export class Delegation {
       const outcome = events.findLast(event => event.kind === 'delegated_command_applied' || event.kind === 'delegated_command_refused');
       if (outcome?.kind === 'delegated_command_applied') return receipt;
       if (outcome?.kind === 'delegated_command_refused') return Promise.reject(Error(outcome.detail.slice(outcome.detail.indexOf(':') + 2)));
+      if (!isEscalation) return receipt;
       const taskEvents = isEscalation ? this.store.eventsAll(authority.taskId) : [];
       const hasEscalation = taskEvents.some(event => event.kind === 'planner_escalation' && event.detail.startsWith(`${escalationId}:`));
       if (!hasEscalation) {
