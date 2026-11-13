@@ -616,7 +616,9 @@ test('a lost native release question is restored as one board decision and its a
     assert.equal(decision.status, 'open');
     assert.equal(decision.question, question.question);
     assert.deepEqual(decision.options, question.choices.map(choice => choice.label));
-    assert.match(decision.headline ?? '', /· Should Nucleus run the qualification\?$/);
+    // Tom, 2026-11-13: a headline never starts mid-sentence; the first sentence wins.
+    assert.match(decision.headline ?? '', /· The proof-only qualification for merged commit/);
+    assert.doesNotMatch(decision.headline ?? '', /Should .* run the qualification\?$/);
     assert.deepEqual(decision.choices?.map(choice => choice.consequence), [
       'Runs once on the existing qualification workspace; no install or consumer.',
       'Keeps the proof-only task from running this qualification.',
