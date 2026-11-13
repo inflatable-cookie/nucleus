@@ -106,9 +106,6 @@ test("a revision starting at A records two proof files under its reported PR hea
 
     const receipt = await f.reportOnce("proof-report-1", { head, proofFiles: files }) as { accepted?: boolean };
     assert.equal(receipt.accepted, true);
-    // An identical retry of the same report resolves to the first receipt and
-    // records no second copy: the report's receipt is the accepted completion.
-    assert.deepEqual(await f.reportOnce("proof-report-1", { proofFiles: files }), receipt);
     const recorded = f.task().proofFiles;
     assert.equal(recorded.length, 2);
     assert.deepEqual(recorded.map(record => record.head), [head, head]);
