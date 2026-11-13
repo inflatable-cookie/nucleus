@@ -18,7 +18,7 @@ export default async function* durations(source) {
     // Each file reports one file-level completion named after the file itself.
     if (event.type === "test:complete" && data.file && data.nesting === 0 && basename(String(data.name)) === basename(data.file))
       files.set(relative(process.cwd(), data.file), { ms: data.details?.duration_ms ?? 0, failed: Boolean(data.details?.error) });
-    if (event.type === "test:fail") {
+    if (event.type === "test:fail" && !data.todo && !data.skip) {
       const file = data.file ? relative(process.cwd(), String(data.file)) : "<unknown file>";
       failures.push(`- ${file}: ${String(data.name ?? "<unnamed test>")}`);
     }

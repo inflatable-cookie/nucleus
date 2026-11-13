@@ -719,7 +719,7 @@ for (const kind of ["time", "decision"] as const) {
       const questionId = `ns-escalation-${escalationId}`;
       const decision = kind === "decision" ? new Decisions(f.store).add({ question: "What next?", askedBy: "origin" }) : null;
       const target = kind === "time" ? "2099-01-01T00:00:00.000Z" : decision!.id;
-      const choice = kind === "time" ? "Wait until a time (put an ISO timestamp in Reason)" : "Wait for an operator decision (put its ID in Reason)";
+      const choice = kind === "time" ? "Wait until a time" : "Wait for an operator decision";
       const reason = kind === "time" ? "2099-01-01T00:00:00Z" : decision!.id;
       const receiptKey = `delegation:${questionId}`;
       f.store.event(receiptKey, "delegated_answer", JSON.stringify({ questionId, caller: "origin", answer: choice, reason }));
@@ -1668,7 +1668,7 @@ test('a named task wait wakes the parked escalation when its prerequisite settle
   const f = fixture({ responsible: true });
   f.engine.resolution.delegatedAnswerWaitMs = 5000;
   const prerequisite = f.store.insert(submissionSchema.parse({ submissionId: randomUUID(), title: 'Upstream', repoPath: join(f.dir, 'upstream'), planningCommit: 'b'.repeat(40), brief: { text: 'Upstream' }, originAgentId: 'origin' }), 'host', 'brief', 'b'.repeat(40));
-  (f.adapter as unknown as Record<string, unknown>).askPlanner = async () => `Choice: Wait for a task (put its reference in Reason)\nReason: ${prerequisite.id}`;
+  (f.adapter as unknown as Record<string, unknown>).askPlanner = async () => `Choice: Wait for a task\nReason: ${prerequisite.id}`;
   try {
     f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: join(f.dir, 'repo') }] });
     f.store.setProjectPlanner({ key: 'app', agentId: 'planner-1', setBy: 'operator' });
@@ -1787,7 +1787,7 @@ test('an operator decision wait applies its answer on wake', async () => {
   f.engine.resolution.delegatedAnswerWaitMs = 5000;
   const decisions = new Decisions(f.store);
   const decision = decisions.add({ question: 'What should happen next?', askedBy: 'origin' });
-  (f.adapter as unknown as Record<string, unknown>).askPlanner = async () => `Choice: Wait for an operator decision (put its ID in Reason)\nReason: ${decision.id}`;
+  (f.adapter as unknown as Record<string, unknown>).askPlanner = async () => `Choice: Wait for an operator decision\nReason: ${decision.id}`;
   try {
     f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: join(f.dir, 'repo') }] });
     f.store.setProjectPlanner({ key: 'app', agentId: 'planner-1', setBy: 'operator' });

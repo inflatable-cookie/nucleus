@@ -221,15 +221,26 @@ export class Delegation {
     const qualified = parseAgentId(caller);
     const recordedHost = authority.hostId ?? (this.store.getMeta<Array<{ id: string }>>('hostRegistry')?.length === 1 ? this.store.getMeta<Array<{ id: string }>>('hostRegistry')?.[0]?.id : undefined);
     if (!caller || ![caller, qualified?.nativeAgentId].includes(authority.recipient) || (qualified && qualified.hostId !== recordedHost)) throw Error('Only the delegated recipient thread may answer this question');
+    const isEscalation = input.questionId.startsWith('ns-escalation-') || input.questionId.startsWith('ns-decider-');
+    const choices = authority.prompt.split('\n').filter(line => line.startsWith('- ')).map(line => line.slice(2));
+    const submittedAnswer = (input.answer ?? input.choice)?.trim();
+    const shortWaitChoices = isEscalation && submittedAnswer
+      ? choices.filter(choice => {
+        const shortLabel = choice.replace(/\s*\([^)]*\)$/, '');
+        return shortLabel === submittedAnswer && /^(?:Wait for a task|Wait until a time|Wait for an operator decision)$/.test(shortLabel);
+      })
+      : [];
+    const answer = shortWaitChoices.length === 1 ? shortWaitChoices[0] : submittedAnswer;
+    const normalizedInput = shortWaitChoices.length === 1
+      ? input.choice ? { ...input, choice: answer } : { ...input, answer }
+      : input;
     const recorded = events.findLast(event => event.kind === 'delegated_answer');
     if (recorded) {
       const receipt = JSON.parse(recorded.detail) as { questionId: string; caller: string; answer?: string; reason: string; decision?: 'operator'; overtakes?: string[] };
-      const isEscalation = input.questionId.startsWith('ns-escalation-') || input.questionId.startsWith('ns-decider-');
       const escalationId = escalationIdForQuestion(input.questionId);
       const outcome = events.findLast(event => event.id > recorded.id && (event.kind === 'delegated_command_applied' || event.kind === 'delegated_command_refused'));
       if (outcome?.kind === 'delegated_command_applied') return receipt;
       if (outcome?.kind === 'delegated_command_refused') {
-        const answer = (input.answer ?? input.choice)?.trim();
         if (answer === receipt.answer && input.reason?.trim() === receipt.reason && input.decision === receipt.decision)
           return Promise.reject(Error(outcome.detail.slice(outcome.detail.indexOf(':') + 2)));
         // Keep the refused receipt as history and accept a distinct correction.
@@ -246,13 +257,10 @@ export class Delegation {
       }
     }
     if (events.some(event => event.kind === 'delegated_closed') || Date.now() > authority.deadline) throw Error('This delegated answer window has closed');
-    const answer = (input.answer ?? input.choice)?.trim();
     const reason = input.reason?.trim();
     if (!reason || /[\r\n]/.test(reason) || reason.length > 500) throw Error('A one-line reason is required (up to 500 characters)');
     if (input.decision !== 'operator' && (!answer || answer.length > 4000 || /[\r\n]/.test(answer))) throw Error('An answer or choice is required (one line, up to 4000 characters)');
-    const choices = authority.prompt.split('\n').filter(line => line.startsWith('- ')).map(line => line.slice(2));
     if (input.decision !== 'operator' && choices.length && (input.choice || input.questionId.startsWith('queue-delegate-')) && !choices.includes(answer!)) throw Error('Choice must match an offered choice');
-    const isEscalation = input.questionId.startsWith('ns-escalation-') || input.questionId.startsWith('ns-decider-');
     const escalationId = escalationIdForQuestion(input.questionId);
     const taskEvents = isEscalation ? this.store.eventsAll(authority.taskId) : [];
     const escalation = isEscalation ? plannerEscalations(taskEvents as LadderEvent[]).find(item => item.id === escalationId) : undefined;
@@ -263,7 +271,7 @@ export class Delegation {
     const receiptEventId = this.store.eventsAll(key).findLast(event => event.kind === 'delegated_answer')!.id;
     this.store.event(authority.taskId, 'delegated_command_answered', `${input.questionId}: ${caller}`);
     if (escalation) {
-      return this.applyEscalationAnswer(authority.taskId, input, caller, authority.role, reason).then(() => {
+      return this.applyEscalationAnswer(authority.taskId, normalizedInput, caller, authority.role, reason).then(() => {
         this.recordCommandApplied(key, escalationId, receiptEventId);
         return receipt;
       }, error => {
