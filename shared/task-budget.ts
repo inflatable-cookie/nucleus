@@ -201,18 +201,21 @@ export function recordedBudgetPaused(events: BudgetEvent[], task: Pick<Task, "re
   budgetStart = Number.NEGATIVE_INFINITY, additionalIntervals: BudgetInterval[] = []): number {
   const intervals = recordedWaitIntervals(events, at);
   const clock = task.resolution.budgetClock;
-  if (clock?.since) intervals.push({ start: Date.parse(clock.since), end: at });
   const eventClock = events.filter(event => event.kind === "budget_clock_paused" || event.kind === "budget_clock_resumed");
   if (eventClock.length) {
+    if (clock?.since) intervals.push({ start: Date.parse(clock.since), end: at });
     let opened: string | null = null;
     for (const event of eventClock) {
       if (event.kind === "budget_clock_paused") opened ??= event.at;
       else if (opened) { intervals.push({ start: Date.parse(opened), end: Date.parse(event.at) }); opened = null; }
     }
     if (opened && !clock?.since) intervals.push({ start: Date.parse(opened), end: at });
-  } else if (clock?.pausedMs) {
-    // Older rows may have a folded clock without its audit events.
-    intervals.push({ start: at - clock.pausedMs, end: at });
+  } else {
+    // Older rows may have a folded clock without its audit events. Its closed
+    // total has no exact placement, so keep it adjacent to the open segment.
+    const open = clock?.since ? Math.max(0, at - Date.parse(clock.since)) : 0;
+    const total = (clock?.pausedMs ?? 0) + open;
+    if (total > 0) intervals.push({ start: at - total, end: at });
   }
   intervals.push(...additionalIntervals);
   return unionDuration(intervals.map(interval => ({
