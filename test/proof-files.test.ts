@@ -117,7 +117,7 @@ test("a revision starting at A records two proof files under its reported PR hea
       assert.equal(record.path.includes("/worktree/"), false);
       assert.deepEqual(readFileSync(record.path), readFileSync(file.path), "the copied bytes are the reported bytes");
     }
-    const stored = f.task().completion!;
+    const stored = f.store.run("revision-run")!.completion!;
     assert.equal(Object.hasOwn(stored, "proofFiles"), false, "the worker's local source paths never enter the stored completion");
 
     const reviewerRun = {
