@@ -171,21 +171,18 @@ the same text can come from a handler after an effect — and the task keeps the
 path-and-manual-fix guidance inside that unknown, never a refused mark
 (review ruling, 2026-11-12). Nucleus does not rename or remove projects.
 
-Closing a task archives the task's project through the `project.update`
-mutation with `archived: true` — the nightly keeps the project's threads and
-files (nucleus#1139, shapes read from the same bundle:
-`ProjectMutation = project.create | project.update | project.delete` in
-`packages/contracts/src/project.ts`). The project is one registration per
-repository, so while another live task on the same host still works there the
-archive holds — a visible `workspace_cleanup_wait` wait, never a failure — and
-the last closer retires the registration; earlier terminal tasks complete
-their local teardown against whatever state the last closer leaves, including
-the archived one. An archived project keeps its repository
-root, so a later task in the same repository reopens the same registration
-with `archived: false` instead of registering a second project, which the
-nightly refuses for an owned root. Archive observation is a positive native
-fact: the project is gone from the inventory or carries `archivedAt`, and an
-archived registration is no longer a current workspace.
+Closing a task retires its task-specific worktree handle from the adapter's
+stored state and tears down its owned Git worktree. The adapter keeps an
+archived marker on the handle so archived threads retain their workspace
+mapping for lifecycle reconciliation. It does not mutate the
+native project registration: that registration is shared by every task in the
+repository, and a finished task's archive must proceed while another task is
+live. Nucleus currently leaves the shared project registered; if a future
+project-level retirement is added, it must wait until no task uses the
+registration. A new task reuses the still-registered project directly.
+Workspace archive observation is positive from the stored adapter state: a
+missing or marked task worktree handle is archived, while the shared project
+remains available.
 
 Nucleus prepares and verifies the Git worktree before handing it to T3. Creation
 uses only `existing_worktree`; T3 must confirm it belongs to the selected project.
@@ -217,7 +214,7 @@ the write if the desired title is already present.
 | Remove | `thread.delete` through dispatch at closeout, never `onlyIfUnused` | Durable intent, then `deletedAt` or absence from a complete inventory proves removal; an unknown outcome is never resent |
 | Settle report | `thread.settle` through dispatch for any completed non-worker role | Immediately after the accepted Nucleus receipt; bind `expectedLatestRunId`, keep an uncertain intent and inspect `settledOverride` before retry |
 | Wake settled support thread | `thread.unsettle` through dispatch before a follow-up message | Stable command intent; a retained reviewer is active again for its next round |
-| Archive workspace | `projects.mutate` / `project.update` `archived: true` | The project is retired with threads and files kept; observation reads `archivedAt` from the inventory |
+| Archive workspace | Mark the task's T3 worktree handle archived in adapter state | Observation reads the handle's `archivedAt`; the shared project registration remains registered and available |
 | Atomic interrupt and continue | `message.dispatch` `steer_active` with the live run's `targetRunId` | The message injects into the active turn; with no active run the refusal is proven before send |
 
 Use `launchThread` for creation because it supplies the native workspace strategy
@@ -592,8 +589,9 @@ launch carries `modelSelection.options`), a planner `tell` delivered mid-run,
 the worker's report through the packaged helper, an independent reviewer's
 launch and verdict, a revision round addressed on the retained worker, the
 accepted round-two verdict, the merge, closeout, the worker thread's archive, the
-removal of every support thread and the archive of the native project, observed
-positively (nucleus#1155). A second lifecycle test keeps a released recovery
+removal of every support thread and the archive of only that task's T3 worktree
+handle while its shared project registration remains registered (nucleus#1155).
+A second lifecycle test keeps a released recovery
 thread settled while the task is open and continues the same thread for the next
 fault instead of opening another. The test fails on a tree
 without the model-option, archive and steering work.

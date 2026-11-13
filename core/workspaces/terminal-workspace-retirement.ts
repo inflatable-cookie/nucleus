@@ -5,7 +5,6 @@ import { now, type Store } from '../store/store';
 import type { Adapter } from '../host/adapter';
 import type { RuntimeRetirementService } from '../runtime/runtime-retirement';
 import { proveWorkspaceEmpty } from '../verbs/disposition';
-import { sharedRepositoryArchiveHold } from './repository-archive-gate';
 import { workspaceDiscardKey, type WorkspaceDiscard } from './orphan-worktree';
 import { git } from '../git/index';
 import { buildOutputCleanupHooks } from './worktree-cleanup';
@@ -50,9 +49,6 @@ export async function progressWorkspaceRetirement(store: Store, adapter: Adapter
   try {
     if (!allowed()) throw Error('Workspace retirement is held by task identity, ownership, a hold, merge evidence or an unreleased run');
     if (!adapter.archiveTaskWorkspace || !adapter.taskWorkspaceArchived) throw Error('Workspace archive or observation is unavailable');
-    // A shared-project archive waits for the repository to quiesce (nucleus#1139 review).
-    const sharedHold = sharedRepositoryArchiveHold(adapter, store.tasks(), task);
-    if (sharedHold) throw Error(sharedHold);
     // Papercut c7643943 generalized (owner content discard): a structured discard
     // recorded for exactly this task, workspace and directory waives only the
     // cancellation retirement's content and publication proofs. A record naming

@@ -4,7 +4,6 @@ import type { BulkDisposition, BulkDispositionRequest, Task } from "../../../sha
 import { bulkDispositionSchema, isDispositionActive } from "../../../shared/contracts";
 import { digest, now } from "../../store/store";
 import { buildOutputCleanupHooks } from "../../workspaces/worktree-cleanup";
-import { sharedRepositoryArchiveHold } from "../../workspaces/repository-archive-gate";
 import type { Engine } from "../../engine";
 import type { DispositionRequest } from "./types";
 import { productionDeps } from "./production";
@@ -30,9 +29,6 @@ export class Dispositions {
       archiveAgent: (id) => this.engine.host.archiveAgent(id),
       archiveWorkspace: async (task, attachedAgentIds) => {
         if (!this.adapter.archiveTaskWorkspace) throw new Error("Workspace cleanup is unavailable; task remains preserved");
-        // A shared-project archive waits for the repository to quiesce (nucleus#1139 review).
-        const sharedHold = sharedRepositoryArchiveHold(this.adapter, this.store.tasks(), task);
-        if (sharedHold) throw new Error(sharedHold);
         const allowed = () => !this.engine.stopped && isDispositionActive(this.store.task(task.id)) && !this.store.runs(task.id).some(run => !run.released)
           && !this.store.hostRunHoldingWorkspace(task.directory!);
         const buildOutputCleanup = buildOutputCleanupHooks(this.store, task.id, task.workspaceId!, task.directory!, allowed, {

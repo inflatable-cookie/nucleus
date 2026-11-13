@@ -799,7 +799,7 @@ test('an unreported option value is refused before send with the option and valu
   assert.equal(Object.keys(host.state.read().intents).length, 0, 'no durable launch intent was recorded for a refusal');
 });
 
-test('workspace archive is the native project.update archived mutation, observed positively', async t => {
+test('workspace archive retires its local handle without archiving the shared T3 project', async t => {
   const { host, server, workspace } = await fixture(t);
   assert.equal(await host.workspaceArchived(workspace.id), false);
   const ref = host.workspaceRef(workspace.id);
@@ -808,29 +808,41 @@ test('workspace archive is the native project.update archived mutation, observed
   const result = await ref.archive('ns-archive-check');
   assert.equal(result.error, null);
   assert.ok(result.archivedAt);
-  const command = server.commands.find(c => c.method === 'projects.mutate');
-  assert.equal(command?.type, 'project.update');
-  assert.equal(command?.archived, true);
-  assert.equal(command?.projectId, 'synthetic-project');
+  assert.equal(server.commands.some(c => c.method === 'projects.mutate'), false);
   assert.equal(await host.workspaceArchived(workspace.id), true);
   assert.equal(await host.workspaceAvailable(workspace.id), false);
   await ref.refresh();
-  assert.equal(ref.current(), null, 'an archived project is no longer a current registration');
-  // The durable intent replays the settled outcome; no second mutation is sent.
+  assert.equal(ref.current(), null, 'the retired task handle is no longer current');
   const again = await ref.archive('ns-archive-check');
   assert.equal(again.error, null);
-  assert.equal(server.commands.filter(c => c.method === 'projects.mutate').length, 1);
+  assert.equal(server.commands.filter(c => c.method === 'projects.mutate').length, 0);
 });
 
-test('createWorkspace reopens an archived project for its root instead of registering a second one', async t => {
+test('one task worktree archives while another T3 task keeps the repository project registered', async t => {
+  const { host, server, workspace, directory, root } = await fixture(t);
+  const secondDirectory = join(root, 'second-worktree');
+  mkdirSync(secondDirectory);
+  const second = await host.createWorkspace({ title: 'Other task worktree', requestId: 'workspace-second-task', directory: secondDirectory,
+    project: { projectId: 'synthetic-project' } });
+  const records = Object.values(host.state.read().workspaces);
+  assert.equal(records.length, 2);
+  assert.ok(records.every(record => record.projectId === 'synthetic-project'), 'stored adapter records bind both worktrees to the shared project');
+
+  const archived = await host.workspaceRef(workspace.id).archive('ns-archive-first-task');
+  assert.ok(archived.archivedAt);
+  assert.equal(await host.workspaceArchived(workspace.id), true);
+  assert.equal(await host.workspaceAvailable(second.id), true);
+  assert.equal(host.state.read().workspaces[workspace.id]?.archivedAt !== undefined, true, 'the archived record retains thread-to-worktree ownership');
+  assert.equal(host.state.read().workspaces[second.id]?.archivedAt, undefined, 'the other task handle stays active');
+  assert.equal(server.commands.some(c => c.method === 'projects.mutate'), false, 'individual worktree archive never mutates the shared registration');
+});
+
+test('createWorkspace reuses the preserved project registration after a task workspace archive', async t => {
   const { host, server, workspace, directory } = await fixture(t);
   await host.workspaceRef(workspace.id).archive('ns-archive-recreate');
   const reopened = await host.createWorkspace({ title: 'Synthetic worktree', requestId: 'workspace-archived-root', directory, project: { projectId: 'synthetic-project', workspaceRoot: directory } });
   assert.equal(await host.workspaceAvailable(reopened.id), true, 'the archived registration was reopened, not replaced');
-  const updates = server.commands.filter(c => c.method === 'projects.mutate');
-  assert.deepEqual(updates.map(c => c.type), ['project.update', 'project.update'], 'archive then reopen, never a second project.create');
-  assert.equal(updates[1]?.archived, false);
-  assert.equal(updates[1]?.projectId, 'synthetic-project');
+  assert.equal(server.commands.filter(c => c.method === 'projects.mutate').length, 0, 'the project stayed registered throughout');
 });
 
 test('atomic interrupt and continue steers the live run through steer_active', async t => {
