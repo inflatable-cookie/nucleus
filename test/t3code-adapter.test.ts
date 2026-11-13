@@ -868,6 +868,9 @@ test('a tell to a thread with a live run steers into that run, and an idle threa
   const created = await host.createAgent(spec());
   const p = server.threads.get(created.id)!;
   p.runs = [{ id: 'run-1', status: 'running', startedAt: STAMP }];
+  // The run the steer targets must be the one the adapter's own read path decodes from the thread projection.
+  const read = await (host as unknown as { readProjection(id: string): Promise<{ runs: { id: string; status: string }[] }> }).readProjection(created.id);
+  assert.deepEqual(read.runs.map(run => [run.id, run.status]), [['run-1', 'running']], 'the adapter reads the live run from the projection');
   await host.steerOrNotify(created.id, { messageId: 'ns-tell-live', text: 'Planner: keep the change set narrow.' });
   const steer = server.commands.at(-1)!;
   assert.equal(steer.type, 'message.dispatch');
