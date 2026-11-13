@@ -97,7 +97,7 @@ that needs it.
 | --- | --- | --- |
 | Escalating a fault whose own evidence it conceals | Open PR on the queue-owned branch | implemented |
 | Escalating a reporting-identity mismatch | The retained worker's current binding and stopped state | **gap** |
-| Declaring a missing callback, or refusing recovery resume of a stopped revision | Live `effigy qa` or repository QA process in the task worktree (complete scan; an incomplete listing is `unverified`, never absence) | implemented |
+| Declaring a missing callback, or refusing recovery resume of a stopped revision | Live `effigy qa` or repository QA process in the task worktree (complete scan; an incomplete listing is `unverified`, never absence), and the agent's own latest running non-turn-bound tool call on its provider timeline (unreadable or inconclusive evidence is never liveness) | implemented |
 | Creating a coordinator or reviewer run | Exact identity of any existing run | already an exact lookup |
 | Failover after provider exhaustion | The assigned agent's own observed provider error, or the current reviewer's own identity-bound terminal refusal in its dispatch turn | implemented |
 | Transient provider failure | The retained thread's observed error and its run identity | resumes in place, bounded |
@@ -445,6 +445,17 @@ existing result — never fires; one `callback_reminder_skipped` event records
 the miss and the task parks for the ordinary relaunch. Anything less than a
 provably complete page without the dispatch (a gap, older pages pending, an
 unreadable page) stays unverified and keeps the existing reminder path.
+
+## 2026-11-12 amendment — a thread waiting on its own job is liveness (papercut 6895edaa)
+
+The missing-callback decision reads the stopped thread's own provider timeline as
+one more live fact. A latest tool call that is still `running`, of a kind that
+can outlive its turn (a background shell, a timed test run under a Monitor, a
+worktree setup), proves the agent is waiting on its own work; the task records
+that wait, extends its reminder grace and starts no reminder, incident or
+recovery run over it. Turn-bound kinds, terminal states, unrecognised statuses,
+ambiguous simultaneous states and unreadable pages are not liveness, so an
+ordinary stopped thread keeps the existing reminder and recovery path.
 
 ## Rule 8: a stale superseded reviewer incident settles with its owner control
 

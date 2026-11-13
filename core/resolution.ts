@@ -268,7 +268,7 @@ export class Resolution {
     resolvePassedUnchangedCheckEscalation: (...args) => owner.resolvePassedUnchangedCheckEscalation(...args),
   }))(this));
   readonly origins = new OriginRouting(this);
-  readonly recovery = new Recovery(recoveryContext(this, ['adapter', 'attention', 'automaticHookReplayPending', 'ensureIncident', 'escalateRefusedCoordinator', 'extendCallbackReminder', 'graceMs', 'host', 'hostAvailable', 'workerProviderUnavailable', 'idle', 'lease', 'onTaskHost', 'openReviewContinuationEscalation', 'recordStop', 'requiredRouteNote', 'responsibleBlockerLadder', 'resumeTransientProviderThread', 'select', 'slotAdmissionReason', 'startsNoRuns', 'stopped', 'store', 'suppressAutomaticRetry', 'update', 'usageCeilingNote', 'validationEvidence', 'waiting']));
+  readonly recovery = new Recovery(recoveryContext(this, ['adapter', 'attention', 'automaticHookReplayPending', 'ensureIncident', 'escalateRefusedCoordinator', 'extendCallbackReminder', 'graceMs', 'host', 'hostAvailable', 'workerProviderUnavailable', 'idle', 'lease', 'onTaskHost', 'openPlannerEscalation', 'openReviewContinuationEscalation', 'recordStop', 'requiredRouteNote', 'responsibleBlockerLadder', 'resumeTransientProviderThread', 'select', 'slotAdmissionReason', 'startsNoRuns', 'stopped', 'store', 'suppressAutomaticRetry', 'update', 'usageCeilingNote', 'validationEvidence', 'waiting']));
   readonly checkpoints = new Checkpoints(intakeContext(this, ['adapter', 'attention', 'hostAvailable', 'paused', 'store', 'withHost']));
   readonly stalls = new Stalls(recoveryContext(this, ['adapter', 'attention', 'host', 'onTaskHost', 'paused', 'profiles', 'recordStop', 'recovery', 'saveIncident', 'store', 'update', 'waiting']));
   readonly ownedTools = new OwnedTools(this);
@@ -281,7 +281,7 @@ export class Resolution {
   readonly selection = new RoleSelection(this);
   readonly providerRefusals = new ProviderRefusals(recoveryContext(this, ['adapter', 'applyReviewerRefusal', 'attention', 'clearUnverifiableRefusalWait', 'host', 'observeStoppedReviewer', 'paused', 'recordRefusalBlocked', 'recordUnverifiableRefusalRead', 'refusalExclusions', 'refusalGap', 'select', 'stopped', 'store', 'unverifiableRefusalReads', 'update', 'usageCeilingNote', 'verifyRefusedRevision', 'waiting']));
   readonly validation = new ValidationEvidence(this);
-  readonly callbackReminders = new CallbackReminders(intakeContext(this, ['adapter', 'attention', 'ensureIncident', 'extendCallbackReminder', 'graceMs', 'heavyRunAlive', 'host', 'onTaskHost', 'saveIncident', 'store', 'validationEvidence', 'waiting']));
+  readonly callbackReminders = new CallbackReminders(intakeContext(this, ['adapter', 'attention', 'ensureIncident', 'extendCallbackReminder', 'graceMs', 'heavyRunAlive', 'host', 'onTaskHost', 'ownedJobWait', 'saveIncident', 'store', 'validationEvidence', 'waiting']));
   readonly checkWaits = new CheckWaits(((owner: Resolution): CheckWaitsContext => ({
     get adapter() { return owner.adapter; },
     attention: (...args) => owner.attention(...args),
@@ -760,6 +760,8 @@ export class Resolution {
   ownedToolHold(agentId: string, options: { requireCompleteEvidence?: boolean; runId?: string; runIds?: string[]; taskId?: string; workspaceId?: string } = {}): Promise<string | null> {
     return this.ownedTools.ownedToolHold(agentId, options);
   }
+  /** Positive evidence that the agent's own detached job is still running, or null. */
+  ownedJobWait(agentId: string): Promise<string | null> { return this.ownedTools.ownedJobWait(agentId); }
 
   assertIdleReviewerObservation(task: Task, run: Run, observed: AgentObservation) { return this.reviewContinuations.assertIdleReviewerObservation(task, run, observed); }
 

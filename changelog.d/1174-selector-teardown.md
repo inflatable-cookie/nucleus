@@ -1,0 +1,1 @@
+Clarify that tests and selectors may remove temporary directories they created inside the run's scratch root, while preserving the root itself. Source-immutable reviewers and proof executors now use formatter check-only modes or report the missing selector and continue other checks.
