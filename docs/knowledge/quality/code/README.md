@@ -44,3 +44,5 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
 - nucleus#1206 (floor 5, 2026-11-14): the project editor and settings profiles were split by screen,
   form, repository and save-queue responsibility; task holds, attention phases and prerequisite
   reason facts now use shared owners. The changed N6 rows were re-rated at this PR's head.
+
+- nucleus#1207 (floor 5, 2026-11-14): the question service and ladder were split by joint review, delegation, supersession, reviewer consult and escalation settlement; their N1 rows were re-rated at this PR’s head.

@@ -1,8 +1,6 @@
-import { delegateQuestion } from './planner-delegation';
 import type { DecisionView } from '../../shared/contracts';
-import { clipDecisionQuestion, holdsOf,taskControlInputSchema,type Run,type Task,type TaskControlInput } from '../../shared/contracts';
+import { clipDecisionQuestion, taskControlInputSchema,type Task,type TaskControlInput } from '../../shared/contracts';
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
-import { taskBudget } from '../../shared/task-budget';
 import { queueAskDeliveryId } from './agent-ask';
 import {
 plannerEscalations,
@@ -12,20 +10,9 @@ import { Decisions,decisionHeadline } from '../planning/decisions';
 import { supportsNativeQuestions } from './native-decision';
 import { questionRoute } from './question-route';
 import { isDelegableQuestionKind,operatorQuestionFor,operatorQuestionStep,type OperatorQuestion,type OperatorQuestionChoice,type OperatorQuestionKind } from './operator-question';
-import { boundInlineReport } from '../review/ordinary-review';
-import { DELEGATED_ANSWER_TIMEOUT_MS,applyBinaryApproval,delegatedAuthorityNote,delegatedDecisionText,nativeDelegationPrompt,parseDelegatedAnswer,parseNativeDelegatedReply,type DelegatedAnswer } from './question-delegation';
+import { delegatedAuthorityNote,type DelegatedAnswer } from './question-delegation';
 import type { Resolution } from '../resolution';
-import { DelegatedHostUnavailable } from './delegation';
 import { digest } from '../store/store';
-import { RESPONSIBLE_QUESTION_WAIT } from '../recovery/task-reasons';
-
-/** The recorded budget questions a task carries: their ids, in event order. */
-function budgetQuestionIds(events: Array<{ kind: string; detail: string }>): string[] {
-  return [...new Set(events
-    .filter(event => event.kind === 'operator_question' && event.detail.includes('kind budget'))
-    .map(event => event.detail.split(':', 1)[0]!)
-    .filter(Boolean))];
-}
 
 export class Questions {
   constructor(readonly resolution: Resolution) {}
@@ -36,88 +23,8 @@ export class Questions {
   readonly recoveringQueueAsks = new Set<string>();
   readonly delegatedAnswers = new Map<string, DelegatedAnswer>();
   readonly responsibleQuestions = new Map<string, AbortController>();
-  async responsibleJointQuestion(t: Task): Promise<boolean> {
-    const applied = new Set(this.store.eventsAll(t.id)
-      .filter(event => ['review_result_applied', 'review_reapplied'].includes(event.kind)).map(event => event.detail));
-    const receipts = this.store.db.prepare('SELECT id,run FROM receipts WHERE task=? ORDER BY rowid').all(t.id) as { id: string; run: string }[];
-    const runs = new Map(this.store.runs(t.id).map(run => [run.id, run]));
-    let reviews: Run[] = [];
-    const seen = new Set<string>();
-    for (const receipt of receipts) {
-      if (seen.has(receipt.run)) continue;
-      const run = runs.get(receipt.run), completion = run?.completion;
-      if (!run || !completion || run.role !== 'reviewer' || run.mechanicalReviewProof
-        || run.status !== 'finished' || !run.released || completion.eventId !== receipt.id
-        || completion.taskId !== t.id || completion.runId !== run.id || !completion.head || completion.head !== run.head
-        || !applied.has(run.id)) continue;
-      seen.add(run.id);
-      if (completion.status === 'ready_to_merge') { reviews = []; continue; }
-      if (completion.status === 'changes_required' && (completion.reviewResponsibility === 'author'
-        || !run.reviewResponsibilityRequired && completion.reviewResponsibility === undefined)) reviews.push(run);
-    }
-    if (reviews.length !== 3) return false;
-    const latest = reviews.at(-1)!;
-    const id = digest(`responsible-question:${t.id}:${latest.id}`);
-    const events = this.store.eventsAll(t.id);
-    const marked = (kind: string) => events.find(event => event.kind === kind && event.detail.startsWith(`${id}:`));
-    if (marked('responsible_question_answered')) return false;
-    if (marked('responsible_question_unknown')) return false;
-    // An owner control moved past the question, so it no longer holds the task.
-    if (marked('responsible_question_superseded')) return false;
-    if (marked('responsible_question')) { this.resolution.waiting(this.store.task(t.id), RESPONSIBLE_QUESTION_WAIT, 'responsible_question'); return true; }
-    if (!t.agentId) return false;
-    if (!this.adapter.raiseTaskDecision && questionRoute(this.adapter) !== 'board') return false;
-    const reviewer = latest.completion;
-    const worker = this.store.runs(t.id).findLast(run => run.role === 'revision' && run.completion)?.completion;
-    // The reviewer's authenticated full finding is reviewText; a summary or an
-    // excerpt would not give the operator the disagreement the brief requires,
-    // so the complete finding travels in the decision's details. The question
-    // itself stays a short readable ask inside the view limit: an over-long
-    // question broke the board read (a too_big refusal under the board header).
-    // The durable send intent records the exact payload's digest, not a copy.
-    const head = reviewer?.head ?? t.prHead ?? 'the recorded head';
-    const finding = boundInlineReport(reviewer?.reviewText?.trim() || reviewer?.summary?.trim() || 'not recorded', 'reviewer finding');
-    const workerReturn = boundInlineReport(worker?.summary?.trim() || 'not recorded', 'worker return');
-    // The full findings travel in the interactive prompts (the native question
-    // and the planner/decider delegation), which carry no view limit. The
-    // recorded question stays a short readable ask inside the view limit and
-    // the full material travels in the decision's details, so no producer
-    // breaks a board read with a too_big refusal.
-    const fullQuestion = `Three review rounds have not converged on "${t.title}" at ${head}. The reviewer's authenticated findings: ${finding} The worker's latest return: ${workerReturn} How should the next round proceed?`;
-    const question = clipDecisionQuestion(`Three review rounds have not converged on "${t.title}" at ${head}. The reviewer's authenticated findings and the worker's latest return are in the decision details. How should the next round proceed?`);
-    const details = `Reviewer's authenticated findings:\n${finding}\n\nWorker's latest return:\n${workerReturn}`.slice(0, 48000);
-    const options = ['Continue the current approach', 'Change the approach', 'Stop and keep the work'];
-    this.store.transaction(() => {
-      this.store.event(t.id, 'responsible_question', `${id}: head ${head}; question ${digest(question)} (${question.length} chars); reviewer finding ${digest(finding)} (${finding.length} chars); worker return ${digest(workerReturn)} (${workerReturn.length} chars)`);
-      if (!supportsNativeQuestions(t.profile?.provider) && questionRoute(this.adapter, t.profile?.provider) !== 'board')
-        this.store.event(t.id, 'queue_ask_payload', JSON.stringify({ id, kind: 'review', question, options, details, fullQuestion }));
-    });
-    this.resolution.waiting(this.store.task(t.id), RESPONSIBLE_QUESTION_WAIT, 'responsible_question');
-    const controller = new AbortController();
-    this.resolution.responsibleQuestions.set(id, controller);
-    void this.resolution.raiseDecision(this.store.task(t.id), { id, kind: 'review', question, options, details, fullQuestion }, controller.signal)
-      .then(answer => {
-        this.resolution.settleJointQuestion(t.id, id, answer);
-      })
-      .catch(error => {
-        if (this.resolution.stopped()) return;
-        if (this.store.eventsAll(t.id).some(event => event.kind === 'responsible_question_superseded' && event.detail.startsWith(`${id}:`))) return;
-        this.store.event(t.id, 'responsible_question_unknown', `${id}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));
-      })
-      .finally(() => this.resolution.responsibleQuestions.delete(id));
-    return true;
-  }
-  settleJointQuestion(taskId: string, id: string, answer: string): void {
-    const delegated = this.resolution.delegatedAnswers.get(id); this.resolution.delegatedAnswers.delete(id);
-    const boardBy = this.resolution.queueAskRaiseAnsweredBy.get(id); this.resolution.queueAskRaiseAnsweredBy.delete(id);
-    if (this.store.eventsAll(taskId).some(event => event.kind === 'responsible_question_superseded' && event.detail.startsWith(`${id}:`))) {
-      this.store.event(taskId, 'responsible_question_stale_answered', `${id}: ${answer} — answered by ${delegated ? `delegated ${delegated.role} ${delegated.agentId}` : boardBy ?? 'operator'}; no effect because the question was superseded`);
-      if (delegated) this.resolution.notifyStaleQuestionAnswer(taskId, id, `${delegated.role} ${delegated.agentId}`);
-      return;
-    }
-    this.store.event(taskId, 'responsible_question_answered', `${id}: ${answer} — answered by ${delegated ? `delegated ${delegated.role} ${delegated.agentId}` : boardBy ?? 'operator'}`);
-    const current = this.store.task(taskId);
-    this.resolution.update(current, { stop: null }, { reason: `${delegated ? `A delegated ${delegated.role} answered` : 'The operator answered'} the joint review question; the next review round continues with that answer` }, 'responsible_question_resumed', answer.slice(0, 2000));
+  supersedeBudgetQuestions(taskId: string, reason: string): string[] {
+    return this.resolution.questionSupersession.supersedeBudgetQuestions(taskId, reason);
   }
   async raiseOperatorQuestions(scopedTaskId?: string): Promise<void> {
     if (!scopedTaskId) {
@@ -227,169 +134,6 @@ export class Questions {
       finally { this.resolution.queueAskRaiseAnsweredBy.delete(id); }
     }
   }
-  extendTaskBudget(taskId: string, detail: string, by = 'The operator'): Task | null {
-    const current = this.store.task(taskId);
-    const events = this.store.eventsAll(taskId);
-    if (!taskBudget(current, this.store.runs(taskId), Date.now(), events,
-      this.store.canonicalRepository(current.repoPath, current.repository)).exhausted) return null;
-    const wasBudgetPause = current.resolution.stop?.reason === 'budget';
-    // Papercut 7cb34906 (2026-11-10): a budget extended through a verb left
-    // Nucleus's own budget questions pending on the worker thread; launches then
-    // declined ("retained worker still owns its turn: pending question") until a
-    // person answered them by hand. Every recorded budget question belongs to the
-    // budget stop this extension clears — including one already answered at the
-    // board whose native prompt is still pending on the thread — so all of them
-    // are superseded and dismissed through the host, the same supersession #975
-    // applies to asks.
-    const updated = this.store.transaction(() => {
-      const next = this.resolution.update(current, { ...(wasBudgetPause ? { stop: null } : {}), budgetExtensions: current.resolution.budgetExtensions + 1 },
-        wasBudgetPause ? { reason: `${by} extended the budget by one default increment; the next run may start` }
-          : {}, 'budget_extended', detail);
-      this.supersedeBudgetQuestionsInTransaction(taskId, 'The exhausted budget was extended.');
-      return next;
-    });
-    this.settleSupersededBudgetQuestions(taskId);
-    return updated;
-  }
-  /**
-   * Every recorded budget question the task still carries, superseded with its
-   * native prompt dismissed and any linked board decision withdrawn, so nobody
-   * answers a pause that no longer exists and no answer can change the task. The
-   * pause is gone two ways: an extension lifted it, or the measured budget stopped
-   * showing it (nucleus#1187).
-   */
-  supersedeBudgetQuestions(taskId: string, reason: string): string[] {
-    const marks = () => this.supersedeBudgetQuestionsInTransaction(taskId, reason);
-    if (this.store.db.isTransaction) marks(); else this.store.transaction(marks);
-    return this.settleSupersededBudgetQuestions(taskId);
-  }
-  private supersedeBudgetQuestionsInTransaction(taskId: string, reason: string): void {
-    const events = this.store.eventsAll(taskId);
-    const marked = (kind: string, id: string) => events.some(event => event.kind === kind && event.detail.startsWith(`${id}:`));
-    for (const questionId of budgetQuestionIds(events)) {
-      if (!marked('operator_question_superseded', questionId))
-        this.store.event(taskId, 'operator_question_superseded', `${questionId}: ${reason}`);
-      if (!marked('native_question_dismiss_intent', questionId))
-        this.store.event(taskId, 'native_question_dismiss_intent', `${questionId}: ${reason}`);
-      const decisionLink = events.find(event => event.kind === 'operator_question_decision'
-        && event.detail.startsWith(`${questionId}: decision `));
-      const decisionId = decisionLink?.detail.match(/decision ([^;\s]+)/)?.[1];
-      if (decisionId) {
-        const decision = this.store.decision(decisionId);
-        if (decision.status === 'open') new Decisions(this.store).withdrawInTransaction({ id: decisionId, version: decision.version,
-          reason, withdrawnBy: 'nucleus' });
-      }
-    }
-  }
-  /**
-   * Abort the in-turn waits and dismiss the native prompts of the recorded budget
-   * questions. Runs after the write that superseded them: a host call belongs
-   * outside the transaction that records the intent.
-   */
-  private settleSupersededBudgetQuestions(taskId: string): string[] {
-    const ids = budgetQuestionIds(this.store.eventsAll(taskId));
-    for (const questionId of ids) this.resolution.responsibleQuestions.get(questionId)?.abort();
-    this.dismissSupersededNativeQuestions(taskId, ids);
-    return ids;
-  }
-  supersedeOpenOwnerQuestions(taskId: string, reason: string): void {
-    const events = this.store.eventsAll(taskId);
-    const settled = (kind: string, id: string) => events.some(event => event.kind === kind && event.detail.startsWith(`${id}:`));
-    const supersededIds: string[] = [];
-    const supersede = (questionKind: 'operator_question' | 'responsible_question', markerKind: 'operator_question_superseded' | 'responsible_question_superseded') => {
-      const answeredKind = questionKind === 'operator_question' ? 'operator_question_answered' : 'responsible_question_answered';
-      for (const event of events.filter(item => item.kind === questionKind)) {
-        const id = event.detail.split(':', 1)[0]!;
-        if (!id || settled(answeredKind, id) || settled(markerKind, id)) continue;
-        this.store.event(taskId, markerKind, `${id}: ${reason}`.slice(0, 2000));
-        this.resolution.responsibleQuestions.get(id)?.abort();
-        supersededIds.push(id);
-        if (questionKind === 'operator_question') {
-          const link = events.find(item => item.kind === 'operator_question_decision' && item.detail.startsWith(`${id}: decision `));
-          const decisionId = link?.detail.match(/decision ([^;\s]+)/)?.[1];
-          if (decisionId) {
-            const decision = this.store.decision(decisionId);
-            if (decision.status === 'open') new Decisions(this.store).withdrawInTransaction({ id: decisionId, version: decision.version,
-              reason, withdrawnBy: 'nucleus' });
-          }
-          const askRaise = this.resolution.queueAskRaises.get(id);
-          if (askRaise) { this.resolution.queueAskRaises.delete(id); this.resolution.queueAskRaiseAnsweredBy.delete(id); askRaise.reject(Error('Question superseded by an applied owner control')); }
-          this.resolution.delegatedAnswers.delete(id);
-        }
-      }
-    };
-    this.store.transaction(() => {
-      supersede('operator_question', 'operator_question_superseded');
-      supersede('responsible_question', 'responsible_question_superseded');
-      for (const event of events.filter(item => item.kind === 'agent_ask')) {
-        const id = event.detail.split(':', 1)[0]!;
-        if (!id || settled('agent_ask_answered', id) || settled('agent_ask_superseded', id)) continue;
-        this.store.event(taskId, 'agent_ask_superseded', `${id}: ${reason}`.slice(0, 2000));
-        const link = events.find(item => item.kind === 'agent_ask_decision' && item.detail.startsWith(`${id}: decision `));
-        const decisionId = link?.detail.match(/decision ([^;\s]+)/)?.[1];
-        if (decisionId) {
-          const decision = this.store.decision(decisionId);
-          if (decision.status === 'open') new Decisions(this.store).withdrawInTransaction({ id: decisionId, version: decision.version,
-            reason, withdrawnBy: 'nucleus' });
-        }
-      }
-      for (const id of supersededIds) {
-        if (events.some(item => item.kind === 'native_question_dismiss_intent' && item.detail.startsWith(`${id}:`))) continue;
-        this.store.event(taskId, 'native_question_dismiss_intent', `${id}: ${reason}`.slice(0, 2000));
-      }
-    });
-    this.dismissSupersededNativeQuestions(taskId, supersededIds);
-  }
-  /** Host-dismiss Nucleus-raised native questions whose observer was aborted. Tool and bash permissions stay. */
-  private dismissSupersededNativeQuestions(taskId: string, ids: string[]): void {
-    if (!ids.length) return;
-    const task = this.store.task(taskId);
-    if (!task.hostId) return;
-    if (!this.resolution.withHost(task.hostId, () => this.resolution.originHostAvailable(task.hostId!)
-      && Boolean(this.adapter.pendingQuestions) && Boolean(this.adapter.dismissNativeQuestion))) return;
-    const agents = this.nativeQuestionAgents(task);
-    // Recorded native requestIds from the raise (durable) plus the text-prefix
-    // fallback for questions raised before the link was recorded.
-    const recorded = new Map<string, string[]>();
-    for (const event of this.store.eventsAll(taskId)) {
-      if (event.kind !== 'operator_question_native_request') continue;
-      const id = event.detail.split(':')[0]!;
-      if (!ids.includes(id)) continue;
-      const requestId = event.detail.match(/request (\S+)/)?.[1];
-      if (requestId) recorded.set(requestId, [...(recorded.get(requestId) ?? []), id]);
-    }
-    void this.resolution.withHost(task.hostId, async () => {
-      for (const agent of agents) {
-        let pending: Array<{ requestId: string; questions: Array<{ header: string; question: string; options: string[] }> }>;
-        try { pending = await this.adapter.pendingQuestions!(agent.agentId); }
-        catch { continue; }
-        for (const request of pending) {
-          const byRecorded = recorded.get(request.requestId);
-          const match = byRecorded?.find(id => ids.includes(id))
-            ?? ids.find(id => request.questions.some(question => question.question.startsWith(`[Queue decision ${id}]`)));
-          if (!match) continue;
-          try {
-            await this.adapter.dismissNativeQuestion!(agent.agentId, agent.workspaceId, request.requestId);
-            if (!this.store.eventsAll(taskId).some(item => item.kind === 'native_question_dismissed' && item.detail.startsWith(`${match}:`)))
-              this.store.event(taskId, 'native_question_dismissed', `${match}: request ${request.requestId} on ${agent.agentId}`);
-          } catch { /* delivery is unknown; the intent prevents a resend */ }
-        }
-      }
-    });
-  }
-  private nativeQuestionAgents(task: Task): Array<{ agentId: string; workspaceId: string }> {
-    const out = new Map<string, string>();
-    const add = (agentId: string | null | undefined, workspaceId: string | null | undefined) => {
-      if (!agentId || !workspaceId) return;
-      if (!out.has(agentId)) out.set(agentId, workspaceId);
-    };
-    add(task.agentId, task.workspaceId);
-    const runs = this.store.runs(task.id);
-    const current = task.resolution.currentRunId ? runs.find(run => run.id === task.resolution.currentRunId) : null;
-    add(current?.agentId, current?.workspaceId ?? task.workspaceId);
-    add(task.resolution.reviewerAgentId, runs.find(run => run.role === 'reviewer' && run.agentId === task.resolution.reviewerAgentId)?.workspaceId ?? task.workspaceId);
-    return [...out].map(([agentId, workspaceId]) => ({ agentId, workspaceId }));
-  }
   /**
    * Papercut a1bc9fe5: a native question whose delivery went unknown never
    * reached the planner, so `question.answer` refused every planner. The same
@@ -409,7 +153,7 @@ export class Questions {
     if (this.resolution.recoveringQueueAsks.has(decision.id)) return;
     this.resolution.recoveringQueueAsks.add(decision.id);
     this.store.event(taskId, 'operator_question_unknown_delegated', `${decision.id}: native delivery was unknown; the question falls back to the planner ladder`);
-    void this.delegateDecision(taskId, { id: decision.id, kind: decision.kind, question: decision.question, options },
+    void this.resolution.delegateDecision(taskId, { id: decision.id, kind: decision.kind, question: decision.question, options },
       null, new AbortController().signal, async (fresh, answer) => {
         const question = operatorQuestionFor(this.store, fresh);
         if (question?.id === decision.id) await this.resolution.settleOperatorQuestion(taskId, question, answer);
@@ -549,7 +293,7 @@ export class Questions {
       const raise = this.resolution.queueAskRaises.get(decision.id);
       if (raise) { this.resolution.queueAskRaises.delete(decision.id); this.resolution.queueAskRaiseAnsweredBy.delete(decision.id); raise.reject(Error('Nucleus planner question observation cancelled; delivery or answer may be unknown')); }
     }, { once: true });
-    void this.delegateDecision(task.id, decision, null, signal, async (_fresh, answer) => {
+    void this.resolution.delegateDecision(task.id, decision, null, signal, async (_fresh, answer) => {
       this.resolution.resolveQueueRaise(decision.id, answer);
     }).then(delivered => {
       if (delivered || signal.aborted || !this.resolution.queueAskRaises.has(decision.id)) return;
@@ -832,165 +576,6 @@ export class Questions {
     }
     // Task 562: pending asks collect their joined answers and every recorded
     // answer resumes its asking agent, even when the in-turn wait already left.
-  }
-  async delegateDecision(taskId: string, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; fullQuestion?: string | null },
-    request: { requestId: string; header: string } | null, signal: AbortSignal,
-    deliver: (task: Task, answer: string) => Promise<void>): Promise<boolean> {
-    // Nothing raises an operator-only kind through here today. If something ever does, it stays with the operator.
-    if (!isDelegableQuestionKind(decision.kind) || this.resolution.stopped() || signal.aborted || !this.resolution.queueBudgetQuestionCurrent(taskId, decision)) return false;
-    // The planner and decider prompts carry the producer's full text when it
-    // kept one; the bounded surfaces keep the short canonical question.
-    const prompt = decision.fullQuestion ?? decision.question;
-    const answered = () => this.store.eventsAll(taskId).some(event =>
-      (event.kind === 'operator_question_answered' || event.kind === 'operator_question_stale_answered') && event.detail.startsWith(`${decision.id}:`));
-    if (answered()) return false;
-    const task = this.store.task(taskId);
-    if (!this.store.eventsAll(taskId).some(event => event.kind === 'delegated_decision_route' && JSON.parse(event.detail).decision.id === decision.id))
-      this.store.event(taskId, 'delegated_decision_route', JSON.stringify({ decision, request }));
-    const budgetQuestion = decision.kind === 'budget' ? operatorQuestionFor(this.store, task) : null;
-    const recordDelegatedChoice = (parsed: { choice: string; reason: string; overtakes?: string[] }) => {
-      const approved = applyBinaryApproval(prompt, decision.options, parsed.choice, parsed.reason);
-      const extendsBudget = budgetQuestion?.id === decision.id
-        && budgetQuestion.choices.some(choice => choice.label === parsed.choice && choice.extendBudget);
-      return extendsBudget ? { ...parsed, budgetAuthority: 'approve_by_default' as const, reason: `approve by default, Tom 2026-11-03 — ${parsed.reason}` }
-        : approved ? { ...parsed, reason: approved.reason } : parsed;
-    };
-    const ask = { question: prompt, choices: decision.options, context: this.resolution.decisionContext(task) };
-    let answer: DelegatedAnswer | null = null;
-    // Task 1109: the task's own planner first, then the project's, then the decider.
-    const { rungs, projectFailed } = await this.resolution.plannerRungsFor(task);
-    const planners = rungs.map(item => ({ ...item, messageId: `queue-delegate-${decision.id}${item.rung === 'project' ? '-project' : ''}` }));
-    let unknown = false;
-    let result;
-    try {
-      result = await delegateQuestion(this.resolution, task, {
-        planners, decisionId: decision.id,
-        context: ask, signal,
-        current: () => !answered(),
-        canAdvance: () => this.resolution.queueBudgetQuestionCurrent(taskId, decision),
-        parse: text => {
-          const classification = parseNativeDelegatedReply(text);
-          if (classification?.kind === 'operator') return classification;
-          const parsed = parseDelegatedAnswer(text, decision.options);
-          return parsed ? { kind: 'choice' as const, ...parsed } : null;
-        },
-        onIntent: (role, agentId, rung) => this.store.event(taskId, 'operator_question_delegated', `${decision.id}: ${role === 'planner' ? `${rung === 'task' ? 'task planner' : 'project planner'} ${agentId}; asked` : 'decider requested'}`),
-        onSkip: (rung, agentId, detail) => this.store.event(taskId, 'operator_question_delegation_skipped', `${decision.id}: ${rung} planner ${agentId} skipped: ${detail}`.slice(0, 4000)),
-        onMiss: detail => this.store.event(taskId, 'operator_question_delegation_missed', `${decision.id}: ${detail}`),
-        onUnknown: (role, agentId, error) => {
-          unknown = true;
-          this.store.event(taskId, 'operator_question_delegation_unknown', `${decision.id}: ${role}${agentId ? ` ${agentId}` : ''}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));
-        },
-        onUnavailable: planner => {
-          this.resolution.ensureQueueRaiseDecision(task, decision, `the planner ladder ran out because selected planner ${planner} cannot be asked on its host`);
-        },
-      });
-    } catch (error) {
-      if (error instanceof DelegatedHostUnavailable) return false;
-      throw error;
-    }
-    if (this.resolution.stopped() || unknown) return false;
-    if (result?.reply.kind === 'operator') {
-      this.resolution.ensureQueueRaiseDecision(task, decision, `${result.role === 'planner' ? 'Planner' : 'Decider'} forwarded it: ${result.reply.reason}`);
-      return false;
-    }
-    if (result?.reply.kind === 'choice') {
-      if (result.role === 'decider' && projectFailed && result.reply.choice === 'Leave held for the planner')
-        this.store.event(taskId, 'operator_question_delegation_missed', `${decision.id}: decider ${result.agentId} could not decide because the planner just failed; the question remains with the Nucleus planner`);
-      else answer = { role: result.role, agentId: result.agentId, ...recordDelegatedChoice(result.reply), ...(result.role === 'decider' ? { overtakes: undefined } : {}) };
-    }
-    if (answered()) return false;
-    if (!answer) {
-      this.store.event(taskId, 'operator_question_delegation_missed', `${decision.id}: no delegated answer was produced; the question stays on its existing surface`);
-      return false;
-    }
-    if (!this.resolution.queueBudgetQuestionCurrent(taskId, decision)) {
-      const who = `delegated ${answer.role} ${answer.agentId}`;
-      this.store.event(taskId, 'operator_question_stale_answered', `${decision.id}: ${answer.choice} — answered by ${who}; no effect because the question was superseded`);
-      this.resolution.notifyStaleQuestionAnswer(taskId, decision.id, who);
-      return false;
-    }
-    if (signal.aborted) return false;
-    this.resolution.delegatedAnswers.set(decision.id, answer);
-    this.store.event(taskId, 'operator_question_decided', `${decision.id}: ${delegatedDecisionText(answer)}; agent ${answer.agentId}`.slice(0, 4000));
-    try {
-      await deliver(task, answer.choice);
-    } catch (error) {
-      this.resolution.delegatedAnswers.delete(decision.id);
-      this.store.event(taskId, 'operator_question_delegation_unknown', `${decision.id}: answer not delivered: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));
-      return false;
-    }
-    if (answer.role === 'planner' && answer.overtakes?.length) this.store.transaction(() => {
-      const decisions = new Decisions(this.store);
-      const reference = { kind: 'planner_answer' as const, id: taskId, sourceId: decision.id,
-        label: `Planner answer to Nucleus question ${decision.id}: ${answer.choice}`.slice(0, 240), at: new Date().toISOString() };
-      for (const id of [...new Set(answer.overtakes!)].slice(0, 100)) {
-        try {
-          decisions.markOvertaken(id, reference);
-          this.store.event(taskId, 'operator_question_overtakes', `${decision.id}: ${id}`);
-        } catch (error) {
-          this.store.event(taskId, 'operator_question_overtakes_refused', `${decision.id}: ${id}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 1000));
-        }
-      }
-    });
-    return true;
-  }
-  async projectPlannerRegistered(projectKey: string, plannerId: string, scopedHost?: string): Promise<void> {
-    if (!scopedHost) {
-      const host = await this.resolution.identifyOriginHost(plannerId);
-      if (!host) return;
-      return this.resolution.withHost(host, () => this.projectPlannerRegistered(projectKey, plannerId, host));
-    }
-    if (!this.resolution.originHostAvailable(scopedHost)) return;
-    if (!this.adapter.originAgent || !this.adapter.askPlanner || !this.resolution.applyOperatorControl) return;
-    try {
-      const registered = await this.resolution.host.originAgent(plannerId);
-      if (!registered || registered.archived) return;
-      const observation = await this.resolution.host.observe(plannerId);
-      if (observation.id !== plannerId || observation.status === 'closed') return;
-    } catch { return; }
-    const project = this.store.projectByKey(projectKey);
-    if (!project || project.planner?.agentId !== plannerId) return;
-    for (const task of this.store.tasks()) {
-      if (this.store.projectFor(task.repoPath, normalizeRepositoryOrigin(task.repository ?? ''))?.key !== projectKey
-        || !holdsOf(task).merge || task.resolution.stop?.reason !== 'awaiting_proof') continue;
-      const events = this.store.eventsAll(task.id);
-      const heldAnswer = events.findLast(event => event.kind === 'operator_question_applied' && event.detail.includes('Leave held for the planner'));
-      if (!heldAnswer) continue;
-      const requestId = digest(`${task.id}:${heldAnswer.detail}:${plannerId}`);
-      if (events.some(event => event.kind === 'operator_question_reasked' && event.detail.startsWith(`${requestId}:`))) continue;
-      const { merge: _merge, ...otherHolds } = task.holds ?? {};
-      const question = operatorQuestionFor(this.store, { ...task, held: false, mergeHold: false, holds: otherHolds });
-      if (!question) continue;
-      this.store.event(task.id, 'operator_question_reasked', `${requestId}: asking newly registered planner ${plannerId}`);
-      const ask = { question: question.question, choices: question.choices.map(choice => choice.label), context: this.resolution.decisionContext(task) };
-      let text: string | null = null;
-      try {
-        text = await this.resolution.askBound(task, plannerId, { prompt: nativeDelegationPrompt('planner', ask), signal: new AbortController().signal,
-          timeoutMs: DELEGATED_ANSWER_TIMEOUT_MS, messageId: `queue-planner-reask-${requestId}` }, 'planner');
-      } catch (error) {
-        this.store.event(task.id, 'operator_question_reasked_missed', `${requestId}: planner ${plannerId}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));
-        continue;
-      }
-      const answer = parseDelegatedAnswer(text, ask.choices);
-      if (!answer) {
-        this.store.event(task.id, 'operator_question_reasked_missed', `${requestId}: planner ${plannerId} gave no usable answer`);
-        continue;
-      }
-      const current = this.store.task(task.id);
-      // The operator settled the parked question during the window: that answer wins.
-      if (!holdsOf(current).merge || current.resolution.stop?.reason !== 'awaiting_proof') {
-        this.store.event(task.id, 'operator_question_stale_answered', `${question.id}: ${answer.choice} — answered by delegated planner ${plannerId}; no effect because the question was already settled`.slice(0, 4000));
-        this.resolution.notifyStaleQuestionAnswer(task.id, question.id, `delegated planner ${plannerId}`);
-        continue;
-      }
-      const choice = question.choices.find(item => item.label === answer.choice);
-      if (!choice || !choice.control) continue;
-      const delegated = { role: 'planner' as const, agentId: plannerId, ...answer };
-      this.store.event(task.id, 'operator_question_reasked_answered', `${requestId}: ${answer.choice} — ${answer.reason}`.slice(0, 4000));
-      try { await this.resolution.applyOperatorControl(this.resolution.operatorAnswerControl(current, question, choice, answer.choice, delegated)); }
-      catch (error) { this.store.event(task.id, 'operator_question_reasked_apply_failed', `${requestId}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000)); }
-    }
   }
   abortResponsibleQuestions() {
     for (const controller of this.resolution.responsibleQuestions.values()) controller.abort();
