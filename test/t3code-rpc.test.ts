@@ -431,15 +431,16 @@ test('disconnect after a mutation is unknown and never replays the request', asy
   const server = await fakeServer(t, (request, _send, socket) => { if (request._tag === 'Request') socket.destroy(); });
   const client = await clientFor(t, server);
   await assert.rejects(client.call('orchestration.dispatchCommand', { type: 'thread.stop', commandId: 'stable', threadId: 'synthetic' }), error => error instanceof T3RpcError && error.delivery === 'unknown');
+  assert.equal(client.lastDisconnectReason, 'socket_close');
   assert.equal(server.frames.filter(frame => frame._tag === 'Request').length, 1);
   assert.equal(server.upgrades, 1);
 });
 
-test('a stalled snapshot times out, releases the socket and does not retry', async t => {
+test('a stalled snapshot times out, releases only its subscription and does not retry', async t => {
   const server = await fakeServer(t, () => {});
   const client = await clientFor(t, server, 100);
   await assert.rejects(client.readStream('orchestration.subscribeShell', {}, () => false), error => error instanceof T3RpcError && error.code === 'timeout');
-  assert.equal(client.connected, false);
+  assert.equal(client.connected, true);
   assert.equal(server.frames.filter(frame => frame._tag === 'Request').length, 1);
 });
 
@@ -448,4 +449,93 @@ test('malformed server frames invalidate pending reads without leaking raw conte
   const client = await clientFor(t, server);
   await assert.rejects(client.call('server.getConfig', {}), error => error instanceof T3RpcError && error.code === 'protocol' && !error.message.includes('synthetic-bearer'));
   assert.equal(client.connected, false);
+  assert.equal(client.lastDisconnectReason, 'protocol_error');
+});
+
+test('one timed-out mutation leaves other in-flight and later requests on the shared connection', async t => {
+  const replies = new Map<string, () => void>();
+  const received = new Map<string, Promise<void>>();
+  const releases = new Map<string, () => void>();
+  for (const method of ['orchestration.dispatchCommand', 'server.getConfig'])
+    received.set(method, new Promise(resolve => releases.set(method, resolve)));
+  const server = await fakeServer(t, (request, send) => {
+    if (request._tag !== 'Request') return;
+    const method = String(request.tag);
+    replies.set(method, () => send(success(request, method)));
+    releases.get(method)?.();
+    if (method === 'later.read') send(success(request, 'later'));
+  });
+  const client = await clientFor(t, server);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const timeout = assert.rejects(client.call('orchestration.dispatchCommand', {
+    type: 'thread.stop', commandId: 'synthetic-command', threadId: 'synthetic-thread',
+  }), error => error instanceof T3RpcError && error.code === 'timeout' && error.delivery === 'unknown');
+  await received.get('orchestration.dispatchCommand');
+  t.mock.timers.tick(500);
+  const other = client.call('server.getConfig', {});
+  await received.get('server.getConfig');
+  t.mock.timers.tick(500);
+  await timeout;
+  assert.equal(client.connected, true);
+  assert.equal(client.lastDisconnectReason, null);
+  replies.get('server.getConfig')!();
+  assert.equal(await other, 'server.getConfig');
+  assert.equal(await client.call('later.read', {}), 'later');
+  assert.equal(server.upgrades, 1);
+  assert.equal(server.frames.filter(frame => frame.tag === 'orchestration.dispatchCommand').length, 1, 'unknown mutation is never resent');
+});
+
+test('a late reply to an expired request cannot settle a different request', async t => {
+  let late!: () => void;
+  let firstReceived!: () => void;
+  const first = new Promise<void>(resolve => { firstReceived = resolve; });
+  const server = await fakeServer(t, (request, send) => {
+    if (request._tag !== 'Request') return;
+    if (request.tag === 'expired.read') {
+      late = () => send(success(request, 'expired-value'));
+      firstReceived();
+    } else {
+      late();
+      send(success(request, 'current-value'));
+    }
+  });
+  const client = await clientFor(t, server);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const expired = assert.rejects(client.call('expired.read', {}), error => error instanceof T3RpcError && error.code === 'timeout');
+  await first;
+  t.mock.timers.tick(1_000);
+  await expired;
+  assert.equal(await client.call('current.read', {}), 'current-value');
+  assert.equal(client.connected, true);
+  assert.equal(server.upgrades, 1);
+});
+
+test('thread snapshots have a method-specific minute while small commands keep ten seconds', async t => {
+  let snapshot!: () => void;
+  let received!: () => void;
+  const ready = new Promise<void>(resolve => { received = resolve; });
+  const server = await fakeServer(t, (request, send) => {
+    if (request._tag !== 'Request') return;
+    if (request.tag === 'orchestration.subscribeThread') {
+      snapshot = () => send({ _tag: 'Chunk', requestId: request.id, values: [{ kind: 'synchronized', sequence: 1 }] });
+      received();
+    }
+  });
+  const client = new T3RpcClient({ endpoint: server.endpoint, bearer: 'synthetic-bearer' });
+  t.after(() => client.close());
+  await client.connect();
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let settled = false;
+  const thread = client.readStream('orchestration.subscribeThread', { threadId: 'synthetic-thread', requestCompletionMarker: true }, () => true)
+    .finally(() => { settled = true; });
+  const command = assert.rejects(client.call('server.getConfig', {}), error => error instanceof T3RpcError && error.code === 'timeout');
+  await ready;
+  t.mock.timers.tick(10_000);
+  await command;
+  t.mock.timers.tick(49_999);
+  await Promise.resolve();
+  assert.equal(settled, false);
+  snapshot();
+  assert.deepEqual(await thread, { kind: 'synchronized', sequence: 1 });
+  assert.equal(client.connected, true);
 });

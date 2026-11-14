@@ -154,3 +154,5 @@ export function createAdapter(Policy: HostPolicyConstructor, host: T3CodeHost, r
   const T3Adapter = t3AdapterClass(Policy);
   return new T3Adapter(host, reporting);
 }
+
+export type { T3DisconnectReason } from './rpc';
