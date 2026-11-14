@@ -3,8 +3,10 @@ import { StoreConfig } from "./store-config";
 import { digest,now,StoreCore } from "./store-core";
 import { StoreHostRuns } from "./store-host-runs";
 import { StoreLanes } from "./store-lanes";
-import type { ReclaimResult,RetainedRowPrune } from "./store-maintenance";
-import { StoreMaintenance } from "./store-maintenance";
+import { StoreAdmission } from "./store-admission";
+import { StoreMigration } from "./store-migration";
+import { ContentFingerprint,StoreFacts,StoreReclaim,type ReclaimResult } from "./store-reclaim";
+import { HISTORY_RETENTION_MS,StoreRetention,type RetainedRowPrune } from "./store-retention";
 import { StoreOperations } from "./store-operations";
 import { buildOutcomeRecord,StoreOutcomes,type TelemetryFactChunk,type VerbOutcome } from "./store-outcomes";
 import { StorePlanning } from "./store-planning";
@@ -14,7 +16,9 @@ import { StoreSubmissions,submissionHash } from "./store-submissions";
 import { STORED_OBSERVATION_FIELDS,StoreTaskWrites,type DetachedEntries,type StoredTaskParts } from "./store-task-writes";
 import { repositoryIdentity,StoreTasks,taskNumberReference } from "./store-tasks";
 export { digest } from "./store-core";
-export { ASSIGNMENT_HISTORY_KEEP,AUTO_VACUUM_INCREMENTAL,AUTO_VACUUM_NONE,CACHE_SIZE_KIB,CURRENT_SCHEMA,HOST_RUN_KEEP_PER_SELECTOR,JOURNAL_SIZE_LIMIT_BYTES,PROJECT_QA_KEEP_PER_REPOSITORY,RECLAIM_BUDGET_MS,RECLAIM_CHUNK_PAGES,RECLAIM_DRAIN_BUDGET_MS,RECLAIM_DRAIN_FREE_PAGES,RECLAIM_DRAIN_MAX_PAGES,RECLAIM_MAX_PAGES,STORE_COMPACTION_META_KEY,STORE_MAINTENANCE_META_KEY,VERB_OUTCOME_RETENTION_MS } from "./store-maintenance";
+export { CACHE_SIZE_KIB,CURRENT_SCHEMA,JOURNAL_SIZE_LIMIT_BYTES } from "./store-admission";
+export { AUTO_VACUUM_INCREMENTAL,AUTO_VACUUM_NONE,ContentFingerprint,STORE_COMPACTION_META_KEY,STORE_MAINTENANCE_META_KEY,StoreFacts,RECLAIM_BUDGET_MS,RECLAIM_CHUNK_PAGES,RECLAIM_DRAIN_BUDGET_MS,RECLAIM_DRAIN_FREE_PAGES,RECLAIM_DRAIN_MAX_PAGES,RECLAIM_MAX_PAGES } from "./store-reclaim";
+export { ASSIGNMENT_HISTORY_KEEP,HISTORY_RETENTION_MS,HOST_RUN_KEEP_PER_SELECTOR,PROJECT_QA_KEEP_PER_REPOSITORY,VERB_OUTCOME_RETENTION_MS } from "./store-retention";
 export { operationIdForKey,operationInputHash,provedPreSendHistory } from "./store-operations";
 export { buildOutcomeRecord,type TelemetryFactChunk,type VerbOutcome } from "./store-outcomes";
 export { explicitCriticalFalseSubmissionHash,legacySubmissionHash,submissionHash } from "./store-submissions";
@@ -51,7 +55,6 @@ import { stageDeclarationFromBrief } from "../stages";
 
 import { HOST_RUN_OUTPUT_FAILURE_DUE_PAGE,HOST_RUN_OUTPUT_FAILURE_SUMMARY_EXAMPLES,type HostRunOutputFailure,type HostRunOutputReclassification } from "../host-runs/host-run-output-failures";
 import { qualifiedThreadArchiveEffectKey } from "./store-core";
-import { ContentFingerprint,HISTORY_RETENTION_MS,StoreFacts } from "./store-maintenance";
 import type { BudgetClock } from "../../shared/task-budget";
 /**
  * The store's write funnels are closed for a bounded maintenance window; nothing may
@@ -59,7 +62,6 @@ import type { BudgetClock } from "../../shared/task-budget";
  */
 export { now,qualifiedThreadArchiveEffectKey,StoreMaintenanceError } from "./store-core";
 export { UNRESOLVED_SEED } from "./store-lanes";
-export { ContentFingerprint,HISTORY_RETENTION_MS,StoreFacts } from "./store-maintenance";
 
 /** Latest accepted non-recovery run completion by run creation, optionally limited to statuses. */
 export const latestRunCompletion = (runs: Run[], statuses?: string[]) =>
@@ -85,35 +87,39 @@ export class Store {
     eventWritten: (taskId, at) => this.eventWritten(taskId, at),
     taskChanged: taskId => this.taskChanged(taskId),
   });
-  private readonly maintenanceStore = (() => {
-    const store = this;
-    return new StoreMaintenance(this.core, {
-      storedSchema: (path, integrity) => Store.storedSchema(path, integrity),
-      schemaIn: (db, integrity) => Store.schemaIn(db, integrity),
-      verifyMigrationSnapshot: (source, snapshot) => Store.verifyMigrationSnapshot(source, snapshot),
-      get db() { return store.db; },
-      setMeta: this.setMeta.bind(this),
-      numberedTask: this.numberedTask.bind(this),
-      taskRow: this.taskRow.bind(this),
-      storedReviewValue: this.storedReviewValue.bind(this),
-      getMeta: this.getMeta.bind(this),
-      deleteMeta: this.deleteMeta.bind(this),
-      transaction: this.transaction.bind(this),
-      get maintenanceOpen() { return store.maintenanceOpen; },
-      get path() { return store.path; },
-      runs: this.runs.bind(this),
-      hookEvents: this.hookEvents.bind(this),
-      deleteCredential: this.deleteCredential.bind(this),
-      get lastEventAtByTask() { return store.lastEventAtByTask; },
-      set lastEventAtByTask(value) { store.lastEventAtByTask = value; },
-      get tasksStore() { return store.tasksStore; },
-      get cachedTaskCount() { return store.cachedTaskCount; },
-      set cachedTaskCount(value) { store.cachedTaskCount = value; },
-      advanceRevision: this.advanceRevision.bind(this),
-      taskChanged: this.taskChanged.bind(this),
-      notices: this.notices.bind(this),
-    });
-  })();
+  /**
+   * The store's maintenance seams, one owner per mechanism: opening and migrating a store,
+   * the every-open row strips, its retention windows, and its file facts and reclamation. Each
+   * is constructed with only the facts it uses.
+   */
+  private readonly retentionStore = new StoreRetention(this.core, {
+    numberedTask: data => this.numberedTask(data),
+    runs: taskId => this.runs(taskId),
+    hookEvents: taskId => this.hookEvents(taskId),
+    notices: taskId => this.notices(taskId),
+    deleteCredential: run => this.deleteCredential(run),
+    tasksStore: () => this.tasksStore,
+    lastEventAtByTask: () => this.lastEventAtByTask,
+    cachedTaskCount: () => this.cachedTaskCount,
+    setCachedTaskCount: value => { this.cachedTaskCount = value; },
+    advanceRevision: () => this.advanceRevision(),
+    taskChanged: taskId => this.taskChanged(taskId),
+  });
+  private readonly migrationStore = new StoreMigration(this.core, {
+    retainedArchiveKeys: () => this.retentionStore.retainedArchiveKeys(),
+    pruneThreadArchiveKeys: () => this.retentionStore.pruneThreadArchiveKeys(),
+  });
+  private readonly admissionStore = new StoreAdmission(this.core, {
+    storedSchema: (path, integrity) => Store.storedSchema(path, integrity),
+    schemaIn: (db, integrity) => Store.schemaIn(db, integrity),
+    verifyMigrationSnapshot: (source, snapshot) => Store.verifyMigrationSnapshot(source, snapshot),
+    numberedTask: data => this.numberedTask(data),
+    taskRow: (task, before) => this.taskRow(task, before),
+    storedReviewValue: value => this.storedReviewValue(value),
+    migration: this.migrationStore,
+    retention: this.retentionStore,
+  });
+  private readonly reclaimStore = new StoreReclaim(this.core, () => this.path);
 
   private readonly lanesStore = (() => {
     const store = this;
@@ -293,15 +299,11 @@ export class Store {
 
   private readClock(name: string): number { return this.core.readClock(name); }
   /** Read the schema under SQLite's native snapshot, including committed WAL. */
-  static storedSchema(path: string, checkIntegrity = true): number | undefined { return StoreMaintenance.storedSchema(path, checkIntegrity); }
-  private static schemaIn(db: DatabaseSync, checkIntegrity = true): number { return StoreMaintenance.schemaIn(db, checkIntegrity); }
+  static storedSchema(path: string, checkIntegrity = true): number | undefined { return StoreAdmission.storedSchema(path, checkIntegrity); }
+  private static schemaIn(db: DatabaseSync, checkIntegrity = true): number { return StoreAdmission.schemaIn(db, checkIntegrity); }
   /** Compare native snapshots by every stored value and meaningful row order. */
-  private static verifyMigrationSnapshot(source: DatabaseSync, snapshot: DatabaseSync): void { return StoreMaintenance.verifyMigrationSnapshot(source, snapshot); }
-  constructor(readonly path: string, backupDir?: string, onMigrationStart?: () => void) { this.maintenanceStore.initialize(path, backupDir, onMigrationStart); }
-  /** External content keeps searchable text only in the permanent outcome row. */
-  private createOutcomeSearchIndex(): void { return this.maintenanceStore.createOutcomeSearchIndex(); }
-  /** Resolve the current body from its version unless it has independent bytes. */
-  private createLeadReadView(): void { return this.maintenanceStore.createLeadReadView(); }
+  private static verifyMigrationSnapshot(source: DatabaseSync, snapshot: DatabaseSync): void { return StoreAdmission.verifyMigrationSnapshot(source, snapshot); }
+  constructor(readonly path: string, backupDir?: string, onMigrationStart?: () => void) { this.admissionStore.initialize(path, backupDir, onMigrationStart); }
   close() { this.taskChanged(null); this.taskChangeListeners.clear(); this.prerequisiteListeners.clear(); this.db.close(); }
   /**
    * Spec 028 revision "Store compaction" (audit B9): the store's write funnels are
@@ -315,16 +317,15 @@ export class Store {
    * itself proves no other connection holds a lock (an exclusive lock probe) before it
    * touches the file: a busy store fails before anything is changed.
    */
-  beginMaintenanceWindow(): void { return this.maintenanceStore.beginMaintenanceWindow(); }
+  beginMaintenanceWindow(): void { return this.admissionStore.beginMaintenanceWindow(); }
   /** Release the window's write funnels; the window's own writes are all committed. */
-  endMaintenanceWindow(): void { return this.maintenanceStore.endMaintenanceWindow(); }
+  endMaintenanceWindow(): void { return this.admissionStore.endMaintenanceWindow(); }
   /** True while a bounded maintenance window holds the write funnels closed. */
-  get maintenance(): boolean { return this.maintenanceStore.maintenance; }
+  get maintenance(): boolean { return this.maintenanceOpen; }
   /** The store's auto-vacuum mode as SQLite reports it (0 none, 2 incremental). */
-  autoVacuumMode(): number { return this.maintenanceStore.autoVacuumMode(); }
-  /** True when the file holds no table yet: the only moment SQLite accepts an auto-vacuum mode. */
+  autoVacuumMode(): number { return this.reclaimStore.autoVacuumMode(); }
   /** The store's file and page facts, from one stat and three cheap pragmas. */
-  storeFacts(): StoreFacts { return this.maintenanceStore.storeFacts(); }
+  storeFacts(): StoreFacts { return this.reclaimStore.storeFacts(); }
   /**
    * Spec 028 revision "truthful preservation": the canonical content digest of the store's
    * authoritative logical rows and settings.
@@ -345,7 +346,7 @@ export class Store {
    * Every other table, and every other `meta` row (pause, limits, pool, availability, usage,
    * retention marks, every Queue-internal fact), is hashed exactly.
    */
-  contentFingerprint(): ContentFingerprint { return this.maintenanceStore.contentFingerprint(); }
+  contentFingerprint(): ContentFingerprint { return this.reclaimStore.contentFingerprint(); }
   /**
    * Spec 028: return freed pages after a prune pass, bounded rather than a full rewrite.
    *
@@ -356,9 +357,9 @@ export class Store {
    * asked for). The WAL is then checkpointed to `journal_size_limit`. A pass that finds nothing
    * to reclaim writes nothing, so an idle store is not rewritten every hour.
    */
-  reclaimFreedPages(options: { maxPages?: number; budgetMs?: number } = {}): ReclaimResult { return this.maintenanceStore.reclaimFreedPages(options); }
+  reclaimFreedPages(options: { maxPages?: number; budgetMs?: number } = {}): ReclaimResult { return this.reclaimStore.reclaimFreedPages(options); }
   /** One truncating WAL checkpoint; `busy` reports a reader that kept the WAL in place. */
-  checkpointWal(): { busy: number; log: number; checkpointed: number } { return this.maintenanceStore.checkpointWal(); }
+  checkpointWal(): { busy: number; log: number; checkpointed: number } { return this.reclaimStore.checkpointWal(); }
   transaction<T>(fn: () => T): T { return this.core.transaction(fn); }
   private transactionHooks() {
     const undo = this.tasksStore.projectionUndo = { projection: this.tasksStore.taskProjection, clock: this.tasksStore.projectionClock, sequence: this.tasksStore.newestSequence,
@@ -987,15 +988,13 @@ export class Store {
     this.advanceRevision(); this.taskChanged(id); return next;
   }
   taskOrNull(id: string): Task | null { return this.tasksStore.taskOrNull(id); }
-  purgeOldTasks(at=Date.now(),cleanupFiles?:(taskId:string,runIds:string[])=>void) { return this.maintenanceStore.purgeOldTasks(at, cleanupFiles); }
+  purgeOldTasks(at=Date.now(),cleanupFiles?:(taskId:string,runIds:string[])=>void) { return this.retentionStore.purgeOldTasks(at, cleanupFiles); }
   /**
    * Audits B5: the tasks the next purge would delete, so the caller can reap their owned
    * hook checkouts first. This is the same retention fact the purge re-checks inside its
    * transaction; a task that changes in between simply keeps its history for one more pass.
    */
-  retentionCandidates(at=Date.now()): Task[] { return this.maintenanceStore.retentionCandidates(at); }
-  /** Shared settled-history rule; purge additionally waits for hook cleanup, which candidates feed. */
-  private retentionEligible(task: Task, runs: Run[], cutoff: number): boolean { return this.maintenanceStore.retentionEligible(task, runs, cutoff); }
+  retentionCandidates(at=Date.now()): Task[] { return this.retentionStore.retentionCandidates(at); }
   /**
    * Round 4: one applied or refused task control, for telemetry only. Owner
    * controls are recorded by the control path, coordinator actions once when
@@ -1033,8 +1032,6 @@ export class Store {
   }
   events(taskId: string) { return this.db.prepare("SELECT * FROM events WHERE taskId=? ORDER BY id DESC LIMIT 100").all(taskId) as { id: number; taskId: string; at: string; kind: string; detail: string }[]; }
   eventsAll(taskId: string) { return this.db.prepare("SELECT * FROM events WHERE taskId=? ORDER BY id").all(taskId) as { id: number; taskId: string; at: string; kind: string; detail: string }[]; }
-  /** Task 1002: rewrite the stored pool without retired fields; a no-op once clean. */
-  private stripRetiredPoolFields(): void { return this.maintenanceStore.stripRetiredPoolFields(); }
   /**
    * Schema 54 (task 989): stored rows lose their retired fields and the store loses the
    * `workspace_creation_step_*` events, which nothing reads. Runs on every open, idempotently:
@@ -1044,7 +1041,6 @@ export class Store {
    * scanned and left byte-identical. The old reader functions went with the step: the
    * outcome `routing.capability` → `scope` rewrite above is the last legacy reader.
    */
-  private stripRetiredRowFields(): void { return this.maintenanceStore.stripRetiredRowFields(); }
   pool(): PoolEntry[] { return this.configStore.pool(); }
   /**
    * Nucleus-owned profile records (Tom, 2026-11-07). The host's own profile list
@@ -1090,7 +1086,7 @@ export class Store {
    * them so request handling interleaves.
    *
    */
-  pruneRetainedHistory(cutoff = new Date(Date.now() - HISTORY_RETENTION_MS).toISOString(), batch = 2000): Promise<{ journal: number }> { return this.maintenanceStore.pruneRetainedHistory(cutoff, batch); }
+  pruneRetainedHistory(cutoff = new Date(Date.now() - HISTORY_RETENTION_MS).toISOString(), batch = 2000): Promise<{ journal: number }> { return this.retentionStore.pruneRetainedHistory(cutoff, batch); }
   /**
    * Lean store 2 (task 987): the retention windows for rows that outlive their task, run or
    * request. The caller owns the transaction (the schema-52 migration and the daily sweep both
@@ -1111,7 +1107,7 @@ export class Store {
    *   the latest passing main run of each repository (the schedule's green reading);
    * - the assignment history the profile picker reads.
    */
-  pruneRetainedRows(at: number): RetainedRowPrune { return this.maintenanceStore.pruneRetainedRows(at); }
+  pruneRetainedRows(at: number): RetainedRowPrune { return this.retentionStore.pruneRetainedRows(at); }
   /** Subscription group availability rows as stored. */
   availability(): Array<z.infer<typeof availabilitySchema>> { return this.authStore.availability(); }
   /** Spec 052 diagnostics: the usage policy for the profiles this task's routing names, from fresh usage. */
@@ -1170,11 +1166,6 @@ export class Store {
   pendingRuns(): Run[] { return this.tasksStore.pendingRuns(); }
   runsForTasks(taskIds: string[]): Run[] { return this.tasksStore.runsForTasks(taskIds); }
   run(id: string): Run | null { return this.tasksStore.run(id); }
-  /** Collect host-qualified identities still represented by a retained task or run. */
-  private retainedArchiveKeys(): Set<string> { return this.maintenanceStore.retainedArchiveKeys(); }
-  private pruneThreadArchiveKeys(): void { return this.maintenanceStore.pruneThreadArchiveKeys(); }
-  private migrateRevocableCredentials(): void { return this.maintenanceStore.migrateRevocableCredentials(); }
-  private migrateLeanReceiptsAndArchives(): void { return this.maintenanceStore.migrateLeanReceiptsAndArchives(); }
   /**
    * Look up the thread archive effect. `archived` is the durable proof that a
    * thread Queue launched can never take another turn.
