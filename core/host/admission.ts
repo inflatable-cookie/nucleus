@@ -161,6 +161,51 @@ function requestIdentity(prefix: string, args: unknown[]): string | undefined {
   return `${prefix}:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
 }
 
+/** Keep held-slot diagnostics useful without using request payloads as merge keys. */
+function requestHolder(name: string, args: unknown[]): string {
+  const first = args[0] as { id?: unknown } | undefined;
+  const taskId = typeof first?.id === "string" ? first.id : undefined;
+  const idAt = (value: unknown) => typeof value === "string" && value ? value : undefined;
+  const named = (prefix: string, value: unknown) => {
+    const id = idAt(value);
+    return id ? `${prefix}:${id}` : name;
+  };
+  switch (name) {
+    case "subscribeRunUsage": case "originAgent": case "archiveAgent": case "steerOrNotify":
+      return named(name, args[0]);
+    case "preflightWorkerContinuation": case "findWorkspaces": case "findCloseoutWorkspaces":
+    case "findAgents": case "findOpenBranchPr": case "findAnyOpenBranchPr":
+    case "recoverTaskWorkspace": case "createCloseoutWorkspace": case "createAgent":
+    case "continueWorker":
+      return named(name, taskId);
+    case "setTaskWorkspaceTitle":
+      return named("title", taskId);
+    case "findRunAgents":
+      return named(name, first?.id);
+    case "archiveTaskWorkspace":
+      return named("archiveWorkspace", args[1]);
+    case "archiveExternalWorkspace": {
+      const input = args[0] as { workspaceId?: unknown } | undefined;
+      return named("archiveWorkspace", input?.workspaceId);
+    }
+    case "createRun": case "sendRun": {
+      const input = args[1] as { id?: unknown } | undefined;
+      return named(name, input?.id);
+    }
+    case "continueRun": {
+      const input = args[0] as { id?: unknown } | undefined;
+      const runId = idAt(input?.id), messageId = idAt(args[1]);
+      return runId && messageId ? `${name}:${runId}:${messageId}` : name;
+    }
+    case "interruptAndContinue": {
+      const agentId = idAt(args[0]), messageId = idAt(args[1]);
+      return agentId && messageId ? `${name}:${agentId}:${messageId}` : name;
+    }
+    default:
+      return name;
+  }
+}
+
 export class Admission {
   private readonly gates = new Map<AdmissionClass, Gate>();
   private readonly inflight = new Map<string, Promise<unknown>>();
@@ -344,18 +389,18 @@ export class Admission {
   }
 
   /** Serialize distinct messages to one retained thread, while identical calls still coalesce above. */
-  private orderedNotify<T>(agentId: string, work: () => Promise<T>): Promise<T> {
+  private orderedNotify<T>(agentId: string, holder: string, work: () => Promise<T>): Promise<T> {
     const previous = this.notifyTails.get(agentId) ?? Promise.resolve();
-    const current = previous.catch(() => undefined).then(work);
+    const current = previous.catch(() => undefined).then(() => this.run("callback", work, undefined, { holder }));
     this.notifyTails.set(agentId, current);
     void current.finally(() => { if (this.notifyTails.get(agentId) === current) this.notifyTails.delete(agentId); }).catch(() => undefined);
     return current;
   }
 
   /** Coalesce an identical notification, then admit distinct notifications in target order. */
-  notify<T>(agentId: string, requestIdentity: string | undefined, work: () => Promise<T>): Promise<T> {
+  notify<T>(agentId: string, requestIdentity: string | undefined, work: () => Promise<T>, holder = `notify:${agentId}`): Promise<T> {
     return this.withKey("callback", requestIdentity,
-      () => this.orderedNotify(agentId, () => this.run("callback", work)));
+      () => this.orderedNotify(agentId, holder, work));
   }
 
   /** One Paseo request's latency sample and pending call, settled on every outcome. */
@@ -704,11 +749,12 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
     return (...args: unknown[]) => {
       const identity = key(args);
       const target = orderedTarget?.(args);
+      const holder = requestHolder(name, args);
       const invoke = () => admission.run(cls, () => (fn as (...a: unknown[]) => Promise<T>).apply(raw, args), target === undefined ? identity : undefined, {
         innerTiming: INNER_TIMED.has(name), breakerExempt: BREAKER_EXEMPT.has(name), longRunning: LONG_RUNNING.has(name),
-        ordinaryInnerDeadlines: ORDINARY_INNER_DEADLINES.has(name), holder: identity ?? name,
+        ordinaryInnerDeadlines: ORDINARY_INNER_DEADLINES.has(name), holder,
       });
-      return (target === undefined ? invoke() : admission.notify(target, identity, invoke))
+      return (target === undefined ? invoke() : admission.notify(target, identity, invoke, holder))
         .then(result => { invalidate?.(args, result); return result; });
     };
   };
@@ -811,7 +857,7 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
   const rawNotify = held.notify;
   if (typeof rawNotify === "function") set("notify", (agentId: string, messageId: string, text: string, sourceAgentId?: string) =>
     admission.notify(agentId, requestIdentity("notify", [agentId, messageId, text, sourceAgentId]),
-      () => (rawNotify as (...args: unknown[]) => Promise<void>).apply(raw, [agentId, messageId, text, sourceAgentId])).then(result => {
+      () => (rawNotify as (...args: unknown[]) => Promise<void>).apply(raw, [agentId, messageId, text, sourceAgentId]), `notify:${agentId}`).then(result => {
       admission.invalidate(agentId);
       return result;
     }));
