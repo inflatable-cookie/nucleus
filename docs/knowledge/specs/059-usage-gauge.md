@@ -58,16 +58,23 @@ exhaustion from a refused run, after the fact.
 - **The pressure projection is pure** (`shared/usage-projection.ts`). Per window: used fraction
   `u`, elapsed fraction `e` from the window length and reset (a billing period's own start and
   end count as the window), and uniform pace `p = u/e`; recent samples do not affect the pace,
-  dial, state, or exhaustion time. The dial is `clamp(log2 p, -1, 1)`, damped toward centre while
-  `e < 0.05`, pinned right at `u >= 1`; `exhaustsInMs` uses the same uniform rate and counts when
+  dial, state, or exhaustion time. Below 5% elapsed, samples are too sparse to extrapolate: use
+  the pace that reaches 100% at reset, which reads on-track or spare, and do not project a runout.
+  The dial is `clamp(log2 p, -1, 1)`, pinned right while `u >= 1` and the reset has not passed;
+  `exhaustsInMs` uses the same uniform rate and counts when
   exhaustion lands before that window's own reset, except a fully used window — exhausted now,
   whatever its reset says — which reports `exhaustsInMs` 0. The binding window is whichever hits 100%
-  earliest before its own reset; a fully used window binds regardless of its reset, and with
+  earliest before its own reset; a fully used window binds until its known reset (or indefinitely
+  when no reset is known), and with
   none running out the closest call (highest dial) names the dial. The state is `will_run_out`
   when the binding window exhausts before its reset or is already fully used, `on_track` when
   its dial sits within ±0.05 of centre, `spare` left of that, and `unknown` when no window
-  carries enough data to project. Partial windows whose reset has passed project nothing
-  (stale, not zero); a fully used one still pins. The projected use at reset keeps its
+  carries enough data to project. A partial window whose reset has passed is known to have
+  reset: project it as 0 used from that reset onward, keep its length, and show its last known
+  reset time with “not sampled since” while the next reset is unknown. A fresh sample replaces
+  that state. A provider-confirmed inactive Claude `five_hour` window is shown as unused with
+  “not started”; malformed windows remain unknown. Codex and Grok use the same passed-reset rule
+  (Tom, 2026-11-14). The projected use at reset keeps its
   over-projection past 100% (schema-capped at twice the window, where the dial is pinned anyway)
   so the dial's label can say "+18% over"; a fully used window reads exactly 100%.
 
@@ -110,9 +117,10 @@ exhaustion from a refused run, after the fact.
 
 - **`usage.state`** (read-only) serves every subscription with its latest reading, the
   projection, and freshness (`asOf`, `nextReadAt`, `lastAttemptAt`, `lastError`). After a failed
-  refresh it keeps the last successful reading and projection while its windows remain current,
-  and adds `stale` with the failure reason, time and reading age. Once all known windows have
-  reset, it keeps the value as of its sample time, marks it expired, and returns an unknown dial.
+  refresh it keeps the last successful reading and projection and adds `stale` with the failure
+  reason, time and reading age. Once a known window has reset,
+  it shows that window as unused, with its last reset time and no claimed next reset, until a
+  fresh sample replaces it.
   With no successful reading, it returns the failure as unknown. The CLI reads it with
   `nucleus usage.state`. The Usage page and the Paseo sidebar row read the same RPC.
 

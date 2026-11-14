@@ -160,6 +160,11 @@ export function resetLabel(iso: string | null): string {
   return `Resets ${weekdays[date.getDay()]} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
+function resetTimeLabel(iso: string): string {
+  const date = resetDate(iso)!;
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
 /** Projected use at reset at or below this reads "Plenty of room"; above it, "On track". */
 export const PLENTY_OF_ROOM_MAX = 0.8;
 
@@ -176,6 +181,9 @@ export function usageVerdict(
   )
     return "Usage unavailable right now.";
   const window = bindingWindow(subscription);
+  if (window?.notStarted) return "The 5-hour window has not started.";
+  if (window?.resetsAt && Date.parse(window.resetsAt) <= now)
+    return `Usage reset at ${resetTimeLabel(window.resetsAt)}. Next reset unknown.`;
   const day = resetDay(window?.resetsAt ?? null);
   if (!window || !day) return "Usage unavailable right now.";
   const reset = Date.parse(window.resetsAt!);
@@ -525,10 +533,15 @@ function UsageWindowRow({
   color: string;
 }) {
   const r = roles(c);
-  const used = Math.round(window.usedFraction * 100);
+  const resetSinceSample = Boolean(window.resetsAt && Date.parse(window.resetsAt) <= now);
+  const used = resetSinceSample ? 0 : Math.round(window.usedFraction * 100);
   const paceLabel = pace == null ? null : `pace ${Math.round(pace * 100)}%`;
   const elapsed = windowElapsedFraction(window, now);
-  const reset = resetLabel(window.resetsAt);
+  const reset = window.notStarted
+    ? "Not started"
+    : resetSinceSample
+      ? `Reset at ${resetTimeLabel(window.resetsAt!)}, not sampled since`
+      : resetLabel(window.resetsAt);
   return (
     <View
       style={{ gap: space.xxs }}

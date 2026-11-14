@@ -41,6 +41,8 @@ export const usageWindowSchema = z
     windowSeconds: z.number().int().positive().nullable(),
     windowStartsAt: z.string().nullable(),
     resetsAt: z.string().nullable(),
+    /** Provider-confirmed inactive window, such as Claude's null five_hour entry. */
+    notStarted: z.boolean().optional(),
   })
   .strict();
 export type UsageWindow = z.infer<typeof usageWindowSchema>;

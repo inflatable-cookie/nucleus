@@ -805,6 +805,53 @@ test("plenty of room only well under 100%, and resets round to the minute", asyn
   assert.equal(usage.resetLabel(null), "Reset time unavailable");
 });
 
+test("a passed reset shows zero used and the last known reset time", async () => {
+  await load();
+  const pastReset = new Date(NOW - HOUR).toISOString();
+  const resetWindow = window({
+    windowId: "seven_day",
+    name: "Weekly",
+    usedFraction: 0.89,
+    resetsAt: pastReset,
+  });
+  const projection = projectUsage({ now: NOW, windows: [resetWindow] });
+  const sub = subscription({
+    provider: "claude",
+    reading: reading([resetWindow], "cache"),
+    projection,
+  });
+  assert.match(usage.usageVerdict(sub as never, NOW), /Next reset unknown/);
+  const tree = mountPage({
+    ...fixture.state,
+    subscriptions: [sub],
+  });
+  await settle(() => tree.text().includes("not sampled since"));
+  assert.ok(tree.text().includes("Reset at"));
+  assert.ok(tree.text().includes("0% used"));
+  assert.ok(!tree.text().includes("89% used"));
+
+  const inactive = window({
+    windowId: "five_hour",
+    name: "5-hour",
+    usedFraction: 0,
+    windowSeconds: 5 * 3600,
+    resetsAt: null,
+    notStarted: true,
+  });
+  const inactiveSub = subscription({
+    provider: "claude",
+    reading: reading([inactive], "cache"),
+    projection: projectUsage({ now: NOW, windows: [inactive] }),
+  });
+  const inactiveTree = mountPage({
+    ...fixture.state,
+    subscriptions: [inactiveSub],
+  });
+  await settle(() => inactiveTree.text().includes("Not started"));
+  assert.ok(inactiveTree.text().includes("0% used"));
+  assert.ok(inactiveTree.text().includes("The 5-hour window has not started."));
+});
+
 test("the entry registers the combined row only where the host carries it", async () => {
   await load();
   const contribute = (await import("../hosts/paseo/client/index")).default;

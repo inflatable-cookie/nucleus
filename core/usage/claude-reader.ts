@@ -43,6 +43,16 @@ function claudeWindow(
   entry: { id: string; name: string; seconds: number },
   raw: unknown,
 ): UsageWindow | null {
+  if (raw === null && entry.id === "five_hour")
+    return {
+      windowId: entry.id,
+      name: entry.name,
+      usedFraction: 0,
+      windowSeconds: entry.seconds,
+      windowStartsAt: null,
+      resetsAt: null,
+      notStarted: true,
+    };
   if (!raw || typeof raw !== "object") return null;
   const window = raw as CachedUtilizationWindow;
   const usedFraction = fractionFromPercent(window.utilization);

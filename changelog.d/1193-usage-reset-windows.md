@@ -1,0 +1,1 @@
+Passed usage windows now show as reset and unused until a fresh sample arrives. Claude's inactive 5-hour window is visible as not started, and early-window usage no longer projects a runout from sparse samples.

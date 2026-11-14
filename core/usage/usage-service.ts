@@ -201,10 +201,10 @@ export class UsageService {
         ) lastGoodReading = null;
         const staleReading = hasFailure ? lastGoodReading : null;
         const reading = staleReading ?? stored?.reading ?? notSampledReading();
-        const expired = Boolean(staleReading && allWindowsExpired(staleReading, now.getTime()));
-        const projection = expired
-          ? unknownProjection()
-          : projectUsage({ now: now.getTime(), windows: reading.windows });
+        // A passed reset still tells us that the window reset; project it as
+        // unused until a fresh provider sample supplies the next reset.
+        const expired = false;
+        const projection = projectUsage({ now: now.getTime(), windows: reading.windows });
         const stale = staleReading && stored?.lastAttemptAt && stored.lastError
           ? {
               reason: stored.lastError,
@@ -435,25 +435,7 @@ function parseReadState(data: string): StoredReadState | null {
   }
 }
 
-function allWindowsExpired(reading: UsageReading, now: number): boolean {
-  return reading.windows.length > 0 && reading.windows.every((window) => {
-    const reset = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
-    return Number.isFinite(reset) && reset <= now;
-  });
-}
-
 function readingAgeMs(reading: UsageReading, now: number): number {
   const asOf = Date.parse(reading.asOf);
   return Number.isFinite(asOf) ? Math.max(0, now - asOf) : 0;
-}
-
-function unknownProjection(): ReturnType<typeof projectUsage> {
-  return {
-    state: "unknown",
-    bindingWindowId: null,
-    bindingWindowName: null,
-    projectedUseAtReset: null,
-    dial: null,
-    windows: [],
-  };
 }
