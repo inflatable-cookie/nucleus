@@ -88,9 +88,11 @@ export async function queueUntrackedFiles(directory: string, ...args: string[]):
     && !(path === "node_modules" && isQueueRetainedNodeModulesLink(directory))).join("\n");
 }
 /**
- * Raw stdout for `git` calls whose output must not be trimmed or normalized,
- * such as NUL-separated path lists. Trimming would fold a whitespace sibling
- * (`manifest.json `) into the declared `manifest.json`.
+ * The worker checkout's current branch, reattaching it first when ordinary review
+ * left it detached at the reviewed head. Reattach only when that clean head is
+ * still exactly the locally recorded and remotely published queue branch tip;
+ * otherwise return the checkout's branch unchanged (empty when detached) for the
+ * caller to refuse.
  */
 export async function currentWorkerBranch(task: Pick<Task, "branch" | "baseBranch">, directory: string): Promise<string> {
   let branch = await git(directory, "branch", "--show-current");

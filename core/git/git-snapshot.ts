@@ -3,7 +3,7 @@ import { copyFile, lstat, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { normalizeRepoRelativePath, pathIsAllowed, type MergeCandidate } from "../../shared/hooks";
-import { isOsMetadataPath, isQueueRetainedNodeModulesLink } from "./index";
+import { isOsMetadataPath, isQueueRetainedNodeModulesLink } from "./git-checkout";
 import { gitRun, formatGitError } from "./git-command";
 
 /** Prefix of the per-invocation scratch index the read-only baseline snapshots through. */
