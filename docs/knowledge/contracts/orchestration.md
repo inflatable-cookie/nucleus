@@ -1189,8 +1189,10 @@ request identities and submitted handoffs are not rewritten.
   about a live outage: when the host recovers before its planner can take it,
   the pending notice is superseded with "outage ended before delivery" and is
   not sent, and its stored text is never rewritten at delivery (planner ruling,
-  2026-11-14). A shorter outage tells nobody, and a fresh outage starts
-  unnotified.
+  2026-11-14). An interrupted send keeps its durable intent: it settles as
+  `uncertain` before the ended-outage rule applies, so an outage ending first
+  never relabels unknown delivery as not sent. A shorter outage tells nobody,
+  and a fresh outage starts unnotified.
 - The board card of a waiting task shows the same wait ("Waiting on <host>
   since …"); host health itself is unchanged.
 

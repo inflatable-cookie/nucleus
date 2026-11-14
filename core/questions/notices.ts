@@ -146,6 +146,12 @@ export class Notices {
     for (const n of this.store.pendingNotices()) {
       if (this.paused()) return;
       if (n.kind !== 'host_outage') continue;
+      // Durable intent first (planner ruling, 2026-11-14; nucleus#1198 review):
+      // sendDurably writes `intent` before the remote send, so an intent left by a
+      // restart proves nothing about delivery. It settles as `uncertain` whatever
+      // the outage now says — the ended-outage rule below applies only to a
+      // known-pending notice, so unknown delivery is never relabelled as not sent.
+      if (n.status === 'intent') { this.store.putNotice({ ...n, status: 'uncertain', error: 'Restart during delivery; inspect the planner thread before resending' }); continue; }
       const identity = parseHostOutageNoticeId(n.id);
       const outage = identity ? this.resolution.hostOutage(identity.hostId) : null;
       const live = Boolean(identity && outage && outage.since === identity.since);
@@ -154,7 +160,6 @@ export class Notices {
         this.store.putNotice({ ...n, status: 'superseded', error: ended });
         continue;
       }
-      if (n.status === 'intent') { this.store.putNotice({ ...n, status: 'uncertain', error: 'Restart during delivery; inspect the planner thread before resending' }); continue; }
       const recipientHost = await this.resolution.identifyOriginHost(n.agentId);
       if (!recipientHost) {
         if (n.error !== 'Waiting for a proven planner host') this.store.putNotice({ ...n, error: 'Waiting for a proven planner host' });

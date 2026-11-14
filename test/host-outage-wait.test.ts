@@ -349,3 +349,37 @@ test('a long-outage notice pending when its planner is unreachable is superseded
     assert.equal(f.store.notices().filter(notice => notice.kind === 'host_outage')[0]!.status, 'superseded');
   } finally { f.close(); }
 });
+
+test('an interrupted long-outage send settles uncertain, not superseded, when the host recovers first', async () => {
+  const f = noticeFixture();
+  const plannerA = formatAgentId(f.plannerHost, 'planner-a');
+  f.makeProject('project-a', plannerA);
+  f.makeTask('Project A task', 'project-a');
+  try {
+    f.online.planner = false;
+    await f.engine.wake();
+    f.ageOutage(180);
+    await f.engine.wake();
+    const pending = f.store.notices().find(notice => notice.kind === 'host_outage')!;
+    assert.equal(pending.status, 'pending');
+    const plannerSends = () => f.sends.filter(send => send.agentId === 'planner-a');
+
+    // sendDurably records `intent` before the remote send; the process stops
+    // before the outcome is recorded. The host recovering first must not turn
+    // that unknown delivery into a known-unsent superseded notice.
+    f.store.putNotice({ ...pending, status: 'intent', error: '' });
+    f.online.task = true;
+    await f.engine.wake();
+    const settled = f.store.notices().find(notice => notice.kind === 'host_outage')!;
+    assert.equal(settled.status, 'uncertain', 'an interrupted send settles as uncertain');
+    assert.match(settled.error, /Restart during delivery/);
+    assert.equal(settled.text, pending.text, 'settling never rewrites the stored text');
+    assert.equal(plannerSends().length, 0, 'unknown delivery is never resent');
+
+    // A later reachable planner does not resend the uncertain notice either.
+    f.online.planner = true;
+    await f.engine.wake();
+    assert.equal(f.store.notices().find(notice => notice.kind === 'host_outage')!.status, 'uncertain');
+    assert.equal(plannerSends().length, 0);
+  } finally { f.close(); }
+});
