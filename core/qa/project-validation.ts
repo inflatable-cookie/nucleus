@@ -323,10 +323,6 @@ export class ProjectValidationRunner {
       const candidatePath = await this.prospectiveCandidatePath(task, prior.candidate);
       try { await verifyMergeCandidate(candidatePath, prior.candidate); candidateClean = true; }
       catch (error) { state = "hold"; outputTail = `Validation changed the candidate: ${String(error)}`; }
-      if (candidateClean) {
-        try { await this.removeIsolatedCheckout(task, candidatePath, true); }
-        catch (error) { state = "hold"; candidateClean = false; outputTail = `Project validation candidate cleanup requires reconciliation: ${String(error)}`; }
-      }
     } else {
       state = "hold";
       outputTail = "Project-validation run has no pinned candidate identity; operator reconciliation required";
@@ -357,6 +353,14 @@ export class ProjectValidationRunner {
     this.store.update(task.id, { resolution: { ...current.resolution, projectValidation: updated },
       reason: state === "passed" ? "Project validation passed" : state === "refused" ? outputTail || `Validation exited ${result?.exitCode}` : outputTail || "Project validation requires attention" },
     "project_validation_result", `${latest.digest} ${state}`);
+    if (candidateClean && prior.candidate) {
+      const candidatePath = await this.prospectiveCandidatePath(task, prior.candidate);
+      await this.removeIsolatedCheckout(task, candidatePath, true).catch(error => {
+        // The result is already durable. A later cleanup pass can finish removing
+        // disposable candidate bytes without changing the validation verdict.
+        this.store.event(task.id, "project_validation_candidate_cleanup_deferred", String(error));
+      });
+    }
     await rm(paths.root, { recursive: true, force: true }).catch(() => { /* Durable Queue result is already recorded. */ });
     if (state === "passed") return { kind: "ok", base: latest.base };
     if (state === "refused") return { kind: "refused", detail: outputTail || `Validation exited ${result?.exitCode}` };

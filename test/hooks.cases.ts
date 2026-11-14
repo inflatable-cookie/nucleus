@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { Store } from '../core/store/store';
+import { Store, digest } from '../core/store/store';
 import { git, command, queueCheckoutStatus, validateSubmission } from '../core/git/index';
 import {
   RepositoryHooks, blobDigest, discoverManifest, inspectChangedPaths, STDERR_EXCERPT_MAX_BYTES, HOOK_EVIDENCE_MAX_BYTES,
@@ -1160,6 +1160,33 @@ test('hook checkout reaper keeps an isolation directory while its host run is un
   assert.equal((await reapHookCheckouts(f.store)).reapedCount, 2, 'settling releases the recorded and unowned checkouts');
   assert.equal(existsSync(checkout), false);
   assert.equal(existsSync(activeUnknown), false);
+});
+
+test('hook checkout reaper retains a candidate for an unrecorded project-validation result', async t => {
+  const { reapHookCheckouts } = await import('../core/hooks/hook-cleanup');
+  const f = await hooksFixture(t, {
+    '.paseo/queue.json': { content: manifest([manifestHook()]) },
+    '.paseo/hooks/ledger': { content: ledgerScript('/dev/null'), mode: 0o755 },
+  });
+  t.after(() => f.store.close());
+  const task = f.task();
+  const common = await git(f.repo, 'rev-parse', '--path-format=absolute', '--git-common-dir');
+  const candidate = { integrationBase: f.head, reviewedHead: f.head, commit: f.head, tree: await git(f.repo, 'rev-parse', 'HEAD^{tree}') };
+  const candidateId = digest(`prospective-merge\n${task.id}\n${candidate.integrationBase}\n${candidate.reviewedHead}`).slice(0, 48);
+  const path = join(isolationRootFor(isolationDataDirFor(f.store), common), candidateId);
+  await mkdir(join(path, '.git', 'logs'), { recursive: true });
+  await writeFile(join(path, 'src.partial'), 'surviving candidate bytes');
+  const old = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000);
+  await utimes(path, old, old);
+  f.store.update(task.id, { resolution: { ...task.resolution, projectValidation: {
+    argv: ['node', 'check'], digest: 'validation', exitCode: null, durationMs: 0, outputTail: '',
+    base: f.head, head: f.head, candidate, state: 'running', queueBuild: '', settingsRevision: 0,
+    pid: null, capacityWait: null, capacityUnavailable: false,
+  } } });
+
+  const health = await reapHookCheckouts(f.store);
+  assert.equal(health.reapedCount, 0);
+  assert.equal(existsSync(path), true, 'cleanup leaves the active validation candidate for result reconciliation');
 });
 
 test('a timed-out step whose leader is still running is signalled even when ps cannot prove identity', { timeout: 15_000 }, async t => {

@@ -1,0 +1,1 @@
+Project validation now records its result before candidate cleanup, so a service roll cannot strand a half-removed candidate before reconciliation. Forced cleanup rebuilds broken owned candidates; non-forced cleanup still preserves dirty work.

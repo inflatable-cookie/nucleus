@@ -118,6 +118,33 @@ test('Queue validation records its host-run settlement and writes no legacy admi
   assert.equal(recorded.capacityWait, null);
 });
 
+test('a half-removed owned candidate is rebuilt and project validation proceeds', async t => {
+  const f = await fixture(t);
+  t.after(() => f.store.close());
+  const task = grantIntegrationTurn(f.store, f.task.id);
+  const scheduler = new HostRunScheduler(f.store, { capacity: () => ({ cpuCapacity: 8, memoryCapacityBytes: 8_000_000_000, freeMemoryBytes: 8_000_000_000, loadAverage: [] }) });
+  const hooks = new RepositoryHooks(f.store, { hostRuns: scheduler });
+  const candidatePath = await (hooks as any).prospectiveCandidatePath(task, { integrationBase: f.base, reviewedHead: f.head });
+  const initial = await (hooks as any).buildProspectiveCandidate(task, candidatePath, f.base, f.head);
+  assert.equal(initial.kind, 'built', JSON.stringify(initial));
+  await writeFile(join(candidatePath, 'unrecognised-work'), 'keep this on a non-forced removal');
+  await assert.rejects((hooks as any).removeIsolatedCheckout(task, candidatePath, false), /Queue-owned isolated repository is dirty/);
+  await rm(join(candidatePath, 'unrecognised-work'));
+  await rm(join(candidatePath, '.git'), { recursive: true, force: true });
+  await mkdir(join(candidatePath, '.git', 'logs'), { recursive: true });
+  await mkdir(join(candidatePath, 'src'), { recursive: true });
+  await writeFile(join(candidatePath, 'src', 'partial.ts'), 'partial');
+  await mkdir(join(candidatePath, 'node_modules', 'leftover'), { recursive: true });
+  await writeFile(join(candidatePath, 'node_modules', 'leftover', 'package.json'), '{}');
+
+  const rebuilt = await (hooks as any).buildProspectiveCandidate(task, candidatePath, f.base, f.head);
+  assert.equal(rebuilt.kind, 'built', JSON.stringify(rebuilt));
+  assert.equal(existsSync(join(candidatePath, 'src', 'partial.ts')), false);
+  const outcome = await hooks.projectValidationGate(task, f.head, validationCommand("process.stdout.write('validation ran')"));
+  assert.equal(outcome.kind, 'ok', JSON.stringify(outcome));
+  assert.equal(f.store.task(task.id).resolution.projectValidation?.state, 'passed');
+});
+
 test('a settled validation for the prior PR head is recorded superseded before current-head validation', async t => {
   const f = await fixture(t);
   t.after(() => f.store.close());
