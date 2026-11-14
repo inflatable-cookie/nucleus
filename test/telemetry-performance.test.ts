@@ -186,9 +186,10 @@ timingTest('cold telemetry yields to cached detail and durable acceptance on the
   const {createUiSnapshotFactsCache}=await import('../core/telemetry/ui-snapshot');
   try{
     const detail=createTaskDetailCache(fixture.store),board=createUiSnapshotFactsCache(fixture.store);
+    board(); // Warm the board snapshot before measuring the selected task's detail cache.
     let detailReads=0;const events=fixture.store.eventsAll.bind(fixture.store);
     fixture.store.eventsAll=id=>{detailReads++;return events(id);};
-    detail('perf-task-0');board();
+    detail('perf-task-0');
     const cached=createTelemetrySnapshotCache(fixture.store);
     const latency:number[]=[];let finished=false;const start=process.cpuUsage();
     const cold=cached({window:'all'}).finally(()=>{finished=true;});
