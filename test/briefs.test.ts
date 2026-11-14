@@ -291,6 +291,13 @@ test('5. a planning commit not on the pushed base is refused', async t => {
   await assert.rejects(verifyPublishedPlanning(briefSubmission(f.repo, side)));
 });
 
+test('5b. an unreadable published-planning ancestry is named, not reported as an unpushed base', async t => {
+  const f = await repoFixture(t, 'v5');
+  // The base and its remote branch both read; only the planning commit is absent
+  // from the object store, so the ancestry read is unknown rather than a no.
+  await assert.rejects(verifyPublishedPlanning(briefSubmission(f.repo, 'f'.repeat(40))), /Git ancestry is unreadable/);
+});
+
 test('6. worker, revision and reviewer prompts carry the brief; handoff-mode prompts match the reviewed snapshot', () => {
   const store = new Store(':memory:');
   try {

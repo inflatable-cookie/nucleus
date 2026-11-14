@@ -5,7 +5,7 @@ import { normalizeRepoRelativePath, pathIsAllowed, type HookRecord, type Normali
 import type { Task } from "../../shared/contracts";
 import { type Store, now } from "../store/store";
 import { gitText, statusEntries, inspectChangedPaths, isolatedRepositoryIsCleanAt, verifyReviewedHead, verifyRetainedWorktree } from "../git/git-snapshot";
-import { gitRaw } from "../git/git-command";
+import { gitRun, } from "../git/git-command";
 import { removeTree } from "../workspaces/tree-removal";
 import { discoverManifest, instructionForCommit, pinExecutable, pinProgram, type ManifestDiscovery } from "./hook-manifest";
 import { hookRecordTarget, preArchiveWorktreeHead, type HookContext, type HookEmissionResult } from "./hook-context";
@@ -228,7 +228,7 @@ export class HookRetry {
         // established absence at its base; inspect every newly reachable commit
         // before extending that proof to a later fast-forwarded base.
         const anchor = record.checkoutDiscard.baseCommit;
-        if ((await gitRaw(task.repoPath, ["merge-base", "--is-ancestor", anchor, baseCommit])).code !== 0)
+        if ((await gitRun(task.repoPath, ["merge-base", "--is-ancestor", anchor, baseCommit])).code !== 0)
           throw new Error("Discard proof base is no longer an ancestor of the remote");
         const added = await gitText(task.repoPath, "rev-list", `${anchor}..${baseCommit}`);
         if (added.split("\n").includes(commit)) throw new Error("Previously discarded hook commit is now published");

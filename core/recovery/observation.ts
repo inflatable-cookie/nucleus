@@ -1,4 +1,4 @@
-import { observeReviewerReplacement, releaseUnreachableRun } from '../workspaces/thread-archive';
+import { observeReviewerReplacement, releaseUnreachableRun } from '../workspaces/thread-archive-replacement';
 /**
  * One sweep of unreleased runs: observe each pending run's agent, then settle,
  * recover, remind or leave it. `Resolution.observe` and `observationTargets`

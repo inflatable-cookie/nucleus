@@ -52,7 +52,7 @@ async function runSupervisor() {
   const script = new URL(import.meta.url).pathname;
   const childArgs = [...runtimeNodeArgs(), script, "--state-dir", stateDir];
   const { awaitStandbyProgress, standbyIsReady, STANDBY_READY_BUDGET_MS, STANDBY_READY_CAP_MS, STANDBY_READY_STALL_MS } = await import("../service/install/standby.ts");
-  const { processCpuMs } = await import("../core/machine/process-group.ts");
+  const { processCpuMs } = await import("../core/machine/process-tree-cpu.ts");
   let child = null;
   let stopping = false;
   let restarting = false;

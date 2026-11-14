@@ -546,25 +546,43 @@ export async function readToolTimeline(host: { agentTimelinePage?(id: string, li
   return { issue: `tool observations remain partial after ${TOOL_TIMELINE_READ_BUDGET} reads (largest requested limit ${limit}); latest turn coverage is unproven` };
 }
 /**
- * Why recent tool history fails to prove that no live tool remains, or null.
- * A tool call appears once per state change (running, then completed), so
- * each call is judged by its latest state in time, matched by call ID. A
- * later completed, failed or canceled entry settles an earlier running one;
- * a latest running or status-less entry stays live unless the caller supplies
- * the agent's own observation and that observation proves no turn is live: a
- * call of a `TURN_BOUND_TOOL_KINDS` kind cannot outlive the turn that started
- * it, so a running entry left behind by a finished turn is settled. A shell
- * command, a worktree setup, an unknown kind, an unrecognised status, absent
- * turn proof and ambiguous evidence all still refuse. Evidence that cannot be
- * ordered or matched refuses: a missing call ID or time, unsettled conflicting tool or command identity, or two different states at the same
- * instant.
+ * Why recent tool history fails to prove that no live tool remains, as typed
+ * facts, or null when it proves it.
+ *
+ * A tool call appears once per state change (running, then completed), so each
+ * call is judged by its latest state in time, matched by call ID. A later
+ * completed, failed or canceled entry settles an earlier running one; a latest
+ * running or status-less entry stays live unless the caller supplies the
+ * agent's own observation and that observation proves no turn is live: a call
+ * of a `TURN_BOUND_TOOL_KINDS` kind cannot outlive the turn that started it, so
+ * a running entry left behind by a finished turn is settled. A shell command, a
+ * worktree setup, an unknown kind, an unrecognised status, absent turn proof and
+ * ambiguous evidence all still refuse. Evidence that cannot be ordered or
+ * matched refuses: a missing call ID or time, unsettled conflicting tool or
+ * command identity, or two different states at the same instant.
  */
-export function liveToolIssue(entries: TimelineEntry[], owner?: ObservedTurnState | null): string | null {
+export type LiveToolIssue =
+  | { kind: 'incomplete-evidence' }
+  | { kind: 'ambiguous-state'; callId: string }
+  | { kind: 'conflicting-identity'; callId: string; running: boolean }
+  | { kind: 'live'; callId: string; tool: string; toolKind: string; status: string; turnBound: boolean };
+
+/** The reader's one sentence for a typed issue. Callers act on the facts, never on this text. */
+export function formatLiveToolIssue(issue: LiveToolIssue): string {
+  switch (issue.kind) {
+    case 'incomplete-evidence': return 'an observed tool has incomplete identity or time evidence';
+    case 'ambiguous-state': return `observed tool call ${issue.callId} has ambiguous states at one instant`;
+    case 'conflicting-identity': return `observed tool call ${issue.callId} has conflicting tool or command identity${issue.running ? ' and is running' : ''}`;
+    case 'live': return `observed tool ${issue.tool} (${issue.toolKind || 'unknown kind'}) is ${issue.status || 'without a terminal status'}`;
+  }
+}
+
+export function liveToolIssueFact(entries: TimelineEntry[], owner?: ObservedTurnState | null): LiveToolIssue | null {
   const calls = new Map<string, TimelineEntry[]>();
   for (const entry of entries) {
     if (entry.item.type !== 'tool_call') continue;
     const callId = entry.item.callId ? String(entry.item.callId) : '';
-    if (!callId || !Number.isFinite(Date.parse(entry.timestamp))) return 'an observed tool has incomplete identity or time evidence';
+    if (!callId || !Number.isFinite(Date.parse(entry.timestamp))) return { kind: 'incomplete-evidence' };
     calls.set(callId, [...(calls.get(callId) ?? []), entry]);
   }
   const turnOver = noTurnLive(owner);
@@ -575,21 +593,26 @@ export function liveToolIssue(entries: TimelineEntry[], owner?: ObservedTurnStat
     const latestAt = Math.max(...states.map(entry => Date.parse(entry.timestamp)));
     const latest = states.filter(entry => Date.parse(entry.timestamp) === latestAt);
     const statuses = new Set(latest.map(entry => String(entry.item.status ?? '')));
-    if (statuses.size > 1) return `observed tool call ${callId} has ambiguous states at one instant`;
+    if (statuses.size > 1) return { kind: 'ambiguous-state', callId };
     const status = [...statuses][0];
     const conflicting = names.size > 1 || commands.size > 1;
     const allTurnBound = states.every(turnBoundTool);
     if (conflicting && !(turnOver && (TERMINAL_TOOL_STATUSES.has(status) || (status === 'running' && allTurnBound))))
-      return `observed tool call ${callId} has conflicting tool or command identity${status === 'running' ? ' and is running' : ''}`;
+      return { kind: 'conflicting-identity', callId, running: status === 'running' };
     if (!TERMINAL_TOOL_STATUSES.has(status)) {
       const kind = String(latest[0].item.detail?.type ?? '');
       // Queue's own MCP tools (nucleus_report, ask, tell) answer inside the agent's turn;
       // a running entry left behind by a finished turn is settled like other turn-bound kinds.
-      if (turnOver && status === 'running' && turnBoundTool(latest[0])) continue;
-      const tool = String(latest[0].item.name ?? 'call');
-      const displayKind = kind || 'unknown kind';
-      return `observed tool ${tool} (${displayKind}) is ${status || 'without a terminal status'}`;
+      const entry = latest[0]!;
+      if (turnOver && status === 'running' && turnBoundTool(entry)) continue;
+      return { kind: 'live', callId, tool: String(entry.item.name ?? 'call'), toolKind: kind, status, turnBound: turnBoundTool(entry) };
     }
   }
   return null;
+}
+
+/** The same refusal as one sentence, for callers that only display it. */
+export function liveToolIssue(entries: TimelineEntry[], owner?: ObservedTurnState | null): string | null {
+  const issue = liveToolIssueFact(entries, owner);
+  return issue ? formatLiveToolIssue(issue) : null;
 }

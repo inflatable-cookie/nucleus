@@ -36,7 +36,9 @@ import {
   readCheckedHostRunFile,
   writeVerifiedOwnedFile,
 } from "../../core/host-runs/host-run-files";
-import { processStartIdentityEnvironment, ProcessTreeCpuSampler, processGroupEmpty, processesForStartIdentity, processesForStartIdentityInTree } from "../../core/machine/process-group";
+import { processGroupEmpty } from "../../core/machine/process-group";
+import { processStartIdentityEnvironment, processesForStartIdentity, processesForStartIdentityInTree } from "../../core/machine/process-identity-search";
+import { ProcessTreeCpuSampler } from "../../core/machine/process-tree-cpu";
 import { startIdentityMatches } from "../../core/machine/start-identity";
 import { HOST_RUN_CPU_COVERAGE_FILE, hostRunCpuCoverageSidecar } from "../../core/host-runs/host-run-cpu-coverage";
 

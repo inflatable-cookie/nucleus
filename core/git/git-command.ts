@@ -1,20 +1,29 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { retryGitSshAuthentication, SshAuthExhaustedError } from "./git-auth-retry";
 import { queueGitFetch, withFetchLock } from "./git-fetch";
 import { withSpawnSlot } from "../dispatch/spawn-gate";
+import { ForgeOutageError, githubHealthy, isForgeNetworkFailure, classifyGitCommandFailure, GitTransientError } from "../forge/forge-health";
+import { isLoginSessionFault, LoginSessionFaultError, notifyLoginSessionFault } from "../../shared/session-fault";
+import { promisify } from "node:util";
+import { githubRepositoryFromRemote } from "./git-remote";
 const GIT_ENV = { GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o ConnectTimeout=10" };
+const exec = promisify(execFile);
 async function gitText(cwd: string, ...args: string[]): Promise<string> {
-  const result = await gitRaw(cwd, args);
+  const result = await gitRun(cwd, args);
   if (result.code !== 0) throw new Error(result.stderr);
   return result.stdout.toString("utf8").trim();
 }
 export interface GitResult { code: number; signal?: NodeJS.Signals | null; stdout: Buffer; stderr: string; sshAuthExhausted?: SshAuthExhaustedError }
 
-/** Run Git with byte-exact stdout. Trimmed text helpers hide trailing bytes we must not guess. */
-export async function gitRaw(cwd: string, args: string[], maxBuffer = 16 * 1024 * 1024, extraEnv: Record<string, string> = {}, timeout = 30000): Promise<GitResult> {
+/**
+ * Run Git and keep its whole result: exit code, signal, byte-exact stdout and
+ * stderr. This is the binary reader, for callers that inspect the exit code or
+ * must not lose trailing bytes.
+ */
+export async function gitRun(cwd: string, args: string[], maxBuffer = 16 * 1024 * 1024, extraEnv: Record<string, string> = {}, timeout = 30000): Promise<GitResult> {
   class FailedGit extends Error {
     constructor(readonly result: GitResult) { super(result.stderr); }
     get code() { return this.result.code; }
@@ -132,6 +141,7 @@ export async function gitNulEach(cwd: string, args: string[], visit: (record: st
   });
 }
 
+
 /** Hash a potentially large Git blob as it streams from the child process. */
 export async function gitHash(cwd: string, args: string[]): Promise<string> {
   return withSpawnSlot(async () => {
@@ -153,4 +163,168 @@ export async function gitHash(cwd: string, args: string[]): Promise<string> {
       throw error;
     }
   });
+}
+
+/**
+ * The one Git and `gh` process runner: the environment, the spawn slot, the
+ * output ceiling, the timeout ceiling and the failure classification every
+ * other Git module calls.
+ *
+ * A failed remote mutation is classified so its caller can keep a durable
+ * intent, never so it can retry blindly.
+ */
+export async function command(file: string, args: string[], cwd: string, extraEnv?: NodeJS.ProcessEnv, options?: { timeout?: number; maxBuffer?: number; trim?: boolean }): Promise<string> {
+  const run = () => withSpawnSlot(() => exec(file, args, { cwd, timeout: options?.timeout ?? 30000, maxBuffer: options?.maxBuffer ?? 1024 * 1024,
+    env: { ...process.env, ...extraEnv, GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o ConnectTimeout=10" } }));
+  try {
+    const result = file === "git" ? await (async () => {
+      const raw = await gitRun(cwd, args, options?.maxBuffer ?? 1024 * 1024, extraEnv as Record<string, string>, options?.timeout);
+      if (raw.sshAuthExhausted) throw raw.sshAuthExhausted;
+      if (raw.code !== 0) throw Object.assign(new Error(raw.stderr || `git ${args.join(" ")} exited with code ${raw.code}`), raw);
+      return { stdout: raw.stdout.toString("utf8") };
+    })() : await run();
+    return options?.trim === false ? result.stdout : result.stdout.trim();
+  } catch (error) {
+    const namedError = nameOutputLimit(error, [file, ...args]);
+    if (file === "gh" && isLoginSessionFault(namedError)) {
+      notifyLoginSessionFault();
+      throw new LoginSessionFaultError(namedError);
+    }
+    const remoteFailure = file === "git" && ["fetch", "push", "ls-remote"].includes(args[0]) &&
+      (namedError instanceof SshAuthExhaustedError || isForgeNetworkFailure(namedError));
+    const githubRemote = remoteFailure && Boolean(githubRepositoryFromRemote(await command("git", ["remote", "get-url", "origin"], cwd).catch(() => "")));
+    const kind = (file === "git" || file === "gh") ? classifyGitCommandFailure(namedError) : null;
+    // A failed remote mutation can have reached its recipient. Its caller's
+    // durable intent, not this classification, governs any later retry.
+    const ghRead = args[0] === 'pr' && ['view', 'list'].includes(args[1]) || args[0] === 'api'
+      && !args.some(arg => ['-f', '-F', '--field', '--raw-field', '--input'].includes(arg))
+      && !args.some((arg, i) => ['-X', '--method'].includes(arg) && args[i + 1]?.toUpperCase() !== 'GET');
+    const mutating = file === 'git' && args[0] === 'push' || file === 'gh' && !ghRead;
+    const wrapped = namedError instanceof GitTransientError ? namedError : kind ? new GitTransientError(kind, namedError, kind === 'network' && mutating) : namedError;
+    if ((file === "gh" && isForgeNetworkFailure(error) || githubRemote) && !await githubHealthy())
+      throw new ForgeOutageError(wrapped);
+    throw wrapped;
+  }
+}
+export const git = (cwd: string, ...args: string[]) => command("git", args, cwd);
+
+/** The finite answer to "does this commit contain that one": yes, a proven no, or unreadable. */
+export type GitAncestry = 'ancestor' | 'diverged' | 'unknown';
+
+/**
+ * Asynchronous ancestry on the shared runner: exit 0 is a proven yes and exit 1
+ * a proven no; anything else (missing object, unusable executable, timeout) is
+ * unknown. Only a proven "no" is divergence — an unreadable ancestry never is.
+ */
+export async function gitAncestry(cwd: string, ancestor: string, descendant: string): Promise<GitAncestry> {
+  const result = await gitRun(cwd, ["merge-base", "--is-ancestor", ancestor, descendant], 64 * 1024);
+  return result.code === 0 ? 'ancestor' : result.code === 1 ? 'diverged' : 'unknown';
+}
+
+/**
+ * Refuse unless the relation is proven, with the refusal the caller reads and
+ * the unreadable read named apart from it: a caller that cannot read ancestry
+ * reports that fact, never a divergence it did not observe.
+ */
+export async function requireGitAncestry(cwd: string, ancestor: string, descendant: string, refusal: string): Promise<void> {
+  const relation = await gitAncestry(cwd, ancestor, descendant);
+  if (relation === 'ancestor') return;
+  if (relation === 'unknown') throw new Error(`${refusal}; Git ancestry is unreadable, so the relation is unproven`);
+  throw new Error(refusal);
+}
+
+export function gitAncestrySync(cwd: string, ancestor: string, descendant: string): 'ancestor' | 'diverged' | 'unknown' {
+  try {
+    execFileSync("git", ["merge-base", "--is-ancestor", ancestor, descendant],
+      { cwd, stdio: ["ignore", "ignore", "pipe"], timeout: 30000,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o ConnectTimeout=10" } });
+    return 'ancestor';
+  } catch (error) {
+    return (error as { status?: unknown }).status === 1 ? 'diverged' : 'unknown';
+  }
+}
+
+export function gitSync(cwd: string, ...args: string[]): string {
+  try {
+    return execFileSync("git", args, { cwd, encoding: "utf8", timeout: 30000, maxBuffer: 4 * 1024 * 1024,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o ConnectTimeout=10" } }).trim();
+  } catch (error) {
+    const stderr = (error as { stderr?: unknown })?.stderr;
+    const detail = typeof stderr === "string" && stderr.trim() ? stderr.trim()
+      : error instanceof Error && error.message ? error.message : String(error);
+    throw Error(detail.slice(0, 2000));
+  }
+}
+
+/** Untrimmed stdout through the shared runner, for output that must keep every byte. */
+export const gitRaw = (cwd: string, ...args: string[]) => command("git", args, cwd, undefined, { trim: false });
+
+/** The default gate is tuned to per-command Git reads; store clones, repacks and linked-checkout population over full history need a longer ceiling. */
+export const GIT_SLOW_TIMEOUT_MS = 600000;
+const GIT_SLOW_MAX_BUFFER = 8 * 1024 * 1024;
+export const gitSlow = (cwd: string, ...args: string[]) => command("git", args, cwd, undefined, { timeout: GIT_SLOW_TIMEOUT_MS, maxBuffer: GIT_SLOW_MAX_BUFFER });
+const GIT_DIAGNOSTIC_MAX_CHARS = 2000, GIT_DIAGNOSTIC_MAX_LINES = 8;
+
+/** A failed bulk Git command. Its fields keep timeout, exit and signal evidence apart; output is bounded. */
+export class GitBulkCommandError extends Error {
+  readonly args!: string[];
+  readonly budgetMs!: number;
+  readonly elapsedMs!: number;
+  readonly timedOut!: boolean;
+  /** Node's raw witness that it terminated the child, which is true for a timeout and for an output overrun. */
+  readonly killed!: boolean;
+  readonly exitCode!: number | null;
+  readonly signal!: string | null;
+  readonly stdout!: string;
+  readonly stderr!: string;
+  constructor(message: string, fields: Omit<GitBulkCommandError, "name" | "message" | "stack" | "cause">) {
+    super(message);
+    this.name = "GitBulkCommandError";
+    Object.assign(this, fields);
+  }
+}
+
+/**
+ * Bulk filesystem Git (linked worktree add and no-force remove) under the slow
+ * ceiling. The generic 30-second read gate would stop a healthy checkout mid-populate.
+ */
+export async function gitBulk(cwd: string, ...args: string[]): Promise<void> {
+  const started = Date.now();
+  try { await gitSlow(cwd, ...args); }
+  catch (error) { throw bulkGitFailure(args, GIT_SLOW_TIMEOUT_MS, Date.now() - started, error); }
+}
+
+/**
+ * Classify a failed `execFile` call. Node sets `killed` only when it terminated
+ * the child itself (the timeout, or an output overrun), so a timeout is
+ * witnessed by that flag, never inferred from progress text.
+ */
+export function bulkGitFailure(args: string[], budgetMs: number, elapsedMs: number, error: unknown): GitBulkCommandError {
+  const failure = error as { code?: unknown; signal?: unknown; killed?: unknown; stdout?: unknown; stderr?: unknown } | null;
+  const overflow = failure?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+  const killed = failure?.killed === true;
+  const timedOut = killed && !overflow;
+  const exitCode = typeof failure?.code === "number" ? failure.code : null;
+  const signal = typeof failure?.signal === "string" ? failure.signal : null;
+  const stdout = boundedGitOutput(failure?.stdout), stderr = boundedGitOutput(failure?.stderr);
+  const subject = `git ${args.slice(0, 2).join(" ")}`;
+  const killedBy = signal ?? "an unknown signal";
+  const verdict = timedOut ? `timed out and was terminated by ${killedBy}`
+    : overflow ? `exceeded its ${GIT_SLOW_MAX_BUFFER}-byte output limit${killed ? ` and was terminated by ${killedBy}` : ""}`
+    : exitCode !== null ? `exited with code ${exitCode}`
+    : signal ? `was terminated by ${signal}`
+    : `failed without exit evidence (${typeof failure?.code === "string" ? failure.code : "unknown code"})`;
+  // The budget and elapsed time name every outcome, so a refusal never hides the ceiling it ran under.
+  const message = `${subject} ${verdict} (budget ${budgetMs}ms, elapsed ${elapsedMs}ms)${stderr ? `: ${stderr}` : ""}${stdout ? ` (stdout: ${stdout})` : ""}`;
+  return new GitBulkCommandError(message, { args, budgetMs, elapsedMs, timedOut, killed, exitCode, signal, stdout, stderr });
+}
+
+/** One error's message, for a refusal that composes two failures. */
+export const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+/** The last progress or fatal lines, with URL credentials removed and length capped. */
+function boundedGitOutput(output: unknown): string {
+  const lines = String(output ?? "").split(/[\r\n]+/).map(line => line.trim()).filter(Boolean).slice(-GIT_DIAGNOSTIC_MAX_LINES);
+  const text = lines.join("\n").replace(/(\/\/)[^/\s@]+@/g, "$1***@");
+  return text.length > GIT_DIAGNOSTIC_MAX_CHARS ? `…${text.slice(-GIT_DIAGNOSTIC_MAX_CHARS)}` : text;
 }

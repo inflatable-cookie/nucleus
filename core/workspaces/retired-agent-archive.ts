@@ -2,7 +2,7 @@ import type { AgentObservation } from '../host/adapter';
 import type { Engine } from '../engine';
 import { startsNoRuns } from '../closeout/queue-drain';
 import { now } from '../store/store';
-import { archiveWait } from './thread-archive';
+import { archiveWait } from './thread-archive-effect';
 
 /**
  * The Paseo Failed-workspace sweep: Paseo marks a workspace Failed while any of

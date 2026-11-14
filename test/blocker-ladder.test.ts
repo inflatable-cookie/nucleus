@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   blockerCauseId,
+  decodeEscalationChoice,
   escalationAnswerControl,
   escalationVerbChoices,
   escalationWaitDetail,
@@ -2037,5 +2038,35 @@ test('a delegated restart choice applies through the ordinary verb', async () =>
     assert.equal(f.events('planner_escalation_refused').length, 0, f.events('planner_escalation_refused')[0]?.detail);
     assert.match(f.events('planner_escalation_applied')[0]!.detail, /^[^:]+: Restart/);
     assert.equal(asks, 1);
+  } finally { await f.close(); }
+});
+
+
+test("escalation choice boundary preserves offered identity and wait targets", () => {
+  const offer = { label: 'Move to review', verb: 'move', args: { to: 'review' } };
+  assert.deepEqual(decodeEscalationChoice('Move to review — ready', [offer]), { kind: 'owner', choice: offer, reason: 'ready' });
+  assert.deepEqual(decodeEscalationChoice('Wait for a task (put its reference in Reason) — nucleus#123', []), { kind: 'task', reason: 'nucleus#123' });
+  assert.deepEqual(decodeEscalationChoice('Wait until a time (put an ISO timestamp in Reason) — 2099-01-01T00:00:00Z', []), { kind: 'time', reason: '2099-01-01T00:00:00Z' });
+  assert.deepEqual(decodeEscalationChoice('Wait for an operator decision (put its ID in Reason) — decision-1', []), { kind: 'decision', reason: 'decision-1' });
+  assert.equal(decodeEscalationChoice('Move to review elsewhere', [offer]).kind, 'other');
+});
+
+test('a decider archive failure remains visible after an escalation answer', async () => {
+  const f = fixture({ responsible: true, delegates: {
+    decider: 'Choice: Stop and keep the work\nReason: Nothing further to do',
+  } });
+  f.engine.resolution.plannerRungsFor = async () => ({ rungs: [], projectFailed: false });
+  f.engine.resolution.deciderBound = async () => ({ agentId: 'decider-1', text: 'Choice: Stop and keep the work\nReason: Nothing further to do' });
+  const archive = f.adapter.archiveAgent;
+  f.adapter.archiveAgent = async id => {
+    if (id === 'decider-1') throw Error('archive unavailable');
+    return archive(id);
+  };
+  try {
+    await f.reviews(1); await f.engine.wake();
+    await f.report('blocked', { summary: 'The gate is held', cause: { kind: 'external', name: 'held gate' } });
+    await until(() => f.events('planner_escalation_archive_failed').length > 0);
+    assert.match(f.events('planner_escalation_archive_failed')[0]!.detail, /decider decider-1: archive unavailable/);
+    assert.equal(f.events('planner_escalation_answered').length, 1);
   } finally { await f.close(); }
 });

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { lstat, mkdir, realpath, rm, symlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { gitRaw } from "../git/git-command";
+import { gitRun, } from "../git/git-command";
 import { findGitWorktreeAdd } from "../machine/process-identity";
 import { worktreeManifestBlock } from "../workspaces/worktree-links";
 import { removeTree } from "../workspaces/tree-removal";
@@ -19,7 +19,7 @@ import type { QaPipelineRun } from "./project-qa-pipeline";
  * never touched.
  */
 async function gitText(cwd: string, ...args: string[]): Promise<string> {
-  const result = await gitRaw(cwd, args);
+  const result = await gitRun(cwd, args);
   if (result.code !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr.trim() || `exit ${result.code}`}`);
   return result.stdout.toString("utf8").trim();
 }
@@ -93,13 +93,13 @@ export async function removeQaWorkspace(paths: { registeredPath: string; checkou
   // A run from the pre-Spec-022 layout left a private source tree here.
   const marker = await lstat(join(paths.checkoutPath, ".git")).catch(() => null);
   if (existsSync(paths.checkoutPath)) {
-    const removed = marker?.isFile() ? await gitRaw(paths.registeredPath, ["worktree", "remove", "--force", paths.checkoutPath]) : null;
+    const removed = marker?.isFile() ? await gitRun(paths.registeredPath, ["worktree", "remove", "--force", paths.checkoutPath]) : null;
     if (!removed || removed.code !== 0) {
       if (paths.admission) throw new Error("Project QA checkout removal is uncertain; preserving it");
       await removeTree(paths.checkoutPath);
     }
   }
-  if (!paths.admission) await gitRaw(paths.registeredPath, ["worktree", "prune"]).catch(() => { /* Legacy cleanup. */ });
+  if (!paths.admission) await gitRun(paths.registeredPath, ["worktree", "prune"]).catch(() => { /* Legacy cleanup. */ });
 }
 
 

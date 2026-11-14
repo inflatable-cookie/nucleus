@@ -18,6 +18,11 @@ import { DispatchLaunch, type DispatchLaunchContext } from './dispatch/launch';
 
 import { intakeContext } from './intake/context';
 
+import { JointReviewQuestion } from './questions/joint-review-question';
+import { OperatorDelegation } from './questions/operator-delegation';
+import { ReviewerConsult } from './questions/reviewer-consult';
+import { EscalationSettlement } from './questions/escalation-settlement';
+import { QuestionSupersession } from './questions/question-supersession';
 import { Questions } from './questions/questions';
 import { NativeQuestions } from './questions/native-questions';
 
@@ -367,7 +372,12 @@ export class Resolution {
   readonly absentRestarts = new AbsentRestarts(recoveryContext(this, ['adapter', 'attention', 'ensureIncident', 'graceMs', 'paused', 'recordIncidentEvent', 'resolveIncident', 'resumeWorkerContinuation', 'settleVerbFences', 'store', 'update']));
   readonly observation = new Observation(recoveryContext(this, ['adapter', 'attention', 'environmentDeferred', 'extendCallbackReminder', 'graceMs', 'heavyRunAlive', 'host', 'hostAvailable', 'inventoryHostMatches', 'launchingRuns', 'onTaskHost', 'orphanRuns', 'paused', 'reconcileAbsentCreation', 'reconcileStalledTurnStop', 'recoverRefusedReviewer', 'remindStoppedRun', 'resolveIncident', 'resumeTransientProviderThread', 'retainedProfileIssue', 'stalls', 'stopped', 'store', 'supersedeOrphans', 'transportDeferred', 'update', 'waiting', 'withHost']));
   readonly delegation = new Delegation(this);
+  readonly reviewerConsult = new ReviewerConsult(this);
+  readonly escalationSettlement = new EscalationSettlement(this);
+  readonly questionSupersession = new QuestionSupersession(this);
   readonly questions = new Questions(this);
+  readonly operatorDelegation = new OperatorDelegation(this);
+  readonly jointReviewQuestion = new JointReviewQuestion(this);
   readonly proofAutorun = new ProofAutorun(this);
   readonly nativeQuestions = new NativeQuestions(this);
   readonly ladder = new Ladder(this);
@@ -479,7 +489,7 @@ export class Resolution {
   get routingEscalations() { return this.ladder.routingEscalations; }
   readonly wakingEscalations = new Set<string>();
   readonly settlingOperatorEscalations = new Set<string>();
-  get routingConsults() { return this.ladder.routingConsults; }
+  get routingConsults() { return this.reviewerConsult.routingConsults; }
   get recoveringQueueAsks() { return this.questions.recoveringQueueAsks; }
   /**
    * Spec 058 (task 550): the ask-mode raises this process is waiting on, keyed by
@@ -820,23 +830,23 @@ export class Resolution {
    * Returns true when the round must not be dispatched now. Other tasks keep
    * their ordinary revision route.
    */
-  responsibleJointQuestion(t: Task): Promise<boolean> { return this.questions.responsibleJointQuestion(t); }
-  settleJointQuestion(taskId: string, id: string, answer: string): void { return this.questions.settleJointQuestion(taskId, id, answer); }
+  responsibleJointQuestion(t: Task): Promise<boolean> { return this.jointReviewQuestion.responsibleJointQuestion(t); }
+  settleJointQuestion(taskId: string, id: string, answer: string): void { return this.jointReviewQuestion.settleJointQuestion(taskId, id, answer); }
   responsibleBlockerLadder(t: Task, input: { source: 'worker' | 'revision' | 'executor' | 'reviewer' | 'recovery' | 'closeout'; runId: string | null; completion: Completion }): Promise<boolean> { return this.ladder.responsibleBlockerLadder(t, input); }
   holdProofOnlyGoWait(t: Task): boolean { return this.ladder.holdProofOnlyGoWait(t); }
   settleCompletedExecutorBlocker(input: Completion): Promise<void> { return this.ladder.settleCompletedExecutorBlocker(input); }
   suppressAutomaticRetry(t: Task, site: string, evidence: string, runId?: string | null): boolean { return this.ladder.suppressAutomaticRetry(t, site, evidence, runId); }
-  openReviewerConsult(t: Task, input: { cause: string; runId: string | null; completion: Completion; reviewer: string | null }): void { return this.ladder.openReviewerConsult(t, input); }
-  consultStillOwnsWait(taskId: string, id: string): boolean { return this.ladder.consultStillOwnsWait(taskId, id); }
+  openReviewerConsult(t: Task, input: { cause: string; runId: string | null; completion: Completion; reviewer: string | null }): void { return this.reviewerConsult.openReviewerConsult(t, input); }
+  consultStillOwnsWait(taskId: string, id: string): boolean { return this.reviewerConsult.consultStillOwnsWait(taskId, id); }
   runReviewerConsult(t: Task, input: { id: string; reviewer: string | null; question: string }): Promise<void> { return this.ladder.runReviewerConsult(t, input); }
-  escalateConsultedBlocker(t: Task, input: { id: string }): void { return this.ladder.escalateConsultedBlocker(t, input); }
+  escalateConsultedBlocker(t: Task, input: { id: string }): void { return this.reviewerConsult.escalateConsultedBlocker(t, input); }
   openReviewContinuationEscalation(t: Task, state: 'exhausted' | 'closed'): string { return this.ladder.openReviewContinuationEscalation(t, state); }
   escalateRefusedCoordinator(t: Task, reason: string): void { return this.ladder.escalateRefusedCoordinator(t, reason); }
   attentionUnknownEscalation(t: Task, escalation: { id: string; question: string | null }): void { return this.ladder.attentionUnknownEscalation(t, escalation); }
   openPlannerEscalation(t: Task, input: { cause: string; runId: string | null; question: string; payload: object; suggestedVerbs?: TaskStopVerb[]; causeDetail?: string }): void { return this.ladder.openPlannerEscalation(t, input); }
   routePlannerEscalation(t: Task, id: string, question: string): Promise<void> { return this.ladder.routePlannerEscalation(t, id, question); }
   classifyEscalationToOperator(t: Task, id: string, reason: string, who: string): void { return this.ladder.classifyEscalationToOperator(t, id, reason, who); }
-  settlePlannerEscalation(t: Task, id: string, answer: string, who: string, offered?: EscalationVerbChoice[], questionId?: string): Promise<string | null> { return this.ladder.settlePlannerEscalation(t, id, answer, who, offered, questionId); }
+  settlePlannerEscalation(t: Task, id: string, answer: string, who: string, offered?: EscalationVerbChoice[], questionId?: string): Promise<string | null> { return this.escalationSettlement.settlePlannerEscalation(t, id, answer, who, offered, questionId); }
   continueWorkerAfterLadder(t: Task, input: { instruction: string; event: string; reason: string; detail: string }): void { return this.ladder.continueWorkerAfterLadder(t, input); }
   /**
    * Spec 058 (task 523): a responsible task parked on a wait only a person can
@@ -875,13 +885,13 @@ export class Resolution {
    * remain in place. A late answer cannot grant an increment after usage falls
    * below the current limit.
    */
-  extendTaskBudget(taskId: string, detail: string, by = 'The operator'): Task | null { return this.questions.extendTaskBudget(taskId, detail, by); }
+  extendTaskBudget(taskId: string, detail: string, by = 'The operator'): Task | null { return this.questionSupersession.extendTaskBudget(taskId, detail, by); }
   /**
    * An applied owner control replaces any outstanding question about the
    * task's previous state. Keep the question history, but make later native
    * or delegated answers inert and close any linked board decision.
    */
-  supersedeOpenOwnerQuestions(taskId: string, reason: string): void { return this.questions.supersedeOpenOwnerQuestions(taskId, reason); }
+  supersedeOpenOwnerQuestions(taskId: string, reason: string): void { return this.questionSupersession.supersedeOpenOwnerQuestions(taskId, reason); }
   /** Record the answer, then apply the owner verb it names with the operator's authority. */
   settleOperatorQuestion(taskId: string, question: OperatorQuestion, answer: string, recordAnswer = true): Promise<void> { return this.questions.settleOperatorQuestion(taskId, question, answer, recordAnswer); }
   /**
@@ -979,10 +989,10 @@ export class Resolution {
    */
   delegateDecision(taskId: string, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; fullQuestion?: string | null },
     request: { requestId: string; header: string } | null, signal: AbortSignal,
-    deliver: (task: Task, answer: string) => Promise<void>): Promise<boolean> { return this.questions.delegateDecision(taskId, decision, request, signal, deliver); }
+    deliver: (task: Task, answer: string) => Promise<void>): Promise<boolean> { return this.operatorDelegation.delegateDecision(taskId, decision, request, signal, deliver); }
 
   /** A newly live planner gets one fresh chance to settle each proof wait parked for it. */
-  projectPlannerRegistered(projectKey: string, plannerId: string): Promise<void> { return this.questions.projectPlannerRegistered(projectKey, plannerId); }
+  projectPlannerRegistered(projectKey: string, plannerId: string): Promise<void> { return this.operatorDelegation.projectPlannerRegistered(projectKey, plannerId); }
   /**
    * Task 1110: the send-time address of one of a project's registered agents.
    * `name` null is the project's fallback planner, the thread `to: {project}`

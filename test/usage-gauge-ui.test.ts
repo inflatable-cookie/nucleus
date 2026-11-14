@@ -1024,6 +1024,7 @@ function mountBoard() {
           theme: { colors: c },
           host: { id: "host", label: "Host" },
           layout: { compact: false, platform: "ios" as const },
+          now: NOW,
         }),
       }),
     }),

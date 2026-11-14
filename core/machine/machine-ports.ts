@@ -6,7 +6,8 @@ import {
 } from "../git/index";
 import { checkoutRunScratchPlacement, runTemporaryDirectory, type RunScratchPlacement } from "../workspaces/run-scratch";
 import { findWorktreeValidation, type WorktreeValidationScan } from "../workspaces/worktree-validation";
-import { listHostUidProcesses, type HostProcessFact } from "./host-process-reap";
+import { readHostUidProcesses } from "./host-process-listing";
+import type { HostProcessFact } from "../host/types";
 
 /**
  * The machine ports: work that belongs to the machine this daemon runs on, never
@@ -78,5 +79,8 @@ export class MachinePorts {
   hostLoad() { return { load: loadavg()[0], cpus: cpus().length }; }
   worktreeValidation(directory: string, extraArgv: string[][]): WorktreeValidationScan { return findWorktreeValidation(directory, extraArgv); }
   /** Complete host process table for proofs rooted in a Queue-launched provider. */
-  hostProcessListing(): Promise<HostProcessFact[] | null> { return listHostUidProcesses(); }
+  async hostProcessListing(): Promise<HostProcessFact[] | null> {
+    const read = await readHostUidProcesses();
+    return read.state === "listed" ? read.processes : null;
+  }
 }

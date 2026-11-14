@@ -5,7 +5,7 @@ import type { HostRunEscapedDescendant } from "../../shared/contracts";
 import type { HostRunScheduler } from "../host-runs/host-run-scheduler";
 import type { Store } from "../store/store";
 import { processCommandLine } from "../machine/process-identity";
-import { processStartIdentityLiveness } from "../machine/process-group";
+import { processStartIdentityLiveness } from "../machine/process-identity-search";
 import { cwdMapFromLsof } from "../workspaces/worktree-validation";
 
 const sleep = (ms: number) => new Promise<void>(resolvePromise => { setTimeout(resolvePromise, ms); });

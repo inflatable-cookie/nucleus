@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { PaseoAdapter } from '../service/paseo-composition';
-import type { HostProcessFact } from '../core/machine/host-process-reap';
+import type { HostProcessFact } from '../core/host/types';
 
 function adapter(processes: HostProcessFact[] | null) {
   const result = new PaseoAdapter('ws://127.0.0.1:1', join(process.cwd(), 'callback.sock'), join(process.cwd(), 'worker-report.mjs'));

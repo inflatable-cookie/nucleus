@@ -19,7 +19,8 @@ import { HOST_RUN_CAPACITY_DEADLINE_MS, HostRunScheduler, classifyHostRun, selec
 import type { HostRunHandler } from "../host-runs/host-run-scheduler";
 import { HOST_RUN_TOKEN_GRACE_MS } from "../host-runs/host-run-endpoint-types";
 import { issueHostRunToken } from "../host-runs/host-run-token";
-import { processGroupEmpty, processStartIdentityLiveness, processesForStartIdentity, signalProcessGroup, signalProcessGroupByLeader } from "../machine/process-group";
+import { processGroupEmpty, signalProcessGroup, signalProcessGroupByLeader } from "../machine/process-group";
+import { processesForStartIdentity, processStartIdentityLiveness } from "../machine/process-identity-search";
 import { SupervisorLivenessReader } from "../machine/supervisor-liveness";
 import { findProcessByCommandTokenAsync, pidAlive, processCommandLine } from "../machine/process-identity";
 import { projectValidationSupervisorPaths, readProjectValidationCancellation, readProjectValidationCpuCoverage, readProjectValidationPlan, readProjectValidationResult, readProjectValidationSupervisorState, writeProjectValidationCancellation, writeProjectValidationPlan, type ProjectValidationSupervisorPlan, type ProjectValidationSupervisorResult } from "./project-validation-supervisor";

@@ -6,7 +6,7 @@ import { existsSync } from "node:fs";
 import { AUTOMATIC_REPLAY_LIMIT, AUTOMATIC_REPLAY_RETRY_MS, hookReplayLineageSchema, hookEventSupportsAutomaticReplay, type NormalizedHookDefinition, type HookEventName, type HookRecord } from "../../shared/hooks";
 import { isDispositionActive, type Task } from "../../shared/contracts";
 import { type Store, now } from "../store/store";
-import { gitRaw } from "../git/git-command";
+import { gitRun } from "../git/git-command";
 import { HookObservationMap, type HeldAutomaticReplay, type AutomaticReplayAttempt } from "./hook-context";
 /** Task-history kinds for automatic exact-identity base-advance replay. */
 const AUTOMATIC_REPLAY_INTENT_KIND = "hook_automatic_replay_intent";
@@ -86,7 +86,7 @@ export class HookReplay {
     try {
       head = await gitText(task.repoPath, "rev-parse", "HEAD");
       if (head === record.baseCommit) return null;
-      if ((await gitRaw(task.repoPath, ["merge-base", "--is-ancestor", record.baseCommit, head])).code !== 0) return null;
+      if ((await gitRun(task.repoPath, ["merge-base", "--is-ancestor", record.baseCommit, head])).code !== 0) return null;
       await this.verifyCleanSynchronizedBase(task.repoPath, record.baseBranch, head);
     } catch { return null; }
     if (!record.baseAdvance) this.supersedeForBaseAdvance(record, record.baseCommit, head);
@@ -211,7 +211,7 @@ export class HookReplay {
         return refuse("the exact reviewed head changed");
       if (baseCommit === record.baseCommit) return refuse("the integration base has not advanced");
       if ((await this.matchingCommits(task, record)).length) return refuse("a commit carrying this hook event already exists");
-      if ((await gitRaw(task.repoPath, ["merge-base", "--is-ancestor", record.baseCommit, baseCommit])).code !== 0)
+      if ((await gitRun(task.repoPath, ["merge-base", "--is-ancestor", record.baseCommit, baseCommit])).code !== 0)
         return refuse("the integration base did not advance by fast-forward");
       const isolation = await this.isolationPath(task, record.eventId);
       if (payload.repository.root !== isolation)
