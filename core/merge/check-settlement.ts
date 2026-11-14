@@ -60,13 +60,15 @@ export class CheckSettlement {
     }
   }
   /**
-   * A poll record written before this module owned the episode names no incident,
-   * so the incident its wait raised is still identified the previous way: the
-   * reason text is the pending-check deadline this wait recorded, and the task is
-   * in the attention that wait raised. Every record this version writes names its
-   * incident, and an unrelated fault's reason never matches this deadline shape,
-   * so an unrelated attention is never settled. This is the one bounded
-   * compatibility read for in-flight records.
+   * A poll record that names no incident (`incidentId: null`, which this version
+   * also writes when the wait raised no incident at all) identifies the incident
+   * its wait raised the previous way: the task's reason is the pending-check
+   * deadline this wait recorded, and the task carries that wait's attention. When
+   * no incident was raised the read is inert, because the attention or the
+   * incident it needs is absent. A current record therefore consults the reason
+   * only when it names no incident, and an unrelated fault's reason never matches
+   * this deadline shape, so an unrelated attention is never settled. This is the
+   * one bounded compatibility read for in-flight records.
    */
   private legacyEpisodeIncident(t: Task): string | null {
     if (!t.resolution.attention) return null;

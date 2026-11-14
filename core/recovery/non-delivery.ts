@@ -1,5 +1,5 @@
 import type { Completion, Run, Task } from '../../shared/contracts';
-import { gitSync } from '../git/index';
+import { automaticRetryForbidden } from '../../shared/automatic-retry';
 import { readGitCheckout } from '../git/git-identity';
 import { classifyGitCommandFailure } from '../forge/forge-health';
 import { GIT_TRANSIENT_LIMIT_MS } from '../git/git-transient-backoff';
@@ -9,55 +9,22 @@ import { isPromptTooLargeError } from './provider-refusal';
 export const NON_DELIVERY_ROUTE_REASON = 'Automatic same-capability non-delivery replacement';
 export const NON_DELIVERY_PUSHBACK = 'You reported no external blocker and produced no change. Under the ownership rule, decide within the brief and implement; record decisions in the PR. Report blocked only for an external cause, naming it.';
 
-/** Phrases that forbid automatic retry in an owner instruction, reason or brief. */
-export const NO_AUTOMATIC_RETRY_FORBID = [
-  /\bnoAutomaticRetry\s*:\s*true\b/i,
-  /\bno automatic retry\b/i,
-  /\bautomatic retries? (?:are )?(?:forbidden|prohibited|not allowed)\b/i,
-];
-/** Phrases that lift the rule again: a later owner instruction that permits retry. */
-export const NO_AUTOMATIC_RETRY_LIFT = [
-  /\bnoAutomaticRetry\s*:\s*false\b/i,
-  /\ballow automatic retr\w*\b/i,
-  /\bautomatic retr\w* (?:is |are )?(allowed|permitted|enabled)\b/i,
-  /\bpermit\w* automatic retr\w*\b/i,
-  /\bresume automatic retr\w*\b/i,
-  /\bre-?enable automatic retr\w*\b/i,
-];
-/** Read one owner's no-automatic-retry intent from free text: forbid wins on mixed wording. */
-export function noAutomaticRetryRule(text: string | null | undefined): 'forbid' | 'lift' | null {
-  if (!text) return null;
-  if (NO_AUTOMATIC_RETRY_FORBID.some(pattern => pattern.test(text))) return 'forbid';
-  if (NO_AUTOMATIC_RETRY_LIFT.some(pattern => pattern.test(text))) return 'lift';
-  return null;
-}
-/** Read an explicit retry prohibition from the pinned owner brief's wording. */
-export function automaticRetryForbidden(task: Task, runs?: Run[]): boolean {
-  if (task.resolution.noAutomaticRetry) return true;
-  // An explicit owner lift is authoritative: the brief-text and old-run fallbacks
-  // below serve only rows with no durable owner decision, so the superseded run's
-  // instruction can never re-forbid retry after the owner permitted it.
-  if (task.resolution.noAutomaticRetryDecided) return false;
-  const text = [task.briefVersions?.at(-1)?.text, task.brief?.text, task.handoffText,
-    task.resolution.pendingWorkerInstruction, task.resolution.revisionInstruction?.text].filter((value): value is string => Boolean(value)).join('\n');
-  if (NO_AUTOMATIC_RETRY_FORBID.some(pattern => pattern.test(text))) return true;
-  // Older rows recorded the prohibition only in the instruction that launched
-  // the run: read the latest owner-instructed run's instruction, which the
-  // launch clears from the task row once its run starts.
-  if (runs) for (let index = runs.length - 1; index >= 0; index--) {
-    const instruction = runs[index]?.instruction;
-    if (!instruction) continue;
-    return NO_AUTOMATIC_RETRY_FORBID.some(pattern => pattern.test(instruction));
-  }
-  return false;
-}
-
 /** Task 576: the same push-back for a return that pushed progress but stopped while work remains. */
 export const UNFINISHED_CONTINUATION_INSTRUCTION = 'You pushed new commits but reported the work unfinished. Under the ownership rule, continue the same approved round from the retained worktree and existing PR until the brief is complete; record decisions in the PR. Report blocked only for an external cause, naming it.';
 
 /** The external-cause phrases Queue reads from a summary when a report carries no structured cause. */
 const LEGACY_EXTERNAL_WORDING = /\b(missing dependency|dependency is missing|broken environment|environment is broken|external system|operator decision|operator-only|provider quota|quota exhausted|rate limit|network unavailable|service unavailable|credentials? unavailable|permission denied|awaiting operator|needs operator)\b/;
 const NO_EXTERNAL_BLOCKER = /\b(no|without|not|isn't|is not)\s+(?:an?\s+)?external\s+(?:blockers?|causes?)\b/;
+
+/**
+ * The one legacy wording reader: an owner or report phrase that names an external
+ * cause. It is migration evidence for reports that predate the structured
+ * `cause`, so it lives here alone and the gates never restate it.
+ */
+function legacyExternalWording(text: string): boolean {
+  const lower = text.toLowerCase();
+  return !NO_EXTERNAL_BLOCKER.test(lower) && LEGACY_EXTERNAL_WORDING.test(lower);
+}
 
 /**
  * Wording Queue already recognises as an external cause or a provider failure keeps today's handling:
@@ -67,8 +34,7 @@ const NO_EXTERNAL_BLOCKER = /\b(no|without|not|isn't|is not)\s+(?:an?\s+)?extern
  */
 export function recognisedExternalWording(text: string): boolean {
   if (isQuotaExhaustion(text) || isRateLimitError(text) || isTransientProviderError(text) || isPromptTooLargeError(text)) return true;
-  const lower = text.toLowerCase();
-  return !NO_EXTERNAL_BLOCKER.test(lower) && LEGACY_EXTERNAL_WORDING.test(lower);
+  return legacyExternalWording(text);
 }
 
 /**
@@ -108,9 +74,7 @@ export function reportsExternalCause(completion: Completion, events: Array<{ kin
   if (recordedExternalCause(completion, events, runId)) return true;
   // A structured cause, internal or unfinished, is the whole classification.
   if (completion.cause) return false;
-  const text = completion.summary.toLowerCase();
-  if (NO_EXTERNAL_BLOCKER.test(text)) return false;
-  return LEGACY_EXTERNAL_WORDING.test(text);
+  return legacyExternalWording(completion.summary);
 }
 
 export type UnfinishedReturn = {
@@ -168,7 +132,10 @@ export function unfinishedReturnFor(task: Task, run: Run | null, completion: Com
     if (observedHead !== baselineHead && !reportsExternalCause(completion, events, runId))
       return { ...record, observedHead };
     if (completion.impediment || recordedExternalCause(completion, events, runId) || recognisedExternalWording(completion.summary)) return null;
-    if (gitSync(task.directory, 'rev-list', '--count', `${baselineHead}..${observedHead}`) !== '0') return null;
+    // Every path that reaches here holds an unchanged head: a moved head with no
+    // external cause returned above, and a moved head with one returned here. The
+    // range baseline..observed is therefore empty by construction, so no git
+    // process is spawned to count its commits.
     if (noImpedimentContinuationCount(events, agentId) >= NO_IMPEDIMENT_CONTINUATION_LIMIT) return null;
     return { ...record, observedHead, reason: 'no_impediment', agentId };
   } catch {

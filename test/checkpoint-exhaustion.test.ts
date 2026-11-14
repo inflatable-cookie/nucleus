@@ -9,7 +9,7 @@ import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
 import { workerPrompt } from '../core/dispatch/prompts';
 import { checkpointPrompt, runPrompt } from '../core/dispatch/prompts';
-import { isPseudoCheckpointError, postBudgetPrePrResumes } from '../core/recovery/recovery';
+import { isPseudoCheckpointError, postBudgetPrePrResumes } from '../core/recovery/pseudo-checkpoint';
 import { CHECKPOINT_BUDGET, submissionSchema, type Profile, type Run, type Task } from '../shared/contracts';
 import type { Adapter, AgentObservation } from '../core/host';
 import type { ResolutionAdapter } from '../core/resolution';

@@ -26,3 +26,9 @@ the old row, adds a row per new module with the charter's five parts and evidenc
 notes the commit. Scores are never edited without a re-rate. Code that has moved since `136cf0de` keeps
 its old row until its module is next changed. Re-rating changes the row count: the 588 rows above are
 the `136cf0de` sweep, and these tables carry every row added or replaced since.
+
+## Re-rates
+
+- nucleus#1199 (floor 5, 2026-11-14): `core/store/store.ts`, `core/store/store-tasks.ts` and
+  `core/store/store-maintenance.ts` were split into one owner per mechanism; `store-maintenance.ts` no
+  longer exists. The store rows in `N3.csv` were re-rated at that PR's head.

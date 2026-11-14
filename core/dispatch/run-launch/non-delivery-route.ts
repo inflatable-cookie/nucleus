@@ -1,7 +1,7 @@
 import type { LaunchThreadContext } from '../launch';
 import type { Profile, Run, Task } from '../../../shared/contracts';
 import { workerProfileIsExcluded } from '../../../shared/contracts';
-import { groupIsUnavailable, requestOnly } from '../../../shared/pool';
+import { requestOnly, unavailableGroupNames } from '../../../shared/pool';
 import { escalationWaitDetail, plannerEscalations, type LadderEvent } from '../../questions/blocker-ladder';
 import { message } from '../../recovery/task-reasons';
 import { chooseProfile } from '../routing';
@@ -35,7 +35,7 @@ export async function resolveNonDeliveryRoute(ctx: LaunchThreadContext, t: Task,
   const routeTask = { ...t, preferredProfileId: '', requirePreferred: false, thinkingOptionId: '',
     profileRequests: { ...t.profileRequests, worker: undefined } };
   const selected = chooseProfile(routeTask, profiles, pool, ctx.store.counts(),
-    new Set(ctx.store.availability().filter(groupIsUnavailable).map(value => value.group)),
+    unavailableGroupNames(ctx.store.availability()),
     'worker', ctx.store.recentCounts(), ctx.store.usageLevel(), ctx.store.demandRoleOffsets(), false);
   if (!selected) {
     const reason = `No eligible alternate provider at the retained ${oldEntry?.capability ?? 'known'} capability for a non-delivery replacement`;

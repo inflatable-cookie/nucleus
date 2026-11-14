@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { submissionSchema, taskSchema } from '../shared/contracts';
 import { decideSlotAdmission } from '../core/dispatch/capacity';
 import { dispatchGate } from '../core/dispatch/dispatch-decisions';
+import { taskStopRecord } from '../shared/task-stop';
 
 const base = 'a'.repeat(40);
 const submission = submissionSchema.parse({ submissionId: 's', title: 'T', repoPath: '/r', planningCommit: base, handoffPath: 'h.md', originAgentId: 'o' });
@@ -42,12 +43,15 @@ test('slot admission names occupancy and earlier reservations', () => {
 test('slot request decisions preserve eligibility gates', async () => {
   const { slotRequestDecision } = await import('../core/dispatch/capacity');
   const phases = ['awaiting_review', 'changes_requested'];
+  // A route wait is the recorded typed stop, exactly what dispatch writes.
+  const routeStop = taskStopRecord('route_unavailable', 'no eligible worker');
+  const routeWaiter = { ...task, reason: routeStop.detail, resolution: { ...task.resolution, stop: routeStop } };
   const cases = [
     [task, {}, 'read'],
     [task, { dependencyWait: '' }, true],
     [task, { dependencyWait: 'wait' }, false],
-    [{ ...task, reason: 'no eligible worker' }, {}, 'read'],
-    [{ ...task, reason: 'no eligible worker' }, { routingRetryAllowed: false }, false],
+    [routeWaiter, {}, 'read'],
+    [routeWaiter, { routingRetryAllowed: false }, false],
     [{ ...task, agentActive: true }, {}, false],
     [{ ...task, phase: 'needs_attention' as const }, {}, false],
   ] as const;

@@ -238,13 +238,23 @@ and [Liveness and reminders](#liveness-and-reminders). Pures:
 `classifyWorkerObservation`, `branchPrLookupOutcome`, `blockedReturnDecision`.
 Delegates remain on Engine.
 
-**WorkerFailover** (`core/recovery/worker-failover.ts`). Retired-worker observation,
-the sweep that replaces an exhausted or failed worker, the replacement ceiling
-refusal, and the archive of retired errored agents. Enforces
+**WorkerFailover** (`core/dispatch/worker-failover.ts`). The sweep that replaces an
+exhausted or failed worker, and its decision. Enforces
 [Worker replacement ceiling](#worker-replacement-ceiling) and
 [Retained worker recovery](#retained-worker-recovery). `decideWorkerFailover`
 is the pure replacement decision; it is file-private. `planWorkerFailover`
-gathers the lazy reads and writes. Delegates remain on Engine.
+gathers the lazy reads and writes, including the store's typed availability rows.
+The replacement ceiling refusal lives with the replacement rule in
+`core/recovery/worker-replacement.ts`. Delegates remain on Engine.
+
+**RetiredObservations** (`core/recovery/retired-observation.ts`). The retired-worker
+observation cadence and the lifecycle-signal invalidations that make an identity
+due before it. Same-name `Engine` methods delegate to it.
+
+**RetiredAgentArchive** (`core/workspaces/retired-agent-archive.ts`). The sweep that
+archives retired errored agents so a Paseo workspace stops reporting Failed. An
+unreadable read or a refused archive records a thread-archive wait instead of
+being dropped. `Engine.archiveRetiredErroredAgents` delegates to it.
 
 **CreationRecovery** (`core/recovery/creation-recovery.ts`). Recovers a proven-absent
 worker and an unowned workspace creation, including proof-only dispatch
@@ -570,21 +580,31 @@ uncertain-run restart under the same run ID, and the one-replacement creation
 budget. Enforces [Orphan worktree after a timed-out create](#orphan-worktree-after-a-timed-out-create).
 Delegates remain on Resolution.
 
-**Recovery** (`core/recovery/recovery.ts`). Coordinates bounded repair and the planner
-ladder: dispatch routing, observed settlement of finished recovery runs, and
-the typed coordinator-action handler. Enforces
+**Recovery** (`core/recovery/recovery.ts`). The coordinator surface Resolution
+constructs: it wires the stages together and keeps the method shape its callers
+and tests use. Its stages are one module each. **CoordinatorRoute**
+(`coordinator-route.ts`) decides whether a task needs a coordinator episode and
+performs the one launch that opens it. **CoordinatorPass** (`coordinator-pass.ts`)
+observes that exact run, settles it, and owns the pending-episode bound. Enforces
 [Coordinator reports](#coordinator-reports),
 [Coordinator loop breaker](#coordinator-loop-breaker) and
-[Responsible tasks](#responsible-tasks-spec-058-cutover-1). Pures:
-`coordinatorReportMatches`, `taskProgressDigest`. Resolution constructs it.
+[Responsible tasks](#responsible-tasks-spec-058-cutover-1). **CoordinatorEpisode**
+(`coordinator-episode.ts`) owns the episode's durable bookkeeping: the report
+binding, the not-applied refusal, the run release, the settling changes and the
+escalation. **Pseudo-checkpoint** (`pseudo-checkpoint.ts`) owns the post-budget
+pseudo-checkpoint rule.
 
-**RecoverySettlement** (`core/recovery/recovery.ts`). Applies a recovery report as an
-owner verb and settles the faults code can. Enforces
-[Coordinator reports](#coordinator-reports). Pures: `coordinatorActionPlan`
-(report to verb arguments, or the refusal naming why it no longer applies),
-`recoverySettlementPatch` (what settling the report changes). Delegates remain
-on Engine. RecoverySettlement is a second class because Recovery is built by
-Resolution without Engine, and the handlers stay registered on Engine.
+**RecoverySettlement** (`core/recovery/coordinator-settlement.ts`). Applies a
+recovery report as the owner verb it names, once. Enforces
+[Coordinator reports](#coordinator-reports). Its pure rules live beside the
+report identity in `coordinator-report.ts`: `taskProgressDigest`,
+`coordinatorReportMatches`, `coordinatorActionPlan` (report to verb arguments, or
+the refusal naming why it no longer applies) and `recoverySettlementPatch` (what
+settling the report changes). **Responsible fault settlement**
+(`responsible-fault.ts`) is the Spec 058 mechanical fault code settles before an
+episode opens. Delegates remain on Engine. RecoverySettlement is a separate class
+because Recovery is built by Resolution without Engine, and the handlers stay
+registered on Engine.
 
 **Ladder** (`core/questions/ladder.ts`) and **blocker-ladder.ts**. A blocked worker gets
 one reviewer consult per cause, then one planner escalation, which a planner or
@@ -2079,7 +2099,9 @@ movement invalidates source approval and preserves the normal readiness gates.
   head exists: the record owns the episode, its incident, its one recovery and its
   escalation, and the task's reason text is only its wording. A record written
   before the record named its incident keeps the previous read of the deadline
-  wait it held.
+  wait it held, and a planner escalation recorded before its payload carried a
+  refusal class keeps the previous identification from the revision instruction
+  it recorded.
 - A pending check is re-observed every minute at the same head and yields the
   integration turn; when checks settle, Nucleus reacquires a turn and reruns every
   gate. An overdue check gets one coordinator recovery look per check and head,

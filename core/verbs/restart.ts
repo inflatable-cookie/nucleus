@@ -13,7 +13,7 @@ import type { RestartRole } from "./owner-verbs";
 import { RestartRefusal, collectOwnerVerbFacts, currentRouteProfile, deriveRestartRole, parkedRestart, plainHandoverFreshRestart, restartShape, restartTakesParkedStep, unservedParkedStep, workerRestartRefusal } from "./owner-verbs";
 import type { AgentObservation } from "../host/adapter";
 import { hostFailureRefusalDetail } from "../host/errors";
-import { coordinatorReportMatches } from "../recovery/recovery";
+import { coordinatorReportMatches } from "../recovery/coordinator-report";
 import { isBlockingRecoveryEffect, recoveryEffects, recoveryEffectsRefusal } from "../recovery/recovery-effects";
 import { DurableFenceRefusal } from "../intake/run-settlement";
 import { digest, now } from "../store/store";

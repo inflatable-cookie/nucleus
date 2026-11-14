@@ -5,7 +5,7 @@ import { DEMAND_ROLE_OFFSETS } from "../../shared/demand";
 import { nucleusProfileSchema,profileImportRecordSchema,type NucleusProfile,type ProfileImportRecord } from "../../shared/profiles";
 import { taskRoutingPolicy } from "../dispatch/routing";
 import { now,StoreCore } from "./store-core";
-import { ASSIGNMENT_HISTORY_KEEP } from "./store-maintenance";
+import { ASSIGNMENT_HISTORY_KEEP } from "./store-retention";
 
 /** Nucleus's own profile list and the one-time import record (Spec 052). */
 const PROFILES_META_KEY = "profiles";

@@ -1,38 +1,17 @@
 import type { Resolution } from '../resolution';
 import type { Profile, Task } from "../../shared/contracts";
-import { formatAgentId } from '../../shared/agent-identity';
 import { WORKER_REPLACEMENT_CEILING, workerExclusionFor, workerProfileIsExcluded } from "../../shared/contracts";
 import { isTransportFailure } from "../../shared/transport";
-import { demandRank, groupIsUnavailable, honouredWorkerThinking } from "../../shared/pool";
+import { demandRank, groupIsUnavailable, honouredWorkerThinking, unavailableGroupNames } from "../../shared/pool";
 import { runDemand } from "../../shared/demand";
-import { occupiesSlot } from "../dispatch/capacity";
 import type { Engine } from "../engine";
-import { isQuotaExhaustion, isRateLimitError, providerRetryAt, rateLimitCooldownData } from "./exhaustion";
+import { isQuotaExhaustion, isRateLimitError, providerRetryAt, rateLimitCooldownData } from "../recovery/exhaustion";
 import type { Adapter, AgentObservation } from "../host/adapter";
-import { chooseProfile, eligibilityReasons, reviewerFiltersWorker } from "../dispatch/routing";
+import { chooseProfile, eligibilityReasons, reviewerFiltersWorker } from "./routing";
 import { startsNoRuns } from "../closeout/queue-drain";
 import { now, type Store } from "../store/store";
-import { OPERATOR_RETAINED_WORKER_REPLACEMENT_REASON, OPERATOR_ROLE_REASSIGNMENT_REASON, OPERATOR_STOPPED_REVISION_REMAP_REASON, OPERATOR_STOPPED_WORKER_REMAP_REASON, OPERATOR_WORKER_REMAP_REASON, PROFILE_CATALOG_PENDING_REASON } from "./task-reasons";
-import { decideWorkerReplacement, isWorkerRouteApproved, retainedWorkerFailureCause, supersededReplacementRefusal, type WorkerReplacementDecision } from "./worker-replacement";
-
-/**
- * Audit A6: a retired worker is re-read on this bounded cadence instead of every
- * pass. Its record keeps the last observation in between, and a Paseo lifecycle
- * signal or an ordinary Queue invalidation for that identity or workspace makes
- * it due at once; missing evidence is still re-read rather than remembered.
- */
-export const RETIRED_OBSERVATION_INTERVAL_MS = 120_000;
-/** A retired worker's record is unsettled only past its own cadence plus the ordinary window. */
-export const RETIRED_OBSERVATION_STALE_MS = RETIRED_OBSERVATION_INTERVAL_MS + 45_000;
-/** Bound on the lifecycle identities remembered until the next pass; a burst cannot grow it without limit. */
-const LIFECYCLE_INVALIDATION_LIMIT = 512;
-/**
- * A key-order-independent digest of the persisted retired-worker observations,
- * so a pass that observed nothing new writes no record at all (audit A6).
- */
-function observationMapDigest(records: Record<string,{active:boolean;at:string}>): string {
-  return JSON.stringify(Object.keys(records).sort().map(key => [key, records[key]!.active, records[key]!.at]));
-}
+import { OPERATOR_RETAINED_WORKER_REPLACEMENT_REASON, OPERATOR_ROLE_REASSIGNMENT_REASON, OPERATOR_STOPPED_REVISION_REMAP_REASON, OPERATOR_STOPPED_WORKER_REMAP_REASON, OPERATOR_WORKER_REMAP_REASON, PROFILE_CATALOG_PENDING_REASON } from "../recovery/task-reasons";
+import { decideWorkerReplacement, isWorkerRouteApproved, replacementCeilingRefusal, retainedWorkerFailureCause, supersededReplacementRefusal, type WorkerReplacementDecision } from "../recovery/worker-replacement";
 
 /** Only explicit model/configuration failures blame a profile; transport and provider errors do not. */
 function profileFailure(error: string): boolean {
@@ -163,7 +142,7 @@ function planWorkerFailover(task: Task, state: AgentObservation, erroredWithoutT
     // needs_attention. Automatic exhaustion failover keeps retrying; an
     // operator decision parks visibly instead.
     if ((replacingRetainedWorker||replacingReassignedWorker) && !outage) {
-      const availability=store.db.prepare("SELECT data FROM availability").all().map(row=>{const entry=JSON.parse(String(row.data));return{group:String(entry.group),unavailable:groupIsUnavailable(entry),reason:String(entry.reason??''),retryAt:(entry.retryAt??null) as string|null};});
+      const availability=store.availability().map(entry=>({group:entry.group,unavailable:groupIsUnavailable(entry),reason:entry.reason,retryAt:entry.retryAt}));
       const excludedProfiles=task.workerExclusions.filter(exclusion=>exclusion.profileId).map(exclusion=>exclusion.profileId);
       const cause=`${eligibilityReasons(replacementTask,profiles,store.pool(),availability,store.usageLevel(),facts.profiles)}${excludedProfiles.length?`; excluded profiles: ${[...new Set(excludedProfiles)].join(', ')}`:''}`;
       return decideWorkerFailover({ stage: 'unselected', instruction: true, alternate: false, cause }) as WorkerFailoverDecision;
@@ -176,7 +155,7 @@ function planWorkerFailover(task: Task, state: AgentObservation, erroredWithoutT
     if(chooseProfile(replacementTask,restoredProfiles,selectionPool,store.counts(),new Set(),'worker',store.recentCounts(),store.usageLevel(), store.demandRoleOffsets())){
       return decideWorkerFailover({ stage: 'unselected', instruction: false, alternate: true, cause: '' }) as WorkerFailoverDecision;
     }
-    const availability=store.db.prepare("SELECT data FROM availability").all().map(row=>JSON.parse(String(row.data)));
+    const availability=store.availability();
     const cause=eligibilityReasons(replacementTask,profiles,store.pool(),availability,store.usageLevel(),facts.profiles);
     return decideWorkerFailover({ stage: 'unselected', instruction: false, alternate: false, cause }) as WorkerFailoverDecision;
   }
@@ -196,10 +175,7 @@ function planWorkerFailover(task: Task, state: AgentObservation, erroredWithoutT
       OPERATOR_ROLE_REASSIGNMENT_REASON].some(reason => task.failoverReason.startsWith(reason));
     const profileIssue = facts.retainedProfileIssue();
     const sweepGroup = task.profileGroup ?? store.pool().find(entry => entry.profileId === task.profile?.id)?.group ?? null;
-    const sweepAvailabilityRow = sweepGroup
-      ? store.db.prepare("SELECT data FROM availability WHERE group_id=?").get(sweepGroup)
-      : null;
-    const sweepAvailability = sweepAvailabilityRow ? JSON.parse(String((sweepAvailabilityRow as { data: string }).data)) : null;
+    const sweepAvailability = sweepGroup ? store.availability().find(entry => entry.group === sweepGroup) ?? null : null;
     const failure = retainedWorkerFailureCause({
       task,
       observedStatus: state.status,
@@ -234,182 +210,22 @@ function planWorkerFailover(task: Task, state: AgentObservation, erroredWithoutT
 }
 
 /**
- * Worker failover: the retired-worker observation cadence, the sweep that
- * replaces an exhausted or failed worker, and the archive of retired errored
- * agents. Same-name `Engine` methods delegate here. `store`, `adapter` and
- * `resolution` read the engine per call: tests replace the adapter.
+ * Worker failover: the sweep that replaces an exhausted or failed worker, its
+ * gated decision, and the availability read every profile selection shares. The
+ * retained-worker observation cadence lives in `core/recovery/retired-observation.ts`
+ * and the archive of retired errored agents in `core/workspaces/thread-archive.ts`;
+ * this module owns only the replacement itself. Same-name `Engine` methods
+ * delegate here. `store`, `adapter` and `resolution` read the engine per call:
+ * tests replace the adapter.
  */
-export type WorkerFailoverContext = Pick<Engine, 'activeHostId' | 'adapter' | 'host' | 'launchAgent' | 'note' | 'profileCatalogKnown' | 'profiles' | 'workerProviderUnavailable' | 'replacementCeilingRefusal' | 'retiredObservationKey' | 'stopped' | 'store' | 'taskHostAvailable' | 'unavailableGroups' | 'withHost'>
+export type WorkerFailoverContext = Pick<Engine, 'activeHostId' | 'adapter' | 'host' | 'launchAgent' | 'note' | 'profileCatalogKnown' | 'profiles' | 'workerProviderUnavailable' | 'stopped' | 'store' | 'taskHostAvailable' | 'withHost'>
   & { readonly resolution: Pick<Resolution, 'recordStop' | 'resumeTransientProviderThread' | 'resumeTransientWorker' | 'retainedWorkerProfileIssue' | 'suppressAutomaticRetry' | 'transportDeferred' | 'waiting'> };
 
 export class WorkerFailover {
-  /** Identities and workspaces a Paseo lifecycle signal invalidated since the last pass (audit A6). */
-  private readonly invalidatedIdentities = new Set<string>();
-  private readonly invalidatedWorkspaces = new Set<string>();
-  private readonly scopedInvalidatedIdentities = new Set<string>();
-  private readonly scopedInvalidatedWorkspaces = new Set<string>();
   constructor(readonly engine: WorkerFailoverContext) {}
   get store() { return this.engine.store; }
   get adapter() { return this.engine.adapter; }
   get resolution() { return this.engine.resolution; }
-  /**
-   * A Paseo lifecycle hint reaches Queue before the next pass (audit A6): the
-   * named identity or workspace is re-read then, rather than waiting for the
-   * retired-worker cadence. A hint is never authority; it only makes an
-   * observation due, and a burst is bounded so it cannot grow this memory.
-   */
-  noteLifecycleSignal(input: { agentId?: string | null; workspaceId?: string | null; hostId?: string | null }): void {
-    const add = (set: Set<string>, value: string | null | undefined) => {
-      if (!value) return;
-      set.delete(value);
-      set.add(value);
-      while (set.size > LIFECYCLE_INVALIDATION_LIMIT) set.delete(set.values().next().value!);
-    };
-    if (input.hostId) {
-      add(this.scopedInvalidatedIdentities, input.agentId ? formatAgentId(input.hostId, input.agentId) : null);
-      add(this.scopedInvalidatedWorkspaces, input.workspaceId ? JSON.stringify([input.hostId, input.workspaceId]) : null);
-    } else {
-      add(this.invalidatedIdentities, input.agentId);
-      add(this.invalidatedWorkspaces, input.workspaceId);
-    }
-  }
-  /**
-   * The retired-worker records this pass keeps and the identities it must read.
-   * A record survives its cadence only while it is still readable and no
-   * lifecycle signal or Queue invalidation named it; everything else is due and
-   * is re-read from live evidence rather than carried forward.
-   */
-  retiredObservationPlan(): { persisted: Record<string,{active:boolean;at:string}>; keep: Record<string,{active:boolean;at:string}>; due: string[] } {
-    const scope = this.engine.activeHostId;
-    const persisted = this.store.getMeta<Record<string,{active:boolean;at:string}>>(scope ? this.engine.retiredObservationKey(scope) : "retiredObservations") ?? {};
-    const keep: Record<string,{active:boolean;at:string}> = {};
-    const due: string[] = [];
-    const nowMs = Date.now();
-    // Task 629 moved slots to live agents, so a task between runs holds no slot —
-    // its retired workers are exactly the ones quiet detection must keep reading.
-    for (const task of this.store.activeCapacityTasks().filter(task => (!scope || task.hostId === scope) && this.engine.taskHostAvailable(task) && (occupiesSlot(task) || task.retiredWorkers.length > 0))) for (const worker of task.retiredWorkers) {
-      const previous = persisted[worker.agentId];
-      const at = previous ? Date.parse(previous.at) : Number.NaN;
-      const invalidated = this.invalidatedIdentities.has(worker.agentId) || Boolean(scope && this.scopedInvalidatedIdentities.has(formatAgentId(scope, worker.agentId)))
-        || Boolean(task.workspaceId && (this.invalidatedWorkspaces.has(task.workspaceId) || scope && this.scopedInvalidatedWorkspaces.has(JSON.stringify([scope, task.workspaceId]))));
-      if (previous && Number.isFinite(at) && nowMs - at < RETIRED_OBSERVATION_INTERVAL_MS && !invalidated) keep[worker.agentId] = previous;
-      else due.push(worker.agentId);
-    }
-    return { persisted, keep, due };
-  }
-  clearRetiredInvalidations(): void { this.invalidatedIdentities.clear(); this.invalidatedWorkspaces.clear(); this.scopedInvalidatedIdentities.clear(); this.scopedInvalidatedWorkspaces.clear(); }
-  /**
-   * Re-read the due retired workers and return the map the board counters read.
-   * A failed read leaves its identity absent, exactly as before: missing evidence
-   * keeps quiet detection unsettled instead of remembering an older answer. The
-   * store write is skipped when nothing moved, so an unchanged pass persists no
-   * observation at all.
-   */
-  async observeRetiredWorkers(plan: { persisted: Record<string,{active:boolean;at:string}>; keep: Record<string,{active:boolean;at:string}>; due: string[] },
-    inventory: ReadonlyMap<string, AgentObservation> | null): Promise<{ observations: Record<string,{active:boolean;at:string}>; changed: boolean }> {
-    const observations: Record<string,{active:boolean;at:string}> = { ...plan.keep };
-    if (plan.due.length) {
-      const workspaces = new Map<string,string|null>();
-      for (const task of this.store.activeCapacityTasks().filter(task => (!this.engine.activeHostId || task.hostId === this.engine.activeHostId) && (occupiesSlot(task) || task.retiredWorkers.length > 0))) for (const worker of task.retiredWorkers) workspaces.set(worker.agentId, task.workspaceId);
-      for (const agentId of plan.due) {
-        try {
-          const state = inventory?.get(agentId) ?? await this.engine.host.observe(agentId);
-          observations[agentId] = { active: state.active || state.permissions || !["idle","error","closed"].includes(state.status) || state.workspaceId !== workspaces.get(agentId), at: now() };
-        } catch { /* Missing evidence keeps quiet detection unsettled. */ }
-      }
-    }
-    return { observations, changed: observationMapDigest(observations) !== observationMapDigest(plan.persisted) };
-  }
-  /** The subscription groups currently recorded unavailable, from the durable availability rows. */
-  unavailableGroups(): Set<string> {
-    return new Set(this.store.db.prepare("SELECT data FROM availability").all().flatMap(row => {
-      const entry = JSON.parse(String(row.data));
-      return groupIsUnavailable(entry) ? [String(entry.group)] : [];
-    }));
-  }
-  /** The refusal when the worker retirement ceiling has been reached. */
-  replacementCeilingRefusal(task: Task): string {
-    return `Nucleus has retired ${task.retiredWorkers.length} workers, the replacement ceiling of ${WORKER_REPLACEMENT_CEILING}; an operator-relayed restart role=worker fresh is required to replace it`;
-  }
-  /**
-   * Task 646: Paseo marks a workspace Failed while any of its agents reports
-   * status `error`. When a task has moved past an errored agent's run — a
-   * later run succeeded, or the run was replaced and released — the retired
-   * errored agent keeps the workspace Failed with no live work behind it.
-   * Paseo's agent surface offers no attention-clear call (only `archive`), so
-   * this sweep archives retired errored agents no unreleased run references,
-   * once the errored thread has stopped. Agents still referenced, active, or
-   * outside the task workspace are never touched. A task is swept when its
-   * retired set grows, else at most every ten minutes, so the sweep adds no
-   * per-pass Paseo read per retired agent.
-   */
-  async archiveRetiredErroredAgents(scopedHost?: string): Promise<void> {
-    if (!scopedHost) {
-      const hosts = new Set(this.store.activeCapacityTasks().flatMap(task => task.hostId ? [task.hostId] : []));
-      for (const host of hosts) await this.engine.withHost(host, () => this.archiveRetiredErroredAgents(host));
-      return;
-    }
-    // T3 keeps every task thread visible until closeout, including displaced
-    // workers and support threads. This Paseo Failed-workspace cleanup must not
-    // archive them while their task is still open (nucleus#1155).
-    if (typeof this.engine.adapter.deleteAgent === 'function') return;
-    const sweep = this.store.getMeta<Record<string, { count: number; at: string; archived?: string[] }>>('retiredArchiveSweep') ?? {};
-    let sweepChanged = false;
-    const tasks = this.store.activeCapacityTasks();
-    const activeIds = new Set(tasks.map(task => task.id));
-    for (const taskId of Object.keys(sweep)) if (!activeIds.has(taskId)) {
-      delete sweep[taskId];
-      sweepChanged = true;
-    }
-    for (const task of tasks) {
-      if (startsNoRuns(this.store, this.engine.stopped)) return;
-      if (task.hostId !== scopedHost) continue;
-      if (!this.engine.taskHostAvailable(task)) continue;
-      const stamped = sweep[task.id];
-      if (stamped && stamped.count === task.retiredWorkers.length && Date.now() - Date.parse(stamped.at) < 10 * 60_000) continue;
-      sweep[task.id] = { ...stamped, count: task.retiredWorkers.length, at: now() };
-      sweepChanged = true;
-      const runs = this.store.runs(task.id);
-      const referenced = new Set<string>();
-      for (const run of runs) if (!run.released && run.agentId) referenced.add(run.agentId);
-      for (const id of [task.agentId, task.resolution.reviewerAgentId, task.coordinatorAgentId]) if (id) referenced.add(id);
-      const candidates: Array<{ agentId: string; why: string }> = [];
-      for (const retired of task.retiredWorkers) {
-        if (!retired.agentId || referenced.has(retired.agentId)) continue;
-        candidates.push({ agentId: retired.agentId, why: `retired worker ${retired.runId}` });
-      }
-      for (const run of runs) {
-        if (!run.released || run.status !== 'superseded' || !run.agentId || referenced.has(run.agentId)) continue;
-        if (run.role === 'reviewer' && run.agentId === task.resolution.reviewerAgentId) continue;
-        candidates.push({ agentId: run.agentId, why: `superseded ${run.role} run ${run.id}` });
-      }
-      const candidateIds = new Set(candidates.map(candidate => candidate.agentId));
-      const archived = new Set((sweep[task.id]?.archived ?? []).filter(id => candidateIds.has(id)));
-      if (sweep[task.id]!.archived?.length !== archived.size) sweepChanged = true;
-      sweep[task.id]!.archived = [...archived];
-      for (const candidate of candidates) {
-        if (archived.has(candidate.agentId)) continue;
-        if (startsNoRuns(this.store, this.engine.stopped)) return;
-        let state: AgentObservation | null = null;
-        try { state = await this.engine.host.observe(candidate.agentId); }
-        catch { continue; }
-        if (!state || state.workspaceId !== task.workspaceId) continue;
-        if (state.active || state.activeTurnId || state.permissions) continue;
-        if (!["idle", "closed", "error"].includes(state.status)) continue;
-        if (state.status !== 'error' && !state.error) continue;
-        try {
-          await this.engine.host.archiveAgent(candidate.agentId);
-        } catch { continue; }
-        archived.add(candidate.agentId);
-        sweep[task.id]!.archived = [...archived];
-        sweepChanged = true;
-        this.store.setMeta('retiredArchiveSweep', sweep);
-        sweepChanged = false;
-        this.store.event(task.id, 'retired_errored_agent_archived', `${candidate.why}: archived errored agent ${candidate.agentId} so the workspace no longer reports Failed`);
-      }
-    }
-    if (sweepChanged) this.store.setMeta('retiredArchiveSweep', sweep);
-  }
   async recoverExhaustedWorkers(scopedHost?: string): Promise<void> {
     if (!scopedHost) {
       const hosts = new Set(this.store.activeCapacityTasks().flatMap(task => task.hostId ? [task.hostId] : []));
@@ -474,16 +290,15 @@ export class WorkerFailover {
         // error status alone does not prove that the existing thread cannot resume.
         if (!pausedStopHeld && !revision && !armed.failoverReason && await this.resolution.resumeTransientWorker(armed, state)) continue;
         const assignedGroup = original.profileGroup ?? this.store.pool().find(p=>p.profileId===original.profile!.id)?.group;
-        const availabilityRow = assignedGroup
-          ? this.store.db.prepare("SELECT data FROM availability WHERE group_id=?").get(assignedGroup)
-          : null;
-        const assignedAvailability = availabilityRow ? JSON.parse(String(availabilityRow.data)) : null;
+        const assignedAvailability = assignedGroup ? this.store.availability().find(entry => entry.group === assignedGroup) ?? null : null;
         const assignedGroupUnavailable = Boolean(assignedAvailability && groupIsUnavailable(assignedAvailability));
         if (!pausedStopHeld && !original.failoverReason && (!report || ["blocked","error"].includes(report.status)) && (isQuotaExhaustion(state.error) || assignedGroupUnavailable)) {
           if (startsNoRuns(this.store, this.engine.stopped)) return;
           const group = assignedGroup;
           if (!group) { this.engine.note(original.id,"Exhausted provider has no recorded subscription group; inspect routing", 'operator_needed', "needs_attention");continue; }
-          const reason = isQuotaExhaustion(state.error) ? state.error : String(assignedAvailability.reason || `Subscription group ${group} is unavailable`);
+          // The typed row may be absent (a group with no recorded availability):
+          // the wait still records, with the group's own name as its reason.
+          const reason = isQuotaExhaustion(state.error) ? state.error : String(assignedAvailability?.reason || `Subscription group ${group} is unavailable`);
           this.store.transaction(()=>{
             if(!assignedGroupUnavailable)this.store.setAvailability(group,JSON.stringify({group,unavailable:true,reason:reason.slice(0,2000),retryAt:providerRetryAt(state.error,report?.providerRetryAt)}));
             this.store.update(original.id,{failoverReason:reason.slice(0,2000)},assignedGroupUnavailable?"provider_unavailable":"provider_exhausted",`${group}: ${reason.slice(0,2000)}`);
@@ -503,8 +318,8 @@ export class WorkerFailover {
         if (isRateLimitError(state.error)) {
           const pacedGroup = task.profileGroup ?? this.store.pool().find(entry => task.profile && entry.profileId === task.profile.id)?.group ?? null;
           if (pacedGroup) {
-            const row = this.store.db.prepare('SELECT data FROM availability WHERE group_id=?').get(pacedGroup) as { data: string } | undefined;
-            this.store.setAvailability(pacedGroup, rateLimitCooldownData(row?.data, state.error, pacedGroup));
+            const row = this.store.availability().find(entry => entry.group === pacedGroup) ?? null;
+            this.store.setAvailability(pacedGroup, rateLimitCooldownData(row, state.error, pacedGroup));
           }
         }
         const failover = planWorkerFailover(task, state, erroredWithoutTurn, {
@@ -513,7 +328,7 @@ export class WorkerFailover {
           catalogKnown: () => this.engine.profileCatalogKnown(),
           suppressed: () => this.resolution.suppressAutomaticRetry(task, 'provider_failover',
             task.completion?.summary ?? task.failoverReason, task.runId),
-          unavailableGroups: () => this.engine.unavailableGroups(),
+          unavailableGroups: () => unavailableGroupNames(this.store.availability()),
           retainedProfileIssue: () => this.resolution.retainedWorkerProfileIssue(task),
           providerUnavailable: () => this.engine.workerProviderUnavailable(task),
         });
@@ -526,7 +341,7 @@ export class WorkerFailover {
           continue;
         }
         if (failover.kind === "ceiling") {
-          this.engine.note(task.id, `${this.engine.replacementCeilingRefusal(task)}. Nothing was retired and no worker was created`, 'operator_needed', "needs_attention");continue;
+          this.engine.note(task.id, `${replacementCeilingRefusal(task)}. Nothing was retired and no worker was created`, 'operator_needed', "needs_attention");continue;
         }
         if (failover.kind === "catalog_pending") { this.resolution.waiting(this.store.task(task.id), PROFILE_CATALOG_PENDING_REASON, 'lifecycle'); continue; }
         if (failover.kind === "refuse_instruction") {

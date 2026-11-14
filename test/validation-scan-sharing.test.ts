@@ -25,7 +25,7 @@ import { randomUUID } from "node:crypto";
 import { Store } from "../core/store/store";
 import { Engine } from "../core/engine";
 import { VALIDATION_SCAN_PASS_MAX_MS } from "../core/resolution";
-import { taskProgressDigest } from "../core/recovery/recovery";
+import { taskProgressDigest } from "../core/recovery/coordinator-report";
 import { submissionSchema, type Profile, type Run, type Task } from "../shared/contracts";
 import type { Incident } from "../shared/incident";
 import type { Adapter } from "../core/host";

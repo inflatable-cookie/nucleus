@@ -1,6 +1,7 @@
 import { DEFAULT_PROJECT_LIMIT, DEFAULT_PAPERCUT_PROJECT_LIMIT } from "../../shared/contracts";
 import { currentTaskStop, holdsOf, isDispositionActive, mergeHeld, runHoldsSlot, type Run, type Task } from "../../shared/contracts";
 import { DEFAULT_GLOBAL_LIMIT, formatTaskNumber, isParkedTask } from "../../shared/contracts";
+import { routeUnavailableStop } from "../../shared/task-stop";
 import { CAPACITY_WAIT_PREFIX, inFlightSlotWaitReason } from "../../shared/wait-state";
 import type { Resolution } from "../resolution";
 import type { Store } from "../store/store";
@@ -241,7 +242,7 @@ export function slotRequestDecision(candidate: Task, parkedPhases: readonly stri
     if (facts.integrationReady === undefined) return 'read';
     if (!facts.integrationReady) return false;
   }
-  if (/no eligible|configure.*profile|profile.*unavailable/i.test(candidate.reason)) {
+  if (routeUnavailableStop(candidate)) {
     if (facts.routingRetryAllowed === undefined) return 'read';
     if (!facts.routingRetryAllowed) return false;
   }
@@ -413,7 +414,7 @@ export class SlotAdmission {
         input.integrationReady = facts ? facts.integrationReady(candidate) : this.resolution.holdsIntegrationTurn(candidate);
         result = slotRequestDecision(candidate, parkedPhases, includeRecovery, input);
       }
-      if (result === 'read' && /no eligible|configure.*profile|profile.*unavailable/i.test(candidate.reason)) {
+      if (result === 'read' && routeUnavailableStop(candidate)) {
         input.routingRetryAllowed = this.store.routingRetryAllowed(candidate);
         result = slotRequestDecision(candidate, parkedPhases, includeRecovery, input);
       }

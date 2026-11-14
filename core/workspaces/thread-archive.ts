@@ -402,7 +402,7 @@ async function settleArchive(store: Store, adapter: Adapter, taskId: string, age
  * the same probe record the terminal lane uses. An unchanged wait is not a new
  * event.
  */
-function archiveWait(store: Store, taskId: string, agentId: string, detail: string): void {
+export function archiveWait(store: Store, taskId: string, agentId: string, detail: string): void {
   const key = archiveProbeKey(store, taskId, agentId);
   if (store.getMeta<string>(key) !== detail) store.event(taskId, 'thread_archive_wait', `${agentId}: ${detail}`);
   store.setMeta(key, detail);
@@ -670,3 +670,4 @@ function finished(store: Store, task: Task, run: Run): boolean {
         store.events(task.id).some(event => event.kind === 'escalation_resolved' && event.at >= run.createdAt));
   return false;
 }
+

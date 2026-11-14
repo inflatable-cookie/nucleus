@@ -1,7 +1,7 @@
 import type { Engine } from '../engine';
 import type { Task } from '../../shared/contracts';
 import { isDispositionActive, workerProfileIsExcluded } from '../../shared/contracts';
-import { unavailableGroups } from '../../shared/pool';
+import { unavailableGroupNames } from '../../shared/pool';
 import { capacityRefusal, dispatchBlocked, occupiesSlot } from './capacity';
 import { workspaceAdmissionGapMs } from '../engine';
 import { GitBulkCommandError } from '../git/index';
@@ -75,7 +75,7 @@ export class FirstDispatch {
     // One availability read for this dispatch: selection and its refusal text
     // read the same instant, so a refusal never names a different pool state.
     const availability = this.store.availability();
-    const unavailable = unavailableGroups(availability);
+    const unavailable = unavailableGroupNames(availability);
     // The task's own host decides availability: profiles its catalog cannot
     // run (a thinking level or feature value it does not report) are kept out
     // of selection here instead of being refused at launch (nucleus#1139).
