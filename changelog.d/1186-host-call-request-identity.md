@@ -1,0 +1,1 @@
+Host-call admission now identifies keyed requests from their complete arguments so calls with different payloads cannot merge. Identical notifications still merge, while distinct messages to one agent run in order. Owner restart reports unknown delivery after an interrupted instruction send instead of resending blindly.

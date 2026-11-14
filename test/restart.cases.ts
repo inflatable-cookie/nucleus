@@ -18,6 +18,7 @@ import { REVIEW_AUTHORIZATION_REQUIRED, reviewCheckpointPathFor, writeReviewChec
 import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
 import { runFenceRefusal } from '../core/intake/run-settlement';
 import { recoveryEffects } from '../core/recovery/recovery-effects';
+import { restartShape } from '../core/verbs/owner-restart';
 import { taskProgressDigest } from '../core/recovery/recovery';
 import { runPrompt } from '../core/dispatch/prompts';
 import { queueOperationSchema } from '../shared/operations';
@@ -70,6 +71,7 @@ function fixture() {
   const createdRuns: Run[] = [];
   const createdRunTokens = new Map<string, string>();
   const archived = new Set<string>();
+  let notify = async (_agentId: string, _messageId: string, _text: string) => {};
   const adapter = fakeAdapter({
     catalog: async () => paseoCatalog(),
     validate: async () => base,
@@ -83,7 +85,7 @@ function fixture() {
     },
     observe: async (id: string) => observations.get(id) ?? { id, workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '' },
     originAgent: async (id: string) => ({ id, workspaceId: 'workspace', title: id, archived: archived.has(id) }),
-    archiveAgent: async (id: string) => { archived.add(id); }, notify: async () => {},
+    archiveAgent: async (id: string) => { archived.add(id); }, notify: async (agentId: string, messageId: string, text: string) => notify(agentId, messageId, text),
     findRunAgents: async () => [],
     verifyPr: async () => ({ head: store.task(submitted.id).prHead ?? head, url: store.task(submitted.id).prUrl ?? 'https://github.com/example/repo/pull/7', repository: 'example/repo', headRepository: 'example/repo', crossRepository: false }),
     verifyPrIdentity: async () => ({ head: store.task(submitted.id).prHead ?? head, url: store.task(submitted.id).prUrl ?? 'https://github.com/example/repo/pull/7', repository: 'example/repo', headRepository: 'example/repo', crossRepository: false }),
@@ -119,7 +121,7 @@ function fixture() {
   const next = () => taskNextSchema.parse(ownerTaskNext(collectOwnerVerbFacts(store, current())));
   return {
     dir, store, engine, adapter, profiles: { worker, reviewer, coord }, taskId: submitted.id, current, control, events, next,
-    observations, createdRunTokens, createdRuns,
+    observations, createdRunTokens, createdRuns, setNotify: (next: typeof notify) => { notify = next; },
     close: async () => { await engine.stop(); store.close(); rmSync(dir, { recursive: true, force: true }); },
   };
 }
@@ -811,6 +813,25 @@ test('unobservable worker restart is a definite refused operation with no lifecy
     assert.match(operation.diagnostic, /cannot be observed.*No continuation was sent/);
     assert.equal(operation.effect?.status, 'reconciled');
     assert.deepEqual(restartState(f), before);
+  } finally { await f.close(); }
+});
+
+test('an owner restart with an intent but no sent receipt reports unknown delivery and never resends', async () => {
+  const f = fixture(); try {
+    retainedWorker(f, 'retained_worker', false);
+    f.store.update(f.taskId, { phase: 'working', agentActive: false, lastAgentStatus: 'idle' });
+    f.store.event(f.taskId, 'owner_stopped', JSON.stringify({ runIds: ['worker-run'] }));
+    assert.equal(restartShape(f.current(), f.store.runs(f.taskId), 'worker', f.store.eventsAll(f.taskId)), 'owner_stopped_worker');
+    let sends = 0;
+    f.setNotify(async () => { sends++; throw new Error('reply lost after send'); });
+    const request = () => taskControlInputSchema.parse({ taskId: f.taskId, version: f.current().version,
+      action: 'restart', reason: 'Owner restart', instruction: 'Continue the approved task', caller: CALLER });
+    await assert.rejects(f.engine.restartTask(request()), /reply lost after send/);
+    assert.equal(f.events('owner_restart_instruction_intent').length, 1);
+    assert.equal(f.events('owner_restart_instruction_sent').length, 0);
+    await assert.rejects(f.engine.restartTask(request()), /delivery is unknown/);
+    assert.equal(sends, 1);
+    assert.equal(f.events('owner_restart_instruction_intent').length, 1);
   } finally { await f.close(); }
 });
 
