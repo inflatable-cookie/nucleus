@@ -291,10 +291,13 @@ export function ownerTaskStop(facts: OwnerVerbFacts): TaskNextStop | null {
   if (!kind) return null;
   const stored = currentTaskStop(task, budget);
   // No recorded stop: type it from the stop kind. Only a queued task's reason is
-  // Queue's own dispatch text to classify; any other reason may be an agent's report.
+  // Nucleus's own dispatch text to classify; any other reason may be an agent's report.
   // A row released before its release reset the hold text still says "Dispatch
-  // held"; with no fence left it waits for dispatch like any queued task.
-  const reasonText = kind === "wait" && taskStopClassification(task.reason).reason === "held" ? DISPATCH_WAIT_REASON : task.reason;
+  // held"; with no fence left it waits for dispatch like any queued task. The text
+  // typed here is the one `next` reports, so a budget pause the measured figure no
+  // longer shows cannot come back as an operator wait (nucleus#1187).
+  const visibleReason = taskVisibleReason(task, budget);
+  const reasonText = kind === "wait" && taskStopClassification(visibleReason).reason === "held" ? DISPATCH_WAIT_REASON : visibleReason;
   const fallback: TaskStopReason = kind === "hold" ? "held"
     : kind === "wait" ? (task.prerequisiteWait && !task.prerequisiteWait.releasedAt ? "prerequisite" : taskStopClassification(reasonText).reason)
       : "operator_needed";

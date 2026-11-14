@@ -317,6 +317,17 @@ test('a stored budget pause the figure no longer shows does not fence a queued t
     assert.equal(taskBudget(f.current(), f.store.runs(f.submitted.id), Date.now(), f.store.eventsAll(f.submitted.id)).exhausted, null);
     assert.equal(slotRequestFenced(f.current()), true, 'the stored pause fences the queued request');
     assert.equal(operatorQuestionFor(f.store, f.current()), null, 'and raises no budget question');
+    // Read before any pass, the stop and the reason must not contradict each other
+    // (review 5900239817): the task waits for dispatch, it does not wait on a person
+    // carrying the cleared pause's text.
+    const early = ownerTaskNext(collectOwnerVerbFacts(f.store, f.current()));
+    assert.equal(early.reason, DISPATCH_WAIT_REASON);
+    assert.equal(early.stop?.kind, 'wait');
+    assert.equal(early.stop?.reason, 'capacity');
+    assert.equal(early.stop?.detail, DISPATCH_WAIT_REASON);
+    const earlyRuns = f.store.runs(f.submitted.id), earlyEvents = f.store.eventsAll(f.submitted.id);
+    const earlyBoard = summarizeTask(f.current(), false, false, {}, earlyRuns, undefined, 'host', earlyEvents);
+    assert.equal(earlyBoard.reason, DISPATCH_WAIT_REASON, 'the board reads the same reason as next');
 
     f.engine.resolution.settleBudgetClock(f.current());
     const cleared = f.current();
@@ -327,7 +338,8 @@ test('a stored budget pause the figure no longer shows does not fence a queued t
     const next = ownerTaskNext(collectOwnerVerbFacts(f.store, cleared));
     assert.equal(next.stop?.kind, 'wait');
     assert.equal(next.stop?.reason, 'capacity');
-    assert.doesNotMatch(next.reason, /Budget reached/);
+    assert.equal(next.reason, DISPATCH_WAIT_REASON);
+    assert.doesNotMatch(next.stop?.detail ?? '', /Budget reached/);
     assert.equal(f.events('operator_question_superseded').some(event => event.detail.startsWith('budget-old:')), true);
   } finally { await f.close(); }
 });

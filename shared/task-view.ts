@@ -7,7 +7,7 @@ import { deriveWaitState, type WaitStateContext } from "./wait-state";
 import { taskBudget, taskBudgetBoardView, type BudgetEvent, type TaskBudgetView } from "./task-budget";
 import { reportHeadline, TASK_PROGRESSING_REASON } from "./task-detail-summary";
 import { taskSummarySchema } from "./schema/task-view";
-import { isWaitingTaskStop, type TaskStopRecord, type TaskStopKind } from "./task-stop";
+import { DISPATCH_WAIT_REASON, isWaitingTaskStop, type TaskStopRecord, type TaskStopKind } from "./task-stop";
 export * from "./task-stop";
 
 /**
@@ -160,11 +160,14 @@ export function currentTaskStop(task: Task, budget?: TaskBudgetView | null): Tas
  * The reason a read shows for the task's current state (papercut 703b4aa3). A
  * recorded budget pause the measured budget no longer shows is not the task's
  * reason any more: oxide#083 kept reading "Budget reached" after the pause's own
- * figure had cleared, so the read states the task is progressing instead.
+ * figure had cleared. What the task is doing instead is the wait its phase carries
+ * — dispatch for a queued task, progress for any other — so the reason, the stop
+ * and the board badge never contradict each other (nucleus#1187).
  */
 export function taskVisibleReason(task: Task, budget: TaskBudgetView | null | undefined): string {
   const stop = task.resolution.stop;
-  return stop?.reason === "budget" && budget && !budget.exhausted ? TASK_PROGRESSING_REASON : task.reason;
+  if (stop?.reason !== "budget" || !budget || budget.exhausted) return task.reason;
+  return task.phase === "queued" ? DISPATCH_WAIT_REASON : TASK_PROGRESSING_REASON;
 }
 
 /**
