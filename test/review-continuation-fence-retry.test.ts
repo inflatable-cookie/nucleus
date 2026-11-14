@@ -13,6 +13,10 @@ test('fresh review launches at the current head over either checkpoint fence', a
       else f.store.putRun({ ...f.run(), id: 'other-reader', agentId: 'other-reader', reviewCheckpoints: [] });
       await f.engine.performTaskControl({ action: 'move', to: 'review', fresh: true, taskId: f.submitted.id,
         version: f.current().version, reason: 'Start a fresh independent review at this head' });
+      await f.engine.resolution.remindStoppedRun(f.current(), f.run());
+      assert.equal(f.store.events(f.submitted.id).filter(event => event.kind === 'callback_reminder').length, 0,
+        'a superseded reviewer gets no callback reminder');
+      assert.notEqual(f.current().resolution.incident?.runId, f.runId, 'a superseded reviewer creates no missing-callback incident');
       f.store.setMeta('paused', false);
       await f.engine.wake(); await f.engine.wake();
       const replacement = f.store.run(f.current().resolution.currentRunId!);

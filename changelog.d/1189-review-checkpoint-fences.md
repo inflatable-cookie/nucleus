@@ -1,0 +1,1 @@
+Reviewer checkpoint continuations now ignore verified results from an earlier head after a newer author result, and `next` offers a fresh review when a result fences an idle checkpoint. Superseded reviewers no longer receive callback reminders, and ordinary review admission races retry on the next pass without creating incidents.

@@ -1297,6 +1297,40 @@ weighted(3)("a prior round's result at an older head is history: the current che
   } finally { await f.close(); }
 });
 
+weighted(3)("an approval at an older head is history after the author returns and the reviewer checkpoint continues", async () => {
+  const f = fixture(); try {
+    await f.report({ covered: ['Diff'], remaining: ['Proofs'] }, 'approved-old-head-cp');
+    const approval = priorRound(f, { status: 'ready_to_merge' });
+    f.store.update(f.submitted.id, { resolution: { ...f.current().resolution, review: approval } });
+    const outcome = await acceptControl(f, reviewControl(f));
+    assert.equal(outcome.state, 'succeeded', outcome.diagnostic);
+    assert.equal(f.reviewerDeliveries.length, 1);
+    assert.equal(f.reviewerDeliveries[0]!.runId, f.runId);
+    assert.equal(f.current().resolution.review?.runId, 'prior-review');
+  } finally { await f.close(); }
+});
+
+weighted(3)('an idle checkpoint fenced by its own-head result is shown stopped and offers an applicable fresh reviewer', async () => {
+  const f = fixture(); try {
+    await f.report({ covered: ['Diff'], remaining: ['Proofs'] }, 'own-head-result-cp');
+    const result = completionSchema.parse({ eventId: 'own-head-review-result', taskId: f.submitted.id, runId: f.runId,
+      status: 'ready_to_merge', summary: 'Approved at this head', head });
+    f.store.update(f.submitted.id, { resolution: { ...f.current().resolution, review: result } });
+    await f.engine.wake();
+    const next = ownerTaskNext(collectOwnerVerbFacts(f.store, f.current()));
+    assert.equal(next.activeRun?.status, 'stopped');
+    assert.match(next.stop?.detail ?? '', /reviewer result fences checkpoint/);
+    const restart = next.verbs.find(verb => verb.available && verb.verb === 'restart' && verb.args?.role === 'reviewer');
+    assert.ok(restart, 'next offers restart role=reviewer fresh');
+    assert.equal(restart.args?.fresh, true);
+    const outcome = await acceptControl(f, taskControlInputSchema.parse({ ...restart.args,
+      reason: 'The result fences the saved checkpoint; start a fresh review at this head', caller: 'owner' }));
+    assert.equal(outcome.state, 'succeeded', outcome.diagnostic);
+    assert.equal(f.createdRuns.length, 1);
+    assert.equal(f.reviewerDeliveries.length, 0, 'the fenced run receives no second turn');
+  } finally { await f.close(); }
+});
+
 weighted(8)('a review result the lifecycle cannot prove is an earlier round still fences the checkpoint', async () => {
   const shapes = ['own run', 'same head', 'unknown run', 'tampered event', 'unreleased source', 'no revision between', 'revision after the current run',
     'source after the current run', 'ready_to_merge', 'changed review head', 'foreign review task', 'foreign completion run', 'missing head',
