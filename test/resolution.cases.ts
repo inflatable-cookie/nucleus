@@ -727,6 +727,34 @@ test('a withdrawn pending question with no host dismissal handle waits honestly 
   assert.equal(f.store.events(f.task.id).filter(event=>event.kind==='native_question_dismissed').length,0,'nothing is recorded as dismissed');
  }finally{await f.close()}
 });
+test('a withdrawn pending permission with no recorded request is cancelled by text match (papercut ee9fc161)',async()=>{
+ // The host never reported the native request id, so no operator_question_native_request
+ // record exists; the stale permission still names the withdrawn question in its
+ // first line. Dispatch cancels it (never a tool/bash approval) and launches next.
+ const f=fixture();try{
+  const qid='d912dbab-0000-4000-8000-000000000002';
+  f.store.event(f.task.id,'operator_question_superseded',`${qid}: the exhausted budget was extended`);
+  f.store.event(f.task.id,'native_question_dismiss_intent',`${qid}: the exhausted budget was extended`);
+  let cleared=false;
+  f.states.set('worker',{id:'worker',workspaceId:'workspace',status:'idle',active:false,permissions:true,error:'',pendingRequest:{id:'perm-7',kind:'permission',firstLine:`[Queue decision ${qid}] Approve budget extension?`}} as never);
+  const cancelled:unknown[][]=[];
+  (f.adapter as unknown as Record<string,unknown>).answerNativePermission=async(...args:unknown[])=>{cancelled.push(args);cleared=true;};
+  const innerObserve=f.adapter.observe;
+  f.adapter.observe=(async(id:string)=>cleared?{id,workspaceId:'workspace',status:'idle',active:false,permissions:false,error:''}:innerObserve(id)) as typeof f.adapter.observe;
+  f.store.update(f.task.id,{phase:'changes_requested',reason:'Apply review fixes'});
+  await f.engine.resolution.launch(f.current(),'revision');
+  assert.equal(cancelled.length,1,'the stale withdrawn permission is cancelled through the host');
+  assert.deepEqual(cancelled[0]?.slice(0,4),['worker','workspace','perm-7','cancel']);
+  assert.match(String(cancelled[0]?.[4]),/^ns-withdrawn-/,'the cancel carries the durable withdrawn intent id');
+  assert.ok(f.store.events(f.task.id).some(event=>event.kind==='native_permission_cancel_intent'&&event.detail.includes('perm-7')),'the cancel intent is recorded');
+  assert.match(f.current().reason,/Resolving a withdrawn/,'the first pass resolves instead of stalling on the pending permission');
+  assert.equal(f.store.runs(f.task.id).some(run=>run.role==='revision'),false,'no run launches while the host still reports the permission');
+  await f.engine.resolution.launch(f.current(),'revision');
+  const revision=f.store.runs(f.task.id).find(run=>run.role==='revision');
+  assert.ok(revision,'the retained revision launches once the withdrawn permission is resolved');
+  assert.equal(revision!.agentId,'worker');
+ }finally{await f.close()}
+});
 test('two concurrent revision launches record exactly one run on the retained thread',async()=>{
  const f=fixture();try{
   await f.engine.wake();await f.report('changes_required');
