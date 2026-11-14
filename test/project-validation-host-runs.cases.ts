@@ -164,10 +164,10 @@ weighted(2)('a service roll during candidate cleanup keeps the verdict and finis
   let interrupted = false;
   let candidatePath = '';
   (hooksBefore as any).removeIsolatedCheckout = async (owner: Task, path: string, force: boolean) => {
-    if (!interrupted) {
+    const durable = f.store.task(task.id).resolution.projectValidation;
+    if (!interrupted && durable?.state === 'passed' && durable.candidateCleanupPending === true) {
       interrupted = true;
       candidatePath = path;
-      const durable = f.store.task(task.id).resolution.projectValidation!;
       assert.equal(durable.state, 'passed', 'the verdict is durable before disposable candidate cleanup starts');
       assert.equal(durable.candidateCleanupPending, true, 'the cleanup intent survives a service roll');
       await rm(join(path, '.git'), { recursive: true, force: true });
@@ -191,6 +191,9 @@ weighted(2)('a service roll during candidate cleanup keeps the verdict and finis
   const after = new HostRunScheduler(f.store, { capacity });
   t.after(() => after.stop());
   const hooksAfter = new RepositoryHooks(f.store, { hostRuns: after });
+  const durable = f.store.task(task.id).resolution.projectValidation!;
+  assert.equal(durable.state, 'passed');
+  assert.equal(durable.candidateCleanupPending, true);
   const resumed = await hooksAfter.projectValidationGate(f.store.task(task.id), f.head, validation);
   assert.equal(resumed.kind, 'ok', JSON.stringify(resumed));
   assert.equal(f.store.task(task.id).resolution.projectValidation?.state, 'passed');
