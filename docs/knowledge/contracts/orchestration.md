@@ -463,7 +463,7 @@ path. The pure `advanceOwner` names the owner that advances one completed run by
 role. Proof-execution settlement and the revision `report_ready` transition are
 `core/intake/proof-settlement.ts` and `core/intake/report-ready.ts`, shared with
 run intake. A checkout or PR-identity refusal is the typed `WorkerSourceRefusal`
-from `core/git/index.ts`, whose code decides the route; no message is classified.
+from `core/git/git-refusals.ts`, whose code decides the route; no message is classified.
 Enforces [Verdicts and findings](#verdicts-and-findings) and the
 single-apply fence in [Durable effects](#durable-effects-and-unknown-delivery).
 Delegates remain on Resolution and return the owner's promise without an
