@@ -1,8 +1,24 @@
-import { listHostUidProcesses, ownedToolAgentProcessTreeVerdict } from './host-process-reap';
+import { ownedToolAgentProcessTreeVerdict } from './owned-tool-process-proof';
+import { readHostUidProcesses } from './host-process-listing';
 import type { Resolution } from '../resolution';
-import { turnBoundTool, liveToolIssue, noTurnLive, observedTurnState, readToolTimeline, runningOwnedTool, type TimelineEntry } from '../recovery/stall';
+import {
+  formatLiveToolIssue, liveToolIssueFact, noTurnLive, observedTurnState, readToolTimeline, runningOwnedTool, turnBoundTool,
+} from '../recovery/stall';
+import type { HostProcessFact } from '../host/types';
 
-/** Proves no live tool holds a run, and records the `owned_tool_*` events that say so. */
+/** The owned-tool events this proof reads and writes. */
+const OWNED_TOOL_HOLD = 'owned_tool_hold';
+const OWNED_TOOL_SETTLED = 'owned_tool_settled';
+
+/**
+ * The owned-tool proof: no live tool holds a run.
+ *
+ * The decision is made on typed facts. The tool timeline reader answers with
+ * entries or an issue; `liveToolIssueFact` names the exact fact that refuses
+ * (a live non-turn-bound call, a conflicting identity, an unreadable state);
+ * the process-tree proof answers empty, live or unknown with its own reason
+ * code. The event history is decoded once per run id, not re-parsed per call.
+ */
 export class OwnedTools {
   constructor(readonly resolution: Resolution) {}
   get store() { return this.resolution.store; }
@@ -51,72 +67,97 @@ export class OwnedTools {
     try { read = await readToolTimeline(this.resolution.host, agentId); }
     catch { return 'owned tool evidence is unreadable'; }
     if ('issue' in read) return `owned tool evidence is inconclusive: ${read.issue}`;
-    const issue = liveToolIssue(read.entries);
-    if (!issue) {
-      if (options.taskId) for (const runId of options.runIds?.length ? options.runIds : options.runId ? [options.runId] : [])
+    const runIds = options.runIds?.length ? options.runIds : options.runId ? [options.runId] : [];
+    if (!liveToolIssueFact(read.entries)) {
+      if (options.taskId) for (const runId of runIds)
         this.recordOwnedToolSettlement(options.taskId, runId, 'complete tool timeline has no live or unknown calls');
       return null;
     }
     // The turn proof is read AFTER the evidence it settles: an agent that became
     // active, permissioned or turn-bound since then is caught here and holds.
     const turn = await observedTurnState(this.resolution.host, agentId);
-    let settled = liveToolIssue(read.entries, turn);
-    const turnBound = (entry: TimelineEntry) => entry.item.type === 'tool_call'
-      && turnBoundTool(entry);
-    const processEntries = read.entries.filter(entry => entry.item.type === 'tool_call' && !turnBound(entry));
-    const processIssue = liveToolIssue(processEntries, turn);
-    const processRunIds=options.runIds?.length ? options.runIds : options.runId ? [options.runId] : [];
-    if (settled && processRunIds.length && options.taskId && noTurnLive(turn)
-      && processIssue !== null && / is running$/.test(processIssue)
-      && liveToolIssue(read.entries.filter(entry => !processEntries.includes(entry)), turn) === null) {
-      const toolLabel = processIssue;
-      let processes: Awaited<ReturnType<typeof listHostUidProcesses>> = null;
-      try { processes = this.adapter.hostProcessListing ? await this.adapter.hostProcessListing() : await listHostUidProcesses(); }
-      catch { processes = null; }
-      const verdict=ownedToolAgentProcessTreeVerdict(processRunIds,processes,{ noTurnLive: true });
-      if (verdict.state==='empty') {
-        const heldRunId=options.runId ?? verdict.runId;
+    const issue = liveToolIssueFact(read.entries, turn);
+    let hold = issue ? formatLiveToolIssue(issue) : null;
+    const processEntries = read.entries.filter(entry => entry.item.type === 'tool_call' && !turnBoundTool(entry));
+    const processIssue = liveToolIssueFact(processEntries, turn);
+    // A call that is still running and is not turn-bound is the only shape the
+    // process tree can settle; a turn-bound call never outlives its turn.
+    const processOwnsWork = processIssue?.kind === 'live' && processIssue.status === 'running'
+      || processIssue?.kind === 'conflicting-identity' && processIssue.running;
+    const turnBoundOnly = read.entries.filter(entry => !processEntries.includes(entry));
+    if (hold && runIds.length && options.taskId && noTurnLive(turn) && processIssue && processOwnsWork
+      && liveToolIssueFact(turnBoundOnly, turn) === null) {
+      const toolLabel = formatLiveToolIssue(processIssue);
+      let processes: HostProcessFact[] | null = null;
+      if (this.adapter.hostProcessListing) {
+        try { processes = await this.adapter.hostProcessListing(); } catch { processes = null; }
+      } else {
+        const listing = await readHostUidProcesses();
+        processes = listing.state === 'listed' ? listing.processes : null;
+      }
+      const verdict = ownedToolAgentProcessTreeVerdict(runIds, processes, { noTurnLive: true });
+      if (verdict.state === 'empty') {
+        const heldRunId = options.runId ?? verdict.runId;
         this.recordOwnedToolSettlement(options.taskId, heldRunId,
           `run ${heldRunId}: stale non-turn-bound tool settled; agent helper run ${verdict.runId} proves provider pid ${verdict.providerPid} has no live descendants except Nucleus MCP report helper pid ${verdict.helperPid}`, true);
-        settled = null;
-      } else if (verdict.state==='live') {
-        settled = `${toolLabel}; descendant pid ${verdict.pid} remains under provider pid ${verdict.providerPid}`;
-      } else if (verdict.reason==='MCP report helper is missing' && options.workspaceId && this.adapter.noLiveWorkspaceProcesses) {
-        const processIssue=await this.adapter.noLiveWorkspaceProcesses(options.workspaceId,processRunIds);
-        if (!processIssue) {
-          this.recordOwnedToolSettlement(options.taskId, processRunIds[0]!,
-            `run ids ${processRunIds.join(', ')}: stale non-turn-bound tool settled; no process carried an MCP ticket and the task workspace process tree was empty`, true);
-          settled = null;
-        } else settled = `${toolLabel}; ${processIssue}`;
-      } else {
-        settled = `${toolLabel}; process tree is unreadable: ${verdict.reason}`;
-      }
+        hold = null;
+      } else if (verdict.state === 'live') {
+        hold = `${toolLabel}; descendant pid ${verdict.pid} remains under provider pid ${verdict.providerPid}`;
+      } else if (verdict.code === 'helper-missing' && options.workspaceId && this.adapter.noLiveWorkspaceProcesses) {
+        const workspaceIssue = await this.adapter.noLiveWorkspaceProcesses(options.workspaceId, runIds);
+        if (!workspaceIssue) {
+          this.recordOwnedToolSettlement(options.taskId, runIds[0]!,
+            `run ids ${runIds.join(', ')}: stale non-turn-bound tool settled; no process carried an MCP ticket and the task workspace process tree was empty`, true);
+          hold = null;
+        } else hold = `${toolLabel}; ${workspaceIssue}`;
+      } else hold = `${toolLabel}; process tree is unreadable: ${verdict.reason}`;
     }
-    if (settled && options.runId && options.taskId) {
-      this.recordOwnedToolHold(options.taskId, options.runId, settled);
-      const latest = this.store.eventsAll(options.taskId).findLast(event => event.kind === 'owned_tool_hold' && (() => {
-        try { return JSON.parse(event.detail).runId === options.runId; } catch { return false; }
-      })());
+    if (hold && options.runId && options.taskId) {
+      this.recordOwnedToolHold(options.taskId, options.runId, hold);
+      const latestHold = this.latestOwnedToolEvent(options.taskId, options.runId, OWNED_TOOL_HOLD);
       if (this.store.task(options.taskId).resolution.ownerSettlements.some(record =>
-        record.effect === `owned_tool.${options.runId}` && record.occurrence === String(latest?.id ?? ''))) return null;
+        record.effect === `owned_tool.${options.runId}` && record.occurrence === String(latestHold?.id ?? ''))) return null;
     }
-    if (!settled && options.taskId) for (const runId of processRunIds)
+    if (!hold && options.taskId) for (const runId of runIds)
       this.recordOwnedToolSettlement(options.taskId, runId, 'fresh tool and owner observations prove the recorded hold settled');
-    return settled ? `an owned tool is still live: ${settled}` : null;
+    return hold ? `an owned tool is still live: ${hold}` : null;
   }
 
   private recordOwnedToolHold(taskId: string, runId: string, reason: string): void {
     const detail = JSON.stringify({ runId, reason });
-    const latest = this.store.eventsAll(taskId).reverse().find(event => ['owned_tool_hold', 'owned_tool_settled'].includes(event.kind)
-      && (() => { try { return JSON.parse(event.detail).runId === runId; } catch { return false; } })());
-    if (latest?.kind === 'owned_tool_hold' && latest.detail === detail) return;
-    this.store.event(taskId, 'owned_tool_hold', detail);
+    const latest = this.latestOwnedToolEvent(taskId, runId, OWNED_TOOL_HOLD, OWNED_TOOL_SETTLED);
+    if (latest?.kind === OWNED_TOOL_HOLD && latest.detail === detail) return;
+    this.store.event(taskId, OWNED_TOOL_HOLD, detail);
   }
 
   private recordOwnedToolSettlement(taskId: string, runId: string, evidence: string, force = false): void {
-    const latest = this.store.eventsAll(taskId).reverse().find(event => ['owned_tool_hold', 'owned_tool_settled'].includes(event.kind)
-      && (() => { try { return JSON.parse(event.detail).runId === runId; } catch { return false; } })());
-    if (latest?.kind !== 'owned_tool_hold' && !force) return;
-    this.store.event(taskId, 'owned_tool_settled', JSON.stringify({ runId, evidence }));
+    const latest = this.latestOwnedToolEvent(taskId, runId, OWNED_TOOL_HOLD, OWNED_TOOL_SETTLED);
+    if (latest?.kind !== OWNED_TOOL_HOLD && !force) return;
+    this.store.event(taskId, OWNED_TOOL_SETTLED, JSON.stringify({ runId, evidence }));
   }
+
+  /**
+   * The newest owned-tool event for this run, decoded once. The reader walks the
+   * event history from the end and stops at the first owned-tool event, so a
+   * long history is not re-parsed on every proof.
+   */
+  private latestOwnedToolEvent(taskId: string, runId: string, ...kinds: string[]): { kind: string; detail: string; id?: number } | null {
+    const events = this.store.eventsAll(taskId);
+    for (let index = events.length - 1; index >= 0; index--) {
+      const event = events[index]!;
+      if (!kinds.includes(event.kind)) continue;
+      const decoded = decodeOwnedToolDetail(event.detail);
+      if (!decoded) continue;
+      if (decoded.runId === runId) return { kind: event.kind, detail: event.detail, id: event.id };
+    }
+    return null;
+  }
+}
+
+/** One owned-tool event detail, decoded once into the run it names. */
+export function decodeOwnedToolDetail(detail: string): { runId: string } | null {
+  try {
+    const decoded = JSON.parse(detail) as { runId?: unknown };
+    return typeof decoded.runId === 'string' && decoded.runId ? { runId: decoded.runId } : null;
+  } catch { return null; }
 }

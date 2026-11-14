@@ -22,7 +22,7 @@ import { Engine } from '../core/engine';
 import { runSchema, submissionSchema, taskControlInputSchema, type Run, type Task } from '../shared/contracts';
 import type { Adapter, AgentObservation } from '../core/host';
 import { toolTimelinePage } from './support/tool-timeline';
-import type { HostProcessFact } from '../core/machine/host-process-reap';
+import type { HostProcessFact } from '../core/host/types';
 import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
 
 const head = 'a'.repeat(40), base = 'b'.repeat(40);

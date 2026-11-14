@@ -16,9 +16,12 @@ import {
   HOST_PROCESS_SWEEP_KIND, HOST_PROCESS_SWEEP_SETTLED_KIND,
   HOST_PROCESS_SWEEP_PASEO_SKIPPED_KIND,
   formatHostProcessSweepEvent, hostProcessSweepIntent,
-  listHostUidProcesses, ownedToolAgentProcessTreeVerdict, ownedToolProcessTreeVerdict, reapHostProcesses, selectHostProcessTargets, sweepTaskHostProcesses, terminateHostProcessTargets,
-  type HostProcessFact, type HostProcessTarget,
+  reapHostProcesses, sweepTaskHostProcesses, terminateHostProcessTargets,
 } from "../core/machine/host-process-reap";
+import { selectHostProcessTargets, type HostProcessTarget } from "../core/machine/host-process-select";
+import { readHostUidProcesses } from "../core/machine/host-process-listing";
+import { ownedToolAgentProcessTreeVerdict, ownedToolProcessTreeVerdict } from "../core/machine/owned-tool-process-proof";
+import type { HostProcessFact } from "../core/host/types";
 import type { Engine } from "../core/engine";
 
 const GRACE_MS = 80;
@@ -249,7 +252,8 @@ function stopTrackedFixtureChild(pid: number | null): void {
  */
 async function liveFixtureChildrenOf(pid: number): Promise<number[]> {
   if (!Number.isSafeInteger(pid) || pid <= 0) return [];
-  const facts = await listHostUidProcesses();
+  const read = await readHostUidProcesses();
+  const facts = read.state === "listed" ? read.processes : null;
   if (!facts) return [];
   return facts.filter(fact => fact.ppid === pid && (fact.command ?? "").includes("setInterval(() => {}, 1000)")).map(fact => fact.pid);
 }
@@ -428,7 +432,8 @@ function spawnOrphanSleeper(cwd: string, childPidPath: string): ChildProcess {
 
 async function waitForProcessFact(pid: number, predicate: (fact: HostProcessFact) => boolean, timeoutMs: number, label: string): Promise<void> {
   await waitFor(async () => {
-    const fact = (await listHostUidProcesses())?.find(entry => entry.pid === pid);
+    const read = await readHostUidProcesses();
+    const fact = (read.state === 'listed' ? read.processes : []).find(entry => entry.pid === pid);
     return Boolean(fact && predicate(fact));
   }, timeoutMs, label);
 }
@@ -722,8 +727,8 @@ test("macOS host discovery keeps the event loop responsive while ps/lsof run", {
   let ticked = false;
   const timer = setTimeout(() => { ticked = true; }, 0);
   try {
-    const facts = await listHostUidProcesses();
+    const read = await readHostUidProcesses();
     assert.equal(ticked, true, "OS discovery must not block a queued timer");
-    assert.ok(facts?.some(fact => fact.pid === process.pid), "current process is retained in discovery");
+    assert.ok(read.state === 'listed' && read.processes.some(fact => fact.pid === process.pid), "current process is retained in discovery");
   } finally { clearTimeout(timer); }
 });
