@@ -69,7 +69,7 @@ test('Spec 041 rows 7 and 8 rendered: an escalated drained lane is answered on t
   const calls: Array<{ method: string; input: unknown }> = [];
   const board = (revision: number) => ({
     revision, connected: true, hostId: 'host', paused: false, error: '', quiet: true, activeWorkers: 0, unsettled: 0, occupiedSlots: 0,
-    globalLimit: 32, projectLimit: 5, stallThresholdMinutes: 20, holdReminderMinutes: 120, holdEscalationMinutes: 240, laneDrainMinutes: 120, laneDrainEscalationMinutes: 1440,
+    globalLimit: 32, projectLimit: 5, stallThresholdMinutes: 20, holdReminderMinutes: 120, holdEscalationMinutes: 240, laneDrainMinutes: 120, laneDrainEscalationMinutes: 1440, hostOutageNoticeMinutes: 120,
     tasks: [], profiles: [], pool: [], availability: [], assignments: {}, recentAssignments: {},
     lanes: [drainedLane(escalated.lane), plainLane], projects: [project(escalated.project ? { since: '2026-10-02T08:00:00.000Z', notices: 1, lastNoticeAt: '2026-10-02T08:00:00.000Z', escalatedAt: '2026-10-03T08:00:00.000Z' } : null)], prStates: {},
   });
@@ -105,7 +105,7 @@ test('Spec 041 rendered: Close from the Decisions column finishes the drained la
   const invoke = async (method: string, input: unknown) => {
     if (method === 'queue.ui-snapshot') return {
       revision: escalated ? 1 : 1000, connected: true, hostId: 'host', paused: false, error: '', quiet: true, activeWorkers: 0, unsettled: 0, occupiedSlots: 0,
-      globalLimit: 32, projectLimit: 5, stallThresholdMinutes: 20, holdReminderMinutes: 120, holdEscalationMinutes: 240, laneDrainMinutes: 120, laneDrainEscalationMinutes: 1440,
+      globalLimit: 32, projectLimit: 5, stallThresholdMinutes: 20, holdReminderMinutes: 120, holdEscalationMinutes: 240, laneDrainMinutes: 120, laneDrainEscalationMinutes: 1440, hostOutageNoticeMinutes: 120,
       tasks: [], profiles: [], pool: [], availability: [], assignments: {}, recentAssignments: {},
       lanes: [drainedLane(escalated), plainLane], projects: [project(null)], prStates: {},
     };

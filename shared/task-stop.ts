@@ -16,6 +16,10 @@ export const taskStopReasons = [
   "held",
   "lifecycle",
   "external_unavailable",
+  // Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): the task's host
+  // is away. The task keeps its identity, host and threads and waits visibly on
+  // that host; moving it stays an explicit owner decision.
+  "host_unavailable",
   // Spec 051: an interactive task's worker is idle in its thread, waiting for the operator.
   "interactive",
   // Spec 058: a responsible task waits on the operator's answer to its one joint
@@ -47,7 +51,7 @@ export type TaskStopReason = z.infer<typeof taskStopReasonSchema>;
 export const waitingTaskStopReasons = [
   "awaiting_proof", "origin_busy", "capacity", "provider_unavailable", "route_unavailable", "pr_head_lag",
   "prerequisite", "workspace_unavailable", "validation", "lifecycle", "external_unavailable", "interactive",
-  "responsible_question", "escalated", "paused_stop",
+  "responsible_question", "escalated", "paused_stop", "host_unavailable",
 ] as const satisfies readonly TaskStopReason[];
 export const isWaitingTaskStop = (reason: TaskStopReason): boolean => (waitingTaskStopReasons as readonly string[]).includes(reason);
 
@@ -131,8 +135,19 @@ export function taskStopClassification(detail: string): Pick<TaskStopRecord, "re
   // delegated answer settles them; a coordinator cannot, so they clear on their own.
   if (/waiting with the (?:retained reviewer|planner|operator)/i.test(detail))
     return { reason: "escalated", suggestedVerbs: [] };
+  // The one host wait (`shared/host-outage.ts`). Older text paths that restore a
+  // reason never invent a different owner for a host that is away.
+  if (/^Waiting on .{1,120} host .{1,120} since \d{4}-\d{2}-\d{2}T/.test(detail))
+    return { reason: "host_unavailable", suggestedVerbs: [] };
   return { reason: "operator_needed", suggestedVerbs: ["restart", "route", "move"] };
 }
+
+/**
+ * Dispatch found no eligible profile for the task's next role. The recorded typed stop is the
+ * fact every reader uses; the visible reason text is never parsed for it.
+ */
+export const routeUnavailableStop = (task: { resolution: { stop: { reason: string } | null } }): boolean =>
+  task.resolution.stop?.reason === "route_unavailable";
 
 /** A stop's suggested verbs follow its typed reason unless the caller names them; never its detail text. */
 export function taskStopRecord(

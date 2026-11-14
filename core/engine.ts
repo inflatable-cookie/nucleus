@@ -7,6 +7,7 @@ import { PrerequisiteReleases } from './scheduling/prerequisites';
 import { TaskQuantum } from './scheduling/task-quantum';
 import { schedulingEngineContext } from './scheduling/context';
 import { recoveryContext, recoveryEngineContext } from './recovery/context';
+import { unavailableGroupNames } from '../shared/pool';
 import { PlannerGrantCleanup } from './questions/planner-grants';
 import { intakeContext } from './intake/context';
 
@@ -14,6 +15,7 @@ import { Dispatch } from "./dispatch/dispatch";
 import { hostProviderFor, profileCompatibility, routingProfiles } from "../shared/profiles";
 import { canonicalCatalog, canonicalVocabulary, type HostVocabulary } from "../shared/profile-vocabulary";
 import { HOST_KIND_LABELS, hostKindOf } from "../shared/host-kind";
+import { HOST_WAIT_PRESERVED_STOPS, hostUnavailableDetail } from '../shared/host-outage';
 import type { HostCatalog } from "../shared/host";
 import type { ProfileCompatibilityHost, ProfileCompatibilityRow } from "../shared/rpc/settings";
 import { CreationRecovery } from "./recovery/creation-recovery";
@@ -21,7 +23,8 @@ import type { GitTransientEpisode } from './git/git-transient-backoff';
 
 import { type WorkspaceDiscard } from './workspaces/orphan-worktree';
 import type { IdentitySource } from '../shared/host-kind';
-import { RecoverySettlement } from "./recovery/recovery";
+import { RecoverySettlement } from "./recovery/coordinator-settlement";
+import { settleResponsibleFault } from "./recovery/responsible-fault";
 import { Decisions } from "./planning/decisions";
 import type { RepositoryRekeyInput } from "../shared/repository-rekey";
 
@@ -90,7 +93,10 @@ import { RestartControls } from "./verbs/restart";
 import { RetryEffectControls } from "./verbs/retry-effect";
 import { CallbackIntake } from "./intake/callback-intake";
 import { WorkerReconcile, completionReportsPr, INTERACTIVE_RUNNING_REASON, INTERACTIVE_WAIT_REASON } from "./recovery/worker-reconcile";
-import { WorkerFailover, RETIRED_OBSERVATION_INTERVAL_MS, RETIRED_OBSERVATION_STALE_MS } from "./recovery/worker-failover";
+import { WorkerFailover } from "./dispatch/worker-failover";
+import { RetiredObservations, RETIRED_OBSERVATION_INTERVAL_MS, RETIRED_OBSERVATION_STALE_MS } from "./recovery/retired-observation";
+import { replacementCeilingRefusal } from "./recovery/worker-replacement";
+import { archiveRetiredErroredAgents } from "./workspaces/retired-agent-archive";
 import { Operations, SOURCE_PROMOTION_NOT_DELIVERED } from "./planning/operations";
 // Moved to worker-failover.ts; re-exported because engine.ts exported them.
 export { RETIRED_OBSERVATION_INTERVAL_MS, RETIRED_OBSERVATION_STALE_MS };
@@ -125,6 +131,7 @@ import { ownerPendingEffects, type OwnerEffect, type RouteRole, type RestartRole
 import { RunRelease } from './recovery/fence-settlement';
 import { blockedEffectAttentionReason, settleObservedHostEffectOperations } from './recovery/effect-gates';
 import { Sweep } from "./scheduling/sweep";
+import { HostOutages } from './scheduling/host-outage';
 import { TaskWakes } from './scheduling/task-wakes';
 import { CompletionFollowUps } from './closeout/completion-follow-ups';
 import { closeoutContext } from './closeout/context';
@@ -135,6 +142,8 @@ const PRIMARY_CATALOG = "\u0000primary";
 export const STOPPED_BEFORE_DRAIN = () => new Error("Nucleus engine stopped before the requested reconciliation drain covered the fleet");
 
 export class Engine {
+  /** Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): the durable host-outage record. */
+  readonly hostOutages: HostOutages;
   readonly taskControlLifecycle = new TaskControlLifecycle(schedulingContext(this, ['store', 'resolveTaskControl', 'hostAvailable', 'withHost', 'taskControlDispatcher', 'resolution', 'forceCallerAuthorized', 'selfForceRole']));
 
   readonly hookRetention = new HookRetention(schedulingContext(this, ['hooks', 'store']));
@@ -192,8 +201,49 @@ export class Engine {
     return Boolean(task.hostId && (!this.activeHostId || this.activeHostId === task.hostId) && this.hostAvailable(task.hostId)
       && this.store.runs(task.id).every(run => run.hostId === task.hostId));
   }
+  /**
+   * Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait). One task's host
+   * wait, recorded or cleared from the availability this call observes:
+   *
+   * - Every live task on an unavailable host records its own `resolution.hostWait`
+   *   (nucleus#1198 review), independent of its stop. That is what pauses the
+   *   wall clock, shows on its card and joins its project's outage notice, even
+   *   when the stop beside it belongs to an owner answer.
+   * - The stop reads `host_unavailable` naming the host and the time it went
+   *   offline unless a stop already owns the task's answer (budget, escalation,
+   *   responsible question, hold, proof wait, interactive turn, paused stop,
+   *   operator attention); that stop and its question stay.
+   * - When the host is back the wait clears, and the ordinary observation pass
+   *   re-proves every retained thread before the task sends anything again.
+   *
+   * Returns the detail while waiting, or null when the task's host is online (or
+   * it has no host identity, which is a different, existing wait).
+   */
+  hostWait(task: Task): string | null {
+    const hostId = task.hostId;
+    if (!hostId || task.phase === 'done' || task.phase === 'cancelled') return null;
+    const online = this.withHost(hostId, () => this.hostAvailable(hostId));
+    const outage = this.hostOutages.observe(hostId, online);
+    if (!outage) {
+      this.resolution.clearHostWait(task);
+      return null;
+    }
+    const detail = hostUnavailableDetail(hostId, outage.since);
+    let current = this.store.task(task.id);
+    const wait = current.resolution.hostWait;
+    if (wait?.hostId !== hostId || wait.since !== outage.since) {
+      current = this.resolution.update(current, { hostWait: { hostId, since: outage.since } }, {}, 'host_outage_wait');
+    }
+    const stop = current.resolution.stop;
+    // An owner-facing stop keeps its own answer and question; the independent
+    // host wait above is still recorded, so the clock, card and notice see it.
+    if (stop && (HOST_WAIT_PRESERVED_STOPS as readonly string[]).includes(stop.reason)) return detail;
+    if (stop?.reason !== 'host_unavailable' || stop.detail !== detail)
+      this.resolution.recordStop(current, 'host_unavailable', detail);
+    return detail;
+  }
   private sweepOwner?: Sweep;
-  private get sweep(): Sweep { return this.sweepOwner ??= new Sweep(schedulingEngineContext(this, ['adapter', 'applyDeferredOwnerVerbs', 'archivePlannerGrants', 'archiveRetiredErroredAgents', 'auditPass', 'clearRetiredInvalidations', 'continueAwaitingReviewers', 'dispatchQueued', 'dispositionDeps', 'drainProjections', 'drainWaiters', 'enqueueTitle', 'ensureSweep', 'flushPrerequisiteReleases', 'host', 'hostAvailable', 'hostIds', 'inventoryHostMatches', 'lastHookCleanupAt', 'lifecycle', 'maxSweepWindows', 'migrateProjectOwnersToPlanners', 'noteStepFailure', 'observeRetiredWorkers', 'quiesce', 'reconcile', 'recoverExhaustedWorkers', 'removeSiblings', 'resumePausedStops', 'retiredObservationKey', 'retiredObservationPlan', 'scheduleLane', 'scheduleLifecycleFollowUp', 'scheduleTaskQuantum', 'settleQuiesce', 'startSweepChain', 'stopped', 'store', 'sweepChain', 'sweepCursor', 'sweepDeferred', 'sweepDeferredCursor', 'sweepMode', 'sweepOrder', 'sweepPending', 'sweepStats', 'sweepTicks', 'taskHostAvailable', 'wakeCapacityWaiter', 'wakePreludes', 'withHost'], ['checkpoints', 'delegateNativeQuestions', 'deliverDecisionNotices', 'deliverDrainNotices', 'deliverHoldNotices', 'deliverNotices', 'deliverQueuedMessages', 'observationTargets', 'observe', 'origins', 'raiseOperatorQuestions', 'recovery', 'resumeAskQuestions', 'resumeResponsibleAnsweredQuestions', 'settleBudgetClock'])); }
+  private get sweep(): Sweep { return this.sweepOwner ??= new Sweep(schedulingEngineContext(this, ['adapter', 'applyDeferredOwnerVerbs', 'archivePlannerGrants', 'archiveRetiredErroredAgents', 'auditPass', 'clearRetiredInvalidations', 'continueAwaitingReviewers', 'dispatchQueued', 'dispositionDeps', 'drainProjections', 'drainWaiters', 'enqueueTitle', 'ensureSweep', 'flushPrerequisiteReleases', 'host', 'hostAvailable', 'hostIds', 'hostOutages', 'hostWait', 'inventoryHostMatches', 'lastHookCleanupAt', 'lifecycle', 'maxSweepWindows', 'migrateProjectOwnersToPlanners', 'noteStepFailure', 'observeRetiredWorkers', 'quiesce', 'reconcile', 'recoverExhaustedWorkers', 'removeSiblings', 'resumePausedStops', 'retiredObservationKey', 'retiredObservationPlan', 'scheduleLane', 'scheduleLifecycleFollowUp', 'scheduleTaskQuantum', 'settleQuiesce', 'startSweepChain', 'stopped', 'store', 'sweepChain', 'sweepCursor', 'sweepDeferred', 'sweepDeferredCursor', 'sweepMode', 'sweepOrder', 'sweepPending', 'sweepStats', 'sweepTicks', 'taskHostAvailable', 'wakeCapacityWaiter', 'wakePreludes', 'withHost'], ['checkpoints', 'delegateNativeQuestions', 'deliverDecisionNotices', 'deliverDrainNotices', 'deliverHoldNotices', 'deliverHostOutageNotices', 'deliverNotices', 'deliverQueuedMessages', 'observationTargets', 'observe', 'origins', 'raiseOperatorQuestions', 'recovery', 'resumeAskQuestions', 'resumeResponsibleAnsweredQuestions', 'settleBudgetClock'])); }
   readonly dispatchOwner = new Dispatch(this);
   private readonly dispatchAdmission = new DispatchAdmission({
     store: () => this.store,
@@ -325,6 +375,7 @@ export class Engine {
   private readonly workerReconcile: WorkerReconcile;
   private readonly callbackIntake: CallbackIntake;
   private readonly workerFailover: WorkerFailover;
+  private readonly retiredObservations: RetiredObservations;
   readonly taskControlDispatcher: TaskControlDispatcher;
   private readonly recoverySettlement: RecoverySettlement;
   private readonly pausedStops: PausedStops;
@@ -338,6 +389,7 @@ export class Engine {
   /** The Host contract over this engine's adapter, read at each call (`core/host/host-facade.ts`). */
   get host(): HostFacade { return new HostFacade(this); }
   constructor(readonly store: Store, readonly adapter: Adapter, readonly idleGraceMs = 60000, readonly submissionReady: () => boolean = () => true, retirement?: RuntimeRetirementService, readonly uncertainMergeRetryMs = DEFAULT_UNCERTAIN_MERGE_RETRY_MS, hostRunStateDir?: string) {
+    this.hostOutages = new HostOutages(store);
     this.primaryAdapter = adapter;
     this.resolveHostAdapter = () => adapter;
     this.adapter = new Proxy(adapter, {
@@ -435,6 +487,7 @@ export class Engine {
     this.resolution = new Resolution(store, this.adapter, () => this.profilesFor(this.activeHostId), () => this.stopped, idleGraceMs, this.hooks, uncertainMergeRetryMs);
     this.resolution.hostAvailable = (task, run) => this.taskHostAvailable(task) && (!run || run.hostId === task.hostId);
     this.resolution.withHost = (id, fn) => this.withHost(id, fn);
+    this.resolution.hostOutage = id => this.hostOutages.current(id);
     this.resolution.hostOnline = id => this.hostOnline(id);
     this.resolution.inventoryHostMatches = id => this.inventoryHostMatches(id);
     this.resolution.originHostAvailable = id => this.hostAvailable(id);
@@ -502,7 +555,8 @@ export class Engine {
       get withHost() { return engine.withHost.bind(engine); },
       get resolution() { return intakeContext(engine.resolution, ['attention', 'complete', 'settleCompletedExecutorBlocker']); },
     });
-    this.workerFailover = new WorkerFailover(recoveryEngineContext(this, ['activeHostId', 'adapter', 'host', 'launchAgent', 'note', 'profileCatalogKnown', 'profiles', 'workerProviderUnavailable', 'replacementCeilingRefusal', 'retiredObservationKey', 'stopped', 'store', 'taskHostAvailable', 'unavailableGroups', 'withHost'], ['recordStop', 'resumeTransientProviderThread', 'resumeTransientWorker', 'retainedWorkerProfileIssue', 'suppressAutomaticRetry', 'transportDeferred', 'waiting']));
+    this.workerFailover = new WorkerFailover(recoveryEngineContext(this, ['activeHostId', 'adapter', 'host', 'launchAgent', 'note', 'profileCatalogKnown', 'profiles', 'workerProviderUnavailable', 'stopped', 'store', 'taskHostAvailable', 'withHost'], ['recordStop', 'resumeTransientProviderThread', 'resumeTransientWorker', 'retainedWorkerProfileIssue', 'suppressAutomaticRetry', 'transportDeferred', 'waiting']));
+    this.retiredObservations = new RetiredObservations(recoveryContext(this, ['activeHostId', 'host', 'retiredObservationKey', 'store', 'taskHostAvailable']));
     this.taskControlDispatcher = new TaskControlDispatcher(this);
     this.recoverySettlement = new RecoverySettlement(recoveryEngineContext(this, ['coordinatorActionRunId', 'host', 'onTaskHost', 'performTaskControl', 'store'], ['attention', 'recovery', 'update']));
     this.pausedStops = new PausedStops(this);
@@ -731,7 +785,7 @@ export class Engine {
   performSubmit(submission: Submission, requirePushedPlanning?: boolean, promotion?: {source:{kind:"lead"|"papercut";id:string;repository:string;digest:string;expectedSource:string}; initial?: Partial<Task>; identitySource?: IdentitySource}, hostId?: string, selection?: import('../shared/operations').QueueOperation['hostSelection']): Promise<OperationResult> { return this.operations.performSubmit(submission, requirePushedPlanning, promotion, hostId, selection); }
 
   applyCoordinatorAction(task: Task, run: Run, binding: RecoveryActionBinding): Promise<void> { return this.recoverySettlement.applyCoordinatorAction(task, run, binding); }
-  settleResponsibleFault(task: Task): Promise<boolean> { return this.recoverySettlement.settleResponsibleFault(task); }
+  settleResponsibleFault(task: Task): Promise<boolean> { return settleResponsibleFault(this.recoverySettlement.engine, task); }
 
   completeTask(input: TaskControlInput, operationId?: string): Promise<{ task: Task; idempotent: boolean }> {
     return this.taskCompletion.completeTask(input, operationId);
@@ -1044,10 +1098,10 @@ export class Engine {
    * next start, so the marker lands only after every project has resolved.
    */
   migrateProjectOwnersToPlanners(): Promise<void> { return this.projectLifecycle.migrateProjectOwnersToPlanners(); }
-  noteLifecycleSignal(input: { agentId?: string | null; workspaceId?: string | null; hostId?: string | null }): void { return this.workerFailover.noteLifecycleSignal(input); }
-  retiredObservationPlan(): { persisted: Record<string,{active:boolean;at:string}>; keep: Record<string,{active:boolean;at:string}>; due: string[] } { return this.workerFailover.retiredObservationPlan(); }
-  observeRetiredWorkers(plan: { persisted: Record<string,{active:boolean;at:string}>; keep: Record<string,{active:boolean;at:string}>; due: string[] }, inventory: ReadonlyMap<string, AgentObservation> | null): Promise<{ observations: Record<string,{active:boolean;at:string}>; changed: boolean }> { return this.workerFailover.observeRetiredWorkers(plan, inventory); }
-  clearRetiredInvalidations(): void { this.workerFailover.clearRetiredInvalidations(); }
+  noteLifecycleSignal(input: { agentId?: string | null; workspaceId?: string | null; hostId?: string | null }): void { this.retiredObservations.noteLifecycleSignal(input); }
+  retiredObservationPlan(): { persisted: Record<string,{active:boolean;at:string}>; keep: Record<string,{active:boolean;at:string}>; due: string[] } { return this.retiredObservations.retiredObservationPlan(); }
+  observeRetiredWorkers(plan: { persisted: Record<string,{active:boolean;at:string}>; keep: Record<string,{active:boolean;at:string}>; due: string[] }, inventory: ReadonlyMap<string, AgentObservation> | null): Promise<{ observations: Record<string,{active:boolean;at:string}>; changed: boolean }> { return this.retiredObservations.observeRetiredWorkers(plan, inventory); }
+  clearRetiredInvalidations(): void { this.retiredObservations.clearRetiredInvalidations(); }
   /**
    * One audit pass. It resolves with its recorded fault (also kept as
    * `engineError`), or null, and whether a drain reached every task once.
@@ -1137,9 +1191,9 @@ export class Engine {
   quantumSteps(taskId: string, task: Task, quantum: { pausedForPrerequisiteWait: boolean }): Promise<void> { return this.taskQuantumOwner.quantumSteps(taskId, task, quantum); }
   /** Closing reconciliation, thread archive and title projection for one quantum. */
   quantumFinish(taskId: string): Promise<void> { return this.taskQuantumOwner.quantumFinish(taskId); }
-  unavailableGroups(): Set<string> { return this.workerFailover.unavailableGroups(); }
-  replacementCeilingRefusal(task: Task): string { return this.workerFailover.replacementCeilingRefusal(task); }
-  archiveRetiredErroredAgents(): Promise<void> { return this.workerFailover.archiveRetiredErroredAgents(); }
+  unavailableGroups(): Set<string> { return unavailableGroupNames(this.store.availability()); }
+  replacementCeilingRefusal(task: Task): string { return replacementCeilingRefusal(task); }
+  archiveRetiredErroredAgents(): Promise<void> { return archiveRetiredErroredAgents(this); }
   recoverExhaustedWorkers(): Promise<void> { return this.workerFailover.recoverExhaustedWorkers(); }
   recover(task: Task) { return this.creationRecovery.recover(task); }
   recoverProofOnlyDispatch(task: Task): Promise<void> { return this.creationRecovery.recoverProofOnlyDispatch(task); }

@@ -6,7 +6,7 @@ import { OPERATOR_BOARD_CALLER, REVISION_BUDGET } from "../../shared/contracts";
 import { taskBudget } from "../../shared/task-budget";
 import { withdrawCancellation } from "./disposition";
 import { taskPrNumber } from "../forge/index";
-import { noAutomaticRetryRule } from "../recovery/non-delivery";
+import { noAutomaticRetryRule } from "../../shared/automatic-retry";
 import { currentReadyPrEvidence, deriveRestartRole, ownerControlEventDetail, reviewerSharesAuthorModel } from "./owner-verbs";
 import { DurableFenceRefusal } from "../intake/run-settlement";
 import { openProofOnlyGo, PROOF_GO_WAIT_REFUSAL, PROOF_GO_WAIT_VERBS } from "../qa/proof-only-go";

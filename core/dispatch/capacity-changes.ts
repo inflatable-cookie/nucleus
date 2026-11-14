@@ -28,6 +28,7 @@
  */
 import {
   CAPACITY_CHANGE_LOG_LIMIT, DEFAULT_GLOBAL_LIMIT, DEFAULT_HOLD_ESCALATION_MINUTES, DEFAULT_HOLD_REMINDER_MINUTES,
+  DEFAULT_HOST_OUTAGE_NOTICE_MINUTES,
   DEFAULT_LANE_DRAIN_ESCALATION_MINUTES, DEFAULT_LANE_DRAIN_MINUTES, DEFAULT_PAPERCUT_PROJECT_LIMIT,
   DEFAULT_PROJECT_LIMIT, DEFAULT_STALL_THRESHOLD_MINUTES,
   capacityAuthorityValuesSchema, capacityChangeSchema,
@@ -43,6 +44,7 @@ export const CAPACITY_CHANGE_LOG_META_KEY = "capacityChanges";
 export const CAPACITY_AUTHORITY_KEYS = [
   "globalLimit", "projectLimit", "papercutProjectLimit", "paseoCallLimit", "stallThresholdMinutes",
   "holdReminderMinutes", "holdEscalationMinutes", "laneDrainMinutes", "laneDrainEscalationMinutes",
+  "hostOutageNoticeMinutes",
 ] as const satisfies readonly (keyof CapacityAuthorityValues)[];
 
 /** The current state, with the defaults every live reader uses on a store that never set one. */
@@ -57,6 +59,7 @@ export function capacityAuthorityEffective(store: Store): CapacityAuthorityValue
     holdEscalationMinutes: store.getMeta<number>("holdEscalationMinutes") ?? DEFAULT_HOLD_ESCALATION_MINUTES,
     laneDrainMinutes: store.getMeta<number>("laneDrainMinutes") ?? DEFAULT_LANE_DRAIN_MINUTES,
     laneDrainEscalationMinutes: store.getMeta<number>("laneDrainEscalationMinutes") ?? DEFAULT_LANE_DRAIN_ESCALATION_MINUTES,
+    hostOutageNoticeMinutes: store.getMeta<number>("hostOutageNoticeMinutes") ?? DEFAULT_HOST_OUTAGE_NOTICE_MINUTES,
   };
 }
 

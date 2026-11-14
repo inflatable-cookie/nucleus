@@ -17,7 +17,8 @@ import { PaseoAdapter, type Adapter, type AgentObservation } from '../service/pa
 import type { ResolutionAdapter } from '../core/resolution';
 import { MERGE_CONFLICT_REASON, requiredCheckPollMetaKey, reviewPublicationBody, taskPrNumber } from '../core/forge/index';
 import { ABSENT_RESOLUTION_REASON, ABSENT_WORKER_REASON, ACCEPTED_PR_RECONCILIATION_REASON, EXTERNAL_MERGE_CHECK_REASON_PREFIX, EXTERNAL_MERGE_CHECK_RECOVERED_REASON, NO_ORIGIN_THREAD_WAIT, originRecipient, proofWaitApplies } from '../core/resolution';
-import { RECOVERY_STOPPED_WITHOUT_RESULT, ACCEPTED_RECOVERY_NOT_APPLIED_PREFIX } from '../core/recovery/recovery';
+import { RECOVERY_STOPPED_WITHOUT_RESULT } from '../core/recovery/coordinator-pass';
+import { ACCEPTED_RECOVERY_NOT_APPLIED_PREFIX } from '../core/recovery/coordinator-episode';
 import { runPrompt } from '../core/dispatch/prompts';
 import { dispatchBlocked } from '../core/dispatch/capacity';
 import { pipelineBoard, pipelineColumn } from '../shared/pipeline-board';

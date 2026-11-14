@@ -11,12 +11,19 @@ import { QUEUED_VISIT_MARGIN } from '../core/dispatch/capacity';
 import { QueueRuntime } from '../service/runtime-owner';
 import { holdPatch } from '../core/merge/merge-hold';
 import { holdsOf } from '../shared/contracts';
+import { taskStopRecord } from '../shared/task-stop';
 import { submissionSchema } from '../shared/contracts';
-import type { Profile } from '../shared/contracts';
+import type { Profile, Task } from '../shared/contracts';
 import type { Adapter } from '../core/host';
 
 /** Tom, 2026-11-06: "The number of queued tasks shouldn't make a difference". */
 const profile: Profile = { id: 'worker', name: 'Worker', provider: 'test', model: 'test', notes: '', available: true, problem: '', supportedThinking: ['low'] };
+
+/** Dispatch's own route-unavailable wait: the typed stop, exactly as production records it. */
+function routeUnavailable(f: ReturnType<typeof fixture>, taskId: string, reason = 'No eligible worker profile', phase?: Task['phase']) {
+  const task = f.store.task(taskId);
+  f.store.update(taskId, { ...(phase ? { phase } : {}), reason, resolution: { ...task.resolution, stop: taskStopRecord('route_unavailable', reason) } });
+}
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'ns-queued-visits-'));
@@ -117,7 +124,7 @@ test('a parked review with no eligible route does not reserve the free slot', as
   try {
     f.store.setMeta('globalLimit', 1);
     const parked = f.add('/project-b');
-    f.store.update(parked.id, { phase: 'awaiting_review', reason: 'No eligible independent reviewer profile' });
+    routeUnavailable(f, parked.id, 'No eligible independent reviewer profile', 'awaiting_review');
     const next = f.add();
     assert.equal(f.engine.resolution.slotAdmissionReason(f.store.task(next.id)), '');
     await f.pass();
@@ -175,7 +182,7 @@ test('ready queue heads skip prerequisites and unavailable routes and keep prior
     const parent = f.add('/parent');
     const blocked = f.add('/project-a', [parent.id]);
     const unavailable = f.add('/project-a');
-    f.store.update(unavailable.id, { reason: 'No eligible worker profile' });
+    routeUnavailable(f, unavailable.id);
     f.store.markRoutingAttempt(unavailable.id);
     const first = f.add('/project-a'), second = f.add('/project-a');
     assert.deepEqual(f.store.readyQueueHeads(1, '/project-a').map(t => t.id), [first.id]);
@@ -209,7 +216,7 @@ test('route waits are retried once when the routing epoch changes', async () => 
   try {
     const task = f.add();
     f.store.setRoutingEpoch('first');
-    f.store.update(task.id, { reason: 'No eligible worker profile' });
+    routeUnavailable(f, task.id);
     f.store.markRoutingAttempt(task.id);
     assert.equal(f.store.readyQueueHeads(2).length, 0);
     f.store.setRoutingEpoch('first');
@@ -239,7 +246,7 @@ test('routing epochs notice catalog, pool, subscription, usage and demand change
     try {
       scenario.before?.(f);
       const task = f.add();
-      f.store.update(task.id, { reason: 'No eligible worker profile' });
+      routeUnavailable(f, task.id);
       const internal = f.engine as unknown as { dispatchTask(id: string, held: boolean): Promise<void> };
       const seen: string[] = [];
       internal.dispatchTask = async id => { seen.push(id); };
@@ -315,7 +322,7 @@ test('a freed slot wakes the ready head past a route-unavailable task', async ()
   try {
     f.store.setMeta('globalLimit', 1);
     const blocked = f.add(), ready = f.add();
-    f.store.update(blocked.id, { reason: 'No eligible worker profile' });
+    routeUnavailable(f, blocked.id);
     f.store.markRoutingAttempt(blocked.id);
     (f.engine as unknown as { wakeCapacityWaiter(id: string): void }).wakeCapacityWaiter('released');
     await f.engine.quiesce();

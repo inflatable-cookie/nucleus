@@ -8,11 +8,8 @@ import { randomUUID } from 'node:crypto';
 import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
 import type { ResolutionAdapter } from '../core/resolution';
-import {
-  automaticRetryForbidden,
-  noAutomaticRetryRule,
-  nonDeliveryFor,
-} from '../core/recovery/non-delivery';
+import { automaticRetryForbidden, noAutomaticRetryRule } from '../shared/automatic-retry';
+import { nonDeliveryFor } from '../core/recovery/non-delivery';
 import {
   collectOwnerVerbFacts,
   ownerTaskNext,

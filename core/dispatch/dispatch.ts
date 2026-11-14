@@ -108,6 +108,11 @@ export class Dispatch {
     const transientBefore = this.store.getMeta<GitTransientEpisode | null>(this.engine.transientKey(taskId));
     const task = this.store.task(taskId);
     if (!this.engine.taskHostAvailable(task)) {
+      // Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): new dispatch
+      // for a project on an unavailable host waits on that host too, with the
+      // same named stop as work already in flight. A task with no proven host
+      // identity keeps its own distinct wait.
+      if (this.engine.hostWait(task)) return;
       const reason = task.hostId ? `Waiting for host ${task.hostId}` : "Waiting for a proven host identity";
       if (task.reason !== reason) this.store.update(task.id, { reason });
       return;

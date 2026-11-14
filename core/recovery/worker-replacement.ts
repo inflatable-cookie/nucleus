@@ -17,6 +17,7 @@
  * the retained worker.
  */
 import { requestOnly, honouredRequest } from "../../shared/pool";
+import { WORKER_REPLACEMENT_CEILING } from "../../shared/contracts";
 import type { PoolEntry, Task, UsageLevel } from "../../shared/contracts";
 import { isQuotaExhaustion } from "./exhaustion";
 import { modelKey } from "../dispatch/routing";
@@ -137,6 +138,15 @@ export function decideWorkerReplacement(args: {
     rule: "same_model_no_failure",
     detail: "the replacement keeps the same model with no worker failure; the retained worker continues",
   };
+}
+
+/**
+ * The refusal when the worker retirement ceiling has been reached. The ceiling and
+ * its one exit belong to the replacement rule, so every caller that refuses names
+ * the same bound and the same owner verb.
+ */
+export function replacementCeilingRefusal(task: Pick<Task, 'retiredWorkers'>): string {
+  return `Nucleus has retired ${task.retiredWorkers.length} workers, the replacement ceiling of ${WORKER_REPLACEMENT_CEILING}; an operator-relayed restart role=worker fresh is required to replace it`;
 }
 
 /** The `worker_replacement_refused` detail for a selection that stopped matching its armed request. */

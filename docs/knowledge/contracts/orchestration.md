@@ -242,13 +242,23 @@ and [Liveness and reminders](#liveness-and-reminders). Pures:
 `classifyWorkerObservation`, `branchPrLookupOutcome`, `blockedReturnDecision`.
 Delegates remain on Engine.
 
-**WorkerFailover** (`core/recovery/worker-failover.ts`). Retired-worker observation,
-the sweep that replaces an exhausted or failed worker, the replacement ceiling
-refusal, and the archive of retired errored agents. Enforces
+**WorkerFailover** (`core/dispatch/worker-failover.ts`). The sweep that replaces an
+exhausted or failed worker, and its decision. Enforces
 [Worker replacement ceiling](#worker-replacement-ceiling) and
 [Retained worker recovery](#retained-worker-recovery). `decideWorkerFailover`
 is the pure replacement decision; it is file-private. `planWorkerFailover`
-gathers the lazy reads and writes. Delegates remain on Engine.
+gathers the lazy reads and writes, including the store's typed availability rows.
+The replacement ceiling refusal lives with the replacement rule in
+`core/recovery/worker-replacement.ts`. Delegates remain on Engine.
+
+**RetiredObservations** (`core/recovery/retired-observation.ts`). The retired-worker
+observation cadence and the lifecycle-signal invalidations that make an identity
+due before it. Same-name `Engine` methods delegate to it.
+
+**RetiredAgentArchive** (`core/workspaces/retired-agent-archive.ts`). The sweep that
+archives retired errored agents so a Paseo workspace stops reporting Failed. An
+unreadable read or a refused archive records a thread-archive wait instead of
+being dropped. `Engine.archiveRetiredErroredAgents` delegates to it.
 
 **CreationRecovery** (`core/recovery/creation-recovery.ts`). Recovers a proven-absent
 worker and an unowned workspace creation, including proof-only dispatch
@@ -574,21 +584,31 @@ uncertain-run restart under the same run ID, and the one-replacement creation
 budget. Enforces [Orphan worktree after a timed-out create](#orphan-worktree-after-a-timed-out-create).
 Delegates remain on Resolution.
 
-**Recovery** (`core/recovery/recovery.ts`). Coordinates bounded repair and the planner
-ladder: dispatch routing, observed settlement of finished recovery runs, and
-the typed coordinator-action handler. Enforces
+**Recovery** (`core/recovery/recovery.ts`). The coordinator surface Resolution
+constructs: it wires the stages together and keeps the method shape its callers
+and tests use. Its stages are one module each. **CoordinatorRoute**
+(`coordinator-route.ts`) decides whether a task needs a coordinator episode and
+performs the one launch that opens it. **CoordinatorPass** (`coordinator-pass.ts`)
+observes that exact run, settles it, and owns the pending-episode bound. Enforces
 [Coordinator reports](#coordinator-reports),
 [Coordinator loop breaker](#coordinator-loop-breaker) and
-[Responsible tasks](#responsible-tasks-spec-058-cutover-1). Pures:
-`coordinatorReportMatches`, `taskProgressDigest`. Resolution constructs it.
+[Responsible tasks](#responsible-tasks-spec-058-cutover-1). **CoordinatorEpisode**
+(`coordinator-episode.ts`) owns the episode's durable bookkeeping: the report
+binding, the not-applied refusal, the run release, the settling changes and the
+escalation. **Pseudo-checkpoint** (`pseudo-checkpoint.ts`) owns the post-budget
+pseudo-checkpoint rule.
 
-**RecoverySettlement** (`core/recovery/recovery.ts`). Applies a recovery report as an
-owner verb and settles the faults code can. Enforces
-[Coordinator reports](#coordinator-reports). Pures: `coordinatorActionPlan`
-(report to verb arguments, or the refusal naming why it no longer applies),
-`recoverySettlementPatch` (what settling the report changes). Delegates remain
-on Engine. RecoverySettlement is a second class because Recovery is built by
-Resolution without Engine, and the handlers stay registered on Engine.
+**RecoverySettlement** (`core/recovery/coordinator-settlement.ts`). Applies a
+recovery report as the owner verb it names, once. Enforces
+[Coordinator reports](#coordinator-reports). Its pure rules live beside the
+report identity in `coordinator-report.ts`: `taskProgressDigest`,
+`coordinatorReportMatches`, `coordinatorActionPlan` (report to verb arguments, or
+the refusal naming why it no longer applies) and `recoverySettlementPatch` (what
+settling the report changes). **Responsible fault settlement**
+(`responsible-fault.ts`) is the Spec 058 mechanical fault code settles before an
+episode opens. Delegates remain on Engine. RecoverySettlement is a separate class
+because Recovery is built by Resolution without Engine, and the handlers stay
+registered on Engine.
 
 **Ladder** (`core/questions/ladder.ts`) and **blocker-ladder.ts**. A blocked worker gets
 one reviewer consult per cause, then one planner escalation, which a planner or
@@ -1158,6 +1178,47 @@ request identities and submitted handoffs are not rewritten.
 - Declared-stage execution is retired (Tom, 2026-10-06): a submission declaring
   `queue.stages` refuses, and stage records stay readable history that never
   dispatches or merges.
+
+### Host outage
+
+- A task's host is part of its identity (Tom, 2026-11-14; T3 lane document v18,
+  host dropout option 1: wait). While its host is unavailable — the service
+  health `state` is not `online`, so the transport is not connected — the task
+  records its own durable wait (`resolution.hostWait`: the host and the time the
+  outage was first observed). The outage record is durable (`hostOutages` meta),
+  so a service restart during the outage keeps the same start.
+- The wait is independent of the task's stop (nucleus#1198 review). When nothing
+  more specific already stops the task the stop reads `host_unavailable`, naming
+  the host and the outage start. A stop that belongs to an owner answer (budget,
+  ladder escalation, responsible question, hold, proof wait, interactive turn,
+  paused stop, operator attention) keeps its own record and question: the host
+  wait still pauses the wall clock, shows on the card beside the stop, and joins
+  the project's outage notice.
+- Nothing is sent to that host: no quantum, launch, continuation, notification,
+  recovery or coordinator, and no stall, incident or escalation is raised from
+  the outage. The wall-time budget pauses for the wait (Spec 058 budgets). New
+  dispatch for a project whose host is away waits the same way.
+- When the host returns, the wait clears and observation re-proves each retained
+  thread before anything is sent; the task continues on the same host and
+  threads. Delivery that was unknown stays unknown — an outage is never a reason
+  to replay it.
+- Moving a task to another host stays an explicit owner decision: there is no
+  automatic failover and no `move host` verb.
+- Past the dispatch-limits bound (`hostOutageNoticeMinutes`, 120 by default) each
+  affected project's planner receives one notice naming the host, its outage
+  start and the tasks held on it, through the ordinary durable notice path.
+  Tracking is per project on the outage, so a project that becomes affected
+  later, or whose planner is only resolvable later, still hears once for the
+  same outage; a project that already heard never hears again. The notice is
+  about a live outage: when the host recovers before its planner can take it,
+  the pending notice is superseded with "outage ended before delivery" and is
+  not sent, and its stored text is never rewritten at delivery (planner ruling,
+  2026-11-14). An interrupted send keeps its durable intent: it settles as
+  `uncertain` before the ended-outage rule applies, so an outage ending first
+  never relabels unknown delivery as not sent. A shorter outage tells nobody,
+  and a fresh outage starts unnotified.
+- The board card of a waiting task shows the same wait ("Waiting on <host>
+  since …"); host health itself is unchanged.
 
 ### Orphan worktree after a timed-out create
 

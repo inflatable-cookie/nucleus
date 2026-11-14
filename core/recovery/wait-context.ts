@@ -2,7 +2,7 @@ import type { Task } from "../../shared/contracts";
 import type { WaitStateContext } from "../../shared/wait-state";
 import { boardDispatchHoldApplies, BOARD_DISPATCH_HOLD_REASON } from '../../shared/board-dispatch-hold';
 import { holdsOf } from '../../shared/contracts';
-import { DISPATCH_WAIT_REASON } from '../../shared/task-stop';
+import { DISPATCH_WAIT_REASON, routeUnavailableStop } from '../../shared/task-stop';
 import { DISPATCH_HELD_REASON, projectInFlightWaitReason } from '../dispatch/capacity';
 import type { Store } from "../store/store";
 
@@ -36,7 +36,7 @@ export function queuedReason(store: Store, task: Task, context: WaitStateContext
   if (holdsOf(task).dispatch) return DISPATCH_HELD_REASON;
   if (!store.getMeta<boolean>('paused') && store.getMeta<boolean>('dispatchHeld') && boardDispatchHoldApplies(task)) return BOARD_DISPATCH_HOLD_REASON;
   if (context.slotAdmissionReason) return context.slotAdmissionReason;
-  if (/no eligible|configure.*profile|profile.*unavailable/i.test(task.reason))
+  if (routeUnavailableStop(task))
     return store.routingRetryAllowed(task) ? DISPATCH_WAIT_REASON : task.reason;
   if (task.reason && task.reason !== DISPATCH_WAIT_REASON && !/prerequisite|capacity|project slot|task.slot|dispatch held/i.test(task.reason)) return task.reason;
   return externalWait(task) || DISPATCH_WAIT_REASON;
