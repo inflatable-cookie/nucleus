@@ -24,6 +24,12 @@ test('a merge hold on a task still doing its work shows the phase', () => {
     'Working*: 769 Move every route');
 });
 
+test('operator hold identity includes the board caller label', () => {
+  const task = { held: true, phase: 'blocked' as const, holds: { dispatch: { owner: 'Operator (Board)' } } };
+  assert.equal(taskStateLabel(task), 'Waiting on Tom');
+  assert.equal(taskTitleStateLabel(task), 'Waiting on Tom');
+});
+
 test('a delivered report waits for its planner without reading as blocked', () => {
   const task = { held: false, phase: 'report_ready' as const };
   assert.equal(taskStateLabel(task), 'Planner');
