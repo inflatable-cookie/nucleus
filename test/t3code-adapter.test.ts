@@ -436,6 +436,14 @@ test('a host failure refusal names the kind, the code or method, and the message
   // A Paseo adapter's own messages appear as they are.
   assert.equal(hostFailureRefusalDetail(new Error('Agent was not found')), 'Error: Agent was not found');
   assert.equal(hostFailureRefusalDetail(new Error('Transport timeout')), 'Error: Transport timeout');
+  // A system or library error code is a plain token, so it is kept like an
+  // adapter's own code: an owner can see ECONNREFUSED, ENOENT or ETIMEDOUT.
+  for (const code of ['ECONNREFUSED', 'ENOENT', 'ETIMEDOUT', 'ERR_SOCKET_CLOSED'])
+    assert.equal(hostFailureRefusalDetail(Object.assign(new Error('connect failed'), { code })),
+      `Error ${code}: connect failed`);
+  // Free text in a code is dropped; only one bounded token is kept.
+  assert.equal(hostFailureRefusalDetail(Object.assign(new Error('connect failed'), { code: 'connect failed badly' })),
+    'Error: connect failed');
   // One line, clipped to 200 characters.
   assert.equal(hostFailureRefusalDetail(new Error('first line\n  at [\"text\"]')), 'Error: first line');
   assert.equal(hostFailureRefusalDetail(new Error('x'.repeat(300))), `Error: ${'x'.repeat(200)}`);

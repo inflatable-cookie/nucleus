@@ -73,12 +73,16 @@ export function sanitizeHostFailureDetail(input: unknown): string | undefined {
  * v2, 2026-11-14: no certification scheme; the refusal goes only to the task
  * owner about their own local host, so the host's own message is shown as it is).
  * The same rule applies to every host: a Paseo `Agent was not found` and a T3
- * `T3Code timeout: orchestration.subscribeThread` both appear verbatim.
+ * `T3Code timeout: orchestration.subscribeThread` both appear verbatim, and so
+ * does a system code such as `ECONNREFUSED`.
  */
 export function hostFailureRefusalDetail(error: unknown): string {
   const record = error && typeof error === 'object' ? error as { name?: unknown; message?: unknown; code?: unknown; method?: unknown } : {};
-  const name = typeof record.name === 'string' && /^[A-Za-z][A-Za-z0-9]{0,78}$/.test(record.name) ? record.name : 'Error';
-  const code = sanitizeHostFailureReason(record.code);
+  const token = (value: unknown) => typeof value === 'string' && /^[A-Za-z][A-Za-z0-9_.:-]{0,79}$/.test(value) ? value : undefined;
+  const name = token(record.name) ?? 'Error';
+  // A system error's code is a plain token too (ENOENT, ECONNREFUSED, ETIMEDOUT),
+  // so it is kept like any adapter code; only whitespace or free text is dropped.
+  const code = token(record.code);
   const method = typeof record.method === 'string' && /^[A-Za-z][A-Za-z0-9.]{0,100}$/.test(record.method) ? record.method : undefined;
   const kind = `${name}${code && code !== name ? ` ${code}` : ''}${method ? ` ${method}` : ''}`;
   const line = typeof record.message === 'string' ? record.message.split('\n')[0]!.trim().slice(0, 200) : '';

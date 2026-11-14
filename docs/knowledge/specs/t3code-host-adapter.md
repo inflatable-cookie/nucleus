@@ -445,8 +445,9 @@ caught observation into a refusal keeps the host error's kind and message: the
 proof of an external-merge source acceptance, and a finished run whose
 observation fences the verb. One rule applies to every host (planner ruling,
 2026-11-14): the kind is the error's class name plus its `code` or RPC `method`
-when it carries one, and the detail is the first line of its message clipped to
-200 characters. Hosts are the operator's own local services and the refusal goes
+when it carries one — a system code such as `ECONNREFUSED` or `ENOENT` counts,
+only free text in a code is dropped — and the detail is the first line of its
+message clipped to 200 characters. Hosts are the operator's own local services and the refusal goes
 only to the task owner, so the host's words are shown as they are and nothing is
 certified: a Paseo `Agent was not found` and a T3 `T3Code timeout:
 orchestration.subscribeThread` both appear verbatim.

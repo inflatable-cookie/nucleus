@@ -850,6 +850,16 @@ test('a Paseo observation refusal keeps the adapter message', async () => {
     assert.equal(operation.state, 'failed');
     assert.match(operation.diagnostic, /cannot be observed \(Error: Agent was not found\); restore observation before restarting\. No continuation was sent/);
     assert.deepEqual(restartState(f), before);
+    // A system error code is kept as the error's kind, not filtered out.
+    f.adapter.observe = async () => { throw Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:1'), { code: 'ECONNREFUSED' }); };
+    const next = f.current();
+    const retry = await f.engine.startOperation({ key: 'paseo-code-restart', kind: 'task_control', taskId: f.taskId,
+      expectedVersion: next.version, payload: { type: 'task_control', control: taskControlInputSchema.parse({
+        taskId: f.taskId, version: next.version, action: 'restart', reason: 'Continue' }) } });
+    assert.ok('accepted' in retry);
+    const refused = await f.engine.awaitOperation(retry.operation.id);
+    assert.equal(refused.state, 'failed');
+    assert.match(refused.diagnostic, /cannot be observed \(Error ECONNREFUSED: connect ECONNREFUSED 127\.0\.0\.1:1\)/);
   } finally { await f.close(); }
 });
 
