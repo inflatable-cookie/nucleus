@@ -376,13 +376,14 @@ owner to the rules it enforces.
   an exhausted or failed worker, and its gated decision (`decideWorkerFailover`
   names the outcome the sweep then applies). Worker replacement is dispatch's
   business — who runs the next round — so the sweep sits beside `worker-launcher.ts`.
-  Same-name `Engine` methods delegate to its `WorkerFailover`.
+  Its availability facts are the store's typed `availability()` rows, and
+  `unavailableGroupNames` is the one pure rule over them. Same-name `Engine` methods
+  delegate to its `WorkerFailover`.
 - `core/recovery/retired-observation.ts` holds the retired-worker observation
   cadence and the lifecycle-signal invalidations that make an identity due early.
   `core/workspaces/retired-agent-archive.ts` archives retired errored agents so a
   Paseo workspace stops reporting Failed, and records each unreadable read and
-  refused archive on the thread-archive wait lane. Availability rows are read as
-  the store's typed rows, never decoded from JSON at each gate.
+  refused archive on the thread-archive wait lane.
 - `core/planning/operations.ts` holds durable operations: accepting one, scheduling
   it on its lane, running and settling it (typed pre-send refusals settle
   definite, unexplained failures by the prose classifier), restart

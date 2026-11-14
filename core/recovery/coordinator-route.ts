@@ -129,8 +129,8 @@ export class CoordinatorRoute {
    if(stop.reason==='capacity')waiting=Boolean(this.resolution.slotAdmissionReason(t,true));
    else if(stop.reason==='provider_unavailable'){
     const group=t.profileGroup??this.store.runs(t.id).findLast(run=>run.agentId===t.agentId&&run.profile)?.profileGroup;
-    const row=group?this.store.db.prepare('SELECT data FROM availability WHERE group_id=?').get(group):null;
-    waiting=Boolean(row&&groupIsUnavailable(JSON.parse(String(row.data))));
+    const row=group?this.store.availability().find(entry=>entry.group===group)??null:null;
+    waiting=Boolean(row&&groupIsUnavailable(row));
    }else if(stop.reason==='route_unavailable'){
     // A coordinator can route the waiting role elsewhere (Tom, 2026-10-19), so
     // the wait holds only while no coordinator is routable either.
@@ -349,8 +349,8 @@ export class CoordinatorRoute {
       &&(!checkPoll.incidentId||checkPoll.incidentId===incident?.incidentId))
       this.store.setMeta(requiredCheckPollMetaKey(current.id,current.prHead!),{...checkPoll,recoveryRunId:run.id});
     const workerGroup=current.profileGroup ?? this.store.pool().find(entry=>entry.profileId===current.profile?.id)?.group;
-    const availability=workerGroup ? this.store.db.prepare('SELECT data FROM availability WHERE group_id=?').get(workerGroup) : null;
-    const outage=!this.resolution.hostAvailable(current) || this.resolution.workerProviderUnavailable(current) || Boolean(availability && groupIsUnavailable(JSON.parse(String(availability.data))));
+    const availability=workerGroup ? this.store.availability().find(entry=>entry.group===workerGroup)??null : null;
+    const outage=!this.resolution.hostAvailable(current) || this.resolution.workerProviderUnavailable(current) || Boolean(availability && groupIsUnavailable(availability));
     this.store.setCredential(run.id,token);this.store.putRun(run);this.store.event(t.id,'telemetry_recovery',JSON.stringify({runId:run.id,targetRole:target,cause:cause(t,this.store.runs(t.id)),work:taskWorkIdentity(current,this.store),outage}));this.episode.save(t,{runId:run.id,agentId,status:'running',...(current.resolution.recovery?.action ? {action:null} : {})});this.resolution.update(t,{recoveryActive:true,recoveryAttempts:current.resolution.recoveryAttempts+(outage?0:1)});
     if(group)this.store.chargeAssignment(group,profile!.id);
    });

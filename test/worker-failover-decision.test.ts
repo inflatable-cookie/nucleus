@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decideWorkerFailover, type WorkerFailoverFacts } from '../core/recovery/worker-failover';
+import { decideWorkerFailover, type WorkerFailoverFacts } from '../core/dispatch/worker-failover';
 
 test('worker failover gates and outcomes', () => {
   const cases: [WorkerFailoverFacts, string][] = [

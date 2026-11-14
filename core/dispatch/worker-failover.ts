@@ -142,7 +142,7 @@ function planWorkerFailover(task: Task, state: AgentObservation, erroredWithoutT
     // needs_attention. Automatic exhaustion failover keeps retrying; an
     // operator decision parks visibly instead.
     if ((replacingRetainedWorker||replacingReassignedWorker) && !outage) {
-      const availability=store.db.prepare("SELECT data FROM availability").all().map(row=>{const entry=JSON.parse(String(row.data));return{group:String(entry.group),unavailable:groupIsUnavailable(entry),reason:String(entry.reason??''),retryAt:(entry.retryAt??null) as string|null};});
+      const availability=store.availability().map(entry=>({group:entry.group,unavailable:groupIsUnavailable(entry),reason:entry.reason,retryAt:entry.retryAt}));
       const excludedProfiles=task.workerExclusions.filter(exclusion=>exclusion.profileId).map(exclusion=>exclusion.profileId);
       const cause=`${eligibilityReasons(replacementTask,profiles,store.pool(),availability,store.usageLevel(),facts.profiles)}${excludedProfiles.length?`; excluded profiles: ${[...new Set(excludedProfiles)].join(', ')}`:''}`;
       return decideWorkerFailover({ stage: 'unselected', instruction: true, alternate: false, cause }) as WorkerFailoverDecision;
@@ -155,7 +155,7 @@ function planWorkerFailover(task: Task, state: AgentObservation, erroredWithoutT
     if(chooseProfile(replacementTask,restoredProfiles,selectionPool,store.counts(),new Set(),'worker',store.recentCounts(),store.usageLevel(), store.demandRoleOffsets())){
       return decideWorkerFailover({ stage: 'unselected', instruction: false, alternate: true, cause: '' }) as WorkerFailoverDecision;
     }
-    const availability=store.db.prepare("SELECT data FROM availability").all().map(row=>JSON.parse(String(row.data)));
+    const availability=store.availability();
     const cause=eligibilityReasons(replacementTask,profiles,store.pool(),availability,store.usageLevel(),facts.profiles);
     return decideWorkerFailover({ stage: 'unselected', instruction: false, alternate: false, cause }) as WorkerFailoverDecision;
   }
@@ -175,10 +175,7 @@ function planWorkerFailover(task: Task, state: AgentObservation, erroredWithoutT
       OPERATOR_ROLE_REASSIGNMENT_REASON].some(reason => task.failoverReason.startsWith(reason));
     const profileIssue = facts.retainedProfileIssue();
     const sweepGroup = task.profileGroup ?? store.pool().find(entry => entry.profileId === task.profile?.id)?.group ?? null;
-    const sweepAvailabilityRow = sweepGroup
-      ? store.db.prepare("SELECT data FROM availability WHERE group_id=?").get(sweepGroup)
-      : null;
-    const sweepAvailability = sweepAvailabilityRow ? JSON.parse(String((sweepAvailabilityRow as { data: string }).data)) : null;
+    const sweepAvailability = sweepGroup ? store.availability().find(entry => entry.group === sweepGroup) ?? null : null;
     const failure = retainedWorkerFailureCause({
       task,
       observedStatus: state.status,
@@ -293,16 +290,15 @@ export class WorkerFailover {
         // error status alone does not prove that the existing thread cannot resume.
         if (!pausedStopHeld && !revision && !armed.failoverReason && await this.resolution.resumeTransientWorker(armed, state)) continue;
         const assignedGroup = original.profileGroup ?? this.store.pool().find(p=>p.profileId===original.profile!.id)?.group;
-        const availabilityRow = assignedGroup
-          ? this.store.db.prepare("SELECT data FROM availability WHERE group_id=?").get(assignedGroup)
-          : null;
-        const assignedAvailability = availabilityRow ? JSON.parse(String(availabilityRow.data)) : null;
+        const assignedAvailability = assignedGroup ? this.store.availability().find(entry => entry.group === assignedGroup) ?? null : null;
         const assignedGroupUnavailable = Boolean(assignedAvailability && groupIsUnavailable(assignedAvailability));
         if (!pausedStopHeld && !original.failoverReason && (!report || ["blocked","error"].includes(report.status)) && (isQuotaExhaustion(state.error) || assignedGroupUnavailable)) {
           if (startsNoRuns(this.store, this.engine.stopped)) return;
           const group = assignedGroup;
           if (!group) { this.engine.note(original.id,"Exhausted provider has no recorded subscription group; inspect routing", 'operator_needed', "needs_attention");continue; }
-          const reason = isQuotaExhaustion(state.error) ? state.error : String(assignedAvailability.reason || `Subscription group ${group} is unavailable`);
+          // The typed row may be absent (a group with no recorded availability):
+          // the wait still records, with the group's own name as its reason.
+          const reason = isQuotaExhaustion(state.error) ? state.error : String(assignedAvailability?.reason || `Subscription group ${group} is unavailable`);
           this.store.transaction(()=>{
             if(!assignedGroupUnavailable)this.store.setAvailability(group,JSON.stringify({group,unavailable:true,reason:reason.slice(0,2000),retryAt:providerRetryAt(state.error,report?.providerRetryAt)}));
             this.store.update(original.id,{failoverReason:reason.slice(0,2000)},assignedGroupUnavailable?"provider_unavailable":"provider_exhausted",`${group}: ${reason.slice(0,2000)}`);
@@ -322,8 +318,8 @@ export class WorkerFailover {
         if (isRateLimitError(state.error)) {
           const pacedGroup = task.profileGroup ?? this.store.pool().find(entry => task.profile && entry.profileId === task.profile.id)?.group ?? null;
           if (pacedGroup) {
-            const row = this.store.db.prepare('SELECT data FROM availability WHERE group_id=?').get(pacedGroup) as { data: string } | undefined;
-            this.store.setAvailability(pacedGroup, rateLimitCooldownData(row?.data, state.error, pacedGroup));
+            const row = this.store.availability().find(entry => entry.group === pacedGroup) ?? null;
+            this.store.setAvailability(pacedGroup, rateLimitCooldownData(row, state.error, pacedGroup));
           }
         }
         const failover = planWorkerFailover(task, state, erroredWithoutTurn, {
