@@ -67,6 +67,17 @@ export const proofOnlyReceiptAwaitingReview = (
 ): boolean => settledProofOnlyReceipt(task) !== null;
 
 /**
+ * The single-flight refusal as its own error, so a dispatch path that expected
+ * to lose the race recognises it without matching refusal text.
+ */
+export class ProofSingleFlightError extends Error {
+  constructor(readonly refusal: string) {
+    super(refusal);
+    this.name = 'ProofSingleFlightError';
+  }
+}
+
+/**
  * Task 560: single-flight launch refusal. Executor dispatch records its run
  * intent before the adapter call, and this is the check every dispatch path
  * (and the reservation transaction) reads: a second dispatch while an

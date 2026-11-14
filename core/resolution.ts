@@ -285,7 +285,6 @@ export class Resolution {
   readonly checkWaits = new CheckWaits(((owner: Resolution): CheckWaitsContext => ({
     get adapter() { return owner.adapter; },
     attention: (...args) => owner.attention(...args),
-    mergeGateEvidence: (...args) => owner.mergeGateEvidence(...args),
     paused: (...args) => owner.paused(...args),
     recordIncidentEvent: (...args) => owner.recordIncidentEvent(...args),
     refusePreMerge: (...args) => owner.refusePreMerge(...args),

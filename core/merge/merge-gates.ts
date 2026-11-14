@@ -117,7 +117,7 @@ export class MergeGates {
       const existing = findOpenPlannerEscalation(this.store.eventsAll(t.id) as LadderEvent[], cause);
       if (existing) this.resolution.waiting(t, escalationWaitDetail.planner(existing.id), 'escalated');
       else this.resolution.openPlannerEscalation(t, { cause, runId: work.id, question,
-        payload: { cause, runId: work.id, source: 'revision', question } });
+        payload: { cause, runId: work.id, source: 'revision', refusal: failedCheck ? 'failed_checks' : 'pre_merge', question } });
       return;
     }
     this.store.event(t.id, 'pre_merge_refused', eventDetail);

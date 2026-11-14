@@ -1,6 +1,6 @@
 import { NO_PENDING_EFFECT_REFUSAL } from "./verb-refusal-text";
 import { canRetireCancelledWorkspace } from "../workspaces/terminal-workspace-retirement";
-import { terminalArchiveWorkspaces } from "../closeout/workspace-lifecycle";
+import { terminalArchiveWorkspaces } from "../closeout/terminal-archive";
 import { exhaustedThreadArchives } from "../workspaces/thread-archive";
 import { archiveIntentOutstanding, archiveIntentUnreadable } from "../workspaces/archive-intent";
 import { externalArchiveHoldReason, preservedExternalWorkspace, recordedExternalArchive } from "../workspaces/external-workspace-archive";

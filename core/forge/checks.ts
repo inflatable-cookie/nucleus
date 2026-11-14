@@ -93,9 +93,6 @@ export function pendingCheckDeadlineMs(recentDurationsMs: number[]): number {
   if (!recentDurationsMs.length) return PENDING_CHECK_FALLBACK_MS;
   return Math.max(...recentDurationsMs) * 3;
 }
-export function isPendingCheckDeadlineReason(reason: string): boolean {
-  return reason.includes("has been pending past its deadline") && reason.includes("job URL:");
-}
 /**
  * The merge gate's failed-check refusal text. Queue records this exact string as
  * the author's revision instruction, so a later observation of the identical

@@ -21,7 +21,7 @@ import type { TimelinePage } from '../core/recovery/stall';
 import { toolTimelinePage } from './support/tool-timeline';
 import { classifyWorkspaceCreation, populateOwnedWorktree, taskCheckoutTarget } from '../core/workspaces/workspace-allocation';
 import { validateDispatch, verifyWorkspace as verifyTaskWorkspace } from '../core/git/index';
-import { terminalArchiveWorkspaces } from '../core/closeout/workspace-lifecycle';
+import { terminalArchiveWorkspaces } from '../core/closeout/terminal-archive';
 import { collectOwnerVerbFacts, ownerTaskNext, ownerVerbViews } from '../core/verbs/owner-verbs';
 import { escalationVerbChoices, plannerEscalationChoicesFor } from '../core/questions/blocker-ladder';
 

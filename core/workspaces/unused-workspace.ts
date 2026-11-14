@@ -1,3 +1,4 @@
+import { archiveFailureKeepsScope } from './archive-failure';
 import { existsSync } from "node:fs";
 import type { TaskControlInput } from '../../shared/contracts';
 import { isDispositionActive } from '../../shared/contracts';
@@ -46,7 +47,7 @@ export async function archiveUnusedWorkspace(store: Store, adapter: Adapter, inp
     try { return await adapter.archiveTaskWorkspace!(target, id, directory, head, allowed, uncertain, uncertain); }
     catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      if (retirement && (/teardown/i.test(reason) || retirement.hasScope(task.id, id) && /retire|runtime scope/i.test(reason)))
+      if (retirement && archiveFailureKeepsScope(retirement, task.id, id, error))
         retirement.flagArchiveFailure(task.id, id, reason);
       throw error;
     }

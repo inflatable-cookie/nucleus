@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { decideWorkspacePressureWait } from '../core/dispatch/dispatch';
+import { decideWorkspacePressureWait } from '../core/dispatch/dispatch-decisions';
 
 test('workspace pressure admission decisions', () => {
   const task = { workspaceId: null, queuePriority: 0 };
