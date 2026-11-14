@@ -31,3 +31,7 @@ its old row until its module is next changed.
 - nucleus#1199 (floor 5, 2026-11-14): `core/store/store.ts`, `core/store/store-tasks.ts` and
   `core/store/store-maintenance.ts` were split into one owner per mechanism; `store-maintenance.ts` no
   longer exists. The store rows in `N3.csv` were re-rated at that PR's head.
+- nucleus#1205 (floor 5, 2026-11-14): planning operation settlement, source reconciliation,
+  pre-dispatch repairs and submission intake now have separate owners; runtime promotion is split
+  from the planning facade and the board surfaces share counters and settings. The affected `N3.csv`
+  rows and the touched brief helper were re-rated against the code at `8d622cc4` (the PR's code head).
