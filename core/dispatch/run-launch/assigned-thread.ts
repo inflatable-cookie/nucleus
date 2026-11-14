@@ -69,11 +69,15 @@ export async function observeAssignedThread(ctx: LaunchThreadContext, t: Task, r
     ctx.waiting(t, assignedThreadWaitReason(state), active(state) ? 'lifecycle' : 'operator_needed');
     return { kind: 'handled' };
   }
+  let resumedWorkspace = workspaceId;
   if (role === 'reviewer' || role === 'revision') {
     if (state.workspaceId !== t.workspaceId!) throw new Error('Retained thread left the worker workspace');
-    return { kind: 'reuse', workspaceId };
+  } else {
+    resumedWorkspace = state.workspaceId!;
   }
-  const resumedWorkspace = state.workspaceId!;
+  // The workspace the run launches on is a launch fence for every role: a
+  // retained coordinator naming none, and a reviewer or revision whose task has
+  // none either, are faults rather than a launch with no workspace.
   if (!resumedWorkspace) throw new Error('Assigned coordinator has no workspace');
   return { kind: 'reuse', workspaceId: resumedWorkspace };
 }

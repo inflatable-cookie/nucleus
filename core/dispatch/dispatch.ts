@@ -1,6 +1,5 @@
 import type { Task } from "../../shared/contracts";
 import { DEFAULT_GLOBAL_LIMIT, isDispositionActive } from "../../shared/contracts";
-import { unavailableGroups } from '../../shared/pool';
 import { groupIsUnavailable } from '../../shared/pool';
 import { occupiesSlot, queuedVisits } from "./capacity";
 import { PRE_DISPATCH_BASE_ADVANCE_LIMIT, queuedDispatchOrder, type Engine } from "../engine";

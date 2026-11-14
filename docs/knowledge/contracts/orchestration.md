@@ -2077,7 +2077,9 @@ movement invalidates source approval and preserves the normal readiness gates.
   a total run count at one head does not distinguish those useful rounds.
 - A check wait is an episode only while its durable poll record for the current
   head exists: the record owns the episode, its incident, its one recovery and its
-  escalation, and the task's reason text is only its wording.
+  escalation, and the task's reason text is only its wording. A record written
+  before the record named its incident keeps the previous read of the deadline
+  wait it held.
 - A pending check is re-observed every minute at the same head and yields the
   integration turn; when checks settle, Nucleus reacquires a turn and reruns every
   gate. An overdue check gets one coordinator recovery look per check and head,

@@ -1,5 +1,5 @@
 import type { Task } from '../../shared/contracts';
-import type { CheckObservationFields, RequiredChecksResult } from '../resolution';
+import type { RequiredChecksResult } from '../resolution';
 import { requiredCheckPollMetaKey } from '../forge/index';
 import { now } from '../store/store';
 import type { CheckWaitsContext } from './check-waits';
@@ -32,11 +32,7 @@ export class CheckSettlement {
     const current = this.store.task(t.id);
     const incident = current.resolution.incident;
     const recovery = current.resolution.recovery;
-    // A record written before its incident was captured (or by an older process)
-    // adopts the incident the wait itself is visibly holding. The decision is
-    // keyed on the durable record and the task's typed attention, never on the
-    // reason's wording.
-    const incidentId = state.incidentId ?? (current.resolution.attention && current.resolution.incident ? current.resolution.incident.id : null);
+    const incidentId = state.incidentId ?? this.legacyEpisodeIncident(current);
     const matchesIncident = Boolean(incidentId && incident?.id === incidentId);
     const matchesRecovery = Boolean(incidentId && recovery?.incidentId === incidentId);
     if (!matchesIncident && !matchesRecovery) {
@@ -62,6 +58,20 @@ export class CheckSettlement {
     } else if (current.reason !== detail) {
       this.store.update(t.id, { reason: detail });
     }
+  }
+  /**
+   * A poll record written before this module owned the episode names no incident,
+   * so the incident its wait raised is still identified the previous way: the
+   * reason text is the pending-check deadline this wait recorded, and the task is
+   * in the attention that wait raised. Every record this version writes names its
+   * incident, and an unrelated fault's reason never matches this deadline shape,
+   * so an unrelated attention is never settled. This is the one bounded
+   * compatibility read for in-flight records.
+   */
+  private legacyEpisodeIncident(t: Task): string | null {
+    if (!t.resolution.attention) return null;
+    const deadline = t.reason.includes('has been pending past its deadline') && t.reason.includes('job URL:');
+    return deadline ? t.resolution.incident?.id ?? null : null;
   }
   /** Re-observe checks without the repository turn. A settled result returns to the ordinary
    * exact-head verification path, which must reacquire its FIFO turn and repeat every gate. */

@@ -132,13 +132,13 @@ test('a pending-check episode is owned by its durable record, not by the reason 
 test('a green gate settles the escalation it raised for failed checks, matched by its recorded refusal class', () => {
   const cause = 'd'.repeat(64);
   const escalationId = 'escalation-1';
-  const withRefusal = (refusal: string) => fakeStore({
+  const withRefusal = (refusal: string | undefined, instruction = 'PR checks failed: lint (job URL: https://example.test/job/1)') => fakeStore({
     task: task(),
-    runs: { 'run-1': { id: 'run-1', role: 'revision', revisionCause: 'pre_merge', head, released: true, status: 'finished' } },
+    runs: { 'run-1': { id: 'run-1', role: 'revision', revisionCause: 'pre_merge', head, released: true, status: 'finished', instruction } },
     events: [
       { id: 1, taskId: 'task-1', at: '2026-01-01T00:00:00.000Z', kind: 'unchanged_check_revision_refused', detail: 'refused at the reviewed head' },
       { id: 2, taskId: 'task-1', at: '2026-01-01T00:00:01.000Z', kind: 'planner_escalation', detail: `${escalationId}: cause ${cause}; run run-1; question digest (1 chars); options move | route` },
-      { id: 3, taskId: 'task-1', at: '2026-01-01T00:00:02.000Z', kind: 'planner_escalation_payload', detail: `${escalationId}: ${JSON.stringify({ id: escalationId, runId: 'run-1', question: 'q', refusal })}` },
+      { id: 3, taskId: 'task-1', at: '2026-01-01T00:00:02.000Z', kind: 'planner_escalation_payload', detail: `${escalationId}: ${JSON.stringify({ id: escalationId, runId: 'run-1', question: 'q', ...(refusal === undefined ? {} : { refusal }) })}` },
     ],
   });
   const typed = withRefusal('failed_checks');
@@ -153,6 +153,38 @@ test('a green gate settles the escalation it raised for failed checks, matched b
   const unrevisioned = fakeStore({ task: task() });
   waitsFor(unrevisioned.store).resolvePassedUnchangedCheckEscalation(task());
   assert.deepEqual(unrevisioned.writes, [], 'a task with no unchanged-check refusal event is never settled');
+
+  // An escalation opened before payloads carried the class names none. It keeps
+  // the previous identification through the revision instruction it wrote.
+  const legacy = withRefusal(undefined);
+  waitsFor(legacy.store).resolvePassedUnchangedCheckEscalation(task());
+  assert.deepEqual(legacy.writes.map(write => write.kind), ['planner_escalation_resolved'],
+    'a pre-class escalation still settles on a failed-check instruction');
+
+  const legacyOther = withRefusal(undefined, 'Pre-merge refusal is unchanged at the reviewed head: repository hook refused');
+  waitsFor(legacyOther.store).resolvePassedUnchangedCheckEscalation(task());
+  assert.deepEqual(legacyOther.writes, [], 'a pre-class escalation for another refusal is not a check escalation');
+});
+
+test('a pre-class poll record adopts only the deadline wait it recorded, never an unrelated attention', () => {
+  const prose = "Required check 'build' (queued, no runner yet) has been pending past its deadline (2h elapsed, bound 1h); job URL: https://example.test/job/1";
+  const waiting = task({ reason: prose, resolution: { incident, attention: true } as Task['resolution'] });
+  const legacy = fakeStore({ task: waiting });
+  legacy.meta.set(`requiredCheckPoll:${waiting.id}:${head}`, { head, nextAt: 0, incidentId: null });
+  const incidents: unknown[] = [];
+  waitsFor(legacy.store, { recordIncidentEvent: (_id, record) => { incidents.push(record); } })
+    .finishRequiredCheckWait(waiting, 'Required checks settled');
+  assert.equal(incidents.length, 1, 'the deadline wait settles the incident it raised');
+  assert.equal((incidents[0] as { status: string }).status, 'resolved');
+
+  const unrelated = task({ reason: 'A different fault holds this task', resolution: { incident, attention: true } as Task['resolution'] });
+  const other = fakeStore({ task: unrelated });
+  other.meta.set(`requiredCheckPoll:${unrelated.id}:${head}`, { head, nextAt: 0, incidentId: null });
+  const untouched: unknown[] = [];
+  waitsFor(other.store, { recordIncidentEvent: (_id, record) => { untouched.push(record); } })
+    .finishRequiredCheckWait(unrelated, 'Required checks settled');
+  assert.deepEqual(untouched, [], 'an unrelated attention is never settled by a green gate');
+  assert.deepEqual(other.updates, [], 'nor is its record rewritten');
 });
 
 test('a poll record for another head is not this episode', () => {

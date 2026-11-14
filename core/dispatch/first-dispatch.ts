@@ -1,6 +1,6 @@
 import type { Engine } from '../engine';
-import type { Profile, Task } from '../../shared/contracts';
-import { DEFAULT_GLOBAL_LIMIT, isDispositionActive, workerProfileIsExcluded } from '../../shared/contracts';
+import type { Task } from '../../shared/contracts';
+import { isDispositionActive, workerProfileIsExcluded } from '../../shared/contracts';
 import { unavailableGroups } from '../../shared/pool';
 import { capacityRefusal, dispatchBlocked, occupiesSlot } from './capacity';
 import { workspaceAdmissionGapMs } from '../engine';

@@ -1,6 +1,6 @@
-import type { Task } from '../../shared/contracts';
-import { requiredCheckPollMetaKey, REQUIRED_CHECK_ESCALATION_MS, REQUIRED_CHECK_POLL_INTERVAL_MS } from '../forge/index';
-import { plannerEscalations, type LadderEvent } from '../questions/blocker-ladder';
+import type { Run, Task } from '../../shared/contracts';
+import { isFailedChecksReason, requiredCheckPollMetaKey, REQUIRED_CHECK_ESCALATION_MS, REQUIRED_CHECK_POLL_INTERVAL_MS } from '../forge/index';
+import { plannerEscalations, type LadderEvent, type PlannerEscalation } from '../questions/blocker-ladder';
 import type { CheckObservationFields, MergeGateResult, OverdueCheckEvidence, RequiredChecksResult, Resolution } from '../resolution';
 import { now } from '../store/store';
 import { CheckEvidence } from './check-evidence';
@@ -78,7 +78,7 @@ export class CheckWaits {
     const escalation = plannerEscalations(this.store.eventsAll(t.id) as LadderEvent[])
       .findLast(item => {
         const work = item.runId ? this.store.run(item.runId) : null;
-        return !item.answered && item.refusal === 'failed_checks' && work?.role === 'revision'
+        return !item.answered && this.escalationIsFailedCheck(item, work) && work?.role === 'revision'
           && work.revisionCause === 'pre_merge' && work.head === t.prHead;
       });
     if (escalation) {
@@ -86,6 +86,18 @@ export class CheckWaits {
       if (t.resolution.stop?.reason === 'escalated')
         this.waiting(this.store.task(t.id), 'Required check passed; reacquiring repository integration turn', 'lifecycle');
     }
+  }
+  /**
+   * Which refusal an escalation answers. Every escalation this version opens
+   * carries the class on its payload. An escalation opened before that field
+   * existed names none, and that in-flight record keeps the previous
+   * identification: the revision instruction Queue wrote for the failed check.
+   * This is the one bounded compatibility read; a payload with a class never
+   * reads the instruction text.
+   */
+  private escalationIsFailedCheck(escalation: PlannerEscalation, work: Run | null): boolean {
+    if (escalation.refusal !== null) return escalation.refusal === 'failed_checks';
+    return Boolean(work && isFailedChecksReason(work.instruction));
   }
   requiredCheckPollState(t: Task): RequiredCheckPollState | null {
     if (!t.prHead) return null;
