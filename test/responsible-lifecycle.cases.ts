@@ -865,6 +865,12 @@ test('extend_budget uses the owner extension path and requires board, relayed or
     assert.match(f.events('operator_question_superseded')[0]!.detail, new RegExp(`^${question.id}: .*budget was extended`));
     assert.equal(f.store.decision(decision.id).status, 'withdrawn', 'the linked board question closes with the budget pause');
 
+    // One answer grants room past the use it found (nucleus#1214), so a later pause
+    // is a later overrun: a further 20 hours of recorded work spends the increment
+    // and is what the second answer clears.
+    const later = new Date(Date.now() - 40 * 60 * 60 * 1000).toISOString();
+    f.store.update(f.current().id, { budgetSince: later });
+    f.recordRunStart(later);
     f.engine.resolution.recordStop(f.current(), 'budget', 'Budget reached: 6 hours');
     await f.engine.performTaskControl(taskControlInputSchema.parse({ ...withoutAuthority, version: f.current().version,
       caller: 'relay-agent', relayed: true, note: 'Operator approved one more increment' }));

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { taskBudget } from '../shared/task-budget';
 import { summarizeTask, taskDetailView } from '../shared/task-view';
 import { TASK_PROGRESSING_REASON } from '../shared/task-detail-summary';
-import { runSchema } from '../shared/contracts';
+import { OPERATOR_BOARD_CALLER, runSchema } from '../shared/contracts';
 import { DISPATCH_WAIT_REASON } from '../shared/task-stop';
 import { slotRequestFenced } from '../core/dispatch/capacity';
 import { operatorQuestionFor } from '../core/questions/operator-question';
@@ -439,5 +439,112 @@ test('the reason follows the current stop, so a cleared budget pause does not ke
     const stillPaused = ownerTaskNext(collectOwnerVerbFacts(f.store, f.current()));
     assert.equal(stillPaused.stop?.reason, 'budget');
     assert.match(stillPaused.reason, /Budget reached: 16982 of 1920/);
+  } finally { await f.close(); }
+});
+
+/**
+ * nucleus#1214 / praxis#328: the head was accepted, prospective-merge validation
+ * passed, and the wall clock was 1,925 minutes against a 960-minute limit when the
+ * pause landed at the merge stage. The pause keeps the stage it interrupted, and
+ * one answer — not three — lets the same stage continue: the merge gate runs, and
+ * no revision and no review is dispatched just because the pause cleared.
+ */
+test('praxis#328: a budget stop at the merge stage keeps the stage, and one extension resumes the merge gate', async () => {
+  const f = fixture({ responsible: true });
+  try {
+    const startedAt = iso(Date.now() - 1925 * MINUTE);
+    const task = f.current();
+    // Real stored shape: the accepted exact head, the passed prospective-merge
+    // validation, and the merge stage that owns the next step.
+    f.store.update(task.id, { complexity: 'very_high', budgetSince: startedAt, phase: 'merging' }, 'budget_fixture');
+    f.store.update(task.id, { resolution: { ...f.current().resolution, currentRunId: null, mergeBase: base,
+      mechanicalVerification: { at: startedAt, head, base },
+      reviews: [{ runId: 'review-1', agentId: 'reviewer-1', head, status: 'ready_to_merge', reviewId: 5906585656,
+        reviewCommentId: null, at: startedAt, verdicts: [] }],
+      review: { eventId: 'review-1', taskId: task.id, runId: 'review-1', status: 'ready_to_merge',
+        summary: 'Accepted at the reviewed head', head, prNumber: 1, reviewId: 5906585656 } } }, 'review_accepted_fixture');
+    f.recordRunStart(startedAt);
+    const mergeRuns = () => f.store.runs(task.id).filter(run => run.role === 'revision' || run.role === 'reviewer');
+    const beforeRuns = mergeRuns().length;
+    // The dispatch funnel is the one writer of a budget pause; the task was over its
+    // limit before its next step could start.
+    await f.engine.resolution.launch(f.current(), 'revision');
+    const stopped = f.current();
+    assert.equal(stopped.phase, 'merging', 'the pause keeps the stage it interrupted');
+    assert.equal(stopped.resolution.stop?.reason, 'budget', stopped.reason);
+    assert.deepEqual(stopped.resolution.stop?.suggestedVerbs, ['extend_budget']);
+    const paused = taskBudget(stopped, f.store.runs(stopped.id), Date.now(), f.store.eventsAll(stopped.id));
+    assert.equal(paused.wallMs.limit, 960 * MINUTE);
+    assert.equal(paused.exhausted, 'wall_time');
+
+    // One answer.
+    await f.engine.performTaskControl({ taskId: stopped.id, version: stopped.version, action: 'extend_budget',
+      reason: 'Continue the merge at the accepted head', caller: OPERATOR_BOARD_CALLER });
+    const extended = f.current();
+    assert.equal(extended.resolution.stop, null, 'one extension clears the pause');
+    assert.equal(extended.phase, 'merging', 'and never moves the stage');
+    const resumed = taskBudget(extended, f.store.runs(extended.id), Date.now(), f.store.eventsAll(extended.id));
+    assert.equal(resumed.exhausted, null, `one answer always lets the task continue: ${resumed.wallMs.used} of ${resumed.wallMs.limit}`);
+    // The granted limit is one increment past the use, not past the old limit.
+    assert.equal(resumed.wallMs.limit, extended.resolution.budgetLimits!.wallMs);
+    assert.ok(resumed.wallMs.limit >= paused.wallMs.used + 960 * MINUTE, `granted ${resumed.wallMs.limit} for use ${paused.wallMs.used}`);
+    assert.ok(resumed.wallMs.limit <= paused.wallMs.used + 961 * MINUTE);
+    assert.equal(extended.resolution.budgetLimits!.effectiveTokens, 50_000_000);
+    // The extension event records both figures, so the answer is auditable.
+    const event = f.events('budget_extended').at(-1)!;
+    assert.match(event.detail, /wall limit 960 -> 2885 minutes \(use 1925\)/);
+    assert.match(event.detail, /token limit 25000000 -> 50000000 \(use 0\)/);
+
+    // The next pass continues the merge stage: the gate is read and the merge is
+    // requested. No revision and no review run is created by the cleared pause.
+    await f.engine.wake();
+    await f.engine.quiesce();
+    const after = f.current();
+    assert.equal(f.mergeCalls, 1, `the merge gate resumed at the accepted head: ${after.reason}`);
+    assert.ok(after.resolution.mergeIntent, 'the merge intent was recorded at the accepted head');
+    assert.notEqual(after.resolution.stop?.reason, 'budget', 'the cleared pause is not re-stamped');
+    assert.equal(mergeRuns().length, beforeRuns, 'no revision and no review was dispatched');
+    assert.equal(after.phase === 'changes_requested', false, 'the stage never became a revision');
+  } finally { await f.close(); }
+});
+
+/**
+ * nucleus#1214: a pause during review resumes the review stage — the retained
+ * reviewer, not a revision. The reviewer thread recorded on the task stays the
+ * one the next run continues, and no revision run appears.
+ */
+test('a budget stop during review resumes the same retained reviewer, not a revision', async () => {
+  const f = fixture({ responsible: true });
+  try {
+    // One review round and its revision, so the reviewer thread is retained.
+    await f.reviews(1);
+    await f.engine.wake();
+    assert.equal(f.run().role, 'revision');
+    const inFlight = f.current();
+    const retainedAgent = inFlight.resolution.reviewerAgentId;
+    const retainedProfile = inFlight.resolution.reviewerProfile?.id;
+    assert.ok(retainedAgent, 'the reviewer thread is retained on the task');
+    const revisions = f.store.runs(inFlight.id).filter(run => run.role === 'revision').length;
+    // The wall clock is spent while the revision is in flight, so the review that
+    // follows it meets the pause.
+    f.store.update(inFlight.id, { complexity: 'low', budgetSince: iso(Date.now() - 70 * MINUTE) }, 'budget_fixture');
+    f.recordRunStart(iso(Date.now() - 70 * MINUTE));
+    await f.report('ready_for_review');
+    const stopped = f.current();
+    assert.equal(stopped.phase, 'awaiting_review', 'the pause keeps the review stage');
+    assert.equal(stopped.resolution.stop?.reason, 'budget', stopped.reason);
+
+    // One answer resumes that stage.
+    await f.engine.performTaskControl({ taskId: stopped.id, version: stopped.version, action: 'extend_budget',
+      reason: 'Continue the review', caller: OPERATOR_BOARD_CALLER });
+    await f.engine.wake();
+    await f.engine.quiesce();
+    const resumed = f.current();
+    assert.equal(resumed.phase, 'reviewing', `the review stage resumes: ${resumed.reason}`);
+    assert.equal(f.run().role, 'reviewer', 'the resumed run is the reviewer, never a revision');
+    assert.equal(f.run().agentId, retainedAgent, 'the same retained reviewer thread continues');
+    assert.equal(resumed.resolution.reviewerProfile?.id, retainedProfile, 'and the same reviewer profile');
+    assert.equal(f.store.runs(resumed.id).filter(run => run.role === 'revision').length, revisions,
+      'no revision was dispatched by the cleared pause');
   } finally { await f.close(); }
 });

@@ -2,7 +2,7 @@ import { z } from "zod";
 import { recoveryActionSchema } from "./task-common";
 import { completionSchema, coordinatorActionSchema, externalOwnerRevisionReceiptSchema, mechanicalVerificationSchema, ownerAcceptanceRecordSchema, reviewRecordSchema, reviewSupersessionSchema } from "./review";
 import { taskStopRecordSchema } from "../task-stop";
-import { budgetClockSchema } from "../task-budget";
+import { budgetClockSchema, taskBudgetLimitsSchema } from "../task-budget";
 import { taskHostWaitSchema } from "../host-outage";
 import { taskPhaseSchema } from "../schema/task-primitives";
 import { incidentSchema } from "../incident";
@@ -67,6 +67,10 @@ export const resolutionSchema = z.object({
   stop: taskStopRecordSchema.nullable().default(null),
   // Spec 058 budgets: operator extensions granted to this responsible task, one default increment each.
   budgetExtensions: z.number().int().min(0).default(0),
+  // Spec 058 budgets (nucleus#1214): the limits the last extension granted. One answer
+  // raises them one default increment past the task's own use as well as past the
+  // current limit, so a single extension always clears the stop.
+  budgetLimits: taskBudgetLimitsSchema.nullable().default(null),
   // Spec 058 budgets (nucleus#1153): wall-clock time discounted because the task was
   // held on a Nucleus-side cause. The task quantum is its one writer.
   budgetClock: budgetClockSchema.nullable().default(null),
