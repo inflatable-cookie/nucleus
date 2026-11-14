@@ -170,6 +170,8 @@ export interface ProjectQaOptions {
   fetchTimeoutMs?: number;
   /** Supervision poll cadence; tests shorten it. */
   supervisionPollMs?: number;
+  /** Process identity probe override for escaped-descendant sweep tests. */
+  escapeeLiveness?: (pid: number, startIdentity: string) => "alive" | "dead" | "unknown";
   /** Detached supervisor entry override; tests and fixtures only. */
   supervisorEntry?: string;
   notify?: (agentId: string, messageId: string, text: string) => Promise<void>;
@@ -370,10 +372,9 @@ export class ProjectQaRunner {
   /** Latest run per repository, re-attaching to or healing running rows so the board never shows a stuck run. */
   async list(): Promise<ProjectQaRun[]> {
     this.settleInterruptedPreparations();
-    // Audit A7: re-attach only the settled rows that still hold capacity for
-    // escaped descendants not yet proven dead, selected in SQL instead of
-    // parsing every host-run row on each 20 s tick and 4 s poll.
-    for (const run of this.store.hostRunsAwaitingEscapedDescendants()) this.watchEscapedDescendants(run.id);
+    // QA history outlives host-run accounting, so it remains the sweep source
+    // for escaped descendants even after the host-run row is pruned.
+    for (const run of this.store.qaRunsAwaitingEscapedDescendants()) this.watchEscapedDescendants(run.id);
     const runs = this.store.latestQaRuns();
     for (const run of runs) {
       if (run.state === "queued") { this.attachQueued(run); continue; }

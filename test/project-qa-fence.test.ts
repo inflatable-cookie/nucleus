@@ -10,6 +10,7 @@ import { ProjectQaRunner } from './project-qa-runner-fixture';
 import { ProjectQaSchedules, qaScheduleStateKey } from '../core/qa/project-qa-schedule';
 import { qaFenceStatus, writeQaFence } from '../core/qa/qa-fence';
 import { qaFenceText } from '../shared/qa-fence';
+import { sweepQaEscapedDescendants } from '../core/qa/project-qa-escapees';
 import {
   projectQaFence, projectQaFenceInputSchema, projectQaRunSchema, QA_FENCE_REFUSAL_PREFIX, submissionSchema,
   type ProjectQaFenceInput,
@@ -200,6 +201,52 @@ test('the inventory is complete across all rows: unfinished runs behind a newer 
   assert.match(inventory.find(item => item.id === 'milestone-holding')!.detail, /still holding host capacity/);
   assert.match(inventory.find(item => item.id === 'held-escaped')!.detail, /Finished with 1 escaped descendant and no durable proof they exited/);
   assert.deepEqual(qaFenceStatus(f.store).inventory, inventory, 'the read returns the same complete inventory');
+});
+
+test('one sweep proves dead QA escapees without a host row, while alive and unknown identities stay inventoried', async t => {
+  const f = await runnerFixture(t);
+  const queued = await f.runner.run({ repository: f.root, requestId: 'escapee-proof' });
+  const escaped = [{ pid: 4242, startIdentity: 'copied-process-start' }];
+  const finishedAt = new Date().toISOString();
+  const finished = { ...queued, state: 'failed' as const, exitCode: 1, finishedAt, escapedDescendants: escaped };
+  f.store.putQaRun(finished);
+  f.store.db.prepare('DELETE FROM host_run_records WHERE id=?').run(queued.id);
+  const context = {
+    store: f.store,
+    hostRuns: { get: () => null, markEscapedDescendantsDead: () => { throw new Error('no host row should be required'); } },
+    options: { escapeeLiveness: (_pid: number, _identity: string): 'alive' | 'dead' | 'unknown' => 'dead' },
+  };
+  assert.deepEqual(qaFenceStatus(f.store).inventory.map(item => item.id), [queued.id]);
+  assert.equal(sweepQaEscapedDescendants(context, queued.id), 'dead');
+  assert.deepEqual(qaFenceStatus(f.store).inventory, [], 'the QA row now carries proof after one sweep');
+  const proof = f.store.qaRun(queued.id)!;
+  assert.ok(proof.escapedDescendantsProvenDeadAt);
+  assert.deepEqual(proof.escapedDescendantsProvenDead, escaped);
+
+  for (const [id, liveness] of [['alive-escapee', 'alive'], ['unknown-escapee', 'unknown']] as const) {
+    f.store.putQaRun({ ...finished, id, escapedDescendantsProvenDeadAt: undefined, escapedDescendantsProvenDead: undefined });
+    context.options.escapeeLiveness = () => liveness;
+    assert.equal(sweepQaEscapedDescendants(context, id), liveness);
+    assert.deepEqual(qaFenceStatus(f.store).inventory.map(item => item.id), [id], `${liveness} identity stays fenced`);
+  }
+});
+
+test('pruning a host-run proof record does not restore its finished QA row to the inventory', async t => {
+  const f = await runnerFixture(t);
+  const queued = await f.runner.run({ repository: f.root, requestId: 'retained-proof' });
+  const escaped = [{ pid: 4343, startIdentity: 'retained-process-start' }];
+  const at = new Date().toISOString();
+  f.store.putQaRun({ ...queued, state: 'failed', exitCode: 1, finishedAt: at, escapedDescendants: escaped });
+  f.store.db.prepare('INSERT INTO host_run_records(id, repository, state, data) VALUES (?, ?, ?, ?)').run(
+    queued.id, 'owner/repo', 'settled', JSON.stringify({ id: queued.id, priority: 'milestone', state: 'settled',
+      capacityReleasedAt: at, escapedDescendantsProvenDeadAt: at, settlement: { result: { escapedDescendants: escaped } } }));
+  const context = { store: f.store,
+    hostRuns: { get: () => null, markEscapedDescendantsDead: () => { throw new Error('host proof row was already pruned'); } },
+    options: { escapeeLiveness: () => 'dead' as const } };
+  assert.deepEqual(qaFenceStatus(f.store).inventory, []);
+  assert.equal(sweepQaEscapedDescendants(context, queued.id), 'dead');
+  f.store.db.prepare('DELETE FROM host_run_records WHERE id=?').run(queued.id);
+  assert.deepEqual(qaFenceStatus(f.store).inventory, [], 'proof retained on project_qa_runs survives host-run pruning');
 });
 
 async function scheduleFixture(t: any) {

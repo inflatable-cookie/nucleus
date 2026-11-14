@@ -35,7 +35,7 @@ import {DatabaseSync} from "node:sqlite";
 import {z} from "zod";
 
 import type {Completion,PoolEntry,Submission} from "../../shared/contracts";
-import {availabilitySchema,compactLiveTask,decisionSchema,leadSchema,leadVersionMetadataSchema,noticeSchema,type AgentMessageRecord,type BoardLead,type BoardLeadLink,type Decision,type DemandRoleOffsets,type HostRunAccountingRetirement,type HostRunInternalRecord,type HostRunRecord,type Lane,type LaneDocumentPin,type LaneDocumentVersion,type LaneView,type Lead,type LeadVersion,type Notice,type Outcome,type OutcomeSearchInput,type OutcomeSearchResult,type Papercut,type PendingSubmission,type Profile,type Project,type ProjectCloseout,type ProjectManageInput,type ProjectManagementPreview,type ProjectMergeCheck,type ProjectMergeCheckInput,type ProjectMergeInput,type ProjectMergeResult,type ProjectPlan,type ProjectQa,type ProjectQaRun,type ProjectRemovalBlocker,type ProjectRemoveRepositoryInput,type ProjectTombstone,type ProjectUpsertInput,type ProjectValidation,type QaFence,type QaFenceRecord,type QaFenceView,type QaInventoryItem,type RepositoryChecksPolicy,type RepositorySettings,type RoutingGrant,type RoutingPolicy,type Run,type RuntimeRetirement,type SnapshotInput,type Task,type UsageLevel,type UsageSetting,type UsageView} from "../../shared/contracts";
+import {availabilitySchema,compactLiveTask,decisionSchema,leadSchema,leadVersionMetadataSchema,noticeSchema,type AgentMessageRecord,type BoardLead,type BoardLeadLink,type Decision,type DemandRoleOffsets,type HostRunAccountingRetirement,type HostRunEscapedDescendant,type HostRunInternalRecord,type HostRunRecord,type Lane,type LaneDocumentPin,type LaneDocumentVersion,type LaneView,type Lead,type LeadVersion,type Notice,type Outcome,type OutcomeSearchInput,type OutcomeSearchResult,type Papercut,type PendingSubmission,type Profile,type Project,type ProjectCloseout,type ProjectManageInput,type ProjectManagementPreview,type ProjectMergeCheck,type ProjectMergeCheckInput,type ProjectMergeInput,type ProjectMergeResult,type ProjectPlan,type ProjectQa,type ProjectQaRun,type ProjectRemovalBlocker,type ProjectRemoveRepositoryInput,type ProjectTombstone,type ProjectUpsertInput,type ProjectValidation,type QaFence,type QaFenceRecord,type QaFenceView,type QaInventoryItem,type RepositoryChecksPolicy,type RepositorySettings,type RoutingGrant,type RoutingPolicy,type Run,type RuntimeRetirement,type SnapshotInput,type Task,type UsageLevel,type UsageSetting,type UsageView} from "../../shared/contracts";
 import {type HookRecord} from "../../shared/hooks";
 import {type OperationAcceptance,type OperationResult,type QueueOperation} from "../../shared/operations";
 import {type LaneRecordActivity} from "../planning/lanes";
@@ -901,6 +901,10 @@ export class Store {
   qaRequestRecords(input: { requestId: string } | { repository: string; since: string; expectedHead: string }): unknown[] { return this.projectQaStore.qaRequestRecords(input); }
   qaHistoryForRequest(input: { repository: string; since: string; expectedHead: string }): ProjectQaRun[] { return this.projectQaStore.qaHistoryForRequest(input); }
   putQaRun(run: ProjectQaRun): ProjectQaRun { return this.projectQaStore.putQaRun(run); }
+  qaRunsAwaitingEscapedDescendants(): ProjectQaRun[] { return this.projectQaStore.qaRunsAwaitingEscapedDescendants(); }
+  markQaEscapedDescendantsDead(id: string, provenDead: HostRunEscapedDescendant[], at: string): ProjectQaRun {
+    return this.projectQaStore.markQaEscapedDescendantsDead(id, provenDead, at);
+  }
   qaRun(id: string): ProjectQaRun | null { return this.projectQaStore.qaRun(id); }
   latestQaRun(key: string): ProjectQaRun | null { return this.projectQaStore.latestQaRun(key); }
   latestQaRuns(limit = 250): ProjectQaRun[] { return this.projectQaStore.latestQaRuns(limit); }
