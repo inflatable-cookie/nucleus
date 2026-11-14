@@ -68,23 +68,29 @@ export function sanitizeHostFailureDetail(input: unknown): string | undefined {
 
 /**
  * A failed host call, as an owner-verb refusal names it: the error's kind — its
- * class name plus, when the adapter reports one, a bounded code, reason or
- * compatibility field — and its message, both bounded to facts the adapter
- * authored. A timeout therefore reads `T3RpcError timeout: T3Code timeout:
- * orchestration.subscribeThread` instead of a bare "cannot be observed", and
- * remote text that is not a bounded token never survives into the refusal.
+ * class name plus, when the adapter reports them, a bounded code, RPC method and
+ * compatibility field or remote tag — and, when it is a bounded token, its
+ * message. Structured adapter facts come first because an adapter's own message
+ * may carry punctuation (a remote tag in parentheses, a method in brackets) that
+ * the free-text rule below must not admit: `T3RpcError remote
+ * orchestration.subscribeThread (OrchestrationV2GetThreadProjectionError)` keeps
+ * the method and tag, and `T3RpcError timeout orchestration.subscribeThread`
+ * keeps the read that timed out, instead of a bare "cannot be observed". Remote
+ * text that is not a bounded token never survives into the refusal.
  */
 export function hostFailureRefusalDetail(error: unknown): string {
   const record = error && typeof error === 'object' ? error as {
-    name?: unknown; message?: unknown; code?: unknown; reason?: unknown; field?: unknown; remoteTag?: unknown;
+    name?: unknown; message?: unknown; code?: unknown; reason?: unknown; field?: unknown; remoteTag?: unknown; method?: unknown;
     diagnostic?: { reason?: unknown } } : {};
   const name = typeof record.name === 'string' && /^[A-Za-z][A-Za-z0-9]{0,78}$/.test(record.name) ? record.name : 'Error';
   const code = sanitizeHostFailureReason(record.code) ?? sanitizeHostFailureReason(record.reason)
     ?? sanitizeHostFailureReason(record.diagnostic?.reason);
-  const field = sanitizeHostFailureDetail(record.field) ?? sanitizeHostFailureReason(record.remoteTag);
-  const kind = `${name}${code && code !== name ? ` ${code}` : ''}${field ? ` (${field})` : ''}`;
+  // RPC method names are the adapter's own constants (`orchestration.…`).
+  const method = typeof record.method === 'string' && /^[A-Za-z][A-Za-z0-9.]{0,100}$/.test(record.method) ? record.method : undefined;
+  const label = sanitizeHostFailureDetail(record.field) ?? sanitizeHostFailureReason(record.remoteTag);
+  const kind = `${name}${code && code !== name ? ` ${code}` : ''}${method ? ` ${method}` : ''}${label ? ` (${label})` : ''}`;
   const message = sanitizeHostFailureDetail(record.message);
-  return message && message !== name ? `${kind}: ${message}` : kind;
+  return message ? `${kind}: ${message}` : kind;
 }
 
 /** Native names plus a bounded, shape-restricted reason and bounded guidance: never arbitrary remote text. */

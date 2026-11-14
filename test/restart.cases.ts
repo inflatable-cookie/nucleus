@@ -819,7 +819,8 @@ test('a refused restart names the host observation error and its kind', async ()
     retainedWorker(f, 'retained_worker', false);
     // The exact failure a long T3 thread produced: a read that outlived the bound.
     f.adapter.observe = async () => {
-      throw Object.assign(new Error('T3Code timeout: orchestration.subscribeThread'), { name: 'T3RpcError', code: 'timeout' });
+      throw Object.assign(new Error('T3Code timeout: orchestration.subscribeThread'),
+        { name: 'T3RpcError', code: 'timeout', method: 'orchestration.subscribeThread' });
     };
     const before = restartState(f);
     const input = taskControlInputSchema.parse({ taskId: f.taskId, version: f.current().version, action: 'restart', reason: 'Continue' });
@@ -829,8 +830,47 @@ test('a refused restart names the host observation error and its kind', async ()
     const operation = await f.engine.awaitOperation(accepted.operation.id);
     assert.equal(operation.state, 'failed');
     assert.match(operation.diagnostic,
-      /The retained worker cannot be observed \(T3RpcError timeout: T3Code timeout: orchestration\.subscribeThread\); restore observation before restarting\. No continuation was sent/);
+      /The retained worker cannot be observed \(T3RpcError timeout orchestration\.subscribeThread: T3Code timeout: orchestration\.subscribeThread\); restore observation before restarting\. No continuation was sent/);
     assert.deepEqual(restartState(f), before);
+  } finally { await f.close(); }
+});
+
+test('a refused restart keeps an adapter-authored method and remote tag', async () => {
+  const f = fixture(); try {
+    retainedWorker(f, 'retained_worker', false);
+    // The shape T3RpcError produces when the nightly fails a read with a typed tag.
+    f.adapter.observe = async () => {
+      throw Object.assign(new Error('T3Code remote: orchestration.subscribeThread (OrchestrationV2GetThreadProjectionError)'),
+        { name: 'T3RpcError', code: 'remote', method: 'orchestration.subscribeThread', remoteTag: 'OrchestrationV2GetThreadProjectionError' });
+    };
+    const before = restartState(f);
+    const input = taskControlInputSchema.parse({ taskId: f.taskId, version: f.current().version, action: 'restart', reason: 'Continue' });
+    const accepted = await f.engine.startOperation({ key: 'tagged-restart', kind: 'task_control', taskId: f.taskId,
+      expectedVersion: input.version, payload: { type: 'task_control', control: input } });
+    assert.ok('accepted' in accepted);
+    const operation = await f.engine.awaitOperation(accepted.operation.id);
+    assert.equal(operation.state, 'failed');
+    assert.match(operation.diagnostic, /cannot be observed \(T3RpcError remote orchestration\.subscribeThread \(OrchestrationV2GetThreadProjectionError\)\)/);
+    assert.deepEqual(restartState(f), before);
+  } finally { await f.close(); }
+});
+
+test('a finished run fenced by an unreadable observation names the host error', async () => {
+  const f = fixture(); try {
+    retainedWorker(f, 'retained_worker', false);
+    // A finished support run has to be observed before the restart settles it; its
+    // unreadable observation must say what failed, not just that it did.
+    f.store.putRun(runSchema.parse({ id: 'fenced-run', taskId: f.taskId, role: 'reviewer', generation: 1, head, base,
+      agentId: 'review-agent', workspaceId: 'workspace', profile: f.profiles.reviewer, status: 'finished',
+      createdAt: new Date().toISOString(), lastObservedAt: null, active: null, idleSince: null, released: false,
+      completion: { taskId: f.taskId, runId: 'fenced-run', eventId: 'fenced-ready', status: 'ready_for_review', summary: 'Reviewed', head } }));
+    f.adapter.observe = async () => { throw Object.assign(new Error('T3Code timeout: orchestration.subscribeThread'),
+      { name: 'T3RpcError', code: 'timeout', method: 'orchestration.subscribeThread' }); };
+    const finished = await f.engine.collectVerbFinishedRuns(f.taskId, () => false);
+    const fence = finished.fenced.find(entry => entry.run.id === 'fenced-run');
+    assert.ok(fence, JSON.stringify(finished.fenced.map(entry => entry.why)));
+    assert.equal(fence!.why, 'its agent is unobservable (T3RpcError timeout orchestration.subscribeThread: T3Code timeout: orchestration.subscribeThread)');
+    assert.match(f.engine.verbRunFenceRefusal(fence!), /still owns this task: its agent is unobservable \(T3RpcError timeout orchestration\.subscribeThread/);
   } finally { await f.close(); }
 });
 

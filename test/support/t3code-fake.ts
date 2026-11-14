@@ -20,26 +20,38 @@ export function threadProjection(id: string, directory: string): Value {
 export async function t3Fake(t: TestContext, directory: string) {
   const requests: Value[] = [];
   const commands: Value[] = [];
+  /** Every thread snapshot this fake served: what the client asked for and what it got. */
+  const snapshots: Value[] = [];
   const projectRows: Value[] = [{ id: 'synthetic-project', title: 'Synthetic project', workspaceRoot: directory }];
   const archivedProjects = new Set<string>();
   const threads = new Map<string, Value>([['synthetic-probe', threadProjection('synthetic-probe', directory)]]);
   /**
-   * The nightly's bounded snapshot (recorded `subscribeThread` contract): only
-   * a client that sends `acceptBoundedSnapshot` receives one, the thread record,
-   * its runs and its runtime requests stay complete, and only the timeline is a
+   * The nightly's bounded snapshot (recorded `subscribeThread` contract): only a
+   * client that sends `acceptBoundedSnapshot` receives one. The thread record is
+   * whole; runs keep the active-status set, the window's own runs and the run the
+   * shell presents; runtime requests keep the pending set and the window's own
+   * requests; plans and context handoffs are filtered; and only the timeline is a
    * window with `hasMoreHistory` and an opaque `historyCursor`. Items a pending
    * runtime request needs are retained outside the window, as the nightly keeps
-   * them.
+   * them (contract `subscribeThread.projectionRetained`).
    */
   const boundedSnapshot = (p: Value, rowLimit: number) => {
-    const pending = new Set(p.runtimeRequests.filter((request: Value) => request.status === 'pending').map((request: Value) => request.id));
+    const active = new Set(['queued', 'preparing', 'starting', 'running', 'waiting']);
+    const pending = new Set(p.runtimeRequests.filter((request: Value) => ['pending', 'waiting'].includes(request.status)).map((request: Value) => request.id));
     const kept = new Set(p.turnItems.slice(-rowLimit).map((item: Value) => item.id));
     for (const item of p.turnItems)
       if (item.type === 'run_interrupt_request' || ['user_input_request', 'approval_request'].includes(item.type) && pending.has(item.requestId))
         kept.add(item.id);
-    const turnItems = p.turnItems.filter((item: Value) => kept.has(item.id));
-    const hasMoreHistory = turnItems.length < p.turnItems.length;
-    const snapshot = { projection: { ...p, turnItems, messages: p.messages.slice(-1) },
+    const windowItems = p.turnItems.filter((item: Value) => kept.has(item.id));
+    const windowRuns = new Set(windowItems.flatMap((item: Value) => item.runId ? [item.runId] : []));
+    const presented = [...p.runs].reverse().find((run: Value) => run.status !== 'queued' || !run.queueHeld);
+    const runs = p.runs.filter((run: Value) => active.has(run.status) || windowRuns.has(run.id) || run.id === presented?.id);
+    const windowNodes = new Set(windowItems.flatMap((item: Value) => item.nodeId ? [item.nodeId] : []));
+    const runtimeRequests = p.runtimeRequests.filter((request: Value) => ['pending', 'waiting'].includes(request.status) || windowNodes.has(request.nodeId));
+    const plans = (p.plans ?? []).filter((plan: Value) => plan.status === 'active');
+    const contextHandoffs = (p.contextHandoffs ?? []).filter((handoff: Value) => ['pending', 'ready'].includes(handoff.status));
+    const hasMoreHistory = windowItems.length < p.turnItems.length;
+    const snapshot = { projection: { ...p, runs, runtimeRequests, plans, contextHandoffs, turnItems: windowItems, messages: p.messages.slice(-1) },
       hasMoreHistory, historyCursor: hasMoreHistory ? 'synthetic-history-cursor' : null, latestLocalTurnOrdinal: null };
     // The fixture is checked against the recorded contract on every bounded
     // answer, so a hand-made coverage field cannot enter a test unobserved.
@@ -56,8 +68,15 @@ export async function t3Fake(t: TestContext, directory: string) {
     unsupportedProjectCreate: false, projectMutationFailure: false, projectMutationSecretFailure: false, projectMutationIdSecretFailure: false, secretDefect: false, secretLocationDefect: false, mutationObserver: (() => {}) as () => void,
     /** Rows the bounded snapshot keeps before it pages; the nightly's own limit is a policy, not a contract field. */
     boundedRowLimit: 20,
-    /** A nightly that answers a bounded window without the client asking (the read main's long threads hit). */
-    boundedSnapshotAlways: false,
+    /**
+     * Millisecond delay before a whole-projection answer (a read that did not opt
+     * into the bounded snapshot), modelling the measured slow full read of a very
+     * long thread: the nightly sends all 1986 of a long worker's turn items in one
+     * 8.1 MiB frame, and a busy service outlives the 10 s read bound doing it.
+     */
+    slowFullSnapshotMs: 0,
+    /** A nightly that ignores `acceptBoundedSnapshot` and always answers the whole projection. */
+    ignoreBoundedSnapshot: false,
     /** Replaces the single synthetic provider in `server.getConfig` when set (nightly provider shapes). */
     providers: undefined as Value[] | undefined };
   /** Command receipts make a replayed project mutation answer with its recorded outcome. */
@@ -149,12 +168,22 @@ export async function t3Fake(t: TestContext, directory: string) {
           // The nightly refuses a removed thread's projection outright.
           if (!p || p.thread.deletedAt !== null) return failure({ _tag: 'Fail', error: { _tag: 'ThreadNotFoundError' } });
           if (controls.interruptThreadReads > 0) { controls.interruptThreadReads--; return send({ _tag: 'Interrupt', requestId: request.id }); }
-          const coverage = payload.acceptBoundedSnapshot === true || controls.boundedSnapshotAlways ? boundedSnapshot(p, controls.boundedRowLimit)
-            : { projection: p };
+          // A bounded snapshot is answered only to a read that opts in, and only
+          // by a nightly that understands the field (recorded server guard).
+          const bounded = payload.acceptBoundedSnapshot === true && !controls.ignoreBoundedSnapshot;
+          const coverage = bounded ? boundedSnapshot(p, controls.boundedRowLimit) : { projection: p };
           // A coverage claim that says more history exists without a cursor: the
           // pair the nightly never sends, which no read may use.
           const incoherent = controls.incompleteThread ? { hasMoreHistory: true, historyCursor: null } : {};
-          return stream([{ kind: 'snapshot', snapshotSequence: controls.snapshotSequence, ...coverage, ...incoherent, ...controls.threadCoverage }, ...marker()]);
+          const frame = { kind: 'snapshot', snapshotSequence: controls.snapshotSequence, ...coverage, ...incoherent, ...controls.threadCoverage } as Value;
+          snapshots.push({ threadId: payload.threadId, acceptBoundedSnapshot: payload.acceptBoundedSnapshot === true, bounded,
+            hasMoreHistory: frame.hasMoreHistory === true, historyCursor: frame.historyCursor ?? null,
+            turnItems: frame.projection?.turnItems?.length ?? 0, runs: frame.projection?.runs?.length ?? 0 });
+          const answer = () => stream([frame, ...marker()]);
+          // A whole projection of a very long thread is the slow read; a bounded
+          // window never pays that cost (contract `slowFullSnapshotMs`).
+          if (!bounded && controls.slowFullSnapshotMs > 0) { setTimeout(answer, controls.slowFullSnapshotMs); return; }
+          return answer();
         }
         case 'orchestration.launchThread': {
           for (const field of contract.launchThread.required) assert.ok(Object.hasOwn(payload, field), `launchThread.${field}`);
@@ -299,5 +328,5 @@ export async function t3Fake(t: TestContext, directory: string) {
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   /** Drops every live WebSocket, as a T3 restart or network reset does. */
   const dropSockets = () => { for (const socket of sockets) socket.destroy(); };
-  return { endpoint: `http://127.0.0.1:${address.port}`, controls, threads, commands, requests, projects: projectRows, dropSockets };
+  return { endpoint: `http://127.0.0.1:${address.port}`, controls, threads, commands, requests, snapshots, projects: projectRows, dropSockets };
 }

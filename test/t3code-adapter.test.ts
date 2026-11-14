@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { T3CodeHost } from '../hosts/t3code/adapter';
 import { T3RpcError } from '../hosts/t3code/rpc';
-import { ProvenPreSendRefusalError, HostUnknownDeliveryError } from '../core/host';
+import { ProvenPreSendRefusalError, HostUnknownDeliveryError, hostFailureRefusalDetail } from '../core/host';
 import { isTransportFailure } from '../shared/transport';
 import type { HostAgentSpec } from '../shared/host';
 import { submissionSchema, type Profile, type Task } from '../shared/contracts';
@@ -425,19 +425,35 @@ test('coverage fields are strictly decoded before observation or timeline comple
   assert.equal((await host.observe(created.id)).active, false);
 });
 
+test('a host failure refusal keeps the adapter-authored method and remote tag', () => {
+  // T3RpcError builds its message with parentheses and colons, so the free-text
+  // rule drops it; the structured facts an owner-verb refusal needs survive.
+  assert.equal(hostFailureRefusalDetail(new T3RpcError('timeout', 'orchestration.subscribeThread')),
+    'T3RpcError timeout orchestration.subscribeThread: T3Code timeout: orchestration.subscribeThread');
+  assert.equal(hostFailureRefusalDetail(new T3RpcError('remote', 'orchestration.subscribeThread', 'OrchestrationV2GetThreadProjectionError')),
+    'T3RpcError remote orchestration.subscribeThread (OrchestrationV2GetThreadProjectionError)');
+  assert.equal(hostFailureRefusalDetail(new Error('Transport timeout')), 'Error: Transport timeout');
+  // Remote text that is not a bounded token never reaches a refusal.
+  assert.equal(hostFailureRefusalDetail(new Error('Expected synthetic-secret got value\n  at ["text"]')), 'Error');
+});
+
 test('a thread long enough to page stays observable from the nightly bounded snapshot', async t => {
   const { host, server, spec } = await fixture(t);
   const created = await host.createAgent(spec());
   const p = server.threads.get(created.id)!;
   // A long worker run leaves far more turn items than one snapshot window holds.
   p.turnItems = Array.from({ length: server.controls.boundedRowLimit + 40 }, (_, index) =>
-    ({ id: `synthetic-item-${index}`, type: 'assistant_message', createdAt: STAMP }));
-  p.runs = [{ id: 'synthetic-run', status: 'running', startedAt: STAMP }];
+    ({ id: `synthetic-item-${index}`, type: 'assistant_message', createdAt: STAMP,
+      ...(index === server.controls.boundedRowLimit + 39 ? { runId: 'synthetic-old-run' } : {}) }));
+  p.runs = [{ id: 'synthetic-unreferenced-run', status: 'completed', startedAt: STAMP },
+    { id: 'synthetic-old-run', status: 'completed', startedAt: STAMP },
+    { id: 'synthetic-run', status: 'running', startedAt: STAMP }];
   p.runtimeRequests = [{ id: 'synthetic-question', kind: 'user_input', status: 'pending',
     responseCapability: { type: 'live', providerSessionId: 'synthetic-session' } }];
-  // The paged answer arrives whether or not the read opts in, so this is the
-  // shape main's observation refused as an incomplete projection.
-  server.controls.boundedSnapshotAlways = true;
+  // The nightly answers a whole projection only to a read that does not opt in,
+  // and that read of a thread this long is the slow one: the full snapshot of the
+  // reported thread measured 8.1 MiB, and outlived the bound on a busy service.
+  server.controls.slowFullSnapshotMs = 1_500;
   const observed = await host.observe(created.id);
   assert.equal(observed.status, 'running');
   assert.equal(observed.active, true);
@@ -445,12 +461,38 @@ test('a thread long enough to page stays observable from the nightly bounded sna
   assert.equal(observed.permissions, true);
   assert.equal(observed.pendingRequest?.id, 'synthetic-question');
   assert.deepEqual(observed.pendingPermissionKinds, ['question']);
-  const read = server.requests.filter(request => request.tag === 'orchestration.subscribeThread').at(-1)!.payload as Record<string, unknown>;
-  assert.equal(read.acceptBoundedSnapshot, true, 'observation asks for the bounded snapshot');
-  assert.equal(read.requestCompletionMarker, true);
+  const served = server.snapshots.filter(snapshot => snapshot.threadId === created.id).at(-1)!;
+  assert.equal(served.acceptBoundedSnapshot, true, 'observation asks for the bounded snapshot');
+  assert.equal(served.bounded, true);
+  assert.equal(served.hasMoreHistory, true, 'the answer is the paged window, not the whole transcript');
+  assert.equal(typeof served.historyCursor, 'string');
+  assert.ok(served.turnItems < p.turnItems.length, 'the window drops older turn items');
+  // The bounded projection keeps the active run and the run its window
+  // references, and drops a settled run the window no longer shows
+  // (contract `subscribeThread.projectionRetained.runs`).
+  assert.equal(served.runs, 2);
+  // The same thread read without the opt-in, as main's observe read it, outlives
+  // the bound and names the read that timed out.
+  await assert.rejects(host.pendingQuestions(created.id), /T3Code timeout: orchestration\.subscribeThread/);
 });
 
-test('a transcript read refuses what observation accepts, so partial history is never handed out', async t => {
+test('a nightly that ignores the bounded opt-in still observes from its whole projection', async t => {
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  server.threads.get(created.id)!.runs = [{ id: 'synthetic-run', status: 'running', startedAt: STAMP }];
+  // An older server drops the unknown field and answers the complete detail
+  // projection, so observation degrades to today's read instead of refusing.
+  server.controls.ignoreBoundedSnapshot = true;
+  const observed = await host.observe(created.id);
+  assert.equal(observed.active, true);
+  assert.equal(observed.activeTurnId, 'synthetic-run');
+  const served = server.snapshots.filter(snapshot => snapshot.threadId === created.id).at(-1)!;
+  assert.equal(served.acceptBoundedSnapshot, true);
+  assert.equal(served.bounded, false);
+  assert.equal(served.hasMoreHistory, false);
+});
+
+test('a transcript read refuses a paged projection, so partial history is never handed out', async t => {
   const { host, server, spec } = await fixture(t);
   const created = await host.createAgent(spec());
   const p = server.threads.get(created.id)!;
@@ -461,8 +503,9 @@ test('a transcript read refuses what observation accepts, so partial history is 
   ];
   p.runtimeRequests = [{ id: 'synthetic-question', kind: 'user_input', status: 'pending',
     responseCapability: { type: 'live', providerSessionId: 'synthetic-session' } }];
-  // A paged projection with an opaque cursor: observation may use it, a reader
-  // of the transcript may not.
+  // A paged projection with an opaque cursor: observation may use it, a reader of
+  // the transcript may not. This arm is defensive — today's nightly pages only an
+  // opted-in read — so it also holds if a later nightly pages every read.
   server.controls.threadCoverage = { hasMoreHistory: true, historyCursor: 'synthetic-history-cursor', latestLocalTurnOrdinal: 0 };
   assert.equal((await host.observe(created.id)).pendingRequest?.id, 'synthetic-question');
   await assert.rejects(host.pendingQuestions(created.id), /incomplete projection/);

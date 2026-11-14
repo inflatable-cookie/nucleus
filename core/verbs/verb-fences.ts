@@ -4,6 +4,7 @@ import type { Engine } from "../engine";
 import { releaseRunFromRecordedCompletion, settleSupersededFencesInTx, supersedeDisplacedRunInTx, supersedeIdleRunInTx, supersededIdleBinding } from "../recovery/fence-settlement";
 import { observationAdvanceSince, runsUnchangedSince } from "../recovery/observation-advance";
 import type { Adapter } from "../host/adapter";
+import { hostFailureRefusalDetail } from "../host/errors";
 import { coordinatorReportMatches } from "../recovery/recovery";
 import type { Resolution } from "../resolution";
 import { DurableFenceRefusal, matchingInactiveParticipant, runFenceRefusal, runSettlement, runSettlementFence } from "../intake/run-settlement";
@@ -14,6 +15,8 @@ export function classifyVerbRun(input: {
   settlement: ReturnType<typeof runSettlement>; episode: boolean; displace: boolean;
   completed: boolean; currentBinding: boolean;
   observation?: Pick<Awaited<ReturnType<Adapter['observe']>>, 'id' | 'workspaceId' | 'active' | 'activeTurnId' | 'permissions' | 'status'> | null;
+  /** What the failed observation said, so an unobservable fence names its cause. */
+  observationError?: string | null;
   agentId: string | null; workspaceId: string | null;
 }): { kind: 'settle' | 'episode' | 'displace' | 'superseded' | 'observe' } | { kind: 'fence'; why: string } {
   const { settlement, episode, displace, completed, currentBinding, observation, agentId, workspaceId } = input;
@@ -25,7 +28,7 @@ export function classifyVerbRun(input: {
   if (currentBinding) return { kind: 'fence', why: 'its callback binding is still current' };
   if (observation === undefined) return { kind: 'observe' };
   if (!observation || !agentId || observation.id !== agentId || observation.workspaceId !== workspaceId)
-    return { kind: 'fence', why: 'its agent is unobservable' };
+    return { kind: 'fence', why: `its agent is unobservable${input.observationError ? ` (${input.observationError})` : ''}` };
   if (observation.active || observation.activeTurnId) return { kind: 'fence', why: 'its agent is active' };
   if (observation.permissions) return { kind: 'fence', why: 'its agent is awaiting a permission request' };
   if (!['idle', 'error', 'closed'].includes(observation.status)) return { kind: 'fence', why: `its agent is ${observation.status}` };
@@ -171,8 +174,10 @@ export class VerbFences {
         continue;
       }
       let state: Awaited<ReturnType<Adapter["observe"]>> | undefined;
-      try { state = run.agentId ? await this.engine.host.observe(run.agentId) : undefined; } catch { state = undefined; }
-      const observed = classifyVerbRun({ ...facts, observation: state ?? null });
+      let observationError: string | undefined;
+      try { state = run.agentId ? await this.engine.host.observe(run.agentId) : undefined; }
+      catch (error) { state = undefined; observationError = hostFailureRefusalDetail(error); }
+      const observed = classifyVerbRun({ ...facts, observation: state ?? null, observationError });
       if (observed.kind === 'fence') fenced.push({ run, why: observed.why });
       else settleable.push(run);
     }

@@ -424,20 +424,29 @@ flags and cursors are strictly typed, and a claim the nightly never makes is
 refused: `hasMoreHistory` and `historyCursor` are one pair, so more history
 without a cursor, or a cursor with no more history, is not usable. A *paged*
 snapshot is not a malformed one. The nightly answers a bounded snapshot only to
-a read that opts in (`acceptBoundedSnapshot`); it keeps the thread record, every
-run and every runtime request complete and windows only the timeline with
-`hasMoreHistory` and an opaque `historyCursor`. Observation asks for that
-bounded snapshot and reports status, active run, pending request and archive
-state from any length of thread, so a long thread is never unobservable
-(nucleus#1188). A read that consumes the transcript — timeline pages, question
-text, answer mapping — does not opt in and refuses a paged or locally-omitted
-projection, so partial history is never handed out as the whole list; its
-refusal names the missing coverage, not the thread's length.
+a read that opts in (`acceptBoundedSnapshot`), and that snapshot keeps exactly the
+facts observation reads: the thread record is whole, the projection carries every
+queued, preparing, starting, running or waiting run, the runs its window
+references, the run the shell presents, and every pending or waiting runtime
+request; plans and context handoffs are filtered to the active or window-reachable
+ones. Settled runs, resolved requests and the timeline before the window are
+absent, and none of them changes a status, an active run, a pending request or a
+settle marker. Observation asks for that bounded snapshot and reports status,
+active run, pending request and archive state from any length of thread, so a
+long thread is never unobservable (nucleus#1188). A read that consumes the
+transcript — timeline pages, question text, answer mapping — does not opt in and
+refuses a paged or locally-omitted projection, so partial history is never handed
+out as the whole list; its refusal names the missing coverage, not the thread's
+length.
 
-An observation read that fails names its own cause: an owner verb that catches
-it (`restart`'s refusals and `move to=review`'s reader check) keeps the host
-error's kind and message, for example `T3RpcError timeout: T3Code timeout:
-orchestration.subscribeThread`, instead of a bare "cannot be observed".
+An observation read that fails names its own cause. Every owner path that turns a
+caught observation into a refusal keeps the host error's kind and message: the
+`restart` refusals, `move to=review`'s reader check, the quiet-project participant
+proof of an external-merge source acceptance, and a finished run whose
+observation fences the verb. A timeout therefore reads `T3RpcError timeout
+orchestration.subscribeThread` (with the adapter's own message when it is a
+bounded token), and an adapter error that carries a method and a remote tag keeps
+both, instead of a bare "cannot be observed".
 
 The canonical thread projection is the whole turn list, so timeline pages carry
 the full coverage contract: no gap, no reset, no newer history, an epoch that

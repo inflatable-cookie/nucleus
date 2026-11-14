@@ -178,12 +178,15 @@ export class T3CodeHost implements Host {
   }
   /**
    * One fresh, synchronized thread snapshot. An observation read opts into the
-   * nightly's bounded snapshot: the thread, its runs and its runtime requests
-   * stay complete while only the timeline is a window, so a thread long enough
-   * to be paged is still observable (nucleus#1188). A transcript read does not
-   * opt in and refuses an incomplete projection, so only a reader that needs
-   * every turn item is ever refused for a long thread. Both reads strictly
-   * decode the coverage fields the nightly sends.
+   * nightly's bounded snapshot, which keeps every fact observation reads: the
+   * thread record is whole, and the projection carries every queued, preparing,
+   * starting, running or waiting run, the runs its window references, the run the
+   * shell presents, and every pending or waiting runtime request (nucleus#1188).
+   * Older settled runs, resolved requests and the timeline before the window are
+   * absent, and none of them changes a status, an active run, a pending request
+   * or a settle marker. A transcript read does not opt in and refuses an
+   * incomplete projection, so only a reader that needs every turn item is ever
+   * refused for a long thread. Both reads strictly decode the coverage fields.
    */
   private async readProjection(threadId: string, kind: ThreadReadKind = 'transcript'): Promise<Projection> {
     let snapshot: Projection | undefined;
