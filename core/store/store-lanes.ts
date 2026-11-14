@@ -206,10 +206,10 @@ export class StoreLanes {
     if (lanes.length) {
       this.tasksStore.ensureTaskProjection();
       const times = this.eventTimes();
-      this.tasksStore.ensureQueuedLaneStats();
-      const active = [...this.tasksStore.boardOtherIds].map(id => this.tasksStore.taskProjection!.get(id)!);
+      this.tasksStore.board.ensureQueuedLaneStats();
+      const active = this.tasksStore.board.activeTasks();
       views = buildLaneViews(lanes, active, this.outcomesByLane(), times, this.laneRecordActivity()).map(view => {
-        const queued = this.tasksStore.queuedLaneStats.get(view.key);
+        const queued = this.tasksStore.board.queuedLaneStats.get(view.key);
         if (!queued) return view;
         const byRepository = { ...view.liveByRepository };
         for (const [repo, count] of queued.repos) byRepository[repo] = (byRepository[repo] ?? 0) + count;
@@ -236,7 +236,7 @@ export class StoreLanes {
     const loaded = new Map<string, string>();
     for (const row of this.db.prepare("SELECT taskId, MAX(at) AS at FROM events GROUP BY taskId").all()) loaded.set(String(row.taskId), String(row.at));
     this.lastEventAtByTask = loaded;
-    this.tasksStore.queuedLaneStatsValid = false;
+    this.tasksStore.board.queuedLaneStatsValid = false;
     this.eventTimesClock = clock;
     return loaded;
   }

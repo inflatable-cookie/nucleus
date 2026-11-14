@@ -253,17 +253,17 @@ export class Store {
     return () => { this.taskChangeListeners.delete(listener); };
   }
   private taskChanged(taskId: string | null) { for (const listener of this.taskChangeListeners) listener(taskId); }
-  routingRetryAllowed(task: Task): boolean { return this.tasksStore.routingRetryAllowed(task); }
-  setRoutingEpoch(epoch: string): void { return this.tasksStore.setRoutingEpoch(epoch); }
-  markRoutingAttempt(taskId: string): void { return this.tasksStore.markRoutingAttempt(taskId); }
-  readyQueueHeads(limit: number, repoPath?: string, startedOnly = false): Task[] { return this.tasksStore.readyQueueHeads(limit, repoPath, startedOnly); }
-  boardQueueCounts(): Array<{ repoPath: string; count: number }> { return this.tasksStore.boardQueueCounts(); }
-  boardQueuePage(repoPath: string, offset: number, limit: number): { tasks: Task[]; nextOffset: number | null } { return this.tasksStore.boardQueuePage(repoPath, offset, limit); }
-  boardTasks(limit: number): Task[] { return this.tasksStore.boardTasks(limit); }
-  dueHoldTasks(nowMs = Date.now()): Task[] { return this.tasksStore.dueHoldTasks(nowMs); }
-  prStateTasks(): Task[] { return this.tasksStore.prStateTasks(); }
-  activeUiTasks(): Task[] { return this.tasksStore.activeUiTasks(); }
-  queuedOriginGroups(): Array<{ owner: string; workspaceId: string | null; ids: ReadonlySet<string> }> { return this.tasksStore.queuedOriginGroups(); }
+  routingRetryAllowed(task: Task): boolean { return this.tasksStore.queue.routingRetryAllowed(task); }
+  setRoutingEpoch(epoch: string): void { return this.tasksStore.queue.setRoutingEpoch(epoch); }
+  markRoutingAttempt(taskId: string): void { return this.tasksStore.queue.markRoutingAttempt(taskId); }
+  readyQueueHeads(limit: number, repoPath?: string, startedOnly = false): Task[] { return this.tasksStore.queue.readyQueueHeads(limit, repoPath, startedOnly); }
+  boardQueueCounts(): Array<{ repoPath: string; count: number }> { return this.tasksStore.board.boardQueueCounts(); }
+  boardQueuePage(repoPath: string, offset: number, limit: number): { tasks: Task[]; nextOffset: number | null } { return this.tasksStore.board.boardQueuePage(repoPath, offset, limit); }
+  boardTasks(limit: number): Task[] { return this.tasksStore.board.boardTasks(limit); }
+  dueHoldTasks(nowMs = Date.now()): Task[] { return this.tasksStore.board.dueHoldTasks(nowMs); }
+  prStateTasks(): Task[] { return this.tasksStore.board.prStateTasks(); }
+  activeUiTasks(): Task[] { return this.tasksStore.board.activeUiTasks(); }
+  queuedOriginGroups(): Array<{ owner: string; workspaceId: string | null; ids: ReadonlySet<string> }> { return this.tasksStore.board.queuedOriginGroups(); }
   /**
    * Lane views read the newest event time per task and every outcome. Both are
    * append-only in practice, and recomputing them cost most of a board rebuild
@@ -527,69 +527,20 @@ export class Store {
   liveTasks(): Task[] { return this.tasksStore.liveTasks(); }
   laneTaskPage(lane: string, offset: number, limit: number): { tasks: Task[]; total: number; nextOffset: number | null } { return this.tasksStore.laneTaskPage(lane, offset, limit); }
   maintenanceTasks(operationalOnly = false): Task[] { return this.tasksStore.maintenanceTasks(operationalOnly); }
-  activeCapacityTasks(): Task[] { return this.tasksStore.activeCapacityTasks(); }
-  admissionCandidates(task?: Task): Task[] { return this.tasksStore.admissionCandidates(task); }
+  activeCapacityTasks(): Task[] { return this.tasksStore.queue.activeCapacityTasks(); }
+  admissionCandidates(task?: Task): Task[] { return this.tasksStore.queue.admissionCandidates(task); }
   lifecycleTasks(operationalOnly = false): Task[] { return this.tasksStore.lifecycleTasks(operationalOnly); }
   retirementTasks(taskId?: string): Task[] { return this.tasksStore.retirementTasks(taskId); }
   finishedHookTasks(): Task[] { return this.tasksStore.finishedHookTasks(); }
   hostProcessSweepTasks(): Task[] { return this.tasksStore.hostProcessSweepTasks(); }
   originRoutingTasks(operationalOnly = false): Task[] { return this.tasksStore.originRoutingTasks(operationalOnly); }
-  originWorkspaces(): Map<string,string> { return this.tasksStore.originWorkspaces(); }
+  originWorkspaces(): Map<string,string> { return this.tasksStore.board.originWorkspaces(); }
   pendingNotices(): Notice[] {
     return this.db.prepare("SELECT data FROM notices WHERE json_extract(data,'$.status') IN ('pending','intent') ORDER BY rowid")
       .all().map(row=>noticeSchema.parse(JSON.parse(String(row.data))));
   }
-  /**
-   * Bounded exact identity lookup for bridge lifecycle hints (Contract 007).
-   * It matches only Queue identities the service already knows, materializes no
-   * fleet history and returns an empty list for an unknown identity, so an
-   * unknown event schedules nothing.
-   */
-  taskIdsForIdentities(input: { agentId?: string | null; workspaceId?: string | null; hostId?: string | null }): string[] {
-    const ids = new Set<string>();
-    const runHosts = new Map<string, Set<string | null>>();
-    const addRun = (row: Record<string, unknown>) => {
-      const id = String(row.taskId), host = typeof row.hostId === 'string' && row.hostId ? row.hostId : null;
-      ids.add(id);
-      const hosts = runHosts.get(id) ?? new Set<string | null>(); hosts.add(host); runHosts.set(id, hosts);
-    };
-    const agentId = input.agentId ?? "";
-    const workspaceId = input.workspaceId ?? "";
-    // Separate branches keep the retired-worker fallback from defeating scalar index searches.
-    if (agentId) {
-      for (const row of this.db.prepare(`SELECT id FROM tasks WHERE rowid IN (
-        SELECT rowid FROM tasks WHERE json_extract(data,'$.removedAt') IS NULL AND json_extract(data,'$.agentId')=?
-        UNION SELECT rowid FROM tasks WHERE json_extract(data,'$.removedAt') IS NULL AND json_extract(data,'$.coordinatorAgentId')=?
-        UNION SELECT rowid FROM tasks WHERE json_extract(data,'$.removedAt') IS NULL AND json_extract(data,'$.resolution.reviewerAgentId')=?
-        UNION SELECT rowid FROM tasks INDEXED BY tasks_retired_identity
-          WHERE json_extract(data,'$.removedAt') IS NULL AND json_array_length(data,'$.retiredWorkers')>0
-          AND EXISTS (SELECT 1 FROM json_each(json_extract(data,'$.retiredWorkers')) WHERE json_extract(value,'$.agentId')=?)
-        ) ORDER BY rowid`).all(agentId, agentId, agentId, agentId)) ids.add(String(row.id));
-      for (const row of this.db.prepare(`SELECT r.taskId AS taskId, json_extract(r.data,'$.hostId') AS hostId FROM runs r JOIN tasks t ON t.id=r.taskId
-        WHERE json_extract(t.data,'$.removedAt') IS NULL AND json_extract(r.data,'$.agentId')=? ORDER BY r.rowid`).all(agentId)) addRun(row);
-    }
-    if (workspaceId) {
-      for (const row of this.db.prepare(`SELECT id FROM tasks WHERE rowid IN (
-        SELECT rowid FROM tasks WHERE json_extract(data,'$.removedAt') IS NULL AND json_extract(data,'$.workspaceId')=?
-        UNION SELECT rowid FROM tasks WHERE json_extract(data,'$.removedAt') IS NULL AND json_extract(data,'$.resolution.coordinatorWorkspaceId')=?
-        UNION SELECT rowid FROM tasks WHERE json_extract(data,'$.removedAt') IS NULL AND json_extract(data,'$.resolution.closeoutWorkspaceId')=?
-        ) ORDER BY rowid`).all(workspaceId, workspaceId, workspaceId)) ids.add(String(row.id));
-      for (const row of this.db.prepare(`SELECT r.taskId AS taskId, json_extract(r.data,'$.hostId') AS hostId FROM runs r JOIN tasks t ON t.id=r.taskId
-        WHERE json_extract(t.data,'$.removedAt') IS NULL AND json_extract(r.data,'$.workspaceId')=? ORDER BY r.rowid`).all(workspaceId)) addRun(row);
-    }
-    const matches = [...ids];
-    const readHost = this.db.prepare("SELECT json_extract(data,'$.hostId') AS hostId FROM tasks WHERE id=?");
-    const hostOf = (id: string) => {
-      const host = readHost.get(id)?.hostId;
-      return typeof host === 'string' && host ? host : null;
-    };
-    if (input.hostId) return matches.filter(id => hostOf(id) === input.hostId && [...(runHosts.get(id) ?? [])].every(host => host === input.hostId));
-    // An unqualified bridge identity is useful only when all matches prove the
-    // same host. Unknown provenance or matches spanning hosts are ambiguous.
-    const hosts = new Set(matches.map(hostOf));
-    for (const values of runHosts.values()) for (const host of values) hosts.add(host);
-    return hosts.size > 1 || hosts.has(null) ? [] : matches;
-  }
+  /** Bridge lifecycle hints resolve through the task read model's exact identity lookup. */
+  taskIdsForIdentities(input: { agentId?: string | null; workspaceId?: string | null; hostId?: string | null }): string[] { return this.tasksStore.taskIdsForIdentities(input); }
   /** Cheap durable identity count for service health; no task payloads are parsed. */
   countTasks(): number {
     if (!this.db.isTransaction && this.cachedTaskCount !== null) return this.cachedTaskCount;
@@ -1064,7 +1015,7 @@ export class Store {
       this.eventTimesClock = this.readClock("eventRows");
     }
     const queued = this.tasksStore.taskProjection?.get(taskId);
-    if (queued && this.tasksStore.queuedLaneStatsValid) this.tasksStore.indexQueuedLanes(queued);
+    if (queued && this.tasksStore.board.queuedLaneStatsValid) this.tasksStore.board.indexQueuedLanes(queued);
   }
   /** Move an existing event's clock forward. Used to extend a callback reminder while validation is still running. */
   touchEvent(id: number) {
@@ -1077,7 +1028,7 @@ export class Store {
       this.eventTimesClock = this.readClock("eventRows");
     }
     const queued = this.tasksStore.taskProjection?.get(row.taskId);
-    if (queued && this.tasksStore.queuedLaneStatsValid) this.tasksStore.indexQueuedLanes(queued);
+    if (queued && this.tasksStore.board.queuedLaneStatsValid) this.tasksStore.board.indexQueuedLanes(queued);
     this.advanceTelemetryRevision(); this.taskChanged(row.taskId);
   }
   events(taskId: string) { return this.db.prepare("SELECT * FROM events WHERE taskId=? ORDER BY id DESC LIMIT 100").all(taskId) as { id: number; taskId: string; at: string; kind: string; detail: string }[]; }
