@@ -17,6 +17,12 @@ import { assertPinnedBrief, validateSubmission, verifyBriefWorkerIdentity } from
 import { dirtyWorktreeError } from "./git-stash";
 import { verifyRecordedOrigin } from "./git-proof";
 
+/**
+ * A refused private-root cleanup after the integration operation had already
+ * failed. `cause` is the cleanup refusal and `operationError` the earlier
+ * failure; both keep their own fields, and the message carries both for durable
+ * records.
+ */
 export class IntegrationCheckoutCleanupError extends Error {
   readonly operationError: unknown;
   constructor(cleanupError: unknown, operationError: unknown) {

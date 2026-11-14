@@ -244,7 +244,7 @@ export function gitSync(cwd: string, ...args: string[]): string {
   }
 }
 
-/** True only for the dependency link Queue retains from a source checkout. */
+/** Untrimmed stdout through the shared runner, for output that must keep every byte. */
 export const gitRaw = (cwd: string, ...args: string[]) => command("git", args, cwd, undefined, { trim: false });
 
 /** The default gate is tuned to per-command Git reads; store clones, repacks and linked-checkout population over full history need a longer ceiling. */
@@ -307,11 +307,7 @@ export function bulkGitFailure(args: string[], budgetMs: number, elapsedMs: numb
   return new GitBulkCommandError(message, { args, budgetMs, elapsedMs, timedOut, killed, exitCode, signal, stdout, stderr });
 }
 
-/**
- * A refused private-root cleanup after the integration operation had already
- * failed. `cause` is the cleanup refusal and `operationError` the earlier failure;
- * both keep their own fields, and the message carries both for durable records.
- */
+/** One error's message, for a refusal that composes two failures. */
 export const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 /** The last progress or fatal lines, with URL credentials removed and length capped. */

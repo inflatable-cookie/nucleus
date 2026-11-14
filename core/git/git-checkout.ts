@@ -11,6 +11,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { Task } from "../../shared/contracts";
 import { GIT_SLOW_TIMEOUT_MS, git, gitSlow } from "./git-command";
 
+/** True only for the dependency link Queue retains from a source checkout. */
 export function isQueueRetainedNodeModulesLink(directory: string): boolean {
   try {
     const link = resolve(directory, "node_modules");
