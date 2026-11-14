@@ -5,13 +5,13 @@ import {
 } from '../questions/blocker-ladder';
 import { MERGE_CONFLICT_REASON, isFailedChecksReason, isForgeCheckProofText, taskPrNumber, type PublicationOutcome, type VerifiedPr } from '../forge/index';
 import { classifyGitTransientFailure, gitDeliveryUnknown, ReviewPublicationTransientError } from '../forge/forge-health';
-import { git } from '../git/index';
+import { git, WorkerSourceRefusal } from '../git/index';
 import { readGitCheckout } from '../git/git-identity';
 import { hookHoldReason } from '../hooks/hooks';
 import { consecutiveNonDeliveries, continuationInstruction, unfinishedContinuationEvents } from '../recovery/non-delivery';
 import { automaticRetryForbidden } from '../../shared/automatic-retry';
 import { proveReviewRunSource } from '../review/ordinary-review';
-import { ProofExecutionRefusal, proofExecutionRecord, proofWorkerRequests, recordProofExecution, verifyProofSource } from '../qa/proof-execution';
+import { ProofExecutionRefusal, proofWorkerRequests, verifyProofSource } from '../qa/proof-execution';
 import type { Resolution } from '../resolution';
 import { retainReviewPublication, reviewVerdictApplied } from '../review/review-publication';
 import { reviewRecordFor } from '../review/review-verdicts';
@@ -19,6 +19,8 @@ import { digest, now } from '../store/store';
 import { coordinative, proofExecutor } from '../recovery/task-reasons';
 import { settlementHeld } from '../closeout/queue-drain';
 import { reviewInProgress } from '../review/review-continuation';
+import { settleProofExecution, type ProofOutcome } from './proof-settlement';
+import { settleReportReady } from './report-ready';
 
 /** Publication may add an ID after the authenticated callback was received. */
 function authenticatedReviewResult(store: ResultApplicationContext['store'], taskId: string, completion: Completion): boolean {
@@ -30,6 +32,18 @@ function authenticatedReviewResult(store: ResultApplicationContext['store'], tas
       { ...withoutPublication, ...(completion.reviewId !== undefined ? { reviewId: completion.reviewId } : {}) },
       { ...withoutPublication, ...(completion.reviewCommentId !== undefined ? { reviewCommentId: completion.reviewCommentId } : {}) }]
       .some(value => receipt.hash === digest(JSON.stringify(value))));
+}
+
+/**
+ * Which owner advances one completed run, decided from its role alone. Every
+ * other role is a closeout step; the manual verification coordinator is retired
+ * (Spec 058 cutover 2) and its stored rows are refused rather than misread.
+ */
+export function advanceOwner(run: Pick<Run, 'role'>): 'reviewer' | 'revision' | 'retired_verification' | 'closeout' {
+  if (run.role === 'reviewer') return 'reviewer';
+  if (run.role === 'revision') return 'revision';
+  if (run.role === 'verification') return 'retired_verification';
+  return 'closeout';
 }
 
 /** Apply a released result. */
@@ -255,20 +269,17 @@ export class ResultApplication {
       return;
     }
     if (!await this.resolution.lease(t) || settlementHeld(this.store, this.resolution.stopped())) return;
-    if (run.role === 'reviewer') {
-      await this.advanceReviewerResult(t, run, c);
-    } else if (run.role === 'revision') {
-      await this.advanceRevisionResult(t, run, c);
-    } else if (run.role === 'verification') {
-      // The manual verification coordinator is retired (Spec 058 cutover 2); no
-      // verification run is launched any more. A stored row that still carries
-      // one must not be misread as a closeout: refuse it and let recovery sweep
-      // the run.
-      throw new Error('The manual verification coordinator is retired; a verification run cannot advance the task');
-    } else {
-      await this.resolution.advanceCloseoutResult(t, run, c);
+    switch (advanceOwner(run)) {
+      case 'reviewer': await this.advanceReviewerResult(t, run, c); return;
+      case 'revision': await this.advanceRevisionResult(t, run, c); return;
+      case 'retired_verification':
+        // The manual verification coordinator is retired (Spec 058 cutover 2); no
+        // verification run is launched any more. A stored row that still carries
+        // one must not be misread as a closeout: refuse it and let recovery sweep
+        // the run.
+        throw new Error('The manual verification coordinator is retired; a verification run cannot advance the task');
+      case 'closeout': await this.resolution.advanceCloseoutResult(t, run, c); return;
     }
-    return;
   }
   /**
    * Task 405: settle one proof-only execution. The evidence it produced is
@@ -282,54 +293,25 @@ export class ResultApplication {
     const binding = run.proofExecution;
     if (!binding) throw new Error('A proof executor completed without its bound subject');
     const current = this.store.task(t.id);
-    const base = proofExecutionRecord({ ...run, agentId: run.agentId, completion: c }, current, binding.authorizedBy, binding.operationId);
-    let status: 'passed' | 'failed' | 'stale' | 'unknown' = c.status === 'proof_executed' ? (c.proofResult?.status === 'passed' ? 'passed' : 'failed') : 'unknown';
+    let outcome: ProofOutcome = c.status === 'proof_executed' ? (c.proofResult?.status === 'passed' ? 'passed' : 'failed') : 'unknown';
     let drift = '';
-    if (status === 'passed') {
+    if (outcome === 'passed') {
       try {
         const source = await verifyProofSource(current, run.head);
-        if (source.tree !== binding.tree) { status = 'stale'; drift = 'the checked-out tree differs from the reserved tree'; }
+        if (source.tree !== binding.tree) { outcome = 'stale'; drift = 'the checked-out tree differs from the reserved tree'; }
       } catch (error) {
         // A moved or dirty checkout is drift; an unreadable one is unknown, never a pass.
-        status = error instanceof ProofExecutionRefusal && ['source_moved', 'source_branch', 'source_dirty'].includes(error.code) ? 'stale' : 'unknown';
+        outcome = error instanceof ProofExecutionRefusal && ['source_moved', 'source_branch', 'source_dirty'].includes(error.code) ? 'stale' : 'unknown';
         drift = error instanceof Error ? error.message : String(error);
       }
       if (settlementHeld(this.store, this.resolution.stopped())) return;
     }
-    const latest = this.store.task(t.id);
-    if (latest.resolution.currentRunId !== run.id) return;
-    this.store.transaction(() => {
-      if (resultApplied(this.store, t.id, run.id) || this.store.task(t.id).resolution.currentRunId !== run.id) return;
-      recordResultApplied(this.store, t.id, run.id);
-      const evidence = [c.summary, c.proofResult?.evidence, drift ? `Source proof: ${drift}` : ''].filter(Boolean).join('\n').slice(0, 4000);
-      recordProofExecution(this.store, t.id, { ...base, status, exitCode: c.proofResult?.exitCode ?? null, evidence, refusedBeforeSelector: false, selectorStart: c.proofResult ? 'started' : 'unknown', ...(c.proofResult ? { selectorStartEvidence: c.proofResult.evidence || c.summary } : {}) },
-        `${run.id}: ${status} for ${binding.selector} at ${run.head}`);
-      const reason = status === 'passed'
-        ? `Author-side proof execution ${run.id} passed ${binding.selector} at ${run.head}; a distinct independent review is still required`
-        : status === 'failed'
-          ? `Author-side proof execution ${run.id} did not pass ${binding.selector} at ${run.head}; the execution is recorded and that head's allowance is spent`
-          : `Author-side proof execution ${run.id} cannot claim passing evidence for ${binding.selector} at ${run.head} (${status}); the evidence is retained`;
-      const latest = this.store.task(t.id);
-      if (latest.entrypoint === 'proof') {
-        const reason = `Qualification ${run.id} settled ${status} for ${binding.selector} at merged commit ${run.head}; the retained reviewer will judge its receipt`;
-        this.resolution.update(latest, { currentRunId: null, integrationTurn: null },
-          { phase: 'awaiting_review', reason }, 'proof_only_execution_settled', `${run.id}: ${status} for ${binding.selector} at ${run.head}`);
-        return;
-      }
-      if (status === 'failed') {
-        const cases = [c.summary, c.proofResult?.evidence].filter(Boolean).join('\n').slice(0, 3000);
-        const instruction = `The settled proof failed at ${run.head}. Revise the task to address these failing cases, then return the PR for the retained reviewer to judge. Proof receipt: task.detail → proofExecutions for run ${run.id} (selector ${binding.selector}, exact head ${run.head}); use its recorded evidence and case failures as the instruction.\n${cases}`.slice(0, 4000);
-        this.resolution.update(latest, { currentRunId: null, integrationTurn: null, review: latest.resolution.review,
-          pendingWorkerInstruction: instruction, pendingRevisionCause: 'review' },
-          { phase: 'changes_requested', reason: `Settled proof ${run.id} failed ${binding.selector} at ${run.head}; the retained worker must address the recorded failures` },
-          'proof_failure_returned_to_worker', run.id);
-        return;
-      }
-      this.resolution.update(latest, { currentRunId: null, integrationTurn: null },
-        { phase: binding.returnPhase, reason: status === 'passed'
-          ? `Settled proof ${run.id} passed ${binding.selector} at ${run.head}; evidence-only review is next`
-          : reason }, 'proof_execution_settled');
-    });
+    this.store.transaction(() => settleProofExecution(this.resolution, {
+      task: t, run, completion: c, outcome,
+      evidence: [c.summary, c.proofResult?.evidence, drift ? `Source proof: ${drift}` : ''].filter(Boolean).join('\n').slice(0, 4000),
+      selectorStart: c.proofResult ? 'started' : 'unknown',
+      ...(c.proofResult ? { selectorStartEvidence: c.proofResult.evidence || c.summary } : {}),
+    }));
   }
   /**
    * Spec 058 (task 533): route every proof a source-approving reviewer named to
@@ -590,10 +572,10 @@ export class ResultApplication {
   }
   /** Return an authenticated ready report rejected by checkout/PR verification to its worker. */
   responsiblePrReportRefused(t: Task, runId: string, prNumber: number, error: unknown): boolean {
-    if (!(error instanceof Error)) return false;
-    const identityRefusal = error.message === "PR must be open, ready, and match the task's branch and base";
-    const checkoutRefusal = /^(Worker must leave a clean worktree before review|Worker must remain on queue-owned branch )/.test(error.message);
-    if (!identityRefusal && !checkoutRefusal) return false;
+    // The checkout and PR-identity refusals are typed where they are thrown; no
+    // message ever decides a route here.
+    if (!(error instanceof WorkerSourceRefusal)) return false;
+    const identityRefusal = error.code === 'pr_identity';
     const instruction = identityRefusal
       ? `Nucleus refused PR #${prNumber}: ${error.message}. Keep the exact task branch ${t.branch}, close or correct the mismatched PR, open a replacement PR targeting ${t.baseBranch}, then report ready_for_review with its number.`
       : `Nucleus refused ready_for_review because: ${error.message}. Resolve the named checkout condition (remove or ignore metadata files; preserve source files), then report ready_for_review again with the same PR #${prNumber}.`;
@@ -604,13 +586,10 @@ export class ResultApplication {
   }
   async advanceRevisionResult(t:Task, run:Run, c:Completion): Promise<void> {
     if (resultApplied(this.store, t.id, run.id)) return;
+    // report_ready settles through the same owner the intake path uses; only the
+    // release differs, and advanceCompletedRun is already past it.
     if (c.status === 'report_ready') {
-      this.store.transaction(() => {
-        const latest = this.store.task(t.id);
-        if (resultApplied(this.store, t.id, run.id) || latest.resolution.currentRunId !== run.id) return;
-        this.resolution.update(latest, { currentRunId: null, integrationTurn: null }, { phase: 'report_ready', completion: c, reason: c.summary }, 'revision_report_ready');
-        recordResultApplied(this.store, t.id, run.id);
-      });
+      this.store.transaction(() => { settleReportReady(this.resolution, t, run, c); });
       return;
     }
     const establishesFirstPr=!t.resumePrNumber&&!t.completion?.prNumber;
@@ -648,20 +627,20 @@ export class ResultApplication {
           review.head === pr.head && (review.reviewId ?? review.reviewCommentId) &&
           approval?.role === 'reviewer' && approval.status === 'finished' && approval.released &&
           approval.completion?.eventId === review.eventId && approval.completion.head === pr.head);
-      if (unchangedApprovedReturn && isFailedChecksReason(run.instruction)) {
+      // The two mechanical returns differ only in the cause the task names; the
+      // transition, the fence and the gate recheck are one rule.
+      const mechanical = !unchangedApprovedReturn ? null
+        : isFailedChecksReason(run.instruction) ? {
+            event: 'unchanged_check_revision',
+            reason: `Unchanged reviewed head after a failed required check; rechecking the merge gates without another review. Unmet check: ${run.instruction}`,
+          } : run.instruction === MERGE_CONFLICT_REASON ? {
+            event: 'unchanged_conflict_revision',
+            reason: 'Merge-conflict revision returned unchanged approved head; rechecking merge prerequisites without another review',
+          } : null;
+      if (mechanical) {
         this.resolution.update(latest, { currentRunId: null, mechanicalVerification: null, revisionPrRepair: false,
           integrationTurn: { sequence: this.store.nextIntegrationSequence(latest.repoPath), acceptedAt: now() } },
-          { phase: 'verifying', completion: c, prHead: pr.head, prUrl: pr.url,
-            reason: `Unchanged reviewed head after a failed required check; rechecking the merge gates without another review. Unmet check: ${run.instruction}` },
-          'unchanged_check_revision');
-        return;
-      }
-      if (unchangedApprovedReturn && run.instruction === MERGE_CONFLICT_REASON) {
-        this.resolution.update(latest, { currentRunId: null, mechanicalVerification: null, revisionPrRepair: false,
-          integrationTurn: { sequence: this.store.nextIntegrationSequence(latest.repoPath), acceptedAt: now() } },
-          { phase: 'verifying', completion: c, prHead: pr.head, prUrl: pr.url,
-            reason: 'Merge-conflict revision returned unchanged approved head; rechecking merge prerequisites without another review' },
-          'unchanged_conflict_revision');
+          { phase: 'verifying', completion: c, prHead: pr.head, prUrl: pr.url, reason: mechanical.reason }, mechanical.event);
         return;
       }
       this.resolution.update(latest, { currentRunId: null, review: null, revisionPrRepair: false, integrationTurn: null },

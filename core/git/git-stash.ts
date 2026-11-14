@@ -7,6 +7,7 @@
  */
 import type { StashEntry, Task } from "../../shared/contracts";
 import { git, gitNulEach } from "./git-command";
+import { QUEUE_BRANCH_PATTERN, WorkerSourceRefusal } from "./git-refusals";
 
 export async function readStash(directory: string): Promise<StashEntry[]> {
   if (!await git(directory, "rev-parse", "--verify", "--quiet", "refs/stash").then(() => true, () => false)) return [];
@@ -21,7 +22,7 @@ export async function readStash(directory: string): Promise<StashEntry[]> {
 }
 /** The branch a stash entry was taken on, from `WIP on <branch>: ...` or `On <branch>: ...`. */
 export const stashBranch = (subject: string) => subject.match(/^(?:WIP on|On) ([^:]+):/)?.[1] ?? null;
-const QUEUE_BRANCH = /^ns-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const QUEUE_BRANCH = new RegExp(`^${QUEUE_BRANCH_PATTERN}$`);
 const describeStash = (entry: StashEntry) => `stash entry ${entry.sha.slice(0, 12)} "${entry.subject}"`;
 /**
  * Compare the stash list recorded when the run was created with the current
@@ -45,9 +46,9 @@ export function stashFindings(branch: string, baseline: StashEntry[], current: S
  * run, so the likely cause is visible instead of a bare "leave a clean worktree".
  */
 export async function dirtyWorktreeError(task: Task, message: string) {
-  if (!task.directory || !task.stashBaseline) return new Error(message);
+  if (!task.directory || !task.stashBaseline) return new WorkerSourceRefusal('worktree_dirty', message);
   let findings: string[];
   try { findings = stashFindings(task.branch, task.stashBaseline.entries, await readStash(task.directory)); }
-  catch { return new Error(`${message}. Stash findings are unavailable: the shared stash list could not be read`); }
-  return new Error(findings.length ? `${message}. Stash findings: ${findings.join("; ")}` : message);
+  catch { return new WorkerSourceRefusal('worktree_dirty', `${message}. Stash findings are unavailable: the shared stash list could not be read`); }
+  return new WorkerSourceRefusal('worktree_dirty', findings.length ? `${message}. Stash findings: ${findings.join("; ")}` : message);
 }

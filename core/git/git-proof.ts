@@ -12,6 +12,7 @@ import { command, git, gitAncestry } from "./git-command";
 import { queueCheckoutStatus, currentWorkerBranch } from "./git-checkout";
 import { githubRepositoryFromRemote } from "./git-remote";
 import { dirtyWorktreeError } from "./git-stash";
+import { WORKER_BRANCH_REFUSAL_PREFIX, WORKER_DIRTY_REFUSAL_PREFIX, WORKER_PR_IDENTITY_REFUSAL, WorkerSourceRefusal } from "./git-refusals";
 
 export async function verifyPr(task: Task, number: number) {
   if (!task.directory) throw new Error("Task has no worktree");
@@ -19,15 +20,15 @@ export async function verifyPr(task: Task, number: number) {
   const repository = githubRepositoryFromRemote(remote);
   if (!repository) throw new Error("Ready for review requires a GitHub origin remote");
   const pr = JSON.parse(await command("gh", ["pr", "view", String(number), "--repo", repository, "--json", "number,url,state,isDraft,headRefName,baseRefName,headRefOid,headRepository,headRepositoryOwner,isCrossRepository"], task.repoPath));
-  if (pr.state !== "OPEN" || pr.isDraft || pr.headRefName !== task.branch || pr.baseRefName !== task.baseBranch) throw new Error("PR must be open, ready, and match the task's branch and base");
-  if (await currentWorkerBranch(task, task.directory!) !== task.branch) throw new Error(`Worker must remain on queue-owned branch ${task.branch}`);
+  if (pr.state !== "OPEN" || pr.isDraft || pr.headRefName !== task.branch || pr.baseRefName !== task.baseBranch) throw new WorkerSourceRefusal('pr_identity', WORKER_PR_IDENTITY_REFUSAL);
+  if (await currentWorkerBranch(task, task.directory!) !== task.branch) throw new WorkerSourceRefusal('worktree_branch', `${WORKER_BRANCH_REFUSAL_PREFIX}${task.branch}`);
   const status = await queueCheckoutStatus(task.directory, "status", "--porcelain", "--untracked-files=all");
   if (status) {
     const causes = status.split("\n").map(line => {
       const path = line.slice(3);
       return line.startsWith("?? ") ? `untracked ${path}` : `changed ${path}`;
     });
-    throw await dirtyWorktreeError(task, `Worker must leave a clean worktree before review: ${causes.join(", ")}`);
+    throw await dirtyWorktreeError(task, `${WORKER_DIRTY_REFUSAL_PREFIX}${causes.join(", ")}`);
   }
   if (pr.headRefOid !== await git(task.directory, "rev-parse", "HEAD")) throw new Error("PR head differs from the worker worktree");
   // The head repository is reported for the PR-binding sites; null when the fork was deleted.

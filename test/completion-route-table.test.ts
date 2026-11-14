@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import type { Completion, Run } from '../shared/contracts';
-import { completionRoute } from '../core/intake/callback-intake';
+import { completionRoute } from '../core/intake/report-shape';
 
 test('completion routes checkpoints and run roles', () => {
   const cases: Array<[Completion['status'], Run | null, string]> = [

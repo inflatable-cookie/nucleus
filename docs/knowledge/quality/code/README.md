@@ -41,6 +41,17 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
   pre-dispatch repairs and submission intake now have separate owners; runtime promotion is split
   from the planning facade and the board surfaces share counters and settings. The affected `N3.csv`
   rows and the touched brief helper were re-rated against the code at the PR head.
+- nucleus#1208 (floor 5, 2026-11-14): intake and result application were split and consolidated
+  along their named seams — worker intake (`core/intake/callback-intake.ts`) from run intake
+  (`core/intake/run-callback-intake.ts`), with the shared report-shape, report-ready and
+  proof-settlement rules in one owner each (`report-shape.ts`, `report-ready.ts`,
+  `proof-settlement.ts`) and the lifecycle wait sentences in `thread-waits.ts`. PR refusals are
+  typed (`WorkerSourceRefusal`) instead of classified by message. Review entry decodes one canonical
+  PR and names its own refusal codes; PR adoption reads one typed plan. Their N2 rows were re-rated
+  at this PR's head. `core/git/git-refusals.ts` is new there: the ready-report refusal codes and the
+  one queue branch-name shape, thrown by `git-proof.ts` and `git-stash.ts` (their N4 rows keep their
+  scores and gained the new loc), and compared as one named text in `core/recovery/retry-routes.ts`
+  (its row is unchanged).
 - nucleus#1206 (floor 5, 2026-11-14): the project editor and settings profiles were split by screen,
   form, repository and save-queue responsibility; task holds, attention phases and prerequisite
   reason facts now use shared owners. The changed N6 rows were re-rated at this PR's head.
