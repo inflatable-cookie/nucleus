@@ -17,6 +17,7 @@ import type { WorkspaceDiscard } from "../workspaces/orphan-worktree";
 import { workspaceDiscardKey } from "../workspaces/orphan-worktree";
 import { RestartRefusal, currentReadyPrEvidence, currentRouteProfile, plainHandoverFreshRestart, qualifiedAcceptanceEligibility, unreleasedLaunchFence } from "./owner-verbs";
 import type { AgentObservation } from "../host/adapter";
+import { hostFailureRefusalDetail } from "../host/errors";
 import { blockingRecoveryEffectsRefusal } from "../recovery/recovery-effects";
 import type { ContinuedPrBinding } from "../resolution";
 import { REVIEW_FRESH_REPLACEMENT_EXIT, reviewContinuationState, reviewContinuationWait, reviewInProgress, reviewerIdentityAtHead, retainedReaderStateDecision, retainedReaderStoredRefusal, retainedReaderUnavailableRefusal, keepRetainedReviewer } from "../review/review-continuation";
@@ -233,7 +234,7 @@ export class MoveControls {
       const wait=reviewContinuationWait(readerTask,this.store);
       let observed:AgentObservation;
       try{observed=await this.engine.host.observe(reading.agentId!);}
-      catch{throw Error('Move to review cannot observe the retained reviewer; restore observation before moving, and no review turn was sent');}
+      catch(error){throw Error(`Move to review cannot observe the retained reviewer (${hostFailureRefusalDetail(error)}); restore observation before moving, and no review turn was sent`);}
       const latestTask=this.store.task(task.id);
       this.engine.requireOwnerControlCurrent(latestTask,input.version,'Task changed; refresh before retrying');
       const latestReader=this.store.run(reading.id);
@@ -984,7 +985,9 @@ export class MoveControls {
       for(const [id,workspaceId] of participants){
         if(this.store.unreleasedRunsForAgent(id,task.hostId).some(run=>run.taskId!==task.id))throw Error(`Participant ${id} owns another unreleased run`);
         this.engine.admission?.invalidate(id);
-        const observed=await this.engine.host.observe(id);
+        let observed:AgentObservation;
+        try{observed=await this.engine.host.observe(id);}
+        catch(error){throw Error(`Participant ${id} could not be observed (${hostFailureRefusalDetail(error)})`);}
         if(!observed.workspaceId || (workspaceId && observed.workspaceId!==workspaceId) || observed.id!==id || observed.active!==false
           || observed.permissions!==false || observed.activeTurnId || !['idle','error','closed'].includes(observed.status))
           throw Error(`Participant ${id} is active, permission-holding or unobservable`);
@@ -1058,7 +1061,7 @@ export class MoveControls {
         this.engine.admission?.invalidate(id);
         let observed:AgentObservation;
         try{observed=await this.engine.host.observe(id);}
-        catch{throw Error(`Participant ${id} could not be observed`);}
+        catch(error){throw Error(`Participant ${id} could not be observed (${hostFailureRefusalDetail(error)})`);}
         if(observed.id!==id||observed.workspaceId!==workspaceId||observed.status!=='idle'||observed.active!==false||observed.activeTurnId||observed.permissions!==false||this.store.unreleasedRunsForAgent(id,task.hostId).some(run=>run.taskId!==task.id))
           throw Error(`Participant ${id} has observed activity, a permission or unknown identity`);
         const issue=await this.resolution.participantToolIssue(task.id,id,workspaceId);

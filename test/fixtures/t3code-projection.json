@@ -14,13 +14,15 @@
     "branch": "synthetic",
     "archivedAt": null,
     "deletedAt": null,
-    "updatedAt": "2026-01-01T00:00:00.000Z"
+    "updatedAt": "2026-01-01T00:00:00.000Z",
+    "runtimeMode": "full-access"
   },
   "runs": [
     {
       "id": "run-1",
       "status": "running",
-      "startedAt": "2026-01-01T00:00:00.000Z"
+      "startedAt": "2026-01-01T00:00:00.000Z",
+      "ordinal": 1
     }
   ],
   "runtimeRequests": [],

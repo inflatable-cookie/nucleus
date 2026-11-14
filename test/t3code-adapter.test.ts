@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { T3CodeHost } from '../hosts/t3code/adapter';
 import { T3RpcError } from '../hosts/t3code/rpc';
-import { ProvenPreSendRefusalError, HostUnknownDeliveryError } from '../core/host';
+import { ProvenPreSendRefusalError, HostUnknownDeliveryError, hostFailureRefusalDetail } from '../core/host';
+import { T3CompatibilityError } from '../hosts/t3code/contracts';
 import { isTransportFailure } from '../shared/transport';
 import type { HostAgentSpec } from '../shared/host';
 import { submissionSchema, type Profile, type Task } from '../shared/contracts';
@@ -16,7 +17,7 @@ import type { Adapter } from '../core/host';
 import { taskWorkspaceTitle } from '../core/workspaces/workspace-title';
 import { capPaseoTitle } from '../shared/paseo-title';
 import { WIRE_LABEL_KEYS, WIRE_PLUGIN_LABEL_KEY } from '../shared/wire-labels';
-import { t3Fake, STAMP, threadProjection } from './support/t3code-fake';
+import { t3Fake, STAMP, threadProjection, syntheticRun, syntheticRuntimeRequest, syntheticTurnItem } from './support/t3code-fake';
 import { storedT3Labels } from './support/t3code-labels';
 
 const profile: Profile = { id: 'synthetic-profile', name: 'Synthetic', provider: 'synthetic-provider', model: 'synthetic-model',
@@ -394,12 +395,15 @@ test('empty enrichment snapshots preserve inventory while missing fields and inc
   await assert.rejects(host.observe(created.id), /activeRunId/);
   assert.equal(await host.observationInventory([created.id]), null);
   server.controls.shellMissingField = '';
+  // A coverage claim that names more history without saying where it went cannot
+  // be used by either read: nothing in it bounds or locates the rest.
   server.controls.incompleteThread = true;
-  await assert.rejects(host.observe(created.id), /incomplete projection/);
+  await assert.rejects(host.observe(created.id), /hasMoreHistory true with no cursor/);
   assert.equal(await host.agentTimelinePage(created.id), null);
   server.controls.incompleteThread = false;
   server.controls.synchronized = false;
-  await assert.rejects(host.observe(created.id), /timeout/);
+  await assert.rejects(host.observe(created.id), (error: T3RpcError) => error instanceof T3RpcError && error.code === 'timeout'
+    && /T3Code timeout: orchestration\.subscribeThread/.test(error.message));
   assert.equal(host.connected, false);
 });
 
@@ -417,9 +421,122 @@ test('coverage fields are strictly decoded before observation or timeline comple
     assert.equal(await host.observationInventory([created.id]), null);
   }
   server.controls.threadCoverage = { hasMoreHistory: false, historyCursor: 'opaque-history-cursor' };
-  await assert.rejects(host.observe(created.id), /incomplete projection/);
+  await assert.rejects(host.observe(created.id), /hasMoreHistory false with a cursor/);
   server.controls.threadCoverage = { hasMoreHistory: false, historyCursor: null, turnItemsOmitLocalVisible: false };
   assert.equal((await host.observe(created.id)).active, false);
+});
+
+test('a host failure refusal names the kind, the code or method, and the message line', () => {
+  // The same rule for every host (planner ruling, brief v2): the refusal goes to
+  // the task owner about their own local host, so the host's own words are kept.
+  assert.equal(hostFailureRefusalDetail(new T3RpcError('timeout', 'orchestration.subscribeThread')),
+    'T3RpcError timeout orchestration.subscribeThread: T3Code timeout: orchestration.subscribeThread');
+  assert.equal(hostFailureRefusalDetail(new T3RpcError('remote', 'orchestration.subscribeThread', 'OrchestrationV2GetThreadProjectionError')),
+    'T3RpcError remote orchestration.subscribeThread: T3Code remote: orchestration.subscribeThread (OrchestrationV2GetThreadProjectionError)');
+  // A Paseo adapter's own messages appear as they are.
+  assert.equal(hostFailureRefusalDetail(new Error('Agent was not found')), 'Error: Agent was not found');
+  assert.equal(hostFailureRefusalDetail(new Error('Transport timeout')), 'Error: Transport timeout');
+  // A present code or method is kept, whatever its shape: system codes, numeric
+  // codes, library codes and non-dotted method names all appear as the host
+  // wrote them (no character class decides presence).
+  for (const code of ['ECONNREFUSED', 'ENOENT', 'ETIMEDOUT', 'ERR_SOCKET_CLOSED', '0x80004005', 'not-found: 42', 'connect failed badly'])
+    assert.equal(hostFailureRefusalDetail(Object.assign(new Error('connect failed'), { code })),
+      `Error ${code.split('\n')[0]!.trim().slice(0, 80)}: connect failed`);
+  for (const code of [404, 500])
+    assert.equal(hostFailureRefusalDetail(Object.assign(new Error('request failed'), { code })),
+      `Error ${code}: request failed`);
+  for (const method of ['paseo:agent.observe', 'paseo/observe', 'Agent.Observe'])
+    assert.equal(hostFailureRefusalDetail(Object.assign(new Error('not sent'), { method })),
+      `Error ${method}: not sent`);
+  // Only the first line is kept, and the field is clipped; an absent or empty
+  // field contributes nothing.
+  assert.equal(hostFailureRefusalDetail(Object.assign(new Error('not sent'), { code: 'E_BIG\ntrace line' })),
+    'Error E_BIG: not sent');
+  assert.equal(hostFailureRefusalDetail(Object.assign(new Error('not sent'), { code: 'E'.repeat(120) })),
+    `Error ${'E'.repeat(80)}: not sent`);
+  assert.equal(hostFailureRefusalDetail(Object.assign(new Error('not sent'), { code: '', method: '   ' })), 'Error: not sent');
+  // One line, clipped to 200 characters.
+  assert.equal(hostFailureRefusalDetail(new Error('first line\n  at [\"text\"]')), 'Error: first line');
+  assert.equal(hostFailureRefusalDetail(new Error('x'.repeat(300))), `Error: ${'x'.repeat(200)}`);
+  // A compatibility failure names its adapter-authored field through its message.
+  assert.equal(hostFailureRefusalDetail(new T3CompatibilityError('subscribeThread: incomplete projection')),
+    'T3CompatibilityError: T3Code compatibility check failed: subscribeThread: incomplete projection');
+});
+
+test('a thread long enough to page stays observable from the nightly bounded snapshot', async t => {
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const p = server.threads.get(created.id)!;
+  // A long worker run leaves far more turn items than one snapshot window holds.
+  // Every record is the Nightly's own wire shape (contract `wireShapes`): the
+  // transport completes and checks them, so no invented partial record is served.
+  p.turnItems = Array.from({ length: server.controls.boundedRowLimit + 40 }, (_, index) => syntheticTurnItem(created.id, index + 1,
+    { type: 'assistant_message', text: `Synthetic reply ${index}`,
+      ...(index === server.controls.boundedRowLimit + 39 ? { runId: 'synthetic-old-run' } : {}) }));
+  p.runs = [syntheticRun(created.id, 1, { id: 'synthetic-unreferenced-run' }),
+    syntheticRun(created.id, 2, { id: 'synthetic-old-run' }),
+    syntheticRun(created.id, 3, { id: 'synthetic-run', status: 'running', completedAt: null })];
+  p.runtimeRequests = [syntheticRuntimeRequest({ id: 'synthetic-question', kind: 'user_input', status: 'pending' })];
+  // The nightly answers a whole projection only to a read that does not opt in,
+  // and that read of a thread this long is the slow one: the full snapshot of the
+  // reported thread measured 8.1 MiB, and outlived the bound on a busy service.
+  server.controls.slowFullSnapshotMs = 1_500;
+  const observed = await host.observe(created.id);
+  assert.equal(observed.status, 'running');
+  assert.equal(observed.active, true);
+  assert.equal(observed.activeTurnId, 'synthetic-run');
+  assert.equal(observed.permissions, true);
+  assert.equal(observed.pendingRequest?.id, 'synthetic-question');
+  assert.deepEqual(observed.pendingPermissionKinds, ['question']);
+  const served = server.snapshots.filter(snapshot => snapshot.threadId === created.id).at(-1)!;
+  assert.equal(served.acceptBoundedSnapshot, true, 'observation asks for the bounded snapshot');
+  assert.equal(served.bounded, true);
+  assert.equal(served.hasMoreHistory, true, 'the answer is the paged window, not the whole transcript');
+  assert.equal(typeof served.historyCursor, 'string');
+  assert.ok(served.turnItems < p.turnItems.length, 'the window drops older turn items');
+  // The bounded projection keeps the active run and the run its window
+  // references, and drops a settled run the window no longer shows
+  // (contract `subscribeThread.projectionRetained.runs`).
+  assert.equal(served.runs, 2);
+  // The same thread read without the opt-in, as main's observe read it, outlives
+  // the bound and names the read that timed out.
+  await assert.rejects(host.pendingQuestions(created.id), /T3Code timeout: orchestration\.subscribeThread/);
+});
+
+test('a nightly that ignores the bounded opt-in still observes from its whole projection', async t => {
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  server.threads.get(created.id)!.runs = [syntheticRun(created.id, 1, { id: 'synthetic-run', status: 'running', completedAt: null })];
+  // An older server drops the unknown field and answers the complete detail
+  // projection, so observation degrades to today's read instead of refusing.
+  server.controls.ignoreBoundedSnapshot = true;
+  const observed = await host.observe(created.id);
+  assert.equal(observed.active, true);
+  assert.equal(observed.activeTurnId, 'synthetic-run');
+  const served = server.snapshots.filter(snapshot => snapshot.threadId === created.id).at(-1)!;
+  assert.equal(served.acceptBoundedSnapshot, true);
+  assert.equal(served.bounded, false);
+  assert.equal(served.hasMoreHistory, false);
+});
+
+test('a transcript read refuses a paged projection, so partial history is never handed out', async t => {
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const p = server.threads.get(created.id)!;
+  p.turnItems = [syntheticTurnItem(created.id, 1, { type: 'assistant_message' }),
+    syntheticTurnItem(created.id, 2, { type: 'user_input_request', id: 'synthetic-question-item', requestId: 'synthetic-question' })];
+  p.runtimeRequests = [syntheticRuntimeRequest({ id: 'synthetic-question', kind: 'user_input', status: 'pending' })];
+  // A paged projection with an opaque cursor: observation may use it, a reader of
+  // the transcript may not. This arm is defensive — today's nightly pages only an
+  // opted-in read — so it also holds if a later nightly pages every read.
+  server.controls.threadCoverage = { hasMoreHistory: true, historyCursor: 'synthetic-history-cursor', latestLocalTurnOrdinal: 0 };
+  assert.equal((await host.observe(created.id)).pendingRequest?.id, 'synthetic-question');
+  await assert.rejects(host.pendingQuestions(created.id), /incomplete projection/);
+  await assert.rejects(host.answeredQuestions(created.id), /incomplete projection/);
+  assert.equal(await host.agentTimelinePage(created.id), null);
+  // The transcript read never opts into a window; it demands the whole list.
+  const read = server.requests.filter(request => request.tag === 'orchestration.subscribeThread').at(-1)!.payload as Record<string, unknown>;
+  assert.equal(read.acceptBoundedSnapshot, undefined);
 });
 
 test('inventory repeats moving live/archive snapshot pairs and succeeds when the sequence settles', async t => {
@@ -564,9 +681,9 @@ test('the origin read answers authoritative absence, and only an unread inventor
   // T3 has no such thread: a complete shell plus archive read proves absence, so
   // the lookup answers not-mine instead of throwing.
   assert.equal(await host.originAgent('native-id-t3-does-not-have'), null);
-  // A projection that cannot be read completely proves nothing about the thread.
+  // A projection whose coverage claim is unusable proves nothing about the thread.
   server.controls.incompleteThread = true;
-  await assert.rejects(host.originAgent(created.id), /incomplete projection/);
+  await assert.rejects(host.originAgent(created.id), /hasMoreHistory true with no cursor/);
   server.controls.incompleteThread = false;
   // A read that cannot run at all is a failed read, never authoritatively absent.
   host.close();

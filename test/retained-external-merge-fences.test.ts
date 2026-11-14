@@ -46,3 +46,22 @@ test('an unresolved hook effect refuses before the forge read', {timeout:90000},
     assert.equal(f.counts().sourceReads,reads);assert.deepEqual(store.task(task.id),before);
   }finally{await f.close();}
 });
+
+test('a participant that cannot be observed refuses the source acceptance with the host error', {timeout:90000}, async()=>{
+  const f=await fixture();try{
+    const before=f.runtime.store.task(f.taskId);
+    // The acceptance's quiet-project proof observes every participant; an
+    // unreadable one is not silent absence, and its refusal names what the host
+    // said. Only the post-forge observation fails, so the proof reaches the check.
+    const workerId=before.agentId!;
+    const original=f.adapter.observe.bind(f.adapter);
+    let strict=false;
+    f.setProof(()=>{strict=true;});
+    f.adapter.observe=async(id:string)=>{if(strict&&id===workerId)throw Object.assign(
+      new Error('T3Code timeout: orchestration.subscribeThread'),{name:'T3RpcError',code:'timeout',method:'orchestration.subscribeThread'});return original(id);};
+    await assert.rejects(f.runtime.taskControl(f.control()),
+      /could not be observed \(T3RpcError timeout orchestration\.subscribeThread: T3Code timeout: orchestration\.subscribeThread\)/);
+    assert.deepEqual(f.runtime.store.task(f.taskId),before);
+    assert.equal(f.counts().sourceReads,1);
+  }finally{await f.close();}
+});

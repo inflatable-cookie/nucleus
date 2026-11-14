@@ -207,7 +207,7 @@ the write if the desired title is already present.
 | Register project | `projects.mutate` / `project.create` mutation | Deterministic IDs bind the real repository root; the receipt ledger answers replays; reconcile unknown delivery against the complete inventory before retry |
 | Create | `orchestration.launchThread` with explicit thread/message IDs, provider instance/model, prompt, the profile's runtime mode and model options, and `existing_worktree` | Top-level thread with the exact project and directory |
 | Follow-up | `orchestration.dispatchCommand` / `message.dispatch` | Stable command and message IDs; receipt records acceptance |
-| Observe | `orchestration.subscribeShell` and `orchestration.subscribeThread` | Fresh complete state, including active run and pending request |
+| Observe | `orchestration.subscribeShell` and a bounded `orchestration.subscribeThread` | Fresh state, including active run and pending request, from a snapshot whose timeline window never makes a long thread unobservable |
 | Answer question or permission | `runtime-request.respond` through dispatch | Exact request, thread and workspace; typed answers or approval decision |
 | Stop | `thread.stop` through dispatch | Receipt followed by observation; never a replacement thread |
 | Archive | `thread.archive` through dispatch | Receipt followed by archived-state observation |
@@ -420,13 +420,50 @@ Active and archive snapshots must report the same application-event sequence;
 otherwise their union is refused as incomplete. This includes an unarchive
 between the two reads, which could otherwise hide a live thread. A direct
 retained-thread read must settle an identity before reporting it gone. Coverage
-flags and cursors are strictly typed; retyped fields or a remaining history
-cursor cannot establish complete observation or timeline coverage.
+flags and cursors are strictly typed, and a claim the nightly never makes is
+refused: `hasMoreHistory` and `historyCursor` are one pair, so more history
+without a cursor, or a cursor with no more history, is not usable. A *paged*
+snapshot is not a malformed one. The nightly answers a bounded snapshot only to
+a read that opts in (`acceptBoundedSnapshot`), and that snapshot keeps exactly the
+facts observation reads: the thread record is whole, the projection carries every
+queued, preparing, starting, running or waiting run, the runs its window
+references, the run the shell presents, and every pending or waiting runtime
+request; plans and context handoffs are filtered to the active or window-reachable
+ones. Settled runs, resolved requests and the timeline before the window are
+absent, and none of them changes a status, an active run, a pending request or a
+settle marker. Observation asks for that bounded snapshot and reports status,
+active run, pending request and archive state from any length of thread, so a
+long thread is never unobservable (nucleus#1188). A read that consumes the
+transcript — timeline pages, question text, answer mapping — does not opt in and
+refuses a paged or locally-omitted projection, so partial history is never handed
+out as the whole list; its refusal names the missing coverage, not the thread's
+length.
+
+An observation read that fails names its own cause. Every owner path that turns a
+caught observation into a refusal keeps the host error's kind and message: the
+`restart` refusals, `move to=review`'s reader check, the quiet-project participant
+proof of an external-merge source acceptance, and a finished run whose
+observation fences the verb. One rule applies to every host (planner ruling,
+2026-11-14): the kind is the error's class name plus its `code` or RPC `method`
+whenever the error carries one — a system code such as `ECONNREFUSED`, a numeric
+code, a library code or a non-dotted method name all count, first line only and
+clipped — and the detail is the first line of its message clipped to 200
+characters. Presence decides, not a character class. Hosts are the operator's own local services and the refusal goes
+only to the task owner, so the host's words are shown as they are and nothing is
+certified: a Paseo `Agent was not found` and a T3 `T3Code timeout:
+orchestration.subscribeThread` both appear verbatim.
 
 The canonical thread projection is the whole turn list, so timeline pages carry
 the full coverage contract: no gap, no reset, no newer history, an epoch that
 is the thread identity, and start/end cursors that are positions in the full
-list. Archived threads are retired participants: they report the terminal
+list. The test transport serves only records in the Nightly's own wire shape:
+`test/fixtures/t3code-contract.json` (`wireShapes`) records the field sets
+captured read-only from the nightly, the fake completes every served thread,
+run, runtime request, message and turn item to them (`visibleTurnItems` derived
+from the items served, so a window holds no older rows), and it checks both the
+records and the projection's own key set, so an invented partial record or a
+missing collection cannot stand in for a real one (nucleus#1188). Archived
+threads are retired participants: they report the terminal
 closed state with `archived` carried on its own field, so archive proofs and
 workspace teardown read a terminal state while retained reads still see the
 retirement.
