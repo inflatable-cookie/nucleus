@@ -447,6 +447,20 @@ export function escalationAnswerControl(answer: string): EscalationControl {
   return { action: "work", instruction: text };
 }
 
+/** Decode the legacy text boundary once; settlement consumes a typed choice. */
+export function decodeEscalationChoice(answer: string, offered: readonly EscalationVerbChoice[]):
+  | { kind: 'owner'; choice: EscalationVerbChoice; reason: string }
+  | { kind: 'task' | 'time' | 'decision'; reason: string }
+  | { kind: 'other'; reason: string } {
+  const reason = answer.includes(' — ') ? answer.slice(answer.indexOf(' — ') + 3).trim() : answer.trim();
+  const choice = offered.find(item => answer === item.label || answer.startsWith(`${item.label} — `));
+  if (choice) return { kind: 'owner', choice, reason };
+  if (answer.startsWith('Wait for a task (')) return { kind: 'task', reason };
+  if (answer.startsWith('Wait until a time (')) return { kind: 'time', reason };
+  if (answer.startsWith('Wait for an operator decision (')) return { kind: 'decision', reason };
+  return { kind: 'other', reason };
+}
+
 /** The first ISO-8601 timestamp with a timezone in the reason; the rest is a note. */
 export function extractFirstIsoTimestamp(text: string): string | null {
   const match = text.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})/);
