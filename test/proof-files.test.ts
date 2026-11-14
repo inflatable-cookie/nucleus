@@ -96,7 +96,7 @@ function fixture(options: { branchPrs?: { number: number; url: string; head: str
       agentId: "executor-thread", workspaceId: "workspace", profile: worker, status: "running", createdAt: new Date().toISOString(),
       lastObservedAt: null, active: true, idleSince: null, completion: null, released: false, temporaryDirectory: executorScratch,
       proofExecution: { selector: "effigy test unit -- test/proof.test.ts", inputs: [], prNumber: 1, tree,
-        operationId: "synthetic-operation", briefVersion: 1, briefDigest: null, returnPhase: "awaiting_proof",
+        operationId: "synthetic-operation", briefVersion: 1, briefDigest: null, returnPhase: "awaiting_review",
         authorizedBy: { role: "queue_dispatch", caller: null, note: null } } }));
   };
   const task = () => store.task(taskId);
