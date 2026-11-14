@@ -599,9 +599,11 @@ test('questions and approvals answer exact runtime requests and refuse wrong kin
   const { host, server, workspace, spec } = await fixture(t);
   const created = await host.createAgent(spec());
   const p = server.threads.get(created.id)!;
-  p.runtimeRequests = [{ id: 'question-request', kind: 'user_input', status: 'pending', responseCapability: { type: 'live', providerSessionId: 'session' } },
+  p.runtimeRequests = [{ id: 'question-request', nodeId: 'synthetic-question-node', kind: 'user_input', status: 'pending', responseCapability: { type: 'live', providerSessionId: 'session' } },
     { id: 'approval-request', kind: 'command', status: 'pending', responseCapability: { type: 'live', providerSessionId: 'session' } }];
-  p.turnItems = [{ id: 'question-item', type: 'user_input_request', requestId: 'question-request', questions: [{ id: 'choice', header: 'Choice', question: 'Pick one', options: [{ label: 'A' }, { label: 'B' }] }] }];
+  // Nightly retains resolved requests through the window's node/provider-turn
+  // links. A question item and its request must describe the same node.
+  p.turnItems = [{ id: 'question-item', nodeId: 'synthetic-question-node', type: 'user_input_request', requestId: 'question-request', questions: [{ id: 'choice', header: 'Choice', question: 'Pick one', options: [{ label: 'A' }, { label: 'B' }] }] }];
   assert.deepEqual(await host.pendingQuestions(created.id), [{ requestId: 'question-request', questions: [{ header: 'Choice', question: 'Pick one', options: ['A', 'B'] }] }]);
   await assert.rejects(host.respondRuntimeRequest(created.id, workspace.id, 'question-request', { decision: 'accept' }, 'invalid-question-kind'), /kind/);
   await assert.rejects(host.respondRuntimeRequest(created.id, 'other-workspace', 'question-request', { answers: { choice: 'A' } }, 'invalid-question-workspace'), /workspace/);
