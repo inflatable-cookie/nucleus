@@ -73,16 +73,28 @@ it never closes the shared socket or replays a mutation. Late replies are droppe
 by request ID, and an expired subscription sends `Interrupt` to release it.
 Small requests have a 10-second deadline; `orchestration.subscribeThread` has a
 60-second deadline in the adapter's method table, including bounded snapshots.
+A protocol fault that names one in-flight request — a `Defect` with a request ID,
+a `Chunk` for a unary call or with non-array values, a stream past its per-method
+cap, an `Exit` whose shape does not match, or an unknown tag carrying a known
+request ID — settles that request as a protocol failure (unknown delivery, never
+resent) and, for a stream, sends `Interrupt`. The connection stays open. Default
+streams accept 10,000 values; `orchestration.subscribeThread` accepts 50,000, and
+thread readers interrupt once they have the snapshot they asked for.
+The connection closes only for unattributable data: an unparseable frame, a
+non-string or oversize message, a frame batch over the cap, a frame that is not
+an object with a string tag, a connection-level `Defect` without a request ID, or
+a frame with no request ID that is not `Ping` or `Pong`.
 
 Liveness uses the nightly's Effect RPC `Ping`/`Pong` control frames, independently
 of request traffic. After 10 seconds idle between heartbeat exchanges, a ping
 gets 10 seconds for a pong; one miss sends a second ping immediately, and a
 second consecutive miss closes the connection. A pong resets the failure count.
-Socket close, socket error and malformed protocol frames also close it; the
+Socket close, socket error and unattributable protocol frames also close it; the
 service's ordinary host reconnect path then proves identity again. `service.health`
 retains `t3code.lastDisconnectReason` across reconnects as a fixed reason code
 (`heartbeat_failure`, `socket_close`, `socket_error`, `protocol_error` or
-`connect_timeout`), without remote text or credentials.
+`connect_timeout`), and `t3code.lastProtocolError` as the branch and frame tag
+that last fired (never payload values), without remote text or credentials.
 
 Strict decoding validates consumed fields and their types while tolerating
 unrelated extra fields, so additive nightly changes do not become version pins.

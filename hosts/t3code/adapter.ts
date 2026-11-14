@@ -102,6 +102,7 @@ export class T3CodeHost implements Host {
   }
   get connected() { return this.ready && this.rpc.connected; }
   get lastDisconnectReason() { return this.rpc.lastDisconnectReason; }
+  get lastProtocolError() { return this.rpc.lastProtocolError; }
   get threadShapePending() { return this.reads.threadShapePending; }
   get compatibilityFailure() { return this.reads.compatibilityFailure; }
   capabilities() { return { reportingViaMcp: false, supportsCoordinatorRecovery: false, nativeDecisions: false, uiContributions: false, lifecycleDispatch: false, perThreadEnvironment: false }; }
