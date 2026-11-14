@@ -22,6 +22,7 @@ import { JointReviewQuestion } from './questions/joint-review-question';
 import { OperatorDelegation } from './questions/operator-delegation';
 import { ReviewerConsult } from './questions/reviewer-consult';
 import { EscalationSettlement } from './questions/escalation-settlement';
+import { QuestionSupersession } from './questions/question-supersession';
 import { Questions } from './questions/questions';
 import { NativeQuestions } from './questions/native-questions';
 
@@ -373,6 +374,7 @@ export class Resolution {
   readonly delegation = new Delegation(this);
   readonly reviewerConsult = new ReviewerConsult(this);
   readonly escalationSettlement = new EscalationSettlement(this);
+  readonly questionSupersession = new QuestionSupersession(this);
   readonly questions = new Questions(this);
   readonly operatorDelegation = new OperatorDelegation(this);
   readonly jointReviewQuestion = new JointReviewQuestion(this);
@@ -883,13 +885,13 @@ export class Resolution {
    * remain in place. A late answer cannot grant an increment after usage falls
    * below the current limit.
    */
-  extendTaskBudget(taskId: string, detail: string, by = 'The operator'): Task | null { return this.questions.extendTaskBudget(taskId, detail, by); }
+  extendTaskBudget(taskId: string, detail: string, by = 'The operator'): Task | null { return this.questionSupersession.extendTaskBudget(taskId, detail, by); }
   /**
    * An applied owner control replaces any outstanding question about the
    * task's previous state. Keep the question history, but make later native
    * or delegated answers inert and close any linked board decision.
    */
-  supersedeOpenOwnerQuestions(taskId: string, reason: string): void { return this.questions.supersedeOpenOwnerQuestions(taskId, reason); }
+  supersedeOpenOwnerQuestions(taskId: string, reason: string): void { return this.questionSupersession.supersedeOpenOwnerQuestions(taskId, reason); }
   /** Record the answer, then apply the owner verb it names with the operator's authority. */
   settleOperatorQuestion(taskId: string, question: OperatorQuestion, answer: string, recordAnswer = true): Promise<void> { return this.questions.settleOperatorQuestion(taskId, question, answer, recordAnswer); }
   /**

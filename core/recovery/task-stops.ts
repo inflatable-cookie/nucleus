@@ -165,7 +165,7 @@ export class TaskStops {
     if (!cleared) return this.store.task(task.id);
     // The question answers to the same figure: the pause is gone, so its recorded
     // question is superseded and dismissed rather than left waiting for an answer.
-    this.resolution.questions.supersedeBudgetQuestions(task.id, 'The measured budget no longer shows the pause.');
+    this.resolution.questionSupersession.supersedeBudgetQuestions(task.id, 'The measured budget no longer shows the pause.');
     return cleared;
   }
   /** Record one stop or wait on the task; matching observations retain their first timestamp. */
