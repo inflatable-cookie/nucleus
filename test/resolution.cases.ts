@@ -706,6 +706,27 @@ test('a withdrawn Nucleus question at dispatch is resolved and the retained revi
   assert.doesNotMatch(f.current().reason,/pending question/);
  }finally{await f.close()}
 });
+test('a withdrawn pending question with no host dismissal handle waits honestly instead of looping in resolving',async()=>{
+ // The resolving wait is recorded only on a pass that actually sends a dismiss
+ // or cancel. When the host offers no dismissal handle for the stale request,
+ // dispatch names the pending question it observes (with the ordinary owner
+ // verbs) instead of sitting in "resolving" with nothing sent.
+ const f=fixture();try{
+  const qid='c812dbab-0000-4000-8000-000000000001';
+  f.store.event(f.task.id,'operator_question_superseded',`${qid}: the exhausted budget was extended`);
+  f.store.event(f.task.id,'native_question_dismiss_intent',`${qid}: the exhausted budget was extended`);
+  f.states.set('worker',{id:'worker',workspaceId:'workspace',status:'idle',active:false,permissions:true,error:'',pendingRequest:{id:'native-9',kind:'question',firstLine:`[Queue decision ${qid}] Budget reached. Continue?`}} as never);
+  f.store.update(f.task.id,{phase:'changes_requested',reason:'Apply review fixes'});
+  await f.engine.resolution.launch(f.current(),'revision');
+  assert.match(f.current().reason,/Assigned thread has pending question native-9/,'the visible wait names the observed pending question');
+  assert.doesNotMatch(f.current().reason,/Resolving a withdrawn/,'no resolving wait is recorded without a send');
+  assert.equal(f.store.runs(f.task.id).some(run=>run.role==='revision'),false);
+  await f.engine.resolution.launch(f.current(),'revision');
+  assert.match(f.current().reason,/Assigned thread has pending question native-9/,'a second pass still waits honestly instead of looping in resolving');
+  assert.doesNotMatch(f.current().reason,/Resolving a withdrawn/);
+  assert.equal(f.store.events(f.task.id).filter(event=>event.kind==='native_question_dismissed').length,0,'nothing is recorded as dismissed');
+ }finally{await f.close()}
+});
 test('two concurrent revision launches record exactly one run on the retained thread',async()=>{
  const f=fixture();try{
   await f.engine.wake();await f.report('changes_required');

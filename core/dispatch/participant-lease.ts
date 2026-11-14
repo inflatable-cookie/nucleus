@@ -58,6 +58,16 @@ export class ParticipantLease {
       add(current?.agentId, current?.workspaceId ?? t.workspaceId);
       add(t.resolution.reviewerAgentId, runs.find(run => run.role === 'reviewer' && run.agentId === t.resolution.reviewerAgentId)?.workspaceId ?? t.workspaceId);
     }
+    // A resolving wait is recorded only on a pass that actually sends a dismiss
+    // or cancel toward the host; anything already sent falls through to the
+    // ordinary wait so the task can never sit in "resolving" with nothing sent.
+    const resolving = () => {
+      this.resolution.waiting(this.store.task(t.id), 'Resolving a withdrawn Nucleus question still pending on the retained thread; dispatch proceeds once the host clears it', 'lifecycle');
+    };
+    const dismissed = (match: string, requestId: string) =>
+      this.store.eventsAll(t.id).some(item => item.kind === 'native_question_dismissed' && item.detail.startsWith(`${match}:`) && item.detail.includes(requestId));
+    const cancelSent = (match: string, intentId: string) =>
+      this.store.eventsAll(t.id).some(item => item.kind === 'native_permission_cancel_intent' && item.detail.startsWith(`${match}: ${intentId}`));
     for (const candidate of candidates) {
       let state = candidate.state;
       if (!state) {
@@ -67,46 +77,51 @@ export class ParticipantLease {
       if (!state.permissions && !state.pendingRequest) continue;
       const workspaceId = candidate.workspaceId || state.workspaceId || '';
       // Pending native questions: dismiss by recorded requestId or text prefix.
-      try {
-        if (this.adapter.pendingQuestions && this.adapter.dismissNativeQuestion) {
-          const pending = await this.adapter.pendingQuestions(candidate.agentId);
+      if (this.adapter.pendingQuestions && this.adapter.dismissNativeQuestion) {
+        let pending: Awaited<ReturnType<NonNullable<Adapter['pendingQuestions']>>> | null = null;
+        try { pending = await this.adapter.pendingQuestions(candidate.agentId); }
+        catch { pending = null; }
+        if (pending) {
           for (const request of pending) {
             const recorded = recordedRequests.get(request.requestId);
             const match = (recorded && withdrawn.has(recorded) ? recorded : null)
               ?? [...withdrawn].find(id => request.questions.some(question => question.question.startsWith(`[Queue decision ${id}]`)));
-            if (!match) continue;
+            if (!match || dismissed(match, request.requestId)) continue;
             try {
               await this.adapter.dismissNativeQuestion(candidate.agentId, workspaceId, request.requestId);
-              if (!this.store.eventsAll(t.id).some(item => item.kind === 'native_question_dismissed' && item.detail.startsWith(`${match}:`)))
-                this.store.event(t.id, 'native_question_dismissed', `${match}: request ${request.requestId} on ${candidate.agentId} (resolved at dispatch)`);
-              this.resolution.waiting(this.store.task(t.id), 'Resolving a withdrawn Nucleus question still pending on the retained thread; dispatch proceeds once the host clears it', 'lifecycle');
-              return true;
-            } catch {
-              this.resolution.waiting(this.store.task(t.id), 'Resolving a withdrawn Nucleus question still pending on the retained thread; dispatch proceeds once the host clears it', 'lifecycle');
-              return true;
-            }
+            } catch { return false; }
+            this.store.event(t.id, 'native_question_dismissed', `${match}: request ${request.requestId} on ${candidate.agentId} (resolved at dispatch)`);
+            resolving();
+            return true;
           }
         }
-      } catch { /* an unreadable pending list proves nothing; fall through to the request check */ }
-      // Pending permission or question observed on the thread: cancel only when
-      // it is a recorded withdrawn Nucleus request or its text names one.
+      }
+      // Pending permission or question observed on the thread: act only when it
+      // is a recorded withdrawn Nucleus request or its text names one, and only
+      // with the host call that settles that kind.
       const pendingId = state.pendingRequest?.id ?? null;
       const firstLine = state.pendingRequest?.firstLine ?? '';
-      if (pendingId && recordedRequests.has(pendingId)) {
-        const match = recordedRequests.get(pendingId)!;
-        if (state.pendingRequest?.kind === 'permission' && this.adapter.answerNativePermission) {
-          const intentId = `ns-withdrawn-${match}-${pendingId}`;
-          if (!events.some(event => event.kind === 'native_permission_cancel_intent' && event.detail.startsWith(`${match}: ${intentId}`))) {
-            this.store.event(t.id, 'native_permission_cancel_intent', `${match}: ${intentId} request ${pendingId} on ${candidate.agentId}`);
-            try { await this.adapter.answerNativePermission(candidate.agentId, workspaceId, pendingId, 'cancel', intentId); } catch { /* unknown delivery; the intent prevents a resend */ }
-          }
-        }
-        this.resolution.waiting(this.store.task(t.id), 'Resolving a withdrawn Nucleus question still pending on the retained thread; dispatch proceeds once the host clears it', 'lifecycle');
+      const kind = state.pendingRequest?.kind;
+      if (!pendingId) continue;
+      const recorded = recordedRequests.get(pendingId);
+      const match = (recorded && withdrawn.has(recorded) ? recorded : null)
+        ?? [...withdrawn].find(id => firstLine.includes(`[Queue decision ${id}]`) || firstLine.includes(id));
+      if (!match) continue;
+      if (kind === 'permission' && this.adapter.answerNativePermission) {
+        const intentId = `ns-withdrawn-${match}-${pendingId}`;
+        if (cancelSent(match, intentId)) continue;
+        this.store.event(t.id, 'native_permission_cancel_intent', `${match}: ${intentId} request ${pendingId} on ${candidate.agentId}`);
+        try { await this.adapter.answerNativePermission(candidate.agentId, workspaceId, pendingId, 'cancel', intentId); }
+        catch { return false; }
+        resolving();
         return true;
       }
-      const textMatch = [...withdrawn].find(id => firstLine.includes(`[Queue decision ${id}]`) || firstLine.includes(id));
-      if (textMatch && pendingId) {
-        this.resolution.waiting(this.store.task(t.id), 'Resolving a withdrawn Nucleus question still pending on the retained thread; dispatch proceeds once the host clears it', 'lifecycle');
+      if (kind === 'question' && this.adapter.dismissNativeQuestion) {
+        if (dismissed(match, pendingId)) continue;
+        try { await this.adapter.dismissNativeQuestion(candidate.agentId, workspaceId, pendingId); }
+        catch { return false; }
+        this.store.event(t.id, 'native_question_dismissed', `${match}: request ${pendingId} on ${candidate.agentId} (resolved at dispatch)`);
+        resolving();
         return true;
       }
     }
