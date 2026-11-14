@@ -10,6 +10,7 @@ import { hostKindOf, taskNumberLabel, type BoardQaRun, type DecisionView, type L
 import { phaseBadgeTone, recordBadgeTone } from "../../shared/badge-tones";
 import { waitStateLabels } from "../../shared/wait-state";
 import { isWaitingTaskStop, taskStopClassification } from "../../shared/task-stop";
+import { hostDisplayLabel } from "../../shared/host-outage";
 import { decisionAge } from "../../shared/pipeline-board";
 import { UNKNOWN_ASKER_LABEL, decisionProjectLabel, isGeneralDecision } from "../../shared/decision-project";
 import { taskWaitCardLabel } from "../../shared/task-detail-summary";
@@ -106,7 +107,17 @@ export const TaskCard = React.memo(function TaskCard({task,selected,onPress,prSt
   const longCommandStartedAt = longShellCommandStart(task.reason);
   const budgetExhausted = Boolean(task.budget && budgetFields(task.budget).exhausted);
   const attentionPriority = Boolean(cardAttention || archiveRetry || (stopRecord && !stopWait));
-  const next = plainWait ? <Text numberOfLines={2} ellipsizeMode="tail" style={{color:c.foregroundMuted,fontSize:typeScale.metadata.fontSize,lineHeight:typeScale.metadata.lineHeight}}>{plainWait}</Text>
+  // nucleus#1198 review: the task's own host wait is shown beside any stop. An
+  // owner-facing stop (budget, escalation, interactive) keeps its own line, so an
+  // operator sees both why the task is stopped and that its host is away.
+  const hostWait = task.hostWait;
+  const hostWaitBlock = hostWait ? <View style={{gap:space.xxs / 2}}>
+    <Text accessibilityLabel={`Waiting on ${hostDisplayLabel(hostWait.hostId)}`} numberOfLines={2} ellipsizeMode="tail" style={{color:c.foregroundMuted,fontSize:typeScale.metadata.fontSize,lineHeight:typeScale.metadata.lineHeight}}>Waiting on {hostDisplayLabel(hostWait.hostId)}</Text>
+    <Text numberOfLines={1} style={{...muted(c),fontSize:typeScale.metadata.fontSize}}>Waiting on the host · {decisionAge(hostWait.since)}</Text>
+    {stopRecord && stopRecord.reason !== "host_unavailable" && <Text numberOfLines={2} ellipsizeMode="tail" style={{color:c.statusWarning,fontSize:typeScale.metadata.fontSize,lineHeight:typeScale.metadata.lineHeight}}>{stopDetail}</Text>}
+  </View> : null;
+  const next = hostWaitBlock ? hostWaitBlock
+    : plainWait ? <Text numberOfLines={2} ellipsizeMode="tail" style={{color:c.foregroundMuted,fontSize:typeScale.metadata.fontSize,lineHeight:typeScale.metadata.lineHeight}}>{plainWait}</Text>
     : task.heavyRun ? <HeavyRunStatus run={task.heavyRun} c={c}/>
     : questions.length ? <View style={{gap: space.xxs}}>{questions.flatMap(request => request.questions.map(q => <Text key={`${request.id}:${q.header}`} numberOfLines={2} style={{color:c.statusWarning,fontSize:typeScale.metadata.fontSize,lineHeight:typeScale.metadata.lineHeight}}>Question · {q.question}</Text>))}</View>
     : archiveRetry ? <Text numberOfLines={2} ellipsizeMode="tail" style={{color:c.statusWarning,fontSize:typeScale.metadata.fontSize,lineHeight:typeScale.metadata.lineHeight}}>Workspace archive failed: {archiveRetry.error}</Text>
@@ -129,7 +140,9 @@ export const TaskCard = React.memo(function TaskCard({task,selected,onPress,prSt
   const hasFooter = task.queuePriority>0 || task.dependsOn.length>0 || Boolean(task.prUrl);
   const stopA11y = stopRecord ? stopWait ? `Waiting: ${stopDetail}` : stopHeld ? `Held: ${stopDetail}` : `Needs attention: ${stopDetail}; next owner ${attentionOwner}` : "";
   const holdOwnerA11y = !dispatchWait && task.holds?.merge ? `, Merge held by ${task.holdDisplayOwner ?? "a planner thread"}` : dispatchWait ? `, Dispatch held by ${task.holdDisplayOwner ?? "a planner thread"}` : "";
-  const accessibleWait = plainWait
+  const accessibleWait = hostWait
+    ? `, Waiting on ${hostDisplayLabel(hostWait.hostId)} since ${hostWait.since}`
+    : plainWait
     ? `, ${plainWait}`
     : task.heavyRun
       ? `, ${task.heavyRun.state === "queued" ? `Waiting for QA capacity · position ${task.heavyRun.position ?? "unknown"}` : `QA run ${task.heavyRun.state}`}`

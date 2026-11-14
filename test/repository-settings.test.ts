@@ -252,7 +252,7 @@ test('Settings-only capacity writes apply and record the change, refuse every ot
   const values = {
     globalLimit: 20, projectLimit: 4, papercutProjectLimit: 3, paseoCallLimit: 12,
     stallThresholdMinutes: 50, holdReminderMinutes: 90, holdEscalationMinutes: 180,
-    laneDrainMinutes: 45, laneDrainEscalationMinutes: 90,
+    laneDrainMinutes: 45, laneDrainEscalationMinutes: 90, hostOutageNoticeMinutes: 120,
   };
   try {
     assert.equal(runtime.store.configuredPaseoCallLimit(), DEFAULT_PASEO_CALL_LIMIT, 'the default is sized to Paseo interactive capacity');

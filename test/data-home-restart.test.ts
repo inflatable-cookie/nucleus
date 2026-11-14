@@ -40,7 +40,7 @@ const base = 'b'.repeat(40);
 const CAPACITY = {
   globalLimit: 7, projectLimit: 3, papercutProjectLimit: 2, paseoCallLimit: 9,
   stallThresholdMinutes: 5, holdReminderMinutes: 90, holdEscalationMinutes: 150,
-  laneDrainMinutes: 45, laneDrainEscalationMinutes: 75,
+  laneDrainMinutes: 45, laneDrainEscalationMinutes: 75, hostOutageNoticeMinutes: 120,
 } as const;
 
 const PROFILES = [
@@ -138,6 +138,7 @@ async function liveView(dataDir: string) {
         paseoCallLimit: state.paseoCallLimit, stallThresholdMinutes: state.stallThresholdMinutes,
         holdReminderMinutes: state.holdReminderMinutes, holdEscalationMinutes: state.holdEscalationMinutes,
         laneDrainMinutes: state.laneDrainMinutes, laneDrainEscalationMinutes: state.laneDrainEscalationMinutes,
+        hostOutageNoticeMinutes: state.hostOutageNoticeMinutes,
       },
       taskIds: (state.tasks ?? []).map(task => task.id).sort(),
       profileIds: listed.map(profile => profile.id).sort(),
@@ -238,7 +239,7 @@ test('the live leftover layout survives two service restarts through the post-mo
   const after = durableState(dataDir);
   assert.deepEqual(after, before, 'every record and setting is unchanged by the two restarts');  assert.equal(after.profiles.length, 2);
   assert.equal(after.pool.length, 2, 'both subscription entries survive');
-  assert.deepEqual(after.capacity, { ...CAPACITY }, 'all nine limits survive');
+  assert.deepEqual(after.capacity, { ...CAPACITY }, 'all ten limits survive');
   assert.equal(after.paused, true, 'the pause state survives');
   assert.equal(after.settings, before.settings);
   assert.equal(after.runners, before.runners);
