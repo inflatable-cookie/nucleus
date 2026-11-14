@@ -19,6 +19,7 @@ import { DispatchLaunch, type DispatchLaunchContext } from './dispatch/launch';
 import { intakeContext } from './intake/context';
 
 import { JointReviewQuestion } from './questions/joint-review-question';
+import { OperatorDelegation } from './questions/operator-delegation';
 import { Questions } from './questions/questions';
 import { NativeQuestions } from './questions/native-questions';
 
@@ -369,6 +370,7 @@ export class Resolution {
   readonly observation = new Observation(recoveryContext(this, ['adapter', 'attention', 'environmentDeferred', 'extendCallbackReminder', 'graceMs', 'heavyRunAlive', 'host', 'hostAvailable', 'inventoryHostMatches', 'launchingRuns', 'onTaskHost', 'orphanRuns', 'paused', 'reconcileAbsentCreation', 'reconcileStalledTurnStop', 'recoverRefusedReviewer', 'remindStoppedRun', 'resolveIncident', 'resumeTransientProviderThread', 'retainedProfileIssue', 'stalls', 'stopped', 'store', 'supersedeOrphans', 'transportDeferred', 'update', 'waiting', 'withHost']));
   readonly delegation = new Delegation(this);
   readonly questions = new Questions(this);
+  readonly operatorDelegation = new OperatorDelegation(this);
   readonly jointReviewQuestion = new JointReviewQuestion(this);
   readonly proofAutorun = new ProofAutorun(this);
   readonly nativeQuestions = new NativeQuestions(this);
@@ -981,10 +983,10 @@ export class Resolution {
    */
   delegateDecision(taskId: string, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; fullQuestion?: string | null },
     request: { requestId: string; header: string } | null, signal: AbortSignal,
-    deliver: (task: Task, answer: string) => Promise<void>): Promise<boolean> { return this.questions.delegateDecision(taskId, decision, request, signal, deliver); }
+    deliver: (task: Task, answer: string) => Promise<void>): Promise<boolean> { return this.operatorDelegation.delegateDecision(taskId, decision, request, signal, deliver); }
 
   /** A newly live planner gets one fresh chance to settle each proof wait parked for it. */
-  projectPlannerRegistered(projectKey: string, plannerId: string): Promise<void> { return this.questions.projectPlannerRegistered(projectKey, plannerId); }
+  projectPlannerRegistered(projectKey: string, plannerId: string): Promise<void> { return this.operatorDelegation.projectPlannerRegistered(projectKey, plannerId); }
   /**
    * Task 1110: the send-time address of one of a project's registered agents.
    * `name` null is the project's fallback planner, the thread `to: {project}`
