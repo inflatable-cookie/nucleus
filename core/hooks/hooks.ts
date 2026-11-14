@@ -1174,11 +1174,14 @@ export class RepositoryHooks {
     } else if (gitMarker?.isDirectory()) {
       // Ignored entries are disposable runtime material in a Queue-owned
       // isolated checkout; every non-ignored entry still blocks a clean removal.
-      const dirt = await statusEntries(path, false);
-      if (!force && dirt.length) throw new Error("Queue-owned isolated repository is dirty");
+      if (!force) {
+        const dirt = await statusEntries(path, false);
+        if (dirt.length) throw new Error("Queue-owned isolated repository is dirty");
+      }
       await rm(path, { recursive: true, force: true });
     } else {
-      throw new Error("Queue-owned isolated checkout has no recognized Git identity");
+      if (!force) throw new Error("Queue-owned isolated checkout has no recognized Git identity");
+      await rm(path, { recursive: true, force: true });
     }
     if (existsSync(path)) throw new Error("Isolated checkout still exists after removal");
   }

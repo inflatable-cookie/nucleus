@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { Store } from '../core/store/store';
+import { Store, digest } from '../core/store/store';
 import { git, command, queueCheckoutStatus, validateSubmission } from '../core/git/index';
 import {
   RepositoryHooks, blobDigest, discoverManifest, inspectChangedPaths, STDERR_EXCERPT_MAX_BYTES, HOOK_EVIDENCE_MAX_BYTES,
