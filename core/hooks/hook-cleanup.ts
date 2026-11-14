@@ -120,15 +120,6 @@ export async function reapHookCheckouts(store: Store, options: { taskIds?: Reado
   const commons = new Map<string, string | null>();
   const dataDir = store.path === ':memory:' ? null : isolationDataDirFor(store);
   const recordedPaths = new Set<string>();
-  for (const task of store.tasks()) {
-    const validation = task.resolution.projectValidation;
-    if (validation?.state !== 'running' || !validation.candidate || !dataDir) continue;
-    try {
-      const common = await git(task.repoPath, 'rev-parse', '--path-format=absolute', '--git-common-dir');
-      const candidateId = digest(`prospective-merge\n${task.id}\n${validation.candidate.integrationBase}\n${validation.candidate.reviewedHead}`).slice(0, 48);
-      recordedPaths.add(resolve(isolationPathFor(dataDir, common, candidateId)));
-    } catch { /* An unresolved validation keeps its candidate even if the repository is unavailable. */ }
-  }
   const activeHostPaths = new Set(store.hostRunsByStates(['queued', 'admitted', 'running']).map(run => resolve(run.repository.path)));
   const settledHostPaths = new Set(store.hostRunsByStates(['settled']).map(run => resolve(run.repository.path)));
   const usedByLiveRun = (path: string) => [...activeHostPaths].some(active => active === path || active.startsWith(`${path}/`));

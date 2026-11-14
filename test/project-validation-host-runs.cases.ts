@@ -131,6 +131,11 @@ test('a half-removed owned candidate is rebuilt and project validation proceeds'
   await assert.rejects((hooks as any).removeIsolatedCheckout(task, candidatePath, false), /Queue-owned isolated repository is dirty/);
   await rm(join(candidatePath, 'unrecognised-work'));
   await rm(join(candidatePath, '.git'), { recursive: true, force: true });
+  await mkdir(join(candidatePath, 'src'), { recursive: true });
+  await writeFile(join(candidatePath, 'src', 'foreign.ts'), 'unrecognised candidate');
+  await assert.rejects((hooks as any).removeIsolatedCheckout(task, candidatePath, false), /no recognized Git identity/);
+  assert.equal(existsSync(join(candidatePath, 'src', 'foreign.ts')), true, 'non-forced removal preserves an unrecognised checkout');
+  await rm(join(candidatePath, 'src'), { recursive: true, force: true });
   await mkdir(join(candidatePath, '.git', 'logs'), { recursive: true });
   await mkdir(join(candidatePath, 'src'), { recursive: true });
   await writeFile(join(candidatePath, 'src', 'partial.ts'), 'partial');
@@ -143,6 +148,55 @@ test('a half-removed owned candidate is rebuilt and project validation proceeds'
   const outcome = await hooks.projectValidationGate(task, f.head, validationCommand("process.stdout.write('validation ran')"));
   assert.equal(outcome.kind, 'ok', JSON.stringify(outcome));
   assert.equal(f.store.task(task.id).resolution.projectValidation?.state, 'passed');
+});
+
+weighted(2)('a service roll during candidate cleanup keeps the verdict and finishes removal on reattach', { timeout: HOOK_TEST_TIMEOUT_MS }, async t => {
+  const f = await fixture(t);
+  t.after(() => f.store.close());
+  const task = grantIntegrationTurn(f.store, f.task.id);
+  const capacity = () => ({ cpuCapacity: 8, memoryCapacityBytes: 8_000_000_000, freeMemoryBytes: 8_000_000_000, loadAverage: [] });
+  const before = new HostRunScheduler(f.store, { capacity });
+  t.after(() => before.stop());
+  const hooksBefore = new RepositoryHooks(f.store, { hostRuns: before });
+  const launches = join(f.root, 'validation-launches');
+  const validation = validationCommand(`require('node:fs').appendFileSync(${JSON.stringify(launches)}, 'run\\n')`);
+  const remove = (hooksBefore as any).removeIsolatedCheckout.bind(hooksBefore);
+  let interrupted = false;
+  let candidatePath = '';
+  (hooksBefore as any).removeIsolatedCheckout = async (owner: Task, path: string, force: boolean) => {
+    if (!interrupted) {
+      interrupted = true;
+      candidatePath = path;
+      const durable = f.store.task(task.id).resolution.projectValidation!;
+      assert.equal(durable.state, 'passed', 'the verdict is durable before disposable candidate cleanup starts');
+      assert.equal(durable.candidateCleanupPending, true, 'the cleanup intent survives a service roll');
+      await rm(join(path, '.git'), { recursive: true, force: true });
+      await mkdir(join(path, '.git', 'logs'), { recursive: true });
+      await mkdir(join(path, 'src'), { recursive: true });
+      await writeFile(join(path, 'src', 'partial.ts'), 'partial source');
+      await mkdir(join(path, 'node_modules', 'leftover'), { recursive: true });
+      await writeFile(join(path, 'node_modules', 'leftover', 'package.json'), '{}');
+      throw new Error('simulated service roll interrupted candidate removal');
+    }
+    return remove(owner, path, force);
+  };
+
+  const first = await hooksBefore.projectValidationGate(task, f.head, validation);
+  assert.equal(first.kind, 'ok', JSON.stringify(first));
+  assert.equal(interrupted, true);
+  assert.equal(existsSync(join(candidatePath, 'src', 'partial.ts')), true, 'the interrupted cleanup leaves the evidence-shaped half tree');
+  assert.equal(f.store.task(task.id).resolution.projectValidation?.candidateCleanupPending, true);
+
+  before.stop();
+  const after = new HostRunScheduler(f.store, { capacity });
+  t.after(() => after.stop());
+  const hooksAfter = new RepositoryHooks(f.store, { hostRuns: after });
+  const resumed = await hooksAfter.projectValidationGate(f.store.task(task.id), f.head, validation);
+  assert.equal(resumed.kind, 'ok', JSON.stringify(resumed));
+  assert.equal(f.store.task(task.id).resolution.projectValidation?.state, 'passed');
+  assert.equal(f.store.task(task.id).resolution.projectValidation?.candidateCleanupPending, false);
+  assert.equal(existsSync(candidatePath), false, 'the restarted service finishes the forced removal');
+  assert.equal((await readFile(launches, 'utf8')).trim().split('\n').length, 1, 'the durable verdict avoids a second validation run');
 });
 
 test('a settled validation for the prior PR head is recorded superseded before current-head validation', async t => {
@@ -483,6 +537,12 @@ weighted(2)('a durable validation result reconciles after Queue restarts without
   f.store.update(task.id, { resolution: { ...f.store.task(task.id).resolution,
     projectValidation: { ...prior, state: 'running', exitCode: null, durationMs: 0, outputTail: '', pid: originalRun.pid,
       processGroupId: null, leaderStartIdentity: identityToken, capacityWait: null, capacityUnavailable: false } } });
+
+  // A cleanup sweep after the supervisor exit but before the task verdict is
+  // re-recorded leaves the fresh candidate intact for result reconciliation.
+  const { reapHookCheckouts } = await import('../core/hooks/hook-cleanup');
+  assert.equal((await reapHookCheckouts(f.store)).reapedCount, 0);
+  assert.equal(existsSync(candidatePath), true, 'the restart sweep leaves the validation candidate for result reconciliation');
 
   const reconciled = await hooks.projectValidationGate(f.store.task(task.id), f.head, validation);
   assert.equal(reconciled.kind, 'ok', JSON.stringify(reconciled));

@@ -66,6 +66,35 @@ export class ProjectValidationRunner {
   // on the task (project-k #55, 2026-09-29: a conflict looped for 2.5 hours).
   private readonly projectValidationDecided = new HookObservationMap<{ key: string; outcome: ProjectValidationOutcome }>();
 
+  /** Retry disposable candidate cleanup without changing an already durable verdict. */
+  private async retryCandidateCleanup(task: Task, validation: NonNullable<Task["resolution"]["projectValidation"]>, knownPath?: string): Promise<void> {
+    const candidate = validation.candidate;
+    const legacySettledVerdict = validation.state === "passed" || validation.state === "refused";
+    if (!candidate || !validation.candidateCleanupPending && !legacySettledVerdict) return;
+    const report = (error: unknown) => {
+      try { this.store.event(task.id, "project_validation_candidate_cleanup_deferred", String(error).slice(0, 2000)); }
+      catch { /* Cleanup diagnostics never replace the durable validation result. */ }
+    };
+    try {
+      let currentTask = this.store.task(task.id);
+      let current = currentTask.resolution.projectValidation;
+      if (!current || current.state === "running" || current.hostRunId !== validation.hostRunId || current.digest !== validation.digest) return;
+      if (current.candidateCleanupPending !== true) {
+        current = { ...current, candidateCleanupPending: true };
+        this.store.update(task.id, { resolution: { ...currentTask.resolution, projectValidation: current } },
+          "project_validation_candidate_cleanup_pending", current.digest);
+      }
+      const path = knownPath ?? await this.prospectiveCandidatePath(task, candidate);
+      await this.removeIsolatedCheckout(task, path, true);
+      currentTask = this.store.task(task.id);
+      current = currentTask.resolution.projectValidation;
+      if (!current || current.hostRunId !== validation.hostRunId || current.digest !== validation.digest || current.candidateCleanupPending !== true) return;
+      this.store.update(task.id, { resolution: { ...currentTask.resolution,
+        projectValidation: { ...current, candidateCleanupPending: false } } },
+      "project_validation_candidate_cleanup_complete", current.digest);
+    } catch (error) { report(error); }
+  }
+
   /**
    * Start project validation off the delivery lanes (Spec 012).
    *
@@ -87,7 +116,11 @@ export class ProjectValidationRunner {
     // One run per task in this process, even across repeated quanta.
     if (this.projectValidationRuns.has(task.id)) return { kind: "deferred" };
     const key = `${base} ${head} ${argvDigest}`;
-    const prior = this.store.task(task.id).resolution.projectValidation;
+    let prior = this.store.task(task.id).resolution.projectValidation;
+    if (prior) {
+      await this.retryCandidateCleanup(task, prior);
+      prior = this.store.task(task.id).resolution.projectValidation;
+    }
     const priorHostRun = prior?.hostRunId ? this.hostRunScheduler.get(prior.hostRunId) : null;
     const canReattachQueued = priorHostRun?.state === "queued" || priorHostRun?.state === "admitted";
     const decided = this.projectValidationDecided.get(task.id);
@@ -319,8 +352,9 @@ export class ProjectValidationRunner {
     }
 
     let candidateClean = false;
+    let candidatePath: string | null = null;
     if (prior.candidate) {
-      const candidatePath = await this.prospectiveCandidatePath(task, prior.candidate);
+      candidatePath = await this.prospectiveCandidatePath(task, prior.candidate);
       try { await verifyMergeCandidate(candidatePath, prior.candidate); candidateClean = true; }
       catch (error) { state = "hold"; outputTail = `Validation changed the candidate: ${String(error)}`; }
     } else {
@@ -349,18 +383,13 @@ export class ProjectValidationRunner {
       leaderStartIdentity: result?.leaderStartIdentity ?? latest.leaderStartIdentity,
       terminationSignal,
       processGroupEmpty: result?.processGroupEmpty ?? null, terminationError: result?.terminationError ?? null,
-      resubmissionRequired: !cancelled && (observation.kind === "lost" || result?.timedOut === true) && !capacityUnavailable };
+      resubmissionRequired: !cancelled && (observation.kind === "lost" || result?.timedOut === true) && !capacityUnavailable,
+      candidateCleanupPending: candidateClean && candidatePath !== null };
     this.store.update(task.id, { resolution: { ...current.resolution, projectValidation: updated },
       reason: state === "passed" ? "Project validation passed" : state === "refused" ? outputTail || `Validation exited ${result?.exitCode}` : outputTail || "Project validation requires attention" },
     "project_validation_result", `${latest.digest} ${state}`);
-    if (candidateClean && prior.candidate) {
-      const candidatePath = await this.prospectiveCandidatePath(task, prior.candidate);
-      await this.removeIsolatedCheckout(task, candidatePath, true).catch(error => {
-        // The result is already durable. A later cleanup pass can finish removing
-        // disposable candidate bytes without changing the validation verdict.
-        this.store.event(task.id, "project_validation_candidate_cleanup_deferred", String(error));
-      });
-    }
+    if (updated.candidateCleanupPending && candidatePath)
+      await this.retryCandidateCleanup(task, updated, candidatePath);
     await rm(paths.root, { recursive: true, force: true }).catch(() => { /* Durable Queue result is already recorded. */ });
     if (state === "passed") return { kind: "ok", base: latest.base };
     if (state === "refused") return { kind: "refused", detail: outputTail || `Validation exited ${result?.exitCode}` };
@@ -431,6 +460,10 @@ export class ProjectValidationRunner {
       const discovery = await discoverManifest(task.repoPath, base);
       if (discovery && !manifestSupportsCloseoutSelection(discovery.manifest.schema)) return { kind: "none" };
       let prior = this.store.task(task.id).resolution.projectValidation;
+      if (prior) {
+        await this.retryCandidateCleanup(task, prior);
+        prior = this.store.task(task.id).resolution.projectValidation;
+      }
       if (prior && prior.head !== head && prior.state !== "running" && prior.state !== "superseded") {
         this.store.update(task.id, { resolution: { ...this.store.task(task.id).resolution,
           projectValidation: { ...prior, state: "superseded" } } }, "project_validation_superseded",

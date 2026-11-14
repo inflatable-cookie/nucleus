@@ -101,6 +101,9 @@ never get a second gate.
   when the executor's `maxOutputBytes` cap cut a stream, it keeps a bounded
   beginning and end around the marker and counts inside the same 2,000-character
   bound, so a long failure's beginning is not lost at this last step (Task #388).
+  Queue records the verdict before removing the disposable candidate. A service
+  roll before that write leaves the candidate for result reconciliation; a roll
+  during cleanup keeps the verdict and retries forced removal on the next pass.
 - A project with no validation command merges on independent review and GitHub's
   merge checks, as today. Per-task validation stays opt-in: the setting defaults
   to null and no default command is ever stored there.
