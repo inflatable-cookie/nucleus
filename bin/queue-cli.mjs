@@ -30,16 +30,19 @@ function snapshotBoundMessage(input) {
   return `queue.snapshot exceeded the ${MAX_FRAME_BYTES}-byte transport bound with filters: ${filters}. The service closed the socket instead of returning the payload. Retry with repository, project, and a smaller limit, then page with cursor. Terminal history is queue.outcome-search.`;
 }
 
+/** The service or the frame reader answered with its typed oversize code: its own message names the size. */
+const typedOversize = error => Boolean(error) && typeof error === 'object' && error.code === 'oversize';
+
 /**
- * A snapshot that outgrew the transport bound closes the socket instead of
- * answering, so no typed code crosses it. The reader's own typed `oversize`
- * code and the client's own stable sentence are the two observations that name
- * it; no other failure text is interpreted anywhere in this CLI.
+ * A service that answers the refusal keeps its own message: it names the method,
+ * the size and the bound. Only a snapshot that outgrew the bound before any
+ * answer (the client's own socket close) gets this CLI's filter guidance, and no
+ * other failure text is interpreted anywhere in this CLI.
  */
 function isSnapshotOversize(error) {
-  if (error && typeof error === 'object' && error.code === 'oversize') return true;
+  if (typedOversize(error)) return true;
   const message = error instanceof Error ? error.message : String(error);
-  return /Service socket closed|exceeds the \d+ byte protocol bound|Frame of \d+ bytes exceeds/i.test(message);
+  return /Service socket closed/i.test(message);
 }
 
 /** `nucleus ui`: hand the link to the desktop's default browser; a missing opener only means the printed link is used. */
@@ -148,7 +151,7 @@ async function main() {
     } else console.log(JSON.stringify(result, null, 2));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (snapshotMethod && isSnapshotOversize(error)) console.error(snapshotBoundMessage(payloadInput));
+    if (snapshotMethod && isSnapshotOversize(error)) console.error(typedOversize(error) ? message : snapshotBoundMessage(payloadInput));
     else if ((method === 'lead.submit' || method === 'lead.promote-task' || method === 'papercut.promote-task') && /timed out|timeout/i.test(message)) {
       const target = method === 'lead.submit' ? 'lead.list by repository and title, then lead.get promotedTaskId' : method === 'lead.promote-task' ? 'lead.get promotedTaskId' : 'papercut.get taskId';
       console.error(`outcome unknown — check ${target} (or operation <id> with queue.operation-status); do not repeat blindly. ${message}`);
