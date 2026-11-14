@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Store, digest, operationIdForKey, operationInputHash } from '../core/store/store';
 import { Engine } from '../core/engine';
-import { taskProgressDigest } from '../core/recovery/recovery';
+import { taskProgressDigest } from '../core/recovery/coordinator-report';
 import { collectOwnerVerbFacts, ownerControlEventDetail, ownerTaskNext } from '../core/verbs/owner-verbs';
 import { reviewContinuationState } from '../core/review/review-continuation';
 import { OPERATOR_BOARD_CALLER, REVISION_BUDGET, reviewDeliveryAuthorizationSchema, runSchema, submissionSchema, taskControlInputSchema, taskNextSchema, type Completion, type Profile, type Run, type Task } from '../shared/contracts';

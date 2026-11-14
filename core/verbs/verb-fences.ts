@@ -5,7 +5,7 @@ import { releaseRunFromRecordedCompletion, settleSupersededFencesInTx, supersede
 import { observationAdvanceSince, runsUnchangedSince } from "../recovery/observation-advance";
 import type { Adapter } from "../host/adapter";
 import { hostFailureRefusalDetail } from "../host/errors";
-import { coordinatorReportMatches } from "../recovery/recovery";
+import { coordinatorReportMatches } from "../recovery/coordinator-report";
 import type { Resolution } from "../resolution";
 import { DurableFenceRefusal, matchingInactiveParticipant, runFenceRefusal, runSettlement, runSettlementFence } from "../intake/run-settlement";
 import { digest, now } from "../store/store";
