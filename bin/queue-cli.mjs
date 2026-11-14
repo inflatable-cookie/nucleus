@@ -64,7 +64,7 @@ async function main() {
   const file = uiCommand ? undefined : rest.find(arg => arg !== '--wait');
   // Spec 050: the CLI verb name for the task.next read RPC.
   const method = uiCommand ? 'service.ui-link' : requestedMethod === 'next' ? 'task.next' : requestedMethod;
-  let input = uiCommand ? { action: rest.includes('--revoke') ? 'revoke' : 'issue' } : readPayload(file);
+  const input = uiCommand ? { action: rest.includes('--revoke') ? 'revoke' : 'issue' } : readPayload(file);
   if (rest.includes('--wait')) {
     if (method !== 'project.qa.run') throw new Error('--wait is supported by project.qa.run; lead.submit always waits');
     input.wait = true;
@@ -110,7 +110,7 @@ async function main() {
       },
     },
   });
-  input = stamped.input;
+  const payloadInput = stamped.input;
   if (stamped.early !== undefined) {
     console.log(JSON.stringify(stamped.early));
     process.exit(0);
@@ -127,7 +127,7 @@ async function main() {
     client = runtimeClient;
     const names = method.includes('.') ? [method] : [`queue.${method}`, method];
     const entry = names.map(name => RPC_CATALOGUE.find(item => item.name === name)).find(Boolean);
-    const payload = entry ? parseContractValue(entry.contract.input, input) : input;
+    const payload = entry ? parseContractValue(entry.contract.input, payloadInput) : payloadInput;
     // The Settings-only capacity rule (service-boundary contract): queue.capacity is
     // not a CLI route. It refuses here, before any service request, and the service
     // refuses the same shape at its dispatch point, so a caller that skips this still
@@ -141,14 +141,14 @@ async function main() {
     let result;
     if (method.includes('.')) result = await call(method);
     else { try { result = await call(`queue.${method}`); } catch (error) { if (!unknown(error)) throw error; result = await call(method); } }
-    if (uiCommand && input.action === 'issue') {
+    if (uiCommand && payloadInput.action === 'issue') {
       console.log(result.url);
       console.error(`Board link valid until ${result.expiresAt}; refused after that, or once \`nucleus ui --revoke\` runs.`);
       if (!rest.includes('--no-open')) openInBrowser(result.url);
     } else console.log(JSON.stringify(result, null, 2));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (snapshotMethod && isSnapshotOversize(error)) console.error(snapshotBoundMessage(input));
+    if (snapshotMethod && isSnapshotOversize(error)) console.error(snapshotBoundMessage(payloadInput));
     else if ((method === 'lead.submit' || method === 'lead.promote-task' || method === 'papercut.promote-task') && /timed out|timeout/i.test(message)) {
       const target = method === 'lead.submit' ? 'lead.list by repository and title, then lead.get promotedTaskId' : method === 'lead.promote-task' ? 'lead.get promotedTaskId' : 'papercut.get taskId';
       console.error(`outcome unknown — check ${target} (or operation <id> with queue.operation-status); do not repeat blindly. ${message}`);
