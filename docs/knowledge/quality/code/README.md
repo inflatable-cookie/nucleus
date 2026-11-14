@@ -32,3 +32,6 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
 - nucleus#1199 (floor 5, 2026-11-14): `core/store/store.ts`, `core/store/store-tasks.ts` and
   `core/store/store-maintenance.ts` were split into one owner per mechanism; `store-maintenance.ts` no
   longer exists. The store rows in `N3.csv` were re-rated at that PR's head.
+- nucleus#1206 (floor 5, 2026-11-14): the project editor and settings profiles were split by screen,
+  form, repository and save-queue responsibility; task holds, attention phases and prerequisite
+  reason facts now use shared owners. The changed N6 rows were re-rated at this PR's head.
