@@ -3,6 +3,8 @@ import { lstat, mkdir, realpath, rm, symlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { gitRaw } from "../git/git-command";
 import { findGitWorktreeAdd } from "../machine/process-identity";
+import { worktreeManifestBlock } from "../workspaces/worktree-links";
+import { removeTree } from "../workspaces/tree-removal";
 import { parseWorktreeList, repoCommonDir } from "../workspaces/workspace-allocation";
 import type { ProjectQaWorktreeHooks } from "./project-qa-supervision-files";
 import type { QaPipelineRun } from "./project-qa-pipeline";
@@ -25,11 +27,7 @@ export { gitText as projectQaGitText };
 
 /** Read the optional `worktree.setup` and `worktree.teardown` from a manifest's parsed bytes. */
 export function parseProjectQaWorktreeHooks(source: string): ProjectQaWorktreeHooks {
-  const manifest = JSON.parse(source) as { worktree?: unknown };
-  if (manifest.worktree === undefined) return { setup: null, teardown: null };
-  if (!manifest.worktree || typeof manifest.worktree !== "object" || Array.isArray(manifest.worktree))
-    throw new Error("paseo.json worktree must be an object");
-  const worktree = manifest.worktree as Record<string, unknown>;
+  const worktree = worktreeManifestBlock(source);
   for (const key of ["setup", "teardown"] as const) {
     if (worktree[key] !== undefined && typeof worktree[key] !== "string")
       throw new Error(`paseo.json worktree.${key} must be a string`);
@@ -98,7 +96,7 @@ export async function removeQaWorkspace(paths: { registeredPath: string; checkou
     const removed = marker?.isFile() ? await gitRaw(paths.registeredPath, ["worktree", "remove", "--force", paths.checkoutPath]) : null;
     if (!removed || removed.code !== 0) {
       if (paths.admission) throw new Error("Project QA checkout removal is uncertain; preserving it");
-      await rm(paths.checkoutPath, { recursive: true, force: true });
+      await removeTree(paths.checkoutPath);
     }
   }
   if (!paths.admission) await gitRaw(paths.registeredPath, ["worktree", "prune"]).catch(() => { /* Legacy cleanup. */ });
@@ -115,7 +113,7 @@ export async function preparePipelineCheckout(run: QaPipelineRun): Promise<void>
     if (existsSync(run.checkoutPath)) throw new Error("Project QA checkout already exists; creation is uncertain");
     await mkdir(dirname(run.checkoutPath), { recursive: true, mode: 0o700 });
     run.checkoutAdmission();
-  } else await rm(run.checkoutPath, { recursive: true, force: true });
+  } else await removeTree(run.checkoutPath);
   await gitText(run.registeredPath, "worktree", "add", "--detach", "--", run.checkoutPath, run.base);
   for (const link of run.links) await installQaSiblingLink(dirname(run.checkoutPath), link.name, link.target);
   const head = await gitText(run.checkoutPath, "rev-parse", "HEAD");

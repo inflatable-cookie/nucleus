@@ -37,7 +37,7 @@ import {
   writeQaSupervisionPlan,
 } from '../core/qa/project-qa-supervision-files';
 import { supervisorLiveness } from '../core/machine/supervisor-liveness';
-import { removeQaWorkspace } from '../core/qa/project-qa-worktree';
+import { parseProjectQaWorktreeHooks, removeQaWorkspace } from '../core/qa/project-qa-worktree';
 import { findProcessByCommandToken, scanTokenVerdict, type ProcCommandLine } from '../core/machine/process-identity';
 import { HostRunScheduler, classifyHostRun } from '../core/host-runs/host-run-scheduler';
 import { checkoutRunScratchPlacement, runScratchRoot, runTemporaryDirectory, type RunScratchPlacement } from '../core/workspaces/run-scratch';
@@ -517,6 +517,15 @@ test('non-TAP QA failures index a pointer to retained step output', async t => {
   assert.match(settled.failureIndexes?.[0]?.identities[0]?.title ?? '', /inspect retained output/);
   assert.ok(settled.failureIndexes?.[0]?.identities[0]?.location);
   assert.ok(existsSync(settled.failureIndexes![0].identities[0].location!));
+});
+
+test('worktree hooks are read from one validated manifest block, and an invalid block is refused', () => {
+  assert.deepEqual(parseProjectQaWorktreeHooks(JSON.stringify({ worktree: { setup: 'prepare', teardown: 'retire' } })), { setup: 'prepare', teardown: 'retire' });
+  assert.deepEqual(parseProjectQaWorktreeHooks(JSON.stringify({})), { setup: null, teardown: null });
+  assert.deepEqual(parseProjectQaWorktreeHooks(JSON.stringify({ worktree: {} })), { setup: null, teardown: null });
+  assert.throws(() => parseProjectQaWorktreeHooks(JSON.stringify({ worktree: { teardown: 1 } })), /worktree\.teardown must be a string/);
+  assert.throws(() => parseProjectQaWorktreeHooks(JSON.stringify({ worktree: [] })), /worktree must be an object/);
+  assert.throws(() => parseProjectQaWorktreeHooks(JSON.stringify([])), /paseo\.json must be an object/);
 });
 
 test('worktree setup sees Queue-owned sibling checkouts before QA, then teardown runs after pass and fail', async t => {

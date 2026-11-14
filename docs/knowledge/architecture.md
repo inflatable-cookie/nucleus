@@ -536,8 +536,16 @@ owner to the rules it enforces.
   schemas accept and drops or infers none. `shared/service/callback-client.mjs` holds
   the pure transport; the root `mcp-report.mjs` keeps paths issued to retained
   sessions. Review entry preserves externally owned PR workspaces.
-- `core/hooks/hooks.ts` owns hook intent, execution, publication and durable
-  reconciliation, with compatibility re-exports for its leaf modules.
+- `core/hooks/hooks.ts` is the hook domain's front: the lifecycle entry points,
+  closeout authority, the finished-task stop and compatibility re-exports. Each
+  mechanism behind it has one owner: `hook-occurrence.ts` owns durable occurrence
+  identity and transitions, `hook-execution.ts` runs one occurrence's read-only
+  proof, `hook-publication.ts` owns the integration-write commit, push, canonical
+  sync and cleanup, `hook-reconcile.ts` owns the restart reconciliation state
+  machine, `hook-retry.ts` owns retry and disposal proofs, `hook-retention.ts` owns
+  the retention gate and its reconciliation, `hook-checkouts.ts` owns the
+  Queue-owned isolated checkout and the integration base, and `hook-result.ts`
+  owns the closed result envelope and failure evidence.
   `core/hooks/hook-manifest.ts` owns manifest discovery and program/instruction
   pinning, including named tool resolution; `core/machine/process-exec.ts` owns
   bounded process execution; `core/git/git-snapshot.ts` owns status, snapshots
@@ -549,7 +557,8 @@ owner to the rules it enforces.
   proofs and the shared occurrence renewal path. Both use narrow contexts and
   keep delivery with `RepositoryHooks`.
   `core/hooks/hook-isolation.ts` owns shared isolation paths;
-  `core/hooks/hook-context.ts` owns shared hook context/result types and helpers.
+  `core/hooks/hook-context.ts` owns the hook context and result types plus the
+  record and hold-reason codecs.
   These modules never import `core/hooks/hooks.ts`;
   `core/git/index.ts` reads manifests directly from the manifest leaf.
   Every stored occurrence carries its immutable event payload

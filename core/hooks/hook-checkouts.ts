@@ -1,5 +1,5 @@
 import { existsSync, realpathSync } from "node:fs";
-import { lstat, rm } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { Task } from "../../shared/contracts";
 import type { Store } from "../store/store";
@@ -7,6 +7,7 @@ import { gitText, statusEntries } from "../git/git-snapshot";
 import { gitRaw, formatGitError } from "../git/git-command";
 import { withIntegrationCheckout } from "../git/index";
 import { requestServiceRollAfterRepositorySync } from "../forge/roll-request";
+import { removeTree } from "../workspaces/tree-removal";
 import { WARM_CANDIDATE_NAME, isolationDataDirFor, isolationPathFor, isOwnedIsolationPath } from "./hook-isolation";
 
 /**
@@ -65,7 +66,7 @@ export class HookCheckouts {
       const result = await gitRaw(task.repoPath, ["worktree", "remove", ...(force ? ["--force"] : []), path]);
       if (result.code !== 0) {
         if (!force) throw new Error(`Isolated checkout removal failed: ${formatGitError(["worktree", "remove", path], result.code, result.signal, result.stderr)}`);
-        await rm(path, { recursive: true, force: true });
+        await removeTree(path);
         await gitRaw(task.repoPath, ["worktree", "prune"]);
       }
     } else if (gitMarker?.isDirectory()) {
@@ -75,10 +76,10 @@ export class HookCheckouts {
         const dirt = await statusEntries(path, false);
         if (dirt.length) throw new Error("Queue-owned isolated repository is dirty");
       }
-      await rm(path, { recursive: true, force: true });
+      await removeTree(path);
     } else {
       if (!force) throw new Error("Queue-owned isolated checkout has no recognized Git identity");
-      await rm(path, { recursive: true, force: true });
+      await removeTree(path);
     }
     if (existsSync(path)) throw new Error("Isolated checkout still exists after removal");
   }
@@ -146,7 +147,7 @@ export class HookCheckouts {
       if (unresolved)
         throw new Error(`Legacy warm checkout still has an unresolved occurrence: ${path}`);
       await proveWarmOwnership(task, path, common);
-      await rm(path, { recursive: true });
+      await removeTree(path, { force: false });
     }
     store.setMeta("legacyWarmCheckoutsDisposed", true);
   }
