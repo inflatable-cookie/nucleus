@@ -57,7 +57,7 @@ export class EscalationSettlement {
     const reason = selected.reason;
     const current = this.store.task(t.id);
     const grant = delegatedAnswer
-      ? { caller: answerer.role === 'operator' ? 'unknown' : answerer.agentId, delegated: true, note: `Delegated answer to escalation ${id} by ${who}: ${answer.slice(0, 1200)}` }
+      ? { caller: answerer.agentId, delegated: true, note: `Delegated answer to escalation ${id} by ${who}: ${answer.slice(0, 1200)}` }
       : { caller: current.agentId ?? undefined, relayed: true, note: `The operator answered escalation ${id}: ${answer}`.slice(0, 4000) };
     try {
       if (!this.resolution.applyOperatorControl) throw Error('No control applier is bound');

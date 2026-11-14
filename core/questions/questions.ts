@@ -23,6 +23,9 @@ export class Questions {
   readonly recoveringQueueAsks = new Set<string>();
   readonly delegatedAnswers = new Map<string, DelegatedAnswer>();
   readonly responsibleQuestions = new Map<string, AbortController>();
+  supersedeBudgetQuestions(taskId: string, reason: string): string[] {
+    return this.resolution.questionSupersession.supersedeBudgetQuestions(taskId, reason);
+  }
   async raiseOperatorQuestions(scopedTaskId?: string): Promise<void> {
     if (!scopedTaskId) {
       for (const task of this.store.maintenanceTasks(true)) {
