@@ -103,11 +103,13 @@ test('a failed project settings refresh is visible in the save status', async ()
   const app = harness(settingsOf([row('nucleus', 'Nucleus', [repo('acme/nucleus')])]), { refreshFailure: 'settings read failed' });
   const ui = await app.mount(false);
   try {
+    ui.press('Nucleus, Active');
     ui.type('Project name', 'Renamed');
     ui.get('Project name').props.onBlur();
     await settle(() => app.refreshes === 1 && /Refresh failed/.test(ui.text()), 'refresh failure');
-    assert.match(ui.text(), /settings read failed/);
     assert.equal(ui.get('Nucleus save status').children.join(''), 'Refresh failed', 'the project write succeeded; only the refresh failed');
+    ui.press('Refresh failed help');
+    await settle(() => /settings read failed/.test(ui.text()), 'refresh reason');
   } finally { done(ui); }
 });
 
