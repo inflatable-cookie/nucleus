@@ -143,6 +143,9 @@ test("the verb targets normalise to one route each and refuse what they cannot a
   assert.deepEqual(normalizeTellTarget("effigy#590", "reviewer"), { kind: "task", task: "effigy#590", role: "reviewer" });
   assert.deepEqual(normalizeTellTarget({ task: "effigy#590" }), { kind: "task", task: "effigy#590", role: "worker" });
   assert.deepEqual(normalizeTellTarget({ project: "app", agent: "lead" }), { kind: "project", project: "app", agent: "lead" });
+  // nucleus#1195: the live proof executor is a tell recipient.
+  assert.deepEqual(normalizeTellTarget("executor"), { kind: "counterpart", role: "executor" });
+  assert.deepEqual(normalizeTellTarget({ task: "effigy#590", role: "executor" }), { kind: "task", task: "effigy#590", role: "executor" });
   assert.throws(() => normalizeTellTarget(undefined), /tell requires to/);
   assert.throws(() => normalizeTellTarget("reviewer", "worker"), /already names its recipient/);
 });
@@ -224,6 +227,29 @@ test("MCP run: tell to a sibling task's worker is delivered labelled with the se
     assert.equal(f.notified[0]!.agentId, "peer");
     assert.match(f.notified[0]!.text, /\(worker, project App\)/);
     assert.equal(f.notified[0]!.text.includes(f.sender.id), false, "the label names the task reference, never a thread or task UUID");
+  } finally { await f.close(); }
+});
+
+test("MCP run: tell to the task's live proof executor is delivered to that run's agent, and refuses once no executor is live", async () => {
+  const f = await verbFixture();
+  try {
+    // A live executor run on the sibling task: the one agent a report can still reach.
+    f.store.putRun({ id: "executor-run", taskId: f.sibling.id, role: "executor", generation: 1, head: base,
+      agentId: "executor-peer", workspaceId: "ws", hostId: "host", profile: null, status: "running",
+      createdAt: new Date().toISOString(), lastObservedAt: null, active: true, idleSince: null, completion: null,
+      released: false } as unknown as Run);
+    f.store.update(f.sibling.id, { resolution: { ...f.store.task(f.sibling.id).resolution, currentRunId: "executor-run" } });
+    const receipt = await f.tell({ to: { task: f.sibling.id, role: "executor" }, text: "Your report was lost; resend it for the same run." });
+    assert.equal(receipt.json?.status, "delivered");
+    const delivered = f.notified.at(-1)!;
+    assert.equal(delivered.agentId, "executor-peer");
+    assert.equal(receipt.json?.role, "executor", "the receipt names the recipient role it addressed");
+    assert.match(delivered.text, /resend it for the same run/);
+    // Once that run is released there is no live executor to address.
+    f.store.putRun({ ...f.store.run("executor-run")!, released: true, status: "finished" });
+    const refused = await f.tell({ to: "executor", text: "Still there?" });
+    assert.equal(refused.isError, true);
+    assert.match(refused.text, /has no executor/);
   } finally { await f.close(); }
 });
 

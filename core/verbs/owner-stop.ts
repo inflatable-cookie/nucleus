@@ -271,8 +271,16 @@ export class OwnerStop {
       if (refusal) throw Error(refusal);
       const role = input.role as RouteRole | undefined;
       const roleOf = (run: Run): RouteRole => run.role === "reviewer" ? "reviewer" : run.role === "revision" ? "worker" : "coordinator";
+      // nucleus#1195: a live proof executor is never interrupted by an owner stop.
+      // Its turn is source-immutable and mid-report, and the stop's fence already
+      // keeps anything new from starting, so the stop applies the dispatch hold
+      // and leaves the executor's turn alone until it reports or ends. This holds
+      // for a stop that names no role ("Stop and keep the work") and for one that
+      // names a different role than the executor's.
+      const liveExecutors = this.store.runs(task.id).filter(run => run.role === "executor" && !run.released && !run.completion);
       let collectionIssue = '';
-      const finished = await this.engine.collectVerbFinishedRuns(task.id, run => role !== undefined && roleOf(run) !== role, { displace: true })
+      const finished = await this.engine.collectVerbFinishedRuns(task.id,
+        run => run.role === "executor" || role !== undefined && roleOf(run) !== role, { displace: true })
         .catch(error => {
           if (!task.resolution.integrationTurn) throw error;
           collectionIssue = String(error);
@@ -329,12 +337,16 @@ export class OwnerStop {
       }
       const stoppedRunIds = new Set(busy.map(run => run.id));
       for (const run of runRows) {
+        // The live executor keeps its turn: the dispatch hold fences new work only.
+        if (run.role === "executor") continue;
         const targeted = role === undefined || (role === "reviewer" ? run.role === "reviewer" : role === "worker" ? run.role === "revision" : !["reviewer", "revision"].includes(run.role));
         if (targeted && !run.released && !run.completion) stoppedRunIds.add(run.id);
       }
       if ((role === undefined || role === "worker") && task.runId && task.agentId
         && !runRows.some(run => run.id === task.runId)) stoppedRunIds.add(task.runId);
       this.store.event(task.id, "owner_stopped", JSON.stringify({ role: role ?? null, reason, runIds: [...stoppedRunIds], cancelled: confirmedStops.map(run => ({ runId: run.id, role: run.role, agentId: run.agentId })),
+        // A proof executor's turn is left to report; the hold still fences dispatch.
+        ...(liveExecutors.length ? { executorContinues: liveExecutors.map(run => ({ runId: run.id, agentId: run.agentId })) } : {}),
         ...(mergeRequested ? { mergeAlreadyRequested: { head: current.resolution.mergeHead ?? null, requestedAt: current.resolution.mergeRequestedAt ?? null } } : {}) }));
       // A stop supersedes any verb recorded before it.
       const recorded = held.resolution.deferredVerb;

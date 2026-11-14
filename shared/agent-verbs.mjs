@@ -8,10 +8,10 @@ import { z } from 'zod';
 
 /** Recipients of `ask`: a question's route. `reviewer` consults this task's retained reviewer. */
 export const ASK_ROUTE_KEYWORDS = Object.freeze(['reviewer', 'planner']);
-/** Recipients of `tell`: this task's counterpart, its planner ladder, or a task reference's role. */
-export const TELL_ROLE_KEYWORDS = Object.freeze(['reviewer', 'worker', 'planner']);
-/** The roles a task reference names. */
-export const TASK_ROLES = Object.freeze(['worker', 'reviewer', 'planner']);
+/** Recipients of `tell`: this task's counterpart, its planner ladder, a task reference's role, or its live proof executor. */
+export const TELL_ROLE_KEYWORDS = Object.freeze(['reviewer', 'worker', 'planner', 'executor']);
+/** The roles a task reference names. `executor` is the task's live proof-execution run. */
+export const TASK_ROLES = Object.freeze(['worker', 'reviewer', 'planner', 'executor']);
 export const VERB_TEXT_MAX_CHARS = 4000;
 
 const name = z.string().trim().min(1).max(200);
@@ -24,7 +24,7 @@ const reference = z.string().trim().min(1).max(240);
  * (`{project, agent}`) or another task's role (`{task, role}`).
  */
 export const verbTargetSchema = z.union([
-  z.enum(['reviewer', 'worker', 'planner']),
+  z.enum(['reviewer', 'worker', 'planner', 'executor']),
   reference,
   z.object({ project: name, agent: name.optional() }).strict(),
   z.object({ task: reference, role: z.enum(TASK_ROLES).optional() }).strict(),

@@ -432,7 +432,8 @@ export const reviewProgressSchema = z.object({
 export type ReviewProgress = z.infer<typeof reviewProgressSchema>;
 
 export const coordinatorActionSchema = z.discriminatedUnion("verb", [
-  z.object({ verb: z.literal("restart"), role: z.enum(["worker", "reviewer", "coordinator"]).optional(),
+  // nucleus#1195: `executor` is the proof-execution re-report continuation, never a route role.
+  z.object({ verb: z.literal("restart"), role: z.enum(["worker", "reviewer", "coordinator", "executor"]).optional(),
     instruction: z.string().trim().min(1).max(12000).optional(), fresh: z.boolean().optional(), reason: z.string().trim().min(1).max(4000) }).strict(),
   z.object({ verb: z.literal("route"), role: z.enum(["worker", "reviewer", "coordinator"]), profileId: z.string().trim().min(1).max(240),
     thinkingOptionId: z.string().optional(), now: z.boolean().optional(), reason: z.string().trim().min(1).max(4000) }).strict(),

@@ -187,6 +187,34 @@ fetch plus its `FETCH_HEAD` read and ancestry check) runs in one critical
 section per checkout, so concurrent verifications cannot fail each other with
 a spurious source-moved refusal.
 
+### Dispatch, stops and re-reports (nucleus#1195)
+
+An executor dispatch is **proof execution, never a retry**. The automatic Spec
+058 start (a retained reviewer's source approval whose awaited proof is the
+brief's own selector) and the owner `proof` activation are the same proof
+execution: the owner's `noAutomaticRetry` rule neither fences nor escalates
+them, no `automatic_retry_suppressed` event is charged as `recovery_rerun`, and
+no recovery episode opens while an executor run is unreleased. A running proof
+execution owns the lane: its receipt is the next move, so the task is not
+re-stamped as a stopped or needs-attention task while the executor still works.
+
+An owner stop never interrupts a live executor. "Stop and keep the work" and
+any other owner stop apply the dispatch hold and leave the executor's turn alone
+until it reports or ends: the `owner_stopped` audit records the executor under
+`executorContinues` instead of cancelling its turn, because the run is
+source-immutable and may be mid-report. Its own result still enters ordinary
+intake under the hold, and the hold keeps the next dispatch from starting.
+
+A report lost in flight is re-requested, never re-run. When an executor run is
+unreleased, its agent is idle and no result is recorded, `next` offers
+`restart role=executor`: Nucleus freshly observes the executor and asks that same
+executor, on its existing run and credential, to resend its report only. The
+request is one bounded delivery per run (a durable intent before the send and its
+outcome after it); it re-runs no selector, spends no allowance and starts no run.
+`tell` also accepts `role: executor` for a live executor run, so an owner,
+planner or the task's own agents can reach that thread for information. A resent
+report enters ordinary intake, including the `proofFiles` copy.
+
 ### Source immutability
 
 `verifyProofSource` proves, before activation and again before a passing result

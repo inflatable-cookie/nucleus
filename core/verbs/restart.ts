@@ -2,6 +2,7 @@ import { RETAINED_PREREQUISITE_REFUSAL, restartTerminalRefusal } from './verb-re
 import { DISPOSITION_CONTROL_REFUSAL, REMOVED_TASK_REFUSAL, parkedRestartRefusal } from './control-refusals';
 import { restartResumeChoice } from '../task-decision-rules';
 import { COORDINATOR_LOOP_LIMIT, unproductiveCoordinatorRuns } from '../recovery/recovery-bound';
+import { unreportedExecutorRun } from '../qa/proof-execution';
 import type { Run, Task, TaskControlInput } from "../../shared/contracts";
 import { DEFAULT_GLOBAL_LIMIT, OPERATOR_BOARD_CALLER, WORKER_REPLACEMENT_CEILING, isDispositionActive } from "../../shared/contracts";
 import { groupIsUnavailable } from "../../shared/pool";
@@ -266,6 +267,50 @@ export class RestartControls {
   }
 
   /**
+   * nucleus#1195: one bounded re-report request to the live proof executor whose
+   * result never arrived. The same run, agent and credential stay: nothing is
+   * relaunched, the selector is never re-run and the one allowance stays spent.
+   * The send is recorded once as a durable intent before the delivery and its
+   * outcome after it, so a repeat never asks and an unknown delivery refuses.
+   */
+  private async resendExecutorReport(input: TaskControlInput, task: Task, reason: string): Promise<Task> {
+    if (input.fresh === true) throw new RestartRefusal("A proof executor's re-report request continues the same run; fresh is unsupported because it would spend another execution");
+    const run = unreportedExecutorRun(this.store.runs(task.id));
+    if (!run) throw new RestartRefusal("No unreleased proof executor is waiting on a report; nothing was asked");
+    if (!this.adapter.notify) throw new RestartRefusal("This host cannot deliver the re-report request; use tell role=executor from a host with a message channel");
+    const events = this.store.eventsAll(task.id);
+    if (events.some(event => event.kind === "executor_report_request_sent" && event.detail.startsWith(`${run.id}:`)))
+      throw new RestartRefusal(`The re-report request for proof executor run ${run.id} was already sent; its result is still outstanding. Inspect the executor's thread, or use tell role=executor`);
+    if (events.some(event => event.kind === "executor_report_request_intent" && event.detail.startsWith(`${run.id}:`)))
+      throw new RestartRefusal(`The re-report request for proof executor run ${run.id} has an unknown delivery; inspect the executor's thread before deciding anything else`);
+    let observed: AgentObservation;
+    try { observed = await this.engine.onTaskHost(task, () => this.engine.host.observe(run.agentId!)); }
+    catch (error) { throw new RestartRefusal(`The proof executor cannot be observed (${hostFailureRefusalDetail(error)}); no re-report was asked`); }
+    this.engine.requireOwnerControlCurrent(this.store.task(task.id), input.version, "Task changed during restart verification; read next again before restarting");
+    const latest = unreportedExecutorRun(this.store.runs(task.id));
+    if (!latest || latest.id !== run.id) throw new RestartRefusal("The proof executor changed during verification; read next again before restarting");
+    if (observed.id !== run.agentId || observed.workspaceId !== run.workspaceId)
+      throw new RestartRefusal("The observed executor agent or workspace differs from the recorded run; no re-report was asked");
+    if (observed.status === "closed")
+      throw new RestartRefusal("The proof executor's thread is closed, so it cannot resend a report; inspect its evidence and decide the next owner action");
+    if (observed.active || observed.activeTurnId || observed.permissions || !["idle", "error"].includes(observed.status))
+      throw new RestartRefusal("The proof executor is not positively idle; its own turn owns the report until it ends");
+    const messageId = `ns-executor-report-${run.id}`;
+    const request = `Nucleus re-requests your report for proof executor run ${run.id} (task ${task.reference ?? task.id}). Your last turn ended without a recorded result, and the task's one proof allowance stays spent. Do not run the selector again and do not change source. Resend the authenticated report for this same run with its existing credential and the evidence you already produced: proof_executed with proofResult {selector, status, exitCode, evidence}, and the same proofFiles when you copied them. If you never produced a result, report blocked or error with the concrete condition. This is one bounded re-report request. Reason: ${reason}`.slice(0, 4000);
+    const text = `${request}${this.adapter.reportingFallback ? ` ${this.adapter.reportingFallback(run)}` : ""}`.slice(0, 6000);
+    this.store.event(task.id, "executor_report_request_intent", `${run.id}: ${JSON.stringify({ runId: run.id, agentId: run.agentId, messageId })}`);
+    try {
+      await this.engine.onTaskHost(task, () => this.adapter.notify!(run.agentId!, messageId, text));
+    } catch (error) {
+      throw new RestartRefusal(`The re-report request to proof executor run ${run.id} could not be delivered (${error instanceof Error ? error.message : String(error)}); its delivery is unknown, so nothing was retried`);
+    }
+    this.store.event(task.id, "executor_report_request_sent", `${run.id}: ${JSON.stringify({ runId: run.id, agentId: run.agentId, messageId })}`);
+    this.resolution.waiting(this.store.task(task.id),
+      `The proof executor ${run.id} was asked to resend its report; the selector is not re-run and no new run starts`, "lifecycle");
+    return this.store.task(task.id);
+  }
+
+  /**
    * Spec 050 `restart`: get a stopped, stalled or checkpointed run going again.
    * The role is derived from the phase when omitted. Queue settles the fences
    * the restart supersedes, releases or stops the old run and starts the next
@@ -294,6 +339,9 @@ export class RestartControls {
       throw Error(restartTerminalRefusal(task, "refusal" in parked ? parked.refusal : undefined));
     }
     const shape = restartShape(task, this.store.runs(task.id), role, this.store.eventsAll(task.id));
+    // nucleus#1195: the proof executor's one continuation is a re-report request,
+    // never a relaunch, a fresh agent or a selector re-run.
+    if (shape === "unreported_executor") return await this.resendExecutorReport(input, task, reason);
     // A worker continuation whose recorded workspace is gone re-creates the
     // worktree from the branch on origin through the move-to-work transition, so
     // the task, PR and approval stay and the role starts on a fresh thread

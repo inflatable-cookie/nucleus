@@ -1399,6 +1399,16 @@ request identities and submitted handoffs are not rewritten.
   feature delivery activates nothing. A passing claim re-proves the source, and
   later reviewer independence accounts for the executor's models. A distinct
   independent reviewer still performs its own proof.
+- An executor dispatch is proof execution, never a worker or review retry
+  (nucleus#1195): the automatic Spec 058 start and the owner `proof` activation
+  are never classified as `recovery_rerun`, so `noAutomaticRetry` neither fences
+  nor escalates them and no recovery episode opens while an executor run is
+  unreleased. An owner stop — "Stop and keep the work" included — applies its
+  dispatch hold and leaves a live executor's turn alone until it reports or ends.
+  An unreleased executor with an idle agent and no recorded result is offered
+  `restart role=executor`, which asks the same executor on its same run and
+  credential to resend its report only, and `tell role=executor` reaches that
+  thread; neither re-runs the selector nor spends another allowance.
 
 ### Progress checkpoints
 

@@ -10,6 +10,7 @@ import { startsNoRuns } from "../closeout/queue-drain";
 import { isDispositionActive } from "../../shared/contracts";
 import type { Resolution } from "../resolution";
 import { participantToolRunIds } from "../recovery/task-reasons";
+import { proofExecutionRunning } from "../qa/proof-execution";
 import { hookHoldReason } from "../hooks/hooks";
 import type { Engine } from '../engine';
 
@@ -157,7 +158,13 @@ export class TaskQuantum {
         current = this.context.store.task(taskId);
         // effigy#697: a release-GO wait is the operator's whatever a later write did to the stop.
         if (!current.removedAt && this.context.resolution.holdProofOnlyGoWait(current)) current = this.context.store.task(taskId);
-        if (!this.context.store.getMeta("paused") && !current.resolution.stop && !current.removedAt && (current.originError&&!missingOriginHasPlanner(this.context.store,current) || current.resolution.attention
+        // nucleus#1195: a running proof execution owns the lane. Its dispatch records
+        // an ordinary thread-running wait over the reviewed phase, so the task must
+        // not be re-stamped as a stopped task while the executor is still working;
+        // its receipt is what moves the task.
+        if (!this.context.store.getMeta("paused") && !current.resolution.stop && !current.removedAt
+          && !proofExecutionRunning(this.context.store.runs(current.id))
+          && (current.originError&&!missingOriginHasPlanner(this.context.store,current) || current.resolution.attention
           || ["blocked", "error", "needs_attention"].includes(current.phase))) {
           // Only Queue's own origin error text is classified. A task reason can
           // be an agent's report, and reading a wait out of it invents one.

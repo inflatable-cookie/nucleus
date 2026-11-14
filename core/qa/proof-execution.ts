@@ -94,6 +94,34 @@ export function proofSingleFlightRefusal(
   return null;
 }
 
+/**
+ * nucleus#1195: any executor run that has not been released yet. While one owns
+ * the lane, its receipt is the next move: no recovery episode opens and no
+ * retry fence or escalation is charged for proof execution.
+ */
+export function unreleasedExecutorRun<T extends Pick<Run, 'role' | 'released'>>(runs: readonly T[]): T | null {
+  const live = runs.filter(run => run.role === 'executor' && !run.released);
+  return live.length === 1 ? live[0]! : null;
+}
+
+/** A proof execution is still running: an executor run is unreleased with no result recorded yet. */
+export const proofExecutionRunning = (runs: readonly Pick<Run, 'role' | 'released' | 'completion'>[]): boolean =>
+  runs.some(run => run.role === 'executor' && !run.released && !run.completion);
+
+/**
+ * nucleus#1195: the one live proof executor whose report never arrived. A proof
+ * execution is single-flight, so a task holds at most one unreleased executor
+ * run; the shape is that run itself — unreleased, bound to its agent, and no
+ * result recorded. `restart role=executor` asks exactly this run to resend its
+ * report on its existing credential, and nothing here re-runs the selector.
+ */
+export function unreportedExecutorRun<T extends Pick<Run, 'id' | 'role' | 'agentId' | 'released' | 'completion'>>(runs: readonly T[]): T | null {
+  const live = runs.filter(run => run.role === 'executor' && !run.released);
+  if (live.length !== 1) return null;
+  const run = live[0]!;
+  return run.completion || !run.agentId ? null : run;
+}
+
 /** A proof may be repeated only after a recorded author revision and source approval at a new exact head. */
 export function proofHeadAdmission(task: Task, runs: Pick<Run, 'id' | 'role' | 'head' | 'released' | 'completion' | 'proofExecution'>[], head: string): string | null {
   if (proofExecutions(task).some(proof => proof.head === head)
