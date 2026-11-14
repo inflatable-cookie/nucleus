@@ -1,36 +1,32 @@
-import { resolveCliCaller } from './caller.mjs';
 // Completion-subscription helper: subscribe or unsubscribe the calling thread.
-
+//
+// The calling thread comes from the shared caller resolver, and the write is one
+// versioned task write through the CLI's single retry owner
+// (./versioned-write.mjs): subscribing is idempotent, so a moved version is
+// retried with a fresh read, while a definitive refusal is reported as it is.
+import { resolveCliCaller } from './caller.mjs';
 import { queueClient } from './queue-client.mjs';
-const viaPaseo=process.argv.includes('--via-paseo');
-process.argv=process.argv.filter(arg=>arg!=='--via-paseo');
+import { applyVersionedWrite, VersionedWriteError } from './versioned-write.mjs';
 
-const [taskId,action]=process.argv.slice(2);
-if(!taskId||!['subscribe','unsubscribe'].includes(action))throw Error('Usage: node bin/nucleus-subscribe.mjs TASK_ID subscribe|unsubscribe');
-const agentId=(await resolveCliCaller({viaPaseo})).caller;
-// Subscribing is idempotent, so a moved task version or a transient transport fault is
-// retried with a fresh version read. Anything else, or exhaustion, fails with one line.
-const reasonOf=error=>(error instanceof Error?error.message:String(error)).split('\n')[0].replace(/^Queue service request failed \([a-z_]+\): /,'');
-const retryable=error=>/Task changed|stream|socket|disconnect|ECONNRESET|EPIPE|timed out|timeout/i.test(reasonOf(error));
-const client=await queueClient({viaPaseo});
-try{
+const viaPaseo = process.argv.includes('--via-paseo');
+process.argv = process.argv.filter(arg => arg !== '--via-paseo');
+
+const [taskId, action] = process.argv.slice(2);
+if (!taskId || !['subscribe', 'unsubscribe'].includes(action)) throw Error('Usage: node bin/nucleus-subscribe.mjs TASK_ID subscribe|unsubscribe');
+const agentId = (await resolveCliCaller({ viaPaseo })).caller;
+const client = await queueClient({ viaPaseo });
+try {
   await client.connect();
-  let lastError;
-  for(let attempt=1;attempt<=3;attempt++){
-    try{
-      const detail=await client.request('queue.detail',{taskId});
-      const task=await client.request('queue.completion-subscription',{taskId,version:detail.task.version,agentId,action});
-      console.log(JSON.stringify({taskId:task.id,agentId,action,version:task.version},null,2));
-      lastError=undefined;break;
-    }catch(error){
-      lastError=error;
-      if(!retryable(error)||attempt===3)break;
-      await new Promise(resolve=>setTimeout(resolve,1000*attempt));
-    }
+  try {
+    const task = await applyVersionedWrite(client, {
+      taskId, method: 'queue.completion-subscription', input: { agentId, action }, idempotent: true,
+    });
+    console.log(JSON.stringify({ taskId: task.id, agentId, action, version: task.version }, null, 2));
+  } catch (error) {
+    if (!(error instanceof VersionedWriteError)) throw error;
+    console.error(`Completion ${action} for task ${taskId} failed: ${error.message}`);
+    process.exitCode = 1;
   }
-  if(lastError){
-    const reason=reasonOf(lastError);
-    console.error(`Completion ${action} for task ${taskId} failed: ${reason}${retryable(lastError)?' (still changing after 3 attempts; retry shortly)':''}`);
-    process.exitCode=1;
-  }
-}finally{await client.close();}
+} finally {
+  await client.close();
+}

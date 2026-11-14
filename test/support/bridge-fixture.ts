@@ -86,9 +86,10 @@ export function recordSpawnIdentity(record: Map<number, string>, pid: number, id
  * teardown reports instead of assuming settlement.
  */
 export function bridgeInFlightWork(bridge: ServiceBridge): Promise<unknown>[] {
-  const internals = bridge as unknown as { ensurePromise?: Promise<unknown> | null; rolling?: Promise<unknown> | null };
+  // The bridge keeps its own single-flight connect; the roll scheduler keeps the roll.
+  const internals = bridge as unknown as { ensurePromise?: Promise<unknown> | null; roll?: { rolling?: Promise<unknown> | null } };
   if (!("ensurePromise" in internals)) return [Promise.reject(new Error("the fixture cannot observe this bridge's in-flight work"))];
-  return [internals.ensurePromise, internals.rolling]
+  return [internals.ensurePromise, internals.roll?.rolling]
     .filter((pending): pending is Promise<unknown> => Boolean(pending));
 }
 

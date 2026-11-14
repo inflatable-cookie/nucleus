@@ -80,7 +80,10 @@ agent-host adapter. A future agent app gets its own `hosts/<app>/` subtree;
 adding it must not make core or board code depend on its SDK.
 
 The T3Code adapter lives behind `hosts/t3code/index.ts`, with its
-minimal private-protocol client and adapter modules inside that host subtree.
+minimal private-protocol client and adapter modules inside that host subtree:
+`adapter.ts` is the Host surface alone, `reads.ts` owns the shell and thread
+reads, `intents.ts` the durable intent ledger, `presentation.ts` titles and
+settle state, and `state.ts` the typed state file.
 It has no plugin-backend or client contribution entry. Service composition
 reaches only the public index; no T3 protocol type enters core or shared.
 The [adapter contract](../specs/t3code-host-adapter.md) owns its nightly protocol
@@ -232,10 +235,12 @@ remains `server/service/local-client.mjs`. Pure review text lives in
 
 The plugin registration entry (`hosts/paseo/plugin/index.ts`) binds the shared structural
 bridge action port through `service/install/bridge-process-actions.ts`. That is
-its only service-process composition import; the bridge itself reaches only
-shared modules, with process effects supplied synchronously through the port.
-The folder gate permits this registration edge alone, and the layout gate checks
-the bridge's transitive graph independently of registration.
+its only service-process composition import; the forwarder folder — `bridge.ts`
+with `session.ts`, `spawn.ts`, `roll.ts`, `startup-output.ts` and `options.ts` —
+reaches only shared modules and its own files, with process effects supplied
+synchronously through the port. The folder gate permits this registration edge
+alone, and the layout gate checks the forwarder's transitive graph independently
+of registration.
 
 The Paseo adapter, plugin backend and client now live under `hosts/paseo/`,
 with a separate index for each process. The root plugin entries only re-export
