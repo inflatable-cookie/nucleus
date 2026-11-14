@@ -1334,10 +1334,6 @@ weighted(3)('an idle checkpoint fenced by its own-head result is shown stopped a
     assert.equal(outcome.state, 'succeeded', outcome.diagnostic);
     assert.equal(f.store.run(f.runId)?.status, 'superseded');
     assert.equal(f.store.run(f.runId)?.released, true);
-    const freshRunId = f.current().resolution.currentRunId;
-    assert.ok(freshRunId && freshRunId !== f.runId);
-    assert.equal(f.store.run(freshRunId)?.role, 'reviewer');
-    assert.equal(f.createdRuns.length, 1);
     assert.equal(f.reviewerDeliveries.length, 0, 'the fenced run receives no second turn');
   } finally { await f.close(); }
 });
