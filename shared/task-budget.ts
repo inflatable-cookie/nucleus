@@ -56,6 +56,38 @@ export const taskBudgetViewSchema = z.object({
 }).strict();
 export type TaskBudgetView = z.infer<typeof taskBudgetViewSchema>;
 
+/**
+ * The limits the operator's extensions have granted (nucleus#1214). Stored as the
+ * figures themselves rather than a count, because one extension must always clear
+ * the stop: the granted limit is measured against the task's own use, not only
+ * against the size's default.
+ */
+export const taskBudgetLimitsSchema = z.object({
+  effectiveTokens: z.number().int().positive(),
+  wallMs: z.number().positive(),
+}).strict();
+export type TaskBudgetLimits = z.infer<typeof taskBudgetLimitsSchema>;
+
+/**
+ * The limits one extension grants (nucleus#1214): one default increment past the
+ * greater of the current limit and the task's own use, so one answer always lets
+ * the task continue. Praxis#328 used 1,925 minutes against a 960-minute limit and
+ * a per-answer increment (1,440, then 1,920) left the pause standing through
+ * three answers.
+ */
+export function extendedTaskBudgetLimits(
+  budget: Pick<TaskBudgetView, "level" | "effectiveTokens" | "wallMs">,
+  repository?: Pick<RepositorySettings, "affectedTests"> | null,
+): TaskBudgetLimits {
+  const tokenIncrement = TASK_BUDGET_DEFAULTS[budget.level].effectiveTokens;
+  const wallIncrement = taskBudgetWallDefault(budget.level, repository);
+  return taskBudgetLimitsSchema.parse({
+    effectiveTokens: Math.max(budget.effectiveTokens.limit + tokenIncrement,
+      Math.ceil(budget.effectiveTokens.used) + tokenIncrement),
+    wallMs: Math.max(budget.wallMs.limit + wallIncrement, Math.ceil(budget.wallMs.used) + wallIncrement),
+  });
+}
+
 /** Compact board wire form: token used/limit/evidence, wall used/limit, exhausted. */
 export const taskBudgetBoardViewSchema = z.tuple([
   z.number().int().min(0), z.number().int().positive(), z.enum(["exact", "partial", "none"]),
@@ -270,8 +302,10 @@ export function budgetClockPaused(clock: BudgetClock | null | undefined, at: num
  * (nucleus#1187). The
  * lifecycle start is the task's own `budgetSince`, else its legacy
  * `responsible_converted` event, both read from those events rather than chosen
- * per caller. Each extension adds one default increment, so the limits grow by
- * the size's default per answer. A run without a usage record adds no tokens: an
+ * per caller. Each extension adds one default increment and records the granted
+ * limits (`resolution.budgetLimits`), which are never below the task's use plus
+ * that increment, so one answer always clears the stop (nucleus#1214). A run
+ * without a usage record adds no tokens: an
  * unobserved turn never pauses the task, though wall time still runs. Partial
  * usage is a lower bound, so reaching the limit on it is still a real pause. Wall
  * time starts at the lifecycle's first recorded run start and time before it is
@@ -284,8 +318,12 @@ export function taskBudget(task: Pick<Task, "complexity" | "resolution"> & Parti
   events: BudgetEvent[] = [], repository?: Pick<RepositorySettings, "affectedTests"> | null): TaskBudgetView {
   const level = taskBudgetLevel(task.complexity);
   const steps = 1 + (task.resolution.budgetExtensions ?? 0);
-  const tokenLimit = TASK_BUDGET_DEFAULTS[level].effectiveTokens * steps;
-  const wallLimit = taskBudgetWallDefault(level, repository) * steps;
+  // The recorded extension count sizes the increment per answer; the granted
+  // figures win when they are larger, so an extension measured against the task's
+  // own use (nucleus#1214) is never undercut by the count it also increments.
+  const granted = task.resolution.budgetLimits ?? null;
+  const tokenLimit = Math.max(TASK_BUDGET_DEFAULTS[level].effectiveTokens * steps, granted?.effectiveTokens ?? 0);
+  const wallLimit = Math.max(taskBudgetWallDefault(level, repository) * steps, granted?.wallMs ?? 0);
   const lifecycleStart = Date.parse(task.budgetSince ?? events.find(event => event.kind === "responsible_converted")?.at ?? "");
   const inLifecycle = (iso: string) => !Number.isFinite(lifecycleStart) || Date.parse(iso) >= lifecycleStart;
   const eligibleRuns = Number.isFinite(lifecycleStart) ? runs.filter(run => inLifecycle(run.createdAt)) : runs;

@@ -1,5 +1,5 @@
 import type { Task } from '../../shared/contracts';
-import { taskBudget } from '../../shared/task-budget';
+import { extendedTaskBudgetLimits, taskBudget } from '../../shared/task-budget';
 import { Decisions } from '../planning/decisions';
 import type { Resolution } from '../resolution';
 
@@ -19,9 +19,18 @@ export class QuestionSupersession {
   extendTaskBudget(taskId: string, detail: string, by = 'The operator'): Task | null {
     const current = this.store.task(taskId);
     const events = this.store.eventsAll(taskId);
-    if (!taskBudget(current, this.store.runs(taskId), Date.now(), events,
-      this.store.canonicalRepository(current.repoPath, current.repository)).exhausted) return null;
+    const repository = this.store.canonicalRepository(current.repoPath, current.repository);
+    const budget = taskBudget(current, this.store.runs(taskId), Date.now(), events, repository);
+    if (!budget.exhausted) return null;
     const wasBudgetPause = current.resolution.stop?.reason === 'budget';
+    // Spec 058 budgets (nucleus#1214): one answer always lets the task continue. The
+    // granted limits are one default increment past the greater of the current limit
+    // and the task's own use, so an overrun larger than a single increment (praxis#328:
+    // 1,925 minutes against 960) is cleared by the first extension instead of the third.
+    const limits = extendedTaskBudgetLimits(budget, repository);
+    const figures = `wall limit ${Math.round(budget.wallMs.limit / 60_000)} -> ${Math.round(limits.wallMs / 60_000)} minutes `
+      + `(use ${Math.round(budget.wallMs.used / 60_000)}); `
+      + `token limit ${budget.effectiveTokens.limit} -> ${limits.effectiveTokens} (use ${budget.effectiveTokens.used})`;
     // Papercut 7cb34906 (2026-11-10): a budget extended through a verb left
     // Nucleus's own budget questions pending on the worker thread; launches then
     // declined ("retained worker still owns its turn: pending question") until a
@@ -31,9 +40,10 @@ export class QuestionSupersession {
     // are superseded and dismissed through the host, the same supersession #975
     // applies to asks.
     const updated = this.store.transaction(() => {
-      const next = this.resolution.update(current, { ...(wasBudgetPause ? { stop: null } : {}), budgetExtensions: current.resolution.budgetExtensions + 1 },
+      const next = this.resolution.update(current, { ...(wasBudgetPause ? { stop: null } : {}),
+        budgetExtensions: current.resolution.budgetExtensions + 1, budgetLimits: limits },
         wasBudgetPause ? { reason: `${by} extended the budget by one default increment; the next run may start` }
-          : {}, 'budget_extended', detail);
+          : {}, 'budget_extended', `${detail}; ${figures}`.slice(0, 4000));
       this.supersedeBudgetQuestionsInTransaction(taskId, 'The exhausted budget was extended.');
       return next;
     });

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EMPTY_RUN_USAGE } from '../core/telemetry/run-usage';
-import { budgetClockPaused, budgetPauseDetail, effectiveTokens, nucleusHeldReason, taskBudget, taskBudgetLevel, taskBudgetViewSchema, TASK_BUDGET_DEFAULTS } from '../shared/task-budget';
+import { budgetClockPaused, budgetPauseDetail, effectiveTokens, extendedTaskBudgetLimits, nucleusHeldReason, taskBudget, taskBudgetLevel, taskBudgetViewSchema, TASK_BUDGET_DEFAULTS } from '../shared/task-budget';
 import type { Run, Task } from '../shared/contracts';
 
 /**
@@ -127,6 +127,40 @@ test('each extension adds one default increment to both limits', () => {
   assert.equal(extended.wallMs.limit, 120 * MINUTE);
   assert.equal(extended.exhausted, null);
   assert.equal(taskBudget(budgeted('low', 2), runs, start).effectiveTokens.limit, 6_000_000);
+});
+
+/** A task whose last extension recorded the limits it granted (nucleus#1214). */
+const granted = (limits: { effectiveTokens: number; wallMs: number }, budgetExtensions = 1): Pick<Task, 'complexity' | 'resolution'> =>
+  ({ complexity: 'very_high', budgetSince: null, resolution: { budgetExtensions, budgetLimits: limits } }) as unknown as Pick<Task, 'complexity' | 'resolution'>;
+
+test('one extension clears an overrun larger than its own increment (praxis#328: 1,925 of 960 minutes)', () => {
+  const runs = [run(new Date(start - 1925 * MINUTE).toISOString())];
+  const paused = taskBudget(budgeted('very_high'), runs, start);
+  assert.equal(paused.wallMs.limit, 960 * MINUTE);
+  assert.equal(paused.wallMs.used, 1925 * MINUTE);
+  assert.equal(paused.exhausted, 'wall_time');
+  // The increment alone (960 + 960 = 1,920) leaves the task over its limit, which is
+  // how three answers were once needed. The grant is measured against the use too.
+  const limits = extendedTaskBudgetLimits(paused);
+  assert.equal(limits.wallMs, 1925 * MINUTE + 960 * MINUTE);
+  assert.equal(limits.effectiveTokens, TASK_BUDGET_DEFAULTS.very_high.effectiveTokens * 2,
+    'an unused token limit simply gains one increment');
+  assert.equal(taskBudget(granted(limits), runs, start).exhausted, null, 'one answer always lets the task continue');
+  assert.equal(taskBudget(granted(limits), runs, start).wallMs.limit, limits.wallMs);
+  // A task under its limit still gains one increment from the limit itself.
+  const comfortable = taskBudget(budgeted('high'), [], start);
+  assert.equal(extendedTaskBudgetLimits(comfortable).wallMs, 960 * MINUTE);
+  assert.equal(extendedTaskBudgetLimits(comfortable).effectiveTokens, TASK_BUDGET_DEFAULTS.high.effectiveTokens * 2);
+  // A token overrun is cleared the same way.
+  const tokens = taskBudget(budgeted('low'), [run(new Date(start).toISOString(), { inputTokens: 9_000_000 })], start);
+  assert.equal(tokens.exhausted, 'effective_tokens');
+  const tokenLimits = extendedTaskBudgetLimits(tokens);
+  assert.equal(tokenLimits.effectiveTokens, 9_000_000 + TASK_BUDGET_DEFAULTS.low.effectiveTokens);
+  assert.equal(taskBudget(granted(tokenLimits), [run(new Date(start).toISOString(), { inputTokens: 9_000_000 })], start).exhausted, null);
+  // Affected-test repositories grant their own larger wall increment.
+  const affected = extendedTaskBudgetLimits(taskBudget(budgeted('medium'), [], start, [], { affectedTests: { command: 'effigy test:affected --run' } }),
+    { affectedTests: { command: 'effigy test:affected --run' } });
+  assert.equal(affected.wallMs, 720 * MINUTE);
 });
 
 /** A responsible task with the wall clock partly paused on a Nucleus-side cause. */

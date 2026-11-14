@@ -400,7 +400,12 @@ lifecycle; use a direct PR with operator source acceptance. Historical task rows
 - **Pause, not kill.** The launch funnel refuses every new run once either limit is
   reached, so a run in flight finishes and nothing new starts. The task stops with
   `budget` as its stop reason and the detail names the limit. That detail is fixed for
-  the pause, so waiting does not rewrite the stop. A recorded budget pause is current
+  the pause, so waiting does not rewrite the stop. A budget stop records and keeps the
+  stage it interrupted — work, review, merge, closeout, awaiting validation — and
+  changes no phase, so clearing it resumes exactly that stage: a passed validation at
+  an unchanged head and base goes straight back to the merge gate, and no revision or
+  review is dispatched because a pause cleared (nucleus#1214; the praxis#328 revision
+  came from the cross-task carry gate, not from the pause). A recorded budget pause is current
   only while the measured budget still shows it: the pass that reads the task's runs
   and events clears the stop and supersedes the question it raised once the figure is
   under the limit, so the dispatcher's fence, the board's question and `task.next`'s
@@ -446,10 +451,15 @@ lifecycle; use a direct PR with operator source acceptance. Historical task rows
 - **Holds.** A dispatch hold suppresses the question because it blocks runs. A merge
   hold does not: it does not block runs and cannot leave a budget pause without an
   answer.
-- **Answers.** `Extend the budget` adds one default increment to both limits and lifts
-  the pause. `Change the approach` adds the same increment and sends the answerer's
-  recorded direction to the worker as its next instruction (`move to=work`), retaining
-  operator, planner or decider attribution. `Stop and keep the
+- **Answers.** `Extend the budget` always clears the pause in one answer: the granted
+  limits (`resolution.budgetLimits`) are one default increment past the greater of the
+  current limit and the task's own use, so an overrun larger than a single increment
+  still needs only one extension (praxis#328 used 1,925 minutes against a 960-minute
+  limit; a per-answer increment left the pause standing through three answers). The
+  `budget_extended` event records the limit it found, the limit it granted and the use
+  that set them. `Change the approach` grants the same increment and sends the
+  answerer's recorded direction to the worker as its next instruction (`move to=work`),
+  retaining operator, planner or decider attribution. `Stop and keep the
   work` applies the owner `stop` verb: live work halts, the branch and PR stay, and the
   task is parked under a dispatch hold. A free-text answer is recorded and applies
   nothing. A late answer to a superseded budget question has no effect. Whenever
