@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { certifyHostFailureFacts } from '../../core/host/errors';
+import { certifyHostFailureFacts } from '../../core/host';
 
 const id = z.string().min(1);
 const date = z.string().min(1);
