@@ -1,4 +1,5 @@
 import type { Completion, Run, Task } from '../../shared/contracts';
+import { QUEUE_BRANCH_PATTERN } from '../git/index';
 import { coordinatorActionShapeRefusal } from '../recovery/task-reasons';
 import { proofResultRefusal } from './proof-settlement';
 
@@ -36,6 +37,20 @@ export function completionRefusal(input: Completion, run: Run, task: Task, revis
     if (role === 'reviewer' && !input.reviewCommentId && !input.reviewText) return 'Review requires full reviewText or a durable PR comment ID';
   }
   return null;
+}
+
+/** The queue branch names a report's prose carries, matched with the owner's branch shape. */
+const reportedBranches = () => new RegExp(`\\b${QUEUE_BRANCH_PATTERN}\\b`, 'gi');
+
+/**
+ * A report may name its own task branch and no other: a headline or summary
+ * carrying a different queue branch is another task's evidence, so it refuses
+ * before any PR identity is read. Both the callback path and the incident-report
+ * path are pinned by `test/callback-client.test.ts`.
+ */
+export function foreignBranchRefusal(input: Pick<Completion, 'headline' | 'summary'>, task: Pick<Task, 'branch'>): string | null {
+  const branches = `${input.headline ?? ''} ${input.summary}`.match(reportedBranches()) ?? [];
+  return branches.some(branch => branch !== task.branch) ? 'Report names another task branch' : null;
 }
 
 /**

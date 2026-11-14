@@ -19,7 +19,7 @@ import { digest, now } from '../store/store';
 import { recordProofFiles } from './proof-files';
 import { recordSupersededRunRefusal, supersededByPendingResume, supersededResumeRefusal } from '../recovery/superseded-resume';
 import { ownerArmedRetainedWorker } from '../recovery/task-reasons';
-import { completionRoute, sourceApprovalRefusal } from './report-shape';
+import { completionRoute, foreignBranchRefusal, sourceApprovalRefusal } from './report-shape';
 import { reportReadyRefusal } from './report-ready';
 import { proofResultRefusal } from './proof-settlement';
 
@@ -95,10 +95,12 @@ export class CallbackIntake {
     const priorReceipt = this.store.receipt(proofFilesRemoved(input), token);
     if (priorReceipt) { await this.settleHandedOverWorker(input.taskId, sourceRun, input.status); await this.settleReportedThread(sourceRun); return priorReceipt; }
     let verifiedPr: { url: string; head: string } | null = null;
-    // A worker report's PR is bound to this task by typed identity: the canonical
-    // source, the task branch, the base branch and the exact head. Nothing is read
-    // out of the report's prose.
+    // A worker report is bound to this task by typed identity: the canonical source,
+    // the task branch, the base branch and the exact head. Its prose may name no
+    // other task's queue branch, so another task's evidence refuses before the PR read.
     if (!sourceRun || sourceRun.role === 'revision') {
+      const foreignBranch = foreignBranchRefusal(input, identityTask);
+      if (foreignBranch) throw new Error(foreignBranch);
       if (input.prNumber) {
         const pr = this.adapter.verifyPrIdentity
           ? await this.adapter.verifyPrIdentity(identityTask, input.prNumber, {allowDraft: input.status !== 'ready_for_review'})
