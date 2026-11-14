@@ -12,6 +12,7 @@ Every topic has exactly one owning file. Link to it; don't restate it.
 | Restore a verified store snapshot | [operations/restore.md](operations/restore.md) |
 | Compact the store: the one-shot conversion and bounded freed-page maintenance | [operations/store-compaction.md](operations/store-compaction.md) |
 | Unexpected child termination: retained evidence and the attribution gap | [operations/unexpected-child-termination.md](operations/unexpected-child-termination.md) |
+| Code-module quality ratings and the floor target | [quality/code/](quality/code/README.md) |
 | Retired concepts | [retired.toml](retired.toml) |
 | Open questions | [questions.md](questions.md) |
 
