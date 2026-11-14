@@ -1,11 +1,12 @@
 import { existsSync } from "node:fs";
-import { lstat, realpath, rm } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { normalizeRepoRelativePath, pathIsAllowed, type HookRecord, type NormalizedHookDefinition } from "../../shared/hooks";
 import type { Task } from "../../shared/contracts";
 import { type Store, now } from "../store/store";
 import { gitText, statusEntries, inspectChangedPaths, isolatedRepositoryIsCleanAt, verifyReviewedHead, verifyRetainedWorktree } from "../git/git-snapshot";
 import { gitRaw } from "../git/git-command";
+import { removeTree } from "../workspaces/tree-removal";
 import { discoverManifest, instructionForCommit, pinExecutable, pinProgram, type ManifestDiscovery } from "./hook-manifest";
 import { hookRecordTarget, preArchiveWorktreeHead, type HookContext, type HookEmissionResult } from "./hook-context";
 import type { HookOccurrences } from "./hook-occurrence";
@@ -257,7 +258,7 @@ export class HookRetry {
       record = this.save(record, { checkoutDiscard: { status: "intent", baseCommit, at: now() } });
       this.store.event(task.id, "hook_unpublished_checkout_discard_intent", `${record.eventId}: explicit operator disposal after synchronized-base and remote-absence proofs`);
       if (existsSync(join(path, ".git"))) await this.removeIsolatedCheckout(task, path, true);
-      else await rm(path, { recursive: true, force: true });
+      else await removeTree(path);
     } else if (!record.checkoutDiscard) throw new Error("Checkout disappeared without a recorded discard intent");
     const summary = "Unpublished checkout discarded; Nucleus holds this occurrence until an owner retry_effect with discard mints a replacement";
     record = this.save(record, { state: "blocked", workspace: null, processId: null, error: summary, summary,
