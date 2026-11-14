@@ -1,6 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { recoveryEffects, isBlockingRecoveryEffect, recoveryEffectsRefusal } from '../recovery/recovery-effects';
-import { isPendingCheckDeadlineReason } from '../forge/index';
 import { mergeFenced, type Task } from '../../shared/contracts';
 import { now } from '../store/store';
 import { mergeFenceReason } from '../recovery/task-reasons';
@@ -46,7 +45,8 @@ export class IntegrationTurns {
     if (t.resolution.mergeIntent && !t.resolution.mergedCommit) return true;
     if (this.integrationQuanta.has(t.id)) return this.quantumOwesTurn(t);
     if (this.integrationBlock(t)) return false;
-    if (this.resolution.requiredCheckPollState(t) || isPendingCheckDeadlineReason(t.reason)) return false;
+    // The durable poll record is what makes this a check wait; the reason text is only its wording.
+    if (this.resolution.requiredCheckPollState(t)) return false;
     return ['verifying', 'merging', 'syncing', 'closing'].includes(t.phase);
   }
   /**

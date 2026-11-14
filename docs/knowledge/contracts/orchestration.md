@@ -2136,6 +2136,13 @@ movement invalidates source approval and preserves the normal readiness gates.
   Alternating refusals are compared across the unchanged-head episode.
   Changed evidence, a changed head or an owner instruction gets another round;
   a total run count at one head does not distinguish those useful rounds.
+- A check wait is an episode only while its durable poll record for the current
+  head exists: the record owns the episode, its incident, its one recovery and its
+  escalation, and the task's reason text is only its wording. A record written
+  before the record named its incident keeps the previous read of the deadline
+  wait it held, and a planner escalation recorded before its payload carried a
+  refusal class keeps the previous identification from the revision instruction
+  it recorded.
 - A pending check is re-observed every minute at the same head and yields the
   integration turn; when checks settle, Nucleus reacquires a turn and reruns every
   gate. An overdue check gets one coordinator recovery look per check and head,
