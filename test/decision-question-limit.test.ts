@@ -59,7 +59,9 @@ test("1141-2 an already-stored over-long record clips in the view without failin
   const store = new Store(join(dir, "queue.sqlite"));
   try {
     const decisions = new Decisions(store);
-    const created = decisions.add({ question: "Short question?", askedBy: "agent", tasks: ["task-1"] });
+    // Task 1183 places every new decision; this file owns clipping, not placing.
+    const created = decisions.add({ question: "Short question?", askedBy: "agent",
+      project: { origin: "owner/repo", path: "/repo" } });
     const over = `Over-long stored question: ${"word ".repeat(1500)}`;
     assert.ok(over.length > 4000, "the stored record exceeds the view limit");
     const raw = JSON.parse(String((store.db.prepare("SELECT data FROM decisions WHERE id=?").get(created.id) as { data: string }).data));

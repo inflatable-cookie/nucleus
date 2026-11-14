@@ -5,7 +5,7 @@ import { useRpc } from "../shell";
 import { Button, ConfirmReplaceAnswer, DetailSection, controlFrame, controlText, muted, type Colors } from "../controls";
 import * as api from "../../shared/contracts";
 import { decisionAge } from "../../shared/pipeline-board";
-import { decisionProjectLabel } from "../../shared/decision-project";
+import { UNKNOWN_ASKER_LABEL, decisionProjectLabel } from "../../shared/decision-project";
 import { decisionChoicePresentation } from "../board/cards";
 import { CollapsibleSection, RecordNotice, type BoardAct, type RecordNoticeValue } from "../task/parts";
 import { RecordModal } from "./record-modal";
@@ -28,6 +28,8 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
     decisionDetail.question.length > 140 && decisionDetail.question !== (decisionDetail.headline ?? decisionDetail.question)
       ? `Full question: ${decisionDetail.question}` : null,
     decisionDetail.details, decisionDetail.context, decisionDetail.recommendation,
+    // A fallback asker names no thread: keep the full identity selectable here for forensics.
+    decisionDetail.askerLabel === UNKNOWN_ASKER_LABEL ? `Asking thread: ${decisionDetail.askedBy.agentId}` : null,
   ].filter((part): part is string => Boolean(part)))].join("\n\n") : "";
   return (
     <RecordModal
@@ -41,8 +43,7 @@ export function DecisionDialog({ id: openDecisionId, compact, busy, act, recordN
           <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>
             {decisionDetail.status}
             {decisionDetail.stale ? " · stale" : ""} ·{" "}
-            {decisionProjectLabel(decisionDetail)} · asked by{" "}
-            {decisionDetail.askedBy.agentId.slice(0, 8)} ·{" "}
+            {decisionProjectLabel(decisionDetail)} · {decisionDetail.askerLabel ?? UNKNOWN_ASKER_LABEL} ·{" "}
             {decisionAge(decisionDetail.createdAt)}
           </Text>
         ) : undefined

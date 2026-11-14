@@ -103,7 +103,8 @@ const decision=(id:string,links:{tasks?:string[];leads?:string[];papercuts?:stri
   askedBy: { agentId: 'agent-asker', project },
   links: { tasks: links.tasks ?? [], leads: links.leads ?? [], papercuts: links.papercuts ?? [] },
   status: 'open', answer: null, withdrawal: null, supersededBy: null, delivery: null,
-  createdAt: '2026-09-27T00:00:00.000Z', updatedAt: '2026-09-27T00:00:00.000Z', versions: [], stale: false, projectKey: null, ...extra,
+  createdAt: '2026-09-27T00:00:00.000Z', updatedAt: '2026-09-27T00:00:00.000Z', versions: [], stale: false, projectKey: null,
+  askerLabel: 'agent-asker', ...extra,
 });
 
 test('032 the decisions view sits ahead of Attention and holds agent decisions only',()=>{
