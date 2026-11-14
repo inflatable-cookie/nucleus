@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { T3CodeHost } from '../hosts/t3code/adapter';
 import { T3RpcError } from '../hosts/t3code/rpc';
 import { ProvenPreSendRefusalError, HostUnknownDeliveryError, hostFailureRefusalDetail } from '../core/host';
+import { T3CompatibilityError } from '../hosts/t3code/contracts';
 import { isTransportFailure } from '../shared/transport';
 import type { HostAgentSpec } from '../shared/host';
 import { submissionSchema, type Profile, type Task } from '../shared/contracts';
@@ -16,7 +17,7 @@ import type { Adapter } from '../core/host';
 import { taskWorkspaceTitle } from '../core/workspaces/workspace-title';
 import { capPaseoTitle } from '../shared/paseo-title';
 import { WIRE_LABEL_KEYS, WIRE_PLUGIN_LABEL_KEY } from '../shared/wire-labels';
-import { t3Fake, STAMP, threadProjection } from './support/t3code-fake';
+import { t3Fake, STAMP, threadProjection, syntheticRun, syntheticRuntimeRequest, syntheticTurnItem } from './support/t3code-fake';
 import { storedT3Labels } from './support/t3code-labels';
 
 const profile: Profile = { id: 'synthetic-profile', name: 'Synthetic', provider: 'synthetic-provider', model: 'synthetic-model',
@@ -425,16 +426,25 @@ test('coverage fields are strictly decoded before observation or timeline comple
   assert.equal((await host.observe(created.id)).active, false);
 });
 
-test('a host failure refusal keeps the adapter-authored method and remote tag', () => {
-  // T3RpcError builds its message with parentheses and colons, so the free-text
-  // rule drops it; the structured facts an owner-verb refusal needs survive.
+test('a host failure refusal keeps only adapter-certified facts and never host text', () => {
+  // T3RpcError certifies its own facts in its constructor; its message carries
+  // punctuation, so the structured facts are what keep the refusal useful.
   assert.equal(hostFailureRefusalDetail(new T3RpcError('timeout', 'orchestration.subscribeThread')),
     'T3RpcError timeout orchestration.subscribeThread: T3Code timeout: orchestration.subscribeThread');
   assert.equal(hostFailureRefusalDetail(new T3RpcError('remote', 'orchestration.subscribeThread', 'OrchestrationV2GetThreadProjectionError')),
     'T3RpcError remote orchestration.subscribeThread (OrchestrationV2GetThreadProjectionError)');
-  assert.equal(hostFailureRefusalDetail(new Error('Transport timeout')), 'Error: Transport timeout');
-  // Remote text that is not a bounded token never reaches a refusal.
+  // An uncertified error contributes a runtime-known kind and nothing else, so a
+  // secret-shaped single line cannot be published from arbitrary host text.
+  assert.equal(hostFailureRefusalDetail(new Error('synthetic-secret')), 'Error');
+  assert.equal(hostFailureRefusalDetail(new Error('Transport timeout')), 'Error');
+  assert.equal(hostFailureRefusalDetail(Object.assign(new Error('synthetic-secret'), { name: 'synthetic-secret' })), 'host error');
+  // Uncertified structured fields are ignored even when well shaped.
+  assert.equal(hostFailureRefusalDetail(Object.assign(new Error('synthetic-secret'),
+    { name: 'TypeError', code: 'synthetic_secret', method: 'orchestration.subscribeThread', field: 'synthetic_secret', remoteTag: 'SyntheticError' })), 'TypeError');
   assert.equal(hostFailureRefusalDetail(new Error('Expected synthetic-secret got value\n  at ["text"]')), 'Error');
+  // A certified compatibility failure names its adapter-authored field.
+  assert.equal(hostFailureRefusalDetail(new T3CompatibilityError('subscribeThread: incomplete projection')),
+    'T3CompatibilityError (subscribeThread: incomplete projection)');
 });
 
 test('a thread long enough to page stays observable from the nightly bounded snapshot', async t => {
@@ -442,14 +452,15 @@ test('a thread long enough to page stays observable from the nightly bounded sna
   const created = await host.createAgent(spec());
   const p = server.threads.get(created.id)!;
   // A long worker run leaves far more turn items than one snapshot window holds.
-  p.turnItems = Array.from({ length: server.controls.boundedRowLimit + 40 }, (_, index) =>
-    ({ id: `synthetic-item-${index}`, type: 'assistant_message', createdAt: STAMP,
+  // Every record is the Nightly's own wire shape (contract `wireShapes`): the
+  // transport completes and checks them, so no invented partial record is served.
+  p.turnItems = Array.from({ length: server.controls.boundedRowLimit + 40 }, (_, index) => syntheticTurnItem(created.id, index + 1,
+    { type: 'assistant_message', text: `Synthetic reply ${index}`,
       ...(index === server.controls.boundedRowLimit + 39 ? { runId: 'synthetic-old-run' } : {}) }));
-  p.runs = [{ id: 'synthetic-unreferenced-run', status: 'completed', startedAt: STAMP },
-    { id: 'synthetic-old-run', status: 'completed', startedAt: STAMP },
-    { id: 'synthetic-run', status: 'running', startedAt: STAMP }];
-  p.runtimeRequests = [{ id: 'synthetic-question', kind: 'user_input', status: 'pending',
-    responseCapability: { type: 'live', providerSessionId: 'synthetic-session' } }];
+  p.runs = [syntheticRun(created.id, 1, { id: 'synthetic-unreferenced-run' }),
+    syntheticRun(created.id, 2, { id: 'synthetic-old-run' }),
+    syntheticRun(created.id, 3, { id: 'synthetic-run', status: 'running', completedAt: null })];
+  p.runtimeRequests = [syntheticRuntimeRequest({ id: 'synthetic-question', kind: 'user_input', status: 'pending' })];
   // The nightly answers a whole projection only to a read that does not opt in,
   // and that read of a thread this long is the slow one: the full snapshot of the
   // reported thread measured 8.1 MiB, and outlived the bound on a busy service.
@@ -479,7 +490,7 @@ test('a thread long enough to page stays observable from the nightly bounded sna
 test('a nightly that ignores the bounded opt-in still observes from its whole projection', async t => {
   const { host, server, spec } = await fixture(t);
   const created = await host.createAgent(spec());
-  server.threads.get(created.id)!.runs = [{ id: 'synthetic-run', status: 'running', startedAt: STAMP }];
+  server.threads.get(created.id)!.runs = [syntheticRun(created.id, 1, { id: 'synthetic-run', status: 'running', completedAt: null })];
   // An older server drops the unknown field and answers the complete detail
   // projection, so observation degrades to today's read instead of refusing.
   server.controls.ignoreBoundedSnapshot = true;
@@ -496,13 +507,9 @@ test('a transcript read refuses a paged projection, so partial history is never 
   const { host, server, spec } = await fixture(t);
   const created = await host.createAgent(spec());
   const p = server.threads.get(created.id)!;
-  p.turnItems = [
-    { id: 'synthetic-item-0', type: 'assistant_message', createdAt: STAMP },
-    { id: 'synthetic-question-item', type: 'user_input_request', requestId: 'synthetic-question', createdAt: STAMP,
-      questions: [{ id: 'synthetic-q', header: 'Synthetic', question: 'Synthetic question?', options: [{ label: 'Yes' }] }] },
-  ];
-  p.runtimeRequests = [{ id: 'synthetic-question', kind: 'user_input', status: 'pending',
-    responseCapability: { type: 'live', providerSessionId: 'synthetic-session' } }];
+  p.turnItems = [syntheticTurnItem(created.id, 1, { type: 'assistant_message' }),
+    syntheticTurnItem(created.id, 2, { type: 'user_input_request', id: 'synthetic-question-item', requestId: 'synthetic-question' })];
+  p.runtimeRequests = [syntheticRuntimeRequest({ id: 'synthetic-question', kind: 'user_input', status: 'pending' })];
   // A paged projection with an opaque cursor: observation may use it, a reader of
   // the transcript may not. This arm is defensive — today's nightly pages only an
   // opted-in read — so it also holds if a later nightly pages every read.

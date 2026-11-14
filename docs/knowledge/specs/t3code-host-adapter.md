@@ -443,15 +443,23 @@ An observation read that fails names its own cause. Every owner path that turns 
 caught observation into a refusal keeps the host error's kind and message: the
 `restart` refusals, `move to=review`'s reader check, the quiet-project participant
 proof of an external-merge source acceptance, and a finished run whose
-observation fences the verb. A timeout therefore reads `T3RpcError timeout
-orchestration.subscribeThread` (with the adapter's own message when it is a
-bounded token), and an adapter error that carries a method and a remote tag keeps
-both, instead of a bare "cannot be observed".
+observation fences the verb. Only facts the adapter itself certifies reach the
+refusal (`certifyHostFailureFacts`, a module-local mark no remote text can set):
+an uncertified error contributes nothing but a runtime-known kind, so arbitrary
+host text — a secret-shaped single line included — is never published. A
+timeout therefore reads `T3RpcError timeout orchestration.subscribeThread` with
+the adapter's own message, and an adapter error that carries a method and a
+remote tag keeps both, instead of a bare "cannot be observed".
 
 The canonical thread projection is the whole turn list, so timeline pages carry
 the full coverage contract: no gap, no reset, no newer history, an epoch that
 is the thread identity, and start/end cursors that are positions in the full
-list. Archived threads are retired participants: they report the terminal
+list. The test transport serves only records in the Nightly's own wire shape:
+`test/fixtures/t3code-contract.json` (`wireShapes`) records the field sets
+captured read-only from the nightly, and the fake completes and checks every
+served thread, run, runtime request, message and turn item against them, so an
+invented partial record cannot stand in for a real one (nucleus#1188). Archived
+threads are retired participants: they report the terminal
 closed state with `archived` carried on its own field, so archive proofs and
 workspace teardown read a terminal state while retained reads still see the
 retirement.

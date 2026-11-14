@@ -1,4 +1,4 @@
-import { SAFE_REMOTE_TAGS, sanitizeHostFailureReason } from '../../core/host';
+import { SAFE_REMOTE_TAGS, certifyHostFailureFacts, sanitizeHostFailureReason } from '../../core/host';
 
 export interface T3ConnectionConfig {
   endpoint: string;
@@ -25,6 +25,10 @@ export class T3RpcError extends Error {
     this.name = 'T3RpcError';
     this.command = command;
     this.reason = reason;
+    // Every fact here is built by this constructor from constants and the fixed
+    // tag list, so a refusal may keep them (nucleus#1188 review: character rules
+    // alone cannot prove a message came from an adapter, this certification can).
+    certifyHostFailureFacts(this, { code, method, field: remoteTag, message: this.message });
   }
 }
 

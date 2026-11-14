@@ -26,6 +26,7 @@ import {
   type Profile, type Run, type Task,
 } from '../shared/contracts';
 import type { Adapter } from '../core/host';
+import { certifyHostFailureFacts } from '../core/host';
 import { exactProofFixture } from './support/review-entry-fixture';
 import { toolTimelinePage } from './support/tool-timeline';
 
@@ -808,7 +809,7 @@ test('unobservable worker restart is a definite refused operation with no lifecy
     assert.ok('accepted' in accepted);
     const operation = await f.engine.awaitOperation(accepted.operation.id);
     assert.equal(operation.state, 'failed');
-    assert.match(operation.diagnostic, /cannot be observed \(Error: Transport timeout\).*No continuation was sent/);
+    assert.match(operation.diagnostic, /cannot be observed \(Error\).*No continuation was sent/);
     assert.equal(operation.effect?.status, 'reconciled');
     assert.deepEqual(restartState(f), before);
   } finally { await f.close(); }
@@ -819,8 +820,8 @@ test('a refused restart names the host observation error and its kind', async ()
     retainedWorker(f, 'retained_worker', false);
     // The exact failure a long T3 thread produced: a read that outlived the bound.
     f.adapter.observe = async () => {
-      throw Object.assign(new Error('T3Code timeout: orchestration.subscribeThread'),
-        { name: 'T3RpcError', code: 'timeout', method: 'orchestration.subscribeThread' });
+      throw certifyHostFailureFacts(Object.assign(new Error('T3Code timeout: orchestration.subscribeThread'), { name: 'T3RpcError' }),
+        { code: 'timeout', method: 'orchestration.subscribeThread', message: 'T3Code timeout: orchestration.subscribeThread' });
     };
     const before = restartState(f);
     const input = taskControlInputSchema.parse({ taskId: f.taskId, version: f.current().version, action: 'restart', reason: 'Continue' });
@@ -840,8 +841,8 @@ test('a refused restart keeps an adapter-authored method and remote tag', async 
     retainedWorker(f, 'retained_worker', false);
     // The shape T3RpcError produces when the nightly fails a read with a typed tag.
     f.adapter.observe = async () => {
-      throw Object.assign(new Error('T3Code remote: orchestration.subscribeThread (OrchestrationV2GetThreadProjectionError)'),
-        { name: 'T3RpcError', code: 'remote', method: 'orchestration.subscribeThread', remoteTag: 'OrchestrationV2GetThreadProjectionError' });
+      throw certifyHostFailureFacts(Object.assign(new Error('T3Code remote: orchestration.subscribeThread (OrchestrationV2GetThreadProjectionError)'), { name: 'T3RpcError' }),
+        { code: 'remote', method: 'orchestration.subscribeThread', field: 'OrchestrationV2GetThreadProjectionError' });
     };
     const before = restartState(f);
     const input = taskControlInputSchema.parse({ taskId: f.taskId, version: f.current().version, action: 'restart', reason: 'Continue' });
@@ -859,13 +860,17 @@ test('a finished run fenced by an unreadable observation names the host error', 
   const f = fixture(); try {
     retainedWorker(f, 'retained_worker', false);
     // A finished support run has to be observed before the restart settles it; its
-    // unreadable observation must say what failed, not just that it did.
+    // unreadable observation must say what failed, not just that it did. An
+    // uncertified error keeps only its runtime kind; a certified adapter error
+    // keeps its own facts, which is what an owner refusal shows.
     f.store.putRun(runSchema.parse({ id: 'fenced-run', taskId: f.taskId, role: 'reviewer', generation: 1, head, base,
       agentId: 'review-agent', workspaceId: 'workspace', profile: f.profiles.reviewer, status: 'finished',
       createdAt: new Date().toISOString(), lastObservedAt: null, active: null, idleSince: null, released: false,
       completion: { taskId: f.taskId, runId: 'fenced-run', eventId: 'fenced-ready', status: 'ready_for_review', summary: 'Reviewed', head } }));
-    f.adapter.observe = async () => { throw Object.assign(new Error('T3Code timeout: orchestration.subscribeThread'),
-      { name: 'T3RpcError', code: 'timeout', method: 'orchestration.subscribeThread' }); };
+    f.adapter.observe = async () => {
+      throw certifyHostFailureFacts(Object.assign(new Error('T3Code timeout: orchestration.subscribeThread'), { name: 'T3RpcError' }),
+        { code: 'timeout', method: 'orchestration.subscribeThread', message: 'T3Code timeout: orchestration.subscribeThread' });
+    };
     const finished = await f.engine.collectVerbFinishedRuns(f.taskId, () => false);
     const fence = finished.fenced.find(entry => entry.run.id === 'fenced-run');
     assert.ok(fence, JSON.stringify(finished.fenced.map(entry => entry.why)));

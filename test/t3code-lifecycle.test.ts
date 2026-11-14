@@ -464,6 +464,28 @@ test('the sweep settles a recovery thread released from recorded completion with
   } finally { await f.close(); }
 });
 
+test('a slow T3 thread read refuses the retained-worker restart and names the timeout', async t => {
+  const f = await fixture(t);
+  try {
+    const { taskId } = await taskWithWorker(f);
+    // The retained worker the owner restart continues: the exact shape the
+    // incident reported, on its own T3 thread.
+    f.runtime.store.update(taskId, { phase: 'changes_requested', reason: 'The planner asked for the continuation' });
+    const task = f.runtime.store.task(taskId);
+    assert.ok(task.agentId && task.profile, 'the worker thread is retained');
+    // A subscribeThread that outlives the host's read bound: the recorded
+    // incident failure, end to end through observe and the owner verb.
+    f.server.controls.slowSnapshotMs = 6_000; // the fixture host's read bound is 5 000 ms
+    await assert.rejects(
+      f.runtime.taskControl({ action: 'restart', taskId, version: task.version, role: 'worker',
+        reason: 'Continue the retained worker', caller: f.planner }),
+      /The retained worker cannot be observed \(T3RpcError timeout orchestration\.subscribeThread: T3Code timeout: orchestration\.subscribeThread\); restore observation before restarting\. No continuation was sent/);
+    assert.equal(f.server.commands.filter(command => command.type === 'message.dispatch').length, 0,
+      'a refused restart sends no continuation');
+    assert.equal(f.runtime.store.task(taskId).phase, 'changes_requested', 'the refusal changed nothing');
+  } finally { f.server.controls.slowSnapshotMs = 0; await f.close(); }
+});
+
 test('a support thread stays active during a later run and settles that run when it finishes', async t => {
   const f = await fixture(t);
   try {

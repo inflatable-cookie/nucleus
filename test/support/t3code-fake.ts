@@ -9,11 +9,101 @@ type Value = Record<string, any>;
 const contract = JSON.parse(readFileSync(new URL('../fixtures/t3code-contract.json', import.meta.url), 'utf8')) as Value;
 export const STAMP = '2026-01-01T00:00:00.000Z';
 
+/**
+ * The Nightly's record shapes, captured read-only from its own wire (contract
+ * `wireShapes`: keys only, values synthetic). A test may override any field it
+ * needs; the transport completes every served record to this shape and checks
+ * it, so the fixture is always a Nightly wire record and never an invented
+ * partial one (nucleus#1188 review).
+ */
+const shapes = contract.wireShapes as {
+  threadKeys: string[]; runKeys: string[]; runtimeRequestKeys: string[];
+  turnItemBaseKeys: string[]; turnItemTypeKeys: Record<string, string[]>; messageKeys: string[] };
+const modelSelection = { instanceId: 'synthetic-provider', model: 'synthetic-model' };
+
+export function syntheticThread(id: string, directory: string, overrides: Value = {}): Value {
+  const thread: Value = { id, projectId: 'synthetic-project', title: 'Synthetic thread',
+    providerInstanceId: 'synthetic-provider', modelSelection, runtimeMode: 'full-access', interactionMode: 'default',
+    branch: 'synthetic', worktreePath: directory, linkedPullRequest: null, pullRequests: [], activeProviderThreadId: null,
+    createdBy: 'user', creationSource: 'web', lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: id },
+    forkedFrom: null, createdAt: STAMP, updatedAt: STAMP, archivedAt: null, deletedAt: null,
+    settledOverride: null, settledAt: null, snoozedUntil: null, snoozedAt: null, lastVisitedAt: null,
+    opens: [], titleRegeneration: null, ...overrides };
+  return thread;
+}
+
+export function syntheticRun(threadId: string, ordinal: number, overrides: Value = {}): Value {
+  const id = overrides.id ?? `synthetic-run-${ordinal}`;
+  return { id, threadId, ordinal, providerInstanceId: 'synthetic-provider', modelSelection,
+    providerThreadId: null, userMessageId: `synthetic-message-${id}`, rootNodeId: null, activeAttemptId: null,
+    status: 'completed', queuePosition: null, requestedAt: STAMP, startedAt: STAMP, completedAt: STAMP,
+    checkpointId: null, contextHandoffId: null, workspacePreparation: null, ...overrides };
+}
+
+export function syntheticRuntimeRequest(overrides: Value = {}): Value {
+  const id = overrides.id ?? 'synthetic-request';
+  return { id, nodeId: `synthetic-node-${id}`, providerTurnId: null, nativeRequestRef: null, kind: 'user_input',
+    status: 'pending', responseCapability: { type: 'live', providerSessionId: 'synthetic-session' },
+    createdAt: STAMP, resolvedAt: null, ...overrides };
+}
+
+export function syntheticTurnItem(threadId: string, ordinal: number, overrides: Value = {}): Value {
+  const id = overrides.id ?? `synthetic-item-${ordinal}`;
+  const type = overrides.type ?? 'assistant_message';
+  const base: Value = { id, threadId, type, status: 'completed', title: null, ordinal,
+    runId: null, nodeId: null, providerThreadId: null, providerTurnId: null, nativeItemRef: null, parentItemId: null,
+    startedAt: STAMP, completedAt: STAMP, updatedAt: STAMP };
+  const member: Record<string, Value> = {
+    assistant_message: { messageId: `synthetic-message-${id}`, text: 'Synthetic reply', streaming: false },
+    user_message: { messageId: `synthetic-message-${id}`, createdBy: 'user', creationSource: 'web', inputIntent: 'turn_start',
+      text: 'Synthetic prompt', attachments: [] },
+    user_input_request: { requestId: `synthetic-request-${id}`,
+      questions: [{ id: `synthetic-question-${id}`, header: 'Synthetic', question: 'Synthetic question?',
+        options: [{ label: 'Yes', description: 'Accept the synthetic choice' }, { label: 'No', description: 'Refuse it' }] }] },
+    command_execution: { input: 'synthetic-command', exitCode: 0, outputIndicatesFailure: false, outputOmitted: false },
+    reasoning: { text: 'Synthetic reasoning', streaming: false },
+  };
+  return { ...base, ...(member[type] ?? {}), ...overrides };
+}
+
+/** Every record of a projection, completed to the recorded wire shape. */
+function wireProjection(p: Value, bounded = false): Value {
+  const threadId = p.thread.id;
+  const thread = syntheticThread(threadId, p.thread.worktreePath ?? '/synthetic', p.thread);
+  const runs = (p.runs ?? []).map((run: Value, index: number) => syntheticRun(threadId, index + 1, run));
+  const runtimeRequests = (p.runtimeRequests ?? []).map((request: Value, index: number) =>
+    syntheticRuntimeRequest({ id: `synthetic-request-${index + 1}`, ...request }));
+  const turnItems = (p.turnItems ?? []).map((item: Value, index: number) => syntheticTurnItem(threadId, index + 1, item));
+  const messages = (p.messages ?? []).map((message: Value, index: number) => ({ id: `synthetic-message-${index + 1}`,
+    threadId, runId: null, nodeId: null, createdBy: 'user', creationSource: 'web', role: 'user', text: 'Synthetic message',
+    attachments: [], streaming: false, createdAt: STAMP, updatedAt: STAMP, ...message }));
+  const projection = { ...p, thread, runs, runtimeRequests, turnItems, messages,
+    // The wire carries the visible rows beside the window; each row points at its item.
+    visibleTurnItems: bounded ? turnItems.map((item: Value, index: number) => ({ position: index + 1,
+      sourceItemId: item.id, sourceThreadId: threadId, visibility: 'local', item })) : [] };
+  assertWireRecords(projection);
+  return projection;
+}
+
+/** Refuse a served record that is missing a field the Nightly's wire always carries. */
+function assertWireRecords(projection: Value): void {
+  const missing = (records: Value[], keys: string[], kind: string) => {
+    for (const record of records)
+      for (const key of keys)
+        assert.ok(Object.hasOwn(record, key), `${kind} ${record.id ?? record.type} is missing the wire field ${key}`);
+  };
+  missing([projection.thread], shapes.threadKeys, 'thread');
+  missing(projection.runs, shapes.runKeys, 'run');
+  missing(projection.runtimeRequests, shapes.runtimeRequestKeys, 'runtimeRequest');
+  missing(projection.messages, shapes.messageKeys, 'message');
+  for (const item of projection.turnItems) {
+    const extra = shapes.turnItemTypeKeys[item.type] ?? [];
+    missing([item], [...shapes.turnItemBaseKeys, 'type', ...extra.filter((key: string) => !shapes.turnItemBaseKeys.includes(key))], `turnItem ${item.type}`);
+  }
+}
+
 export function threadProjection(id: string, directory: string): Value {
-  return { thread: { id, projectId: 'synthetic-project', title: 'Synthetic thread', providerInstanceId: 'synthetic-provider',
-    modelSelection: { instanceId: 'synthetic-provider', model: 'synthetic-model' }, worktreePath: directory, branch: 'synthetic',
-    archivedAt: null, deletedAt: null, settledOverride: null, settledAt: null, updatedAt: STAMP },
-    runs: [], runtimeRequests: [], turnItems: [], messages: [], updatedAt: STAMP };
+  return { thread: syntheticThread(id, directory), runs: [], runtimeRequests: [], turnItems: [], messages: [], updatedAt: STAMP };
 }
 
 /** Exercises the real HTTP ticket exchange and WebSocket RPC client. */
@@ -35,7 +125,8 @@ export async function t3Fake(t: TestContext, directory: string) {
    * runtime request needs are retained outside the window, as the nightly keeps
    * them (contract `subscribeThread.projectionRetained`).
    */
-  const boundedSnapshot = (p: Value, rowLimit: number) => {
+  const boundedSnapshot = (raw: Value, rowLimit: number) => {
+    const p = wireProjection(raw, true);
     const active = new Set(['queued', 'preparing', 'starting', 'running', 'waiting']);
     const pending = new Set(p.runtimeRequests.filter((request: Value) => ['pending', 'waiting'].includes(request.status)).map((request: Value) => request.id));
     const kept = new Set(p.turnItems.slice(-rowLimit).map((item: Value) => item.id));
@@ -75,6 +166,8 @@ export async function t3Fake(t: TestContext, directory: string) {
      * 8.1 MiB frame, and a busy service outlives the 10 s read bound doing it.
      */
     slowFullSnapshotMs: 0,
+    /** Millisecond delay before any thread snapshot answer (a busy or wedged read). */
+    slowSnapshotMs: 0,
     /** A nightly that ignores `acceptBoundedSnapshot` and always answers the whole projection. */
     ignoreBoundedSnapshot: false,
     /** Replaces the single synthetic provider in `server.getConfig` when set (nightly provider shapes). */
@@ -88,7 +181,8 @@ export async function t3Fake(t: TestContext, directory: string) {
     response.writeHead(200, { 'content-type': 'application/json' });
     response.end(JSON.stringify({ ticket: 'synthetic-ticket', expiresAt: '2099-01-01T00:00:00.000Z' }));
   });
-  const shell = (p: Value) => {
+  const shell = (raw: Value) => {
+    const p = wireProjection(raw);
     const active = p.runs.find((run: Value) => ['preparing', 'queued', 'starting', 'running', 'waiting'].includes(run.status));
     const pending = p.runtimeRequests.find((request: Value) => request.status === 'pending');
     const value: Value = { ...p.thread, activeRunId: active?.id ?? null, status: active?.status ?? 'idle',
@@ -171,7 +265,7 @@ export async function t3Fake(t: TestContext, directory: string) {
           // A bounded snapshot is answered only to a read that opts in, and only
           // by a nightly that understands the field (recorded server guard).
           const bounded = payload.acceptBoundedSnapshot === true && !controls.ignoreBoundedSnapshot;
-          const coverage = bounded ? boundedSnapshot(p, controls.boundedRowLimit) : { projection: p };
+          const coverage = bounded ? boundedSnapshot(p, controls.boundedRowLimit) : { projection: wireProjection(p) };
           // A coverage claim that says more history exists without a cursor: the
           // pair the nightly never sends, which no read may use.
           const incoherent = controls.incompleteThread ? { hasMoreHistory: true, historyCursor: null } : {};
@@ -181,8 +275,10 @@ export async function t3Fake(t: TestContext, directory: string) {
             turnItems: frame.projection?.turnItems?.length ?? 0, runs: frame.projection?.runs?.length ?? 0 });
           const answer = () => stream([frame, ...marker()]);
           // A whole projection of a very long thread is the slow read; a bounded
-          // window never pays that cost (contract `slowFullSnapshotMs`).
-          if (!bounded && controls.slowFullSnapshotMs > 0) { setTimeout(answer, controls.slowFullSnapshotMs); return; }
+          // window never pays that cost (contract `slowFullSnapshotMs`). A wedged
+          // or busy server delays either answer (`slowSnapshotMs`).
+          const delay = controls.slowSnapshotMs || (!bounded ? controls.slowFullSnapshotMs : 0);
+          if (delay > 0) { setTimeout(answer, delay); return; }
           return answer();
         }
         case 'orchestration.launchThread': {
@@ -208,7 +304,7 @@ export async function t3Fake(t: TestContext, directory: string) {
           p.thread.runtimeMode = payload.runtimeMode;
           p.messages.push({ id: payload.initialMessage.messageId, role: 'user', text: payload.initialMessage.text });
           threads.set(payload.threadId, p);
-          return success({ threadId: payload.threadId, projection: p, resumed: false, sequence: 1 });
+          return success({ threadId: payload.threadId, projection: wireProjection(p), resumed: false, sequence: 1 });
         }
         case 'orchestration.dispatchCommand': {
           const definition = contract.commands[payload.type];

@@ -5,4 +5,5 @@ so `restart`, `route` and the sweep can still see a long worker thread. Reads th
 consume the transcript still refuse a paged projection instead of returning partial
 history. When an owner verb cannot observe a retained thread, its refusal now names
 the host's error and kind (for example a `subscribeThread` timeout, or an adapter
-error's method and remote tag) instead of only "cannot be observed".
+error's method and remote tag) instead of only "cannot be observed"; only facts the
+host adapter itself certifies reach the refusal, so no arbitrary host text does.
