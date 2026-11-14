@@ -33,11 +33,11 @@ import {
   readQaSupervision,
   readQaSupervisionPlan,
   writeHostRunResult,
-  supervisorLiveness,
   writeQaSupervision,
   writeQaSupervisionPlan,
-  removeQaWorkspace,
-} from '../core/qa/project-qa-supervisor';
+} from '../core/qa/project-qa-supervision-files';
+import { supervisorLiveness } from '../core/machine/supervisor-liveness';
+import { removeQaWorkspace } from '../core/qa/project-qa-worktree';
 import { findProcessByCommandToken, scanTokenVerdict, type ProcCommandLine } from '../core/machine/process-identity';
 import { HostRunScheduler, classifyHostRun } from '../core/host-runs/host-run-scheduler';
 import { checkoutRunScratchPlacement, runScratchRoot, runTemporaryDirectory, type RunScratchPlacement } from '../core/workspaces/run-scratch';
@@ -49,7 +49,7 @@ import { PROCESS_START_IDENTITY_ENV, processGroupEmpty, processGroupHasStartIden
 import { HOOK_TEST_TIMEOUT_MS, waitFor } from './support/budgets';
 import { frozenHostRunSettlementSchema } from './support/contract-010-frozen';
 import { buildConfiguredClone, materializeSeed, type GitSeed } from './support/git-seed';
-import type { QaPipelineOutcome } from '../core/qa/project-qa-supervisor';
+import type { QaPipelineOutcome } from '../core/qa/project-qa-pipeline';
 import { confirmStaleSupervisorHeartbeat } from '../core/machine/supervisor-watchdog';
 
 /** Every case starts from the same published one-commit repository. */

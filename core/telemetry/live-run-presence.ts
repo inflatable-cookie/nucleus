@@ -39,7 +39,7 @@ import type {
 } from "../../shared/contracts";
 import { hostRunSupervisorPaths } from "../host-runs/host-run-files";
 import { projectValidationSupervisorPaths } from "../qa/project-validation-supervisor";
-import { qaRunLiveOutputPath, qaRunRootPath } from "../qa/project-qa-supervisor";
+import { qaRunLiveOutputPath, qaRunRootPath } from "../qa/project-qa-supervision-files";
 import { overdueHostRun, taskForHostRun } from "./ui-snapshot";
 import { capPaseoTitle } from "../workspaces/workspace-title";
 

@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { writeOwnedJson } from "../machine/owned-file.mjs";
 import { tailWithTruncationMarker } from "../machine/output-retention";
-import { HOST_RUN_CPU_COVERAGE_FILE, parseCpuCoverageSidecar } from "../host-runs/host-run-cpu-coverage";
+import { HOST_RUN_CPU_COVERAGE_FILE, boundSidecarCoverage, parseCpuCoverageSidecar } from "../host-runs/host-run-cpu-coverage";
 import {
   DEFAULT_PROCESS_TERMINATION_GRACE_MS,
   PROCESS_TERMINATION_GRACE_MAX_MS,
@@ -20,6 +20,7 @@ import {
   projectQaStepSchema,
   hostRunResultSchema,
   PROJECT_QA_LOG_WRITE_ERRORS_MAX,
+  type HostRunCpuCoverage,
   type HostRunResult,
 } from "../../shared/contracts";
 
@@ -166,6 +167,18 @@ export const qaSupervisionStateSchema = z.object({
   result: qaSupervisionResultSchema.nullable(),
 }).strict();
 export type QaSupervisionState = z.infer<typeof qaSupervisionStateSchema>;
+
+/**
+ * The Queue-internal CPU reason for a settling result: only from this run's
+ * private sidecar naming the same run, epoch, step and cpuMs. The step is the
+ * one whose process group the result names in this run's own supervision
+ * state; without that state the reason is absent.
+ */
+export function qaSupervisionCpuCoverage(runId: string, state: QaSupervisionState | null, hostResult: HostRunResult | null, sidecar: unknown): HostRunCpuCoverage | undefined {
+  if (!hostResult || hostResult.runId !== runId || state?.runId !== runId) return undefined;
+  const step = state.steps.find(entry => entry.processGroupId === hostResult.pgid)?.name;
+  return boundSidecarCoverage(sidecar, { runId, epoch: hostResult.epoch, ...(step ? { step } : {}), cpuMs: hostResult.cpuMs });
+}
 
 /**
  * The Queue-owned directory holding one repository key's QA runs, checkouts and

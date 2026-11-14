@@ -233,7 +233,7 @@ test('every task checkout-target call site resolves through taskCheckoutTarget',
     ['core/hooks/hooks.ts', 'the integration checkout that lifecycle hooks run against sits at the base'],
     ['core/merge/prospective-merge.ts', 'task 1032 extracted isolated synthetic merge-candidate checkouts from hooks.ts'],
     ['core/workspaces/siblings.ts', 'prerequisite sibling checkouts sit at the base'],
-    ['core/qa/project-qa-supervisor.ts', 'project QA checkouts sit at the QA base'],
+    ['core/qa/project-qa-worktree.ts', 'project QA checkouts sit at the QA base'],
   ]);
   for (const [name, source] of sources) {
     if (!/worktree", "add|checkout", "--detach/.test(source)) continue;

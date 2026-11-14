@@ -8,7 +8,9 @@ import { now } from "../core/store/store";
 import { executeHookProgram, minimalHookEnvironment } from "../core/hooks/hooks";
 import { withRunTemporaryDirectory } from "../core/workspaces/run-scratch";
 import { HOST_RUN_TOKEN_GRACE_MS, hostRunLaunchEnvironment, issueHostRunToken, redactHostRunToken } from "../service/callbacks/host-run-endpoint";
-import { qaSupervisionPaths, readQaCancelRequest, runProjectQaPipeline, runQaTeardownRetry, writeHostRunResult, type QaPipelineRun, type QaPipelineIo, type QaPipelineOutcome } from "../core/qa/project-qa-supervisor";
+import { qaSupervisionPaths, readQaCancelRequest, writeHostRunResult } from "../core/qa/project-qa-supervision-files";
+import { runProjectQaPipeline, type QaPipelineIo, type QaPipelineOutcome, type QaPipelineRun } from "../core/qa/project-qa-pipeline";
+import { runQaTeardownRetry } from "../core/qa/project-qa-teardown";
 
 /** Inline execution belongs to fixtures; service QA always uses its detached supervisor. */
 export class ProjectQaRunner extends DetachedProjectQaRunner {

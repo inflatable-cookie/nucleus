@@ -10,7 +10,7 @@ import type { Task } from "../../shared/contracts";
 import { type Store, digest, now } from "../store/store";
 import { gitText, statusEntries } from "../git/git-snapshot";
 import { gitRaw, formatGitError } from "../git/git-command";
-import { blobDigest, discoverManifest, pinProgram, type ManifestDiscovery } from "./hook-manifest";
+import { blobDigest, discoverManifest, pinProgram } from "./hook-manifest";
 import { hookHoldReason, type HookContext, type HookEmissionResult } from "./hook-context";
 
 /**
