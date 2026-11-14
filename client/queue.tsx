@@ -61,7 +61,7 @@ export function requestBoardTab(tab: BoardTab): void {
  * (`board/header.tsx`), the Pipeline (`board/pipeline.tsx`) and the reads
  * (`board/use-board-data.ts`) live in their own modules.
  */
-export function MainSurface({ theme, layout, navigation, workspaceBoard }: BoardSurfaceProps & { workspaceBoard?: WorkspaceBoardScope }) {
+export function MainSurface({ theme, layout, navigation, workspaceBoard, now }: BoardSurfaceProps & { workspaceBoard?: WorkspaceBoardScope; now?: number }) {
   const workspacePanel = Boolean(workspaceBoard);
   const c = theme.colors;
   const [panelWidth, setPanelWidth] = useState(0);
@@ -396,7 +396,7 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard }: Board
         )}
         {tab === "usage" && (
           <View style={{ flex: 1, minHeight: 0 }}>
-            <UsagePage theme={theme} layout={{ compact }} />
+            <UsagePage theme={theme} layout={{ compact }} now={now} />
           </View>
         )}
         {tab === "queue" && (
