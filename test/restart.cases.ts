@@ -860,6 +860,17 @@ test('a Paseo observation refusal keeps the adapter message', async () => {
     const refused = await f.engine.awaitOperation(retry.operation.id);
     assert.equal(refused.state, 'failed');
     assert.match(refused.diagnostic, /cannot be observed \(Error ECONNREFUSED: connect ECONNREFUSED 127\.0\.0\.1:1\)/);
+    // A numeric code and a non-dotted method are present fields too, so the
+    // refusal keeps them rather than filtering on their shape.
+    f.adapter.observe = async () => { throw Object.assign(new Error('Action refused'), { code: 500, method: 'paseo/observe' }); };
+    const last = f.current();
+    const third = await f.engine.startOperation({ key: 'paseo-shape-restart', kind: 'task_control', taskId: f.taskId,
+      expectedVersion: last.version, payload: { type: 'task_control', control: taskControlInputSchema.parse({
+        taskId: f.taskId, version: last.version, action: 'restart', reason: 'Continue' }) } });
+    assert.ok('accepted' in third);
+    const shaped = await f.engine.awaitOperation(third.operation.id);
+    assert.equal(shaped.state, 'failed');
+    assert.match(shaped.diagnostic, /cannot be observed \(Error 500 paseo\/observe: Action refused\)/);
   } finally { await f.close(); }
 });
 

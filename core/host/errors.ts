@@ -71,21 +71,29 @@ export function sanitizeHostFailureDetail(input: unknown): string | undefined {
  * class name plus its `code` or RPC `method` when the error carries one — and the
  * first line of its message, clipped to 200 characters (planner ruling for brief
  * v2, 2026-11-14: no certification scheme; the refusal goes only to the task
- * owner about their own local host, so the host's own message is shown as it is).
- * The same rule applies to every host: a Paseo `Agent was not found` and a T3
- * `T3Code timeout: orchestration.subscribeThread` both appear verbatim, and so
- * does a system code such as `ECONNREFUSED`.
+ * owner about their own local host, so the host's own words are shown as they are).
+ * The same rule applies to every host: a Paseo `Agent was not found`, a T3
+ * `T3Code timeout: orchestration.subscribeThread`, a system code such as
+ * `ECONNREFUSED` and a numeric or library code all appear as the host wrote them.
  */
 export function hostFailureRefusalDetail(error: unknown): string {
   const record = error && typeof error === 'object' ? error as { name?: unknown; message?: unknown; code?: unknown; method?: unknown } : {};
-  const token = (value: unknown) => typeof value === 'string' && /^[A-Za-z][A-Za-z0-9_.:-]{0,79}$/.test(value) ? value : undefined;
-  const name = token(record.name) ?? 'Error';
-  // A system error's code is a plain token too (ENOENT, ECONNREFUSED, ETIMEDOUT),
-  // so it is kept like any adapter code; only whitespace or free text is dropped.
-  const code = token(record.code);
-  const method = typeof record.method === 'string' && /^[A-Za-z][A-Za-z0-9.]{0,100}$/.test(record.method) ? record.method : undefined;
+  /**
+   * One field of the failure as the amended rule keeps it: a code or method is
+   * present or it is not — no character class decides that — so any string or
+   * number is kept, first line only and clipped to the field's bound.
+   */
+  const held = (value: unknown, limit: number): string | undefined => {
+    const text = typeof value === 'number' && Number.isFinite(value) ? String(value) : value;
+    if (typeof text !== 'string') return undefined;
+    const line = text.split('\n')[0]!.trim();
+    return line ? line.slice(0, limit) : undefined;
+  };
+  const name = held(record.name, 80) ?? 'Error';
+  const code = held(record.code, 80);
+  const method = held(record.method, 80);
   const kind = `${name}${code && code !== name ? ` ${code}` : ''}${method ? ` ${method}` : ''}`;
-  const line = typeof record.message === 'string' ? record.message.split('\n')[0]!.trim().slice(0, 200) : '';
+  const line = held(record.message, 200);
   return line ? `${kind}: ${line}` : kind;
 }
 

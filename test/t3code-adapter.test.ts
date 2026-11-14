@@ -436,14 +436,25 @@ test('a host failure refusal names the kind, the code or method, and the message
   // A Paseo adapter's own messages appear as they are.
   assert.equal(hostFailureRefusalDetail(new Error('Agent was not found')), 'Error: Agent was not found');
   assert.equal(hostFailureRefusalDetail(new Error('Transport timeout')), 'Error: Transport timeout');
-  // A system or library error code is a plain token, so it is kept like an
-  // adapter's own code: an owner can see ECONNREFUSED, ENOENT or ETIMEDOUT.
-  for (const code of ['ECONNREFUSED', 'ENOENT', 'ETIMEDOUT', 'ERR_SOCKET_CLOSED'])
+  // A present code or method is kept, whatever its shape: system codes, numeric
+  // codes, library codes and non-dotted method names all appear as the host
+  // wrote them (no character class decides presence).
+  for (const code of ['ECONNREFUSED', 'ENOENT', 'ETIMEDOUT', 'ERR_SOCKET_CLOSED', '0x80004005', 'not-found: 42', 'connect failed badly'])
     assert.equal(hostFailureRefusalDetail(Object.assign(new Error('connect failed'), { code })),
-      `Error ${code}: connect failed`);
-  // Free text in a code is dropped; only one bounded token is kept.
-  assert.equal(hostFailureRefusalDetail(Object.assign(new Error('connect failed'), { code: 'connect failed badly' })),
-    'Error: connect failed');
+      `Error ${code.split('\n')[0]!.trim().slice(0, 80)}: connect failed`);
+  for (const code of [404, 500])
+    assert.equal(hostFailureRefusalDetail(Object.assign(new Error('request failed'), { code })),
+      `Error ${code}: request failed`);
+  for (const method of ['paseo:agent.observe', 'paseo/observe', 'Agent.Observe'])
+    assert.equal(hostFailureRefusalDetail(Object.assign(new Error('not sent'), { method })),
+      `Error ${method}: not sent`);
+  // Only the first line is kept, and the field is clipped; an absent or empty
+  // field contributes nothing.
+  assert.equal(hostFailureRefusalDetail(Object.assign(new Error('not sent'), { code: 'E_BIG\ntrace line' })),
+    'Error E_BIG: not sent');
+  assert.equal(hostFailureRefusalDetail(Object.assign(new Error('not sent'), { code: 'E'.repeat(120) })),
+    `Error ${'E'.repeat(80)}: not sent`);
+  assert.equal(hostFailureRefusalDetail(Object.assign(new Error('not sent'), { code: '', method: '   ' })), 'Error: not sent');
   // One line, clipped to 200 characters.
   assert.equal(hostFailureRefusalDetail(new Error('first line\n  at [\"text\"]')), 'Error: first line');
   assert.equal(hostFailureRefusalDetail(new Error('x'.repeat(300))), `Error: ${'x'.repeat(200)}`);
