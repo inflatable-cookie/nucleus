@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import type { Task } from "../../shared/contracts";
 import type { Store } from "../store/store";
 import { gitText, statusEntries } from "../git/git-snapshot";
-import { gitRaw, formatGitError } from "../git/git-command";
+import { gitRun, formatGitError } from "../git/git-command";
 import { withIntegrationCheckout } from "../git/index";
 import { requestServiceRollAfterRepositorySync } from "../forge/roll-request";
 import { removeTree } from "../workspaces/tree-removal";
@@ -59,15 +59,15 @@ export class HookCheckouts {
     const common = await gitText(task.repoPath, "rev-parse", "--path-format=absolute", "--git-common-dir");
     if (!isOwnedIsolationPath(path, this.dataDir(), common)) throw new Error("Refusing to remove a checkout outside the Queue-owned isolation root");
     const rootInfo = await lstat(path).catch(() => null);
-    if (!rootInfo) { await gitRaw(task.repoPath, ["worktree", "prune"]); return; }
+    if (!rootInfo) { await gitRun(task.repoPath, ["worktree", "prune"]); return; }
     if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) throw new Error("Queue-owned isolated checkout path is not a real directory");
     const gitMarker = await lstat(join(path, ".git")).catch(() => null);
     if (gitMarker?.isFile()) {
-      const result = await gitRaw(task.repoPath, ["worktree", "remove", ...(force ? ["--force"] : []), path]);
+      const result = await gitRun(task.repoPath, ["worktree", "remove", ...(force ? ["--force"] : []), path]);
       if (result.code !== 0) {
         if (!force) throw new Error(`Isolated checkout removal failed: ${formatGitError(["worktree", "remove", path], result.code, result.signal, result.stderr)}`);
         await removeTree(path);
-        await gitRaw(task.repoPath, ["worktree", "prune"]);
+        await gitRun(task.repoPath, ["worktree", "prune"]);
       }
     } else if (gitMarker?.isDirectory()) {
       // Ignored entries are disposable runtime material in a Queue-owned

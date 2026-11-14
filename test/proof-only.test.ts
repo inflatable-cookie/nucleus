@@ -227,7 +227,7 @@ test('every task checkout-target call site resolves through taskCheckoutTarget',
   // Git commands that place a checkout appear only in files whose checkout
   // targets are documented here. A new call site must either provision task
   // checkouts through the helper or justify its own target in this list.
-  const taskProvisioning = ['core/workspaces/workspace-allocation.ts', 'core/git/index.ts'];
+  const taskProvisioning = ['core/workspaces/workspace-allocation.ts', 'core/git/git-dispatch.ts'];
   const otherTargets = new Map([
     ['core/workspaces/workspace-lifecycle.ts', 'recoverTaskWorkspace re-adds a worker checkout at the accepted PR head'],
     ['core/hooks/hooks.ts', 'the integration checkout that lifecycle hooks run against sits at the base'],
@@ -248,7 +248,9 @@ test('every task checkout-target call site resolves through taskCheckoutTarget',
   }
   // verifyWorkspace resolves the proof-only checkout target before any
   // planning-base handling can move the checkout.
-  const gitSource = sources.get('core/git/index.ts')!;
+  // The dispatch proofs own the checkout placement after the git split: the
+  // folder's public index is a re-export barrel with no code of its own.
+  const gitSource = sources.get('core/git/git-dispatch.ts')!;
   const body = gitSource.slice(gitSource.indexOf('export async function verifyWorkspace'));
   const proofBranch = body.indexOf('if (task.proofOnly)');
   assert.ok(proofBranch >= 0, 'verifyWorkspace must carry a proof-only checkout resolution');

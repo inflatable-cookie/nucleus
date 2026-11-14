@@ -9,7 +9,7 @@ import {
 import type { Task } from "../../shared/contracts";
 import { type Store, digest, now } from "../store/store";
 import { gitText, statusEntries } from "../git/git-snapshot";
-import { gitRaw, formatGitError } from "../git/git-command";
+import { gitRun, formatGitError } from "../git/git-command";
 import { blobDigest, discoverManifest, pinProgram } from "./hook-manifest";
 import { hookHoldReason, type HookContext, type HookEmissionResult } from "./hook-context";
 
@@ -233,7 +233,7 @@ export class HookRetentionGate {
     let baseCommit: string;
     try { baseCommit = await gitText(current.repoPath, "rev-parse", `refs/heads/${current.baseBranch}`); }
     catch { throw new Error(`Retention reconciliation cannot read the current refs/heads/${current.baseBranch} commit`); }
-    if ((await gitRaw(current.repoPath, ["merge-base", "--is-ancestor", mergedCommit, baseCommit])).code !== 0)
+    if ((await gitRun(current.repoPath, ["merge-base", "--is-ancestor", mergedCommit, baseCommit])).code !== 0)
       throw new Error("Retention reconciliation requires the merged commit to be an ancestor of the current integration base");
     // A failed integration-base reconciliation is history, not the original
     // retained declaration's identity. Keep the immutable task-head occurrence
@@ -304,7 +304,7 @@ export class HookRetentionGate {
     if (!record.retentionReconciliation || record.program.kind !== "repository") return null;
     const pin = record.program.executable;
     if (pin.commit !== record.baseCommit) throw new Error("the pinned hook program is not at the reconciled integration base");
-    const blob = await gitRaw(task.repoPath, ["cat-file", "-p", `${record.baseCommit}:${pin.path}`]);
+    const blob = await gitRun(task.repoPath, ["cat-file", "-p", `${record.baseCommit}:${pin.path}`]);
     if (blob.code !== 0) throw new Error(`the pinned hook program is missing at the reconciled base: ${formatGitError(["cat-file", "-p", `${record.baseCommit}:${pin.path}`], blob.code, blob.signal, blob.stderr)}`);
     if (blobDigest(blob.stdout) !== pin.digest) throw new Error("the hook program at the reconciled base differs from the pinned digest");
     const dir = await mkdtemp(join(tmpdir(), "nsq-retention-program-"));

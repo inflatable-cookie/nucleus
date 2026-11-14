@@ -8,7 +8,7 @@ import {
   MANIFEST_MAX_BYTES, HOOK_MANIFEST_PATH, controlManifestSchema, normalizeControlManifest, normalizeRepoRelativePath,
   type HookProgram, type HookProgramPin, type ControlManifest, type NormalizedControlManifest, type HookPin, type InstructionArtifact,
 } from "../../shared/hooks";
-import { gitRaw, formatGitError } from "../git/git-command";
+import { gitRun, formatGitError } from "../git/git-command";
 
 const CONTROL_SCHEMAS = [CONTROL_SCHEMA, CONTROL_SCHEMA_V2, CONTROL_SCHEMA_V3, CONTROL_SCHEMA_V4, CONTROL_SCHEMA_V5, CONTROL_SCHEMA_V6, CONTROL_SCHEMA_V7] as const;
 
@@ -37,7 +37,7 @@ async function readTreeEntry(repoPath: string, commit: string, path: string): Pr
 }
 
 async function loadTreeEntry(repoPath: string, commit: string, path: string): Promise<TreeEntry | null> {
-  const listing = await gitRaw(repoPath, ["ls-tree", commit, "--", path]);
+  const listing = await gitRun(repoPath, ["ls-tree", commit, "--", path]);
   if (listing.code !== 0) throw new Error(formatGitError(["ls-tree"], listing.code, listing.signal, listing.stderr));
   const line = listing.stdout.toString("utf8").trim();
   if (!line) return null;
@@ -46,7 +46,7 @@ async function loadTreeEntry(repoPath: string, commit: string, path: string): Pr
   const match = rows[0].match(/^(\d{6}) (blob|tree|commit) ([a-f0-9]{40})\t(.+)$/);
   if (!match || match[4] !== path) return null;
   const [, mode, type, sha] = match;
-  const blob = type === "blob" ? await gitRaw(repoPath, ["cat-file", "blob", sha]) : { code: 0, stdout: Buffer.alloc(0), stderr: "" };
+  const blob = type === "blob" ? await gitRun(repoPath, ["cat-file", "blob", sha]) : { code: 0, stdout: Buffer.alloc(0), stderr: "" };
   if (blob.code !== 0) throw new Error(formatGitError(["cat-file", "blob", sha], blob.code, blob.signal, blob.stderr));
   return { mode, type, sha, bytes: blob.stdout };
 }

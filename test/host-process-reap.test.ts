@@ -16,9 +16,12 @@ import {
   HOST_PROCESS_SWEEP_KIND, HOST_PROCESS_SWEEP_SETTLED_KIND,
   HOST_PROCESS_SWEEP_PASEO_SKIPPED_KIND,
   formatHostProcessSweepEvent, hostProcessSweepIntent,
-  listHostUidProcesses, ownedToolAgentProcessTreeVerdict, ownedToolProcessTreeVerdict, reapHostProcesses, selectHostProcessTargets, sweepTaskHostProcesses, terminateHostProcessTargets,
-  type HostProcessFact, type HostProcessTarget,
+  reapHostProcesses, sweepTaskHostProcesses, terminateHostProcessTargets,
 } from "../core/machine/host-process-reap";
+import { selectHostProcessTargets, type HostProcessTarget } from "../core/machine/host-process-select";
+import { readHostUidProcesses } from "../core/machine/host-process-listing";
+import { ownedToolAgentProcessTreeVerdict, ownedToolProcessTreeVerdict } from "../core/machine/owned-tool-process-proof";
+import type { HostProcessFact } from "../core/host/types";
 import type { Engine } from "../core/engine";
 
 const GRACE_MS = 80;
@@ -249,7 +252,8 @@ function stopTrackedFixtureChild(pid: number | null): void {
  */
 async function liveFixtureChildrenOf(pid: number): Promise<number[]> {
   if (!Number.isSafeInteger(pid) || pid <= 0) return [];
-  const facts = await listHostUidProcesses();
+  const read = await readHostUidProcesses();
+  const facts = read.state === "listed" ? read.processes : null;
   if (!facts) return [];
   return facts.filter(fact => fact.ppid === pid && (fact.command ?? "").includes("setInterval(() => {}, 1000)")).map(fact => fact.pid);
 }
@@ -428,7 +432,8 @@ function spawnOrphanSleeper(cwd: string, childPidPath: string): ChildProcess {
 
 async function waitForProcessFact(pid: number, predicate: (fact: HostProcessFact) => boolean, timeoutMs: number, label: string): Promise<void> {
   await waitFor(async () => {
-    const fact = (await listHostUidProcesses())?.find(entry => entry.pid === pid);
+    const read = await readHostUidProcesses();
+    const fact = (read.state === 'listed' ? read.processes : []).find(entry => entry.pid === pid);
     return Boolean(fact && predicate(fact));
   }, timeoutMs, label);
 }
@@ -615,6 +620,41 @@ test("a detached child in a recorded pgid is terminated even outside the worktre
   assert.ok(store.events(task.id).some(event => event.kind === HOST_PROCESS_SWEEP_KIND && event.detail.includes(`pid=${childPid}`)));
 });
 
+test("an unreadable process table is an unknown sweep, never an empty one", async t => {
+  const root = await mkdtemp(join(tmpdir(), "nsq-reap-unknown-"));
+  const worktree = join(root, "task");
+  await mkdir(worktree);
+  const storeDir = await mkdtemp(join(tmpdir(), "nsq-reap-unknown-store-"));
+  t.after(() => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
+  t.after(() => rm(storeDir, { recursive: true, force: true }));
+  const store = new Store(join(storeDir, "queue.sqlite"));
+  t.after(() => store.close());
+  const task = insertTerminal(store, worktree, "done");
+
+  // A table the read could not make proves nothing: the result says which read
+  // failed, nothing is reported as stopped, and the durable intent stays owed
+  // so a later pass re-reads it.
+  const missing = await reapHostProcesses({ directory: worktree, processes: null, graceMs: GRACE_MS });
+  assert.deepEqual(missing.terminated, []);
+  assert.equal(missing.unavailable?.read, "process-listing");
+  const unreadable = await sweepTaskHostProcesses(store, task, { processes: null, graceMs: GRACE_MS });
+  assert.equal(unreadable.unavailable?.read, "process-listing");
+  assert.equal(store.task(task.id).resolution.hostProcessSweep !== null, true, "the owed sweep stays owed");
+  assert.match(store.eventsAll(task.id).find(event => event.kind === "host_process_sweep_warning")!.detail, /unavailable/);
+
+  // A table with no readable cwd column cannot scope a worktree sweep either,
+  // and reads as its own fact rather than as "no leftover processes".
+  const noCwd = await reapHostProcesses({ directory: worktree, graceMs: GRACE_MS,
+    processes: [{ pid: 4_000_001, ppid: 1, pgid: 4_000_001, uid: 501, startIdentity: "4000001@a", command: "sleep 10", cwd: null }] });
+  assert.deepEqual(noCwd.terminated, []);
+  assert.equal(noCwd.unavailable?.read, "cwd-listing");
+
+  // A readable, empty table is a real empty pass: it settles the intent.
+  const empty = await sweepTaskHostProcesses(store, task, { processes: [], graceMs: GRACE_MS });
+  assert.equal(empty.unavailable, null);
+  assert.equal(store.task(task.id).resolution.hostProcessSweep, null);
+});
+
 test("a process outside the worktree is left running", async t => {
   const root = await mkdtemp(join(tmpdir(), "nsq-reap-out-"));
   const worktree = join(root, "task");
@@ -722,8 +762,8 @@ test("macOS host discovery keeps the event loop responsive while ps/lsof run", {
   let ticked = false;
   const timer = setTimeout(() => { ticked = true; }, 0);
   try {
-    const facts = await listHostUidProcesses();
+    const read = await readHostUidProcesses();
     assert.equal(ticked, true, "OS discovery must not block a queued timer");
-    assert.ok(facts?.some(fact => fact.pid === process.pid), "current process is retained in discovery");
+    assert.ok(read.state === 'listed' && read.processes.some(fact => fact.pid === process.pid), "current process is retained in discovery");
   } finally { clearTimeout(timer); }
 });

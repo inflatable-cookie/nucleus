@@ -1118,4 +1118,6 @@ export class Store {
   putThreadArchiveEffect<T extends { status: string; at: string }>(key: string, _agentId: string, effect: T): void { return this.threadEffects.putArchiveEffect(key, effect); }
   threadArchiveEffect(agentId: string, hostId?: string | null): { status?: string } | undefined { return this.threadEffects.archiveEffect(agentId, hostId); }
   retireThreadScratch(taskId: string, agentId: string): number { return this.threadEffects.retireScratch(taskId, agentId); }
+  /** Finished tasks on this host whose threads still owe an archive or removal; `store-thread-effects.ts` owns the keys. */
+  finishedTasksOwingThreadCleanup(hostId: string, removal: boolean): Task[] { return this.threadEffects.finishedTasksOwingCleanup(hostId, removal); }
 }

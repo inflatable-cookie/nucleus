@@ -3,7 +3,7 @@ import { defaultHostRunStateDir } from "../../core/host-runs/host-run-files";
 import { HOST_RUN_TOKEN_GRACE_MS } from "../../core/host-runs/host-run-endpoint-types";
 import { hostRunLaunchEnvironment } from "../../core/host-runs/host-run-wire";
 import { issueHostRunToken, redactHostRunToken } from "../../core/host-runs/host-run-token";
-import { ProcessTreeCpuSampler } from "../../core/machine/process-group";
+import { ProcessTreeCpuSampler } from "../../core/machine/process-tree-cpu";
 import { hostRunProcessStartIdentity } from "../../core/machine/start-identity";
 import { hostRunCpuCoverageSidecar } from "../../core/host-runs/host-run-cpu-coverage";
 import { realpathSync } from "node:fs";

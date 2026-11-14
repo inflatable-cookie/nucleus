@@ -14,7 +14,7 @@ import {
 } from "../../shared/contracts";
 import type { ExecutionOutcome } from "../machine/process-exec";
 import { boundSidecarCoverage, hostRunCpuCoverageSidecar, type HostRunCpuCoverageSidecar } from "../host-runs/host-run-cpu-coverage";
-import { type ProcessTreeCpu } from "../machine/process-group";
+import { type ProcessTreeCpu } from "../machine/process-tree-cpu";
 import { hostRunProcessStartIdentity } from "../machine/start-identity";
 import { openLiveOutputLog } from "../machine/live-output";
 import { FAILURE_FIRST_RETENTION_NOTE, boundedHeadTail, streamTruncation, type StreamTruncation } from "../machine/output-retention";

@@ -155,7 +155,20 @@ owner to the rules it enforces.
   through `core/resolution.ts`. `core/dispatch/retained-work.ts` reads the retained
   author's receipted results.
 - `core/machine/owned-tool.ts` proves no live tool holds a run and records the
-  `owned_tool_*` events. `Resolution.ownedToolHold` delegates to it.
+  `owned_tool_*` events. It decides on the typed tool-issue facts in
+  `core/recovery/stall.ts` and on `core/machine/owned-tool-process-proof.ts`,
+  which owns the provider-runtime and descendant proof and answers with its own
+  reason code. `Resolution.ownedToolHold` delegates to it.
+- `core/machine/` keeps one owner per process mechanism:
+  `host-process-listing.ts` reads the host process table and answers `unknown`
+  with its reason rather than an empty list, `host-process-select.ts` makes the
+  pure target decision (worktree cwd or a proven recorded group, with Queue,
+  Paseo and its daemon protected), `host-process-reap.ts` stops a selected
+  target once and records the sweep, `process-host-reads.ts` owns the Darwin
+  `ps` reads and parsers, `process-identity-search.ts` answers which processes
+  carry a group identity and whether a pid still has the recorded one,
+  `process-group.ts` owns group custody and its one signal, and
+  `process-tree-cpu.ts` owns the sampled CPU lower bound.
 - `core/review/pr-adoption.ts` binds an existing PR to a task: identity only under an
   authenticated block, otherwise dead-revision recovery, initial reconciliation
   or replacement. `Resolution` keeps `recordBlockedPrIdentity` and
@@ -392,7 +405,12 @@ owner to the rules it enforces.
   cadence and the lifecycle-signal invalidations that make an identity due early.
   `core/workspaces/retired-agent-archive.ts` archives retired errored agents so a
   Paseo workspace stops reporting Failed, and records each unreadable read and
-  refused archive on the thread-archive wait lane.
+  refused archive on the thread-archive wait lane. The thread lanes are
+  `core/workspaces/thread-archive.ts` (closeout and the durable completion
+  marker), `thread-archive-replacement.ts` (a replaced reviewer or a routed
+  superseded worker), `thread-archive-effect.ts` (the observe-then-deliver-once
+  record) and `thread-ownership.ts` (who owns a thread, whether it still serves
+  another live task, and the archive-or-remove operation).
 - `core/planning/operations.ts` accepts, schedules, runs and settles durable
   operations and holds the source-promotion, lead-check and re-key handlers.
   `core/planning/operation-failure.ts` classifies a failed run from its re-read
@@ -541,8 +559,16 @@ owner to the rules it enforces.
   the injected load and process probes. A host adapter keeps those names as
   late-bound delegates, so an instance override still wins and a synthetic
   adapter that omits a probe observes none.
-- `core/git/index.ts`, `core/git/git-identity.ts` and `core/git/git-fetch.ts` verify
-  repository identity and perform gated Git effects. Exact-head identity is read
+- `core/git/` keeps one owner per Git mechanism behind its public entry point
+  (`core/git/index.ts`, a re-export barrel): `git-command.ts` is the one `git`
+  and `gh` runner, its failure classes and the tri-state ancestry reads,
+  `git-checkout.ts` the one clean-checkout filter and the worker checkout's
+  branch, `git-submission.ts` submission and published-planning proofs,
+  `git-dispatch.ts` the integration checkout and the dispatch, base, workspace,
+  resume, checkpoint and replacement proofs, `git-stash.ts` the read-only stash
+  forensics, and `git-proof.ts` the PR and published-source proofs.
+  `core/git/git-identity.ts` and `core/git/git-fetch.ts` verify
+  repository identity and serialize fetches. Exact-head identity is read
   from the filesystem; working-tree walks are async git so they delay the calling
   task, not the executor's other work. Fetches serialize per common Git
   directory. `core/forge/index.ts` performs gated GitHub effects. A required check
@@ -582,7 +608,7 @@ owner to the rules it enforces.
   `core/hooks/hook-context.ts` owns the hook context and result types plus the
   record and hold-reason codecs.
   These modules never import `core/hooks/hooks.ts`;
-  `core/git/index.ts` reads manifests directly from the manifest leaf.
+  `core/git/git-submission.ts` reads manifests directly from the manifest leaf.
   Every stored occurrence carries its immutable event payload
   ([repository hooks](contracts/repository-hooks.md),
   [Spec 001](specs/001-generic-repository-hooks.md),

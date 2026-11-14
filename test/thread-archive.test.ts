@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Store, qualifiedThreadArchiveEffectKey } from '../core/store/store';
-import { archiveFinishedThreads, archiveReplacedReviewer, archiveSupersededWorkers, finishedThreadCleanupCatchUp, finishedThreadCleanupKey } from '../core/workspaces/thread-archive';
+import { archiveFinishedThreads, finishedThreadCleanupCatchUp, finishedThreadCleanupKey } from '../core/workspaces/thread-archive';
+import { archiveReplacedReviewer, archiveSupersededWorkers } from '../core/workspaces/thread-archive-replacement';
+import { threadBoundToAnotherLiveTask, threadOperation, threadServesAnotherTask } from '../core/workspaces/thread-ownership';
 import { dispositionSchema } from '../shared/contracts';
 import { profileSchema, submissionSchema, type Run } from '../shared/contracts';
 import type { Adapter } from '../core/host';
@@ -570,5 +572,64 @@ test('a superseded worker waits while its run is unreleased or its turn is still
     ownedAndIdle(f);
     await archiveSupersededWorkers(f.store, f.t3Adapter, f.task.id);
     assert.deepEqual(f.calls, ['old-worker'], 'the released, idle thread is archived once its run ends');
+  } finally { f.close(); }
+});
+
+test('the operation a task owes a thread is the ownership owner\'s decision, whatever the label shape', () => {
+  const workers = new Set(['w']);
+  // The worker's own thread stays as history; every other identity is support.
+  assert.equal(threadOperation('w', undefined, workers, true), 'archive');
+  assert.equal(threadOperation('r', undefined, workers, true), 'delete');
+  // A host that cannot remove a thread archives its support threads too.
+  assert.equal(threadOperation('r', undefined, workers, false), 'archive');
+  // A stored role label wins over the run history, and worker/revision are workers.
+  assert.equal(threadOperation('x', { [WIRE_LABEL_KEYS.role]: 'worker' }, workers, true), 'archive');
+  assert.equal(threadOperation('x', { [WIRE_LABEL_KEYS.role]: 'revision' }, workers, true), 'archive');
+  assert.equal(threadOperation('x', { [WIRE_LABEL_KEYS.role]: 'reviewer' }, workers, true), 'delete');
+  assert.equal(threadOperation('x', { 'northstar.role': 'recovery' }, workers, true), 'delete');
+});
+
+test('a thread another live task binds is not this task\'s to archive; a finished one never binds it', () => {
+  const f = fixture(); try {
+    const other = f.store.insert(submissionSchema.parse({ submissionId: randomUUID(), title: 'Other', repoPath: '/repo',
+      planningCommit: 'a'.repeat(40), handoffPath: 'handoff.md', originAgentId: 'origin' }), 'host', 'handoff', 'a'.repeat(40));
+    const live = f.store.update(other.id, { phase: 'working', agentId: 'shared-thread' });
+    assert.equal(threadBoundToAnotherLiveTask(f.store, f.task, 'shared-thread'), true);
+    assert.equal(threadServesAnotherTask(f.store, f.task, 'shared-thread'), true);
+    // A thread that still carries an unreleased run serves it, wherever it came from.
+    f.store.putRun({ ...f.run('reviewer', 'free-thread'), released: false, status: 'running' });
+    assert.equal(threadServesAnotherTask(f.store, f.task, 'free-thread'), true);
+
+    f.store.update(live.id, { phase: 'done' });
+    assert.equal(threadBoundToAnotherLiveTask(f.store, f.task, 'shared-thread'), false);
+    assert.equal(threadBoundToAnotherLiveTask(f.store, f.task, 'free-thread'), false);
+  } finally { f.close(); }
+});
+
+test('the catch-up query owes a support removal even after its archive, and nothing once both effects match', () => {
+  const f = fixture(); try {
+    ownedAndIdle(f);
+    const worker = f.run('revision', 'revision-worker'); f.store.putRun(worker);
+    const reviewer = f.run('reviewer', 'support-reviewer'); f.store.putRun(reviewer);
+    f.store.update(f.task.id, { phase: 'done', resolution: { ...f.store.task(f.task.id).resolution, mergedCommit: 'c'.repeat(40) } });
+    const workerKeys = ['worker', 'revision-worker'].map(agentId => f.store.threadArchiveKey(agentId, 'host')!);
+    const supportKey = f.store.threadArchiveKey('support-reviewer', 'host')!;
+
+    assert.deepEqual(finishedThreadCleanupCatchUp(f.store, 'host', true).map(task => task.id), [f.task.id]);
+    assert.deepEqual(finishedThreadCleanupCatchUp(f.store, 'other-host', true), [], 'another host owes nothing here');
+
+    for (const key of workerKeys) f.store.putThreadArchiveEffect(key, 'worker', { status: 'archived', at: 'now', op: 'archive' });
+    assert.deepEqual(finishedThreadCleanupCatchUp(f.store, 'host', true).map(task => task.id), [f.task.id],
+      'the support thread still owes its removal');
+
+    // An archive of the support thread is not the removal the task owes.
+    f.store.putThreadArchiveEffect(supportKey, 'support-reviewer', { status: 'archived', at: 'now', op: 'archive' });
+    assert.deepEqual(finishedThreadCleanupCatchUp(f.store, 'host', true).map(task => task.id), [f.task.id]);
+
+    f.store.putThreadArchiveEffect(supportKey, 'support-reviewer', { status: 'archived', at: 'now', op: 'delete' });
+    assert.deepEqual(finishedThreadCleanupCatchUp(f.store, 'host', true), []);
+    // A removal record is not the archive a host without removal would owe, and
+    // only a host that can remove a thread ever writes one.
+    assert.deepEqual(finishedThreadCleanupCatchUp(f.store, 'host', false).map(task => task.id), [f.task.id]);
   } finally { f.close(); }
 });

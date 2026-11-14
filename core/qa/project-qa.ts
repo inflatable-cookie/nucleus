@@ -86,7 +86,8 @@ import { missingSiblingCheckout, siblingMembers, siblingNameFor } from "../works
 import { dependencyLinkPaths, gitText, resolveSiblingSource, worktreeSiblingSpecs, type ConfiguredCheckout } from "../workspaces/worktree-links";
 import { findGitWorktreeAdd, findProcessByCommandToken } from "../machine/process-identity";
 import { parseWorktreeList, repoCommonDir } from "../workspaces/workspace-allocation";
-import { processGroupEmpty, processStartIdentityLiveness } from "../machine/process-group";
+import { processGroupEmpty } from "../machine/process-group";
+import { processStartIdentityLiveness } from "../machine/process-identity-search";
 import {
   parseProjectQaWorktreeHooks,
   projectQaWorktreeHooks,

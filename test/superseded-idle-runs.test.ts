@@ -22,7 +22,8 @@ import { Engine } from '../core/engine';
 import { runSchema, submissionSchema, taskControlInputSchema, type Run, type Task } from '../shared/contracts';
 import type { Adapter, AgentObservation } from '../core/host';
 import { toolTimelinePage } from './support/tool-timeline';
-import type { HostProcessFact } from '../core/machine/host-process-reap';
+import type { HostProcessFact } from '../core/host/types';
+import { decodeOwnedToolDetail } from '../core/machine/owned-tool';
 import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
 
 const head = 'a'.repeat(40), base = 'b'.repeat(40);
@@ -284,6 +285,25 @@ test('a live turn keeps the provider own tool runtimes as descendants and an unr
     assert.match((await proof())!, /is running/, 'a live turn keeps the provider runtimes as descendants');
     f.observe('review-turn', { activeTurnId: null });
     assert.equal(await proof(), null, 'a positively finished turn settles the idle runtimes');
+  } finally { await f.close(); }
+});
+
+test('an owned-tool detail that is not a run id is skipped instead of read as one', () => {
+  assert.deepEqual(decodeOwnedToolDetail(JSON.stringify({ runId: 'run-1', reason: 'hold' })), { runId: 'run-1' });
+  for (const detail of ['not json', JSON.stringify({ runId: 42 }), JSON.stringify({ reason: 'hold' }), JSON.stringify({ runId: '' })])
+    assert.equal(decodeOwnedToolDetail(detail), null, detail);
+});
+
+test('a stale hold history settles through its newest decodable record, whatever else the log holds', async () => {
+  const f = fixture();
+  try {
+    f.observe('owner', { activeTurnId: null });
+    f.store.event(f.taskId, 'owned_tool_hold', JSON.stringify({ runId: 'shell-run', reason: 'earlier hold' }));
+    f.store.event(f.taskId, 'owned_tool_hold', 'not json at all');
+    f.timelineEntries.push({ timestamp: '2026-11-05T19:50:00.000Z', item: { type: 'tool_call', callId: 'call', name: 'Bash', status: 'running', detail: { type: 'shell', command: 'git status' } } });
+    f.setHostProcesses(providerRuntimeTree('shell-run'));
+    assert.equal(await f.engine.resolution.ownedToolHold('owner', { taskId: f.taskId, runId: 'shell-run', runIds: ['shell-run'], workspaceId: 'ws' }), null);
+    assert.equal(f.events('owned_tool_settled').length, 1);
   } finally { await f.close(); }
 });
 

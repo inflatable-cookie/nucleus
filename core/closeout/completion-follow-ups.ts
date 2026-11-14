@@ -4,7 +4,7 @@ import type { Resolution } from '../resolution';
 import type { GitTransientEpisode } from '../git/git-transient-backoff';
 import { dispatchBlocked, occupiesSlot } from '../dispatch/capacity';
 import { settlementHeld } from './queue-drain';
-import { archiveProbeKey } from '../workspaces/thread-archive';
+import { archiveProbeKey } from '../workspaces/thread-archive-effect';
 
 export type CompletionFollowUpsContext = Pick<Engine, 'cleanContext' | 'enqueueCleanup' | 'scheduleCompletionFollowUp' | 'scheduleLifecycleFollowUp' | 'scheduleRunBuildOutputs' | 'scheduleTerminalArchiveRetry' | 'stopped' | 'store' | 'terminalThreadsPending' | 'transientKey' | 'wakeCapacityWaiter' | 'wakeIntegrationSuccessor' | 'wakeTask'> & {
   readonly resolution: Pick<Resolution, 'holdsIntegrationTurn' | 'integrationActive'>;

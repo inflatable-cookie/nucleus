@@ -5,7 +5,7 @@ import type { ExecutionOutcome } from "../machine/process-exec";
 import { executeHookProgram } from "../machine/process-exec";
 import { minimalHookEnvironment } from "../hooks/hook-result";
 import { withRunTemporaryDirectory } from "../workspaces/run-scratch";
-import { ProcessTreeCpuSampler, type ProcessTreeCpu } from "../machine/process-group";
+import { ProcessTreeCpuSampler, type ProcessTreeCpu } from "../machine/process-tree-cpu";
 import { defaultHostRunStateDir } from "../host-runs/host-run-files";
 import { HOST_RUN_TOKEN_GRACE_MS } from "../host-runs/host-run-endpoint-types";
 import { hostRunLaunchEnvironment } from "../host-runs/host-run-wire";

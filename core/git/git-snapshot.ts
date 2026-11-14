@@ -3,21 +3,21 @@ import { copyFile, lstat, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { normalizeRepoRelativePath, pathIsAllowed, type MergeCandidate } from "../../shared/hooks";
-import { isOsMetadataPath, isQueueRetainedNodeModulesLink } from "./index";
-import { gitRaw, formatGitError } from "./git-command";
+import { isOsMetadataPath, isQueueRetainedNodeModulesLink } from "./git-checkout";
+import { gitRun, formatGitError } from "./git-command";
 
 /** Prefix of the per-invocation scratch index the read-only baseline snapshots through. */
 export const SCRATCH_INDEX_PREFIX = "nucleus-index-";
 
 export async function gitText(cwd: string, ...args: string[]): Promise<string> {
-  const result = await gitRaw(cwd, args);
+  const result = await gitRun(cwd, args);
   if (result.code !== 0) throw new Error(formatGitError(args, result.code, result.signal, result.stderr));
   return result.stdout.toString("utf8").trim();
 }
 
 /** Git text with an explicit extra environment, used for deterministic synthetic commits. */
 export async function gitTextEnv(cwd: string, env: Record<string, string>, ...args: string[]): Promise<string> {
-  const result = await gitRaw(cwd, args, undefined, env);
+  const result = await gitRun(cwd, args, undefined, env);
   if (result.code !== 0) throw new Error(formatGitError(args, result.code, result.signal, result.stderr));
   return result.stdout.toString("utf8").trim();
 }
@@ -46,7 +46,7 @@ export function parsePorcelain(bytes: Buffer): StatusEntry[] {
  * exhaustive either way.
  */
 export async function statusEntries(root: string, includeIgnored = true): Promise<StatusEntry[]> {
-  const result = await gitRaw(root, ["status", "--porcelain=v1", "-z", ...(includeIgnored ? ["--ignored=matching"] : []), "--untracked-files=all"]);
+  const result = await gitRun(root, ["status", "--porcelain=v1", "-z", ...(includeIgnored ? ["--ignored=matching"] : []), "--untracked-files=all"]);
   if (result.code !== 0) throw new Error(formatGitError(["status"], result.code, result.signal, result.stderr));
   const entries = parsePorcelain(result.stdout);
   return entries.filter(entry => {
@@ -58,7 +58,7 @@ export async function statusEntries(root: string, includeIgnored = true): Promis
 
 /** Read comparison-only status without refreshing or locking the shared index. */
 async function snapshotStatusEntries(root: string): Promise<StatusEntry[]> {
-  const result = await gitRaw(root, ["--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+  const result = await gitRun(root, ["--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=all"]);
   if (result.code !== 0) throw new Error(formatGitError(["status"], result.code, result.signal, result.stderr));
   return parsePorcelain(result.stdout).filter(entry => !(((entry.index === "?" || entry.worktree === "?") || entry.ignored) && isOsMetadataPath(entry.path)));
 }
@@ -191,11 +191,11 @@ export async function inspectChangedPaths(root: string, declared: string[], allo
     const info = await lstat(join(root, path)).catch(() => null);
     if (info && !info.isFile()) throw new Error(`Changed path is not a regular file: ${path}`);
     if (!info) {
-      const entryInfo = await gitRaw(root, ["ls-tree", "HEAD", "--", path]);
+      const entryInfo = await gitRun(root, ["ls-tree", "HEAD", "--", path]);
       const mode = entryInfo.stdout.toString("utf8").trim().match(/^(\d{6}) blob /)?.[1];
       if (!mode || !/^100(644|755)$/.test(mode)) throw new Error(`Deleted path was not a regular committed file: ${path}`);
     }
-    if ((await gitRaw(root, ["ls-files", "--stage", "--", path])).stdout.toString("utf8").startsWith("160000")) throw new Error(`Submodule changes are rejected: ${path}`);
+    if ((await gitRun(root, ["ls-files", "--stage", "--", path])).stdout.toString("utf8").startsWith("160000")) throw new Error(`Submodule changes are rejected: ${path}`);
     actual.add(path);
   }
   const paths = [...actual].sort();
