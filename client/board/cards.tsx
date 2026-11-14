@@ -11,7 +11,7 @@ import { phaseBadgeTone, recordBadgeTone } from "../../shared/badge-tones";
 import { waitStateLabels } from "../../shared/wait-state";
 import { isWaitingTaskStop, taskStopClassification } from "../../shared/task-stop";
 import { hostDisplayLabel } from "../../shared/host-outage";
-import { decisionAge } from "../../shared/pipeline-board";
+import { decisionAge, phaseNeedsAttention } from "../../shared/pipeline-board";
 import { UNKNOWN_ASKER_LABEL, decisionProjectLabel, isGeneralDecision } from "../../shared/decision-project";
 import { taskWaitCardLabel } from "../../shared/task-detail-summary";
 import { projectName, plainCardText, plainCardNode, phaseLabel, phaseIcon, attention, holdKindLabel, presentHoldKinds, stopBadgeLabel, prerequisiteLine, holdReasonPreview, budgetFields, interactiveBadgeLabel, elapsedRun, longShellCommandStart } from "./text";
@@ -135,7 +135,7 @@ export const TaskCard = React.memo(function TaskCard({task,selected,onPress,prSt
     : task.headline ? <Text numberOfLines={2} ellipsizeMode="tail" style={{ color: c.foregroundMuted, fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>{task.headline}</Text>
     : <Text numberOfLines={2} ellipsizeMode="tail" style={{ color: c.foregroundMuted, fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>{task.reason}</Text>;
   // The stop badge is suppressed where the phase line already says it, so it does not count toward the chips row.
-  const showStopBadge = Boolean(stopLabel) && !stopWait && !stopHeld && !(task.stop==='attention'&&['needs_attention','blocked','error'].includes(task.phase));
+  const showStopBadge = Boolean(stopLabel) && !stopWait && !stopHeld && !(task.stop==='attention'&&phaseNeedsAttention(task.phase));
   const hasChips = Boolean(parked||decisions||task.parked||task.pausedStop||interactiveLabel||task.waitState||holdKinds.length||showStopBadge||budgetExhausted);
   const hasFooter = task.queuePriority>0 || task.dependsOn.length>0 || Boolean(task.prUrl);
   const stopA11y = stopRecord ? stopWait ? `Waiting: ${stopDetail}` : stopHeld ? `Held: ${stopDetail}` : `Needs attention: ${stopDetail}; next owner ${attentionOwner}` : "";

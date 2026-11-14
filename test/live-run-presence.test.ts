@@ -37,7 +37,7 @@ import { projectValidationSupervisorPaths } from "../core/qa/project-validation-
 import {
   qaRunLiveOutputPath,
   qaRunRootPath,
-} from "../core/qa/project-qa-supervisor";
+} from "../core/qa/project-qa-supervision-files";
 import type {
   HostRunInternalRecord,
   ProjectQaRun,

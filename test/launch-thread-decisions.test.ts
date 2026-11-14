@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   executorThreadDecision, reviewerThreadDecision, reviewerRoundEligible,
   type ExecutorThreadFacts, type LaunchThreadDecision, type ReviewerThreadFacts,
-} from '../core/dispatch/run-launch/thread';
+} from '../core/dispatch/run-launch/thread-decisions';
 import { revisionRunPlan, type RevisionRunFacts, type RevisionRunPlan } from '../core/dispatch/run-launch/source';
 
 test('executorThreadDecision outcomes', () => {

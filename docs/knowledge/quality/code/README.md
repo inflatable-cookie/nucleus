@@ -24,7 +24,8 @@ Calibration, distribution, recurring defect classes and the target are in [SUMMA
 A PR that splits, consolidates or deletes a rated module updates its rows here. It removes or replaces
 the old row, adds a row per new module with the charter's five parts and evidence at the PR head, and
 notes the commit. Scores are never edited without a re-rate. Code that has moved since `136cf0de` keeps
-its old row until its module is next changed.
+its old row until its module is next changed. Re-rating changes the row count: the 588 rows above are
+the `136cf0de` sweep, and these tables carry every row added or replaced since.
 
 ## Re-rates
 
@@ -35,3 +36,6 @@ its old row until its module is next changed.
   pre-dispatch repairs and submission intake now have separate owners; runtime promotion is split
   from the planning facade and the board surfaces share counters and settings. The affected `N3.csv`
   rows and the touched brief helper were re-rated against the code at the PR head.
+- nucleus#1206 (floor 5, 2026-11-14): the project editor and settings profiles were split by screen,
+  form, repository and save-queue responsibility; task holds, attention phases and prerequisite
+  reason facts now use shared owners. The changed N6 rows were re-rated at this PR's head.

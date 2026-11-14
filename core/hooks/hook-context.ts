@@ -2,7 +2,8 @@ import type { executeHookProgram } from "../machine/process-exec";
 import type { snapshotGit } from "../git/git-snapshot";
 import type { HostRunScheduler } from "../host-runs/host-run-scheduler";
 import { join } from "node:path";
-import type { HookPin, HookRecord, HookEventName, InstructionArtifact, MergeCandidate } from "../../shared/hooks";
+import { EVENT_SCHEMA_V2, EVENT_SCHEMA_V3, type AnyHookTarget, type HookPin, type HookRecord, type HookEventName, type InstructionArtifact, type MergeCandidate } from "../../shared/hooks";
+import type { Task } from "../../shared/contracts";
 
 export interface HookEmissionResult { hold: boolean; attention: boolean; records: HookRecord[] }
 
@@ -35,6 +36,48 @@ export function hookHoldReason(result: HookEmissionResult): string {
 }
 
 export function executablePath(root: string, pin: HookPin): string { return join(root, pin.path); }
+
+/** The executable one recorded occurrence runs at its execution root. */
+export async function hookProgramExecutable(record: HookRecord, root: string): Promise<string> {
+  if (record.program.kind === "repository") return executablePath(root, record.program.executable);
+  if (record.program.kind === "tool") return record.program.path;
+  if (record.program.kind === "unavailable_tool") throw new Error(record.program.error);
+  throw new Error("Historical trusted runner occurrence cannot execute after retirement");
+}
+
+/** The target a stored occurrence actually carries, tolerating records that only named it in the immutable payload. */
+export function hookRecordTarget(record: Pick<HookRecord, "target" | "eventPayload">): AnyHookTarget {
+  if (record.eventPayload?.schema === EVENT_SCHEMA_V2) return "reviewed_head";
+  if (record.eventPayload?.schema === EVENT_SCHEMA_V3) return "prospective_merge";
+  return record.target;
+}
+
+/**
+ * The retained worktree head a pre-archive occurrence must still observe: the
+ * reconciled task head for a merged-task reconciliation at the integration
+ * base, otherwise the pinned worktree-head base itself.
+ */
+export function preArchiveWorktreeHead(record: Pick<HookRecord, "baseCommit" | "retentionReconciliation">): string {
+  return record.retentionReconciliation?.taskHead ?? record.baseCommit;
+}
+
+/** True when a hold reason was produced by {@link hookHoldReason}. */
+export function isHookHoldReason(reason: string): boolean {
+  return reason.startsWith("Repository hook ") && reason.includes(" holds this transition: ");
+}
+
+/** True when a successful retry has cleared the pre-dispatch hook hold recorded on a task. */
+export function isRecoveredPreDispatchHookHold(task: Pick<Task, "phase" | "reason">, result: HookEmissionResult): boolean {
+  return task.phase === "needs_attention"
+    && isHookHoldReason(task.reason)
+    && !result.hold
+    && result.records.some(record => record.event === "task.pre_dispatch" && ["result", "published"].includes(record.state));
+}
+
+/** True when a task is visibly held by a repository closeout hook rather than a coordinator issue. */
+export function isCloseoutHookHold(task: Pick<Task, "phase" | "reason">): boolean {
+  return task.phase === "closing" && isHookHoldReason(task.reason);
+}
 
 export interface RepositoryHooksOptions {
   run?: typeof executeHookProgram;

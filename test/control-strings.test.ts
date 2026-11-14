@@ -31,7 +31,7 @@ import { GitReadTimeoutError, SubmissionUnavailableError } from '../core/git/ind
 import { hookHoldReason, isHookHoldReason } from '../core/hooks/hooks';
 import { OWNER_STOP_HOLD_PREFIX } from '../core/merge/merge-hold';
 import { RestartRefusal } from '../core/verbs/owner-verbs';
-import { ProofExecutionRefusal, proofSingleFlightRefusal } from '../core/qa/proof-execution';
+import { ProofExecutionRefusal, ProofSingleFlightError, proofSingleFlightRefusal } from '../core/qa/proof-execution';
 import { RepositoryRekeyRefused } from '../core/planning/repository-rekey';
 import { ReviewEntryRefusal } from '../core/review/review-entry';
 import { DurableFenceRefusal, runFenceRefusal } from '../core/intake/run-settlement';
@@ -328,18 +328,20 @@ test('proof race: each real single-flight refusal stands down quietly; other pro
   assert.equal(spent, 'This proof-only qualification already spent its one execution (run-1, completed); it is never repeated, refunded or reset. Inspect it with task.detail');
   assert.equal(reserved, `An author-side proof execution was already reserved at ${head}; inspect it with task.detail`);
 
-  const launch = async (message: string) => {
+  const launch = async (failure: () => Error) => {
     const f = fixture(t);
     const task = f.add({ entrypoint: 'proof', proofOnly: { commit: head } });
     let thrown = 0;
     f.resolution.select = () => ({ profile: { id: 'profile' } });
-    f.resolution.proofExecution = async () => { thrown += 1; throw new Error(message); };
+    f.resolution.proofExecution = async () => { thrown += 1; throw failure(); };
     const outcome = await f.internals.launchProofOnly(task).then(() => 'quiet', (error: Error) => error.message);
     assert.equal(thrown, 1, 'the race must have been reached');
     return outcome;
   };
-  for (const message of [unreleased!, spent!, reserved!]) assert.equal(await launch(message), 'quiet', message);
-  assert.equal(await launch('A proof execution is already running'), 'A proof execution is already running');
+  for (const message of [unreleased!, spent!, reserved!])
+    assert.equal(await launch(() => new ProofSingleFlightError(message)), 'quiet', message);
+  assert.equal(await launch(() => new Error('A proof execution is already running')), 'A proof execution is already running',
+    'only the typed single-flight refusal stands down; other prose still surfaces');
 });
 
 test('store fence: exactly the real fence messages relabel a legacy refusal', async t => {
@@ -595,8 +597,9 @@ const PARSED: ParsedText[] = [
   { site: 'version hint', re: /^Task changed\b/, sample: 'Task changed during the move; read next', reads: ['error.constructor === Error'] },
   { site: 'move replan', re: /^(Task changed|Task or run changed|A run started during the move|A run changed during the move)/, sample: 'A run changed during the move; refresh before retrying',
     writers: ['Task changed during the move; read next', 'Task or run changed; refresh before retrying', 'A run started during the move', 'A run changed during the move; refresh before retrying'] },
-  { site: 'proof single flight', re: /already dispatched and unreleased|already spent its one execution|already reserved at/, sample: 'An author-side proof execution was already reserved at abc',
-    writers: ['is already dispatched and unreleased (', 'already spent its one execution (', 'was already reserved at ${head}'] },
+  { site: 'proof single flight', sample: 'An author-side proof execution was already reserved at abc',
+    writers: ['is already dispatched and unreleased (', 'already spent its one execution (', 'was already reserved at ${head}'],
+    reads: ['error instanceof ProofSingleFlightError'] },
   { site: 'reviewer crash', re: /^The reviewer (?:thread stopped|callback reminder expired)/, sample: 'The reviewer thread stopped without a callback; inspect the thread',
     writers: ['The ${run.role} thread stopped without a callback; inspect the thread', 'callback reminder expired'] },
   { site: 'missing callback', reads: ['t.reason===`The ${completed.role} thread stopped without a callback; inspect the thread`', 't.reason===`The ${completed.role} callback reminder expired`'] },

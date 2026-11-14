@@ -21,7 +21,7 @@ import type { TimelinePage } from '../core/recovery/stall';
 import { toolTimelinePage } from './support/tool-timeline';
 import { classifyWorkspaceCreation, populateOwnedWorktree, taskCheckoutTarget } from '../core/workspaces/workspace-allocation';
 import { validateDispatch, verifyWorkspace as verifyTaskWorkspace } from '../core/git/index';
-import { terminalArchiveWorkspaces } from '../core/closeout/workspace-lifecycle';
+import { terminalArchiveWorkspaces } from '../core/closeout/terminal-archive';
 import { collectOwnerVerbFacts, ownerTaskNext, ownerVerbViews } from '../core/verbs/owner-verbs';
 import { escalationVerbChoices, plannerEscalationChoicesFor } from '../core/questions/blocker-ladder';
 
@@ -233,7 +233,7 @@ test('every task checkout-target call site resolves through taskCheckoutTarget',
     ['core/hooks/hooks.ts', 'the integration checkout that lifecycle hooks run against sits at the base'],
     ['core/merge/prospective-merge.ts', 'task 1032 extracted isolated synthetic merge-candidate checkouts from hooks.ts'],
     ['core/workspaces/siblings.ts', 'prerequisite sibling checkouts sit at the base'],
-    ['core/qa/project-qa-supervisor.ts', 'project QA checkouts sit at the QA base'],
+    ['core/qa/project-qa-worktree.ts', 'project QA checkouts sit at the QA base'],
   ]);
   for (const [name, source] of sources) {
     if (!/worktree", "add|checkout", "--detach/.test(source)) continue;

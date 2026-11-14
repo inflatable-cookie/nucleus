@@ -138,6 +138,11 @@ export function pipelinePhaseColumn(phase: TaskSummary['phase']): PipelineColumn
   }
 }
 
+/** Whether a task phase occupies the board's Attention column. */
+export function phaseNeedsAttention(phase: TaskSummary['phase']): boolean {
+  return pipelinePhaseColumn(phase) === 'Attention';
+}
+
 export function pipelineColumn(card: PipelineCard): PipelineColumn {
   if (card.kind === 'lead') return 'Triage';
   // Spec 032: the Decisions column holds agent decisions and Queue-raised work.

@@ -47,7 +47,7 @@ const candidates = [
 ];
 
 type Call = [string, any];
-function harness(initial: ProjectSettings, options: { refuse?: (method: string, input: any) => string | null; blockers?: (input: any) => Promise<unknown>; mergeCheck?: (input: any) => Promise<unknown>; candidates?: { data: typeof candidates | undefined; error: unknown; isPending: boolean } } = {}) {
+function harness(initial: ProjectSettings, options: { refuse?: (method: string, input: any) => string | null; refreshFailure?: string; blockers?: (input: any) => Promise<unknown>; mergeCheck?: (input: any) => Promise<unknown>; candidates?: { data: typeof candidates | undefined; error: unknown; isPending: boolean } } = {}) {
   const calls: Call[] = [];
   let data = initial, error: unknown = null, refreshes = 0;
   const reply = (method: string, input: any, result: unknown) => {
@@ -81,7 +81,7 @@ function harness(initial: ProjectSettings, options: { refuse?: (method: string, 
         source: rest.length ? { ...source, repositories: rest, version: input.versions.source + 1 } : null,
         tombstone: rest.length ? null : { key: source.key, repositories: source.repositories, reason: input.reason, removedAt: 'now' } });
     },
-    refresh: async () => { refreshes++; },
+    refresh: async () => { refreshes++; if (options.refreshFailure) throw new Error(options.refreshFailure); },
     candidates: options.candidates ?? { data: candidates, error: null, isPending: false },
   };
   let ui!: ReturnType<typeof mount>;
@@ -98,6 +98,20 @@ function harness(initial: ProjectSettings, options: { refuse?: (method: string, 
     set(next: { data?: ProjectSettings; error?: unknown }) { if (next.data) data = next.data; if ('error' in next) error = next.error; ui.update(render()); },
   };
 }
+
+test('a failed project settings refresh is visible in the save status', async () => {
+  const app = harness(settingsOf([row('nucleus', 'Nucleus', [repo('acme/nucleus')])]), { refreshFailure: 'settings read failed' });
+  const ui = await app.mount(false);
+  try {
+    ui.press('Nucleus, Active');
+    ui.type('Project name', 'Renamed');
+    ui.get('Project name').props.onBlur();
+    await settle(() => app.refreshes === 1 && /Refresh failed/.test(ui.text()), 'refresh failure');
+    assert.equal(ui.get('Nucleus save status').children.join(''), 'Refresh failed', 'the project write succeeded; only the refresh failed');
+    ui.press('Refresh failed help');
+    await settle(() => /settings read failed/.test(ui.text()), 'refresh reason');
+  } finally { done(ui); }
+});
 
 test('helpers: commands split like a shell and join back; the planner picker leaves task threads out and marks a gone planner', async () => {
   const { splitCommand, joinCommand } = await import('../client/project-helpers');

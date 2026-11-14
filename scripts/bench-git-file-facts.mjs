@@ -32,7 +32,7 @@ if (process.argv[2] === '--worker') {
   cp.ChildProcess.prototype.spawn = function(...args) { spawns++; return original.apply(this, args); };
   syncBuiltinESMExports();
   const { instructionForCommit } = require(join(source, 'core/hooks/hooks.ts'));
-  const { supervisorLiveness, supervisorLivenessAsync } = require(join(source, 'core/qa/project-qa-supervisor.ts'));
+  const { supervisorLiveness, supervisorLivenessAsync } = require(join(source, 'core/machine/supervisor-liveness.ts'));
   const { hostRunProcessStartIdentity } = require(machineSource('start-identity.ts'));
   const after = process.env.NUCLEUS_BENCH_VARIANT === 'after';
   const Reader = after ? require(machineSource('supervisor-liveness.ts')).SupervisorLivenessReader : null;

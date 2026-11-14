@@ -116,10 +116,14 @@ for run reads and supervisor inspection in `project-qa-inspection.ts`, escaped
 descendant capacity tracking in `project-qa-escapees.ts`, and file pruning in
 `project-qa-supervision-files.ts`. The supervision-files module also owns durable
 schemas, run paths, owner-only reads and writes, step logs and file removal.
-`project-qa-supervisor.ts` owns the detached pipeline and re-exports the moved
-file helpers and TAP collector for existing callers. `project-qa-tap-failures.ts`
-owns failure parsing, identities and truncation. These modules import downward;
-none imports its former parent, and file helpers have no runtime store dependency.
+The detached supervisor is three owners: `project-qa-pipeline.ts` runs the ordered
+stages and records every step, `project-qa-teardown.ts` reruns a settled run's
+recorded teardown, and `project-qa-detached-io.ts` holds the real executors and
+durable writes. `project-qa-worktree.ts` owns the run's linked checkout, its
+sibling links, the `paseo.json` worktree hooks and the checkout's removal.
+`project-qa-tap-failures.ts` owns failure parsing, identities and truncation.
+These modules import downward; none imports its former parent, and file helpers
+have no runtime store dependency.
 
 ### Shared task reads
 
@@ -2138,6 +2142,13 @@ movement invalidates source approval and preserves the normal readiness gates.
   Alternating refusals are compared across the unchanged-head episode.
   Changed evidence, a changed head or an owner instruction gets another round;
   a total run count at one head does not distinguish those useful rounds.
+- A check wait is an episode only while its durable poll record for the current
+  head exists: the record owns the episode, its incident, its one recovery and its
+  escalation, and the task's reason text is only its wording. A record written
+  before the record named its incident keeps the previous read of the deadline
+  wait it held, and a planner escalation recorded before its payload carried a
+  refusal class keeps the previous identification from the revision instruction
+  it recorded.
 - A pending check is re-observed every minute at the same head and yields the
   integration turn; when checks settle, Nucleus reacquires a turn and reruns every
   gate. An overdue check gets one coordinator recovery look per check and head,

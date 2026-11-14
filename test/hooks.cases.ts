@@ -739,6 +739,30 @@ test('intent and dead-runner records resume only after clean-state reconciliatio
   assert.equal(reconciled.state, 'intent');
 });
 
+test('a manifest read failure is recorded as its own uncertainty, never as a stale pin', async t => {
+  const { repo } = await makeRepo(t);
+  const head = await commit(repo, 'base', {
+    '.paseo/queue.json': { content: manifest([manifestHook()]) },
+    '.paseo/hooks/ledger': { content: ledgerScript(join(repo, '..', 'ledger.jsonl')), mode: 0o755 },
+    'docs/plan.json': { content: '{}' },
+  });
+  await push(repo);
+  const dir = await mkdtemp(join(tmpdir(), 'nsq-store-')); t.after(() => rm(dir, { recursive: true, force: true }));
+  const store = new Store(join(dir, 'queue.sqlite'));
+  const hooks = new RepositoryHooks(store);
+  const task = taskFor(store, repo);
+  await (hooks as any).intent(task, controlManifestSchema.parse(JSON.parse(manifest([manifestHook()]))).hooks[0], await discoverManifest(repo, head), { event: 'task.pre_dispatch', baseCommit: head });
+  // The bytes at the pinned base are not a manifest at all. That is a read
+  // failure, not a stale pin and not an unbound hook.
+  const unreadable = await commit(repo, 'unreadable manifest', { '.paseo/queue.json': { content: '{ not a manifest' } });
+  store.putHookEvent({ ...store.hookEvents(task.id)[0], baseCommit: unreadable });
+  const resumed = await hooks.reconcileTask(task);
+  assert.equal(resumed.hold, true);
+  assert.equal(store.hookEvents(task.id)[0].state, 'uncertain');
+  assert.match(store.hookEvents(task.id)[0].error ?? '', /manifest could not be read at/);
+  assert.doesNotMatch(store.hookEvents(task.id)[0].error ?? '', /stale or the hook is no longer bound/);
+});
+
 test('commit subject join enforces the manifest byte budget and control bytes', () => {
   assert.equal(joinCommitSubject({ prefix: 'queue: hook', maxBytes: 60 }, 'ledger'), 'queue: hook ledger');
   assert.equal(joinCommitSubject({ prefix: 'queue: hook ', maxBytes: 60 }, 'ledger'), 'queue: hook ledger');

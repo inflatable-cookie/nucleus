@@ -19,9 +19,10 @@ import { Store } from '../core/store/store';
 import { HostRunScheduler } from '../core/host-runs/host-run-scheduler';
 import { HostRunEndpoint, hostRunSupervisorStateSchema, writeVerifiedOwnedFile, type HostRunSupervisorState } from '../service/callbacks/host-run-endpoint';
 import {
-  QA_SUPERVISION_SCHEMA, QA_SUPERVISION_SCHEMA_VERSION, qaSupervisionCpuCoverage, qaSupervisionPaths, qaSupervisionStateSchema,
+  QA_SUPERVISION_SCHEMA, QA_SUPERVISION_SCHEMA_VERSION, qaSupervisionPaths, qaSupervisionStateSchema,
   readQaCpuCoverage, readQaSupervision, writeQaSupervision, type QaSupervisionState,
-} from '../core/qa/project-qa-supervisor';
+} from '../core/qa/project-qa-supervision-files';
+import { qaSupervisionCpuCoverage } from '../core/qa/project-qa-pipeline';
 import {
   projectValidationSupervisorPaths, projectValidationSupervisorResultSchema, readProjectValidationCpuCoverage, readProjectValidationResult,
   writeProjectValidationCpuCoverage, writeProjectValidationResult,
@@ -249,7 +250,7 @@ test('milestone QA: main\'s strict reader parses the new state; the sidecar bind
   assert.equal(qaSupervisionCpuCoverage('qa-1', read, { ...hostResult, pgid: 4100 }, sidecar), undefined, 'another step');
   assert.equal(qaSupervisionCpuCoverage('qa-1', null, hostResult, sidecar), undefined, 'no state: the step cannot be named');
   assert.equal(qaSupervisionCpuCoverage('qa-1', read, hostResult, readQaCpuCoverage(join(runRoot, 'missing'))), undefined);
-  const { removeQaSupervisionFiles } = await import('../core/qa/project-qa-supervisor');
+  const { removeQaSupervisionFiles } = await import('../core/qa/project-qa-supervision-files');
   removeQaSupervisionFiles(runRoot, 'qa-1');
   assert.equal(readQaCpuCoverage(paths.cpuCoveragePath), null, 'removed with the supervision files');
 });

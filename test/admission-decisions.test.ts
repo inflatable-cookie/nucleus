@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { submissionSchema, taskSchema } from '../shared/contracts';
 import { decideSlotAdmission } from '../core/dispatch/capacity';
-import { dispatchGate } from '../core/dispatch/dispatch';
+import { dispatchGate } from '../core/dispatch/dispatch-decisions';
 import { taskStopRecord } from '../shared/task-stop';
 
 const base = 'a'.repeat(40);
