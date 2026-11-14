@@ -420,8 +420,11 @@ lifecycle; use a direct PR with operator source acceptance. Historical task rows
 - **Wall time is the task's own work** (nucleus#1153). Each task quantum settles a
   durable pause interval (`resolution.budgetClock`) while the task waits on a
   Nucleus-side cause: a recorded `external_unavailable`, `workspace_unavailable`,
-  `route_unavailable` or `provider_unavailable` stop (a host-adapter refusal before a
-  send, a missing workspace, no runnable profile, a provider outage), an unresolved
+  `route_unavailable`, `provider_unavailable` or `host_unavailable` stop (a
+  host-adapter refusal before a
+  send, a missing workspace, no runnable profile, a provider outage, or the task's
+  whole host being away), the task's own durable host wait
+  (`resolution.hostWait`, independent of whichever stop the task carries), an unresolved
   `workspace_state` or `uncertain_delivery` incident, a proven pre-send refusal that
   parked the task in attention (`worker_creation_refused_before_send` and the
   reviewer-launch equivalents, held until an owner resume resolves the episode), a

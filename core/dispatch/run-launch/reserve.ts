@@ -7,7 +7,7 @@ import { currentBrief } from '../../planning/brief';
 import { checkHistoryFromStore, taskPrNumber } from '../../forge/index';
 import { ordinaryReviewDelta, proveReviewRunSource } from '../../review/ordinary-review';
 import type { Adapter } from '../../host/adapter';
-import { proofSingleFlightRefusal } from '../../qa/proof-execution';
+import { proofSingleFlightRefusal, ProofSingleFlightError } from '../../qa/proof-execution';
 import { revisionContinuationAction } from '../prompts';
 import { blockingRecoveryEffectsRefusal } from '../../recovery/recovery-effects';
 import type { ProofActivation, ContinuedPrBinding } from '../../resolution';
@@ -144,7 +144,7 @@ export class RunLaunchReserve {
       // loop or a concurrent owner control.
       if (proofExecutor(role)) {
         const singleFlight = proofSingleFlightRefusal(latest, this.store.runs(t.id), run.head);
-        if (singleFlight) throw Error(singleFlight);
+        if (singleFlight) throw new ProofSingleFlightError(singleFlight);
       }
       if (handoverReview && (latest.prHead !== run.head || latest.directory !== t.directory || latest.entrypoint !== 'review'))
         throw Error('The review source changed before the reviewer run was reserved; no reviewer was created');

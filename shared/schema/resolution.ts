@@ -3,6 +3,7 @@ import { recoveryActionSchema } from "./task-common";
 import { completionSchema, coordinatorActionSchema, externalOwnerRevisionReceiptSchema, mechanicalVerificationSchema, ownerAcceptanceRecordSchema, reviewRecordSchema, reviewSupersessionSchema } from "./review";
 import { taskStopRecordSchema } from "../task-stop";
 import { budgetClockSchema } from "../task-budget";
+import { taskHostWaitSchema } from "../host-outage";
 import { taskPhaseSchema } from "../schema/task-primitives";
 import { incidentSchema } from "../incident";
 import { buildOutputCleanupSchema, externalWorkspaceArchiveSchema, runtimeRetirementSchema, sharedWorkspaceStateSchema, stalledTurnStopSchema, workspaceArchiveRetrySchema } from "./workspace";
@@ -69,6 +70,11 @@ export const resolutionSchema = z.object({
   // Spec 058 budgets (nucleus#1153): wall-clock time discounted because the task was
   // held on a Nucleus-side cause. The task quantum is its one writer.
   budgetClock: budgetClockSchema.nullable().default(null),
+  // Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): this task's own
+  // wait on an unavailable host. Independent of `stop`: an owner-facing stop keeps
+  // its question while the host wait still pauses the clock, shows on the card and
+  // joins the outage notice. Cleared when the host returns.
+  hostWait: taskHostWaitSchema.nullable().default(null),
   externalMerge: z.boolean().default(false),
   // A verified merge with no applied ready_to_merge verdict and no operator
   // source acceptance at that head. Closeout uses the merge commit anyway.

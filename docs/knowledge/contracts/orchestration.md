@@ -1175,6 +1175,47 @@ request identities and submitted handoffs are not rewritten.
   `queue.stages` refuses, and stage records stay readable history that never
   dispatches or merges.
 
+### Host outage
+
+- A task's host is part of its identity (Tom, 2026-11-14; T3 lane document v18,
+  host dropout option 1: wait). While its host is unavailable — the service
+  health `state` is not `online`, so the transport is not connected — the task
+  records its own durable wait (`resolution.hostWait`: the host and the time the
+  outage was first observed). The outage record is durable (`hostOutages` meta),
+  so a service restart during the outage keeps the same start.
+- The wait is independent of the task's stop (nucleus#1198 review). When nothing
+  more specific already stops the task the stop reads `host_unavailable`, naming
+  the host and the outage start. A stop that belongs to an owner answer (budget,
+  ladder escalation, responsible question, hold, proof wait, interactive turn,
+  paused stop, operator attention) keeps its own record and question: the host
+  wait still pauses the wall clock, shows on the card beside the stop, and joins
+  the project's outage notice.
+- Nothing is sent to that host: no quantum, launch, continuation, notification,
+  recovery or coordinator, and no stall, incident or escalation is raised from
+  the outage. The wall-time budget pauses for the wait (Spec 058 budgets). New
+  dispatch for a project whose host is away waits the same way.
+- When the host returns, the wait clears and observation re-proves each retained
+  thread before anything is sent; the task continues on the same host and
+  threads. Delivery that was unknown stays unknown — an outage is never a reason
+  to replay it.
+- Moving a task to another host stays an explicit owner decision: there is no
+  automatic failover and no `move host` verb.
+- Past the dispatch-limits bound (`hostOutageNoticeMinutes`, 120 by default) each
+  affected project's planner receives one notice naming the host, its outage
+  start and the tasks held on it, through the ordinary durable notice path.
+  Tracking is per project on the outage, so a project that becomes affected
+  later, or whose planner is only resolvable later, still hears once for the
+  same outage; a project that already heard never hears again. The notice is
+  about a live outage: when the host recovers before its planner can take it,
+  the pending notice is superseded with "outage ended before delivery" and is
+  not sent, and its stored text is never rewritten at delivery (planner ruling,
+  2026-11-14). An interrupted send keeps its durable intent: it settles as
+  `uncertain` before the ended-outage rule applies, so an outage ending first
+  never relabels unknown delivery as not sent. A shorter outage tells nobody,
+  and a fresh outage starts unnotified.
+- The board card of a waiting task shows the same wait ("Waiting on <host>
+  since …"); host health itself is unchanged.
+
 ### Orphan worktree after a timed-out create
 
 - Initial workspace creation is Nucleus-owned bulk Git: `git worktree add` into
@@ -2095,6 +2136,13 @@ movement invalidates source approval and preserves the normal readiness gates.
   Alternating refusals are compared across the unchanged-head episode.
   Changed evidence, a changed head or an owner instruction gets another round;
   a total run count at one head does not distinguish those useful rounds.
+- A check wait is an episode only while its durable poll record for the current
+  head exists: the record owns the episode, its incident, its one recovery and its
+  escalation, and the task's reason text is only its wording. A record written
+  before the record named its incident keeps the previous read of the deadline
+  wait it held, and a planner escalation recorded before its payload carried a
+  refusal class keeps the previous identification from the revision instruction
+  it recorded.
 - A pending check is re-observed every minute at the same head and yields the
   integration turn; when checks settle, Nucleus reacquires a turn and reruns every
   gate. An overdue check gets one coordinator recovery look per check and head,

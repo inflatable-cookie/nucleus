@@ -236,6 +236,11 @@ export interface PlannerEscalation {
   runId: string | null;
   /** The escalation question, from the durable payload. */
   question: string | null;
+  /**
+   * The refusal class this escalation answers, from the durable payload, when the
+   * raiser recorded one. A reader matches this, never the refusal text.
+   */
+  refusal: 'failed_checks' | 'pre_merge' | null;
   answered: boolean;
   unknown: boolean;
   /** When the last unknown-delivery record was written; the stall threshold reads it. */
@@ -256,14 +261,15 @@ export function plannerEscalations(events: LadderEvent[]): PlannerEscalation[] {
       (event) => event.detail.startsWith(`${id}:`),
     );
     let question: string | null = null;
+    let refusal: PlannerEscalation['refusal'] = null;
     if (payload) {
       try {
-        question =
-          (
-            JSON.parse(
-              payload.detail.slice(payload.detail.indexOf(":") + 1),
-            ) as { question?: string | null }
-          ).question ?? null;
+        const recorded = JSON.parse(
+          payload.detail.slice(payload.detail.indexOf(":") + 1),
+        ) as { question?: string | null; refusal?: string | null };
+        question = recorded.question ?? null;
+        refusal = recorded.refusal === 'failed_checks' || recorded.refusal === 'pre_merge'
+          ? recorded.refusal : null;
       } catch {
         /* payload stays unread */
       }
@@ -305,6 +311,7 @@ export function plannerEscalations(events: LadderEvent[]): PlannerEscalation[] {
       cause,
       runId: runId && runId !== "worker" ? runId : null,
       question,
+      refusal,
       answered:
         resolved ||
         (Boolean(answered) &&

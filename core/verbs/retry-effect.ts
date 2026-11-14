@@ -6,7 +6,7 @@ import { dispositionWorkPolicy, incidentBindsCurrentWork, taskControlInputSchema
 import { archiveIntentUnreadable } from "../workspaces/archive-intent";
 import { progressDisposition, reopenDispositionWorkspace } from "./disposition";
 import { isRecoveredPreDispatchHookHold } from "../hooks/hooks";
-import { terminalArchiveWorkspaces } from "../closeout/workspace-lifecycle";
+import { terminalArchiveWorkspaces } from "../closeout/terminal-archive";
 import type { WorkspaceDiscard } from "../workspaces/orphan-worktree";
 import { workspaceDiscardKey } from "../workspaces/orphan-worktree";
 import type { OwnerEffect } from "./owner-verbs";

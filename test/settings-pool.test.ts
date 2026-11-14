@@ -39,7 +39,7 @@ const entry = (profileId: string, group = 'subscription'): PoolEntry =>
   poolSchema.parse({ profileId, group, weight: 1, enabled: true, scopes: ['general'] });
 
 /** Settings-only capacity writes: the read Settings renders, with no change recorded yet. */
-const CAPACITY_VALUES = { globalLimit: 32, projectLimit: 5, papercutProjectLimit: 2, paseoCallLimit: 6, stallThresholdMinutes: 30, holdReminderMinutes: 120, holdEscalationMinutes: 240, laneDrainMinutes: 120, laneDrainEscalationMinutes: 1440 };
+const CAPACITY_VALUES = { globalLimit: 32, projectLimit: 5, papercutProjectLimit: 2, paseoCallLimit: 6, stallThresholdMinutes: 30, holdReminderMinutes: 120, holdEscalationMinutes: 240, laneDrainMinutes: 120, laneDrainEscalationMinutes: 1440, hostOutageNoticeMinutes: 120 };
 interface CapacityView { effective: typeof CAPACITY_VALUES; changes: { version: number; at: string; surface: string; before: typeof CAPACITY_VALUES; after: typeof CAPACITY_VALUES }[] }
 const capacityAuthorityState = (overrides: Record<string, unknown> = {}): CapacityView => ({
   effective: CAPACITY_VALUES,

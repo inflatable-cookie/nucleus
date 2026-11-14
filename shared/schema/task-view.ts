@@ -51,6 +51,10 @@ export const taskSummarySchema = z.object({
   // fixtures keep their shape and progressing tasks add no transfer weight.
   stop: taskStopKindSchema.optional(),
   stopRecord: taskStopRecordSchema.optional(),
+  // nucleus#1198 review: the task's own wait on an unavailable host. Independent
+  // of `stop`: an owner-facing stop keeps its question while the card names the
+  // host the task is waiting on. Omitted when the host is available.
+  hostWait: z.object({ hostId: z.string().min(1), since: z.string().datetime({ offset: true }) }).strict().optional(),
   // Task 538: the newest accepted report's headline, so a card snippet reads as a
   // report rather than the stored reason. Bounded and absent when no report exists.
   headline: z.string().max(REPORT_HEADLINE_MAX).optional(),

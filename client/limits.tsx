@@ -7,7 +7,7 @@ import { radius, roles, space, type } from "./design";
 import { DateTimeLink, formatLocalDateTime } from "./date-time-field";
 import { USAGE_LABELS } from "../shared/pool";
 import * as api from "../shared/contracts";
-import { MAX_HOLD_MINUTES, MAX_PASEO_CALL_LIMIT, MAX_STALL_THRESHOLD_MINUTES, usageLevels, type UiQueueState, type UsageLevel } from "../shared/contracts";
+import { MAX_HOLD_MINUTES, MAX_HOST_OUTAGE_NOTICE_MINUTES, MAX_PASEO_CALL_LIMIT, MAX_STALL_THRESHOLD_MINUTES, usageLevels, type UiQueueState, type UsageLevel } from "../shared/contracts";
 
 /*
  * Settings → Dispatch limits. One place for what the host runs with: the usage
@@ -174,6 +174,7 @@ const CAPACITY_FIELD_LABELS: Record<keyof api.CapacityAuthorityValues, string> =
   paseoCallLimit: "Paseo calls", stallThresholdMinutes: "Stall threshold",
   holdReminderMinutes: "Hold reminder", holdEscalationMinutes: "Hold escalation",
   laneDrainMinutes: "Lane drain", laneDrainEscalationMinutes: "Lane drain escalation",
+  hostOutageNoticeMinutes: "Host outage notice",
 };
 type CapacityKey = keyof api.CapacityAuthorityValues;
 type LimitSpec = { key: CapacityKey; min: number; max: number; unit: "slots" | "calls" | "minutes"; advanced?: true };
@@ -187,6 +188,7 @@ const CAPACITY_FIELDS: LimitSpec[] = [
   { key: "holdEscalationMinutes", min: 1, max: MAX_HOLD_MINUTES, unit: "minutes", advanced: true },
   { key: "laneDrainMinutes", min: 1, max: MAX_HOLD_MINUTES, unit: "minutes", advanced: true },
   { key: "laneDrainEscalationMinutes", min: 1, max: MAX_HOLD_MINUTES, unit: "minutes", advanced: true },
+  { key: "hostOutageNoticeMinutes", min: 1, max: MAX_HOST_OUTAGE_NOTICE_MINUTES, unit: "minutes", advanced: true },
 ];
 const UNIT_SHORT: Record<LimitSpec["unit"], string> = { slots: "slots", calls: "calls", minutes: "min" };
 
