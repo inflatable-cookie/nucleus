@@ -102,6 +102,9 @@ test('the pinned nightly contract examples retain direct command payloads and st
   const server = await fakeServer(t, (request, send) => { if (request._tag === 'Request') send(success(request, { sequence: 1 })); });
   const client = await clientFor(t, server);
   assert.equal(contract.sourceRevision, '97e35bcf23e4dcf34c2dcffadd37c08db0e01e52');
+  assert.deepEqual(contract.protocolFrames.recorded, { ping: { _tag: 'Ping' }, pong: { _tag: 'Pong' } });
+  assert.equal('requestId' in contract.protocolFrames.effect.connectionDefect, false);
+  assert.equal('requestId' in contract.protocolFrames.constructed.defectWithRequestId, true);
   for (const example of contract.examples) {
     await client.call(example.method, example.payload);
     const request = server.frames.at(-1)!;
@@ -546,8 +549,9 @@ test('thread snapshots have a method-specific minute while small commands keep t
 });
 
 const protocolFrames = contract.protocolFrames as {
-  attributable: { defect: Frame; chunk: Frame; exit: Frame };
-  unattributable: { connectionDefect: Frame };
+  recorded: { ping: Frame; pong: Frame };
+  effect: { exit: Frame; chunk: Frame; connectionDefect: Frame };
+  constructed: { defectWithRequestId: Frame };
 };
 
 function wsSend(socket: Socket, text: string) { socket.write(wsFrame(text)); }
@@ -602,7 +606,7 @@ test('a Defect with a request ID settles that request only', async t => {
   await attributableFault(t, {
     branch: 'defect',
     tag: 'Defect',
-    fault: (request, send) => send({ ...protocolFrames.attributable.defect, requestId: request.id }),
+    fault: (request, send) => send({ ...protocolFrames.constructed.defectWithRequestId, requestId: request.id }),
   });
 });
 
@@ -610,7 +614,7 @@ test('a Chunk for a unary request settles that request only', async t => {
   await attributableFault(t, {
     branch: 'chunk_without_acceptor',
     tag: 'Chunk',
-    fault: (request, send) => send({ ...protocolFrames.attributable.chunk, requestId: request.id, values: [{ kind: 'snapshot' }] }),
+    fault: (request, send) => send({ ...protocolFrames.effect.chunk, requestId: request.id, values: [{ kind: 'snapshot' }] }),
   });
 });
 
@@ -681,7 +685,7 @@ test('an unparseable frame still closes the shared connection', async t => {
 
 test('a connection-level Defect without a request ID closes the shared connection', async t => {
   const server = await fakeServer(t, (request, send) => {
-    if (request._tag === 'Request') send(protocolFrames.unattributable.connectionDefect);
+    if (request._tag === 'Request') send(protocolFrames.effect.connectionDefect);
   });
   const client = await clientFor(t, server);
   await assert.rejects(client.call('server.getConfig', {}), error => error instanceof T3RpcError && error.code === 'protocol');

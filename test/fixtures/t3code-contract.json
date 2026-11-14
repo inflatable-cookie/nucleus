@@ -3,16 +3,18 @@
   "nightlyVersion": "0.1.6-nightly.20261030.3917",
   "protocol": 2,
   "protocolFrames": {
-    "source": "Effect RPC JSON FromServerEncoded as used by the nightly (orchestration protocol 2); keys only, request IDs synthetic",
-    "attributable": {
-      "defect": { "_tag": "Defect", "requestId": "synthetic-request" },
-      "chunk": { "_tag": "Chunk", "requestId": "synthetic-request", "values": [] },
-      "exit": { "_tag": "Exit", "requestId": "synthetic-request", "exit": { "_tag": "Success", "value": null } }
-    },
-    "unattributable": {
-      "connectionDefect": { "_tag": "Defect" },
+    "source": "Keys only, synthetic request IDs. Ping and Pong are Nightly frames recorded by 1213's read-only heartbeat (mutations 0). Exit, Chunk and Defect-without-requestId are Effect RPC JSON FromServerEncoded as Nightly uses; stock Effect Defect has no requestId and per-request defects go out as Exit Failure Die. Defect-with-requestId is constructed for the brief's attributable case and is not a recorded Nightly frame.",
+    "recorded": {
       "ping": { "_tag": "Ping" },
       "pong": { "_tag": "Pong" }
+    },
+    "effect": {
+      "exit": { "_tag": "Exit", "requestId": "synthetic-request", "exit": { "_tag": "Success", "value": null } },
+      "chunk": { "_tag": "Chunk", "requestId": "synthetic-request", "values": [] },
+      "connectionDefect": { "_tag": "Defect" }
+    },
+    "constructed": {
+      "defectWithRequestId": { "_tag": "Defect", "requestId": "synthetic-request" }
     }
   },
   "boundaryDecodeExample": "Missing key\n  at [\"commandId\"]",
