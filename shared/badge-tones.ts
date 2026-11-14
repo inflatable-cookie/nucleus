@@ -1,3 +1,5 @@
+import { phaseNeedsAttention } from './pipeline-board';
+
 /**
  * Card badge colours (Tom, 2026-09-28). Papercuts red and leads green matter most;
  * the rest follow the same four semantic tones from the theme. Keyed on the badge's
@@ -34,7 +36,7 @@ export function recordBadgeTone(label: string): BadgeTone {
 /** A task's phase badge tone: attention red, needs-a-hand amber, in progress blue, on its way to done green. */
 export function phaseBadgeTone(task: { held: boolean; phase: string; disposition?: { status: string } | null }): BadgeTone {
   if (task.disposition && task.disposition.status !== "complete") return "danger";
-  if (["blocked", "error", "needs_attention"].includes(task.phase)) return "danger";
+  if (phaseNeedsAttention(task.phase as Parameters<typeof phaseNeedsAttention>[0])) return "danger";
   if (task.phase === "changes_requested") return "warning";
   if (["dispatching", "working"].includes(task.phase)) return "accent";
   if (["awaiting_review", "report_ready", "reviewing", "verifying", "merging", "syncing", "closing"].includes(task.phase)) return "success";

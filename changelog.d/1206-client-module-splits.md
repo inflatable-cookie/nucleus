@@ -1,0 +1,1 @@
+The project editor and settings profile screen now live in focused components, while task-state, board attention, and prerequisite facts share their owning helpers. Project save failures now include settings refresh errors.

@@ -75,6 +75,18 @@ export const OPERATOR_IDENTITIES: ReadonlySet<string> = new Set(["operator", OPE
 
 export const isOperatorOrigin = (id: string | null | undefined): boolean => Boolean(id) && OPERATOR_IDENTITIES.has(id!.trim());
 
+/** Display-only owner text may contain one of the operator identities. */
+const OPERATOR_OWNER_IDENTITIES = new Set([...OPERATOR_IDENTITIES, "tom"].map(identity => identity.toLowerCase()));
+export const isOperatorOwner = (owner: string | null | undefined): boolean =>
+  Boolean(owner) && OPERATOR_OWNER_IDENTITIES.has(owner!.trim().toLowerCase());
+
+/** Hold facts accepted by shared task-state presentation, including the old single-kind view. */
+export function taskStateHolds(task: { held: boolean; holdKind?: HoldKind; holds?: { dispatch?: unknown; merge?: unknown } }) {
+  const dispatch = Boolean(task.holds?.dispatch) || task.holdKind === "dispatch";
+  const merge = Boolean(task.holds?.merge) || task.holdKind === "merge";
+  return { dispatch, merge, any: task.held || dispatch || merge };
+}
+
 /**
  * Spec 058 cutover 5: origin slug of this repository. The Queue planner is the
  * planner of the project that holds this origin, whatever that project's key is.
