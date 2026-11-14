@@ -270,7 +270,8 @@ export class TaskControlDispatcher {
     if (input.action === "extend_budget") {
       const current = this.store.task(input.taskId);
       const events = this.store.eventsAll(current.id);
-      if (!taskBudget(current, this.store.runs(current.id), Date.now(), events).exhausted)
+      if (!taskBudget(current, this.store.runs(current.id), Date.now(), events,
+        this.store.canonicalRepository(current.repoPath, current.repository)).exhausted)
         throw Error("Budget extension applies only while the task budget is exhausted");
       const authorizedBoard = input.caller === OPERATOR_BOARD_CALLER;
       const authorizedRelay = input.relayed === true && Boolean(input.caller) && Boolean(input.note?.trim());

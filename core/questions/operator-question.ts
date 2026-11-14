@@ -159,7 +159,8 @@ export function operatorQuestionFor(store: Store, task: Task): OperatorQuestion 
   // nucleus#1187: the question is a projection of the same budget figure every gate
   // and view reads, so a recorded budget pause that figure no longer shows asks
   // nothing — nobody is asked to answer a pause the task is not in.
-  const stop = currentTaskStop(task, taskBudget(task, facts.runs, now, facts.events));
+  const repository = store.canonicalRepository(task.repoPath, task.repository);
+  const stop = currentTaskStop(task, taskBudget(task, facts.runs, now, facts.events, repository));
   if (!stop || (holds.merge && stop.reason !== 'budget')) return null;
   const build = (legacy: boolean) => stop.reason === 'budget' ? budgetQuestion(store, task, stop, now, legacy)
     : stop.reason === 'awaiting_proof' && proofWaitApplies(task)
@@ -250,7 +251,7 @@ function proofWaitQuestion(store: Store, task: Task, stop: TaskStopRecord, facts
  */
 function budgetQuestion(store: Store, task: Task, stop: TaskStopRecord, now: number, legacy: boolean): OperatorQuestion {
   const events = store.eventsAll(task.id);
-  const budget = taskBudget(task, store.runs(task.id), now, events);
+  const budget = taskBudget(task, store.runs(task.id), now, events, store.canonicalRepository(task.repoPath, task.repository));
   const reached = budget.exhausted === 'wall_time'
     ? `${Math.round(budget.wallMs.used / 60_000)} of ${budget.wallMs.limit / 60_000} minutes of wall time since the responsible lifecycle began`
     : `${budget.effectiveTokens.used.toLocaleString('en-US')} of ${budget.effectiveTokens.limit.toLocaleString('en-US')} effective tokens`;

@@ -31,6 +31,16 @@ test('a size maps to its provisional default, and an unsized responsible task ta
   assert.equal(taskBudget(budgeted('low'), [], start).wallMs.limit, 60 * MINUTE);
 });
 
+test('affected-test repositories raise only low and medium wall defaults, including extensions', () => {
+  const repository = { affectedTests: { command: 'effigy test:affected --run' } };
+  assert.equal(taskBudget(budgeted('low'), [], start, [], repository).wallMs.limit, 120 * MINUTE);
+  assert.equal(taskBudget(budgeted('medium'), [], start, [], repository).wallMs.limit, 360 * MINUTE);
+  assert.equal(taskBudget(budgeted('medium'), [], start).wallMs.limit, 180 * MINUTE);
+  assert.equal(taskBudget(budgeted('high'), [], start, [], repository).wallMs.limit, 480 * MINUTE);
+  assert.equal(taskBudget(budgeted('medium', 1), [], start, [], repository).wallMs.limit, 720 * MINUTE);
+  assert.equal(taskBudget(budgeted('medium'), [], start, [], repository).effectiveTokens.limit, TASK_BUDGET_DEFAULTS.medium.effectiveTokens);
+});
+
 test('the effective-token trigger fires at the limit and not one token below it', () => {
   const below = taskBudget(budgeted('low'), [run(new Date(start).toISOString(), { inputTokens: 1_999_999 })], start);
   assert.equal(below.effectiveTokens.used, 1_999_999);

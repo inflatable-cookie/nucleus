@@ -1,5 +1,5 @@
 import { sameCallerIdentity } from './agent-identity';
-import type { Task, Run, Project, TaskDetail, TaskSummary, Completion, CompletionPolicy, CompletionMembership, WorkerExclusion, OwnerAcceptanceRecord, HoldKind, UnchangedBoard, AwaitingProof, ProofRoute } from "./contracts";
+import type { Task, Run, Project, RepositorySettings, TaskDetail, TaskSummary, Completion, CompletionPolicy, CompletionMembership, WorkerExclusion, OwnerAcceptanceRecord, HoldKind, UnchangedBoard, AwaitingProof, ProofRoute } from "./contracts";
 import type { Incident } from "./incident";
 import { isDispositionComplete } from "./disposition";
 import { holdsOf, syncHoldProjection, taskHoldKind, holdOwnerOf, taskOwner, holdFencesView, holdEscalated, isOperatorOrigin } from "./holds";
@@ -230,11 +230,11 @@ export function taskStopKind(task: Task, runs: Run[] = [], budget?: TaskBudgetVi
  * Add the bounded, derived hold and wait fields at the task detail boundary.
  * Spec 043 (a): the wait state is a read, never a scheduling decision.
  */
-export function taskDetailView(task: Task, context: WaitStateContext = {}, runs: Run[] = [], events: BudgetEvent[] = []): TaskDetail {
+export function taskDetailView(task: Task, context: WaitStateContext = {}, runs: Run[] = [], events: BudgetEvent[] = [], repository?: Pick<RepositorySettings, "affectedTests"> | null): TaskDetail {
   const holds = holdsOf(task);
   // One measurement: the budget this view shows is the one the gates read, and the
   // stop and reason it reports follow that same figure (nucleus#1187).
-  const budget = !['done', 'cancelled'].includes(task.phase) ? taskBudget(task, runs, Date.now(), events) : null;
+  const budget = !['done', 'cancelled'].includes(task.phase) ? taskBudget(task, runs, Date.now(), events, repository) : null;
   const reason = taskVisibleReason(task, budget);
   const holdKind = taskHoldKind(task);
   const waitState = deriveWaitState({
@@ -282,11 +282,11 @@ export const formatTaskNumber = (number: number) => String(number).padStart(3, "
 export const taskNumberLabel = (task: Pick<Task, "number" | "reference">, repositoryNeeded: boolean) =>
   task.number ? repositoryNeeded ? task.reference ?? `#${formatTaskNumber(task.number)}` : `#${formatTaskNumber(task.number)}` : "";
 
-export function summarizeTask(task: Task, includeRepository = false, hasUnreleasedResolutionRun = false, waitContext: WaitStateContext = {}, taskRuns: Run[] = [], waitingOn?: string, defaultHostId?: string, events: BudgetEvent[] = []): TaskSummary {
+export function summarizeTask(task: Task, includeRepository = false, hasUnreleasedResolutionRun = false, waitContext: WaitStateContext = {}, taskRuns: Run[] = [], waitingOn?: string, defaultHostId?: string, events: BudgetEvent[] = [], repository?: Pick<RepositorySettings, "affectedTests"> | null): TaskSummary {
   const holds = holdsOf(task);
   // The board reads the same budget figure the gates do, and its stop and reason
   // follow that figure (nucleus#1187).
-  const budget = !["done", "cancelled"].includes(task.phase) ? taskBudget(task, taskRuns, Date.now(), events) : null;
+  const budget = !["done", "cancelled"].includes(task.phase) ? taskBudget(task, taskRuns, Date.now(), events, repository) : null;
   const reason = taskVisibleReason(task, budget);
   const stop = taskStopKind(task, taskRuns, budget), stopRecord = currentTaskStop(task, budget);
   const waitState = deriveWaitState({
@@ -353,6 +353,7 @@ export function visibleTaskSummaries(
   waitContextByTask: ReadonlyMap<string, WaitStateContext> = new Map(),
   defaultHostId?: string,
   eventsByTask: ReadonlyMap<string, BudgetEvent[]> = new Map(),
+  repositorySettingsByTask: ReadonlyMap<string, Pick<RepositorySettings, "affectedTests"> | null> = new Map(),
 ): TaskSummary[] {
   const visible = tasks.filter(task => !["done", "cancelled"].includes(task.phase) || Boolean(task.originError || task.originLookupError || task.resolution.workspaceArchiveRetries.length));
   const identities = new Map<string, Set<string>>();
@@ -377,7 +378,7 @@ export function visibleTaskSummaries(
     const firstWaitingId = waitContext?.dependencyWait ? reasonText.match(/\(([0-9a-f-]{36})\):/i)?.[1] : undefined;
     const dependency = firstWaitingId ? references.get(firstWaitingId) : waitContext?.dependencyWait ? task.dependsOn.map(id => references.get(id)).find(Boolean) : undefined;
     const summary = summarizeTask(task, !pathIdentifiesMember || (identities.get(task.repoPath)?.size ?? 0) > 1, hasUnreleasedRun,
-      { ...waitContext, decisionId: decisionByTask.get(task.id) ?? null }, taskRuns, until || reasonRef || dependency || undefined, defaultHostId, eventsByTask.get(task.id) ?? []);
+      { ...waitContext, decisionId: decisionByTask.get(task.id) ?? null }, taskRuns, until || reasonRef || dependency || undefined, defaultHostId, eventsByTask.get(task.id) ?? [], repositorySettingsByTask.get(task.id));
     const owner = summary.waitState?.state === "merge_hold"
       ? summary.holds?.merge?.owner ?? summary.holds?.dispatch?.owner
       : summary.holds?.dispatch?.owner ?? summary.holds?.merge?.owner;

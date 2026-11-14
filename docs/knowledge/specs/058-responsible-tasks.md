@@ -387,9 +387,16 @@ lifecycle; use a direct PR with operator source acceptance. Historical task rows
   `responsible_converted` event; a caller never supplies a start of its own, and every
   gate and view measures through `taskBudget` with the same task, runs and events
   (nucleus#1187). The size sets the limits: low 2M / 1 h, medium 5M / 3 h, high 12M /
-  8 h, very_high 25M / 16 h, provisional. A `very_low` task takes low; a responsible
+  8 h, very_high 25M / 16 h, provisional. On repositories configured with
+  `affectedTests`, low and medium wall limits are 2 h and 6 h; token limits and
+  high and very_high wall limits stay the same. (Tom, 2026-11-14: "Go with
+  recommendations" on raising these budgets for affected-test repositories.)
+  Each extension adds the effective default for the task's repository, so an
+  affected-test medium task adds 6 h. A `very_low` task takes low; a responsible
   task with no size takes medium. The defaults are constants in
-  `shared/task-budget.ts`; there is no tuning UI.
+  `shared/task-budget.ts`; there is no tuning UI. Running tasks use the current
+  repository setting on their next budget read; stored task and run history is
+  unchanged.
 - **Pause, not kill.** The launch funnel refuses every new run once either limit is
   reached, so a run in flight finishes and nothing new starts. The task stops with
   `budget` as its stop reason and the detail names the limit. That detail is fixed for
