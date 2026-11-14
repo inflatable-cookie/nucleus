@@ -3,7 +3,7 @@ import { REVISION_BUDGET, awaitingProofRoute, awaitingProofText, awaitingProofTe
 import {
   plannerEscalations, revisionCapCauseId, revisionCapEscalationQuestion, type LadderEvent,
 } from '../questions/blocker-ladder';
-import { MERGE_CONFLICT_REASON, isFailedChecksReason, taskPrNumber, type PublicationOutcome, type VerifiedPr } from '../forge/index';
+import { MERGE_CONFLICT_REASON, isFailedChecksReason, isForgeCheckProofText, taskPrNumber, type PublicationOutcome, type VerifiedPr } from '../forge/index';
 import { classifyGitTransientFailure, gitDeliveryUnknown, ReviewPublicationTransientError } from '../forge/forge-health';
 import { git } from '../git/index';
 import { readGitCheckout } from '../git/git-identity';
@@ -343,7 +343,32 @@ export class ResultApplication {
     // head before it can reach the operator. A proof the worker already had at this
     // head is external: the round was spent, and the repeat goes to the operator.
     const sent = proofWorkerRequests(this.store, t.id, head);
-    const proofs: AwaitingProof[] = c.awaitingProofs!.map(proof => {
+    // Papercut c0fb3df9: a forge CI check is never an awaiting proof. Record it
+    // as CI and let the merge gate's required-check wait cover it.
+    const forgeNoted: string[] = [];
+    for (const proof of c.awaitingProofs!) {
+      const text = awaitingProofText(proof);
+      if (isForgeCheckProofText(text) && !forgeNoted.includes(text)) {
+        forgeNoted.push(text);
+        this.store.event(t.id, 'proof_forge_check_noted', `${head}: ${text.slice(0, 2000)} — recorded as CI; the merge gate's required-check wait covers it`);
+      }
+    }
+    const remaining = c.awaitingProofs!.filter(proof => !isForgeCheckProofText(awaitingProofText(proof)));
+    if (!remaining.length && forgeNoted.length) {
+      // Source is approved and the only named proofs are CI checks: no proof
+      // question, and the merge gate enforces the checks. Store the approval
+      // as ready (with no awaiting proofs) so verification can proceed to the gate.
+      // The caller holds the transaction and records the result; mirror the
+      // other branches and only update here. awaitingProofs is optional with
+      // min 1, so an empty list must be omitted, not stored.
+      const { awaitingProofs: _dropped, ...rest } = c;
+      const converted = { ...rest, status: 'ready_to_merge' as const };
+      this.resolution.update(t, { currentRunId: null, review: converted, integrationTurn: null, proofRetry: null },
+        { phase: 'verifying', reason: `Source approved at ${head}; ${forgeNoted.join(', ').slice(0, 2000)} recorded as CI and covered by the merge gate` },
+        'source_approved_ci_noted', run.id);
+      return;
+    }
+    const proofs: AwaitingProof[] = remaining.map(proof => {
       const text = awaitingProofText(proof);
       const tagged = typeof proof === 'string' ? 'author' : proof.route;
       return tagged === 'author' && sent.has(text) ? { proof: text, route: 'external' } : { proof: text, route: tagged };

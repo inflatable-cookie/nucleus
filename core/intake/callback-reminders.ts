@@ -1,4 +1,14 @@
+import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import type { Incident, Run, Task } from '../../shared/contracts';
+/** Worktree HEAD for the silent-worker shape, or null when it cannot be read. */
+function readWorktreeHead(directory: string | null | undefined): string | null {
+  if (!directory || !existsSync(directory)) return null;
+  try {
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: directory, encoding: 'utf8', timeout: 5000 }).trim();
+    return /^[0-9a-f]{40}$/i.test(head) ? head : null;
+  } catch { return null; }
+}
 import { isDispositionActive, pausedStopWaitReason } from '../../shared/contracts';
 import { dataHome } from '../../shared/data-home.mjs';
 import { wireLabel } from '../../shared/wire-labels';
@@ -68,6 +78,10 @@ export class CallbackReminders {
     // a fault; Queue resumes the thread on unpause instead of reminding.
     if (t.pausedStop) { this.resolution.waiting(t, pausedStopWaitReason('worker'), 'paused_stop'); return; }
     if (isDispositionActive(t) || dispatchBlocked(this.store.task(t.id)) || !t.runId || !t.agentId || t.completion || latestRunCompletion(this.store.runs(t.id))) return;
+    // Papercut 8eedf758: an idle worker with no report but with work to push
+    // gets one bounded push-and-report continuation. A second idle with no new
+    // commit falls through to the ordinary reminder and escalation, without looping.
+    if (await this.sendPushContinuationOnce(this.store.task(t.id))) return;
     if (await this.resolution.heavyRunAlive(t)) { this.resolution.extendCallbackReminder(this.store.task(t.id), t.runId); return; }
     // Papercut 6895edaa: the worker ended its turn to wait on its own timed run.
     // Its provider timeline still shows that tool running, so the thread is
@@ -77,6 +91,45 @@ export class CallbackReminders {
     const incident = this.resolution.ensureIncident(t, null, 'Worker stopped without a completion callback; inspect the thread');
     await this.deliverCallbackReminder(this.store.task(t.id), incident, t.agentId, t.runId, 'worker', null);
   }
+  /**
+   * One bounded push-and-report continuation for an idle worker with no report
+   * but with work to push (papercut 8eedf758). Returns true when a continuation
+   * was sent, so the caller waits for the worker's report instead of reminding.
+   * A second idle with the same worktree head falls through (the recorded event
+   * names that head), so it escalates normally without looping.
+   */
+  private async sendPushContinuationOnce(t: Task): Promise<boolean> {
+    const current = this.store.task(t.id);
+    if (!current.runId || !current.agentId || current.completion) return false;
+    const head = readWorktreeHead(current.directory);
+    if (!head) return false;
+    const hasPrHead = Boolean(current.prHead);
+    const unpushedPrePr = !hasPrHead && head !== current.planningBase;
+    // Pushed head with no report, or unpushed commits on the task branch.
+    if (!hasPrHead && !unpushedPrePr) return false;
+    if (!hasPrHead && head === current.planningBase) return false;
+    const events = this.store.events(current.id);
+    if (events.some(event => event.kind === 'worker_push_continuation' && event.detail.startsWith(`${current.runId}: ${head}`))) return false;
+    const shape = hasPrHead && head === current.prHead ? 'pushed head' : 'unpushed commits';
+    const instruction = `You stopped without reporting. Your worktree at ${head} has ${shape} on task branch ${current.branch} but no report was received. Push the branch and report your actual result through the existing authenticated callback for run ${current.runId} (ready_for_review with the PR number, or blocked/error with the concrete cause). Do not start a new run. This is one bounded continuation; a further idle with no new commit escalates.`;
+    const messageId = `ns-push-continuation-${current.runId}-${head.slice(0, 12)}`;
+    // Prefer the retained-thread continuation channel; fall back to notify.
+    if (this.adapter.continueWorker) {
+      try {
+        await this.resolution.onTaskHost(current, () => this.adapter.continueWorker!(current, messageId, instruction));
+      } catch {
+        try { await this.resolution.onTaskHost(current, () => this.adapter.notify!(current.agentId!, messageId, instruction, current.agentId ?? undefined)); }
+        catch { return false; }
+      }
+    } else if (this.adapter.notify) {
+      try { await this.resolution.onTaskHost(current, () => this.adapter.notify!(current.agentId!, messageId, instruction, current.agentId ?? undefined)); }
+      catch { return false; }
+    } else return false;
+    this.store.event(current.id, 'worker_push_continuation', `${current.runId}: ${head} ${shape}; continuation ${messageId} sent`);
+    this.resolution.waiting(this.store.task(current.id), `Worker idle with ${shape} and no report; one push-and-report continuation sent`, 'lifecycle');
+    return true;
+  }
+
   /**
    * Restart the missing-callback grace while a reminder is already outstanding.
    * The original reminder event stays the one-shot intent; its extension event

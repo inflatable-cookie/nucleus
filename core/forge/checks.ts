@@ -105,6 +105,22 @@ const FAILED_CHECKS_REASON_PREFIX = "PR checks failed: ";
 export function isFailedChecksReason(text: string | null | undefined): boolean {
   return Boolean(text && text.startsWith(FAILED_CHECKS_REASON_PREFIX));
 }
+/**
+ * A reviewer-named proof that is actually a forge CI check (papercut c0fb3df9).
+ * Matched by name or URL: a GitHub Actions run/job URL, a job/run ID pair, or
+ * explicit check language. The merge gate's required-check wait already covers
+ * it, so it is never an awaiting proof and never raises a proof question.
+ */
+export function isForgeCheckProofText(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const normalized = text.trim();
+  if (!normalized) return false;
+  if (/github\.com\/[^\s]+\/actions\/(runs|jobs)/i.test(normalized)) return true;
+  if (/\bjob\b[^\n]{0,80}\b\d{5,}\b/i.test(normalized) && /\brun\b[^\n]{0,80}\b\d{5,}\b/i.test(normalized)) return true;
+  if (/\b(required\s+checks?|forge\s+checks?|CI\s+checks?|GitHub\s+(checks?|jobs?|workflows?|runs?))\b/i.test(normalized)) return true;
+  if (/\b(queued|pending|running)\s+GitHub\s+job\b/i.test(normalized)) return true;
+  return false;
+}
 function checkName(check: PrCheck) { return check.name ?? check.context ?? "unnamed check"; }
 function checkJobUrl(check: PrCheck) { return check.detailsUrl?.trim() || check.targetUrl?.trim() || "(no job URL)"; }
 function formatCheckWait(ms: number): string {

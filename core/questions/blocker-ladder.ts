@@ -440,6 +440,26 @@ export function escalationAnswerControl(answer: string): EscalationControl {
   return { action: "work", instruction: text };
 }
 
+/** The first ISO-8601 timestamp with a timezone in the reason; the rest is a note. */
+export function extractFirstIsoTimestamp(text: string): string | null {
+  const match = text.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})/);
+  return match ? match[0] : null;
+}
+
+/** Ordered task-reference candidates in the reason; the first that resolves is the target. */
+export function extractTaskReferenceCandidates(text: string): string[] {
+  const matches = text.match(/(?:[A-Za-z0-9_.-]+#\d+|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b|#\d+|\b\d+\b)/g);
+  return matches ?? [];
+}
+
+/** Ordered decision-ID candidates in the reason; the first that resolves is the target. */
+export function extractDecisionIdCandidates(text: string): string[] {
+  const uuids = text.match(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi);
+  if (uuids?.length) return uuids;
+  const first = text.trim().split(/\s+/)[0]?.replace(/^[“"'(\[]+|[”"')\].,;]+$/g, '');
+  return first ? [first] : [];
+}
+
 /** The stop detail for an escalation's seat, so the board names who the task waits with. */
 export const escalationWaitDetail = {
   reviewer: (id: string) =>

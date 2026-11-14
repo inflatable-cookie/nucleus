@@ -11,7 +11,7 @@ import { Decisions } from '../planning/decisions';
 import { DELEGATED_ANSWER_TIMEOUT_MS, nativeDelegationPrompt, parseNativeDelegatedReply, taskContextLines } from './question-delegation';
 import { collectOwnerVerbFacts, latestAuthorResult, ownerVerbViews } from '../verbs/owner-verbs';
 import { automaticRetryForbidden, reportsExternalCause } from '../recovery/non-delivery';
-import { REVIEWER_CONSULT_TIMEOUT_MS, consultRecovery, escalationRecovery, blockerCauseId, consultContinuationInstruction, escalationAnswerControl, escalationContinuationInstruction, escalationWaitDetail, escalationVerbChoices, unknownEscalationAttentionDetail, type EscalationVerbChoice, type PlannerEscalation, isProviderFailure, findOpenPlannerEscalation, parseEscalationReply, plannerEscalationChoicesFor, plannerEscalationQuestion, plannerEscalations, reviewerConsultQuestion, reviewerConsults, reviewContinuationCauseId, reviewContinuationEscalationQuestion, type LadderEvent } from './blocker-ladder';
+import { REVIEWER_CONSULT_TIMEOUT_MS, consultRecovery, escalationRecovery, blockerCauseId, consultContinuationInstruction, escalationAnswerControl, escalationContinuationInstruction, escalationWaitDetail, escalationVerbChoices, extractDecisionIdCandidates, extractFirstIsoTimestamp, extractTaskReferenceCandidates, unknownEscalationAttentionDetail, type EscalationVerbChoice, type PlannerEscalation, isProviderFailure, findOpenPlannerEscalation, parseEscalationReply, plannerEscalationChoicesFor, plannerEscalationQuestion, plannerEscalations, reviewerConsultQuestion, reviewerConsults, reviewContinuationCauseId, reviewContinuationEscalationQuestion, type LadderEvent } from './blocker-ladder';
 import type { Resolution } from '../resolution';
 import { DelegatedHostUnavailable } from './delegation';
 
@@ -781,8 +781,21 @@ export class Ladder {
         return null;
       }
       if (answer.startsWith('Wait for a task (')) {
-        let prerequisite: Task;
-        try { prerequisite = this.resolution.messageRecipientTask(current, reason); }
+        let prerequisite: Task | null = null;
+        try {
+          // The reason may carry a note after the reference; the first resolving token is the target.
+          const candidates = extractTaskReferenceCandidates(reason);
+          let lastError: unknown = null;
+          for (const candidate of candidates) {
+            try { prerequisite = this.resolution.messageRecipientTask(current, candidate); break; }
+            catch (error) { lastError = error; }
+          }
+          if (!prerequisite) {
+            try { prerequisite = this.resolution.messageRecipientTask(current, reason); }
+            catch (error) { lastError = error; }
+          }
+          if (!prerequisite) throw lastError ?? Error(`No task reference in "${reason}"`);
+        }
         catch (error) { throw Error(`Wait for a task (put its reference in Reason) could not read target "${reason}": ${error instanceof Error ? error.message : String(error)}`); }
         const controlInput = taskControlInputSchema.parse({ taskId: current.id, version: current.version,
           action: 'set_prerequisite_wait', waitsFor: [prerequisite.id], reason: `Escalation ${id}: waiting for ${prerequisite.reference ?? prerequisite.id}` });
@@ -796,8 +809,10 @@ export class Ladder {
         return null;
       }
       if (answer.startsWith('Wait until a time (')) {
-        const at = Date.parse(reason);
-        if (!Number.isFinite(at) || at <= Date.now() || !/(?:Z|[+-]\d\d:\d\d)$/i.test(reason))
+        // The reason may carry a note after the timestamp; the first ISO timestamp with a timezone is the target.
+        const timestamp = extractFirstIsoTimestamp(reason) ?? reason.trim();
+        const at = Date.parse(timestamp);
+        if (!Number.isFinite(at) || at <= Date.now() || !/(?:Z|[+-]\d\d:?\d\d)$/i.test(timestamp))
           throw Error(`Wait until a time (put an ISO timestamp in Reason) could not read target "${reason}": name a future ISO timestamp with a timezone`);
         const target = new Date(at).toISOString();
         this.store.event(t.id, 'planner_escalation_answer_pending', `${id}: ${JSON.stringify({ questionId, who, answer, control: { kind: 'time', target } })}`);
@@ -808,9 +823,21 @@ export class Ladder {
         return null;
       }
       if (answer.startsWith('Wait for an operator decision (')) {
-        let decision: DecisionView;
+        let decision: DecisionView | null = null;
         try {
-          decision = new Decisions(this.store).get({ id: reason });
+          // The reason may carry a note after the ID; the first matching token is the target.
+          const candidates = extractDecisionIdCandidates(reason);
+          let lastError: unknown = null;
+          const decisions = new Decisions(this.store);
+          for (const candidate of candidates) {
+            try { decision = decisions.get({ id: candidate }); break; }
+            catch (error) { lastError = error; }
+          }
+          if (!decision) {
+            try { decision = decisions.get({ id: reason.trim() }); }
+            catch (error) { lastError = error; }
+          }
+          if (!decision) throw lastError ?? Error(`No decision ID in "${reason}"`);
           if (decision.status !== 'open') throw Error('the decision is not open');
         } catch (error) {
           throw Error(`Wait for an operator decision (put its ID in Reason) could not read target "${reason}": ${error instanceof Error ? error.message : String(error)}`);

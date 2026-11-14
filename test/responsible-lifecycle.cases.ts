@@ -559,6 +559,31 @@ test('a mixed report returns the author proofs first and only the external one a
   } finally { await f.close(); }
 });
 
+test('a reviewer-named forge check is recorded as CI, raises no proof question and leaves the merge gate to wait (papercut c0fb3df9)', async () => {
+  const { isForgeCheckProofText } = await import('../core/forge/checks');
+  // Unit shape: name and URL match, ordinary proofs do not.
+  const forgeProof = 'Stable process-spawning nextest (job 123456789, run 987654321, macos-latest, no runner yet) https://github.com/example/repo/actions/runs/987654321/job/123456789';
+  assert.equal(isForgeCheckProofText(forgeProof), true);
+  assert.equal(isForgeCheckProofText('https://github.com/example/repo/actions/runs/1/job/2'), true);
+  assert.equal(isForgeCheckProofText('native-hardware-run'), false);
+  assert.equal(isForgeCheckProofText('effigy test unit -- test/changed.test.ts'), false);
+  const f = fixture({ responsible: true });
+  try {
+    seededSourceCheckout(f);
+    await f.engine.wake();
+    await proofReport(f, [{ proof: forgeProof, route: 'external' }]);
+    const task = f.current();
+    // Recorded as CI, not parked as an awaiting proof.
+    assert.ok(f.events('proof_forge_check_noted').some(event => event.detail.includes('recorded as CI')), JSON.stringify(f.events('proof_forge_check_noted')));
+    assert.notEqual(task.resolution.stop?.reason, 'awaiting_proof', task.reason);
+    assert.equal(task.resolution.review?.status, 'ready_to_merge', 'source approval stands with no awaiting proofs');
+    assert.deepEqual(task.resolution.review?.awaitingProofs ?? [], []);
+    // No proof question is raised for the CI check.
+    assert.equal(f.asks.length, 0, 'a forge check never asks the operator for a proof decision');
+    assert.equal(operatorQuestionFor(f.store, task), null);
+  } finally { await f.close(); }
+});
+
 test('a return to the worker carries the proof list, and a worker that cannot produce them is not asked about again (Project-F #38)', async () => {
   const f = fixture({ responsible: true });
   try {

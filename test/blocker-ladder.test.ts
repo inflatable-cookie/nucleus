@@ -7,6 +7,9 @@ import {
   escalationAnswerControl,
   escalationVerbChoices,
   escalationWaitDetail,
+  extractDecisionIdCandidates,
+  extractFirstIsoTimestamp,
+  extractTaskReferenceCandidates,
   findOpenPlannerEscalation,
   parseAnsweredText,
   parseEscalationReply,
@@ -1779,6 +1782,38 @@ test('a time wait wakes once when the named time arrives', async () => {
     await new Promise(resolve => setTimeout(resolve, Math.max(0, Date.parse(when) - Date.now()) + 10));
     await f.engine.resolution.resumeAskQuestions();
     assert.equal(f.events('planner_escalation_woke').length, 1, JSON.stringify(f.events('planner_escalation_wake_refused')));
+  } finally { await f.close(); }
+});
+
+test('timed-wait, task and decision reasons take the first token and keep the note', () => {
+  // Papercut b6320ae1: a reason like `<ISO> — note` refused because the parser
+  // treated everything after the first ' — ' as the timestamp.
+  const when = '2026-11-13T18:47:16Z';
+  assert.equal(extractFirstIsoTimestamp(`${when} — not stalled: reviewer is 25 min into test:affected`), when);
+  assert.equal(extractFirstIsoTimestamp(`wait until ${when} then continue`), when);
+  assert.equal(extractFirstIsoTimestamp('no timestamp here'), null);
+  assert.deepEqual(extractTaskReferenceCandidates('nucleus#1183 — not stalled: waiting on review'), ['nucleus#1183']);
+  assert.deepEqual(extractDecisionIdCandidates('c0fb3df9-6672-413f-b5d3-feaeee8431ba — see the CI run'), ['c0fb3df9-6672-413f-b5d3-feaeee8431ba']);
+});
+
+test('a timed-wait answer with a note after the timestamp applies the wait', async () => {
+  const f = fixture({ responsible: true });
+  f.engine.resolution.delegatedAnswerWaitMs = 5000;
+  let when = '';
+  (f.adapter as unknown as Record<string, unknown>).askPlanner = async () => {
+    when = new Date(Date.now() + 10_000).toISOString();
+    return `Choice: Wait until a time (put an ISO timestamp in Reason)\nReason: ${when} — not stalled: reviewer is 25 min into test:affected`;
+  };
+  try {
+    f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: join(f.dir, 'repo') }] });
+    f.store.setProjectPlanner({ key: 'app', agentId: 'planner-1', setBy: 'operator' });
+    await f.reviews(1); await f.engine.wake();
+    await f.report('blocked', { summary: 'Try after the window', cause: { kind: 'external', name: 'window' } });
+    await until(() => f.events('planner_escalation_applied').some(event => event.detail.includes('waiting until'))
+      || f.events('planner_escalation_answer_refused').length > 0);
+    assert.equal(f.events('planner_escalation_answer_refused').length, 0, JSON.stringify(f.events('planner_escalation_answer_refused')));
+    assert.match(f.current().resolution.stop?.detail ?? '', /waiting until/i);
+    assert.match(f.events('planner_escalation_answered').at(-1)?.detail ?? '', /not stalled/);
   } finally { await f.close(); }
 });
 

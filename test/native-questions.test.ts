@@ -297,3 +297,47 @@ test('extend_budget dismisses Nucleus budget questions still pending on the work
     assert.equal(store.task(queued.id).resolution.budgetExtensions, 1);
   } finally { await engine.stop(); store.close(); }
 });
+
+/**
+ * Papercut ee9fc161: a budget question withdrawn by extension resolves the
+ * worker's pending host question by its recorded native requestId (even when
+ * the host text carries no prefix), so dispatch never waits on a question
+ * Nucleus withdrew. Real shapes: copied operator_question and native_request
+ * rows with synthetic ids.
+ */
+test('a withdrawn budget question is dismissed by its recorded native request and never stalls dispatch', async () => {
+  const store = new Store(':memory:');
+  store.setMeta('paused', false);
+  store.setMeta('hostId', 'host');
+  const task = store.insert(submissionSchema.parse({
+    submissionId: 'budget-withdrawn', title: 'Budget', repoPath: '/repo', planningCommit: 'a'.repeat(40),
+    handoffPath: 'handoff.md', originAgentId: 'origin',
+  }), 'host', 'handoff', 'a'.repeat(40));
+  const startedAt = new Date(Date.now() - 20 * 60 * 60 * 1000).toISOString();
+  const queued = store.update(task.id, {
+    phase: 'blocked', reason: 'Budget reached', agentId: 'worker', workspaceId: 'workspace',
+    budgetSince: startedAt,
+  });
+  recordRunStart(store, queued.id, startedAt);
+  const questionId = 'c812dbab-0000-4000-8000-000000000001';
+  store.event(queued.id, 'operator_question', `${questionId}: kind budget; stop budget; head none; question ${digest(questionId)} (3 chars); options Extend the budget | Stop and keep the work`);
+  // The raise recorded its native requestId durably (no text prefix on the host).
+  store.event(queued.id, 'operator_question_native_request', `${questionId}: request native-9 header Question 1 on worker`);
+  const dismissed: unknown[] = [];
+  const adapter = {
+    pendingQuestions: async (id: string) => id === 'worker' ? [
+      { requestId: 'native-9', questions: [{ header: 'Question 1', question: 'Budget reached. Continue?', options: ['Extend the budget'] }] },
+    ] : [],
+    dismissNativeQuestion: async (...args: unknown[]) => { dismissed.push(args); },
+    observe: observeIdle('workspace'),
+  } as unknown as Adapter;
+  const engine = new Engine(store, adapter, 0);
+  try {
+    await engine.performTaskControl({ taskId: queued.id, version: store.task(queued.id).version,
+      action: 'extend_budget', reason: 'Continue the current approach', caller: 'operator (board)' });
+    for (let i = 0; i < 20 && dismissed.length < 1; i++) await tick();
+    assert.deepEqual(dismissed, [['worker', 'workspace', 'native-9']],
+      'the withdrawn question is dismissed by its recorded requestId without a text prefix');
+    assert.ok(store.eventsAll(queued.id).some(event => event.kind === 'native_question_dismissed' && event.detail.startsWith(`${questionId}:`)));
+  } finally { await engine.stop(); store.close(); }
+});

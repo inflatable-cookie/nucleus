@@ -4,6 +4,7 @@ import { isWaitingTaskStop, type TaskStopRecord } from '../../shared/task-stop';
 import { taskBudget } from '../../shared/task-budget';
 import { collectOwnerVerbFacts, ownerVerbViews, qualifiedAcceptanceEligibility, type OwnerVerbFacts } from '../verbs/owner-verbs';
 import { proofWaitApplies, proofWorkerRequests } from '../qa/proof-execution';
+import { isForgeCheckProofText } from '../forge/checks';
 import { openProofOnlyGo, proofOnlyGoQuestionId } from '../qa/proof-only-go';
 
 /**
@@ -200,7 +201,10 @@ function proofWaitQuestion(store: Store, task: Task, stop: TaskStopRecord, facts
   const review = task.resolution.review;
   const head = review?.head ?? task.prHead;
   if (!head) return null;
-  const externals = (review?.awaitingProofs ?? []).filter(proof => awaitingProofRoute(proof) === 'external');
+  // Papercut c0fb3df9: forge CI checks are never awaiting proofs; the merge
+  // gate's required-check wait covers them, so they raise no proof question.
+  const externals = (review?.awaitingProofs ?? []).filter(proof => awaitingProofRoute(proof) === 'external'
+    && !isForgeCheckProofText(awaitingProofTexts([proof])[0] ?? ''));
   if (!externals.length) return null;
   const external = awaitingProofTexts(externals);
   const proofs = external.join('; ').slice(0, 9000);
