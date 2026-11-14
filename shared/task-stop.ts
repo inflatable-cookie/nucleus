@@ -134,6 +134,13 @@ export function taskStopClassification(detail: string): Pick<TaskStopRecord, "re
   return { reason: "operator_needed", suggestedVerbs: ["restart", "route", "move"] };
 }
 
+/**
+ * Dispatch found no eligible profile for the task's next role. The recorded typed stop is the
+ * fact every reader uses; the visible reason text is never parsed for it.
+ */
+export const routeUnavailableStop = (task: { resolution: { stop: { reason: string } | null } }): boolean =>
+  task.resolution.stop?.reason === "route_unavailable";
+
 /** A stop's suggested verbs follow its typed reason unless the caller names them; never its detail text. */
 export function taskStopRecord(
   reason: TaskStopReason, detail: string, prior?: TaskStopRecord | null,

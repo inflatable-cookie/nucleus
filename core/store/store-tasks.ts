@@ -3,10 +3,11 @@ import { basename } from "node:path";
 import { realpathSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
-import { boardDispatchHoldApplies } from "../../shared/board-dispatch-hold";
-import { isPapercutTask, slotRequestFenced } from "../dispatch/capacity";
 import { PREREQUISITE_WAIT_PREFIX } from "../../shared/wait-state";
-import { taskSchema, taskOwner, holdsOf, isOperatorOrigin, taskHasUnreleasedRun, runHoldsSlot, externalWorkspaceArchivesSettled, taskReferenceSchema, compactTaskVerdicts, compactLiveTask, SNAPSHOT_DEFAULT_LIMIT, DEFAULT_GLOBAL_LIMIT, runSchema, formatTaskNumber, type Task, type Run, type Notice, type Project, type SnapshotInput, type BriefVersion } from "../../shared/contracts";
+import { taskSchema, externalWorkspaceArchivesSettled, taskReferenceSchema, compactTaskVerdicts, compactLiveTask, SNAPSHOT_DEFAULT_LIMIT, formatTaskNumber, runSchema, type Task, type Run, type Notice, type Project, type SnapshotInput, type BriefVersion } from "../../shared/contracts";
+import { holdsOf } from "../../shared/holds";
+import { boardVisible, StoreBoardIndex } from "./store-board-index";
+import { StoreQueueIndex } from "./store-queue-index";
 
 /** One stored task's detached parts; a bulk read supplies the side stores for its page. */
 interface StoredTaskParts {
@@ -54,6 +55,9 @@ function decodeSnapshotCursor(value: string): { rowid: number; id: string } {
     throw new Error("Invalid snapshot cursor");
   return { rowid: cursor.rowid, id: cursor.id };
 }
+/** Nonterminal phases: the live band every list filter reads. */
+const isLivePhase = (task: Task) => task.phase !== "done" && task.phase !== "cancelled";
+
 export function repositoryMatchClause(identities: string[]): { sql: string; params: string[] } {
   const placeholders = identities.map(() => "?").join(",");
   return {
@@ -72,375 +76,51 @@ interface StoreTasksHooks {
   projectByKey: (key: string) => Project | null;
 }
 
-/** Task projection and read models; depends on the core and explicit access callbacks. */
+/**
+ * The task projection and the task read models. One owner per mechanism:
+ *
+ * - this module builds and maintains the parsed, frozen task rows and the run state the
+ *   filters read, and answers every task read from them;
+ * - `StoreQueueIndex` owns the dispatch-facing indexes (ready queues, routing epochs,
+ *   operational visits, capacity);
+ * - `StoreBoardIndex` owns the board-facing indexes (board queues, queued lanes, hold wake
+ *   timers, PR state, origin threads).
+ *
+ * The projection is built once with a single scan, then updated on `insert`/`update`/`putRun`/
+ * purge instead of invalidated: an event, notice, hook or outcome write touches no task row
+ * and leaves every projected list exactly as it was. A write that bypasses the funnels moves
+ * the `writes` clock, and the next read rebuilds.
+ */
 export class StoreTasks {
-  constructor(private readonly core: StoreCore, private readonly hooks: StoreTasksHooks) {}
+  constructor(private readonly core: StoreCore, private readonly hooks: StoreTasksHooks) {
+    this.queue = new StoreQueueIndex(this.core, {
+      projection: () => this.taskProjection ?? new Map(),
+      sequence: id => this.taskSequence.get(id) ?? 0,
+      ensureProjection: () => this.ensureTaskProjection(),
+      dependencyWait: task => this.dependencyWait(task),
+      pendingRuns: () => this.pendingRuns(),
+      unreleasedCount: taskId => this.unreleasedByTask?.get(taskId) ?? 0,
+    });
+    this.board = new StoreBoardIndex({
+      projection: () => this.taskProjection ?? new Map(),
+      sequence: id => this.taskSequence.get(id) ?? 0,
+      ensureProjection: () => this.ensureTaskProjection(),
+      task: id => this.task(id),
+      activeCapacityTasks: () => this.queue.activeCapacityTasks(),
+      lastEventAtByTask: () => this.hooks.lastEventAtByTask(),
+    });
+  }
   private get db() { return this.core.db; }
+  /** The dispatch-facing indexes over this projection. */
+  readonly queue: StoreQueueIndex;
+  /** The board-facing indexes over this projection. */
+  readonly board: StoreBoardIndex;
 
-  /**
-   * Incremental task projection (task 160): parsed, frozen task rows keyed by id,
-   * plus the run-derived state the list filters need. Whole-table rescans on every
-   * write stalled the runtime thread for seconds at live size: each write bumped a
-   * version that dropped every memoised list, and the next audit pass re-read and
-   * re-parsed every task blob (about 60 ms each) before answering. The projection
-   * is built once with a single scan, then updated on `insert`/`update`/`putRun`/
-   * purge instead of invalidated: an event, notice, hook or outcome write touches
-   * no task row and leaves every projected list exactly as it was. A rollback
-   * drops the projection (the database rewinds; the maps cannot) and it rebuilds
-   * lazily on the next read. Number lookups are cached alongside, so hot reads do
-   * no per-id query and no per-row zod parse: rows were validated at write.
-   * Callers receive shallow copies; the frozen rows never escape.
-   */
   taskProjection: Map<string, Task> | null = null;
   /** Task ids newest first, matching the historical `ORDER BY rowid DESC` lists. */
   taskProjectionOrder: string[] = [];
-  /** Nonterminal retained task identities, newest first, for slot accounting. */
-  private activeCapacityIds = new Set<string>();
-  /** Queued rows with lifecycle obligations; ordinary waiting rows are inert. */
-  private operationalIds = new Set<string>();
-  private indexOperational(task: Task): void {
-    const stop = task.resolution.stop?.reason;
-    const needed = task.phase !== 'queued' || Boolean(task.removedAt == null && (
-      task.workspaceId || task.workspaceIntent || task.agentId || task.agentIntent || task.coordinatorAgentId || task.resolution.reviewerAgentId
-      || task.pausedStop || task.retiredWorkers.length || task.reviewEntry?.workspaceId || task.entrypoint === 'proof' && task.requiresOperatorGo
-      || Object.keys(holdsOf(task)).length || task.disposition || task.originError || task.originLookupError
-      || task.checkpoints.intent || task.prerequisiteWait || task.resolution.attention || task.resolution.recoveryActive
-      || task.resolution.recovery || task.resolution.incident || task.resolution.currentRunId
-      || stop && !['capacity', 'prerequisite', 'held', 'route_unavailable', 'lifecycle'].includes(stop)));
-    if (needed) this.operationalIds.add(task.id); else this.operationalIds.delete(task.id);
-  }
-  private operationalTasksWhere(predicate: (task: Task) => boolean): Task[] {
-    this.ensureTaskProjection();
-    const ids = new Set(this.operationalIds);
-    for (const run of this.pendingRuns()) ids.add(run.taskId);
-    return [...ids].map(id => this.taskProjection!.get(id)).filter((task): task is Task => Boolean(task && predicate(task)))
-      .sort((a, b) => this.taskSequence.get(b.id)! - this.taskSequence.get(a.id)!).map(task => ({ ...task }));
-  }
-
   private taskSequence = new Map<string, number>();
   newestSequence = 0;
-  private capacityEligible(task: Task): boolean {
-    return task.removedAt == null && task.phase !== "done" && task.phase !== "cancelled";
-  }
-  private updateCapacityIndex(task: Task, _previous?: Task): void {
-    if (this.capacityEligible(task) && (task.phase !== "queued" || task.workspaceId || task.workspaceIntent
-      || task.agentId || task.agentIntent || task.agentActive || task.coordinatorAgentId || task.resolution.reviewerAgentId || task.pausedStop || task.interactive || task.retiredWorkers.length || task.proofExecutions.length || task.reviewEntry?.workspaceId))
-      this.activeCapacityIds.add(task.id);
-    else this.activeCapacityIds.delete(task.id);
-
-  }
-  /** Ready requests in priority order per repository; dependency changes update only their dependents. */
-  private readyQueues = new Map<string, string[]>();
-  private readyRepository = new Map<string, string>();
-  private readyStartedQueues = new Map<string, string[]>();
-  private readyNormalQueues = new Map<string, string[]>();
-  private readyPapercutQueues = new Map<string, string[]>();
-  private readyStartedNormalQueues = new Map<string, string[]>();
-  private readyStartedPapercutQueues = new Map<string, string[]>();
-  private readyOldest = new Map<string, string[]>();
-  private readyStartedOldest = new Map<string, string[]>();
-  private unavailableQueueIds = new Set<string>();
-  private attemptedRoutingEpoch = new Map<string, string>();
-  private routingEpoch = "";
-  private routeUnavailable(task: Task): boolean {
-    return /no eligible|configure.*profile|profile.*unavailable/i.test(task.reason);
-  }
-  routingRetryAllowed(task: Task): boolean {
-    return task.phase === "queued" && this.routeUnavailable(task) && this.attemptedRoutingEpoch.get(task.id) !== this.routingEpoch;
-  }
-  setRoutingEpoch(epoch: string): void {
-    this.ensureTaskProjection();
-    if (this.routingEpoch === epoch) return;
-    this.routingEpoch = epoch;
-    for (const id of this.unavailableQueueIds) {
-      const task = this.taskProjection!.get(id);
-      if (task) this.indexReady(task);
-    }
-  }
-  markRoutingAttempt(taskId: string): void {
-    this.ensureTaskProjection();
-    this.attemptedRoutingEpoch.set(taskId, this.routingEpoch);
-    const task = this.taskProjection!.get(taskId);
-    if (task) this.indexReady(task);
-  }
-  private unindexReady(id: string): void {
-    const repository = this.readyRepository.get(id);
-    if (repository === undefined) return;
-    const queue = this.readyQueues.get(repository)!;
-    const at = queue.indexOf(id);
-    if (at >= 0) queue.splice(at, 1);
-    if (!queue.length) this.readyQueues.delete(repository);
-    for (const index of [this.readyStartedQueues, this.readyNormalQueues, this.readyPapercutQueues, this.readyStartedNormalQueues, this.readyStartedPapercutQueues, this.readyOldest, this.readyStartedOldest]) {
-      const entries = index.get(repository);
-      if (!entries) continue;
-      const position = entries.indexOf(id);
-      if (position >= 0) entries.splice(position, 1);
-      if (!entries.length) index.delete(repository);
-    }
-    this.readyRepository.delete(id);
-  }
-  private indexReady(task: Task): void {
-    this.unindexReady(task.id);
-    const unavailable = task.phase === "queued" && task.removedAt == null && this.routeUnavailable(task);
-    if (unavailable) this.unavailableQueueIds.add(task.id);
-    else { this.unavailableQueueIds.delete(task.id); this.attemptedRoutingEpoch.delete(task.id); }
-    if (task.removedAt != null || task.phase !== "queued" || slotRequestFenced(task)
-      || unavailable && !this.routingRetryAllowed(task)
-      || (task.dependsOn.length && this.dependencyWait(task))) return;
-    let queue = this.readyQueues.get(task.repoPath);
-    if (!queue) this.readyQueues.set(task.repoPath, queue = []);
-    const sequence = this.taskSequence.get(task.id)!;
-    let low = 0, high = queue.length;
-    while (low < high) {
-      const mid = (low + high) >>> 1;
-      const other = this.taskProjection!.get(queue[mid])!;
-      if (other.queuePriority > task.queuePriority || other.queuePriority === task.queuePriority && this.taskSequence.get(other.id)! < sequence) low = mid + 1;
-      else high = mid;
-    }
-    queue.splice(low, 0, task.id);
-    const insertByPriority = (index: Map<string, string[]>) => {
-      let entries = index.get(task.repoPath);
-      if (!entries) index.set(task.repoPath, entries = []);
-      let left = 0, right = entries.length;
-      while (left < right) {
-        const mid = (left + right) >>> 1, other = this.taskProjection!.get(entries[mid])!;
-        if (other.queuePriority > task.queuePriority || other.queuePriority === task.queuePriority && this.taskSequence.get(other.id)! < sequence) left = mid + 1;
-        else right = mid;
-      }
-      entries.splice(left, 0, task.id);
-    };
-    insertByPriority(isPapercutTask(task) ? this.readyPapercutQueues : this.readyNormalQueues);
-    const insertByAge = (index: Map<string, string[]>) => {
-      let entries = index.get(task.repoPath);
-      if (!entries) index.set(task.repoPath, entries = []);
-      let left = 0, right = entries.length;
-      while (left < right) {
-        const mid = (left + right) >>> 1;
-        if (this.taskSequence.get(entries[mid])! < sequence) left = mid + 1;
-        else right = mid;
-      }
-      entries.splice(left, 0, task.id);
-    };
-    insertByAge(this.readyOldest);
-    if (!boardDispatchHoldApplies(task)) {
-      let entries = this.readyStartedQueues.get(task.repoPath);
-      if (!entries) this.readyStartedQueues.set(task.repoPath, entries = []);
-      let left = 0, right = entries.length;
-      while (left < right) {
-        const mid = (left + right) >>> 1;
-        const other = this.taskProjection!.get(entries[mid])!;
-        if (other.queuePriority > task.queuePriority || other.queuePriority === task.queuePriority && this.taskSequence.get(other.id)! < sequence) left = mid + 1;
-        else right = mid;
-      }
-      entries.splice(left, 0, task.id);
-      insertByPriority(isPapercutTask(task) ? this.readyStartedPapercutQueues : this.readyStartedNormalQueues);
-      insertByAge(this.readyStartedOldest);
-    }
-    this.readyRepository.set(task.id, task.repoPath);
-  }
-  /** At most limit candidates per repository, oldest first on equal priority. */
-  readyQueueHeads(limit: number, repoPath?: string, startedOnly = false): Task[] {
-    this.ensureTaskProjection();
-    if (limit <= 0) return [];
-    const result: Task[] = [];
-    const queues = startedOnly ? this.readyStartedQueues : this.readyQueues;
-    const ages = startedOnly ? this.readyStartedOldest : this.readyOldest;
-    const normal = startedOnly ? this.readyStartedNormalQueues : this.readyNormalQueues;
-    const papercuts = startedOnly ? this.readyStartedPapercutQueues : this.readyPapercutQueues;
-    for (const [repo] of queues) {
-      if (repoPath && repo !== repoPath) continue;
-      const selected = [...(normal.get(repo) ?? []).slice(0, limit), ...(papercuts.get(repo) ?? []).slice(0, limit)];
-      // Fair rotation starts with the repository whose oldest eligible request
-      // came first, even when that request has a lower priority than the heads.
-      const oldest = ages.get(repo)?.[0];
-      if (oldest && !selected.includes(oldest)) selected.push(oldest);
-      for (const id of selected) result.push({ ...this.taskProjection!.get(id)! });
-    }
-    // The fair-order helper expects newest first and determines repository rotation
-    // from the oldest eligible request, independently of priority sorting.
-    return result.sort((a, b) => this.taskSequence.get(b.id)! - this.taskSequence.get(a.id)!);
-  }
-  /** Board identities: all active/obligated work and an ordered queue per repository. */
-  boardOtherIds = new Set<string>();
-  private boardQueues = new Map<string, string[]>();
-  private boardQueueRepository = new Map<string, string>();
-  private queuedLaneEntries = new Map<string, { repo: string; lanes: string[]; at: string }>();
-  queuedLaneStats = new Map<string, { count: number; repos: Map<string, number>; activity: Array<{ id: string; at: string }> }>();
-  queuedLaneStatsValid = false;
-  private unindexQueuedLanes(id: string): void {
-    const old = this.queuedLaneEntries.get(id);
-    if (!old) return;
-    for (const lane of old.lanes) {
-      const stat = this.queuedLaneStats.get(lane)!;
-      stat.count--;
-      const count = (stat.repos.get(old.repo) ?? 1) - 1;
-      if (count) stat.repos.set(old.repo, count); else stat.repos.delete(old.repo);
-      const at = stat.activity.findIndex(entry => entry.id === id);
-      if (at >= 0) stat.activity.splice(at, 1);
-      if (!stat.count) this.queuedLaneStats.delete(lane);
-    }
-    this.queuedLaneEntries.delete(id);
-  }
-  indexQueuedLanes(task: Task): void {
-    this.unindexQueuedLanes(task.id);
-    if (!this.queuedLaneStatsValid || task.phase !== 'queued' || task.removedAt != null) return;
-    const entry = { repo: task.repoPath, lanes: [...new Set(task.lanes)], at: this.hooks.lastEventAtByTask()?.get(task.id) ?? task.updatedAt };
-    this.queuedLaneEntries.set(task.id, entry);
-    for (const lane of entry.lanes) {
-      let stat = this.queuedLaneStats.get(lane);
-      if (!stat) this.queuedLaneStats.set(lane, stat = { count: 0, repos: new Map(), activity: [] });
-      stat.count++;
-      stat.repos.set(entry.repo, (stat.repos.get(entry.repo) ?? 0) + 1);
-      let low = 0, high = stat.activity.length;
-      while (low < high) { const mid = (low + high) >>> 1; if (stat.activity[mid].at < entry.at) low = mid + 1; else high = mid; }
-      stat.activity.splice(low, 0, { id: task.id, at: entry.at });
-    }
-  }
-  ensureQueuedLaneStats(): void {
-    if (this.queuedLaneStatsValid) return;
-    this.queuedLaneStats.clear(); this.queuedLaneEntries.clear(); this.queuedLaneStatsValid = true;
-    for (const ids of this.boardQueues.values()) for (const id of ids) this.indexQueuedLanes(this.taskProjection!.get(id)!);
-  }
-
-  private boardVisible(task: Task): boolean {
-    if (task.removedAt != null) return false;
-    if (StoreTasks.isLivePhase(task)) return true;
-    if ((task.originError ?? "") !== "" || (task.originLookupError ?? "") !== "") return true;
-    const resolution = task.resolution;
-    return Boolean(resolution?.mergeIntent && resolution?.mergedCommit == null || resolution?.archiveIntentWorkspaceId != null
-      || (resolution?.cleanupReason ?? "") !== "" || resolution?.workspaceRetirement && resolution.workspaceRetirement.state !== 'archived'
-      || (resolution?.buildOutputCleanups ?? []).some(record => ['intent', 'skipped', 'uncertain'].includes(record.state))
-      || (resolution?.runtimeRetirements ?? []).some(record => ['pending', 'failed'].includes(record.state))
-      || resolution?.closeoutWorkspaceIntent && resolution?.closeoutWorkspaceId == null);
-  }
-  private indexBoard(task: Task): void {
-    this.indexQueuedLanes(task);
-    this.boardOtherIds.delete(task.id);
-    const previous = this.boardQueueRepository.get(task.id);
-    if (previous !== undefined) {
-      const ids = this.boardQueues.get(previous)!;
-      const at = ids.indexOf(task.id);
-      if (at >= 0) ids.splice(at, 1);
-      if (!ids.length) this.boardQueues.delete(previous);
-      this.boardQueueRepository.delete(task.id);
-    }
-    if (!this.boardVisible(task)) return;
-    if (task.phase !== 'queued') { this.boardOtherIds.add(task.id); return; }
-    let ids = this.boardQueues.get(task.repoPath);
-    if (!ids) this.boardQueues.set(task.repoPath, ids = []);
-    let low = 0, high = ids.length;
-    const seq = this.taskSequence.get(task.id)!;
-    while (low < high) {
-      const mid = (low + high) >>> 1, other = this.taskProjection!.get(ids[mid])!;
-      if (other.queuePriority > task.queuePriority || other.queuePriority === task.queuePriority && this.taskSequence.get(other.id)! < seq) low = mid + 1;
-      else high = mid;
-    }
-    ids.splice(low, 0, task.id);
-    this.boardQueueRepository.set(task.id, task.repoPath);
-  }
-  boardQueueCounts(): Array<{ repoPath: string; count: number }> {
-    this.ensureTaskProjection();
-    return [...this.boardQueues].map(([repoPath, ids]) => ({ repoPath, count: ids.length }));
-  }
-  boardQueuePage(repoPath: string, offset: number, limit: number): { tasks: Task[]; nextOffset: number | null } {
-    this.ensureTaskProjection();
-    const ids = this.boardQueues.get(repoPath) ?? [];
-    const page = ids.slice(offset, offset + limit);
-    return { tasks: page.map(id => compactTaskVerdicts({ ...this.taskProjection!.get(id)! })), nextOffset: offset + page.length < ids.length ? offset + page.length : null };
-  }
-  boardTasks(limit: number): Task[] {
-    this.ensureTaskProjection();
-    const ids = new Set(this.boardOtherIds);
-    for (const task of this.activeCapacityTasks()) if (task.phase === 'queued') ids.add(task.id);
-    for (const queue of this.boardQueues.values()) for (const id of queue.slice(0, limit)) ids.add(id);
-    return [...ids].sort((a, b) => this.taskSequence.get(b)! - this.taskSequence.get(a)!)
-      .map(id => compactTaskVerdicts({ ...this.taskProjection!.get(id)! }));
-  }
-  private holdWakeTargets = new Set<string>();
-  private holdTimers: Array<{ id: string; at: number }> = [];
-  private indexHoldWake(task: Task): void {
-    this.holdWakeTargets.delete(task.id);
-    this.holdTimers = this.holdTimers.filter(timer => timer.id !== task.id);
-    if (task.removedAt != null || ['done', 'cancelled'].includes(task.phase)) return;
-    const untils = [task.holdUntil, ...Object.values(holdsOf(task)).map(fence => fence?.until)];
-    const times = new Set<number>();
-    for (const until of untils) {
-      if (!until) continue;
-      if (until.kind === 'time') times.add(Date.parse(until.at));
-      else {
-        try { const target = this.taskReference(until.taskId); if (target.phase === 'done' || target.phase === 'cancelled' || target.removedAt) this.holdWakeTargets.add(task.id); }
-        catch { this.holdWakeTargets.add(task.id); }
-      }
-    }
-    for (const at of times) {
-      let low = 0, high = this.holdTimers.length;
-      while (low < high) { const mid = (low + high) >>> 1; if (this.holdTimers[mid].at < at) low = mid + 1; else high = mid; }
-      this.holdTimers.splice(low, 0, { id: task.id, at });
-    }
-  }
-  dueHoldTasks(nowMs = Date.now()): Task[] {
-    this.ensureTaskProjection();
-    const ids = new Set(this.holdWakeTargets);
-    for (const timer of this.holdTimers) { if (timer.at > nowMs) break; ids.add(timer.id); }
-    return [...ids].flatMap(id => { const task = this.taskProjection!.get(id); return task ? [{ ...task }] : []; });
-  }
-  private prStateIds = new Set<string>();
-  private indexPrState(task: Task): void {
-    if (task.removedAt == null && StoreTasks.isLivePhase(task) && task.prUrl && !task.resolution.mergedCommit) this.prStateIds.add(task.id);
-    else this.prStateIds.delete(task.id);
-  }
-  prStateTasks(): Task[] {
-    this.ensureTaskProjection();
-    return [...this.prStateIds].map(id => ({ ...this.taskProjection!.get(id)! }));
-  }
-  activeUiTasks(): Task[] {
-    this.ensureTaskProjection();
-    const ids = new Set(this.boardOtherIds);
-    for (const task of this.activeCapacityTasks()) ids.add(task.id);
-    return [...ids].map(id => compactTaskVerdicts({ ...this.taskProjection!.get(id)! }));
-  }
-  private originWorkspaceIds = new Map<string, string[]>();
-  private originWorkspaceOwners = new Map<string, string>();
-  private queuedOriginIndex = new Map<string, { owner: string; workspaceId: string | null; ids: Set<string> }>();
-  private queuedOriginKeys = new Map<string, string>();
-  private indexOrigin(task: Task): void {
-    const previousOwner = this.originWorkspaceOwners.get(task.id);
-    if (previousOwner !== undefined) {
-      const ids = this.originWorkspaceIds.get(previousOwner)!;
-      const at = ids.indexOf(task.id);
-      if (at >= 0) ids.splice(at, 1);
-      if (!ids.length) this.originWorkspaceIds.delete(previousOwner);
-      this.originWorkspaceOwners.delete(task.id);
-    }
-    const previousKey = this.queuedOriginKeys.get(task.id);
-    if (previousKey !== undefined) {
-      const group = this.queuedOriginIndex.get(previousKey)!;
-      group.ids.delete(task.id);
-      if (!group.ids.size) this.queuedOriginIndex.delete(previousKey);
-      this.queuedOriginKeys.delete(task.id);
-    }
-    const owner = taskOwner(task);
-    if (task.removedAt != null || isOperatorOrigin(owner)) return;
-    if (task.originWorkspaceId) {
-      let ids = this.originWorkspaceIds.get(owner);
-      if (!ids) this.originWorkspaceIds.set(owner, ids = []);
-      const sequence = this.taskSequence.get(task.id)!;
-      let low = 0, high = ids.length;
-      while (low < high) { const mid = (low + high) >>> 1; if (this.taskSequence.get(ids[mid])! > sequence) low = mid + 1; else high = mid; }
-      ids.splice(low, 0, task.id);
-      this.originWorkspaceOwners.set(task.id, owner);
-    }
-    if (task.phase !== 'queued' || this.operationalIds.has(task.id)) return;
-    const key = JSON.stringify([owner, task.originWorkspaceId]);
-    let group = this.queuedOriginIndex.get(key);
-    if (!group) this.queuedOriginIndex.set(key, group = { owner, workspaceId: task.originWorkspaceId, ids: new Set() });
-    group.ids.add(task.id);
-    this.queuedOriginKeys.set(task.id, key);
-  }
-  queuedOriginGroups(): Array<{ owner: string; workspaceId: string | null; ids: ReadonlySet<string> }> {
-    this.ensureTaskProjection();
-    return [...this.queuedOriginIndex.values()];
-  }
   /** Reverse prerequisite edges, maintained alongside the task projection. */
   dependentIndex = new Map<string, Set<string>>();
   private indexDependencies(task: Task, add: boolean): void {
@@ -458,6 +138,7 @@ export class StoreTasks {
       }
     }
   }
+
   projectionUndo: {
     projection: Map<string, Task> | null;
     clock: number;
@@ -466,73 +147,6 @@ export class StoreTasks {
     runs: Map<string, { state: { taskId: string; released: boolean } | undefined; pending: Run | undefined; rowid: number | undefined }>;
     counts: Map<string, number | undefined>;
   } | null = null;
-  rememberProjectedRun(id: string, taskId: string): void {
-    const undo = this.projectionUndo;
-    if (!undo || undo.projection !== this.taskProjection) return;
-    if (!undo.runs.has(id)) undo.runs.set(id, { state: this.runState?.get(id), pending: this.pendingRunProjection?.get(id), rowid: this.pendingRunRowid?.get(id) });
-    if (!undo.counts.has(taskId)) undo.counts.set(taskId, this.unreleasedByTask?.get(taskId));
-  }
-  restoreProjection(undo: NonNullable<StoreTasks["projectionUndo"]>): void {
-    for (const [id, entry] of undo.tasks) {
-      const current = this.taskProjection!.get(id);
-      if (entry.task) this.setProjectedTask(entry.task);
-      else if (current) {
-        // Remove the inserted identity from each incremental index before dropping it.
-        this.setProjectedTask({ ...current, phase: "cancelled", removedAt: now() });
-        this.indexDependencies(current, false);
-        this.taskProjection!.delete(id); this.taskSequence.delete(id); this.operationalIds.delete(id);
-        const at = this.taskProjectionOrder.indexOf(id);
-        if (at >= 0) this.taskProjectionOrder.splice(at, 1);
-      }
-      if (entry.attempt === undefined) this.attemptedRoutingEpoch.delete(id);
-      else this.attemptedRoutingEpoch.set(id, entry.attempt);
-      const restored = this.taskProjection!.get(id);
-      if (restored) this.indexReady(restored);
-    }
-    // A dependent can have been visited before its prerequisite was restored.
-    for (const id of undo.tasks.keys()) for (const dependent of this.dependentIndex.get(id) ?? []) {
-      const task = this.taskProjection!.get(dependent);
-      if (task) { this.indexReady(task); this.indexHoldWake(task); }
-    }
-    for (const [id, entry] of undo.runs) {
-      if (entry.state) this.runState!.set(id, entry.state); else this.runState!.delete(id);
-      if (entry.pending) this.pendingRunProjection!.set(id, entry.pending); else this.pendingRunProjection!.delete(id);
-      if (entry.rowid !== undefined) this.pendingRunRowid!.set(id, entry.rowid); else this.pendingRunRowid!.delete(id);
-    }
-    for (const [id, count] of undo.counts) {
-      if (count !== undefined) this.unreleasedByTask!.set(id, count); else this.unreleasedByTask!.delete(id);
-    }
-    this.newestSequence = undo.sequence;
-    this.integrationTaskIndex = null; this.queuedLaneStatsValid = false;
-    this.projectionClock = undo.clock;
-  }
-  setProjectedTask(task: Task): void {
-    const previous = this.taskProjection?.get(task.id);
-    const undo = this.projectionUndo;
-    if (undo && undo.projection === this.taskProjection && !undo.tasks.has(task.id))
-      undo.tasks.set(task.id, { task: previous, attempt: this.attemptedRoutingEpoch.get(task.id) });
-    // A task control can change its route request without changing global routing
-    // inputs. That changed task deserves a fresh selection attempt as well.
-    if (previous && previous.version !== task.version && previous.reason === task.reason)
-      this.attemptedRoutingEpoch.delete(task.id);
-    if (previous) this.indexDependencies(previous, false);
-    else this.taskSequence.set(task.id, ++this.newestSequence);
-    this.updateCapacityIndex(task, previous);
-    this.taskProjection!.set(task.id, task);
-    this.indexDependencies(task, true);
-    this.indexReady(task);
-    this.indexBoard(task);
-    this.indexOperational(task);
-    this.indexOrigin(task);
-    this.indexPrState(task);
-    this.indexHoldWake(task);
-    if (!previous || previous.phase !== task.phase || previous.resolution.goalUnmet !== task.resolution.goalUnmet || previous.removedAt !== task.removedAt) {
-      for (const dependent of this.dependentIndex.get(task.id) ?? []) {
-        const candidate = this.taskProjection!.get(dependent);
-        if (candidate) { this.indexReady(candidate); this.indexHoldWake(candidate); if (previous && task.phase === 'done' && previous.phase !== 'done') this.hooks.settledDependents.add(dependent); }
-      }
-    }
-  }
   readonly numberCache = new Map<string, { number: number; reference: string }>();
   /** Every run's owning task and release flag; missing `released` reads as unreleased. */
   runState: Map<string, { taskId: string; released: boolean }> | null = null;
@@ -562,11 +176,80 @@ export class StoreTasks {
     return true;
   }
   invalidateProjections() {
-    this.taskProjection = null; this.taskProjectionOrder = []; this.integrationTaskIndex = null; this.dependentIndex.clear(); this.activeCapacityIds.clear(); this.operationalIds.clear(); this.taskSequence.clear(); this.newestSequence = 0; this.readyQueues.clear(); this.readyRepository.clear(); this.readyStartedQueues.clear(); this.readyNormalQueues.clear(); this.readyPapercutQueues.clear(); this.readyStartedNormalQueues.clear(); this.readyStartedPapercutQueues.clear(); this.readyOldest.clear(); this.readyStartedOldest.clear(); this.unavailableQueueIds.clear(); this.attemptedRoutingEpoch.clear(); this.boardOtherIds.clear(); this.boardQueues.clear(); this.boardQueueRepository.clear(); this.queuedLaneEntries.clear(); this.queuedLaneStats.clear(); this.queuedLaneStatsValid = false; this.prStateIds.clear(); this.originWorkspaceIds.clear(); this.originWorkspaceOwners.clear(); this.queuedOriginIndex.clear(); this.queuedOriginKeys.clear(); this.holdWakeTargets.clear(); this.holdTimers = [];
+    this.taskProjection = null; this.taskProjectionOrder = []; this.integrationTaskIndex = null; this.dependentIndex.clear(); this.taskSequence.clear(); this.newestSequence = 0;
+    this.queue.reset(); this.board.reset();
     this.runState = null; this.unreleasedByTask = null; this.pendingRunProjection = null; this.pendingRunRowid = null;
     // A rolled-back `assignNumber` leaves no task_numbers row behind, so cached
     // numbers go with the projection; misses re-read the table below.
     this.numberCache.clear();
+  }
+  /**
+   * One projected row changed: record it for a rollback, update the sequence, and re-index
+   * every derived index. This is the single write path for the projection.
+   */
+  setProjectedTask(task: Task): void {
+    const previous = this.taskProjection?.get(task.id);
+    const undo = this.projectionUndo;
+    if (undo && undo.projection === this.taskProjection && !undo.tasks.has(task.id))
+      undo.tasks.set(task.id, { task: previous, attempt: this.queue.attemptedEpoch(task.id) });
+    // A task control can change its route request without changing global routing
+    // inputs. That changed task deserves a fresh selection attempt as well.
+    if (previous && previous.version !== task.version && previous.reason === task.reason)
+      this.queue.setAttemptedEpoch(task.id, undefined);
+    if (previous) this.indexDependencies(previous, false);
+    else this.taskSequence.set(task.id, ++this.newestSequence);
+    this.taskProjection!.set(task.id, task);
+    this.indexDependencies(task, true);
+    this.queue.index(task);
+    this.board.index(task);
+    if (!previous || previous.phase !== task.phase || previous.resolution.goalUnmet !== task.resolution.goalUnmet || previous.removedAt !== task.removedAt) {
+      for (const dependent of this.dependentIndex.get(task.id) ?? []) {
+        const candidate = this.taskProjection!.get(dependent);
+        if (candidate) {
+          this.queue.index(candidate); this.board.index(candidate);
+          if (previous && task.phase === 'done' && previous.phase !== 'done') this.hooks.settledDependents.add(dependent);
+        }
+      }
+    }
+  }
+  rememberProjectedRun(id: string, taskId: string): void {
+    const undo = this.projectionUndo;
+    if (!undo || undo.projection !== this.taskProjection) return;
+    if (!undo.runs.has(id)) undo.runs.set(id, { state: this.runState?.get(id), pending: this.pendingRunProjection?.get(id), rowid: this.pendingRunRowid?.get(id) });
+    if (!undo.counts.has(taskId)) undo.counts.set(taskId, this.unreleasedByTask?.get(taskId));
+  }
+  restoreProjection(undo: NonNullable<StoreTasks["projectionUndo"]>): void {
+    for (const [id, entry] of undo.tasks) {
+      const current = this.taskProjection!.get(id);
+      if (entry.task) this.setProjectedTask(entry.task);
+      else if (current) {
+        // Remove the inserted identity from each incremental index before dropping it.
+        this.setProjectedTask({ ...current, phase: "cancelled", removedAt: now() });
+        this.indexDependencies(current, false);
+        this.taskProjection!.delete(id); this.taskSequence.delete(id);
+        const at = this.taskProjectionOrder.indexOf(id);
+        if (at >= 0) this.taskProjectionOrder.splice(at, 1);
+      }
+      this.queue.setAttemptedEpoch(id, entry.attempt);
+      const restored = this.taskProjection!.get(id);
+      if (restored) this.queue.index(restored);
+    }
+    // A dependent can have been visited before its prerequisite was restored.
+    for (const id of undo.tasks.keys()) for (const dependent of this.dependentIndex.get(id) ?? []) {
+      const task = this.taskProjection!.get(dependent);
+      if (task) { this.queue.index(task); this.board.index(task); }
+    }
+    for (const [id, entry] of undo.runs) {
+      if (entry.state) this.runState!.set(id, entry.state); else this.runState!.delete(id);
+      if (entry.pending) this.pendingRunProjection!.set(id, entry.pending); else this.pendingRunProjection!.delete(id);
+      if (entry.rowid !== undefined) this.pendingRunRowid!.set(id, entry.rowid); else this.pendingRunRowid!.delete(id);
+    }
+    for (const [id, count] of undo.counts) {
+      if (count !== undefined) this.unreleasedByTask!.set(id, count); else this.unreleasedByTask!.delete(id);
+    }
+    this.newestSequence = undo.sequence;
+    this.integrationTaskIndex = null; this.board.queuedLaneStatsValid = false;
+    this.projectionClock = undo.clock;
   }
   ensureTaskProjection(): void {
     const clock = this.readProjectionClock();
@@ -597,8 +280,6 @@ export class StoreTasks {
         observation: observations.get(id) ?? null });
       tasks.set(task.id, frozenTask(task));
       this.taskSequence.set(task.id, -order.length);
-      this.updateCapacityIndex(task);
-      this.indexDependencies(task, true);
       order.push(task.id);
     }
     // Scalar run state only: no blob is transferred or parsed for the filters.
@@ -623,7 +304,10 @@ export class StoreTasks {
     this.runState = runState; this.unreleasedByTask = unreleased; this.pendingRunProjection = pending;
     this.pendingRunRowid = pendingRowid;
     this.projectionClock = clock;
-    for (const task of tasks.values()) { this.indexReady(task); this.indexBoard(task); this.indexOperational(task); this.indexOrigin(task); this.indexPrState(task); this.indexHoldWake(task); }
+    for (const task of tasks.values()) {
+      this.indexDependencies(task, true);
+      this.queue.index(task); this.board.index(task);
+    }
   }
   /** A caller-owned copy of one projected row; null when the id names no task. */
   projectedTask(id: string): Task | null {
@@ -655,7 +339,6 @@ export class StoreTasks {
     }
     return out;
   }
-  private static readonly isLivePhase = (task: Task) => task.phase !== "done" && task.phase !== "cancelled";
   numberForCached(taskId: string): { number: number; reference: string } | null {
     const hit = this.numberCache.get(taskId);
     if (hit) return hit;
@@ -686,7 +369,7 @@ export class StoreTasks {
         const task = this.taskProjection!.get(id)!;
         const resolution = task.resolution;
         if (task.removedAt != null || !resolution.integrationTurn) continue;
-        if (!StoreTasks.isLivePhase(task) && !(resolution.mergeIntent && !resolution.mergedCommit)) continue;
+        if (!isLivePhase(task) && !(resolution.mergeIntent && !resolution.mergedCommit)) continue;
         const tasks = index.get(task.repoPath);
         if (tasks) tasks.push(task); else index.set(task.repoPath, [task]);
       }
@@ -696,7 +379,7 @@ export class StoreTasks {
   }
   /** Live work only; retained terminal history is never parsed for dispatch. */
   liveTasks(): Task[] {
-    return this.projectedTasksWhere(task => task.removedAt == null && StoreTasks.isLivePhase(task));
+    return this.projectedTasksWhere(task => task.removedAt == null && isLivePhase(task));
   }
   laneTaskPage(lane: string, offset: number, limit: number): { tasks: Task[]; total: number; nextOffset: number | null } {
     const tasks = this.liveTasks().filter(task => task.lanes.includes(lane)).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
@@ -711,10 +394,10 @@ export class StoreTasks {
   maintenanceTasks(operationalOnly = false): Task[] {
     this.ensureTaskProjection();
     const runs = this.runState!;
-    const select = operationalOnly ? this.operationalTasksWhere.bind(this) : this.projectedTasksWhere.bind(this);
+    const select = operationalOnly ? this.queue.operationalTasksWhere.bind(this.queue) : this.projectedTasksWhere.bind(this);
     return select(task => {
       if (task.removedAt != null) return false;
-      if (StoreTasks.isLivePhase(task)) return true;
+      if (isLivePhase(task)) return true;
       if ((task.originError ?? "") !== "") return true;
       const resolution = task.resolution;
       if (resolution?.attention === true) return true;
@@ -730,33 +413,21 @@ export class StoreTasks {
     });
   }
   /** Active capacity facts plus live run owners; never visits the waiting queue. */
-  activeCapacityTasks(): Task[] {
-    this.ensureTaskProjection();
-    const ids = new Set(this.activeCapacityIds);
-    const liveRuns = new Set<string>();
-    for (const run of this.pendingRuns()) { ids.add(run.taskId); if (runHoldsSlot(run)) liveRuns.add(run.taskId); }
-    return [...ids].map(id => this.taskProjection!.get(id)).filter((task): task is Task => Boolean(task && this.capacityEligible(task)))
-      .sort((a, b) => this.taskSequence.get(b.id)! - this.taskSequence.get(a.id)!)
-      .map(task => ({ ...task, hasUnreleasedRun: taskHasUnreleasedRun(task, (this.unreleasedByTask!.get(task.id) ?? 0) > 0), hasLiveRun: liveRuns.has(task.id) }));
-  }
+  activeCapacityTasks(): Task[] { return this.queue.activeCapacityTasks(); }
   /** All active work and only the queue heads that could reserve the free slots. */
-  admissionCandidates(task?: Task): Task[] {
-    const limit = this.core.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT;
-    const byId = new Map(this.activeCapacityTasks().map(candidate => [candidate.id, candidate]));
-    for (const candidate of this.readyQueueHeads(Math.max(1, limit + 2))) if (!byId.has(candidate.id)) byId.set(candidate.id, candidate);
-    if (task && !byId.has(task.id)) byId.set(task.id, task);
-    return [...byId.values()].sort((a, b) => (this.taskSequence.get(b.id) ?? 0) - (this.taskSequence.get(a.id) ?? 0));
-  }
+  admissionCandidates(task?: Task): Task[] { return this.queue.admissionCandidates(task); }
+  /** Ready dispatch requests in priority order. */
+  readyQueueHeads(limit: number, repoPath?: string, startedOnly = false): Task[] { return this.queue.readyQueueHeads(limit, repoPath, startedOnly); }
   /** Terminal tasks with unlaunched run intents, unarchived workspaces, or runtime retirement proofs. */
   lifecycleTasks(operationalOnly = false): Task[] {
     const terminalIntentTasks = new Set(this.pendingRuns()
       .filter(run => run.status === "intent" && run.agentId == null && ["done", "cancelled"].includes(this.task(run.taskId).phase))
       .map(run => run.taskId));
-    const select = operationalOnly ? this.operationalTasksWhere.bind(this) : this.projectedTasksWhere.bind(this);
+    const select = operationalOnly ? this.queue.operationalTasksWhere.bind(this.queue) : this.projectedTasksWhere.bind(this);
     return select(task => {
       if (task.removedAt != null) return false;
       if (terminalIntentTasks.has(task.id)) return true;
-      if (StoreTasks.isLivePhase(task)) return true;
+      if (isLivePhase(task)) return true;
       if (task.resolution?.buildOutputCleanups?.some(record => record.runId && ['intent', 'uncertain'].includes(record.state))) return true;
       if (task.resolution?.workspaceRetirement && ['authorized', 'intent', 'uncertain'].includes(task.resolution.workspaceRetirement.state)) return true;
       // A cancelled task's stale recovery episode owes a sweep once no recovery run of its own is unreleased (Queue #680).
@@ -823,30 +494,16 @@ export class StoreTasks {
    * correlated subquery over every task row.
    */
   originRoutingTasks(operationalOnly = false): Task[] {
-    const select = operationalOnly ? this.operationalTasksWhere.bind(this) : this.projectedTasksWhere.bind(this);
+    const select = operationalOnly ? this.queue.operationalTasksWhere.bind(this.queue) : this.projectedTasksWhere.bind(this);
     return select(task => {
       if (task.removedAt != null) return false;
-      if (StoreTasks.isLivePhase(task)) return true;
+      if (isLivePhase(task)) return true;
       if (task.originError || task.originLookupError) return true;
       if (task.phase !== "done") return false;
       if (!task.completionNotificationCohort?.some(member => member.originEntry)) return false;
       return !this.hooks.notices(task.id).some(notice =>
         notice.kind === "completion" && notice.originEntry && notice.status === "delivered");
     });
-  }
-  /**
-   * Newest recorded workspace fallback per origin thread, from the projection:
-   * the newest task's recorded workspace wins, and a thread whose newest task
-   * recorded none inherits nothing.
-   */
-  originWorkspaces(): Map<string,string> {
-    this.ensureTaskProjection();
-    const result = new Map<string, string>();
-    for (const [owner, ids] of this.originWorkspaceIds) {
-      const workspace = this.taskProjection!.get(ids[0])?.originWorkspaceId;
-      if (workspace) result.set(owner, workspace);
-    }
-    return result;
   }
   /**
    * Bounded task set needed by the native board and its global activity strip.
@@ -856,7 +513,7 @@ export class StoreTasks {
    * Queue-owned side effect or an origin-routing fault that the board exposes.
    */
   uiTasks(): Task[] {
-    return this.projectedTasksWhere(task => this.boardVisible(task)).map(compactTaskVerdicts);
+    return this.projectedTasksWhere(task => boardVisible(task)).map(compactTaskVerdicts);
   }
   /**
    * Compact live-fleet page for `queue.snapshot`. Event history stays in the
@@ -956,6 +613,56 @@ export class StoreTasks {
     if (hit) return hit;
     const row = this.db.prepare("SELECT data FROM tasks WHERE id=?").get(id);
     return row ? this.hooks.numberedTask(String(row.data)) : null;
+  }
+  /**
+   * Bounded exact identity lookup for bridge lifecycle hints (Contract 007). It matches only
+   * Queue identities the service already knows, materializes no fleet history and returns an
+   * empty list for an unknown identity, so an unknown event schedules nothing.
+   */
+  taskIdsForIdentities(input: { agentId?: string | null; workspaceId?: string | null; hostId?: string | null }): string[] {
+    const ids = new Set<string>();
+    const runHosts = new Map<string, Set<string | null>>();
+    const addRun = (row: Record<string, unknown>) => {
+      const id = String(row.taskId), host = typeof row.hostId === 'string' && row.hostId ? row.hostId : null;
+      ids.add(id);
+      const hosts = runHosts.get(id) ?? new Set<string | null>(); hosts.add(host); runHosts.set(id, hosts);
+    };
+    const agentId = input.agentId ?? "";
+    const workspaceId = input.workspaceId ?? "";
+    // Separate branches keep the retired-worker fallback from defeating scalar index searches.
+    if (agentId) {
+      for (const row of this.db.prepare(`SELECT id FROM tasks WHERE rowid IN (
+        SELECT rowid FROM tasks WHERE json_extract(data,'$.removedAt') IS NULL AND json_extract(data,'$.agentId')=?
+        UNION SELECT rowid FROM tasks WHERE json_extract(data,'$.removedAt') IS NULL AND json_extract(data,'$.coordinatorAgentId')=?
+        UNION SELECT rowid FROM tasks WHERE json_extract(data,'$.removedAt') IS NULL AND json_extract(data,'$.resolution.reviewerAgentId')=?
+        UNION SELECT rowid FROM tasks INDEXED BY tasks_retired_identity
+          WHERE json_extract(data,'$.removedAt') IS NULL AND json_array_length(data,'$.retiredWorkers')>0
+          AND EXISTS (SELECT 1 FROM json_each(json_extract(data,'$.retiredWorkers')) WHERE json_extract(value,'$.agentId')=?)
+        ) ORDER BY rowid`).all(agentId, agentId, agentId, agentId)) ids.add(String(row.id));
+      for (const row of this.db.prepare(`SELECT r.taskId AS taskId, json_extract(r.data,'$.hostId') AS hostId FROM runs r JOIN tasks t ON t.id=r.taskId
+        WHERE json_extract(t.data,'$.removedAt') IS NULL AND json_extract(r.data,'$.agentId')=? ORDER BY r.rowid`).all(agentId)) addRun(row);
+    }
+    if (workspaceId) {
+      for (const row of this.db.prepare(`SELECT id FROM tasks WHERE rowid IN (
+        SELECT rowid FROM tasks WHERE json_extract(data,'$.removedAt') IS NULL AND json_extract(data,'$.workspaceId')=?
+        UNION SELECT rowid FROM tasks WHERE json_extract(data,'$.removedAt') IS NULL AND json_extract(data,'$.resolution.coordinatorWorkspaceId')=?
+        UNION SELECT rowid FROM tasks WHERE json_extract(data,'$.removedAt') IS NULL AND json_extract(data,'$.resolution.closeoutWorkspaceId')=?
+        ) ORDER BY rowid`).all(workspaceId, workspaceId, workspaceId)) ids.add(String(row.id));
+      for (const row of this.db.prepare(`SELECT r.taskId AS taskId, json_extract(r.data,'$.hostId') AS hostId FROM runs r JOIN tasks t ON t.id=r.taskId
+        WHERE json_extract(t.data,'$.removedAt') IS NULL AND json_extract(r.data,'$.workspaceId')=? ORDER BY r.rowid`).all(workspaceId)) addRun(row);
+    }
+    const matches = [...ids];
+    const readHost = this.db.prepare("SELECT json_extract(data,'$.hostId') AS hostId FROM tasks WHERE id=?");
+    const hostOf = (id: string) => {
+      const host = readHost.get(id)?.hostId;
+      return typeof host === 'string' && host ? host : null;
+    };
+    if (input.hostId) return matches.filter(id => hostOf(id) === input.hostId && [...(runHosts.get(id) ?? [])].every(host => host === input.hostId));
+    // An unqualified bridge identity is useful only when all matches prove the
+    // same host. Unknown provenance or matches spanning hosts are ambiguous.
+    const hosts = new Set(matches.map(hostOf));
+    for (const values of runHosts.values()) for (const host of values) hosts.add(host);
+    return hosts.size > 1 || hosts.has(null) ? [] : matches;
   }
   runs(taskId?: string): Run[] { return (taskId ? this.db.prepare("SELECT data FROM runs WHERE taskId=? ORDER BY rowid").all(taskId) : this.db.prepare("SELECT runs.data FROM runs JOIN tasks ON tasks.id=runs.taskId WHERE json_extract(tasks.data, '$.removedAt') IS NULL ORDER BY runs.rowid").all()).map(r => JSON.parse(String(r.data))); }
   /** Candidate leases only; callers retain role, generation and task-stage gates. */

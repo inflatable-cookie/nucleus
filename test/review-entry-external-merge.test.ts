@@ -261,7 +261,8 @@ test('the parent behaviour reproduces the queued refusal through the public rout
   const service=await openService({paused:false});
   const {f,runtime,task}=service,store=runtime.store;
   const patchable=store as unknown as Record<string,unknown>;
-  const original=patchable.reviewEntryUnrunBeforeFirstRun;
+  // The public boundary without the authenticated invocation: the pre-408 reader.
+  const original=store.reviewEntryUnrunBeforeFirstRun.bind(store);
   try{
     const before=store.task(task.id);
     const control=closeout(service);
@@ -272,7 +273,7 @@ test('the parent behaviour reproduces the queued refusal through the public rout
     let unseen:string[]=[];
     patchable.reviewEntryUnrunBeforeFirstRun=(current:Task)=>{
       unseen=store.operations({taskId:current.id,states:['pending','running','needs_attention']}).map(item=>item.id);
-      return (patchable.reviewEntryUnrun as (task:Task)=>boolean)(current);
+      return original(current);
     };
     await assert.rejects(runtime.taskControl(control),/Only an unmerged dispatched task can accept an external merge/,
       'the durable route, not only a parent engine call, reproduced the queued refusal');
