@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { isAbsolute, join } from "node:path";
 import type { HostRunEscapedDescendant } from "../../shared/contracts";
 import type { HostRunScheduler } from "../host-runs/host-run-scheduler";
+import type { Store } from "../store/store";
 import { processCommandLine } from "../machine/process-identity";
 import { processStartIdentityLiveness } from "../machine/process-identity-search";
 import { cwdMapFromLsof } from "../workspaces/worktree-validation";
@@ -11,24 +12,40 @@ const sleep = (ms: number) => new Promise<void>(resolvePromise => { setTimeout(r
 /** Capacity holds for escaped descendants resume from settled rows after service rolls. */
 const qaEscapedDescendantWatchers = new Map<string, Promise<void>>();
 export interface QaEscapeeContext {
+  store: Pick<Store, "qaRun" | "markQaEscapedDescendantsDead">;
   hostRuns: Pick<HostRunScheduler, "get" | "markEscapedDescendantsDead">;
-  options: { supervisionPollMs?: number };
+  options: { supervisionPollMs?: number; escapeeLiveness?: typeof processStartIdentityLiveness };
 }
+
+/** Run one identity-liveness sweep and persist proof only when every identity is dead. */
+export function sweepQaEscapedDescendants(context: QaEscapeeContext, runId: string): "dead" | "alive" | "unknown" | "ineligible" {
+  const run = context.store.qaRun(runId);
+  if (!run?.finishedAt || ["queued", "running"].includes(run.state) || !run.escapedDescendants.length
+      || run.escapedDescendantsProvenDeadAt) return "ineligible";
+  const liveness = context.options.escapeeLiveness ?? processStartIdentityLiveness;
+  const states = run.escapedDescendants.map(descendant => liveness(descendant.pid, descendant.startIdentity));
+  if (states.includes("alive")) return "alive";
+  if (states.includes("unknown")) return "unknown";
+  const scheduled = context.hostRuns.get(runId);
+  const hostEscaped = scheduled?.settlement?.result?.escapedDescendants ?? [];
+  const hostIdentities = new Set(hostEscaped.map(entry => `${entry.pid}:${entry.startIdentity}`));
+  if (scheduled?.state === "settled" && !scheduled.escapedDescendantsProvenDeadAt
+      && run.escapedDescendants.length === hostEscaped.length
+      && run.escapedDescendants.every(entry => hostIdentities.has(`${entry.pid}:${entry.startIdentity}`)))
+    context.hostRuns.markEscapedDescendantsDead(runId, run.escapedDescendants);
+  context.store.markQaEscapedDescendantsDead(runId, run.escapedDescendants, new Date().toISOString());
+  return "dead";
+}
+
 export const projectQaEscapees = {
-  /** Retain settled capacity until every recorded escaped PID is proven to be the same dead process. */
+  /** Record dead-process proof on QA history and release matching retained host capacity. */
   watchEscapedDescendants(this: QaEscapeeContext, runId: string): void {
     if (qaEscapedDescendantWatchers.has(runId)) return;
     const pollMs = Math.max(25, this.options.supervisionPollMs ?? 1_000);
     const watching = (async () => {
       for (;;) {
-        const scheduled = this.hostRuns.get(runId);
-        if (!scheduled || scheduled.state !== "settled" || scheduled.capacityReleasedAt) return;
-        const escaped = scheduled.settlement?.result?.escapedDescendants ?? [];
-        if (!escaped.length || scheduled.escapedDescendantsProvenDeadAt) return;
-        if (escaped.every(descendant => processStartIdentityLiveness(descendant.pid, descendant.startIdentity) === "dead")) {
-          this.hostRuns.markEscapedDescendantsDead(runId, escaped);
-          return;
-        }
+        const state = sweepQaEscapedDescendants(this, runId);
+        if (state === "dead" || state === "ineligible") return;
         await sleep(pollMs);
       }
     })().finally(() => { qaEscapedDescendantWatchers.delete(runId); });

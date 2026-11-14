@@ -1,4 +1,4 @@
-import { projectQaRunSchema, type ProjectQaRun } from "../../shared/contracts";
+import { hostRunEscapedDescendantSchema, projectQaRunSchema, type HostRunEscapedDescendant, type ProjectQaRun } from "../../shared/contracts";
 import { StoreCore } from "./store-core";
 
 export class StoreProjectQa {
@@ -36,6 +36,38 @@ export class StoreProjectQa {
   qaRun(id: string): ProjectQaRun | null {
     const row = this.core.db.prepare("SELECT data FROM project_qa_runs WHERE id=?").get(id);
     return row ? projectQaRunSchema.parse(JSON.parse(String(row.data))) : null;
+  }
+
+  /** Finished QA rows whose escaped descendants still need identity-based exit proof. */
+  qaRunsAwaitingEscapedDescendants(): ProjectQaRun[] {
+    return this.core.db.prepare(`SELECT data FROM project_qa_runs
+      WHERE json_valid(data) AND json_extract(data,'$.finishedAt') IS NOT NULL
+        AND json_extract(data,'$.state') NOT IN ('queued','running')
+        AND json_array_length(json_extract(data,'$.escapedDescendants')) > 0
+      ORDER BY rowid`).all()
+      .map(row => projectQaRunSchema.parse(JSON.parse(String((row as { data: unknown }).data))))
+      .filter(run => !qaEscapeeProofCovers(run));
+  }
+
+  /** Persist an exact identity proof on QA history so it survives host-run retention. */
+  markQaEscapedDescendantsDead(id: string, provenDead: HostRunEscapedDescendant[], at: string): ProjectQaRun {
+    return this.core.transaction(() => {
+      const current = this.qaRun(id);
+      if (!current) throw new Error(`Project QA run ${id} does not exist`);
+      if (!current.finishedAt || ['queued', 'running'].includes(current.state))
+        throw new Error('Escaped descendants can be proven dead only after the QA run finishes');
+      if (!current.escapedDescendants.length) throw new Error('QA run has no recorded escaped descendants');
+      const validated = provenDead.map(entry => hostRunEscapedDescendantSchema.parse(entry));
+      const identities = new Set(validated.map(entry => `${entry.pid}:${entry.startIdentity}`));
+      if (identities.size !== current.escapedDescendants.length
+          || current.escapedDescendants.some(entry => !identities.has(`${entry.pid}:${entry.startIdentity}`)))
+        throw new Error('Dead-process proof must cover every QA escaped descendant exactly');
+      if (qaEscapeeProofCovers(current)) return current;
+      const updated = projectQaRunSchema.parse({ ...current, escapedDescendantsProvenDeadAt: at, escapedDescendantsProvenDead: validated });
+      this.core.db.prepare('UPDATE project_qa_runs SET data=? WHERE id=?').run(JSON.stringify(updated), id);
+      this.core.advanceRevision();
+      return updated;
+    });
   }
 
   /** The board-read current run for one repository key, via the bounded latest index. */
@@ -114,4 +146,10 @@ export class StoreProjectQa {
       green: read("json_extract(data,'$.baseBranch')='main' AND json_extract(data,'$.state')='passed'"),
       active: read("json_extract(data,'$.state') IN ('queued','running')") };
   }
+}
+
+function qaEscapeeProofCovers(run: ProjectQaRun): boolean {
+  if (!run.escapedDescendantsProvenDeadAt || !run.escapedDescendantsProvenDead) return false;
+  const covered = new Set(run.escapedDescendantsProvenDead.map(entry => `${entry.pid}:${entry.startIdentity}`));
+  return run.escapedDescendants.length > 0 && run.escapedDescendants.every(entry => covered.has(`${entry.pid}:${entry.startIdentity}`));
 }

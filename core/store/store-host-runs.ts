@@ -380,7 +380,7 @@ export class StoreHostRuns {
   /**
    * Every unsettled QA custody item on the host, read from all rows rather than
    * the latest-per-repository index: QA runs not finished, finished runs with an
-   * escaped descendant no exit proof covers, requests still preparing (an
+   * escaped descendant no QA-row or host-run exit proof covers, requests still preparing (an
    * unresolved delivery stays visible however old), and milestone host runs
    * still queued, admitted, running or holding capacity after settling. Every
    * JSON read is guarded (`json_extract` only inside `CASE WHEN json_valid`, and
@@ -396,6 +396,13 @@ export class StoreHostRuns {
     // proof proves nothing.
     const hostRow = this.core.db.prepare("SELECT data FROM host_run_records WHERE id=?");
     const provenDead = (run: ProjectQaRun): boolean => {
+      if (typeof run.escapedDescendantsProvenDeadAt === "string" && run.escapedDescendantsProvenDead) {
+        const qaProof = z.array(hostRunEscapedDescendantSchema).safeParse(run.escapedDescendantsProvenDead);
+        if (qaProof.success) {
+          const covered = new Set(qaProof.data.map(entry => `${entry.pid}:${entry.startIdentity}`));
+          if (run.escapedDescendants.every(entry => covered.has(`${entry.pid}:${entry.startIdentity}`))) return true;
+        }
+      }
       const host = decode((hostRow.get(run.id) as { data: string } | undefined)?.data) as
         { escapedDescendantsProvenDeadAt?: unknown; settlement?: { result?: { escapedDescendants?: unknown } } } | undefined;
       if (!host || typeof host !== "object" || typeof host.escapedDescendantsProvenDeadAt !== "string") return false;

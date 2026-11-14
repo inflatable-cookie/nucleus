@@ -186,6 +186,9 @@ export const projectQaRunSchema = z.object({
   /** Contract 010's settlement is durable with the run row; its result file is retained beside the run. */
   hostSettlement: hostRunSettlementSchema.nullable().default(null),
   escapedDescendants: z.array(hostRunEscapedDescendantSchema).default([]),
+  /** Identity-scoped exit proof retained with QA history after host-run pruning. */
+  escapedDescendantsProvenDeadAt: z.string().datetime().optional(),
+  escapedDescendantsProvenDead: z.array(hostRunEscapedDescendantSchema).optional(),
   cancelReason: z.string().nullable().default(null),
   /**
    * How many operator teardown retries this run has attempted (task 134). It
