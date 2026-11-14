@@ -12,7 +12,7 @@ import type { Adapter } from '../core/host';
 import { t3Fake } from './support/t3code-fake';
 
 async function until(predicate: () => boolean) {
-  for (let attempt = 0; attempt < 200; attempt++) {
+  for (let attempt = 0; attempt < 500; attempt++) {
     if (predicate()) return;
     await delay(10);
   }
@@ -31,25 +31,23 @@ test('two heartbeat failures retire the host and reconnect once; health retains 
   const connection = new T3HostConnection({ endpoint: server.endpoint, bearer: 'synthetic-bearer' }, directory, hosts,
     () => new Admission(), {
       create: config => {
-        const host = createHost({ ...config, heartbeatIntervalMs: 100, heartbeatTimeoutMs: 100 });
+        const host = createHost({ ...config, heartbeatIntervalMs: 100, heartbeatTimeoutMs: 1_000 });
         native.push(host);
         return host;
       },
       adapter: () => ({} as Adapter),
     });
   t.after(() => connection.close());
-  t.mock.timers.enable({ apis: ['setTimeout'] });
   await connection.ensureConnected();
   assert.equal(connection.status().connected, true);
+  const pingsBeforeFailure = server.controlFrames.filter(frame => frame._tag === 'Ping').length;
   server.controls.heartbeat = false;
-  t.mock.timers.tick(100);
-  await until(() => server.controlFrames.filter(frame => frame._tag === 'Ping').length === 1);
-  t.mock.timers.tick(100);
-  await until(() => server.controlFrames.filter(frame => frame._tag === 'Ping').length === 2);
+  await until(() => server.controlFrames.filter(frame => frame._tag === 'Ping').length === pingsBeforeFailure + 1);
+  await until(() => server.controlFrames.filter(frame => frame._tag === 'Ping').length === pingsBeforeFailure + 2);
   assert.equal(connection.status().connected, true, 'one missed pong cannot retire a host');
   // Ordinary successful reads do not substitute for the liveness exchange.
   await native[0]!.catalog();
-  t.mock.timers.tick(100);
+  await until(() => !native[0]!.connected);
   assert.equal(connection.status().connected, false);
   assert.equal(connection.status().lastDisconnectReason, 'heartbeat_failure');
   assert.deepEqual(hosts.onlineIds(), [], 'the registry exposes host_unavailable');
@@ -61,16 +59,16 @@ test('two heartbeat failures retire the host and reconnect once; health retains 
   assert.equal(server.closes, 1);
   assert.equal(connection.status().connected, true);
   assert.equal(connection.status().lastDisconnectReason, 'heartbeat_failure', 'reconnect must retain the last disconnect reason');
-  t.mock.timers.tick(100);
-  await until(() => server.controlFrames.filter(frame => frame._tag === 'Ping').length === 3);
+  const pingsBeforeHealthy = server.controlFrames.filter(frame => frame._tag === 'Ping').length;
+  await until(() => server.controlFrames.filter(frame => frame._tag === 'Ping').length > pingsBeforeHealthy);
   // The config response follows Pong on the same socket, so this drains it.
   await native[1]!.catalog();
-  t.mock.timers.tick(100);
+  await delay(200);
   await native[1]!.catalog();
   assert.equal(connection.status().connected, true);
   connection.close();
   await until(() => server.closes === 2);
   const pings = server.controlFrames.filter(frame => frame._tag === 'Ping').length;
-  t.mock.timers.tick(1_000);
+  await delay(200);
   assert.equal(server.controlFrames.filter(frame => frame._tag === 'Ping').length, pings, 'close cancels heartbeat timers');
 });

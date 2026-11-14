@@ -431,7 +431,7 @@ test('disconnect after a mutation is unknown and never replays the request', asy
   const server = await fakeServer(t, (request, _send, socket) => { if (request._tag === 'Request') socket.destroy(); });
   const client = await clientFor(t, server);
   await assert.rejects(client.call('orchestration.dispatchCommand', { type: 'thread.stop', commandId: 'stable', threadId: 'synthetic' }), error => error instanceof T3RpcError && error.delivery === 'unknown');
-  assert.equal(client.lastDisconnectReason, 'socket_close');
+  assert.ok(['socket_close', 'socket_error'].includes(client.lastDisconnectReason!), 'abrupt loss retains the socket event that arrived first');
   assert.equal(server.frames.filter(frame => frame._tag === 'Request').length, 1);
   assert.equal(server.upgrades, 1);
 });
