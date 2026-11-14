@@ -50,7 +50,7 @@ import { STEPS_RETIRED_REASON } from "../recovery/retired-steps";
 import { stageDeclarationFromBrief } from "../stages";
 
 import { HOST_RUN_OUTPUT_FAILURE_DUE_PAGE,HOST_RUN_OUTPUT_FAILURE_SUMMARY_EXAMPLES,type HostRunOutputFailure,type HostRunOutputReclassification } from "../host-runs/host-run-output-failures";
-import { qualifiedThreadArchiveEffectKey } from "./store-core";
+import { finishedThreadCleanupKeyPrefix, qualifiedThreadArchiveEffectKey, qualifiedThreadArchiveEffectKeyPrefix } from "./store-core";
 import { ContentFingerprint,HISTORY_RETENTION_MS,StoreFacts } from "./store-maintenance";
 import type { BudgetClock } from "../../shared/task-budget";
 /**
@@ -1238,6 +1238,53 @@ export class Store {
   threadArchiveEffect(agentId: string, hostId?: string | null): { status?: string } | undefined {
     const key = this.threadArchiveKey(agentId, hostId);
     return key ? this.getMeta(key) : undefined;
+  }
+  /**
+   * Finished tasks on this host whose threads still owe an archive or removal.
+   *
+   * One direct query over the stored tasks: done or cancelled (the
+   * active-capacity index deliberately excludes both, so the ordinary sweep
+   * never presents them), this host's, not removed, and still owing a thread's
+   * cleanup. A task is selected again on a later sweep only while an effect is
+   * still owed, so a lost or partial cleanup keeps its durable retry
+   * (nucleus#1155 brief v3). The effect keys and the completion marker are the
+   * store's own formats, read here once.
+   */
+  finishedTasksOwingThreadCleanup(hostId: string, removal: boolean): Task[] {
+    const rows = this.db.prepare(`WITH finished AS (
+      SELECT id, data, json_extract(data,'$.hostId') AS hostId FROM tasks
+      WHERE json_extract(data,'$.hostId')=?
+        AND json_extract(data,'$.removedAt') IS NULL
+        AND ((json_extract(data,'$.phase')='done' AND (
+          COALESCE(json_extract(data,'$.resolution.mergedCommit'),'')<>''
+          OR (json_extract(data,'$.entrypoint')='proof'
+            AND json_extract(data,'$.proofOnly.commit')=json_extract(data,'$.proofOnlyResult.commit'))))
+          OR (? AND json_extract(data,'$.phase')='cancelled'
+            AND json_extract(data,'$.disposition.status')='complete'))
+        AND NOT EXISTS (SELECT 1 FROM meta WHERE key=? || tasks.id)
+    ), threads AS (
+      SELECT id AS taskId, hostId, json_extract(data,'$.agentId') AS agentId, 1 AS worker FROM finished
+      UNION ALL
+      SELECT finished.id, hostId, json_extract(retired.value,'$.agentId'), 1
+        FROM finished, json_each(finished.data,'$.retiredWorkers') AS retired
+      UNION ALL
+      SELECT finished.id, finished.hostId, json_extract(runs.data,'$.agentId'),
+        CASE WHEN json_extract(runs.data,'$.role')='revision' THEN 1 ELSE 0 END
+        FROM finished JOIN runs ON runs.taskId=finished.id
+        WHERE json_extract(runs.data,'$.hostId')=finished.hostId
+    ), candidates AS (
+      SELECT taskId, hostId, agentId, MAX(worker) AS worker FROM threads
+        WHERE agentId IS NOT NULL AND agentId<>'' GROUP BY taskId, hostId, agentId
+    )
+    SELECT finished.data FROM finished WHERE EXISTS (
+      SELECT 1 FROM candidates LEFT JOIN meta
+        ON meta.key=? || json_array(candidates.hostId,candidates.agentId)
+      WHERE candidates.taskId=finished.id AND (
+        COALESCE(json_extract(meta.value,'$.status'),'')<>'archived'
+        OR COALESCE(json_extract(meta.value,'$.op'),'archive')<>
+          CASE WHEN ? AND candidates.worker=0 THEN 'delete' ELSE 'archive' END)
+    ) ORDER BY finished.id`).all(hostId, removal ? 1 : 0, finishedThreadCleanupKeyPrefix, qualifiedThreadArchiveEffectKeyPrefix, removal ? 1 : 0) as { data: string }[];
+    return rows.map(row => JSON.parse(row.data) as Task);
   }
   /**
    * Remove every recorded run leaf a retired thread's tools were launched with,

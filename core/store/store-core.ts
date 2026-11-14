@@ -135,3 +135,14 @@ export const operationInputHash = (value: unknown) => digest(JSON.stringify(valu
  * leaves are done (task 681).
  */
 export const qualifiedThreadArchiveEffectKey = (hostId: string, agentId: string) => `threadArchiveQualified:${formatAgentId(hostId, agentId)}`;
+
+/**
+ * The prefix every qualified thread archive effect key shares. A query pairs it
+ * with the same `[hostId, agentId]` JSON the key is built from, so the key
+ * format has one owner.
+ */
+export const qualifiedThreadArchiveEffectKeyPrefix = 'threadArchiveQualified:nucleus-agent:v1:';
+
+/** The task-level record that an already-finished task's thread cleanup ran to completion. */
+export const finishedThreadCleanupKeyPrefix = 'finishedTaskThreadCleanup:';
+export const finishedThreadCleanupKey = (taskId: string) => `${finishedThreadCleanupKeyPrefix}${taskId}`;

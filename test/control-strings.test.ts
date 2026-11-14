@@ -618,7 +618,9 @@ const PARSED: ParsedText[] = [
   { site: 'ready report checkout', re: /^(Worker must leave a clean worktree before review|Worker must remain on queue-owned branch )/, sample: 'Worker must remain on queue-owned branch ns-1',
     writers: ['Worker must leave a clean worktree before review: ${causes.join(", ")}', 'Worker must remain on queue-owned branch ${task.branch}'] },
   { site: 'waiting running', re: /\bthread running$/, sample: 'Reviewer thread running' },
-  { site: 'tool issue', re: / is running$/, sample: 'observed tool call x is running', writers: [' and is running'] },
+  // The owned-tool proof decides on its typed issue fact, so no reader matches
+  // this refusal's text any more; the writer's sentence stays pinned.
+  { site: 'tool issue', sample: 'observed tool call x is running', writers: [' and is running'] },
   { site: 'agent gone', reads: ["error.message === 'Agent was not found'", 'error.message !== "Agent was not found"', 'error.message === "Agent was not found"', 'const AGENT_NOT_FOUND = "Agent was not found"'], writers: ['throw new Error("Agent was not found")', "throw Error('Agent was not found')"] },
   // Task 1090: empty awaitingProofs on source approval names the ready_to_merge
   // route so a reviewer that finished source review with only release gates
@@ -725,7 +727,7 @@ native_question_delegated:2:1 native_question_operator:1:1 native_question_respo
 native_question_unknown:1:1 needs_attention:4:168 non_delivery:3:12 non_delivery_pushback:2:2 non_delivery_reset:1:2 operator_control:4:2
 operator_question:8:9 operator_question_answered:10:8 operator_question_applied:3:1 operator_question_decided:1:1 operator_question_decision:4:7
 operator_question_delegation_missed:1:3 operator_question_delegation_unknown:1:3 operator_question_reasked:1:1 operator_question_refused:2:2
-operator_question_stale_answered:3:3 operator_question_superseded:3:5 operator_question_unknown:1:3 owned_tool_hold:5:4 owned_tool_settled:3:1
+operator_question_stale_answered:3:3 operator_question_superseded:3:5 operator_question_unknown:1:3 owned_tool_hold:3:2 owned_tool_settled:1:1
 owner_control:3:9 owner_restart_instruction_sent:3:2 owner_stop_sent:5:4 owner_stop_uncertain:2:2 owner_stopped:4:1 owner_verb_deferred:1:1
 paused_resume_uncertain:1:2 planner_escalation_answered:1:5 planner_escalation_attached:1:1 planner_escalation_decision:1:1
 planner_escalation_decision_linked:1:3 planner_escalation_missed:2:3 planner_escalation_offered:1:1 planner_escalation_payload:2:2
@@ -736,7 +738,7 @@ queue_promoted:1:1 recovery_escalated:2:2 recovery_pending:3:1 release:1:24 repo
 responsible_converted:1:0 responsible_fault_restart:1:1 responsible_question:1:14 responsible_question_answered:3:5
 responsible_question_stale_answered:1:1 responsible_question_superseded:2:2 review_auto_continue_deferred:1:1 review_checkpoint:1:2
 review_delivery_delivered:1:0 review_delivery_refused:1:0 review_delivery_reserved:1:1 review_delivery_uncertain:1:0 review_published:1:2
-review_reapplied:5:4 review_result_applied:5:5 reviewer_consult:1:2 reviewer_consult_answered:1:2 reviewer_consult_missed:1:3
+review_reapplied:4:4 review_result_applied:4:5 reviewer_consult:1:2 reviewer_consult_answered:1:2 reviewer_consult_missed:1:3
 reviewer_consult_payload:1:2 reviewer_consult_reviewer:1:2 reviewer_consult_sent:1:2 reviewer_consult_unknown:2:4 revision_budget_exhausted:2:1
 revision_requested:4:3 role_replacement:1:6 routing_signoff:1:7 run_completion:1:1 run_completion_corrected:1:1 run_intent:1:1
 runnable_proof_refused:1:1 runnable_proof_started:1:1 shell_notice_cleared:1:1 shell_notice_shown:1:1 state:2:40 submitted:1:1 telemetry_recovery:1:2

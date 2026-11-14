@@ -1,6 +1,7 @@
 import { onCheckoutVolume } from "../workspaces/checkout-volume";
 import { reconcileRoutingSignoffs } from "../dispatch/routing-signoff";
-import { archiveFinishedThreads, archiveSupersededWorkers } from '../workspaces/thread-archive';
+import { archiveFinishedThreads } from '../workspaces/thread-archive';
+import { archiveSupersededWorkers } from '../workspaces/thread-archive-replacement';
 import type { Task } from "../../shared/contracts";
 import { missingOriginHasPlanner } from '../questions/origin';
 import { taskStopClassification, taskStopVerbsFor } from "../../shared/task-stop";

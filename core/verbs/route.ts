@@ -1,4 +1,4 @@
-import { archiveReplacedReviewer } from '../workspaces/thread-archive';
+import { archiveReplacedReviewer } from '../workspaces/thread-archive-replacement';
 import { routeStateRefusal } from './control-refusals';
 import { REMOVED_TASK_REFUSAL } from './control-refusals';
 import { liveRun, liveRunForRole } from '../task-decision-rules';

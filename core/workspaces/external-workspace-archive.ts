@@ -3,6 +3,7 @@ import { doublingDelay } from "../../shared/backoff";
 import { AdmissionDeferred, isBackpressureDeferral } from "../host/admission";
 import type { Adapter, ExternalWorkspaceArchiveOutcome, ExternalWorkspaceCatalog, ExternalWorkspaceCatalogEntry } from "../host/adapter";
 import { now, type Store } from "../store/store";
+import { threadServesAnotherTask } from "./thread-ownership";
 import {
   type ExternalWorkspaceArchive, type Run, type Task, externalWorkspaceArchiveSettled, externalArchiveOccurrence, ownerSettlementMatches, holdsOf,
 } from "../../shared/contracts";
@@ -321,7 +322,7 @@ export async function settleExternalWorkspaceArchive(ports: ExternalWorkspaceArc
     if (store.workspaceUsedByOtherTaskRun(task.id, workspaceId)) return hold(ports, task, record, target, "Workspace is referenced by another task", currentRuns, samePath);
     const hostRun = store.hostRunHoldingWorkspace(bound.directory);
     if (hostRun) return hold(ports, task, record, target, "A host run still holds the preserved workspace", currentRuns, samePath);
-    const foreign = [...ownedAgentIds].filter(agentId => servesAnotherTask(store, task, agentId));
+    const foreign = [...ownedAgentIds].filter(agentId => threadServesAnotherTask(store, task, agentId));
     if (foreign.length) return hold(ports, task, record, target, `Thread ${foreign[0]} now serves another task`, currentRuns, samePath);
 
     // The durable removal of this shared folder by an earlier authorized entry:
@@ -474,13 +475,6 @@ function hold(ports: ExternalWorkspaceArchivePorts, task: Task, record: External
     nextAttemptAt: isBackpressureDeferral(detail) ? new Date(Date.now()).toISOString() : retryAt(attempts),
   };
   return settle(ports, task, held, "external_workspace_archive_held");
-}
-
-/** A thread that any other live task binds is not this task's to archive. */
-function servesAnotherTask(store: Store, task: Task, agentId: string): boolean {
-  if (store.unreleasedRunsForAgent(agentId, task.hostId).length) return true;
-  return store.tasks().some(other => other.id !== task.id && (!other.hostId || !task.hostId || other.hostId === task.hostId) && !["done", "cancelled"].includes(other.phase) && !other.removedAt
-    && [other.agentId, other.coordinatorAgentId, other.resolution.reviewerAgentId].includes(agentId));
 }
 
 /**
