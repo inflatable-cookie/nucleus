@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, delimiter } from "node:path";
-import { gitAncestry, gitRun } from "../core/git/git-command";
+import { gitAncestry, gitRun, requireGitAncestry } from "../core/git/git-command";
 import { githubRepositoryFromRemote } from "../core/git/git-remote";
 import { command } from "../core/git/index";
 
@@ -69,4 +69,18 @@ test("a remote names a GitHub repository only in its own forms", () => {
   // Another forge, a nested path and a bare word are not GitHub repositories.
   for (const remote of ["https://gitlab.com/owner/repo", "https://github.com/owner/repo/tree/main", "repo", ""])
     assert.equal(githubRepositoryFromRemote(remote), null, remote);
+});
+
+test("a refused ancestry names an unreadable read apart from a proven no", async () => {
+  const refusal = "Replacement source does not descend from the base";
+  const cases: Array<[number, RegExp | null]> = [[0, null], [1, /Replacement source does not descend from the base$/], [128, /unreadable/]];
+  for (const [code, expected] of cases) {
+    const { directory, env } = fakeGit(`process.exit(${code});`);
+    const previous = process.env.PATH;
+    process.env.PATH = env.PATH;
+    try {
+      if (!expected) { await requireGitAncestry(directory, "a".repeat(40), "b".repeat(40), refusal); continue; }
+      await assert.rejects(requireGitAncestry(directory, "a".repeat(40), "b".repeat(40), refusal), expected, `exit ${code}`);
+    } finally { process.env.PATH = previous; }
+  }
 });

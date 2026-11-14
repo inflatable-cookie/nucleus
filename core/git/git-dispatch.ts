@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { Task } from "../../shared/contracts";
 import { taskCheckoutTarget } from "../workspaces/checkout-target";
-import { git, gitAncestry, gitBulk, gitRaw, messageOf } from "./git-command";
+import { git, gitAncestry, gitBulk, gitRaw, messageOf, requireGitAncestry } from "./git-command";
 import { gitStatus, queueCheckoutStatus, currentWorkerBranch } from "./git-checkout";
 import { assertPinnedBrief, validateSubmission, verifyBriefWorkerIdentity } from "./git-submission";
 import { dirtyWorktreeError } from "./git-stash";
@@ -117,7 +117,9 @@ async function validateDispatchCheckout(task: Task, unchanged: () => Promise<voi
     }
   }
   const base = await git(task.repoPath, "rev-parse", `refs/heads/${task.baseBranch}`);
-  await git(task.repoPath, "merge-base", "--is-ancestor", task.planningCommit, base);
+  await requireGitAncestry(task.repoPath, task.planningCommit, base,
+    "Integration branch does not contain the submitted planning commit");
+
   // Brief mode: planning identity is ancestry, checked above; the pinned brief lives in Queue.
   if (task.brief) { assertPinnedBrief(task); return base; }
   const currentHandoff = await git(task.repoPath, "show", `${base}:${task.handoffPath}`);
@@ -265,7 +267,7 @@ export async function verifyReplacementSource(task: Task, head: string) {
   if (!task.directory) throw new Error('Replacement requires the retained worktree');
   await verifyRecordedOrigin(task, task.directory);
   await verifyResume(task);
-  if (await gitAncestry(task.directory, task.planningBase, head) !== 'ancestor') throw new Error('Replacement source does not descend from the task planning base');
+  await requireGitAncestry(task.directory, task.planningBase, head, 'Replacement source does not descend from the task planning base');
   await verifyCheckpoint(task, head);
   const advertised = await git(task.directory, 'ls-remote', 'origin', `refs/heads/${task.branch}`);
   if ((advertised.split(/\s+/)[0] ?? '') !== head) throw new Error('Replacement source is not the published task branch head');

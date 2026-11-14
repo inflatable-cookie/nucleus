@@ -101,6 +101,9 @@ export async function originBranchContaining(directory: string, head: string, pr
   // other worktrees may be merging or fetching at the same time.
   await git(directory, "fetch", "--no-tags", "--no-write-fetch-head", "--refmap=", "origin", ...[...before.keys()].map(name => `refs/heads/${name}`));
   const live = await advertised();
+  // This reader only ever proves containment: an unreadable ancestry adds no
+  // branch to the proof, and the caller's refusal is "no branch proves it",
+  // never a claim that the head is absent.
   const containing = new Set<string>();
   for (const [name, sha] of before) {
     if (live.get(name) === sha && await gitAncestry(directory, head, sha) === 'ancestor') containing.add(name);

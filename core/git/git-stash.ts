@@ -48,6 +48,6 @@ export async function dirtyWorktreeError(task: Task, message: string) {
   if (!task.directory || !task.stashBaseline) return new Error(message);
   let findings: string[];
   try { findings = stashFindings(task.branch, task.stashBaseline.entries, await readStash(task.directory)); }
-  catch { return new Error(message); }
+  catch { return new Error(`${message}. Stash findings are unavailable: the shared stash list could not be read`); }
   return new Error(findings.length ? `${message}. Stash findings: ${findings.join("; ")}` : message);
 }

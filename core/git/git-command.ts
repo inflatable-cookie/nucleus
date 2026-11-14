@@ -221,6 +221,18 @@ export async function gitAncestry(cwd: string, ancestor: string, descendant: str
   return result.code === 0 ? 'ancestor' : result.code === 1 ? 'diverged' : 'unknown';
 }
 
+/**
+ * Refuse unless the relation is proven, with the refusal the caller reads and
+ * the unreadable read named apart from it: a caller that cannot read ancestry
+ * reports that fact, never a divergence it did not observe.
+ */
+export async function requireGitAncestry(cwd: string, ancestor: string, descendant: string, refusal: string): Promise<void> {
+  const relation = await gitAncestry(cwd, ancestor, descendant);
+  if (relation === 'ancestor') return;
+  if (relation === 'unknown') throw new Error(`${refusal}; Git ancestry is unreadable, so the relation is unproven`);
+  throw new Error(refusal);
+}
+
 export function gitAncestrySync(cwd: string, ancestor: string, descendant: string): 'ancestor' | 'diverged' | 'unknown' {
   try {
     execFileSync("git", ["merge-base", "--is-ancestor", ancestor, descendant],

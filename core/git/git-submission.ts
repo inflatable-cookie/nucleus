@@ -13,7 +13,7 @@ import type { InstructionArtifact } from "../../shared/hooks";
 import { CONTROL_SCHEMA_V5, manifestSupportsCloseoutSelection } from "../../shared/hooks";
 import { discoverManifest, instructionForCommit, pinInstruction } from "../hooks/hook-manifest";
 import { assertOneInstructionSource, briefDigest, currentBrief, pinnedBriefDigest } from "../planning/brief";
-import { git, gitAncestry } from "./git-command";
+import { git, gitAncestry, requireGitAncestry } from "./git-command";
 
 export interface PlanningHeadProof { head: string; planningCommit: string; ancestor?: boolean }
 
@@ -30,11 +30,8 @@ export async function validateSubmission(input: Submission) {
   const handoffText = await git(input.repoPath, "show", `${input.planningCommit}:${input.handoffPath}`);
   if (!handoffText || handoffText.length > 128000) throw new Error("Handoff is empty or exceeds 128 KB");
   const planningBase = await git(input.repoPath, "rev-parse", `refs/heads/${input.baseBranch}`);
-  try {
-    await git(input.repoPath, "merge-base", "--is-ancestor", input.planningCommit, planningBase);
-  } catch (error) {
-    throw error;
-  }
+  await requireGitAncestry(input.repoPath, input.planningCommit, planningBase,
+    "Planning commit is not on the base branch; submit a commit the base contains");
   return { handoffText, planningBase, instruction };
 }
 /**
@@ -56,7 +53,6 @@ async function validateBriefSubmission(input: Submission) {
   if (relation !== 'ancestor') throw new Error("Brief planning commit is not on the integration branch");
   return { handoffText: input.brief!.text, planningBase, instruction: null };
 }
-const isAncestor = async (cwd: string, ancestor: string, head: string) => await gitAncestry(cwd, ancestor, head) === 'ancestor';
 /**
  * Brief mode runs only where no lifecycle hook reads a committed handoff: a v5,
  * v6 or v7 manifest at the planning commit, or no manifest. v1–v4 are refused.
@@ -76,14 +72,15 @@ export async function verifyBriefWorkerIdentity(task: Task, directory: string, h
   assertPinnedBrief(task);
   if (task.reviewEntry) {
     const { planningCommit, verifiedBase, verifiedHead } = task.reviewEntry;
-    if (planningCommit !== task.planningCommit || !await isAncestor(directory, planningCommit, verifiedBase))
+    if (planningCommit !== task.planningCommit)
       throw new Error("Brief review-entry base does not descend from the planning commit");
-    if (!await isAncestor(directory, verifiedHead, head))
-      throw new Error("Brief review-entry worker head does not descend from the recorded intake head");
+    await requireGitAncestry(directory, planningCommit, verifiedBase,
+      "Brief review-entry base does not descend from the planning commit");
+    await requireGitAncestry(directory, verifiedHead, head,
+      "Brief review-entry worker head does not descend from the recorded intake head");
     return;
   }
-  if (!await isAncestor(directory, task.planningCommit, head))
-    throw new Error(ordinaryFailure);
+  await requireGitAncestry(directory, task.planningCommit, head, ordinaryFailure);
 }
 /** A read-only submission check can wait safely for its Git remote without losing intent. */
 export class SubmissionUnavailableError extends Error {}
@@ -97,7 +94,8 @@ export async function verifyPublishedPlanning(input: Submission): Promise<void> 
   const pushed = await gitAncestry(input.repoPath, local, remote);
   if (pushed === 'unknown') throw new Error("Cannot prove the integration commit is pushed: Git ancestry is unreadable");
   if (pushed !== 'ancestor') throw new Error("Push the integration commit before queue submission");
-  await git(input.repoPath, "merge-base", "--is-ancestor", input.planningCommit, remote);
+  await requireGitAncestry(input.repoPath, input.planningCommit, remote,
+    "Submitted planning commit is not contained in the pushed integration branch");
 }
 
 /** Resolve the immutable generic instruction identity, validating any supplied artifact. */
