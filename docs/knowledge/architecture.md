@@ -95,10 +95,19 @@ owner to the rules it enforces.
   Nucleus planner once.
 - `core/store/store-compaction.ts` owns the one-shot store conversion, run once at
   start before serving ([store compaction](operations/store-compaction.md)).
-- `core/store/store.ts` keeps task events, authenticated receipts, role runs,
-  notifications, availability, operations and retention tombstones;
-  `taskIdsForIdentities` maps a bridge lifecycle hint to Nucleus identities
-  without reading fleet history.
+- `core/store/` gives each store mechanism one owner. `store.ts` is the facade:
+  owner wiring, the transaction and listener boundaries and the shared read
+  clocks. `store-tasks.ts` owns the task projection and the task read models
+  (`taskIdsForIdentities` maps a bridge lifecycle hint to Nucleus identities
+  without reading fleet history), `store-queue-index.ts` and
+  `store-board-index.ts` own the dispatch and board indexes over that
+  projection, and `store-task-funnel.ts` is the single writer of task and run
+  rows. Opening and migrating a store is `store-admission.ts`, the every-open
+  row strips are `store-migration.ts`, the retention windows are
+  `store-retention.ts`, and the file facts, content fingerprint and freed-page
+  reclamation are `store-reclaim.ts`; `store-schema.ts` holds every schema
+  statement. Task events, authenticated receipts, role runs, notifications,
+  availability and operations keep their own store modules.
 - `core/telemetry/telemetry.ts` derives lifecycle timing and interventions from durable
   facts; `shared/telemetry.ts` owns its schemas. `queue.detail` and
   `queue.telemetry` read them; no analytics database exists
