@@ -61,7 +61,7 @@ import { mainPrivateHostRunSupervisorStateSchema } from "./support/main-private-
 import { HOST_RUN_CPU_COVERAGE_FILE, boundSidecarCoverage } from "../core/host-runs/host-run-cpu-coverage";
 import { hostRunResultSchema } from "../shared/contracts";
 import { runHostRunSupervisorMain } from "../service/executor/host-run-supervisor";
-import { overrideIdentityListing } from "../core/machine/process-group";
+import { overrideIdentityListing } from "../core/machine/process-identity-search";
 import { HOST_RUN_IDENTITY_PROOF_CACHE_MS, hostRunOwnStartIdentity, readHostRunStartIdentity, RecordedIdentityProofs, startIdentityMatches, type StartIdentityRead } from "../core/machine/start-identity";
 
 const capacity = () => ({ cpuCapacity: 4, memoryCapacityBytes: 8_000_000_000, freeMemoryBytes: 8_000_000_000, loadAverage: [0, 0, 0] });

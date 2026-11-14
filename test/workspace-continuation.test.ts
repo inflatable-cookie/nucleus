@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PaseoAdapter } from "../service/paseo-composition";
-import type { HostProcessFact } from "../core/machine/host-process-reap";
+import type { HostProcessFact } from "../core/host/types";
 import type { Task } from "../shared/contracts";
 import type { HostWorkspaceRecord } from "../shared/host";
 import {

@@ -1,7 +1,7 @@
 /** The plugin entry alone binds service process effects to the neutral bridge port. */
 import { spawn } from "node:child_process";
 import { writeOwnedJson } from "../../core/machine/owned-file.mjs";
-import { processCpuMs } from "../../core/machine/process-group";
+import { processCpuMs } from "../../core/machine/process-tree-cpu";
 import { MainChannel } from "./main-channel.mjs";
 import { activateVersion, verifyVersion } from "./install.mjs";
 import { pidAlive, removeServiceStartupFailure, writeServiceRoll, writeServiceStartupFailure } from "../transport/identity";

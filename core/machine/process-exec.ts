@@ -2,7 +2,8 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_PROCESS_TERMINATION_GRACE_MS, PROCESS_TERMINATION_GRACE_MAX_MS, type HostRunEscapedDescendant } from "../../shared/contracts";
 import { withSpawnSlot } from "../dispatch/spawn-gate";
-import { processStartIdentityEnvironment, processGroupEmpty, processesForStartIdentity, signalProcessGroup, waitForProcessGroupEmpty } from "./process-group";
+import { processGroupEmpty, signalProcessGroup, waitForProcessGroupEmpty } from "./process-group";
+import { processStartIdentityEnvironment, processesForStartIdentity } from "./process-identity-search";
 import { hostRunProcessStartIdentity } from "./start-identity";
 import { BoundedStreamRetention, FailureFirstStreamRetention } from "./output-retention";
 

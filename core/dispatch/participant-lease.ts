@@ -3,7 +3,8 @@ import { recoveryEffects, isBlockingRecoveryEffect, recoveryEffectsRefusal } fro
 import { executionParticipants } from '../machine/execution-participants';
 import { runBindsCurrentWork, type Run, type Task } from '../../shared/contracts';
 import { STALE_INTEGRATION_BASE_PROOF } from '../hooks/hooks';
-import { formatHostProcessSweepEvent, reapHostProcesses, recordedProcessGroupsForTask } from '../machine/host-process-reap';
+import { formatHostProcessSweepEvent, reapHostProcesses } from '../machine/host-process-reap';
+import { recordedProcessGroupsForTask } from '../machine/host-process-select';
 import type { Adapter } from '../host/adapter';
 import type { VerifiedEnclosingOperation } from '../planning/enclosing-operation';
 import type { Resolution } from '../resolution';
@@ -164,6 +165,7 @@ export class ParticipantLease {
     } catch (error) {
       return `${issue}; host-process reap failed: ${error instanceof Error ? error.message : String(error)}`;
     }
+    if (result.unavailable) return `${issue}; host-process reap could not read the host: ${result.unavailable.reason}`;
     if (result.failed.length) return `${issue}; host-process reap could not prove or stop every target: ${result.failed.map(target => target.reason).join('; ')}`;
     if (result.skippedPaseo.length) {
       const skipped = `Skipped ${result.skippedPaseo.length} Paseo-owned process${result.skippedPaseo.length === 1 ? '' : 'es'}: ${result.skippedPaseo.map(target => `pid=${target.pid} pgid=${target.pgid} cwd=${target.cwd || '-'} command=${target.command || '-'}`).join('; ')}`;

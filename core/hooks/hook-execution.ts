@@ -2,7 +2,7 @@ import { EVENT_SCHEMA, type HookRecord, type HookResult, type NormalizedHookDefi
 import type { Task } from "../../shared/contracts";
 import type { Store } from "../store/store";
 import { gitText, verifyMergeCandidate, verifyRetainedWorktree, verifyReviewedHead, type GitSnapshot } from "../git/git-snapshot";
-import { gitRaw } from "../git/git-command";
+import { gitRun, } from "../git/git-command";
 import type { ExecutionOutcome, ExecutionRequest } from "../machine/process-exec";
 import {
   hookProgramExecutable, hookRecordTarget, preArchiveWorktreeHead,
@@ -259,7 +259,7 @@ export class HookExecution {
     try {
       const root = task.repoPath;
       if (await gitText(root, "branch", "--show-current") !== record.baseBranch) return false;
-      if ((await gitRaw(root, ["merge-base", "--is-ancestor", before.head, after.head])).code !== 0) return false;
+      if ((await gitRun(root, ["merge-base", "--is-ancestor", before.head, after.head])).code !== 0) return false;
       if (after.indexTree !== await gitText(root, "rev-parse", `${after.head}^{tree}`)) return false;
       return after.head === await gitText(root, "rev-parse", `refs/remotes/origin/${record.baseBranch}`);
     } catch { return false; }

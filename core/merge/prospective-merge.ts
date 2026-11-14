@@ -5,7 +5,7 @@ import type { Task } from "../../shared/contracts";
 import type { HookRecord, HookEventName, MergeCandidate, NormalizedHookDefinition } from "../../shared/hooks";
 import { blobDigest, discoverManifest, repositoryIsGitCheckout } from "../hooks/hook-manifest";
 import { gitText, gitTextEnv, statusEntries, verifyMergeCandidate } from "../git/git-snapshot";
-import { gitRaw, formatGitError } from "../git/git-command";
+import { gitRun, formatGitError } from "../git/git-command";
 import { digest, now, type Store } from "../store/store";
 import { isolationPathFor, warmCandidatePathFor, isOwnedIsolationPath } from "../hooks/hook-isolation";
 import { executablePath, hookHoldReason, type HookContext, type HookEmissionResult, type ProspectiveMergeRequest, type ProspectiveMergeOutcome } from "../hooks/hook-context";
@@ -108,9 +108,9 @@ export class ProspectiveMerge {
   async buildProspectiveCandidate(task: Task, path: string, base: string, head: string, warm = false): Promise<{ kind: "built"; candidate: MergeCandidate } | { kind: "conflict"; detail: string } | { kind: "error"; detail: string } | { kind: "fallback"; detail: string }> {
     try {
       for (const commit of [base, head]) {
-        if ((await gitRaw(task.repoPath, ["cat-file", "-e", `${commit}^{commit}`])).code === 0) continue;
-        await gitRaw(task.repoPath, ["fetch", "origin", commit]);
-        if ((await gitRaw(task.repoPath, ["cat-file", "-e", `${commit}^{commit}`])).code !== 0) return { kind: "error", detail: `the commit ${commit} is not available to Queue` };
+        if ((await gitRun(task.repoPath, ["cat-file", "-e", `${commit}^{commit}`])).code === 0) continue;
+        await gitRun(task.repoPath, ["fetch", "origin", commit]);
+        if ((await gitRun(task.repoPath, ["cat-file", "-e", `${commit}^{commit}`])).code !== 0) return { kind: "error", detail: `the commit ${commit} is not available to Queue` };
       }
       const common = await gitText(task.repoPath, "rev-parse", "--path-format=absolute", "--git-common-dir");
       if (!isOwnedIsolationPath(path, this.isolationDataDir(), common)) return { kind: "error", detail: "the candidate checkout is outside the Queue-owned isolation root" };
@@ -121,7 +121,7 @@ export class ProspectiveMerge {
       // `merge-tree --write-tree` performs the same three-way merge Git would use
       // for a merge commit; its first output line is the resulting tree. Exit 1
       // means conflicts, which stop the gate before any hook process starts.
-      const merged = await gitRaw(task.repoPath, ["merge-tree", "--write-tree", base, head]);
+      const merged = await gitRun(task.repoPath, ["merge-tree", "--write-tree", base, head]);
       const lines = merged.stdout.toString("utf8").split("\n").map(line => line.trim()).filter(Boolean);
       if (merged.code === 1) return { kind: "conflict", detail: lines.slice(1, 4).join("; ") || "the pinned base and accepted head do not merge cleanly" };
       if (merged.code !== 0) return { kind: "error", detail: formatGitError(["merge-tree", "--write-tree", base, head], merged.code, merged.signal, merged.stderr) };

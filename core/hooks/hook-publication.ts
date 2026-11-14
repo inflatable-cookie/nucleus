@@ -7,7 +7,7 @@ import {
 import type { Task } from "../../shared/contracts";
 import { type Store, now } from "../store/store";
 import { gitText, snapshotGit, statusEntries, ignoredPathCollides, inspectChangedPaths, isolatedRepositoryIsCleanAt, type GitSnapshot } from "../git/git-snapshot";
-import { gitRaw } from "../git/git-command";
+import { gitRun, } from "../git/git-command";
 import { gitNulEach } from "../git/git-command";
 import { blobDigest } from "./hook-manifest";
 import { executablePath, hookProgramExecutable, type HookEmissionResult } from "./hook-context";
@@ -172,7 +172,7 @@ export class HookPublication {
       if ((await statusEntries(root, false)).length) return "canonical checkout has tracked or untracked changes";
       const head = await gitText(root, "rev-parse", "HEAD");
       if (head !== target) {
-        if ((await gitRaw(root, ["merge-base", "--is-ancestor", head, target])).code !== 0) return "canonical HEAD diverged from the published history";
+        if ((await gitRun(root, ["merge-base", "--is-ancestor", head, target])).code !== 0) return "canonical HEAD diverged from the published history";
         const collisions = await this.ignoredCollisions(root, head, target);
         if (collisions.length) return `ignored operator content would be overwritten: ${collisions.join(", ")}`;
         await gitText(root, "merge", "--ff-only", target);
@@ -231,16 +231,16 @@ export class HookPublication {
       await gitText(task.repoPath, "fetch", "origin", record.baseBranch);
       let root = task.repoPath;
       let remote = await gitText(root, "rev-parse", `refs/remotes/origin/${record.baseBranch}`);
-      if ((await gitRaw(root, ["cat-file", "-e", `${commit}^{commit}`])).code !== 0) {
+      if ((await gitRun(root, ["cat-file", "-e", `${commit}^{commit}`])).code !== 0) {
         // An isolated clone can hold the only copy of a rejected publication.
         // Fetch the canonical publication remote there before asking ancestry.
         root = record.workspace?.path ?? "";
-        if (!root || (await gitRaw(root, ["cat-file", "-e", `${commit}^{commit}`])).code !== 0) return true;
+        if (!root || (await gitRun(root, ["cat-file", "-e", `${commit}^{commit}`])).code !== 0) return true;
         const origin = await gitText(task.repoPath, "remote", "get-url", "origin");
         await gitText(root, "fetch", origin, record.baseBranch);
         remote = await gitText(root, "rev-parse", "FETCH_HEAD");
       }
-      const ancestry = await gitRaw(root, ["merge-base", "--is-ancestor", commit, remote]);
+      const ancestry = await gitRun(root, ["merge-base", "--is-ancestor", commit, remote]);
       return ancestry.code !== 1; // Only Git's proven non-ancestor result establishes absence.
     } catch {
       // An unreadable remote is not proof of absence, so refuse and keep the stronger path.
@@ -260,7 +260,7 @@ export class HookPublication {
     try {
       await gitText(task.repoPath, "fetch", "origin", record.baseBranch);
       const remote = await gitText(task.repoPath, "rev-parse", `refs/remotes/origin/${record.baseBranch}`);
-      const contains = remote === record.commit || (await gitRaw(task.repoPath, ["merge-base", "--is-ancestor", record.commit, remote])).code === 0;
+      const contains = remote === record.commit || (await gitRun(task.repoPath, ["merge-base", "--is-ancestor", record.commit, remote])).code === 0;
       if (!contains) return this.uncertainSync(record, `Remote ${record.baseBranch} does not contain published commit ${record.commit}`);
       const syncError = await this.syncCanonical(task.repoPath, record.baseBranch, record.baseCommit, remote);
       if (syncError) return this.uncertainSync(record, `Canonical synchronization requires reconciliation: ${syncError}`);
@@ -288,7 +288,7 @@ export class HookPublication {
 }
 
 export async function matchingCommitsIn(root: string, record: HookRecord): Promise<string[]> {
-  const log = await gitRaw(root, ["log", "--format=%H", "-n", "200"]);
+  const log = await gitRun(root, ["log", "--format=%H", "-n", "200"]);
   if (log.code !== 0) return [];
   const matches: string[] = [];
   for (const sha of log.stdout.toString("utf8").split("\n").map(line => line.trim()).filter(Boolean)) {

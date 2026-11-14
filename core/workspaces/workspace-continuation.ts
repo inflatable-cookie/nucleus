@@ -4,7 +4,7 @@ import { now } from '../store/store';
 import type { HostWorktreeWorkspaceSpec } from '../host/types';
 export type { HostWorktreeWorkspaceSpec } from '../host/types';
 import { existsSync } from "node:fs";
-import type { HostProcessFact } from "../machine/host-process-reap";
+import type { HostProcessFact } from "../host/types";
 import type { Task } from "../../shared/contracts";
 import type { HostWorkspaceRef } from "../../shared/host";
 import { git, queueCheckoutStatus } from "../git/index";

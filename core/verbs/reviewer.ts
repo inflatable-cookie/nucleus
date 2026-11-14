@@ -1,4 +1,5 @@
-import { archiveReplacedReviewer, threadArchivedOrGone } from '../workspaces/thread-archive';
+import { archiveReplacedReviewer } from '../workspaces/thread-archive-replacement';
+import { threadArchivedOrGone } from '../workspaces/thread-archive-effect';
 import { incidentBindsCurrentWork, type Run, type Task, type TaskControlInput } from "../../shared/contracts";
 import type { Engine } from "../engine";
 import { isReviewerRelaunchTarget, plainHandoverFreshRestart, RestartRefusal, settledReviewerHistory, unreleasedLaunchFence } from "./owner-verbs";
