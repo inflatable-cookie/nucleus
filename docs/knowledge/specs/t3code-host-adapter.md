@@ -81,7 +81,7 @@ resent) and, for a stream, sends `Interrupt`. The connection stays open. Default
 streams accept 10,000 values; `orchestration.subscribeThread` accepts 50,000, and
 thread readers interrupt once they have the snapshot they asked for.
 The connection closes only for unattributable data: an unparseable frame, a
-non-string or oversize message, a frame batch over the cap, a frame that is not
+binary or oversize message, a frame batch over the cap, a frame that is not
 an object with a string tag, a connection-level `Defect` without a request ID, or
 a frame with no request ID that is not `Ping` or `Pong`.
 
@@ -95,6 +95,11 @@ retains `t3code.lastDisconnectReason` across reconnects as a fixed reason code
 (`heartbeat_failure`, `socket_close`, `socket_error`, `protocol_error` or
 `connect_timeout`), and `t3code.lastProtocolError` as the branch and frame tag
 that last fired (never payload values), without remote text or credentials.
+`binary_message` and `oversize_message` additionally retain the message's byte
+length and the distinct pending method names. The 16 MiB limit counts UTF-8
+bytes, including on sends. These messages close the connection: their envelope
+has not been decoded within the byte budget, and neither a JSON prefix nor a
+single pending stream proves attribution in the presence of late replies.
 
 Strict decoding validates consumed fields and their types while tolerating
 unrelated extra fields, so additive nightly changes do not become version pins.
@@ -462,10 +467,18 @@ absent, and none of them changes a status, an active run, a pending request or a
 settle marker. Observation asks for that bounded snapshot and reports status,
 active run, pending request and archive state from any length of thread, so a
 long thread is never unobservable (nucleus#1188). A read that consumes the
-transcript — timeline pages, question text, answer mapping — does not opt in and
+transcript — timeline pages, question text, answer mapping — also opts in and
 refuses a paged or locally-omitted projection, so partial history is never handed
-out as the whole list; its refusal names the missing coverage, not the thread's
-length.
+out as the whole list and no consumer requests an unbounded thread snapshot.
+Its refusal names the missing coverage, not the thread's length. Complete shell
+and archive inventory reads contain summaries rather than transcript history;
+the Nightly exposes no complete paged shell form. Omitting settled threads or
+subagents cannot establish absence and is not an inventory substitute.
+
+`effigy proof:t3code:read-sizes` measures the live config, shell, archive and
+full/bounded thread replies read-only. It records byte counts, field names and
+collection counts with synthetic thread labels, never remote contents or IDs;
+the full reads belong only to this explicit diagnostic, not adapter reads.
 
 An observation read that fails names its own cause. Every owner path that turns a
 caught observation into a refusal keeps the host error's kind and message: the

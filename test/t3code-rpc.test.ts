@@ -693,3 +693,34 @@ test('a connection-level Defect without a request ID closes the shared connectio
   assert.equal(client.lastDisconnectReason, 'protocol_error');
   assert.deepEqual(client.lastProtocolError, { branch: 'connection_defect', tag: 'Defect' });
 });
+
+for (const binary of [false, true]) test(`${binary ? 'binary' : 'oversize'} messages retain byte length and only pending methods`, async t => {
+  const text = 'é'.repeat(9 * 1024 * 1024); // Fewer characters than the limit, more UTF-8 bytes.
+  const message = wsFrame(binary ? 'synthetic-secret' : text);
+  if (binary) message[0] = 0x82;
+  const server = await fakeServer(t, (request, _send, socket) => {
+    if (request._tag === 'Request' && request.tag === 'orchestration.subscribeThread') socket.write(message);
+  });
+  const client = await clientFor(t, server);
+  const other = client.call('server.getConfig', { secret: 'synthetic-bearer' });
+  const stream = client.readStream('orchestration.subscribeThread', { threadId: 'synthetic-private-thread' }, () => false);
+  const outcomes = await Promise.allSettled([other, stream]);
+  assert.ok(outcomes.every(result => result.status === 'rejected' && result.reason instanceof T3RpcError && result.reason.code === 'protocol'));
+  assert.deepEqual(client.lastProtocolError, { branch: binary ? 'binary_message' : 'oversize_message', tag: null,
+    byteLength: Buffer.byteLength(binary ? 'synthetic-secret' : text),
+    pendingMethods: ['orchestration.subscribeThread', 'server.getConfig'] });
+  assert.doesNotMatch(JSON.stringify(client.lastProtocolError), /synthetic|bearer|secret/);
+  assert.equal(client.connected, false, 'an undecoded message cannot be safely attributed, even with pending streams');
+  assert.equal(client.lastDisconnectReason, 'protocol_error');
+  await client.connect();
+  assert.equal(client.lastProtocolError?.branch, binary ? 'binary_message' : 'oversize_message', 'diagnostic survives reconnect');
+});
+
+test('a UTF-8 request over the byte limit is refused before sending', async t => {
+  const server = await fakeServer(t, () => assert.fail('oversize request must not be sent'));
+  const client = await clientFor(t, server);
+  await assert.rejects(client.call('orchestration.dispatchCommand', { text: 'é'.repeat(9 * 1024 * 1024) }),
+    error => error instanceof T3RpcError && error.code === 'protocol' && error.delivery === 'not_sent');
+  assert.equal(server.frames.length, 0);
+  assert.equal(client.connected, true);
+});
