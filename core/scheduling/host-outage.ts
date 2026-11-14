@@ -93,7 +93,11 @@ export class HostOutages {
         if (!current || current.since !== outage.since || current.noticeSentAt) continue;
         const waiting = this.store.tasks().filter(task => task.hostId === hostId && isLive(task)
           && task.resolution.stop?.reason === "host_unavailable");
-        for (const [projectKey, tasks] of this.groupByProject(waiting)) {
+        const groups = this.groupByProject(waiting);
+        // No project is affected by this outage yet: leave it unnotified so a task
+        // that starts waiting later still reaches its planner for the same outage.
+        if (!groups.size) continue;
+        for (const [projectKey, tasks] of groups) {
           const project = this.store.projectByKey(projectKey);
           const planner = this.store.projectPlannerRecipient(project);
           if (!planner) continue;
