@@ -227,7 +227,9 @@ test('one sweep proves dead QA escapees without a host row, while alive and unkn
     f.store.putQaRun({ ...finished, id, escapedDescendantsProvenDeadAt: undefined, escapedDescendantsProvenDead: undefined });
     context.options.escapeeLiveness = () => liveness;
     assert.equal(sweepQaEscapedDescendants(context, id), liveness);
-    assert.deepEqual(qaFenceStatus(f.store).inventory.map(item => item.id), [id], `${liveness} identity stays fenced`);
+    const expected = liveness === 'alive' ? ['alive-escapee'] : ['alive-escapee', 'unknown-escapee'];
+    assert.deepEqual(qaFenceStatus(f.store).inventory.map(item => item.id).sort(), expected,
+      `${liveness} identity stays fenced`);
   }
 });
 
