@@ -148,7 +148,7 @@ export class RepositoryHooks {
       isolationDataDir: () => this.checkouts.dataDir(),
       gitCommonDir: task => this.checkouts.gitCommonDir(task),
       integrationBase: task => this.integrationBase(task),
-      removeIsolatedCheckout: (task, path, force) => this.checkouts.removeIsolatedCheckout(task, path, force),
+      removeIsolatedCheckout: (task, path, force) => this.removeIsolatedCheckout(task, path, force),
       save: (record, changes) => this.occurrences.save(record, changes),
       emit: (event, task, context, accept) => this.emit(event, task, context, accept),
     });
@@ -175,10 +175,10 @@ export class RepositoryHooks {
       save: (record, changes) => this.occurrences.save(record, changes),
       matchingCommits: (task, record) => this.publication.matchingCommits(task, record),
       isolationPath: (task, eventId) => this.checkouts.isolationPath(task, eventId),
-      verifyCleanSynchronizedBase: (root, baseBranch, baseCommit) => this.checkouts.verifyCleanSynchronizedBase(root, baseBranch, baseCommit),
+      verifyCleanSynchronizedBase: (root, baseBranch, baseCommit) => this.verifyCleanSynchronizedBase(root, baseBranch, baseCommit),
       remoteCarries: (task, record) => this.publication.remoteCarries(task, record),
       remoteCarriesCommit: (task, record, commit) => this.publication.remoteCarriesCommit(task, record, commit),
-      removeIsolatedCheckout: (task, path, force) => this.checkouts.removeIsolatedCheckout(task, path, force),
+      removeIsolatedCheckout: (task, path, force) => this.removeIsolatedCheckout(task, path, force),
       runHook: (task, hook, discovery, context) => this.execution.runHook(task, hook, discovery, context),
       emit: (event, task, context, accept) => this.emit(event, task, context, accept),
     });
@@ -219,7 +219,7 @@ export class RepositoryHooks {
       integrationBase: (task) => this.integrationBase(task),
       prospectiveCandidatePath: (task, candidate) => this.prospectiveCandidatePath(task, candidate),
       buildProspectiveCandidate: (task, path, base, head, warm) => this.buildProspectiveCandidate(task, path, base, head, warm),
-      removeIsolatedCheckout: (task, path, force) => this.checkouts.removeIsolatedCheckout(task, path, force),
+      removeIsolatedCheckout: (task, path, force) => this.removeIsolatedCheckout(task, path, force),
     });
   }
 
@@ -234,6 +234,23 @@ export class RepositoryHooks {
 
   private run(request: ExecutionRequest) { return (this.options.run ?? executeHookProgram)(request); }
   private snapshot(root: string) { return (this.options.snapshot ?? snapshotGit)(root); }
+  private queueBuild(): string { return this.projectValidation.queueBuild(); }
+  /** The Queue data directory that owns isolated checkouts, as the queue's own front reports it. */
+  private isolationDataDir(): string { return this.checkouts.dataDir(); }
+  /** The clean, synchronized integration base proof; one owner, reachable from the front. */
+  private verifyCleanSynchronizedBase(root: string, baseBranch: string, baseCommit: string): Promise<void> {
+    return this.checkouts.verifyCleanSynchronizedBase(root, baseBranch, baseCommit);
+  }
+  /** Remove only a Queue-owned isolated checkout. */
+  private removeIsolatedCheckout(task: Task, path: string, force: boolean): Promise<void> {
+    return this.checkouts.removeIsolatedCheckout(task, path, force);
+  }
+  private prospectiveCandidatePath(task: Task, candidate: Pick<MergeCandidate, "integrationBase" | "reviewedHead">): Promise<string> {
+    return this.prospectiveMerge.prospectiveCandidatePath(task, candidate);
+  }
+  private buildProspectiveCandidate(task: Task, path: string, base: string, head: string, warm = false): Promise<{ kind: "built"; candidate: MergeCandidate } | { kind: "conflict"; detail: string } | { kind: "error"; detail: string } | { kind: "fallback"; detail: string }> {
+    return this.prospectiveMerge.buildProspectiveCandidate(task, path, base, head, warm);
+  }
 
   /** Run read-only pre-dispatch policy before a task enters the durable Queue store. */
   async previewPreDispatch(submission: Submission, handoffText: string, planningBase: string): Promise<void> {
@@ -367,7 +384,7 @@ export class RepositoryHooks {
 
   /** The clean, synchronized integration base commit for one repository, proven against origin. */
   integrationBase(task: Task): Promise<string> {
-    return this.checkouts.integrationBase(task);
+    return this.checkouts.integrationBase(task, (root, baseBranch, baseCommit) => this.verifyCleanSynchronizedBase(root, baseBranch, baseCommit));
   }
 
   /**
@@ -378,14 +395,6 @@ export class RepositoryHooks {
    */
   renewIntegrationBase(task: Task, allowed: () => boolean): Promise<string> {
     return this.checkouts.renewIntegrationBase(task, allowed);
-  }
-
-  private prospectiveCandidatePath(task: Task, candidate: Pick<MergeCandidate, "integrationBase" | "reviewedHead">): Promise<string> {
-    return this.prospectiveMerge.prospectiveCandidatePath(task, candidate);
-  }
-
-  private buildProspectiveCandidate(task: Task, path: string, base: string, head: string, warm = false): Promise<{ kind: "built"; candidate: MergeCandidate } | { kind: "conflict"; detail: string } | { kind: "error"; detail: string } | { kind: "fallback"; detail: string }> {
-    return this.prospectiveMerge.buildProspectiveCandidate(task, path, base, head, warm);
   }
 
   prospectiveMergeGate(task: Task, request: ProspectiveMergeRequest): Promise<ProspectiveMergeOutcome> {

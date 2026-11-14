@@ -85,10 +85,10 @@ export class HookCheckouts {
   }
 
   /** The clean, synchronized integration base commit for one repository, proven against origin. */
-  async integrationBase(task: Task): Promise<string> {
+  async integrationBase(task: Task, verifyCleanSynchronizedBase: (root: string, baseBranch: string, baseCommit: string) => Promise<void> = (root, baseBranch, baseCommit) => this.verifyCleanSynchronizedBase(root, baseBranch, baseCommit)): Promise<string> {
     return withIntegrationCheckout(task, async (checkout, unchanged) => {
       const head = await gitText(checkout, "rev-parse", "HEAD");
-      await this.verifyCleanSynchronizedBase(checkout, task.baseBranch, head);
+      await verifyCleanSynchronizedBase(checkout, task.baseBranch, head);
       await unchanged();
       return head;
     });
