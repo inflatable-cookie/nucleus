@@ -1228,7 +1228,8 @@ function priorRound(f: ReturnType<typeof fixture>, over: { runHead?: string; com
   const current = Date.parse(f.run().createdAt);
   const status = over.status ?? 'changes_required';
   const completion = { eventId: 'prior-review-result', taskId: f.submitted.id, runId: over.completionRunId ?? 'prior-review', status,
-    summary: 'Fix the figures', head: over.completionHead ?? otherHead, reviewCommentId: 5543610983 } as Completion;
+    summary: 'Fix the figures', head: over.completionHead ?? otherHead, reviewCommentId: 5543610983,
+    ...(status === 'report_ready' ? { artifact: { key: 'review', version: 1, digest: `sha256:${'a'.repeat(64)}` } } : {}) } as Completion;
   f.store.putRun(runSchema.parse({ id: 'prior-review', taskId: f.submitted.id, role: 'reviewer', generation: 1, head: over.runHead ?? otherHead, base,
     agentId: 'prior-reviewer', workspaceId: 'workspace', profile: f.run().profile, status: 'finished', createdAt: new Date(current + (over.sourceAt ?? -3_600_000)).toISOString(),
     lastObservedAt: null, active: false, idleSince: null, released: over.released ?? true, completion }));
@@ -1327,9 +1328,15 @@ weighted(3)('an idle checkpoint fenced by its own-head result is shown stopped a
     const restart = next.verbs.find(verb => verb.available && verb.verb === 'restart' && verb.args?.role === 'reviewer');
     assert.ok(restart, 'next offers restart role=reviewer fresh');
     assert.equal(restart.args?.fresh, true);
+    f.adapter.originAgent = async () => ({ id: 'review-agent', workspaceId: 'workspace', title: 'reviewer', archived: true });
     const outcome = await acceptControl(f, taskControlInputSchema.parse({ ...restart.args,
       reason: 'The result fences the saved checkpoint; start a fresh review at this head', caller: 'owner' }));
     assert.equal(outcome.state, 'succeeded', outcome.diagnostic);
+    assert.equal(f.store.run(f.runId)?.status, 'superseded');
+    assert.equal(f.store.run(f.runId)?.released, true);
+    const freshRunId = f.current().resolution.currentRunId;
+    assert.ok(freshRunId && freshRunId !== f.runId);
+    assert.equal(f.store.run(freshRunId)?.role, 'reviewer');
     assert.equal(f.createdRuns.length, 1);
     assert.equal(f.reviewerDeliveries.length, 0, 'the fenced run receives no second turn');
   } finally { await f.close(); }
