@@ -35,6 +35,7 @@ export {
   pendingCheckDeadlineMs,
   isPendingCheckDeadlineReason,
   isFailedChecksReason,
+  isForgeCheckProofText,
   classifyPrChecks,
   type CheckRequirements,
   type CheckObservation,

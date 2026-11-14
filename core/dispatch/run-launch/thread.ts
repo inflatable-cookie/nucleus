@@ -359,6 +359,12 @@ export class RunLaunchThread {
       const resumable = state.status === 'idle' || state.status === 'closed' && (
         role === 'reviewer' || role === 'revision'
       ) || role === 'revision' && t.resolution.revisionResumeUnpublished && state.status === 'error';
+      // A stale pending Nucleus question found at dispatch is resolved, not
+      // waited on (papercut ee9fc161): a withdrawn question never stalls
+      // dispatch. Anything else pending keeps the ordinary wait below.
+      if ((active(state) || !resumable) && (state.permissions || state.pendingRequest)) {
+        if (await this.resolution.resolveWithdrawnPending(t, { agentId, state })) return;
+      }
       // No bypass over a pending permission or question here: nothing Queue can
       // observe identifies the pending item as the superseded run's own question,
       // so the resume waits until the thread goes idle. The recorded

@@ -414,6 +414,7 @@ export class Resolution {
     recordCriticalReviewFallback: (...args) => owner.recordCriticalReviewFallback(...args),
     requiredRouteNote: (...args) => owner.requiredRouteNote(...args),
     reserveLaunchRun: (...args) => owner.reserveLaunchRun(...args),
+    resolveWithdrawnPending: (...args) => owner.resolveWithdrawnPending(...args),
     responsibleJointQuestion: (...args) => owner.responsibleJointQuestion(...args),
     retainedProfileIssue: (...args) => owner.retainedProfileIssue(...args),
     retainedWorkerProfileIssue: (...args) => owner.retainedWorkerProfileIssue(...args),
@@ -609,6 +610,7 @@ export class Resolution {
   lease(t: Task, onBusy?: (agentId: string, state: Awaited<ReturnType<Adapter['observe']>>) => void, supersededRunId?: string): Promise<boolean> { return this.participantLease.lease(t, onBusy, supersededRunId); }
   leaseDeclineText(t: Task, agentId: string, state: Awaited<ReturnType<Adapter['observe']>>): string { return this.participantLease.declineText(t, agentId, state); }
   leaseDeclineReason(t: Task): Promise<string | null> { return this.participantLease.declineReason(t); }
+  resolveWithdrawnPending(t: Task, hint?: { agentId: string; state: Awaited<ReturnType<Adapter['observe']>> }): Promise<boolean> { return this.participantLease.resolveWithdrawnPending(t, hint); }
   refreshingCloseoutHook(t: Task, syncing: boolean): ReturnType<ParticipantLease['refreshingCloseoutHook']> { return this.participantLease.refreshingCloseoutHook(t, syncing); }
   executionLease(t: Task, enclosing?: VerifiedEnclosingOperation, syncing?: boolean, probe?: boolean): Promise<boolean> { return this.participantLease.executionLease(t, enclosing, syncing, probe); }
   participantToolIssue(taskId: string, agentId: string, workspaceId: string): Promise<string | null> { return this.participantLease.participantToolIssue(taskId, agentId, workspaceId); }

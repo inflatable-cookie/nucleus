@@ -12,7 +12,7 @@ import { RunLaunchReserve } from './run-launch/reserve';
 import { RunLaunchDeliver } from './run-launch/deliver';
 
 export type LaunchSourceContext = Pick<Resolution, 'adapter' | 'bindReportedHeadForReview' | 'continuedPrBinding' | 'continuedProgressWait' | 'ordinaryRoundCustody' | 'paused' | 'profiles' | 'retainedWorkerProfileIssue' | 'selectLaunchThread' | 'store' | 'update' | 'usageCeilingNote' | 'waiting' | 'workerContinuation'>;
-export type LaunchThreadContext = Pick<Resolution, 'adapter' | 'assertReviewProfileIndependent' | 'attention' | 'authorAgentIds' | 'host' | 'openPlannerEscalation' | 'orphanRuns' | 'paused' | 'profiles' | 'requiredRouteNote' | 'reserveLaunchRun' | 'retainedProfileIssue' | 'select' | 'signoffIssue' | 'store' | 'update' | 'usageCeilingNote' | 'waiting'>;
+export type LaunchThreadContext = Pick<Resolution, 'adapter' | 'assertReviewProfileIndependent' | 'attention' | 'authorAgentIds' | 'host' | 'openPlannerEscalation' | 'orphanRuns' | 'paused' | 'profiles' | 'requiredRouteNote' | 'reserveLaunchRun' | 'resolveWithdrawnPending' | 'retainedProfileIssue' | 'select' | 'signoffIssue' | 'store' | 'update' | 'usageCeilingNote' | 'waiting'>;
 export type LaunchReserveContext = Pick<Resolution, 'adapter' | 'advanceAttempt' | 'bindContinuedPrInTx' | 'continuedProgressWait' | 'deliverLaunchRun' | 'launchingRuns' | 'ordinaryReviewRuns' | 'paused' | 'progressEffectsPending' | 'recordCriticalReviewFallback' | 'retryContext' | 'reviewerSetting' | 'slotAdmissionReason' | 'store' | 'supersedeOrphans' | 'update' | 'waiting'>;
 export type LaunchDeliverContext = Pick<Resolution, 'adapter' | 'assertReviewProfileIndependent' | 'ensureIncident' | 'ordinaryReviewRuns' | 'ordinaryRoundCustody' | 'paused' | 'store' | 'update' | 'waiting'>;
 export type DispatchLaunchContext = Pick<Resolution, 'catalogKnown' | 'claimIntegrationTurn' | 'launch' | 'lease' | 'leaseDeclineText' | 'paused' | 'responsibleJointQuestion' | 'slotAdmissionReason' | 'startsNoRuns' | 'store' | 'waiting'>
@@ -44,6 +44,12 @@ export class DispatchLaunch {
     if (isDispositionActive(t)) throw new Error("Disposition fence is active; no replacement runs are launched");
     if ((role === 'reviewer' || role === 'revision' || proofExecutor(role)) && dispatchBlocked(t)) { this.context.waiting(t, DISPATCH_HELD_REASON, 'held'); return; }
     if ((role === 'reviewer' || role === 'revision' || proofExecutor(role)) && this.context.pauseForPrerequisiteWait(t)) return;
+    // A stale pending Nucleus question found at dispatch is resolved, not
+    // waited on (papercut ee9fc161): a withdrawn question never stalls the
+    // launch behind the participant lease. The helper records a short
+    // resolving wait when it sends a dismiss or cancel; the next pass
+    // launches once the host clears the stale request.
+    if ((role === 'revision' || role === 'reviewer') && await this.context.resolveWithdrawnPending(t)) return;
     if ((role === 'closeout') && !this.context.claimIntegrationTurn(t)) return;
     t = this.context.store.task(t.id);
     if (!await this.context.lease(t, (agentId, state) => {

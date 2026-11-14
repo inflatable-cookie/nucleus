@@ -677,6 +677,84 @@ test('revision wait reason names the observed retained-thread blocker without di
   }finally{await f.close()}
  }
 });
+test('a withdrawn Nucleus question at dispatch is resolved and the retained revision launches (papercut ee9fc161)',async()=>{
+ // A budget question withdrawn by extension leaves its recorded native request
+ // pending on the retained thread; dispatch resolves that stale request instead
+ // of stalling on "Assigned thread has pending question", then launches.
+ const f=fixture();try{
+  const qid='c812dbab-0000-4000-8000-000000000001';
+  f.store.event(f.task.id,'operator_question',`${qid}: kind budget; stop budget; head none; question abc (3 chars); options Extend the budget | Stop and keep the work`);
+  f.store.event(f.task.id,'operator_question_superseded',`${qid}: the exhausted budget was extended`);
+  f.store.event(f.task.id,'native_question_dismiss_intent',`${qid}: the exhausted budget was extended`);
+  f.store.event(f.task.id,'operator_question_native_request',`${qid}: request native-9 header Question 1 on worker`);
+  let cleared=false;
+  f.states.set('worker',{id:'worker',workspaceId:'workspace',status:'idle',active:false,permissions:true,error:'',pendingRequest:{id:'native-9',kind:'question',firstLine:`[Queue decision ${qid}] Budget reached. Continue?`}} as never);
+  const dismissed:unknown[][]=[];
+  (f.adapter as unknown as Record<string,unknown>).pendingQuestions=async(id:unknown)=>cleared?[]:id==='worker'?[{requestId:'native-9',questions:[{header:'Question 1',question:`[Queue decision ${qid}] Budget reached. Continue?`,options:['Extend the budget']}]}]:[];
+  (f.adapter as unknown as Record<string,unknown>).dismissNativeQuestion=async(...args:unknown[])=>{dismissed.push(args);cleared=true;};
+  const innerObserve=f.adapter.observe;
+  f.adapter.observe=(async(id:string)=>cleared?{id,workspaceId:'workspace',status:'idle',active:false,permissions:false,error:''}:innerObserve(id)) as typeof f.adapter.observe;
+  f.store.update(f.task.id,{phase:'changes_requested',reason:'Apply review fixes'});
+  await f.engine.resolution.launch(f.current(),'revision');
+  assert.deepEqual(dismissed,[['worker','workspace','native-9']],'the stale withdrawn request is dismissed through the host');
+  assert.match(f.current().reason,/Resolving a withdrawn/,'the first pass resolves instead of stalling on the pending question');
+  assert.equal(f.store.runs(f.task.id).some(run=>run.role==='revision'),false,'no run launches while the host still reports the request');
+  await f.engine.resolution.launch(f.current(),'revision');
+  const revision=f.store.runs(f.task.id).find(run=>run.role==='revision');
+  assert.ok(revision,'the retained revision launches once the withdrawn request is resolved');
+  assert.equal(revision!.agentId,'worker');
+  assert.doesNotMatch(f.current().reason,/pending question/);
+ }finally{await f.close()}
+});
+test('a withdrawn pending question with no host dismissal handle waits honestly instead of looping in resolving',async()=>{
+ // The resolving wait is recorded only on a pass that actually sends a dismiss
+ // or cancel. When the host offers no dismissal handle for the stale request,
+ // dispatch names the pending question it observes (with the ordinary owner
+ // verbs) instead of sitting in "resolving" with nothing sent.
+ const f=fixture();try{
+  const qid='c812dbab-0000-4000-8000-000000000001';
+  f.store.event(f.task.id,'operator_question_superseded',`${qid}: the exhausted budget was extended`);
+  f.store.event(f.task.id,'native_question_dismiss_intent',`${qid}: the exhausted budget was extended`);
+  f.states.set('worker',{id:'worker',workspaceId:'workspace',status:'idle',active:false,permissions:true,error:'',pendingRequest:{id:'native-9',kind:'question',firstLine:`[Queue decision ${qid}] Budget reached. Continue?`}} as never);
+  f.store.update(f.task.id,{phase:'changes_requested',reason:'Apply review fixes'});
+  await f.engine.resolution.launch(f.current(),'revision');
+  assert.match(f.current().reason,/Assigned thread has pending question native-9/,'the visible wait names the observed pending question');
+  assert.doesNotMatch(f.current().reason,/Resolving a withdrawn/,'no resolving wait is recorded without a send');
+  assert.equal(f.store.runs(f.task.id).some(run=>run.role==='revision'),false);
+  await f.engine.resolution.launch(f.current(),'revision');
+  assert.match(f.current().reason,/Assigned thread has pending question native-9/,'a second pass still waits honestly instead of looping in resolving');
+  assert.doesNotMatch(f.current().reason,/Resolving a withdrawn/);
+  assert.equal(f.store.events(f.task.id).filter(event=>event.kind==='native_question_dismissed').length,0,'nothing is recorded as dismissed');
+ }finally{await f.close()}
+});
+test('a withdrawn pending permission with no recorded request is cancelled by text match (papercut ee9fc161)',async()=>{
+ // The host never reported the native request id, so no operator_question_native_request
+ // record exists; the stale permission still names the withdrawn question in its
+ // first line. Dispatch cancels it (never a tool/bash approval) and launches next.
+ const f=fixture();try{
+  const qid='d912dbab-0000-4000-8000-000000000002';
+  f.store.event(f.task.id,'operator_question_superseded',`${qid}: the exhausted budget was extended`);
+  f.store.event(f.task.id,'native_question_dismiss_intent',`${qid}: the exhausted budget was extended`);
+  let cleared=false;
+  f.states.set('worker',{id:'worker',workspaceId:'workspace',status:'idle',active:false,permissions:true,error:'',pendingRequest:{id:'perm-7',kind:'permission',firstLine:`[Queue decision ${qid}] Approve budget extension?`}} as never);
+  const cancelled:unknown[][]=[];
+  (f.adapter as unknown as Record<string,unknown>).answerNativePermission=async(...args:unknown[])=>{cancelled.push(args);cleared=true;};
+  const innerObserve=f.adapter.observe;
+  f.adapter.observe=(async(id:string)=>cleared?{id,workspaceId:'workspace',status:'idle',active:false,permissions:false,error:''}:innerObserve(id)) as typeof f.adapter.observe;
+  f.store.update(f.task.id,{phase:'changes_requested',reason:'Apply review fixes'});
+  await f.engine.resolution.launch(f.current(),'revision');
+  assert.equal(cancelled.length,1,'the stale withdrawn permission is cancelled through the host');
+  assert.deepEqual(cancelled[0]?.slice(0,4),['worker','workspace','perm-7','cancel']);
+  assert.match(String(cancelled[0]?.[4]),/^ns-withdrawn-/,'the cancel carries the durable withdrawn intent id');
+  assert.ok(f.store.events(f.task.id).some(event=>event.kind==='native_permission_cancel_intent'&&event.detail.includes('perm-7')),'the cancel intent is recorded');
+  assert.match(f.current().reason,/Resolving a withdrawn/,'the first pass resolves instead of stalling on the pending permission');
+  assert.equal(f.store.runs(f.task.id).some(run=>run.role==='revision'),false,'no run launches while the host still reports the permission');
+  await f.engine.resolution.launch(f.current(),'revision');
+  const revision=f.store.runs(f.task.id).find(run=>run.role==='revision');
+  assert.ok(revision,'the retained revision launches once the withdrawn permission is resolved');
+  assert.equal(revision!.agentId,'worker');
+ }finally{await f.close()}
+});
 test('two concurrent revision launches record exactly one run on the retained thread',async()=>{
  const f=fixture();try{
   await f.engine.wake();await f.report('changes_required');
@@ -2036,6 +2114,38 @@ test('an overdue queued required check gets one recovery look, then waits and es
   await f.engine.wake();
   assert.equal(f.counts().merges,1,'a passing check clears the wait and the existing merge path continues by itself');
  }finally{Date.now=realNow;await f.close()}
+});
+test('a reviewer-named forge check merges once the required check passes (papercut c0fb3df9)',async()=>{
+ // The reviewer approves the source but names the queued CI job as an external
+ // proof (synthetic ids, real intake shape on a real-source checkout). The check
+ // is recorded as CI, raises no proof question, and the merge gate withholds the
+ // merge until the same required check passes, then merges.
+ const f=fixture(false,false,undefined,true);try{
+  const {operatorQuestionFor}=await import('../core/questions/operator-question');
+  const forgeProof='Stable process-spawning nextest (job 123456789, run 987654321, macos-latest, no runner yet) https://github.com/example/repo/actions/runs/987654321/job/123456789';
+  await f.engine.wake();const run=f.run();
+  assert.equal(run.role,'reviewer');
+  f.idle(run.agentId!,run.workspaceId);
+  const token=f.tokens.get(run.id)!;
+  f.engine.resolution.complete({eventId:randomUUID(),taskId:f.task.id,runId:run.id,status:'blocked',summary:'Source approved; CI checks pending',head:run.head,sourceApproved:true,awaitingProofs:[{proof:forgeProof,route:'external'}],reviewResponsibility:'environment',reviewText:'Source approved at the exact head; the required CI job is still queued.',reviewCommentId:1},token);
+  const h=f.current().prHead!,b=f.current().planningBase;
+  const job='https://github.com/example/repo/actions/runs/987654321/job/123456789';
+  f.adapter.mergeGate=async()=>({head:h,base:b,wait:`Required check 'Stable process-spawning nextest' (queued, no runner yet) is pending; job URL: ${job}`,pendingCheck:true});
+  await f.engine.wake();
+  const converted=f.current();
+  assert.ok(f.store.events(f.task.id).some(event=>event.kind==='proof_forge_check_noted'&&event.detail.includes('recorded as CI')),'the forge check is recorded as CI');
+  assert.equal(converted.resolution.review?.status,'ready_to_merge','source approval stands with no awaiting proofs');
+  assert.deepEqual(converted.resolution.review?.awaitingProofs??[],[]);
+  assert.notEqual(converted.resolution.stop?.reason,'awaiting_proof','no proof wait parks the task');
+  assert.equal(operatorQuestionFor(f.store,converted),null,'a forge check raises no proof question');
+  assert.match(f.current().reason,/Stable process-spawning nextest/,'the merge gate withholds the merge on the pending required check');
+  assert.equal(f.counts().merges,0,'nothing merges while the required check is pending');
+  f.adapter.mergeGate=async()=>({head:h,base:b,wait:''});
+  const poll=f.store.getMeta<any>(requiredCheckPollMetaKey(f.task.id,h));
+  f.store.setMeta(requiredCheckPollMetaKey(f.task.id,h),{...poll,nextAt:0});
+  await f.engine.wake();
+  assert.equal(f.counts().merges,1,'the merge proceeds once the required check passes');
+ }finally{await f.close()}
 });
 test('a recovery move to merge keeps a same-head running check as a wait through an hour',async()=>{
  const f=fixture();const realNow=Date.now;let fakeNow=Date.parse('2026-11-12T14:00:00.000Z');Date.now=()=>fakeNow;try{

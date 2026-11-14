@@ -347,13 +347,25 @@ export class Questions {
     if (!this.resolution.withHost(task.hostId, () => this.resolution.originHostAvailable(task.hostId!)
       && Boolean(this.adapter.pendingQuestions) && Boolean(this.adapter.dismissNativeQuestion))) return;
     const agents = this.nativeQuestionAgents(task);
+    // Recorded native requestIds from the raise (durable) plus the text-prefix
+    // fallback for questions raised before the link was recorded.
+    const recorded = new Map<string, string[]>();
+    for (const event of this.store.eventsAll(taskId)) {
+      if (event.kind !== 'operator_question_native_request') continue;
+      const id = event.detail.split(':')[0]!;
+      if (!ids.includes(id)) continue;
+      const requestId = event.detail.match(/request (\S+)/)?.[1];
+      if (requestId) recorded.set(requestId, [...(recorded.get(requestId) ?? []), id]);
+    }
     void this.resolution.withHost(task.hostId, async () => {
       for (const agent of agents) {
         let pending: Array<{ requestId: string; questions: Array<{ header: string; question: string; options: string[] }> }>;
         try { pending = await this.adapter.pendingQuestions!(agent.agentId); }
         catch { continue; }
         for (const request of pending) {
-          const match = ids.find(id => request.questions.some(question => question.question.startsWith(`[Queue decision ${id}]`)));
+          const byRecorded = recorded.get(request.requestId);
+          const match = byRecorded?.find(id => ids.includes(id))
+            ?? ids.find(id => request.questions.some(question => question.question.startsWith(`[Queue decision ${id}]`)));
           if (!match) continue;
           try {
             await this.adapter.dismissNativeQuestion!(agent.agentId, agent.workspaceId, request.requestId);
@@ -501,8 +513,15 @@ export class Questions {
     // question through `nucleus_ask` instead of a prompt it cannot follow.
     if (route === 'mcp_ask' || !supportsNativeQuestions(task.profile?.provider)) return this.resolution.raiseAskDecision(task, decision, signal);
     return this.adapter.raiseTaskDecision!(task, { id: decision.id, question: prompt, options: decision.options, signal,
-      onRequested: request => { void this.resolution.delegateDecision(task.id, decision, request, signal,
-        (fresh, answer) => this.adapter.answerTaskDecision!(fresh, { requestId: request.requestId, header: request.header, answer })); } });
+      onRequested: request => {
+        // Durable native request identity for later withdrawal: a superseded
+        // question is dismissed by its recorded requestId, not by matching text.
+        try {
+          if (!this.store.eventsAll(task.id).some(event => event.kind === 'operator_question_native_request' && event.detail.startsWith(`${decision.id}: request ${request.requestId}`)))
+            this.store.event(task.id, 'operator_question_native_request', `${decision.id}: request ${request.requestId} header ${request.header} on ${task.agentId ?? 'unknown'}`);
+        } catch { /* the send intent stands without the request link */ }
+        void this.resolution.delegateDecision(task.id, decision, request, signal,
+          (fresh, answer) => this.adapter.answerTaskDecision!(fresh, { requestId: request.requestId, header: request.header, answer })); } });
   }
   raiseBoardDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }, signal: AbortSignal,
     why = 'the task host cannot take a native question'): Promise<string> {

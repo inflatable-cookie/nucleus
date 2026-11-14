@@ -674,6 +674,41 @@ test('repeated observations update one incident and never append another escalat
   } finally { await f.close(); }
 });
 
+test('an idle worker with unpushed commits gets one push continuation, and a second idle escalates without looping (papercut 8eedf758)', async () => {
+  const { mkdtempSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { execFileSync } = await import('node:child_process');
+  // Real shape: a worktree git repo with synthetic ids, not hand-made fields.
+  const repo = mkdtempSync(join(tmpdir(), 'ns-push-'));
+  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'test@example.test'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo });
+  writeFileSync(join(repo, 'work.txt'), 'unpushed work\n');
+  execFileSync('git', ['add', 'work.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-q', '-m', 'unpushed commit'], { cwd: repo });
+  const workHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+  const f = fixture();
+  const continuations: Array<{ taskId: string; intentId: string; text: string }> = [];
+  (f.adapter as unknown as Record<string, unknown>).continueWorker = async (task: { id: string }, intentId: string, text: string) => {
+    continuations.push({ taskId: task.id, intentId, text });
+  };
+  try {
+    // Unpushed commits on the task branch: PR still at the base, worktree ahead, no report.
+    f.store.update(f.task.id, { directory: repo, planningBase: base, prHead: base, idleSince: new Date(Date.now() - 100_000).toISOString() });
+    await f.engine.resolution.remindStoppedWorker(f.current());
+    assert.equal(continuations.length, 1, 'one push-and-report continuation is sent');
+    assert.match(continuations[0]!.text, /Push the branch/);
+    assert.match(continuations[0]!.text, new RegExp(workHead.slice(0, 12)));
+    assert.ok(f.events('worker_push_continuation').some(event => event.detail.includes(workHead)), 'the continuation is recorded with the worktree head');
+    assert.equal(f.events('callback_reminder').length, 0, 'the continuation replaces the ordinary reminder for this shape');
+    // A second idle with no new commit does not loop: no second continuation.
+    await f.engine.resolution.remindStoppedWorker(f.current());
+    assert.equal(continuations.length, 1, 'no second continuation without a new commit');
+    assert.ok(f.events('callback_reminder').length >= 1 || f.current().resolution.incident, 'the second idle falls through to the ordinary path');
+  } finally { await f.close(); }
+});
+
 test('terminal tasks keep telemetry attribution while skipping routine reconciliation', async () => {
   const f = fixture(); try {
     const done = f.add({ phase: 'done', finishedAt: new Date().toISOString(), agentId: null, agentIntent: false, resolution: { mergedCommit: merged, syncedCommit: merged, mechanicalVerification: null, incident: null, revisionRuns: 0 } });
