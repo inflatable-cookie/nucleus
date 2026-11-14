@@ -19,7 +19,7 @@ import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs'
 import { runFenceRefusal } from '../core/intake/run-settlement';
 import { recoveryEffects } from '../core/recovery/recovery-effects';
 import { restartShape } from '../core/verbs/owner-restart';
-import { taskProgressDigest } from '../core/recovery/recovery';
+import { taskProgressDigest } from '../core/recovery/coordinator-report';
 import { runPrompt } from '../core/dispatch/prompts';
 import { queueOperationSchema } from '../shared/operations';
 import {

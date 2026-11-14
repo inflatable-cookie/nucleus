@@ -159,6 +159,14 @@ export function normalizeRetryAt(value:string|null){
  if(retryAt&&!Number.isFinite(Date.parse(retryAt)))throw Error('Retry time must be a valid date');
  return retryAt;
 }
+/**
+ * The subscription groups recorded unavailable at `at`, from the store's typed
+ * availability rows. One read of the durable table serves every selection gate,
+ * so no caller decodes the JSON row itself.
+ */
+export function unavailableGroupNames(availability:ReadonlyArray<{group:string;unavailable:boolean;retryAt:string|null}>,at=Date.now()):Set<string>{
+ return new Set(availability.filter(entry=>groupIsUnavailable(entry,at)).map(entry=>entry.group));
+}
 export function activeGroupLimit(availability:readonly {group:string;unavailable:boolean;reason:string;retryAt:string|null}[],group:string,at=Date.now()) {
  return availability.find(a=>a.group===group&&groupIsUnavailable(a,at));
 }

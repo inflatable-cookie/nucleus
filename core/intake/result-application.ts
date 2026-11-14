@@ -8,7 +8,8 @@ import { classifyGitTransientFailure, gitDeliveryUnknown, ReviewPublicationTrans
 import { git } from '../git/index';
 import { readGitCheckout } from '../git/git-identity';
 import { hookHoldReason } from '../hooks/hooks';
-import { automaticRetryForbidden, consecutiveNonDeliveries, continuationInstruction, unfinishedContinuationEvents } from '../recovery/non-delivery';
+import { consecutiveNonDeliveries, continuationInstruction, unfinishedContinuationEvents } from '../recovery/non-delivery';
+import { automaticRetryForbidden } from '../../shared/automatic-retry';
 import { proveReviewRunSource } from '../review/ordinary-review';
 import { ProofExecutionRefusal, proofExecutionRecord, proofWorkerRequests, recordProofExecution, verifyProofSource } from '../qa/proof-execution';
 import type { Resolution } from '../resolution';

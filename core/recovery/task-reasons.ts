@@ -13,6 +13,8 @@ import type { Adapter } from '../host/adapter';
 import type { Store } from '../store/store';
 
 export const RECOVERY_ESCALATION_FAILURE_PREFIX = 'Coordinator recovery could not safely continue: ';
+/** A coordinator run that could not be created at all: the episode escalates with the failure text. */
+export const RECOVERY_CREATION_FAILURE_PREFIX = 'Coordinator recovery unavailable: ';
 /** A policy observation is only usable while the settings row it read has not changed; a moving row is re-observed this many times before Queue holds visibly. */
 const MERGE_GATE_SETTINGS_ATTEMPTS = 3;
 /** Every wait the transient same-thread provider resume records starts with this. */

@@ -21,7 +21,7 @@ import { advanceFailureDisposition, type AdvanceFailureDisposition } from '../co
 import { NO_ORIGIN_THREAD_WAIT } from '../core/questions/origin';
 import { noticeSettlement, type NoticeSettlement } from '../core/questions/notices';
 import { operationFailureSettlement, type OperationFailureSettlement } from '../core/planning/operations';
-import { coordinatorActionPlan, recoverySettlementPatch, type CoordinatorActionPlan, type RecoverySettlementPatch } from '../core/recovery/recovery';
+import { coordinatorActionPlan, recoverySettlementPatch, type CoordinatorActionPlan, type RecoverySettlementPatch } from '../core/recovery/coordinator-report';
 import { digest } from '../core/store/store';
 
 // ---------------------------------------------------------------------------

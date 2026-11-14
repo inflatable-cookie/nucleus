@@ -7,6 +7,7 @@ import { PrerequisiteReleases } from './scheduling/prerequisites';
 import { TaskQuantum } from './scheduling/task-quantum';
 import { schedulingEngineContext } from './scheduling/context';
 import { recoveryContext, recoveryEngineContext } from './recovery/context';
+import { unavailableGroupNames } from '../shared/pool';
 import { PlannerGrantCleanup } from './questions/planner-grants';
 import { intakeContext } from './intake/context';
 
@@ -21,7 +22,8 @@ import type { GitTransientEpisode } from './git/git-transient-backoff';
 
 import { type WorkspaceDiscard } from './workspaces/orphan-worktree';
 import type { IdentitySource } from '../shared/host-kind';
-import { RecoverySettlement } from "./recovery/recovery";
+import { RecoverySettlement } from "./recovery/coordinator-settlement";
+import { settleResponsibleFault } from "./recovery/responsible-fault";
 import { Decisions } from "./planning/decisions";
 import type { RepositoryRekeyInput } from "../shared/repository-rekey";
 
@@ -90,7 +92,10 @@ import { RestartControls } from "./verbs/restart";
 import { RetryEffectControls } from "./verbs/retry-effect";
 import { CallbackIntake } from "./intake/callback-intake";
 import { WorkerReconcile, completionReportsPr, INTERACTIVE_RUNNING_REASON, INTERACTIVE_WAIT_REASON } from "./recovery/worker-reconcile";
-import { WorkerFailover, RETIRED_OBSERVATION_INTERVAL_MS, RETIRED_OBSERVATION_STALE_MS } from "./recovery/worker-failover";
+import { WorkerFailover } from "./dispatch/worker-failover";
+import { RetiredObservations, RETIRED_OBSERVATION_INTERVAL_MS, RETIRED_OBSERVATION_STALE_MS } from "./recovery/retired-observation";
+import { replacementCeilingRefusal } from "./recovery/worker-replacement";
+import { archiveRetiredErroredAgents } from "./workspaces/thread-archive";
 import { Operations, SOURCE_PROMOTION_NOT_DELIVERED } from "./planning/operations";
 // Moved to worker-failover.ts; re-exported because engine.ts exported them.
 export { RETIRED_OBSERVATION_INTERVAL_MS, RETIRED_OBSERVATION_STALE_MS };
@@ -325,6 +330,7 @@ export class Engine {
   private readonly workerReconcile: WorkerReconcile;
   private readonly callbackIntake: CallbackIntake;
   private readonly workerFailover: WorkerFailover;
+  private readonly retiredObservations: RetiredObservations;
   readonly taskControlDispatcher: TaskControlDispatcher;
   private readonly recoverySettlement: RecoverySettlement;
   private readonly pausedStops: PausedStops;
@@ -502,7 +508,8 @@ export class Engine {
       get withHost() { return engine.withHost.bind(engine); },
       get resolution() { return intakeContext(engine.resolution, ['attention', 'complete', 'settleCompletedExecutorBlocker']); },
     });
-    this.workerFailover = new WorkerFailover(recoveryEngineContext(this, ['activeHostId', 'adapter', 'host', 'launchAgent', 'note', 'profileCatalogKnown', 'profiles', 'workerProviderUnavailable', 'replacementCeilingRefusal', 'retiredObservationKey', 'stopped', 'store', 'taskHostAvailable', 'unavailableGroups', 'withHost'], ['recordStop', 'resumeTransientProviderThread', 'resumeTransientWorker', 'retainedWorkerProfileIssue', 'suppressAutomaticRetry', 'transportDeferred', 'waiting']));
+    this.workerFailover = new WorkerFailover(recoveryEngineContext(this, ['activeHostId', 'adapter', 'host', 'launchAgent', 'note', 'profileCatalogKnown', 'profiles', 'workerProviderUnavailable', 'stopped', 'store', 'taskHostAvailable', 'withHost'], ['recordStop', 'resumeTransientProviderThread', 'resumeTransientWorker', 'retainedWorkerProfileIssue', 'suppressAutomaticRetry', 'transportDeferred', 'waiting']));
+    this.retiredObservations = new RetiredObservations(recoveryContext(this, ['activeHostId', 'host', 'retiredObservationKey', 'store', 'taskHostAvailable']));
     this.taskControlDispatcher = new TaskControlDispatcher(this);
     this.recoverySettlement = new RecoverySettlement(recoveryEngineContext(this, ['coordinatorActionRunId', 'host', 'onTaskHost', 'performTaskControl', 'store'], ['attention', 'recovery', 'update']));
     this.pausedStops = new PausedStops(this);
@@ -731,7 +738,7 @@ export class Engine {
   performSubmit(submission: Submission, requirePushedPlanning?: boolean, promotion?: {source:{kind:"lead"|"papercut";id:string;repository:string;digest:string;expectedSource:string}; initial?: Partial<Task>; identitySource?: IdentitySource}, hostId?: string, selection?: import('../shared/operations').QueueOperation['hostSelection']): Promise<OperationResult> { return this.operations.performSubmit(submission, requirePushedPlanning, promotion, hostId, selection); }
 
   applyCoordinatorAction(task: Task, run: Run, binding: RecoveryActionBinding): Promise<void> { return this.recoverySettlement.applyCoordinatorAction(task, run, binding); }
-  settleResponsibleFault(task: Task): Promise<boolean> { return this.recoverySettlement.settleResponsibleFault(task); }
+  settleResponsibleFault(task: Task): Promise<boolean> { return settleResponsibleFault(this.recoverySettlement.engine, task); }
 
   completeTask(input: TaskControlInput, operationId?: string): Promise<{ task: Task; idempotent: boolean }> {
     return this.taskCompletion.completeTask(input, operationId);
@@ -1044,10 +1051,10 @@ export class Engine {
    * next start, so the marker lands only after every project has resolved.
    */
   migrateProjectOwnersToPlanners(): Promise<void> { return this.projectLifecycle.migrateProjectOwnersToPlanners(); }
-  noteLifecycleSignal(input: { agentId?: string | null; workspaceId?: string | null; hostId?: string | null }): void { return this.workerFailover.noteLifecycleSignal(input); }
-  retiredObservationPlan(): { persisted: Record<string,{active:boolean;at:string}>; keep: Record<string,{active:boolean;at:string}>; due: string[] } { return this.workerFailover.retiredObservationPlan(); }
-  observeRetiredWorkers(plan: { persisted: Record<string,{active:boolean;at:string}>; keep: Record<string,{active:boolean;at:string}>; due: string[] }, inventory: ReadonlyMap<string, AgentObservation> | null): Promise<{ observations: Record<string,{active:boolean;at:string}>; changed: boolean }> { return this.workerFailover.observeRetiredWorkers(plan, inventory); }
-  clearRetiredInvalidations(): void { this.workerFailover.clearRetiredInvalidations(); }
+  noteLifecycleSignal(input: { agentId?: string | null; workspaceId?: string | null; hostId?: string | null }): void { this.retiredObservations.noteLifecycleSignal(input); }
+  retiredObservationPlan(): { persisted: Record<string,{active:boolean;at:string}>; keep: Record<string,{active:boolean;at:string}>; due: string[] } { return this.retiredObservations.retiredObservationPlan(); }
+  observeRetiredWorkers(plan: { persisted: Record<string,{active:boolean;at:string}>; keep: Record<string,{active:boolean;at:string}>; due: string[] }, inventory: ReadonlyMap<string, AgentObservation> | null): Promise<{ observations: Record<string,{active:boolean;at:string}>; changed: boolean }> { return this.retiredObservations.observeRetiredWorkers(plan, inventory); }
+  clearRetiredInvalidations(): void { this.retiredObservations.clearRetiredInvalidations(); }
   /**
    * One audit pass. It resolves with its recorded fault (also kept as
    * `engineError`), or null, and whether a drain reached every task once.
@@ -1137,9 +1144,9 @@ export class Engine {
   quantumSteps(taskId: string, task: Task, quantum: { pausedForPrerequisiteWait: boolean }): Promise<void> { return this.taskQuantumOwner.quantumSteps(taskId, task, quantum); }
   /** Closing reconciliation, thread archive and title projection for one quantum. */
   quantumFinish(taskId: string): Promise<void> { return this.taskQuantumOwner.quantumFinish(taskId); }
-  unavailableGroups(): Set<string> { return this.workerFailover.unavailableGroups(); }
-  replacementCeilingRefusal(task: Task): string { return this.workerFailover.replacementCeilingRefusal(task); }
-  archiveRetiredErroredAgents(): Promise<void> { return this.workerFailover.archiveRetiredErroredAgents(); }
+  unavailableGroups(): Set<string> { return unavailableGroupNames(this.store.availability()); }
+  replacementCeilingRefusal(task: Task): string { return replacementCeilingRefusal(task); }
+  archiveRetiredErroredAgents(): Promise<void> { return archiveRetiredErroredAgents(this); }
   recoverExhaustedWorkers(): Promise<void> { return this.workerFailover.recoverExhaustedWorkers(); }
   recover(task: Task) { return this.creationRecovery.recover(task); }
   recoverProofOnlyDispatch(task: Task): Promise<void> { return this.creationRecovery.recoverProofOnlyDispatch(task); }
