@@ -34,7 +34,7 @@ function fixture() {
   let reviewPublications = 0;
   const make = (f.buildAdapter() as ReturnType<typeof f.buildAdapter> & ResolutionAdapter).createRun;
 
-  const faults = { unknownTools: false, staleCovering: false, mergeNeedsApproval: false, blockOrdinarySend: false };
+  const faults = { unknownTools: false, staleCovering: false, mergeNeedsApproval: false, blockOrdinarySend: false, admissionRace: false };
   const overrides: Parameters<typeof f.buildEngine>[0] = {
     verifyPr: async () => ({ url: store.task(task.id).prUrl!, head: f.state.prSha }),
     verifyPrIdentity: async () => ({ url: store.task(task.id).prUrl!, head: f.state.prSha,
@@ -48,6 +48,13 @@ function fixture() {
     },
     coveringEvidence: async () => ({ head: faults.staleCovering ? f.oldHead : f.state.prSha, base: runGit(f.repo, 'rev-parse', 'main'), wait: '' }),
     agentTimelinePage: async () => faults.unknownTools ? null : toolTimelinePage([]),
+    authorCommentEvidence: async () => {
+      if (faults.admissionRace) {
+        faults.admissionRace = false;
+        store.update(task.id, { reason: 'Concurrent canonical admission changed the source reservation' });
+      }
+      return '';
+    },
     continueReviewer: async (t, run, _id, _text, allowed, stillAllowed) => {
       assert.equal(await allowed(), true); assert.equal(stillAllowed(), true);
       await ordinaryReviewSource(t, run.head, true); sends.push(run); return { sent: true };
@@ -765,6 +772,34 @@ for (const busy of ['permission', 'active turn', 'active flag'] as const) {
     } finally { f.close(); }
   });
 }
+
+test('an ordinary review reservation race waits for the next pass without an incident', async () => {
+  const f = fixture();
+  try {
+    await f.engine.wake(); const first = f.current();
+    await f.report(first, 'changes_required');
+    await f.engine.wake(); const revision = f.current();
+    assert.equal(revision.role, 'revision');
+    const head = f.pushRevision('raced revision'); f.idle(revision);
+    const reviewersBeforeRace = f.sends.filter(run => run.role === 'reviewer').length;
+    f.faults.admissionRace = true;
+    const result = await new Reports(f.engine).report({ taskId: f.task.id, runId: revision.id, eventId: randomUUID(),
+      status: 'ready_for_review', summary: 'Fixed revision', prNumber: 41, head }, f.tokens.get(revision.id)!);
+    assert.equal((result as {accepted:boolean}).accepted, true);
+    await f.engine.wake();
+    assert.equal(f.faults.admissionRace, false, 'the admission read observed the racing source change');
+    const reviewersAfterFirstPass = f.sends.filter(run => run.role === 'reviewer').length;
+    assert.ok(reviewersAfterFirstPass === reviewersBeforeRace || reviewersAfterFirstPass === reviewersBeforeRace + 1,
+      'the reservation race admits at most one reviewer');
+    const incident = f.store.task(f.task.id).resolution.incident;
+    assert.ok(!incident || incident.status === 'resolved', 'a reservation race does not leave an incident needing an owner');
+    assert.match(f.store.task(f.task.id).reason, /source reservation changed.*rechecking before dispatch|reviewer thread running/i);
+    await f.engine.wake(); await f.engine.wake();
+    assert.equal(f.sends.filter(run => run.role === 'reviewer').length, reviewersBeforeRace + 1, 'ordinary dispatch admits one reviewer');
+    const settledIncident = f.store.task(f.task.id).resolution.incident;
+    assert.ok(!settledIncident || settledIncident.status === 'resolved', 'the retry does not leave an incident needing an owner');
+  } finally { f.close(); }
+});
 
 test('a checkout dirtied during an awaited observation refuses the new round without stashing or sending', async () => {
   const f = fixture();

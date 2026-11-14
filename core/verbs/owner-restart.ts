@@ -7,7 +7,7 @@ import { retainedProfileRemapPark } from "../recovery/task-reasons";
 import { reviewContinuationLocalRefusal } from "../review/review-continuation";
 import { OWNER_STOP_HOLD_PREFIX } from "../merge/merge-hold";
 import type { AgentObservation } from "../host/adapter";
-import { reviewerIdentityAtHead, reviewContinuationLimit } from "../review/review-continuation";
+import { reviewerIdentityAtHead, reviewContinuationLimit, reviewResultFencesRun } from "../review/review-continuation";
 import { runFenceRefusal, runSettlement } from "../intake/run-settlement";
 import { ownerStoppedRunIds, neverDispatched, workerBlockedOnOwnRun, prIdentity, escalatedEpisode, escalationBackedByLiveWork, retainedWorkerDeliveryRefusal, replacementAllowanceNote } from './owner-facts';
 import type { OwnerVerbFacts } from './owner-facts';
@@ -285,6 +285,8 @@ export function retainedContinuationPlan(facts: OwnerVerbFacts): RetainedContinu
   // own verb settles it with everything else it supersedes.
   if (incidentBindsCurrentWork(task, runs) && task.resolution.incident?.status === "reconciling")
     return { kind: "refused", refusal: "Automatic reconciliation still owns the task incident; continue the review after it settles" };
+  if (reviewResultFencesRun(facts.store, task, current))
+    return { kind: "fresh_only", note: `A recorded ${task.resolution.review?.status} result at ${task.resolution.review?.head ?? "an unproved head"} fences checkpoint ${checkpoint.ordinal} on run ${current.id}; continue with restart role=reviewer fresh or move to=review fresh.` };
   // Two established causes make the retained-agent continuation impossible: the
   // checkpoint budget is spent, or the reviewer's own agent was positively
   // observed closed. Both keep the lease and the saved progress, and both are

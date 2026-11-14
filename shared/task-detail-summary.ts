@@ -13,6 +13,9 @@ import { waitStateLabels, type WaitStateView } from "./wait-state";
 
 /** The headline a reader sees: about one line on a card and in the dialog. */
 export const REPORT_HEADLINE_MAX = 200;
+/** The words a progressing responsible task reads with: no stop and no wait. */
+export const TASK_PROGRESSING_REASON = "No stop or wait; the task is progressing.";
+
 /** What a report may carry; longer text is clipped for display, not refused on read. */
 export const REPORT_HEADLINE_STORED_MAX = 240;
 /** The summary keeps the two or three verbs that fit this state, and no more. */
@@ -144,7 +147,7 @@ export function taskOverviewWait(waitState: WaitStateView | null | undefined, ne
       stop: stopRow,
     };
   }
-  if (next) return { state: "No stop or wait; the task is progressing.", owner: "", nextAction: "", detail: "", actor, stop: null };
+  if (next) return { state: TASK_PROGRESSING_REASON, owner: "", nextAction: "", detail: "", actor, stop: null };
   return { state: firstSentence(fallbackReason, 400) || "Reading the task's current state…", owner: "", nextAction: "", detail: "", actor, stop: null };
 }
 

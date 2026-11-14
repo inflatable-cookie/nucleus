@@ -2,16 +2,18 @@ import { taskNeverDispatched, liveRun } from "../task-decision-rules";
 import { boardDispatchHoldApplies, BOARD_DISPATCH_HOLD_REASON } from "../../shared/board-dispatch-hold";
 import { supersededWorkerResult } from "../recovery/incident";
 import { holdOwnerOf, taskOwner } from "../../shared/contracts";
-import { holdsOf, incidentBindsCurrentWork, taskNextRunSchema, taskNextStopSchema, taskStopKind, taskStopClassification, taskStopRecord, currentTaskStop, DISPATCH_WAIT_REASON, blockingHoldFence, WORKER_REPLACEMENT_CEILING, type Notice, type Profile, type Run, type Task, type TaskNext, type TaskNextStop } from "../../shared/contracts";
+import { holdsOf, incidentBindsCurrentWork, taskNextRunSchema, taskNextStopSchema, taskStopKind, taskStopClassification, taskStopRecord, currentTaskStop, taskVisibleReason, DISPATCH_WAIT_REASON, blockingHoldFence, WORKER_REPLACEMENT_CEILING, type Notice, type Profile, type Run, type Task, type TaskNext, type TaskNextStop } from "../../shared/contracts";
 import { type HookRecord } from "../../shared/hooks";
 import type { TaskStopReason } from "../../shared/task-stop";
 import { noActionEscalationAtAcceptedHead } from "../recovery/task-reasons";
+import { taskBudget } from "../../shared/task-budget";
 import { type Store } from "../store/store";
 import { OWNER_STOP_HOLD_PREFIX } from "../merge/merge-hold";
 import { blockingRecoveryEffects, recoveryEffectsRefusal } from "../recovery/recovery-effects";
 import { recoveryBoundStatus } from "../recovery/recovery-bound";
 import { runFenceRefusal, runSettlementFence } from "../intake/run-settlement";
 import { supersededIdleBinding } from "../recovery/fence-settlement";
+import { reviewResultFencesRun } from "../review/review-continuation";
 
 /** Everything the registry reads about one task; a store read, never a remote call. */
 export interface OwnerVerbFacts {
@@ -159,6 +161,12 @@ export function retainedWorkerDeliveryRefusal(facts: OwnerVerbFacts): string | n
 }
 
 /**
+ * The budget figure `next` reads (nucleus#1187): the same call the dispatch gates
+ * and the views make, from the task row, its runs and its events.
+ */
+export const ownerTaskBudget = (facts: OwnerVerbFacts) => taskBudget(facts.task, facts.runs, Date.now(), facts.events);
+
+/**
  * The one honest sentence `next` carries once a task has retired enough workers
  * that the worker replacement ceiling applies (Spec 050). It reports the real
  * count and the operator-relayed restart that can pass it; it grants nothing.
@@ -275,16 +283,22 @@ function withRecoveryNote(text: string, note: string, limit = 2000): string {
  */
 export function ownerTaskStop(facts: OwnerVerbFacts): TaskNextStop | null {
   const { task, runs } = facts;
+  // One measurement (nucleus#1187): the stop this reads is the one the same
+  // budget figure supports, so a pause the gates no longer see is not a stop here.
+  const budget = ownerTaskBudget(facts);
   if (!facts.store.getMeta("paused") && facts.store.getMeta("dispatchHeld") === true && boardDispatchHoldApplies(task) && !holdsOf(task).dispatch)
     return { kind: "wait", reason: "held", suggestedVerbs: [], detail: BOARD_DISPATCH_HOLD_REASON, owner: "operator", evidence: "Board dispatch hold", since: task.updatedAt };
-  const kind = taskStopKind(task, runs);
+  const kind = taskStopKind(task, runs, budget);
   if (!kind) return null;
-  const stored = currentTaskStop(task);
+  const stored = currentTaskStop(task, budget);
   // No recorded stop: type it from the stop kind. Only a queued task's reason is
-  // Queue's own dispatch text to classify; any other reason may be an agent's report.
+  // Nucleus's own dispatch text to classify; any other reason may be an agent's report.
   // A row released before its release reset the hold text still says "Dispatch
-  // held"; with no fence left it waits for dispatch like any queued task.
-  const reasonText = kind === "wait" && taskStopClassification(task.reason).reason === "held" ? DISPATCH_WAIT_REASON : task.reason;
+  // held"; with no fence left it waits for dispatch like any queued task. The text
+  // typed here is the one `next` reports, so a budget pause the measured figure no
+  // longer shows cannot come back as an operator wait (nucleus#1187).
+  const visibleReason = taskVisibleReason(task, budget);
+  const reasonText = kind === "wait" && taskStopClassification(visibleReason).reason === "held" ? DISPATCH_WAIT_REASON : visibleReason;
   const fallback: TaskStopReason = kind === "hold" ? "held"
     : kind === "wait" ? (task.prerequisiteWait && !task.prerequisiteWait.releasedAt ? "prerequisite" : taskStopClassification(reasonText).reason)
       : "operator_needed";
@@ -312,6 +326,10 @@ export function ownerTaskStop(facts: OwnerVerbFacts): TaskNextStop | null {
     detail: withRecoveryNote(stopDetail, boundNote),
     suggestedVerbs: classified.suggestedVerbs,
   };
+  const checkpointed = (kind === "run" || kind === "wait") ? retainedCheckpointRun(runs) : null;
+  const resultFencedCheckpoint = checkpointed?.reviewCheckpoints?.length && reviewResultFencesRun(facts.store, task, checkpointed)
+    ? checkpointed : null;
+  if (resultFencedCheckpoint) stopFields.detail = `A reviewer result fences checkpoint ${resultFencedCheckpoint.reviewCheckpoints!.at(-1)!.ordinal} on run ${resultFencedCheckpoint.id}; continue with restart role=reviewer fresh or move to=review fresh.`;
   const fences = holdsOf(task);
   if (kind === "hold") {
     // A hold stop is its owner's gate whatever wait the task last recorded: a
@@ -355,11 +373,16 @@ export function ownerTaskStop(facts: OwnerVerbFacts): TaskNextStop | null {
     const checkpointed = retainedCheckpointRun(runs);
     if (checkpointed) {
       const ordinal = checkpointed.reviewCheckpoints!.at(-1)!.ordinal;
+      const resultFenced = reviewResultFencesRun(facts.store, task, checkpointed);
       return taskNextStopSchema.parse({
-        kind, ...stopFields, owner: taskOwner(task) || null,
+        kind, ...stopFields,
+        ...(resultFenced ? { detail: `A reviewer result fences checkpoint ${ordinal} on run ${checkpointed.id}; continue with restart role=reviewer fresh or move to=review fresh.` } : {}),
+        owner: taskOwner(task) || null,
         evidence: checkpointed.retainedAgentClosedAt
           ? `reviewer run ${checkpointed.id} (agent ${checkpointed.agentId}) holds checkpoint ${ordinal} at ${checkpointed.head}; its agent was observed closed in ${checkpointed.workspaceId} at ${checkpointed.retainedAgentClosedAt}, so the same-agent continuation is impossible`
-          : `reviewer run ${checkpointed.id} holds checkpoint ${ordinal} at ${checkpointed.head}; continuation needs explicit authorization`,
+          : resultFenced
+            ? `reviewer run ${checkpointed.id} holds checkpoint ${ordinal} at ${checkpointed.head}; recorded ${task.resolution.review?.status} result ${task.resolution.review?.eventId} at ${task.resolution.review?.head} fences another turn on this run`
+            : `reviewer run ${checkpointed.id} holds checkpoint ${ordinal} at ${checkpointed.head}; continuation needs explicit authorization`,
       });
     }
     const author = latestAuthorReport;

@@ -1330,6 +1330,7 @@ export class QueueRuntime {
   private async executeSourcePromotion(payload:unknown, hostId?: string, selection?: import('../shared/operations').QueueOperation['hostSelection']):Promise<OperationResult> { return this.planning.executeSourcePromotion(payload, hostId, selection); }
   importLeads(input: Parameters<Leads["import"]>[0]) { return this.planning.importLeads(input); }
   addDecision(input: Parameters<Decisions["add"]>[0]) { return this.questions.addDecision(input); }
+  backfillDecisions(input: { dryRun?: boolean }) { return this.questions.backfillDecisions(input); }
   getDecision(input: Parameters<Decisions["get"]>[0]) { return this.questions.getDecision(input); }
   listDecisions(input: Parameters<Decisions["list"]>[0]) { return this.questions.listDecisions(input); }
   decisionAgentProjects(input: Parameters<Decisions["agentProjects"]>[0]) { return this.questions.decisionAgentProjects(input); }

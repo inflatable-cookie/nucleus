@@ -1,0 +1,1 @@
+Project validation now records its result before candidate cleanup and retries interrupted cleanup on the next pass. Forced cleanup rebuilds broken owned candidates; non-forced cleanup still preserves dirty or unrecognised work.

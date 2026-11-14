@@ -24,6 +24,7 @@ const decision = (over: Partial<DecisionView> = {}): DecisionView => ({
   recommended: over.recommended ?? 'main', details: over.details ?? null, overtakenBy: over.overtakenBy ?? [],
   context: over.context ?? null, options: over.options ?? ['main', 'branch'], recommendation: over.recommendation ?? 'main',
   askedBy: over.askedBy ?? { agentId: 'agent-asker', project }, links: over.links ?? { tasks: [], leads: [], papercuts: [] },
+  askerLabel: over.askerLabel ?? 'agent-asker',
   status: 'open', answer: null, withdrawal: null, supersededBy: null, delivery: null,
   createdAt: '2026-09-29T10:00:00Z', updatedAt: '2026-09-29T10:00:00Z', versions: [], stale: false, projectKey: 'projectKey' in over ? over.projectKey ?? null : 'decisions',
 });

@@ -51,7 +51,9 @@ export class CallbackReminders {
     // Queue #650: a paused-stop marker proves the stop was the operator's, never
     // a fault; Queue resumes the thread on unpause instead of reminding.
     if (run.pausedStop) { this.resolution.waiting(this.store.task(t.id), pausedStopWaitReason(run.role), 'paused_stop'); return; }
-    if (isDispositionActive(t) || dispatchBlocked(this.store.task(t.id)) || reviewAuthorizationRequired(this.store.task(t.id), this.store) || run.completion) return;
+    if (isDispositionActive(t) || dispatchBlocked(this.store.task(t.id)) || reviewAuthorizationRequired(this.store.task(t.id), this.store)
+      || run.completion || run.released || run.status === 'finished' || run.status === 'superseded'
+      || run.role === 'reviewer' && t.resolution.currentRunId !== run.id) return;
     if (await this.resolution.heavyRunAlive(t)) { this.resolution.extendCallbackReminder(this.store.task(t.id), run.id); return; }
     // Papercut 6895edaa: a thread waiting on its own detached job is working, not
     // stopped. The live tool is the wait, and no coordinator is launched over it.

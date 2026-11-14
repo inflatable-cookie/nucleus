@@ -440,8 +440,9 @@ test("a planner answer overtakes only the exact decisions it cites", async () =>
   const f = await askFixture();
   try {
     const decisions = new Decisions(f.store);
-    const settled = decisions.add({ question: "Should the public API stay open?", askedBy: "planner" });
-    const similar = decisions.add({ question: "Should the API remain available?", askedBy: "planner" });
+    const project = { origin: f.task.repoPath, path: f.task.repoPath };
+    const settled = decisions.add({ question: "Should the public API stay open?", askedBy: "planner", project });
+    const similar = decisions.add({ question: "Should the API remain available?", askedBy: "planner", project });
     registerPlanner(f, `Answer: Make the API private\nReason: The planner ruling is explicit.\nOvertakes: ${settled.id}`);
 
     const receipt = await f.receipt({ question: "How should the API change?" });
@@ -727,7 +728,8 @@ test("the joint review question on a provider without native questions goes thro
   });
   f.engine.resolution.delegatedAnswerWaitMs = 30_000;
   try {
-    const settled = new Decisions(f.store).add({ question: "Should this review stay on the current branch?", askedBy: "planner" });
+    const settled = new Decisions(f.store).add({ question: "Should this review stay on the current branch?", askedBy: "planner",
+      project: { origin: join(f.dir, "repo"), path: join(f.dir, "repo") } });
     delegated.planner = `Choice: Continue the current approach\nReason: The disagreement is mechanical\nOvertakes: ${settled.id}`;
     f.store.upsertProject({
       key: "app",
@@ -844,7 +846,8 @@ test('a T3-bound third-round review question goes to the task planner through qu
     capabilities: () => ({ nativeDecisions: false, reportingViaMcp: false }),
     reportingViaMcp: false,
   });
-  const prior = new Decisions(f.store).add({ question: 'Earlier planner question?', askedBy: 'planner' });
+  const prior = new Decisions(f.store).add({ question: 'Earlier planner question?', askedBy: 'planner',
+    project: { origin: join(f.dir, "repo"), path: join(f.dir, "repo") } });
   delegated.planner = `Choice: Continue the current approach\nReason: The current approach remains safe\nOvertakes: ${prior.id}`;
   f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: join(f.dir, 'repo') }] });
   f.store.setProjectPlanner({ key: 'app', agentId: 'planner-1', setBy: 'operator' });

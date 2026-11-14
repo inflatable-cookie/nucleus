@@ -5,7 +5,7 @@ import { dispatchBlocked, DISPATCH_HELD_REASON } from "../dispatch/capacity";
 import type { Engine } from "../engine";
 import { holdPatch, releasePatch, OPERATOR_HOLD_OWNER, OWNER_STOP_HOLD_PREFIX } from "../merge/merge-hold";
 import type { RouteRole } from "./owner-verbs";
-import { reviewContinuationState } from "../review/review-continuation";
+import { reviewContinuationState, reviewResultFencesRun } from "../review/review-continuation";
 import { DurableFenceRefusal } from "../intake/run-settlement";
 import { now } from "../store/store";
 
@@ -178,14 +178,24 @@ export class OwnerStop {
       if (!found || found.run.id !== before.run.id || found.checkpoint.ordinal !== before.checkpoint.ordinal) continue;
       const { task, run, checkpoint } = found;
       const reason = `Queue continues the reviewer from checkpoint ${checkpoint.ordinal}`;
+      const markFencedReaderStopped = () => {
+        const latestRun = this.store.run(run.id);
+        if (latestRun && !latestRun.released && !latestRun.completion && latestRun.status !== 'superseded'
+          && reviewResultFencesRun(this.store, this.store.task(task.id), latestRun)) {
+          const observedAt = new Date().toISOString();
+          this.store.putRun({ ...latestRun, status: 'stopped', active: false, idleSince: latestRun.idleSince ?? observedAt, lastObservedAt: observedAt });
+        }
+      };
       try {
         await this.engine.replayingDeferredVerb.run(true, () => this.engine.performTaskControl(taskControlInputSchema.parse({
           taskId: task.id, version: task.version, action: "restart", role: "reviewer", reason }) as TaskControlInput));
         // A hold or pause that landed meanwhile records the verb instead of sending it.
         const sent = ["reserved", "continuing"].includes(reviewContinuationState(this.store.task(task.id), this.store) ?? "");
         if (sent) this.store.event(task.id, "review_auto_continued", `${checkpoint.ordinal} run ${run.id} at ${run.head}`);
+        else markFencedReaderStopped();
       } catch (error) {
         const detail = `${checkpoint.ordinal} run ${run.id}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 2000);
+        markFencedReaderStopped();
         const last = this.autoContinueRefusals.get(`${run.id}:${checkpoint.ordinal}`);
         this.autoContinueRefusals.set(`${run.id}:${checkpoint.ordinal}`, { detail, at: Date.now(), repeated: last?.detail === detail });
         const previous = this.store.events(task.id).findLast(event => event.kind === "review_auto_continue_deferred");

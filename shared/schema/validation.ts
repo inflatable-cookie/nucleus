@@ -94,4 +94,6 @@ export const projectValidationResultSchema = z.object({
   capacityUnavailable: z.boolean().default(false),
   /** Lost and timed-out runs require an explicit retry; build or settings changes cannot replay them. */
   resubmissionRequired: z.boolean().optional(),
+  /** The durable verdict is kept while interrupted removal of its disposable candidate is retried. */
+  candidateCleanupPending: z.boolean().optional(),
 }).strict();

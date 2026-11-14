@@ -1,12 +1,13 @@
 import { REMOVED_TASK_REFUSAL } from "./control-refusals";
 import { workerStepLabel } from "../../shared/demand";
 import { holdOwnerOf } from "../../shared/contracts";
-import { holdsOf, taskNextVerbSchema, REVISION_BUDGET, WORKER_REPLACEMENT_CEILING, type Run, type Task, type TaskNext, type TaskNextReviewOutcome, type TaskNextVerb } from "../../shared/contracts";
+import { holdsOf, taskNextVerbSchema, taskVisibleReason, REVISION_BUDGET, WORKER_REPLACEMENT_CEILING, type Run, type Task, type TaskNext, type TaskNextReviewOutcome, type TaskNextVerb } from "../../shared/contracts";
 import { isAcceptedReview } from "../recovery/task-reasons";
-import { latestAuthorResult, retainedCheckpointRun, ownerActiveRun, ownerTaskStop } from './owner-facts';
+import { latestAuthorResult, ownerTaskBudget, retainedCheckpointRun, ownerActiveRun, ownerTaskStop } from './owner-facts';
 import type { OwnerVerbFacts } from './owner-facts';
 import { DEFAULT_STALL_THRESHOLD_MINUTES } from '../../shared/schema/settings';
 import { taskStopVerbs } from '../../shared/task-stop';
+import { reviewResultFencesRun } from '../review/review-continuation';
 
 /** One reviewer run's own recorded verdict with the publication evidence it carries. */
 type RecordedVerdict = {
@@ -153,8 +154,11 @@ function currentReviewOutcome(facts: OwnerVerbFacts): TaskNextReviewOutcome {
   // current run, else the retained checkpoint reviewer. One that belongs to
   // another source head is not reading the current one.
   const current = task.resolution.currentRunId ? runs.find(run => run.id === task.resolution.currentRunId) : undefined;
-  const readingRun = current && current.role === 'reviewer' && !current.released && !current.completion
-    ? current : retainedCheckpointRun(runs) ?? null;
+  const checkpointReader = retainedCheckpointRun(runs) ?? null;
+  const readerRun = current && current.role === 'reviewer' && !current.released && !current.completion
+    ? current : checkpointReader;
+  const readingRun = readerRun && !(readerRun.reviewCheckpoints?.length && reviewResultFencesRun(facts.store, task, readerRun))
+    ? readerRun : null;
   const reader: TaskNextReviewOutcome['reader'] = readingRun && (!head || readingRun.head === head) ? {
     runId: readingRun.id, agentId: readingRun.agentId ?? null, head: readingRun.head ?? null,
     checkpoint: readingRun.reviewCheckpoints?.at(-1)?.ordinal ?? null,
@@ -277,7 +281,9 @@ export function assembleOwnerTaskNext(facts: OwnerVerbFacts, ownerVerbViews: (fa
     number: task.number,
     reference: task.reference,
     attention: task.resolution.attention,
-    reason: task.reason,
+    // Papercut 703b4aa3: the reason is the one the current stop supports, so a
+    // budget pause the measured budget no longer shows cannot keep its text.
+    reason: taskVisibleReason(task, ownerTaskBudget(facts)),
     activeRun: ownerActiveRun(facts),
     prHead: task.prHead,
     prUrl: task.prUrl,

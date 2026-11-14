@@ -98,6 +98,8 @@ export class RuntimeQuestions {
 
   addDecision(input: Parameters<Decisions["add"]>[0]) { return this.context.decisions.add(input); }
 
+  backfillDecisions(input: { dryRun?: boolean }) { return this.context.decisions.backfillDecisionProjects(input.dryRun ?? true); }
+
   getDecision(input: Parameters<Decisions["get"]>[0]) { this.context.markStoreAccess(); return this.context.decisions.get(input); }
 
   listDecisions(input: Parameters<Decisions["list"]>[0]) { this.context.markStoreAccess(); return this.context.decisions.list(input); }

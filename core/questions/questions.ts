@@ -19,6 +19,14 @@ import { DelegatedHostUnavailable } from './delegation';
 import { digest } from '../store/store';
 import { RESPONSIBLE_QUESTION_WAIT } from '../recovery/task-reasons';
 
+/** The recorded budget questions a task carries: their ids, in event order. */
+function budgetQuestionIds(events: Array<{ kind: string; detail: string }>): string[] {
+  return [...new Set(events
+    .filter(event => event.kind === 'operator_question' && event.detail.includes('kind budget'))
+    .map(event => event.detail.split(':', 1)[0]!)
+    .filter(Boolean))];
+}
+
 export class Questions {
   constructor(readonly resolution: Resolution) {}
   get store() { return this.resolution.store; }
@@ -222,9 +230,8 @@ export class Questions {
   extendTaskBudget(taskId: string, detail: string, by = 'The operator'): Task | null {
     const current = this.store.task(taskId);
     const events = this.store.eventsAll(taskId);
-    const legacyBudgetSince = events.find(event => event.kind === 'responsible_converted')?.at;
-    if (!taskBudget(current, this.store.runs(taskId), Date.now(), legacyBudgetSince, events).exhausted) return null;
-    const marked = (kind: string, id: string) => events.some(event => event.kind === kind && event.detail.startsWith(`${id}:`));
+    if (!taskBudget(current, this.store.runs(taskId), Date.now(), events).exhausted) return null;
+    const wasBudgetPause = current.resolution.stop?.reason === 'budget';
     // Papercut 7cb34906 (2026-11-10): a budget extended through a verb left
     // Nucleus's own budget questions pending on the worker thread; launches then
     // declined ("retained worker still owns its turn: pending question") until a
@@ -233,35 +240,56 @@ export class Questions {
     // board whose native prompt is still pending on the thread — so all of them
     // are superseded and dismissed through the host, the same supersession #975
     // applies to asks.
-    const budgetQuestionIds = [...new Set(events
-      .filter(event => event.kind === 'operator_question' && event.detail.includes('kind budget'))
-      .map(event => event.detail.split(':', 1)[0]!)
-      .filter(Boolean))];
-    const wasBudgetPause = current.resolution.stop?.reason === 'budget';
-    const supersededReason = 'The exhausted budget was extended.';
     const updated = this.store.transaction(() => {
       const next = this.resolution.update(current, { ...(wasBudgetPause ? { stop: null } : {}), budgetExtensions: current.resolution.budgetExtensions + 1 },
         wasBudgetPause ? { reason: `${by} extended the budget by one default increment; the next run may start` }
           : {}, 'budget_extended', detail);
-      for (const questionId of budgetQuestionIds) {
-        if (!marked('operator_question_superseded', questionId))
-          this.store.event(taskId, 'operator_question_superseded', `${questionId}: ${supersededReason}`);
-        if (!marked('native_question_dismiss_intent', questionId))
-          this.store.event(taskId, 'native_question_dismiss_intent', `${questionId}: ${supersededReason}`);
-        const decisionLink = events.find(event => event.kind === 'operator_question_decision'
-          && event.detail.startsWith(`${questionId}: decision `));
-        const decisionId = decisionLink?.detail.match(/decision ([^;\s]+)/)?.[1];
-        if (decisionId) {
-          const decision = this.store.decision(decisionId);
-          if (decision.status === 'open') new Decisions(this.store).withdrawInTransaction({ id: decisionId, version: decision.version,
-            reason: supersededReason, withdrawnBy: 'nucleus' });
-        }
-      }
+      this.supersedeBudgetQuestionsInTransaction(taskId, 'The exhausted budget was extended.');
       return next;
     });
-    for (const questionId of budgetQuestionIds) this.resolution.responsibleQuestions.get(questionId)?.abort();
-    this.dismissSupersededNativeQuestions(taskId, budgetQuestionIds);
+    this.settleSupersededBudgetQuestions(taskId);
     return updated;
+  }
+  /**
+   * Every recorded budget question the task still carries, superseded with its
+   * native prompt dismissed and any linked board decision withdrawn, so nobody
+   * answers a pause that no longer exists and no answer can change the task. The
+   * pause is gone two ways: an extension lifted it, or the measured budget stopped
+   * showing it (nucleus#1187).
+   */
+  supersedeBudgetQuestions(taskId: string, reason: string): string[] {
+    const marks = () => this.supersedeBudgetQuestionsInTransaction(taskId, reason);
+    if (this.store.db.isTransaction) marks(); else this.store.transaction(marks);
+    return this.settleSupersededBudgetQuestions(taskId);
+  }
+  private supersedeBudgetQuestionsInTransaction(taskId: string, reason: string): void {
+    const events = this.store.eventsAll(taskId);
+    const marked = (kind: string, id: string) => events.some(event => event.kind === kind && event.detail.startsWith(`${id}:`));
+    for (const questionId of budgetQuestionIds(events)) {
+      if (!marked('operator_question_superseded', questionId))
+        this.store.event(taskId, 'operator_question_superseded', `${questionId}: ${reason}`);
+      if (!marked('native_question_dismiss_intent', questionId))
+        this.store.event(taskId, 'native_question_dismiss_intent', `${questionId}: ${reason}`);
+      const decisionLink = events.find(event => event.kind === 'operator_question_decision'
+        && event.detail.startsWith(`${questionId}: decision `));
+      const decisionId = decisionLink?.detail.match(/decision ([^;\s]+)/)?.[1];
+      if (decisionId) {
+        const decision = this.store.decision(decisionId);
+        if (decision.status === 'open') new Decisions(this.store).withdrawInTransaction({ id: decisionId, version: decision.version,
+          reason, withdrawnBy: 'nucleus' });
+      }
+    }
+  }
+  /**
+   * Abort the in-turn waits and dismiss the native prompts of the recorded budget
+   * questions. Runs after the write that superseded them: a host call belongs
+   * outside the transaction that records the intent.
+   */
+  private settleSupersededBudgetQuestions(taskId: string): string[] {
+    const ids = budgetQuestionIds(this.store.eventsAll(taskId));
+    for (const questionId of ids) this.resolution.responsibleQuestions.get(questionId)?.abort();
+    this.dismissSupersededNativeQuestions(taskId, ids);
+    return ids;
   }
   supersedeOpenOwnerQuestions(taskId: string, reason: string): void {
     const events = this.store.eventsAll(taskId);

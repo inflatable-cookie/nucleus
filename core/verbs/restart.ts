@@ -405,7 +405,14 @@ export class RestartControls {
           || observed.active || observed.activeTurnId || !["idle", "error", "closed"].includes(observed.status))
           throw new RestartRefusal("The retained worker is no longer positively idle in its workspace; no instruction was delivered");
         const messageId = `ns-owner-restart-${digest(`${task.id}:${task.runId}:${digest(instruction || reason)}`).slice(0, 32)}`;
-        const alreadySent = this.store.eventsAll(task.id).some(event => event.kind === "owner_restart_instruction_sent" && event.detail.includes(messageId));
+        const events = this.store.eventsAll(task.id);
+        const alreadySent = events.some(event => event.kind === "owner_restart_instruction_sent" && event.detail.includes(messageId));
+        const priorIntent = events.some(event => {
+          if (event.kind !== "owner_restart_instruction_intent") return false;
+          try { return JSON.parse(event.detail).messageId === messageId; } catch { return false; }
+        });
+        if (!alreadySent && priorIntent)
+          throw new RestartRefusal("Owner restart instruction delivery is unknown; inspect the retained worker before deciding what to do next");
         if (!alreadySent) {
           this.store.event(task.id, "owner_restart_instruction_intent", JSON.stringify({ runId: task.runId, agentId: task.agentId, messageId }));
           await this.adapter.notify(task.agentId, messageId,

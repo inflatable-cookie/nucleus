@@ -1223,12 +1223,13 @@ weighted(7)('a successful probe that races a change, pause or lease across its a
  * changes_required result, then an accepted revision, then the current reviewer.
  * Overrides build each contradictory or out-of-order variant.
  */
-function priorRound(f: ReturnType<typeof fixture>, over: { runHead?: string; completionHead?: string; released?: boolean; status?: 'changes_required' | 'ready_to_merge';
+function priorRound(f: ReturnType<typeof fixture>, over: { runHead?: string; completionHead?: string; released?: boolean; status?: Completion['status'];
   sourceAt?: number; revision?: 'before' | 'after' | 'none'; completionRunId?: string; revisionCompletion?: { taskId?: string; runId?: string } } = {}) {
   const current = Date.parse(f.run().createdAt);
   const status = over.status ?? 'changes_required';
   const completion = { eventId: 'prior-review-result', taskId: f.submitted.id, runId: over.completionRunId ?? 'prior-review', status,
-    summary: 'Fix the figures', head: over.completionHead ?? otherHead, reviewCommentId: 5543610983 } as Completion;
+    summary: 'Fix the figures', head: over.completionHead ?? otherHead, reviewCommentId: 5543610983,
+    ...(status === 'report_ready' ? { artifact: { key: 'review', version: 1, digest: `sha256:${'a'.repeat(64)}` } } : {}) } as Completion;
   f.store.putRun(runSchema.parse({ id: 'prior-review', taskId: f.submitted.id, role: 'reviewer', generation: 1, head: over.runHead ?? otherHead, base,
     agentId: 'prior-reviewer', workspaceId: 'workspace', profile: f.run().profile, status: 'finished', createdAt: new Date(current + (over.sourceAt ?? -3_600_000)).toISOString(),
     lastObservedAt: null, active: false, idleSince: null, released: over.released ?? true, completion }));
@@ -1297,9 +1298,49 @@ weighted(3)("a prior round's result at an older head is history: the current che
   } finally { await f.close(); }
 });
 
+weighted(3)("a result at an older head is history for every status after the author returns", async () => {
+  const statuses: Completion['status'][] = ['ready_for_review', 'report_ready', 'progress_checkpoint', 'review_in_progress', 'ready_to_merge',
+    'changes_required', 'verified', 'proof_executed', 'closed', 'blocked', 'error', 'recovered', 'escalate'];
+  for (const status of statuses) {
+    const f = fixture(); try {
+      await f.report({ covered: ['Diff'], remaining: ['Proofs'] }, `old-head-${status}`);
+      const result = priorRound(f, { status });
+      f.store.update(f.submitted.id, { resolution: { ...f.current().resolution, review: result } });
+      const outcome = await acceptControl(f, reviewControl(f));
+      assert.equal(outcome.state, 'succeeded', `${status}: ${outcome.diagnostic}`);
+      assert.equal(f.reviewerDeliveries.length, 1, status);
+      assert.equal(f.reviewerDeliveries[0]!.runId, f.runId, status);
+      assert.equal(f.current().resolution.review?.runId, 'prior-review', status);
+    } finally { await f.close(); }
+  }
+});
+
+weighted(3)('an idle checkpoint fenced by its own-head result is shown stopped and offers an applicable fresh reviewer', async () => {
+  const f = fixture(); try {
+    await f.report({ covered: ['Diff'], remaining: ['Proofs'] }, 'own-head-result-cp');
+    const result = completionSchema.parse({ eventId: 'own-head-review-result', taskId: f.submitted.id, runId: f.runId,
+      status: 'ready_to_merge', summary: 'Approved at this head', head });
+    f.store.update(f.submitted.id, { resolution: { ...f.current().resolution, review: result } });
+    await f.engine.wake();
+    const next = ownerTaskNext(collectOwnerVerbFacts(f.store, f.current()));
+    assert.equal(next.activeRun?.status, 'stopped');
+    assert.match(next.stop?.detail ?? '', /reviewer result fences checkpoint/);
+    const restart = next.verbs.find(verb => verb.available && verb.verb === 'restart' && verb.args?.role === 'reviewer');
+    assert.ok(restart, 'next offers restart role=reviewer fresh');
+    assert.equal(restart.args?.fresh, true);
+    f.adapter.originAgent = async () => ({ id: 'review-agent', workspaceId: 'workspace', title: 'reviewer', archived: true });
+    const outcome = await acceptControl(f, taskControlInputSchema.parse({ ...restart.args,
+      reason: 'The result fences the saved checkpoint; start a fresh review at this head', caller: 'owner' }));
+    assert.equal(outcome.state, 'succeeded', outcome.diagnostic);
+    assert.equal(f.store.run(f.runId)?.status, 'superseded');
+    assert.equal(f.store.run(f.runId)?.released, true);
+    assert.equal(f.reviewerDeliveries.length, 0, 'the fenced run receives no second turn');
+  } finally { await f.close(); }
+});
+
 weighted(8)('a review result the lifecycle cannot prove is an earlier round still fences the checkpoint', async () => {
   const shapes = ['own run', 'same head', 'unknown run', 'tampered event', 'unreleased source', 'no revision between', 'revision after the current run',
-    'source after the current run', 'ready_to_merge', 'changed review head', 'foreign review task', 'foreign completion run', 'missing head',
+    'source after the current run', 'changed review head', 'foreign review task', 'foreign completion run', 'missing head',
     'revision completion for another task', 'revision completion for another run'] as const;
   for (const shape of shapes) {
     const f = fixture(); try {
@@ -1313,7 +1354,6 @@ weighted(8)('a review result the lifecycle cannot prove is an earlier round stil
       else if (shape === 'no revision between') review = priorRound(f, { revision: 'none' });
       else if (shape === 'revision after the current run') review = priorRound(f, { revision: 'after' });
       else if (shape === 'source after the current run') review = priorRound(f, { sourceAt: 120_000, revision: 'after' });
-      else if (shape === 'ready_to_merge') review = priorRound(f, { status: 'ready_to_merge' });
       else if (shape === 'changed review head') review = { ...priorRound(f), head: 'd'.repeat(40) };
       else if (shape === 'foreign review task') review = { ...priorRound(f), taskId: 'another-task' };
       else if (shape === 'foreign completion run') review = priorRound(f, { completionRunId: 'someone-else' });

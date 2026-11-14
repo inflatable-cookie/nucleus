@@ -733,7 +733,7 @@ planner_escalation_refusal_sent:1:1 planner_escalation_resolved:1:2 planner_esca
 pre_merge_candidate_stale:1:3 pre_merge_refused:2:1 pre_merge_warm_candidate_created:2:1 pre_merge_warm_candidate_missing:2:1 progress_checkpoint:2:5
 project_planner_missing_notified:1:1 proof_autorun_skipped:1:2 proof_autorun_waiting_inputs:1:1 proof_worker_requested:1:2 queue_ask_delivery:1:1
 queue_promoted:1:1 recovery_escalated:2:2 recovery_pending:3:1 release:1:24 report_ready_planner_notice_intent:1:1 reporting_binding_recheck:1:1
-responsible_converted:5:0 responsible_fault_restart:1:1 responsible_question:1:14 responsible_question_answered:3:5
+responsible_converted:1:0 responsible_fault_restart:1:1 responsible_question:1:14 responsible_question_answered:3:5
 responsible_question_stale_answered:1:1 responsible_question_superseded:2:2 review_auto_continue_deferred:1:1 review_checkpoint:1:2
 review_delivery_delivered:1:0 review_delivery_refused:1:0 review_delivery_reserved:1:1 review_delivery_uncertain:1:0 review_published:1:2
 review_reapplied:5:4 review_result_applied:5:5 reviewer_consult:1:2 reviewer_consult_answered:1:2 reviewer_consult_missed:1:3

@@ -119,11 +119,11 @@ export async function reapHookCheckouts(store: Store, options: { taskIds?: Reado
   }
   const commons = new Map<string, string | null>();
   const dataDir = store.path === ':memory:' ? null : isolationDataDirFor(store);
+  const recordedPaths = new Set<string>();
   const activeHostPaths = new Set(store.hostRunsByStates(['queued', 'admitted', 'running']).map(run => resolve(run.repository.path)));
   const settledHostPaths = new Set(store.hostRunsByStates(['settled']).map(run => resolve(run.repository.path)));
   const usedByLiveRun = (path: string) => [...activeHostPaths].some(active => active === path || active.startsWith(`${path}/`));
   const usedBySettledRun = (path: string) => [...settledHostPaths].some(settled => settled === path || settled.startsWith(`${path}/`));
-  const recordedPaths = new Set<string>();
   for await (const record of records()) if (record.workspace?.path) recordedPaths.add(resolve(record.workspace.path));
   const reconciled: string[] = [];
   let walked = 0;
