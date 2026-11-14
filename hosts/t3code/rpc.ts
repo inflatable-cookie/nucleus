@@ -4,6 +4,8 @@ export interface T3ConnectionConfig {
   endpoint: string;
   bearer: string;
   timeoutMs?: number;
+  heartbeatIntervalMs?: number;
+  heartbeatTimeoutMs?: number;
 }
 
 /** Errors deliberately exclude remote error bodies, request data and ticket URLs. */
@@ -27,6 +29,11 @@ export class T3RpcError extends Error {
     this.reason = reason;
   }
 }
+
+export type T3DisconnectReason = 'heartbeat_failure' | 'socket_close' | 'socket_error' | 'protocol_error' | 'connect_timeout';
+
+// Bounded thread projections can still be megabytes; small commands keep their deadline.
+const METHOD_TIMEOUT_MS: Readonly<Record<string, number>> = { 'orchestration.subscribeThread': 60_000 };
 
 type Pending = {
   method: string;
@@ -98,6 +105,13 @@ export class T3RpcClient {
   private readonly base: URL;
   readonly #bearer: string;
   private readonly timeoutMs: number;
+  private readonly requestTimeoutMs?: number;
+  private readonly heartbeatIntervalMs: number;
+  private readonly heartbeatTimeoutMs: number;
+  private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+  private pongTimer: ReturnType<typeof setTimeout> | null = null;
+  private heartbeatFailures = 0;
+  private disconnectReason: T3DisconnectReason | null = null;
   private socket: WebSocket | null = null;
   private connecting: Promise<void> | null = null;
   private connectAbort: AbortController | null = null;
@@ -113,10 +127,15 @@ export class T3RpcClient {
     this.base = new URL(base.origin);
     this.#bearer = config.bearer;
     this.timeoutMs = config.timeoutMs ?? 10_000;
-    if (!Number.isFinite(this.timeoutMs) || this.timeoutMs <= 0) throw new Error('T3Code request timeout must be positive');
+    this.requestTimeoutMs = config.timeoutMs;
+    this.heartbeatIntervalMs = config.heartbeatIntervalMs ?? 10_000;
+    this.heartbeatTimeoutMs = config.heartbeatTimeoutMs ?? 10_000;
+    if (![this.timeoutMs, this.heartbeatIntervalMs, this.heartbeatTimeoutMs].every(value => Number.isFinite(value) && value > 0))
+      throw new Error('T3Code timeouts and heartbeat interval must be positive');
   }
 
   get connected(): boolean { return this.socket?.readyState === WebSocket.OPEN; }
+  get lastDisconnectReason(): T3DisconnectReason | null { return this.disconnectReason; }
   toJSON(): { endpoint: string; connected: boolean } { return { endpoint: this.base.origin, connected: this.connected }; }
 
   connect(): Promise<void> {
@@ -173,19 +192,25 @@ export class T3RpcClient {
     await new Promise<void>((resolve, reject) => {
       const socket = new WebSocket(url);
       this.socket = socket;
-      const fail = (code: 'timeout' | 'transport') => {
+      const fail = (code: 'timeout' | 'transport', reason: T3DisconnectReason) => {
         clearTimeout(connectTimer);
-        if (this.socket === socket) {
-          this.socket = null;
-          this.failAll(new T3RpcError(code));
-        }
         reject(new T3RpcError(code, undefined, undefined, 'not_sent'));
+        if (this.socket !== socket) return;
+        this.disconnectReason = reason;
+        this.stopHeartbeat();
+        this.socket = null;
+        this.failAll(new T3RpcError(code));
         try { socket.close(); } catch { /* already closed */ }
       };
-      const connectTimer = setTimeout(() => fail('timeout'), this.timeoutMs);
-      socket.addEventListener('open', () => { clearTimeout(connectTimer); resolve(); }, { once: true });
-      socket.addEventListener('error', () => fail('transport'));
-      socket.addEventListener('close', () => fail('transport'));
+      const connectTimer = setTimeout(() => fail('timeout', 'connect_timeout'), this.timeoutMs);
+      socket.addEventListener('open', () => {
+        clearTimeout(connectTimer);
+        if (this.socket !== socket) { reject(new T3RpcError('transport', undefined, undefined, 'not_sent')); return; }
+        this.scheduleHeartbeat(socket);
+        resolve();
+      }, { once: true });
+      socket.addEventListener('error', () => fail('transport', 'socket_error'));
+      socket.addEventListener('close', () => fail('transport', 'socket_close'));
       socket.addEventListener('message', event => {
         if (this.socket !== socket) return;
         if (typeof event.data !== 'string' || event.data.length > MAX_FRAME_BYTES) return this.broken();
@@ -201,6 +226,7 @@ export class T3RpcClient {
 
   close(): void {
     this.epoch++;
+    this.stopHeartbeat();
     this.connectAbort?.abort();
     const socket = this.socket;
     this.socket = null;
@@ -228,24 +254,32 @@ export class T3RpcClient {
         if (!pending) return;
         this.pending.delete(id);
         reject(new T3RpcError('timeout', method));
-        this.close();
-      }, this.timeoutMs);
+        if (accept) this.sendControl({ _tag: 'Interrupt', requestId: id });
+      }, this.requestTimeoutMs ?? METHOD_TIMEOUT_MS[method] ?? this.timeoutMs);
       const command = object(payload) ? safeCommand(payload.type) : undefined;
       this.pending.set(id, { method, command: command ?? (method === 'orchestration.launchThread' ? method : undefined), accept, resolve, reject, timer, values: 0 });
       try { this.socket!.send(data); }
-      catch { this.settle(id, new T3RpcError('transport', method), true); }
+      catch { this.disconnectReason = 'socket_error'; this.close(); }
     });
   }
 
   private receive(frame: unknown): void {
     if (!object(frame) || typeof frame._tag !== 'string') return this.broken();
-    if (frame._tag === 'Pong') return;
+    if (frame._tag === 'Pong') {
+      if (this.pongTimer && this.socket) {
+        clearTimeout(this.pongTimer);
+        this.pongTimer = null;
+        this.heartbeatFailures = 0;
+        this.scheduleHeartbeat(this.socket);
+      }
+      return;
+    }
     if (frame._tag === 'Ping') { this.sendControl({ _tag: 'Pong' }); return; }
     if (frame._tag === 'Defect') return this.broken();
     if (typeof frame.requestId !== 'string' && typeof frame.requestId !== 'number') return this.broken();
     const id = String(frame.requestId);
     const pending = this.pending.get(id);
-    if (!pending) return; // A final Exit may follow our stream Interrupt.
+    if (!pending) return; // Late replies and a final Exit after our stream Interrupt are abandoned.
     if (frame._tag === 'Chunk') {
       if (!pending.accept || !Array.isArray(frame.values)) return this.broken();
       this.sendControl({ _tag: 'Ack', requestId: id });
@@ -270,7 +304,35 @@ export class T3RpcClient {
     this.broken();
   }
 
-  private sendControl(frame: unknown): void { try { if (this.connected) this.socket!.send(JSON.stringify(frame)); } catch { this.broken(); } }
+  private scheduleHeartbeat(socket: WebSocket): void {
+    this.heartbeatTimer = setTimeout(() => {
+      this.heartbeatTimer = null;
+      this.ping(socket);
+    }, this.heartbeatIntervalMs);
+    this.heartbeatTimer.unref();
+  }
+
+  private ping(socket: WebSocket): void {
+    if (this.socket !== socket || !this.connected) return;
+    this.pongTimer = setTimeout(() => {
+      this.pongTimer = null;
+      if (this.socket !== socket) return;
+      if (++this.heartbeatFailures < 2) return this.ping(socket);
+      this.disconnectReason = 'heartbeat_failure';
+      this.close();
+    }, this.heartbeatTimeoutMs);
+    this.pongTimer.unref();
+    this.sendControl({ _tag: 'Ping' });
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer) clearTimeout(this.heartbeatTimer);
+    if (this.pongTimer) clearTimeout(this.pongTimer);
+    this.heartbeatTimer = this.pongTimer = null;
+    this.heartbeatFailures = 0;
+  }
+
+  private sendControl(frame: unknown): void { try { if (this.connected) this.socket!.send(JSON.stringify(frame)); } catch { this.disconnectReason = 'socket_error'; this.close(); } }
   private settle(id: string, value: unknown, failed: boolean): void {
     const pending = this.pending.get(id);
     if (!pending) return;
@@ -279,5 +341,5 @@ export class T3RpcClient {
     if (failed) pending.reject(value); else pending.resolve(value);
   }
   private failAll(error: Error): void { for (const id of [...this.pending.keys()]) this.settle(id, error, true); }
-  private broken(): void { this.failAll(new T3RpcError('protocol')); this.close(); }
+  private broken(): void { this.disconnectReason = 'protocol_error'; this.failAll(new T3RpcError('protocol')); this.close(); }
 }

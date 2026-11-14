@@ -1,0 +1,1 @@
+A slow T3 request now times out on its own without disconnecting other tasks. Heartbeats detect a lost connection, thread snapshots have a longer deadline, and service health retains the last disconnect reason.

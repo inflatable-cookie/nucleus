@@ -404,7 +404,9 @@ test('empty enrichment snapshots preserve inventory while missing fields and inc
   server.controls.synchronized = false;
   await assert.rejects(host.observe(created.id), (error: T3RpcError) => error instanceof T3RpcError && error.code === 'timeout'
     && /T3Code timeout: orchestration\.subscribeThread/.test(error.message));
-  assert.equal(host.connected, false);
+  assert.equal(host.connected, true);
+  server.controls.synchronized = true;
+  assert.ok(await host.observe(created.id), 'a later snapshot uses the same live connection');
 });
 
 test('coverage fields are strictly decoded before observation or timeline completeness is claimed', async t => {

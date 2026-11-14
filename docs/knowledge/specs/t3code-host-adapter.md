@@ -68,6 +68,22 @@ requires `Ack`; `Interrupt` releases a subscription. The client validates the
 subset it consumes. Malformed frames, error exits, premature stream completion,
 timeouts and disconnects invalidate affected reads. Ticket URLs, headers and
 raw remote error bodies are never logged.
+A request deadline settles only that request, with unknown delivery after send;
+it never closes the shared socket or replays a mutation. Late replies are dropped
+by request ID, and an expired subscription sends `Interrupt` to release it.
+Small requests have a 10-second deadline; `orchestration.subscribeThread` has a
+60-second deadline in the adapter's method table, including bounded snapshots.
+
+Liveness uses the nightly's Effect RPC `Ping`/`Pong` control frames, independently
+of request traffic. After 10 seconds idle between heartbeat exchanges, a ping
+gets 10 seconds for a pong; one miss sends a second ping immediately, and a
+second consecutive miss closes the connection. A pong resets the failure count.
+Socket close, socket error and malformed protocol frames also close it; the
+service's ordinary host reconnect path then proves identity again. `service.health`
+retains `t3code.lastDisconnectReason` across reconnects as a fixed reason code
+(`heartbeat_failure`, `socket_close`, `socket_error`, `protocol_error` or
+`connect_timeout`), without remote text or credentials.
+
 Strict decoding validates consumed fields and their types while tolerating
 unrelated extra fields, so additive nightly changes do not become version pins.
 

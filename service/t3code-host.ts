@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { createHost, createAdapter } from '../hosts/t3code';
+import { createHost, createAdapter, type T3DisconnectReason } from '../hosts/t3code';
 import type { Adapter, HostPolicyConstructor } from '../core/host';
 import { HostPolicies } from '../core/host/host-policies';
 import { Admission, admitAdapter } from '../core/host/admission';
@@ -14,6 +14,7 @@ export interface T3ConnectionConfig {
 
 interface NativeConnection {
   readonly connected: boolean;
+  readonly lastDisconnectReason?: T3DisconnectReason | null;
   readonly hostId: string;
   readonly version: string;
   readonly threadShapePending?: boolean;
@@ -38,6 +39,7 @@ export class T3HostConnection {
   private errorValue = '';
   private lastIdentity: string | null = null;
   private versionValue = '';
+  private lastDisconnectReason: T3DisconnectReason | null = null;
 
   constructor(
     config: T3ConnectionConfig,
@@ -61,14 +63,15 @@ export class T3HostConnection {
   }
 
   /** Only connection facts are returned; no endpoint, credential or native object. */
-  status(): { id: string | null; connected: boolean; error: string; version: string; threadShapePending: boolean } {
+  status(): { id: string | null; connected: boolean; error: string; version: string; threadShapePending: boolean; lastDisconnectReason: T3DisconnectReason | null } {
     this.retireDisconnected();
-    return { id: this.lastIdentity, connected: this.session !== null, error: this.errorValue, version: this.versionValue,
+    return { lastDisconnectReason: this.lastDisconnectReason, id: this.lastIdentity, connected: this.session !== null, error: this.errorValue, version: this.versionValue,
       threadShapePending: this.session !== null && this.host?.threadShapePending === true };
   }
 
   /** A disconnected socket invalidates this claim, never another host's claim. */
   retireDisconnected(): void {
+    this.lastDisconnectReason = this.host?.lastDisconnectReason ?? this.lastDisconnectReason;
     if (this.session && (!this.host?.connected || this.host.hostId !== this.session.id)) {
       if (this.host?.compatibilityFailure) this.errorValue = `T3Code: ${this.host.compatibilityFailure}`;
       this.registry.disconnect(this.session.id, this.session.token);
@@ -106,6 +109,7 @@ export class T3HostConnection {
       this.versionValue = candidate.version;
       this.errorValue = '';
     } catch (error) {
+      this.lastDisconnectReason = candidate?.lastDisconnectReason ?? this.lastDisconnectReason;
       candidate?.close();
       this.host = null;
       // Connector diagnostics name missing methods/fields, but never trust a

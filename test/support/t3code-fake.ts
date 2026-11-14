@@ -169,7 +169,7 @@ export async function t3Fake(t: TestContext, directory: string) {
     return snapshot;
   };
   const controls = { environmentId: 'synthetic-environment', version: 'nightly-synthetic-unseen', protocol: 2,
-    synchronized: true, incompleteThread: false, enrichment: false, shellMissingField: '',
+    heartbeat: true, synchronized: true, incompleteThread: false, enrichment: false, shellMissingField: '',
     snapshotSequence: 1, threadCoverage: {} as Record<string, unknown>, beforeArchiveRead: (() => {}) as () => void,
     /** The next N thread reads end with an Interrupt frame instead of a snapshot (a stream cut mid-turn). */
     interruptThreadReads: 0,
@@ -193,6 +193,8 @@ export async function t3Fake(t: TestContext, directory: string) {
   /** Command receipts make a replayed project mutation answer with its recorded outcome. */
   const projectReceipts = new Map<string, { type: string; projectId: string }>();
   const sockets = new Set<Socket>();
+  const controlFrames: Value[] = [];
+  let upgrades = 0, closes = 0;
   const server = createServer((request, response) => {
     assert.equal(request.url, '/api/auth/websocket-ticket/rpc');
     assert.equal(request.headers.authorization, 'Bearer synthetic-bearer');
@@ -212,7 +214,8 @@ export async function t3Fake(t: TestContext, directory: string) {
   const projects = () => projectRows.map(row => ({ ...row, archivedAt: archivedProjects.has(row.id) ? STAMP : null }));
   server.on('upgrade', (request, rawSocket) => {
     const socket = rawSocket as Socket;
-    sockets.add(socket); socket.on('close', () => sockets.delete(socket));
+    upgrades++;
+    sockets.add(socket); socket.on('close', () => { sockets.delete(socket); closes++; });
     const url = new URL(request.url!, 'http://localhost');
     assert.equal(url.pathname, '/ws'); assert.equal(url.searchParams.get('wsTicket'), 'synthetic-ticket');
     const accept = createHash('sha1').update(`${request.headers['sec-websocket-key']}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64');
@@ -228,7 +231,11 @@ export async function t3Fake(t: TestContext, directory: string) {
       socket.write(Buffer.concat([header, bytes]));
     };
     const handle = (request: Value) => {
-      if (request._tag !== 'Request') return;
+      if (request._tag !== 'Request') {
+        controlFrames.push(request);
+        if (request._tag === 'Ping' && controls.heartbeat) send({ _tag: 'Pong' });
+        return;
+      }
       requests.push(request);
       const payload = request.payload as Value;
       const success = (value: unknown) => send({ _tag: 'Exit', requestId: request.id, exit: { _tag: 'Success', value } });
@@ -444,5 +451,5 @@ export async function t3Fake(t: TestContext, directory: string) {
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   /** Drops every live WebSocket, as a T3 restart or network reset does. */
   const dropSockets = () => { for (const socket of sockets) socket.destroy(); };
-  return { endpoint: `http://127.0.0.1:${address.port}`, controls, threads, commands, requests, snapshots, projects: projectRows, dropSockets };
+  return { endpoint: `http://127.0.0.1:${address.port}`, controls, threads, commands, requests, snapshots, controlFrames, get upgrades() { return upgrades; }, get closes() { return closes; }, projects: projectRows, dropSockets };
 }

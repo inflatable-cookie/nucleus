@@ -5,7 +5,7 @@ import type { Host, HostAgentSpec, HostWorkspaceSpec, HostMessage, HostGuardedMe
 import type { Task, Profile } from '../../shared/contracts';
 import { WIRE_LABEL_KEYS } from '../../shared/wire-labels';
 import { ArchiveNotDeliveredError, ProvenPreSendRefusalError } from '../../core/host';
-import { T3RpcClient } from './rpc';
+import { T3RpcClient, type T3ConnectionConfig } from './rpc';
 import { t3codeVocabulary } from './vocabulary';
 import { T3StateFile, canonical } from './state';
 import { decode, config, optionDescriptor, T3CompatibilityError, runtimeModes, defaultRuntimeMode, type RuntimeMode } from './contracts';
@@ -13,7 +13,7 @@ import { activeStatuses, T3Reads, type Projection, type ThreadReadKind } from '.
 import { identity, T3IntentLedger } from './intents';
 import { T3Presentation } from './presentation';
 
-export interface T3CodeConfig { endpoint: string; bearer: string; statePath: string; timeoutMs?: number; probeThreadId?: string }
+export interface T3CodeConfig extends T3ConnectionConfig { statePath: string; probeThreadId?: string }
 const unsupported = (capability: string): never => { throw new ProvenPreSendRefusalError(`T3Code does not support ${capability}`); };
 /**
  * The option descriptor a model's thinking level rides: the nightly marks a
@@ -101,6 +101,7 @@ export class T3CodeHost implements Host {
     });
   }
   get connected() { return this.ready && this.rpc.connected; }
+  get lastDisconnectReason() { return this.rpc.lastDisconnectReason; }
   get threadShapePending() { return this.reads.threadShapePending; }
   get compatibilityFailure() { return this.reads.compatibilityFailure; }
   capabilities() { return { reportingViaMcp: false, supportsCoordinatorRecovery: false, nativeDecisions: false, uiContributions: false, lifecycleDispatch: false, perThreadEnvironment: false }; }
