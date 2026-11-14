@@ -180,7 +180,10 @@ function noticeFixture() {
   } as unknown as Adapter;
   const engine = new Engine(store, adapter, 60_000);
   engine.hostIds = () => [host, plannerHost];
-  engine.hostAvailable = id => id === plannerHost;
+  // The task host starts away; a test may recover it. The planner host starts
+  // reachable and may also go away.
+  const online = { task: false, planner: true };
+  engine.hostAvailable = id => id === plannerHost ? online.planner : id === host ? online.task : false;
   engine.identifyOriginHost = async id => parseAgentId(id)?.hostId;
   const makeProject = (key: string, planner: string | null) => {
     store.upsertProject({ key, name: `Project ${key}`, repositories: [{ origin: `synthetic/${key}`, path: `/synthetic/${key}` }] });
@@ -197,7 +200,7 @@ function noticeFixture() {
     const outages = store.getMeta<Record<string, { since: string; notifiedProjects: Record<string, string> }>>('hostOutages')!;
     store.setMeta('hostOutages', { ...outages, [host]: { ...outages[host]!, since: new Date(Date.now() - minutes * 60_000).toISOString() } });
   };
-  return { store, engine, sends, host, plannerHost, makeProject, makeTask, ageOutage,
+  return { store, engine, sends, online, host, plannerHost, makeProject, makeTask, ageOutage,
     close: () => { void engine.stop(); store.close(); } };
 }
 
@@ -306,5 +309,45 @@ test('an owner-facing stop keeps its question while the host wait still pauses t
     assert.equal(f.sends.length, 1, 'the project planner heard once');
     assert.match(f.sends[0]!.text, /Interactive task/, 'the waiting task is named even with an owner-facing stop');
     assert.equal(f.store.task(task.id).resolution.stop?.reason, 'interactive', 'the notice does not replace the question');
+  } finally { f.close(); }
+});
+
+test('a pending long-outage notice is delivered once its planner is reachable, even after the host recovered', async () => {
+  const f = noticeFixture();
+  const plannerA = formatAgentId(f.plannerHost, 'planner-a');
+  f.makeProject('project-a', plannerA);
+  const task = f.makeTask('Project A task', 'project-a');
+  try {
+    // The planner's own host is unreachable when the outage passes the bound.
+    f.online.planner = false;
+    await f.engine.wake();
+    f.ageOutage(180);
+    await f.engine.wake();
+    const pending = f.store.notices().filter(notice => notice.kind === 'host_outage');
+    assert.equal(pending.length, 1, 'the notice is raised for the project');
+    assert.equal(pending[0]!.status, 'pending', 'and waits for its planner');
+    assert.match(pending[0]!.error, /Waiting for host paseo:synthetic-planner/);
+    const plannerSends = () => f.sends.filter(send => send.agentId === 'planner-a');
+    assert.equal(plannerSends().length, 0);
+
+    // The task's host recovers before the planner is reachable: the notice is
+    // still the record of that outage and must not be discarded.
+    f.online.task = true;
+    await f.engine.wake();
+    assert.equal(f.store.task(task.id).resolution.hostWait, null, 'the task host wait cleared');
+    assert.equal(f.store.notices().filter(notice => notice.kind === 'host_outage')[0]?.status, 'pending',
+      'a recovered host does not discard the pending notice');
+    assert.equal(plannerSends().length, 0, 'the recovered host alone does not deliver the notice');
+
+    // The planner becomes reachable later: it hears once, for the outage that
+    // already ended.
+    f.online.planner = true;
+    await f.engine.wake();
+    assert.equal(plannerSends().length, 1, 'the planner hears once when it becomes reachable');
+    assert.match(plannerSends()[0]!.text, new RegExp(`Host ${f.host}`));
+    assert.equal(f.store.notices().filter(notice => notice.kind === 'host_outage')[0]?.status, 'delivered');
+
+    await f.engine.wake();
+    assert.equal(plannerSends().length, 1, 'the delivered notice is never resent');
   } finally { f.close(); }
 });
