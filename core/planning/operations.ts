@@ -1,36 +1,30 @@
+import { activeSourcePromotions, sourceOwnerKey, reconcileSourcePromotion } from "./source-promotion-reconcile";
+export { SOURCE_PROMOTION_NOT_DELIVERED } from "./source-promotion-reconcile";
+import { isTransportFailure } from "../../shared/transport";
+import { assertSupportedSubmission, PlanningSubmission } from "./submission";
 import { PlanningRepairs } from "./planning-repairs";
 import { operationFailureSettlement, typedPreSendRefusal } from "./operation-failure";
 export { operationFailureSettlement } from "./operation-failure";
 export type { OperationFailureSettlement } from "./operation-failure";
 import { currentServiceBuildId } from "../../shared/service/build";
-import { pidAlive } from '../machine/process-identity';
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import type { Task } from "../../shared/contracts";
 import { leadCheckOperationPayloadSchema, reviewEntryInputSchema, sourcePromotionOperationPayloadSchema, submissionRecordFromLegacy, submissionSchema, taskControlInputSchema, type Submission } from "../../shared/contracts";
 import { OPERATION_COMPATIBILITY_WAIT_MS, operationIsSettled, type OperationAcceptance, type OperationResult, type QueueOperation } from "../../shared/operations";
 import { repositoryRekeyInputSchema, type RepositoryRekeyInput } from "../../shared/repository-rekey";
-import { isTransportFailure } from "../../shared/transport";
 import type { IdentitySource } from "../../shared/host-kind";
-import { validateCompletionRecipients } from "../scheduling/cohort";
 import type { Engine } from "../engine";
-import { SubmissionUnavailableError, validateSubmission, verifyPublishedPlanning } from "../git/index";
-import { isStaleIntegrationBaseRefusal } from "../hooks/hooks";
+import { SubmissionUnavailableError } from "../git/index";
 import { LANE_PRIORITY_OPERATION } from "../scheduling/lane-priorities";
 import { repositoryOrigin } from "./lanes";
 import type { Adapter } from "../host/adapter";
-import { STEPS_RETIRED_REASON } from "../recovery/retired-steps";
 import { bindReviewEntry, type ReviewEntryAdapter } from "../review/review-entry";
 import { DurableFenceRefusal } from "../intake/run-settlement";
-import { stageDeclarationFromBrief } from "../stages";
 import { digest, now, operationIdForKey, operationInputHash, provedPreSendHistory } from "../store/store";
 import { hostIndependentControlRefusal } from "../host/host-independent-refusals";
 import { ParkedRestartPreSendRefusal } from "../verbs/restart";
 
-const activeSourcePromotions = new Set<string>();
-const sourceOwnerKey = (id: string) => `sourcePromotionOwner:${id}`;
-
-export const SOURCE_PROMOTION_NOT_DELIVERED = "Source promotion reconciled after restart: no task or source insert was committed";
 /** Deterministic rejection vs. uncertain external outcome, for the operation state. */
 /** Lane key for an accepted operation: task-scoped commands share the task's exclusive lane. */
 function operationLaneKey(payload: unknown, operation: QueueOperation): string {
@@ -127,9 +121,7 @@ export class Operations {
   startSubmission(submission: Submission, requirePushedPlanning = false): Promise<OperationAcceptance> {
     const key = `submit:${submission.submissionId}`;
     const alreadyAccepted = Boolean(this.store.operation(operationIdForKey(key))) || Boolean(this.store.existing(submission));
-    if (!alreadyAccepted && submission.responsible === false) throw new Error("responsible: false is no longer supported; every task runs the responsible lifecycle");
-    if (!alreadyAccepted && submission.manualVerification === true) throw new Error("manualVerification is no longer available; every task runs the responsible lifecycle");
-    if (!alreadyAccepted && (submission.reviewVerdicts !== undefined || submission.reviewPassGate !== undefined)) throw new Error("reviewVerdicts and reviewPassGate are no longer available; state the outcome and acceptance in prose in the brief, and use mergeHold for a needed hold");
+    if (!alreadyAccepted) assertSupportedSubmission(submission);
     const legacy = { type: "submit" as const, submission };
     const pushed = { ...legacy, requirePushedPlanning: true };
     const prior = this.store.operation(operationIdForKey(key));
@@ -182,52 +174,8 @@ export class Operations {
     }
     for (const operation of this.store.operations({ states: ["pending", "running"] })) this.engine.scheduleOperation(operation.id);
   }
-  /** A source insert and its lead target commit in one store transaction, so the target is an absence proof. */
   reconcileSourcePromotion(operation: QueueOperation): void {
-    if (this.activeOperations.has(operation.id)) {
-      this.store.transaction(() => {
-        const current = this.store.operation(operation.id);
-        if (current?.state !== 'running' || current.effect?.kind !== 'source_promotion') return;
-        const diagnostic = 'Source promotion is still in flight; its outcome is uncertain';
-        this.store.putOperation({ ...current, diagnostic, effect: { ...current.effect, status: 'uncertain', result: diagnostic, resultAt: now() } });
-      });
-      return;
-    }
-    if (operation.kind !== "source_promote" || !operation.effect || operation.effect.kind !== "source_promotion"
-      || !["intent", "uncertain"].includes(operation.effect.status)) return;
-    try {
-      const payload = sourcePromotionOperationPayloadSchema.parse(this.store.operationPayload(operation.id));
-      this.store.transaction(() => {
-        const current = this.store.operation(operation.id);
-        if (!current || current.kind !== "source_promote" || !["running", "needs_attention"].includes(current.state)
-          || !current.effect || current.effect.kind !== "source_promotion"
-          || current.effect.target !== current.id || !["intent", "uncertain"].includes(current.effect.status)
-          || operationIdForKey(current.key) !== current.id || operationInputHash(payload) !== current.inputHash) return;
-        const effect = current.effect;
-        const result = this.store.sourcePromotionResult(payload.source, payload.source.repository,
-          payload.source.version, payload.source.digest);
-        if (result) {
-          this.store.putOperation({ ...current, state: "succeeded", result, settledAt: now(), diagnostic: "",
-            effect: { ...effect, status: "reconciled", result: "Committed task found from source identity", resultAt: now() } });
-        } else {
-          const owner = this.store.getMeta(sourceOwnerKey(current.id)) as { pid?: unknown } | null;
-          const pid = typeof owner?.pid === 'number' && Number.isInteger(owner.pid) && owner.pid > 0 ? owner.pid : null;
-          // A recorded owner that is this process is proved not to be mid-commit
-          // once no lane here is running it: the insert only happens inside that
-          // operation's own handler, so absence now is absence for good.
-          const idleHere = pid === process.pid && !activeSourcePromotions.has(current.id);
-          const absent = pid !== null && (!pidAlive(pid) || idleHere);
-          if (!absent) {
-            const diagnostic = 'Source promotion outcome is uncertain: its executing process may still commit';
-            this.store.putOperation({ ...current, state: current.state === 'running' && activeSourcePromotions.has(current.id) ? 'running' : 'needs_attention',
-              diagnostic, effect: { ...effect, status: 'uncertain', result: diagnostic, resultAt: now() } });
-            return;
-          }
-          this.store.putOperation({ ...current, state: "failed", result: null, settledAt: now(), diagnostic: SOURCE_PROMOTION_NOT_DELIVERED,
-            effect: { ...effect, status: "reconciled", result: SOURCE_PROMOTION_NOT_DELIVERED, resultAt: now() } });
-        }
-      });
-    } catch { /* Ambiguous source history remains in attention for operator resolution. */ }
+    reconcileSourcePromotion(this.store, operation, this.activeOperations);
   }
   scheduleOperation(id: string): void {
     const operation = this.store.operation(id);
@@ -575,64 +523,8 @@ export class Operations {
   async submitPlanningSource(submission: Submission, source: { kind:"lead"|"papercut"; id:string; repository:string; digest:string; expectedSource:string }, initial: Partial<Task> = {}, hostId?: string, identitySource?: IdentitySource): Promise<OperationResult> {
     return this.engine.performSubmit(submission, false, { source, initial, ...(identitySource ? { identitySource } : {}) }, hostId);
   }
-  async performSubmit(submission: Submission, requirePushedPlanning = false, promotion?: {source:{kind:"lead"|"papercut";id:string;repository:string;digest:string;expectedSource:string}; initial?: Partial<Task>; identitySource?: IdentitySource}, hostId?: string, hostSelection?: QueueOperation['hostSelection']): Promise<OperationResult> {
-    const originForSelection = promotion?.source.repository ?? await repositoryOrigin(submission.repoPath).catch(() => null);
-    hostId ??= this.engine.selectIngressHost(submission.hostId, submission.repoPath, originForSelection);
-    // A replay after a lost response resolves the durable submission identity
-    // before any remote validation or insertion.
-    const existing = promotion ? null : this.store.existing(submission);
-    if (existing) return { taskId: existing.id, taskVersion: existing.version, phase: existing.phase, number: existing.number, reference: existing.reference };
-    if (submission.responsible === false) throw new Error("responsible: false is no longer supported; every task runs the responsible lifecycle");
-    if (submission.manualVerification === true) throw new Error("manualVerification is no longer available; every task runs the responsible lifecycle");
-    if (submission.reviewVerdicts !== undefined || submission.reviewPassGate !== undefined) throw new Error("reviewVerdicts and reviewPassGate are no longer available; state the outcome and acceptance in prose in the brief, and use mergeHold for a needed hold");
-    if (submission.brief && stageDeclarationFromBrief(submission.brief.text)) throw new Error(STEPS_RETIRED_REASON);
-    const origin = await repositoryOrigin(submission.repoPath);
-    if (requirePushedPlanning) await verifyPublishedPlanning(submission);
-    const validated = await validateSubmission(submission);
-    const raced = promotion ? null : this.store.existing(submission);
-    if (raced) return { taskId: raced.id, taskVersion: raced.version, phase: raced.phase, number: raced.number, reference: raced.reference };
-    this.store.requireSubmissionLanes(submission, origin);
-    const routingConflict = this.engine.independentReviewRoutingRefusal(submission);
-    if (routingConflict) throw new Error(routingConflict);
-    // Resolving recipients is a live agent lookup, so only a submission that actually
-    // notifies needs it. Doing it unconditionally put a daemon round trip - and its 15 s
-    // liveness timeout - in front of every accepted handoff, so a flapping transport failed
-    // the submission and left no task at all.
-    const needsRecipients = Boolean(submission.notifyOriginOnCloseout) || submission.completionNotificationAgentIds.length > 0;
-    // The origin identity's own source proved its host; it is evidence about that
-    // identity only, so an offline host that has no part in it cannot turn a
-    // decidable origin into an ambiguous one.
-    const originIdentity = promotion?.identitySource ?? submission.originIdentity;
-    const originHostId = await this.engine.identifyOriginHost(submission.originAgentId, originIdentity);
-    if (needsRecipients && !originHostId) throw new SubmissionUnavailableError("Origin host is unknown or ambiguous");
-    const resolved = needsRecipients ? await validateCompletionRecipients(submission, async id => {
-      const identitySource = id === submission.originAgentId ? originIdentity : undefined;
-      const host = await this.engine.identifyOriginHost(id, identitySource);
-      if (!host) throw new SubmissionUnavailableError("Completion recipient host is unknown or ambiguous");
-      return this.engine.withHost(host, () => this.engine.host.originAgent(id));
-    }) : null;
-    // A parsed refusal is a ruling and stops the submission. An operational failure - the
-    // transport, a stale integration base - is not: the task is created queued and the same
-    // hook runs again at dispatch.
-    try {
-      await this.hooks.previewPreDispatch(submission, validated.handoffText, validated.planningBase);
-    } catch (error) {
-      const message = String(error instanceof Error ? error.message : error);
-      if (!isTransportFailure(error) && !isStaleIntegrationBaseRefusal(message)) throw error;
-    }
-    const initial = {
-      ...(resolved ? { creatorCompletionRecipients: resolved.recipients } : {}),
-      ...(promotion ? promotion.initial ?? {} : {}),
-      ...(hostSelection ? { hostSelection } : {}),
-      originHostId,
-    };
-    const inserted = promotion
-      ? this.store.promoteSource({kind:promotion.source.kind,id:promotion.source.id},promotion.source.repository,promotion.source.digest,promotion.source.expectedSource,submission,hostId ?? "",validated.planningBase,origin,initial)
-      : this.store.insert(submission, hostId ?? "", validated.handoffText, validated.planningBase, initial, undefined, origin);
-    if ("taskId" in inserted) return inserted;
-    const task = this.store.update(inserted.id, { originWorkspaceId: resolved?.origin?.workspaceId ?? null });
-    void this.engine.cleanContext(() => this.engine.wakeTask(task.id));
-    void this.engine.cleanContext(() => this.engine.wakeRepository(task.repoPath));
-    return { taskId: task.id, taskVersion: task.version, phase: task.phase, number: task.number, reference: task.reference };
+  performSubmit(...args: Parameters<PlanningSubmission["performSubmit"]>) {
+    return new PlanningSubmission(this.engine).performSubmit(...args);
   }
+
 }

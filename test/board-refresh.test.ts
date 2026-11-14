@@ -464,3 +464,19 @@ test('every substantive board write invalidates it and only an observation-only 
     }
   } finally { f.close(); }
 });
+
+test('board reports a routing grant reconciliation read failure', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'ns-board-grant-error-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const { QueueRuntime } = await import('../service/runtime-owner');
+  const runtime = new QueueRuntime({ dataDir: dir, timers: false });
+  try {
+    const getMeta = runtime.store.getMeta.bind(runtime.store);
+    runtime.store.getMeta = ((key: string) => {
+      if (key === 'routingGrants') throw new Error('grant storage unavailable');
+      return getMeta(key);
+    }) as typeof runtime.store.getMeta;
+    assert.throws(() => runtime.uiSnapshot(), /grant storage unavailable/);
+    runtime.store.getMeta = getMeta;
+  } finally { await runtime.stop(); }
+});
