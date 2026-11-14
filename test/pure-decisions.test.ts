@@ -9,6 +9,7 @@
  * - `recoverySettlementPatch` — what settling an accepted report changes.
  * - `advanceFailureDisposition` — how one failed lifecycle pass settles.
  * - `noticeSettlement` — what one pending notice settles as before it is sent.
+ * - `unavailableGroupNames` — the subscription groups a selection must avoid now.
  *
  * Current behaviour is the spec: every row states today's answer, including the
  * strings a stored record keeps. Bug 7's fix is pinned here (a task waiting on
@@ -23,6 +24,7 @@ import { noticeSettlement, type NoticeSettlement } from '../core/questions/notic
 import { operationFailureSettlement, type OperationFailureSettlement } from '../core/planning/operations';
 import { coordinatorActionPlan, recoverySettlementPatch, type CoordinatorActionPlan, type RecoverySettlementPatch } from '../core/recovery/coordinator-report';
 import { digest } from '../core/store/store';
+import { unavailableGroupNames } from '../shared/pool';
 
 // ---------------------------------------------------------------------------
 // operationFailureSettlement
@@ -352,4 +354,22 @@ test('noticeSettlement: one pending notice’s ordinary settlement, in today’s
       expect: { kind: 'wait', error: NO_ORIGIN_THREAD_WAIT } },
   ];
   for (const row of rows) assert.deepEqual(noticeSettlement(row.facts), row.expect, row.name);
+});
+
+// ---------------------------------------------------------------------------
+// unavailableGroupNames
+// ---------------------------------------------------------------------------
+
+test('unavailableGroupNames reads the typed availability rows once', () => {
+  const at = Date.parse('2026-11-14T12:00:00.000Z');
+  const rows = [
+    { group: 'paused', unavailable: true, reason: 'paused', retryAt: null },
+    { group: 'cooling', unavailable: true, reason: 'rate limit', retryAt: '2026-11-14T13:00:00.000Z' },
+    { group: 'recovered', unavailable: true, reason: 'rate limit', retryAt: '2026-11-14T11:00:00.000Z' },
+    { group: 'healthy', unavailable: false, reason: '', retryAt: null },
+  ];
+  assert.deepEqual([...unavailableGroupNames(rows, at)].sort(), ['cooling', 'paused'],
+    'a group past its retry time is selectable again');
+  assert.deepEqual([...unavailableGroupNames(rows, Date.parse('2026-11-14T13:00:00.000Z'))].sort(), ['paused'],
+    'the retry time itself is the first selectable instant');
 });

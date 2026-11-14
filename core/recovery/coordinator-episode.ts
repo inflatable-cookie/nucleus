@@ -28,7 +28,7 @@ export const key=(t:Task,runs:Run[])=>t.resolution.stop
  ? digest(`stop:${t.resolution.stop.reason}:${t.resolution.stop.since}`)
  : digest(t.originError?`origin:${taskOwner(t)}:${t.originWorkspaceId}:${t.coordinatorGeneration}`:`${t.phase}:${cause(t,runs)}:${t.resolution.currentRunId ?? t.runId}:${t.coordinatorGeneration}`);
 
-export type Incident=NonNullable<Task['resolution']['recovery']>;
+type RecoveryEpisode=NonNullable<Task['resolution']['recovery']>;
 /** A report that was authenticated and accepted, and could not be applied. */
 export const ACCEPTED_RECOVERY_NOT_APPLIED_PREFIX = 'Accepted recovery report was not applied: ';
 
@@ -44,7 +44,7 @@ export class CoordinatorEpisode {
   if(recovery?.status==='pending'&&!recovery.runId&&!recovery.action)
    this.resolution.update(current,{recovery:null,recoveryActive:false},{},'recovery_waiting');
  }
- bindingFrom(run:Run,incident:Incident):RecoveryActionBinding|null{
+ bindingFrom(run:Run,incident:RecoveryEpisode):RecoveryActionBinding|null{
   if(incident.action)return incident.action;
   const completion=run.completion;
   if(!completion||run.role!=='recovery')return null;
@@ -252,7 +252,7 @@ export class CoordinatorEpisode {
   this.store.putRun({...run,status:'superseded',released:true});
   return this.resolution.update(current,{recoveryActive:false,recovery:{...current.resolution.recovery!,runId:null,agentId:null}},{},'absent_recovery_released',proof);
  }
- save(t:Task,patch:Partial<Incident>){
+ save(t:Task,patch:Partial<RecoveryEpisode>){
   const current=this.store.task(t.id);
   // An operator control can clear the recovery while a pass awaits; never rebuild a partial one.
   if(!current.resolution.recovery)return current;

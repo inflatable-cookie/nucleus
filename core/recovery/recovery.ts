@@ -27,9 +27,7 @@ export class Recovery {
  setCoordinatorActionHandler(handler:(task:Task,run:Run,action:RecoveryActionBinding)=>Promise<void>){this.passStage.coordinatorActionHandler=handler;}
  /** Engine-provided Spec 058 mechanical settlement for an opted-in responsible task. */
  setResponsibleFaultHandler(handler:(task:Task)=>Promise<boolean>){this.routeStage.setResponsibleFaultHandler(handler);}
- get store(){return this.resolution.store}
  busy(t:Task){return this.episode.busy(t)}
- save(t:Task,patch:Parameters<CoordinatorEpisode['save']>[1]){return this.episode.save(t,patch);}
  escalate(t:Task,summary:string){return this.episode.escalate(t,summary);}
  settledEpisodeChanges(...args:Parameters<CoordinatorEpisode['settledEpisodeChanges']>):Partial<Task['resolution']>|null{return this.episode.settledEpisodeChanges(...args);}
  settleFinishedRun(...args:Parameters<CoordinatorEpisode['settleFinishedRun']>):void{return this.episode.settleFinishedRun(...args);}

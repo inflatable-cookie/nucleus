@@ -1,9 +1,8 @@
 import { formatAgentId } from '../../shared/agent-identity';
 import { occupiesSlot } from '../dispatch/capacity';
-import { now, type Store } from '../store/store';
+import { now } from '../store/store';
 import type { Task } from '../../shared/contracts';
 import type { AgentObservation } from '../host/adapter';
-import type { HostFacade } from '../host/host-facade';
 import type { Engine } from '../engine';
 
 

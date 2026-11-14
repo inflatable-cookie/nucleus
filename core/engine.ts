@@ -95,7 +95,7 @@ import { WorkerReconcile, completionReportsPr, INTERACTIVE_RUNNING_REASON, INTER
 import { WorkerFailover } from "./dispatch/worker-failover";
 import { RetiredObservations, RETIRED_OBSERVATION_INTERVAL_MS, RETIRED_OBSERVATION_STALE_MS } from "./recovery/retired-observation";
 import { replacementCeilingRefusal } from "./recovery/worker-replacement";
-import { archiveRetiredErroredAgents } from "./workspaces/thread-archive";
+import { archiveRetiredErroredAgents } from "./workspaces/retired-agent-archive";
 import { Operations, SOURCE_PROMOTION_NOT_DELIVERED } from "./planning/operations";
 // Moved to worker-failover.ts; re-exported because engine.ts exported them.
 export { RETIRED_OBSERVATION_INTERVAL_MS, RETIRED_OBSERVATION_STALE_MS };

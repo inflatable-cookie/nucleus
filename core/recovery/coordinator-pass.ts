@@ -4,7 +4,6 @@ import {isDispositionActive,isDispositionComplete} from '../../shared/contracts'
 import { isWaitingTaskStop } from '../../shared/task-stop';
 import { reviewFenceHoldsCoordinators } from '../review/review-continuation';
 import { dispatchBlocked } from '../dispatch/capacity';
-import {unproductiveCoordinatorRuns} from './recovery-bound';
 import {RECOVERY_ESCALATION_FAILURE_PREFIX} from './task-reasons';
 import {ACCEPTED_RECOVERY_NOT_APPLIED_PREFIX, cause, needsAttention, type CoordinatorEpisode, type RecoveryContext} from './coordinator-episode';
 

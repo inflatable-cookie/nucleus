@@ -372,12 +372,17 @@ owner to the rules it enforces.
   synchronous. Same-name `Engine` and `Resolution` methods delegate to them.
   Engine's `complete`, `completeCheckpoint` and `completeReviewProgress` delegates
   return the owner's promise without an `async` wrapper.
-- `core/recovery/worker-failover.ts` holds worker failover: the retired-worker
-  observation cadence and lifecycle-signal invalidations, the sweep that replaces
-  an exhausted or failed worker (its decision is `decideWorkerFailover`, which
-  names the outcome the sweep then applies), the replacement ceiling refusal and
-  the archive of retired errored agents. Same-name `Engine` methods delegate to
-  its `WorkerFailover`.
+- `core/dispatch/worker-failover.ts` holds worker failover: the sweep that replaces
+  an exhausted or failed worker, and its gated decision (`decideWorkerFailover`
+  names the outcome the sweep then applies). Worker replacement is dispatch's
+  business — who runs the next round — so the sweep sits beside `worker-launcher.ts`.
+  Same-name `Engine` methods delegate to its `WorkerFailover`.
+- `core/recovery/retired-observation.ts` holds the retired-worker observation
+  cadence and the lifecycle-signal invalidations that make an identity due early.
+  `core/workspaces/retired-agent-archive.ts` archives retired errored agents so a
+  Paseo workspace stops reporting Failed, and records each unreadable read and
+  refused archive on the thread-archive wait lane. Availability rows are read as
+  the store's typed rows, never decoded from JSON at each gate.
 - `core/planning/operations.ts` holds durable operations: accepting one, scheduling
   it on its lane, running and settling it (typed pre-send refusals settle
   definite, unexplained failures by the prose classifier), restart
@@ -400,12 +405,20 @@ owner to the rules it enforces.
   titles, the cleanup drain and its retry timers, runtime-retirement scheduling
   and the occurrence counts a wake or an effect retry waits on. Same-name
   `Engine` methods delegate to it.
-- `core/recovery/recovery.ts` coordinates bounded repair and the planner ladder, and its
-  `RecoverySettlement` class applies a recovery report as an owner verb and
-  settles the faults code can. Same-name `Engine` methods delegate to it. Two pure
-  functions beside it name the rule: `coordinatorActionPlan` turns a report into the
-  owner verb's arguments or the refusal saying why it no longer applies, and
-  `recoverySettlementPatch` says what settling the report changes on the task.
+- Coordinator recovery is one stage per module under `core/recovery/`.
+  `recovery.ts` is the `Recovery` surface `Resolution` constructs and wires the
+  stages together. `coordinator-route.ts` decides whether a task needs a
+  coordinator and launches it; `coordinator-pass.ts` observes that exact run until
+  it reports; `coordinator-episode.ts` owns the episode's durable bookkeeping
+  (bindings, refusal, release, escalation). `coordinator-report.ts` holds the pure
+  report rules — `taskProgressDigest`, `coordinatorReportMatches`,
+  `coordinatorActionPlan` (a report to verb arguments, or the refusal naming why it
+  no longer applies) and `recoverySettlementPatch` (what settling the report
+  changes on the task); `coordinator-settlement.ts` applies a report as the owner
+  verb it names; `responsible-fault.ts` settles the Spec 058 mechanical faults code
+  can settle; `pseudo-checkpoint.ts` owns the post-budget pseudo-checkpoint rule.
+  Same-name `Engine` methods delegate to `RecoverySettlement` and
+  `settleResponsibleFault`.
   `core/questions/origin.ts` keeps the one task-owner field exact and records a
   missing origin while delivery is still owed, with planner notice routing and
   reparent authority for projects whose origin is unavailable.

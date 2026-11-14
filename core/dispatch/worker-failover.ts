@@ -4,7 +4,6 @@ import { WORKER_REPLACEMENT_CEILING, workerExclusionFor, workerProfileIsExcluded
 import { isTransportFailure } from "../../shared/transport";
 import { demandRank, groupIsUnavailable, honouredWorkerThinking, unavailableGroupNames } from "../../shared/pool";
 import { runDemand } from "../../shared/demand";
-import { occupiesSlot } from "./capacity";
 import type { Engine } from "../engine";
 import { isQuotaExhaustion, isRateLimitError, providerRetryAt, rateLimitCooldownData } from "../recovery/exhaustion";
 import type { Adapter, AgentObservation } from "../host/adapter";

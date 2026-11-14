@@ -1,4 +1,4 @@
-import { isWaitingTaskStop, taskStopVerbsFor } from '../../shared/task-stop';
+import { taskStopVerbsFor } from '../../shared/task-stop';
 import { reviewContinuationState, reviewFenceHoldsCoordinators } from '../review/review-continuation';
 import { isSshAuthExhausted } from '../../shared/ssh-auth';
 import { randomBytes, randomUUID } from 'node:crypto';
