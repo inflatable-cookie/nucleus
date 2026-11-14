@@ -247,7 +247,7 @@ test('hosted-runner acquisition cancellations classify as infrastructure only wi
 });
 
 test('a required check pending past its deadline raises attention with the job URL; one within it does not',async()=>{
- const {classifyPrChecks,pendingCheckDeadlineMs,PENDING_CHECK_FALLBACK_MS,isPendingCheckDeadlineReason}=await import('../core/forge/index');
+ const {classifyPrChecks,pendingCheckDeadlineMs,PENDING_CHECK_FALLBACK_MS}=await import('../core/forge/index');
  const now=Date.parse('2026-09-26T12:00:00.000Z');
  const iso=(ms:number)=>new Date(ms).toISOString();
  assert.equal(pendingCheckDeadlineMs([]),PENDING_CHECK_FALLBACK_MS);
@@ -258,10 +258,8 @@ test('a required check pending past its deadline raises attention with the job U
  assert.equal(overdue.overdue,true);
  assert.match(overdue.wait,/Required check 'build'.*has been pending past its deadline/);
  assert.match(overdue.wait,/job URL: https:\/\/github.com\/example\/repo\/actions\/runs\/9/);
- assert.equal(isPendingCheckDeadlineReason(overdue.wait),true);
  const within=classifyPrChecks([{__typename:'CheckRun',name:'build',status:'IN_PROGRESS',startedAt:iso(now-10*60_000),detailsUrl:job}],{now,durations:()=>[5*60_000]});
  assert.deepEqual(within,{wait:'PR checks are pending',checksFailed:false,pendingCheck:true});
- assert.equal(isPendingCheckDeadlineReason(within.wait),false);
  const historic=classifyPrChecks([{__typename:'CheckRun',name:'build',status:'IN_PROGRESS',startedAt:iso(now-20*60_000),detailsUrl:job}],{now,durations:()=>[5*60_000]});
  assert.equal(historic.overdue,true);
  assert.match(historic.wait,/bound 15m/);

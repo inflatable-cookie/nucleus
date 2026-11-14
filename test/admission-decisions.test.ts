@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { submissionSchema, taskSchema } from '../shared/contracts';
 import { decideSlotAdmission } from '../core/dispatch/capacity';
-import { dispatchGate } from '../core/dispatch/dispatch';
+import { dispatchGate } from '../core/dispatch/dispatch-decisions';
 
 const base = 'a'.repeat(40);
 const submission = submissionSchema.parse({ submissionId: 's', title: 'T', repoPath: '/r', planningCommit: base, handoffPath: 'h.md', originAgentId: 'o' });

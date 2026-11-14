@@ -198,6 +198,19 @@ export function capacityFor(task: Task, tasks: Task[], globalLimit: number, proj
   return recoveryCapacityFor(task, tasks, globalLimit, projectLimit, papercuts);
 }
 
+/**
+ * The capacity refusal at this instant, read from the store's own limits. Every
+ * dispatch admission asks this one question, so the four re-checks before an
+ * intent cannot drift from one another.
+ */
+export function capacityRefusal(
+  store: Pick<Store, 'activeCapacityTasks' | 'getMeta' | 'papercutDispatchPolicy' | 'projectDispatchLimitFor'>,
+  task: Task,
+): string {
+  return capacityFor(task, store.activeCapacityTasks(), store.getMeta<number>('globalLimit') ?? DEFAULT_GLOBAL_LIMIT,
+    store.projectDispatchLimitFor(task), store.papercutDispatchPolicy());
+}
+
 interface SlotAdmissionView {
   tasks: Task[];
   runsByTask: Map<string, Run[]>;

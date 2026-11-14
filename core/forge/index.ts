@@ -33,7 +33,6 @@ export {
   requiredCheckPollMetaKey,
   type CheckHistory,
   pendingCheckDeadlineMs,
-  isPendingCheckDeadlineReason,
   isFailedChecksReason,
   isForgeCheckProofText,
   classifyPrChecks,

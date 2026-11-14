@@ -154,6 +154,10 @@ export function removePoolEntry(pool:readonly PoolEntry[],profileId:string):Pool
 export function groupIsUnavailable(state:{unavailable:boolean;retryAt:string|null},at=Date.now()){
  return state.unavailable&&(!state.retryAt||Date.parse(state.retryAt)>at);
 }
+/** The groups unavailable at this instant. Every dispatch path reads availability through this, so no caller parses its own rows. */
+export function unavailableGroups(availability:readonly {group:string;unavailable:boolean;retryAt:string|null}[],at=Date.now()){
+ return new Set(availability.filter(state=>groupIsUnavailable(state,at)).map(state=>state.group));
+}
 export function normalizeRetryAt(value:string|null){
  const retryAt=value?.trim()||null;
  if(retryAt&&!Number.isFinite(Date.parse(retryAt)))throw Error('Retry time must be a valid date');

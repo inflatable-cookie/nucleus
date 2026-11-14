@@ -3,7 +3,7 @@ import { CLEANUP_CONCURRENCY } from "../host/admission";
 import { doublingDelay } from "../../shared/backoff";
 import type { Engine } from "../engine";
 import { LANE_PRIORITY_TASK } from "../scheduling/lane-priorities";
-import { terminalArchiveWorkspaces } from "../closeout/workspace-lifecycle";
+import { terminalArchiveWorkspaces } from "../closeout/terminal-archive";
 import { taskWorkspaceTitle } from "../workspaces/workspace-title";
 
 /**

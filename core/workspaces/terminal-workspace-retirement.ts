@@ -1,3 +1,4 @@
+import { archiveFailureIsTeardown } from './archive-failure';
 import { existsSync } from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
 import { holdsOf, type Task } from '../../shared/contracts';
@@ -109,7 +110,7 @@ export async function progressWorkspaceRetirement(store: Store, adapter: Adapter
     return write({ state: 'archived', archivedAt: now(), detail: base + discarded });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    if (uncertain && /teardown|retire|runtime scope/i.test(detail)) retirement.flagArchiveFailure(taskId, record.workspaceId, detail);
+    if (uncertain && archiveFailureIsTeardown(error)) retirement.flagArchiveFailure(taskId, record.workspaceId, detail);
     return write({ state: uncertain ? 'uncertain' : 'held', detail });
   }
 }

@@ -1,6 +1,6 @@
 import type { Task } from '../../shared/contracts';
 import type { Engine } from '../engine';
-import type { LifecycleAdapter } from './workspace-lifecycle';
+import type { LifecycleAdapter } from './archive-proof';
 import type { Resolution } from '../resolution';
 import { missingOriginHasPlanner } from '../questions/origin';
 import { isStaleIntegrationBaseRefusal } from '../hooks/hooks';
