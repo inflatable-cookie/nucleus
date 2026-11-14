@@ -470,7 +470,11 @@ interface PaseoProcessOwnership {
   pgids: Set<number>;
 }
 
-function paseoProcessOwnership(processes: HostProcessFact[], configuredDaemonPid?: number | null): PaseoProcessOwnership {
+function paseoProcessOwnership(
+  processes: HostProcessFact[],
+  configuredDaemonPid?: number | null,
+  lookupMissingDaemonPgid = true,
+): PaseoProcessOwnership {
   const configured = configuredDaemonPid === undefined ? paseoDaemonPidFromFile() : configuredDaemonPid;
   const daemonPid = Number.isSafeInteger(configured) && configured! > 0 ? configured! : null;
   const byPid = new Map(processes.map(fact => [fact.pid, fact]));
@@ -479,7 +483,7 @@ function paseoProcessOwnership(processes: HostProcessFact[], configuredDaemonPid
   if (daemonPid !== null) roots.add(daemonPid);
 
   const daemonFact = daemonPid === null ? undefined : byPid.get(daemonPid);
-  const daemonPgid = daemonFact?.pgid ?? (daemonPid === null ? null : livePgid(daemonPid));
+  const daemonPgid = daemonFact?.pgid ?? (lookupMissingDaemonPgid && daemonPid !== null ? livePgid(daemonPid) : null);
   const pids = new Set<number>();
   const pgids = new Set<number>();
   if (daemonPgid !== null && daemonPgid > 0) pgids.add(daemonPgid);
@@ -562,7 +566,10 @@ export function selectHostProcessTargets(input: {
   queuePgid: number;
   paseoDaemonPid?: number | null;
 }): HostProcessTarget[] {
-  const paseo = paseoProcessOwnership(input.processes, input.paseoDaemonPid);
+  // This selector is a pure decision over the supplied process snapshot. The
+  // production reap path may resolve the configured daemon and query its live
+  // pgid before calling the lower-level selector.
+  const paseo = paseoProcessOwnership(input.processes, input.paseoDaemonPid ?? null, false);
   return selectHostProcessTargetsAndSkips({ ...input, paseo }).targets;
 }
 
