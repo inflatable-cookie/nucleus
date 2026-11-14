@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Engine } from "../core/engine";
-import { runPrompt } from "../core/dispatch/prompts";
+import { runPrompt, workerPrompt } from "../core/dispatch/prompts";
 import { Reports, reportSchema } from "../core/intake/report";
 import { reviewPublicationBody } from "../core/review/review-body";
 import { Store } from "../core/store/store";
@@ -40,6 +40,7 @@ function fixture(options: { branchPrs?: { number: number; url: string; head: str
   const taskId = submitted.id, runId = "initial-run", token = "proof-files-token";
   let reportingRunId = runId;
   let reportingToken = token;
+  let forgeHead = head;
   store.update(taskId, {
     phase: "working", planningBase: base, workspaceId: "workspace", directory: worktree, branch: submitted.branch,
     temporaryDirectory: scratch, agentId: "worker-thread", runId, profile: worker, workerModel: worker.model,
@@ -51,8 +52,8 @@ function fixture(options: { branchPrs?: { number: number; url: string; head: str
     createWorkspace: async () => { throw new Error("proof-files fixture does not create workspaces"); },
     createAgent: async () => { throw new Error("proof-files fixture does not create agents"); },
     observe: async (id: string) => ({ id, workspaceId: "workspace", status: "idle", active: false, permissions: false, error: "" }),
-    verifyPr: async () => ({ url: prUrl, head, repository: "example/repo", headRepository: "example/repo" }),
-    verifyPrIdentity: async () => ({ url: prUrl, head, repository: "example/repo", headRepository: "example/repo" }),
+    verifyPr: async () => ({ url: prUrl, head: forgeHead, repository: "example/repo", headRepository: "example/repo" }),
+    verifyPrIdentity: async () => ({ url: prUrl, head: forgeHead, repository: "example/repo", headRepository: "example/repo" }),
     verifyCleanQueueWorktree: async () => {}, findOpenBranchPr: async () => options.branchPrs ?? [],
     mergeGate: async () => ({ head, base: "main", wait: "" }), merge: async () => {},
     merged: async () => ({ merged: false, commit: null, head, base: "main" }), syncMain: async () => base,
@@ -86,8 +87,20 @@ function fixture(options: { branchPrs?: { number: number; url: string; head: str
     assert.equal(store.task(taskId).resolution.currentRunId, reportingRunId);
     assert.equal(store.run(reportingRunId)?.released, false);
   };
+  const startExecutor = (executorScratch: string, sourceHead: string, tree: string) => {
+    reportingRunId = "executor-run";
+    reportingToken = "proof-files-executor-token";
+    forgeHead = sourceHead;
+    store.setCredential(reportingRunId, reportingToken);
+    store.putRun(runSchema.parse({ id: reportingRunId, taskId, role: "executor", generation: 1, head: sourceHead, base,
+      agentId: "executor-thread", workspaceId: "workspace", profile: worker, status: "running", createdAt: new Date().toISOString(),
+      lastObservedAt: null, active: true, idleSince: null, completion: null, released: false, temporaryDirectory: executorScratch,
+      proofExecution: { selector: "effigy test unit -- test/proof.test.ts", inputs: [], prNumber: 1, tree,
+        operationId: "synthetic-operation", briefVersion: 1, briefDigest: null, returnPhase: "awaiting_review",
+        authorizedBy: { role: "queue_dispatch", caller: null, note: null } } }));
+  };
   const task = () => store.task(taskId);
-  return { dir, worktree, scratch, scratchRoot, store, engine, adapter, taskId, runId, token, complete, reportOnce, cliReport, startRevision, task,
+  return { dir, worktree, scratch, scratchRoot, store, engine, adapter, taskId, runId, token, complete, reportOnce, cliReport, startRevision, startExecutor, task,
     close: async () => { await engine.stop(); store.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 
@@ -138,6 +151,114 @@ test("a revision starting at A records two proof files under its reported PR hea
       assert.ok(prompt.includes(record.label));
     }
     assert.match(prompt, /never uploaded to the forge/);
+  } finally { await f.close(); }
+});
+
+test("an executor proof delivers retained evidence beside its run scratch for the reviewer", async () => {
+  const f = fixture();
+  try {
+    const remote = join(f.dir, "origin.git");
+    execFileSync("git", ["init", "--bare", "--quiet", remote]);
+    execFileSync("git", ["-C", f.worktree, "init", "--quiet", "-b", f.task().branch]);
+    execFileSync("git", ["-C", f.worktree, "config", "user.email", "proof-files@example.com"]);
+    execFileSync("git", ["-C", f.worktree, "config", "user.name", "Proof Files"]);
+    execFileSync("git", ["-C", f.worktree, "remote", "add", "origin", remote]);
+    writeFileSync(join(f.worktree, "source.txt"), "source\n");
+    execFileSync("git", ["-C", f.worktree, "add", "source.txt"]);
+    execFileSync("git", ["-C", f.worktree, "commit", "--quiet", "-m", "source"]);
+    execFileSync("git", ["-C", f.worktree, "-c", "protocol.file.allow=always", "push", "--quiet", "origin", f.task().branch]);
+    const sourceHead = execFileSync("git", ["-C", f.worktree, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    const tree = execFileSync("git", ["-C", f.worktree, "rev-parse", "HEAD^{tree}"], { encoding: "utf8" }).trim();
+    const executorScratch = join(f.scratchRoot, "ef567890");
+    mkdirSync(executorScratch);
+    const sourcePath = join(executorScratch, "capture.png");
+    writeFileSync(sourcePath, png("executor capture"));
+    f.startExecutor(executorScratch, sourceHead, tree);
+    const executorPrompt = runPrompt(f.task(), f.store.run("executor-run")!, "/helper", "/ticket", true);
+    assert.match(executorPrompt, /Executor evidence files for the retained reviewer/);
+    assert.match(executorPrompt, /top-level head equal to the current pushed PR HEAD/);
+
+    const receipt = await f.complete("proof_executed", {
+      head: sourceHead,
+      proofResult: { status: "passed", selector: "effigy test unit -- test/proof.test.ts", exitCode: 0, evidence: "Selector passed at the published source" },
+      proofFiles: [{ label: "Executor capture", path: sourcePath }],
+    }) as { accepted?: boolean };
+    assert.equal(receipt.accepted, true);
+    const [record] = f.task().proofFiles;
+    assert.ok(record);
+    assert.equal(record.runId, "executor-run", "the copy is bound to the proof execution run");
+    assert.equal(record.sourcePath, sourcePath, "the original locator is retained as provenance");
+    assert.equal(record.sha256, createHash("sha256").update(png("executor capture")).digest("hex"));
+    assert.equal(record.bytes, png("executor capture").byteLength);
+    assert.ok(record.path.startsWith(join(f.scratchRoot, "evidence", f.taskId, sourceHead)));
+    assert.equal(f.task().proofExecutions.find(execution => execution.runId === "executor-run")?.status, "passed");
+
+    rmSync(executorScratch, { recursive: true, force: true });
+    assert.equal(existsSync(sourcePath), false, "the executor scratch was removed");
+    assert.deepEqual(readFileSync(record.path), png("executor capture"), "the Nucleus copy survives executor scratch removal");
+    const reviewerRun = { id: "review-run", taskId: f.taskId, role: "reviewer" as const, generation: 1, head: sourceHead, base,
+      agentId: "reviewer", workspaceId: "workspace", profile: null, createdAt: new Date().toISOString(),
+      lastObservedAt: null, active: false, idleSince: null, released: false, status: "running" };
+    const prompt = runPrompt(f.task(), reviewerRun as never, "/helper", "/ticket", true);
+    assert.ok(prompt.includes(record.path));
+    assert.ok(prompt.includes(record.sourcePath!));
+    assert.ok(prompt.includes(record.sha256));
+    assert.ok(prompt.includes(`${record.bytes} bytes`));
+    assert.match(prompt, /Selector passed at the published source/);
+  } finally { await f.close(); }
+});
+
+test("executor proof files outside its own scratch or over a file limit are refused without copying", async () => {
+  const f = fixture();
+  try {
+    const remote = join(f.dir, "origin.git");
+    execFileSync("git", ["init", "--bare", "--quiet", remote]);
+    execFileSync("git", ["-C", f.worktree, "init", "--quiet", "-b", f.task().branch]);
+    execFileSync("git", ["-C", f.worktree, "config", "user.email", "proof-files@example.com"]);
+    execFileSync("git", ["-C", f.worktree, "config", "user.name", "Proof Files"]);
+    execFileSync("git", ["-C", f.worktree, "remote", "add", "origin", remote]);
+    writeFileSync(join(f.worktree, "source.txt"), "source\n");
+    execFileSync("git", ["-C", f.worktree, "add", "source.txt"]);
+    execFileSync("git", ["-C", f.worktree, "commit", "--quiet", "-m", "source"]);
+    execFileSync("git", ["-C", f.worktree, "-c", "protocol.file.allow=always", "push", "--quiet", "origin", f.task().branch]);
+    const sourceHead = execFileSync("git", ["-C", f.worktree, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    const tree = execFileSync("git", ["-C", f.worktree, "rev-parse", "HEAD^{tree}"], { encoding: "utf8" }).trim();
+    const executorScratch = join(f.scratchRoot, "ef567890");
+    mkdirSync(executorScratch);
+    f.startExecutor(executorScratch, sourceHead, tree);
+    const wrongScratchPath = join(f.scratch, "worker-file.png");
+    writeFileSync(wrongScratchPath, png("wrong run"));
+    await assert.rejects(f.complete("proof_executed", {
+      head: sourceHead, proofResult: { status: "passed", selector: "effigy test unit -- test/proof.test.ts", exitCode: 0, evidence: "Ran" },
+      proofFiles: [{ label: "Wrong run", path: wrongScratchPath }],
+    }), /outside this task's own scratch and worktree/);
+    assert.equal(f.task().proofFiles.length, 0);
+    assert.equal(existsSync(join(f.scratchRoot, "evidence")), false);
+
+    const oversizedPath = join(executorScratch, "oversized.png");
+    writeFileSync(oversizedPath, Buffer.alloc(8 * 1024 * 1024 + 1));
+    await assert.rejects(f.complete("proof_executed", {
+      head: sourceHead, proofResult: { status: "passed", selector: "effigy test unit -- test/proof.test.ts", exitCode: 0, evidence: "Ran" },
+      proofFiles: [{ label: "Oversized", path: oversizedPath }],
+    }), /each proof file must be at most/);
+    assert.equal(f.task().proofFiles.length, 0);
+    assert.equal(existsSync(join(f.scratchRoot, "evidence")), false);
+  } finally { await f.close(); }
+});
+
+test("an initial worker report accepts proofFiles", async () => {
+  const f = fixture();
+  try {
+    const sourcePath = join(f.scratch, "initial-worker.png");
+    writeFileSync(sourcePath, png("worker"));
+    const prompt = workerPrompt(f.task(), true);
+    assert.match(prompt, /Proof files for the retained reviewer/);
+    const receipt = await f.reportOnce("initial-worker-proof", {
+      head, proofFiles: [{ label: "Initial worker", path: sourcePath }],
+    }) as { accepted?: boolean };
+    assert.equal(receipt.accepted, true);
+    assert.equal(f.task().proofFiles.length, 1);
+    assert.equal(f.task().proofFiles[0]!.sourcePath, sourcePath);
   } finally { await f.close(); }
 });
 

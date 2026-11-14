@@ -1,0 +1,1 @@
+Author-side proof executors can deliver bounded evidence files to the retained reviewer. Nucleus keeps the copies after executor scratch is removed, and initial worker reports can deliver proof files too.

@@ -9,7 +9,7 @@ import {
 import { now } from "../store/store";
 
 /**
- * nucleus#1142 (papercut 01e88ba5): a worker's proof files reach the retained
+ * nucleus#1142 (papercut 01e88ba5): author-side proof files reach the retained
  * reviewer, never the public PR.
  *
  * The worker names local files in its report; Nucleus proves each one is a real
@@ -69,9 +69,9 @@ function ensureEvidenceDirectory(directory: string): void {
  * one entry is outside the task, missing, not a regular file or too large, so a
  * refused report leaves nothing behind.
  */
-export function recordWorkerProofFiles(input: {
+export function recordProofFiles(input: {
   task: Pick<Task, "id" | "directory" | "temporaryDirectory" | "runId" | "proofFiles">;
-  run: Pick<Run, "id" | "temporaryDirectory"> | null;
+  run: Pick<Run, "id" | "role" | "temporaryDirectory"> | null;
   files: readonly ProofFileEntry[];
   head: string | null | undefined;
   eventId: string;
@@ -90,7 +90,10 @@ export function recordWorkerProofFiles(input: {
   const scratchRoot = scratchRootFor(scratchLeaf);
   if (!scratchRoot)
     throw Error("proofFiles require this task's recorded scratch directory; the report cannot name a file without the scratch Queue created for this run");
-  const bases = [...new Set([task.directory, run?.temporaryDirectory, task.temporaryDirectory].filter((value): value is string => Boolean(value)))]
+  const sourceDirectories = run?.role === 'executor'
+    ? [task.directory, run.temporaryDirectory]
+    : [task.directory, run?.temporaryDirectory, task.temporaryDirectory];
+  const bases = [...new Set(sourceDirectories.filter((value): value is string => Boolean(value)))]
     .filter(realDirectory);
   if (!bases.length) throw Error("proofFiles require this task's own worktree or scratch directory to prove the named paths");
 
@@ -133,7 +136,7 @@ export function recordWorkerProofFiles(input: {
     const target = join(headDirectory, name);
     writeFileSync(target, item.bytes, { mode: 0o600 });
     records.push({
-      head, label: item.entry.label.trim().slice(0, MAX_PROOF_FILE_LABEL), name, path: target,
+      head, label: item.entry.label.trim().slice(0, MAX_PROOF_FILE_LABEL), name, path: target, sourcePath: item.entry.path,
       sha256: item.sha256, bytes: item.bytes.byteLength,
       runId: run?.id ?? task.runId ?? "", eventId: input.eventId, at,
     });
