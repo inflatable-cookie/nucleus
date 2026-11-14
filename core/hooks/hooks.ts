@@ -47,8 +47,8 @@ export const STDERR_EXCERPT_MAX_BYTES = 2000;
 const RETENTION_RECONCILIATION_TARGET = "merged_integration_base" as const;
 const RETENTION_RECONCILIATION_ROUTE = "merged_task_reconciliation" as const;
 
-export { gitRaw } from "../git/git-command";
-import { gitRaw, formatGitError } from "../git/git-command";
+export { gitRun as gitRaw } from "../git/git-command";
+import { gitRun, formatGitError } from "../git/git-command";
 /** The target a stored occurrence actually carries, tolerating records that only named it in the immutable payload. */
 function hookRecordTarget(record: Pick<HookRecord, "target" | "eventPayload">): AnyHookTarget {
   if (record.eventPayload?.schema === EVENT_SCHEMA_V2) return "reviewed_head";
@@ -438,7 +438,7 @@ export class RepositoryHooks {
     let baseCommit: string;
     try { baseCommit = await gitText(current.repoPath, "rev-parse", `refs/heads/${current.baseBranch}`); }
     catch { throw new Error(`Retention reconciliation cannot read the current refs/heads/${current.baseBranch} commit`); }
-    if ((await gitRaw(current.repoPath, ["merge-base", "--is-ancestor", mergedCommit, baseCommit])).code !== 0)
+    if ((await gitRun(current.repoPath, ["merge-base", "--is-ancestor", mergedCommit, baseCommit])).code !== 0)
       throw new Error("Retention reconciliation requires the merged commit to be an ancestor of the current integration base");
     // A failed integration-base reconciliation is history, not the original
     // retained declaration's identity. Keep the immutable task-head occurrence
@@ -1015,7 +1015,7 @@ export class RepositoryHooks {
     if (!record.retentionReconciliation || record.program.kind !== "repository") return null;
     const pin = record.program.executable;
     if (pin.commit !== record.baseCommit) throw new Error("the pinned hook program is not at the reconciled integration base");
-    const blob = await gitRaw(task.repoPath, ["cat-file", "-p", `${record.baseCommit}:${pin.path}`]);
+    const blob = await gitRun(task.repoPath, ["cat-file", "-p", `${record.baseCommit}:${pin.path}`]);
     if (blob.code !== 0) throw new Error(`the pinned hook program is missing at the reconciled base: ${formatGitError(["cat-file", "-p", `${record.baseCommit}:${pin.path}`], blob.code, blob.signal, blob.stderr)}`);
     if (blobDigest(blob.stdout) !== pin.digest) throw new Error("the hook program at the reconciled base differs from the pinned digest");
     const dir = await mkdtemp(join(tmpdir(), "nsq-retention-program-"));
@@ -1131,7 +1131,7 @@ export class RepositoryHooks {
     try {
       const root = task.repoPath;
       if (await gitText(root, "branch", "--show-current") !== record.baseBranch) return false;
-      if ((await gitRaw(root, ["merge-base", "--is-ancestor", before.head, after.head])).code !== 0) return false;
+      if ((await gitRun(root, ["merge-base", "--is-ancestor", before.head, after.head])).code !== 0) return false;
       if (after.indexTree !== await gitText(root, "rev-parse", `${after.head}^{tree}`)) return false;
       return after.head === await gitText(root, "rev-parse", `refs/remotes/origin/${record.baseBranch}`);
     } catch { return false; }
@@ -1161,15 +1161,15 @@ export class RepositoryHooks {
     const common = await gitText(task.repoPath, "rev-parse", "--path-format=absolute", "--git-common-dir");
     if (!isOwnedIsolationPath(path, this.isolationDataDir(), common)) throw new Error("Refusing to remove a checkout outside the Queue-owned isolation root");
     const rootInfo = await lstat(path).catch(() => null);
-    if (!rootInfo) { await gitRaw(task.repoPath, ["worktree", "prune"]); return; }
+    if (!rootInfo) { await gitRun(task.repoPath, ["worktree", "prune"]); return; }
     if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) throw new Error("Queue-owned isolated checkout path is not a real directory");
     const gitMarker = await lstat(join(path, ".git")).catch(() => null);
     if (gitMarker?.isFile()) {
-      const result = await gitRaw(task.repoPath, ["worktree", "remove", ...(force ? ["--force"] : []), path]);
+      const result = await gitRun(task.repoPath, ["worktree", "remove", ...(force ? ["--force"] : []), path]);
       if (result.code !== 0) {
         if (!force) throw new Error(`Isolated checkout removal failed: ${formatGitError(["worktree", "remove", path], result.code, result.signal, result.stderr)}`);
         await rm(path, { recursive: true, force: true });
-        await gitRaw(task.repoPath, ["worktree", "prune"]);
+        await gitRun(task.repoPath, ["worktree", "prune"]);
       }
     } else if (gitMarker?.isDirectory()) {
       // Ignored entries are disposable runtime material in a Queue-owned
@@ -1249,7 +1249,7 @@ export class RepositoryHooks {
       if ((await statusEntries(root, false)).length) return "canonical checkout has tracked or untracked changes";
       const head = await gitText(root, "rev-parse", "HEAD");
       if (head !== target) {
-        if ((await gitRaw(root, ["merge-base", "--is-ancestor", head, target])).code !== 0) return "canonical HEAD diverged from the published history";
+        if ((await gitRun(root, ["merge-base", "--is-ancestor", head, target])).code !== 0) return "canonical HEAD diverged from the published history";
         const collisions = await this.ignoredCollisions(root, head, target);
         if (collisions.length) return `ignored operator content would be overwritten: ${collisions.join(", ")}`;
         await gitText(root, "merge", "--ff-only", target);
@@ -1445,7 +1445,7 @@ export class RepositoryHooks {
     try {
       await gitText(task.repoPath, "fetch", "origin", record.baseBranch);
       const remote = await gitText(task.repoPath, "rev-parse", `refs/remotes/origin/${record.baseBranch}`);
-      const contains = remote === record.commit || (await gitRaw(task.repoPath, ["merge-base", "--is-ancestor", record.commit, remote])).code === 0;
+      const contains = remote === record.commit || (await gitRun(task.repoPath, ["merge-base", "--is-ancestor", record.commit, remote])).code === 0;
       if (!contains) return this.uncertainSync(record, `Remote ${record.baseBranch} does not contain published commit ${record.commit}`);
       const syncError = await this.syncCanonical(task.repoPath, record.baseBranch, record.baseCommit, remote);
       if (syncError) return this.uncertainSync(record, `Canonical synchronization requires reconciliation: ${syncError}`);
@@ -1726,16 +1726,16 @@ export class RepositoryHooks {
       await gitText(task.repoPath, "fetch", "origin", record.baseBranch);
       let root = task.repoPath;
       let remote = await gitText(root, "rev-parse", `refs/remotes/origin/${record.baseBranch}`);
-      if ((await gitRaw(root, ["cat-file", "-e", `${commit}^{commit}`])).code !== 0) {
+      if ((await gitRun(root, ["cat-file", "-e", `${commit}^{commit}`])).code !== 0) {
         // An isolated clone can hold the only copy of a rejected publication.
         // Fetch the canonical publication remote there before asking ancestry.
         root = record.workspace?.path ?? "";
-        if (!root || (await gitRaw(root, ["cat-file", "-e", `${commit}^{commit}`])).code !== 0) return true;
+        if (!root || (await gitRun(root, ["cat-file", "-e", `${commit}^{commit}`])).code !== 0) return true;
         const origin = await gitText(task.repoPath, "remote", "get-url", "origin");
         await gitText(root, "fetch", origin, record.baseBranch);
         remote = await gitText(root, "rev-parse", "FETCH_HEAD");
       }
-      const ancestry = await gitRaw(root, ["merge-base", "--is-ancestor", commit, remote]);
+      const ancestry = await gitRun(root, ["merge-base", "--is-ancestor", commit, remote]);
       return ancestry.code !== 1; // Only Git's proven non-ancestor result establishes absence.
     } catch {
       // An unreadable remote is not proof of absence, so refuse and keep the stronger path.
@@ -1776,7 +1776,7 @@ export class RepositoryHooks {
         // established absence at its base; inspect every newly reachable commit
         // before extending that proof to a later fast-forwarded base.
         const anchor = record.checkoutDiscard.baseCommit;
-        if ((await gitRaw(task.repoPath, ["merge-base", "--is-ancestor", anchor, baseCommit])).code !== 0)
+        if ((await gitRun(task.repoPath, ["merge-base", "--is-ancestor", anchor, baseCommit])).code !== 0)
           throw new Error("Discard proof base is no longer an ancestor of the remote");
         const added = await gitText(task.repoPath, "rev-list", `${anchor}..${baseCommit}`);
         if (added.split("\n").includes(commit)) throw new Error("Previously discarded hook commit is now published");
@@ -1930,7 +1930,7 @@ async function reviewedHeadIsClean(task: Task, record: HookRecord): Promise<bool
 }
 
 async function matchingCommitsIn(root: string, record: HookRecord): Promise<string[]> {
-  const log = await gitRaw(root, ["log", "--format=%H", "-n", "200"]);
+  const log = await gitRun(root, ["log", "--format=%H", "-n", "200"]);
   if (log.code !== 0) return [];
   const matches: string[] = [];
   for (const sha of log.stdout.toString("utf8").split("\n").map(line => line.trim()).filter(Boolean)) {
