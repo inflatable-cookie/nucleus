@@ -345,7 +345,8 @@
         "questions"
       ]
     },
-    "turnItemTypeSource": "assistant, user and command members come from the captured thread; user_input_request comes from the OrchestrationV2TurnItem union member in the installed bundle",
+    "visibleTurnItemKeys": ["position", "sourceItemId", "sourceThreadId", "visibility", "item"],
+  "turnItemTypeSource": "assistant, user and command members come from the captured thread; user_input_request comes from the OrchestrationV2TurnItem union member in the installed bundle",
     "messageKeys": [
       "id",
       "threadId",

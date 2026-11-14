@@ -443,22 +443,24 @@ An observation read that fails names its own cause. Every owner path that turns 
 caught observation into a refusal keeps the host error's kind and message: the
 `restart` refusals, `move to=review`'s reader check, the quiet-project participant
 proof of an external-merge source acceptance, and a finished run whose
-observation fences the verb. Only facts the adapter itself certifies reach the
-refusal (`certifyHostFailureFacts`, a module-local mark no remote text can set):
-an uncertified error contributes nothing but a runtime-known kind, so arbitrary
-host text — a secret-shaped single line included — is never published. A
-timeout therefore reads `T3RpcError timeout orchestration.subscribeThread` with
-the adapter's own message, and an adapter error that carries a method and a
-remote tag keeps both, instead of a bare "cannot be observed".
+observation fences the verb. One rule applies to every host (planner ruling,
+2026-11-14): the kind is the error's class name plus its `code` or RPC `method`
+when it carries one, and the detail is the first line of its message clipped to
+200 characters. Hosts are the operator's own local services and the refusal goes
+only to the task owner, so the host's words are shown as they are and nothing is
+certified: a Paseo `Agent was not found` and a T3 `T3Code timeout:
+orchestration.subscribeThread` both appear verbatim.
 
 The canonical thread projection is the whole turn list, so timeline pages carry
 the full coverage contract: no gap, no reset, no newer history, an epoch that
 is the thread identity, and start/end cursors that are positions in the full
 list. The test transport serves only records in the Nightly's own wire shape:
 `test/fixtures/t3code-contract.json` (`wireShapes`) records the field sets
-captured read-only from the nightly, and the fake completes and checks every
-served thread, run, runtime request, message and turn item against them, so an
-invented partial record cannot stand in for a real one (nucleus#1188). Archived
+captured read-only from the nightly, the fake completes every served thread,
+run, runtime request, message and turn item to them (`visibleTurnItems` derived
+from the items served, so a window holds no older rows), and it checks both the
+records and the projection's own key set, so an invented partial record or a
+missing collection cannot stand in for a real one (nucleus#1188). Archived
 threads are retired participants: they report the terminal
 closed state with `archived` carried on its own field, so archive proofs and
 workspace teardown read a terminal state while retained reads still see the

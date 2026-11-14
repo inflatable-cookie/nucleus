@@ -426,25 +426,22 @@ test('coverage fields are strictly decoded before observation or timeline comple
   assert.equal((await host.observe(created.id)).active, false);
 });
 
-test('a host failure refusal keeps only adapter-certified facts and never host text', () => {
-  // T3RpcError certifies its own facts in its constructor; its message carries
-  // punctuation, so the structured facts are what keep the refusal useful.
+test('a host failure refusal names the kind, the code or method, and the message line', () => {
+  // The same rule for every host (planner ruling, brief v2): the refusal goes to
+  // the task owner about their own local host, so the host's own words are kept.
   assert.equal(hostFailureRefusalDetail(new T3RpcError('timeout', 'orchestration.subscribeThread')),
     'T3RpcError timeout orchestration.subscribeThread: T3Code timeout: orchestration.subscribeThread');
   assert.equal(hostFailureRefusalDetail(new T3RpcError('remote', 'orchestration.subscribeThread', 'OrchestrationV2GetThreadProjectionError')),
-    'T3RpcError remote orchestration.subscribeThread (OrchestrationV2GetThreadProjectionError)');
-  // An uncertified error contributes a runtime-known kind and nothing else, so a
-  // secret-shaped single line cannot be published from arbitrary host text.
-  assert.equal(hostFailureRefusalDetail(new Error('synthetic-secret')), 'Error');
-  assert.equal(hostFailureRefusalDetail(new Error('Transport timeout')), 'Error');
-  assert.equal(hostFailureRefusalDetail(Object.assign(new Error('synthetic-secret'), { name: 'synthetic-secret' })), 'host error');
-  // Uncertified structured fields are ignored even when well shaped.
-  assert.equal(hostFailureRefusalDetail(Object.assign(new Error('synthetic-secret'),
-    { name: 'TypeError', code: 'synthetic_secret', method: 'orchestration.subscribeThread', field: 'synthetic_secret', remoteTag: 'SyntheticError' })), 'TypeError');
-  assert.equal(hostFailureRefusalDetail(new Error('Expected synthetic-secret got value\n  at ["text"]')), 'Error');
-  // A certified compatibility failure names its adapter-authored field.
+    'T3RpcError remote orchestration.subscribeThread: T3Code remote: orchestration.subscribeThread (OrchestrationV2GetThreadProjectionError)');
+  // A Paseo adapter's own messages appear as they are.
+  assert.equal(hostFailureRefusalDetail(new Error('Agent was not found')), 'Error: Agent was not found');
+  assert.equal(hostFailureRefusalDetail(new Error('Transport timeout')), 'Error: Transport timeout');
+  // One line, clipped to 200 characters.
+  assert.equal(hostFailureRefusalDetail(new Error('first line\n  at [\"text\"]')), 'Error: first line');
+  assert.equal(hostFailureRefusalDetail(new Error('x'.repeat(300))), `Error: ${'x'.repeat(200)}`);
+  // A compatibility failure names its adapter-authored field through its message.
   assert.equal(hostFailureRefusalDetail(new T3CompatibilityError('subscribeThread: incomplete projection')),
-    'T3CompatibilityError (subscribeThread: incomplete projection)');
+    'T3CompatibilityError: T3Code compatibility check failed: subscribeThread: incomplete projection');
 });
 
 test('a thread long enough to page stays observable from the nightly bounded snapshot', async t => {

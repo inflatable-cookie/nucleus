@@ -17,8 +17,9 @@ export const STAMP = '2026-01-01T00:00:00.000Z';
  * partial one (nucleus#1188 review).
  */
 const shapes = contract.wireShapes as {
-  threadKeys: string[]; runKeys: string[]; runtimeRequestKeys: string[];
-  turnItemBaseKeys: string[]; turnItemTypeKeys: Record<string, string[]>; messageKeys: string[] };
+  projectionKeys: string[]; threadKeys: string[]; runKeys: string[]; runtimeRequestKeys: string[];
+  turnItemBaseKeys: string[]; turnItemTypeKeys: Record<string, string[]>; messageKeys: string[];
+  visibleTurnItemKeys: string[] };
 const modelSelection = { instanceId: 'synthetic-provider', model: 'synthetic-model' };
 
 export function syntheticThread(id: string, directory: string, overrides: Value = {}): Value {
@@ -66,8 +67,13 @@ export function syntheticTurnItem(threadId: string, ordinal: number, overrides: 
   return { ...base, ...(member[type] ?? {}), ...overrides };
 }
 
-/** Every record of a projection, completed to the recorded wire shape. */
-function wireProjection(p: Value, bounded = false): Value {
+/**
+ * Every record of a projection, completed to the recorded wire shape, plus every
+ * projection collection the Nightly's wire carries (an empty array where the test
+ * has no data). `visibleTurnItems` is derived from the items actually served, so a
+ * windowed projection holds no older rows.
+ */
+function wireProjection(p: Value): Value {
   const threadId = p.thread.id;
   const thread = syntheticThread(threadId, p.thread.worktreePath ?? '/synthetic', p.thread);
   const runs = (p.runs ?? []).map((run: Value, index: number) => syntheticRun(threadId, index + 1, run));
@@ -78,9 +84,15 @@ function wireProjection(p: Value, bounded = false): Value {
     threadId, runId: null, nodeId: null, createdBy: 'user', creationSource: 'web', role: 'user', text: 'Synthetic message',
     attachments: [], streaming: false, createdAt: STAMP, updatedAt: STAMP, ...message }));
   const projection = { ...p, thread, runs, runtimeRequests, turnItems, messages,
-    // The wire carries the visible rows beside the window; each row points at its item.
-    visibleTurnItems: bounded ? turnItems.map((item: Value, index: number) => ({ position: index + 1,
-      sourceItemId: item.id, sourceThreadId: threadId, visibility: 'local', item })) : [] };
+    // The wire carries the visible rows beside the items it serves; each row points at its item.
+    visibleTurnItems: turnItems.map((item: Value, index: number) => ({ position: index + 1,
+      sourceItemId: item.id, sourceThreadId: threadId, visibility: 'local', item })),
+    // Collections the Nightly always projects, empty unless the test supplies them.
+    attempts: p.attempts ?? [], nodes: p.nodes ?? [], subagents: p.subagents ?? [],
+    providerSessions: p.providerSessions ?? [], providerThreads: p.providerThreads ?? [],
+    providerTurns: p.providerTurns ?? [], plans: p.plans ?? [], checkpointScopes: p.checkpointScopes ?? [],
+    checkpoints: p.checkpoints ?? [], contextHandoffs: p.contextHandoffs ?? [], contextTransfers: p.contextTransfers ?? [],
+    updatedAt: p.updatedAt ?? STAMP };
   assertWireRecords(projection);
   return projection;
 }
@@ -92,10 +104,13 @@ function assertWireRecords(projection: Value): void {
       for (const key of keys)
         assert.ok(Object.hasOwn(record, key), `${kind} ${record.id ?? record.type} is missing the wire field ${key}`);
   };
+  for (const key of shapes.projectionKeys)
+    assert.ok(Object.hasOwn(projection, key), `projection is missing the wire field ${key}`);
   missing([projection.thread], shapes.threadKeys, 'thread');
   missing(projection.runs, shapes.runKeys, 'run');
   missing(projection.runtimeRequests, shapes.runtimeRequestKeys, 'runtimeRequest');
   missing(projection.messages, shapes.messageKeys, 'message');
+  missing(projection.visibleTurnItems, shapes.visibleTurnItemKeys, 'visibleTurnItem');
   for (const item of projection.turnItems) {
     const extra = shapes.turnItemTypeKeys[item.type] ?? [];
     missing([item], [...shapes.turnItemBaseKeys, 'type', ...extra.filter((key: string) => !shapes.turnItemBaseKeys.includes(key))], `turnItem ${item.type}`);
@@ -126,7 +141,7 @@ export async function t3Fake(t: TestContext, directory: string) {
    * them (contract `subscribeThread.projectionRetained`).
    */
   const boundedSnapshot = (raw: Value, rowLimit: number) => {
-    const p = wireProjection(raw, true);
+    const p = raw;
     const active = new Set(['queued', 'preparing', 'starting', 'running', 'waiting']);
     const pending = new Set(p.runtimeRequests.filter((request: Value) => ['pending', 'waiting'].includes(request.status)).map((request: Value) => request.id));
     const kept = new Set(p.turnItems.slice(-rowLimit).map((item: Value) => item.id));
@@ -142,7 +157,10 @@ export async function t3Fake(t: TestContext, directory: string) {
     const plans = (p.plans ?? []).filter((plan: Value) => plan.status === 'active');
     const contextHandoffs = (p.contextHandoffs ?? []).filter((handoff: Value) => ['pending', 'ready'].includes(handoff.status));
     const hasMoreHistory = windowItems.length < p.turnItems.length;
-    const snapshot = { projection: { ...p, runs, runtimeRequests, plans, contextHandoffs, turnItems: windowItems, messages: p.messages.slice(-1) },
+    // Window first, then wire: the served rows and items are the same window, so a
+    // bounded snapshot holds no older rows.
+    const windowed = { ...p, runs, runtimeRequests, plans, contextHandoffs, turnItems: windowItems, messages: p.messages.slice(-1) };
+    const snapshot = { projection: wireProjection(windowed),
       hasMoreHistory, historyCursor: hasMoreHistory ? 'synthetic-history-cursor' : null, latestLocalTurnOrdinal: null };
     // The fixture is checked against the recorded contract on every bounded
     // answer, so a hand-made coverage field cannot enter a test unobserved.
@@ -201,10 +219,12 @@ export async function t3Fake(t: TestContext, directory: string) {
     socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
     const send = (value: unknown) => {
       const bytes = Buffer.from(JSON.stringify(value));
-      const header = Buffer.alloc(bytes.length < 126 ? 2 : 4);
+      // WebSocket framing: small inline length, 16-bit, then 64-bit.
+      const header = Buffer.alloc(bytes.length < 126 ? 2 : bytes.length <= 0xffff ? 4 : 10);
       header[0] = 0x81;
       if (header.length === 2) header[1] = bytes.length;
-      else { header[1] = 126; header.writeUInt16BE(bytes.length, 2); }
+      else if (header.length === 4) { header[1] = 126; header.writeUInt16BE(bytes.length, 2); }
+      else { header[1] = 127; header.writeBigUInt64BE(BigInt(bytes.length), 2); }
       socket.write(Buffer.concat([header, bytes]));
     };
     const handle = (request: Value) => {

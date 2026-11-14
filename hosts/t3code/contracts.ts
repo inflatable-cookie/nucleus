@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { certifyHostFailureFacts } from '../../core/host';
 
 const id = z.string().min(1);
 const date = z.string().min(1);
@@ -112,13 +111,7 @@ export function threadSnapshotCoverage(snapshot: z.infer<typeof threadSnapshot>)
 }
 
 export class T3CompatibilityError extends Error {
-  constructor(readonly field: string) {
-    super(`T3Code compatibility check failed: ${field}`);
-    this.name = 'T3CompatibilityError';
-    // The field is one of this adapter's own constants (a snapshot name, a
-    // decoded path), so an owner refusal may name it.
-    certifyHostFailureFacts(this, { field });
-  }
+  constructor(readonly field: string) { super(`T3Code compatibility check failed: ${field}`); this.name = 'T3CompatibilityError'; }
 }
 export function decode<T>(schema: z.ZodType<T>, value: unknown, at: string): T {
   const result = schema.safeParse(value);

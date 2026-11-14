@@ -67,50 +67,22 @@ export function sanitizeHostFailureDetail(input: unknown): string | undefined {
 }
 
 /**
- * Facts a host adapter constructs itself, certified as safe to keep in a refusal.
- *
- * Character restrictions alone cannot establish provenance: an arbitrary host
- * error whose message is a single token (a secret, a name) would pass them. Only
- * an adapter that builds an error from its own constants certifies its facts, and
- * this module keeps the certification out of reach of any remote text.
- */
-export interface HostFailureFacts { code?: string; method?: string; field?: string; message?: string }
-const certifiedFacts = new WeakMap<object, HostFailureFacts>();
-/** Error kinds that come from the JavaScript runtime rather than from host text. */
-const runtimeErrorNames = new Set(['Error', 'TypeError', 'RangeError', 'SyntaxError', 'ReferenceError', 'EvalError',
-  'URIError', 'AggregateError', 'AbortError', 'TimeoutError']);
-
-/** Record adapter-authored facts for one failure of this adapter's own making. */
-export function certifyHostFailureFacts<T extends object>(error: T, facts: HostFailureFacts): T {
-  certifiedFacts.set(error, {
-    ...(sanitizeHostFailureReason(facts.code) ? { code: sanitizeHostFailureReason(facts.code) } : {}),
-    ...(typeof facts.method === 'string' && /^[A-Za-z][A-Za-z0-9.]{0,100}$/.test(facts.method) ? { method: facts.method } : {}),
-    ...(sanitizeHostFailureDetail(facts.field) ? { field: sanitizeHostFailureDetail(facts.field) } : {}),
-    ...(sanitizeHostFailureDetail(facts.message) ? { message: sanitizeHostFailureDetail(facts.message) } : {}),
-  });
-  return error;
-}
-
-/**
  * A failed host call, as an owner-verb refusal names it: the error's kind — its
- * class name plus, for a certified adapter error, a bounded code, RPC method and
- * compatibility field or remote tag — and, when the adapter certified it, the
- * adapter's own bounded message. Structured facts come first because an adapter's
- * own message may carry punctuation the free-text rule must not admit:
- * `T3RpcError remote orchestration.subscribeThread
- * (OrchestrationV2GetThreadProjectionError)` keeps the method and tag, and
- * `T3RpcError timeout orchestration.subscribeThread` keeps the read that timed
- * out. Only an adapter certifies text; an uncertified error contributes nothing
- * but a runtime-known kind, so no host or remote text can reach a refusal.
+ * class name plus its `code` or RPC `method` when the error carries one — and the
+ * first line of its message, clipped to 200 characters (planner ruling for brief
+ * v2, 2026-11-14: no certification scheme; the refusal goes only to the task
+ * owner about their own local host, so the host's own message is shown as it is).
+ * The same rule applies to every host: a Paseo `Agent was not found` and a T3
+ * `T3Code timeout: orchestration.subscribeThread` both appear verbatim.
  */
 export function hostFailureRefusalDetail(error: unknown): string {
-  const record = error && typeof error === 'object' ? error as { name?: unknown } : {};
-  const facts = error && typeof error === 'object' ? certifiedFacts.get(error) : undefined;
-  if (!facts)
-    return typeof record.name === 'string' && runtimeErrorNames.has(record.name) ? record.name : 'host error';
-  const name = typeof record.name === 'string' && /^[A-Za-z][A-Za-z0-9]{0,78}$/.test(record.name) ? record.name : 'host error';
-  const kind = `${name}${facts.code && facts.code !== name ? ` ${facts.code}` : ''}${facts.method ? ` ${facts.method}` : ''}${facts.field ? ` (${facts.field})` : ''}`;
-  return facts.message ? `${kind}: ${facts.message}` : kind;
+  const record = error && typeof error === 'object' ? error as { name?: unknown; message?: unknown; code?: unknown; method?: unknown } : {};
+  const name = typeof record.name === 'string' && /^[A-Za-z][A-Za-z0-9]{0,78}$/.test(record.name) ? record.name : 'Error';
+  const code = sanitizeHostFailureReason(record.code);
+  const method = typeof record.method === 'string' && /^[A-Za-z][A-Za-z0-9.]{0,100}$/.test(record.method) ? record.method : undefined;
+  const kind = `${name}${code && code !== name ? ` ${code}` : ''}${method ? ` ${method}` : ''}`;
+  const line = typeof record.message === 'string' ? record.message.split('\n')[0]!.trim().slice(0, 200) : '';
+  return line ? `${kind}: ${line}` : kind;
 }
 
 /** Native names plus a bounded, shape-restricted reason and bounded guidance: never arbitrary remote text. */

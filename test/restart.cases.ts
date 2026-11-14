@@ -26,7 +26,6 @@ import {
   type Profile, type Run, type Task,
 } from '../shared/contracts';
 import type { Adapter } from '../core/host';
-import { certifyHostFailureFacts } from '../core/host';
 import { exactProofFixture } from './support/review-entry-fixture';
 import { toolTimelinePage } from './support/tool-timeline';
 
@@ -809,7 +808,7 @@ test('unobservable worker restart is a definite refused operation with no lifecy
     assert.ok('accepted' in accepted);
     const operation = await f.engine.awaitOperation(accepted.operation.id);
     assert.equal(operation.state, 'failed');
-    assert.match(operation.diagnostic, /cannot be observed \(Error\).*No continuation was sent/);
+    assert.match(operation.diagnostic, /cannot be observed \(Error: Transport timeout\).*No continuation was sent/);
     assert.equal(operation.effect?.status, 'reconciled');
     assert.deepEqual(restartState(f), before);
   } finally { await f.close(); }
@@ -820,8 +819,8 @@ test('a refused restart names the host observation error and its kind', async ()
     retainedWorker(f, 'retained_worker', false);
     // The exact failure a long T3 thread produced: a read that outlived the bound.
     f.adapter.observe = async () => {
-      throw certifyHostFailureFacts(Object.assign(new Error('T3Code timeout: orchestration.subscribeThread'), { name: 'T3RpcError' }),
-        { code: 'timeout', method: 'orchestration.subscribeThread', message: 'T3Code timeout: orchestration.subscribeThread' });
+      throw Object.assign(new Error('T3Code timeout: orchestration.subscribeThread'),
+        { name: 'T3RpcError', code: 'timeout', method: 'orchestration.subscribeThread' });
     };
     const before = restartState(f);
     const input = taskControlInputSchema.parse({ taskId: f.taskId, version: f.current().version, action: 'restart', reason: 'Continue' });
@@ -836,13 +835,32 @@ test('a refused restart names the host observation error and its kind', async ()
   } finally { await f.close(); }
 });
 
+test('a Paseo observation refusal keeps the adapter message', async () => {
+  const f = fixture(); try {
+    retainedWorker(f, 'retained_worker', false);
+    // The live Paseo host answers an identity it does not hold exactly this way;
+    // the refusal shows its words, as it does for every host.
+    f.adapter.observe = async () => { throw new Error('Agent was not found'); };
+    const before = restartState(f);
+    const input = taskControlInputSchema.parse({ taskId: f.taskId, version: f.current().version, action: 'restart', reason: 'Continue' });
+    const accepted = await f.engine.startOperation({ key: 'paseo-refusal-restart', kind: 'task_control', taskId: f.taskId,
+      expectedVersion: input.version, payload: { type: 'task_control', control: input } });
+    assert.ok('accepted' in accepted);
+    const operation = await f.engine.awaitOperation(accepted.operation.id);
+    assert.equal(operation.state, 'failed');
+    assert.match(operation.diagnostic, /cannot be observed \(Error: Agent was not found\); restore observation before restarting\. No continuation was sent/);
+    assert.deepEqual(restartState(f), before);
+  } finally { await f.close(); }
+});
+
 test('a refused restart keeps an adapter-authored method and remote tag', async () => {
   const f = fixture(); try {
     retainedWorker(f, 'retained_worker', false);
-    // The shape T3RpcError produces when the nightly fails a read with a typed tag.
+    // The shape T3RpcError produces when the nightly fails a read with a typed tag:
+    // its kind keeps the code and method, and its message keeps the tag.
     f.adapter.observe = async () => {
-      throw certifyHostFailureFacts(Object.assign(new Error('T3Code remote: orchestration.subscribeThread (OrchestrationV2GetThreadProjectionError)'), { name: 'T3RpcError' }),
-        { code: 'remote', method: 'orchestration.subscribeThread', field: 'OrchestrationV2GetThreadProjectionError' });
+      throw Object.assign(new Error('T3Code remote: orchestration.subscribeThread (OrchestrationV2GetThreadProjectionError)'),
+        { name: 'T3RpcError', code: 'remote', method: 'orchestration.subscribeThread', remoteTag: 'OrchestrationV2GetThreadProjectionError' });
     };
     const before = restartState(f);
     const input = taskControlInputSchema.parse({ taskId: f.taskId, version: f.current().version, action: 'restart', reason: 'Continue' });
@@ -851,7 +869,7 @@ test('a refused restart keeps an adapter-authored method and remote tag', async 
     assert.ok('accepted' in accepted);
     const operation = await f.engine.awaitOperation(accepted.operation.id);
     assert.equal(operation.state, 'failed');
-    assert.match(operation.diagnostic, /cannot be observed \(T3RpcError remote orchestration\.subscribeThread \(OrchestrationV2GetThreadProjectionError\)\)/);
+    assert.match(operation.diagnostic, /cannot be observed \(T3RpcError remote orchestration\.subscribeThread: T3Code remote: orchestration\.subscribeThread \(OrchestrationV2GetThreadProjectionError\)\)/);
     assert.deepEqual(restartState(f), before);
   } finally { await f.close(); }
 });
@@ -860,16 +878,14 @@ test('a finished run fenced by an unreadable observation names the host error', 
   const f = fixture(); try {
     retainedWorker(f, 'retained_worker', false);
     // A finished support run has to be observed before the restart settles it; its
-    // unreadable observation must say what failed, not just that it did. An
-    // uncertified error keeps only its runtime kind; a certified adapter error
-    // keeps its own facts, which is what an owner refusal shows.
+    // unreadable observation must say what failed, not just that it did.
     f.store.putRun(runSchema.parse({ id: 'fenced-run', taskId: f.taskId, role: 'reviewer', generation: 1, head, base,
       agentId: 'review-agent', workspaceId: 'workspace', profile: f.profiles.reviewer, status: 'finished',
       createdAt: new Date().toISOString(), lastObservedAt: null, active: null, idleSince: null, released: false,
       completion: { taskId: f.taskId, runId: 'fenced-run', eventId: 'fenced-ready', status: 'ready_for_review', summary: 'Reviewed', head } }));
     f.adapter.observe = async () => {
-      throw certifyHostFailureFacts(Object.assign(new Error('T3Code timeout: orchestration.subscribeThread'), { name: 'T3RpcError' }),
-        { code: 'timeout', method: 'orchestration.subscribeThread', message: 'T3Code timeout: orchestration.subscribeThread' });
+      throw Object.assign(new Error('T3Code timeout: orchestration.subscribeThread'),
+        { name: 'T3RpcError', code: 'timeout', method: 'orchestration.subscribeThread' });
     };
     const finished = await f.engine.collectVerbFinishedRuns(f.taskId, () => false);
     const fence = finished.fenced.find(entry => entry.run.id === 'fenced-run');

@@ -6,7 +6,6 @@ import type { Task } from '../shared/contracts';
 import { fixture, git } from './support/retained-external-merge-fixture';
 import { ownerEffectHook } from './support/review-entry-fixture';
 import {collectOwnerVerbFacts, ownerTaskNext} from '../core/verbs/owner-verbs';
-import {certifyHostFailureFacts} from '../core/host';
 
 test('descendant acceptance requires qualification and an exact observed final head', {timeout:90000}, async()=>{
   const f=await fixture();try{
@@ -58,9 +57,8 @@ test('a participant that cannot be observed refuses the source acceptance with t
     const original=f.adapter.observe.bind(f.adapter);
     let strict=false;
     f.setProof(()=>{strict=true;});
-    f.adapter.observe=async(id:string)=>{if(strict&&id===workerId)throw certifyHostFailureFacts(
-      Object.assign(new Error('T3Code timeout: orchestration.subscribeThread'),{name:'T3RpcError'}),
-      {code:'timeout',method:'orchestration.subscribeThread',message:'T3Code timeout: orchestration.subscribeThread'});return original(id);};
+    f.adapter.observe=async(id:string)=>{if(strict&&id===workerId)throw Object.assign(
+      new Error('T3Code timeout: orchestration.subscribeThread'),{name:'T3RpcError',code:'timeout',method:'orchestration.subscribeThread'});return original(id);};
     await assert.rejects(f.runtime.taskControl(f.control()),
       /could not be observed \(T3RpcError timeout orchestration\.subscribeThread: T3Code timeout: orchestration\.subscribeThread\)/);
     assert.deepEqual(f.runtime.store.task(f.taskId),before);
