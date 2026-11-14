@@ -1,19 +1,20 @@
+import { assertSubmissionRouting } from "../planning/submission-routing";
+import { PlanningPromotion } from "./planning-promotion";
 import { createHash } from "node:crypto";
 import type { z } from "zod";
-import { type Store, digest as storeDigest, operationIdForKey } from "../store/store";
+import { type Store, operationIdForKey } from "../store/store";
 import { type Engine } from "../engine";
-import { git, validateSubmission } from "../git/index";
+import { validateSubmission } from "../git/index";
 import type { Submission, Lead } from "../../shared/contracts";
 import { OPERATION_COMPATIBILITY_WAIT_MS, operationIsSettled, type OperationAcceptance, type OperationResult } from "../../shared/operations";
-import { COMPLEXITY_REQUIRED, complexityRefusal } from "../../shared/demand";
-import { leadCheckOperationPayloadSchema, MAX_TITLE_LENGTH, parseHoldUntil, sourcePromotionInputSchema, sourcePromotionOperationPayloadSchema, sourcePromotionOutputSchema, leadSubmit } from "../../shared/contracts";
-import { holdPatch, OPERATOR_HOLD_OWNER } from "../merge/merge-hold";
+import { complexityRefusal } from "../../shared/demand";
+import { leadCheckOperationPayloadSchema, leadSubmit } from "../../shared/contracts";
 import { validateCompletionRecipients } from '../scheduling/cohort';
 import { repositoryOrigin } from "../planning/lanes";
-import { briefDigest } from "../planning/brief";
+import { briefDigest, hasBriefFrontmatter } from "../planning/brief";
 import { now, operationInputHash } from "../store/store";
-import { parseNorthstarDocument, prepareDraftContent, proofOnlyPreferenceWarning, reportOnlyDeliveryRefusal } from "../planning/handoff";
-import { laneListsRepository, normalizeRepositoryOrigin } from "../../shared/lanes";
+import { prepareDraftContent, proofOnlyPreferenceWarning, reportOnlyDeliveryRefusal } from "../planning/handoff";
+import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import type { Leads } from '../planning/leads';
 import type { HostFacade } from "../host/host-facade";
 
@@ -46,7 +47,7 @@ export class RuntimePlanning {
       return { created: this.context.leads.add({ repositories: [repository], title: request.title, body: request.body,
         baseBranch: request.baseBranch, lanes: request.lanes, tags: request.tags, author: request.agent }) };
     })();
-    if ("taskId" in source) return { ...this.promotionReply(source.taskId), reference: this.context.store.numberFor(source.taskId)!.reference };
+    if ("taskId" in source) return { ...this.promotion.promotionReply(source.taskId), reference: this.context.store.numberFor(source.taskId)!.reference };
     if ("leadId" in source) return { lead: this.context.store.lead(source.leadId) };
     let lead = await this.checkLeadAfterMutation(source.created);
     if (lead.checkOperationId) {
@@ -66,7 +67,7 @@ export class RuntimePlanning {
     if (!("accepted" in result)) return result;
     const operation = await this.context.engine.awaitOperation(result.operation.id, Infinity);
     if (operation.state === "succeeded" && operation.result?.taskId)
-      return { ...this.promotionReply(operation.result.taskId), reference: operation.result.reference ?? "" };
+      return { ...this.promotion.promotionReply(operation.result.taskId), reference: operation.result.reference ?? "" };
     throw new Error(`Task promotion ${operation.id}: ${operation.diagnostic || operation.state}; inspect lead.get before retrying`);
   }
 
@@ -78,7 +79,7 @@ export class RuntimePlanning {
     const current = this.context.store.lead(input.id);
     const baseBranchChanged = input.baseBranch !== undefined && input.baseBranch !== current.baseBranch;
     const lead = this.context.leads.edit(input);
-    return !baseBranchChanged && /^---\r?\n/.test(lead.body) && !lead.check ? this.checkLeadAfterMutation(lead) : lead;
+    return !baseBranchChanged && hasBriefFrontmatter(lead.body) && !lead.check ? this.checkLeadAfterMutation(lead) : lead;
   }
   getLead(input: Parameters<Leads["get"]>[0]) { this.context.markStoreAccess(); return this.context.leads.get(input); }
   getLeadSummary(input: Parameters<Leads["getSummary"]>[0]) { this.context.markStoreAccess(); return this.context.leads.getSummary(input); }
@@ -105,7 +106,7 @@ export class RuntimePlanning {
   async checkLead(input: { id:string; repository?:string; baseBranch?:string }, acceptance = true) {
     await this.context.started;
     const lead = this.context.store.lead(input.id);
-    if (!/^---\r?\n/.test(lead.body)) throw new Error("Lead has no brief to check");
+    if (!hasBriefFrontmatter(lead.body)) throw new Error("Lead has no brief to check");
     if (input.baseBranch && input.baseBranch !== lead.baseBranch) throw new Error("Edit the lead's baseBranch before checking it");
     const repository = this.selectLeadRepository(lead,input.repository);
     const checked = await this.checkDraft({ id:this.sourceBriefId("lead",lead.id,repository.origin,briefDigest(lead.body)),
@@ -113,7 +114,7 @@ export class RuntimePlanning {
     return this.context.store.recordLeadCheck(lead.id,lead.version,{...checked.check,baseBranch:lead.baseBranch});
   }
   private async checkLeadAfterMutation(lead: Lead): Promise<Lead> {
-    if (!/^---\r?\n/.test(lead.body)) return lead;
+    if (!hasBriefFrontmatter(lead.body)) return lead;
     if (lead.checkOperationId) {
       const existing = this.context.store.operation(lead.checkOperationId);
       if (existing && !operationIsSettled(existing.state)) {
@@ -162,7 +163,7 @@ export class RuntimePlanning {
       if (lead.checkOperationId || lead.check) throw new Error("Lead check operation changed; reload");
       lead = this.context.store.markLeadCheckPending(lead.id,lead.version,request.digest,operationId);
     }
-    if (!/^---\r?\n/.test(lead.body)) throw new Error("Lead has no brief to check");
+    if (!hasBriefFrontmatter(lead.body)) throw new Error("Lead has no brief to check");
     const repository = this.selectLeadRepository(lead,request.repository);
     const checked = await this.checkDraft({ id:this.sourceBriefId("lead",lead.id,repository.origin,request.digest),
       text:lead.body,repoPath:repository.path,baseBranch:request.baseBranch,originAgentId:this.latestLeadAuthor(lead),attachedLanes:lead.lanes });
@@ -172,7 +173,7 @@ export class RuntimePlanning {
   approveLead(input:{id:string;version:number;digest:string;approver:string;note:string;relayed:boolean}) {
     return this.context.store.transaction(() => {
       const lead = this.context.store.lead(input.id);
-      if (lead.state === "dropped" || !/^---\r?\n/.test(lead.body) || lead.version !== input.version
+      if (lead.state === "dropped" || !hasBriefFrontmatter(lead.body) || lead.version !== input.version
         || briefDigest(lead.body) !== input.digest) throw new Error("Lead version or digest changed; reload before approval");
       if (!lead.check?.ok) throw new Error(`Lead check failed: ${lead.check?.message ?? "Not checked"}`);
       const checkedBaseBranch = lead.check.baseBranch ?? (lead.baseBranch === "main" ? "main" : null);
@@ -189,228 +190,23 @@ export class RuntimePlanning {
       return updated;
     });
   }
-  private sourceBriefId(kind:"lead"|"papercut",id:string,repository:string,digest:string,version?:number) {
+  sourceBriefId(kind:"lead"|"papercut",id:string,repository:string,digest:string,version?:number) {
     return createHash("sha256").update(JSON.stringify([kind,id,repository,digest,...(version ? [version] : [])])).digest("hex");
   }
-  private selectLeadRepository(lead: ReturnType<Store["lead"]>, requested?:string) {
+  selectLeadRepository(lead: ReturnType<Store["lead"]>, requested?:string) {
     if (lead.repositories.length>1 && !requested) throw new Error("Select one repository for this lead");
     const normalized=requested ? normalizeRepositoryOrigin(requested) ?? requested : lead.repositories[0].origin;
     const repository=lead.repositories.find(repo=>repo.origin===normalized||repo.path===normalized);
     if (!repository) throw new Error("Lead does not list that repository");
     return repository;
   }
-  private papercutPromotionRepository(cut: ReturnType<Store["papercut"]>) {
-    const origin=cut.repository.origin;
-    const registered=this.context.store.projects().flatMap(project=>project.repositories)
-      .find(repository=>repository.origin===origin && repository.path.trim());
-    const path=registered?.path || this.context.store.repositoryFor(origin)?.repository.path?.trim() || cut.repository.path;
-    return {...cut.repository,path};
-  }
-  private latestLeadAuthor(lead: ReturnType<Store["lead"]>) {
+  latestLeadAuthor(lead: ReturnType<Store["lead"]>) {
     return this.context.store.leadVersion(lead.id,lead.version).author;
   }
-  private leadApprovalMatches(lead: Lead, digest: string) {
-    const approval=lead.approval, check=lead.check;
-    if (!approval || !check?.ok || approval.version!==lead.version || approval.digest!==digest || !check.planningCommit) return false;
-    const checkedBaseBranch=check.baseBranch ?? (lead.baseBranch==="main"?"main":null);
-    const approvedBaseBranch=approval.baseBranch ?? (lead.baseBranch==="main"?checkedBaseBranch:null);
-    const approvedHead=approval.planningCommit ?? (lead.baseBranch==="main"?check.planningCommit:null);
-    return checkedBaseBranch===lead.baseBranch && approvedBaseBranch===lead.baseBranch
-      && approvedHead===check.planningCommit;
-  }
-  /**
-   * A settled promotion's reply names its task and the host selection that task
-   * took, so the caller can see which host it will run on without a second read.
-   */
-  private promotionReply(taskId: string): { taskId: string; hostId?: string; hostSelection?: import('../../shared/host-selection').HostSelection } {
-    const task = this.context.store.task(taskId);
-    return { taskId: task.id, ...(task.hostSelection ? { hostId: task.hostSelection.hostId, hostSelection: task.hostSelection } : {}) };
-  }
-  promoteLeadToTask(input:{id:string;repository?:string;baseBranch?:string;agent?:string;note:string;board:boolean;hold?:{reason:string;until?:string};identitySource?:z.infer<typeof sourcePromotionInputSchema>["identitySource"]}) {
-    return this.promotePlanningSource("lead",input);
-  }
-  promotePapercutToTask(input:{id:string;repository?:string;baseBranch?:string;agent?:string;note:string;board:boolean;hold?:{reason:string;until?:string};complexity?:z.infer<typeof sourcePromotionInputSchema>["complexity"];identitySource?:z.infer<typeof sourcePromotionInputSchema>["identitySource"]}) {
-    return this.promotePlanningSource("papercut",input);
-  }
-  private async promotePlanningSource(kind:"lead"|"papercut",input:{id:string;repository?:string;baseBranch?:string;agent?:string;note:string;board:boolean;hold?:{reason:string;until?:string};complexity?:z.infer<typeof sourcePromotionInputSchema>["complexity"];identitySource?:z.infer<typeof sourcePromotionInputSchema>["identitySource"]}):Promise<z.infer<typeof sourcePromotionOutputSchema>> {
-    await this.context.started;
-    const request=sourcePromotionInputSchema.parse(input);
-    if (!request.board && (!request.agent?.trim() || !request.note.trim())) throw new Error("Agent promotion requires an agent and operator authorization note");
-    if (request.board && request.agent) throw new Error("Board promotion records operator (board), without an agent");
-    const lead=kind==="lead"?this.context.store.lead(request.id):null;
-    const cut=kind==="papercut"?this.context.store.papercut(request.id):null;
-    if (lead?.state==="dropped" || cut?.state==="closed") throw new Error("Source is closed");
-    if (lead && request.baseBranch && request.baseBranch!==lead.baseBranch) throw new Error("Edit the lead's baseBranch before promotion");
-    if (cut && request.baseBranch && request.baseBranch!=="main") throw new Error("Papercut promotion uses main");
-    const repository=lead?this.selectLeadRepository(lead,request.repository):this.papercutPromotionRepository(cut!);
-    const sourceDigest=lead
-      ? storeDigest(JSON.stringify([lead.version,briefDigest(lead.body)]))
-      : storeDigest(JSON.stringify(cut));
-    const existing=this.context.store.sourcePromotionResult({kind,id:request.id},repository.origin,lead?.version??null,sourceDigest);
-    if (existing) return {...this.promotionReply(existing.taskId!),reference:existing.reference!};
-    if (lead) {
-      if (!/^---\r?\n/.test(lead.body)) throw new Error("Lead has no brief to promote");
-      parseNorthstarDocument(lead.body,"draft");
-      const digest=briefDigest(lead.body);
-      if (request.board && !this.leadApprovalMatches(lead,digest))
-        throw new Error("Approve this lead before promotion");
-    }
-    else if (cut!.title.length > MAX_TITLE_LENGTH) throw new Error("Task title must be 200 characters or fewer");
-    if (lead && request.complexity) throw new Error("A lead names its complexity in its brief (queue.complexity); edit the lead instead");
-    const source={kind,id:request.id,repository:repository.origin,version:lead?.version??null,digest:sourceDigest,
-      ...(lead?{approval:lead.approval}:{})};
-    const operationPayload=sourcePromotionOperationPayloadSchema.parse({type:"source_promote",source,request:{...request,repository:repository.origin}});
-    // Observe an unfinished delivery before considering a fresh checked approval attempt.
-    const unfinished=this.context.store.unfinishedSourcePromotion(source);
-    // A papercut's generated brief carries the requested complexity, so it is part of the attempt's identity.
-    const revision=lead?JSON.stringify([lead.version,briefDigest(lead.body),lead.baseBranch,lead.approval]):JSON.stringify([sourceDigest,request.complexity]);
-    const baseKey=`source-promote:${operationInputHash([kind,request.id,repository.origin,revision])}`;
-    let key=unfinished?.key??baseKey;
-    if (!unfinished) {
-      // A failed attempt whose effect is reconciled is proven not to have
-      // inserted anything, so the same lead may be promoted again under a fresh
-      // key; an uncertain attempt keeps its key and must be reconciled first.
-      for (let retry=1;;retry++) {
-        const prior=this.context.store.operationForKey(key);
-        if (prior?.state!=='failed' || prior.effect?.status!=='reconciled') break;
-        key=`${baseKey}:retry:${retry}`;
-      }
-    }
-    const existingOperation=unfinished??this.context.store.operationForKey(key);
-    // Spec 053: a new promotion names its complexity (a papercut in the request,
-    // a lead in its brief). It is refused before any operation exists, so a retry
-    // that names one is a fresh attempt; an operation already accepted replays.
-    if (!existingOperation) {
-      const named=lead ? parseNorthstarDocument(lead.body,"draft").queue.complexity : request.complexity;
-      if (!named) throw new Error(lead ? `Lead brief: ${COMPLEXITY_REQUIRED}` : COMPLEXITY_REQUIRED);
-    }
-    const payload=existingOperation?this.context.store.operationPayload(existingOperation.id):operationPayload;
-    const acceptance=await this.context.engine.startOperation({key,kind:"source_promote",payload,repoPath:repository.path,hostId:request.hostId});
-    if ("backpressured" in acceptance) return acceptance;
-    const operation=await this.context.engine.awaitOperation(acceptance.operation.id,OPERATION_COMPATIBILITY_WAIT_MS);
-    if (operation.state==="succeeded" && operation.result?.taskId)
-      return {...this.promotionReply(operation.result.taskId),reference:operation.result.reference??""};
-    if (operation.state==="failed") throw new Error(operation.diagnostic||"Task promotion failed");
-    return {accepted:true,operation};
-  }
-  async executeSourcePromotion(payload:unknown, hostId?: string, selection?: import('../../shared/operations').QueueOperation['hostSelection']):Promise<OperationResult> {
-    const parsed=sourcePromotionOperationPayloadSchema.parse(payload);
-    const {source,request}=parsed;
-    const kind=source.kind,input=request;
-    if (!input.board && (!input.agent?.trim() || !input.note.trim())) throw new Error("Agent promotion requires an agent and operator authorization note");
-    if (input.board && input.agent) throw new Error("Board promotion records operator (board), without an agent");
-    if (kind==="lead" && input.complexity) throw new Error("A lead names its complexity in its brief (queue.complexity); edit the lead instead");
-    const lead=kind==="lead"?this.context.store.lead(input.id):null;
-    const cut=kind==="papercut"?this.context.store.papercut(input.id):null;
-    const papercutDigest=cut?storeDigest(JSON.stringify(cut)):null;
-    if (source.id!==input.id || source.repository!==input.repository)
-      throw new Error("Promotion source does not match its request");
-    const existing=this.context.store.sourcePromotionResult({kind,id:source.id},source.repository,source.version,source.digest);
-    if (existing) return existing;
-    if (lead?.state==="dropped" || cut?.state==="closed") throw new Error("Source is closed");
-    if (lead && input.baseBranch && input.baseBranch!==lead.baseBranch) throw new Error("Edit the lead's baseBranch before promotion");
-    if (cut && input.baseBranch && input.baseBranch!=="main") throw new Error("Papercut promotion uses main");
-    const repository=lead?this.selectLeadRepository(lead,input.repository):this.papercutPromotionRepository(cut!);
-    const currentDigest=lead
-      ? storeDigest(JSON.stringify([lead.version,briefDigest(lead.body)]))
-      : storeDigest(JSON.stringify(cut));
-    if (source.version!==(lead?.version??null) || currentDigest!==source.digest)
-      throw new Error(`${kind==="lead"?"Lead":"Papercut"} changed during promotion; reload`);
-    if (lead && source.approval!==undefined && JSON.stringify(source.approval)!==JSON.stringify(lead.approval))
-      throw new Error("Lead approval changed while promotion was queued; reload");
-    if (lead) {
-      if (!/^---\r?\n/.test(lead.body)) throw new Error("Lead has no brief to promote");
-      parseNorthstarDocument(lead.body,"draft");
-    }
-    else if (cut!.title.length > MAX_TITLE_LENGTH) throw new Error("Task title must be 200 characters or fewer");
-    const sourceLanes=(lead??cut)!.lanes;
-    const lanes=sourceLanes.filter(key=>{
-      const lane=this.context.store.laneByKey(key);
-      return lane&&laneListsRepository(lane.repositories,repository.path,repository.origin);
-    });
-    if (kind==="papercut" && !sourceLanes.length) {
-      const project=this.context.store.projectFor(repository.path,repository.origin);
-      if (project) {
-        const currentPlan=this.context.store.plan({project:project.key});
-        if (currentPlan.version>0) {
-          const plan=this.context.store.plan({project:project.key,version:currentPlan.version});
-          const current=plan.entries.find(entry=>{
-            if (entry.horizon!=="now") return false;
-            const lane=this.context.store.laneByKey(entry.lane);
-            return lane&&(lane.status==="active"||lane.status==="paused")&&laneListsRepository(lane.repositories,repository.path,repository.origin);
-          });
-          if (current) lanes.push(current.lane);
-        }
-      }
-    }
-    const papercutApproval=kind==="papercut"
-      ? [input.board ? "operator (board)" : input.agent!.trim(),input.note.trim()].filter(Boolean).join(": ")
-      : null;
-    const text=lead ? lead.body : `---
-title: ${JSON.stringify(cut!.title)}
-repository: ${JSON.stringify(repository.origin)}
-queue_approval: ${JSON.stringify(papercutApproval)}
-queue:
-  lanes: ${JSON.stringify(lanes)}${input.complexity ? `\n  complexity: ${input.complexity}` : ""}
----
-
-# ${cut!.title.replace(/\s+/g," ")}
-
-## Happened
-
-${cut!.happened}
-
-## Impact
-
-${cut!.impact}${cut!.fix?`\n\n## Fix\n\n${cut!.fix}`:""}
-`;
-    if (lead && !/^---\r?\n/.test(text)) throw new Error("Lead has no brief to promote");
-    const digest=briefDigest(text);
-    if (lead && !this.leadApprovalMatches(lead,digest)) {
-      if (input.board) throw new Error("Approve this lead before promotion");
-      // Inside an accepted promotion: its acceptance already settled the complexity requirement.
-      const refreshed=await this.checkLead({id:lead.id,repository:repository.origin,baseBranch:lead.baseBranch},false);
-      if (!refreshed.check?.ok) throw new Error(`Promotion check failed: ${refreshed.check?.message}`);
-      this.approveLead({id:lead.id,version:lead.version,digest,approver:input.agent!,note:input.note,relayed:true});
-    }
-    const expectedApproval=lead?this.context.store.lead(lead.id).approval:null;
-    const checked=await this.checkDraft({id:this.sourceBriefId(kind,input.id,repository.origin,digest,lead?.version),text,
-      repoPath:repository.path,baseBranch:lead?.baseBranch??"main",originAgentId:lead?this.latestLeadAuthor(lead):(input.board?"operator (board)":input.agent!),attachedLanes:(lead??cut)!.lanes},false);
-    if (lead) this.context.store.recordLeadCheck(lead.id,lead.version,{...checked.check,baseBranch:lead.baseBranch});
-    if (!checked.check.ok) throw new Error(`Promotion check failed: ${checked.check.message}`);
-    const promotedDeclaration=parseNorthstarDocument(text,"draft").queue;
-    if(promotedDeclaration.proofOnly){
-      const commit=promotedDeclaration.proofOnly.commit;
-      const baseBranch=lead?.baseBranch??"main";
-      try{
-        await git(repository.path,"fetch","--no-tags","origin",`refs/heads/${baseBranch}`);
-        await git(repository.path,"merge-base","--is-ancestor",commit,"FETCH_HEAD");
-      }catch(error){
-        throw new Error(`Proof-only commit ${commit} is not proved as an ancestor of origin/${baseBranch}; promotion refused (${error instanceof Error?error.message:String(error)})`);
-      }
-    }
-    const approvedLead=lead ? this.context.store.lead(lead.id) : null;
-    if (approvedLead && (approvedLead.version!==lead!.version || briefDigest(approvedLead.body)!==digest
-      || JSON.stringify(approvedLead.approval)!==JSON.stringify(expectedApproval) || !this.leadApprovalMatches(approvedLead,digest)))
-      throw new Error("Lead approval no longer matches the checked base branch and head; approve it again");
-    // The lead's lanes travel with it: promotion used only brief frontmatter lanes, so tasks from
-    // leads filed with `lanes` came out unlaned and their lane read drained while work was live
-    // (consumer-b #321, #324, #325, 2026-10-04).
-    const promotedLanes=[...new Set([...checked.prepared!.submission.lanes,...lanes])];
-    const submission={...checked.prepared!.submission,lanes:promotedLanes,planningSource:{kind,id:input.id},
-      ...(approvedLead?.approval?{leadProvenance:{version:approvedLead.version,approval:approvedLead.approval,
-        earlierDigests:this.context.store.leadVersionDigestsBeforeLatest(approvedLead.id)}}:{})};
-    const expectedSource=papercutDigest??storeDigest(JSON.stringify(this.context.store.lead(input.id)));
-    const owner=input.board?OPERATOR_HOLD_OWNER:(input.agent??"").trim();
-    const until=input.hold?.until?parseHoldUntil(input.hold.until):null;
-    if(input.hold?.until&&!until)throw new Error("A promotion hold's until must be a task ID or an offset timestamp");
-    const initial=input.hold?holdPatch({
-      held:false,phase:"queued",mergeHold:false,holdOwner:null,holdReason:null,holdAt:null,holdGeneration:0,
-      holdUntil:null,holdBlocking:null,originAgentId:owner,holds:{},
-    },"dispatch",owner,input.hold.reason,until):{};
-    return this.context.engine.submitPlanningSource(submission,{kind,id:input.id,repository:repository.origin,digest,expectedSource},
-      {...initial,...(selection ? {hostSelection:selection} : {})},hostId,input.identitySource);
-  }
+  private get promotion() { return new PlanningPromotion(this.context, this); }
+  promoteLeadToTask(input: Parameters<PlanningPromotion["promoteLeadToTask"]>[0]) { return this.promotion.promoteLeadToTask(input); }
+  promotePapercutToTask(input: Parameters<PlanningPromotion["promotePapercutToTask"]>[0]) { return this.promotion.promotePapercutToTask(input); }
+  executeSourcePromotion(...args: Parameters<PlanningPromotion["executeSourcePromotion"]>) { return this.promotion.executeSourcePromotion(...args); }
   importLeads(input: Parameters<Leads["import"]>[0]) { return this.context.leads.import(input); }
   getLaneDocument(input: { key: string; version?: number }) {
     this.context.markStoreAccess();
@@ -450,7 +246,7 @@ ${cut!.impact}${cut!.fix?`\n\n## Fix\n\n${cut!.fix}`:""}
    * promotion Queue already accepted passes false: an operation accepted before
    * Spec 053 required complexity still replays (review #597).
    */
-  private async checkDraft(input:{id:string;text:string;repoPath:string;baseBranch:string;originAgentId:string;attachedLanes?:string[]}, acceptance = true) {
+  async checkDraft(input:{id:string;text:string;repoPath:string;baseBranch:string;originAgentId:string;attachedLanes?:string[]}, acceptance = true) {
     let prepared: Awaited<ReturnType<typeof prepareDraftContent>> | null = null;
     try {
       const repository = await repositoryOrigin(input.repoPath) ?? input.repoPath;
@@ -463,8 +259,7 @@ ${cut!.impact}${cut!.fix?`\n\n## Fix\n\n${cut!.fix}`:""}
       // reports an unusable profile before approval or dispatch ever reads it.
       const stageProfileRefusal = this.context.engine.briefStageProfileRefusal(input.text, submission.scope);
       if (stageProfileRefusal) throw new Error(stageProfileRefusal);
-      const routingConflict = this.context.engine.independentReviewRoutingRefusal(submission);
-      if (routingConflict) throw new Error(routingConflict);
+      assertSubmissionRouting(this.context.engine, submission);
       this.context.store.validateDependencies(submission);
       const origin = await repositoryOrigin(submission.repoPath);
       this.context.store.requireSubmissionLanes(submission,origin);
@@ -493,8 +288,7 @@ ${cut!.impact}${cut!.fix?`\n\n## Fix\n\n${cut!.fix}`:""}
       const { verifyPublishedPlanning } = await import("../git/index");
       await verifyPublishedPlanning(prepared.submission);
       const validated = await validateSubmission(prepared.submission);
-      const routingConflict = this.context.engine.independentReviewRoutingRefusal(prepared.submission);
-      if (routingConflict) throw new Error(routingConflict);
+      assertSubmissionRouting(this.context.engine, prepared.submission);
       const needsRecipients = prepared.submission.notifyOriginOnCloseout || prepared.submission.completionNotificationAgentIds.length > 0;
       if (needsRecipients) await validateCompletionRecipients(prepared.submission, id => this.lookupCompletionRecipient(id, prepared!.submission));
       if (!this.context.store.existing(prepared.submission)) this.context.store.validateDependencies(prepared.submission);

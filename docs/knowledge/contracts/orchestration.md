@@ -717,14 +717,16 @@ Typed pre-send refusals it exports include `ProvenPreSendRefusalError` and
 `RetainedRunRefusal`. **retained-work.ts** reads the retained author's
 receipted results.
 
-**Operations** (`core/planning/operations.ts`). Durable accept, run, settle;
-submission intake; pre-dispatch repair (dispatch-base re-record, validation
-retry). Holds the source-promotion, lead-check and re-key handlers. Enforces
-[Durable effects](#durable-effects-and-unknown-delivery). Pure:
-`operationFailureSettlement` (committed result, deferred validation, pre-send
-receipt, state and effect status). Typed refusals settle failed with a receipt
-whatever their prose says; unexplained failures use the prose classifier.
-Delegates remain on Engine.
+**Operations** (`core/planning/operations.ts`). Durable accept, schedule, run
+and settle. Holds the source-promotion, lead-check and re-key handlers. Enforces
+[Durable effects](#durable-effects-and-unknown-delivery). The pure
+`operationFailureSettlement` in `core/planning/operation-failure.ts` decides from
+the committed result, deferred validation, pre-send receipt, state and effect
+status. Typed refusals settle failed with a receipt whatever their prose says;
+unexplained failures use the prose classifier. `core/planning/source-promotion-reconcile.ts`
+reconciles interrupted source promotion. `core/planning/submission.ts` owns
+submission intake, and `core/planning/planning-repairs.ts` owns dispatch-base
+re-record and validation retry. Delegates remain on Engine.
 
 ### Run-launch owners
 

@@ -37,6 +37,10 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
   into one owner per mechanism, and `bin/nucleus-dependencies.mjs`, `bin/nucleus-dispose.mjs` and
   `bin/nucleus-promote.mjs` were deleted. Their rows in `N5.csv` were re-rated at that PR's head, and
   `hosts/t3code/state.ts` was re-rated with them because an intent entry gained its typed kind and thread.
+- nucleus#1205 (floor 5, 2026-11-14): planning operation settlement, source reconciliation,
+  pre-dispatch repairs and submission intake now have separate owners; runtime promotion is split
+  from the planning facade and the board surfaces share counters and settings. The affected `N3.csv`
+  rows and the touched brief helper were re-rated against the code at the PR head.
 - nucleus#1206 (floor 5, 2026-11-14): the project editor and settings profiles were split by screen,
   form, repository and save-queue responsibility; task holds, attention phases and prerequisite
   reason facts now use shared owners. The changed N6 rows were re-rated at this PR's head.

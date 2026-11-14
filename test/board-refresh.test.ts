@@ -304,6 +304,7 @@ test('the 45 s unsettled counter crosses its boundary with no write and reads a 
     const later = runtime.uiSnapshot({ revision: first.revision }) as BoardCounters;
     assert.equal(later.unchanged, true, 'the projection is still the cached one');
     assert.equal(later.unsettled, 1, 'the stale observation shows without any write');
+    assert.equal(runtime.snapshot().unsettled, later.unsettled, 'both board surfaces use the same live observation');
     // A fresh observation is an observation-only write, made while the clock is past the old
     // window: the board does not rebuild, so a counter reading the kept projection would still
     // report the task unsettled after 46 s, and the counter must read the row instead.
@@ -315,6 +316,7 @@ test('the 45 s unsettled counter crosses its boundary with no write and reads a 
     const observed = runtime.uiSnapshot({ revision: first.revision }) as BoardCounters;
     assert.equal(observed.unchanged, true, 'still the same projection');
     assert.equal(observed.unsettled, 0, 'the fresh observation is read from the row, not the cache');
+    assert.equal(runtime.snapshot().unsettled, observed.unsettled, 'both board surfaces see the fresh observation');
   } finally {
     Date.now = realNow;
     await runtime.stop();
@@ -461,4 +463,20 @@ test('every substantive board write invalidates it and only an observation-only 
       assert.equal(f.store.boardRevision(), board, `${label}: the board revision stays put`);
     }
   } finally { f.close(); }
+});
+
+test('board reports a routing grant reconciliation read failure', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'ns-board-grant-error-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const { QueueRuntime } = await import('../service/runtime-owner');
+  const runtime = new QueueRuntime({ dataDir: dir, timers: false });
+  try {
+    const getMeta = runtime.store.getMeta.bind(runtime.store);
+    runtime.store.getMeta = ((key: string) => {
+      if (key === 'routingGrants') throw new Error('grant storage unavailable');
+      return getMeta(key);
+    }) as typeof runtime.store.getMeta;
+    assert.throws(() => runtime.uiSnapshot(), /grant storage unavailable/);
+    runtime.store.getMeta = getMeta;
+  } finally { await runtime.stop(); }
 });

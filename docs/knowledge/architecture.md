@@ -393,15 +393,14 @@ owner to the rules it enforces.
   `core/workspaces/retired-agent-archive.ts` archives retired errored agents so a
   Paseo workspace stops reporting Failed, and records each unreadable read and
   refused archive on the thread-archive wait lane.
-- `core/planning/operations.ts` holds durable operations: accepting one, scheduling
-  it on its lane, running and settling it (typed pre-send refusals settle
-  definite, unexplained failures by the prose classifier), restart
-  reconciliation, submission intake, and the pre-dispatch repairs (dispatch base
-  re-record, validation retry). It holds the source-promotion, lead-check and
-  re-key handlers. Same-name `Engine` methods delegate to its `Operations`. A
-  failed run settles by `operationFailureSettlement`, a pure function over the
-  facts re-read after the throw: a committed result, a deferred validation, the
-  pre-send receipt that proves a refusal, and the state and effect status.
+- `core/planning/operations.ts` accepts, schedules, runs and settles durable
+  operations and holds the source-promotion, lead-check and re-key handlers.
+  `core/planning/operation-failure.ts` classifies a failed run from its re-read
+  facts, including committed results, deferred validation, pre-send receipts and
+  effect status. `core/planning/source-promotion-reconcile.ts` reconciles source
+  promotion after interruption. `core/planning/submission.ts` owns submission
+  intake; `core/planning/planning-repairs.ts` owns dispatch-base re-record and
+  validation retry. Same-name `Engine` methods delegate to these owners.
 - `core/workspaces/workspace-provisioning.ts` creates, compares and removes a task's
   sibling worktrees, refreshes checkout siblings, prepares its worktree links
   and reads its stash list. Same-name `Engine` methods delegate to it.

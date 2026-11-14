@@ -1,38 +1,30 @@
+import { activeSourcePromotions, sourceOwnerKey, reconcileSourcePromotion } from "./source-promotion-reconcile";
+export { SOURCE_PROMOTION_NOT_DELIVERED } from "./source-promotion-reconcile";
+import { isTransportFailure } from "../../shared/transport";
+import { assertSupportedSubmission, PlanningSubmission } from "./submission";
+import { PlanningRepairs } from "./planning-repairs";
+import { operationFailureSettlement, typedPreSendRefusal } from "./operation-failure";
+export { operationFailureSettlement } from "./operation-failure";
+export type { OperationFailureSettlement } from "./operation-failure";
 import { currentServiceBuildId } from "../../shared/service/build";
-import { pidAlive } from '../machine/process-identity';
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import type { Task } from "../../shared/contracts";
 import { leadCheckOperationPayloadSchema, reviewEntryInputSchema, sourcePromotionOperationPayloadSchema, submissionRecordFromLegacy, submissionSchema, taskControlInputSchema, type Submission } from "../../shared/contracts";
 import { OPERATION_COMPATIBILITY_WAIT_MS, operationIsSettled, type OperationAcceptance, type OperationResult, type QueueOperation } from "../../shared/operations";
 import { repositoryRekeyInputSchema, type RepositoryRekeyInput } from "../../shared/repository-rekey";
-import { isTransportFailure } from "../../shared/transport";
 import type { IdentitySource } from "../../shared/host-kind";
-import { validateCompletionRecipients } from "../scheduling/cohort";
 import type { Engine } from "../engine";
-import { git, proveRebindableDispatchBase, SubmissionUnavailableError, validateSubmission, verifyPublishedPlanning } from "../git/index";
-import { isStaleIntegrationBaseRefusal } from "../hooks/hooks";
+import { SubmissionUnavailableError } from "../git/index";
 import { LANE_PRIORITY_OPERATION } from "../scheduling/lane-priorities";
 import { repositoryOrigin } from "./lanes";
 import type { Adapter } from "../host/adapter";
-import { RepositoryRekeyRefused } from "./repository-rekey";
-import { STEPS_RETIRED_REASON } from "../recovery/retired-steps";
-import { bindReviewEntry, ReviewEntryRefusal, type ReviewEntryAdapter } from "../review/review-entry";
-import { RestartRefusal } from "../verbs/owner-verbs";
+import { bindReviewEntry, type ReviewEntryAdapter } from "../review/review-entry";
 import { DurableFenceRefusal } from "../intake/run-settlement";
-import { stageDeclarationFromBrief } from "../stages";
 import { digest, now, operationIdForKey, operationInputHash, provedPreSendHistory } from "../store/store";
-import { ProvenPreSendRefusalError, RetainedRunRefusal } from "../recovery/task-reasons";
-import { ExternalMergeRefusal } from "../verbs/moves";
 import { hostIndependentControlRefusal } from "../host/host-independent-refusals";
 import { ParkedRestartPreSendRefusal } from "../verbs/restart";
-import { workspaceCreationRefusal } from "../workspaces/workspace-allocation";
-import { worktreeLinksForBinding, worktreeLinksForClearedIntent } from "../workspaces/worktree-links";
 
-const activeSourcePromotions = new Set<string>();
-const sourceOwnerKey = (id: string) => `sourcePromotionOwner:${id}`;
-
-export const SOURCE_PROMOTION_NOT_DELIVERED = "Source promotion reconciled after restart: no task or source insert was committed";
 /** Deterministic rejection vs. uncertain external outcome, for the operation state. */
 /** Lane key for an accepted operation: task-scoped commands share the task's exclusive lane. */
 function operationLaneKey(payload: unknown, operation: QueueOperation): string {
@@ -50,94 +42,8 @@ function operationLaneKey(payload: unknown, operation: QueueOperation): string {
   const taskId = operation.taskId ?? controlTaskId ?? removeTaskId ?? null;
   return taskId ? `task:${taskId}` : `operation:${operation.id}`;
 }
-/** Prose classifier for unexplained failures only; typed pre-binding refusals never reach it. */
-const uncertainOperationError = (message: string) => /uncertain|unknown|timed out|timeout|connection|socket|transport|interrupted|ambiguous/i.test(message);
-/** One removal payload shape, read by the host-independent refusal and by the removal itself. */
+/** One removal payload shape, shared by refusal and execution. */
 const taskRemoveOperationPayloadSchema = z.object({ type: z.literal("task_remove"), taskId: z.string().min(1).max(160), version: z.number().int().positive() }).strict();
-/**
- * A typed refusal is Queue's own gate answering before any effect: the class
- * carries the proof that nothing was bound or sent, whatever the prose says.
- * Classification reads that proof, never the diagnostic's words (papercut
- * 4b285a6e: the retained-run gate's own "uncertain delivery" prose settled a
- * definite pre-send refusal as an unknown delivery). An untyped failure keeps
- * the prose classifier and the pre-send boundary evidence.
- */
-const typedPreSendRefusal = (error: unknown): boolean =>
-  error instanceof ProvenPreSendRefusalError || error instanceof ReviewEntryRefusal
-  || error instanceof ExternalMergeRefusal || error instanceof RestartRefusal || error instanceof RepositoryRekeyRefused
-  || error instanceof RetainedRunRefusal || error instanceof ParkedRestartPreSendRefusal || error instanceof DurableFenceRefusal;
-
-/**
- * How one failed operation settles, from the facts `runOperation` re-reads after
- * the throw. A handler may have committed its own durable result; a submission
- * or review entry may defer validation; Queue's own pre-send refusal keeps its
- * proof; and everything else settles from its pre-send boundary evidence, never
- * from prose alone. The caller applies the effects in this order.
- */
-export type OperationFailureSettlement =
-  | { kind: "already_committed" }
-  | { kind: "defer_git_transient" }
-  | { kind: "defer_validation" }
-  | { kind: "settle";
-      /** The pre-send receipt that proves the refusal, when one applies. */
-      receipt: "parked_restart" | "typed_refusal" | null;
-      state: "failed" | "needs_attention";
-      /** `keep` retains the effect the settled record already holds. */
-      effect: "reconciled" | "uncertain" | "keep" | null };
-/**
- * A recorded pre-send receipt always belongs to a typed refusal, and both settle
- * failed, so the settlement does not depend on whether the receipt write itself
- * succeeded. `deferGitTransient` is asked only where today's order asks it: after
- * the committed result, before any other deferral, and only for a submission or
- * review entry.
- */
-export function operationFailureSettlement(facts: {
-  /** The handler committed its result with a reconciled effect before any send boundary. */
-  committed: boolean;
-  /** The failed operation is a submission or a review entry. */
-  submissionDeferrable: boolean;
-  /** A transport failure or `SubmissionUnavailableError` left validation unread. */
-  validationUnavailable: boolean;
-  /** Every proof a parked restart's rollback receipt requires. */
-  parkedRestartProven: boolean;
-  /** Every proof any other typed pre-send refusal's receipt requires. */
-  typedRefusalProven: boolean;
-  /** Queue's own gate answered before anything was bound or sent. */
-  typedPreSendRefusal: boolean;
-  /** A send boundary was crossed, so only observed evidence settles it. */
-  preSendBoundaryStarted: boolean;
-  /** The retry was refused by an owned-tool hold, which is definite whatever its prose. */
-  ownedToolRetryRefused: boolean;
-  /** A source promotion whose own insert is provably absent refused before committing. */
-  sourcePromotionAbsent?: boolean;
-  /** The settled record's effect changed since its intent, so no failure may rewrite it. */
-  effectChangedSinceIntent: boolean;
-  hasEffect: boolean;
-  message: string;
-}, deferGitTransient: () => boolean): OperationFailureSettlement {
-  // A handler may atomically commit its durable operation with its local
-  // transition. A later reporting failure cannot undo that committed result.
-  if (facts.committed) return { kind: "already_committed" };
-  if (facts.submissionDeferrable && deferGitTransient()) return { kind: "defer_git_transient" };
-  if (facts.submissionDeferrable && facts.validationUnavailable) return { kind: "defer_validation" };
-  // Record the proof before settlement; an interrupted writer is fenced on restart.
-  const receipt = facts.parkedRestartProven ? "parked_restart" as const
-    : facts.typedRefusalProven ? "typed_refusal" as const : null;
-  // A parked restart's refusal is raised by read-only verification or a
-  // transaction that rolls back, so the typed refusal itself is the proof that
-  // nothing was bound or sent. Its own prose never decides attention, and a
-  // receipt it could not record leaves a definite refusal definite (papercut
-  // 4b285a6e). A fence refusal (`DurableFenceRefusal`) is the same definite
-  // class: its prose — "its delivery is unknown" and kin — never re-classifies
-  // Queue's own pre-send refusal as an unknown effect.
-  const state = facts.ownedToolRetryRefused || facts.sourcePromotionAbsent ? "failed"
-    : facts.preSendBoundaryStarted && !facts.typedPreSendRefusal ? "needs_attention"
-    : facts.typedPreSendRefusal ? "failed"
-    : uncertainOperationError(facts.message) ? "needs_attention" : "failed";
-  const effect = facts.effectChangedSinceIntent ? "keep" as const
-    : !facts.hasEffect ? null : state === "needs_attention" ? "uncertain" as const : "reconciled" as const;
-  return { kind: "settle", receipt, state, effect };
-}
 
 /**
  * Durable operations: accept, schedule, run and settle a generic operation,
@@ -215,9 +121,7 @@ export class Operations {
   startSubmission(submission: Submission, requirePushedPlanning = false): Promise<OperationAcceptance> {
     const key = `submit:${submission.submissionId}`;
     const alreadyAccepted = Boolean(this.store.operation(operationIdForKey(key))) || Boolean(this.store.existing(submission));
-    if (!alreadyAccepted && submission.responsible === false) throw new Error("responsible: false is no longer supported; every task runs the responsible lifecycle");
-    if (!alreadyAccepted && submission.manualVerification === true) throw new Error("manualVerification is no longer available; every task runs the responsible lifecycle");
-    if (!alreadyAccepted && (submission.reviewVerdicts !== undefined || submission.reviewPassGate !== undefined)) throw new Error("reviewVerdicts and reviewPassGate are no longer available; state the outcome and acceptance in prose in the brief, and use mergeHold for a needed hold");
+    if (!alreadyAccepted) assertSupportedSubmission(submission);
     const legacy = { type: "submit" as const, submission };
     const pushed = { ...legacy, requirePushedPlanning: true };
     const prior = this.store.operation(operationIdForKey(key));
@@ -270,52 +174,8 @@ export class Operations {
     }
     for (const operation of this.store.operations({ states: ["pending", "running"] })) this.engine.scheduleOperation(operation.id);
   }
-  /** A source insert and its lead target commit in one store transaction, so the target is an absence proof. */
   reconcileSourcePromotion(operation: QueueOperation): void {
-    if (this.activeOperations.has(operation.id)) {
-      this.store.transaction(() => {
-        const current = this.store.operation(operation.id);
-        if (current?.state !== 'running' || current.effect?.kind !== 'source_promotion') return;
-        const diagnostic = 'Source promotion is still in flight; its outcome is uncertain';
-        this.store.putOperation({ ...current, diagnostic, effect: { ...current.effect, status: 'uncertain', result: diagnostic, resultAt: now() } });
-      });
-      return;
-    }
-    if (operation.kind !== "source_promote" || !operation.effect || operation.effect.kind !== "source_promotion"
-      || !["intent", "uncertain"].includes(operation.effect.status)) return;
-    try {
-      const payload = sourcePromotionOperationPayloadSchema.parse(this.store.operationPayload(operation.id));
-      this.store.transaction(() => {
-        const current = this.store.operation(operation.id);
-        if (!current || current.kind !== "source_promote" || !["running", "needs_attention"].includes(current.state)
-          || !current.effect || current.effect.kind !== "source_promotion"
-          || current.effect.target !== current.id || !["intent", "uncertain"].includes(current.effect.status)
-          || operationIdForKey(current.key) !== current.id || operationInputHash(payload) !== current.inputHash) return;
-        const effect = current.effect;
-        const result = this.store.sourcePromotionResult(payload.source, payload.source.repository,
-          payload.source.version, payload.source.digest);
-        if (result) {
-          this.store.putOperation({ ...current, state: "succeeded", result, settledAt: now(), diagnostic: "",
-            effect: { ...effect, status: "reconciled", result: "Committed task found from source identity", resultAt: now() } });
-        } else {
-          const owner = this.store.getMeta(sourceOwnerKey(current.id)) as { pid?: unknown } | null;
-          const pid = typeof owner?.pid === 'number' && Number.isInteger(owner.pid) && owner.pid > 0 ? owner.pid : null;
-          // A recorded owner that is this process is proved not to be mid-commit
-          // once no lane here is running it: the insert only happens inside that
-          // operation's own handler, so absence now is absence for good.
-          const idleHere = pid === process.pid && !activeSourcePromotions.has(current.id);
-          const absent = pid !== null && (!pidAlive(pid) || idleHere);
-          if (!absent) {
-            const diagnostic = 'Source promotion outcome is uncertain: its executing process may still commit';
-            this.store.putOperation({ ...current, state: current.state === 'running' && activeSourcePromotions.has(current.id) ? 'running' : 'needs_attention',
-              diagnostic, effect: { ...effect, status: 'uncertain', result: diagnostic, resultAt: now() } });
-            return;
-          }
-          this.store.putOperation({ ...current, state: "failed", result: null, settledAt: now(), diagnostic: SOURCE_PROMOTION_NOT_DELIVERED,
-            effect: { ...effect, status: "reconciled", result: SOURCE_PROMOTION_NOT_DELIVERED, resultAt: now() } });
-        }
-      });
-    } catch { /* Ambiguous source history remains in attention for operator resolution. */ }
+    reconcileSourcePromotion(this.store, operation, this.activeOperations);
   }
   scheduleOperation(id: string): void {
     const operation = this.store.operation(id);
@@ -590,136 +450,11 @@ export class Operations {
     const control = payload as { control?: { action?: string } } | null;
     return { kind: "task_control", target: control?.control?.action ?? "", intentAt: now(), status: "intent", result: null, resultAt: null };
   }
-  /**
-   * Re-record a task's dispatch base to the worktree head when nothing was ever pinned to the old one.
-   *
-   * `planningBase` is recorded when the handoff is submitted and the worker worktree must sit exactly
-   * on it. If main advances between that record and the workspace creation - a coordinator's own
-   * handoff push is enough - the worktree lands on the newer head and dispatch refuses forever, while
-   * restart's validation replay refuses because a workspace is visible. There is no worker agent, run, branch or
-   * PR to preserve in that state, so the repair is to re-record the base, gated on the proofs in
-   * proveRebindableDispatchBase: clean worktree on the queue-owned branch, head descending from the
-   * recorded base, and the submitted handoff present at that head.
-   */
-  async rerecordPlanningBase(input: { taskId: string; version: number }): Promise<Task> {
-    const current = this.store.task(input.taskId);
-    if (current.removedAt) throw new Error("Task was removed from the queue");
-    if (current.version !== input.version) throw new Error("Task changed; refresh before retrying");
-    // A recovery run is not a worker: it exists precisely because an uncertain creation had to be
-    // diagnosed, and it proves the absence of a worker agent and worker run. Gating on any run at all
-    // refused the state the control was built for.
-    if (current.agentIntent || current.agentId)
-      throw new Error("A worker agent already exists; a dispatch base is only re-recorded before any worker exists");
-    const taskRuns = this.store.runs(current.id);
-    if (taskRuns.some(run => run.role !== "recovery"))
-      throw new Error("A worker run already exists; a dispatch base is only re-recorded before any worker exists");
-    if (taskRuns.some(run => !run.released))
-      throw new Error("A run is still in flight; a dispatch base is only re-recorded once the task is settled");
-    if (current.prUrl || current.prHead || current.resumePrNumber)
-      throw new Error("A PR identity already exists; resolve the dispatch instead of re-recording its base");
-    if (!current.workspaceIntent || !current.workspaceId || !current.directory)
-      throw new Error("Re-recording a dispatch base requires the recorded workspace");
-    if (this.engine.stopped || this.store.getMeta("paused")) throw new Error("A dispatch base cannot be re-recorded while the queue is paused");
-    const newBase = await git(current.directory, "rev-parse", "HEAD");
-    await proveRebindableDispatchBase(current, current.directory, newBase);
-    return this.store.transaction(() => {
-      const latest = this.store.task(current.id);
-      if (latest.version !== current.version || latest.planningBase !== current.planningBase || latest.agentIntent || latest.agentId ||
-        latest.workspaceId !== current.workspaceId || latest.prUrl || latest.prHead)
-        throw new Error("Task changed during dispatch base re-record; retry");
-      return this.store.update(latest.id, {
-        phase: "queued", planningBase: newBase,
-        reason: `Dispatch base re-recorded to ${newBase}; dispatching from the current integration head`,
-      }, "planning_base_rerecorded", `${current.planningBase} → ${newBase}`);
-    });
+  rerecordPlanningBase(input: Parameters<PlanningRepairs["rerecordPlanningBase"]>[0]) {
+    return new PlanningRepairs(this.engine).rerecordPlanningBase(input);
   }
-
-  async retryValidation(input: { taskId: string; version: number; rebindWorkspaceId?: string; removeOrphanWorkspace?: boolean; settleFences?: { detail: string; runIds: string[]; displacedRunIds?: string[] } }): Promise<Task> {
-    const current = this.store.task(input.taskId);
-    if (current.removedAt) throw new Error("Task was removed from the queue");
-    if (current.version !== input.version) throw new Error("Task changed; refresh before retrying");
-    this.engine.rejectFenced(current, "validation retry");
-    if (!["queued", "needs_attention", "blocked", "error"].includes(current.phase) || current.entrypoint === "review")
-      throw new Error("Validation retry requires an initial pre-dispatch task");
-    if (current.agentIntent || current.agentId) throw new Error("A worker creation is already in flight; uncertain creation cannot be replayed");
-    // The same settled rule the restart shape uses (nucleus#1147): only an unreleased
-    // run owns the task. A released run, historical or not, is a previous owner move's
-    // history, and the retained workspace is verified before any new worker starts.
-    if (current.completion || current.prUrl || current.prHead || current.resumePrNumber || current.resolution.mergeIntent ||
-        current.resolution.currentRunId || current.resolution.recoveryActive || this.store.runs(current.id).some(run => !run.released))
-      throw new Error("Validation retry requires settled pre-dispatch state with no worker or PR");
-    // Round 4: re-admission is state; the scheduler waits for unpause to dispatch.
-    if (this.engine.stopped) throw new Error("Validation cannot be retried while Nucleus is stopping");
-    let retained = false;
-    let rebound: { id: string; directory: string } | null = null;
-    let bound: { id: string; directory: string } | null = null;
-    let displaced: { id: string; directory: string; branch: string } | null = null;
-    const targetOwnedElsewhere = (id: string, directory: string) => this.store.tasks().some(other => other.id !== current.id &&
-      (other.workspaceId === id || other.directory === directory || other.resolution.coordinatorWorkspaceId === id ||
-       other.resolution.closeoutWorkspaceId === id)) || this.store.workspaceUsedByOtherTaskRun(current.id, id);
-    if (input.rebindWorkspaceId && (!current.workspaceIntent || !current.workspaceId || !current.directory))
-      throw new Error("Workspace rebind requires a recorded workspace to preserve");
-    if (current.workspaceIntent) {
-      const found = await this.adapter.findWorkspaces(current);
-      if (found.length) {
-        const targetId = input.rebindWorkspaceId ?? current.workspaceId;
-        const matches = found.filter(workspace => workspace.id === targetId);
-        if (!current.workspaceId || !current.directory || matches.length !== 1 || !matches[0].directory ||
-            (targetId === current.workspaceId && matches[0].directory !== current.directory))
-          throw new Error("Visible workspace does not uniquely match the task's recorded workspace and directory");
-        if (input.rebindWorkspaceId && input.rebindWorkspaceId !== current.workspaceId) {
-          const old = found.filter(workspace => workspace.id === current.workspaceId);
-          if (old.length !== 1 || old[0].directory !== current.directory || matches[0].directory === current.directory)
-            throw new Error("Displaced workspace identity must remain visible at its recorded directory");
-          if (targetOwnedElsewhere(targetId!, matches[0].directory))
-            throw new Error("Rebind target is referenced by another task");
-          displaced = { id: current.workspaceId, directory: current.directory,
-            branch: await git(current.directory, "branch", "--show-current") };
-          rebound = matches[0];
-        }
-        await this.adapter.verifyWorkspace(current, matches[0].directory);
-        retained = true;
-      } else if (current.workspaceId || current.directory) {
-        throw new Error("The recorded workspace is not visible; reconcile its identity before retrying");
-      } else if (this.adapter.inspectWorkspaceCreation) {
-        const classified = await this.adapter.inspectWorkspaceCreation(current);
-        if (classified.kind === "found_done") {
-          bound = await this.adapter.createWorkspace(current);
-          await this.adapter.verifyWorkspace(current, bound.directory);
-          retained = true;
-        } else if (classified.kind === "partial") {
-          const orphan = classified.orphan;
-          if (!input.removeOrphanWorkspace || !this.adapter.removeOrphanWorkspace)
-            throw new Error(workspaceCreationRefusal(classified));
-          await this.adapter.removeOrphanWorkspace(current, orphan);
-          this.store.event(current.id, "orphan_workspace_removed", JSON.stringify(orphan));
-        } else if (classified.kind !== "absent") {
-          throw new Error(workspaceCreationRefusal(classified));
-        }
-      }
-    } else if (current.workspaceId || current.directory) {
-      throw new Error("Recorded workspace has no creation intent; reconcile its identity before retrying");
-    }
-    return this.store.transaction(() => {
-      const latest = this.store.task(current.id);
-      if (latest.version !== current.version || this.engine.stopped) throw new Error("Task changed during validation verification; retry");
-      // Spec 050 (#3569): the settling restart supersedes its admission fences
-      // atomically with the re-admission; a refusal inside rolls both back.
-      if (input.settleFences) this.engine.settleVerbFences(current.id, input.settleFences);
-      if (rebound && displaced) {
-        if (targetOwnedElsewhere(rebound.id, rebound.directory)) throw new Error("Rebind target acquired another task owner during verification");
-        this.store.setMeta(`displacedDispatchWorkspace:${current.id}:${displaced.id}`, displaced);
-        this.store.update(current.id, { workspaceId: rebound.id, directory: rebound.directory },
-          "dispatch_workspace_rebound", JSON.stringify({ from: displaced, to: rebound }));
-      } else if (bound) {
-        this.store.update(current.id, { workspaceId: bound.id, directory: bound.directory, ...worktreeLinksForBinding(this.store.task(current.id), { workspaceId: bound.id, directory: bound.directory }) }, "workspace_created", bound.id);
-      }
-      const reason = retained ? "Retained workspace verified; validation retry requested" : current.workspaceIntent
-        ? "Uncertain workspace creation is provably absent; replaying the same create" : "Validation retry requested";
-      // Clearing a recorded intent carries only the eligibility it recorded (no backfill).
-      if (!retained) { const cleared = worktreeLinksForClearedIntent(this.store.task(current.id)); if (cleared.worktreeLinks) this.store.update(current.id, cleared); }
-      return this.resolution.returnToDispatch(this.store.task(current.id), retained, reason);
-    });
+  retryValidation(input: Parameters<PlanningRepairs["retryValidation"]>[0]) {
+    return new PlanningRepairs(this.engine).retryValidation(input);
   }
 
   async performOperation(operation: QueueOperation, payload: unknown): Promise<OperationResult> {
@@ -788,64 +523,8 @@ export class Operations {
   async submitPlanningSource(submission: Submission, source: { kind:"lead"|"papercut"; id:string; repository:string; digest:string; expectedSource:string }, initial: Partial<Task> = {}, hostId?: string, identitySource?: IdentitySource): Promise<OperationResult> {
     return this.engine.performSubmit(submission, false, { source, initial, ...(identitySource ? { identitySource } : {}) }, hostId);
   }
-  async performSubmit(submission: Submission, requirePushedPlanning = false, promotion?: {source:{kind:"lead"|"papercut";id:string;repository:string;digest:string;expectedSource:string}; initial?: Partial<Task>; identitySource?: IdentitySource}, hostId?: string, hostSelection?: QueueOperation['hostSelection']): Promise<OperationResult> {
-    const originForSelection = promotion?.source.repository ?? await repositoryOrigin(submission.repoPath).catch(() => null);
-    hostId ??= this.engine.selectIngressHost(submission.hostId, submission.repoPath, originForSelection);
-    // A replay after a lost response resolves the durable submission identity
-    // before any remote validation or insertion.
-    const existing = promotion ? null : this.store.existing(submission);
-    if (existing) return { taskId: existing.id, taskVersion: existing.version, phase: existing.phase, number: existing.number, reference: existing.reference };
-    if (submission.responsible === false) throw new Error("responsible: false is no longer supported; every task runs the responsible lifecycle");
-    if (submission.manualVerification === true) throw new Error("manualVerification is no longer available; every task runs the responsible lifecycle");
-    if (submission.reviewVerdicts !== undefined || submission.reviewPassGate !== undefined) throw new Error("reviewVerdicts and reviewPassGate are no longer available; state the outcome and acceptance in prose in the brief, and use mergeHold for a needed hold");
-    if (submission.brief && stageDeclarationFromBrief(submission.brief.text)) throw new Error(STEPS_RETIRED_REASON);
-    const origin = await repositoryOrigin(submission.repoPath);
-    if (requirePushedPlanning) await verifyPublishedPlanning(submission);
-    const validated = await validateSubmission(submission);
-    const raced = promotion ? null : this.store.existing(submission);
-    if (raced) return { taskId: raced.id, taskVersion: raced.version, phase: raced.phase, number: raced.number, reference: raced.reference };
-    this.store.requireSubmissionLanes(submission, origin);
-    const routingConflict = this.engine.independentReviewRoutingRefusal(submission);
-    if (routingConflict) throw new Error(routingConflict);
-    // Resolving recipients is a live agent lookup, so only a submission that actually
-    // notifies needs it. Doing it unconditionally put a daemon round trip - and its 15 s
-    // liveness timeout - in front of every accepted handoff, so a flapping transport failed
-    // the submission and left no task at all.
-    const needsRecipients = Boolean(submission.notifyOriginOnCloseout) || submission.completionNotificationAgentIds.length > 0;
-    // The origin identity's own source proved its host; it is evidence about that
-    // identity only, so an offline host that has no part in it cannot turn a
-    // decidable origin into an ambiguous one.
-    const originIdentity = promotion?.identitySource ?? submission.originIdentity;
-    const originHostId = await this.engine.identifyOriginHost(submission.originAgentId, originIdentity);
-    if (needsRecipients && !originHostId) throw new SubmissionUnavailableError("Origin host is unknown or ambiguous");
-    const resolved = needsRecipients ? await validateCompletionRecipients(submission, async id => {
-      const identitySource = id === submission.originAgentId ? originIdentity : undefined;
-      const host = await this.engine.identifyOriginHost(id, identitySource);
-      if (!host) throw new SubmissionUnavailableError("Completion recipient host is unknown or ambiguous");
-      return this.engine.withHost(host, () => this.engine.host.originAgent(id));
-    }) : null;
-    // A parsed refusal is a ruling and stops the submission. An operational failure - the
-    // transport, a stale integration base - is not: the task is created queued and the same
-    // hook runs again at dispatch.
-    try {
-      await this.hooks.previewPreDispatch(submission, validated.handoffText, validated.planningBase);
-    } catch (error) {
-      const message = String(error instanceof Error ? error.message : error);
-      if (!isTransportFailure(error) && !isStaleIntegrationBaseRefusal(message)) throw error;
-    }
-    const initial = {
-      ...(resolved ? { creatorCompletionRecipients: resolved.recipients } : {}),
-      ...(promotion ? promotion.initial ?? {} : {}),
-      ...(hostSelection ? { hostSelection } : {}),
-      originHostId,
-    };
-    const inserted = promotion
-      ? this.store.promoteSource({kind:promotion.source.kind,id:promotion.source.id},promotion.source.repository,promotion.source.digest,promotion.source.expectedSource,submission,hostId ?? "",validated.planningBase,origin,initial)
-      : this.store.insert(submission, hostId ?? "", validated.handoffText, validated.planningBase, initial, undefined, origin);
-    if ("taskId" in inserted) return inserted;
-    const task = this.store.update(inserted.id, { originWorkspaceId: resolved?.origin?.workspaceId ?? null });
-    void this.engine.cleanContext(() => this.engine.wakeTask(task.id));
-    void this.engine.cleanContext(() => this.engine.wakeRepository(task.repoPath));
-    return { taskId: task.id, taskVersion: task.version, phase: task.phase, number: task.number, reference: task.reference };
+  performSubmit(...args: Parameters<PlanningSubmission["performSubmit"]>) {
+    return new PlanningSubmission(this.engine).performSubmit(...args);
   }
+
 }
