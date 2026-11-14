@@ -103,7 +103,7 @@ function fixture(notifyOriginOnCloseout=false, mergeHold=false, uncertainMergeRe
   }
   const step=()=>stepEngine(engine);
   const reportStep=(status:Completion['status'], prNumber=1)=>report(status,prNumber,false);
-  return {store,engine,adapter,task,current,run,report,step,reportStep,states,idle,tokens,creates,sends,continuations,notices,prompts,reruns,dir,counts:()=>({merges,syncs,reviewChecks}),setHead:(h:string)=>{currentHead=source?source.pushRevision(h):h;if(source){localHead=currentHead;remoteHead=currentHead}return currentHead},setLocalHead:(h:string)=>{localHead=h},setRemoteHead:(h:string)=>{remoteHead=h},close:async()=>{await engine.stop();if(source)source.close();else{store.close();rmSync(dir,{recursive:true,force:true})}}};
+  return {store,engine,adapter,task,current,run,report,step,reportStep,states,idle,tokens,creates,sends,continuations,notices,prompts,reruns,dir,counts:()=>({merges,syncs,reviewChecks}),setHead:(h:string)=>{currentHead=source?source.pushRevision(h):h;if(source){localHead=currentHead;remoteHead=currentHead}return currentHead},setObservedHead:(h:string)=>{currentHead=h;localHead=h;remoteHead=h;return h},setLocalHead:(h:string)=>{localHead=h},setRemoteHead:(h:string)=>{remoteHead=h},close:async()=>{await engine.stop();if(source)source.close();else{store.close();rmSync(dir,{recursive:true,force:true})}}};
 }
 
 function expireWorkspaceArchiveBackoff(f:ReturnType<typeof fixture>) {
@@ -242,6 +242,67 @@ test('the merge gate refuses a PR carrying another unfinished task\'s recorded h
   assert.ok(current.reason.includes(wip.title),current.reason);
   assert.match(current.reason,/Rebase onto main without them/);
   assert.ok(f.store.events(current.id).some(event=>event.kind==='pre_merge_refused'&&event.detail.startsWith('cross-task carry')),current.reason);
+  assert.equal(f.counts().merges,0);
+ }finally{await f.close()}
+});
+test('the merge gate ignores another task stacked on this PR but still catches this PR stacked on another task',async()=>{
+ const stackedOnThis=fixture(false,false,undefined,true);try{
+  const aHead=stackedOnThis.current().prHead!;
+  recordRealSourceAcceptedReview(stackedOnThis,aHead);
+  const childWorkspace=join(stackedOnThis.dir,'stacked-child');
+  execFileSync('git',['worktree','add','-q','-b','feature/stacked-child',childWorkspace,aHead],{cwd:join(stackedOnThis.dir,'repo')});
+  writeFileSync(join(childWorkspace,'child.txt'),'child task change\n');
+  const childGit=(...args:string[])=>execFileSync('git',args,{cwd:childWorkspace,encoding:'utf8'}).trim();
+  childGit('add','child.txt');childGit('commit','-m','child task change');
+  const childHead=childGit('rev-parse','HEAD');
+  insertCarryingTask(stackedOnThis,'Task stacked on this PR',childHead);
+  await stackedOnThis.engine.resolution.advance(stackedOnThis.current());
+  assert.equal(stackedOnThis.counts().merges,1,'the lower task can merge without rebasing');
+ }finally{await stackedOnThis.close()}
+
+ const stackedOnOther=fixture(false,false,undefined,true);try{
+  const aHead=stackedOnOther.current().prHead!;
+  const childHead=stackedOnOther.setHead('PR stacked above another task');
+  const other=insertCarryingTask(stackedOnOther,'Task this PR is stacked on',aHead);
+  recordRealSourceAcceptedReview(stackedOnOther,childHead);
+  await stackedOnOther.engine.resolution.advance(stackedOnOther.current());
+  assert.equal(stackedOnOther.current().phase,'changes_requested');
+  assert.ok(stackedOnOther.current().reason.includes(other.title),stackedOnOther.current().reason);
+  assert.match(stackedOnOther.current().reason,/Rebase onto main without them/);
+  assert.equal(stackedOnOther.counts().merges,0);
+ }finally{await stackedOnOther.close()}
+});
+test('the merge gate flags sibling PRs sharing an unfinished third task\'s commit',async()=>{
+ const f=fixture(false,false,undefined,true);try{
+  const repo=join(f.dir,'repo'),thirdWorkspace=join(f.dir,'third-task'),aWorkspace=join(f.dir,'sibling-a'),bWorkspace=join(f.dir,'sibling-b');
+  const git=(cwd:string,...args:string[])=>execFileSync('git',args,{cwd,encoding:'utf8'}).trim();
+  const baseHead=git(repo,'rev-parse','main');
+  execFileSync('git',['worktree','add','-q','-b','feature/third-task',thirdWorkspace,baseHead],{cwd:repo});
+  writeFileSync(join(thirdWorkspace,'third-task.txt'),'shared third task commit\n');
+  git(thirdWorkspace,'add','third-task.txt');git(thirdWorkspace,'commit','-m','third task shared commit');
+  const thirdHead=git(thirdWorkspace,'rev-parse','HEAD');
+  execFileSync('git',['worktree','add','-q','-b','feature/sibling-a',aWorkspace,thirdHead],{cwd:repo});
+  writeFileSync(join(aWorkspace,'sibling-a.txt'),'sibling A change\n');
+  git(aWorkspace,'add','sibling-a.txt');git(aWorkspace,'commit','-m','sibling A change');
+  const aHead=git(aWorkspace,'rev-parse','HEAD');
+  execFileSync('git',['worktree','add','-q','-b','feature/sibling-b',bWorkspace,thirdHead],{cwd:repo});
+  writeFileSync(join(bWorkspace,'sibling-b.txt'),'sibling B change\n');
+  git(bWorkspace,'add','sibling-b.txt');git(bWorkspace,'commit','-m','sibling B change');
+  const bHead=git(bWorkspace,'rev-parse','HEAD');
+
+  // `tasks()` scans newest first, so insert the sibling after the third task. That
+  // makes the asserted refusal prove the sibling-overlap path, not the third task's
+  // own head being an ancestor of A.
+  const third=insertCarryingTask(f,'Unfinished unrelated third task',thirdHead);
+  const sibling=insertCarryingTask(f,'Diverged sibling sharing third task commit',bHead);
+  f.setObservedHead(aHead);recordRealSourceAcceptedReview(f,aHead);
+  assert.deepEqual(f.store.tasks().filter(t=>t.id===sibling.id||t.id===third.id).map(t=>t.id),[sibling.id,third.id]);
+
+  await f.engine.resolution.advance(f.current());
+  assert.equal(f.current().phase,'changes_requested');
+  assert.ok(f.current().reason.includes(sibling.title),f.current().reason);
+  assert.ok(!f.current().reason.includes(third.title),f.current().reason);
+  assert.ok(f.store.task(third.id)?.phase==='working','the unrelated third task remains unfinished');
   assert.equal(f.counts().merges,0);
  }finally{await f.close()}
 });
