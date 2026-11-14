@@ -105,7 +105,7 @@ export function deriveRestartRole(task: Task, runs: Run[]): RestartRole {
   if (current && !current.released && ["recovery", "closeout"].includes(current.role)) return "coordinator";
   // nucleus#1195: a live proof executor that has not reported is owed a report,
   // not a worker or review continuation; its own run owns the next move.
-  if (unreportedExecutorRun(runs)) return "executor";
+  if (unreportedExecutorRun(runs, task.resolution.currentRunId)) return "executor";
   // Task 405: an absent proof-execution creation resumes through the same
   // absent-resolution restart path; its own run carries the return phase.
   if (current && !current.released && current.role === "executor") return "reviewer";
@@ -158,7 +158,7 @@ export function restartShape(task: Task, runs: Run[], role: RestartRole, events:
   const fault = incident && incident.status !== "resolved" && incidentBindsCurrentWork(task, runs) ? incident : null;
   // nucleus#1195: the proof execution role has exactly one continuation shape —
   // an unreleased executor whose result never arrived.
-  if (role === "executor") return unreportedExecutorRun(runs) ? "unreported_executor" : null;
+  if (role === "executor") return unreportedExecutorRun(runs, task.resolution.currentRunId) ? "unreported_executor" : null;
   if (role === "worker") {
     const ownerStopped = ownerStoppedRunIds(events);
     // A stall whose stop is already confirmed is no longer a live stop: the run
@@ -375,7 +375,7 @@ export const restart: OwnerVerb = {
     // credential. It re-runs no selector and starts no run, so the view names the
     // fresh observation execution makes and the one request already sent.
     if (shape === "unreported_executor") {
-      const executor = unreportedExecutorRun(runs)!;
+      const executor = unreportedExecutorRun(runs, task.resolution.currentRunId)!;
       const asked = facts.events.some(event => event.kind === "executor_report_request_sent" && event.detail.startsWith(`${executor.id}:`));
       return asked
         ? { available: false, refusal: `The re-report request for proof executor run ${executor.id} was already sent; its result is still outstanding. Inspect the executor's thread, or use tell role=executor` }

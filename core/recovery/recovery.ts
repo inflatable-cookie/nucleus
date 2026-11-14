@@ -608,7 +608,7 @@ export class Recovery {
   // `recovery_rerun`, and no planner escalation is raised for a proof that is
   // simply running. If that report was lost, `restart role=executor` asks the
   // same executor to resend it.
-  if(unreleasedExecutorRun(this.store.runs(t.id)))return null;
+  if(unreleasedExecutorRun(this.store.runs(t.id),t.resolution.currentRunId))return null;
   // Spec 058 slice 2: an opted-in responsible task settles its mechanical faults
   // by code before any coordinator episode opens. Only a fault code cannot settle
   // reaches the coordinator below.

@@ -95,18 +95,21 @@ export function proofSingleFlightRefusal(
 }
 
 /**
- * nucleus#1195: any executor run that has not been released yet. While one owns
- * the lane, its receipt is the next move: no recovery episode opens and no
- * retry fence or escalation is charged for proof execution.
+ * nucleus#1195: the executor run that still owns the lane. While it is unreleased
+ * and current, its receipt is the next move: no recovery episode opens and no
+ * retry fence or escalation is charged for proof execution. A historical executor
+ * the task has moved past is not this run.
  */
-export function unreleasedExecutorRun<T extends Pick<Run, 'role' | 'released'>>(runs: readonly T[]): T | null {
-  const live = runs.filter(run => run.role === 'executor' && !run.released);
+export function unreleasedExecutorRun<T extends Pick<Run, 'id' | 'role' | 'released'>>(runs: readonly T[], currentRunId?: string | null): T | null {
+  const live = runs.filter(run => run.role === 'executor' && !run.released
+    && (currentRunId === undefined || run.id === currentRunId));
   return live.length === 1 ? live[0]! : null;
 }
 
-/** A proof execution is still running: an executor run is unreleased with no result recorded yet. */
-export const proofExecutionRunning = (runs: readonly Pick<Run, 'role' | 'released' | 'completion'>[]): boolean =>
-  runs.some(run => run.role === 'executor' && !run.released && !run.completion);
+/** A proof execution is still running: the current executor run is unreleased with no result recorded yet. */
+export const proofExecutionRunning = (runs: readonly Pick<Run, 'id' | 'role' | 'released' | 'completion'>[], currentRunId?: string | null): boolean =>
+  runs.some(run => run.role === 'executor' && !run.released && !run.completion
+    && (currentRunId === undefined || run.id === currentRunId));
 
 /**
  * nucleus#1195: the one live proof executor whose report never arrived. A proof
@@ -115,8 +118,9 @@ export const proofExecutionRunning = (runs: readonly Pick<Run, 'role' | 'release
  * result recorded. `restart role=executor` asks exactly this run to resend its
  * report on its existing credential, and nothing here re-runs the selector.
  */
-export function unreportedExecutorRun<T extends Pick<Run, 'id' | 'role' | 'agentId' | 'released' | 'completion'>>(runs: readonly T[]): T | null {
-  const live = runs.filter(run => run.role === 'executor' && !run.released);
+export function unreportedExecutorRun<T extends Pick<Run, 'id' | 'role' | 'agentId' | 'released' | 'completion'>>(runs: readonly T[], currentRunId?: string | null): T | null {
+  const live = runs.filter(run => run.role === 'executor' && !run.released
+    && (currentRunId === undefined || run.id === currentRunId));
   if (live.length !== 1) return null;
   const run = live[0]!;
   return run.completion || !run.agentId ? null : run;

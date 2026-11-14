@@ -275,7 +275,7 @@ export class RestartControls {
    */
   private async resendExecutorReport(input: TaskControlInput, task: Task, reason: string): Promise<Task> {
     if (input.fresh === true) throw new RestartRefusal("A proof executor's re-report request continues the same run; fresh is unsupported because it would spend another execution");
-    const run = unreportedExecutorRun(this.store.runs(task.id));
+    const run = unreportedExecutorRun(this.store.runs(task.id), task.resolution.currentRunId);
     if (!run) throw new RestartRefusal("No unreleased proof executor is waiting on a report; nothing was asked");
     if (!this.adapter.notify) throw new RestartRefusal("This host cannot deliver the re-report request; use tell role=executor from a host with a message channel");
     const events = this.store.eventsAll(task.id);
@@ -287,7 +287,7 @@ export class RestartControls {
     try { observed = await this.engine.onTaskHost(task, () => this.engine.host.observe(run.agentId!)); }
     catch (error) { throw new RestartRefusal(`The proof executor cannot be observed (${hostFailureRefusalDetail(error)}); no re-report was asked`); }
     this.engine.requireOwnerControlCurrent(this.store.task(task.id), input.version, "Task changed during restart verification; read next again before restarting");
-    const latest = unreportedExecutorRun(this.store.runs(task.id));
+    const latest = unreportedExecutorRun(this.store.runs(task.id), task.resolution.currentRunId);
     if (!latest || latest.id !== run.id) throw new RestartRefusal("The proof executor changed during verification; read next again before restarting");
     if (observed.id !== run.agentId || observed.workspaceId !== run.workspaceId)
       throw new RestartRefusal("The observed executor agent or workspace differs from the recorded run; no re-report was asked");

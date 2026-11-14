@@ -163,7 +163,7 @@ export class TaskQuantum {
         // not be re-stamped as a stopped task while the executor is still working;
         // its receipt is what moves the task.
         if (!this.context.store.getMeta("paused") && !current.resolution.stop && !current.removedAt
-          && !proofExecutionRunning(this.context.store.runs(current.id))
+          && !proofExecutionRunning(this.context.store.runs(current.id), current.resolution.currentRunId)
           && (current.originError&&!missingOriginHasPlanner(this.context.store,current) || current.resolution.attention
           || ["blocked", "error", "needs_attention"].includes(current.phase))) {
           // Only Queue's own origin error text is classified. A task reason can

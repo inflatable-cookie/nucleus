@@ -1616,6 +1616,7 @@ test('an automatic proof executor is proof execution, never a recovery rerun the
     assert.equal(f.events('automatic_retry_suppressed').length, 0, 'an executor start is never charged as a recovery rerun');
     assert.equal(f.events('planner_escalation').length, 0, 'no planner escalation is raised while an executor starts');
     assert.equal(f.events('recovery_pending').length, 0, 'no recovery episode opens for the proof dispatch');
+    assert.ok(!f.events('automatic_retry_suppressed').some(event => event.detail.startsWith('automatic-retry-suppressed:recovery_rerun:')), 'no recovery_rerun fence names the executor run');
     const task = f.current();
     assert.equal(task.resolution.currentRunId, executor.id, 'the executor run owns the task');
     assert.notEqual(task.phase, 'needs_attention', task.reason);
