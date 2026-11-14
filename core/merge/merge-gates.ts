@@ -159,6 +159,10 @@ export class MergeGates {
       const head = other.prHead!;
       try {
         if (await ancestor(head, base)) continue;
+        // If this PR's head is an ancestor of the other task's head, the other
+        // task is stacked on this one. Shared commits are this task's work;
+        // only the other task's later commits sit beyond this PR.
+        if (await ancestor(t.prHead, head)) continue;
         if (await ancestor(head, t.prHead)) return { other };
         const carried = await count(head, '--not', base);
         const outside = await count(head, '--not', base, t.prHead);
@@ -177,7 +181,7 @@ export class MergeGates {
   /** Route one confirmed cross-task carry through the ordinary pre-merge revision, naming the carrying task. */
   private refuseCarriedCommits(t: Task, other: Task) {
     const named = other.reference ?? (other.number ? `#${String(other.number).padStart(3, '0')}` : other.id);
-    const reason = `The PR carries commits from unfinished task ${named} ("${other.title}"): its recorded head ${other.prHead!.slice(0, 12)} has commits outside ${t.baseBranch} that also appear in this PR's ${t.baseBranch}..${t.prHead!.slice(0, 12)} range, so they would enter main under this task's review without that task's exact-head review. Rebase onto ${t.baseBranch} without them, or the planner orders the tasks.`;
+    const reason = `The PR carries commits from unfinished task ${named} ("${other.title}"): its recorded head ${other.prHead!.slice(0, 12)} has commits outside ${t.baseBranch} that also appear in this PR's ${t.baseBranch}..${t.prHead!.slice(0, 12)} range, so they would enter main under this task's review without that task's exact-head review. Rebase onto ${t.baseBranch} without them.`;
     this.resolution.refusePreMerge(t, reason, `cross-task carry: commits of ${named} recorded head ${other.prHead} ride this PR outside base ${t.baseBranch}`);
   }
 

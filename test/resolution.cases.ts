@@ -245,6 +245,33 @@ test('the merge gate refuses a PR carrying another unfinished task\'s recorded h
   assert.equal(f.counts().merges,0);
  }finally{await f.close()}
 });
+test('the merge gate ignores another task stacked on this PR but still catches this PR stacked on another task',async()=>{
+ const stackedOnThis=fixture(false,false,undefined,true);try{
+  const aHead=stackedOnThis.current().prHead!;
+  recordRealSourceAcceptedReview(stackedOnThis,aHead);
+  const childWorkspace=join(stackedOnThis.dir,'stacked-child');
+  execFileSync('git',['worktree','add','-q','-b','feature/stacked-child',childWorkspace,aHead],{cwd:join(stackedOnThis.dir,'repo')});
+  writeFileSync(join(childWorkspace,'child.txt'),'child task change\n');
+  const childGit=(...args:string[])=>execFileSync('git',args,{cwd:childWorkspace,encoding:'utf8'}).trim();
+  childGit('add','child.txt');childGit('commit','-m','child task change');
+  const childHead=childGit('rev-parse','HEAD');
+  insertCarryingTask(stackedOnThis,'Task stacked on this PR',childHead);
+  await stackedOnThis.engine.resolution.advance(stackedOnThis.current());
+  assert.equal(stackedOnThis.counts().merges,1,'the lower task can merge without rebasing');
+ }finally{await stackedOnThis.close()}
+
+ const stackedOnOther=fixture(false,false,undefined,true);try{
+  const aHead=stackedOnOther.current().prHead!;
+  const childHead=stackedOnOther.setHead('PR stacked above another task');
+  const other=insertCarryingTask(stackedOnOther,'Task this PR is stacked on',aHead);
+  recordRealSourceAcceptedReview(stackedOnOther,childHead);
+  await stackedOnOther.engine.resolution.advance(stackedOnOther.current());
+  assert.equal(stackedOnOther.current().phase,'changes_requested');
+  assert.ok(stackedOnOther.current().reason.includes(other.title),stackedOnOther.current().reason);
+  assert.match(stackedOnOther.current().reason,/Rebase onto main without them/);
+  assert.equal(stackedOnOther.counts().merges,0);
+ }finally{await stackedOnOther.close()}
+});
 test('the merge gate refuses a partial cross-task carry and ignores a finished task\'s recorded head',async()=>{
  const f=fixture(false,false,undefined,true);try{
   const wipHead=f.current().prHead!;
@@ -258,6 +285,9 @@ test('the merge gate refuses a partial cross-task carry and ignores a finished t
   gitRun('add','carry.txt');gitRun('commit','-m','divergent carry');
   const diverged=gitRun('rev-parse','HEAD');
   const wip=insertCarryingTask(f,'Diverged sibling',diverged);
+  // The common WIP ancestor represents commits from a separate unfinished task.
+  // Both sibling branches contain it, while neither sibling head contains the other.
+  insertCarryingTask(f,'Unrelated shared task',wipHead);
   await f.engine.resolution.advance(f.current());
   assert.equal(f.current().phase,'changes_requested');
   assert.ok(f.current().reason.includes(wip.title),f.current().reason);
