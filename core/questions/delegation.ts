@@ -291,7 +291,7 @@ export class Delegation {
     recordedId: number,
   ) {
       const taskEvents = this.store.eventsAll(authority.taskId);
-      const inProcess = await this.resolution.ladder.awaitDelegatedEscalationSettlement(
+      const inProcess = await this.resolution.escalationSettlement.awaitDelegatedEscalationSettlement(
         authority.taskId, escalationId, questionId,
       );
       if (inProcess?.status === 'applied') {
@@ -317,7 +317,7 @@ export class Delegation {
         this.recordCommandApplied(key, escalationId, recordedId);
         return receipt;
       }
-      const reconciled = this.resolution.ladder.reconcileDelegatedEscalationAnswer(
+      const reconciled = this.resolution.escalationSettlement.reconcileDelegatedEscalationAnswer(
         authority.taskId, escalationId, questionId, recordedId);
       if (reconciled === 'applied') {
         this.recordCommandApplied(key, escalationId, recordedId);
@@ -364,7 +364,7 @@ export class Delegation {
         this.resolution.ladder.classifyEscalationToOperator(this.store.task(taskId), escalationId, reason, `${role} ${caller}`);
       } else {
         const answer = `${input.choice ?? input.answer!} — ${reason}`;
-        const refusal = await this.resolution.ladder.applyDelegatedEscalationAnswer(taskId, escalationId, input.questionId, answer, `${role} ${caller}`);
+        const refusal = await this.resolution.escalationSettlement.applyDelegatedEscalationAnswer(taskId, escalationId, input.questionId, answer, `${role} ${caller}`);
         if (refusal) throw Error(refusal);
       }
     } catch (error) {

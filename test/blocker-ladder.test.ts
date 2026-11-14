@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   blockerCauseId,
+  decodeEscalationChoice,
   escalationAnswerControl,
   escalationVerbChoices,
   escalationWaitDetail,
@@ -2038,4 +2039,14 @@ test('a delegated restart choice applies through the ordinary verb', async () =>
     assert.match(f.events('planner_escalation_applied')[0]!.detail, /^[^:]+: Restart/);
     assert.equal(asks, 1);
   } finally { await f.close(); }
+});
+
+
+test("escalation choice boundary preserves offered identity and wait targets", () => {
+  const offer = { label: 'Move to review', verb: 'move', args: { to: 'review' } };
+  assert.deepEqual(decodeEscalationChoice('Move to review — ready', [offer]), { kind: 'owner', choice: offer, reason: 'ready' });
+  assert.deepEqual(decodeEscalationChoice('Wait for a task (put its reference in Reason) — nucleus#123', []), { kind: 'task', reason: 'nucleus#123' });
+  assert.deepEqual(decodeEscalationChoice('Wait until a time (put an ISO timestamp in Reason) — 2099-01-01T00:00:00Z', []), { kind: 'time', reason: '2099-01-01T00:00:00Z' });
+  assert.deepEqual(decodeEscalationChoice('Wait for an operator decision (put its ID in Reason) — decision-1', []), { kind: 'decision', reason: 'decision-1' });
+  assert.equal(decodeEscalationChoice('Move to review elsewhere', [offer]).kind, 'other');
 });
