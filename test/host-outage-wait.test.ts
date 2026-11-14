@@ -312,11 +312,11 @@ test('an owner-facing stop keeps its question while the host wait still pauses t
   } finally { f.close(); }
 });
 
-test('a pending long-outage notice is delivered once its planner is reachable, even after the host recovered', async () => {
+test('a long-outage notice pending when its planner is unreachable is superseded when the host recovers, and nothing is sent', async () => {
   const f = noticeFixture();
   const plannerA = formatAgentId(f.plannerHost, 'planner-a');
   f.makeProject('project-a', plannerA);
-  const task = f.makeTask('Project A task', 'project-a');
+  f.makeTask('Project A task', 'project-a');
   try {
     // The planner's own host is unreachable when the outage passes the bound.
     f.online.planner = false;
@@ -329,25 +329,23 @@ test('a pending long-outage notice is delivered once its planner is reachable, e
     assert.match(pending[0]!.error, /Waiting for host paseo:synthetic-planner/);
     const plannerSends = () => f.sends.filter(send => send.agentId === 'planner-a');
     assert.equal(plannerSends().length, 0);
+    const recordedText = pending[0]!.text;
 
-    // The task's host recovers before the planner is reachable: the notice is
-    // still the record of that outage and must not be discarded.
+    // Planner ruling (2026-11-14, in the brief): the notice is about a live
+    // outage. The host recovering first supersedes it with that reason and it is
+    // never sent; its stored text is not rewritten.
     f.online.task = true;
     await f.engine.wake();
-    assert.equal(f.store.task(task.id).resolution.hostWait, null, 'the task host wait cleared');
-    assert.equal(f.store.notices().filter(notice => notice.kind === 'host_outage')[0]?.status, 'pending',
-      'a recovered host does not discard the pending notice');
-    assert.equal(plannerSends().length, 0, 'the recovered host alone does not deliver the notice');
+    const superseded = f.store.notices().filter(notice => notice.kind === 'host_outage')[0]!;
+    assert.equal(superseded.status, 'superseded');
+    assert.equal(superseded.error, 'outage ended before delivery');
+    assert.equal(superseded.text, recordedText, 'delivery time never rewrites the stored text');
+    assert.equal(plannerSends().length, 0, 'nothing is sent for an outage that ended first');
 
-    // The planner becomes reachable later: it hears once, for the outage that
-    // already ended.
+    // A later reachable planner does not receive the stale notice either.
     f.online.planner = true;
     await f.engine.wake();
-    assert.equal(plannerSends().length, 1, 'the planner hears once when it becomes reachable');
-    assert.match(plannerSends()[0]!.text, new RegExp(`Host ${f.host}`));
-    assert.equal(f.store.notices().filter(notice => notice.kind === 'host_outage')[0]?.status, 'delivered');
-
-    await f.engine.wake();
-    assert.equal(plannerSends().length, 1, 'the delivered notice is never resent');
+    assert.equal(plannerSends().length, 0, 'the superseded notice is never sent later');
+    assert.equal(f.store.notices().filter(notice => notice.kind === 'host_outage')[0]!.status, 'superseded');
   } finally { f.close(); }
 });

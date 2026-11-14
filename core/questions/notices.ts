@@ -3,6 +3,7 @@ import { RETAINED_WORKER_PROFILE_REASON, TASK_OWNER_HOLD, episodeBindsCurrentWor
 import { normalizeRepositoryOrigin } from '../../shared/lanes';
 import { isSshAuthExhausted } from '../../shared/ssh-auth';
 import { isWaitingTaskStop } from '../../shared/task-stop';
+import { parseHostOutageNoticeId } from '../../shared/host-outage';
 import { isCloseoutHookHold } from '../hooks/hooks';
 import { NO_ORIGIN_THREAD_WAIT, missingOriginHasPlanner, noticeId, noticeTarget, originRecipient } from './origin';
 import type { AgentObservation } from '../host/adapter';
@@ -133,18 +134,26 @@ export class Notices {
    * it through the same pending/intent/delivered path as a hold prompt and never
    * resends after an uncertain send.
    *
-   * A pending notice is not discarded when the host recovers (nucleus#1198
-   * review): the planner's own host may only become reachable later, and the
-   * notice is still the record of that outage. It stays pending, visible on the
-   * board, until its planner can take it. The planner's host may be a different,
-   * healthy one (a Paseo planner for a T3 project), so delivery resolves that
-   * host before sending.
+   * Planner ruling (2026-11-14, in this task's brief): the notice is about a live
+   * outage. When the outage ended before delivery — for example while its
+   * planner's own host was unreachable — the notice is superseded with the reason
+   * below and is not sent; its stored text is never rewritten or composed at
+   * delivery. The planner's host may be a different, healthy one (a Paseo planner
+   * for a T3 project), so delivery resolves that host before sending.
    */
   async deliverHostOutageNotices() {
     if (!this.adapter.notify || this.paused()) return;
     for (const n of this.store.pendingNotices()) {
       if (this.paused()) return;
       if (n.kind !== 'host_outage') continue;
+      const identity = parseHostOutageNoticeId(n.id);
+      const outage = identity ? this.resolution.hostOutage(identity.hostId) : null;
+      const live = Boolean(identity && outage && outage.since === identity.since);
+      const ended = 'outage ended before delivery';
+      if (!live) {
+        this.store.putNotice({ ...n, status: 'superseded', error: ended });
+        continue;
+      }
       if (n.status === 'intent') { this.store.putNotice({ ...n, status: 'uncertain', error: 'Restart during delivery; inspect the planner thread before resending' }); continue; }
       const recipientHost = await this.resolution.identifyOriginHost(n.agentId);
       if (!recipientHost) {
@@ -164,7 +173,13 @@ export class Notices {
         gone: () => this.store.putNotice({ ...n, status: 'superseded', error: 'The planner thread is no longer available' }),
         confirm: () => {
           const current = this.store.notices(n.taskId).find(notice => notice.id === n.id);
-          return current && current.status === 'pending' ? current : null;
+          if (!current || current.status !== 'pending') return null;
+          const still = this.resolution.hostOutage(identity!.hostId);
+          if (!still || still.since !== identity!.since) {
+            this.store.putNotice({ ...current, status: 'superseded', error: ended });
+            return null;
+          }
+          return current;
         },
         target: current => ({ agentId: current.agentId, id: current.id, text: current.text }),
         mark: (current, status, error) => this.store.putNotice({ ...current, error, status }),

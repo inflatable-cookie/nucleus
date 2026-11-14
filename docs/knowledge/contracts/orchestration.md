@@ -1185,11 +1185,12 @@ request identities and submitted handoffs are not rewritten.
   start and the tasks held on it, through the ordinary durable notice path.
   Tracking is per project on the outage, so a project that becomes affected
   later, or whose planner is only resolvable later, still hears once for the
-  same outage; a project that already heard never hears again. A pending notice
-  is not discarded when the host recovers: it stays pending, visible on the
-  board, until its planner's own host can take it, and is then delivered once
-  for that outage (nucleus#1198 review). A shorter outage tells nobody, and a
-  fresh outage starts unnotified.
+  same outage; a project that already heard never hears again. The notice is
+  about a live outage: when the host recovers before its planner can take it,
+  the pending notice is superseded with "outage ended before delivery" and is
+  not sent, and its stored text is never rewritten at delivery (planner ruling,
+  2026-11-14). A shorter outage tells nobody, and a fresh outage starts
+  unnotified.
 - The board card of a waiting task shows the same wait ("Waiting on <host>
   since …"); host health itself is unchanged.
 

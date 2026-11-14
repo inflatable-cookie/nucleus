@@ -145,5 +145,5 @@ export function hostOutageNoticeText(facts: { hostId: string; since: string; pro
   const rest = remainder > 0 ? `, and ${remainder} more` : "";
   return `Host ${facts.hostId} in project ${facts.projectName} has been unavailable since ${facts.since} (${outageDuration(facts.since, facts.at)}). `
     + `${facts.tasks.length} task${facts.tasks.length === 1 ? "" : "s"} wait${facts.tasks.length === 1 ? "s" : ""} on it: ${listed.join(", ")}${rest}. `
-    + "Nucleus sends nothing to that host while it is away, spends no budget on the wait and resumes each task on the same host and threads when it returns; moving one stays an owner decision.";
+    + "Nucleus sends nothing to that host, spends no budget on the wait and resumes each task on the same host and threads when it returns; moving one stays an owner decision.";
 }
