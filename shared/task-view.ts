@@ -230,11 +230,11 @@ export function taskStopKind(task: Task, runs: Run[] = [], budget?: TaskBudgetVi
  * Add the bounded, derived hold and wait fields at the task detail boundary.
  * Spec 043 (a): the wait state is a read, never a scheduling decision.
  */
-export function taskDetailView(task: Task, context: WaitStateContext = {}, runs: Run[] = [], events: BudgetEvent[] = [], repository?: Pick<RepositorySettings, "affectedTests"> | null): TaskDetail {
+export function taskDetailView(task: Task, context: WaitStateContext = {}, runs: Run[] = [], events: BudgetEvent[] = [], repository?: Pick<RepositorySettings, "affectedTests"> | null, now = Date.now()): TaskDetail {
   const holds = holdsOf(task);
   // One measurement: the budget this view shows is the one the gates read, and the
   // stop and reason it reports follow that same figure (nucleus#1187).
-  const budget = !['done', 'cancelled'].includes(task.phase) ? taskBudget(task, runs, Date.now(), events, repository) : null;
+  const budget = !['done', 'cancelled'].includes(task.phase) ? taskBudget(task, runs, now, events, repository) : null;
   const reason = taskVisibleReason(task, budget);
   const holdKind = taskHoldKind(task);
   const waitState = deriveWaitState({
@@ -282,11 +282,11 @@ export const formatTaskNumber = (number: number) => String(number).padStart(3, "
 export const taskNumberLabel = (task: Pick<Task, "number" | "reference">, repositoryNeeded: boolean) =>
   task.number ? repositoryNeeded ? task.reference ?? `#${formatTaskNumber(task.number)}` : `#${formatTaskNumber(task.number)}` : "";
 
-export function summarizeTask(task: Task, includeRepository = false, hasUnreleasedResolutionRun = false, waitContext: WaitStateContext = {}, taskRuns: Run[] = [], waitingOn?: string, defaultHostId?: string, events: BudgetEvent[] = [], repository?: Pick<RepositorySettings, "affectedTests"> | null): TaskSummary {
+export function summarizeTask(task: Task, includeRepository = false, hasUnreleasedResolutionRun = false, waitContext: WaitStateContext = {}, taskRuns: Run[] = [], waitingOn?: string, defaultHostId?: string, events: BudgetEvent[] = [], repository?: Pick<RepositorySettings, "affectedTests"> | null, now = Date.now()): TaskSummary {
   const holds = holdsOf(task);
   // The board reads the same budget figure the gates do, and its stop and reason
   // follow that figure (nucleus#1187).
-  const budget = !["done", "cancelled"].includes(task.phase) ? taskBudget(task, taskRuns, Date.now(), events, repository) : null;
+  const budget = !["done", "cancelled"].includes(task.phase) ? taskBudget(task, taskRuns, now, events, repository) : null;
   const reason = taskVisibleReason(task, budget);
   const stop = taskStopKind(task, taskRuns, budget), stopRecord = currentTaskStop(task, budget);
   const waitState = deriveWaitState({

@@ -288,12 +288,13 @@ test('a task whose only run has no run row is charged from its recorded run star
     assert.equal(f.events('budget_clock_resumed').length, 1);
 
     const runs = f.store.runs(f.submitted.id), events = f.store.eventsAll(f.submitted.id);
-    const gate = taskBudget(f.current(), runs, Date.now(), events);
-    const detail = taskDetailView(f.current(), {}, runs, events);
-    const board = summarizeTask(f.current(), false, false, {}, runs, undefined, 'host', events);
+    const now = Date.now();
+    const gate = taskBudget(f.current(), runs, now, events);
+    const detail = taskDetailView(f.current(), {}, runs, events, undefined, now);
+    const board = summarizeTask(f.current(), false, false, {}, runs, undefined, 'host', events, undefined, now);
     assert.equal(gate.exhausted, null, `used ${gate.wallMs.used} ms of ${gate.wallMs.limit}`);
     assert.ok(gate.wallMs.used < 31 * MINUTE, `the twelve held days are not charged: ${gate.wallMs.used} ms`);
-    // Each read takes its own `Date.now()`; the figures agree to the millisecond.
+    // The gate, detail and board compare the same budget-clock instant.
     assert.ok(Math.abs(detail.budget!.wallMs.used - gate.wallMs.used) < 1000, `detail ${detail.budget!.wallMs.used} vs gate ${gate.wallMs.used}`);
     assert.equal(detail.budget!.effectiveTokens.used, gate.effectiveTokens.used, 'and its token figure');
     assert.ok(Math.abs(board.budget![3] - gate.wallMs.used) < 1000, `board ${board.budget![3]} vs gate ${gate.wallMs.used}`);
