@@ -379,18 +379,26 @@ lifecycle; use a direct PR with operator source acceptance. Historical task rows
 
 - **Measured and enforced per responsible task.** Effective tokens (uncached input +
   output + 10% of cached input) sum over every run since the task became responsible,
-  workers, reviewers and recovery alike. Wall time starts at the later of a historical
-  conversion and the first run in the responsible lifecycle. Older converted tasks
-  retain their `responsible_converted` event timestamp; new tasks need no conversion
-  record and use the first-dispatch clock. The
-  size sets the limits: low 2M / 1 h, medium 5M / 3 h, high 12M / 8 h, very_high
-  25M / 16 h, provisional. A `very_low` task takes low; a responsible task with no size
-  takes medium. The defaults are constants in `shared/task-budget.ts`; there is no
-  tuning UI.
+  workers, reviewers and recovery alike. Wall time starts at the lifecycle's first
+  recorded run start — a run row, or the dispatch intent and `agent_created` events of
+  a run that has no row, which is every task's initial worker — and time before it is
+  never charged, so a task that has never run reads 0 used. The lifecycle itself
+  starts at the task's `budgetSince`, else at its historical
+  `responsible_converted` event; a caller never supplies a start of its own, and every
+  gate and view measures through `taskBudget` with the same task, runs and events
+  (nucleus#1187). The size sets the limits: low 2M / 1 h, medium 5M / 3 h, high 12M /
+  8 h, very_high 25M / 16 h, provisional. A `very_low` task takes low; a responsible
+  task with no size takes medium. The defaults are constants in
+  `shared/task-budget.ts`; there is no tuning UI.
 - **Pause, not kill.** The launch funnel refuses every new run once either limit is
   reached, so a run in flight finishes and nothing new starts. The task stops with
   `budget` as its stop reason and the detail names the limit. That detail is fixed for
-  the pause, so waiting does not rewrite the stop.
+  the pause, so waiting does not rewrite the stop. A recorded budget pause is current
+  only while the measured budget still shows it: the pass that reads the task's runs
+  and events clears the stop and supersedes the question it raised once the figure is
+  under the limit, so the dispatcher's fence, the board's question and `task.next`'s
+  reason answer to one measurement and a pause the budget no longer supports leaves
+  neither the stop nor "Budget reached" behind (nucleus#1187, papercut 703b4aa3).
 - **Always asks, always names its exit** (nucleus#1153). The pause asks its question
   from the task's own pass, in every phase, as well as from the sweep's question step,
   and the stop lists `extend_budget` in `suggestedVerbs` whatever the phase. A task
@@ -417,7 +425,10 @@ lifecycle; use a direct PR with operator source acceptance. Historical task rows
   time is subtracted from the wall figure. The paused
   total is reported as `wallMs.pausedMs` on the detail and named on the budget's time
   bar, and the transitions are durable `budget_clock_paused` / `budget_clock_resumed`
-  events. A budget pause, a merge hold, capacity queueing and the task's own
+  events. The clock's events place its closed intervals; its folded `pausedMs` is the
+  durable count of that same time, and any part the events do not place is booked
+  adjacent to the segment still open, so a pause is never lost and never counted
+  twice. A budget pause, a merge hold, capacity queueing and the task's own
   validation keep charging: they are the task's work or its own answer to give.
   The clock is a Queue-owned record like runtime retirements: opening or closing an
   interval spends no task version, so a sweep or quantum never makes an owner's

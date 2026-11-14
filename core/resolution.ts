@@ -379,7 +379,7 @@ export class Resolution {
   readonly transientResume = new TransientResume(recoveryContext(this, ['adapter', 'attention', 'graceMs', 'host', 'onTaskHost', 'openPlannerEscalation', 'paused', 'profiles', 'store', 'update', 'waiting']));
   readonly notices = new Notices(this);
   readonly slotAdmission = new SlotAdmission(this);
-  readonly taskStops = new TaskStops(recoveryContext(this, ['ensureIncident', 'recordIncidentEvent', 'saveIncident', 'settleAttentionEpisode', 'stopped', 'store', 'update', 'waiting']));
+  readonly taskStops = new TaskStops(recoveryContext(this, ['ensureIncident', 'questions', 'recordIncidentEvent', 'saveIncident', 'settleAttentionEpisode', 'stopped', 'store', 'update', 'waiting']));
   readonly continuationFences = new ContinuationFences(this);
   readonly resultApplication = new ResultApplication(intakeContext(this, ['adapter', 'advanceCloseoutResult', 'attention', 'hooks', 'lease', 'openPlannerEscalation', 'ordinaryRoundCustody', 'recordBlockedPrIdentity', 'responsibleBlockerLadder', 'responsiblePrReportRefused', 'reviewerSetting', 'settleAttentionEpisode', 'settleAutomaticReplayHold', 'stopped', 'store', 'suppressAutomaticRetry', 'update', 'waiting']));
   readonly closeout = new Closeout(closeoutContext(this, ['adapter', 'attention', 'claimIntegrationTurn', 'closeoutAuthority', 'closeoutWritten', 'executionLease', 'hookCloseout', 'hooks', 'launch', 'paused', 'queueCloseout', 'settleAutomaticReplayHold', 'stopped', 'store', 'turnReleased', 'update', 'waiting']));

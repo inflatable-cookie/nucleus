@@ -17,6 +17,7 @@ import {
 import type { Adapter, AgentObservation } from "../../core/host";
 import type { Task as ParameterTask } from "../../shared/contracts";
 import { toolTimelinePage } from "./tool-timeline";
+import { clearRunStarts, recordRunStart } from "./run-start";
 
 /**
  * The ordinary responsible-lifecycle fixture (Spec 058): a responsible task at its
@@ -426,6 +427,10 @@ export function fixture(
   const run = () => store.run(current().resolution.currentRunId!)!;
   const events = (kind: string) =>
     store.eventsAll(submitted.id).filter((event) => event.kind === kind);
+  /** The recorded start of the initial worker's run (nucleus#1187); see `./run-start`. */
+  const startRun = (at: string) => recordRunStart(store, submitted.id, at, current().runId ?? "initial", "worker");
+  /** Forget the recorded run start, so the task reads as never dispatched again. */
+  const forgetRunStart = () => clearRunStarts(store, submitted.id);
   const coordinatorRuns = () =>
     store.runs(submitted.id).filter((item) => item.role === "recovery");
   const reviewerRuns = () =>
@@ -496,6 +501,8 @@ export function fixture(
     current,
     run,
     events,
+    recordRunStart: startRun,
+    clearRunStarts: forgetRunStart,
     coordinatorRuns,
     reviewerRuns,
     report,

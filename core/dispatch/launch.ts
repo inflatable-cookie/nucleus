@@ -37,8 +37,7 @@ export class DispatchLaunch {
     {
       const current = this.context.store.task(t.id);
       const events = this.context.store.eventsAll(t.id);
-      const legacyBudgetSince = events.find(event => event.kind === 'responsible_converted')?.at;
-      const budget = taskBudget(current, this.context.store.runs(t.id), Date.now(), legacyBudgetSince, events);
+      const budget = taskBudget(current, this.context.store.runs(t.id), Date.now(), events);
       if (budget.exhausted) { this.context.waiting(t, budgetPauseDetail(budget), 'budget'); return; }
     }
     if (reviewAuthorizationRequired(this.context.store.task(t.id), this.context.store)) { const wait = reviewContinuationWait(this.context.store.task(t.id), this.context.store); this.context.waiting(t, wait.reason, wait.stop); return; }

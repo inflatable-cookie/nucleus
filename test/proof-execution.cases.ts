@@ -23,6 +23,7 @@ import type { Adapter, AgentObservation } from '../core/host';
 import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
 import { parseNorthstarDocument } from '../core/planning/handoff';
 import { proofHeadAdmission, proofInputRedeclarationAllowed, proofSingleFlightRefusal } from '../core/qa/proof-execution';
+import { recordRunStart } from './support/run-start';
 
 /**
  * Task 405: the source-immutable author-side proof executor.
@@ -622,7 +623,11 @@ weighted(3)('an exhausted awaiting_proof task can extend its budget before activ
   const f = fixture();
   try {
     await f.releaseDispatch();
-    f.store.update(f.task().id, { budgetSince: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString() });
+    // The wall clock runs from the task's first recorded run; nothing has run for
+    // four hours, so the low default limit is spent (nucleus#1187).
+    const startedAt = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
+    f.store.update(f.task().id, { budgetSince: startedAt });
+    recordRunStart(f.store, f.task().id, startedAt);
     f.engine.resolution.recordStop(f.task(), 'awaiting_proof', 'Waiting for the declared proof');
     const next = () => ownerTaskNext(collectOwnerVerbFacts(f.store, f.task()));
     assert.equal(next().verbs.find(verb => verb.verb === 'extend_budget')?.available, true);
