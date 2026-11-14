@@ -1,3 +1,4 @@
+import { assertSubmissionRouting } from "../planning/submission-routing";
 import { PlanningPromotion } from "./planning-promotion";
 import { createHash } from "node:crypto";
 import type { z } from "zod";
@@ -258,8 +259,7 @@ export class RuntimePlanning {
       // reports an unusable profile before approval or dispatch ever reads it.
       const stageProfileRefusal = this.context.engine.briefStageProfileRefusal(input.text, submission.scope);
       if (stageProfileRefusal) throw new Error(stageProfileRefusal);
-      const routingConflict = this.context.engine.independentReviewRoutingRefusal(submission);
-      if (routingConflict) throw new Error(routingConflict);
+      assertSubmissionRouting(this.context.engine, submission);
       this.context.store.validateDependencies(submission);
       const origin = await repositoryOrigin(submission.repoPath);
       this.context.store.requireSubmissionLanes(submission,origin);
@@ -288,8 +288,7 @@ export class RuntimePlanning {
       const { verifyPublishedPlanning } = await import("../git/index");
       await verifyPublishedPlanning(prepared.submission);
       const validated = await validateSubmission(prepared.submission);
-      const routingConflict = this.context.engine.independentReviewRoutingRefusal(prepared.submission);
-      if (routingConflict) throw new Error(routingConflict);
+      assertSubmissionRouting(this.context.engine, prepared.submission);
       const needsRecipients = prepared.submission.notifyOriginOnCloseout || prepared.submission.completionNotificationAgentIds.length > 0;
       if (needsRecipients) await validateCompletionRecipients(prepared.submission, id => this.lookupCompletionRecipient(id, prepared!.submission));
       if (!this.context.store.existing(prepared.submission)) this.context.store.validateDependencies(prepared.submission);

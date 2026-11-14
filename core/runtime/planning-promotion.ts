@@ -17,6 +17,12 @@ function assertPromotionActor(input: { board: boolean; agent?: string; note: str
   if (input.board && input.agent) throw new Error("Board promotion records operator (board), without an agent");
 }
 
+function assertPromotableSource(lead: Lead | null, cut: ReturnType<Store["papercut"]> | null, baseBranch?: string): void {
+  if (lead?.state === "dropped" || cut?.state === "closed") throw new Error("Source is closed");
+  if (lead && baseBranch && baseBranch !== lead.baseBranch) throw new Error("Edit the lead's baseBranch before promotion");
+  if (cut && baseBranch && baseBranch !== "main") throw new Error("Papercut promotion uses main");
+}
+
 /** Acceptance and execution of durable lead and papercut promotions. */
 export class PlanningPromotion {
   constructor(private readonly context: PlanningContext, private readonly planning: Pick<RuntimePlanning, "sourceBriefId" | "selectLeadRepository" | "latestLeadAuthor" | "checkLead" | "approveLead" | "checkDraft">) {}
@@ -56,9 +62,7 @@ export class PlanningPromotion {
     assertPromotionActor(request);
     const lead=kind==="lead"?this.context.store.lead(request.id):null;
     const cut=kind==="papercut"?this.context.store.papercut(request.id):null;
-    if (lead?.state==="dropped" || cut?.state==="closed") throw new Error("Source is closed");
-    if (lead && request.baseBranch && request.baseBranch!==lead.baseBranch) throw new Error("Edit the lead's baseBranch before promotion");
-    if (cut && request.baseBranch && request.baseBranch!=="main") throw new Error("Papercut promotion uses main");
+    assertPromotableSource(lead, cut, request.baseBranch);
     const repository=lead?this.planning.selectLeadRepository(lead,request.repository):this.papercutPromotionRepository(cut!);
     const sourceDigest=lead
       ? storeDigest(JSON.stringify([lead.version,briefDigest(lead.body)]))
@@ -123,9 +127,7 @@ export class PlanningPromotion {
       throw new Error("Promotion source does not match its request");
     const existing=this.context.store.sourcePromotionResult({kind,id:source.id},source.repository,source.version,source.digest);
     if (existing) return existing;
-    if (lead?.state==="dropped" || cut?.state==="closed") throw new Error("Source is closed");
-    if (lead && input.baseBranch && input.baseBranch!==lead.baseBranch) throw new Error("Edit the lead's baseBranch before promotion");
-    if (cut && input.baseBranch && input.baseBranch!=="main") throw new Error("Papercut promotion uses main");
+    assertPromotableSource(lead, cut, input.baseBranch);
     const repository=lead?this.planning.selectLeadRepository(lead,input.repository):this.papercutPromotionRepository(cut!);
     const currentDigest=lead
       ? storeDigest(JSON.stringify([lead.version,briefDigest(lead.body)]))

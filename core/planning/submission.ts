@@ -1,3 +1,4 @@
+import { assertSubmissionRouting } from "./submission-routing";
 import type { Task, Submission } from "../../shared/contracts";
 import type { QueueOperation, OperationResult } from "../../shared/operations";
 import type { IdentitySource } from "../../shared/host-kind";
@@ -37,8 +38,7 @@ export class PlanningSubmission {
     const raced = promotion ? null : this.store.existing(submission);
     if (raced) return { taskId: raced.id, taskVersion: raced.version, phase: raced.phase, number: raced.number, reference: raced.reference };
     this.store.requireSubmissionLanes(submission, origin);
-    const routingConflict = this.engine.independentReviewRoutingRefusal(submission);
-    if (routingConflict) throw new Error(routingConflict);
+    assertSubmissionRouting(this.engine, submission);
     // Resolving recipients is a live agent lookup, so only a submission that actually
     // notifies needs it. Doing it unconditionally put a daemon round trip - and its 15 s
     // liveness timeout - in front of every accepted handoff, so a flapping transport failed
