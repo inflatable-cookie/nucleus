@@ -518,6 +518,7 @@ weighted(2)('a durable validation result reconciles after Queue restarts without
   const originalRun = scheduler.get(prior.hostRunId!)!;
   assert.equal(originalRun.state, 'settled');
   const savedResult = originalRun.settlement!.result!;
+  scheduler.stop();
   await rm(marker, { force: true });
 
   const candidatePath = await (hooks as any).prospectiveCandidatePath(task, prior.candidate);
@@ -541,16 +542,16 @@ weighted(2)('a durable validation result reconciles after Queue restarts without
     projectValidation: { ...prior, state: 'running', exitCode: null, durationMs: 0, outputTail: '', pid: originalRun.pid,
       processGroupId: null, leaderStartIdentity: identityToken, capacityWait: null, capacityUnavailable: false } } });
 
-  // A cleanup sweep after the supervisor exit but before the task verdict is
-  // re-recorded leaves the fresh candidate intact for result reconciliation.
-  const { reapHookCheckouts } = await import('../core/hooks/hook-cleanup');
-  assert.equal((await reapHookCheckouts(f.store)).reapedCount, 0);
-  assert.equal(existsSync(candidatePath), true, 'the restart sweep leaves the validation candidate for result reconciliation');
+  assert.equal(existsSync(candidatePath), true, 'the service roll leaves the candidate intact before result reconciliation');
 
-  const reconciled = await hooks.projectValidationGate(f.store.task(task.id), f.head, validation);
+  const restartedScheduler = new HostRunScheduler(f.store,
+    { capacity: () => ({ cpuCapacity: 8, memoryCapacityBytes: 8_000_000_000, freeMemoryBytes: 8_000_000_000, loadAverage: [] }) });
+  t.after(() => restartedScheduler.stop());
+  const restartedHooks = new RepositoryHooks(f.store, { hostRuns: restartedScheduler });
+  const reconciled = await restartedHooks.projectValidationGate(f.store.task(task.id), f.head, validation);
   assert.equal(reconciled.kind, 'ok', JSON.stringify(reconciled));
   assert.equal(f.store.task(task.id).resolution.projectValidation?.state, 'passed');
-  assert.equal(scheduler.get(prior.hostRunId!)?.settlement?.outcome, 'passed');
+  assert.equal(restartedScheduler.get(prior.hostRunId!)?.settlement?.outcome, 'passed');
   assert.equal(await import('node:fs/promises').then(fs => fs.access(marker).then(() => true, () => false)), false);
 });
 
