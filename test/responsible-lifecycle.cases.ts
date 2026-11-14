@@ -2,7 +2,7 @@ import { fakeAdapter } from './support/fakes';
 import { test } from './support/sharded-test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
@@ -14,7 +14,7 @@ import { briefDigest } from '../core/planning/brief';
 import { runPrompt } from '../core/dispatch/prompts';
 import { parseNorthstarDocument } from '../core/planning/handoff';
 import { submissionQueueFields } from '../core/planning/handoff';
-import { holdsOf, OPERATOR_BOARD_CALLER, proofExecutionRecordSchema, QUEUE_REPOSITORY_ORIGIN, runSchema, submissionSchema, taskControlInputSchema, taskSchema, type Completion, type PoolEntry, type Profile, type Run } from '../shared/contracts';
+import { completionSchema, holdsOf, OPERATOR_BOARD_CALLER, proofExecutionRecordSchema, QUEUE_REPOSITORY_ORIGIN, runSchema, submissionSchema, taskControlInputSchema, taskSchema, type Completion, type PoolEntry, type Profile, type Run } from '../shared/contracts';
 import type { Adapter, AgentObservation } from '../core/host';
 import type { Task as ParameterTask } from '../shared/contracts';
 import { docsOnlyProofAutorunSkip, proofAutorunWaitingInputs, proofWaitApplies, RESPONSIBLE_QUESTION_WAIT, type ResolutionAdapter } from '../core/resolution';
@@ -1583,6 +1583,144 @@ test('an explicit owner proof activation still runs at a docs-only head the auto
     assert.equal(executors.length, 2, 'the explicit activation dispatches the proof executor');
     assert.equal(executors.at(-1)!.head, nextHead, 'the explicit execution runs at the exact docs-only head');
     assert.equal(f.events('proof_autorun_skipped').length, 1, 'the owner run is a choice, not an automatic one');
+  } finally { await f.close(); }
+});
+
+/**
+ * nucleus#1195: the automatic Spec 058 proof executor and the owner `proof`
+ * activation start a source-immutable proof execution. They are never classified
+ * as a worker or review recovery rerun, so the owner's no-automatic-retry rule
+ * neither fences nor escalates them.
+ */
+async function liveExecutorForApprovedProof(f: ReturnType<typeof fixture>, options: { noAutomaticRetry?: boolean } = {}) {
+  const selector = 'effigy test unit -- test/runnable.test.ts';
+  const wait = [{ proof: `Run ${selector} once at the approved head via the Queue proof route`, route: 'external' as const }];
+  const seeded = f.store.task(f.submitted.id);
+  f.store.update(f.submitted.id, { proofExecution: { selector, inputs: [], role: 'author' },
+    ...(options.noAutomaticRetry ? { resolution: { ...seeded.resolution, noAutomaticRetry: true } } : {}) });
+  seededSourceCheckout(f);
+  await f.engine.wake();
+  assert.equal(f.run().role, 'reviewer');
+  await f.report('blocked', { sourceApproved: true, awaitingProofs: wait });
+  await settleUntil(f, () => f.events('runnable_proof_started').length > 0);
+  const executor = f.store.runs(f.submitted.id).filter(run => run.role === 'executor').at(-1)!;
+  assert.equal(executor.head, f.current().prHead, 'the executor observes the approved exact head');
+  return { selector, wait, executor };
+}
+
+test('an automatic proof executor is proof execution, never a recovery rerun the no-automatic-retry rule fences', async () => {
+  const f = fixture({ responsible: true });
+  try {
+    const { executor } = await liveExecutorForApprovedProof(f, { noAutomaticRetry: true });
+    assert.equal(f.store.task(f.submitted.id).resolution.noAutomaticRetry, true, 'the owner rule still stands');
+    assert.equal(f.events('automatic_retry_suppressed').length, 0, 'an executor start is never charged as a recovery rerun');
+    assert.equal(f.events('planner_escalation').length, 0, 'no planner escalation is raised while an executor starts');
+    assert.equal(f.events('recovery_pending').length, 0, 'no recovery episode opens for the proof dispatch');
+    assert.ok(!f.events('automatic_retry_suppressed').some(event => event.detail.startsWith('automatic-retry-suppressed:recovery_rerun:')), 'no recovery_rerun fence names the executor run');
+    const task = f.current();
+    assert.equal(task.resolution.currentRunId, executor.id, 'the executor run owns the task');
+    assert.notEqual(task.phase, 'needs_attention', task.reason);
+    assert.ok(!['operator_needed', 'escalated'].includes(task.resolution.stop?.reason ?? ''), task.resolution.stop?.detail ?? task.reason ?? '');
+    await f.settle(1);
+    assert.equal(f.events('automatic_retry_suppressed').length, 0);
+    assert.equal(f.events('planner_escalation').length, 0);
+    assert.equal(f.events('runnable_proof_started').length, 1, 'the executor starts once for this head');
+    assert.equal(f.store.runs(f.submitted.id).filter(run => run.role === 'executor').length, 1);
+  } finally { await f.close(); }
+});
+
+test('stop and keep the work while a proof executor is live fences dispatch and leaves the executor to report', async () => {
+  const f = fixture({ responsible: true });
+  try {
+    const { executor } = await liveExecutorForApprovedProof(f);
+    assert.equal(f.states.get(executor.agentId!)?.active, true, 'the executor turn is live');
+    // oxide#083's shape: a planner escalation raised about the executor is answered
+    // with the administrative fence, which applies as an owner stop.
+    f.engine.resolution.delegatedAnswerWaitMs = 5000;
+    (f.adapter as unknown as Record<string, unknown>).askPlanner = async () => 'Choice: Stop and keep the work\nReason: Keep the work, and do not interrupt the executor';
+    f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: join(f.dir, 'repo') }] });
+    f.store.setProjectPlanner({ key: 'app', agentId: 'planner-1', setBy: 'operator' });
+    const id = 'stop-keep-live-executor';
+    f.engine.resolution.openPlannerEscalation(f.current(), {
+      cause: 'e'.repeat(64), runId: executor.id,
+      question: 'The owner forbids automatic retry at recovery_rerun. Preserve the executor and decide the next owner action.',
+      payload: { cause: 'recovery_rerun', runId: executor.id, question: 'The owner forbids automatic retry at recovery_rerun.' },
+    });
+    await settleUntil(f, () => f.events('planner_escalation_applied').length + f.events('planner_escalation_refused').length > 0);
+    assert.equal(f.events('planner_escalation_refused').length, 0, f.events('planner_escalation_refused')[0]?.detail);
+    assert.match(f.events('planner_escalation_applied')[0]!.detail, /stop and keep the work/);
+    const task = f.current();
+    assert.ok(holdsOf(task).dispatch, 'the answer applies the owner dispatch hold');
+    const cancelled = f.events('owner_stop_sent').filter(event => event.detail.includes(executor.id));
+    assert.deepEqual(cancelled, [], 'the live executor turn is never cancelled');
+    assert.ok(!f.events('owner_stop_intent').some(event => event.detail.includes(executor.id)), 'nothing was even sent to the executor');
+    const kept = f.store.run(executor.id)!;
+    assert.equal(kept.released, false, 'the executor run keeps its lease and credential');
+    assert.equal(kept.completion, null, 'no result is invented for it');
+    assert.equal(f.states.get(executor.agentId!)?.active, true, 'its turn is left alone until it reports or ends');
+    const stopped = f.events('owner_stopped').at(-1)!;
+    assert.deepEqual(JSON.parse(stopped.detail).executorContinues, [{ runId: executor.id, agentId: executor.agentId }],
+      'the stop records the executor it left to report');
+  } finally { await f.close(); }
+});
+
+test('an idle proof executor with no result is offered the re-report continuation, and its resent report runs ordinary intake', async () => {
+  const f = fixture({ responsible: true });
+  try {
+    const { executor, selector } = await liveExecutorForApprovedProof(f);
+    // The executor ends its turn without a recorded result: the report was cut off
+    // in flight, so the run is unreleased, its agent idle and nothing is recorded.
+    f.idle(executor.agentId!);
+    // Let the observation settle the executor's saved activity before the owner reads
+    // and applies the continuation: the control re-proves the task version.
+    await f.settle(3);
+    assert.equal(f.store.run(executor.id)!.completion, null);
+    const runsBefore = f.store.runs(f.submitted.id).length;
+    // Proof files need this task's recorded scratch; the report copies them there.
+    mkdirSync(join(f.dir, 'scratch'), { recursive: true });
+    f.store.update(f.submitted.id, { temporaryDirectory: join(f.dir, 'scratch', 'run-1') });
+    const view = ownerTaskNext(collectOwnerVerbFacts(f.store, f.current())).verbs
+      .find(candidate => candidate.verb === 'restart' && candidate.available)!;
+    assert.equal(view.args?.role, 'executor', 'next offers the executor re-report continuation');
+    assert.match(view.note ?? '', /resend its report only/);
+    assert.match(view.note ?? '', /selector is never re-run/);
+    const reported = await f.engine.performTaskControl(taskControlInputSchema.parse({ ...view.args,
+      reason: 'The proof executor reported but no result was recorded; ask it to resend that report' }));
+    assert.equal(reported.resolution.currentRunId, executor.id, 'the same run stays current');
+    assert.equal(f.store.runs(f.submitted.id).length, runsBefore, 'the continuation starts no new run');
+    assert.equal(f.events('executor_report_request_sent').length, 1);
+    const request = f.prompts.find(item => item.agentId === executor.agentId && item.messageId === `ns-executor-report-${executor.id}`)!;
+    assert.ok(request, 'the same executor agent is asked on its own thread');
+    assert.match(request.text, new RegExp(`same run`));
+    assert.match(request.text, /Do not run the selector again/);
+    assert.match(request.text, /proof_executed/);
+    // One bounded request per run: the continuation is not offered or applied twice.
+    const again = ownerTaskNext(collectOwnerVerbFacts(f.store, f.current())).verbs
+      .find(candidate => candidate.verb === 'restart');
+    assert.equal(again?.available, false);
+    assert.match(again?.refusal ?? '', /already sent/);
+    await assert.rejects(f.engine.performTaskControl(taskControlInputSchema.parse({ action: 'restart', role: 'executor',
+      taskId: f.submitted.id, version: f.current().version, reason: 'Ask again' })), /already sent/);
+    // The resent report is ordinary intake: the execution settles and the proof
+    // files are copied as evidence.
+    const proofFile = join(f.current().directory!, 'change.txt');
+    assert.ok(existsSync(proofFile), 'the fixture source file the executor names as proof exists');
+    // The resent report enters the ordinary callback intake the executor uses.
+    const resent = completionSchema.parse({ taskId: f.submitted.id, runId: executor.id, eventId: randomUUID(), status: 'proof_executed',
+      headline: 'The proof ran once at the approved head', summary: `Ran ${selector} once at the approved head`,
+      head: executor.head, proofResult: { status: 'passed', selector, exitCode: 0, evidence: `${selector}: 2 passing` },
+      proofFiles: [{ label: 'focused proof log', path: proofFile }] });
+    const receipt = await f.engine.complete(resent, f.tokens.get(executor.id)!);
+    assert.equal(receipt.accepted, true);
+    await f.settle(1);
+    const settled = f.current();
+    assert.equal(settled.proofExecutions[0]!.status, 'passed', 'the resent report settles the one allowance');
+    assert.equal(settled.proofExecutions[0]!.runId, executor.id, 'the receipt stays bound to the same run');
+    assert.equal(settled.proofFiles.length, 1, 'the report proof files are copied');
+    assert.equal(settled.proofFiles[0]!.label, 'focused proof log');
+    assert.equal(settled.proofFiles[0]!.head, settled.prHead);
+    assert.equal(f.store.runs(f.submitted.id).filter(run => run.role === 'executor').length, 1, 'the selector was never re-run in a new execution');
+    assert.equal(f.events('executor_report_request_sent').length, 1);
   } finally { await f.close(); }
 });
 

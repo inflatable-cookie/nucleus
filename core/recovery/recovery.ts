@@ -23,6 +23,7 @@ import {frontierAllowed,groupIsUnavailable,supersedingRouteProfile,withinUsage} 
 import {missingOriginHasPlanner} from '../questions/origin';
 import {RECOVERY_ESCALATION_FAILURE_PREFIX} from './task-reasons';
 import {requiredCheckPollMetaKey} from '../forge/checks';
+import {unreleasedExecutorRun} from '../qa/proof-execution';
 export const RECOVERY_STOPPED_WITHOUT_RESULT = 'The recovery coordinator stopped without a result. Inspect its thread; the plugin has not repeated its prompt.';
 /**
  * How long a recovery episode may sit pending with no run before it escalates.
@@ -57,6 +58,9 @@ const key=(t:Task,runs:Run[])=>t.resolution.stop
  ? digest(`stop:${t.resolution.stop.reason}:${t.resolution.stop.since}`)
  : digest(t.originError?`origin:${taskOwner(t)}:${t.originWorkspaceId}:${t.coordinatorGeneration}`:`${t.phase}:${cause(t,runs)}:${t.resolution.currentRunId ?? t.runId}:${t.coordinatorGeneration}`);
 const recoveryTarget=(task:Task,run:Run|null):"worker"|"reviewer"|"coordinator"|"closeout"|"unknown"=>{
+ // nucleus#1195: a proof executor run is proof execution, never a recovery
+ // rerun of worker or review work, so it never names their role.
+ if(run?.role==='executor')return 'unknown';
  if(run?.role==='reviewer')return 'reviewer';
  if(run?.role==='revision')return 'worker';
  if(run?.role==='closeout')return 'closeout';
@@ -596,6 +600,15 @@ export class Recovery {
   // Polls and the later planner attention stay owned by the check wait.
   if(pendingCheck?.head===t.prHead&&pendingCheck.overdueCheck&&(pendingCheck.recoveryRunId||pendingCheck.attentionRaisedAt))return null;
   if(t.entrypoint==='proof'&&t.proofOnly)return null;
+  // nucleus#1195: an executor dispatch is proof execution, not a retry of worker
+  // or review work. The automatic Spec 058 start and the owner `proof`
+  // activation are classified as proof execution, so while a declared proof is
+  // dispatched and unreleased the receipt owns the next move: no recovery
+  // episode opens, the no-automatic-retry fence is never charged as
+  // `recovery_rerun`, and no planner escalation is raised for a proof that is
+  // simply running. If that report was lost, `restart role=executor` asks the
+  // same executor to resend it.
+  if(unreleasedExecutorRun(this.store.runs(t.id),t.resolution.currentRunId))return null;
   // Spec 058 slice 2: an opted-in responsible task settles its mechanical faults
   // by code before any coordinator episode opens. Only a fault code cannot settle
   // reaches the coordinator below.

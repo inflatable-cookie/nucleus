@@ -94,6 +94,38 @@ export function proofSingleFlightRefusal(
   return null;
 }
 
+/**
+ * nucleus#1195: the executor run that still owns the lane. While it is unreleased
+ * and current, its receipt is the next move: no recovery episode opens and no
+ * retry fence or escalation is charged for proof execution. A historical executor
+ * the task has moved past is not this run.
+ */
+export function unreleasedExecutorRun<T extends Pick<Run, 'id' | 'role' | 'released'>>(runs: readonly T[], currentRunId?: string | null): T | null {
+  const live = runs.filter(run => run.role === 'executor' && !run.released
+    && (currentRunId === undefined || run.id === currentRunId));
+  return live.length === 1 ? live[0]! : null;
+}
+
+/** A proof execution is still running: the current executor run is unreleased with no result recorded yet. */
+export const proofExecutionRunning = (runs: readonly Pick<Run, 'id' | 'role' | 'released' | 'completion'>[], currentRunId?: string | null): boolean =>
+  runs.some(run => run.role === 'executor' && !run.released && !run.completion
+    && (currentRunId === undefined || run.id === currentRunId));
+
+/**
+ * nucleus#1195: the one live proof executor whose report never arrived. A proof
+ * execution is single-flight, so a task holds at most one unreleased executor
+ * run; the shape is that run itself — unreleased, bound to its agent, and no
+ * result recorded. `restart role=executor` asks exactly this run to resend its
+ * report on its existing credential, and nothing here re-runs the selector.
+ */
+export function unreportedExecutorRun<T extends Pick<Run, 'id' | 'role' | 'agentId' | 'released' | 'completion'>>(runs: readonly T[], currentRunId?: string | null): T | null {
+  const live = runs.filter(run => run.role === 'executor' && !run.released
+    && (currentRunId === undefined || run.id === currentRunId));
+  if (live.length !== 1) return null;
+  const run = live[0]!;
+  return run.completion || !run.agentId ? null : run;
+}
+
 /** A proof may be repeated only after a recorded author revision and source approval at a new exact head. */
 export function proofHeadAdmission(task: Task, runs: Pick<Run, 'id' | 'role' | 'head' | 'released' | 'completion' | 'proofExecution'>[], head: string): string | null {
   if (proofExecutions(task).some(proof => proof.head === head)

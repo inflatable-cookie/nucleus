@@ -36,9 +36,9 @@ export const AGENT_MESSAGE_RATE_WINDOW_MS = 3600_000;
 /** Keep tell responsive while allowing very fast host deliveries to be acknowledged inline. */
 export const AGENT_MESSAGE_INLINE_DELIVERY_MS = 2_000;
 
-export const AGENT_MESSAGE_ROLES = ["worker", "reviewer"] as const;
-/** Every role a message row can carry: a task's worker or reviewer, a planner ladder, or a named project agent. */
-export type AgentMessageRole = "worker" | "reviewer" | "planner" | "agent";
+export const AGENT_MESSAGE_ROLES = ["worker", "reviewer", "executor"] as const;
+/** Every role a message row can carry: a task's worker, reviewer or live proof executor, a planner ladder, or a named project agent. */
+export type AgentMessageRole = "worker" | "reviewer" | "executor" | "planner" | "agent";
 
 /**
  * The `tell` request. A run sender names its taskId and runId; a planner or named
@@ -122,7 +122,7 @@ interface MessageSender {
 
 /** Who a message is for, once resolved: a task's worker or reviewer, a planner ladder, or a named agent. */
 type Recipient =
-  | { kind: "task"; task: Task; role: "worker" | "reviewer" }
+  | { kind: "task"; task: Task; role: "worker" | "reviewer" | "executor" }
   | { kind: "planners"; projectKey: string; ladderTaskId: string | null; label: string }
   | { kind: "agent"; projectKey: string; name: string; agentId: string; hostId: string; label: string };
 
@@ -211,7 +211,7 @@ export class AgentMessages {
   }
 
   /** A task's worker or reviewer, when it is a message's recipient: terminal, removed and roleless tasks refuse. */
-  private taskRecipient(task: Task, role: "worker" | "reviewer"): Recipient {
+  private taskRecipient(task: Task, role: "worker" | "reviewer" | "executor"): Recipient {
     if (task.removedAt) throw Error(`Task ${this.taskLabel(task)} was removed; it cannot receive messages`);
     if (task.phase === "done" || task.phase === "cancelled") throw Error(`Task ${this.taskLabel(task)} is ${task.phase}; terminal tasks cannot receive messages`);
     const identity = this.messageRecipientIdentity(task, role);
@@ -325,8 +325,16 @@ export class AgentMessages {
   /** Resolve a `tell` recipient from a task id, a `repo#number` reference, a bare number or `#number`. */
   messageRecipientTask(from: Task, to: string): Task { return taskByReference(this.store, from, to); }
   /** The recipient task's current agent for a role: none (`present` false), between turns, or live now. */
-  messageRecipientIdentity(task: Task, role: "worker" | "reviewer"): { agentId: string | null; present: boolean; live: boolean; wait: string } {
+  messageRecipientIdentity(task: Task, role: "worker" | "reviewer" | "executor"): { agentId: string | null; present: boolean; live: boolean; wait: string } {
     const runs = this.store.runs(task.id);
+    // nucleus#1195: the live proof executor is a tell recipient. Its one run owns
+    // the thread while unreleased, and a message waits for the next live turn.
+    if (role === "executor") {
+      const executor = runs.findLast(candidate => candidate.role === "executor" && candidate.taskId === task.id
+        && !candidate.released && Boolean(candidate.agentId));
+      const live = Boolean(executor && executor.agentId && executor.hostId === task.hostId && task.hostId && !executor.completion);
+      return { agentId: executor?.agentId ?? null, present: Boolean(executor?.agentId), live, wait: "its proof executor is between turns" };
+    }
     if (role === "reviewer") {
       const agentId = task.resolution.reviewerAgentId;
       const live = Boolean(agentId && runs.some(candidate => candidate.role === "reviewer" && candidate.taskId === task.id
@@ -352,7 +360,7 @@ export class AgentMessages {
   async deliverAgentMessage(recipient: Task, record: AgentMessageRecord): Promise<AgentMessageReceipt> {
     const store = this.store;
     const label = this.taskLabel(recipient);
-    const role = record.toRole as "worker" | "reviewer";
+    const role = record.toRole as "worker" | "reviewer" | "executor";
     if (record.status !== "queued") return this.messageReceipt(recipient, role, record);
     if (record.deliveryIntentAt && record.deliveryIntentState !== "refused") return { status: "uncertain", messageId: record.id, to: label, role, recordedAt: record.createdAt, detail: "Delivery outcome is unknown; the recorded intent will not be resent." };
     let identity = this.messageRecipientIdentity(recipient, role);

@@ -207,8 +207,12 @@ export class TaskControlDispatcher {
     if (input.action === "route") return await this.engine.applyTaskControlRoute(input, operated, operationId);
     if (input.action === "restart") {
       const restarted = await this.engine.applyTaskControlRestart(input, operated, operationId);
-      // Round 4: the owner's restart supersedes their own stop.
+      // nucleus#1195: asking a live proof executor to resend its report is a
+      // reporting continuation, not the owner's next continuation, so it never
+      // releases the stop's fence — the owner's dispatch hold stands.
       const role = input.role ?? deriveRestartRole(restarted, this.store.runs(restarted.id));
+      if (role === "executor") return restarted;
+      // Round 4: the owner's restart supersedes their own stop.
       const preserveStoppedWorker = role === "worker" && this.engine.ownerStopHold(restarted) && this.engine.ownerStopNamesRun(restarted, restarted.runId);
       if (restarted.resolution.deferredVerb || preserveStoppedWorker) return restarted;
       const deferredYield = Boolean(this.engine.replayingDeferredVerb.getStore() && this.engine.deferredRestartSupersedesOwnerStop(restarted));
@@ -313,7 +317,8 @@ export class TaskControlDispatcher {
   async applyTaskControlRestart(input: TaskControlInput, operated: <T>(result: T) => T, operationId?: string): Promise<Task> {
     const result = await this.engine.restartTask(input, operationId);
     const role = input.role ?? deriveRestartRole(result, this.store.runs(result.id));
-    if (!result.resolution.deferredVerb && !(role === "worker" && this.engine.ownerStopHold(result) && this.engine.ownerStopNamesRun(result, result.runId))) {
+    // A re-report request to the live proof executor starts no run, so it wakes no dispatch.
+    if (role !== "executor" && !result.resolution.deferredVerb && !(role === "worker" && this.engine.ownerStopHold(result) && this.engine.ownerStopNamesRun(result, result.runId))) {
       void this.engine.cleanContext(() => this.engine.wakeTask(result.id));
       void this.engine.cleanContext(() => this.engine.wakeRepository(result.repoPath));
     }

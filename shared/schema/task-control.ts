@@ -137,8 +137,8 @@ const taskControlSchema = <T extends z.ZodType<number | undefined>>(version: T) 
       force: z.boolean().optional(),
       /** Spec 050 `retry_effect`: explicit opt-in to discard unpublished checkout state a held occurrence still pins. */
       discard: z.boolean().optional(),
-      /** Spec 050 `route`/`restart`: the role the control acts on. */
-      role: z.enum(["worker", "reviewer", "coordinator"]).optional(),
+      /** Spec 050 `route`/`restart`: the role the control acts on. nucleus#1195: `executor` names the proof-execution re-report continuation, which only `restart` accepts. */
+      role: z.enum(["worker", "reviewer", "coordinator", "executor"]).optional(),
       /**
        * Spec 050 `move to=merge`: the disclosed qualification an owner acceptance
        * records over the reviewer findings. Task 408: `move to=closeout` takes the
@@ -199,6 +199,12 @@ const taskControlSchema = <T extends z.ZodType<number | undefined>>(version: T) 
         // Spec 050 `route`: name one role and the profile its next run uses. The
         // profile checks (catalog, role, scope, thinking option, group availability)
         // run against the live catalog in the engine, not here.
+        if (input.role === "executor")
+          ctx.addIssue({
+            code: "custom",
+            path: ["role"],
+            message: "A proof executor is never routed; restart role=executor asks the live executor to resend its report",
+          });
         if (!input.role)
           ctx.addIssue({
             code: "custom",
@@ -245,6 +251,12 @@ const taskControlSchema = <T extends z.ZodType<number | undefined>>(version: T) 
             code: "custom",
             path: ["role"],
             message: "A control role is only valid for route, restart or stop",
+          });
+        if (input.role === "executor")
+          ctx.addIssue({
+            code: "custom",
+            path: ["role"],
+            message: "An executor role names the proof-execution re-report continuation, which only restart accepts",
           });
         if (input.profileId !== undefined)
           ctx.addIssue({

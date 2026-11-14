@@ -11,8 +11,9 @@ import { reviewerIdentityAtHead, reviewContinuationLimit, reviewResultFencesRun 
 import { runFenceRefusal, runSettlement } from "../intake/run-settlement";
 import { ownerStoppedRunIds, neverDispatched, workerBlockedOnOwnRun, prIdentity, escalatedEpisode, escalationBackedByLiveWork, retainedWorkerDeliveryRefusal, replacementAllowanceNote } from './owner-facts';
 import type { OwnerVerbFacts } from './owner-facts';
-import { verbInput, routeRoles } from './owner-shared';
+import { verbInput, restartRoles } from './owner-shared';
 import type { RestartRole, OwnerVerb } from './owner-shared';
+import { unreportedExecutorRun } from '../qa/proof-execution';
 
 /**
  * Round 4 (Tom, 2026-10-19): what `restart` does when no run of the role needs
@@ -102,6 +103,9 @@ export function parkedRestart(facts: OwnerVerbFacts): ParkedRestart {
 export function deriveRestartRole(task: Task, runs: Run[]): RestartRole {
   const current = task.resolution.currentRunId ? runs.find(run => run.id === task.resolution.currentRunId) ?? null : null;
   if (current && !current.released && ["recovery", "closeout"].includes(current.role)) return "coordinator";
+  // nucleus#1195: a live proof executor that has not reported is owed a report,
+  // not a worker or review continuation; its own run owns the next move.
+  if (unreportedExecutorRun(runs, task.resolution.currentRunId)) return "executor";
   // Task 405: an absent proof-execution creation resumes through the same
   // absent-resolution restart path; its own run carries the return phase.
   if (current && !current.released && current.role === "executor") return "reviewer";
@@ -118,7 +122,8 @@ export function deriveRestartRole(task: Task, runs: Run[]): RestartRole {
 export type RestartShape =
   | "pre_dispatch" | "absent_worker" | "blocked_worker" | "blocked_with_pr"
   | "stopped_revision" | "stalled_run" | "retained_worker" | "owner_stopped_worker"
-  | "checkpoint_reviewer" | "stopped_reviewer" | "absent_resolution" | "coordinator";
+  | "checkpoint_reviewer" | "stopped_reviewer" | "absent_resolution" | "coordinator"
+  | "unreported_executor";
 
 /**
  * Whether a reviewer run can be the run a relaunch keeps or continues. A
@@ -151,6 +156,9 @@ export function restartShape(task: Task, runs: Run[], role: RestartRole, events:
   const current = task.resolution.currentRunId ? runs.find(run => run.id === task.resolution.currentRunId) ?? null : null;
   const incident = task.resolution.incident;
   const fault = incident && incident.status !== "resolved" && incidentBindsCurrentWork(task, runs) ? incident : null;
+  // nucleus#1195: the proof execution role has exactly one continuation shape —
+  // an unreleased executor whose result never arrived.
+  if (role === "executor") return unreportedExecutorRun(runs, task.resolution.currentRunId) ? "unreported_executor" : null;
   if (role === "worker") {
     const ownerStopped = ownerStoppedRunIds(events);
     // A stall whose stop is already confirmed is no longer a live stop: the run
@@ -343,7 +351,7 @@ export const restart: OwnerVerb = {
   verb: "restart",
   action: "restart",
   input: verbInput({
-    role: z.enum(routeRoles).optional(),
+    role: z.enum(restartRoles).optional(),
     instruction: z.string().trim().min(1).max(12000).optional(),
     fresh: z.boolean().optional(),
     reason: z.string().trim().min(1).max(4000),
@@ -362,6 +370,18 @@ export const restart: OwnerVerb = {
     }
     const role = deriveRestartRole(task, runs);
     const shape = restartShape(task, runs, role, facts.events);
+    // nucleus#1195: one bounded continuation asks a live proof executor whose
+    // result never arrived to resend that report on its existing run and
+    // credential. It re-runs no selector and starts no run, so the view names the
+    // fresh observation execution makes and the one request already sent.
+    if (shape === "unreported_executor") {
+      const executor = unreportedExecutorRun(runs, task.resolution.currentRunId)!;
+      const asked = facts.events.some(event => event.kind === "executor_report_request_sent" && event.detail.startsWith(`${executor.id}:`));
+      return asked
+        ? { available: false, refusal: `The re-report request for proof executor run ${executor.id} was already sent; its result is still outstanding. Inspect the executor's thread, or use tell role=executor` }
+        : { available: true, fill: ["reason"], args: { taskId: task.id, version: task.version, role: "executor" },
+            note: `Asks the same proof executor (run ${executor.id}, agent ${executor.agentId}) to resend its report only, on its existing run credential. Nucleus freshly observes the executor first: a live turn or an unreadable identity refuses before anything is sent. The selector is never re-run and no run is started.` };
+    }
     if (!shape || restartTakesParkedStep(task, shape, facts)) {
       const parked = parkedRestart(facts);
       if ("refusal" in parked)

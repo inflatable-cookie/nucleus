@@ -84,8 +84,9 @@ thread ID. `ask` is a question that waits for an answer and escalates; `tell` is
   operator-only kinds), `{"project": "<key or name>"}` (that project's fallback planner),
   `{"project": "...", "agent": "<name>"}` (one named project agent; refused with its state if
   archived or gone), or `{"task": "<reference>", "role": "planner"}` (another task's planner ladder).
-- `tell` `to`: `"reviewer"` or `"worker"` (your task's counterpart), `"planner"`, a task reference such
-  as `effigy#590` with `role` (worker, reviewer or planner), `{"project": ...}` or
+- `tell` `to`: `"reviewer"` or `"worker"` (your task's counterpart), `"planner"`, `"executor"` (this
+  task's live proof-execution run), a task reference such
+  as `effigy#590` with `role` (worker, reviewer, planner or executor), `{"project": ...}` or
   `{"project": ..., "agent": ...}`.
 Nucleus delivers a `tell` labelled with your role and project. To a working T3 agent it steers into
 the running turn; to a working Paseo agent it waits until the agent is idle. Otherwise it queues for

@@ -12,11 +12,11 @@ export const agentMessageRecordSchema = z.object({
   /** Content identity for the duplicate rule: sender, recipient, role and text digest. */
   contentKey: z.string(),
   /** A task id, or `project:<key>` for a planner or named agent sender (its label is fromReference). */
-  fromTaskId: z.string(), fromRole: z.enum(["worker", "reviewer", "planner", "agent"]),
+  fromTaskId: z.string(), fromRole: z.enum(["worker", "reviewer", "planner", "agent", "executor"]),
   fromAgentId: z.string().nullable().default(null), fromReference: z.string().nullable().default(null), fromProject: z.string().nullable().default(null),
   fromHostId: z.string().min(1).nullable().optional(),
   /** A task id, or `project:<key>` for a planner or named agent recipient (its project is toProjectKey). */
-  toTaskId: z.string(), toRole: z.enum(["worker", "reviewer", "planner", "agent"]),
+  toTaskId: z.string(), toRole: z.enum(["worker", "reviewer", "planner", "agent", "executor"]),
   toAgentId: z.string().nullable().default(null), toReference: z.string().nullable().default(null),
   toHostId: z.string().min(1).nullable().optional(),
   /** A planner or named-agent recipient's project: its messages wait in that project's inbox while no thread is live. */

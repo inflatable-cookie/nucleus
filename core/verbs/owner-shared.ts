@@ -38,5 +38,12 @@ export const routeRoles = ["worker", "reviewer", "coordinator"] as const;
 
 export type RouteRole = typeof routeRoles[number];
 
-export type RestartRole = RouteRole;
+/**
+ * nucleus#1195: `restart` also names the proof-execution role, whose one
+ * continuation asks a live executor to resend its report. `route` keeps the
+ * three route roles: a proof executor is never routed or replaced this way.
+ */
+export const restartRoles = [...routeRoles, "executor"] as const;
+
+export type RestartRole = typeof restartRoles[number];
 
