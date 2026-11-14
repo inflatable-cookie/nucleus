@@ -20,6 +20,7 @@ export interface UsageProjectionWindow {
   windowSeconds: number | null;
   windowStartsAt: string | null;
   resetsAt: string | null;
+  notStarted?: boolean;
 }
 
 export interface UsageProjectionInput {
@@ -29,7 +30,7 @@ export interface UsageProjectionInput {
 
 /** The dial dead zone around pace 1 that still reads "on track" (about ±3.5%). */
 export const USAGE_ON_TRACK_EPSILON = 0.05;
-/** A window earlier in its life than this fraction has its dial damped toward centre. */
+/** Minimum elapsed fraction before window usage is extrapolated into pace. */
 export const USAGE_DAMPING_ELAPSED = 0.05;
 /**
  * The projected use at reset caps at twice the window: the dial pins at pace 2
@@ -75,8 +76,29 @@ export function projectUsageWindow(
   now: number,
 ): UsageWindowProjection | null {
   const used = clamp(window.usedFraction, 0, 1);
+  const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : null;
+  // A provider-confirmed null window is known to have no usage yet, although
+  // there is no reset time until that window starts.
+  if (window.notStarted && used <= 0)
+    return {
+      windowId: window.windowId,
+      name: window.name,
+      pace: 0,
+      dial: -1,
+      exhaustsInMs: null,
+    };
+  // The old reset is a known boundary. Once it passes, current usage is zero;
+  // a new reset time is unknown until the provider supplies another sample.
+  if (finite(resetsAt) && resetsAt <= now)
+    return {
+      windowId: window.windowId,
+      name: window.name,
+      pace: 0,
+      dial: -1,
+      exhaustsInMs: null,
+    };
   const elapsed = usageWindowElapsed(window, now);
-  // Fully used pins right whatever the clock says.
+  // Fully used pins right until a known reset passes; with no reset it stays pinned.
   if (used >= 1) {
     return {
       windowId: window.windowId,
@@ -97,7 +119,12 @@ export function projectUsageWindow(
       exhaustsInMs: null,
     };
   if (elapsed <= 0) return null;
-  const pace = used / elapsed;
+  // Sparse early-window samples are too noisy to extrapolate. Hold a neutral
+  // pace through the existing 5% damping interval; a full window still pins.
+  const pace =
+    elapsed < USAGE_DAMPING_ELAPSED
+      ? (1 - used) / (1 - elapsed)
+      : used / elapsed;
   const dialRaw = clamp(Math.log2(Math.max(pace, 1e-9)), -1, 1);
   const dial =
     elapsed < USAGE_DAMPING_ELAPSED
@@ -107,7 +134,9 @@ export function projectUsageWindow(
   // pace above 1 is exactly that; otherwise the reset arrives first.
   const windowMs = usageWindowLengthMs(window);
   const exhaustsInMs =
-    pace > 1 && finite(windowMs) ? ((1 - used) * windowMs) / pace : null;
+    elapsed >= USAGE_DAMPING_ELAPSED && pace > 1 && finite(windowMs)
+      ? ((1 - used) * windowMs) / pace
+      : null;
   return {
     windowId: window.windowId,
     name: window.name,
@@ -171,11 +200,17 @@ export function projectUsage(input: UsageProjectionInput): UsageProjection {
   const bindingWindow = input.windows.find(
     (window) => window.windowId === binding.windowId,
   );
+  const bindingReset = bindingWindow?.resetsAt
+    ? Date.parse(bindingWindow.resetsAt)
+    : null;
   // The projected share at reset keeps its over-projection (a pace above 1 lands
   // past 100%, the "+18% over" the dial label shows, schema-capped at 2); a fully
   // used window is already at 100% and cannot exceed it.
   const projectedUse =
-    !bindingWindow || binding.pace === null
+    bindingWindow?.notStarted ||
+    (finite(bindingReset) && bindingReset <= input.now)
+      ? 0
+      : !bindingWindow || binding.pace === null
       ? bindingWindow && bindingWindow.usedFraction >= 1
         ? 1
         : null

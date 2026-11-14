@@ -82,8 +82,8 @@ test("run-out: faster burn than the window turns red and names the exhaustion ti
   assert.ok(Math.abs(subscription.projectedUseAtReset! - 1.6) < 1e-9);
 });
 
-test("early damping pulls the needle toward centre in the first minutes", () => {
-  // Four minutes into a week with 1% used: raw pace is far red; damped it sits near centre.
+test("early samples hold a neutral pace through the first 5% of a window", () => {
+  // Four minutes into a week with 1% used is too little evidence to extrapolate.
   const fourMinutes = 4 * 60_000;
   const early = window({
     usedFraction: 0.01,
@@ -96,12 +96,20 @@ test("early damping pulls the needle toward centre in the first minutes", () => 
   );
   const projected = projectUsageWindow(early, NOW);
   assert.ok(projected);
-  const expectedScale = fourMinutes / WEEK / 0.05;
-  assert.ok(
-    Math.abs(projected.dial! - Math.min(1, raw) * expectedScale) < 1e-9,
-  );
-  assert.ok(Math.abs(projected.dial!) < 1);
-  assert.ok(projected.dial! > 0, "still slightly right of centre, not left");
+  assert.ok(projected.pace! < 1);
+  assert.ok(Math.abs(projected.dial!) <= USAGE_ON_TRACK_EPSILON);
+  assert.equal(projected.exhaustsInMs, null);
+});
+
+test("2% used one hour after a weekly reset does not project a runout", () => {
+  const oneHourAfterReset = window({
+    usedFraction: 0.02,
+    resetsAt: new Date(NOW + WEEK - HOUR).toISOString(),
+  });
+  const projection = projectUsage({ now: NOW, windows: [oneHourAfterReset] });
+  assert.equal(projection.state, "on_track");
+  assert.ok(projection.windows[0]!.pace! < 1);
+  assert.equal(projection.windows[0]!.exhaustsInMs, null);
 });
 
 test("used fraction ahead of elapsed fraction is red regardless of recent samples", () => {
@@ -148,10 +156,8 @@ test("fully used pins right at zero time to exhaustion", () => {
   assert.equal(subscription.projectedUseAtReset, 1);
 });
 
-test("a fully used window stays will_run_out when its reset has passed or is absent", () => {
-  // A full window is exhausted now, whatever its reset says; a passed or absent
-  // reset must never turn the pinned dial into "spare".
-  for (const resetsAt of [new Date(NOW - HOUR).toISOString(), null]) {
+test("a fully used window pins until its known reset, or indefinitely without one", () => {
+  for (const resetsAt of [new Date(NOW + HOUR).toISOString(), null]) {
     const exhausted = window({ usedFraction: 1, resetsAt });
     const projected = projectUsageWindow(exhausted, NOW);
     assert.ok(projected);
@@ -163,9 +169,13 @@ test("a fully used window stays will_run_out when its reset has passed or is abs
     assert.equal(subscription.dial, 1);
     assert.equal(subscription.projectedUseAtReset, 1);
   }
+  const reset = window({ usedFraction: 1, resetsAt: new Date(NOW - HOUR).toISOString() });
+  const projection = projectUsage({ now: NOW, windows: [reset] });
+  assert.equal(projection.state, "spare");
+  assert.equal(projection.projectedUseAtReset, 0);
 });
 
-test("a fully used window with a passed reset binds ahead of a merely fast window", () => {
+test("a reset full window no longer binds ahead of an active fast window", () => {
   const exhausted = window({
     windowId: "spent",
     name: "Spent",
@@ -175,7 +185,7 @@ test("a fully used window with a passed reset binds ahead of a merely fast windo
   const fast = window({ usedFraction: 0.8 });
   const subscription = projectUsage({ now: NOW, windows: [fast, exhausted] });
   assert.equal(subscription.state, "will_run_out");
-  assert.equal(subscription.bindingWindowId, "spent");
+  assert.equal(subscription.bindingWindowId, "weekly");
 });
 
 test("no usable window projects unknown, never zero", () => {
@@ -202,10 +212,28 @@ test("a billing period can carry the window length instead of windowSeconds", ()
   assert.equal(projected.pace, 0.5);
 });
 
-test("a window whose reset already passed projects nothing (stale, not zero)", () => {
+test("a window whose reset passed projects as unused from that reset", () => {
   const stale = window({ resetsAt: new Date(NOW - HOUR).toISOString() });
-  assert.equal(usageWindowElapsed(stale, NOW), null);
-  assert.equal(projectUsage({ now: NOW, windows: [stale] }).state, "unknown");
+  const projection = projectUsage({ now: NOW, windows: [stale] });
+  assert.equal(projection.state, "spare");
+  assert.equal(projection.dial, -1);
+  assert.equal(projection.projectedUseAtReset, 0);
+  assert.equal(projection.windows[0]!.pace, 0);
+});
+
+test("a confirmed not-started window projects as unused without a reset", () => {
+  const inactive = window({
+    windowId: "five_hour",
+    name: "5-hour",
+    usedFraction: 0,
+    windowSeconds: 5 * 60 * 60,
+    resetsAt: null,
+    notStarted: true,
+  });
+  const projection = projectUsage({ now: NOW, windows: [inactive] });
+  assert.equal(projection.state, "spare");
+  assert.equal(projection.projectedUseAtReset, 0);
+  assert.equal(projection.windows[0]!.dial, -1);
 });
 
 test("a window older than its own length never counts as started", () => {

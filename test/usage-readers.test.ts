@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { readCodexUsage, readCodexRollout } from "../core/usage/codex-reader";
 import { readClaudeUsage } from "../core/usage/claude-reader";
 import { GROK_BILLING_TIMEOUT_MS, GROK_INITIALIZE_TIMEOUT_MS, readGrokUsage } from "../core/usage/grok-reader";
+import { projectUsage } from "../shared/usage-projection";
 
 function scratch(prefix: string) {
   const dir = mkdtempSync(join(tmpdir(), `${prefix}-`));
@@ -327,14 +328,96 @@ test("the claude reader reads the cached utilization windows and sample time", a
   assert.equal(reading.accountId, "1a2b3c4d-0000-4000-8000-000000000001");
   assert.deepEqual(
     reading.windows.map((window) => window.windowId),
-    ["seven_day"],
+    ["five_hour", "seven_day"],
   );
-  assert.equal(reading.windows[0]!.usedFraction, 0.57);
-  assert.equal(reading.windows[0]!.windowSeconds, 7 * 24 * 60 * 60);
+  assert.equal(reading.windows[0]!.notStarted, true);
+  const weekly = reading.windows[1]!;
+  assert.equal(weekly.usedFraction, 0.57);
+  assert.equal(weekly.windowSeconds, 7 * 24 * 60 * 60);
   assert.equal(
-    reading.windows[0]!.resetsAt,
+    weekly.resetsAt,
     new Date(Date.parse("2026-11-14T09:00:00.101354+00:00")).toISOString(),
   );
+});
+
+test("Claude's null five-hour entry is a known inactive window", async () => {
+  const dir = scratch("usage-claude-inactive-five-hour");
+  const fetchedAtMs = Date.parse("2026-11-14T01:05:00.000Z");
+  writeFileSync(
+    join(dir, ".claude.json"),
+    JSON.stringify({
+      userID: "synthetic-user",
+      cachedUsageUtilization: {
+        fetchedAtMs,
+        accountUuid: "1a2b3c4d-0000-4000-8000-000000000001",
+        utilization: { five_hour: null },
+      },
+    }),
+  );
+  const reading = await readClaudeUsage({ home: dir }, { env: {} });
+  assert.equal(reading.status, "ok");
+  assert.equal(reading.accountId, "1a2b3c4d-0000-4000-8000-000000000001");
+  assert.deepEqual(reading.windows, [{
+    windowId: "five_hour",
+    name: "5-hour",
+    usedFraction: 0,
+    windowSeconds: 5 * 60 * 60,
+    windowStartsAt: null,
+    resetsAt: null,
+    notStarted: true,
+  }]);
+});
+
+test("a Claude weekly cache past reset projects as unused", async () => {
+  const dir = scratch("usage-claude-weekly-past-reset");
+  const fetchedAtMs = Date.parse("2026-11-14T01:05:00.000Z");
+  const now = Date.parse("2026-11-14T10:00:00.000Z");
+  writeFileSync(
+    join(dir, ".claude.json"),
+    JSON.stringify({
+      userID: "synthetic-user",
+      cachedUsageUtilization: {
+        fetchedAtMs,
+        accountUuid: "1a2b3c4d-0000-4000-8000-000000000001",
+        utilization: {
+          seven_day: {
+            utilization: 89,
+            resets_at: "2026-11-14T09:00:00.340640+00:00",
+            limit_dollars: null,
+          },
+        },
+      },
+    }),
+  );
+  const reading = await readClaudeUsage({ home: dir }, { env: {} });
+  assert.equal(reading.status, "ok");
+  assert.equal(reading.windows.length, 1);
+  assert.equal(reading.windows[0]!.usedFraction, 0.89);
+  assert.equal(reading.windows[0]!.resetsAt, "2026-11-14T09:00:00.340Z");
+  const projection = projectUsage({ now, windows: reading.windows });
+  assert.equal(projection.state, "spare");
+  assert.equal(projection.dial, -1);
+  assert.equal(projection.projectedUseAtReset, 0);
+});
+
+test("malformed Claude windows remain unknown", async () => {
+  const dir = scratch("usage-claude-malformed-windows");
+  writeFileSync(
+    join(dir, ".claude.json"),
+    JSON.stringify({
+      cachedUsageUtilization: {
+        fetchedAtMs: Date.parse("2026-11-14T01:05:00.000Z"),
+        accountUuid: "1a2b3c4d-0000-4000-8000-000000000001",
+        utilization: {
+          five_hour: { utilization: "many", resets_at: null },
+          seven_day: { utilization: "many", resets_at: null },
+        },
+      },
+    }),
+  );
+  const reading = await readClaudeUsage({ home: dir }, { env: {} });
+  assert.equal(reading.status, "unknown");
+  assert.match(reading.reason!, /no usable window/);
 });
 
 test("the claude reader never invents data from a missing or renamed cache", async () => {
@@ -378,7 +461,10 @@ test("the claude reader reports a cache with no usable window as unknown", async
       cachedUsageUtilization: {
         fetchedAtMs: 1794413084190,
         accountUuid: null,
-        utilization: { five_hour: null, seven_day: { utilization: "many" } },
+        utilization: {
+          five_hour: { utilization: "many" },
+          seven_day: { utilization: "many" },
+        },
       },
     }),
   );

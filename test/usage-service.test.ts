@@ -456,7 +456,7 @@ test("a failed read identifying a different account does not reuse another accou
   }
 });
 
-test("a last good reading stays visible after reset but its stale projection is unknown", async () => {
+test("a last good reading stays visible after reset and projects as unused", async () => {
   const { store } = fixture();
   try {
     store.setProfiles([profile("p1", "grok")]);
@@ -481,9 +481,10 @@ test("a last good reading stays visible after reset but its stale projection is 
     await service.refresh({ dueOnly: false });
     const subscription = service.state().subscriptions[0]!;
     assert.deepEqual(subscription.reading, good);
-    assert.equal(subscription.projection.state, "unknown");
-    assert.equal(subscription.projection.dial, null);
-    assert.equal(subscription.stale?.expired, true);
+    assert.equal(subscription.projection.state, "spare");
+    assert.equal(subscription.projection.dial, -1);
+    assert.equal(subscription.projection.projectedUseAtReset, 0);
+    assert.equal(subscription.stale?.expired, false);
     assert.equal(subscription.stale?.ageMs, 2_000);
   } finally {
     store.close();
