@@ -173,7 +173,7 @@ export const noticeSchema = z.object({
   id: z.string(), taskId: z.string(), agentId: z.string(), text: z.string(),
   status: z.enum(["pending", "intent", "delivered", "uncertain", "superseded"]), error: z.string(),
   // `owner_change` has no writer or delivery; it stays so historical rows parse.
-  kind: z.enum(["attention", "completion", "hold", "hold_release", "lane_drain", "next_aim", "owner_change", "prerequisite", "qa"]).default("attention"),
+  kind: z.enum(["attention", "completion", "hold", "hold_release", "host_outage", "lane_drain", "next_aim", "owner_change", "prerequisite", "qa"]).default("attention"),
   recipientAgentId: z.string().default(""), workspaceId: z.string().nullable().default(null),
   sources: z.array(z.enum(["origin", "creator", "self"])).default([]), originEntry: z.boolean().default(true),
 });

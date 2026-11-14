@@ -434,6 +434,8 @@ export class Resolution {
   }))(this));
   readonly adapter: Adapter & Partial<ResolutionAdapter>;
   hostAvailable: (task: Task, run?: Run) => boolean = () => true;
+  /** Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): the open outage for a host, when one exists. */
+  hostOutage: (hostId: string) => import('../shared/host-outage').HostOutage | null = () => null;
   workerProviderUnavailable: (task: Task) => boolean = () => false;
   withHost: <T>(id: string, fn: () => T) => T = (_id, fn) => fn();
   /** The task-owner host binding every agent-naming call reads (#1154); same rule as `Engine.onTaskHost`. */
@@ -544,6 +546,8 @@ export class Resolution {
   recordStop(task: Task, reason: TaskStopReason, detail: string, suggestedVerbs?: TaskStopVerb[], phase?: Task['phase']): Task { return this.taskStops.recordStop(task, reason, detail, suggestedVerbs, phase); }
   /** Spec 058 budgets (nucleus#1153): open or close the wall-clock pause interval for one task. */
   settleBudgetClock(task: Task, options: { returned?: boolean } = {}): Task { return this.taskStops.settleBudgetClock(task, options); }
+  /** Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): clear the host wait when its host is back. */
+  clearHostWait(task: Task): Task { return this.taskStops.clearHostWait(task); }
   ensureIncident(task: Task, run: Run | null, reason: string, action?: Incident['action'], cause?: IncidentCause): Incident { return this.taskStops.ensureIncident(task, run, reason, action, cause); }
   recordIncidentEvent(taskId: string, incident: Incident) { return this.taskStops.recordIncidentEvent(taskId, incident); }
   saveIncident(task: Task, patch: Partial<Incident>) { return this.taskStops.saveIncident(task, patch); }
@@ -1109,6 +1113,8 @@ export class Resolution {
   advanceSkippedReview(t:Task): void { return this.reviewLifecycle.advanceSkippedReview(t); }
   private sendDurably(...args: Parameters<Notices['sendDurably']>): Promise<'paused' | 'done'> { return this.notices.sendDurably(...args); }
   deliverDrainNotices(): Promise<void> { return this.notices.deliverDrainNotices(); }
+  /** Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): the one long-outage planner notice. */
+  deliverHostOutageNotices(): Promise<void> { return this.notices.deliverHostOutageNotices(); }
   deliverNotices(): Promise<void> { return this.notices.deliverNotices(); }
   deliverHoldNotices(): Promise<void> { return this.notices.deliverHoldNotices(); }
   deliverDecisionNotices(): Promise<void> { return this.notices.deliverDecisionNotices(); }

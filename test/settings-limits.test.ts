@@ -14,7 +14,7 @@ const limits = () => import('../client/limits');
 const dark = { accent: '#1f6feb', accentForeground: '#ffffff', surface0: '#0d1117', surface1: '#161b22', surface2: '#30363d', border: '#30363d', foreground: '#f0f6fc', foregroundMuted: '#8b949e', statusWarning: '#f0883e', statusDanger: '#f85149', statusSuccess: '#3fb950' } as const;
 const c = dark as never;
 
-const CAPACITY: CapacityAuthorityValues = { globalLimit: 32, projectLimit: 5, papercutProjectLimit: 2, paseoCallLimit: 6, stallThresholdMinutes: 30, holdReminderMinutes: 120, holdEscalationMinutes: 240, laneDrainMinutes: 120, laneDrainEscalationMinutes: 1440 };
+const CAPACITY: CapacityAuthorityValues = { globalLimit: 32, projectLimit: 5, papercutProjectLimit: 2, paseoCallLimit: 6, stallThresholdMinutes: 30, holdReminderMinutes: 120, holdEscalationMinutes: 240, laneDrainMinutes: 120, laneDrainEscalationMinutes: 1440, hostOutageNoticeMinutes: 120 };
 /** A recorded change that moved the named limits, each as [before, after]. */
 const change = (version: number, moves: Partial<Record<keyof CapacityAuthorityValues, [number, number]>>, at: string): CapacityChange => ({
   version, at, surface: 'paseo',

@@ -3,7 +3,7 @@ import { holdKindSchema, laneKeyListSchema } from "../schema/task-primitives";
 import { taskSchema } from "./tasks";
 import { projectSchema } from "./projects";
 import { operationSummarySchema } from "../operations";
-import { DEFAULT_HOLD_ESCALATION_MINUTES, DEFAULT_HOLD_REMINDER_MINUTES, DEFAULT_LANE_DRAIN_ESCALATION_MINUTES, DEFAULT_LANE_DRAIN_MINUTES, DEFAULT_PAPERCUT_PROJECT_LIMIT, DEFAULT_PASEO_CALL_LIMIT, DEFAULT_STALL_THRESHOLD_MINUTES, MAX_HOLD_MINUTES, MAX_PASEO_CALL_LIMIT, MAX_STALL_THRESHOLD_MINUTES, poolSchema, profileSchema, projectDispatchLimitOverridesSchema, routingGrantViewSchema, usageViewSchema } from "./settings";
+import { DEFAULT_HOLD_ESCALATION_MINUTES, DEFAULT_HOLD_REMINDER_MINUTES, DEFAULT_HOST_OUTAGE_NOTICE_MINUTES, DEFAULT_LANE_DRAIN_ESCALATION_MINUTES, DEFAULT_LANE_DRAIN_MINUTES, DEFAULT_PAPERCUT_PROJECT_LIMIT, DEFAULT_PASEO_CALL_LIMIT, DEFAULT_STALL_THRESHOLD_MINUTES, MAX_HOLD_MINUTES, MAX_HOST_OUTAGE_NOTICE_MINUTES, MAX_PASEO_CALL_LIMIT, MAX_STALL_THRESHOLD_MINUTES, poolSchema, profileSchema, projectDispatchLimitOverridesSchema, routingGrantViewSchema, usageViewSchema } from "./settings";
 import { qaFenceViewSchema } from "./qa-fence";
 import { backupHealthSchema } from "./backup";
 import { taskSummarySchema } from "../schema/task-view";
@@ -82,6 +82,8 @@ export const stateSchema = z.object({
   // Spec 041: the lane close-out and next-aim drain timers.
   laneDrainMinutes: z.number().int().min(1).max(MAX_HOLD_MINUTES).default(DEFAULT_LANE_DRAIN_MINUTES),
   laneDrainEscalationMinutes: z.number().int().min(1).max(MAX_HOLD_MINUTES).default(DEFAULT_LANE_DRAIN_ESCALATION_MINUTES),
+  // Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): the long-outage notice bound.
+  hostOutageNoticeMinutes: z.number().int().min(1).max(MAX_HOST_OUTAGE_NOTICE_MINUTES).default(DEFAULT_HOST_OUTAGE_NOTICE_MINUTES),
   operationLimit: z.number().int().positive().default(64),
   operationBacklog: z.number().int().nonnegative().default(0),
   operations: z.array(operationSummarySchema).default([]),

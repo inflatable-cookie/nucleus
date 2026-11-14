@@ -31,6 +31,13 @@ export const DEFAULT_HOLD_REMINDER_MINUTES = 120;
 
 export const DEFAULT_HOLD_ESCALATION_MINUTES = 240;
 
+// Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): how long a host may
+// stay unavailable before each affected project's planner hears once. A shorter
+// outage stays a visible wait only.
+export const DEFAULT_HOST_OUTAGE_NOTICE_MINUTES = 120;
+
+export const MAX_HOST_OUTAGE_NOTICE_MINUTES = 10080;
+
 export const MAX_HOLD_MINUTES = 10080;
 
 // Spec 041: how long a plan lane or a drained board sits before Queue prompts the plan
@@ -319,6 +326,12 @@ export const capacitySchema = z.object({
   // Optional so an older caller saving the hold timers never resets the drain timers.
   laneDrainMinutes: z.number().int().min(1).max(MAX_HOLD_MINUTES).optional(),
   laneDrainEscalationMinutes: z.number().int().min(1).max(MAX_HOLD_MINUTES).optional(),
+  /**
+   * Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): minutes a host
+   * may stay unavailable before each affected project's planner is told once.
+   * Optional so an older caller never resets the bound.
+   */
+  hostOutageNoticeMinutes: z.number().int().min(1).max(MAX_HOST_OUTAGE_NOTICE_MINUTES).optional(),
 }).strict();
 
 /**
@@ -335,6 +348,7 @@ export const capacityAuthorityValuesSchema = capacitySchema.extend({
   holdEscalationMinutes: z.number().int().min(1).max(MAX_HOLD_MINUTES),
   laneDrainMinutes: z.number().int().min(1).max(MAX_HOLD_MINUTES),
   laneDrainEscalationMinutes: z.number().int().min(1).max(MAX_HOLD_MINUTES),
+  hostOutageNoticeMinutes: z.number().int().min(1).max(MAX_HOST_OUTAGE_NOTICE_MINUTES),
 });
 
 export type CapacityAuthorityValues = z.infer<typeof capacityAuthorityValuesSchema>;
