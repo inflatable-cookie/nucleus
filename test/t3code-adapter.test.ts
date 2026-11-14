@@ -394,12 +394,15 @@ test('empty enrichment snapshots preserve inventory while missing fields and inc
   await assert.rejects(host.observe(created.id), /activeRunId/);
   assert.equal(await host.observationInventory([created.id]), null);
   server.controls.shellMissingField = '';
+  // A coverage claim that names more history without saying where it went cannot
+  // be used by either read: nothing in it bounds or locates the rest.
   server.controls.incompleteThread = true;
-  await assert.rejects(host.observe(created.id), /incomplete projection/);
+  await assert.rejects(host.observe(created.id), /hasMoreHistory true with no cursor/);
   assert.equal(await host.agentTimelinePage(created.id), null);
   server.controls.incompleteThread = false;
   server.controls.synchronized = false;
-  await assert.rejects(host.observe(created.id), /timeout/);
+  await assert.rejects(host.observe(created.id), (error: T3RpcError) => error instanceof T3RpcError && error.code === 'timeout'
+    && /T3Code timeout: orchestration\.subscribeThread/.test(error.message));
   assert.equal(host.connected, false);
 });
 
@@ -417,9 +420,57 @@ test('coverage fields are strictly decoded before observation or timeline comple
     assert.equal(await host.observationInventory([created.id]), null);
   }
   server.controls.threadCoverage = { hasMoreHistory: false, historyCursor: 'opaque-history-cursor' };
-  await assert.rejects(host.observe(created.id), /incomplete projection/);
+  await assert.rejects(host.observe(created.id), /hasMoreHistory false with a cursor/);
   server.controls.threadCoverage = { hasMoreHistory: false, historyCursor: null, turnItemsOmitLocalVisible: false };
   assert.equal((await host.observe(created.id)).active, false);
+});
+
+test('a thread long enough to page stays observable from the nightly bounded snapshot', async t => {
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const p = server.threads.get(created.id)!;
+  // A long worker run leaves far more turn items than one snapshot window holds.
+  p.turnItems = Array.from({ length: server.controls.boundedRowLimit + 40 }, (_, index) =>
+    ({ id: `synthetic-item-${index}`, type: 'assistant_message', createdAt: STAMP }));
+  p.runs = [{ id: 'synthetic-run', status: 'running', startedAt: STAMP }];
+  p.runtimeRequests = [{ id: 'synthetic-question', kind: 'user_input', status: 'pending',
+    responseCapability: { type: 'live', providerSessionId: 'synthetic-session' } }];
+  // The paged answer arrives whether or not the read opts in, so this is the
+  // shape main's observation refused as an incomplete projection.
+  server.controls.boundedSnapshotAlways = true;
+  const observed = await host.observe(created.id);
+  assert.equal(observed.status, 'running');
+  assert.equal(observed.active, true);
+  assert.equal(observed.activeTurnId, 'synthetic-run');
+  assert.equal(observed.permissions, true);
+  assert.equal(observed.pendingRequest?.id, 'synthetic-question');
+  assert.deepEqual(observed.pendingPermissionKinds, ['question']);
+  const read = server.requests.filter(request => request.tag === 'orchestration.subscribeThread').at(-1)!.payload as Record<string, unknown>;
+  assert.equal(read.acceptBoundedSnapshot, true, 'observation asks for the bounded snapshot');
+  assert.equal(read.requestCompletionMarker, true);
+});
+
+test('a transcript read refuses what observation accepts, so partial history is never handed out', async t => {
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const p = server.threads.get(created.id)!;
+  p.turnItems = [
+    { id: 'synthetic-item-0', type: 'assistant_message', createdAt: STAMP },
+    { id: 'synthetic-question-item', type: 'user_input_request', requestId: 'synthetic-question', createdAt: STAMP,
+      questions: [{ id: 'synthetic-q', header: 'Synthetic', question: 'Synthetic question?', options: [{ label: 'Yes' }] }] },
+  ];
+  p.runtimeRequests = [{ id: 'synthetic-question', kind: 'user_input', status: 'pending',
+    responseCapability: { type: 'live', providerSessionId: 'synthetic-session' } }];
+  // A paged projection with an opaque cursor: observation may use it, a reader
+  // of the transcript may not.
+  server.controls.threadCoverage = { hasMoreHistory: true, historyCursor: 'synthetic-history-cursor', latestLocalTurnOrdinal: 0 };
+  assert.equal((await host.observe(created.id)).pendingRequest?.id, 'synthetic-question');
+  await assert.rejects(host.pendingQuestions(created.id), /incomplete projection/);
+  await assert.rejects(host.answeredQuestions(created.id), /incomplete projection/);
+  assert.equal(await host.agentTimelinePage(created.id), null);
+  // The transcript read never opts into a window; it demands the whole list.
+  const read = server.requests.filter(request => request.tag === 'orchestration.subscribeThread').at(-1)!.payload as Record<string, unknown>;
+  assert.equal(read.acceptBoundedSnapshot, undefined);
 });
 
 test('inventory repeats moving live/archive snapshot pairs and succeeds when the sequence settles', async t => {
@@ -564,9 +615,9 @@ test('the origin read answers authoritative absence, and only an unread inventor
   // T3 has no such thread: a complete shell plus archive read proves absence, so
   // the lookup answers not-mine instead of throwing.
   assert.equal(await host.originAgent('native-id-t3-does-not-have'), null);
-  // A projection that cannot be read completely proves nothing about the thread.
+  // A projection whose coverage claim is unusable proves nothing about the thread.
   server.controls.incompleteThread = true;
-  await assert.rejects(host.originAgent(created.id), /incomplete projection/);
+  await assert.rejects(host.originAgent(created.id), /hasMoreHistory true with no cursor/);
   server.controls.incompleteThread = false;
   // A read that cannot run at all is a failed read, never authoritatively absent.
   host.close();

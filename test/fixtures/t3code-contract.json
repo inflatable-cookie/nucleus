@@ -108,6 +108,23 @@
     "optionSelectionRequired": ["id", "value"],
     "optionSelectionValueTypes": ["string", "boolean"]
   },
+  "subscribeThread": {
+    "sourceBuild": "0.1.10-nightly.20261111.4529",
+    "sourceRevision": "d2c25950b4d9",
+    "source": "apps/server bundle: OrchestrationV2SubscribeThreadInput, OrchestrationV2ThreadDetailSnapshot and OrchestrationV2ThreadBoundedSnapshot; packages/shared/src/orchestrationV2BoundedSnapshot.ts",
+    "roundTrip": "A bounded snapshot is sent only to a client that opts in; the plain read returns the complete detail projection instead",
+    "input": ["threadId", "afterSequence", "requestCompletionMarker", "acceptBoundedSnapshot", "acceptDeferredWork", "acceptCompactTurnItems", "acceptDedupedBodies", "acceptCompactIds"],
+    "boundedRequestField": "acceptBoundedSnapshot",
+    "serverGuardQuote": "function shouldUseBoundedThreadSnapshot(input) { return input.acceptBoundedSnapshot === true; }",
+    "boundedResponseQuote": "return { projection: compactProjection ?? projection, historyCursor: bounded.historyCursor, hasMoreHistory: bounded.hasMoreHistory, latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal, ...compactProjection === null ? {} : { turnItemsOmitLocalVisible: true }, ...input.compactIds ? { idTable: true } : {} };",
+    "boundedRequired": ["snapshotSequence", "projection", "historyCursor", "hasMoreHistory", "latestLocalTurnOrdinal"],
+    "coveragePair": "A window that dropped earlier history sets hasMoreHistory true and a non-null historyCursor; a complete window sets hasMoreHistory false and historyCursor null.",
+    "projectionComplete": ["thread", "runs", "runtimeRequests", "plans", "contextHandoffs"],
+    "projectionWindowed": ["turnItems", "messages", "visibleTurnItems"],
+    "retainedOutsideWindow": "run_interrupt_request items, and user_input_request or approval_request items whose request is still pending",
+    "rowPolicy": { "source": "THREAD_HISTORY_PAGE_POLICY", "maxUserTurns": 10, "maxItems": 75, "maxTurnItems": 500, "maxEncodedBytes": 1048576 },
+    "optInFields": "turnItemsOmitLocalVisible and idTable appear only for acceptCompactTurnItems or acceptCompactIds; the plain decode here cannot restore either"
+  },
   "examples": [
     {
       "method": "orchestration.launchThread",

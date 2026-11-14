@@ -23,6 +23,30 @@ export async function t3Fake(t: TestContext, directory: string) {
   const projectRows: Value[] = [{ id: 'synthetic-project', title: 'Synthetic project', workspaceRoot: directory }];
   const archivedProjects = new Set<string>();
   const threads = new Map<string, Value>([['synthetic-probe', threadProjection('synthetic-probe', directory)]]);
+  /**
+   * The nightly's bounded snapshot (recorded `subscribeThread` contract): only
+   * a client that sends `acceptBoundedSnapshot` receives one, the thread record,
+   * its runs and its runtime requests stay complete, and only the timeline is a
+   * window with `hasMoreHistory` and an opaque `historyCursor`. Items a pending
+   * runtime request needs are retained outside the window, as the nightly keeps
+   * them.
+   */
+  const boundedSnapshot = (p: Value, rowLimit: number) => {
+    const pending = new Set(p.runtimeRequests.filter((request: Value) => request.status === 'pending').map((request: Value) => request.id));
+    const kept = new Set(p.turnItems.slice(-rowLimit).map((item: Value) => item.id));
+    for (const item of p.turnItems)
+      if (item.type === 'run_interrupt_request' || ['user_input_request', 'approval_request'].includes(item.type) && pending.has(item.requestId))
+        kept.add(item.id);
+    const turnItems = p.turnItems.filter((item: Value) => kept.has(item.id));
+    const hasMoreHistory = turnItems.length < p.turnItems.length;
+    const snapshot = { projection: { ...p, turnItems, messages: p.messages.slice(-1) },
+      hasMoreHistory, historyCursor: hasMoreHistory ? 'synthetic-history-cursor' : null, latestLocalTurnOrdinal: null };
+    // The fixture is checked against the recorded contract on every bounded
+    // answer, so a hand-made coverage field cannot enter a test unobserved.
+    for (const field of contract.subscribeThread.boundedRequired)
+      assert.ok(field === 'snapshotSequence' || Object.hasOwn(snapshot, field), `bounded snapshot.${field}`);
+    return snapshot;
+  };
   const controls = { environmentId: 'synthetic-environment', version: 'nightly-synthetic-unseen', protocol: 2,
     synchronized: true, incompleteThread: false, enrichment: false, shellMissingField: '',
     snapshotSequence: 1, threadCoverage: {} as Record<string, unknown>, beforeArchiveRead: (() => {}) as () => void,
@@ -30,6 +54,10 @@ export async function t3Fake(t: TestContext, directory: string) {
     interruptThreadReads: 0,
     disconnectMutation: false, disconnectAfterEffect: false, refuseMutation: false, postEffectDefect: false,
     unsupportedProjectCreate: false, projectMutationFailure: false, projectMutationSecretFailure: false, projectMutationIdSecretFailure: false, secretDefect: false, secretLocationDefect: false, mutationObserver: (() => {}) as () => void,
+    /** Rows the bounded snapshot keeps before it pages; the nightly's own limit is a policy, not a contract field. */
+    boundedRowLimit: 20,
+    /** A nightly that answers a bounded window without the client asking (the read main's long threads hit). */
+    boundedSnapshotAlways: false,
     /** Replaces the single synthetic provider in `server.getConfig` when set (nightly provider shapes). */
     providers: undefined as Value[] | undefined };
   /** Command receipts make a replayed project mutation answer with its recorded outcome. */
@@ -115,11 +143,18 @@ export async function t3Fake(t: TestContext, directory: string) {
           controls.beforeArchiveRead();
           return success({ schemaVersion: 1, snapshotSequence: controls.snapshotSequence, projects: projects(), threads: [...threads.values()].filter(p => p.thread.archivedAt && !p.thread.deletedAt).map(shell) });
         case 'orchestration.subscribeThread': {
+          for (const field of Object.keys(payload))
+            assert.ok(contract.subscribeThread.input.includes(field), `subscribeThread.${field} is not a recorded input field`);
           const p = threads.get(payload.threadId);
           // The nightly refuses a removed thread's projection outright.
           if (!p || p.thread.deletedAt !== null) return failure({ _tag: 'Fail', error: { _tag: 'ThreadNotFoundError' } });
           if (controls.interruptThreadReads > 0) { controls.interruptThreadReads--; return send({ _tag: 'Interrupt', requestId: request.id }); }
-          return stream([{ kind: 'snapshot', snapshotSequence: controls.snapshotSequence, projection: p, ...(controls.incompleteThread ? { hasMoreHistory: true } : {}), ...controls.threadCoverage }, ...marker()]);
+          const coverage = payload.acceptBoundedSnapshot === true || controls.boundedSnapshotAlways ? boundedSnapshot(p, controls.boundedRowLimit)
+            : { projection: p };
+          // A coverage claim that says more history exists without a cursor: the
+          // pair the nightly never sends, which no read may use.
+          const incoherent = controls.incompleteThread ? { hasMoreHistory: true, historyCursor: null } : {};
+          return stream([{ kind: 'snapshot', snapshotSequence: controls.snapshotSequence, ...coverage, ...incoherent, ...controls.threadCoverage }, ...marker()]);
         }
         case 'orchestration.launchThread': {
           for (const field of contract.launchThread.required) assert.ok(Object.hasOwn(payload, field), `launchThread.${field}`);

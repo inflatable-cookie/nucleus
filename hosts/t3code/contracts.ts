@@ -88,6 +88,28 @@ export const config = z.object({ environment: z.object({ environmentId: id, serv
       capabilities: modelCapabilities.optional() })) })),
 });
 
+/**
+ * How much of a thread's timeline one `subscribeThread` snapshot carries.
+ *
+ * The nightly answers a bounded snapshot only to a client that asks for one
+ * (`acceptBoundedSnapshot`). It then keeps the thread record, every run and
+ * every runtime request in full and windows only the timeline, so `paged`
+ * describes the transcript and never the state observation reads.
+ * `hasMoreHistory` and `historyCursor` are a pair: a window that left earlier
+ * history behind sets both, a complete snapshot sets neither, and any other
+ * combination is a coverage claim the adapter cannot use. `idTable` is the
+ * compact-id codec's wire shape, which the plain decode here does not expand.
+ */
+export interface ThreadSnapshotCoverage { paged: boolean; omitsTurnItems: boolean }
+export function threadSnapshotCoverage(snapshot: z.infer<typeof threadSnapshot>): ThreadSnapshotCoverage {
+  const paged = snapshot.hasMoreHistory === true;
+  const cursor = snapshot.historyCursor ?? null;
+  if (paged !== (cursor !== null))
+    throw new T3CompatibilityError(`subscribeThread: hasMoreHistory ${paged} with ${cursor === null ? 'no cursor' : 'a cursor'}`);
+  if (snapshot.idTable !== undefined) throw new T3CompatibilityError('subscribeThread: idTable');
+  return { paged, omitsTurnItems: snapshot.turnItemsOmitLocalVisible === true };
+}
+
 export class T3CompatibilityError extends Error {
   constructor(readonly field: string) { super(`T3Code compatibility check failed: ${field}`); this.name = 'T3CompatibilityError'; }
 }

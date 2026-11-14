@@ -808,8 +808,28 @@ test('unobservable worker restart is a definite refused operation with no lifecy
     assert.ok('accepted' in accepted);
     const operation = await f.engine.awaitOperation(accepted.operation.id);
     assert.equal(operation.state, 'failed');
-    assert.match(operation.diagnostic, /cannot be observed.*No continuation was sent/);
+    assert.match(operation.diagnostic, /cannot be observed \(Error: Transport timeout\).*No continuation was sent/);
     assert.equal(operation.effect?.status, 'reconciled');
+    assert.deepEqual(restartState(f), before);
+  } finally { await f.close(); }
+});
+
+test('a refused restart names the host observation error and its kind', async () => {
+  const f = fixture(); try {
+    retainedWorker(f, 'retained_worker', false);
+    // The exact failure a long T3 thread produced: a read that outlived the bound.
+    f.adapter.observe = async () => {
+      throw Object.assign(new Error('T3Code timeout: orchestration.subscribeThread'), { name: 'T3RpcError', code: 'timeout' });
+    };
+    const before = restartState(f);
+    const input = taskControlInputSchema.parse({ taskId: f.taskId, version: f.current().version, action: 'restart', reason: 'Continue' });
+    const accepted = await f.engine.startOperation({ key: 'timeout-restart', kind: 'task_control', taskId: f.taskId,
+      expectedVersion: input.version, payload: { type: 'task_control', control: input } });
+    assert.ok('accepted' in accepted);
+    const operation = await f.engine.awaitOperation(accepted.operation.id);
+    assert.equal(operation.state, 'failed');
+    assert.match(operation.diagnostic,
+      /The retained worker cannot be observed \(T3RpcError timeout: T3Code timeout: orchestration\.subscribeThread\); restore observation before restarting\. No continuation was sent/);
     assert.deepEqual(restartState(f), before);
   } finally { await f.close(); }
 });

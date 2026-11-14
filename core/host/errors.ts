@@ -66,6 +66,27 @@ export function sanitizeHostFailureDetail(input: unknown): string | undefined {
   return /^[A-Za-z][A-Za-z0-9 .:_\-]{0,199}$/.test(input) ? input : undefined;
 }
 
+/**
+ * A failed host call, as an owner-verb refusal names it: the error's kind — its
+ * class name plus, when the adapter reports one, a bounded code, reason or
+ * compatibility field — and its message, both bounded to facts the adapter
+ * authored. A timeout therefore reads `T3RpcError timeout: T3Code timeout:
+ * orchestration.subscribeThread` instead of a bare "cannot be observed", and
+ * remote text that is not a bounded token never survives into the refusal.
+ */
+export function hostFailureRefusalDetail(error: unknown): string {
+  const record = error && typeof error === 'object' ? error as {
+    name?: unknown; message?: unknown; code?: unknown; reason?: unknown; field?: unknown; remoteTag?: unknown;
+    diagnostic?: { reason?: unknown } } : {};
+  const name = typeof record.name === 'string' && /^[A-Za-z][A-Za-z0-9]{0,78}$/.test(record.name) ? record.name : 'Error';
+  const code = sanitizeHostFailureReason(record.code) ?? sanitizeHostFailureReason(record.reason)
+    ?? sanitizeHostFailureReason(record.diagnostic?.reason);
+  const field = sanitizeHostFailureDetail(record.field) ?? sanitizeHostFailureReason(record.remoteTag);
+  const kind = `${name}${code && code !== name ? ` ${code}` : ''}${field ? ` (${field})` : ''}`;
+  const message = sanitizeHostFailureDetail(record.message);
+  return message && message !== name ? `${kind}: ${message}` : kind;
+}
+
 /** Native names plus a bounded, shape-restricted reason and bounded guidance: never arbitrary remote text. */
 export function sanitizeHostDeliveryDiagnostic(input: unknown): HostDeliveryDiagnostic {
   const value = input && typeof input === 'object' ? input as Record<string, unknown> : {};

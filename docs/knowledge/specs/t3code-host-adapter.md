@@ -207,7 +207,7 @@ the write if the desired title is already present.
 | Register project | `projects.mutate` / `project.create` mutation | Deterministic IDs bind the real repository root; the receipt ledger answers replays; reconcile unknown delivery against the complete inventory before retry |
 | Create | `orchestration.launchThread` with explicit thread/message IDs, provider instance/model, prompt, the profile's runtime mode and model options, and `existing_worktree` | Top-level thread with the exact project and directory |
 | Follow-up | `orchestration.dispatchCommand` / `message.dispatch` | Stable command and message IDs; receipt records acceptance |
-| Observe | `orchestration.subscribeShell` and `orchestration.subscribeThread` | Fresh complete state, including active run and pending request |
+| Observe | `orchestration.subscribeShell` and a bounded `orchestration.subscribeThread` | Fresh state, including active run and pending request, from a snapshot whose timeline window never makes a long thread unobservable |
 | Answer question or permission | `runtime-request.respond` through dispatch | Exact request, thread and workspace; typed answers or approval decision |
 | Stop | `thread.stop` through dispatch | Receipt followed by observation; never a replacement thread |
 | Archive | `thread.archive` through dispatch | Receipt followed by archived-state observation |
@@ -420,8 +420,24 @@ Active and archive snapshots must report the same application-event sequence;
 otherwise their union is refused as incomplete. This includes an unarchive
 between the two reads, which could otherwise hide a live thread. A direct
 retained-thread read must settle an identity before reporting it gone. Coverage
-flags and cursors are strictly typed; retyped fields or a remaining history
-cursor cannot establish complete observation or timeline coverage.
+flags and cursors are strictly typed, and a claim the nightly never makes is
+refused: `hasMoreHistory` and `historyCursor` are one pair, so more history
+without a cursor, or a cursor with no more history, is not usable. A *paged*
+snapshot is not a malformed one. The nightly answers a bounded snapshot only to
+a read that opts in (`acceptBoundedSnapshot`); it keeps the thread record, every
+run and every runtime request complete and windows only the timeline with
+`hasMoreHistory` and an opaque `historyCursor`. Observation asks for that
+bounded snapshot and reports status, active run, pending request and archive
+state from any length of thread, so a long thread is never unobservable
+(nucleus#1188). A read that consumes the transcript — timeline pages, question
+text, answer mapping — does not opt in and refuses a paged or locally-omitted
+projection, so partial history is never handed out as the whole list; its
+refusal names the missing coverage, not the thread's length.
+
+An observation read that fails names its own cause: an owner verb that catches
+it (`restart`'s refusals and `move to=review`'s reader check) keeps the host
+error's kind and message, for example `T3RpcError timeout: T3Code timeout:
+orchestration.subscribeThread`, instead of a bare "cannot be observed".
 
 The canonical thread projection is the whole turn list, so timeline pages carry
 the full coverage contract: no gap, no reset, no newer history, an epoch that

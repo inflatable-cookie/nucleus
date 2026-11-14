@@ -11,6 +11,7 @@ import { runsUnchangedSince } from "../recovery/observation-advance";
 import type { RestartRole } from "./owner-verbs";
 import { RestartRefusal, collectOwnerVerbFacts, currentRouteProfile, deriveRestartRole, parkedRestart, plainHandoverFreshRestart, restartShape, restartTakesParkedStep, unservedParkedStep, workerRestartRefusal } from "./owner-verbs";
 import type { AgentObservation } from "../host/adapter";
+import { hostFailureRefusalDetail } from "../host/errors";
 import { coordinatorReportMatches } from "../recovery/recovery";
 import { isBlockingRecoveryEffect, recoveryEffects, recoveryEffectsRefusal } from "../recovery/recovery-effects";
 import { DurableFenceRefusal } from "../intake/run-settlement";
@@ -347,7 +348,7 @@ export class RestartControls {
       if (unobserved) throw new RestartRefusal(unobserved);
       let observed: AgentObservation;
       try { observed = await this.engine.onTaskHost(task, () => this.engine.host.observe(task.agentId!)); }
-      catch { throw new RestartRefusal("The retained worker cannot be observed; restore observation before restarting. No continuation was sent"); }
+      catch (error) { throw new RestartRefusal(`The retained worker cannot be observed (${hostFailureRefusalDetail(error)}); restore observation before restarting. No continuation was sent`); }
       const latest = this.store.task(task.id);
       this.engine.requireOwnerControlCurrent(latest, task.version, "Task changed during restart verification; read next again before restarting");
       const refusal = workerRestartRefusal(collectOwnerVerbFacts(this.store, latest), shape, observed);
@@ -399,7 +400,7 @@ export class RestartControls {
         if (!this.adapter.notify) throw new RestartRefusal("Retained-thread instruction delivery is unavailable");
         let observed: AgentObservation;
         try { observed = await this.engine.onTaskHost(task, () => this.engine.host.observe(task.agentId!)); }
-        catch { throw new RestartRefusal("The retained worker cannot be observed; restore observation before restarting"); }
+        catch (error) { throw new RestartRefusal(`The retained worker cannot be observed (${hostFailureRefusalDetail(error)}); restore observation before restarting`); }
         if (observed.id !== task.agentId || observed.workspaceId !== task.workspaceId || observed.permissions
           || observed.active || observed.activeTurnId || !["idle", "error", "closed"].includes(observed.status))
           throw new RestartRefusal("The retained worker is no longer positively idle in its workspace; no instruction was delivered");
@@ -473,7 +474,7 @@ export class RestartControls {
           }
           let observed: AgentObservation;
           try { observed = await this.engine.onTaskHost(current, () => this.engine.host.observe(current.agentId!)); }
-          catch { throw new RestartRefusal("The retained worker cannot be observed; restore observation before restarting. No continuation was sent"); }
+          catch (error) { throw new RestartRefusal(`The retained worker cannot be observed (${hostFailureRefusalDetail(error)}); restore observation before restarting. No continuation was sent`); }
           // Run rows and effect records can change without a task-version bump.
           // Recheck them after all awaits, before any settlement or authorization.
           const latest = this.store.task(task.id);
