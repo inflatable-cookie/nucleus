@@ -313,6 +313,15 @@ settles its record as historical evidence: it spends no allowance, is never a
 pass, and can never satisfy proof-only closeout — a reviewer approving a
 historical receipt alone closes the qualification failed.
 
+An author-side executor can attach capture files to its `proof_executed` report
+as `proofFiles: [{label, path}]`, with top-level `head` equal to the current
+pushed PR head. Save them under that executor run's TMPDIR or the task checkout.
+Nucleus accepts at most 12 files, 8 MiB each and 32 MiB total, copies them into
+task-retained per-head evidence storage and lists the copies beside the proof
+receipt in the retained reviewer's prompt. The files must come from this
+executor's own scratch or the task checkout; copies survive removal of the
+executor scratch. Never publish their contents or local paths to the PR.
+
 When a reviewer approves the source at the exact head and names that declared
 selector as an external proof, Nucleus runs it without a question: it starts the
 same executor at the approved head (Spec 058), records it as `delegated` with

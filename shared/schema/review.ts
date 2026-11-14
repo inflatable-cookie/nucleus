@@ -97,6 +97,8 @@ export const proofFileRecordSchema = z.object({
   name: z.string().min(1).max(200),
   /** The copied file's absolute path under Nucleus's own scratch. */
   path: z.string().min(1).max(2000),
+  /** The original task-owned locator, retained as provenance after the run scratch is removed. */
+  sourcePath: z.string().min(1).max(2000).optional(),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   bytes: z.number().int().nonnegative(),
   runId: z.string().min(1),

@@ -1,4 +1,4 @@
-# 061 — Worker proof files reach the retained reviewer
+# 061 — Author proof files reach the retained reviewer
 
 Status: implemented
 Owner: Nucleus runtime maintainers
@@ -23,7 +23,8 @@ required proof insufficient twice at the same head and the task parked at
 
 ### 1. The report names its proof files
 
-A worker or revision report may carry `proofFiles: [{label, path}]`. `label` is
+A worker, revision, or `proof_executed` executor report may carry
+`proofFiles: [{label, path}]`. `label` is
 a short description, `path` is the file's absolute local path. The report schema
 (`shared/schema/review.ts`) and the `nucleus_report` bridge
 (`bin/mcp-report.mjs`) apply one shape rule from
@@ -47,12 +48,21 @@ does not infer this value.
   worktree or scratch directory;
 - each file is at most 8 MiB and the set at most 32 MiB.
 
+For an executor, the file must be inside that executor run's own scratch or the
+task checkout; a different run's scratch is not accepted. The executor report
+must be `proof_executed` and carries its exact published head. Each copied
+record retains the original locator and the executor run ID, linking it to the
+corresponding `proofExecutions` receipt. Copies live outside the run-specific
+scratch leaf under the task's retained scratch namespace, so retiring the
+executor thread does not remove them.
+
 An absent or mismatched head is refused before any copy. Only after the full
 head and file list are validated does Nucleus copy each file into
 `<task scratch root>/evidence/<task id>/<head>/<ordinal>-<sha8>-<name>` with mode
-0600, and record `{head, label, name, path, sha256, bytes, runId, eventId, at}`
-on the task. A refused entry copies nothing. The task's local source paths never
-enter the stored completion; only the copies, their hashes and their labels do.
+0600, and record `{head, label, name, path, sourcePath, sha256, bytes, runId,
+eventId, at}` on the task. A refused entry copies nothing. The task's local
+source paths never enter the stored completion; the original locator is retained
+only as provenance on the proof-file record, beside the Nucleus copy locator.
 
 Evidence is appended to `task.proofFiles` through `Store.appendProofFiles`,
 which de-duplicates the same bytes delivered again for the same head. The
@@ -79,7 +89,8 @@ only reviewer findings, the verdict table and the authenticated marker.
 
 ## Acceptance
 
-1. A revision starting at head A reports head B with two image files; the report
+1. An initial worker report with proof files is accepted. A revision starting at
+   head A reports head B with two image files; the report
    head is checked against the pushed PR head, both files are recorded under B,
    and the reviewer prompt at B lists them with matching hashes.
 2. Files recorded under A by the latest author proof delivery remain under A
@@ -87,3 +98,8 @@ only reviewer findings, the verdict table and the authenticated marker.
 3. A missing or mismatched report head and a path outside the task's own scratch
    and worktree are refused with a clear message, and nothing is copied.
 4. No local path reaches anything published to the forge.
+5. An executor `proof_executed` report accepts files from its own scratch,
+   records the proof receipt run, original locator, copied locator, size and
+   hash, and exposes the files beside its proof result in the retained
+   reviewer's prompt. Removing the executor scratch leaves the copies readable;
+   another run's scratch and over-limit files are refused without copies.

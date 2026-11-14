@@ -22,7 +22,7 @@ import { REVIEW_AUTHORIZATION_REQUIRED, REVIEW_BUDGET_EXHAUSTED, reviewCheckpoin
 import { assertReviewEntryExecutionSource, reviewEntryInputForTask, type ReviewEntryAdapter, verifyReviewEntryCanonicalAuthor } from '../review/review-entry';
 import { assertReviewResponsibility } from '../review/review-verdicts';
 import { digest, now } from '../store/store';
-import { recordWorkerProofFiles } from './proof-files';
+import { recordProofFiles } from './proof-files';
 import { recordSupersededRunRefusal, supersededByPendingResume, supersededResumeRefusal } from '../recovery/superseded-resume';
 import { coordinatorActionShapeRefusal, coordinative, ownerArmedRetainedWorker } from '../recovery/task-reasons';
 
@@ -141,14 +141,16 @@ export class CallbackIntake {
         verifiedPr = { url: pr.url, head: pr.head };
       }
     }
-    // nucleus#1142: a worker's proof files are copied into Nucleus's own
+    // nucleus#1142: author-side proof files are copied into Nucleus's own
     // per-head evidence directory before the result is accepted, and the copied
     // records are what the retained reviewer's prompt lists. The report's local
     // source paths never enter the stored completion; only the copies, their
     // hashes and their labels do. A refused path copies nothing.
     if (input.proofFiles?.length) {
-      if (sourceRun && sourceRun.role !== 'revision')
-        throw new Error('proofFiles is only accepted on a worker or revision report; no other role delivers author evidence');
+      const authorReport = !sourceRun || sourceRun.role === 'revision';
+      const executorProof = sourceRun?.role === 'executor' && input.status === 'proof_executed';
+      if (!authorReport && !executorProof)
+        throw new Error('proofFiles is only accepted on a worker or revision report, or an executor proof_executed report');
       // nucleus#1180: the reported head binds against the forge, never against
       // Nucleus's recorded PR head. A report-carried PR number verifies as
       // before; otherwise the task branch's open PR head is read from the forge
@@ -160,7 +162,7 @@ export class CallbackIntake {
       if (!input.head || !observed.head || input.head !== observed.head)
         throw new Error(`The reported head for proofFiles must match the pushed ${observed.kind} head (reported ${JSON.stringify(input.head ?? null)}; ${observed.kind} ${JSON.stringify(observed.head ?? null)})`);
       const head = input.head;
-      const records = recordWorkerProofFiles({ task: identityTask, run: sourceRun, files: input.proofFiles, head, eventId: input.eventId });
+      const records = recordProofFiles({ task: identityTask, run: sourceRun, files: input.proofFiles, head, eventId: input.eventId });
       this.store.appendProofFiles(identityTask.id, records);
       input = proofFilesRemoved(input);
     }
