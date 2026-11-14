@@ -16,10 +16,28 @@ import { DEFAULT_HOST_OUTAGE_NOTICE_MINUTES, MAX_HOST_OUTAGE_NOTICE_MINUTES } fr
 export const hostOutageSchema = z.object({
   /** When this pass first saw the host unavailable; the wait's one start time. */
   since: z.string().datetime({ offset: true }),
-  /** Set once the long-outage notice was raised for this outage; never reset while it lasts. */
-  noticeSentAt: z.string().datetime({ offset: true }).nullable().default(null),
+  /**
+   * The project notices already raised for this outage, by project key, each with
+   * the durable notice id. Tracking is per project (nucleus#1198 review): a
+   * project that becomes affected later, or whose planner was not resolvable
+   * when an earlier project was told, still hears once for the same outage.
+   */
+  notifiedProjects: z.record(z.string().min(1), z.string().min(1)).default({}),
 }).strict();
 export type HostOutage = z.infer<typeof hostOutageSchema>;
+
+/**
+ * One task's own host wait. It is independent of the task's stop: a task whose
+ * stop belongs to an owner answer (a budget pause, an interactive turn, an
+ * escalation) still waits on its host, so the wait is recorded beside the stop
+ * rather than replacing it.
+ */
+export const taskHostWaitSchema = z.object({
+  hostId: z.string().min(1),
+  /** The outage's own start, so the wait and the outage never disagree. */
+  since: z.string().datetime({ offset: true }),
+}).strict();
+export type TaskHostWait = z.infer<typeof taskHostWaitSchema>;
 
 /** Open outages by host id. A host that is back has no entry. */
 export const hostOutagesSchema = z.record(z.string().min(1), hostOutageSchema);
@@ -31,9 +49,10 @@ export { DEFAULT_HOST_OUTAGE_NOTICE_MINUTES, MAX_HOST_OUTAGE_NOTICE_MINUTES };
 /**
  * Stops that keep their own owner and question when a host goes away. Those are
  * owner-facing answers (a budget extension, an operator decision, a ladder
- * answer, a hold, a proof wait, an interactive turn) that a host outage neither
- * raises nor answers; the wait simply stops sending until the host returns. Any
- * other stop is the host's own absence, so the host wait replaces it.
+ * answer, a hold, a proof wait, an interactive turn). The outage neither raises
+ * nor answers them: the task's independent host wait still pauses its clock,
+ * shows on its card and joins its project's outage notice, and the stop keeps
+ * the question its owner must answer.
  */
 export const HOST_WAIT_PRESERVED_STOPS = [
   "awaiting_proof", "budget", "escalated", "held", "interactive",

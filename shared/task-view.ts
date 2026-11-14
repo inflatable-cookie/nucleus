@@ -319,6 +319,7 @@ export function summarizeTask(task: Task, includeRepository = false, hasUnreleas
     ...(holdEscalated(task) ? { holdEscalated: true } : {}),
     ...(stop ? { stop } : {}),
     ...(stopRecord ? { stopRecord: { ...stopRecord, detail: stopRecord.detail.slice(0, 160) } } : {}),
+    ...(task.resolution.hostWait ? { hostWait: { hostId: task.resolution.hostWait.hostId, since: task.resolution.hostWait.since } } : {}),
     ...(task.completion ? { headline: reportHeadline(task.completion) } : {}),
     ...(budget ? { budget: taskBudgetBoardView(budget) } : {}),
     parked: isParkedTask(task, hasUnreleasedResolutionRun),

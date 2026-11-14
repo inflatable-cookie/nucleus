@@ -9,7 +9,7 @@ import { T3CodeHost } from '../hosts/t3code/adapter';
 import { t3Fake, threadProjection } from './support/t3code-fake';
 import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
-import { submissionSchema, summarizeTask, type Profile } from '../shared/contracts';
+import { submissionSchema, summarizeTask, type Profile, type Run } from '../shared/contracts';
 import type { Adapter } from '../core/host/adapter';
 import { formatAgentId, parseAgentId } from '../shared/agent-identity';
 
@@ -21,9 +21,10 @@ import { formatAgentId, parseAgentId } from '../shared/agent-identity';
  * anything is sent and the task continues on the same host and threads, with no
  * duplicated send and no replay of unknown delivery.
  *
- * The transport here is the fake Nightly (`test/support/t3code-fake.ts`, records
- * in the Nightly's own wire shape), really disconnected with `dropSockets()`; the
- * task row is written through the real Store, so it carries every real field.
+ * The acceptance transport is the fake Nightly (`test/support/t3code-fake.ts`,
+ * records in the Nightly's own wire shape), really disconnected with
+ * `dropSockets()`; task and run rows are written through the real Store, so they
+ * carry every real field.
  */
 
 const base = 'b'.repeat(40);
@@ -45,6 +46,9 @@ function gitHead(directory: string): string {
   execFileSync('git', ['-c', 'user.email=synthetic@example.com', '-c', 'user.name=Synthetic', 'commit', '-q', '-m', 'Synthetic'], { cwd: directory });
   return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: directory, encoding: 'utf8' }).trim();
 }
+
+/** The identity fields of a stored run row; observation owns the rest. */
+const runIdentity = (run: Run) => ({ id: run.id, role: run.role, agentId: run.agentId, workspaceId: run.workspaceId, head: run.head });
 
 test('a working task on a disconnected Nightly transport waits on its host, then re-observes and resumes once', async t => {
   const root = mkdtempSync(join(tmpdir(), 'ns-host-outage-'));
@@ -75,6 +79,15 @@ test('a working task on a disconnected Nightly transport waits on its host, then
     prHead: head, prUrl: 'https://github.com/synthetic/repo/pull/1',
     idleSince: new Date(Date.now() - 3_600_000).toISOString(),
   }, 'dispatched');
+  // A real stored run row: the retained worker's current revision, unreleased and
+  // observed by the sweep. Its identity must survive the outage unchanged.
+  const revision: Run = {
+    id: 'revision-run', taskId: inserted.id, hostId: host.hostId, role: 'revision', generation: 1,
+    head, base, agentId: 'synthetic-worker', workspaceId: workspace.id, profile, profileGroup: 'synthetic',
+    status: 'running', createdAt: new Date(Date.now() - 3_600_000).toISOString(), lastObservedAt: null,
+    active: null, idleSince: null, completion: null, released: false,
+  };
+  store.putRun(revision);
 
   const calls: string[] = [];
   const adapter = {
@@ -83,7 +96,9 @@ test('a working task on a disconnected Nightly transport waits on its host, then
     notify: async (_id: string, messageId: string) => { calls.push(`notify:${messageId}`); },
     originAgent: async (id: string) => ({ id, workspaceId: workspace.id, title: id, archived: false }),
   } as unknown as Adapter;
-  const engine = new Engine(store, adapter, 0);
+  // The ordinary 60 s idle grace: the resume pass re-observes the stored run
+  // without reminding it, so the one send is the worker continuation.
+  const engine = new Engine(store, adapter, 60_000);
   engine.hostIds = () => [host.hostId];
   engine.hostAvailable = id => id === host.hostId && host.connected;
   engine.profiles = [profile];
@@ -99,20 +114,24 @@ test('a working task on a disconnected Nightly transport waits on its host, then
   const waiting = store.task(inserted.id);
   assert.equal(waiting.resolution.stop?.reason, 'host_unavailable', waiting.reason);
   assert.match(waiting.resolution.stop?.detail ?? '', /^Waiting on T3Code host synthetic-environment since \d{4}-\d{2}-\d{2}T/);
+  assert.deepEqual(waiting.resolution.hostWait && { hostId: waiting.resolution.hostWait.hostId }, { hostId: host.hostId },
+    'the task records its own host wait');
   assert.equal(waiting.phase, 'working', 'the outage does not move the phase');
   assert.equal(waiting.agentId, 'synthetic-worker', 'the task keeps its retained thread');
   assert.equal(waiting.workspaceId, workspace.id, 'the task keeps its workspace');
   assert.ok(waiting.resolution.budgetClock?.since, 'the wall-time budget pauses for the outage');
   assert.equal(calls.length, 0, 'nothing is sent to or read from the disconnected host');
-  assert.deepEqual(store.runs(inserted.id), [], 'no recovery or other run was recorded');
+  const offlineRuns = store.runs(inserted.id);
+  assert.equal(offlineRuns.length, 1, 'the stored run row is kept and no recovery run was added');
+  assert.deepEqual(runIdentity(offlineRuns[0]!), runIdentity(revision), 'the stored run identity is untouched');
   const kinds = store.eventsAll(inserted.id).map(event => event.kind);
   for (const never of ['stalled_turn', 'run_stalled', 'incident', 'needs_attention', 'recovery_escalated', 'telemetry_recovery'])
     assert.equal(kinds.includes(never), false, `${never} is not raised by the outage: ${kinds.join(', ')}`);
   assert.equal(store.notices(inserted.id).length, 0, 'the wait raises no escalation notice');
-  // The board card reads the same wait.
-  const card = summarizeTask(waiting, false, false, {}, [], undefined, host.hostId, store.eventsAll(inserted.id));
+  // The board card reads the same wait, independently of the stop record.
+  const card = summarizeTask(waiting, false, true, {}, offlineRuns, undefined, host.hostId, store.eventsAll(inserted.id));
   assert.equal(card.stop, 'wait');
-  assert.match(card.stopRecord?.detail ?? '', /Waiting on T3Code host synthetic-environment since /);
+  assert.deepEqual(card.hostWait && { hostId: card.hostWait.hostId }, { hostId: host.hostId });
 
   // The transport returns: re-observe first, then one continuation, and never
   // the same continuation twice.
@@ -123,14 +142,18 @@ test('a working task on a disconnected Nightly transport waits on its host, then
 
   const resumed = store.task(inserted.id);
   assert.notEqual(resumed.resolution.stop?.reason, 'host_unavailable', 'the wait clears when the host is back');
+  assert.equal(resumed.resolution.hostWait, null, 'the independent host wait is cleared');
   assert.equal(resumed.resolution.budgetClock?.since, null, 'the wall clock runs again');
   assert.equal(resumed.agentId, 'synthetic-worker', 'the task resumed on the same host and thread');
   const observedAt = calls.indexOf('observe:synthetic-worker');
   const continuationAt = calls.findIndex(call => call.startsWith('notify:ns-push-continuation'));
-  assert.ok(observedAt >= 0, `the thread was re-observed: ${calls.join(', ')}`);
+  assert.ok(observedAt >= 0, `the retained thread was re-observed: ${calls.join(', ')}`);
   assert.ok(continuationAt > observedAt, `the continuation followed the observation: ${calls.join(', ')}`);
   assert.equal(calls.filter(call => call.startsWith('notify:ns-push-continuation')).length, 1,
     'the resume sends its continuation once');
+  const resumedRuns = store.runs(inserted.id);
+  assert.equal(resumedRuns.length, 1, 'no replacement run was created for the resumed thread');
+  assert.deepEqual(runIdentity(resumedRuns[0]!), runIdentity(revision), 'the resumed run is the same stored row');
 
   calls.length = 0;
   await engine.wake();
@@ -139,16 +162,14 @@ test('a working task on a disconnected Nightly transport waits on its host, then
 });
 
 /**
- * The one long-outage notice (Tom, 2026-11-14; T3 lane v18, host dropout option
- * 1: wait). Past the dispatch-limits bound each affected project's planner hears
- * once, with the host, its outage start and the waiting tasks; a shorter outage
- * hears nothing, and the same outage never asks again.
+ * The outage notice and the independent wait, over an engine with two healthy
+ * planner hosts and one task host that is away. No T3 transport is needed here:
+ * the availability signal is the engine's own `hostAvailable`.
  */
-test('an outage past the bound tells each affected project planner once and a shorter one tells nobody', async t => {
+function noticeFixture() {
   const store = new Store(':memory:');
-  t.after(() => store.close());
   store.setMeta('paused', false);
-  const taskHost = 't3code:synthetic-outage';
+  const host = 't3code:synthetic-outage';
   const plannerHost = 'paseo:synthetic-planner';
   const sends: { agentId: string; messageId: string; text: string }[] = [];
   const adapter = {
@@ -158,53 +179,132 @@ test('an outage past the bound tells each affected project planner once and a sh
     observe: async (id: string) => ({ id, workspaceId: 'synthetic-workspace', status: 'idle', active: false, permissions: false, error: '' }),
   } as unknown as Adapter;
   const engine = new Engine(store, adapter, 60_000);
-  t.after(() => engine.stop());
-  engine.hostIds = () => [taskHost, plannerHost];
+  engine.hostIds = () => [host, plannerHost];
   engine.hostAvailable = id => id === plannerHost;
   engine.identifyOriginHost = async id => parseAgentId(id)?.hostId;
-
-  const plannerA = formatAgentId(plannerHost, 'planner-a');
-  const plannerB = formatAgentId(plannerHost, 'planner-b');
-  for (const [key, name, planner] of [['project-a', 'Project A', plannerA], ['project-b', 'Project B', plannerB]] as const) {
-    store.upsertProject({ key, name, repositories: [{ origin: `synthetic/${key}`, path: `/synthetic/${key}` }] });
-    store.setProjectPlanner({ key, agentId: planner, setBy: 'operator' });
-  }
-  const make = (title: string, project: string) => {
+  const makeProject = (key: string, planner: string | null) => {
+    store.upsertProject({ key, name: `Project ${key}`, repositories: [{ origin: `synthetic/${key}`, path: `/synthetic/${key}` }] });
+    if (planner) store.setProjectPlanner({ key, agentId: planner, setBy: 'operator' });
+  };
+  const makeTask = (title: string, project: string) => {
     const task = store.insert(submissionSchema.parse({ submissionId: randomUUID(), title,
       repoPath: `/synthetic/${project}`, planningCommit: base, handoffPath: 'handoff.md', originAgentId: 'origin' }),
-      taskHost, 'handoff.md', base);
+      host, 'handoff.md', base);
     return store.update(task.id, { phase: 'working', workspaceId: `workspace-${task.id}`, agentId: `worker-${task.id}`, runId: 'initial' }, 'dispatched');
   };
-  const a1 = make('First project A task', 'project-a');
-  const a2 = make('Second project A task', 'project-a');
-  const b1 = make('Project B task', 'project-b');
+  /** Move the current outage's start back, as a long outage would be. */
+  const ageOutage = (minutes: number) => {
+    const outages = store.getMeta<Record<string, { since: string; notifiedProjects: Record<string, string> }>>('hostOutages')!;
+    store.setMeta('hostOutages', { ...outages, [host]: { ...outages[host]!, since: new Date(Date.now() - minutes * 60_000).toISOString() } });
+  };
+  return { store, engine, sends, host, plannerHost, makeProject, makeTask, ageOutage,
+    close: () => { void engine.stop(); store.close(); } };
+}
 
-  // A shorter outage: every task waits visibly, and no planner hears anything.
-  await engine.wake();
-  for (const task of [a1, a2, b1]) assert.equal(store.task(task.id).resolution.stop?.reason, 'host_unavailable');
-  assert.equal(store.notices().filter(notice => notice.kind === 'host_outage').length, 0, 'a shorter outage sends no planner notice');
-  assert.equal(sends.length, 0);
+test('an outage past the bound tells each affected project planner once and a shorter one tells nobody', async () => {
+  const f = noticeFixture();
+  const plannerA = formatAgentId(f.plannerHost, 'planner-a');
+  const plannerB = formatAgentId(f.plannerHost, 'planner-b');
+  f.makeProject('project-a', plannerA);
+  f.makeProject('project-b', plannerB);
+  const a1 = f.makeTask('First project A task', 'project-a');
+  const a2 = f.makeTask('Second project A task', 'project-a');
+  const b1 = f.makeTask('Project B task', 'project-b');
+  try {
+    // A shorter outage: every task waits visibly, and no planner hears anything.
+    await f.engine.wake();
+    for (const task of [a1, a2, b1]) {
+      assert.equal(f.store.task(task.id).resolution.stop?.reason, 'host_unavailable');
+      assert.ok(f.store.task(task.id).resolution.hostWait, 'the task records its own host wait');
+    }
+    assert.equal(f.store.notices().filter(notice => notice.kind === 'host_outage').length, 0, 'a shorter outage sends no planner notice');
+    assert.equal(f.sends.length, 0);
 
-  // The same outage is now past the bound: one notice for each affected project.
-  const outages = store.getMeta<Record<string, { since: string; noticeSentAt: string | null }>>('hostOutages')!;
-  const since = new Date(Date.now() - 3 * 3_600_000).toISOString();
-  store.setMeta('hostOutages', { ...outages, [taskHost]: { ...outages[taskHost]!, since } });
-  await engine.wake();
-  const notices = store.notices().filter(notice => notice.kind === 'host_outage');
-  assert.equal(notices.length, 2, 'one notice per affected project, not per task');
-  assert.deepEqual(notices.map(notice => notice.agentId).sort(), [plannerA, plannerB].sort(),
-    'each notice addressed to its project planner');
-  assert.deepEqual(sends.map(send => send.agentId).sort(), ['planner-a', 'planner-b'], 'each project planner heard once');
-  const textFor = (nativeId: string) => sends.filter(send => send.agentId === nativeId).map(send => send.text).join('\n');
-  assert.match(textFor('planner-a'), new RegExp(`Host ${taskHost}`));
-  assert.match(textFor('planner-a'), new RegExp(`unavailable since ${since}`));
-  assert.match(textFor('planner-a'), /First project A task/);
-  assert.match(textFor('planner-a'), /Second project A task/);
-  assert.doesNotMatch(textFor('planner-a'), /Project B task/, 'a project hears only about its own waiting tasks');
-  assert.match(textFor('planner-b'), /Project B task/);
+    // The same outage is now past the bound: one notice for each affected project.
+    f.ageOutage(180);
+    await f.engine.wake();
+    const notices = f.store.notices().filter(notice => notice.kind === 'host_outage');
+    assert.equal(notices.length, 2, 'one notice per affected project, not per task');
+    assert.deepEqual(notices.map(notice => notice.agentId).sort(), [plannerA, plannerB].sort(),
+      'each notice addressed to its project planner');
+    assert.deepEqual(f.sends.map(send => send.agentId).sort(), ['planner-a', 'planner-b'], 'each project planner heard once');
+    const textFor = (nativeId: string) => f.sends.filter(send => send.agentId === nativeId).map(send => send.text).join('\n');
+    assert.match(textFor('planner-a'), new RegExp(`Host ${f.host}`));
+    assert.match(textFor('planner-a'), /unavailable since \d{4}-\d{2}-\d{2}T/);
+    assert.match(textFor('planner-a'), /First project A task/);
+    assert.match(textFor('planner-a'), /Second project A task/);
+    assert.doesNotMatch(textFor('planner-a'), /Project B task/, 'a project hears only about its own waiting tasks');
+    assert.match(textFor('planner-b'), /Project B task/);
 
-  // The same outage never asks again.
-  await engine.wake();
-  assert.equal(store.notices().filter(notice => notice.kind === 'host_outage').length, 2);
-  assert.equal(sends.length, 2, 'the same outage repeats no notice');
+    // The same outage never asks again.
+    await f.engine.wake();
+    assert.equal(f.store.notices().filter(notice => notice.kind === 'host_outage').length, 2);
+    assert.equal(f.sends.length, 2, 'the same outage repeats no notice');
+  } finally { f.close(); }
+});
+
+test('a project that becomes affected later, or gains its planner later, still hears once for the same outage', async () => {
+  const f = noticeFixture();
+  const plannerA = formatAgentId(f.plannerHost, 'planner-a');
+  const plannerB = formatAgentId(f.plannerHost, 'planner-b');
+  const plannerC = formatAgentId(f.plannerHost, 'planner-c');
+  f.makeProject('project-a', plannerA);
+  // Project C has no planner yet when the outage passes its bound.
+  f.makeProject('project-c', null);
+  f.makeTask('Project A task', 'project-a');
+  f.makeTask('Project C task', 'project-c');
+  try {
+    await f.engine.wake();
+    f.ageOutage(180);
+    await f.engine.wake();
+    assert.deepEqual(f.sends.map(send => send.agentId), ['planner-a'], 'only the project with a planner was told');
+    assert.equal(f.store.notices().filter(notice => notice.kind === 'host_outage').length, 1);
+
+    // A project that only submits work now is affected by the still-open outage.
+    f.makeProject('project-b', plannerB);
+    f.makeTask('Project B task', 'project-b');
+    await f.engine.wake();
+    assert.equal(f.sends.length, 2, 'the later project heard once');
+    assert.deepEqual(f.sends.map(send => send.agentId).sort(), ['planner-a', 'planner-b']);
+
+    // A project skipped for want of a planner is retried once it has one.
+    f.store.setProjectPlanner({ key: 'project-c', agentId: plannerC, setBy: 'operator' });
+    await f.engine.wake();
+    assert.equal(f.sends.length, 3, 'the previously skipped project heard once');
+    assert.deepEqual(f.sends.map(send => send.agentId).sort(), ['planner-a', 'planner-b', 'planner-c']);
+    // And project A did not hear again.
+    assert.equal(f.sends.filter(send => send.agentId === 'planner-a').length, 1);
+    assert.equal(f.store.notices().filter(notice => notice.kind === 'host_outage').length, 3);
+  } finally { f.close(); }
+});
+
+test('an owner-facing stop keeps its question while the host wait still pauses the clock, shows on the card and joins the notice', async () => {
+  const f = noticeFixture();
+  const plannerA = formatAgentId(f.plannerHost, 'planner-a');
+  f.makeProject('project-a', plannerA);
+  const task = f.makeTask('Interactive task', 'project-a');
+  try {
+    // An interactive turn is the operator's answer to give; the outage neither
+    // raises nor answers it.
+    f.store.update(task.id, { interactive: true, phase: 'working' }, 'interactive');
+    f.engine.resolution.waiting(f.store.task(task.id), "Interactive session: waiting for the operator in the worker's thread", 'interactive');
+    await f.engine.wake();
+
+    const waiting = f.store.task(task.id);
+    assert.equal(waiting.resolution.stop?.reason, 'interactive', 'the question stays the current stop');
+    assert.deepEqual(waiting.resolution.hostWait && { hostId: waiting.resolution.hostWait.hostId }, { hostId: f.host },
+      'the host wait is recorded independently of the stop');
+    assert.ok(waiting.resolution.budgetClock?.since, 'the outage still pauses the wall clock');
+    const card = summarizeTask(waiting, false, false, {}, [], undefined, f.plannerHost, f.store.eventsAll(task.id));
+    assert.equal(card.stopRecord?.reason, 'interactive', 'the card keeps the owner question');
+    assert.deepEqual(card.hostWait && { hostId: card.hostWait.hostId }, { hostId: f.host }, 'and shows the host wait');
+
+    // The preserved-stop task is in its project's notice, and the notice reaches
+    // the planner once the outage passes the bound.
+    f.ageOutage(180);
+    await f.engine.wake();
+    assert.equal(f.sends.length, 1, 'the project planner heard once');
+    assert.match(f.sends[0]!.text, /Interactive task/, 'the waiting task is named even with an owner-facing stop');
+    assert.equal(f.store.task(task.id).resolution.stop?.reason, 'interactive', 'the notice does not replace the question');
+  } finally { f.close(); }
 });

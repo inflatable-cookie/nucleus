@@ -423,7 +423,8 @@ lifecycle; use a direct PR with operator source acceptance. Historical task rows
   `route_unavailable`, `provider_unavailable` or `host_unavailable` stop (a
   host-adapter refusal before a
   send, a missing workspace, no runnable profile, a provider outage, or the task's
-  whole host being away), an unresolved
+  whole host being away), the task's own durable host wait
+  (`resolution.hostWait`, independent of whichever stop the task carries), an unresolved
   `workspace_state` or `uncertain_delivery` incident, a proven pre-send refusal that
   parked the task in attention (`worker_creation_refused_before_send` and the
   reviewer-launch equivalents, held until an owner resume resolves the episode), a

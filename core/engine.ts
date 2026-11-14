@@ -200,10 +200,14 @@ export class Engine {
    * Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait). One task's host
    * wait, recorded or cleared from the availability this call observes:
    *
-   * - While the host is unavailable the task's stop reads `host_unavailable`,
-   *   naming the host and the time it went offline. The wait is recorded before
-   *   the pass settles the wall clock, so the outage pauses the budget from the
-   *   first observation rather than the pass after it.
+   * - Every live task on an unavailable host records its own `resolution.hostWait`
+   *   (nucleus#1198 review), independent of its stop. That is what pauses the
+   *   wall clock, shows on its card and joins its project's outage notice, even
+   *   when the stop beside it belongs to an owner answer.
+   * - The stop reads `host_unavailable` naming the host and the time it went
+   *   offline unless a stop already owns the task's answer (budget, escalation,
+   *   responsible question, hold, proof wait, interactive turn, paused stop,
+   *   operator attention); that stop and its question stay.
    * - When the host is back the wait clears, and the ordinary observation pass
    *   re-proves every retained thread before the task sends anything again.
    *
@@ -216,13 +220,18 @@ export class Engine {
     const online = this.withHost(hostId, () => this.hostAvailable(hostId));
     const outage = this.hostOutages.observe(hostId, online);
     if (!outage) {
-      if (task.resolution.stop?.reason === 'host_unavailable') this.resolution.clearHostWait(task);
+      this.resolution.clearHostWait(task);
       return null;
     }
     const detail = hostUnavailableDetail(hostId, outage.since);
-    const current = this.store.task(task.id);
+    let current = this.store.task(task.id);
+    const wait = current.resolution.hostWait;
+    if (wait?.hostId !== hostId || wait.since !== outage.since) {
+      current = this.resolution.update(current, { hostWait: { hostId, since: outage.since } }, {}, 'host_outage_wait');
+    }
     const stop = current.resolution.stop;
-    // An owner-facing stop keeps its own answer; the outage only suspends sends.
+    // An owner-facing stop keeps its own answer and question; the independent
+    // host wait above is still recorded, so the clock, card and notice see it.
     if (stop && (HOST_WAIT_PRESERVED_STOPS as readonly string[]).includes(stop.reason)) return detail;
     if (stop?.reason !== 'host_unavailable' || stop.detail !== detail)
       this.resolution.recordStop(current, 'host_unavailable', detail);

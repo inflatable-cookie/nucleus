@@ -72,12 +72,17 @@ export class TaskStops {
     const presendRefusal = refusalAt >= 0 && refusalAt > events.findLastIndex(event => event.kind === 'attention_episode_resolved')
       && current.resolution.attention === true && /refused before send/i.test(current.reason);
     const closingOutage = Boolean(outage) && Boolean(options.returned);
+    // The task's own host wait is a Nucleus-side cause of its own (nucleus#1198
+    // review): it pauses the clock whether or not the stop beside it belongs to
+    // an owner answer, and the interval is dated from the outage's start.
+    const hostWait = current.resolution.hostWait ?? null;
     const held = terminal ? null : nucleusHeldReason({
       stopReason: current.resolution.stop?.reason ?? null,
       dispatchHeld: Boolean(holdsOf(current).dispatch),
       incidentCause: current.resolution.incident && current.resolution.incident.status !== 'resolved'
         ? current.resolution.incident.cause : null,
       presendRefusal,
+      hostWaitSince: hostWait?.since ?? null,
       // While the lane is wedged only the outage may hold it; the returned quantum
       // has to be able to close the interval.
       observationOutage: Boolean(outage) && !closingOutage,
@@ -91,7 +96,7 @@ export class TaskStops {
     // the open `since`, and for an outage the observation itself — so an interval
     // opened for an outage is dated from the observation, and a return that beats
     // every visit still books the outage time.
-    const starts = [clock.since, outage]
+    const starts = [clock.since, outage, hostWait?.since]
       .map(value => (value ? Date.parse(value) : Number.NaN))
       .filter(started => Number.isFinite(started) && started <= at);
     const pausedTo = starts.length ? Math.min(...starts) : at;
@@ -117,18 +122,22 @@ export class TaskStops {
     });
   }
   /**
-   * Clear the one host wait when its host is back (Tom, 2026-11-14; T3 lane v18,
-   * host dropout option 1: wait). Nothing about the task's identity, host or
+   * Clear one task's host wait when its host is back (Tom, 2026-11-14; T3 lane
+   * v18, host dropout option 1: wait). Nothing about the task's identity, host or
    * threads changes; the next pass re-proves each retained thread and the task
-   * continues where it was. Only the wait's own stop record is cleared, so an
-   * unrelated fault the task carried keeps its bookkeeping.
+   * continues where it was. The independent wait is always cleared; the stop is
+   * cleared only when the wait wrote it, so an owner-facing stop keeps its
+   * question and its bookkeeping.
    */
   clearHostWait(task: Task): Task {
     const current = this.store.task(task.id);
-    if (current.resolution.stop?.reason !== 'host_unavailable') return current;
-    const reason = current.phase === 'queued' ? DISPATCH_WAIT_REASON : TASK_PROGRESSING_REASON;
+    const hadWait = Boolean(current.resolution.hostWait);
+    const hostStop = current.resolution.stop?.reason === 'host_unavailable';
+    if (!hadWait && !hostStop) return current;
+    const reason = hostStop ? current.phase === 'queued' ? DISPATCH_WAIT_REASON : TASK_PROGRESSING_REASON : current.reason;
     const detail = `Host ${current.hostId ?? 'unknown'} is back; the task resumes on the same host and threads`;
-    return this.resolution.update(current, { stop: null }, { reason }, 'host_outage_resumed', detail);
+    return this.resolution.update(current, { hostWait: null, ...(hostStop ? { stop: null } : {}) },
+      hostStop ? { reason } : {}, 'host_outage_resumed', detail);
   }
   /**
    * Spec 058 budgets (nucleus#1187): a recorded `budget` stop is a fence like any

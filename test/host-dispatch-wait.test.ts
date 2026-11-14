@@ -41,6 +41,8 @@ test('new dispatch for a project on an offline host waits with host_unavailable'
     // a project whose host is away waits on that host, visibly and with its start.
     assert.equal(waiting.resolution.stop?.reason, 'host_unavailable');
     assert.match(waiting.resolution.stop?.detail ?? '', /^Waiting on Paseo host offline since \d{4}-\d{2}-\d{2}T/);
+    assert.deepEqual(waiting.resolution.hostWait && { hostId: waiting.resolution.hostWait.hostId }, { hostId: 'offline' },
+      'the task records its own host wait while it is queued');
     assert.equal(waiting.phase, 'queued');
     assert.equal(creates, 0);
     assert.equal(waiting.workspaceIntent, false);

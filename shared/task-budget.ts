@@ -111,9 +111,12 @@ export function nucleusHeldReason(input: {
   incidentCause?: string | null;
   presendRefusal?: boolean;
   observationOutage?: boolean;
+  /** The task's own host wait (nucleus#1198 review): independent of its stop. */
+  hostWaitSince?: string | null;
 }): string | null {
   if (input.dispatchHeld) return "a dispatch hold blocks every run";
   if (input.observationOutage) return "the sweep could not observe this task (an observation outage)";
+  if (input.hostWaitSince) return "the task's host is unavailable";
   if (input.presendRefusal) return "a host-adapter refusal stopped the task before any send";
   const cause = input.incidentCause;
   if (cause && (NUCLEUS_HELD_INCIDENT_CAUSES as readonly string[]).includes(cause)) return `the task waits on a host fault: ${cause}`;

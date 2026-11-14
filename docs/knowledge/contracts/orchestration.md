@@ -1159,13 +1159,17 @@ request identities and submitted handoffs are not rewritten.
 
 - A task's host is part of its identity (Tom, 2026-11-14; T3 lane document v18,
   host dropout option 1: wait). While its host is unavailable — the service
-  health `state` is not `online`, so the transport is not connected — the task's
-  stop is `host_unavailable`, naming the host and the time the outage was first
-  observed. The outage record is durable (`hostOutages` meta), so a service
-  restart during the outage keeps the same start. A stop that already belongs to
-  an owner answer (budget, ladder escalation, responsible question, hold, proof
-  wait, interactive turn, paused stop, operator attention) keeps its own record;
-  the outage only suspends sends.
+  health `state` is not `online`, so the transport is not connected — the task
+  records its own durable wait (`resolution.hostWait`: the host and the time the
+  outage was first observed). The outage record is durable (`hostOutages` meta),
+  so a service restart during the outage keeps the same start.
+- The wait is independent of the task's stop (nucleus#1198 review). When nothing
+  more specific already stops the task the stop reads `host_unavailable`, naming
+  the host and the outage start. A stop that belongs to an owner answer (budget,
+  ladder escalation, responsible question, hold, proof wait, interactive turn,
+  paused stop, operator attention) keeps its own record and question: the host
+  wait still pauses the wall clock, shows on the card beside the stop, and joins
+  the project's outage notice.
 - Nothing is sent to that host: no quantum, launch, continuation, notification,
   recovery or coordinator, and no stall, incident or escalation is raised from
   the outage. The wall-time budget pauses for the wait (Spec 058 budgets). New
@@ -1178,11 +1182,13 @@ request identities and submitted handoffs are not rewritten.
   automatic failover and no `move host` verb.
 - Past the dispatch-limits bound (`hostOutageNoticeMinutes`, 120 by default) each
   affected project's planner receives one notice naming the host, its outage
-  start and the waiting tasks, through the ordinary durable notice path. The
-  same outage never asks again; a fresh outage starts unnotified. A project with
-  no planner recipient is skipped. A shorter outage tells nobody.
-- The board card of a waiting task shows the same wait ("Waiting on <host> since
-  …"); host health itself is unchanged.
+  start and the tasks held on it, through the ordinary durable notice path.
+  Tracking is per project on the outage, so a project that becomes affected
+  later, or whose planner is only resolvable later, still hears once for the
+  same outage; a project that already heard never hears again. A shorter outage
+  tells nobody, and a fresh outage starts unnotified.
+- The board card of a waiting task shows the same wait ("Waiting on <host>
+  since …"); host health itself is unchanged.
 
 ### Orphan worktree after a timed-out create
 

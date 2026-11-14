@@ -60,7 +60,7 @@ export class HostOutages {
       return null;
     }
     if (existing) return existing;
-    const outage: HostOutage = { since: at, noticeSentAt: null };
+    const outage: HostOutage = { since: at, notifiedProjects: {} };
     this.write({ ...record, [hostId]: outage });
     return outage;
   }
@@ -68,38 +68,42 @@ export class HostOutages {
   /**
    * Once a host has been unavailable past the dispatch-limits bound, tell each
    * affected project's planner once: the host, when it went offline, and the
-   * tasks waiting on it. Marked on the outage, so a later pass of the same
-   * outage creates nothing again; a fresh outage starts unnotified.
+   * tasks waiting on it. Tracking is per project and durable on the outage
+   * (nucleus#1198 review), so:
    *
-   * A project with no planner recipient is skipped and the outage still counts
-   * as noticed: there is no one this run could tell, and the waiting tasks stay
-   * visible on the board in the meantime.
+   * - a project that becomes affected after an earlier project was told still
+   *   hears once for the same outage;
+   * - a project whose planner was not resolvable at an earlier pass is retried on
+   *   later ones instead of being marked as told;
+   * - the same project never hears twice for one outage, and the notice itself is
+   *   never resent after an uncertain delivery (its recorded intent covers that).
+   *
+   * Every live task on the unavailable host is listed, whatever stop it also
+   * carries: an owner-facing stop does not stop the host from being the reason
+   * nothing moves.
    */
   raiseNotices(at = Date.now()): string[] {
     const boundMs = (this.store.getMeta<number>("hostOutageNoticeMinutes") ?? DEFAULT_HOST_OUTAGE_NOTICE_MINUTES) * 60_000;
     const record = this.read();
     const due = Object.entries(record).filter(([, outage]) => {
-      if (outage.noticeSentAt) return false;
       const since = Date.parse(outage.since);
       return Number.isFinite(since) && at - since >= boundMs;
     });
     if (!due.length) return [];
     const created: string[] = [];
     this.store.transaction(() => {
-      const checkedAt = new Date(at).toISOString();
       const latest = this.read();
       for (const [hostId, outage] of due) {
         const current = latest[hostId];
-        if (!current || current.since !== outage.since || current.noticeSentAt) continue;
-        const waiting = this.store.tasks().filter(task => task.hostId === hostId && isLive(task)
-          && task.resolution.stop?.reason === "host_unavailable");
-        const groups = this.groupByProject(waiting);
-        // No project is affected by this outage yet: leave it unnotified so a task
-        // that starts waiting later still reaches its planner for the same outage.
-        if (!groups.size) continue;
-        for (const [projectKey, tasks] of groups) {
+        if (!current || current.since !== outage.since) continue;
+        const waiting = this.store.tasks().filter(task => task.hostId === hostId && isLive(task));
+        let changed = false;
+        for (const [projectKey, tasks] of this.groupByProject(waiting)) {
+          if (current.notifiedProjects[projectKey]) continue;
           const project = this.store.projectByKey(projectKey);
           const planner = this.store.projectPlannerRecipient(project);
+          // No recipient yet: retry next pass, so a project that gains a planner
+          // during the same outage still hears once.
           if (!planner) continue;
           const id = hostOutageNoticeId(hostId, projectKey, outage.since);
           this.store.putNotice({
@@ -107,10 +111,11 @@ export class HostOutages {
             workspaceId: null, sources: [], originEntry: false, kind: "host_outage", status: "pending",
             error: "", text: hostOutageNoticeText({ hostId, since: outage.since, projectName: project?.name ?? projectKey, tasks, at }),
           });
+          current.notifiedProjects[projectKey] = id;
           created.push(id);
+          changed = true;
         }
-        latest[hostId] = { ...current, noticeSentAt: checkedAt };
-        this.write({ ...latest });
+        if (changed) this.write({ ...latest });
       }
     });
     return created;
