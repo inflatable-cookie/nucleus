@@ -313,6 +313,10 @@ export function ownerTaskStop(facts: OwnerVerbFacts): TaskNextStop | null {
     detail: withRecoveryNote(stopDetail, boundNote),
     suggestedVerbs: classified.suggestedVerbs,
   };
+  const checkpointed = (kind === "run" || kind === "wait") ? retainedCheckpointRun(runs) : null;
+  const resultFencedCheckpoint = checkpointed?.reviewCheckpoints?.length && reviewResultFencesRun(facts.store, task, checkpointed)
+    ? checkpointed : null;
+  if (resultFencedCheckpoint) stopFields.detail = `A reviewer result fences checkpoint ${resultFencedCheckpoint.reviewCheckpoints!.at(-1)!.ordinal} on run ${resultFencedCheckpoint.id}; continue with restart role=reviewer fresh or move to=review fresh.`;
   const fences = holdsOf(task);
   if (kind === "hold") {
     // A hold stop is its owner's gate whatever wait the task last recorded: a

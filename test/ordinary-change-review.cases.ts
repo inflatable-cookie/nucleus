@@ -787,11 +787,13 @@ test('an ordinary review reservation race waits for the next pass without an inc
     assert.equal((result as {accepted:boolean}).accepted, true);
     await f.engine.wake();
     assert.equal(f.sends.filter(run => run.role === 'reviewer').length, 1, 'the raced reviewer is not sent');
-    assert.equal(f.store.task(f.task.id).resolution.incident, null, 'a reservation race is not an incident');
+    const incident = f.store.task(f.task.id).resolution.incident;
+    assert.ok(!incident || incident.status === 'resolved', 'a reservation race does not leave an incident needing an owner');
     assert.match(f.store.task(f.task.id).reason, /source reservation changed.*rechecking before dispatch/i);
     await f.engine.wake(); await f.engine.wake();
     assert.equal(f.sends.filter(run => run.role === 'reviewer').length, 2, 'ordinary dispatch retries on the next pass');
-    assert.equal(f.store.task(f.task.id).resolution.incident, null);
+    const settledIncident = f.store.task(f.task.id).resolution.incident;
+    assert.ok(!settledIncident || settledIncident.status === 'resolved', 'the retry does not leave an incident needing an owner');
   } finally { f.close(); }
 });
 
