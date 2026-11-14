@@ -5,12 +5,31 @@ import { z } from 'zod';
 import { sanitizeHostDeliveryDiagnostic } from '../../core/host';
 
 const workspace = z.object({ id: z.string(), directory: z.string(), projectId: z.string(), title: z.string(), archivedAt: z.string().optional() });
+/**
+ * The command kinds this host records. One entry's kind is a typed fact, not a
+ * fact re-derived from the stored wire: the six readers that used to JSON-parse
+ * `payload` for `type` now ask the ledger.
+ */
+const intentKind = z.enum([
+  'launchThread', 'project.create', 'project.update',
+  'thread.settle', 'thread.unsettle', 'thread.metadata.update', 'thread.delete', 'thread.stop', 'thread.archive',
+  'message.dispatch', 'runtime-request.respond', 'thread.user-input.dismiss',
+]);
+export type T3IntentKind = z.infer<typeof intentKind>;
 const agent = z.object({ id: z.string(), workspaceId: z.string(), labels: z.record(z.string(), z.string()), title: z.string().optional() });
 const diagnostic = z.object({ command: z.string().optional(), field: z.string().optional(), reason: z.string().optional(), guidance: z.string().optional() }).strict().refine(value => {
   const clean = sanitizeHostDeliveryDiagnostic(value);
   return clean.command === value.command && clean.field === value.field && clean.reason === value.reason && clean.guidance === value.guidance;
 });
 const intent = z.object({ payload: z.string(), status: z.enum(['unknown', 'settled', 'refused', 'moot']), result: z.unknown().optional(),
+  // The command kind this entry records, written once when the command is
+  // reserved. A reader decides from this typed fact instead of re-parsing the
+  // stored payload; entries written before it existed derive it once, in the
+  // ledger's own `intentKindOf`.
+  kind: intentKind.optional(),
+  // The thread this command addressed, recorded at the same time, so a reader
+  // never re-parses the payload to learn whose command it is.
+  threadId: z.string().optional(),
   // Deletion postcondition observed after our delete; this does not prove command delivery.
   deletionObservedAt: z.string().optional(),
   // Unknown presentation delivery stays unknown historically, but needs no more work.

@@ -6,13 +6,17 @@ import { join } from 'node:path';
 import { applyVersionedWrite, uncertainFailure, VersionedWriteError } from '../bin/versioned-write.mjs';
 import { credentialFor, readRunTicket, runTicketPath } from '../bin/run-ticket.mjs';
 
+interface ClientCall { method: string; input: Record<string, unknown> }
+interface ScriptedOutcome { code?: string; message?: string; id?: string; version?: number }
+interface ScriptedClientOptions { versions: number[]; write: ScriptedOutcome[] }
+
 /** A client that answers `queue.detail` from a script and the write from a script. */
-function scriptedClient({ versions, write }) {
-  const calls = [];
+function scriptedClient({ versions, write }: ScriptedClientOptions) {
+  const calls: ClientCall[] = [];
   let index = 0;
   return {
     calls,
-    async request(method, input) {
+    async request(method: string, input: Record<string, unknown>) {
       calls.push({ method, input });
       if (method === 'queue.detail') return { task: { id: input.taskId, version: versions[Math.min(index, versions.length - 1)] } };
       const outcome = write[index++];
@@ -23,7 +27,7 @@ function scriptedClient({ versions, write }) {
   };
 }
 
-const settle = async () => {};
+const settle = async (_ms: number) => {};
 
 test('an idempotent versioned write retries an uncertain failure with a fresh version', async () => {
   const client = scriptedClient({
@@ -81,7 +85,7 @@ test('a run ticket is read once, and a continuation of another run is refused', 
     writeFileSync(path, JSON.stringify({ socketPath: join(dir, 'c.sock'), token: 'secret', taskId: 'task-1', runId: 'run-1' }));
     const env = { NUCLEUS_TICKET: path };
     assert.equal(runTicketPath(env), path);
-    const ticket = readRunTicket(env);
+    const ticket = readRunTicket(env)!;
     assert.deepEqual({ taskId: ticket.taskId, runId: ticket.runId, participantId: ticket.participantId }, { taskId: 'task-1', runId: 'run-1', participantId: null });
     assert.deepEqual(credentialFor(ticket, 'self-force'), { socketPath: join(dir, 'c.sock'), token: 'secret' });
     // A continuation ticket wins, and it must belong to the continuation's own run.
@@ -99,12 +103,12 @@ test('a participant ticket has no run credential to act with', () => {
   try {
     const path = join(dir, 'participant.json');
     writeFileSync(path, JSON.stringify({ socketPath: join(dir, 'c.sock'), token: 'secret', participantId: '00000000-0000-4000-8000-000000000001' }));
-    const ticket = readRunTicket({ NUCLEUS_TICKET: path });
+    const ticket = readRunTicket({ NUCLEUS_TICKET: path })!;
     assert.equal(ticket.participantId, '00000000-0000-4000-8000-000000000001');
     assert.throws(() => credentialFor(ticket, 'self-force'), /ticket is incomplete; self-force is unavailable/);
     const incomplete = join(dir, 'incomplete.json');
     writeFileSync(incomplete, JSON.stringify({ taskId: 'task-1' }));
-    assert.throws(() => credentialFor(readRunTicket({ NUCLEUS_TICKET: incomplete }), 'question.answer'),
+    assert.throws(() => credentialFor(readRunTicket({ NUCLEUS_TICKET: incomplete })!, 'question.answer'),
       /ticket is incomplete; question\.answer is unavailable/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
