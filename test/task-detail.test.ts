@@ -14,25 +14,38 @@ test('detail cache scopes invalidation, keeps dependencies fresh and bounds cloc
   let reads=0;const events=store.eventsAll.bind(store);store.eventsAll=id=>{reads++;return events(id);};
   const read=createTaskDetailCache(store,{now:()=>clock});const first=read(task.id);
   store.event(dependency.id,'state','unrelated evidence');store.update(dependency.id,{phase:'done'});
-  const second=read(task.id);assert.equal(reads,3);assert.equal(second.dependencies[0].phase,'done');assert.equal(second.telemetry.generatedAt,first.telemetry.generatedAt);
-  clock+=15000;assert.notEqual(read(task.id).telemetry.generatedAt,first.telemetry.generatedAt);assert.equal(reads,5);
-  store.event(task.id,'fixture','new evidence');assert.equal(read(task.id).events[0].kind,'fixture');assert.equal(reads,7);
-  store.update(task.id,{reason:'new reason'});assert.equal(read(task.id).task.reason,'new reason');assert.equal(reads,9);
+  const second=read(task.id);assert.equal(reads,1);assert.equal(second.dependencies[0].phase,'done');assert.equal(second.telemetry.generatedAt,first.telemetry.generatedAt);
+  clock+=15000;assert.notEqual(read(task.id).telemetry.generatedAt,first.telemetry.generatedAt);assert.equal(reads,2);
+  store.event(task.id,'fixture','new evidence');assert.equal(read(task.id).events[0].kind,'fixture');assert.equal(reads,3);
+  store.update(task.id,{reason:'new reason'});assert.equal(read(task.id).task.reason,'new reason');assert.equal(reads,4);
   store.putRun(runSchema.parse({id:'run',taskId:task.id,role:'reviewer',generation:1,head,base:head,agentId:null,workspaceId:'workspace',profile:null,status:'running',createdAt:at,lastObservedAt:null,active:null,idleSince:null,completion:null,released:false}));
-    assert.equal(read(task.id).runs.length,1);assert.equal(reads,11);
+    assert.equal(read(task.id).runs.length,1);assert.equal(reads,5);
     assert.equal(read(task.id).missingResult,null);
   store.putNotice(noticeSchema.parse({id:'notice',taskId:task.id,agentId:'origin',kind:'attention',status:'pending',error:'',text:'attention'}));
-  assert.equal(read(task.id).notices.length,1);assert.equal(reads,14);
+  assert.equal(read(task.id).notices.length,1);assert.equal(reads,6);
   store.putHookEvent(hookRecordSchema.parse({id:'hook',taskId:task.id,hookId:'generic',event:'task.closeout',eventId:'b'.repeat(48),occurrence:1,mode:'integration_write',delivery:'required',state:'intent',manifest:{path:'.paseo/queue.json',commit:head,digest:`sha256:${'b'.repeat(64)}`},executable:{path:'.paseo/hook',commit:head,digest:`sha256:${'c'.repeat(64)}`},instruction:null,baseBranch:'main',baseCommit:head,attempt:1,argv:[],timeoutMs:1000,maxOutputBytes:1024,allowedPaths:['docs/'],commitSubject:{prefix:'hook',maxBytes:80},eventDigest:'d'.repeat(64),eventPayload:null,workspace:null,processId:null,result:null,commit:null,remote:null,summary:'',error:'',reconciledAt:null,createdAt:at,updatedAt:at}));
-  // #1185 added the second eventsAll read for the #1187 one-measurement budget projection, so each
-  // uncached build costs two reads and every detail read (even cached) costs one for the fresh projection.
-  assert.equal(read(task.id).hooks.length,1);assert.equal(reads,16);
+  assert.equal(read(task.id).hooks.length,1);assert.equal(reads,7);
   const accepted=store.acceptOperation({key:'control',kind:'task_control',inputHash:'a'.repeat(64),taskId:task.id,payload:{}});assert.ok('accepted' in accepted);
-  assert.equal(read(task.id).operations.length,1);assert.equal(reads,18);
+  assert.equal(read(task.id).operations.length,1);assert.equal(reads,8);
   if('accepted' in accepted)store.putOperation({...accepted.operation,state:'succeeded',settledAt:at});
-  assert.equal(read(task.id).operations[0].state,'succeeded');assert.equal(reads,20);
+  assert.equal(read(task.id).operations[0].state,'succeeded');assert.equal(reads,9);
   assert.throws(()=>store.transaction(()=>{store.update(task.id,{reason:'rolled back'});assert.equal(read(task.id).task.reason,'rolled back');throw Error('rollback');}),/rollback/);
-  assert.equal(read(task.id).task.reason,'new reason');assert.equal(reads,24);
+  assert.equal(read(task.id).task.reason,'new reason');assert.equal(reads,11);
+ }finally{store.close();}
+});
+
+test('detail evidence cache ignores unrelated operation acceptance and reloads on its own event',()=>{
+ const store=new Store(':memory:');
+ try{
+  const task=add(store,'selected');let reads=0;const events=store.eventsAll.bind(store);
+  store.eventsAll=id=>{reads++;return events(id);};
+  const read=createTaskDetailCache(store);
+  read(task.id);assert.equal(reads,1);
+  const accepted=store.acceptOperation({key:'unrelated-acceptance',kind:'submit',inputHash:'a'.repeat(64),payload:{}});
+  assert.ok('accepted' in accepted);
+  read(task.id);assert.equal(reads,1,'unrelated acceptance must reuse selected-task evidence');
+  store.event(task.id,'fixture','selected task changed');
+  read(task.id);assert.equal(reads,2,'the selected task event must invalidate its cached evidence');
  }finally{store.close();}
 });
 
@@ -40,8 +53,8 @@ test('detail cache evicts old selections and refuses oversized entries',()=>{
  const store=new Store(':memory:');
  try{
   const one=add(store,'one'),two=add(store,'two');let reads=0;const events=store.eventsAll.bind(store);store.eventsAll=id=>{reads++;return events(id);};
-  const read=createTaskDetailCache(store,{maxEntries:1});read(one.id);read(one.id);assert.equal(reads,3);read(two.id);read(one.id);assert.equal(reads,7);
-  const small=createTaskDetailCache(store,{maxBytes:1});small(one.id);small(one.id);assert.equal(reads,11);
+  const read=createTaskDetailCache(store,{maxEntries:1});read(one.id);read(one.id);assert.equal(reads,1);read(two.id);read(one.id);assert.equal(reads,3);
+  const small=createTaskDetailCache(store,{maxBytes:1});small(one.id);small(one.id);assert.equal(reads,6);
  }finally{store.close();}
 });
 
