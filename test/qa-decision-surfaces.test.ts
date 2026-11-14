@@ -250,14 +250,18 @@ test('unknown QA results and capacity waits remain distinct from failed runs', a
 
 // ---- Decisions: the pill popover on the shared controls -------------------
 
-const decision = (over: Partial<DecisionView> = {}): DecisionView => ({
-  id: 'decision-1', version: 1, question: 'Which branch do we cut?', headline: 'Which branch do we cut?',
-  choices: [{ label: 'main', consequence: 'Use the stable branch.' }, { label: 'branch', consequence: 'Start from the feature branch.' }],
-  recommended: 'main', details: null, overtakenBy: [], context: null, options: ['main', 'branch'], recommendation: 'main',
-  askedBy: { agentId: 'agent-asker', project: { origin: 'owner/decisions', path: '/fixture/decisions' } }, links: { tasks: [], leads: [], papercuts: [] },
-  status: 'open', answer: null, withdrawal: null, supersededBy: null, delivery: null,
-  createdAt: '2026-09-29T10:00:00Z', updatedAt: '2026-09-29T10:00:00Z', versions: [], stale: false, projectKey: 'decisions', ...over,
-});
+const decision = (over: Partial<DecisionView> = {}): DecisionView => {
+  const { askerLabel, ...rest } = over;
+  return {
+    id: 'decision-1', version: 1, question: 'Which branch do we cut?', headline: 'Which branch do we cut?',
+    choices: [{ label: 'main', consequence: 'Use the stable branch.' }, { label: 'branch', consequence: 'Start from the feature branch.' }],
+    recommended: 'main', details: null, overtakenBy: [], context: null, options: ['main', 'branch'], recommendation: 'main',
+    askedBy: { agentId: 'agent-asker', project: { origin: 'owner/decisions', path: '/fixture/decisions' } }, links: { tasks: [], leads: [], papercuts: [] },
+    askerLabel: askerLabel ?? 'agent-asker',
+    status: 'open', answer: null, withdrawal: null, supersededBy: null, delivery: null,
+    createdAt: '2026-09-29T10:00:00Z', updatedAt: '2026-09-29T10:00:00Z', versions: [], stale: false, projectKey: 'decisions', ...rest,
+  };
+};
 const popoverProps = () => ({
   theme: { colors: c }, host: { id: 'host', label: 'Host' }, layout: { compact: false, platform: 'ios' as const },
   context: 'agent' as const, workspaceId: 'ws-1', agentId: 'agent-asker', close: () => {},

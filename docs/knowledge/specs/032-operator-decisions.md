@@ -40,8 +40,18 @@ A decision has:
   question must escalate to the planner or provide recommended options.
 - `question` (required) and optional `context`, `options` (short labels) and
   `recommendation`;
-- `askedBy`: the asking agent ID and an optional project (origin and path).
-  Without a project, the decision belongs to the **General** surface.
+- `askedBy`: the asking agent thread. The CLI records the calling thread; a
+  typed name is never trusted. Nucleus derives the project and task from that
+  identity: a run ticket (worker, reviewer, coordinator, executor) gives the
+  task, its repository and its project, and links the task; a planner or
+  named-agent participant ticket gives its project; otherwise the linked
+  tasks, leads or papercuts give the project. An explicit `project` that
+  contradicts the caller's identity is refused, and a decision Nucleus cannot
+  place is refused instead of filing under General. An operator adding a
+  decision at the board picks a project.
+- Legacy project-less decisions belong to the **General** surface. New
+  decisions are always placed; `decision.backfill` retargets legacy rows
+  where the asker still resolves and leaves ambiguous ones as is.
 - links: zero or more task IDs, lead IDs and papercut IDs. They are part of the
   content snapshot each version records;
 - `status`: `open`, `answered`, `withdrawn` or `superseded`;
@@ -71,6 +81,10 @@ the record's links would fabricate history for an imported decision.
   (omitted lists and already-linked entries are unchanged); a call that adds
   nothing writes no version. Linking therefore never supersedes a decision and
   never changes its id.
+- `decision.backfill` — retargets project-less decisions at the asker's
+  project (`{dryRun}` previews the counts without writing). The project is
+  not versioned content, so the write is in place with no new version; an
+  ambiguous asker and unresolvable links are left as is.
 - `decision.supersede` — replaces an open decision with a new one in one step.
 
 ## Delivery
@@ -98,8 +112,10 @@ one-click withdrawal. It never infers a match from similar wording.
 
 - Open agent decisions appear in the Decisions column of the Tasks tab's
   Pipeline, with the one-line headline, recommended choice first, one-line
-  choice consequences, asker, links and age. Full details stay collapsed. The separate
-  Decisions tab was retired on 2026-10-03 (Tom).
+  choice consequences, who asked, links and age. Who asked is the project, the
+  task reference and role (for example `swallowtail#234 worker`), or the
+  planner or agent name — never a bare agent or thread ID. Full details stay
+  collapsed. The separate Decisions tab was retired on 2026-10-03 (Tom).
 - Nucleus-raised items, including escalated merge holds and future close-out
   prompts, appear in the same Decisions column. Only item kinds that explicitly
   grant operator actions expose them; other Nucleus-raised cards remain read-only.

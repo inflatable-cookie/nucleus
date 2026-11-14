@@ -781,9 +781,11 @@ const decision = (over: Record<string, unknown>): DecisionFixture => ({
   details: 'Release is Friday.',
   choices: Object.hasOwn(over, 'choices') ? over.choices : [{ label: 'main', consequence: 'Cut from main.' }, { label: 'release', consequence: 'Cut from release.' }], recommended: over.recommended ?? 'main',
   options: ['main', 'release'], recommendation: 'Cut from main.',
-  askedBy: { agentId: 'agent-asker', project: { origin: 'owner/app', path: '/app' } },
+  askedBy: { agentId: 'worker-1', project: { origin: 'owner/app', path: '/app' } },
   links: { tasks: ['shared'], leads: ['lead-1'], papercuts: [] },
   status: 'open' as string, answer: null, withdrawal: null, supersededBy: null, delivery: null,
+  // Task 1183: the board names who asked — the task reference and role, never a bare thread ID.
+  askerLabel: 'project-a-accelerator#5747 worker',
   createdAt: new Date(Date.now() - 3 * 3_600_000).toISOString(), updatedAt: new Date().toISOString(), versions: [], stale: false, ...over,
 });
 
@@ -792,10 +794,12 @@ test('032 the bundled Pipeline shows agent decisions and Nucleus-raised merge ho
   const fresh = decision({});
   const stale = decision({ id: 'dec-stale', question: 'Still worth splitting?', stale: true, context: null, choices: undefined, options: ['Keep', 'Remove'], recommendation: null, links: { tasks: [], leads: [], papercuts: [] } });
   const withdrawable = decision({ id: 'dec-withdraw', question: 'Rename the lane?', context: null, options: [], recommendation: null,
+    askedBy: { agentId: 'worker-2', project: { origin: 'owner/app', path: '/app' } }, askerLabel: 'unlaned worker',
     overtakenBy: [{ kind: 'brief_amendment', id: 'unlaned', sourceId: 'brief-v2', label: 'Brief amendment for task unlaned: updated scope', at: stamp }],
     links: { tasks: ['unlaned'], leads: [], papercuts: [] } });
   const general = decision({ id: 'dec-general', question: 'Where should this decision live?', context: null, options: [], recommendation: null,
-    askedBy: { agentId: 'agent-general', project: null }, links: { tasks: ['project-d-task'], leads: [], papercuts: [] } });
+    askedBy: { agentId: 'thread-general', project: null }, askerLabel: 'an earlier thread',
+    links: { tasks: ['project-d-task'], leads: [], papercuts: [] } });
   const decisions = new Map<string, DecisionFixture>([[fresh.id, fresh], [stale.id, stale], [withdrawable.id, withdrawable], [general.id, general]]);
   const answers: Array<Record<string, unknown>> = [], withdrawals: Array<Record<string, unknown>> = [];
   const originalProjects = board.projects, originalTasks = board.tasks;
@@ -843,21 +847,22 @@ test('032 the bundled Pipeline shows agent decisions and Nucleus-raised merge ho
     assert.match(ui.text(), /Ready to merge, held for External receipt pending/);
     assert.ok(ui.get('Release'));
     assert.ok(ui.get('Keep'));
-    assert.ok(ui.query('Decision: Where should this decision live?'), 'a General decision is present in the Decisions column');
+    assert.ok(ui.query(/^Decision: Where should this decision live\?/), 'a General decision is present in the Decisions column');
     assert.equal(countText(ui, 'General'), 1, 'the General decision has its own project label');
     assert.equal(countText(ui, 'linked: project-d'), 1, 'the General decision hints at its linked task project');
-    assert.match(ui.text(), /Asked 3h ago · 2 links/);
+    assert.match(ui.text(), /Asked project-a-accelerator#5747 worker · 3h ago · 2 links/, 'the card names the task reference and role');
     assert.ok(ui.text().includes('Task · project-a-accelerator#5747 · Close the F1 and F3 checks'), 'decision cards name linked tasks by reference and title');
     assert.ok(ui.text().includes('Waiting on you · Which branch do we cut?'), 'linked operator waits name the decision');
     assert.ok(ui.ofType('Pressable').some(node => String(node.props.accessibilityLabel).includes('Waiting on you · Which branch do we cut?')), 'the task card accessibility label names the decision');
     // Tom, 2026-09-29: cards named the asking agent's id, not the project it came from.
     assert.ok(countText(ui, 'app') >= 3, 'each decision card names its asking project');
     assert.doesNotMatch(ui.text(), /agent-asker/, 'the raw asker id is not the card label');
+    assert.doesNotMatch(ui.text(), /thread-general/, 'an unplaced asker is never a bare thread ID');
     assert.doesNotMatch(ui.text(), /Choose this direction|Accept the proposed direction/, 'missing consequences never become placeholder filler');
     assert.match(ui.text(), /Cut from main\./);
     assertDarkTheme(ui);
     // The decision modal starts with the compact question and choices; full details stay collapsed.
-    ui.press('Decision: Which branch do we cut?');
+    ui.press(/^Decision: Which branch do we cut\?/);
     await settleUntil(ui, () => ui.query('Operator answer') !== undefined, 'the decision modal did not load');
     assert.doesNotMatch(ui.text(), /Release is Friday\./, 'the long details start collapsed');
     ui.press('Details, collapsed');
@@ -879,13 +884,13 @@ test('032 the bundled Pipeline shows agent decisions and Nucleus-raised merge ho
     assert.equal(answers[0]!.relayed, false);
     assert.equal(answers[0]!.version, 1);
     // The Pipeline updates without reload: the answered decision leaves its column.
-    await settleUntil(ui, () => ui.query('Decision: Which branch do we cut?') === undefined, 'the answered decision stayed on the board');
+    await settleUntil(ui, () => ui.query(/^Decision: Which branch do we cut\?/) === undefined, 'the answered decision stayed on the board');
     assert.ok(ui.query('Decisions, 4'), 'the Pipeline column count dropped');
     await settleUntil(ui, () => ui.text().includes('operator authority'), 'the recorded answer did not render in the modal');
     assertDarkTheme(ui);
     ui.press('Close decision detail');
     // The withdraw path.
-    ui.press('Decision: Rename the lane?');
+    ui.press(/^Decision: Rename the lane\?/);
     await settleUntil(ui, () => ui.query('Withdraw as overtaken') !== undefined, 'the overtaken decision detail did not load');
     assert.ok(ui.query(/View citing/), `the modal links to the exact citing amendment; labels: ${ui.all(/View citing/).map(node => node.props.accessibilityLabel).join(' | ')}`);
     ui.press('Withdraw as overtaken');
@@ -893,11 +898,11 @@ test('032 the bundled Pipeline shows agent decisions and Nucleus-raised merge ho
     assert.equal(withdrawals.length, 1);
     assert.equal(withdrawals[0]!.withdrawnBy, 'operator (board)');
     assert.equal(withdrawals[0]!.reason, 'Withdrawn after Brief amendment for task unlaned: updated scope');
-    await settleUntil(ui, () => ui.query('Decision: Rename the lane?') === undefined, 'the withdrawn decision stayed on the board');
+    await settleUntil(ui, () => ui.query(/^Decision: Rename the lane\?/) === undefined, 'the withdrawn decision stayed on the board');
     assert.ok(ui.query('Decisions, 3'), 'the Pipeline column count dropped again');
     ui.press('Close decision detail');
     // The stale decision stays open on the board until a human withdraws it.
-    assert.ok(ui.query('Decision: Still worth splitting?'));
+    assert.ok(ui.query(/^Decision: Still worth splitting\?/));
     assert.equal(countText(ui, 'Stale'), 1);
     assert.equal(countText(ui, 'Decision'), 3, 'the stale and General decision cards keep their chips, as does the linked Project-D task');
     assertDarkTheme(ui);
@@ -910,8 +915,8 @@ test('032 the bundled Pipeline shows agent decisions and Nucleus-raised merge ho
     assert.equal(countText(ui, 'linked: project-d'), 1, 'the General task hint survives its linked project being filtered out');
     assert.equal(ui.ofType('View').find(node => node.props.accessibilityLabel === 'Decisions, 3')?.props.accessibilityLabel, 'Decisions, 3', 'the Decisions column keeps General and the held merge under a specific project filter');
     assert.equal(ui.query(/^Decisions \(/), undefined, 'agent decisions remain in Pipeline without a separate tab');
-    assert.ok(ui.query('Decision: Still worth splitting?'));
-    assert.ok(ui.query('Decision: Where should this decision live?'));
+    assert.ok(ui.query(/^Decision: Still worth splitting\?/));
+    assert.ok(ui.query(/^Decision: Where should this decision live\?/));
     assert.equal(countText(ui, 'linked: project-d'), 1);
     assertDarkTheme(ui);
   } finally {

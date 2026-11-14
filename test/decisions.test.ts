@@ -60,12 +60,14 @@ test("032-1a the compact decision schema requires two or three choices and a rec
   assert.throws(() => decisionAdd.input.parse({ question: "q", askedBy: "agent", choices: [{ label: "Only", consequence: "One option." }] }), />=2/);
   assert.throws(() => decisionAdd.input.parse({ question: "q", askedBy: "agent", choices: [{ label: "A", consequence: "a" }, { label: "B", consequence: "b" }], recommended: "C" }), /match one choice/);
   const f = setup(); try {
+    // Tom, 2026-11-13, with the planner ruling: the headline is the question
+    // from its start up to the first `?`; a preceding statement stays in.
     const fallback = add(f, { question: "The setup is unclear. Should we keep the API?" });
-    assert.equal(fallback.headline, "Should we keep the API?");
+    assert.equal(fallback.headline, "The setup is unclear. Should we keep the API?");
     assert.equal(fallback.choices?.length, 2);
     assert.equal(fallback.recommended, fallback.choices?.[0]?.label);
     assert.equal(decisionHeadline("First clause. Should Queue run the qualification?", "effigy#538"),
-      "effigy#538 · Should Queue run the qualification?");
+      "effigy#538 · First clause. Should Queue run the qualification?");
     assert.equal(decisionHeadline(`Should Queue run ${"a very long named qualification ".repeat(8)}?`, "effigy#538").endsWith("…"), true);
     assert.equal(decisionHeadline(`Should Queue run ${"a very long named qualification ".repeat(8)}?`, "effigy#538").length <= 140, true);
     const legacyQuestion = `The context is long. Should we keep ${"this branch ".repeat(20)}?`;
@@ -76,9 +78,38 @@ test("032-1a the compact decision schema requires two or three choices and a rec
         { label: "Answer in my own words", consequence: "Give a different direction." }], recommended: "Approve" });
     const repaired = f.decisions.get({ id: legacy.id });
     assert.equal(repaired.headline, decisionHeadline(legacyQuestion));
-    assert.match(repaired.headline ?? "", /^Should we keep this branch/);
+    assert.match(repaired.headline ?? "", /^The context is long\. Should we keep this branch/);
     assert.match(repaired.headline ?? "", /…$/);
     assert.equal(repaired.choices?.length, 2, "legacy free-text decisions get concrete planning choices");
+  } finally { f.close(); }
+});
+
+test("1183 a headline never starts mid-text: the question up to the first question mark wins", () => {
+  const f = setup(); try {
+    const question = "Sign off the video toolkit component inventory (tools/acowtancy-video-deck/docs/component-inventory.md, merged in PR 1236) so the refactor can be briefed?";
+    const created = add(f, { question });
+    assert.ok(created.headline!.startsWith("Sign off the video toolkit component inventory"),
+      `the headline starts at the question start, not mid-path: ${created.headline}`);
+    assert.doesNotMatch(created.headline ?? "", /^md,/);
+    assert.equal(decisionHeadline("Upgrade the runtime to 7.0.0 for the worker fleet?", null),
+      "Upgrade the runtime to 7.0.0 for the worker fleet?", "dots inside a version never matter");
+    assert.equal(decisionHeadline("Rename docs/handbook.md to the new layout?", null),
+      "Rename docs/handbook.md to the new layout?", "dots inside a file name never matter");
+    assert.equal(decisionHeadline("Use e.g. three examples. Should we proceed?", null),
+      "Use e.g. three examples. Should we proceed?", "abbreviations never split the headline");
+    assert.equal(decisionHeadline("Pick one format, i.e. the stable one. Which is it?", null),
+      "Pick one format, i.e. the stable one. Which is it?");
+    assert.equal(decisionHeadline("Should we keep A? Or switch to B?", null), "Should we keep A?",
+      "with two questions, the first one wins");
+    assert.equal(decisionHeadline("The options are red, blue, etc. Which should we choose?", null),
+      "The options are red, blue, etc. Which should we choose?", "a preceding statement sentence stays in the headline");
+    // An existing mid-sentence headline refreshes on read from the stored question, which never changes.
+    const broken = "md, merged in PR 1236) so the refactor can be briefed?";
+    f.store.updateDecision({ ...f.store.decision(created.id), headline: broken });
+    const reread = f.decisions.get({ id: created.id });
+    assert.ok(reread.headline!.startsWith("Sign off the video toolkit component inventory"));
+    assert.equal(f.store.decision(created.id).headline, broken, "the read never rewrites the stored row");
+    assert.equal(f.store.decision(created.id).question, question, "the stored question never changes");
   } finally { f.close(); }
 });
 
@@ -328,7 +359,11 @@ test("032-9 a decision view names its Queue project, and agent-projects maps a t
     const owning = f.store.projectFor(project.path, project.origin)!;
     assert.ok(owning, "the task's repository has a Queue project");
     assert.equal(add(f).projectKey, owning.key);
-    assert.equal(add(f, { project: null }).projectKey, null, "a General decision has no project");
+    // Task 1183 refuses new project-less decisions; a legacy General row still reads with no project.
+    const legacy = f.store.addDecision({ id: "legacy-general", version: 1, question: "Old general question?",
+      askedBy: { agentId: "agent-asker", project: null }, links: { tasks: [], leads: [], papercuts: [] },
+      status: "open", createdAt: "2026-11-01T00:00:00.000Z", updatedAt: "2026-11-01T00:00:00.000Z", versions: [] });
+    assert.equal(f.decisions.get({ id: legacy.id }).projectKey, null, "a General decision has no project");
     f.store.update(task.id, { agentId: "worker-1" });
     assert.deepEqual(f.decisions.agentProjects({ agents: [
       { agentId: "worker-1", cwd: "/somewhere/worktrees/ns-task" },
