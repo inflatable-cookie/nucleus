@@ -194,7 +194,17 @@ export async function t3Fake(t: TestContext, directory: string) {
   const projectReceipts = new Map<string, { type: string; projectId: string }>();
   const sockets = new Set<Socket>();
   const controlFrames: Value[] = [];
+  const injectors: Array<(text: string) => void> = [];
   let upgrades = 0, closes = 0;
+  const wsText = (socket: Socket, text: string) => {
+    const bytes = Buffer.from(text);
+    const header = Buffer.alloc(bytes.length < 126 ? 2 : bytes.length <= 0xffff ? 4 : 10);
+    header[0] = 0x81;
+    if (header.length === 2) header[1] = bytes.length;
+    else if (header.length === 4) { header[1] = 126; header.writeUInt16BE(bytes.length, 2); }
+    else { header[1] = 127; header.writeBigUInt64BE(BigInt(bytes.length), 2); }
+    socket.write(Buffer.concat([header, bytes]));
+  };
   const server = createServer((request, response) => {
     assert.equal(request.url, '/api/auth/websocket-ticket/rpc');
     assert.equal(request.headers.authorization, 'Bearer synthetic-bearer');
@@ -220,16 +230,8 @@ export async function t3Fake(t: TestContext, directory: string) {
     assert.equal(url.pathname, '/ws'); assert.equal(url.searchParams.get('wsTicket'), 'synthetic-ticket');
     const accept = createHash('sha1').update(`${request.headers['sec-websocket-key']}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64');
     socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
-    const send = (value: unknown) => {
-      const bytes = Buffer.from(JSON.stringify(value));
-      // WebSocket framing: small inline length, 16-bit, then 64-bit.
-      const header = Buffer.alloc(bytes.length < 126 ? 2 : bytes.length <= 0xffff ? 4 : 10);
-      header[0] = 0x81;
-      if (header.length === 2) header[1] = bytes.length;
-      else if (header.length === 4) { header[1] = 126; header.writeUInt16BE(bytes.length, 2); }
-      else { header[1] = 127; header.writeBigUInt64BE(BigInt(bytes.length), 2); }
-      socket.write(Buffer.concat([header, bytes]));
-    };
+    injectors.push(text => { if (sockets.has(socket)) wsText(socket, text); });
+    const send = (value: unknown) => wsText(socket, JSON.stringify(value));
     const handle = (request: Value) => {
       if (request._tag !== 'Request') {
         controlFrames.push(request);
@@ -451,5 +453,7 @@ export async function t3Fake(t: TestContext, directory: string) {
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   /** Drops every live WebSocket, as a T3 restart or network reset does. */
   const dropSockets = () => { for (const socket of sockets) socket.destroy(); };
-  return { endpoint: `http://127.0.0.1:${address.port}`, controls, threads, commands, requests, snapshots, controlFrames, get upgrades() { return upgrades; }, get closes() { return closes; }, projects: projectRows, dropSockets };
+  const inject = (value: unknown) => { for (const write of injectors) write(JSON.stringify(value)); };
+  const injectRaw = (text: string) => { for (const write of injectors) write(text); };
+  return { endpoint: `http://127.0.0.1:${address.port}`, controls, threads, commands, requests, snapshots, controlFrames, get upgrades() { return upgrades; }, get closes() { return closes; }, projects: projectRows, dropSockets, inject, injectRaw };
 }

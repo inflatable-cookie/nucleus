@@ -155,4 +155,4 @@ export function createAdapter(Policy: HostPolicyConstructor, host: T3CodeHost, r
   return new T3Adapter(host, reporting);
 }
 
-export type { T3DisconnectReason } from './rpc';
+export type { T3DisconnectReason, T3ProtocolError, T3ProtocolErrorBranch } from './rpc';

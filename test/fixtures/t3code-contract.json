@@ -2,6 +2,19 @@
   "sourceRevision": "97e35bcf23e4dcf34c2dcffadd37c08db0e01e52",
   "nightlyVersion": "0.1.6-nightly.20261030.3917",
   "protocol": 2,
+  "protocolFrames": {
+    "source": "Effect RPC JSON FromServerEncoded as used by the nightly (orchestration protocol 2); keys only, request IDs synthetic",
+    "attributable": {
+      "defect": { "_tag": "Defect", "requestId": "synthetic-request" },
+      "chunk": { "_tag": "Chunk", "requestId": "synthetic-request", "values": [] },
+      "exit": { "_tag": "Exit", "requestId": "synthetic-request", "exit": { "_tag": "Success", "value": null } }
+    },
+    "unattributable": {
+      "connectionDefect": { "_tag": "Defect" },
+      "ping": { "_tag": "Ping" },
+      "pong": { "_tag": "Pong" }
+    }
+  },
   "boundaryDecodeExample": "Missing key\n  at [\"commandId\"]",
   "dispatchUnknownCommandExample": "Expected union member, got {\"type\":\"project.create\",\"commandId\":\"fixture:create\"}",
   "source": "packages/contracts/src/orchestrationV2.ts",

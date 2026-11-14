@@ -10,6 +10,16 @@ type Frame = Record<string, unknown>;
 type Reply = (frame: unknown) => void;
 const contract = JSON.parse(readFileSync(new URL('./fixtures/t3code-contract.json', import.meta.url), 'utf8'));
 
+function wsFrame(text: string) {
+  const payload = Buffer.from(text);
+  const header = Buffer.alloc(payload.length < 126 ? 2 : payload.length <= 0xffff ? 4 : 10);
+  header[0] = 0x81;
+  if (header.length === 2) header[1] = payload.length;
+  else if (header.length === 4) { header[1] = 126; header.writeUInt16BE(payload.length, 2); }
+  else { header[1] = 127; header.writeBigUInt64BE(BigInt(payload.length), 2); }
+  return Buffer.concat([header, payload]);
+}
+
 /** Real HTTP ticket exchange and WebSocket framing; no mocked client methods. */
 async function fakeServer(t: TestContext, handle: (frame: Frame, send: Reply, socket: Socket) => void, status = 200) {
   const frames: Frame[] = [];
@@ -35,14 +45,7 @@ async function fakeServer(t: TestContext, handle: (frame: Frame, send: Reply, so
     assert.equal(url.searchParams.get('orchestrationProtocol'), '2');
     const accept = createHash('sha1').update(`${request.headers['sec-websocket-key']}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64');
     socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
-    const send: Reply = value => {
-      const payload = Buffer.from(JSON.stringify(value));
-      const header = Buffer.alloc(payload.length < 126 ? 2 : 4);
-      header[0] = 0x81;
-      if (header.length === 2) header[1] = payload.length;
-      else { header[1] = 126; header.writeUInt16BE(payload.length, 2); }
-      socket.write(Buffer.concat([header, payload]));
-    };
+    const send: Reply = value => { socket.write(wsFrame(JSON.stringify(value))); };
     let buffer = Buffer.alloc(0);
     socket.on('data', (chunk: Buffer) => {
       buffer = Buffer.concat([buffer, chunk]);
@@ -450,6 +453,8 @@ test('malformed server frames invalidate pending reads without leaking raw conte
   await assert.rejects(client.call('server.getConfig', {}), error => error instanceof T3RpcError && error.code === 'protocol' && !error.message.includes('synthetic-bearer'));
   assert.equal(client.connected, false);
   assert.equal(client.lastDisconnectReason, 'protocol_error');
+  assert.deepEqual(client.lastProtocolError, { branch: 'unknown_control', tag: null });
+  assert.doesNotMatch(JSON.stringify(client.lastProtocolError), /synthetic-bearer/);
 });
 
 test('one timed-out mutation leaves other in-flight and later requests on the shared connection', async t => {
@@ -538,4 +543,149 @@ test('thread snapshots have a method-specific minute while small commands keep t
   snapshot();
   assert.deepEqual(await thread, { kind: 'synchronized', sequence: 1 });
   assert.equal(client.connected, true);
+});
+
+const protocolFrames = contract.protocolFrames as {
+  attributable: { defect: Frame; chunk: Frame; exit: Frame };
+  unattributable: { connectionDefect: Frame };
+};
+
+function wsSend(socket: Socket, text: string) { socket.write(wsFrame(text)); }
+
+/** Two in-flight calls: the faulting one is named, the other succeeds, the socket stays up. */
+async function attributableFault(
+  t: TestContext,
+  options: {
+    fault: (request: Frame, send: Reply) => void;
+    branch: string;
+    tag: string;
+    stream?: boolean;
+  },
+) {
+  const replies = new Map<string, () => void>();
+  const received = new Map<string, Promise<void>>();
+  const releases = new Map<string, () => void>();
+  for (const method of ['faulty.read', 'server.getConfig'])
+    received.set(method, new Promise(resolve => releases.set(method, resolve)));
+  const server = await fakeServer(t, (request, send) => {
+    if (request._tag !== 'Request') return;
+    const method = String(request.tag);
+    if (method === 'faulty.read') replies.set(method, () => options.fault(request, send));
+    else if (method === 'later.read') send(success(request, 'later'));
+    else replies.set(method, () => send(success(request, method)));
+    releases.get(method)?.();
+  });
+  const client = await clientFor(t, server);
+  const failed = options.stream
+    ? client.readStream('faulty.read', {}, () => false)
+    : client.call('faulty.read', {});
+  await received.get('faulty.read');
+  const other = client.call('server.getConfig', {});
+  await received.get('server.getConfig');
+  replies.get('faulty.read')!();
+  await assert.rejects(failed, error => error instanceof T3RpcError && error.code === 'protocol' && error.delivery === 'unknown');
+  replies.get('server.getConfig')!();
+  assert.equal(await other, 'server.getConfig');
+  assert.equal(client.connected, true);
+  assert.equal(client.lastDisconnectReason, null);
+  assert.deepEqual(client.lastProtocolError, { branch: options.branch, tag: options.tag });
+  assert.equal(await client.call('later.read', {}), 'later');
+  assert.equal(server.upgrades, 1);
+  if (options.stream) {
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(server.frames.filter(frame => frame._tag === 'Interrupt' && String(frame.requestId) === '1').length, 1);
+  }
+  return { client, server };
+}
+
+test('a Defect with a request ID settles that request only', async t => {
+  await attributableFault(t, {
+    branch: 'defect',
+    tag: 'Defect',
+    fault: (request, send) => send({ ...protocolFrames.attributable.defect, requestId: request.id }),
+  });
+});
+
+test('a Chunk for a unary request settles that request only', async t => {
+  await attributableFault(t, {
+    branch: 'chunk_without_acceptor',
+    tag: 'Chunk',
+    fault: (request, send) => send({ ...protocolFrames.attributable.chunk, requestId: request.id, values: [{ kind: 'snapshot' }] }),
+  });
+});
+
+test('a Chunk with non-array values settles that stream only', async t => {
+  await attributableFault(t, {
+    branch: 'chunk_values',
+    tag: 'Chunk',
+    stream: true,
+    fault: (request, send) => send({ _tag: 'Chunk', requestId: request.id, values: { not: 'array' } }),
+  });
+});
+
+test('an overlong stream settles that request only', async t => {
+  await attributableFault(t, {
+    branch: 'stream_overlong',
+    tag: 'Chunk',
+    stream: true,
+    fault: (request, send) => {
+      send({ _tag: 'Chunk', requestId: request.id, values: Array.from({ length: 10_000 }, () => 0) });
+      send({ _tag: 'Chunk', requestId: request.id, values: [0] });
+    },
+  });
+});
+
+test('an unexpected Exit shape settles that request only', async t => {
+  await attributableFault(t, {
+    branch: 'unexpected_exit',
+    tag: 'Exit',
+    fault: (request, send) => send({ _tag: 'Exit', requestId: request.id, exit: { _tag: 'Neither' } }),
+  });
+});
+
+test('an unknown tag with a known request ID settles that request only', async t => {
+  await attributableFault(t, {
+    branch: 'unknown_tag',
+    tag: 'ClientEnd',
+    fault: (request, send) => send({ _tag: 'ClientEnd', requestId: request.id }),
+  });
+});
+
+test('subscribeThread accepts more than the default stream cap once the reader has the marker', async t => {
+  const server = await fakeServer(t, (request, send) => {
+    if (request._tag !== 'Request') return;
+    if (request.tag === 'orchestration.subscribeThread') {
+      const values: unknown[] = Array.from({ length: 10_000 }, () => ({ kind: 'snapshot', threads: [] }));
+      values.push({ kind: 'synchronized', sequence: 1 });
+      send({ _tag: 'Chunk', requestId: request.id, values });
+    }
+  });
+  const client = await clientFor(t, server);
+  const marker = await client.readStream('orchestration.subscribeThread', { threadId: 'synthetic', requestCompletionMarker: true }, value =>
+    (value as { kind?: string }).kind === 'synchronized');
+  assert.deepEqual(marker, { kind: 'synchronized', sequence: 1 });
+  assert.equal(client.connected, true);
+  assert.equal(client.lastDisconnectReason, null);
+});
+
+test('an unparseable frame still closes the shared connection', async t => {
+  const server = await fakeServer(t, (request, _send, socket) => {
+    if (request._tag === 'Request') wsSend(socket, '{');
+  });
+  const client = await clientFor(t, server);
+  await assert.rejects(client.call('server.getConfig', {}), error => error instanceof T3RpcError && error.code === 'protocol');
+  assert.equal(client.connected, false);
+  assert.equal(client.lastDisconnectReason, 'protocol_error');
+  assert.deepEqual(client.lastProtocolError, { branch: 'unparseable_frame', tag: null });
+});
+
+test('a connection-level Defect without a request ID closes the shared connection', async t => {
+  const server = await fakeServer(t, (request, send) => {
+    if (request._tag === 'Request') send(protocolFrames.unattributable.connectionDefect);
+  });
+  const client = await clientFor(t, server);
+  await assert.rejects(client.call('server.getConfig', {}), error => error instanceof T3RpcError && error.code === 'protocol');
+  assert.equal(client.connected, false);
+  assert.equal(client.lastDisconnectReason, 'protocol_error');
+  assert.deepEqual(client.lastProtocolError, { branch: 'connection_defect', tag: 'Defect' });
 });

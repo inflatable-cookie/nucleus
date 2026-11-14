@@ -31,9 +31,29 @@ export class T3RpcError extends Error {
 }
 
 export type T3DisconnectReason = 'heartbeat_failure' | 'socket_close' | 'socket_error' | 'protocol_error' | 'connect_timeout';
+/** The protocol-error branch, never a payload value. Recorded next to lastDisconnectReason. */
+export type T3ProtocolErrorBranch =
+  | 'unparseable_frame'
+  | 'non_string_message'
+  | 'oversize_message'
+  | 'frame_batch_oversize'
+  | 'malformed_frame'
+  | 'defect'
+  | 'connection_defect'
+  | 'unknown_control'
+  | 'chunk_without_acceptor'
+  | 'chunk_values'
+  | 'stream_overlong'
+  | 'unexpected_exit'
+  | 'unknown_tag';
+export type T3ProtocolError = { branch: T3ProtocolErrorBranch; tag: string | null };
+const PROTOCOL_TAG = /^[A-Za-z][A-Za-z0-9]{0,40}$/;
+const protocolTag = (value: unknown): string | null => typeof value === 'string' && PROTOCOL_TAG.test(value) ? value : null;
 
 // Bounded thread projections can still be megabytes; small commands keep their deadline.
 const METHOD_TIMEOUT_MS: Readonly<Record<string, number>> = { 'orchestration.subscribeThread': 60_000 };
+// A long thread snapshot plus live updates outlives the default cap.
+const METHOD_STREAM_VALUES: Readonly<Record<string, number>> = { 'orchestration.subscribeThread': 50_000 };
 
 type Pending = {
   method: string;
@@ -112,6 +132,7 @@ export class T3RpcClient {
   private pongTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatFailures = 0;
   private disconnectReason: T3DisconnectReason | null = null;
+  private protocolError: T3ProtocolError | null = null;
   private socket: WebSocket | null = null;
   private connecting: Promise<void> | null = null;
   private connectAbort: AbortController | null = null;
@@ -136,6 +157,7 @@ export class T3RpcClient {
 
   get connected(): boolean { return this.socket?.readyState === WebSocket.OPEN; }
   get lastDisconnectReason(): T3DisconnectReason | null { return this.disconnectReason; }
+  get lastProtocolError(): T3ProtocolError | null { return this.protocolError; }
   toJSON(): { endpoint: string; connected: boolean } { return { endpoint: this.base.origin, connected: this.connected }; }
 
   connect(): Promise<void> {
@@ -213,13 +235,14 @@ export class T3RpcClient {
       socket.addEventListener('close', () => fail('transport', 'socket_close'));
       socket.addEventListener('message', event => {
         if (this.socket !== socket) return;
-        if (typeof event.data !== 'string' || event.data.length > MAX_FRAME_BYTES) return this.broken();
+        if (typeof event.data !== 'string') return this.broken('non_string_message');
+        if (event.data.length > MAX_FRAME_BYTES) return this.broken('oversize_message');
         try {
           const decoded: unknown = JSON.parse(event.data);
           const frames = Array.isArray(decoded) ? decoded : [decoded];
-          if (frames.length > MAX_STREAM_VALUES) return this.broken();
+          if (frames.length > MAX_STREAM_VALUES) return this.broken('frame_batch_oversize');
           for (const frame of frames) this.receive(frame);
-        } catch { this.broken(); }
+        } catch { this.broken('unparseable_frame'); }
       });
     });
   }
@@ -264,7 +287,7 @@ export class T3RpcClient {
   }
 
   private receive(frame: unknown): void {
-    if (!object(frame) || typeof frame._tag !== 'string') return this.broken();
+    if (!object(frame) || typeof frame._tag !== 'string') return this.broken('malformed_frame');
     if (frame._tag === 'Pong') {
       if (this.pongTimer && this.socket) {
         clearTimeout(this.pongTimer);
@@ -275,16 +298,21 @@ export class T3RpcClient {
       return;
     }
     if (frame._tag === 'Ping') { this.sendControl({ _tag: 'Pong' }); return; }
-    if (frame._tag === 'Defect') return this.broken();
-    if (typeof frame.requestId !== 'string' && typeof frame.requestId !== 'number') return this.broken();
-    const id = String(frame.requestId);
+    const id = typeof frame.requestId === 'string' || typeof frame.requestId === 'number' ? String(frame.requestId) : null;
+    if (frame._tag === 'Defect') {
+      if (id) return this.failRequest(id, 'defect', 'Defect');
+      return this.broken('connection_defect', 'Defect');
+    }
+    if (!id) return this.broken('unknown_control', frame._tag);
     const pending = this.pending.get(id);
     if (!pending) return; // Late replies and a final Exit after our stream Interrupt are abandoned.
     if (frame._tag === 'Chunk') {
-      if (!pending.accept || !Array.isArray(frame.values)) return this.broken();
+      if (!pending.accept) return this.failRequest(id, 'chunk_without_acceptor', 'Chunk');
+      if (!Array.isArray(frame.values)) return this.failRequest(id, 'chunk_values', 'Chunk');
       this.sendControl({ _tag: 'Ack', requestId: id });
+      const cap = METHOD_STREAM_VALUES[pending.method] ?? MAX_STREAM_VALUES;
       for (const value of frame.values) {
-        if (++pending.values > MAX_STREAM_VALUES) return this.broken();
+        if (++pending.values > cap) return this.failRequest(id, 'stream_overlong', 'Chunk');
         let accepted: boolean;
         try { accepted = pending.accept(value); }
         catch (error) { this.sendControl({ _tag: 'Interrupt', requestId: id }); this.settle(id, error, true); return; }
@@ -296,12 +324,13 @@ export class T3RpcClient {
       }
       return;
     }
-    if (frame._tag === 'Exit' && object(frame.exit)) {
-      if (frame.exit._tag === 'Failure') return this.settle(id, remoteFailure(pending.method, frame.exit.cause, pending.command), true);
-      if (frame.exit._tag === 'Success') return this.settle(id, pending.accept ? new T3RpcError('protocol', pending.method) : frame.exit.value, Boolean(pending.accept));
+    if (frame._tag === 'Exit') {
+      if (object(frame.exit) && frame.exit._tag === 'Failure') return this.settle(id, remoteFailure(pending.method, frame.exit.cause, pending.command), true);
+      if (object(frame.exit) && frame.exit._tag === 'Success') return this.settle(id, pending.accept ? new T3RpcError('protocol', pending.method) : frame.exit.value, Boolean(pending.accept));
+      return this.failRequest(id, 'unexpected_exit', 'Exit');
     }
     if (frame._tag === 'Interrupt') return this.settle(id, new T3RpcError('transport', pending.method), true);
-    this.broken();
+    this.failRequest(id, 'unknown_tag', frame._tag);
   }
 
   private scheduleHeartbeat(socket: WebSocket): void {
@@ -341,5 +370,21 @@ export class T3RpcClient {
     if (failed) pending.reject(value); else pending.resolve(value);
   }
   private failAll(error: Error): void { for (const id of [...this.pending.keys()]) this.settle(id, error, true); }
-  private broken(): void { this.disconnectReason = 'protocol_error'; this.failAll(new T3RpcError('protocol')); this.close(); }
+  private noteProtocolError(branch: T3ProtocolErrorBranch, tag?: unknown): void {
+    this.protocolError = { branch, tag: protocolTag(tag) };
+  }
+  /** A fault that names one in-flight request settles that request only. */
+  private failRequest(id: string, branch: T3ProtocolErrorBranch, tag: string): void {
+    const pending = this.pending.get(id);
+    if (!pending) return;
+    this.noteProtocolError(branch, tag);
+    if (pending.accept) this.sendControl({ _tag: 'Interrupt', requestId: id });
+    this.settle(id, new T3RpcError('protocol', pending.method), true);
+  }
+  private broken(branch: T3ProtocolErrorBranch, tag?: unknown): void {
+    this.noteProtocolError(branch, tag);
+    this.disconnectReason = 'protocol_error';
+    this.failAll(new T3RpcError('protocol'));
+    this.close();
+  }
 }
