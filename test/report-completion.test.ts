@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { Store } from "../core/store/store";
 import { briefDigest } from "../core/planning/brief";
+import { WorkerSourceRefusal } from "../core/git/index";
 import { runBuildOutputIntent } from "../core/hooks/build-output-records";
 import { Engine } from "../core/engine";
 import { collectOwnerVerbFacts, ownerTaskNext } from "../core/verbs/owner-verbs";
@@ -371,7 +372,7 @@ test('overlapping worker result applications preserve a newer run', async () => 
     const gate = new Promise<void>(resolve => { release = resolve; });
     let calls = 0;
     f.adapter.verifyPr = async () => { const call = ++calls; if (call === 1) await gate;
-      if (call === 1 || secondRefused) throw Error('Worker must leave a clean worktree before review');
+      if (call === 1 || secondRefused) throw new WorkerSourceRefusal('worktree_dirty','Worker must leave a clean worktree before review');
       return { head: f.base, url: 'https://github.com/acme/report/pull/9' }; };
     const first = f.engine.acceptWorkerResult(before, before);
     await f.engine.acceptWorkerResult(before, before);

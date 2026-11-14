@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { Engine } from '../core/engine';
 import { Store, digest } from '../core/store/store';
-import { git, verifyResume } from '../core/git/index';
+import { git, verifyResume, WORKER_PR_IDENTITY_REFUSAL, WorkerSourceRefusal } from '../core/git/index';
 import { reviewPublicationBody } from '../core/forge/index';
 import { assertRegistrationUnowned, registerTask, type RegistrationAdapter } from '../core/host/registration';
 import { submissionSchema, summarizeTask, taskRegistrationSchema, type PoolEntry, type Profile, type Run, type Task } from '../shared/contracts';
@@ -107,7 +107,7 @@ async function fixture() {
     },
      notify: async () => {},
     verifyPr: async (_task: unknown, number: number) => {
-      if (rejectFirstPr && number === 1) throw Error("PR must be open, ready, and match the task's branch and base");
+      if (rejectFirstPr && number === 1) throw new WorkerSourceRefusal('pr_identity', WORKER_PR_IDENTITY_REFUSAL);
       return { head: remoteHead, url: `https://github.com/example/repo/pull/${number}`, repository: 'example/repo', headRepository: 'example/repo' };
     },
     verifyPrIdentity: async (_task: unknown, number: number) => ({ head: remoteHead, url: `https://github.com/example/repo/pull/${number}`, repository: 'example/repo', headRepository: 'example/repo' }),

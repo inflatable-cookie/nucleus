@@ -11,6 +11,7 @@ import { validateCompletionRecipients } from "../scheduling/cohort";
 import { HostFacade } from "../host/host-facade";
 import type { Adapter, OriginAgent } from "../host/adapter";
 import { isTransportFailure } from "../../shared/transport";
+import { classifyGitCommandFailure, isForgeNetworkFailure } from "../forge/forge-health";
 import { pinnedBriefDigest } from "../planning/brief";
 
 export interface ReviewEntryInspection {
@@ -50,7 +51,12 @@ export function reviewEntryInputForTask(task:Task):ReviewEntryInput{
   };
 }
 
-const remoteUnavailable=(error:unknown)=>isTransportFailure(error)||/Could not resolve host|Temporary failure in name resolution|ENETUNREACH|ETIMEDOUT|network is unreachable|TLS connection|HTTP 5\d\d|timeout/i.test(error instanceof Error?error.message:String(error));
+/**
+ * A forge or git read that never reached the service is an unavailable
+ * observation, never a changed fact. The classification is the forge owner's
+ * (`forge-health`), so a network wording fixed there is fixed here too.
+ */
+const remoteUnavailable=(error:unknown)=>isTransportFailure(error)||isForgeNetworkFailure(error)||classifyGitCommandFailure(error)==='network';
 async function remoteCall<T>(label:string,operation:()=>Promise<T>):Promise<T>{
   try{return await operation();}catch(error){if(remoteUnavailable(error))throw new SubmissionUnavailableError(`${label} unavailable: ${error instanceof Error?error.message:String(error)}`);throw error;}
 }
@@ -63,7 +69,7 @@ async function remoteCall<T>(label:string,operation:()=>Promise<T>):Promise<T>{
 export class ReviewEntryRefusal extends Error {
   constructor(readonly code:"identity_mismatch"|"planning_invalid"|"ownership_conflict"|"workspace_busy"|"author_identity_unverified"|"permission_unverified"|"hook_incompatible"|"exclusive_writer_unavailable",message:string,readonly transient=false){super(message);}
 }
-const reject=(code:ReviewEntryRefusal["code"],message:string,transient=false):never=>{throw new ReviewEntryRefusal(code,message,transient);};
+const reject:(code:ReviewEntryRefusal["code"],message:string,transient?:boolean)=>never=(code,message,transient=false)=>{throw new ReviewEntryRefusal(code,message,transient);};
 /**
  * A canonical forge field read is either a positive value or unknown. A missing,
  * blank or malformed field proves nothing about the source, receipt or author, so
@@ -72,7 +78,7 @@ const reject=(code:ReviewEntryRefusal["code"],message:string,transient=false):ne
  */
 const provenString=(value:unknown):value is string=>typeof value==="string"&&value.trim().length>0;
 const provenSha=(value:unknown):value is string=>typeof value==="string"&&/^[a-f0-9]{40}$/.test(value);
-const unreadableForge=(field:string):never=>reject("identity_mismatch",
+const unreadableForge:(field:string)=>never=(field)=>reject("identity_mismatch",
   `The canonical forge response did not prove the PR ${field}; the source was not read and nothing was cleared`,true);
 const assertSupportedWorkspaceMode=(input:ReviewEntryInput)=>{
   if(workspaceMode(input)==="shared_canonical")
@@ -89,17 +95,15 @@ async function gitAncestry(cwd:string,ancestor:string,descendant:string):Promise
   catch(error){ return (error as {code?:unknown}).code===1?'diverged':'unknown'; }
 }
 
-const refusal=(error:unknown)=>{
-  const explanation=error instanceof Error?error.message:String(error);
-  const code=error instanceof ReviewEntryRefusal?error.code
-    :/active|permission request|busy|thread/i.test(explanation)?"workspace_busy"
-    :/author model|GitHub author/i.test(explanation)?"author_identity_unverified"
-    :/permission/i.test(explanation)?"permission_unverified"
-    :/owned|ownership|already belongs/i.test(explanation)?"ownership_conflict"
-    :/planning|handoff|ancestor|published/i.test(explanation)?"planning_invalid"
-    :"identity_mismatch";
-  return {code,explanation} as const;
-};
+/**
+ * The preview's refusal for one failed stage. A typed refusal carries the code its
+ * raising site decided; anything else keeps the code its stage assigned. No refusal
+ * code is ever derived from the words of an explanation.
+ */
+const refusal=(error:unknown,stage:ReviewEntryRefusal["code"]="identity_mismatch")=>({
+  code:error instanceof ReviewEntryRefusal?error.code:stage,
+  explanation:error instanceof Error?error.message:String(error),
+});
 
 /** First identity conflict between a review-entry input and one task record, or null. */
 function taskIdentityConflict(store:Store,task:Task,input:ReviewEntryInput):string|null{
@@ -190,6 +194,68 @@ export async function reconcileReviewEntryOperation(store:Store,adapter:ReviewEn
   });
 }
 
+/**
+ * One canonical pull-request response, decoded into the typed facts Queue reads.
+ * A field the response did not positively establish is `unreadable` — never a
+ * different value — a positively observed closed, merged or draft PR is
+ * `not_open`, and a fork or alternate repository is `foreign`. Each caller maps
+ * these facts to its own sentence instead of re-reading the raw fields, so the
+ * two exact-head proofs cannot disagree about what the forge said.
+ */
+type CanonicalPullRequest =
+  | {kind:"unreadable";field:string}
+  | {kind:"not_open";state:"closed"|"merged"|"draft"}
+  | {kind:"foreign"}
+  | {kind:"read";headRef:string;baseRef:string;headSha:string;login:string|null;url:string|null};
+const decodeCanonicalPullRequest=(raw:any,repository:string):CanonicalPullRequest=>{
+  if(raw.state!=="open"&&raw.state!=="closed")return {kind:"unreadable",field:"state"};
+  if(raw.state==="closed")return {kind:"not_open",state:"closed"};
+  // An explicit null merged_at is the only proof this PR is unmerged.
+  if(raw.merged_at!==null){if(!provenString(raw.merged_at))return {kind:"unreadable",field:"merged status"};return {kind:"not_open",state:"merged"};}
+  if(raw.draft!==false){if(raw.draft!==true)return {kind:"unreadable",field:"draft status"};return {kind:"not_open",state:"draft"};}
+  const headRepo=raw.head&&typeof raw.head==="object"?"repo" in raw.head?raw.head.repo:undefined:undefined;
+  const baseRepo=raw.base&&typeof raw.base==="object"?"repo" in raw.base?raw.base.repo:undefined:undefined;
+  // An explicit null head/base repository is a positively observed deletion; an absent object is an unknown read.
+  if(headRepo===null||baseRepo===null)return {kind:"foreign"};
+  if(!headRepo||!baseRepo)return {kind:"unreadable",field:"head or base repository identity"};
+  const headName=(headRepo as {full_name?:unknown}).full_name,baseName=(baseRepo as {full_name?:unknown}).full_name;
+  if(!provenString(headName))return {kind:"unreadable",field:"head repository"};
+  if(!provenString(baseName))return {kind:"unreadable",field:"base repository"};
+  if(headName!==repository||baseName!==repository)return {kind:"foreign"};
+  if(!provenString(raw.head?.ref))return {kind:"unreadable",field:"head branch"};
+  if(!provenString(raw.base?.ref))return {kind:"unreadable",field:"base branch"};
+  if(!provenSha(raw.head?.sha))return {kind:"unreadable",field:"head"};
+  const login=raw.user&&typeof raw.user==="object"?raw.user.login:undefined;
+  return {kind:"read",headRef:raw.head.ref,baseRef:raw.base.ref,headSha:raw.head.sha,
+    login:provenString(login)?login:null,url:provenString(raw.html_url)?raw.html_url:null};
+};
+async function readCanonicalPullRequest(submission:ReviewEntryInput["submission"],repository:string,prNumber:number,github:(file:string,args:string[],cwd:string)=>Promise<string>):Promise<CanonicalPullRequest>{
+  const raw=JSON.parse(await remoteCall("GitHub",()=>github("gh",["api",`repos/${repository}/pulls/${prNumber}`],submission.repoPath)));
+  return decodeCanonicalPullRequest(raw,repository);
+}
+/**
+ * The typed facts of an open canonical PR, or this caller's refusal. Unreadable
+ * fields and foreign repositories name their own reason; the three non-open states
+ * are mapped by the caller, whose sentence says what it was proving.
+ */
+function openCanonicalPullRequest(read:CanonicalPullRequest,refuse:(state:"closed"|"merged"|"draft")=>string){
+  if(read.kind==="unreadable")unreadableForge(read.field);
+  if(read.kind==="foreign")throw Error("Fork or alternate-repository pull requests are not supported");
+  if(read.kind==="not_open")throw Error(refuse(read.state));
+  return read;
+}
+/** Queue's write permission on the canonical repository; an unproven response is a transient refusal. */
+async function assertQueueWritePermission(submission:ReviewEntryInput["submission"],repository:string,github:(file:string,args:string[],cwd:string)=>Promise<string>):Promise<void>{
+  const repo=JSON.parse(await remoteCall("GitHub",()=>github("gh",["api",`repos/${repository}`],submission.repoPath)));
+  // A repository response that does not positively establish write permission
+  // (`permissions.push:false`, or a missing `permissions`/`permissions.push`
+  // field) proves nothing about the reviewed source, receipt or author: it is an
+  // unavailable observation, not a changed fact. The dated-owner canonical proof
+  // then preserves the exact-head review and records the ordinary
+  // external_unavailable wait instead of clearing credit, and a fresh proof that
+  // positively establishes the permission lets the ordinary pass resume.
+  if(!repo.permissions?.push)reject("permission_unverified","Queue permission check did not prove repository write permission",true);
+}
 export async function verifyReviewEntry(input:ReviewEntryInput,adapter:ReviewEntryAdapter,options:{allowBaseAdvance?:boolean;freshCanonicalRefs?:boolean;taskId?:string;
   /**
    * Intake acceptance only. An active or uncertain source writer is the
@@ -264,55 +330,22 @@ export async function verifyReviewEntry(input:ReviewEntryInput,adapter:ReviewEnt
   const remote=await git(s.repoPath,"config","--get","remote.origin.url"),repository=githubRepositoryFromRemote(remote);
   if(!repository)throw Error("Review entry requires the canonical GitHub origin");
   const github=adapter.reviewEntryGithubCommand??command;
-  const pr=JSON.parse(await remoteCall("GitHub",()=>github("gh",["api",`repos/${repository}/pulls/${input.prNumber}`],s.repoPath)));
+  // Each identity field is read once, as a typed fact: an omitted or malformed
+  // field is unavailable (the merge waits, credit stays), and only a concrete
+  // different value is positive drift. Nothing falls back to the saved receipt.
+  const read=await readCanonicalPullRequest(s,repository,input.prNumber,github);
   const prObservedAt=now();
-  // Each optional/identity field is classified as positively read or unknown. An
-  // omitted or malformed field is unavailable (the merge waits, credit stays);
-  // only a concrete different value is positive drift or a closed/merged/draft
-  // PR. Nothing falls back to the saved receipt values.
-  if(pr.state!=="open"&&pr.state!=="closed")unreadableForge("state");
-  if(pr.state==="closed")throw Error("Pull request must be open, unmerged and non-draft");
-  if(pr.merged_at!==null){
-    if(!provenString(pr.merged_at))unreadableForge("merged status");
-    throw Error("Pull request must be open, unmerged and non-draft");
-  }
-  if(pr.draft!==false){
-    if(pr.draft!==true)unreadableForge("draft status");
-    throw Error("Pull request must be open, unmerged and non-draft");
-  }
-  const headRepo=pr.head&&typeof pr.head==="object"?"repo" in pr.head?pr.head.repo:undefined:undefined;
-  const baseRepo=pr.base&&typeof pr.base==="object"?"repo" in pr.base?pr.base.repo:undefined:undefined;
-  // An explicit null head/base repository is a positively observed deletion;
-  // an absent object is an unknown read.
-  if(headRepo===null||baseRepo===null)throw Error("Fork or alternate-repository pull requests are not supported");
-  if(!headRepo||!baseRepo)unreadableForge("head or base repository identity");
-  const headName=(headRepo as {full_name?:unknown}).full_name;
-  const baseName=(baseRepo as {full_name?:unknown}).full_name;
-  if(!provenString(headName))unreadableForge("head repository");
-  if(!provenString(baseName))unreadableForge("base repository");
-  if(headName!==repository||baseName!==repository)throw Error("Fork or alternate-repository pull requests are not supported");
-  if(!provenString(pr.head?.ref))unreadableForge("head branch");
-  if(!provenString(pr.base?.ref))unreadableForge("base branch");
-  if(!provenSha(pr.head?.sha))unreadableForge("head");
-  if(pr.head!.ref!==input.expectedBranch||pr.base!.ref!==s.baseBranch||pr.head!.sha!==input.expectedHead)
+  const pr=openCanonicalPullRequest(read,()=>"Pull request must be open, unmerged and non-draft");
+  if(pr.headRef!==input.expectedBranch||pr.baseRef!==s.baseBranch||pr.headSha!==input.expectedHead)
     throw Error("Pull request branch, base or head identity does not match the supplied proof");
-  const login=pr.user&&typeof pr.user==="object"?pr.user.login:undefined;
   // A missing, blank or malformed login is an unavailable observation; only a
   // concrete different login is a positive author-identity statement.
-  if(!provenString(login))reject("author_identity_unverified",
+  if(!pr.login)reject("author_identity_unverified",
     "The canonical forge response did not prove the pull request author; the source was not read and nothing was cleared",true);
-  if(login.toLowerCase()!==input.authorDeclaration.githubAuthor.toLowerCase())
+  if(pr.login.toLowerCase()!==input.authorDeclaration.githubAuthor.toLowerCase())
     reject("author_identity_unverified","Declared GitHub author does not match the pull request author");
-  if(!provenString(pr.html_url)||!/^https?:\/\/\S+$/.test(pr.html_url))unreadableForge("URL");
-  const repo=JSON.parse(await remoteCall("GitHub",()=>github("gh",["api",`repos/${repository}`],s.repoPath)));
-  // A repository response that does not positively establish write permission
-  // (`permissions.push:false`, or a missing `permissions`/`permissions.push`
-  // field) proves nothing about the reviewed source, receipt or author: it is an
-  // unavailable observation, not a changed fact. The dated-owner canonical proof
-  // then preserves the exact-head review and records the ordinary
-  // external_unavailable wait instead of clearing credit, and a fresh proof that
-  // positively establishes the permission lets the ordinary pass resume.
-  if(!repo.permissions?.push)reject("permission_unverified","Queue permission check did not prove repository write permission",true);
+  if(!pr.url||!/^https?:\/\/\S+$/.test(pr.url))unreadableForge("URL");
+  await assertQueueWritePermission(s,repository,github);
   let canonicalObservations:ReviewEntryProof['canonicalObservations'];
   if(options.freshCanonicalRefs){
     // One actual origin advertisement after GitHub/permission awaits. This is
@@ -322,9 +355,9 @@ export async function verifyReviewEntry(input:ReviewEntryInput,adapter:ReviewEnt
     const pushed=tips.get(`refs/heads/${input.expectedBranch}`),integration=tips.get(`refs/heads/${s.baseBranch}`);
     if(pushed!==input.expectedHead)throw Error('Remote branch head changed after canonical PR and permission observations');
     if(integration!==base)throw Error('Remote integration tips changed after canonical PR and permission observations');
-    canonicalObservations={pr:{at:prObservedAt,head:String(pr.head.sha)},branch:{at:refsAt,head:pushed},base:{at:refsAt,head:integration}};
+    canonicalObservations={pr:{at:prObservedAt,head:pr.headSha},branch:{at:refsAt,head:pushed},base:{at:refsAt,head:integration}};
   }
-  return {directory,repository,branch:input.expectedBranch,head,base,prUrl:pr.html_url,...(canonicalObservations?{canonicalObservations}:{}),handoffText:validated.handoffText,planningBase:validated.planningBase,originWorkspaceId:inspected.originWorkspaceId,workspaceMode:mode,pendingHandover,
+  return {directory,repository,branch:input.expectedBranch,head,base,prUrl:pr.url,...(canonicalObservations?{canonicalObservations}:{}),handoffText:validated.handoffText,planningBase:validated.planningBase,originWorkspaceId:inspected.originWorkspaceId,workspaceMode:mode,pendingHandover,
     briefDigest:s.brief?pinnedBriefDigest(s):null,briefVersion:s.brief?(s.leadProvenance?.version??1):null};
 }
 
@@ -357,31 +390,20 @@ export async function verifyReviewEntryCanonicalAuthor(input:ReviewEntryInput,ad
   const remote=await git(s.repoPath,'config','--get','remote.origin.url'),repository=githubRepositoryFromRemote(remote);
   if(!repository)throw Error('Review entry requires the canonical GitHub origin');
   const github=adapter.reviewEntryGithubCommand??command;
-  const pr=JSON.parse(await remoteCall('GitHub',()=>github('gh',['api',`repos/${repository}/pulls/${input.prNumber}`],s.repoPath)));
-  if(pr.state!=='open'&&pr.state!=='closed')unreadableForge('state');
-  if(pr.state==='closed')throw Error('The pull request this review accepted is closed; the pinned review is not current');
-  if(pr.merged_at!==null){if(!provenString(pr.merged_at))unreadableForge('merged status');throw Error('The pull request this review accepted is merged; the pinned review is not current');}
-  if(pr.draft!==false){if(pr.draft!==true)unreadableForge('draft status');throw Error('The pull request this review accepted is draft again; the pinned review is not current');}
-  if(!provenString(pr.head?.ref))unreadableForge('head branch');
-  if(!provenString(pr.base?.ref))unreadableForge('base branch');
-  if(!provenSha(pr.head?.sha))unreadableForge('head');
-  const headRepo=pr.head?.repo,baseRepo=pr.base?.repo;
-  if(headRepo===null||baseRepo===null)throw Error('Fork or alternate-repository pull requests are not supported');
-  if(!headRepo||!baseRepo)unreadableForge('head or base repository identity');
-  const headName=headRepo.full_name,baseName=baseRepo.full_name;
-  if(!provenString(headName))unreadableForge('head repository');
-  if(!provenString(baseName))unreadableForge('base repository');
-  if(headName!==repository||baseName!==repository)throw Error('Fork or alternate-repository pull requests are not supported');
-  if(pr.head.sha!==input.expectedHead||pr.head.ref!==input.expectedBranch||pr.base.ref!==s.baseBranch)
+  // The pinned view's own sentence for each typed non-open state; the field and
+  // fork refusals are the shared decode's, so both proofs read one forge fact.
+  const pr=openCanonicalPullRequest(await readCanonicalPullRequest(s,repository,input.prNumber,github),state=>
+    state==='closed'?'The pull request this review accepted is closed; the pinned review is not current'
+    :state==='merged'?'The pull request this review accepted is merged; the pinned review is not current'
+    :'The pull request this review accepted is draft again; the pinned review is not current');
+  if(pr.headSha!==input.expectedHead||pr.headRef!==input.expectedBranch||pr.baseRef!==s.baseBranch)
     throw Error('The pull request branch, base or head no longer matches the accepted intake');
-  const login=pr.user?.login;
-  if(!provenString(login))reject('author_identity_unverified','The canonical forge response did not prove the pull request author',true);
-  if(login.toLowerCase()!==input.authorDeclaration.githubAuthor.toLowerCase())
+  if(!pr.login)reject('author_identity_unverified','The canonical forge response did not prove the pull request author',true);
+  if(pr.login.toLowerCase()!==input.authorDeclaration.githubAuthor.toLowerCase())
     reject('author_identity_unverified','The declared GitHub author is no longer the pull request author; the pinned review is not current');
-  const repo=JSON.parse(await remoteCall('GitHub',()=>github('gh',['api',`repos/${repository}`],s.repoPath)));
-  if(!repo.permissions?.push)reject('permission_unverified','Queue permission check did not prove repository write permission',true);
-  if(!provenString(pr.html_url))unreadableForge('URL');
-  return {repository,prUrl:pr.html_url};
+  if(!pr.url)unreadableForge('URL');
+  await assertQueueWritePermission(s,repository,github);
+  return {repository,prUrl:pr.url};
 }
 
 /**
@@ -404,17 +426,32 @@ export async function assertReviewEntryExecutionSource(task:Task):Promise<void>{
   if(!task.prHead||head!==task.prHead)throw Error(`The external review workspace head ${head} is not the recorded review head ${task.prHead??'none'}; no reviewer was created`);
 }
 
+/**
+ * The code one preview stage answers with when a failure it did not type itself
+ * reaches it. A stage knows what it was proving, so this is a typed fact about the
+ * failure's place in the proof, never a classification of its words.
+ */
+type PreviewStage=Extract<ReviewEntryRefusal["code"],"identity_mismatch"|"planning_invalid">;
+const stageRefusal=async<T>(stage:PreviewStage,work:()=>Promise<T>|T):Promise<T>=>{
+  try{return await work();}
+  catch(error){
+    if(error instanceof SubmissionUnavailableError||isTransportFailure(error)||error instanceof ReviewEntryRefusal)throw error;
+    throw new ReviewEntryRefusal(stage,error instanceof Error?error.message:String(error));
+  }
+};
 export async function previewReviewEntry(store:Store,adapter:ReviewEntryAdapter,input:ReviewEntryInput){
+  let stage:PreviewStage="identity_mismatch";
   try{
     assertSupportedWorkspaceMode(input);
     assertReviewEntryUnowned(store,input);
     // Preview reads only. It accepts the same handover intake would, and reports
     // the wait it observed, so eligibility to accept is never confused with
     // readiness to execute a reviewer.
-    const proof=await verifyReviewEntry(input,adapter,{acceptAuthorHandover:true});
-    store.validateReviewEntryBrief(input.submission,proof.repository);
+    const proof=await stageRefusal(stage,()=>verifyReviewEntry(input,adapter,{acceptAuthorHandover:true}));
+    stage="planning_invalid";
+    await stageRefusal(stage,()=>store.validateReviewEntryBrief(input.submission,proof.repository));
     return {eligible:true,refusals:[],pendingHandover:proof.pendingHandover,resolved:{workspaceId:input.workspaceId,directory:proof.directory,repository:proof.repository,branch:proof.branch,head:proof.head,base:proof.base,prNumber:input.prNumber,prUrl:proof.prUrl,workspaceMode:proof.workspaceMode,planningCommit:input.submission.planningCommit,briefDigest:proof.briefDigest,briefVersion:proof.briefVersion}};
-  }catch(error){if(error instanceof SubmissionUnavailableError||isTransportFailure(error))throw error;return {eligible:false,refusals:[refusal(error)],pendingHandover:null,resolved:null};}
+  }catch(error){if(error instanceof SubmissionUnavailableError||isTransportFailure(error))throw error;return {eligible:false,refusals:[refusal(error,stage)],pendingHandover:null,resolved:null};}
 }
 
 export async function bindReviewEntry(store:Store,adapter:ReviewEntryAdapter,operation:QueueOperation,input:ReviewEntryInput,originHostId?:string,lookupOrigin?:(id:string)=>ReturnType<HostFacade['originAgent']>):Promise<Task>{

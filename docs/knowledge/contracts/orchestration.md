@@ -269,14 +269,18 @@ Pures: `workspaceReplayAllowed`, `absentWorkerStep`. Control-flow strings:
 Engine.
 
 **CallbackIntake** (`core/intake/callback-intake.ts`). Authenticates, validates and
-records one report. `CallbackIntake` holds Engine's source gates and the
-checkpoint and review-progress receipts. `RunCallbackIntake` holds Resolution's
-run completion (validate, proof, build output, bookkeeping, receipt), which
-stays synchronous. Enforces [Runs and callbacks](#runs-and-callbacks) and
-[Progress checkpoints](#progress-checkpoints). Pures: `completionRoute`,
-`completionRefusal`. Engine's `complete`, `completeCheckpoint` and
-`completeReviewProgress` delegates return the owner's promise without an
-`async` wrapper. Delegates remain on Engine and Resolution.
+records one worker report. `CallbackIntake` holds Engine's source gates and the
+checkpoint and review-progress receipts. **RunCallbackIntake**
+(`core/intake/run-callback-intake.ts`) holds Resolution's run completion
+(validate, proof, build output, bookkeeping, receipt), which stays synchronous.
+Enforces [Runs and callbacks](#runs-and-callbacks) and
+[Progress checkpoints](#progress-checkpoints). The rules both entry points apply
+have one owner each: `core/intake/report-shape.ts` (`completionRoute`,
+`completionRefusal`, `sourceApprovalRefusal`), `core/intake/report-ready.ts`
+(`reportReadyRefusal`, `settleReportReady`) and `core/intake/proof-settlement.ts`
+(`proofResultRefusal`, `settleProofExecution`). Engine's `complete`,
+`completeCheckpoint` and `completeReviewProgress` delegates return the owner's
+promise without an `async` wrapper. Delegates remain on Engine and Resolution.
 
 ### Owner-verb owners
 
@@ -455,7 +459,12 @@ Resolution for `holdLastBlocker` and `reconcileHoldUntil`.
 
 **ResultApplication** (`core/intake/result-application.ts`). Applies a released
 result: reviewer, revision, proof-executor, and the interrupted-review reapply
-path. Enforces [Verdicts and findings](#verdicts-and-findings) and the
+path. The pure `advanceOwner` names the owner that advances one completed run by
+role. Proof-execution settlement and the revision `report_ready` transition are
+`core/intake/proof-settlement.ts` and `core/intake/report-ready.ts`, shared with
+run intake. A checkout or PR-identity refusal is the typed `WorkerSourceRefusal`
+from `core/git/index.ts`, whose code decides the route; no message is classified.
+Enforces [Verdicts and findings](#verdicts-and-findings) and the
 single-apply fence in [Durable effects](#durable-effects-and-unknown-delivery).
 Delegates remain on Resolution and return the owner's promise without an
 `async` wrapper. A ready revision, agent closeout, applied reviewer verdict or proof-routing
@@ -500,7 +509,10 @@ Resolution.
 
 **PrAdoption** (`core/review/pr-adoption.ts`). Binds an existing PR to a task:
 identity only under an authenticated block, otherwise dead-revision recovery,
-initial reconciliation or replacement. Enforces
+initial reconciliation or replacement. The pure `prAdoptionPlan` reads that route,
+and its refusal, from the task's typed state before any observation. Every
+stopped-worker check is `matchingInactiveParticipant`, read through
+`onTaskHost` on the task's own host. Enforces
 [PR identity from reports](#pr-identity-from-reports). Delegates remain on
 Resolution.
 

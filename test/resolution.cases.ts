@@ -32,7 +32,7 @@ import { stepEngine } from './support/engine-step';
 import { isTransientExternalFailure, taskStopClassification, taskStopRecord } from '../shared/task-stop';
 import { LoginSessionFaultError } from '../shared/session-fault';
 import { consecutiveNonDeliveries } from '../core/recovery/non-delivery';
-import { GitReadTimeoutError, gitReadTimeoutFailure } from '../core/git/index';
+import { GitReadTimeoutError, gitReadTimeoutFailure, WorkerSourceRefusal } from '../core/git/index';
 import { DEFAULT_UNCERTAIN_MERGE_RETRY_MS } from '../shared/contracts';
 
 test('local Git status timeout classification requires the child timeout witness',()=>{
@@ -630,7 +630,7 @@ test('a revision reaches a worker whose own unfinished revision left the worktre
  const f=fixture();try{
   await f.engine.wake();
   // The previous revision died mid-way; its WIP made the ready-for-review proof refuse every revision launch.
-  f.adapter.verifyPr=async()=>{throw Error('Worker must leave a clean worktree before review')};
+  f.adapter.verifyPr=async()=>{throw new WorkerSourceRefusal('worktree_dirty','Worker must leave a clean worktree before review')};
   let identity=0,resume=0,allowDraft=false;
   f.adapter.verifyPrIdentity=async(_task,_number,options)=>{identity++;allowDraft=options?.allowDraft===true;return{head,url:f.task.prUrl!}};
   f.adapter.verifyResume=async()=>{resume++};
@@ -1468,7 +1468,7 @@ test('manual revision can repair a mismatched PR branch before normal verificati
 test('a refused authenticated ready report returns its exact checkout cause to the same worker',async()=>{
  const f=fixture();try{
   const beforeRuns=f.store.runs(f.task.id).length;
-  const refusal=new Error('Worker must leave a clean worktree before review: untracked .DS_Store');
+  const refusal=new WorkerSourceRefusal('worktree_dirty','Worker must leave a clean worktree before review: untracked .DS_Store');
   assert.equal(f.engine.resolution.responsiblePrReportRefused(f.current(),'initial',1,refusal),true);
   const current=f.current();
   assert.equal(current.phase,'changes_requested');assert.equal(current.agentId,'worker');
@@ -5413,7 +5413,7 @@ test('overlapping revision applications cannot clear the next run', async () => 
   f.store.putRun(run);
   const before=f.store.update(f.task.id,{phase:'changes_requested',resolution:{...f.current().resolution,currentRunId:runId}});
   let release!:()=>void; const gate=new Promise<void>(resolve=>{release=resolve});
-  let calls=0; f.adapter.verifyPr=async()=>{ const call=++calls; if(call===1)await gate; if(call===1||secondRefused)throw Error('Worker must leave a clean worktree before review'); return {head,url:f.task.prUrl!}; };
+  let calls=0; f.adapter.verifyPr=async()=>{ const call=++calls; if(call===1)await gate; if(call===1||secondRefused)throw new WorkerSourceRefusal('worktree_dirty','Worker must leave a clean worktree before review'); return {head,url:f.task.prUrl!}; };
   const first=f.engine.resolution.resultApplication.advanceRevisionResult(before,run,completion);
   await f.engine.resolution.resultApplication.advanceRevisionResult(before,run,completion);
   f.store.update(f.task.id,{resolution:{...f.current().resolution,currentRunId:'new-review'}});
