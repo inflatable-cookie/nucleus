@@ -1,7 +1,8 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import type { Completion, Run, Task } from '../shared/contracts';
-import { completionRefusal, RunCallbackIntake } from '../core/intake/callback-intake';
+import { completionRefusal } from '../core/intake/report-shape';
+import { RunCallbackIntake } from '../core/intake/run-callback-intake';
 import type { Resolution } from '../core/resolution';
 
 test('completion role and status refusals preserve precedence', () => {

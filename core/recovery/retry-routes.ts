@@ -7,6 +7,7 @@ import { RetainedRunRefusal, ACCEPTED_PR_RECONCILIATION_REASON, NO_RESOLUTION_AC
 import { reviewAuthorizationRequired, REVIEW_AUTHORIZATION_REQUIRED } from '../review/review-continuation';
 import { isCloseoutHookHold } from '../hooks/hooks';
 import { taskHasPr } from '../forge/index';
+import { WORKER_PR_IDENTITY_REFUSAL } from '../git/index';
 import { revisionContinuationAction, revisionReviewFindings } from '../dispatch/prompts';
 import type { Resolution } from '../resolution';
 
@@ -78,7 +79,7 @@ export function revisionRoute(t: Task, runs: Run[], options: {
     if (!prePr) return { kind: 'refuse', message: missingPr };
     if (t.prUrl || t.prHead || !t.workspaceId || !t.profile) return { kind: 'refuse', message: 'Pre-PR worker continuation requires the retained worker and no task PR' };
   }
-  const repair = t.reason === 'PR must be open, ready, and match the task\'s branch and base';
+  const repair = t.reason === WORKER_PR_IDENTITY_REFUSAL;
   const repairInstruction = repair ? `restore this worktree to queue-owned branch ${t.branch}, close mismatched PR #${t.completion!.prNumber}, and open exactly one replacement PR from ${t.branch}` : null;
   const reviewFindings = revisionReviewFindings(t);
   const action = repair && !operator ? repairInstruction! : instruction?.trim() || scopedInstruction?.trim() || repairInstruction ||

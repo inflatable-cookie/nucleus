@@ -27,7 +27,7 @@ import {
 } from '../core/resolution';
 import { BACKPRESSURE_DEFERRAL, isBackpressureDeferral } from '../core/host/admission';
 import { ForgeOutageError } from '../core/forge/forge-health';
-import { GitReadTimeoutError, SubmissionUnavailableError } from '../core/git/index';
+import { GitReadTimeoutError, SubmissionUnavailableError, WORKER_BRANCH_REFUSAL_PREFIX, WORKER_DIRTY_REFUSAL_PREFIX, WORKER_PR_IDENTITY_REFUSAL, WorkerSourceRefusal } from '../core/git/index';
 import { hookHoldReason, isHookHoldReason } from '../core/hooks/hooks';
 import { OWNER_STOP_HOLD_PREFIX } from '../core/merge/merge-hold';
 import { RestartRefusal } from '../core/verbs/owner-verbs';
@@ -379,30 +379,31 @@ test('store fence: exactly the real fence messages relabel a legacy refusal', as
   }
 });
 
-for (const [name, message, repair] of [
-  ['the PR identity refusal', "PR must be open, ready, and match the task's branch and base", true],
-  ['the dirty worktree refusal', 'Worker must leave a clean worktree before review: untracked file', false],
-  ['the branch refusal', 'Worker must remain on queue-owned branch ns-1', false],
+for (const [name, refusal, repair] of [
+  ['the PR identity refusal', new WorkerSourceRefusal('pr_identity', WORKER_PR_IDENTITY_REFUSAL), true],
+  ['the dirty worktree refusal', new WorkerSourceRefusal('worktree_dirty', `${WORKER_DIRTY_REFUSAL_PREFIX}untracked file`), false],
+  ['the branch refusal', new WorkerSourceRefusal('worktree_branch', `${WORKER_BRANCH_REFUSAL_PREFIX}ns-1`), false],
 ] as const) {
   test(`ready report: ${name} returns the task to its worker`, t => {
     const f = fixture(t);
     const task = f.add({ phase: 'awaiting_review', branch: 'ns-1' });
-    assert.equal(f.resolution.responsiblePrReportRefused(task, 'run-1', 7, new Error(message)), true);
+    assert.equal(f.resolution.responsiblePrReportRefused(task, 'run-1', 7, refusal), true);
     const after = f.store.task(task.id);
     assert.equal(after.phase, 'changes_requested');
     assert.equal(Boolean(after.resolution.revisionPrRepair), repair);
     assert.equal(after.resolution.pendingWorkerInstruction, after.reason);
-    assert.ok(after.reason.includes(message));
+    assert.ok(after.reason.includes(refusal.message));
     assert.equal(f.store.eventsAll(task.id).at(-1)?.kind, 'responsible_pr_report_refused');
   });
 }
 
-test('ready report: any other text is not a report refusal', t => {
+test('ready report: only the typed refusal is a report refusal', t => {
   const f = fixture(t);
   const task = f.add({ phase: 'awaiting_review', branch: 'ns-1' });
-  for (const message of ["PR must be open and ready", 'The worker must leave a clean worktree before review', 'Worker must remain on branch ns-1'])
+  // A message is never a route: the same words on an untyped error change nothing.
+  for (const message of [WORKER_PR_IDENTITY_REFUSAL, `${WORKER_DIRTY_REFUSAL_PREFIX}untracked file`, `${WORKER_BRANCH_REFUSAL_PREFIX}ns-1`, "PR must be open and ready"])
     assert.equal(f.resolution.responsiblePrReportRefused(task, 'run-1', 7, new Error(message)), false, message);
-  assert.equal(f.resolution.responsiblePrReportRefused(task, 'run-1', 7, "PR must be open, ready, and match the task's branch and base"), false, 'not an Error');
+  assert.equal(f.resolution.responsiblePrReportRefused(task, 'run-1', 7, new WorkerSourceRefusal('pr_identity', WORKER_PR_IDENTITY_REFUSAL).message), false, 'not an Error');
   assert.equal(f.store.task(task.id).phase, 'awaiting_review');
 });
 
@@ -617,16 +618,19 @@ const PARSED: ParsedText[] = [
     reads: ['detail.startsWith(BLOCKED_EFFECT_ATTENTION_PREFIX)', 'stop.detail.startsWith(BLOCKED_EFFECT_ATTENTION_PREFIX)'],
     writers: ['BLOCKED_EFFECT_ATTENTION_PREFIX = "An uncertain side effect blocks review"', '`${BLOCKED_EFFECT_ATTENTION_PREFIX}: ${recoveryEffectsRefusal(blocked)}'] },
   { site: 'external merge check', reads: ['t.reason.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX) || t.reason === EXTERNAL_MERGE_CHECK_RECOVERED_REASON', 't.reason === ACCEPTED_PR_RECONCILIATION_REASON'] },
-  { site: 'revision repair', reads: ["t.reason === 'PR must be open, ready, and match the task\\'s branch and base'"], writers: ['PR must be open, ready, and match the task\'s branch and base'] },
-  { site: 'ready report checkout', re: /^(Worker must leave a clean worktree before review|Worker must remain on queue-owned branch )/, sample: 'Worker must remain on queue-owned branch ns-1',
-    writers: ['Worker must leave a clean worktree before review: ${causes.join(", ")}', 'Worker must remain on queue-owned branch ${task.branch}'] },
+  { site: 'revision repair', reads: ['t.reason === WORKER_PR_IDENTITY_REFUSAL'], writers: ["WORKER_PR_IDENTITY_REFUSAL = \"PR must be open, ready, and match the task's branch and base\""] },
+  // The checkout refusal is typed at its throw site, so the reader is the class
+  // and its codes; the prose below is what the worker reads.
+  { site: 'ready report checkout',
+    writers: ["WORKER_DIRTY_REFUSAL_PREFIX = 'Worker must leave a clean worktree before review: '", "WORKER_BRANCH_REFUSAL_PREFIX = 'Worker must remain on queue-owned branch '"],
+    reads: ["error.code === 'pr_identity'", "new WorkerSourceRefusal('worktree_dirty'", "new WorkerSourceRefusal('worktree_branch'", "new WorkerSourceRefusal('pr_identity'"] },
   { site: 'waiting running', re: /\bthread running$/, sample: 'Reviewer thread running' },
   { site: 'tool issue', re: / is running$/, sample: 'observed tool call x is running', writers: [' and is running'] },
   { site: 'agent gone', reads: ["error.message === 'Agent was not found'", 'error.message !== "Agent was not found"', 'error.message === "Agent was not found"', 'const AGENT_NOT_FOUND = "Agent was not found"'], writers: ['throw new Error("Agent was not found")', "throw Error('Agent was not found')"] },
   // Task 1090: empty awaitingProofs on source approval names the ready_to_merge
   // route so a reviewer that finished source review with only release gates
   // remaining is not left without a report. Both throw sites stay byte-identical.
-  { site: 'source approval empty proofs', writers: ["throw Error('Source approval requires an exact-head environment blocked review with findings and named awaiting proofs; if only release gates remain, report ready_to_merge')"] },
+  { site: 'source approval empty proofs', writers: ["return 'Source approval requires an exact-head environment blocked review with findings and named awaiting proofs; if only release gates remain, report ready_to_merge'"] },
   { site: 'ambiguous reference', reads: ["error.message.startsWith('Ambiguous task reference')"], writers: ['Ambiguous task reference; use repository and number'] },
   { site: 'provider MCP refusal', re: /Provider '.+' does not support MCP servers/, sample: "Provider 'x' does not support MCP servers" },
   { site: 'global capacity', reads: ['capacity.startsWith("Global")'], writers: ['Global concurrent task-slot limit reached'] },
@@ -669,11 +673,11 @@ const SITES: Record<string, number> = {
   'Task or run changed; refresh before retrying': 3,
   'A run started during the move': 4,
   'was already reserved at ${head}': 2,
-  'The ${run.role} thread stopped without a callback; inspect the thread': 2,
+  'The ${run.role} thread stopped without a callback; inspect the thread': 1,
   'callback reminder expired': 3,
   'An unresolved task incident or recovery fence blocks reviewer continuation': 2,
   't.reason === ACCEPTED_PR_RECONCILIATION_REASON': 2,
-  "PR must be open, ready, and match the task's branch and base": 2,
+  "PR must be open, ready, and match the task's branch and base": 1,
   'Worker must remain on queue-owned branch ${task.branch}': 5,
   'capacity.startsWith("Global")': 2,
   '/^(?:planner|decider) /': 2,
@@ -688,7 +692,7 @@ const SITES: Record<string, number> = {
   '${question.id}: kind ${question.kind}; stop ${task.resolution.stop?.reason ?? \'none\'}; head ${task.prHead ?? \'none\'}; question ${digest(': 2,
   '"route_stop_settled"': 2,
   '"route_stop_intent"': 2,
-  "throw Error('Source approval requires an exact-head environment blocked review with findings and named awaiting proofs; if only release gates remain, report ready_to_merge')": 2,
+  "return 'Source approval requires an exact-head environment blocked review with findings and named awaiting proofs; if only release gates remain, report ready_to_merge'": 1,
 };
 
 for (const row of PARSED) {
@@ -723,7 +727,7 @@ delegated_decision_route:2:1 delegated_delivery:4:1 dependencies_changed:1:1 dis
 disposition_complete:2:1 disposition_requested:1:1 disposition_turn_interrupted:2:1 environment_deferred:1:3 escalation_resolved:1:1
 external_merge_observed:2:3 external_workspace_archive_archived:1:3 hold:1:100 hold_until_blocked:1:1 hook_blocked:2:0 hook_execution_started:3:2
 hook_failed:1:0 hook_intent:2:2 hook_published:1:0 hook_result:1:0 hook_uncertain:2:1 hook_workspace_created:1:1 hook_workspace_intent:1:1
-incident:3:9 initial_pr_lookup_unavailable:1:1 main_synchronized:1:1 merge_intent:1:1 merge_verified:4:1 native_question_answered:1:1
+incident:3:8 initial_pr_lookup_unavailable:1:1 main_synchronized:1:1 merge_intent:1:1 merge_verified:4:1 native_question_answered:1:1
 native_question_delegated:2:1 native_question_operator:1:1 native_question_response_intent:2:1 native_question_unanswered:1:1
 native_question_unknown:1:1 needs_attention:4:168 non_delivery:3:12 non_delivery_pushback:2:2 non_delivery_reset:1:2 operator_control:4:2
 operator_question:8:9 operator_question_answered:10:8 operator_question_applied:3:1 operator_question_decided:1:1 operator_question_decision:4:7

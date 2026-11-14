@@ -549,15 +549,30 @@ export function stashFindings(branch: string, baseline: StashEntry[], current: S
   return [...vanished, ...foreign];
 }
 /**
+ * A ready report refused by its own checkout or PR identity. The codes are the
+ * refusal's own facts: a caller that returns the report to its worker reads them
+ * instead of matching this module's prose (nucleus#1208).
+ */
+export class WorkerSourceRefusal extends Error {
+  constructor(readonly code: 'pr_identity' | 'worktree_branch' | 'worktree_dirty', message: string) {
+    super(message);
+    this.name = 'WorkerSourceRefusal';
+  }
+}
+/** The one identity refusal text; a parked reason that carries it is a repair route. */
+export const WORKER_PR_IDENTITY_REFUSAL = "PR must be open, ready, and match the task's branch and base";
+export const WORKER_BRANCH_REFUSAL_PREFIX = 'Worker must remain on queue-owned branch ';
+export const WORKER_DIRTY_REFUSAL_PREFIX = 'Worker must leave a clean worktree before review: ';
+/**
  * A dirty-worktree refusal names any stash that crossed worktrees during the
  * run, so the likely cause is visible instead of a bare "leave a clean worktree".
  */
 export async function dirtyWorktreeError(task: Task, message: string) {
-  if (!task.directory || !task.stashBaseline) return new Error(message);
+  if (!task.directory || !task.stashBaseline) return new WorkerSourceRefusal('worktree_dirty', message);
   let findings: string[];
   try { findings = stashFindings(task.branch, task.stashBaseline.entries, await readStash(task.directory)); }
-  catch { return new Error(message); }
-  return new Error(findings.length ? `${message}. Stash findings: ${findings.join("; ")}` : message);
+  catch { return new WorkerSourceRefusal('worktree_dirty', message); }
+  return new WorkerSourceRefusal('worktree_dirty', findings.length ? `${message}. Stash findings: ${findings.join("; ")}` : message);
 }
 export async function verifyPr(task: Task, number: number) {
   if (!task.directory) throw new Error("Task has no worktree");
@@ -565,15 +580,15 @@ export async function verifyPr(task: Task, number: number) {
   const repository = githubRepositoryFromRemote(remote);
   if (!repository) throw new Error("Ready for review requires a GitHub origin remote");
   const pr = JSON.parse(await command("gh", ["pr", "view", String(number), "--repo", repository, "--json", "number,url,state,isDraft,headRefName,baseRefName,headRefOid,headRepository,headRepositoryOwner,isCrossRepository"], task.repoPath));
-  if (pr.state !== "OPEN" || pr.isDraft || pr.headRefName !== task.branch || pr.baseRefName !== task.baseBranch) throw new Error("PR must be open, ready, and match the task's branch and base");
-  if (await currentWorkerBranch(task, task.directory!) !== task.branch) throw new Error(`Worker must remain on queue-owned branch ${task.branch}`);
+  if (pr.state !== "OPEN" || pr.isDraft || pr.headRefName !== task.branch || pr.baseRefName !== task.baseBranch) throw new WorkerSourceRefusal('pr_identity', WORKER_PR_IDENTITY_REFUSAL);
+  if (await currentWorkerBranch(task, task.directory!) !== task.branch) throw new WorkerSourceRefusal('worktree_branch', `${WORKER_BRANCH_REFUSAL_PREFIX}${task.branch}`);
   const status = await queueCheckoutStatus(task.directory, "status", "--porcelain", "--untracked-files=all");
   if (status) {
     const causes = status.split("\n").map(line => {
       const path = line.slice(3);
       return line.startsWith("?? ") ? `untracked ${path}` : `changed ${path}`;
     });
-    throw await dirtyWorktreeError(task, `Worker must leave a clean worktree before review: ${causes.join(", ")}`);
+    throw await dirtyWorktreeError(task, `${WORKER_DIRTY_REFUSAL_PREFIX}${causes.join(", ")}`);
   }
   if (pr.headRefOid !== await git(task.directory, "rev-parse", "HEAD")) throw new Error("PR head differs from the worker worktree");
   // The head repository is reported for the PR-binding sites; null when the fork was deleted.

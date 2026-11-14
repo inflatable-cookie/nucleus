@@ -158,8 +158,10 @@ owner to the rules it enforces.
   `owned_tool_*` events. `Resolution.ownedToolHold` delegates to it.
 - `core/review/pr-adoption.ts` binds an existing PR to a task: identity only under an
   authenticated block, otherwise dead-revision recovery, initial reconciliation
-  or replacement. `Resolution` keeps `recordBlockedPrIdentity` and
-  `adoptReplacementPr` as delegates.
+  or replacement. The pure `prAdoptionPlan` reads that route from the task's typed
+  state, every stopped-worker check is the shared participant predicate, and each
+  host read is routed to the task's own host. `Resolution` keeps
+  `recordBlockedPrIdentity` and `adoptReplacementPr` as delegates.
 - `core/questions/delegation.ts` puts one question to one delegate under an answer window,
   on the `delegation:<id>` stream, and finds the planner, the decider profile and
   the task facts a delegate reads. `Resolution` keeps each method as a delegate.
@@ -204,8 +206,10 @@ owner to the rules it enforces.
   under the same run ID, and the one-replacement creation budget.
   `Resolution` keeps a same-name delegate for each moved method.
 - `core/intake/result-application.ts` applies a released result: reviewer, revision,
-  proof-executor, and the interrupted-review reapply path. `Resolution` keeps a
-  same-name delegate for each moved method. A delegate is a plain function that
+  proof-executor, and the interrupted-review reapply path. Its pure `advanceOwner`
+  names the owner one completed run advances through. Proof settlement and the
+  revision `report_ready` transition are the intake owners' rules, not copies here.
+  `Resolution` keeps a same-name delegate for each moved method. A delegate is a plain function that
   returns the owner's promise: an `async` wrapper adds microtask turns, which reorders
   detached task wakes against owner reads (route test `move to work launches the
   pending worker route`).
@@ -374,11 +378,14 @@ owner to the rules it enforces.
   steps: observe it and settle a live one, look for its branch PR, repair a split
   reporting binding, take a blocked return, then accept its recorded result.
   Same-name `Engine` methods delegate to its `WorkerReconcile`.
-- `core/intake/callback-intake.ts` authenticates, validates and records one report.
-  `CallbackIntake` holds Engine's source gates and the checkpoint and
-  review-progress receipts; `RunCallbackIntake` holds Resolution's run
-  completion (validate, proof, build output, bookkeeping, receipt), which stays
-  synchronous. Same-name `Engine` and `Resolution` methods delegate to them.
+- `core/intake/callback-intake.ts` authenticates, validates and records one worker
+  report: `CallbackIntake` holds Engine's source gates and the checkpoint and
+  review-progress receipts. `core/intake/run-callback-intake.ts` holds
+  Resolution's run completion (validate, proof, build output, bookkeeping,
+  receipt), which stays synchronous. The rules the two share have one owner each:
+  `report-shape.ts` (route and refusal), `report-ready.ts` (the report-only gate
+  and its transition) and `proof-settlement.ts` (one proof execution's receipt and
+  return). Same-name `Engine` and `Resolution` methods delegate to them.
   Engine's `complete`, `completeCheckpoint` and `completeReviewProgress` delegates
   return the owner's promise without an `async` wrapper.
 - `core/dispatch/worker-failover.ts` holds worker failover: the sweep that replaces

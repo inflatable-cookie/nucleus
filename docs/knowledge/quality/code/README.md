@@ -37,6 +37,15 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
   into one owner per mechanism, and `bin/nucleus-dependencies.mjs`, `bin/nucleus-dispose.mjs` and
   `bin/nucleus-promote.mjs` were deleted. Their rows in `N5.csv` were re-rated at that PR's head, and
   `hosts/t3code/state.ts` was re-rated with them because an intent entry gained its typed kind and thread.
+- nucleus#1208 (floor 5, 2026-11-14): intake and result application were split and consolidated
+  along their named seams — worker intake (`core/intake/callback-intake.ts`) from run intake
+  (`core/intake/run-callback-intake.ts`), with the shared report-shape, report-ready and
+  proof-settlement rules in one owner each (`report-shape.ts`, `report-ready.ts`,
+  `proof-settlement.ts`) and the lifecycle wait sentences in `thread-waits.ts`. PR refusals are
+  typed (`WorkerSourceRefusal`) instead of classified by message. Review entry decodes one canonical
+  PR and names its own refusal codes; PR adoption reads one typed plan. Their N2 rows were re-rated
+  at this PR's head. `core/git/index.ts` and `core/recovery/retry-routes.ts` gained the typed
+  refusal and its one named text; neither row's disposition changed, so their rows are unchanged.
 - nucleus#1206 (floor 5, 2026-11-14): the project editor and settings profiles were split by screen,
   form, repository and save-queue responsibility; task holds, attention phases and prerequisite
   reason facts now use shared owners. The changed N6 rows were re-rated at this PR's head.

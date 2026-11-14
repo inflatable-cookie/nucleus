@@ -58,7 +58,7 @@ import { ParticipantLease } from './dispatch/participant-lease';
 import { IntegrationTurns, type IntegrationTurnsContext } from './merge/integration-turns';
 import { Notices } from './questions/notices';
 import { MergeIntent, type MergeIntentContext } from './merge/merge-intent';
-import { RunCallbackIntake } from './intake/callback-intake';
+import { RunCallbackIntake } from './intake/run-callback-intake';
 import { MergeGates, type MergeGatesContext } from './merge/merge-gates';
 import { RetryRoutes } from './recovery/retry-routes';
 import { ExternalMerge, type ExternalMergeContext } from './merge/external-merge';
@@ -214,6 +214,7 @@ export class Resolution {
       get store() { return resolution.store; },
       get adapter() { return resolution.adapter; },
       get host() { return resolution.host; },
+      onTaskHost: <T>(owner: { hostId?: string | null } | null | undefined, work: () => T): T => resolution.onTaskHost(owner, work),
       paused: (...args: Parameters<Resolution['paused']>) => resolution.paused(...args),
       recordBlockedPrIdentity: (...args: Parameters<Resolution['recordBlockedPrIdentity']>) => resolution.recordBlockedPrIdentity(...args),
     };

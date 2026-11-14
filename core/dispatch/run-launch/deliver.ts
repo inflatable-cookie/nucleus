@@ -15,6 +15,7 @@ import { assertReviewEntryWriterYielded, reviewEntryInputForTask, type ReviewEnt
 import { ABSENT_RESOLUTION_REASON, ProvenPreSendRefusalError, coordinative, message, proofExecutor } from '../../recovery/task-reasons';
 import { isDispositionActive, type Profile, type Run, type Task } from '../../../shared/contracts';
 import { currentBrief } from '../../planning/brief';
+import { threadRunningReason } from '../../intake/thread-waits';
 import { briefLaneDocumentReferences } from '../../planning/brief-lane-documents';
 
 /**
@@ -180,7 +181,7 @@ export class RunLaunchDeliver {
         }
       }
       this.store.putRun({ ...this.store.run(run.id)!, agentId, status: 'running' });
-      this.resolution.waiting(this.store.task(t.id), `${role} thread running`, 'lifecycle');
+      this.resolution.waiting(this.store.task(t.id), threadRunningReason(role), 'lifecycle');
     } catch (error) {
       if (error instanceof BlockingRecoveryEffectsError) {
         const waitReason=`${run.ordinaryDetached?'Ordinary review':'Review-entry'} waits for ${recoveryEffectsRefusal(error.effects)}; settle it with retry_effect before continuing`;
