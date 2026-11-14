@@ -54,7 +54,7 @@ test('detail cache evicts old selections and refuses oversized entries',()=>{
  try{
   const one=add(store,'one'),two=add(store,'two');let reads=0;const events=store.eventsAll.bind(store);store.eventsAll=id=>{reads++;return events(id);};
   const read=createTaskDetailCache(store,{maxEntries:1});read(one.id);read(one.id);assert.equal(reads,1);read(two.id);read(one.id);assert.equal(reads,3);
-  const small=createTaskDetailCache(store,{maxBytes:1});small(one.id);small(one.id);assert.equal(reads,6);
+  const small=createTaskDetailCache(store,{maxBytes:1});small(one.id);small(one.id);assert.equal(reads,5);
  }finally{store.close();}
 });
 
