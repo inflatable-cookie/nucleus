@@ -529,9 +529,11 @@ test('a pending activation is retried on each unchanged roll check, not on conne
     sourcePath: checkout, dataDir, paseoHome: root, rollCheckMs: 0, readinessBudgetMs: 2_000,
     serviceCommand: () => { spawns++; return { command: process.execPath, args: ['-e', 'process.exit(1)'] }; },
   });
-  (bridge as unknown as { mainChannel: unknown }).mainChannel = { target: async () => ({ key: backendSourceDigest(checkout) }) };
+  // The roll scheduler owns the main channel and the pending activation step.
+  const scheduler = (bridge as unknown as { roll: { mainChannel: unknown; activateInstalled: (() => Promise<void>) | null } }).roll;
+  scheduler.mainChannel = { target: async () => ({ key: backendSourceDigest(checkout) }) };
   let activated = 0, fail = true;
-  (bridge as unknown as { activateInstalled: (() => Promise<void>) | null }).activateInstalled = async () => {
+  scheduler.activateInstalled = async () => {
     activated++;
     if (fail) throw new Error('activation not ready');
   };
@@ -539,14 +541,14 @@ test('a pending activation is retried on each unchanged roll check, not on conne
     await bridge.checkSource();
     assert.equal(activated, 1);
     assert.equal(spawns, 0, 'a first failed activation does not spawn; there is no replacement to retry yet');
-    assert.equal(typeof (bridge as unknown as { activateInstalled: unknown }).activateInstalled, 'function', 'a failed activation stays pending');
+    assert.equal(typeof scheduler.activateInstalled, 'function', 'a failed activation stays pending');
     const failed = readServiceRoll(dataDir);
     assert.equal(failed?.status, 'retrying');
     assert.match(failed?.detail ?? '', /activation not ready/);
     fail = false;
     await bridge.checkSource();
     assert.equal(activated, 2);
-    assert.equal((bridge as unknown as { activateInstalled: unknown }).activateInstalled, null);
+    assert.equal(scheduler.activateInstalled, null);
     assert.equal(spawns, 1, 'a retrying record retries the replacement');
     const still = readServiceRoll(dataDir);
     assert.equal(still?.status, 'retrying', 'activation success without a live target does not write rolled');
@@ -582,8 +584,9 @@ test('a seeded retrying replacement is not marked rolled when activation succeed
     sourcePath: checkout, dataDir, paseoHome: root, rollCheckMs: 0, readinessBudgetMs: 2_000,
     serviceCommand: () => { spawns++; return { command: process.execPath, args: ['-e', 'process.exit(1)'] }; },
   });
-  (bridge as unknown as { mainChannel: unknown }).mainChannel = { target: async () => ({ key: digest }) };
-  (bridge as unknown as { activateInstalled: (() => Promise<void>) | null }).activateInstalled = async () => {};
+  const scheduler = (bridge as unknown as { roll: { mainChannel: unknown; activateInstalled: (() => Promise<void>) | null } }).roll;
+  scheduler.mainChannel = { target: async () => ({ key: digest }) };
+  scheduler.activateInstalled = async () => {};
   try {
     await bridge.checkSource();
     assert.equal(spawns, 1);
@@ -659,15 +662,15 @@ test('main rolls coalesce revisions, defer for followers, honor force and retain
   let attached = false;
   const bridge = new ServiceBridge({ processActions: bridgeProcessActions, sourcePath: root, dataDir, paseoHome: root, rollSettleMs: 60_000, heavyFollowers: () => attached });
   const state = bridge as unknown as {
-    mainChannel: unknown; expectedBuild: string; sourceDigest: string; lastDigestChangeAt: number;
-    sourcePath: string; activateInstalled: unknown;
-    ensure: () => Promise<unknown>; convergeActivation: () => Promise<null>;
+    session: { expected: string; sourceDigest: string; sourcePath: string };
+    roll: { mainChannel: unknown; lastDigestChangeAt: number; activateInstalled: unknown; convergeActivation: () => Promise<null> };
+    ensure: () => Promise<unknown>;
   };
-  state.expectedBuild = 'old-build';
-  state.sourceDigest = 'old';
+  state.session.expected = 'old-build';
+  state.session.sourceDigest = 'old';
   let revision = 'one', broken = false, spawned = 0;
   const built: string[] = [], prepared: string[] = [];
-  state.mainChannel = {
+  state.roll.mainChannel = {
     target: async () => ({ key: revision, revision }),
     build: async (next: string) => {
       built.push(next);
@@ -678,13 +681,13 @@ test('main rolls coalesce revisions, defer for followers, honor force and retain
     activated: async () => {},
   };
   state.ensure = async () => { spawned++; return {}; };
-  state.convergeActivation = async () => { state.activateInstalled = null; return null; };
+  state.roll.convergeActivation = async () => { state.roll.activateInstalled = null; return null; };
   try {
     assert.equal((await bridge.checkSource())?.status, 'deferred');
     revision = 'two';
     assert.equal((await bridge.checkSource())?.status, 'deferred', 'latest revision resets the settle window');
     assert.equal(spawned, 0);
-    state.lastDigestChangeAt = 0;
+    state.roll.lastDigestChangeAt = 0;
     attached = true;
     assert.equal((await bridge.checkSource())?.deferrals.at(-1)?.reason, 'heavy_follower');
     const rolled = await bridge.checkSource(true);
@@ -699,7 +702,7 @@ test('main rolls coalesce revisions, defer for followers, honor force and retain
     const attempts = built.length;
     assert.equal(await bridge.checkSource(true), null, 'failed revision is suppressed');
     assert.equal(built.length, attempts);
-    assert.equal(state.expectedBuild, 'build-two', 'failed build keeps the selected running build');
+    assert.equal(state.session.expected, 'build-two', 'failed build keeps the selected running build');
   } finally { bridge.close(); }
 });
 
@@ -709,8 +712,8 @@ test('a checkout without an installed main channel never rolls changed source', 
   writeFileSync(join(root, 'shared', 'entry.ts'), 'export const version = 1;');
   writeFileSync(join(root, 'bin', 'queue-service.mjs'), '');
   const bridge = new ServiceBridge({ processActions: bridgeProcessActions, sourcePath: root, dataDir: join(root, 'data'), paseoHome: root });
-  assert.equal(typeof (bridge as unknown as { expectedBuild: unknown }).expectedBuild, 'string', 'fixture starts with a readable backend identity');
-  (bridge as unknown as { mainChannel: null }).mainChannel = null;
+  assert.equal(typeof (bridge as unknown as { session: { expected: unknown } }).session.expected, 'string', 'fixture starts with a readable backend identity');
+  (bridge as unknown as { roll: { mainChannel: null } }).roll.mainChannel = null;
   try {
     writeFileSync(join(root, 'shared', 'entry.ts'), 'export const version = 2;');
     assert.equal(await bridge.checkSource(true), null);

@@ -8,14 +8,10 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  PROJECT_QA_FAILURES_BYTES,
-  StreamingTapFailures,
-  detachedSupervisorIo,
-  escapeeRootedInWorktree,
-  qaSupervisionPlanSchema,
-  reapQaWorktreeEscapees,
-} from "../core/qa/project-qa-supervisor";
+import { PROJECT_QA_FAILURES_BYTES, StreamingTapFailures } from "../core/qa/project-qa-tap-failures";
+import { detachedSupervisorIo } from "../core/qa/project-qa-detached-io";
+import { escapeeRootedInWorktree, reapQaWorktreeEscapees } from "../core/qa/project-qa-escapees";
+import { qaSupervisionPlanSchema } from "../core/qa/project-qa-supervision-files";
 
 const buf = (text: string): Buffer => Buffer.from(text);
 

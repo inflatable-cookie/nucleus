@@ -826,3 +826,19 @@ test('brief versions live in their own table, so an ordinary update never rewrit
     assert.equal(e.store.run('migrated')!.briefVersion, 3, 'a run still records the current version');
   } finally { await e.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('submission acceptance and execution both reject retired controls before creating a task', async () => {
+  const f = engineFixture();
+  try {
+    for (const [extra, message] of [
+      [{ responsible: false }, /responsible: false/],
+      [{ manualVerification: true }, /manualVerification/],
+      [{ reviewVerdicts: true }, /reviewVerdicts and reviewPassGate/],
+    ] as const) {
+      const submission = briefSubmission('/repo', 'a'.repeat(40), extra);
+      assert.throws(() => f.engine.startSubmission(submission), message);
+      await assert.rejects(f.engine.performSubmit(submission), message);
+      assert.equal(f.store.existing(submission), null);
+    }
+  } finally { await f.close(); }
+});

@@ -119,13 +119,14 @@ test('telemetry keeps select filters and renders the three headline categories c
 });
 
 test('Profile rows keep the name, status and controls on one line', () => {
-  const screen = read('client/settings-screen.tsx');
-  const row = screen.slice(screen.indexOf('function ProfileRow'), screen.indexOf('function quietSaveStatus'));
+  const screen = read('client/settings-profile-editor.tsx');
+  const row = screen.slice(screen.indexOf('export function ProfileRow'), screen.indexOf('export function quietSaveStatus'));
   assert.match(row, /<View style=\{\{ \.\.\.row, flexWrap: "nowrap" \}\}>[\s\S]*?\{profile\.name\}[\s\S]*?icon="TriangleAlert"[\s\S]*?text=\{entry\.enabled[\s\S]*?action=\{editing \? "close" : "edit"\}[\s\S]*?<\/View>/, 'name, status and controls share the first line');
   assert.doesNotMatch(row, /\{model\}/, 'the model is not repeated on the row');
   assert.doesNotMatch(row, /numberOfLines/, 'no live profile row text is ellipsised');
   assert.doesNotMatch(row, /Remove \$\{profile\.name\}/, 'Remove is not on the list row');
-  const stale = screen.slice(screen.indexOf('function StalePoolEntry'), screen.indexOf('function Availability'));
+  const profiles = read('client/settings-profiles.tsx');
+  const stale = profiles.slice(profiles.indexOf('function StalePoolEntry'), profiles.indexOf('function Availability'));
   assert.match(stale, /This profile is gone/, 'a stale row says the profile is gone');
   assert.doesNotMatch(stale, /numberOfLines/, 'no stale row text is ellipsised');
 });
@@ -170,7 +171,11 @@ test('the bridge transport graph reaches only shared modules; process bindings a
   const graph = checkIsolatedImports(root, entry);
   assert.ok(graph.has('shared/service/client.ts'));
   assert.ok(graph.has('shared/service/bridge-process.ts') === false, 'the structural port erases at runtime');
-  for (const path of graph) assert.ok(path === entry || path.startsWith('shared/'), `${entry} reaches process implementation ${path}`);
+  // The forwarder is the whole plugin folder: its own modules plus shared. Nothing
+  // below the plugin boundary - no Store, engine, Git, hook, runtime or process
+  // implementation module - may be reached, which `checkIsolatedImports` refuses
+  // from any file it walks.
+  for (const path of graph) assert.ok(path === entry || path.startsWith('shared/') || path.startsWith('hosts/paseo/plugin/'), `${entry} reaches process implementation ${path}`);
   assert.match(read('hosts/paseo/plugin/index.ts'), /new ServiceBridge\(\{ processActions: bridgeProcessActions,/);
 });
 

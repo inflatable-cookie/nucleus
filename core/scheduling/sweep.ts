@@ -42,7 +42,7 @@ function threadSettlementFailureReason(error: unknown): string {
   return `${error.name}${reason ? `: ${reason}` : ''}${detail ? ` (${detail})` : ''}`;
 }
 
-export type SweepContext = Pick<Engine, 'adapter' | 'applyDeferredOwnerVerbs' | 'archivePlannerGrants' | 'archiveRetiredErroredAgents' | 'auditPass' | 'clearRetiredInvalidations' | 'continueAwaitingReviewers' | 'dispatchQueued' | 'dispositionDeps' | 'drainProjections' | 'drainWaiters' | 'enqueueTitle' | 'ensureSweep' | 'flushPrerequisiteReleases' | 'host' | 'hostAvailable' | 'hostIds' | 'inventoryHostMatches' | 'lastHookCleanupAt' | 'lifecycle' | 'maxSweepWindows' | 'migrateProjectOwnersToPlanners' | 'noteStepFailure' | 'observeRetiredWorkers' | 'quiesce' | 'reconcile' | 'recoverExhaustedWorkers' | 'removeSiblings' | 'resumePausedStops' | 'retiredObservationKey' | 'retiredObservationPlan' | 'scheduleLane' | 'scheduleLifecycleFollowUp' | 'scheduleTaskQuantum' | 'settleQuiesce' | 'startSweepChain' | 'stopped' | 'store' | 'sweepChain' | 'sweepCursor' | 'sweepDeferred' | 'sweepDeferredCursor' | 'sweepMode' | 'sweepOrder' | 'sweepPending' | 'sweepStats' | 'sweepTicks' | 'taskHostAvailable' | 'wakeCapacityWaiter' | 'wakePreludes' | 'withHost'> & { readonly resolution: Pick<Resolution, 'checkpoints' | 'delegateNativeQuestions' | 'deliverDecisionNotices' | 'deliverDrainNotices' | 'deliverHoldNotices' | 'deliverNotices' | 'deliverQueuedMessages' | 'observationTargets' | 'observe' | 'origins' | 'raiseOperatorQuestions' | 'recovery' | 'resumeAskQuestions' | 'resumeResponsibleAnsweredQuestions' | 'settleBudgetClock'> };
+export type SweepContext = Pick<Engine, 'adapter' | 'applyDeferredOwnerVerbs' | 'archivePlannerGrants' | 'archiveRetiredErroredAgents' | 'auditPass' | 'clearRetiredInvalidations' | 'continueAwaitingReviewers' | 'dispatchQueued' | 'dispositionDeps' | 'drainProjections' | 'drainWaiters' | 'enqueueTitle' | 'ensureSweep' | 'flushPrerequisiteReleases' | 'host' | 'hostAvailable' | 'hostIds' | 'hostOutages' | 'hostWait' | 'inventoryHostMatches' | 'lastHookCleanupAt' | 'lifecycle' | 'maxSweepWindows' | 'migrateProjectOwnersToPlanners' | 'noteStepFailure' | 'observeRetiredWorkers' | 'quiesce' | 'reconcile' | 'recoverExhaustedWorkers' | 'removeSiblings' | 'resumePausedStops' | 'retiredObservationKey' | 'retiredObservationPlan' | 'scheduleLane' | 'scheduleLifecycleFollowUp' | 'scheduleTaskQuantum' | 'settleQuiesce' | 'startSweepChain' | 'stopped' | 'store' | 'sweepChain' | 'sweepCursor' | 'sweepDeferred' | 'sweepDeferredCursor' | 'sweepMode' | 'sweepOrder' | 'sweepPending' | 'sweepStats' | 'sweepTicks' | 'taskHostAvailable' | 'wakeCapacityWaiter' | 'wakePreludes' | 'withHost'> & { readonly resolution: Pick<Resolution, 'checkpoints' | 'delegateNativeQuestions' | 'deliverDecisionNotices' | 'deliverDrainNotices' | 'deliverHoldNotices' | 'deliverHostOutageNotices' | 'deliverNotices' | 'deliverQueuedMessages' | 'observationTargets' | 'observe' | 'origins' | 'raiseOperatorQuestions' | 'recovery' | 'resumeAskQuestions' | 'resumeResponsibleAnsweredQuestions' | 'settleBudgetClock'> };
 
 export class Sweep {
   /**
@@ -292,8 +292,11 @@ export class Sweep {
       // identity falls back to the narrow read and no inactivity is inferred.
       let inventory: ReadonlyMap<string, AgentObservation> | null = null;
       const finishedCatchUp = new Map<string, Task>();
-      const hosts = new Set([...this.engine.hostIds(), ...this.engine.store.activeCapacityTasks().flatMap(task => task.hostId ? [task.hostId] : [])]);
+      const hosts = new Set([...this.engine.hostIds(), ...this.engine.store.tasks().flatMap(task => task.hostId ? [task.hostId] : [])]);
       for (const host of hosts) await this.engine.withHost(host, async () => {
+        // Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): one durable
+        // record of when this host went away, kept whether or not it has tasks.
+        this.engine.hostOutages.observe(host, this.engine.hostAvailable(host));
         if (!this.engine.hostAvailable(host)) return;
         try { await this.engine.adapter.reconcileReportedSettlements?.(); } catch { /* durable host intents remain for the next sweep */ }
         try { await this.settleFinishedT3Threads(host); } catch { /* one host's settlement pass never stalls the fleet sweep */ }
@@ -405,9 +408,14 @@ export class Sweep {
           }
           // Spec 058 budgets (nucleus#1153): the wall clock pauses while the host, a
           // workspace or a dispatch hold keeps the task from progress — including a
-          // task whose quantum this sweep cannot start at all.
+          // task whose quantum this sweep cannot start at all. The host wait is
+          // recorded first, so the pause is dated from the outage's own start.
+          const hostWait = this.engine.hostWait(task);
           this.engine.resolution.settleBudgetClock(task);
           reconciled.add(task.id);
+          // Nothing is sent to a host that is away: no quantum, no recovery, no
+          // stall check and no escalation. The wait itself is the whole stop.
+          if (hostWait) continue;
           if (releasedTasks.has(task.id)) continue; // The release already queued this task.
           pending.push(boundQuantum(this.engine.scheduleTaskQuantum(task.id), () => this.recordQuantumOutage(task.id)));
           // Independent lanes may await concurrently. Paseo and process
@@ -445,8 +453,10 @@ export class Sweep {
           if (this.engine.stopped) return { fault: null, covered: false, visited };
           const task = this.engine.store.task(candidate.id);
           if (["done", "cancelled"].includes(task.phase)) continue;
+          const hostWait = this.engine.hostWait(task);
           this.engine.resolution.settleBudgetClock(task);
           reconciled.add(task.id);
+          if (hostWait) continue;
           if (!releasedTasks.has(task.id)) await boundQuantum(this.engine.scheduleTaskQuantum(task.id), () => this.recordQuantumOutage(task.id));
         }
         this.engine.sweepDeferredCursor = start + window.length >= deferred.length ? null : window.at(-1)?.id ?? null;
@@ -460,6 +470,10 @@ export class Sweep {
       await this.engine.resolution.deliverHoldNotices();
       await this.engine.resolution.deliverDecisionNotices();
       await this.engine.resolution.deliverDrainNotices();
+      // The one long-outage notice: raised once per outage past the dispatch-limits
+      // bound, then delivered through the durable notice path.
+      this.engine.hostOutages.raiseNotices();
+      await this.engine.resolution.deliverHostOutageNotices();
       if(this.engine.stopped)return { fault: null, covered: false, visited };
       if(startsNoRuns(this.engine.store, this.engine.stopped)){for(const id of reconciled)this.engine.enqueueTitle(id);return { fault: null, covered, visited };}
       await this.engine.dispatchQueued();

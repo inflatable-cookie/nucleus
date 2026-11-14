@@ -243,7 +243,7 @@ for (const phase of ['build', 'startup proof']) {
     const reached = new Promise<void>(resolve => { entered = resolve; });
     const gate = new Promise<never>((_resolve, reject) => { refuse = reject; });
     const staged = { root: fixture.root, buildId: 'next-build' };
-    (bridge as unknown as { mainChannel: unknown }).mainChannel = {
+    (bridge as unknown as { roll: { mainChannel: unknown } }).roll.mainChannel = {
       target: async () => ({ key: 'new-revision', revision: 'new-revision' }),
       build: async () => { if (phase === 'build') { entered(); await gate; } return staged; },
       prepare: async () => { entered(); await gate; },

@@ -4,6 +4,7 @@ import { classifyGitTransientFailure, ForgeOutageError, gitDeliveryUnknown, Revi
 import { GIT_TRANSIENT_LIMIT_MS, nextGitTransientAttempt, type GitTransientEpisode } from "../git/git-transient-backoff";
 import { boardDispatchHoldApplies } from "../../shared/board-dispatch-hold";
 import { CheckoutRefusalError, CheckoutUnavailableError } from "../workspaces/checkout-volume";
+import { routeUnavailableStop } from "../../shared/task-stop";
 import { CAPACITY_WAIT_PREFIX } from "../../shared/wait-state";
 import { WorkspaceObservationUnavailableError } from "../workspaces/workspace-allocation";
 import { isTransportFailure } from "../../shared/transport";
@@ -241,7 +242,7 @@ export class TaskWakes {
     const held = this.store.getMeta<boolean>("dispatchHeld") ?? false;
     const candidates = fairSlotRequestOrder(this.store.admissionCandidates(), task => task.id !== releasingTaskId
       && !(held && boardDispatchHoldApplies(task))
-      && (!/no eligible|configure.*profile|profile.*unavailable/i.test(task.reason) || this.store.routingRetryAllowed(task))
+      && (!routeUnavailableStop(task) || this.store.routingRetryAllowed(task))
       && !occupiesSlot(task) && (task.phase === "queued" || task.reason.startsWith(CAPACITY_WAIT_PREFIX))
       && ["queued", "awaiting_review", "changes_requested", "verifying"].includes(task.phase));
     const next = candidates.find(task => !task.prerequisiteWait

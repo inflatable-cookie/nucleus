@@ -1,4 +1,4 @@
-import { visibleTaskSummaries, availabilitySchema, DEFAULT_GLOBAL_LIMIT, DEFAULT_PROJECT_LIMIT, DEFAULT_PAPERCUT_PROJECT_LIMIT, DEFAULT_STALL_THRESHOLD_MINUTES, DEFAULT_HOLD_REMINDER_MINUTES, DEFAULT_HOLD_ESCALATION_MINUTES, DEFAULT_LANE_DRAIN_MINUTES, DEFAULT_LANE_DRAIN_ESCALATION_MINUTES } from "../../shared/contracts";
+import { visibleTaskSummaries, availabilitySchema, DEFAULT_GLOBAL_LIMIT, DEFAULT_PROJECT_LIMIT, DEFAULT_PAPERCUT_PROJECT_LIMIT, DEFAULT_STALL_THRESHOLD_MINUTES, DEFAULT_HOLD_REMINDER_MINUTES, DEFAULT_HOLD_ESCALATION_MINUTES, DEFAULT_LANE_DRAIN_MINUTES, DEFAULT_LANE_DRAIN_ESCALATION_MINUTES, DEFAULT_HOST_OUTAGE_NOTICE_MINUTES } from "../../shared/contracts";
 import type { SnapshotInput, SnapshotState, OutcomeSearchInput, Task, BoundRun, UsageLevel, BackupHealth } from "../../shared/contracts";
 import { taskWaitStateContext, queuedReason } from "../recovery/wait-context";
 import { occupiesSlot, RETIRED_OBSERVATION_STALE_MS } from "../engine";
@@ -58,24 +58,23 @@ export class RuntimeBoard {
   snapshot(input: SnapshotInput = {}): SnapshotState {
     this.context.markStoreAccess();
     const facts = this.context.cachedUiSnapshotFacts();
-    const tasks = facts.tasks;
     const page = this.context.store.liveSnapshot(input);
-    const paused = this.context.store.getMeta<boolean>("paused") ?? true;
-    const connected = this.context.anyHostConnected();
-    const owned = facts.capacityTasks.filter(task => occupiesSlot(task));
-    const runs = this.context.store.pendingRuns().filter(r => !r.released || r.status === 'superseded' && owned.some(t => t.id === r.taskId));
-    const retired = owned.flatMap(t => t.retiredWorkers.map(w => ({ host: t.hostId, id: w.agentId })));
-    const observations = new Map<string, Record<string, { active: boolean; at: string }>>();
-    const observed = (host: string, id: string) => { if (!observations.has(host)) observations.set(host, this.context.store.getMeta<Record<string, { active: boolean; at: string }>>(this.context.engine.retiredObservationKey(host)) ?? {}); return observations.get(host)?.[id]; };
-    const key = (host: string | undefined, id: string | null) => JSON.stringify([host, id]);
-    const activeWorkers = new Set([...retired.filter(item => observed(item.host, item.id)?.active).map(item => key(item.host, item.id)), ...owned.filter(t => t.agentId && t.agentActive === true).map(t => key(t.hostId, t.agentId)), ...runs.filter(r => r.agentId && r.active === true).map(r => key(r.hostId, r.agentId))]).size;
-    // A retired worker is re-read on its bounded slow cadence (audit A6), so its
-    // record is unsettled past that cadence plus the ordinary window, not 45 s.
-    const unsettled = retired.filter(item => { const state = observed(item.host, item.id); return !state || Date.now() - Date.parse(state.at) > RETIRED_OBSERVATION_STALE_MS; }).length + runs.filter(r => !r.agentId || !r.lastObservedAt || Date.now() - Date.parse(r.lastObservedAt) > 45000 || r.active === null).length + this.context.store.unsettledNoticeCount() + tasks.filter(t => t.resolution.mergeIntent && !t.resolution.mergedCommit || t.resolution.archiveIntentWorkspaceId || t.resolution.closeoutWorkspaceIntent && !t.resolution.closeoutWorkspaceId || t.resolution.buildOutputCleanups.some(record => record.state !== 'complete') || t.resolution.runtimeRetirements.some(record => record.state === 'pending' || record.state === 'failed')).length + owned.filter(t => t.workspaceIntent && !t.workspaceId || t.agentIntent && !t.agentId || t.agentId && (!t.lastObservedAt || Date.now() - Date.parse(t.lastObservedAt) > 45000 || !["idle", "running", "initializing", "error", "closed"].includes(t.lastAgentStatus ?? ""))).length;
-    return { prStates: this.context.prStates, connected: this.context.anyHostConnected(), hostId: this.context.hostId,
-      paused, dispatchHeld: this.context.store.getMeta<boolean>("dispatchHeld") ?? false, ...this.drainProjection(), quiet: paused && connected && activeWorkers === 0 && unsettled === 0, activeWorkers, unsettled,
-      ...this.pausedStopCounts(facts),
-      occupiedSlots: owned.length,
+    const counters = this.boardCounters(facts);
+    return { prStates: this.context.prStates, hostId: this.context.hostId, ...counters,
+      ...this.boardSettings(facts),
+      backup: this.context.backupHealthProjection(),
+      operations: this.context.store.operations({ states: ["pending", "running", "needs_attention", "failed"], limit: 100 }).map(summarizeOperation),
+      error: this.context.boardError(),
+      tasks: page.tasks.map(summary => {
+        const task = this.context.store.task(summary.id);
+        const context = taskWaitStateContext(this.context.store, task, null, candidate => this.context.engine.resolution.slotAdmissionReason(candidate));
+        return { ...summary, reason: queuedReason(this.context.store, task, context, candidate => this.context.engine.queuedExternalWait(candidate)) };
+      }), cursor: page.cursor, hasMore: page.hasMore, profiles: this.context.engine.profiles, pool: this.context.store.pool(), assignments: this.context.store.counts(), recentAssignments: this.context.store.recentCounts(),
+      availability: this.context.store.db.prepare("SELECT data FROM availability").all().map(r => availabilitySchema.parse(JSON.parse(String(r.data)))) };
+  }
+
+  private boardSettings(facts: UiSnapshotFacts) {
+    return {
       globalLimit: this.context.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT, projectLimit: this.context.store.getMeta<number>("projectLimit") ?? DEFAULT_PROJECT_LIMIT,
       usage: this.context.store.usageView(),
       routingGrants: activeRoutingGrants(this.context.store),
@@ -89,17 +88,10 @@ export class RuntimeBoard {
       holdEscalationMinutes: this.context.store.getMeta<number>("holdEscalationMinutes") ?? DEFAULT_HOLD_ESCALATION_MINUTES,
       laneDrainMinutes: this.context.store.getMeta<number>("laneDrainMinutes") ?? DEFAULT_LANE_DRAIN_MINUTES,
       laneDrainEscalationMinutes: this.context.store.getMeta<number>("laneDrainEscalationMinutes") ?? DEFAULT_LANE_DRAIN_ESCALATION_MINUTES,
+      hostOutageNoticeMinutes: this.context.store.getMeta<number>("hostOutageNoticeMinutes") ?? DEFAULT_HOST_OUTAGE_NOTICE_MINUTES,
       paseoCallLimit: this.context.store.configuredPaseoCallLimit(),
       operationLimit: this.context.store.configuredOperationLimit(), operationBacklog: this.context.store.operationBacklog(),
-      backup: this.context.backupHealthProjection(),
-      operations: this.context.store.operations({ states: ["pending", "running", "needs_attention", "failed"], limit: 100 }).map(summarizeOperation),
-      error: this.context.boardError(),
-      tasks: page.tasks.map(summary => {
-        const task = this.context.store.task(summary.id);
-        const context = taskWaitStateContext(this.context.store, task, null, candidate => this.context.engine.resolution.slotAdmissionReason(candidate));
-        return { ...summary, reason: queuedReason(this.context.store, task, context, candidate => this.context.engine.queuedExternalWait(candidate)) };
-      }), cursor: page.cursor, hasMore: page.hasMore, profiles: this.context.engine.profiles, pool: this.context.store.pool(), assignments: this.context.store.counts(), recentAssignments: this.context.store.recentCounts(),
-      availability: this.context.store.db.prepare("SELECT data FROM availability").all().map(r => availabilitySchema.parse(JSON.parse(String(r.data)))) };
+    };
   }
 
   /** Board counters derived once from the cached facts; shared by both board responses. */
@@ -172,7 +164,7 @@ export class RuntimeBoard {
       try { this.context.store.advanceRevision(); } catch { /* a read-only prewarm store re-projects on its first writable read */ }
     }
     this.boardUsageLevel = usage;
-    try { reconcileRoutingGrants(this.context.store, this.context.decisions); } catch { /* expiry retries on the next writable pass */ }
+    reconcileRoutingGrants(this.context.store, this.context.decisions);
     // Spec 028: a snapshot settling, or a location failing, changes the board with no
     // durable write. Advance the revision once when that health changes, so a poller
     // holding a bounded acknowledgement re-projects instead of keeping the old fact.
@@ -194,22 +186,7 @@ export class RuntimeBoard {
       paused: counters.paused, dispatchHeld: counters.dispatchHeld, drained: counters.drained, boundRuns: counters.boundRuns, quiet: counters.quiet, activeWorkers: counters.activeWorkers, unsettled: counters.unsettled,
       stoppedThreads: counters.stoppedThreads, resumedThreads: counters.resumedThreads,
       occupiedSlots: counters.occupiedSlots,
-      globalLimit: this.context.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT,
-      projectLimit: this.context.store.getMeta<number>("projectLimit") ?? DEFAULT_PROJECT_LIMIT,
-      usage: this.context.store.usageView(),
-      routingGrants: activeRoutingGrants(this.context.store),
-      qaFence: this.context.store.qaFenceView(),
-      demandOffsets: this.context.store.demandRoleOffsets(),
-      papercutProjectLimit: this.context.store.getMeta<number>("papercutProjectLimit") ?? DEFAULT_PAPERCUT_PROJECT_LIMIT,
-      projectLimitOverrides: this.context.store.projectDispatchLimitOverrides(),
-      projectCapacities: this.projectCapacities(facts),
-      stallThresholdMinutes: this.context.store.getMeta<number>("stallThresholdMinutes") ?? DEFAULT_STALL_THRESHOLD_MINUTES,
-      holdReminderMinutes: this.context.store.getMeta<number>("holdReminderMinutes") ?? DEFAULT_HOLD_REMINDER_MINUTES,
-      holdEscalationMinutes: this.context.store.getMeta<number>("holdEscalationMinutes") ?? DEFAULT_HOLD_ESCALATION_MINUTES,
-      laneDrainMinutes: this.context.store.getMeta<number>("laneDrainMinutes") ?? DEFAULT_LANE_DRAIN_MINUTES,
-      laneDrainEscalationMinutes: this.context.store.getMeta<number>("laneDrainEscalationMinutes") ?? DEFAULT_LANE_DRAIN_ESCALATION_MINUTES,
-      paseoCallLimit: this.context.store.configuredPaseoCallLimit(),
-      operationLimit: this.context.store.configuredOperationLimit(), operationBacklog: this.context.store.operationBacklog(),
+      ...this.boardSettings(facts),
       backup,
       operations: this.context.store.operations({ states: ["pending", "running", "needs_attention", "failed"], limit: 100 }).map(summarizeOperation),
       error,

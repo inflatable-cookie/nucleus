@@ -5,7 +5,7 @@ import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { currentBrief } from "../planning/brief";
 import { addOutcomeToLaneIndex } from "../planning/lanes";
 import { digest,now,StoreCore } from "./store-core";
-import { VERB_OUTCOME_RETENTION_MS } from "./store-maintenance";
+import { VERB_OUTCOME_RETENTION_MS } from "./store-retention";
 import { repositoryIdentity,StoreTasks } from "./store-tasks";
 
 /** One recorded task control outcome (round 4 telemetry). */

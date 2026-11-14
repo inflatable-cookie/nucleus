@@ -12,7 +12,7 @@ const colors = new Proxy({}, {get: () => '#123'}) as never;
 // Query notifications use timers; a turn count can expire before their timer runs.
 const settle = (probe: () => boolean) => waitFor(probe, HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS, 'screen to settle');
 const board = {revision:1, connected:true, hostId:'host', paused:false, error:'', quiet:true, activeWorkers:0, unsettled:0, globalLimit:32, projectLimit:5, papercutProjectLimit:2, tasks:[], profiles:[], pool:[], availability:[], assignments:{}, recentAssignments:{}, lanes:[], projects:[], projectLimitOverrides:{}, projectInFlightLimitOverrides:{}, projectCapacities:[], prStates:{}, usage:{level:'normal',setLevel:'normal',until:null,expired:false}, demandOffsets:{worker:0,reviewer:0,coordinator:0}, routingGrants:[], backup:{newestSnapshotAt:'2026-11-07T21:00:00Z',localError:null}};
-const capacity = {effective:{globalLimit:32,projectLimit:5,papercutProjectLimit:2,paseoCallLimit:6,stallThresholdMinutes:30,holdReminderMinutes:120,holdEscalationMinutes:240,laneDrainMinutes:120,laneDrainEscalationMinutes:1440},changes:[]};
+const capacity = {effective:{globalLimit:32,projectLimit:5,papercutProjectLimit:2,paseoCallLimit:6,stallThresholdMinutes:30,holdReminderMinutes:120,holdEscalationMinutes:240,laneDrainMinutes:120,laneDrainEscalationMinutes:1440,hostOutageNoticeMinutes:120},changes:[]};
 
 async function screen(width: number, invoke: (method:string) => Promise<unknown>, layoutCompact = false) {
   const { QueueSettingsScreen } = await import('../client/settings-screen');

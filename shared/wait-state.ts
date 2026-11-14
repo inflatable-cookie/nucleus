@@ -89,17 +89,28 @@ const PREREQUISITE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
  * title is free-form, so the status is never read from anywhere else.
  */
 function prerequisiteEntryCannotComplete(entry: string): boolean {
-  const trimmed = entry.trim();
-  const afterId = trimmed.lastIndexOf("): ");
+  const fact = prerequisiteEntryFacts(entry);
+  return Boolean(fact.id) && (fact.status === PREREQUISITE_REMOVED_STATUS || fact.status === PREREQUISITE_CANCELLED_STATUS
+    || fact.status === PREREQUISITE_GOAL_UNMET_STATUS || fact.status === PREREQUISITE_MISSING_STATUS);
+}
+/** Facts in the generated prerequisite reason, decoded once for board and wait views. */
+function prerequisiteEntryFacts(entry: string): { id: string | null; title: string; status: string } {
+  const afterId = entry.lastIndexOf("): ");
   if (afterId >= 0) {
-    const open = trimmed.lastIndexOf("(", afterId);
-    const id = open >= 0 ? trimmed.slice(open + 1, afterId) : "";
-    const status = trimmed.slice(afterId + 3).trim();
-    return PREREQUISITE_ID.test(id) && (status === PREREQUISITE_REMOVED_STATUS || status === PREREQUISITE_CANCELLED_STATUS || status === PREREQUISITE_GOAL_UNMET_STATUS);
+    const open = entry.lastIndexOf("(", afterId);
+    const id = open >= 0 ? entry.slice(open + 1, afterId) : "";
+    if (PREREQUISITE_ID.test(id)) return { id, title: entry.slice(0, open).trim(), status: entry.slice(afterId + 3).trim() };
   }
-  const afterToken = trimmed.lastIndexOf(": ");
-  return afterToken >= 0 && trimmed.slice(afterToken + 2).trim() === PREREQUISITE_MISSING_STATUS
-    && PREREQUISITE_ID.test(trimmed.slice(0, afterToken).trim());
+  const afterToken = entry.lastIndexOf(": ");
+  if (afterToken >= 0) {
+    const id = entry.slice(0, afterToken).trim();
+    if (PREREQUISITE_ID.test(id)) return { id, title: "Prerequisite", status: entry.slice(afterToken + 2).trim() };
+  }
+  return { id: null, title: entry, status: "" };
+}
+export function prerequisiteReasonEntries(reason: string): Array<{ id: string | null; title: string; status: string }> {
+  const body = reason.startsWith(PREREQUISITE_WAIT_PREFIX) ? reason.slice(PREREQUISITE_WAIT_PREFIX.length) : reason;
+  return body.split("; ").map(value => value.trim()).filter(Boolean).map(prerequisiteEntryFacts);
 }
 /**
  * True when a prerequisite reason names a dependency that can never reach

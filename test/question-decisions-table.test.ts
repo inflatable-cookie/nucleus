@@ -37,6 +37,7 @@ const escalation = (
   cause: "cause",
   runId: "run",
   question: "q",
+  refusal: null,
   answered: false,
   unknown: false,
   missed: false,

@@ -28,7 +28,7 @@ import { runtimeNodeArgs } from "../../shared/runtime.mjs";
  * They grant no merge authority and gate no task.
  *
  * Since task 114 the pipeline itself runs in a detached supervisor process
- * (`project-qa-supervisor.ts`) that outlives the service, so a Queue roll mid-run
+ * (a detached supervisor) that outlives the service, so a Queue roll mid-run
  * neither loses the run nor the steps it had recorded. This module owns the
  * store: it claims the run, resolves the sibling links from Queue's own records,
  * writes the run's plan, spawns the supervisor, and re-attaches to a supervisor a
@@ -89,14 +89,22 @@ import { parseWorktreeList, repoCommonDir } from "../workspaces/workspace-alloca
 import { processGroupEmpty } from "../machine/process-group";
 import { processStartIdentityLiveness } from "../machine/process-identity-search";
 import {
-  QA_SUPERVISION_PLAN_SCHEMA,
-  QA_SUPERVISION_SCHEMA_VERSION,
+  parseProjectQaWorktreeHooks,
+  projectQaWorktreeHooks,
+  removeQaWorkspace,
+} from "./project-qa-worktree";
+import {
   executionOutput,
   qaStepRecord,
   qaExecutionFailed,
   mergeQaEscapees,
-  parseProjectQaWorktreeHooks,
-  projectQaWorktreeHooks,
+  qaSupervisionCpuCoverage,
+  type QaPipelineOutcome,
+} from "./project-qa-pipeline";
+import { supervisorLiveness } from "../machine/supervisor-liveness";
+import {
+  QA_SUPERVISION_PLAN_SCHEMA,
+  QA_SUPERVISION_SCHEMA_VERSION,
   qaRunRootPath,
   qaStepLogPaths,
   qaSupervisionPaths,
@@ -106,18 +114,14 @@ import {
   readHostRunResult,
   readQaCancelRequest,
   removeQaSupervisionFiles,
-  removeQaWorkspace,
-  supervisorLiveness,
-  qaSupervisionCpuCoverage,
   readQaCpuCoverage,
   writeQaStepLog,
   writeQaSupervisionPlan,
   writeQaCancelRequest,
   type ProjectQaWorktreeHooks,
-  type QaPipelineOutcome,
   type QaSupervisionPlan,
   type QaSupervisionState,
-} from "./project-qa-supervisor";
+} from "./project-qa-supervision-files";
 import { tailWithTruncationMarker } from "../machine/output-retention";
 
 const GIT_ENV = { GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o ConnectTimeout=10" };

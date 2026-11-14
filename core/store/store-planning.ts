@@ -550,6 +550,32 @@ export class StorePlanning {
   }
 
   /** Writes the lead; a body or title change records a new version by `author`. */
+  /**
+   * A merged papercut-sourced lead closes with the task that completed it. One owner for
+   * "what completing a task means to the records that named it": the lead's own state, its
+   * closure note and its time, read from the promoted targets that name this task. Returns
+   * the papercuts closed, so the caller records their audit events.
+   */
+  completePapercutsForTask(task: Pick<Task, "id" | "prUrl" | "finishedAt" | "updatedAt"> & { resolution: Pick<Task["resolution"], "mergedCommit"> }): Papercut[] {
+    if (!task.prUrl || !task.resolution.mergedCommit) return [];
+    const linked = this.core.db.prepare(`SELECT data FROM lead_read AS leads WHERE state='promoted'
+      AND EXISTS (SELECT 1 FROM json_each(leads.data,'$.targets')
+        WHERE json_extract(value,'$.kind')='task' AND json_extract(value,'$.reference')=?)`).all(task.id);
+    const closed: Papercut[] = [];
+    for (const row of linked) {
+      const lead = leadSchema.parse(JSON.parse(String(row.data)));
+      if (!lead.tags.includes("papercut") || !lead.papercut) continue;
+      const cut = papercutFromLead(lead);
+      if (cut.taskId !== task.id) continue;
+      const closedAt = task.finishedAt ?? task.updatedAt;
+      this.updateLead({ ...lead, state: "closed", closedAt, updatedAt: task.updatedAt,
+        closure: { reason: "completed", at: closedAt,
+          note: `Completed by ${task.prUrl}; merge commit ${task.resolution.mergedCommit}.` } });
+      closed.push(cut);
+    }
+    return closed;
+  }
+
   updateLead(lead: Lead, author?: string): Lead {
     if (!this.core.db.isTransaction) return this.core.transaction(() => this.updateLead(lead, author));
     const value = leadSchema.parse(lead);

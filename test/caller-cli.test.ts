@@ -22,6 +22,34 @@ const commands = [
   ['project.set-planner',{key:'project',agentId:'thread'},'setBy'],
 ] as const;
 
+/**
+ * Spec 050: every owner control records the calling thread, and an action that
+ * has its own field keeps it too. The pre-send blocks ran in sequence, so a hold
+ * carried both `agentId` and `caller`; the stamping table must not stop at the
+ * first matching rule.
+ */
+for (const source of ['run','participant']) test(`owner controls stamp the calling thread beside their action field (${source})`,async()=>{
+  const f=await callerCliFixture();
+  try {
+    const caller=f.caller(source);
+    const cases=[
+      [{taskId:'task',action:'hold',reason:'Wait'},{caller,agentId:caller}],
+      [{taskId:'task',action:'keep_hold',reason:'Still waiting'},{caller,agentId:caller}],
+      [{taskId:'task',action:'set_routing',critical:true,reason:'Review is critical'},{caller}],
+      [{taskId:'task',action:'set_routing',scope:'general',complexity:'medium',reason:'Route it',note:'Operator authorized'},{caller,relayed:true}],
+      [{taskId:'task',action:'exclude_worker',workerExclusion:{profileId:'synthetic-profile'},reason:'Excluded',note:'Operator authorized'},{caller,relayed:true}],
+    ] as const;
+    for(const [payload,expected] of cases){
+      const result=await f.invoke(source,'queue-cli.mjs',['task','-'],payload);
+      assert.equal(result.code,1,result.stderr);
+      assert.match(result.stderr,/Synthetic caller payload received/);
+      const input=f.calls.at(-1)!.input;
+      for(const [field,value] of Object.entries(expected)) assert.equal(input[field],value,`${payload.action}: ${field}`);
+      if(payload.action==='set_routing'&&'critical' in payload) assert.equal('relayed' in input,false,'a critical-only routing write is not relayed');
+    }
+  } finally {await f.close();}
+});
+
 for (const source of ['run','participant','host','none']) test(`every caller-bearing CLI command resolves ${source}`,async () => {
   const f=await callerCliFixture();
   try {

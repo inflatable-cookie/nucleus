@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Store } from '../core/store/store';
 import { submissionSchema, runSchema } from '../shared/contracts';
+import { taskStopRecord } from '../shared/task-stop';
 
 function fixture() {
   const store = new Store(':memory:');
@@ -76,7 +77,8 @@ test('rollback restores the routing-attempt epoch before recomputing readiness',
   const f = fixture();
   try {
     f.store.setRoutingEpoch('catalog');
-    f.store.update(f.other.id, { reason: 'No eligible profile' });
+    const other = f.store.task(f.other.id);
+    f.store.update(f.other.id, { reason: 'No eligible profile', resolution: { ...other.resolution, stop: taskStopRecord('route_unavailable', 'No eligible profile') } });
     f.store.markRoutingAttempt(f.other.id);
     assert.equal(f.store.routingRetryAllowed(f.store.task(f.other.id)), false);
     assert.throws(() => f.store.transaction(() => {

@@ -32,3 +32,6 @@ export function initialBriefVersion(input: Pick<Submission, "brief">, pinnedAt: 
   if (!input.brief) return [];
   return [{ version: 1, digest: pinnedBriefDigest(input), mediaType: input.brief.mediaType, text: input.brief.text, reason: "Submitted", pinnedAt }];
 }
+
+/** Whether a lead body starts with a frontmatter brief. */
+export const hasBriefFrontmatter = (text: string): boolean => /^---\r?\n/.test(text);

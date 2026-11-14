@@ -1,4 +1,6 @@
-import { blockingHold, phaseStateLabel } from "../../shared/task-state";
+import { blockingHold, isTaskPhase, phaseStateLabel } from "../../shared/task-state";
+import { phaseNeedsAttention } from "../../shared/pipeline-board";
+import { prerequisiteReasonEntries } from "../../shared/wait-state";
 import React from "react";
 import type { HoldKind, Task, TaskDetail, TaskSummary } from "../../shared/contracts";
 
@@ -32,7 +34,7 @@ export const phaseIcon = (t: {held:boolean;phase:Task['phase'];holdKind?:HoldKin
   blocked:"CircleSlash",error:"TriangleAlert",needs_attention:"TriangleAlert",verifying:"BadgeCheck",merging:"GitMerge",syncing:"RefreshCw",closing:"Archive",done:"Check",cancelled:"X",
 } satisfies Record<Task['phase'],string>)[t.phase];
 export type DisplayTask = TaskSummary | TaskDetail;
-export const attention = (t: DisplayTask) => Boolean(t.originError||t.originLookupError) || t.resolution.attention || ["needs_attention", "blocked", "error"].includes(t.phase);
+export const attention = (t: DisplayTask) => Boolean(t.originError||t.originLookupError) || t.resolution.attention || phaseNeedsAttention(t.phase);
 export const holdKindLabel = (kind: HoldKind) => kind === "dispatch" ? "Dispatch held" : "Merge held";
 export function presentHoldKinds(task: { holdKind?: HoldKind; holds?: { dispatch?: unknown; merge?: unknown } }): HoldKind[] {
   const kinds: HoldKind[] = [];
@@ -47,17 +49,11 @@ export const stopBadgeLabel = (stop: TaskSummary["stop"]) =>
   stop && stop in STOP_BADGE_LABEL ? STOP_BADGE_LABEL[stop as keyof typeof STOP_BADGE_LABEL] : null;
 export function prerequisiteLine(task: TaskSummary): string | null {
   if (task.waitState?.state !== "waiting_prerequisite") return null;
-  const entries = task.reason.replace(/^Waiting for prerequisites:\s*/, "").split("; ").filter(Boolean);
+  const entries = prerequisiteReasonEntries(task.reason);
   const first = entries[0];
   if (!first) return task.waitingOn ? `After ${task.waitingOn}` : "Waiting for prerequisite";
-  const match = first.match(/^(.*?)\s+\([0-9a-f-]{36}\):\s*(.*)$/i);
-  const missing = first.match(/^([0-9a-f-]{36}):\s*(.*)$/i);
-  const title = (match?.[1] ?? (missing ? "Prerequisite" : first)).trim();
-  const rawStatus = (match?.[2] ?? missing?.[2] ?? "").trim();
-  const phases: Task["phase"][] = ["queued", "dispatching", "working", "awaiting_review", "report_ready", "blocked", "error", "needs_attention", "cancelled", "reviewing", "changes_requested", "verifying", "merging", "syncing", "closing", "done"];
-  const status = phases.includes(rawStatus as Task["phase"])
-    ? phaseStateLabel({ held: false, phase: rawStatus as Task["phase"] })
-    : rawStatus;
+  const { title, status: rawStatus } = first;
+  const status = isTaskPhase(rawStatus) ? phaseStateLabel({ held: false, phase: rawStatus }) : rawStatus;
   const reference = task.waitingOn ? `After ${task.waitingOn}` : "After prerequisite";
   const rest = [title, status, entries.length > 1 ? `+${entries.length - 1} more` : ""].filter(Boolean).join(" · ");
   return `${reference} · ${rest}`;

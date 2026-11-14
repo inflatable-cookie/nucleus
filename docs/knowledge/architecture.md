@@ -95,10 +95,19 @@ owner to the rules it enforces.
   Nucleus planner once.
 - `core/store/store-compaction.ts` owns the one-shot store conversion, run once at
   start before serving ([store compaction](operations/store-compaction.md)).
-- `core/store/store.ts` keeps task events, authenticated receipts, role runs,
-  notifications, availability, operations and retention tombstones;
-  `taskIdsForIdentities` maps a bridge lifecycle hint to Nucleus identities
-  without reading fleet history.
+- `core/store/` gives each store mechanism one owner. `store.ts` is the facade:
+  owner wiring, the transaction and listener boundaries and the shared read
+  clocks. `store-tasks.ts` owns the task projection and the task read models
+  (`taskIdsForIdentities` maps a bridge lifecycle hint to Nucleus identities
+  without reading fleet history), `store-queue-index.ts` and
+  `store-board-index.ts` own the dispatch and board indexes over that
+  projection, and `store-task-funnel.ts` is the single writer of task and run
+  rows. Opening and migrating a store is `store-admission.ts`, the every-open
+  row strips are `store-migration.ts`, the retention windows are
+  `store-retention.ts`, and the file facts, content fingerprint and freed-page
+  reclamation are `store-reclaim.ts`; `store-schema.ts` holds every schema
+  statement. Task events, authenticated receipts, role runs, notifications,
+  availability and operations keep their own store modules.
 - `core/telemetry/telemetry.ts` derives lifecycle timing and interventions from durable
   facts; `shared/telemetry.ts` owns its schemas. `queue.detail` and
   `queue.telemetry` read them; no analytics database exists
@@ -402,15 +411,14 @@ owner to the rules it enforces.
   superseded worker), `thread-archive-effect.ts` (the observe-then-deliver-once
   record) and `thread-ownership.ts` (who owns a thread, whether it still serves
   another live task, and the archive-or-remove operation).
-- `core/planning/operations.ts` holds durable operations: accepting one, scheduling
-  it on its lane, running and settling it (typed pre-send refusals settle
-  definite, unexplained failures by the prose classifier), restart
-  reconciliation, submission intake, and the pre-dispatch repairs (dispatch base
-  re-record, validation retry). It holds the source-promotion, lead-check and
-  re-key handlers. Same-name `Engine` methods delegate to its `Operations`. A
-  failed run settles by `operationFailureSettlement`, a pure function over the
-  facts re-read after the throw: a committed result, a deferred validation, the
-  pre-send receipt that proves a refusal, and the state and effect status.
+- `core/planning/operations.ts` accepts, schedules, runs and settles durable
+  operations and holds the source-promotion, lead-check and re-key handlers.
+  `core/planning/operation-failure.ts` classifies a failed run from its re-read
+  facts, including committed results, deferred validation, pre-send receipts and
+  effect status. `core/planning/source-promotion-reconcile.ts` reconciles source
+  promotion after interruption. `core/planning/submission.ts` owns submission
+  intake; `core/planning/planning-repairs.ts` owns dispatch-base re-record and
+  validation retry. Same-name `Engine` methods delegate to these owners.
 - `core/workspaces/workspace-provisioning.ts` creates, compares and removes a task's
   sibling worktrees, refreshes checkout siblings, prepares its worktree links
   and reads its stash list. Same-name `Engine` methods delegate to it.
@@ -576,8 +584,16 @@ owner to the rules it enforces.
   schemas accept and drops or infers none. `shared/service/callback-client.mjs` holds
   the pure transport; the root `mcp-report.mjs` keeps paths issued to retained
   sessions. Review entry preserves externally owned PR workspaces.
-- `core/hooks/hooks.ts` owns hook intent, execution, publication and durable
-  reconciliation, with compatibility re-exports for its leaf modules.
+- `core/hooks/hooks.ts` is the hook domain's front: the lifecycle entry points,
+  closeout authority, the finished-task stop and compatibility re-exports. Each
+  mechanism behind it has one owner: `hook-occurrence.ts` owns durable occurrence
+  identity and transitions, `hook-execution.ts` runs one occurrence's read-only
+  proof, `hook-publication.ts` owns the integration-write commit, push, canonical
+  sync and cleanup, `hook-reconcile.ts` owns the restart reconciliation state
+  machine, `hook-retry.ts` owns retry and disposal proofs, `hook-retention.ts` owns
+  the retention gate and its reconciliation, `hook-checkouts.ts` owns the
+  Queue-owned isolated checkout and the integration base, and `hook-result.ts`
+  owns the closed result envelope and failure evidence.
   `core/hooks/hook-manifest.ts` owns manifest discovery and program/instruction
   pinning, including named tool resolution; `core/machine/process-exec.ts` owns
   bounded process execution; `core/git/git-snapshot.ts` owns status, snapshots
@@ -589,7 +605,8 @@ owner to the rules it enforces.
   proofs and the shared occurrence renewal path. Both use narrow contexts and
   keep delivery with `RepositoryHooks`.
   `core/hooks/hook-isolation.ts` owns shared isolation paths;
-  `core/hooks/hook-context.ts` owns shared hook context/result types and helpers.
+  `core/hooks/hook-context.ts` owns the hook context and result types plus the
+  record and hold-reason codecs.
   These modules never import `core/hooks/hooks.ts`;
   `core/git/git-submission.ts` reads manifests directly from the manifest leaf.
   Every stored occurrence carries its immutable event payload

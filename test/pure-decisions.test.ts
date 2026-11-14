@@ -373,3 +373,13 @@ test('unavailableGroupNames reads the typed availability rows once', () => {
   assert.deepEqual([...unavailableGroupNames(rows, Date.parse('2026-11-14T13:00:00.000Z'))].sort(), ['paused'],
     'the retry time itself is the first selectable instant');
 });
+
+test('source promotion reconciliation surfaces an unreadable operation without changing it', async () => {
+  const { reconcileSourcePromotion } = await import('../core/planning/source-promotion-reconcile');
+  const { SOURCE_PROMOTION_NOT_DELIVERED } = await import('../core/planning/operations');
+  const failure = new Error('operation payload unavailable');
+  const store = { operationPayload: () => { throw failure; } } as unknown as import('../core/store/store').Store;
+  const operation = { id: 'op', kind: 'source_promote', effect: { kind: 'source_promotion', status: 'uncertain' } } as import('../shared/operations').QueueOperation;
+  assert.throws(() => reconcileSourcePromotion(store, operation, new Set()), failure);
+  assert.notEqual(operation.effect?.result, SOURCE_PROMOTION_NOT_DELIVERED);
+});
