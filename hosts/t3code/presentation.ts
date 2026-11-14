@@ -53,8 +53,6 @@ export class T3Presentation {
     if (!this.core.state.read().settledThreads?.[agentId]) return;
     this.core.state.update(state => { if (state.settledThreads) delete state.settledThreads[agentId]; });
   }
-  /** Presentation has no remaining target after confirmed deletion, not a successful delivery. */
-
   retireDeletedPresentationIntents(observedId?: string): void {
     const snapshot = this.core.state.read();
     const observeKey = observedId ? identity('delete', observedId) : undefined;
@@ -106,8 +104,6 @@ export class T3Presentation {
     if (legacyRolePrefix && taskTitle.startsWith(legacyRolePrefix)) taskTitle = taskTitle.slice(legacyRolePrefix.length);
     return capPaseoTitle(`${numberedPrefix}${taskTitle}`);
   }
-  /** The core title projection supplies the same phase-derived title used by Paseo. */
-
   async setTaskWorkspaceTitle(task: Task, title: string, requestId: string, _uncertain: boolean): Promise<void> {
     this.retireDeletedPresentationIntents();
     title = capPaseoTitle(title);
@@ -190,8 +186,6 @@ export class T3Presentation {
       return;
     }
   }
-  /** Called by the ordinary host sweep; unknown delivery is checked against T3 before reuse. */
-
   async reconcileReportedSettlements(): Promise<void> {
     this.retireDeletedPresentationIntents();
     const state = this.core.state.read();
@@ -229,7 +223,6 @@ export class T3Presentation {
    * way, so it retires the same way instead of looping invisibly; a malformed
    * intent with no thread stays unknown delivery and is never resent.
    */
-
   async reconcileSettleIntent(key: string, intent: T3State['intents'][string]): Promise<'settled' | 'retired'> {
     const threadId = intentThreadId(intent);
     if (!isIntent('thread.settle', intent) || !threadId) throw new HostUnknownDeliveryError();
@@ -337,7 +330,6 @@ export class T3Presentation {
   }
 
   /** Retry durable worker settle intents during the ordinary host sweep. */
-
   async reconcileSettledThreads(): Promise<void> {
     this.retireDeletedPresentationIntents();
     this.pruneWorkerSettles();
@@ -351,7 +343,6 @@ export class T3Presentation {
   }
 
   /** One worker settle: send when the handover's own run has ended, else retain the intent. */
-
   async attemptWorkerSettle(entry: T3SettleIntent): Promise<void> {
     if (this.core.intents.confirmedDeletion(this.core.state.read(), entry.agentId)) { this.retireDeletedPresentationIntents(); return; }
     const intent = this.core.state.read().intents[entry.commandId];
@@ -437,10 +428,4 @@ export class T3Presentation {
   forgetSettle(commandId: string): void {
     if (!this.core.state.read().pendingSettles?.[commandId]) return;
     this.core.state.update(state => { if (state.pendingSettles) delete state.pendingSettles[commandId]; });
-  }
-  /**
-   * The runtime request's own state, from a fresh read. Answering a question
-   * maps its answers onto the request's turn item, so that path reads the
-   * transcript; a permission decision or a dismissal reads observation only.
-   */
-}
+  }}

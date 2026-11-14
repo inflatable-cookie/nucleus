@@ -25,7 +25,6 @@ export class StandbyStartupError extends Error {}
 
 interface SpawnClaim { pid: number; at: string }
 interface SpawnAttempt { claimPath: string; claimed: boolean; child: ChildProcess | null; startup: StartupCapture | null; token?: string }
-export interface Command { command: string; args: string[] }
 
 /** Everything the spawner needs that it does not own: the process bindings and the bridge's own connect. */
 export interface SpawnContext {

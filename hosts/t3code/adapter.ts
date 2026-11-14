@@ -328,14 +328,6 @@ export class T3CodeHost implements Host {
    * re-anchored to a nearest choice. Selection keeps such a profile out of a
    * T3 task through the host catalog; this fence catches catalog drift.
    */
-  /**
-   * The profile's thinking level and reported feature values as the nightly's
-   * `ProviderOptionSelection[]` for this exact model, from the `server.getConfig`
-   * read the launch already made. A value the model does not report is refused
-   * before send with the option and value named; nothing is dropped or
-   * re-anchored to a nearest choice. Selection keeps such a profile out of a
-   * T3 task through the host catalog; this fence catches catalog drift.
-   */
   modelSelectionOptions(profile: Profile, model: ConfigModel | undefined): OptionSelection[] {
     const thinking = profile.thinkingOptionId;
     const features = Object.entries(profile.featureValues ?? {});
@@ -375,17 +367,6 @@ export class T3CodeHost implements Host {
   }
 
   async sendWhenIdle(_id: string, _input: HostAsk): Promise<string | null> { return unsupported('in-thread Nucleus questions'); }
-
-  /**
-   * The run a message would steer: the projection's live run, or the thread
-   * shell's active run when the projection has none. Read immediately before
-   * every steer.
-   */
-  async activeRunId(id: string): Promise<string | null> {
-    const projection = await this.reads.readProjection(id, 'observation');
-    const native = (await this.reads.inventory()).threads.find(t => t.id === id);
-    return projection.runs.find(r => activeStatuses.has(r.status))?.id ?? native?.activeRunId ?? null;
-  }
 
   /**
    * One atomic interrupt and continue: the nightly's `steer_active` dispatch

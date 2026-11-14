@@ -167,22 +167,6 @@ export class T3Reads {
       pendingPermissionKinds: pending.map(r => r.kind === 'user_input' ? 'question' : r.kind),
       ...(pending[0] ? { pendingRequest: { id: pending[0].id, kind: pending[0].kind === 'user_input' ? 'question' : pending[0].kind, firstLine: null } } : {}) };
   }
-  /** Settle a completed non-worker thread after Nucleus has durably accepted its report.
-   *
-   * The settle key names the reporting run, but one retained thread serves many
-   * native turns under one run: a reviewer continued for a second round, or a
-   * worker surfaced for attention, unsettles the thread after its settle. The
-   * settled marker tells a later settle the thread needs settling again; the
-   * fresh command settles the latest finished native run under a new identity, so a
-   * second finished round ends settled (nucleus#1181). A bind the Nightly
-   * rejected as stale (its latest run moved on) retires the same way: the next
-   * pass settles the current latest run under a fresh command instead of
-   * leaving the thread unsettled, which is what stranded #227's reviewer
-   * thread after its second round.
-   */
-
-  async observationInventory(ids: readonly string[]) { try { return new Map(await Promise.all(ids.map(async id => [id, await this.observe(id)] as const))); } catch { return null; } }
-
   async listLiveAgents() { return (await this.inventory()).threads.filter(t => !t.archivedAt && !t.deletedAt).map(t => ({ id: t.id, title: t.title, workspaceId: this.workspaceFor(t), labels: this.core.state.read().agents[t.id]?.labels ?? {} })); }
 
   async agentTimelinePage(id: string, limit = 100): Promise<HostTimelinePage | null> {
@@ -207,13 +191,6 @@ export class T3Reads {
     const native = (await this.inventory()).threads.find(t => t.id === id);
     return projection.runs.find(r => activeStatuses.has(r.status))?.id ?? native?.activeRunId ?? null;
   }
-  /**
-   * One atomic interrupt and continue: the nightly's `steer_active` dispatch
-   * mode injects the message into the thread's live run. The run id is read
-   * immediately before the send; with no active run there is nothing to steer
-   * and the refusal is proven before the socket write.
-   */
-
   async pendingQuestions(id: string) { const p = await this.readProjection(id); return p.runtimeRequests.filter(r => r.kind === 'user_input' && r.status === 'pending').map(r => {
     const item = p.turnItems.find(t => t.type === 'user_input_request' && t.requestId === r.id);
     if (!item?.questions) throw new T3CompatibilityError('runtimeRequest.questions');

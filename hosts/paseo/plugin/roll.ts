@@ -129,6 +129,14 @@ export class RollScheduler {
     };
   }
 
+  /** Write the durable roll record; the record is advisory, so a failed write never fails the roll. */
+  private writeRoll(roll: ServiceRoll) {
+    try {
+      mkdirSync(this.core.dataDir, { recursive: true, mode: 0o700 });
+      this.core.processActions.writeServiceRoll(this.core.dataDir, roll);
+    } catch { /* the record is advisory: the typed state still reports the service */ }
+  }
+
   private rememberDeferral(reason: ServiceRollDeferral["reason"], until: string): void {
     const at = new Date().toISOString();
     const last = this.deferrals[this.deferrals.length - 1];
@@ -185,7 +193,7 @@ export class RollScheduler {
       detail: detail.slice(-4000),
       deferrals: existing?.deferrals ?? [],
     };
-    try { mkdirSync(this.core.dataDir, { recursive: true, mode: 0o700 }); this.core.processActions.writeServiceRoll(this.core.dataDir, roll); } catch { /* the record is advisory */ }
+    this.writeRoll(roll);
   }
 
   /** Build and roll only the configured main channel, after settle and follower deferrals. */
@@ -204,7 +212,7 @@ export class RollScheduler {
       digest = target.key;
     } catch (error) {
       const roll: ServiceRoll = { status: "failed", fromBuild: this.session.expected, toBuild: null, digest: this.session.sourceDigest ?? "", at: new Date().toISOString(), detail: `main build source unavailable: ${error instanceof Error ? error.message : String(error)}`, deferrals: [] };
-      try { mkdirSync(this.core.dataDir, { recursive: true, mode: 0o700 }); this.core.processActions.writeServiceRoll(this.core.dataDir, roll); } catch { /* the record is advisory */ }
+      this.writeRoll(roll);
       return roll;
     }
     if (digest === this.session.sourceDigest || digest === this.session.failedDigest) {
@@ -235,7 +243,7 @@ export class RollScheduler {
         status, fromBuild, toBuild, digest, at: new Date().toISOString(),
         detail: detail.slice(-4000), deferrals: [...this.deferrals],
       };
-      try { mkdirSync(this.core.dataDir, { recursive: true, mode: 0o700 }); this.core.processActions.writeServiceRoll(this.core.dataDir, roll); } catch { /* the record is advisory */ }
+      this.writeRoll(roll);
       return roll;
     };
     record("typechecking", null, "Building main locally while the settle window runs");
@@ -362,7 +370,7 @@ export class RollScheduler {
       : roll.status === "replacing" ? "Service replaced after the interrupted replacement"
       : roll.status === "deferred" ? "A fresh bridge loaded this source and replaced the service while the roll was deferred, bypassing the roll; no roll typecheck ran for it"
       : "A fresh bridge loaded this source and replaced the service while the roll was typechecking; that check's completion was not observed and no passing roll typecheck is recorded";
-    try { this.core.processActions.writeServiceRoll(this.core.dataDir, { ...roll, status: "rolled", toBuild: buildId, at: new Date().toISOString(), detail }); } catch { /* advisory */ }
+    this.writeRoll({ ...roll, status: "rolled", toBuild: buildId, at: new Date().toISOString(), detail });
     this.reloadPlugin(buildId);
   }
 

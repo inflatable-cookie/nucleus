@@ -206,18 +206,22 @@ export const STAMPING_RULES = [
 ];
 
 /**
- * Stamp one method's payload. A rule may answer the call itself (a run ticket
- * that carries no participant identity answers a question over its own
- * callback); that answer is returned as `early` for the front door to print.
+ * Stamp one method's payload. Every matching rule runs, in table order, exactly
+ * as the sequential pre-send blocks did: an owner control carries its own action
+ * fields *and* the calling thread, so `hold` gets both `agentId` and `caller`.
+ * A rule may answer the call itself (a run ticket that carries no participant
+ * identity answers a question over its own callback); that answer is returned as
+ * `early` for the front door to print.
  */
 export async function stampInput({ method, input, context }) {
   if (method === 'question.answer') return await answerQuestion(input, context);
+  let stamped = input;
   for (const rule of STAMPING_RULES) {
-    if (!rule.matches(method, input)) continue;
-    const stamped = await rule.apply(input, context);
-    if (stamped !== undefined) return { input: stamped };
+    if (!rule.matches(method, stamped)) continue;
+    const result = await rule.apply(stamped, context);
+    if (result !== undefined) stamped = result;
   }
-  return { input };
+  return { input: stamped };
 }
 
 /**
