@@ -5,7 +5,7 @@ import { dataHome } from "../../../shared/data-home.mjs";
 import type { RpcCatalogueEntry } from "../../../shared/rpc-catalogue";
 import { SERVICE_PROTOCOL_VERSION, backendSourceDigest, serviceBuildIdentity, sourcePathFromModule } from "../../../shared/service/build";
 import { pluginRegistration } from "../../../shared/plugin-discovery.mjs";
-import { currentLoginSession, readServiceInfo, readServiceRoll, readServiceStartupFailure, sessionsDiffer, type ServiceInfo, type ServiceStartupFailure } from "../../../shared/service/discovery";
+import { currentLoginSession, readServiceInfo, readServiceRoll, readServiceStartupFailure, sessionsDiffer, type ServiceInfo } from "../../../shared/service/discovery";
 import type { ServiceRoll } from "../../../shared/service-roll";
 import { ServiceClient, ServiceRequestError } from "../../../shared/service/client";
 import { CallNotSentError, callWithRollRecovery, confirmationRead, parseRequestOutcome, rollWaitWorthy } from "../../../shared/service/roll-recovery";
@@ -43,9 +43,6 @@ const FORWARDED_REQUEST_TIMEOUT_MS = 90_000;
 /** Bounded projections stay short so a wedged service surfaces a typed state quickly. */
 const PROJECTION_REQUEST_TIMEOUT_MS = 15_000;
 const PROJECTION_METHODS = new Set(["queue.snapshot", "queue.ui-snapshot", "queue.detail", "queue.outcome", "queue.outcome-search", "queue.telemetry", "lanes"]);
-/** A warm standby starts the moment the old pid exits; poll tightly so the endpoint gap stays small. */
-const UPGRADE_POLL_MS = 250;
-const UPGRADE_TIMEOUT_MS = 60_000;
 /**
  * Bounded wait for a call that arrived mid-roll (reads re-answer, mutations
  * recover their recorded outcome): the roll's own readiness budget — warm
@@ -339,5 +336,3 @@ function readInstalledSourcePath(paseoHome: string): string | null {
   }
   return pluginRegistration(config.plugins)?.path ?? null;
 }
-
-export type { ServiceStartupFailure };

@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { SERVICE_PROTOCOL_VERSION, backendSourceDigest, sourcePathFromModule } from "../../../shared/service/build";
-import { readServiceInfo, readServiceRoll, SERVICE_ROLL_REQUEST_FILE } from "../../../shared/service/discovery";
+import { backendSourceDigest, sourcePathFromModule } from "../../../shared/service/build";
+import { readServiceRoll, SERVICE_ROLL_REQUEST_FILE } from "../../../shared/service/discovery";
 import type { ServiceRoll, ServiceRollDeferral } from "../../../shared/service-roll";
 import type { ServiceClient } from "../../../shared/service/client";
 import type { BridgeMainChannel } from "../../../shared/service/bridge-process";
@@ -14,7 +14,6 @@ export const ROLL_SETTLE_MS = 60_000;
 /** Defer a due roll while a heavy run has an attached follower, up to this cap. */
 export const ROLL_HEAVY_FOLLOWER_CAP_MS = 15 * 60_000;
 const ROLL_CHECK_MS = 30_000;
-const UPGRADE_POLL_MS = 250;
 /** What the scheduler needs from the bridge that owns the connection. */
 export interface RollContext {
   options: BridgeOptions;

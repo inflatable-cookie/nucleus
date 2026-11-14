@@ -3,8 +3,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, openSync, closeSync, writeSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { runtimeNodeArgs } from "../../../shared/runtime.mjs";
-import { dataHome } from "../../../shared/data-home.mjs";
-import { readServiceExecutorFault, readServiceInfo, readServiceRoll, sessionsDiffer, type ServiceInfo, type ServiceStartupFailure } from "../../../shared/service/discovery";
+import { readServiceExecutorFault, readServiceInfo, readServiceRoll, sessionsDiffer, type ServiceInfo } from "../../../shared/service/discovery";
 import { ServiceClient } from "../../../shared/service/client";
 import { awaitForeignReplacement, awaitStandbyProgress, SPAWN_TOKEN_ENV, STANDBY_ENV, STANDBY_READY_BUDGET_MS, STANDBY_READY_CAP_MS, STANDBY_READY_STALL_MS } from "../../../shared/service/standby-wait";
 import type { BridgeProcessActions } from "../../../shared/service/bridge-process";
@@ -495,5 +494,3 @@ function refreshClaim(claimPath: string, writeOwnedJson: BridgeProcessActions["w
 }
 
 export function sleep(ms: number) { return new Promise(resolve => setTimeout(resolve, ms)); }
-
-export type { ServiceStartupFailure };

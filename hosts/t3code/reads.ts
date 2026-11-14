@@ -3,7 +3,7 @@ import type { HostThread, HostTimelinePage } from '../../shared/host';
 import { ProvenPreSendRefusalError } from '../../core/host';
 import type { T3RpcClient } from './rpc';
 import type { T3StateFile } from './state';
-import { decode, shellSnapshot, projection, threadSnapshot, threadSnapshotCoverage, shellThread, project, T3CompatibilityError, type RuntimeMode } from './contracts';
+import { decode, shellSnapshot, projection, threadSnapshot, threadSnapshotCoverage, shellThread, project, T3CompatibilityError } from './contracts';
 
 /**
  * What one thread snapshot is for. Observation needs the thread record, its runs
