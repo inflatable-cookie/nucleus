@@ -210,6 +210,7 @@ test('one sweep proves dead QA escapees without a host row, while alive and unkn
   const finishedAt = new Date().toISOString();
   const finished = { ...queued, state: 'failed' as const, exitCode: 1, finishedAt, escapedDescendants: escaped };
   f.store.putQaRun(finished);
+  f.store.putQaRun({ ...queued, id: 'newer-qa-run', state: 'passed', exitCode: 0, finishedAt, escapedDescendants: [] });
   f.store.db.prepare('DELETE FROM host_run_records WHERE id=?').run(queued.id);
   const context = {
     store: f.store,
@@ -219,6 +220,7 @@ test('one sweep proves dead QA escapees without a host row, while alive and unkn
   assert.deepEqual(qaFenceStatus(f.store).inventory.map(item => item.id), [queued.id]);
   assert.equal(sweepQaEscapedDescendants(context, queued.id), 'dead');
   assert.deepEqual(qaFenceStatus(f.store).inventory, [], 'the QA row now carries proof after one sweep');
+  assert.equal(f.store.latestQaRun(queued.key)?.id, 'newer-qa-run', 'proof updates do not make an older run the latest');
   const proof = f.store.qaRun(queued.id)!;
   assert.ok(proof.escapedDescendantsProvenDeadAt);
   assert.deepEqual(proof.escapedDescendantsProvenDead, escaped);

@@ -63,7 +63,10 @@ export class StoreProjectQa {
           || current.escapedDescendants.some(entry => !identities.has(`${entry.pid}:${entry.startIdentity}`)))
         throw new Error('Dead-process proof must cover every QA escaped descendant exactly');
       if (qaEscapeeProofCovers(current)) return current;
-      return this.putQaRun({ ...current, escapedDescendantsProvenDeadAt: at, escapedDescendantsProvenDead: validated });
+      const updated = projectQaRunSchema.parse({ ...current, escapedDescendantsProvenDeadAt: at, escapedDescendantsProvenDead: validated });
+      this.core.db.prepare('UPDATE project_qa_runs SET data=? WHERE id=?').run(JSON.stringify(updated), id);
+      this.core.advanceRevision();
+      return updated;
     });
   }
 
