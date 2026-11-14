@@ -328,12 +328,14 @@ test("the claude reader reads the cached utilization windows and sample time", a
   assert.equal(reading.accountId, "1a2b3c4d-0000-4000-8000-000000000001");
   assert.deepEqual(
     reading.windows.map((window) => window.windowId),
-    ["seven_day"],
+    ["five_hour", "seven_day"],
   );
-  assert.equal(reading.windows[0]!.usedFraction, 0.57);
-  assert.equal(reading.windows[0]!.windowSeconds, 7 * 24 * 60 * 60);
+  assert.equal(reading.windows[0]!.notStarted, true);
+  const weekly = reading.windows[1]!;
+  assert.equal(weekly.usedFraction, 0.57);
+  assert.equal(weekly.windowSeconds, 7 * 24 * 60 * 60);
   assert.equal(
-    reading.windows[0]!.resetsAt,
+    weekly.resetsAt,
     new Date(Date.parse("2026-11-14T09:00:00.101354+00:00")).toISOString(),
   );
 });
@@ -459,7 +461,10 @@ test("the claude reader reports a cache with no usable window as unknown", async
       cachedUsageUtilization: {
         fetchedAtMs: 1794413084190,
         accountUuid: null,
-        utilization: { five_hour: null, seven_day: { utilization: "many" } },
+        utilization: {
+          five_hour: { utilization: "many" },
+          seven_day: { utilization: "many" },
+        },
       },
     }),
   );
