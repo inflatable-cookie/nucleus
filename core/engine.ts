@@ -109,6 +109,8 @@ import { TaskCompletion } from "./verbs/complete";
 import { SettingsControls } from "./verbs/settings";
 import { ForceVerbs } from "./verbs/force";
 import { OwnerStop } from "./verbs/owner-stop";
+import { DeferredOwnerVerbs } from "./verbs/deferred-verbs";
+import { ReviewerAutoContinue } from "./verbs/reviewer-auto-continue";
 import { PausedStops } from "./verbs/paused-stops";
 import { ProofControls } from "./verbs/proof";
 import { RouteControls } from "./verbs/route";
@@ -368,6 +370,8 @@ export class Engine {
   private readonly briefControls: BriefControls;
   private readonly settingsControls: SettingsControls;
   readonly ownerStop: OwnerStop;
+  private readonly deferredVerbs: DeferredOwnerVerbs;
+  private readonly reviewerAutoContinue: ReviewerAutoContinue;
   private readonly reviewerControls: ReviewerControls;
   readonly moveControls: MoveControls;
   readonly restartControls: RestartControls;
@@ -530,6 +534,8 @@ export class Engine {
     this.briefControls = new BriefControls(this);
     this.settingsControls = new SettingsControls(this);
     this.ownerStop = new OwnerStop(this);
+    this.deferredVerbs = new DeferredOwnerVerbs(this);
+    this.reviewerAutoContinue = new ReviewerAutoContinue(this);
     this.reviewerControls = new ReviewerControls(this);
     this.moveControls = new MoveControls(this);
     this.restartControls = new RestartControls(this);
@@ -980,12 +986,13 @@ export class Engine {
   /** Round 4: a direct owner call — not a coordinator report and not a deferred replay. */
   isOwnerCall(): boolean { return this.controlContext.isOwnerCall(); }
 
-  deferredRestartSupersedesOwnerStop(task: Task): boolean { return this.ownerStop.deferredRestartSupersedesOwnerStop(task); }
+  deferredRestartSupersedesOwnerStop(task: Task): boolean { return this.deferredVerbs.deferredRestartSupersedesOwnerStop(task); }
   dispatchWaitsFor(task: Task, ownerStopYields?: boolean, inFlight?: boolean): "paused" | "held" | null { return this.ownerStop.dispatchWaitsFor(task, ownerStopYields, inFlight); }
   releaseOwnerStopHold(taskId: string, allowDeferredReplay?: boolean): boolean { return this.ownerStop.releaseOwnerStopHold(taskId, allowDeferredReplay); }
-  deferOwnerVerb(task: Task, input: TaskControlInput, why: "paused" | "held", target: { runId: string; checkpointOrdinal?: number; head?: string } | null): Task { return this.ownerStop.deferOwnerVerb(task, input, why, target); }
-  continueAwaitingReviewers(tasks: Task[]): Promise<void> { return this.ownerStop.continueAwaitingReviewers(tasks); }
-  applyDeferredOwnerVerbs(): Promise<void> { return this.ownerStop.applyDeferredOwnerVerbs(); }
+  deferOwnerVerb(task: Task, input: TaskControlInput, why: "paused" | "held", target: { runId: string; checkpointOrdinal?: number; head?: string } | null): Task { return this.deferredVerbs.deferOwnerVerb(task, input, why, target); }
+  continueAwaitingReviewers(tasks: Task[]): Promise<void> { return this.reviewerAutoContinue.continueAwaitingReviewers(tasks); }
+  applyDeferredOwnerVerbs(): Promise<void> { return this.deferredVerbs.applyDeferredOwnerVerbs(); }
+  dropDeferredOwnerVerb(taskId: string, at: string, kind: string, detail: string): void { this.deferredVerbs.dropDeferredVerb(taskId, at, kind, detail); }
   stopTask(input: TaskControlInput): Promise<Task> { return this.ownerStop.stopTask(input); }
 
   stopActiveThreads(input: { caller?: string } = {}): Promise<z.infer<typeof stopThreads.output>> {
