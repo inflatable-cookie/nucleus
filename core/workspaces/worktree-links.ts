@@ -160,14 +160,23 @@ export async function dependencyLinkPaths(repositoryPath: string, maxBytes?: num
 
 const TASK_PREFIX = "Task worktree link";
 
-/** `worktree.setup` as a list of strings; a string or an array of strings is accepted. */
-export function worktreeSetupScripts(source: string): string[] {
+/**
+ * The `worktree` block of a parsed `paseo.json`, validated once: the manifest is
+ * an object and its `worktree` block is an object (an absent block is empty).
+ * Each consumer reads the keys it understands from the same block.
+ */
+export function worktreeManifestBlock(source: string): Record<string, unknown> {
   const manifest = JSON.parse(source) as { worktree?: unknown };
   if (manifest === null || typeof manifest !== "object" || Array.isArray(manifest)) throw new Error("paseo.json must be an object");
-  if (manifest.worktree === undefined) return [];
+  if (manifest.worktree === undefined) return {};
   if (!manifest.worktree || typeof manifest.worktree !== "object" || Array.isArray(manifest.worktree))
     throw new Error("paseo.json worktree must be an object");
-  const setup = (manifest.worktree as Record<string, unknown>).setup;
+  return manifest.worktree as Record<string, unknown>;
+}
+
+/** `worktree.setup` as a list of strings; a string or an array of strings is accepted. */
+export function worktreeSetupScripts(source: string): string[] {
+  const setup = worktreeManifestBlock(source).setup;
   if (setup === undefined) return [];
   if (typeof setup === "string") return [setup];
   if (Array.isArray(setup) && setup.every(item => typeof item === "string")) return setup as string[];

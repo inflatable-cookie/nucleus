@@ -17,7 +17,9 @@ import { join } from "node:path";
 import { executeHookProgram } from "../core/hooks/hooks";
 import { openLiveOutputLog } from "../core/machine/live-output";
 import { BoundedStreamRetention, FAILURE_FIRST_RETENTION_NOTE, FailureFirstStreamRetention, boundedHeadTail, classifyFailureFirstLine, headTailWithMarker, streamTruncationMarker, tailWithTruncationMarker, wasTruncated } from "../core/machine/output-retention";
-import { PROJECT_QA_STEP_OUTPUT_BYTES, StreamingTapFailures, streamHeadTail, writeQaStepLog } from "../core/qa/project-qa-supervisor";
+import { PROJECT_QA_STEP_OUTPUT_BYTES, streamHeadTail } from "../core/qa/project-qa-pipeline";
+import { StreamingTapFailures } from "../core/qa/project-qa-tap-failures";
+import { writeQaStepLog } from "../core/qa/project-qa-supervision-files";
 import { redactHostRunToken } from "../service/callbacks/host-run-endpoint";
 
 const markerPattern = /\[queue: output truncated: observed=(\d+) retained=(\d+) omitted=(\d+)(?: cap=(\d+))?; beginning and end kept\]/;

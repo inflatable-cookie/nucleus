@@ -2,7 +2,9 @@ import { readFileSync } from "node:fs";
 import { qaSupervisionPlanSchema, qaSupervisionPaths } from "../../core/qa/project-qa-supervision-files";
 import { defaultHostRunStateDir } from "../../core/host-runs/host-run-files";
 import { assertCheckoutAvailable } from "../../core/workspaces/checkout-volume";
-import { detachedSupervisorIo, runQaTeardownRetry, runProjectQaPipeline, type QaPipelineRun } from "../../core/qa/project-qa-supervisor";
+import { detachedSupervisorIo } from "../../core/qa/project-qa-detached-io";
+import { runProjectQaPipeline, type QaPipelineRun } from "../../core/qa/project-qa-pipeline";
+import { runQaTeardownRetry } from "../../core/qa/project-qa-teardown";
 
 /**
  * Detached supervisor entry: read the plan the service wrote, then run the

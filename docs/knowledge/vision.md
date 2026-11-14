@@ -381,8 +381,8 @@ than guessed, and nothing renames what is stored.
 Submitted handoffs keep `queue_dispatch: northstar-queue` support permanently;
 new handoffs use `queue_dispatch: nucleus`. Stored events, fence and idempotency
 identifiers, the review and cancel markers in `core/forge/index.ts`, the hook-commit
-trailers in `core/hooks/hooks.ts` and the `queue_dispatch` authorization role are
-unchanged.
+trailers in `core/hooks/hook-publication.ts` and the `queue_dispatch` authorization
+role are unchanged.
 Plugin-ID discovery knows only `nucleus` (nucleus#971): a Paseo config that
 still names the retired `northstar-queue` plugin ID is ignored, not migrated,
 and the capacity authority's privileged paths are the Nucleus ones.

@@ -116,10 +116,14 @@ for run reads and supervisor inspection in `project-qa-inspection.ts`, escaped
 descendant capacity tracking in `project-qa-escapees.ts`, and file pruning in
 `project-qa-supervision-files.ts`. The supervision-files module also owns durable
 schemas, run paths, owner-only reads and writes, step logs and file removal.
-`project-qa-supervisor.ts` owns the detached pipeline and re-exports the moved
-file helpers and TAP collector for existing callers. `project-qa-tap-failures.ts`
-owns failure parsing, identities and truncation. These modules import downward;
-none imports its former parent, and file helpers have no runtime store dependency.
+The detached supervisor is three owners: `project-qa-pipeline.ts` runs the ordered
+stages and records every step, `project-qa-teardown.ts` reruns a settled run's
+recorded teardown, and `project-qa-detached-io.ts` holds the real executors and
+durable writes. `project-qa-worktree.ts` owns the run's linked checkout, its
+sibling links, the `paseo.json` worktree hooks and the checkout's removal.
+`project-qa-tap-failures.ts` owns failure parsing, identities and truncation.
+These modules import downward; none imports its former parent, and file helpers
+have no runtime store dependency.
 
 ### Shared task reads
 

@@ -59,7 +59,7 @@ export const DATA_HOME_ENTRIES = Object.freeze([
   { path: "shadow-seeds/", kind: "durable", owner: "retired contract 009 producer" },
   { path: "isolation/", kind: "durable", owner: "core/hooks/hooks.ts; core/hooks/hook-cleanup.ts (settled checkout retention)" },
   { path: "queue-hooks/", kind: "durable", owner: "core/hooks/hooks.ts" },
-  { path: "project-qa/", kind: "durable", owner: "core/qa/project-qa-supervisor.ts (logs/results); core/qa/project-qa.ts (settled checkout retention)" },
+  { path: "project-qa/", kind: "durable", owner: "core/qa/project-qa-supervision-files.ts (logs/results); core/qa/project-qa.ts (settled checkout retention)" },
   { path: ".external-backups/", kind: "durable", owner: "core/store/data-home-retention.ts (migration copy; live data home only)" },
   { path: "project-validation/", kind: "durable", owner: "core/qa/project-validation-supervisor.ts" },
   { path: "callback.sock", kind: "ephemeral", owner: "server/callback.ts" },

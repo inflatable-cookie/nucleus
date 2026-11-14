@@ -2124,8 +2124,9 @@ the same day took signals by hand, and Nucleus recorded the cancel as `failed`.
   - **Run timeout.** It starts at launch, not at submission. The repository
     `qa` setting's `timeoutMs` is the run timeout. Nucleus's default grows to
     the selector's measured p95 × 1.5 when that is longer than the setting.
-- **Supervisor.** `project-qa-supervisor.ts` is the conforming contract 010
-  supervisor for milestone QA. Project validation uses a detached wrapper over
+- **Supervisor.** `project-qa-pipeline.ts` with `project-qa-teardown.ts` and
+  `project-qa-detached-io.ts` is the conforming contract 010 supervisor for
+  milestone QA. Project validation uses a detached wrapper over
   the same process-group executor, with an additional durable project verdict
   that Nucleus can reconcile after a service roll.
   - **Launch.** It runs each step's command in a new process group and records

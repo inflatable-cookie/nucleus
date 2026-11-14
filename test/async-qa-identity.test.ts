@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { processCommandLineAsync, findProcessByCommandTokenAsync } from '../core/machine/process-identity';
-import { supervisorLivenessAsync } from '../core/qa/project-qa-supervisor';
+import { supervisorLivenessAsync } from '../core/machine/supervisor-liveness';
 import { ProjectQaRunner } from './project-qa-runner-fixture';
 
 test('async supervisor reads yield and retain token identity, mismatch and dead verdicts', async t => {

@@ -19,7 +19,7 @@ const { assertCheckoutAvailable } = await import("../../core/workspaces/checkout
 const { realpath } = await import("node:fs/promises");
 const { Store, digest } = await import("../../core/store/store.ts");
 const { ProjectQaRunner } = await import("../../core/qa/project-qa.ts");
-const { qaSupervisionPaths, readQaSupervision } = await import("../../core/qa/project-qa-supervisor.ts");
+const { qaSupervisionPaths, readQaSupervision } = await import("../../core/qa/project-qa-supervision-files.ts");
 
 const out = value => process.stdout.write(`${JSON.stringify(value)}\n`);
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
