@@ -783,18 +783,12 @@ export class Ladder {
       if (answer.startsWith('Wait for a task (')) {
         let prerequisite: Task | null = null;
         try {
-          // The reason may carry a note after the reference; the first resolving token is the target.
+          // The reason may carry a note after the reference; only the first
+          // matching token is the target, and it must resolve or the answer
+          // is refused (a later token in the note never substitutes for it).
           const candidates = extractTaskReferenceCandidates(reason);
-          let lastError: unknown = null;
-          for (const candidate of candidates) {
-            try { prerequisite = this.resolution.messageRecipientTask(current, candidate); break; }
-            catch (error) { lastError = error; }
-          }
-          if (!prerequisite) {
-            try { prerequisite = this.resolution.messageRecipientTask(current, reason); }
-            catch (error) { lastError = error; }
-          }
-          if (!prerequisite) throw lastError ?? Error(`No task reference in "${reason}"`);
+          const target = candidates.length ? candidates[0]! : reason;
+          prerequisite = this.resolution.messageRecipientTask(current, target);
         }
         catch (error) { throw Error(`Wait for a task (put its reference in Reason) could not read target "${reason}": ${error instanceof Error ? error.message : String(error)}`); }
         const controlInput = taskControlInputSchema.parse({ taskId: current.id, version: current.version,
@@ -825,19 +819,12 @@ export class Ladder {
       if (answer.startsWith('Wait for an operator decision (')) {
         let decision: DecisionView | null = null;
         try {
-          // The reason may carry a note after the ID; the first matching token is the target.
+          // The reason may carry a note after the ID; only the first matching
+          // token is the target, and it must resolve or the answer is refused
+          // (a later token in the note never substitutes for it).
           const candidates = extractDecisionIdCandidates(reason);
-          let lastError: unknown = null;
           const decisions = new Decisions(this.store);
-          for (const candidate of candidates) {
-            try { decision = decisions.get({ id: candidate }); break; }
-            catch (error) { lastError = error; }
-          }
-          if (!decision) {
-            try { decision = decisions.get({ id: reason.trim() }); }
-            catch (error) { lastError = error; }
-          }
-          if (!decision) throw lastError ?? Error(`No decision ID in "${reason}"`);
+          decision = decisions.get({ id: candidates.length ? candidates[0]! : reason.trim() });
           if (decision.status !== 'open') throw Error('the decision is not open');
         } catch (error) {
           throw Error(`Wait for an operator decision (put its ID in Reason) could not read target "${reason}": ${error instanceof Error ? error.message : String(error)}`);

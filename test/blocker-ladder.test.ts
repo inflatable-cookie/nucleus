@@ -1817,6 +1817,46 @@ test('a timed-wait answer with a note after the timestamp applies the wait', asy
   } finally { await f.close(); }
 });
 
+test('a task wait refuses when the first reference token does not resolve, even with a valid token in the note', async () => {
+  const f = fixture({ responsible: true });
+  f.engine.resolution.delegatedAnswerWaitMs = 5000;
+  const bogus = '00000000-0000-4000-8000-000000000000';
+  (f.adapter as unknown as Record<string, unknown>).askPlanner = async () =>
+    `Choice: Wait for a task\nReason: ${bogus} — actually waiting on ${f.submitted.id}`;
+  try {
+    f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: join(f.dir, 'repo') }] });
+    f.store.setProjectPlanner({ key: 'app', agentId: 'planner-1', setBy: 'operator' });
+    await f.reviews(1); await f.engine.wake();
+    await f.report('blocked', { summary: 'Waiting for upstream', cause: { kind: 'external', name: 'upstream' } });
+    await until(() => f.events('planner_escalation_refused').length > 0);
+    assert.match(f.events('planner_escalation_refused').at(-1)?.detail ?? '', /could not read target/);
+    assert.match(f.events('planner_escalation_refused').at(-1)?.detail ?? '', new RegExp(bogus));
+    assert.ok(!f.current().prerequisiteWait?.waitsFor?.length, 'no wait is established on the later token');
+    assert.ok(!f.events('planner_escalation_wait').some(event => event.detail.includes('"kind":"task"')),
+      'the refusal never becomes a task wait');
+  } finally { await f.close(); }
+});
+
+test('a decision wait refuses when the first ID token does not resolve, even with a valid ID in the note', async () => {
+  const f = fixture({ responsible: true });
+  f.engine.resolution.delegatedAnswerWaitMs = 5000;
+  const bogus = '00000000-0000-4000-8000-000000000000';
+  const decision = new Decisions(f.store).add({ question: 'What next?', askedBy: 'origin' });
+  (f.adapter as unknown as Record<string, unknown>).askPlanner = async () =>
+    `Choice: Wait for an operator decision\nReason: ${bogus} — see ${decision.id}`;
+  try {
+    f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: join(f.dir, 'repo') }] });
+    f.store.setProjectPlanner({ key: 'app', agentId: 'planner-1', setBy: 'operator' });
+    await f.reviews(1); await f.engine.wake();
+    await f.report('blocked', { summary: 'Waiting for a ruling', cause: { kind: 'external', name: 'ruling' } });
+    await until(() => f.events('planner_escalation_refused').length > 0);
+    assert.match(f.events('planner_escalation_refused').at(-1)?.detail ?? '', /could not read target/);
+    assert.match(f.events('planner_escalation_refused').at(-1)?.detail ?? '', new RegExp(bogus));
+    assert.ok(!f.events('planner_escalation_wait').some(event => event.detail.includes('"kind":"decision"')),
+      'the refusal never becomes a decision wait');
+  } finally { await f.close(); }
+});
+
 test("a planner's recorded time wait prevents pending recovery from re-escalating until it wakes", async () => {
   const f = fixture({ responsible: true });
   f.engine.resolution.delegatedAnswerWaitMs = 5000;
