@@ -1,0 +1,1 @@
+T3 tool-timeline and question reads come from the nightly's bounded thread window, so a long thread's tools and pending questions are readable again instead of reported unavailable; only reads that need the complete transcript still refuse an incomplete projection.

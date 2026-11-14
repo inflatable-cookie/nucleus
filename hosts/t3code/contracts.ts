@@ -62,6 +62,8 @@ export const runtimeRequest = z.object({
 });
 const question = z.object({ id, header: z.string(), question: z.string(), options: z.array(z.object({ label: z.string() })) });
 export const turnItem = z.object({ id, type: id, requestId: id.optional(),
+  /** The run that owns the item; one run is one provider turn. Null on thread-level items. */
+  runId: id.nullable().optional(),
   questions: z.array(question).optional(), createdAt: date.optional(), updatedAt: date.optional(),
 }).passthrough().superRefine((item, ctx) => {
   if (item.type === 'user_input_request' && (!item.requestId || !item.questions))

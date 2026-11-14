@@ -466,11 +466,29 @@ ones. Settled runs, resolved requests and the timeline before the window are
 absent, and none of them changes a status, an active run, a pending request or a
 settle marker. Observation asks for that bounded snapshot and reports status,
 active run, pending request and archive state from any length of thread, so a
-long thread is never unobservable (nucleus#1188). A read that consumes the
-transcript — timeline pages, question text, answer mapping — also opts in and
-refuses a paged or locally-omitted projection, so partial history is never handed
-out as the whole list and no consumer requests an unbounded thread snapshot.
-Its refusal names the missing coverage, not the thread's length. Complete shell
+long thread is never unobservable (nucleus#1188). The timeline reader and the
+question reads take the same bounded snapshot (nucleus#1217): a timeline page is
+the newest window that read carried, described honestly — a contiguous newest
+suffix (`gap`, `staleCursor`, `reset` and `hasNewer` false), the thread as its
+stable epoch, `hasOlder` true when the requested depth or the nightly's own
+window left earlier history behind, cursors as positions inside the window, and
+`projection: "projected"`. Each entry's `turnId` is the run that owns the item,
+because one T3 run is one provider turn, so a window that reaches back into an
+earlier run proves its partial coverage. A pending question is read from that
+window: the nightly keeps every pending runtime request and the
+`user_input_request` item that carries its questions, so a long thread answers
+without the full transcript; a pending request whose item the window does not
+carry is refused by that exact field. Answered questions are the newest answered
+window: a resolved request the window dropped is absent, and one whose question
+item it dropped keeps its answers with no question text rather than an invented
+one. A read that needs the complete transcript still opts in and refuses a paged
+or locally-omitted projection, so partial history is never handed out as the
+whole list and no consumer requests an unbounded thread snapshot. Its refusal
+names the missing coverage, not the thread's length. The nightly exposes no
+history-cursor pagination for a bounded window, so a window that cannot reach
+back into an earlier turn cannot be widened further: the shared owned-tool
+reader's own progress check reports that, never a fabricated deeper page and
+never a `null` read. Complete shell
 and archive inventory reads contain summaries rather than transcript history;
 the Nightly exposes no complete paged shell form. Omitting settled threads or
 subagents cannot establish absence and is not an inventory substitute.
@@ -494,10 +512,11 @@ only to the task owner, so the host's words are shown as they are and nothing is
 certified: a Paseo `Agent was not found` and a T3 `T3Code timeout:
 orchestration.subscribeThread` both appear verbatim.
 
-The canonical thread projection is the whole turn list, so timeline pages carry
-the full coverage contract: no gap, no reset, no newer history, an epoch that
-is the thread identity, and start/end cursors that are positions in the full
-list. The test transport serves only records in the Nightly's own wire shape:
+The canonical thread projection is the whole turn list, while a T3 timeline page
+is the newest bounded window: the page carries the window's own coverage (no gap,
+no reset, no newer history, the thread as its stable epoch and cursors as
+positions inside the window), so a page never claims the full list. The test
+transport serves only records in the Nightly's own wire shape:
 `test/fixtures/t3code-contract.json` (`wireShapes`) records the field sets
 captured read-only from the nightly, the fake completes every served thread,
 run, runtime request, message and turn item to them (`visibleTurnItems` derived

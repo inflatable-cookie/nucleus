@@ -17,6 +17,7 @@ export const STAMP = '2026-01-01T00:00:00.000Z';
  * partial one (nucleus#1188 review).
  */
 const shapes = contract.wireShapes as {
+  snapshotKeys: string[];
   projectionKeys: string[]; threadKeys: string[]; runKeys: string[]; runtimeRequestKeys: string[];
   turnItemBaseKeys: string[]; turnItemTypeKeys: Record<string, string[]>; messageKeys: string[];
   visibleTurnItemKeys: string[] };
@@ -166,6 +167,13 @@ export async function t3Fake(t: TestContext, directory: string) {
     // answer, so a hand-made coverage field cannot enter a test unobserved.
     for (const field of contract.subscribeThread.boundedRequired)
       assert.ok(field === 'snapshotSequence' || Object.hasOwn(snapshot, field), `bounded snapshot.${field}`);
+    // A bounded answer carries exactly the recorded key set (the `kind` tag and
+    // the sequence ride its frame), so a test can never read a field the live
+    // Nightly does not send. A test that deliberately serves a malformed shape
+    // overrides a coverage field, and then only the required set is checked.
+    if (!Object.keys(controls.threadCoverage).length && !controls.incompleteThread)
+      assert.deepEqual(Object.keys({ kind: 'snapshot', snapshotSequence: 1, ...snapshot }).sort(), [...shapes.snapshotKeys].sort(),
+        'a bounded snapshot carries exactly the recorded key set');
     return snapshot;
   };
   const controls = { environmentId: 'synthetic-environment', version: 'nightly-synthetic-unseen', protocol: 2,

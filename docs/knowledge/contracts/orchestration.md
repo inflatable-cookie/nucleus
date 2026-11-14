@@ -2966,7 +2966,12 @@ movement invalidates source approval and preserves the normal readiness gates.
 - Every response needs coverage flags, an epoch and matching cursors. Gaps,
   resets, missing facts, read failures and exhausted budgets refuse. Partial
   history needs turn IDs and a dated boundary into an earlier turn; a partial
-  tail never hides a live or unknown tool.
+  tail never hides a live or unknown tool. A host whose newest window cannot be
+  widened (T3Code's bounded snapshot, whose only timeline read is that window and
+  whose epoch and cursors are window positions) is reported by the same progress
+  check: the reader never fabricates a deeper page and never reads the window as
+  `null`/unavailable. A host shape problem surfaces as that read's own named
+  failure, so the refusal starts from the exact cause.
 - Merge, external-merge, closeout, superseded-run, cleanup and author
   capability-upgrade gates read this proof. In fixtures
   `observedParticipantTimeline` in `test/support/tool-timeline.ts` supplies
