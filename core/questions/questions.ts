@@ -247,7 +247,7 @@ export class Questions {
       this.supersedeBudgetQuestionsInTransaction(taskId, 'The exhausted budget was extended.');
       return next;
     });
-    this.supersededBudgetQuestions(taskId);
+    this.settleSupersededBudgetQuestions(taskId);
     return updated;
   }
   /**
@@ -258,8 +258,9 @@ export class Questions {
    * showing it (nucleus#1187).
    */
   supersedeBudgetQuestions(taskId: string, reason: string): string[] {
-    const apply = () => { this.supersedeBudgetQuestionsInTransaction(taskId, reason); return this.supersededBudgetQuestions(taskId); };
-    return this.store.db.isTransaction ? apply() : this.store.transaction(apply);
+    const marks = () => this.supersedeBudgetQuestionsInTransaction(taskId, reason);
+    if (this.store.db.isTransaction) marks(); else this.store.transaction(marks);
+    return this.settleSupersededBudgetQuestions(taskId);
   }
   private supersedeBudgetQuestionsInTransaction(taskId: string, reason: string): void {
     const events = this.store.eventsAll(taskId);
@@ -279,8 +280,12 @@ export class Questions {
       }
     }
   }
-  /** Abort the in-turn waits and dismiss the native prompts of the recorded budget questions. */
-  private supersededBudgetQuestions(taskId: string): string[] {
+  /**
+   * Abort the in-turn waits and dismiss the native prompts of the recorded budget
+   * questions. Runs after the write that superseded them: a host call belongs
+   * outside the transaction that records the intent.
+   */
+  private settleSupersededBudgetQuestions(taskId: string): string[] {
     const ids = budgetQuestionIds(this.store.eventsAll(taskId));
     for (const questionId of ids) this.resolution.responsibleQuestions.get(questionId)?.abort();
     this.dismissSupersededNativeQuestions(taskId, ids);

@@ -126,20 +126,23 @@ export class TaskStops {
    * views read as progressing, and the board would ask about a pause that is gone.
    */
   clearPassedBudgetStop(task: Task): Task {
-    if (task.resolution.stop?.reason !== 'budget') return task;
+    if (task.resolution.stop?.reason !== 'budget' || ['done', 'cancelled'].includes(task.phase)) return task;
     const budget = taskBudget(task, this.store.runs(task.id), Date.now(), this.store.eventsAll(task.id));
     if (budget.exhausted) return task;
     // A queued task's own wait is dispatch; every other phase is progressing under
     // whatever it was doing, so the pause's text never survives as the reason.
     const reason = task.phase === 'queued' ? DISPATCH_WAIT_REASON : TASK_PROGRESSING_REASON;
     const detail = `The measured budget no longer shows the pause: ${Math.round(budget.wallMs.used / 60_000)} of ${budget.wallMs.limit / 60_000} minutes and ${budget.effectiveTokens.used} of ${budget.effectiveTokens.limit} effective tokens; the task's budget does not stop it`;
-    return this.store.transaction(() => {
+    const cleared = this.store.transaction(() => {
       const latest = this.store.task(task.id);
-      if (latest.resolution.stop?.reason !== 'budget') return latest;
-      const updated = this.resolution.update(latest, { stop: null }, { reason }, 'budget_pause_cleared', detail);
-      this.resolution.questions.supersedeBudgetQuestions(task.id, 'The measured budget no longer shows the pause.');
-      return updated;
+      if (latest.resolution.stop?.reason !== 'budget') return null;
+      return this.resolution.update(latest, { stop: null }, { reason }, 'budget_pause_cleared', detail);
     });
+    if (!cleared) return this.store.task(task.id);
+    // The question answers to the same figure: the pause is gone, so its recorded
+    // question is superseded and dismissed rather than left waiting for an answer.
+    this.resolution.questions.supersedeBudgetQuestions(task.id, 'The measured budget no longer shows the pause.');
+    return cleared;
   }
   /** Record one stop or wait on the task; matching observations retain their first timestamp. */
   recordStop(task: Task, reason: TaskStopReason, detail: string, suggestedVerbs?: TaskStopVerb[], phase?: Task['phase']): Task {
