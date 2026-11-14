@@ -1,4 +1,4 @@
-import { visibleTaskSummaries, availabilitySchema, DEFAULT_GLOBAL_LIMIT, DEFAULT_PROJECT_LIMIT, DEFAULT_PAPERCUT_PROJECT_LIMIT, DEFAULT_STALL_THRESHOLD_MINUTES, DEFAULT_HOLD_REMINDER_MINUTES, DEFAULT_HOLD_ESCALATION_MINUTES, DEFAULT_LANE_DRAIN_MINUTES, DEFAULT_LANE_DRAIN_ESCALATION_MINUTES } from "../../shared/contracts";
+import { visibleTaskSummaries, availabilitySchema, DEFAULT_GLOBAL_LIMIT, DEFAULT_PROJECT_LIMIT, DEFAULT_PAPERCUT_PROJECT_LIMIT, DEFAULT_STALL_THRESHOLD_MINUTES, DEFAULT_HOLD_REMINDER_MINUTES, DEFAULT_HOLD_ESCALATION_MINUTES, DEFAULT_LANE_DRAIN_MINUTES, DEFAULT_LANE_DRAIN_ESCALATION_MINUTES, DEFAULT_HOST_OUTAGE_NOTICE_MINUTES } from "../../shared/contracts";
 import type { SnapshotInput, SnapshotState, OutcomeSearchInput, Task, BoundRun, UsageLevel, BackupHealth } from "../../shared/contracts";
 import { taskWaitStateContext, queuedReason } from "../recovery/wait-context";
 import { occupiesSlot, RETIRED_OBSERVATION_STALE_MS } from "../engine";
@@ -89,6 +89,7 @@ export class RuntimeBoard {
       holdEscalationMinutes: this.context.store.getMeta<number>("holdEscalationMinutes") ?? DEFAULT_HOLD_ESCALATION_MINUTES,
       laneDrainMinutes: this.context.store.getMeta<number>("laneDrainMinutes") ?? DEFAULT_LANE_DRAIN_MINUTES,
       laneDrainEscalationMinutes: this.context.store.getMeta<number>("laneDrainEscalationMinutes") ?? DEFAULT_LANE_DRAIN_ESCALATION_MINUTES,
+      hostOutageNoticeMinutes: this.context.store.getMeta<number>("hostOutageNoticeMinutes") ?? DEFAULT_HOST_OUTAGE_NOTICE_MINUTES,
       paseoCallLimit: this.context.store.configuredPaseoCallLimit(),
       operationLimit: this.context.store.configuredOperationLimit(), operationBacklog: this.context.store.operationBacklog(),
       backup: this.context.backupHealthProjection(),
@@ -208,6 +209,7 @@ export class RuntimeBoard {
       holdEscalationMinutes: this.context.store.getMeta<number>("holdEscalationMinutes") ?? DEFAULT_HOLD_ESCALATION_MINUTES,
       laneDrainMinutes: this.context.store.getMeta<number>("laneDrainMinutes") ?? DEFAULT_LANE_DRAIN_MINUTES,
       laneDrainEscalationMinutes: this.context.store.getMeta<number>("laneDrainEscalationMinutes") ?? DEFAULT_LANE_DRAIN_ESCALATION_MINUTES,
+      hostOutageNoticeMinutes: this.context.store.getMeta<number>("hostOutageNoticeMinutes") ?? DEFAULT_HOST_OUTAGE_NOTICE_MINUTES,
       paseoCallLimit: this.context.store.configuredPaseoCallLimit(),
       operationLimit: this.context.store.configuredOperationLimit(), operationBacklog: this.context.store.operationBacklog(),
       backup,

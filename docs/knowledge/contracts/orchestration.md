@@ -1155,6 +1155,35 @@ request identities and submitted handoffs are not rewritten.
   `queue.stages` refuses, and stage records stay readable history that never
   dispatches or merges.
 
+### Host outage
+
+- A task's host is part of its identity (Tom, 2026-11-14; T3 lane document v18,
+  host dropout option 1: wait). While its host is unavailable — the service
+  health `state` is not `online`, so the transport is not connected — the task's
+  stop is `host_unavailable`, naming the host and the time the outage was first
+  observed. The outage record is durable (`hostOutages` meta), so a service
+  restart during the outage keeps the same start. A stop that already belongs to
+  an owner answer (budget, ladder escalation, responsible question, hold, proof
+  wait, interactive turn, paused stop, operator attention) keeps its own record;
+  the outage only suspends sends.
+- Nothing is sent to that host: no quantum, launch, continuation, notification,
+  recovery or coordinator, and no stall, incident or escalation is raised from
+  the outage. The wall-time budget pauses for the wait (Spec 058 budgets). New
+  dispatch for a project whose host is away waits the same way.
+- When the host returns, the wait clears and observation re-proves each retained
+  thread before anything is sent; the task continues on the same host and
+  threads. Delivery that was unknown stays unknown — an outage is never a reason
+  to replay it.
+- Moving a task to another host stays an explicit owner decision: there is no
+  automatic failover and no `move host` verb.
+- Past the dispatch-limits bound (`hostOutageNoticeMinutes`, 120 by default) each
+  affected project's planner receives one notice naming the host, its outage
+  start and the waiting tasks, through the ordinary durable notice path. The
+  same outage never asks again; a fresh outage starts unnotified. A project with
+  no planner recipient is skipped. A shorter outage tells nobody.
+- The board card of a waiting task shows the same wait ("Waiting on <host> since
+  …"); host health itself is unchanged.
+
 ### Orphan worktree after a timed-out create
 
 - Initial workspace creation is Nucleus-owned bulk Git: `git worktree add` into

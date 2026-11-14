@@ -74,7 +74,7 @@ export const taskBudgetBoardView = (budget: TaskBudgetView): TaskBudgetBoardView
  * A task held on one of these makes no progress of its own, so its wall clock
  * stops (nucleus#1153).
  */
-export const NUCLEUS_HELD_STOP_REASONS = ["external_unavailable", "workspace_unavailable", "route_unavailable", "provider_unavailable"] as const satisfies readonly TaskStopReason[];
+export const NUCLEUS_HELD_STOP_REASONS = ["external_unavailable", "workspace_unavailable", "route_unavailable", "provider_unavailable", "host_unavailable"] as const satisfies readonly TaskStopReason[];
 export type NucleusHeldStopReason = (typeof NUCLEUS_HELD_STOP_REASONS)[number];
 
 /**

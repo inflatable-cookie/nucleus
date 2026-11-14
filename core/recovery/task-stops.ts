@@ -117,6 +117,20 @@ export class TaskStops {
     });
   }
   /**
+   * Clear the one host wait when its host is back (Tom, 2026-11-14; T3 lane v18,
+   * host dropout option 1: wait). Nothing about the task's identity, host or
+   * threads changes; the next pass re-proves each retained thread and the task
+   * continues where it was. Only the wait's own stop record is cleared, so an
+   * unrelated fault the task carried keeps its bookkeeping.
+   */
+  clearHostWait(task: Task): Task {
+    const current = this.store.task(task.id);
+    if (current.resolution.stop?.reason !== 'host_unavailable') return current;
+    const reason = current.phase === 'queued' ? DISPATCH_WAIT_REASON : TASK_PROGRESSING_REASON;
+    const detail = `Host ${current.hostId ?? 'unknown'} is back; the task resumes on the same host and threads`;
+    return this.resolution.update(current, { stop: null }, { reason }, 'host_outage_resumed', detail);
+  }
+  /**
    * Spec 058 budgets (nucleus#1187): a recorded `budget` stop is a fence like any
    * other, so it may only stand while the measurement it names still shows the
    * pause. A changed measurement — a converted task's first recorded run, a

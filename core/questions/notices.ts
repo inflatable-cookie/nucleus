@@ -3,6 +3,7 @@ import { RETAINED_WORKER_PROFILE_REASON, TASK_OWNER_HOLD, episodeBindsCurrentWor
 import { normalizeRepositoryOrigin } from '../../shared/lanes';
 import { isSshAuthExhausted } from '../../shared/ssh-auth';
 import { isWaitingTaskStop } from '../../shared/task-stop';
+import { parseHostOutageNoticeId } from '../../shared/host-outage';
 import { isCloseoutHookHold } from '../hooks/hooks';
 import { NO_ORIGIN_THREAD_WAIT, missingOriginHasPlanner, noticeId, noticeTarget, originRecipient } from './origin';
 import type { AgentObservation } from '../host/adapter';
@@ -127,6 +128,60 @@ export class Notices {
     return 'done';
   }
   /**
+   * Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): the one notice a
+   * host outage past the dispatch-limits bound delivers to an affected project's
+   * planner. Raised once per outage on a project-level notice id; this pass sends
+   * it through the same pending/intent/delivered path as a hold prompt, never
+   * resends after an uncertain send, and supersedes it if the outage ended first.
+   * The planner's own host may be a different, healthy one (a Paseo planner for a
+   * T3 project), so delivery resolves that host before sending.
+   */
+  async deliverHostOutageNotices() {
+    if (!this.adapter.notify || this.paused()) return;
+    for (const n of this.store.pendingNotices()) {
+      if (this.paused()) return;
+      if (n.kind !== 'host_outage') continue;
+      const identity = parseHostOutageNoticeId(n.id);
+      const outage = identity ? this.resolution.hostOutage(identity.hostId) : null;
+      const live = Boolean(identity && outage && outage.since === identity.since);
+      if (!live) {
+        this.store.putNotice({ ...n, status: 'superseded', error: 'The host outage ended before the notice was delivered' });
+        continue;
+      }
+      if (n.status === 'intent') { this.store.putNotice({ ...n, status: 'uncertain', error: 'Restart during delivery; inspect the planner thread before resending' }); continue; }
+      const recipientHost = await this.resolution.identifyOriginHost(n.agentId);
+      if (!recipientHost) {
+        if (n.error !== 'Waiting for a proven planner host') this.store.putNotice({ ...n, error: 'Waiting for a proven planner host' });
+        continue;
+      }
+      if (!this.resolution.withHost(recipientHost, () => this.resolution.originHostAvailable(recipientHost))) {
+        const reason = `Waiting for host ${recipientHost}`;
+        if (n.error !== reason) this.store.putNotice({ ...n, error: reason });
+        continue;
+      }
+      const sent = await this.resolution.withHost(recipientHost, () => this.sendDurably({
+        recipient: n.agentId,
+        lookupWait: message => `Waiting for the project planner: ${message}`,
+        busyWait: state => `Waiting for the project planner to finish (${state.status})`,
+        wait: reason => { if (n.error !== reason) this.store.putNotice({ ...n, error: reason }); },
+        gone: () => this.store.putNotice({ ...n, status: 'superseded', error: 'The planner thread is no longer available' }),
+        confirm: () => {
+          const current = this.store.notices(n.taskId).find(notice => notice.id === n.id);
+          if (!current || current.status !== 'pending') return null;
+          const still = this.resolution.hostOutage(identity!.hostId);
+          if (!still || still.since !== identity!.since) {
+            this.store.putNotice({ ...current, status: 'superseded', error: 'The host outage ended before the notice was delivered' });
+            return null;
+          }
+          return current;
+        },
+        target: current => ({ agentId: current.agentId, id: current.id, text: current.text }),
+        mark: (current, status, error) => this.store.putNotice({ ...current, error, status }),
+      }));
+      if (sent === 'paused') return;
+    }
+  }
+  /**
    * Spec 041 delivery: one durable notice per drain episode reaches the plan owner's thread
    * through the same pending/intent/delivered path as a hold prompt, never resent blindly.
    * A notice whose episode ended, or whose owner thread is gone, is superseded; the
@@ -189,9 +244,9 @@ export class Notices {
   }
   async deliverNotices(scopedHost?: string) {
     if (!scopedHost) {
-      const tasks = [...this.store.maintenanceTasks(true), ...this.store.pendingNotices().filter(n => !['lane_drain','next_aim','qa'].includes(n.kind)).map(n => this.store.task(n.taskId))];
+      const tasks = [...this.store.maintenanceTasks(true), ...this.store.pendingNotices().filter(n => !['host_outage','lane_drain','next_aim','qa'].includes(n.kind)).map(n => this.store.task(n.taskId))];
       for (const n of this.store.pendingNotices()) {
-        if (n.status !== 'pending' || ['lane_drain','next_aim','qa'].includes(n.kind)) continue;
+        if (n.status !== 'pending' || ['host_outage','lane_drain','next_aim','qa'].includes(n.kind)) continue;
         if (!this.store.task(n.taskId).originHostId && n.error !== 'Waiting for a proven origin host')
           this.store.putNotice({ ...n, error: 'Waiting for a proven origin host' });
       }
@@ -201,7 +256,7 @@ export class Notices {
     }
     if (!this.resolution.originHostAvailable(scopedHost)) {
       for (const n of this.store.pendingNotices()) {
-        if (n.status !== 'pending' || ['lane_drain','next_aim','qa'].includes(n.kind)) continue;
+        if (n.status !== 'pending' || ['host_outage','lane_drain','next_aim','qa'].includes(n.kind)) continue;
         if (this.store.task(n.taskId).originHostId === scopedHost && n.error !== `Waiting for host ${scopedHost}`)
           this.store.putNotice({ ...n, error: `Waiting for host ${scopedHost}` });
       }
@@ -249,7 +304,7 @@ export class Notices {
     }
     for (const n of this.store.pendingNotices()) {
       if (this.paused()) return;
-      if (n.kind === 'hold' || n.kind === 'hold_release' || n.kind === 'lane_drain' || n.kind === 'next_aim' || n.kind === 'qa') continue;
+      if (n.kind === 'hold' || n.kind === 'hold_release' || n.kind === 'host_outage' || n.kind === 'lane_drain' || n.kind === 'next_aim' || n.kind === 'qa') continue;
       const task = this.store.task(n.taskId);
       if (task.originHostId !== scopedHost) continue;
       const completion=n.kind==='completion';
