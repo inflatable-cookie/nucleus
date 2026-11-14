@@ -18,6 +18,7 @@ import { DispatchLaunch, type DispatchLaunchContext } from './dispatch/launch';
 
 import { intakeContext } from './intake/context';
 
+import { JointReviewQuestion } from './questions/joint-review-question';
 import { Questions } from './questions/questions';
 import { NativeQuestions } from './questions/native-questions';
 
@@ -368,6 +369,7 @@ export class Resolution {
   readonly observation = new Observation(recoveryContext(this, ['adapter', 'attention', 'environmentDeferred', 'extendCallbackReminder', 'graceMs', 'heavyRunAlive', 'host', 'hostAvailable', 'inventoryHostMatches', 'launchingRuns', 'onTaskHost', 'orphanRuns', 'paused', 'reconcileAbsentCreation', 'reconcileStalledTurnStop', 'recoverRefusedReviewer', 'remindStoppedRun', 'resolveIncident', 'resumeTransientProviderThread', 'retainedProfileIssue', 'stalls', 'stopped', 'store', 'supersedeOrphans', 'transportDeferred', 'update', 'waiting', 'withHost']));
   readonly delegation = new Delegation(this);
   readonly questions = new Questions(this);
+  readonly jointReviewQuestion = new JointReviewQuestion(this);
   readonly proofAutorun = new ProofAutorun(this);
   readonly nativeQuestions = new NativeQuestions(this);
   readonly ladder = new Ladder(this);
@@ -820,8 +822,8 @@ export class Resolution {
    * Returns true when the round must not be dispatched now. Other tasks keep
    * their ordinary revision route.
    */
-  responsibleJointQuestion(t: Task): Promise<boolean> { return this.questions.responsibleJointQuestion(t); }
-  settleJointQuestion(taskId: string, id: string, answer: string): void { return this.questions.settleJointQuestion(taskId, id, answer); }
+  responsibleJointQuestion(t: Task): Promise<boolean> { return this.jointReviewQuestion.responsibleJointQuestion(t); }
+  settleJointQuestion(taskId: string, id: string, answer: string): void { return this.jointReviewQuestion.settleJointQuestion(taskId, id, answer); }
   responsibleBlockerLadder(t: Task, input: { source: 'worker' | 'revision' | 'executor' | 'reviewer' | 'recovery' | 'closeout'; runId: string | null; completion: Completion }): Promise<boolean> { return this.ladder.responsibleBlockerLadder(t, input); }
   holdProofOnlyGoWait(t: Task): boolean { return this.ladder.holdProofOnlyGoWait(t); }
   settleCompletedExecutorBlocker(input: Completion): Promise<void> { return this.ladder.settleCompletedExecutorBlocker(input); }

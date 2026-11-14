@@ -610,24 +610,30 @@ export class Ladder {
     if (pending || this.resolution.stopped()) return;
     const reply = delegated?.reply ?? null;
     const who = delegated ? `${delegated.role} ${delegated.agentId}` : null;
+    const archiveDecider = async () => {
+      if (delegated?.role !== 'decider') return;
+      try { await this.resolution.host.archiveAgent(delegated.agentId); }
+      catch (error) {
+        this.store.event(t.id, 'planner_escalation_archive_failed', `${id}: decider ${delegated.agentId}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));
+      }
+    };
     if (!reply && escalationOutlived(this.store.task(t.id))) {
       this.store.event(t.id, 'planner_escalation_answered', `${id}: answered by ordinary progress: the task merged or ended first`);
       return;
     }
     if (plannerEscalations(events() as LadderEvent[]).find(item => item.id === id)?.answered) return;
     if (!reply || !who) {
-      if (who?.startsWith('decider ')) await this.resolution.host.archiveAgent(who.slice(8)).catch(() => {});
       this.store.event(t.id, 'planner_escalation_missed', `${id}: no delegated answer was produced; the escalation stays open for the planner`);
       return;
     }
     if (reply.kind === 'operator') {
-      if (who.startsWith('decider ')) await this.resolution.host.archiveAgent(who.slice(8)).catch(() => {});
+      await archiveDecider();
       this.resolution.classifyEscalationToOperator(this.store.task(t.id), id, reply.reason, who);
       return;
     }
     const answer = reply.kind === 'choice' ? `${reply.choice} — ${reply.reason}`.trim() : reply.answer;
     const recordedRefusal = events().findLast(event => event.kind === 'planner_escalation_answer_refused' && event.detail.startsWith(`${id}:`));
-    const initialQuestionId = who.startsWith('decider ')
+    const initialQuestionId = delegated?.role === 'decider'
       ? `ns-decider-${id}`
       : delegated?.rung === 'project' ? `ns-escalation-${id}-project` : `ns-escalation-${id}`;
     let refusal = recordedRefusal
@@ -645,7 +651,7 @@ export class Ladder {
       if (!events().some(event => event.kind === 'planner_escalation_refusal_sent' && event.detail.startsWith(`${id}:`)))
         this.store.event(t.id, 'planner_escalation_refusal_sent', `${id}: ${refusal}`.slice(0, 4000));
       try {
-        const recipient = who.replace(/^(?:planner|decider) /, '');
+        const recipient = delegated!.agentId;
         const followup = await this.resolution.askBound(this.store.task(t.id), recipient, {
           prompt: nativeDelegationPrompt('planner', { question: `Your choice was refused: ${refusal}. Choose again for the same escalation.`, choices: retryChoices, context }),
           signal: new AbortController().signal, timeoutMs: DELEGATED_ANSWER_TIMEOUT_MS,
@@ -662,7 +668,7 @@ export class Ladder {
         this.store.event(t.id, 'planner_escalation_unknown', `${id}: refusal follow-up delivery: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));
       }
     }
-    if (who.startsWith('decider ')) await this.resolution.host.archiveAgent(who.slice(8)).catch(() => {});
+    await archiveDecider();
   }
   /** A planner or decider that explicitly says it cannot decide reaches the operator: one Spec 032 decision. */
   operatorDecisionApplied(taskId: string, id: string): boolean {
