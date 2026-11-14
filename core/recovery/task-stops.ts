@@ -127,7 +127,8 @@ export class TaskStops {
    */
   clearPassedBudgetStop(task: Task): Task {
     if (task.resolution.stop?.reason !== 'budget' || ['done', 'cancelled'].includes(task.phase)) return task;
-    const budget = taskBudget(task, this.store.runs(task.id), Date.now(), this.store.eventsAll(task.id));
+    const budget = taskBudget(task, this.store.runs(task.id), Date.now(), this.store.eventsAll(task.id),
+      this.store.canonicalRepository(task.repoPath, task.repository));
     if (budget.exhausted) return task;
     // A queued task's own wait is dispatch; every other phase is progressing under
     // whatever it was doing, so the pause's text never survives as the reason.

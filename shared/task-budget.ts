@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { CapabilityLevel, HoldFence, Run, Task } from "./contracts";
+import type { CapabilityLevel, HoldFence, RepositorySettings, Run, Task } from "./contracts";
 import type { TaskStopReason } from "./task-stop";
 
 /**
@@ -19,6 +19,17 @@ export const TASK_BUDGET_DEFAULTS = {
   very_high: { effectiveTokens: 25_000_000, wallMs: 960 * MINUTE_MS },
 } as const;
 export type TaskBudgetLevel = keyof typeof TASK_BUDGET_DEFAULTS;
+
+/** Repositories that run affected tests need room for the longer validation pass. */
+export function taskBudgetWallDefault(
+  level: TaskBudgetLevel,
+  repository?: Pick<RepositorySettings, "affectedTests"> | null,
+): number {
+  if (!repository?.affectedTests) return TASK_BUDGET_DEFAULTS[level].wallMs;
+  if (level === "low") return 120 * MINUTE_MS;
+  if (level === "medium") return 360 * MINUTE_MS;
+  return TASK_BUDGET_DEFAULTS[level].wallMs;
+}
 
 /** very_low takes the low default; a responsible task with no size takes medium. */
 export function taskBudgetLevel(complexity: CapabilityLevel | null | undefined): TaskBudgetLevel {
@@ -251,8 +262,9 @@ export function budgetClockPaused(clock: BudgetClock | null | undefined, at: num
 
 /**
  * A responsible task's budget at `at` (epoch ms). Every caller passes the same
- * inputs — the task row, its runs and its events — so the dispatch gate, the
- * board, task detail and `task.next` measure one figure (nucleus#1187). The
+ * inputs — the task row, its runs, its events and canonical repository settings —
+ * so the dispatch gate, the board, task detail and `task.next` measure one figure
+ * (nucleus#1187). The
  * lifecycle start is the task's own `budgetSince`, else its legacy
  * `responsible_converted` event, both read from those events rather than chosen
  * per caller. Each extension adds one default increment, so the limits grow by
@@ -266,11 +278,11 @@ export function budgetClockPaused(clock: BudgetClock | null | undefined, at: num
  * the task's budget.
  */
 export function taskBudget(task: Pick<Task, "complexity" | "resolution"> & Partial<Pick<Task, "budgetSince" | "holds" | "held" | "mergeHold" | "holdAt" | "holdUntil" | "holdOwner" | "holdReason" | "holdGeneration" | "holdBlocking" | "phase">>, runs: Run[], at: number,
-  events: BudgetEvent[] = []): TaskBudgetView {
+  events: BudgetEvent[] = [], repository?: Pick<RepositorySettings, "affectedTests"> | null): TaskBudgetView {
   const level = taskBudgetLevel(task.complexity);
   const steps = 1 + (task.resolution.budgetExtensions ?? 0);
   const tokenLimit = TASK_BUDGET_DEFAULTS[level].effectiveTokens * steps;
-  const wallLimit = TASK_BUDGET_DEFAULTS[level].wallMs * steps;
+  const wallLimit = taskBudgetWallDefault(level, repository) * steps;
   const lifecycleStart = Date.parse(task.budgetSince ?? events.find(event => event.kind === "responsible_converted")?.at ?? "");
   const inLifecycle = (iso: string) => !Number.isFinite(lifecycleStart) || Date.parse(iso) >= lifecycleStart;
   const eligibleRuns = Number.isFinite(lifecycleStart) ? runs.filter(run => inLifecycle(run.createdAt)) : runs;

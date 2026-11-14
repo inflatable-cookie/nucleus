@@ -230,7 +230,8 @@ export class Questions {
   extendTaskBudget(taskId: string, detail: string, by = 'The operator'): Task | null {
     const current = this.store.task(taskId);
     const events = this.store.eventsAll(taskId);
-    if (!taskBudget(current, this.store.runs(taskId), Date.now(), events).exhausted) return null;
+    if (!taskBudget(current, this.store.runs(taskId), Date.now(), events,
+      this.store.canonicalRepository(current.repoPath, current.repository)).exhausted) return null;
     const wasBudgetPause = current.resolution.stop?.reason === 'budget';
     // Papercut 7cb34906 (2026-11-10): a budget extended through a verb left
     // Nucleus's own budget questions pending on the worker thread; launches then

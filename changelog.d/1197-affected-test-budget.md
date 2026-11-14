@@ -1,0 +1,1 @@
+Low and medium tasks on repositories configured with affected tests now receive larger wall-time budgets: 120 minutes for low and 360 minutes for medium. Extensions use the same repository-aware increment; token and higher-complexity limits are unchanged.

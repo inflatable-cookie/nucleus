@@ -48,6 +48,40 @@ test('a budget stop at awaiting_review names extend_budget and asks its question
   } finally { await f.close(); }
 });
 
+test('stored affected-test settings give the budget gate, task.next and detail the same medium limit', async () => {
+  const f = fixture({ responsible: true });
+  try {
+    const task = f.current();
+    const startedAt = iso(Date.now() - 200 * MINUTE);
+    f.store.update(task.id, { complexity: 'medium', budgetSince: startedAt });
+    f.recordRunStart(startedAt);
+    const repository = f.store.patchRepository({ origin: null, path: task.repoPath }, {
+      affectedTests: { command: 'effigy test:affected --run' },
+    });
+    assert.deepEqual(repository.affectedTests, { command: 'effigy test:affected --run' });
+
+    const current = f.current();
+    const runs = f.store.runs(task.id), events = f.store.eventsAll(task.id);
+    const measured = taskBudget(current, runs, Date.now(), events,
+      f.store.canonicalRepository(current.repoPath, current.repository));
+    assert.equal(measured.wallMs.limit, 360 * MINUTE);
+    assert.equal(measured.exhausted, null, '200 minutes remains within the affected-test medium allowance');
+    assert.equal(taskBudget(current, runs, Date.now(), events, null).wallMs.limit, 180 * MINUTE,
+      'the same stored medium task shape keeps the default limit without affected-test settings');
+    assert.equal(taskBudget({ ...current, resolution: { ...current.resolution, budgetExtensions: 1 } }, runs, Date.now(), events, repository).wallMs.limit,
+      720 * MINUTE, 'one extension adds the affected-test medium default');
+    const detail = taskDetailView(current, {}, runs, events, repository);
+    assert.deepEqual(detail.budget?.wallMs.limit, measured.wallMs.limit);
+    const next = ownerTaskNext(collectOwnerVerbFacts(f.store, current));
+    assert.equal(next.reason, detail.reason);
+    assert.equal(next.verbs.find(view => view.verb === 'extend_budget')?.available, false);
+
+    await f.engine.wake();
+    assert.notEqual(f.current().resolution.stop?.reason, 'budget', 'dispatch does not stop inside the 360-minute limit');
+    assert.ok(f.creates.length > 0, 'the ordinary launch gate allowed work to start');
+  } finally { await f.close(); }
+});
+
 test('a budget question is recorded for every phase, even with the task host offline', async () => {
   const f = fixture({ responsible: true });
   try {

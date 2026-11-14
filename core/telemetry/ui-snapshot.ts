@@ -105,7 +105,8 @@ export function createUiSnapshotFactsCache(store: Store, slotAdmissionReader: (t
       tasks,
       capacityTasks,
       summaries: visibleTaskSummaries(displayTasks, projects, runs, decisionByTask, waitContexts, boardHostId,
-        new Map(displayTasks.map(task => [task.id, store.eventsAll(task.id)]))).map(summary => {
+        new Map(displayTasks.map(task => [task.id, store.eventsAll(task.id)])),
+        new Map(displayTasks.map(task => [task.id, store.canonicalRepository(task.repoPath, task.repository)]))).map(summary => {
         const heavyRun = heavyByTask.get(summary.id);
         return heavyRun ? { ...summary, heavyRun } : summary;
       }),

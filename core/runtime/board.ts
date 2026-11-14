@@ -231,7 +231,8 @@ export class RuntimeBoard {
     const contexts = new Map(page.tasks.map(task => [task.id, taskWaitStateContext(this.context.store, task, decisions.get(task.id) ?? null, admission)]));
     const display = page.tasks.map(task => ({ ...task, reason: queuedReason(this.context.store, task, contexts.get(task.id)!, candidate => this.context.engine.queuedExternalWait(candidate)) }));
     const events = new Map(page.tasks.map(task => [task.id, this.context.store.eventsAll(task.id)]));
-    return { tasks: visibleTaskSummaries(display, this.context.store.projects(), runs, decisions, contexts, this.context.hostId, events), nextOffset: page.nextOffset };
+    const repositorySettings = new Map(display.map(task => [task.id, this.context.store.canonicalRepository(task.repoPath, task.repository)]));
+    return { tasks: visibleTaskSummaries(display, this.context.store.projects(), runs, decisions, contexts, this.context.hostId, events, repositorySettings), nextOffset: page.nextOffset };
   }
 
   laneTaskPage(input: { lane: string; offset: number; limit: number }) {
@@ -239,7 +240,8 @@ export class RuntimeBoard {
     const page = this.context.store.laneTaskPage(input.lane, input.offset, input.limit);
     const runs = this.context.store.runsForTasks(page.tasks.map(task => task.id));
     const events = new Map(page.tasks.map(task => [task.id, this.context.store.eventsAll(task.id)]));
-    return { tasks: visibleTaskSummaries(page.tasks, this.context.store.projects(), runs, new Map(), new Map(), this.context.hostId, events), total: page.total, nextOffset: page.nextOffset };
+    const repositorySettings = new Map(page.tasks.map(task => [task.id, this.context.store.canonicalRepository(task.repoPath, task.repository)]));
+    return { tasks: visibleTaskSummaries(page.tasks, this.context.store.projects(), runs, new Map(), new Map(), this.context.hostId, events, repositorySettings), total: page.total, nextOffset: page.nextOffset };
   }
 
   detail(input: { taskId?: string; reference?: string; repository?: string; number?: number }) {

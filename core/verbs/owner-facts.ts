@@ -164,7 +164,8 @@ export function retainedWorkerDeliveryRefusal(facts: OwnerVerbFacts): string | n
  * The budget figure `next` reads (nucleus#1187): the same call the dispatch gates
  * and the views make, from the task row, its runs and its events.
  */
-export const ownerTaskBudget = (facts: OwnerVerbFacts) => taskBudget(facts.task, facts.runs, Date.now(), facts.events);
+export const ownerTaskBudget = (facts: OwnerVerbFacts) => taskBudget(facts.task, facts.runs, Date.now(), facts.events,
+  facts.store.canonicalRepository(facts.task.repoPath, facts.task.repository));
 
 /**
  * The one honest sentence `next` carries once a task has retired enough workers
