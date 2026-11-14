@@ -27,6 +27,7 @@ setup = "npm ci"
 "release:prepare" = "npm run release:prepare -- {args}"
 "proof:installed-daemon" = "node scripts/proof-installed-daemon.mjs {args}"
 "proof:t3code:heartbeat" = "node scripts/acceptance/t3code-heartbeat.mjs {args}"
+"proof:t3code:read-sizes" = "node scripts/acceptance/t3code-read-sizes.mjs {args}"
 "proof:t3code" = "node --import tsx scripts/acceptance/t3code-private.ts {args}"
 check = [{ task = "check:types" }, { task = "check:publication" }]
 # Test files a change can affect, from the import graph; `--run` runs them. See scripts/test-affected.mjs.

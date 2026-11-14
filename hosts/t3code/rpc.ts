@@ -34,7 +34,7 @@ export type T3DisconnectReason = 'heartbeat_failure' | 'socket_close' | 'socket_
 /** The protocol-error branch, never a payload value. Recorded next to lastDisconnectReason. */
 export type T3ProtocolErrorBranch =
   | 'unparseable_frame'
-  | 'non_string_message'
+  | 'binary_message'
   | 'oversize_message'
   | 'frame_batch_oversize'
   | 'malformed_frame'
@@ -46,7 +46,8 @@ export type T3ProtocolErrorBranch =
   | 'stream_overlong'
   | 'unexpected_exit'
   | 'unknown_tag';
-export type T3ProtocolError = { branch: T3ProtocolErrorBranch; tag: string | null };
+export type T3ProtocolError = { branch: T3ProtocolErrorBranch; tag: string | null;
+  byteLength?: number; pendingMethods?: string[] };
 const PROTOCOL_TAG = /^[A-Za-z][A-Za-z0-9]{0,40}$/;
 const protocolTag = (value: unknown): string | null => typeof value === 'string' && PROTOCOL_TAG.test(value) ? value : null;
 
@@ -235,8 +236,12 @@ export class T3RpcClient {
       socket.addEventListener('close', () => fail('transport', 'socket_close'));
       socket.addEventListener('message', event => {
         if (this.socket !== socket) return;
-        if (typeof event.data !== 'string') return this.broken('non_string_message');
-        if (event.data.length > MAX_FRAME_BYTES) return this.broken('oversize_message');
+        if (typeof event.data !== 'string') {
+          const byteLength = event.data instanceof Blob ? event.data.size : event.data.byteLength;
+          return this.unreadableMessage('binary_message', byteLength);
+        }
+        const byteLength = Buffer.byteLength(event.data, 'utf8');
+        if (byteLength > MAX_FRAME_BYTES) return this.unreadableMessage('oversize_message', byteLength);
         try {
           const decoded: unknown = JSON.parse(event.data);
           const frames = Array.isArray(decoded) ? decoded : [decoded];
@@ -270,7 +275,7 @@ export class T3RpcClient {
     const id = String(this.nextId++);
     try { data = JSON.stringify({ _tag: 'Request', id, tag: method, payload, headers: [] }); }
     catch { return Promise.reject(new T3RpcError('protocol', method, undefined, 'not_sent')); }
-    if (data.length > MAX_FRAME_BYTES) return Promise.reject(new T3RpcError('protocol', method, undefined, 'not_sent'));
+    if (Buffer.byteLength(data, 'utf8') > MAX_FRAME_BYTES) return Promise.reject(new T3RpcError('protocol', method, undefined, 'not_sent'));
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         const pending = this.pending.get(id);
@@ -383,6 +388,16 @@ export class T3RpcClient {
   }
   private broken(branch: T3ProtocolErrorBranch, tag?: unknown): void {
     this.noteProtocolError(branch, tag);
+    this.disconnectReason = 'protocol_error';
+    this.failAll(new T3RpcError('protocol'));
+    this.close();
+  }
+  private unreadableMessage(branch: 'binary_message' | 'oversize_message', byteLength: number): void {
+    // No envelope has been decoded. A single pending stream does not establish
+    // ownership: a late interrupted stream or connection control may also send.
+    // Do not parse beyond the byte budget or guess a request from a JSON prefix.
+    this.protocolError = { branch, tag: null, byteLength,
+      pendingMethods: [...new Set([...this.pending.values()].map(request => request.method))].sort() };
     this.disconnectReason = 'protocol_error';
     this.failAll(new T3RpcError('protocol'));
     this.close();

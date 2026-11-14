@@ -7,8 +7,8 @@ import { decode, shellSnapshot, projection, threadSnapshot, threadSnapshotCovera
 
 /**
  * What one thread snapshot is for. Observation needs the thread record, its runs
- * and its runtime requests, never the transcript; a transcript read needs every
- * turn item and refuses a window that left history behind.
+ * and its runtime requests; a transcript read needs every turn item and refuses
+ * a bounded window that left history behind. No read requests a full snapshot.
  */
 export type ThreadReadKind = 'observation' | 'transcript';
 export type Projection = z.infer<typeof projection>;
@@ -71,16 +71,16 @@ export class T3Reads {
    * shell presents, and every pending or waiting runtime request (nucleus#1188).
    * Older settled runs, resolved requests and the timeline before the window are
    * absent, and none of them changes a status, an active run, a pending request
-   * or a settle marker. A transcript read does not opt in and refuses an
-   * incomplete projection, so only a reader that needs every turn item is ever
-   * refused for a long thread. Both reads strictly decode the coverage fields.
+   * or a settle marker. Transcript reads also opt in, then refuse an incomplete
+   * projection rather than requesting unbounded history. Both reads strictly
+   * decode the coverage fields.
    */
 
   async readProjection(threadId: string, kind: ThreadReadKind = 'transcript'): Promise<Projection> {
     let snapshot: Projection | undefined;
     try {
       await this.core.rpc.readStream('orchestration.subscribeThread', {
-        threadId, requestCompletionMarker: true, ...(kind === 'observation' ? { acceptBoundedSnapshot: true } : {}),
+        threadId, requestCompletionMarker: true, acceptBoundedSnapshot: true,
       }, value => {
         const item = decode(z.object({ kind: z.string() }).passthrough(), value, 'subscribeThread');
         if (item.kind === 'snapshot') {

@@ -1,0 +1,1 @@
+T3 thread reads always request bounded snapshots, so transcript and question reads cannot pull an oversized history onto the shared connection. Binary and oversized messages now report separate causes, byte counts and pending method names.

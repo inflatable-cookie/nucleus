@@ -194,10 +194,12 @@ export async function t3Fake(t: TestContext, directory: string) {
   const projectReceipts = new Map<string, { type: string; projectId: string }>();
   const sockets = new Set<Socket>();
   const controlFrames: Value[] = [];
+  const frameBytes: number[] = [];
   const injectors: Array<(text: string) => void> = [];
   let upgrades = 0, closes = 0;
   const wsText = (socket: Socket, text: string) => {
     const bytes = Buffer.from(text);
+    frameBytes.push(bytes.length);
     const header = Buffer.alloc(bytes.length < 126 ? 2 : bytes.length <= 0xffff ? 4 : 10);
     header[0] = 0x81;
     if (header.length === 2) header[1] = bytes.length;
@@ -455,5 +457,7 @@ export async function t3Fake(t: TestContext, directory: string) {
   const dropSockets = () => { for (const socket of sockets) socket.destroy(); };
   const inject = (value: unknown) => { for (const write of injectors) write(JSON.stringify(value)); };
   const injectRaw = (text: string) => { for (const write of injectors) write(text); };
-  return { endpoint: `http://127.0.0.1:${address.port}`, controls, threads, commands, requests, snapshots, controlFrames, get upgrades() { return upgrades; }, get closes() { return closes; }, projects: projectRows, dropSockets, inject, injectRaw };
+  const fullSnapshotBytes = (threadId: string) => Buffer.byteLength(JSON.stringify({ _tag: 'Chunk', requestId: 'synthetic-request',
+    values: [{ kind: 'snapshot', snapshotSequence: controls.snapshotSequence, projection: wireProjection(threads.get(threadId)!) }] }));
+  return { endpoint: `http://127.0.0.1:${address.port}`, controls, threads, commands, requests, snapshots, controlFrames, frameBytes, fullSnapshotBytes, get upgrades() { return upgrades; }, get closes() { return closes; }, projects: projectRows, dropSockets, inject, injectRaw };
 }

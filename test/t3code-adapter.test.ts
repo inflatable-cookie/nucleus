@@ -500,9 +500,9 @@ test('a thread long enough to page stays observable from the nightly bounded sna
   // references, and drops a settled run the window no longer shows
   // (contract `subscribeThread.projectionRetained.runs`).
   assert.equal(served.runs, 2);
-  // The same thread read without the opt-in, as main's observe read it, outlives
-  // the bound and names the read that timed out.
-  await assert.rejects(host.pendingQuestions(created.id), /T3Code timeout: orchestration\.subscribeThread/);
+  // Transcript consumers also opt in and refuse missing history without ever
+  // fetching the slow full snapshot.
+  await assert.rejects(host.pendingQuestions(created.id), /incomplete projection/);
 });
 
 test('a nightly that ignores the bounded opt-in still observes from its whole projection', async t => {
@@ -536,9 +536,40 @@ test('a transcript read refuses a paged projection, so partial history is never 
   await assert.rejects(host.pendingQuestions(created.id), /incomplete projection/);
   await assert.rejects(host.answeredQuestions(created.id), /incomplete projection/);
   assert.equal(await host.agentTimelinePage(created.id), null);
-  // The transcript read never opts into a window; it demands the whole list.
+  // The transcript read requests a bounded window and refuses missing history.
   const read = server.requests.filter(request => request.tag === 'orchestration.subscribeThread').at(-1)!.payload as Record<string, unknown>;
-  assert.equal(read.acceptBoundedSnapshot, undefined);
+  assert.equal(read.acceptBoundedSnapshot, true);
+});
+
+test('history exceeding the frame limit is observed, listed and titled without any full snapshot read', async t => {
+  const { host, server, spec, workspace } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const p = server.threads.get(created.id)!;
+  // Nightly wire records duplicate item bodies in visibleTurnItems. The full
+  // reply exceeds 16 MiB; a 20-row window stays well below it.
+  p.turnItems = Array.from({ length: 200 }, (_, index) => syntheticTurnItem(created.id, index + 1,
+    { text: 'Synthetic history '.repeat(3_000) }));
+  p.runs = [syntheticRun(created.id, 1)];
+  const frameLimit = 16 * 1024 * 1024;
+  assert.ok(server.fullSnapshotBytes(created.id) > frameLimit);
+  const start = server.requests.length;
+  assert.equal((await host.observe(created.id)).active, false);
+  assert.ok((await host.listLiveAgents()).some(agent => agent.id === created.id));
+  assert.ok((await host.workspaceThreads([workspace.id])).threads.some(thread => thread.id === created.id));
+  assert.ok(await host.originAgent(created.id));
+  const task = { id: 'synthetic-task', number: 225, title: 'Synthetic role', held: false, hostId: host.hostId,
+    workspaceId: created.workspaceId, runId: 'worker-run', phase: 'working' } as Task;
+  await host.setTaskWorkspaceTitle(task, '225: Bounded title', 'bounded-title', false);
+  assert.equal(p.thread.title, '225: Bounded title');
+  await host.settleReportedThread(created.id, 'synthetic-report');
+  await assert.rejects(host.pendingQuestions(created.id), /incomplete projection/);
+  await assert.rejects(host.answeredQuestions(created.id), /incomplete projection/);
+  assert.equal(await host.agentTimelinePage(created.id), null);
+  const reads = server.requests.slice(start).filter(request => request.tag === 'orchestration.subscribeThread');
+  assert.ok(reads.length >= 7);
+  assert.ok(reads.every(request => request.payload.acceptBoundedSnapshot === true));
+  assert.ok(server.frameBytes.every(bytes => bytes < frameLimit), 'no actual reply crosses the frame limit');
+  assert.equal(host.connected, true);
 });
 
 test('inventory repeats moving live/archive snapshot pairs and succeeds when the sequence settles', async t => {
