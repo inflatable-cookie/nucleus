@@ -130,7 +130,7 @@ test('a completed cancellation releases its slot even with a stuck unreleased ru
 // (audit B6, schema 45), so the oracle decodes the raw row through the store's own
 // row resolver — never through the projection under test.
 const oracleTask = (store: Store, data: string) => {
-  const task = taskSchema.parse((store as unknown as { resolveStoredTask(raw: Record<string, unknown>): unknown }).resolveStoredTask(JSON.parse(data)));
+  const task = taskSchema.parse((store as unknown as { taskWritesStore: { resolveStoredTask(raw: Record<string, unknown>): unknown } }).taskWritesStore.resolveStoredTask(JSON.parse(data)));
   const number = store.numberFor(task.id);
   return number ? { ...task, ...number } : task;
 };

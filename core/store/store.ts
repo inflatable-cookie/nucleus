@@ -1,20 +1,26 @@
-import { StoreAuth } from "./store-auth";
-import { StoreConfig } from "./store-config";
-import { digest,now,StoreCore } from "./store-core";
-import { StoreHostRuns } from "./store-host-runs";
-import { StoreLanes } from "./store-lanes";
-import { StoreAdmission } from "./store-admission";
-import { StoreMigration } from "./store-migration";
-import { ContentFingerprint,StoreFacts,StoreReclaim,type ReclaimResult } from "./store-reclaim";
-import { HISTORY_RETENTION_MS,StoreRetention,type RetainedRowPrune } from "./store-retention";
-import { StoreOperations } from "./store-operations";
-import { buildOutcomeRecord,StoreOutcomes,type TelemetryFactChunk,type VerbOutcome } from "./store-outcomes";
-import { StorePlanning } from "./store-planning";
-import { StoreProjectQa } from "./store-project-qa";
-import { StoreProjects } from "./store-projects";
-import { StoreSubmissions,submissionHash } from "./store-submissions";
-import { STORED_OBSERVATION_FIELDS,StoreTaskWrites,type DetachedEntries,type StoredTaskParts } from "./store-task-writes";
-import { repositoryIdentity,StoreTasks,taskNumberReference } from "./store-tasks";
+import {StoreAuth} from "./store-auth";
+import {StoreConfig} from "./store-config";
+import {digest,now,StoreCore} from "./store-core";
+import {StoreHostRuns} from "./store-host-runs";
+import {StoreLanes} from "./store-lanes";
+import {StorePrerequisites} from "./store-prerequisites";
+import {StoreSourcePromotion} from "./store-source-promotion";
+import {StoreTaskFunnel} from "./store-task-funnel";
+import {StoreTaskNumbers} from "./store-task-numbers";
+import {StoreThreadEffects} from "./store-thread-effects";
+import {reviewEntryBeforeFirstRun,reviewEntryUnrun,type ReviewEntryFacts} from "./review-entry-eligibility";
+import {StoreAdmission} from "./store-admission";
+import {StoreMigration} from "./store-migration";
+import {ContentFingerprint,StoreFacts,StoreReclaim,type ReclaimResult} from "./store-reclaim";
+import {HISTORY_RETENTION_MS,StoreRetention,type RetainedRowPrune} from "./store-retention";
+import {StoreOperations} from "./store-operations";
+import {buildOutcomeRecord,StoreOutcomes,type TelemetryFactChunk,type VerbOutcome} from "./store-outcomes";
+import {StorePlanning} from "./store-planning";
+import {StoreProjectQa} from "./store-project-qa";
+import {StoreProjects} from "./store-projects";
+import {StoreSubmissions,submissionHash} from "./store-submissions";
+import {StoreTaskWrites,type StoredTaskParts} from "./store-task-writes";
+import {StoreTasks} from "./store-tasks";
 export { digest } from "./store-core";
 export { CACHE_SIZE_KIB,CURRENT_SCHEMA,JOURNAL_SIZE_LIMIT_BYTES } from "./store-admission";
 export { AUTO_VACUUM_INCREMENTAL,AUTO_VACUUM_NONE,ContentFingerprint,STORE_COMPACTION_META_KEY,STORE_MAINTENANCE_META_KEY,StoreFacts,RECLAIM_BUDGET_MS,RECLAIM_CHUNK_PAGES,RECLAIM_DRAIN_BUDGET_MS,RECLAIM_DRAIN_FREE_PAGES,RECLAIM_DRAIN_MAX_PAGES,RECLAIM_MAX_PAGES } from "./store-reclaim";
@@ -24,38 +30,28 @@ export { buildOutcomeRecord,type TelemetryFactChunk,type VerbOutcome } from "./s
 export { explicitCriticalFalseSubmissionHash,legacySubmissionHash,submissionHash } from "./store-submissions";
 
 
-import { randomUUID } from "node:crypto";
-import { basename,dirname } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import { z } from "zod";
+import {dirname} from "node:path";
+import {DatabaseSync} from "node:sqlite";
+import {z} from "zod";
 
-import type { BriefVersion,Completion,PoolEntry,Submission } from "../../shared/contracts";
-import { availabilitySchema,compactLiveTask,completionMembership,decisionSchema,DISPATCH_WAIT_REASON,holdsOf,isOperatorOrigin,leadSchema,leadVersionMetadataSchema,noticeSchema,resolutionSchema,runtimeRetirementFailure,syncHoldProjection,TASK_OWNER_HOLD,taskOwner,taskStopClassification,type AgentMessageRecord,type BoardLead,type BoardLeadLink,type Decision,type DemandRoleOffsets,type HostRunAccountingRetirement,type HostRunInternalRecord,type HostRunRecord,type Lane,type LaneDocumentPin,type LaneDocumentVersion,type LaneView,type Lead,type LeadVersion,type Notice,type Outcome,type OutcomeSearchInput,type OutcomeSearchResult,type Papercut,type PendingSubmission,type Profile,type Project,type ProjectCloseout,type ProjectManageInput,type ProjectManagementPreview,type ProjectMergeCheck,type ProjectMergeCheckInput,type ProjectMergeInput,type ProjectMergeResult,type ProjectPlan,type ProjectQa,type ProjectQaRun,type ProjectRemovalBlocker,type ProjectRemoveRepositoryInput,type ProjectTombstone,type ProjectUpsertInput,type ProjectValidation,type QaFence,type QaFenceRecord,type QaFenceView,type QaInventoryItem,type RepositoryChecksPolicy,type RepositorySettings,type RoutingGrant,type RoutingPolicy,type Run,type RuntimeRetirement,type SnapshotInput,type Task,type TaskHolds,type UsageLevel,type UsageSetting,type UsageView } from "../../shared/contracts";
-import { hookStateIsTerminal,type HookRecord } from "../../shared/hooks";
-import { normalizeRepositoryOrigin } from "../../shared/lanes";
-import { operationIsSettled,type OperationAcceptance,type OperationResult,type QueueOperation } from "../../shared/operations";
-import { telemetryStageForTask } from "../../shared/telemetry";
-import { briefDigest,initialBriefVersion } from "../planning/brief";
-import { laneSnapshot,type LaneRecordActivity } from "../planning/lanes";
-import { plainProfileRequest,workerThinkingConflict } from "../dispatch/routing";
-import { EMPTY_RUN_USAGE } from "../telemetry/run-usage";
+import type {Completion,PoolEntry,Submission} from "../../shared/contracts";
+import {availabilitySchema,compactLiveTask,decisionSchema,leadSchema,leadVersionMetadataSchema,noticeSchema,type AgentMessageRecord,type BoardLead,type BoardLeadLink,type Decision,type DemandRoleOffsets,type HostRunAccountingRetirement,type HostRunInternalRecord,type HostRunRecord,type Lane,type LaneDocumentPin,type LaneDocumentVersion,type LaneView,type Lead,type LeadVersion,type Notice,type Outcome,type OutcomeSearchInput,type OutcomeSearchResult,type Papercut,type PendingSubmission,type Profile,type Project,type ProjectCloseout,type ProjectManageInput,type ProjectManagementPreview,type ProjectMergeCheck,type ProjectMergeCheckInput,type ProjectMergeInput,type ProjectMergeResult,type ProjectPlan,type ProjectQa,type ProjectQaRun,type ProjectRemovalBlocker,type ProjectRemoveRepositoryInput,type ProjectTombstone,type ProjectUpsertInput,type ProjectValidation,type QaFence,type QaFenceRecord,type QaFenceView,type QaInventoryItem,type RepositoryChecksPolicy,type RepositorySettings,type RoutingGrant,type RoutingPolicy,type Run,type RuntimeRetirement,type SnapshotInput,type Task,type UsageLevel,type UsageSetting,type UsageView} from "../../shared/contracts";
+import {type HookRecord} from "../../shared/hooks";
+import {type OperationAcceptance,type OperationResult,type QueueOperation} from "../../shared/operations";
+import {type LaneRecordActivity} from "../planning/lanes";
 
-import { papercutFromLead } from "../../shared/papercut-lead";
-import { purgeReleasedRunTicket } from "../intake/reporting-files";
+import {purgeReleasedRunTicket} from "../intake/reporting-files";
 
-import { type NucleusProfile,type ProfileImportRecord } from "../../shared/profiles";
+import {type NucleusProfile,type ProfileImportRecord} from "../../shared/profiles";
 
-import { runBuildOutputIntent } from "../hooks/build-output-records";
-import { removeRecordedRunScratchDirectory } from "../workspaces/run-scratch";
+import {removeRecordedRunScratchDirectory} from "../workspaces/run-scratch";
 
-import { type RepositoryRekeyInput,type RepositoryRekeyPreview,type RepositoryRekeyPreviewInput,type RepositoryRekeyReceipt,type RepositoryRekeyReceiptQuery,type RepositoryRekeyResult } from "../../shared/repository-rekey";
-import type { VerifiedEnclosingOperation } from "../planning/enclosing-operation";
-import { STEPS_RETIRED_REASON } from "../recovery/retired-steps";
-import { stageDeclarationFromBrief } from "../stages";
+import {type RepositoryRekeyInput,type RepositoryRekeyPreview,type RepositoryRekeyPreviewInput,type RepositoryRekeyReceipt,type RepositoryRekeyReceiptQuery,type RepositoryRekeyResult} from "../../shared/repository-rekey";
+import type {VerifiedEnclosingOperation} from "../planning/enclosing-operation";
 
-import { HOST_RUN_OUTPUT_FAILURE_DUE_PAGE,HOST_RUN_OUTPUT_FAILURE_SUMMARY_EXAMPLES,type HostRunOutputFailure,type HostRunOutputReclassification } from "../host-runs/host-run-output-failures";
-import { qualifiedThreadArchiveEffectKey } from "./store-core";
-import type { BudgetClock } from "../../shared/task-budget";
+import {HOST_RUN_OUTPUT_FAILURE_DUE_PAGE,HOST_RUN_OUTPUT_FAILURE_SUMMARY_EXAMPLES,type HostRunOutputFailure,type HostRunOutputReclassification} from "../host-runs/host-run-output-failures";
+import {qualifiedThreadArchiveEffectKey} from "./store-core";
+import type {BudgetClock} from "../../shared/task-budget";
 /**
  * The store's write funnels are closed for a bounded maintenance window; nothing may
  * start a transaction, and the window itself proves no other connection holds a lock.
@@ -120,6 +116,113 @@ export class Store {
     retention: this.retentionStore,
   });
   private readonly reclaimStore = new StoreReclaim(this.core, () => this.path);
+
+  /**
+   * The task and run write funnels. The store is their client: a task or run row has exactly
+   * one write path, and every service the funnel calls here reads or records, it never starts
+   * another write funnel.
+   */
+  private readonly funnel = (() => {
+    const store = this;
+    return new StoreTaskFunnel({
+      get db() { return store.db; },
+      get tasksStore() { return store.tasksStore; },
+      transaction: fn => store.transaction(fn),
+      task: id => store.task(id),
+      event: (taskId, kind, detail) => store.event(taskId, kind, detail),
+      advanceRevision: () => store.advanceRevision(),
+      taskChanged: taskId => store.taskChanged(taskId),
+      taskCountChanged: () => { store.cachedTaskCount = null; },
+      taskRow: (task, before) => store.taskRow(task, before),
+      syncTaskObservation: (taskId, task) => store.syncTaskObservation(taskId, task),
+      resolveReviewRows: rows => store.resolveReviewRows(rows),
+      runObservationOnly: run => store.taskWritesStore.runObservationOnly(run),
+      run: id => store.run(id),
+      queueRunScratchCleanup: directory => { store.pendingRunScratchCleanup.add(directory); },
+      queueRunReportingCleanup: (runId, taskId) => { store.pendingRunReportingCleanup.set(runId, taskId); },
+      get path() { return store.path; },
+      dependencyWait: task => store.dependencyWait(task),
+      taskReference: id => store.taskReference(id),
+      existing: input => store.existing(input),
+      validateDependencies: input => store.validateDependencies(input),
+      requireAttachableLanes: (keys, repoPath, origin) => store.requireAttachableLanes(keys, repoPath, origin),
+      requireLaneDocuments: (keys, repoPath, origin) => store.requireLaneDocuments(keys, repoPath, origin),
+      ensureProject: (repoPath, origin) => store.ensureProject(repoPath, origin),
+      assignNumber: (taskId, repository) => store.assignNumber(taskId, repository),
+      setCredential: (run, token) => store.setCredential(run, token),
+      putNotice: notice => store.putNotice(notice),
+      notices: taskId => store.notices(taskId),
+      runs: taskId => store.runs(taskId),
+      hookEvents: taskId => store.hookEvents(taskId),
+      operations: filter => store.operations(filter),
+      operation: id => store.operation(id),
+      putOutcome: record => store.putOutcome(record),
+      completePapercutsForTask: task => store.planningStore.completePapercutsForTask(task),
+      noteGrantRun: (task, role) => store.noteGrantRun(task, role),
+      receipt: (input, token) => store.receipt(input, token),
+      setCompletionReceipt: (id, task, run, hash, response) => store.setCompletionReceipt(id, task, run, hash, response),
+      threadArchiveEffect: (agentId, hostId) => store.threadArchiveEffect(agentId, hostId),
+    });
+  })();
+
+  /** The stored facts the review-entry boundary reads; the rule itself is one shared function. */
+  private get reviewEntryFacts(): ReviewEntryFacts {
+    return { runsOf: taskId => this.runs(taskId), operation: id => this.operation(id),
+      operations: filter => this.operations(filter), hookEvents: taskId => this.hookEvents(taskId) };
+  }
+  private reviewEntryBeforeFirstRun(task: Task): boolean { return reviewEntryBeforeFirstRun(this.reviewEntryFacts, task); }
+  /** The dependency boundary and the prerequisite wait, in their own owner. */
+  private readonly prerequisites = new StorePrerequisites({
+    ...{} as ReviewEntryFacts,
+    runsOf: taskId => this.runs(taskId),
+    operation: id => this.operation(id),
+    operations: filter => this.operations(filter),
+    hookEvents: taskId => this.hookEvents(taskId),
+    transaction: fn => this.transaction(fn),
+    task: id => this.task(id),
+    taskReference: id => this.taskReference(id),
+    update: (id, change, kind, detail, expected) => this.update(id, change as Partial<Task> & { attention?: never }, kind, detail, expected),
+    dependencyWait: task => this.dependencyWait(task),
+    putNotice: notice => this.putNotice(notice),
+    notices: taskId => this.notices(taskId),
+    reviewEntryBeforeFirstRun: task => this.reviewEntryBeforeFirstRun(task),
+  });
+
+  /** Source promotion: a lead or papercut becomes a task here, and only here. */
+  private readonly promotion = (() => {
+    const store = this;
+    return new StoreSourcePromotion({
+    get db() { return store.db; },
+    transaction: fn => store.transaction(fn),
+    lead: id => store.lead(id),
+    leadVersionOrNull: (id, version) => store.leadVersionOrNull(id, version),
+    leadVersionDigestsBeforeLatest: id => store.leadVersionDigestsBeforeLatest(id),
+    papercut: id => store.papercut(id),
+    updateLead: lead => store.updateLead(lead),
+    updatePapercut: record => store.updatePapercut(record),
+    outcome: taskId => store.outcome(taskId),
+    numberedTask: data => store.numberedTask(data),
+    existing: input => store.existing(input),
+    insert: (input, hostId, handoffText, planningBase, initial, _credential, origin) => store.insert(input, hostId, handoffText, planningBase, initial, undefined, origin),
+    update: (id, change, kind, detail) => store.update(id, change as Partial<Task> & { attention?: never }, kind, detail),
+    validateReviewEntryBrief: (input, githubRepository) => store.validateReviewEntryBrief(input, githubRepository),
+    });
+  })();
+
+  /** Task numbering: assignment, reference lookup and the per-repository counter. */
+  private readonly numbers = (() => {
+    const store = this;
+    return new StoreTaskNumbers({ get db() { return store.db; }, get numberCache() { return store.tasksStore.numberCache; } });
+  })();
+  /** A thread's durable archive effect and the recorded leaves that go with it. */
+  private readonly threadEffects = (() => {
+    const store = this;
+    return new StoreThreadEffects({
+      get db() { return store.db; },
+      getMeta: key => store.getMeta(key), setMeta: (key, value) => store.setMeta(key, value),
+      removeRecordedRunScratch: directory => store.runScratchRemover(directory),
+    });
+  })();
 
   private readonly lanesStore = (() => {
     const store = this;
@@ -437,39 +540,6 @@ export class Store {
    * extracted field per id keep this far cheaper than re-projecting the whole board.
    */
   observationTimes(kind: "task" | "run", ids: Iterable<string>): Map<string, string | null> { return this.taskWritesStore.observationTimes(kind, ids); }
-  private assignNumber(taskId: string, repository: string): { number: number; reference: string } {
-    const existing = this.numberFor(taskId);
-    if (existing) return existing;
-    const row = this.db.prepare("SELECT next_number FROM task_number_counters WHERE repository=?").get(repository);
-    const number = Number(row?.next_number ?? 1);
-    this.db.prepare("INSERT INTO task_numbers(task_id,repository,number) VALUES(?,?,?)").run(taskId, repository, number);
-    this.db.prepare("INSERT INTO task_number_counters(repository,next_number) VALUES(?,?) ON CONFLICT(repository) DO UPDATE SET next_number=excluded.next_number").run(repository, number + 1);
-    const assigned = { number, reference: taskNumberReference(repository, number) };
-    this.tasksStore.numberCache.set(taskId, assigned);
-    return assigned;
-  }
-  numberFor(taskId: string): { number: number; reference: string } | null {
-    const row = this.db.prepare("SELECT repository,number FROM task_numbers WHERE task_id=?").get(taskId);
-    return row ? { number: Number(row.number), reference: taskNumberReference(String(row.repository), Number(row.number)) } : null;
-  }
-  /** Every numbered task's numbering repository; the row survives a task's purge, so it resolves a decision's link. */
-  taskRepositories(): Array<{ taskId: string; repository: string }> {
-    return this.db.prepare("SELECT task_id,repository FROM task_numbers").all()
-      .map(row => ({ taskId: String(row.task_id), repository: String(row.repository) }));
-  }
-  taskIdByNumber(input: { reference?: string; repository?: string; number?: number }): string {
-    const match = input.reference?.match(/^([^#]+)#0*([1-9][0-9]*)$/);
-    const rows = input.repository && input.number
-      ? this.db.prepare("SELECT task_id FROM task_numbers WHERE repository=? AND number=?").all(repositoryIdentity(input.repository, input.repository), input.number)
-      : match ? this.db.prepare("SELECT task_id,repository FROM task_numbers WHERE number=?").all(Number(match[2])).filter(row =>
-        match[1]!.includes('/') ? String(row.repository) === repositoryIdentity(match[1]!, match[1]!) : basename(String(row.repository)) === match[1]) : [];
-    if (rows.length !== 1) throw new Error(rows.length ? "Ambiguous task reference; use repository and number" : "Task reference not found");
-    return String(rows[0].task_id);
-  }
-  /** Resolve human task references at the API boundary; stored identities stay UUIDs. */
-  resolveTaskId(identity: string): string {
-    return identity.includes('#') ? this.taskIdByNumber({ reference: identity }) : identity;
-  }
   addPapercut(record: Omit<Papercut, "lanes" | "draftId" | "version"> & { lanes?: string[]; draftId?: string | null }): Papercut { return this.planningStore.addPapercut(record); }
   papercut(id: string): Papercut { return this.planningStore.papercut(id); }
   listPapercuts(query: { repository?: string; state?: Papercut["state"] } = {}): Papercut[] { return this.planningStore.listPapercuts(query); }
@@ -480,7 +550,6 @@ export class Store {
    * from `task_observations`. A bulk reader supplies those two side stores for its page so
    * a projection build looks none of them up per task.
    */
-  private resolveStoredTask(raw: Record<string, unknown>, parts?: StoredTaskParts): Task { return this.taskWritesStore.resolveStoredTask(raw, parts); }
   /**
    * The exact text a lane-document pin names. A pin is resolved from the stored version it
    * was taken from and its digest is checked on every read, so a later document edit cannot
@@ -488,8 +557,6 @@ export class Store {
    * document is never substituted. A legacy pin that still carries its own text keeps those
    * recorded bytes, which is what every reader saw before the pin was slimmed.
    */
-  private resolvedPin(taskId: string, value: unknown): LaneDocumentPin { return this.taskWritesStore.resolvedPin(taskId, value); }
-  private storedObservationRow(taskId: string): string | null { return this.taskWritesStore.storedObservationRow(taskId); }
   /** The observation-only fields and the write time that moved them, as one small row. */
   private syncTaskObservation(taskId: string, task: Task) { return this.taskWritesStore.syncTaskObservation(taskId, task); }
   /**
@@ -497,10 +564,7 @@ export class Store {
    * the same bytes. A pin whose version cannot be proven keeps its recorded text inline rather
    * than being resolved to content it never named.
    */
-  private storablePin(pin: LaneDocumentPin): LaneDocumentPin | Omit<LaneDocumentPin, "text"> { return this.taskWritesStore.storablePin(pin); }
   private numberedTask(data: string, parts?: StoredTaskParts): Task { return this.taskWritesStore.numberedTask(data, parts); }
-  private storedBriefVersions(taskId: string): BriefVersion[] { return this.taskWritesStore.storedBriefVersions(taskId); }
-  private storedReviews(taskId: string): Pick<Task["resolution"], "review" | "reviews"> { return this.taskWritesStore.storedReviews(taskId); }
   private resolveReviewRows(rows: Array<{ seq: number; data: string }>): Pick<Task["resolution"], "review" | "reviews"> { return this.taskWritesStore.resolveReviewRows(rows); }
   private storedReviewValue(value: unknown): unknown { return this.taskWritesStore.storedReviewValue(value); }
   /**
@@ -508,14 +572,12 @@ export class Store {
    * ones `after` dropped. An ordinary update carries the same objects, so it
    * writes none.
    */
-  private syncDetached(table: "task_brief_versions" | "task_reviews", column: "version" | "seq", taskId: string, before: DetachedEntries, after: DetachedEntries) { return this.taskWritesStore.syncDetached(table, column, taskId, before, after); }
   /**
    * The task row as stored: everything but its brief versions and reviews (their own tables),
    * its referenced text and its observation-only
    * fields (`task_observations`). Audit B6: the row is the task's state, not its documents.
    */
   private taskRow(task: Task, before: Task | null = null): string { return this.taskWritesStore.taskRow(task, before); }
-  private numberedOutcome(data: string): Outcome { return this.outcomesStore.numberedOutcome(data); }
   /**
    * Bounded bulk reads for the shared telemetry base. Each yielded chunk is one page so a
    * caller can hand the event loop back between pages instead of monopolising it.
@@ -555,438 +617,8 @@ export class Store {
   existing(input: Submission): Task | null { return this.submissionsStore.existing(input); }
   taskReference(id:string) { return this.tasksStore.taskReference(id); }
   validateDependencies(input: Submission) { return this.submissionsStore.validateDependencies(input); }
-  /**
-   * The structural fact behind the pre-dispatch dependency and closeout
-   * boundaries: a queued
-   * review-entry task bound to its external workspace at intake,
-   * with no run of any role ever (released, superseded and cancelled history
-   * included), no execution participant and nothing execution-, review- or
-   * delivery-shaped recorded. Intake's settled operation and bound workspace
-   * are provenance, never dispatch. Every other shape of ambiguity refuses.
-   *
-   * `enclosing` (task 404) is the one internally authenticated durable
-   * invocation executing `move to=closeout`, proved by
-   * `verifyEnclosingOperation`: Queue persists that operation before the engine
-   * performs it, so it is the admitted control itself, not a competing writer.
-   * Nothing else is exempt — a stale, foreign, settled or changed invocation
-   * excludes nothing, and the 401 dependency boundary never passes one.
-   */
-  private reviewEntryUnrun(task: Task, enclosing?: VerifiedEnclosingOperation): boolean {
-    const entry = task.reviewEntry;
-    if (!entry || task.entrypoint !== "review" || task.phase !== "queued" || task.removedAt) return false;
-    // The bound workspace is the external one recorded at intake, and no review
-    // admission has dispatched a reader yet (admission records `dispatchBase`).
-    if (!task.workspaceId || task.workspaceId !== entry.workspaceId || !task.directory || entry.dispatchBase !== null) return false;
-    if (entry.directory && task.directory !== entry.directory) return false;
-    // No run of any role ever existed, released or superseded history included.
-    if (this.runs(task.id).length) return false;
-    // The settled intake operation is the provenance that created this task; a
-    // still-running intake or any other unfinished operation is work in flight.
-    const intake = this.operation(entry.operationId);
-    if (intake && !operationIsSettled(intake.state)) return false;
-    if (this.operations({ taskId: task.id, states: ["pending", "running", "needs_attention"] })
-      .some(operation => operation.id !== enclosing?.operationId)) return false;
-    // No hook delivery is outstanding.
-    if (this.hookEvents(task.id).some(hook => !hookStateIsTerminal(hook.state))) return false;
-    const resolution = task.resolution;
-    // No current or prior execution participant or pending agent intent.
-    if (task.agentId || task.runId || task.agentIntent || task.lastAgentStatus || task.workerModel || task.workerModels.length
-      || task.retiredWorkers.length || resolution.currentRunId || resolution.reviewerAgentId || resolution.reviewerProfile) return false;
-    // No completion, checkpoint, merge intent or accepted review/owner credit.
-    // (A source pin and its pending review reason are not credit; each boundary
-    // below reads them separately.)
-    if (task.completion || task.checkpoints.records.length || task.checkpoints.intent) return false;
-    if (resolution.review || resolution.reviews.length || resolution.reviewSupersessions.length
-      || resolution.ownerAcceptances.length || resolution.mechanicalVerification) return false;
-    if (resolution.mergeIntent || resolution.mergeHead || resolution.mergeBase || resolution.mergeRequestedAt
-      || resolution.mergedCommit || resolution.syncedCommit) return false;
-    // No unknown delivery or durable side effect.
-    if (resolution.workspaceRetirement || resolution.closeoutWorkspaceIntent || resolution.archiveIntentWorkspaceId
-      || resolution.workspaceArchiveRetries.length || resolution.runtimeRetirements.length || resolution.buildOutputCleanups.length
-      || resolution.finishedHook || resolution.hostProcessSweep || resolution.mergeResponseOutcome === "uncertain") return false;
-    // No attention, recovery or recorded work instruction is outstanding.
-    if (resolution.incident || resolution.recovery || resolution.recoveryActive || resolution.stalledTurnStop
-      || resolution.attention || resolution.deferredVerb || resolution.pendingWorkerInstruction
-      || resolution.revisionInstruction || resolution.prePrResumeInstruction) return false;
-    return true;
-  }
-  /**
-   * A queued review-entry task binds an existing external workspace at intake,
-   * so its `workspaceId` is provenance rather than a dispatch (task 401). The
-   * pre-dispatch dependency correction stays available until anything about
-   * this task has run, been dispatched or is still pending. A legacy owner-head
-   * receipt and its pending review reason remain recorded source decisions, so
-   * the dependency boundary still refuses them. Current controls cannot create
-   * either; no supplied input overrides proof of no dispatch.
-   */
-  private reviewEntryBeforeFirstRun(task: Task): boolean {
-    if (!this.reviewEntryUnrun(task)) return false;
-    const resolution = task.resolution;
-    return !(resolution.externalOwnerRevisions?.length || resolution.pendingReviewReason);
-  }
-  /**
-   * The same unrun review-entry fact, read by the owner closeout
-   * reconciliation (task 408): a queued review-entry task that never dispatched
-   * is the one shape whose own PR may have merged outside Queue before any
-   * reviewer existed. The dependency correction and external-merge
-   * reconciliation both read `reviewEntryUnrun`, so no second
-   * boundary can drift from them. `enclosing` is the authenticated
-   * durable invocation executing this control (task 404).
-   */
-  reviewEntryUnrunBeforeFirstRun(task: Task, enclosing?: VerifiedEnclosingOperation): boolean {
-    return this.reviewEntryUnrun(task, enclosing);
-  }
-  updateDependencies(task: Task, dependsOn: string[], actor = "operator control"): Task {
-    const beforeDispatch = task.phase === "queued" && !task.workspaceIntent && !task.agentIntent && !task.workspaceId
-      && !task.agentId && !task.completion && !task.resolution.currentRunId;
-    if (!beforeDispatch && !this.reviewEntryBeforeFirstRun(task))
-      throw new Error("Dependencies can only change before dispatch begins");
-    for (const id of dependsOn) {
-      if (id === task.id) throw new Error("A task cannot depend on itself");
-      let dependency: ReturnType<Store["taskReference"]>;
-      try { dependency = this.taskReference(id); } catch { throw new Error(`Prerequisite task does not exist: ${id}. Submit prerequisites first.`); }
-      if (dependency.removedAt && dependency.phase !== "done") throw new Error(`Prerequisite was removed before completion: ${dependency.title} (${id})`);
-      const pending = [id], visited = new Set<string>();
-      while (pending.length) {
-        const candidate = pending.pop()!;
-        if (candidate === task.id) throw new Error(`Dependency change would create a cycle through ${id}`);
-        if (visited.has(candidate)) continue;
-        visited.add(candidate);
-        try { pending.push(...this.task(candidate).dependsOn); } catch { /* Purged completed history cannot point back to this live task. */ }
-      }
-    }
-    const normalized = [...dependsOn].sort();
-    if (JSON.stringify(normalized) === JSON.stringify(task.dependsOn)) return task;
-    const reason = this.dependencyWait({ dependsOn: normalized }) || DISPATCH_WAIT_REASON;
-    return this.update(task.id, { dependsOn: normalized, reason }, "dependencies_changed", `${task.dependsOn.join(", ") || "none"} → ${normalized.join(", ") || "none"}; requested by ${actor}`, task.version);
-  }
-  setPrerequisiteWait(task: Task, waitsFor: string[], reason: string, expectedVersion = task.version): Task {
-    if (task.version !== expectedVersion) throw new Error("Task changed; refresh before setting a prerequisite wait");
-    if (["queued", "dispatching", "merging", "syncing", "closing", "done", "cancelled"].includes(task.phase))
-      throw new Error("Prerequisite waits require a dispatched, unmerged task before merge intent");
-    if (task.resolution.mergeIntent || task.resolution.mergedCommit)
-      throw new Error("Prerequisite waits cannot be changed after merge intent or merge");
-    const dispatched = Boolean(task.agentId || task.runId || task.completion || task.prUrl || task.prHead
-      || task.resumePrNumber || task.resolution.currentRunId);
-    if (!dispatched) throw new Error("Prerequisite waits require a dispatched task");
-    const normalized = [...waitsFor].sort();
-    for (const id of normalized) {
-      if (id === task.id) throw new Error("A task cannot wait for itself");
-      let prerequisite: ReturnType<Store["taskReference"]>;
-      try { prerequisite = this.taskReference(id); }
-      catch { throw new Error(`Prerequisite task does not exist: ${id}`); }
-      if (prerequisite.removedAt && prerequisite.phase !== "done")
-        throw new Error(`Prerequisite was removed before completion: ${prerequisite.title} (${id})`);
-    }
-    if (!normalized.length) {
-      if (!task.prerequisiteWait) return task;
-      return this.update(task.id, { prerequisiteWait: null }, "prerequisite_wait_cleared",
-        `${task.prerequisiteWait.waitsFor.join(", ")}; requested by ${reason}`, expectedVersion);
-    }
-    if (!task.prerequisiteWait?.releasedAt && task.prerequisiteWait?.reason === reason && JSON.stringify(task.prerequisiteWait.waitsFor) === JSON.stringify(normalized))
-      return task;
-    const wait = { id: randomUUID(), waitsFor: normalized, reason: reason.trim(), releasedAt: null };
-    return this.update(task.id, { prerequisiteWait: wait }, "prerequisite_wait_set",
-      `${normalized.join(", ")}; ${reason.trim()}`, expectedVersion);
-  }
-  /** Release one retained prerequisite wait and create its owner notice atomically. */
-  reconcilePrerequisiteWait(taskId: string): "none" | "waiting" | "released" {
-    return this.transaction(() => {
-      const task = this.task(taskId), wait = task.prerequisiteWait;
-      if (!wait || wait.releasedAt) return "none";
-      if (this.dependencyWait({ dependsOn: wait.waitsFor })) return "waiting";
-      const id = `prerequisite-wait:${wait.id}`;
-      if (!this.notices(task.id).some(notice => notice.id === id)) {
-        const owner = taskOwner(task);
-        this.putNotice({ id, taskId: task.id, agentId: owner, recipientAgentId: owner,
-          workspaceId: task.originWorkspaceId, sources: [], originEntry: true, kind: "prerequisite",
-          status: "pending", error: "",
-          text: `Nucleus prerequisite wait cleared\nTask: ${task.title} (${task.id})\nReason: ${wait.reason}\nPrerequisites complete: ${wait.waitsFor.join(", ")}\nThe task is back in normal handling. Nucleus will not revise it automatically.`,
-        });
-      }
-      // The release is the producer's clear: its prerequisite stop goes with it.
-      const stop = task.resolution.stop?.reason === "prerequisite" ? { resolution: { ...task.resolution, stop: null } } : {};
-      this.update(task.id, { prerequisiteWait: { ...wait, releasedAt: now() }, ...stop }, "prerequisite_wait_released",
-        JSON.stringify({ waitId: wait.id, waitsFor: wait.waitsFor, reason: wait.reason }));
-      return "released";
-    });
-  }
   promoteQueuedTask(task:Task,actor="operator control"):Task { return this.submissionsStore.promoteQueuedTask(task, actor); }
   dependencyWait(task: Pick<Task,"dependsOn">): string { return this.tasksStore.dependencyWait(task); }
-  insert(input: Submission, hostId: string, handoffText: string, planningBase: string, initial: Partial<Task> = {}, credential?: {runId:string;token:string;prepare?:(task:Task)=>void}, origin?: string | null): Task {
-    const insert = () => {
-      this.tasksStore.syncProjectionForWrite();
-      if (input.proofOnly && !input.proofExecution) throw new Error('queue.proofOnly requires queue.proofExecution');
-      if (input.requiresOperatorGo && !input.proofOnly) throw new Error('queue.requiresOperatorGo is only valid with queue.proofOnly');
-      const existing = this.existing(input); if (existing) return existing;
-      this.validateDependencies(input);
-      // Every task row is created here, so no intake path can create a staged task (Spec 043);
-      // a replay of an existing historical submission still returns its task above.
-      if (input.brief && stageDeclarationFromBrief(input.brief.text)) throw new Error(STEPS_RETIRED_REASON);
-      // Spec 058: a responsible task merges on reviewer approval plus Queue's
-      // mechanical gates. The manual evidence-only oracle is a verification
-      // coordinator, so it cannot select a different lifecycle.
-      if (input.manualVerification === true)
-        throw new Error('queue.manualVerification is no longer available; every task runs the responsible lifecycle');
-      // Spec 058 cutover 2: a brief states its outcome and acceptance in prose;
-      // the structured verdict opt-in and pass gate are retired. The optional
-      // persisted fields stay readable for stored rows.
-      if (input.reviewVerdicts !== undefined || input.reviewPassGate !== undefined)
-        throw new Error('reviewVerdicts and reviewPassGate are no longer available; state the outcome and acceptance in prose in the brief, and use mergeHold for a needed hold');
-      // Every new task runs the responsible lifecycle.
-      const responsible = input.responsible ?? true;
-      // Task 1109: a task's planner is a thread that answers its planning questions;
-      // the operator answers no delegated question, so a named planner cannot be it.
-      if (input.plannerAgentId && isOperatorOrigin(input.plannerAgentId))
-        throw new Error('The operator is not a thread; name a planner thread or leave the task to its owner');
-      const thinkingConflict = workerThinkingConflict(input.thinkingOptionId, input.profileRequests?.worker);
-      if (thinkingConflict) throw new Error(thinkingConflict);
-      const id = randomUUID();
-      if (initial.hostSelection && initial.hostSelection.hostId !== hostId) throw new Error('Task host selection does not match host');
-      const pinnedAt = now();
-      const briefVersions = initialBriefVersion(input, pinnedAt);
-      const attached = input.lanes.length ? this.requireAttachableLanes(input.lanes, input.repoPath, origin) : [];
-      if (input.laneDocuments?.length) this.requireLaneDocuments(input.laneDocuments, input.repoPath, origin);
-      const repository = repositoryIdentity(input.repoPath, origin);
-      this.ensureProject(input.repoPath, normalizeRepositoryOrigin(origin ?? repository));
-      const assigned = this.assignNumber(id, repository);
-      const task: Task = { ...input, critical: input.critical ?? false, ...(responsible === undefined ? {} : { responsible }), repository, ...assigned, brief: input.brief ? { ...input.brief, digest: briefVersions[0].digest } : null, id, createdAt: now(), updatedAt: now(), version: 1,
-        papercutTask: input.planningSource?.kind === "papercut",
-        entrypoint:input.proofOnly?"proof":"worker",reviewEntry:null,originWorkspaceId:null,notificationAgentId:isOperatorOrigin(input.originAgentId)?null:input.originAgentId,originError:"",originLookupError:"",
-        creatorCompletionRecipients:[],completionSubscriptionOverrides:[],completionNotificationCohort:null,
-        removedAt: null, finishedAt: null, queuePriority:0, prerequisiteWait: null, phase: "queued", reason: DISPATCH_WAIT_REASON,
-        held: false, mergeHold: false, budgetSince: null, holdOwner: null, holdReason: null, holdAt: null, holdGeneration: 0, holdBlocking: null, holdUntil: null, holds: {},
-        lastSubstantiveVersion: 1, handoffText, planningBase, proofExecutions: [], proofFiles: [], proofExecutionRetired: false, proofOnlyResult: null, proofReceiptAcceptance: null,
-        workspaceId: null, directory: null, branch: input.proofOnly ? "" : `ns-${id}`, agentId: null, runId: null,
-        profile: null, profileGroup: null, failoverReason: "", replacementProfile:null, workerExclusions: [], resumePrNumber: null, retiredWorkers: [], workspaceIntent: false, agentIntent: false, lastAgentStatus: null,
-        idleSince: null, completion: null, agentActive: null, lastObservedAt: null, prUrl: null, prHead: null, coordinatorGeneration: 1, resolution: resolutionSchema.parse({}), checkpoints: { records: [], intent: null }, workerModel: null, workerModels: [], briefVersions, briefRuns: [], siblingPins: [], siblingFindings: [], siblingIntent: false, checkoutSiblingFindings: [], stashBaseline: null,
-        ...laneSnapshot(attached), ...initial, hostId,
-        ...(hostId ? { hostSelection: initial.hostSelection ?? { hostId, basis: input.hostId === hostId ? 'explicit' : 'sole_online_host' } } : {}),
-        originHostId: Object.prototype.hasOwnProperty.call(initial, "originHostId") ? initial.originHostId : hostId || undefined,
-        disposition: initial.disposition ?? null, prLookup: initial.prLookup ?? null };
-      // Spec 050: the `ownerRoute` marker is route-only. A submission never
-      // carries it, so strip it here rather than trusting the input record.
-      // Spec 052: Queue writes `signoff`, never a submission; the request is the origin's.
-      for (const role of ["worker", "reviewer", "coordinator"] as const) {
-        if (task.profileRequests?.[role])
-          task.profileRequests = { ...task.profileRequests, [role]: { ...plainProfileRequest(task.profileRequests[role]!), requestedBy: input.originAgentId } };
-      }
-      const composedHolds: TaskHolds = { ...(initial.holds ?? {}) };
-      if (input.mergeHold === true && !composedHolds.merge) {
-        composedHolds.merge = { owner: TASK_OWNER_HOLD, reason: input.mergeHoldReason ?? "not recorded", at: now(), generation: 1, until: null };
-      }
-      Object.assign(task, syncHoldProjection(composedHolds));
-      if(credential){credential.prepare?.(task);this.setCredential(credential.runId,credential.token);}
-      const validated = this.tasksStore.validatedTask(task);
-      this.db.prepare("INSERT INTO tasks VALUES(?,?,?,?)").run(id, input.submissionId, submissionHash(input), this.taskRow(task));
-      if (this.tasksStore.taskProjection) {
-        this.tasksStore.setProjectedTask(validated);
-      this.tasksStore.integrationTaskIndex = null;
-        this.tasksStore.taskProjectionOrder.unshift(id);
-      }
-      this.cachedTaskCount=null; this.advanceRevision();
-      this.event(id, "submitted", `Origin: ${input.originAgentId}; planning ${input.planningCommit}; PR review: ${input.skipPRReview ? "skipped by submission" : "required"}${briefVersions.length ? `; Queue-held brief v1 ${briefVersions[0].digest}` : ""}${attached.length ? `; lanes ${attached.map(lane => lane.key).join(", ")}` : ""}`);
-      this.event(id, "telemetry_stage", telemetryStageForTask(task)); return task;
-    };
-    return this.db.isTransaction ? insert() : this.transaction(insert);
-  }
-  update(id: string, change: Partial<Task> & { attention?: never }, kind?: string, detail = "", expected?: number): Task {
-    if (!this.db.isTransaction) return this.transaction(() => this.update(id, change, kind, detail, expected));
-    this.tasksStore.syncProjectionForWrite();
-    const task = this.task(id);
-    if (expected !== undefined && task.version !== expected) throw new Error("Task changed; refresh before retrying");
-    if (change.hostId !== undefined && change.hostId !== task.hostId)
-      throw new Error("Task host cannot be changed by an update");
-    if (change.hostSelection !== undefined && JSON.stringify(change.hostSelection) !== JSON.stringify(task.hostSelection))
-      throw new Error("Task host selection cannot be changed by an update");
-    // The existing row already carries this immutable field. Remove even an
-    // explicitly undefined key so observation-only writes remain observations.
-    const { hostSelection: _selection, ...remainingChange } = change;
-    change = remainingChange;
-    if (change.originHostId !== undefined && change.originHostId !== task.originHostId && kind !== 'owner_changed')
-      throw new Error("Origin host cannot be changed by an ordinary update");
-    const lifecycleChanged = change.reason !== undefined && change.reason !== task.reason
-      || change.phase !== undefined && change.phase !== task.phase;
-    const hasExplicitStop = change.resolution !== undefined && Object.prototype.hasOwnProperty.call(change.resolution, "stop");
-    const stopRepeatsCurrent = hasExplicitStop
-      && JSON.stringify(change.resolution!.stop) === JSON.stringify(task.resolution.stop);
-    if (lifecycleChanged && (!hasExplicitStop || stopRepeatsCurrent)) {
-      change = { ...change, resolution: { ...task.resolution, ...(change.resolution ?? {}), stop: null } };
-    }
-    const terminal = ['done', 'cancelled'].includes(change.phase ?? task.phase);
-    const finishedAt=change.phase && change.phase!==task.phase ? terminal ? now() : null : task.finishedAt;
-    const observationFields = new Set<string>(STORED_OBSERVATION_FIELDS);
-    const observationStateFields = new Set<string>(["agentActive", "lastAgentStatus", "idleSince"]);
-    const changedFields = Object.keys(change);
-    const observationOnly = changedFields.length > 0 && changedFields.every(field => observationFields.has(field));
-    const observationStateChanged = observationOnly && changedFields.some(field => observationStateFields.has(field) && !Object.is(task[field as keyof Task], change[field as keyof Task]));
-    const bumpVersion = !observationOnly || observationStateChanged;
-    let next = { ...task, ...change, ...(terminal ? { queuePriority: 0 } : {}), finishedAt, id: task.id,
-      originAgentId: task.originAgentId, notifyOriginOnCloseout: task.notifyOriginOnCloseout,
-      completionNotificationAgentIds: task.completionNotificationAgentIds,
-      creatorCompletionRecipients: task.creatorCompletionRecipients,
-      version: task.version + (bumpVersion ? 1 : 0),
-      lastSubstantiveVersion: observationOnly ? task.lastSubstantiveVersion ?? task.version : task.version + 1,
-      updatedAt: now() };
-    // Audit B6: an observation that changes no board fact writes only `task_observations`.
-    // The task row, its version, its substantive-version marker and the board revision all
-    // stay where they were, and every reader still sees the values the parent write produced:
-    // the moved observation time, the moved write time and the same hold projection.
-    if (observationOnly && !observationStateChanged) {
-      // The substantive-version marker stays exactly as the row holds it, so the row this
-      // write does not touch and the projected copy a reader gets stay the same record.
-      const observed = { ...next, lastSubstantiveVersion: task.lastSubstantiveVersion };
-      const validated = this.tasksStore.validatedTask(observed);
-      this.syncTaskObservation(id, observed);
-      if (this.tasksStore.taskProjection) {
-        this.tasksStore.setProjectedTask(validated);
-      this.tasksStore.integrationTaskIndex = null;
-        // The observation row write advanced the projection's `writes` clock. The maps
-        // already hold this write, so acknowledge that clock here — after they are
-        // consistent and before any synchronous observer below reads the task. An
-        // unacknowledged clock makes that read discard the warm projection and re-parse
-        // every task row, which is the audit's observation hot path. This is the same
-        // ordering as this funnel's substantive branch and `putRun()`.
-        this.tasksStore.projectionClock = this.tasksStore.readProjectionClock();
-      }
-      const previousStage = telemetryStageForTask(task), observedStage = telemetryStageForTask(observed);
-      const hasStage = Boolean(this.db.prepare("SELECT 1 FROM events WHERE taskId=? AND kind='telemetry_stage' LIMIT 1").get(id));
-      if (!hasStage || previousStage !== observedStage) this.event(id, "telemetry_stage", observedStage);
-      this.tasksStore.projectionClock = this.tasksStore.readProjectionClock();
-      this.taskChanged(id); return observed;
-    }
-    if (change.holds) Object.assign(next, syncHoldProjection(change.holds));
-    else if (change.held === false && change.holds === undefined) Object.assign(next, syncHoldProjection({}));
-    else if (change.holds === undefined) {
-      const fences: TaskHolds = { ...(next.holds ?? {}) };
-      const primary = fences.merge ? "merge" as const : fences.dispatch ? "dispatch" as const : null;
-      const holdFieldChanged = change.holdUntil !== undefined || change.holdOwner !== undefined || change.holdReason !== undefined
-        || change.holdAt !== undefined || change.holdGeneration !== undefined || change.holdBlocking !== undefined;
-      if (primary && holdFieldChanged) {
-        const fence = fences[primary]!;
-        fences[primary] = {
-          ...fence,
-          ...(change.holdUntil !== undefined ? { until: change.holdUntil } : {}),
-          ...(change.holdOwner ? { owner: change.holdOwner } : {}),
-          ...(change.holdReason ? { reason: change.holdReason } : {}),
-          ...(change.holdAt ? { at: change.holdAt } : {}),
-          ...(change.holdGeneration !== undefined ? { generation: change.holdGeneration } : {}),
-        };
-        if (change.holdBlocking !== undefined && fences.merge)
-          fences.merge = { ...fences.merge, blocking: change.holdBlocking };
-        Object.assign(next, syncHoldProjection(fences));
-      }
-    }
-    // A hold's stop belongs to its fences: the write that removes the last one
-    // retires it, so the read is true at once, paused or terminal, rather than
-    // after the next quantum. A queued task's hold text goes with it.
-    // Likewise a stop recorded from Queue's origin error goes when that error clears.
-    if (task.originError && !next.originError && next.resolution.stop?.detail === task.originError)
-      next = { ...next, resolution: { ...next.resolution, stop: null } };
-    const fenced = (fields: Task) => { const holds = holdsOf(fields); return Boolean(holds.dispatch || holds.merge); };
-    if (fenced(task) && !fenced(next)) {
-      if (next.resolution.stop?.reason === "held") next = { ...next, resolution: { ...next.resolution, stop: null } };
-      if (next.phase === "queued" && change.reason === undefined && taskStopClassification(next.reason).reason === "held")
-        next = { ...next, reason: this.dependencyWait(next) || DISPATCH_WAIT_REASON };
-    }
-    const freezesCompletion = change.phase === "done" && task.phase !== "done";
-    if (freezesCompletion) {
-      // The membership a done transition freezes is one derived fact (shared with
-      // the recovery preflight and the completion receipt), never restated here.
-      const cohort=completionMembership(task);
-      next={...next,completionNotificationCohort:cohort};
-      const completedAt=finishedAt??now();
-      for(const member of cohort){
-        const notice:Notice={id:digest(`${task.id}:completion:${member.agentId}`),taskId:task.id,agentId:member.agentId,recipientAgentId:member.agentId,
-          workspaceId:member.workspaceId,sources:member.sources,originEntry:member.originEntry,kind:"completion",status:"pending",error:"",
-          text:`Nucleus completion\nTask: ${task.title} (${task.id})\nRepository: ${task.repoPath}\nState: done\nCompleted: ${completedAt}\nPR: ${next.prUrl??"none"}${next.reportAcceptance ? `\n${next.reportAcceptance.artifact ? `Owner accepted report: ${next.reportAcceptance.artifact.key} v${next.reportAcceptance.artifact.version} (${next.reportAcceptance.artifact.digest})` : "Owner completed this task with no PR"}\nAccepted by: ${next.reportAcceptance.acceptedBy}\nReason: ${next.reportAcceptance.reason}` : ""}\nInspect queue detail for full state. Completion membership grants no task authority.`};
-        if(!this.notices(task.id).some(existing=>existing.id===notice.id))this.putNotice(notice);
-      }
-    }
-    const previousTelemetryStage = telemetryStageForTask(task), nextTelemetryStage = telemetryStageForTask(next);
-    const hasTelemetry = Boolean(this.db.prepare("SELECT 1 FROM events WHERE taskId=? AND kind='telemetry_stage' LIMIT 1").get(id));
-    const validated = this.tasksStore.validatedTask(next);
-    this.db.prepare("UPDATE tasks SET data=? WHERE id=?").run(this.taskRow(next, task), id);
-    // Terminal cleanup takes every leaf this task's threads were launched with,
-    // once, on the transition; a live task's retained threads keep theirs (task
-    // 681). The task row's own leaf goes when its worker run identity changes.
-    if ((terminal && task.phase !== next.phase) || (!task.removedAt && Boolean(next.removedAt)))
-      for (const run of this.runs(id)) if (run.temporaryDirectory) this.pendingRunScratchCleanup.add(run.temporaryDirectory);
-    if (task.temporaryDirectory && task.runId && (task.runId !== next.runId || terminal))
-      this.pendingRunScratchCleanup.add(task.temporaryDirectory);
-    if (this.tasksStore.taskProjection) {
-      this.tasksStore.setProjectedTask(validated);
-      this.tasksStore.integrationTaskIndex = null;
-      // A removed task keeps its run rows but leaves every retained-task list.
-      if ((task.removedAt == null) !== (next.removedAt == null)) this.tasksStore.refreshPendingRunsForTask(id, next.removedAt != null);
-      // Synchronous observers may read before advanceRevision below. The maps
-      // already include this write; acknowledge its trigger clock before those
-      // reads so they do not discard the completed incremental update.
-      this.tasksStore.projectionClock = this.tasksStore.readProjectionClock();
-    }
-    if (!hasTelemetry || previousTelemetryStage !== nextTelemetryStage) this.event(id, "telemetry_stage", nextTelemetryStage);
-    if (task.removedAt !== next.removedAt) this.cachedTaskCount=null;
-    if (kind) this.event(id, kind, detail);
-    const becameTerminal = Boolean(terminal && task.phase !== next.phase);
-    const becameRemovedFinished = !task.removedAt && Boolean(next.removedAt) && ["done", "cancelled"].includes(next.phase);
-    if (becameTerminal || becameRemovedFinished) this.putOutcome(buildOutcomeRecord(next, this.runs(id), this.hookEvents(id), false));
-    if (next.phase === "done" && next.prUrl && next.resolution.mergedCommit) {
-      const linked = this.db.prepare(`SELECT data FROM lead_read AS leads WHERE state='promoted'
-        AND EXISTS (SELECT 1 FROM json_each(leads.data,'$.targets')
-          WHERE json_extract(value,'$.kind')='task' AND json_extract(value,'$.reference')=?)`).all(id);
-      for (const row of linked) {
-        const lead = leadSchema.parse(JSON.parse(String(row.data)));
-        if (!lead.tags.includes("papercut") || !lead.papercut) continue;
-        const cut = papercutFromLead(lead);
-        if (cut.taskId !== id) continue;
-        const closedAt = next.finishedAt ?? next.updatedAt;
-        this.updateLead({ ...lead, state: "closed", closedAt, updatedAt: next.updatedAt,
-          closure: { reason: "completed", at: closedAt,
-            note: `Completed by ${next.prUrl}; merge commit ${next.resolution.mergedCommit}.` } });
-        this.event(id, "papercut_completed", cut.id);
-      }
-    }
-    // Every other write is a board fact, observation state included: a status change
-    // still spends a version so a hold or control holding the old one sees it as stale.
-    this.advanceRevision();
-    this.taskChanged(id); return next;
-  }
-  /**
-   * Durable runtime-retirement records are a Queue-owned side effect, not a
-   * versioned operator control: write them without advancing the task's
-   * optimistic version, so an archive's `allowed` fence that compares the
-   * version stays valid. The board still revision-refreshes.
-   */
-  setRuntimeRetirements(id: string, records: RuntimeRetirement[]) {
-    return this.transaction(() => {
-      this.tasksStore.syncProjectionForWrite();
-      const task = this.task(id);
-      const resolution = { ...task.resolution, runtimeRetirements: records, cleanupReason: runtimeRetirementFailure({ resolution: { ...task.resolution, runtimeRetirements: records } }) };
-      const next = { ...task, resolution, updatedAt: now() };
-      const validated = this.tasksStore.validatedTask(next);
-      this.db.prepare("UPDATE tasks SET data=? WHERE id=?").run(this.taskRow(next, task), id);
-      if (this.tasksStore.taskProjection) { this.tasksStore.setProjectedTask(validated); this.tasksStore.integrationTaskIndex = null; }
-      this.advanceRevision(); this.taskChanged(id); return next;
-    });
-  }
-  /**
-   * Spec 058 budgets (nucleus#1153): the wall-clock pause interval is a Queue-owned
-   * bookkeeping record, like runtime retirements. A sweep or quantum that opens or
-   * closes an interval spends no task version: an owner who read the task and sent a
-   * control at that version must not be refused as stale because the Queue's own pass
-   * saw the hold. The board still revision-refreshes, and the caller records the
-   * interval's audit event in the same transaction.
-   */
-  setBudgetClock(id: string, budgetClock: BudgetClock): Task {
-    if (!this.db.isTransaction) return this.transaction(() => this.setBudgetClock(id, budgetClock));
-    this.tasksStore.syncProjectionForWrite();
-    const task = this.task(id);
-    const next = { ...task, resolution: { ...task.resolution, budgetClock }, updatedAt: now() };
-    const validated = this.tasksStore.validatedTask(next);
-    this.db.prepare("UPDATE tasks SET data=? WHERE id=?").run(this.taskRow(next, task), id);
-    if (this.tasksStore.taskProjection) { this.tasksStore.setProjectedTask(validated); this.tasksStore.integrationTaskIndex = null; }
-    this.advanceRevision(); this.taskChanged(id); return next;
-  }
   taskOrNull(id: string): Task | null { return this.tasksStore.taskOrNull(id); }
   purgeOldTasks(at=Date.now(),cleanupFiles?:(taskId:string,runIds:string[])=>void) { return this.retentionStore.purgeOldTasks(at, cleanupFiles); }
   /**
@@ -1124,13 +756,6 @@ export class Store {
   usageView(at = Date.now()): UsageView { return this.configStore.usageView(at); }
   /** Spec 052 planner grants stored in meta, like usage. */
   routingGrants(): RoutingGrant[] { return this.configStore.routingGrants(); }
-  /**
-   * Same mapping OwnerStop.stopTask uses: reviewer stays reviewer, revision is
-   * worker, recovery/verification/closeout/executor are the coordinator route.
-   */
-  private routeRoleForRun(role: Run["role"]): "worker" | "reviewer" | "coordinator" {
-    return role === "reviewer" ? "reviewer" : role === "revision" ? "worker" : "coordinator";
-  }
   noteGrantRun(task: Task, role: "worker" | "reviewer" | "coordinator"): void { return this.configStore.noteGrantRun(task, role); }
   qaFenceRecord(): QaFenceRecord { return this.hostRunStore.qaFenceRecord(); }
   qaFenceInForce(at = Date.now()): QaFence | null { return this.hostRunStore.qaFenceInForce(at); }
@@ -1151,170 +776,9 @@ export class Store {
       // Unknown provenance cannot prove independence, so it remains a conflict.
       .filter(run => !hostId || !run.hostId || run.hostId === hostId);
   }
-  /**
-   * Spec 058 slice 1: persist one run's observed usage. Writes only that field and never
-   * restamps the run's dispatch-time pins; a no-op write touches nothing.
-   */
-  updateRunUsage(runId: string, apply: (usage: NonNullable<Run["usage"]>) => NonNullable<Run["usage"]>): boolean {
-    const run = this.run(runId);
-    if (!run) return false;
-    const next = apply(run.usage ?? EMPTY_RUN_USAGE);
-    if (JSON.stringify(next) === JSON.stringify(run.usage ?? null)) return false;
-    this.putRun({ ...run, usage: next }, { usageOnly: true });
-    return true;
-  }
   pendingRuns(): Run[] { return this.tasksStore.pendingRuns(); }
   runsForTasks(taskIds: string[]): Run[] { return this.tasksStore.runsForTasks(taskIds); }
   run(id: string): Run | null { return this.tasksStore.run(id); }
-  /**
-   * Look up the thread archive effect. `archived` is the durable proof that a
-   * thread Queue launched can never take another turn.
-   */
-  threadArchiveKey(agentId: string, hostId: string | null | undefined): string | null {
-    if (!hostId) return null;
-    return qualifiedThreadArchiveEffectKey(hostId, agentId);
-  }
-  putThreadArchiveEffect<T extends { status: string; at: string }>(key: string, _agentId: string, effect: T): void {
-    this.setMeta(key, effect);
-  }
-  threadArchiveEffect(agentId: string, hostId?: string | null): { status?: string } | undefined {
-    const key = this.threadArchiveKey(agentId, hostId);
-    return key ? this.getMeta(key) : undefined;
-  }
-  /**
-   * Remove every recorded run leaf a retired thread's tools were launched with,
-   * through the same recorded-leaf path release uses. A retained thread's later
-   * runs each start with their own leaf, so all of them go when the thread can
-   * take no further turn (task 681).
-   */
-  retireThreadScratch(taskId: string, agentId: string): number {
-    let removed = 0;
-    const host = this.db.prepare("SELECT json_extract(data,'$.hostId') AS host FROM tasks WHERE id=?").get(taskId)?.host;
-    if (typeof host !== 'string' || !host) return 0;
-    for (const row of this.db.prepare("SELECT json_extract(data,'$.temporaryDirectory') AS leaf FROM runs WHERE taskId=? AND json_extract(data,'$.agentId')=? AND json_extract(data,'$.hostId')=?").all(taskId, agentId, host))
-      if (typeof row.leaf === "string" && row.leaf && this.runScratchRemover(row.leaf)) removed++;
-    return removed;
-  }
-  /**
-   * True once no later turn can reuse the run's thread, so the leaf its tools
-   * started with is no longer needed: an unlaunched run, an archived thread, or
-   * a task that is terminal or removed. A retained thread keeps its leaf until
-   * then, because its MCP children started with that environment and a live
-   * thread outlives the run that launched it (task 681: project-e#280).
-   */
-  private threadRetired(run: Run): boolean {
-    if (!run.agentId) return true;
-    if (run.hostId && this.threadArchiveEffect(run.agentId, run.hostId)?.status === "archived") return true;
-    const row = this.db.prepare("SELECT json_extract(data,'$.phase') AS phase, json_extract(data,'$.removedAt') AS removedAt FROM tasks WHERE id=?").get(run.taskId);
-    if (!row) return true;
-    return ["done", "cancelled"].includes(String(row.phase)) || row.removedAt != null;
-  }
-  putRun(run: Run, options: { usageOnly?: boolean } = {}): void {
-    // A release and its credential revocation are one durable state change.
-    // Callers that already own a transaction keep their larger atomic boundary.
-    if (!this.db.isTransaction) {
-      this.transaction(() => this.putRun(run, options));
-      return;
-    }
-    this.tasksStore.syncProjectionForWrite();
-    const reviewRow = this.db.prepare("SELECT data FROM task_reviews WHERE taskId=? AND seq=0 AND json_extract(data,'$.runId')=? AND json_type(data,'$.reviewTextDigest')='text'").get(run.taskId, run.id);
-    if (reviewRow) {
-      const resolved = this.resolveReviewRows([{ seq: 0, data: String(reviewRow.data) }]).review;
-      if (resolved?.reviewText !== run.completion?.reviewText)
-        this.db.prepare("UPDATE task_reviews SET data=? WHERE taskId=? AND seq=0").run(JSON.stringify(resolved), run.taskId);
-    }
-    const existing = this.db.prepare("SELECT data FROM runs WHERE id=?").get(run.id);
-    const existed = Boolean(existing);
-    const prior = existing ? JSON.parse(String(existing.data)) as { taskId: string; hostId?: unknown; hostSelection?: Run['hostSelection'] } : undefined;
-    if (prior && prior.taskId !== run.taskId) throw new Error("Run task cannot be changed");
-    const recordedHost = prior?.hostId;
-    if (prior?.hostSelection) run = { ...run, hostSelection: prior.hostSelection };
-    else if (prior && run.hostSelection) throw new Error('Run host selection cannot be assigned by an ordinary update');
-    if (typeof recordedHost === "string" && recordedHost && run.hostId !== recordedHost) run = { ...run, hostId: recordedHost };
-    // Stamp only new runs. An existing legacy run must not acquire a host from
-    // a later task state merely because an observation updated it.
-    if (!existed) {
-      const row = this.db.prepare("SELECT json_extract(data,'$.hostId') AS hostId, json_extract(data,'$.hostSelection') AS selection FROM tasks WHERE id=?").get(run.taskId);
-      const taskHost = typeof row?.hostId === "string" && row.hostId ? row.hostId : undefined;
-      if (run.hostId !== undefined && run.hostId !== taskHost) throw new Error("Run host does not match task host");
-      if (taskHost) run = { ...run, hostId: taskHost, hostSelection: row?.selection ? JSON.parse(String(row.selection)) : { hostId: taskHost, basis: 'migrated', reason: 'Inherited from recorded task host' } };
-    } else if (!recordedHost && run.hostId !== undefined) {
-      const row = this.db.prepare("SELECT json_extract(data,'$.hostId') AS hostId FROM tasks WHERE id=?").get(run.taskId);
-      if (!row?.hostId || row.hostId !== run.hostId) throw new Error("Run host is not proved by its task");
-    }
-    // Each run records the brief version it was given; the stamp is taken once, at creation.
-    // A usage-only write never stamps, so an older run keeps the pins it was dispatched with.
-    if (run.briefVersion === undefined && !options.usageOnly) {
-      const row = this.db.prepare("SELECT MAX(version) AS version FROM task_brief_versions WHERE taskId=?").get(run.taskId);
-      if (typeof row?.version === "number") run = { ...run, briefVersion: row.version };
-    }
-    // Spec 026: likewise the lane document versions pinned at dispatch.
-    if (run.laneDocuments === undefined && !options.usageOnly) {
-      const row = this.db.prepare("SELECT json_extract(data,'$.laneDocumentPins') AS pins FROM tasks WHERE id=?").get(run.taskId);
-      const pins = row?.pins ? JSON.parse(String(row.pins)) as Array<{ key: string; version: number; digest: string }> : [];
-      if (pins.length) run = { ...run, laneDocuments: pins.map(({ key, version, digest }) => ({ key, version, digest })) };
-    }
-    // A lifecycle observation that only moves `lastObservedAt` records no new board
-    // fact: the run's status, activity, release and completion are unchanged. The
-    // board's unsettled counters read the observation time fresh from this row.
-    const observationOnly = this.runObservationOnly(run);
-    this.db.prepare("INSERT INTO runs VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data").run(run.id, run.taskId, JSON.stringify(run));
-    // A release revokes the run's callback credential: the released credential
-    // authenticates nothing — no exceptions (task 1005, review 5833000688) —
-    // and its ticket files go with it. The stored hash is kept, so re-binding
-    // the same run identity (a run re-bound after a restart) restores the same
-    // credential instead of minting one, and a re-issued credential (restart,
-    // continuation, recovery) replaces the hash and lifts any revocation.
-    if (run.released) {
-      this.db.prepare("UPDATE credentials SET revoked=1 WHERE run=?").run(run.id);
-      if (this.path !== ":memory:") {
-        if (this.db.isTransaction) this.pendingRunReportingCleanup.set(run.id, run.taskId);
-        else purgeReleasedRunTicket(dirname(this.path), run.taskId, run.id);
-      }
-    }
-    if (!run.released) this.db.prepare("UPDATE credentials SET revoked=0 WHERE run=?").run(run.id);
-    if (run.released && run.temporaryDirectory && this.threadRetired(run)) this.pendingRunScratchCleanup.add(run.temporaryDirectory);
-    if (this.tasksStore.taskProjection) {
-      this.tasksStore.rememberProjectedRun(run.id, run.taskId);
-      const states = this.tasksStore.runState!;
-      const unreleased = this.tasksStore.unreleasedByTask!;
-      const pending = this.tasksStore.pendingRunProjection!;
-      const rowids = this.tasksStore.pendingRunRowid!;
-      const released = Boolean(run.released ?? false);
-      const previous = states.get(run.id);
-      if (previous && !previous.released && (released || previous.taskId !== run.taskId)) {
-        const key = previous.taskId;
-        unreleased.set(key, Math.max(0, (unreleased.get(key) ?? 1) - 1));
-      }
-      if (!released && (!previous || previous.released || previous.taskId !== run.taskId))
-        unreleased.set(run.taskId, (unreleased.get(run.taskId) ?? 0) + 1);
-      states.set(run.id, { taskId: run.taskId, released });
-      // A removed task keeps its run rows but leaves every retained-task list.
-      const retained = this.tasksStore.taskProjection?.get(run.taskId)?.removedAt == null;
-      if ((!released || run.status === "superseded") && retained) {
-        pending.set(run.id, Object.freeze({ ...run }) as Run);
-        rowids.set(run.id, Number(this.db.prepare("SELECT rowid AS rid FROM runs WHERE id=?").get(run.id)?.rid));
-      } else { pending.delete(run.id); rowids.delete(run.id); }
-    }
-    // The run write fired the `writes` trigger the in-memory projection keys on. A
-    // substantive write acknowledges it through `advanceRevision`; an observation-only
-    // write must acknowledge it here exactly as `update()` does, or the next task or run
-    // read discards the whole projection and rebuilds it from every row — the audit's
-    // observation hot path, where a lifecycle pass observes a still-busy run.
-    if (observationOnly) { this.tasksStore.projectionClock = this.tasksStore.readProjectionClock(); }
-    else this.advanceRevision();
-    // After the clock is acknowledged: a task read before that discards the whole projection.
-    if (!existed && !options.usageOnly) {
-      try { this.noteGrantRun(this.task(run.taskId), this.routeRoleForRun(run.role)); } catch { /* a missing task cannot increment a grant */ }
-    }
-    this.taskChanged(run.taskId); }
-  /**
-   * True when the write differs from the stored row only in `lastObservedAt`, so no
-   * board fact moves and the projection need not rebuild (audit A1: observations were
-   * about 0.93 of the rebuilds a second). Nested values compare by serialized bytes
-   * because every read hands back freshly parsed objects.
-   */
-  private runObservationOnly(run: Run): boolean { return this.taskWritesStore.runObservationOnly(run); }
   notices(taskId?: string): Notice[] { return this.operationsStore.notices(taskId); }
   unsettledNoticeCount(): number { return this.operationsStore.unsettledNoticeCount(); }
   putNotice(n: Notice) { return this.operationsStore.putNotice(n); }
@@ -1328,9 +792,7 @@ export class Store {
   putOutcome(record: Outcome): Outcome { return this.outcomesStore.putOutcome(record); }
   private insertOutcomeRow(parsed: Outcome): void { return this.outcomesStore.insertOutcomeRow(parsed); }
   /** Searchable projection of one outcome row; never read for anything but search. */
-  private indexOutcome(parsed: Outcome): void { return this.outcomesStore.indexOutcome(parsed); }
   /** Spec 019 revision: one index row per task and lane, rebuilt from the outcome row. */
-  private indexOutcomeLanes(parsed: Outcome): void { return this.outcomesStore.indexOutcomeLanes(parsed); }
   /**
    * The projection is rebuildable from the rows, which stay the source of truth.
    * Returns the number of indexed outcome rows.
@@ -1382,131 +844,10 @@ export class Store {
   updateDecisionDelivery(id: string, delivery: Decision["delivery"]): Decision { return this.planningStore.updateDecisionDelivery(id, delivery); }
   listDecisions(query: { status?: Decision["status"]; asker?: string; project?: string; task?: string; lead?: string; papercut?: string } = {}): Decision[] { return this.planningStore.listDecisions(query); }
   pendingDecisionDeliveries(): Decision[] { return this.planningStore.pendingDecisionDeliveries(); }
-  /** Resolve only the admitted version, using immutable task/outcome approval, never today's check. */
-  sourcePromotionResult(source: { kind: "lead" | "papercut"; id: string }, repository: string,
-    version: number | null, sourceDigest: string): OperationResult | null {
-    const lead = this.lead(source.id);
-    const targets = lead.targets.filter(target => target.kind === "task" && target.repository === repository);
-    let selected: OperationResult | null = null;
-    for (const target of targets) {
-      const outcome = this.outcome(target.reference);
-      const row = this.db.prepare("SELECT data FROM tasks WHERE id=?").get(target.reference);
-      const task = row ? this.numberedTask(String(row.data)) : null;
-      const ambiguous = () => new Error(`Cannot establish admitted lead version for task ${target.reference}; promotion refused`);
-      if (!task && !outcome) throw ambiguous();
-      // Papercuts have one task identity even when their metadata changes or the lead API reads them.
-      if (source.kind === "lead" && !lead.papercut) {
-        const provenance = task?.leadProvenance;
-        const approval = provenance?.approval ?? outcome?.brief.approval;
-        const recordSource = task?.planningSource ?? outcome?.planningSource;
-        const recordRepository = task?.repository ?? outcome?.repository.origin;
-        const recordPath = task?.repoPath ?? outcome?.repository.path;
-        const member = lead.repositories.find(repo => repo.origin === repository);
-        if (!approval || recordSource?.kind !== "lead" || recordSource.id !== source.id
-          || (recordRepository !== repository && recordPath !== member?.path)
-          || (provenance && provenance.version !== approval.version)) throw ambiguous();
-        const saved = this.leadVersionOrNull(source.id, approval.version);
-        if (!saved || briefDigest(saved.body) !== approval.digest
-          || (outcome?.brief.approval && JSON.stringify(outcome.brief.approval) !== JSON.stringify(approval))) throw ambiguous();
-        if (approval.version !== version) continue;
-        if (digest(JSON.stringify([approval.version, approval.digest])) !== sourceDigest) throw ambiguous();
-      }
-      const result: OperationResult = outcome
-        ? { taskId: outcome.taskId, number: outcome.number, reference: outcome.reference, taskVersion: null, phase: null }
-        : { taskId: task!.id, number: task!.number, reference: task!.reference, taskVersion: task!.version, phase: task!.phase };
-      if (!result.reference || (selected && selected.taskId !== result.taskId)) throw ambiguous();
-      selected = result;
-    }
-    return selected;
-  }
-  /** Source link and task admission commit together; retries resolve the same task. */
-  promoteSource(source: { kind: "lead" | "papercut"; id: string }, repository: string, approvedDigest: string, expectedSource: string,
-    submission: Submission, hostId: string, planningBase: string, origin: string | null, initial: Partial<Task> = {}): Task | OperationResult {
-    return this.transaction(() => {
-      const provenance = submission.leadProvenance;
-      const existing = this.sourcePromotionResult(source, repository, provenance?.version ?? null,
-        digest(JSON.stringify([provenance?.version, approvedDigest])));
-      if (existing) return existing;
-      if (submission.planningSource?.kind !== source.kind || submission.planningSource.id !== source.id
-        || !submission.brief || briefDigest(submission.brief.text) !== approvedDigest)
-        throw new Error("Promotion submission does not match its source brief");
-      if (this.existing(submission)) throw new Error("Promotion submission already exists without its source binding");
-      if (source.kind === "lead") {
-        const lead = this.lead(source.id);
-        if (digest(JSON.stringify(lead)) !== expectedSource) throw new Error("Lead changed during promotion; reload");
-        const approvalBaseBranch = lead.approval?.baseBranch ?? (lead.baseBranch === "main" ? "main" : null);
-        const approvalHead = lead.approval?.planningCommit ?? (lead.baseBranch === "main" ? lead.check?.planningCommit : null);
-        if (lead.state === "dropped" || !lead.repositories.some(repo => repo.origin === repository)
-          || !provenance || provenance.version !== lead.version
-          || JSON.stringify(provenance.approval) !== JSON.stringify(lead.approval)
-          || submission.planningSource?.kind !== source.kind || submission.planningSource.id !== source.id
-          || !lead.approval || lead.approval.version !== lead.version || lead.approval.digest !== approvedDigest
-          || `sha256:${digest(lead.body)}` !== approvedDigest || !lead.check?.ok
-          || lead.baseBranch !== submission.baseBranch || lead.check.baseBranch !== submission.baseBranch
-          || lead.check.planningCommit !== submission.planningCommit
-          || approvalBaseBranch !== submission.baseBranch || approvalHead !== submission.planningCommit)
-          throw new Error("Lead approval or check changed before promotion");
-        const task = this.insert(submission, hostId, lead.body, planningBase, { ...initial, papercutTask: lead.tags.includes("papercut") }, undefined, origin);
-        const stamp = now();
-        this.updateLead({ ...lead, state: "promoted", targets: [...lead.targets,
-          { kind: "task", repository, reference: task.id, at: stamp }], updatedAt: stamp, closedAt: lead.closedAt ?? stamp });
-        return task;
-      }
-      const cut = this.papercut(source.id);
-      if (digest(JSON.stringify(cut)) !== expectedSource) throw new Error("Papercut changed during promotion; reload");
-      if (cut.state !== "open" || `sha256:${digest(submission.brief!.text)}` !== approvedDigest)
-        throw new Error("Papercut changed before promotion");
-      const task = this.insert(submission, hostId, submission.brief!.text, planningBase, initial, undefined, origin);
-      this.updatePapercut({ ...cut, state: "promoted", taskId: task.id, draftId: null });
-      return task;
-    });
-  }
-  /** A review entry may bind only a Queue-held brief whose exact checked approval still exists. */
-  validateReviewEntryBrief(input: Submission, githubRepository: string): void {
-    if (!input.brief) return;
-    if (stageDeclarationFromBrief(input.brief.text)) throw new Error(STEPS_RETIRED_REASON);
-    const expectedDigest = briefDigest(input.brief.text);
-    if (input.brief.digest && input.brief.digest !== expectedDigest) throw new Error("Queue-held brief digest changed");
-    const expectedOrigin = normalizeRepositoryOrigin(`https://github.com/${githubRepository}`);
-    const matchesRepository = (repository: {origin:string|null;path:string}) => repository.path === input.repoPath
-      && Boolean(repository.origin && normalizeRepositoryOrigin(repository.origin) === expectedOrigin);
-    // The retired draft record can only refuse. It never authorizes review entry.
-    if (input.draftProvenance) {
-      if (input.leadProvenance) throw new Error("Queue-held brief has conflicting approval records");
-      throw new Error("Queue-held brief draft approval, check or planning identity changed");
-    }
-    const source = input.planningSource, provenance = input.leadProvenance;
-    if (!source || source.kind !== "lead" || !provenance) throw new Error("Review entry requires a checked Queue-held brief approval");
-    const lead = this.lead(source.id), earlierDigests = this.leadVersionDigestsBeforeLatest(source.id);
-    const approvalBaseBranch = lead.approval?.baseBranch ?? (lead.baseBranch === "main" ? "main" : null);
-    const approvalHead = lead.approval?.planningCommit ?? (lead.baseBranch === "main" ? lead.check?.planningCommit : null);
-    if (lead.state !== "open" || !lead.approval || !lead.check?.ok || !lead.repositories.some(matchesRepository)
-      || lead.baseBranch !== input.baseBranch || (lead.originAgentId && lead.originAgentId !== input.originAgentId)
-      || approvalBaseBranch !== input.baseBranch || approvalHead !== input.planningCommit
-      || lead.version !== provenance.version || lead.approval.version !== provenance.version
-      || lead.approval.digest !== expectedDigest || lead.digest !== expectedDigest || lead.body !== input.brief.text
-      || JSON.stringify(lead.approval) !== JSON.stringify(provenance.approval)
-      || JSON.stringify(earlierDigests) !== JSON.stringify(provenance.earlierDigests)
-      || lead.check.planningCommit !== input.planningCommit)
-      throw new Error("Queue-held brief lead approval, check or planning identity changed");
-  }
-  /** Consume the approved source and link it to the review task in its binding transaction. */
-  claimReviewEntryBrief(input: Submission, githubRepository: string, taskId: string): void {
-    if (!input.brief) return;
-    this.validateReviewEntryBrief(input, githubRepository);
-    // Validation above admits only a lead source.
-    if (this.lead(input.planningSource!.id).tags.includes("papercut"))
-      this.update(taskId, { papercutTask: true }, "papercut_source_claimed", input.planningSource!.id);
-    const source = input.planningSource!, lead = this.lead(source.id), stamp = now();
-    const repository = lead.repositories.find(matches => matches.path === input.repoPath)!.origin;
-    this.updateLead({ ...lead, state:"promoted", targets:[...lead.targets,
-      {kind:"task",repository,reference:taskId,at:stamp}], updatedAt:stamp, closedAt:lead.closedAt ?? stamp });
-  }
   laneByKey(key: string): Lane | null { return this.lanesStore.laneByKey(key); }
   lanes(): Lane[] { return this.lanesStore.lanes(); }
   requireAttachableLanes(keys: string[], repoPath: string, origin?: string | null): Lane[] { return this.lanesStore.requireAttachableLanes(keys, repoPath, origin); }
   /** The denormalised prompt/detail context for a task's lane list, in membership order. */
-  private laneContextFor(keys: string[]): Array<{ key: string; title: string; aim: string }> { return this.lanesStore.laneContextFor(keys); }
   upsertLane(input: { key: string; title: string; aim: string; repositories: Lane["repositories"] }): Lane { return this.lanesStore.upsertLane(input); }
   setLaneStatus(key: string, status: Lane["status"], note = ""): Lane { return this.lanesStore.setLaneStatus(key, status, note); }
   /**
@@ -1515,10 +856,8 @@ export class Store {
    */
   keepLane(input: { key: string; reason: string; author: string }): Lane { return this.lanesStore.keepLane(input); }
   /** Writes a lane's drain episode without touching its activity timestamp, so the evaluation never resets its own window. */
-  private setLaneDrain(key: string, drain: Lane["drain"]): void { return this.lanesStore.setLaneDrain(key, drain); }
   setTaskLanes(task: Task, keys: string[], origin?: string | null): Task { return this.lanesStore.setTaskLanes(task, keys, origin); }
   /** Spec 022: a repository settings row is keyed by the repository identity — origin when known, else the local path. */
-  private repositoryKey(identity: RepositorySettings["repository"]): string { return this.projectsStore.repositoryKey(identity); }
   repositoryByKey(key: string): RepositorySettings | null { return this.projectsStore.repositoryByKey(key); }
   repositories(): RepositorySettings[] { return this.projectsStore.repositories(); }
   /**
@@ -1549,7 +888,6 @@ export class Store {
    */
   resolveRepositoryIdentity(input: { origin: string; path: string }): { origin: string; path: string } { return this.projectsStore.resolveRepositoryIdentity(input); }
   /** Monotonic write ordinal for repository settings rows, allocated inside the caller's transaction: durable latest-setting order independent of clock resolution. */
-  private nextRepositoryRevision(): number { return this.projectsStore.nextRepositoryRevision(); }
   putRepository(identity: RepositorySettings["repository"], closeout: ProjectCloseout | null, note: string, validation: ProjectValidation | null = null, reviewer: RepositorySettings["reviewer"] = null, qa: ProjectQa | null = null, checksPolicy: RepositorySettings["checksPolicy"] | undefined = undefined, scratchNamespace?: string | null, hostKind?: import("../../shared/host-kind").HostKind, affectedTests?: RepositorySettings["affectedTests"]): RepositorySettings { return this.projectsStore.putRepository(identity, closeout, note, validation, reviewer, qa, checksPolicy, scratchNamespace, hostKind, affectedTests); }
   /** Patch semantics: only the named fields change; `null` clears one and an absent field keeps its stored value. Returns the full resulting row. */
   patchRepository(identity: RepositorySettings["repository"], patch: { scratchNamespace?: string | null; closeout?: ProjectCloseout | null; validation?: ProjectValidation | null; reviewer?: RepositorySettings["reviewer"]; qa?: ProjectQa | null; affectedTests?: RepositorySettings["affectedTests"]; checksPolicy?: RepositorySettings["checksPolicy"]; hostKind?: import("../../shared/host-kind").HostKind; note?: string }): RepositorySettings { return this.projectsStore.patchRepository(identity, patch); }
@@ -1597,9 +935,6 @@ export class Store {
   hostRunsByStates(states: HostRunInternalRecord["state"][]): HostRunInternalRecord[] { return this.hostRunStore.hostRunsByStates(states); }
   appendHostRunJournal(runId: string, event: string, data: unknown, at = now()): number { return this.hostRunStore.appendHostRunJournal(runId, event, data, at); }
   hostRunJournal(runId: string): Array<{ event: string; at: string; data: unknown }> { return this.hostRunStore.hostRunJournal(runId); }
-  private defaultProject(repo: Project["repositories"][number]): Project { return this.projectsStore.defaultProject(repo); }
-  private isDefaultProject(project: Project): boolean { return this.projectsStore.isDefaultProject(project); }
-  private insertDefaultProject(repo: Project["repositories"][number]) { return this.projectsStore.insertDefaultProject(repo); }
   projects(): Project[] { return this.projectsStore.projects(); }
   projectByKey(key: string): Project | null { return this.projectsStore.projectByKey(key); }
   /** The project that holds this repository's origin, whatever its stored key is. */
@@ -1647,12 +982,10 @@ export class Store {
    * confirmation never recomputes them from a filtered view.
    */
   /** Confirmation identity excludes task progress, but includes every task ID and complete planning records. */
-  private managementRecords(key: string) { return this.projectsStore.managementRecords(key); }
   projectManagementPreview(input: {key: string; target?: string}): ProjectManagementPreview { return this.projectsStore.projectManagementPreview(input); }
   resetProjectCancellation(input: {key:string;operationId:string;tasks:Array<{taskId:string;version:number}>}) { return this.projectsStore.resetProjectCancellation(input); }
   manageRemoveProject(input: ProjectManageInput): ProjectTombstone { return this.projectsStore.manageRemoveProject(input); }
   removalBlockers(key: string, repository?: string): ProjectRemovalBlocker[] { return this.projectsStore.removalBlockers(key, repository); }
-  private projectMember(project: Project, repository: string): Project["repositories"][number] { return this.projectsStore.projectMember(project, repository); }
   /**
    * nucleus#967: take a member out of a project and delete the one-repository
    * project it becomes, as one write. A blocker, a stale version or the primary
@@ -1670,7 +1003,6 @@ export class Store {
    * plan, its slot override and any settings row no remaining project uses go,
    * and a tombstone keeps an export or import from resurrecting it.
    */
-  private retireProject(project: Project, reason: string): ProjectTombstone { return this.projectsStore.retireProject(project, reason); }
   /**
    * nucleus#984: what a move would refuse on, and what it carries along. A move
    * takes every record attached to the moving repositories with them (tasks,
@@ -1680,7 +1012,6 @@ export class Store {
    * repository re-key, on a moving repository.
    */
   mergeCheck(input: ProjectMergeCheckInput): ProjectMergeCheck { return this.projectsStore.mergeCheck(input); }
-  private mergeBlockers(moving: Project): ProjectRemovalBlocker[] { return this.projectsStore.mergeBlockers(moving); }
   /**
    * nucleus#969: move a project, or one of its members, into another project as
    * one write. The target keeps its name, planner, slots and primary. Records
@@ -1695,26 +1026,22 @@ export class Store {
    * target's, skipping lanes the target already orders, as one new target plan
    * version. The target's idle mark stays only while no now or next lane joins.
    */
-  private mergePlanInto(source: string, target: string): void { return this.projectsStore.mergePlanInto(source, target); }
   laneViews(query: { status?: Lane["status"]; repository?: string } = {}): LaneView[] { return this.lanesStore.laneViews(query); }
   /**
    * Lane views are derived from lanes, outcomes, live task phases and event times only, so they
    * are rebuilt once per `laneViewRevision()` change and served from cache in between. The value
    * is never stored inside a transaction: a rollback rewinds the rows the views came from.
    */
-  private cachedLaneViews(): LaneView[] { return this.lanesStore.cachedLaneViews(); }
   /**
    * The newest event time per task, loaded once and maintained by `event()`. A write that
    * bypassed the funnel (a backdated fixture, a repair) moves the `eventRows` clock, and the
    * map is then rebuilt from the rows rather than answered from memory.
    */
-  private eventTimes(): Map<string, string> { return this.lanesStore.eventTimes(); }
   /**
    * Spec 019: one outcome-by-lane index, built once from the permanent rows and extended by
    * `insertOutcomeRow`. A row written outside that funnel moves the `outcomeRows` clock, and
    * the index is then rebuilt from the rows.
    */
-  private outcomesByLane(): Map<string, Outcome[]> { return this.lanesStore.outcomesByLane(); }
   /** Spec 019: lead (including papercut-tagged lead) activity per lane. */
   laneRecordActivity(): Map<string, LaneRecordActivity> { return this.lanesStore.laneRecordActivity(); }
   /**
@@ -1748,52 +1075,47 @@ export class Store {
   putOperation(operation: QueueOperation, payload?: unknown): QueueOperation { return this.operationsStore.putOperation(operation, payload); }
   acceptOperation(input: { key: string; kind: QueueOperation["kind"]; inputHash: string; taskId?: string | null; expectedVersion?: number | null; repoPath?: string | null; submissionId?: string | null; hostId?: string; hostSelection?: QueueOperation['hostSelection']; payload: unknown }, at = now()): OperationAcceptance { return this.operationsStore.acceptOperation(input, at); }
   receipt(input: Completion, token: string): { accepted: true; eventId: string } | null { return this.authStore.receipt(input, token); }
-  appendProofFiles(taskId: string, records: Task["proofFiles"]): Task {
-    if (!records.length) return this.task(taskId);
-    const task = this.task(taskId);
-    // A retried report (a fresh event ID for the same bytes) is the same evidence.
-    const key = (record: Task["proofFiles"][number]) => `${record.head}\0${record.label}\0${record.sha256}\0${record.bytes}\0${record.runId}`;
-    const seen = new Set(task.proofFiles.map(key));
-    const fresh = records.filter(record => !seen.has(key(record)));
-    if (!fresh.length) return task;
-    return this.update(taskId, { proofFiles: [...task.proofFiles, ...fresh] }, "proof_files",
-      fresh.map(record => `${record.label} ${record.sha256.slice(0, 12)} @ ${record.head}`).join("; "));
+  /** The task and run write funnels; see `store-task-funnel.ts` for the rules they own. */
+  insert(input: Submission, hostId: string, handoffText: string, planningBase: string, initial: Partial<Task> = {}, credential?: {runId:string;token:string;prepare?:(task:Task)=>void}, origin?: string | null): Task { return this.funnel.insert(input, hostId, handoffText, planningBase, initial, credential, origin); }
+  update(id: string, change: Partial<Task> & { attention?: never }, kind?: string, detail = "", expected?: number): Task { return this.funnel.update(id, change, kind, detail, expected); }
+  putRun(run: Run, options: { usageOnly?: boolean } = {}): void { return this.funnel.putRun(run, options); }
+  setRuntimeRetirements(id: string, records: RuntimeRetirement[]) { return this.funnel.setRuntimeRetirements(id, records); }
+  setBudgetClock(id: string, budgetClock: BudgetClock): Task { return this.funnel.setBudgetClock(id, budgetClock); }
+  updateRunUsage(runId: string, apply: (usage: NonNullable<Run["usage"]>) => NonNullable<Run["usage"]>): boolean { return this.funnel.updateRunUsage(runId, apply); }
+  appendProofFiles(taskId: string, records: Task["proofFiles"]): Task { return this.funnel.appendProofFiles(taskId, records); }
+  acceptCompletion(input: Completion, token: string, pr: { url: string; head: string } | null, options: { armedReplacement?: boolean } = {}) { return this.funnel.acceptCompletion(input, token, pr, options); }
+  /**
+   * The same unrun review-entry fact, read by the owner closeout reconciliation (task 408):
+   * a queued review-entry task that never dispatched is the one shape whose own PR may have
+   * merged outside Queue before any reviewer existed.
+   */
+  reviewEntryUnrunBeforeFirstRun(task: Task, enclosing?: VerifiedEnclosingOperation): boolean {
+    return reviewEntryUnrun(this.reviewEntryFacts, task, enclosing);
   }
-  acceptCompletion(input: Completion, token: string, pr: { url: string; head: string } | null, options: { armedReplacement?: boolean } = {}) {
-    return this.transaction(() => {
-      const duplicate = this.receipt(input, token); if (duplicate) return duplicate;
-      const task = this.task(input.taskId);
-      // Spec 050 (task 483, review 5695764296 finding 1): an owner's armed worker
-      // replacement that has not retired the worker yet does not make that
-      // worker's own authenticated result stale. The result wins the race, the
-      // armed replacement is abandoned in the same accepted write, and any extra
-      // authorization stays unspent. The caller proves the armed state is the
-      // owner's own replacement, never an automatic fault.
-      const armed = options.armedReplacement === true && task.phase === "changes_requested"
-        && Boolean(task.agentId) && Boolean(task.failoverReason) && Boolean(task.replacementProfile);
-      if (task.runId !== input.runId || task.completion
-        || !(armed || ["working", "dispatching", "needs_attention"].includes(task.phase))) throw new Error("Stale worker run");
-      const response = { accepted: true as const, eventId: input.eventId };
-      const stalledTurnStop = task.resolution.stalledTurnStop?.runId === input.runId
-        ? { ...task.resolution.stalledTurnStop, status: "completed" as const, detail: "Authenticated completion received; stop reconciliation will retain the result" }
-        : task.resolution.stalledTurnStop;
-      const settled = task.resolution.pendingWorkerInstruction || stalledTurnStop !== task.resolution.stalledTurnStop
-        ? { ...task.resolution, pendingWorkerInstruction: null, stalledTurnStop } : task.resolution;
-      // Queue #342: the author's accepted result makes its own build output a settlement candidate.
-      const queueOwnedWorkspace = task.reviewEntry?.preserveWorkspace !== true;
-      const buildOutputCleanups = task.workspaceId && task.directory && queueOwnedWorkspace
-        ? runBuildOutputIntent(settled.buildOutputCleanups, { id: input.runId, workspaceId: task.workspaceId, agentId: task.agentId }, task.directory, new Date().toISOString())
-        : settled.buildOutputCleanups;
-      this.update(task.id, { completion: input, prUrl: pr?.url ?? null, prHead: pr?.head ?? null,
-        resolution: { ...settled, buildOutputCleanups, ...(armed ? { attention: false } : {}) },
-        // The retained worker's own result ends the pending replacement: the
-        // worker keeps running its accepted result and no new agent is created.
-        ...(armed ? { phase: "working" as const, failoverReason: "", replacementProfile: null } : {}),
-        reason: armed
-          ? "Completion received; the retained worker's own result superseded the pending replacement"
-          : "Completion received; waiting for the worker to release the workspace" }, "completion_received", input.summary);
-      this.setCompletionReceipt(input.eventId, task.id, input.runId, digest(JSON.stringify(input)), JSON.stringify(response));
-      return response;
-    });
-  }
+  /** The dependency boundary; `store-prerequisites.ts` owns its admission rules. */
+  updateDependencies(task: Task, dependsOn: string[], actor = "operator control"): Task { return this.prerequisites.updateDependencies(task, dependsOn, actor); }
+  setPrerequisiteWait(task: Task, waitsFor: string[], reason: string, expectedVersion = task.version): Task { return this.prerequisites.setPrerequisiteWait(task, waitsFor, reason, expectedVersion); }
+  reconcilePrerequisiteWait(taskId: string): "none" | "waiting" | "released" { return this.prerequisites.reconcilePrerequisiteWait(taskId); }
+  /** Resolve only the admitted version, using immutable task/outcome approval, never today's check. */
+  sourcePromotionResult(source: { kind: "lead" | "papercut"; id: string }, repository: string,
+    version: number | null, sourceDigest: string): OperationResult | null { return this.promotion.sourcePromotionResult(source, repository, version, sourceDigest); }
+  /** Source link and task admission commit together; retries resolve the same task. */
+  promoteSource(source: { kind: "lead" | "papercut"; id: string }, repository: string, approvedDigest: string, expectedSource: string,
+    submission: Submission, hostId: string, planningBase: string, origin: string | null, initial: Partial<Task> = {}): Task | OperationResult {
+    return this.promotion.promoteSource(source, repository, approvedDigest, expectedSource, submission, hostId, planningBase, origin, initial); }
+  /** A review entry may bind only a Queue-held brief whose exact checked approval still exists. */
+  validateReviewEntryBrief(input: Submission, githubRepository: string): void { return this.promotion.validateReviewEntryBrief(input, githubRepository); }
+  /** Consume the approved source and link it to the review task in its binding transaction. */
+  claimReviewEntryBrief(input: Submission, githubRepository: string, taskId: string): void { return this.promotion.claimReviewEntryBrief(input, githubRepository, taskId); }
+  /** Task numbering; `store-task-numbers.ts` owns the counter and the reference lookup. */
+  private assignNumber(taskId: string, repository: string): { number: number; reference: string } { return this.numbers.assign(taskId, repository); }
+  numberFor(taskId: string): { number: number; reference: string } | null { return this.numbers.numberFor(taskId); }
+  taskRepositories(): Array<{ taskId: string; repository: string }> { return this.numbers.repositories(); }
+  taskIdByNumber(input: { reference?: string; repository?: string; number?: number }): string { return this.numbers.taskIdByNumber(input); }
+  resolveTaskId(identity: string): string { return this.numbers.resolve(identity); }
+  /** A thread's durable archive effect; `store-thread-effects.ts` owns the key and its leaves. */
+  threadArchiveKey(agentId: string, hostId: string | null | undefined): string | null { return this.threadEffects.archiveKey(agentId, hostId); }
+  putThreadArchiveEffect<T extends { status: string; at: string }>(key: string, _agentId: string, effect: T): void { return this.threadEffects.putArchiveEffect(key, effect); }
+  threadArchiveEffect(agentId: string, hostId?: string | null): { status?: string } | undefined { return this.threadEffects.archiveEffect(agentId, hostId); }
+  retireThreadScratch(taskId: string, agentId: string): number { return this.threadEffects.retireScratch(taskId, agentId); }
 }
