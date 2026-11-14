@@ -70,7 +70,7 @@ export function createTaskDetailCache(store: Store, options: { maxEntries?: numb
     const task = store.task(taskId);
     const decisionId = store.listDecisions({ status: 'open', task: taskId })[0]?.id ?? null;
     const context = taskWaitStateContext(store, task, decisionId, options.slotAdmissionReason);
-    const currentTask = taskDetailView({ ...task, reason: queuedReason(store, task, context, options.externalWait) }, context, store.runs(taskId), store.eventsAll(taskId));
+    const currentTask = taskDetailView({ ...task, reason: queuedReason(store, task, context, options.externalWait) }, context, entry.evidence.runs, entry.evidence.events);
     const dependencyIds = [...new Set([...task.dependsOn, ...(task.prerequisiteWait?.waitsFor ?? [])])];
     // Spec 052: the usage level can expire with no write, so the routing policy is read fresh too.
     return { ...entry.value, task: currentTask, dependencies: dependencyIds.map(id => store.taskReference(id)), routingPolicy: store.routingPolicy(task, now(), options.profiles?.(task) ?? []) };

@@ -16,12 +16,12 @@
  * budgets (500 ms gap, 5 s reconnect window) are unchanged.
  */
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { connect, type Socket } from "node:net";
-import { join } from "node:path";
+import { extname, join } from "node:path";
 import { userInfo } from "node:os";
 import { randomUUID } from "node:crypto";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { ServiceBridge } from "../hosts/paseo/plugin/bridge";
 import { readServiceInfo } from "../service/transport/identity";
 import { RPC_CATALOGUE } from "../shared/rpc-catalogue";
@@ -56,9 +56,23 @@ function fixtureServiceCommand(root: string) {
   const source = readFileSync(standalone, "utf8");
   assert.equal(source.split("hostRunEndpoint: true,").length, 2);
   const fixture = source.replace("hostRunEndpoint: true,", `hostRunEndpoint: true, hostRunStateDir: ${JSON.stringify(stateDir)},`)
-    .replace(/from "(\.[^"]+)"/g, (_, specifier: string) => `from "${new URL(specifier.endsWith(".mjs") ? specifier : specifier + ".ts", standalone).href}"`);
+    .replace(/from "(\.[^"]+)"/g, (_, specifier: string) => `from "${fixtureImportUrl(specifier, standalone)}"`);
   writeFileSync(entry, fixture + "\nawait runStandaloneService();\n");
   return () => ({ command: process.execPath, args: ["--import", "tsx", entry] });
+}
+
+/** Resolve fixture imports like the TypeScript runtime: exact files, `.ts` files, and folder barrels. */
+function fixtureImportUrl(specifier: string, parent: URL): string {
+  const path = fileURLToPath(new URL(specifier, parent));
+  const extension = extname(path);
+  const candidates = [
+    path,
+    ...(extension === ".js" ? [path.slice(0, -3) + ".ts"] : []),
+    ...(extension ? [] : [`${path}.ts`, join(path, "index.ts")]),
+  ];
+  const resolved = candidates.find(candidate => existsSync(candidate) && statSync(candidate).isFile());
+  assert.ok(resolved, `fixture import ${specifier} must resolve from ${parent.pathname}`);
+  return pathToFileURL(resolved).href;
 }
 
 /**
