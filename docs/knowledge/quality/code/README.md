@@ -31,3 +31,8 @@ its old row until its module is next changed.
 - nucleus#1199 (floor 5, 2026-11-14): `core/store/store.ts`, `core/store/store-tasks.ts` and
   `core/store/store-maintenance.ts` were split into one owner per mechanism; `store-maintenance.ts` no
   longer exists. The store rows in `N3.csv` were re-rated at that PR's head.
+- nucleus#1204 (floor 5, 2026-11-14): `hosts/paseo/plugin/bridge.ts`,
+  `hosts/t3code/adapter.ts`, `bin/queue-cli.mjs` and `bin/nucleus-subscribe.mjs` were split or consolidated
+  into one owner per mechanism, and `bin/nucleus-dependencies.mjs`, `bin/nucleus-dispose.mjs` and
+  `bin/nucleus-promote.mjs` were deleted. Their rows in `N5.csv` were re-rated at that PR's head, and
+  `hosts/t3code/state.ts` was re-rated with them because an intent entry gained its typed kind and thread.
