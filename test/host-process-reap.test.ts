@@ -620,6 +620,41 @@ test("a detached child in a recorded pgid is terminated even outside the worktre
   assert.ok(store.events(task.id).some(event => event.kind === HOST_PROCESS_SWEEP_KIND && event.detail.includes(`pid=${childPid}`)));
 });
 
+test("an unreadable process table is an unknown sweep, never an empty one", async t => {
+  const root = await mkdtemp(join(tmpdir(), "nsq-reap-unknown-"));
+  const worktree = join(root, "task");
+  await mkdir(worktree);
+  const storeDir = await mkdtemp(join(tmpdir(), "nsq-reap-unknown-store-"));
+  t.after(() => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
+  t.after(() => rm(storeDir, { recursive: true, force: true }));
+  const store = new Store(join(storeDir, "queue.sqlite"));
+  t.after(() => store.close());
+  const task = insertTerminal(store, worktree, "done");
+
+  // A table the read could not make proves nothing: the result says which read
+  // failed, nothing is reported as stopped, and the durable intent stays owed
+  // so a later pass re-reads it.
+  const missing = await reapHostProcesses({ directory: worktree, processes: null, graceMs: GRACE_MS });
+  assert.deepEqual(missing.terminated, []);
+  assert.equal(missing.unavailable?.read, "process-listing");
+  const unreadable = await sweepTaskHostProcesses(store, task, { processes: null, graceMs: GRACE_MS });
+  assert.equal(unreadable.unavailable?.read, "process-listing");
+  assert.equal(store.task(task.id).resolution.hostProcessSweep !== null, true, "the owed sweep stays owed");
+  assert.match(store.eventsAll(task.id).find(event => event.kind === "host_process_sweep_warning")!.detail, /unavailable/);
+
+  // A table with no readable cwd column cannot scope a worktree sweep either,
+  // and reads as its own fact rather than as "no leftover processes".
+  const noCwd = await reapHostProcesses({ directory: worktree, graceMs: GRACE_MS,
+    processes: [{ pid: 4_000_001, ppid: 1, pgid: 4_000_001, uid: 501, startIdentity: "4000001@a", command: "sleep 10", cwd: null }] });
+  assert.deepEqual(noCwd.terminated, []);
+  assert.equal(noCwd.unavailable?.read, "cwd-listing");
+
+  // A readable, empty table is a real empty pass: it settles the intent.
+  const empty = await sweepTaskHostProcesses(store, task, { processes: [], graceMs: GRACE_MS });
+  assert.equal(empty.unavailable, null);
+  assert.equal(store.task(task.id).resolution.hostProcessSweep, null);
+});
+
 test("a process outside the worktree is left running", async t => {
   const root = await mkdtemp(join(tmpdir(), "nsq-reap-out-"));
   const worktree = join(root, "task");

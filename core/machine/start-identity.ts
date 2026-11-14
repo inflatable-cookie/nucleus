@@ -214,13 +214,27 @@ export class RecordedIdentityProofs {
   }
 }
 
-/** Field 22 of `/proc/<pid>/stat`, parsed after the last `)` so `(a) b)` is safe. */
-export function parseLinuxStarttime(stat: string): string | null {
+/**
+ * The `/proc/<pid>/stat` fields every process read needs, parsed once after the
+ * last `)` so a command name containing `)` is safe. Indices follow
+ * proc(5): ppid 4, pgrp 5, utime 14, stime 15, starttime 22, one-based.
+ */
+export interface LinuxProcStat { ppid: number; pgid: number; starttime: string; userTicks: number; systemTicks: number }
+
+export function parseLinuxProcStat(stat: string): LinuxProcStat | null {
   const close = stat.lastIndexOf(")");
   if (close < 0) return null;
   const fields = stat.slice(close + 2).split(" ");
   const starttime = fields[19];
-  return /^\d+$/.test(starttime ?? "") ? starttime : null;
+  const ppid = Number(fields[1]), pgid = Number(fields[2]);
+  const userTicks = Number(fields[11]), systemTicks = Number(fields[12]);
+  if (!/^\d+$/.test(starttime ?? "")) return null;
+  return { ppid, pgid, starttime, userTicks, systemTicks };
+}
+
+/** Field 22 of `/proc/<pid>/stat`, parsed after the last `)` so `(a) b)` is safe. */
+export function parseLinuxStarttime(stat: string): string | null {
+  return parseLinuxProcStat(stat)?.starttime ?? null;
 }
 
 /** Canonical Linux identity from an already-read stat line and boot id. */

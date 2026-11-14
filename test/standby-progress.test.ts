@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { psTimeMs } from '../core/machine/process-group';
+import { psTimeMs } from '../core/machine/process-host-reads';
 import { awaitForeignReplacement, awaitStandbyProgress, STANDBY_READY_BUDGET_MS, STANDBY_READY_CAP_MS, STANDBY_READY_STALL_MS, type StandbyWaitProbe } from '../service/install/standby';
 
 /**

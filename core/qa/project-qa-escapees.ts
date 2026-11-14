@@ -1,5 +1,5 @@
 import type { HostRunScheduler } from "../host-runs/host-run-scheduler";
-import { processStartIdentityLiveness } from "../machine/process-group";
+import { processStartIdentityLiveness } from "../machine/process-identity-search";
 
 const sleep = (ms: number) => new Promise<void>(resolvePromise => { setTimeout(resolvePromise, ms); });
 /** Capacity holds for escaped descendants resume from settled rows after service rolls. */

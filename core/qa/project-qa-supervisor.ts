@@ -77,7 +77,8 @@ import { FAILURE_FIRST_RETENTION_NOTE, boundedHeadTail, streamTruncation, type S
 import { boundSidecarCoverage, hostRunCpuCoverageSidecar, type HostRunCpuCoverageSidecar } from "../host-runs/host-run-cpu-coverage";
 import { findGitWorktreeAdd, processCommandLine } from "../machine/process-identity";
 import { parseWorktreeList, repoCommonDir } from "../workspaces/workspace-allocation";
-import { ProcessTreeCpuSampler, processStartIdentityLiveness, type ProcessTreeCpu } from "../machine/process-group";
+import { ProcessTreeCpuSampler, type ProcessTreeCpu } from "../machine/process-tree-cpu";
+import { processStartIdentityLiveness } from "../machine/process-identity-search";
 import { hostRunProcessStartIdentity } from "../machine/start-identity";
 import { defaultHostRunStateDir } from "../host-runs/host-run-files";
 import { HOST_RUN_TOKEN_GRACE_MS } from "../host-runs/host-run-endpoint-types";

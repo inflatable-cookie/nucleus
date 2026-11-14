@@ -3,10 +3,16 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   PROCESS_START_IDENTITY_ENV, LEGACY_PROCESS_START_IDENTITY_ENV, processStartIdentityEnvironment,
-  PROCESS_TREE_FULL_SCAN_MS, PROCESS_TREE_GROUP_READ_MS, ProcessTreeCpuSampler, darwinCandidateReads, darwinCpuListings,
-  parseEnvironmentLines, parseHostProcessLines, parsePsCpuLines,
-  type HostProcessLine, type ProcessStartIdentitySearch, type ProcessTreeCpuReads,
-} from '../core/machine/process-group';
+  type ProcessStartIdentitySearch,
+} from '../core/machine/process-identity-search';
+import {
+  PROCESS_TREE_FULL_SCAN_MS, PROCESS_TREE_GROUP_READ_MS, ProcessTreeCpuSampler,
+  type ProcessTreeCpuReads,
+} from '../core/machine/process-tree-cpu';
+import {
+  darwinProcessReads, parseEnvironmentLines, parseHostProcessLines, parsePsCpuLines,
+  type HostProcessLine,
+} from '../core/machine/process-host-reads';
 import { macStartIdentity } from '../core/machine/start-identity';
 
 const SPAWN = 'Fri Oct 23 10:00:00 2026';
@@ -158,7 +164,7 @@ test('an empty group read is unknown, not a zero', () => {
   const sampler = grouped(io);
   assert.deepEqual(sampler.read(), { cpuMs: null, cpuCoverage: 'unavailable' });
   assert.deepEqual(sampler.read(), { cpuMs: null, cpuCoverage: 'unavailable' });
-  const empty = darwinCpuListings(() => ({ pid: 1, output: [], stdout: '  \n', stderr: '', status: 0, signal: null }));
+  const empty = darwinProcessReads(() => ({ pid: 1, output: [], stdout: '  \n', stderr: '', status: 0, signal: null }));
   assert.equal(empty.groupListing(PGID), null);
 });
 
@@ -222,7 +228,7 @@ test('legacy-mode output that ignores -g fails closed: other groups never count'
 test('the Darwin reads use deterministic argv and set COMMAND_MODE only on the group read', () => {
   const before = process.env.COMMAND_MODE;
   const seen: Array<{ args: string[]; env: NodeJS.ProcessEnv; timeout?: number; maxBuffer?: number }> = [];
-  const listings = darwinCpuListings((command, args, options) => {
+  const listings = darwinProcessReads((command, args, options) => {
     assert.equal(command, 'ps');
     seen.push({ args, env: options.env!, timeout: options.timeout, maxBuffer: options.maxBuffer });
     return { pid: 1, output: [], stdout: line(PGID, PGID, '0:00.10'), stderr: '', status: 0, signal: null };
@@ -243,7 +249,7 @@ test('the Darwin reads use deterministic argv and set COMMAND_MODE only on the g
     { status: 0, signal: null, stdout: line(PGID, PGID, '0:00.10'), error: Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' }) },
     { status: 0, signal: null, stdout: '' },
   ]) {
-    const read = darwinCpuListings(() => ({ pid: 1, output: [], stderr: '', ...failed }));
+    const read = darwinProcessReads(() => ({ pid: 1, output: [], stderr: '', ...failed }));
     assert.equal(read.groupListing(PGID), null);
     assert.equal(read.pidListing([1]), null);
   }
@@ -251,7 +257,7 @@ test('the Darwin reads use deterministic argv and set COMMAND_MODE only on the g
 
 test('the candidate read lists the host without environments, then reads environments only for those pids', () => {
   const seen: Array<{ args: string[]; maxBuffer?: number }> = [];
-  const reads = darwinCandidateReads((command, args, options) => {
+  const reads = darwinProcessReads((command, args, options) => {
     assert.equal(command, 'ps');
     seen.push({ args, maxBuffer: options.maxBuffer });
     return {
@@ -274,7 +280,7 @@ test('the candidate read lists the host without environments, then reads environ
   ]);
   assert.ok(!seen[0].args.includes('-E'), 'the host-wide listing never reads environments');
   assert.deepEqual(reads.environmentScan('marker', []), { state: 'absent' });
-  const failed = darwinCandidateReads(() => ({ pid: 1, output: [], stderr: '', status: 1, signal: null, stdout: '' }));
+  const failed = darwinProcessReads(() => ({ pid: 1, output: [], stderr: '', status: 1, signal: null, stdout: '' }));
   assert.equal(failed.processListing(), null);
   assert.deepEqual(failed.environmentScan('marker', [4300]), { state: 'unknown' });
   assert.deepEqual(parseHostProcessLines('garbage\n'), []);
@@ -360,7 +366,7 @@ test('new identity launches set only the Nucleus name and the retained marker st
   // recorded before Nucleus (or an escaped descendant of one) still proves.
   for (const names of [[PROCESS_START_IDENTITY_ENV], [LEGACY_PROCESS_START_IDENTITY_ENV],
     [PROCESS_START_IDENTITY_ENV, LEGACY_PROCESS_START_IDENTITY_ENV]]) {
-    const candidate = darwinCandidateReads(() => ({
+    const candidate = darwinProcessReads(() => ({
       pid: 1, output: [], stderr: '', status: 0, signal: null,
       stdout: ` 4300 4300 ${SPAWN} /bin/sh ${names.map(name => `${name}=marker`).join(' ')}\n`,
     }));

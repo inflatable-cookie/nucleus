@@ -17,7 +17,8 @@ import {
 } from "./project-qa-supervision-files";
 import { supervisorLiveness, supervisorLivenessAsync } from "../machine/supervisor-liveness";
 import { findProcessByCommandTokenAsync } from "../machine/process-identity";
-import { processGroupEmpty, processStartIdentityLiveness, processesForStartIdentity, signalProcessGroup, signalProcessGroupByLeader } from "../machine/process-group";
+import { processGroupEmpty, signalProcessGroup, signalProcessGroupByLeader } from "../machine/process-group";
+import { processesForStartIdentity, processStartIdentityLiveness } from "../machine/process-identity-search";
 import { confirmStaleSupervisorHeartbeat, SUPERVISOR_STUCK_CONFIRMATION_MS } from "../machine/supervisor-watchdog";
 
 /** What one running row's durable evidence says about its supervisor. */

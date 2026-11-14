@@ -13,7 +13,8 @@ import type { HostProcessFact } from '../host/types';
  */
 import { existsSync } from "node:fs";
 import { realpathSync } from "node:fs";
-import { processGroupEmpty, processStartIdentityLiveness, signalProcessGroup } from "./process-group";
+import { processGroupEmpty, signalProcessGroup } from "./process-group";
+import { processStartIdentityLiveness } from "./process-identity-search";
 import { pidAlive } from "./pid";
 import { now, type Store } from "../store/store";
 import type { Task } from "../../shared/contracts";
