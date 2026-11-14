@@ -18,6 +18,7 @@ import { readServiceInfo } from '../service/transport/identity';
 import { PROTOCOL_VERSION, MAX_FRAME_BYTES, createFrameReader, encodeFrame } from '../shared/service/protocol';
 import { currentServiceBuildId } from '../shared/service/build';
 import { RPC_CATALOGUE } from '../shared/rpc-catalogue';
+import { formatAgentId } from '../shared/agent-identity';
 import { defaultHostRunStateDir } from '../service/callbacks/host-run-endpoint';
 import { EXTERNAL_MERGE_CHECK_REASON_PREFIX } from '../core/resolution';
 
@@ -1121,14 +1122,34 @@ test('local CLI reaches Queue without Paseo and fences only a different method c
       submissionId: 'cli-controls', title: 'CLI controls', repoPath: '/fixture', planningCommit: 'a'.repeat(40),
       handoffPath: 'docs/handoffs/cli.md', originAgentId: 'origin',
     }), 'fixture-host', 'handoff', 'a'.repeat(40)] }) as { id: string };
-    const runCli = async (helper: string, args: string[]) => JSON.parse((await promisify(execFile)(process.execPath, [`bin/nucleus-${helper}.mjs`, ...args], {
-      cwd: fileURLToPath(new URL('..', import.meta.url)), timeout: 10000,
-      env: { ...process.env, NUCLEUS_DATA_HOME: dir, HOME: join(root, 'home') },
-    })).stdout);
-    assert.deepEqual((await runCli('dependencies', [task.id])).dependsOn, []);
-    assert.ok((await runCli('promote', [task.id])).queuePriority > 0);
-    const disposition = await runCli('dispose', [task.id, 'cancel', '--reason', 'Fixture complete']);
-    assert.ok(disposition.phase === 'cancelled' || disposition.accepted === true);
+    // The three legacy task-control helpers were copies of one versioned owner
+    // verb each and sent no caller; they were removed, so these operations are
+    // exercised through the one service client the CLI also uses.
+    const { createServer: createHttpServer } = await import('node:http');
+    const callerPath = join(dir, 'caller.sock');
+    const caller = { caller: formatAgentId('fixture-host', 'fixture-cli'), hostId: 'fixture-host', source: 'run-ticket' };
+    const callerServer = createHttpServer((request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(caller));
+    });
+    await new Promise<void>(resolve => callerServer.listen(callerPath, resolve));
+    const ticketPath = join(dir, 'run-ticket.json');
+    writeFileSync(ticketPath, JSON.stringify({ socketPath: callerPath, token: 'fixture-token', taskId: task.id, runId: 'fixture-run' }), { mode: 0o600 });
+    const controlCli = async (input: Record<string, unknown>) => {
+      const payloadPath = join(dir, `control-${input.action as string}.json`);
+      writeFileSync(payloadPath, JSON.stringify({ taskId: task.id, ...input }));
+      const cli = await promisify(execFile)(process.execPath, ['bin/queue-cli.mjs', 'task', payloadPath], {
+        cwd: fileURLToPath(new URL('..', import.meta.url)), timeout: 10000,
+        env: { ...process.env, NUCLEUS_DATA_HOME: dir, HOME: join(root, 'home'), NUCLEUS_TICKET: ticketPath },
+      });
+      return JSON.parse(cli.stdout) as Record<string, unknown>;
+    };
+    try {
+      assert.deepEqual((await controlCli({ action: 'set_dependencies', dependsOn: [] })).dependsOn, []);
+      assert.ok((await controlCli({ action: 'promote' })).queuePriority as number > 0);
+      const disposition = await controlCli({ action: 'cancel', reason: 'Fixture complete' });
+      assert.ok(disposition.phase === 'cancelled' || disposition.accepted === true);
+    } finally { await new Promise<void>(resolve => callerServer.close(() => resolve())); }
 
     const path = join(dir, 'queue-service.json');
     const original = readFileSync(path, 'utf8');

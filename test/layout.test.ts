@@ -171,7 +171,11 @@ test('the bridge transport graph reaches only shared modules; process bindings a
   const graph = checkIsolatedImports(root, entry);
   assert.ok(graph.has('shared/service/client.ts'));
   assert.ok(graph.has('shared/service/bridge-process.ts') === false, 'the structural port erases at runtime');
-  for (const path of graph) assert.ok(path === entry || path.startsWith('shared/'), `${entry} reaches process implementation ${path}`);
+  // The forwarder is the whole plugin folder: its own modules plus shared. Nothing
+  // below the plugin boundary - no Store, engine, Git, hook, runtime or process
+  // implementation module - may be reached, which `checkIsolatedImports` refuses
+  // from any file it walks.
+  for (const path of graph) assert.ok(path === entry || path.startsWith('shared/') || path.startsWith('hosts/paseo/plugin/'), `${entry} reaches process implementation ${path}`);
   assert.match(read('hosts/paseo/plugin/index.ts'), /new ServiceBridge\(\{ processActions: bridgeProcessActions,/);
 });
 
