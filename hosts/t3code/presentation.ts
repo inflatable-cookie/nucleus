@@ -424,8 +424,8 @@ export class T3Presentation {
     });
   }
 
-
   forgetSettle(commandId: string): void {
     if (!this.core.state.read().pendingSettles?.[commandId]) return;
     this.core.state.update(state => { if (state.pendingSettles) delete state.pendingSettles[commandId]; });
-  }}
+  }
+}
