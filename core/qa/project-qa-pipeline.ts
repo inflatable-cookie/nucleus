@@ -13,7 +13,7 @@ import {
   type ProjectQaStepName,
 } from "../../shared/contracts";
 import type { ExecutionOutcome } from "../machine/process-exec";
-import { hostRunCpuCoverageSidecar, type HostRunCpuCoverageSidecar } from "../host-runs/host-run-cpu-coverage";
+import { boundSidecarCoverage, hostRunCpuCoverageSidecar, type HostRunCpuCoverageSidecar } from "../host-runs/host-run-cpu-coverage";
 import { type ProcessTreeCpu } from "../machine/process-group";
 import { hostRunProcessStartIdentity } from "../machine/start-identity";
 import { openLiveOutputLog } from "../machine/live-output";
@@ -41,6 +41,18 @@ import { preparePipelineCheckout, projectQaWorktreeHooks, removeQaWorkspace } fr
  * this records. The first failing stage stops the run, teardown still runs, and
  * every step keeps its own bounded excerpts and full-output log.
  */
+/**
+ * The Queue-internal CPU reason for a settling result: only from this run's
+ * private sidecar naming the same run, epoch, step and cpuMs. The step is the
+ * one whose process group the result names in this run's own supervision
+ * state; without that state the reason is absent.
+ */
+export function qaSupervisionCpuCoverage(runId: string, state: QaSupervisionState | null, hostResult: HostRunResult | null, sidecar: unknown): HostRunCpuCoverage | undefined {
+  if (!hostResult || hostResult.runId !== runId || state?.runId !== runId) return undefined;
+  const step = state.steps.find(entry => entry.processGroupId === hostResult.pgid)?.name;
+  return boundSidecarCoverage(sidecar, { runId, epoch: hostResult.epoch, ...(step ? { step } : {}), cpuMs: hostResult.cpuMs });
+}
+
 /** Bytes of each stream kept as one step's own head and tail on the run record. */
 export const PROJECT_QA_STEP_OUTPUT_BYTES = 512;
 

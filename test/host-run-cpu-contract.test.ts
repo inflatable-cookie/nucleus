@@ -19,9 +19,10 @@ import { Store } from '../core/store/store';
 import { HostRunScheduler } from '../core/host-runs/host-run-scheduler';
 import { HostRunEndpoint, hostRunSupervisorStateSchema, writeVerifiedOwnedFile, type HostRunSupervisorState } from '../service/callbacks/host-run-endpoint';
 import {
-  QA_SUPERVISION_SCHEMA, QA_SUPERVISION_SCHEMA_VERSION, qaSupervisionCpuCoverage, qaSupervisionPaths, qaSupervisionStateSchema,
+  QA_SUPERVISION_SCHEMA, QA_SUPERVISION_SCHEMA_VERSION, qaSupervisionPaths, qaSupervisionStateSchema,
   readQaCpuCoverage, readQaSupervision, writeQaSupervision, type QaSupervisionState,
 } from '../core/qa/project-qa-supervision-files';
+import { qaSupervisionCpuCoverage } from '../core/qa/project-qa-pipeline';
 import {
   projectValidationSupervisorPaths, projectValidationSupervisorResultSchema, readProjectValidationCpuCoverage, readProjectValidationResult,
   writeProjectValidationCpuCoverage, writeProjectValidationResult,

@@ -97,6 +97,7 @@ import {
   qaStepRecord,
   qaExecutionFailed,
   mergeQaEscapees,
+  qaSupervisionCpuCoverage,
   type QaPipelineOutcome,
 } from "./project-qa-pipeline";
 import { supervisorLiveness } from "../machine/supervisor-liveness";
@@ -112,7 +113,6 @@ import {
   readHostRunResult,
   readQaCancelRequest,
   removeQaSupervisionFiles,
-  qaSupervisionCpuCoverage,
   readQaCpuCoverage,
   writeQaStepLog,
   writeQaSupervisionPlan,
