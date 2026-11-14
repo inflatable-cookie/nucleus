@@ -288,13 +288,13 @@ test('the merge gate refuses a partial cross-task carry and ignores a finished t
   // The common WIP ancestor represents commits from a separate unfinished task.
   // Both sibling branches contain it, while neither sibling head contains the other.
   const shared=insertCarryingTask(f,'Unrelated shared task',wipHead);
+  f.store.update(shared.id,{phase:'done'});
   await f.engine.resolution.advance(f.current());
   assert.equal(f.current().phase,'changes_requested');
   assert.ok(f.current().reason.includes(wip.title),f.current().reason);
   assert.equal(f.counts().merges,0);
   // A finished task's recorded head is no longer unfinished work, so the merge proceeds.
   f.store.update(wip.id,{phase:'done'});
-  f.store.update(shared.id,{phase:'done'});
   f.store.update(f.task.id,{phase:'verifying',resolution:{...f.current().resolution,pendingRevisionCause:null,pendingWorkerInstruction:null,currentRunId:null,integrationTurn:{sequence:1,acceptedAt:new Date().toISOString()}}});
   await f.engine.resolution.advance(f.current());
   assert.equal(f.counts().merges,1);
