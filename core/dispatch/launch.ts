@@ -3,7 +3,7 @@ import { isDispositionActive, workerExclusionFor } from '../../shared/contracts'
 import { budgetPauseDetail, taskBudget } from '../../shared/task-budget';
 import { proofExecutor } from '../recovery/task-reasons';
 import { dispatchBlocked, DISPATCH_HELD_REASON } from './capacity';
-import { proofSingleFlightRefusal } from '../qa/proof-execution';
+import { proofSingleFlightRefusal, ProofSingleFlightError } from '../qa/proof-execution';
 import { reviewAuthorizationRequired, reviewContinuationWait } from '../review/review-continuation';
 import type { ProofActivation, Resolution } from '../resolution';
 import { RunLaunchSource } from './run-launch/source';
@@ -90,7 +90,7 @@ export class DispatchLaunch {
     const head = current.proofOnly?.commit ?? current.prHead;
     if (head) {
       const refusal = proofSingleFlightRefusal(current, this.context.store.runs(t.id), head);
-      if (refusal) throw new Error(refusal);
+      if (refusal) throw new ProofSingleFlightError(refusal);
     }
     await this.context.launch(t, 'executor', { proof: activation, ...(profile ? { profile } : {}) });
     const after = this.context.store.task(t.id);

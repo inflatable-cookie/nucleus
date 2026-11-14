@@ -32,7 +32,11 @@ export class CheckSettlement {
     const current = this.store.task(t.id);
     const incident = current.resolution.incident;
     const recovery = current.resolution.recovery;
-    const incidentId = state.incidentId ?? null;
+    // A record written before its incident was captured (or by an older process)
+    // adopts the incident the wait itself is visibly holding. The decision is
+    // keyed on the durable record and the task's typed attention, never on the
+    // reason's wording.
+    const incidentId = state.incidentId ?? (current.resolution.attention && current.resolution.incident ? current.resolution.incident.id : null);
     const matchesIncident = Boolean(incidentId && incident?.id === incidentId);
     const matchesRecovery = Boolean(incidentId && recovery?.incidentId === incidentId);
     if (!matchesIncident && !matchesRecovery) {

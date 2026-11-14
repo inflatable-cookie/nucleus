@@ -28,7 +28,7 @@ function originHostReviewAdapter(context: ReviewEntryAdmissionContext, adapter: 
   originHostId: string, reviewInput: ReviewEntryInput): ReviewEntryAdapter {
   return {
     hostId: adapter.hostId,
-    originAgent: id => adapter.originAgent(id),
+    originAgent: id => context.host.originAgent(id),
     ...(adapter.reviewEntryGithubCommand ? { reviewEntryGithubCommand: adapter.reviewEntryGithubCommand.bind(adapter) } : {}),
     inspectReviewEntry: async (input, taskId) => {
       const proof = await context.withHost(originHostId, async () => {
