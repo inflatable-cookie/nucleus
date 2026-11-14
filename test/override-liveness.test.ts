@@ -159,7 +159,9 @@ liveness('resolution', 'heavyRunAlive', 'observing a retained reviewer', f => {
 }, { standIn: asyncly(true) });
 liveness('resolution', 'heavyRunAlive', 'a stopped-run reminder', f => {
   const task = f.add({ phase: 'reviewing' });
-  return f.resolution.remindStoppedRun(task, f.putRun(task.id));
+  const run = f.putRun(task.id);
+  f.patchResolution(task, { currentRunId: run.id });
+  return f.resolution.remindStoppedRun(f.store.task(task.id), run);
 }, { standIn: asyncly(true) });
 liveness('resolution', 'heavyRunAlive', 'a stopped-worker reminder', f => f.resolution.remindStoppedWorker(f.add(workerIdle)), { standIn: asyncly(true) });
 

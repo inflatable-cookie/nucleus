@@ -414,7 +414,7 @@ export function reviewFenceHoldsCoordinators(task: Task, store: Pick<Store, 'run
 /**
  * Whether the task's recorded review result fences this reviewer run's
  * checkpoint continuation. It does unless lifecycle evidence proves the result
- * ended an earlier round: the result is a `changes_required` whose task, run,
+ * ended an earlier round: the result has a valid task, run,
  * event, status and head all match one released reviewer run of this task and
  * that run's recorded completion; that run was created before this run, at a
  * different head; and an accepted (`ready_for_review`) author result arrived
@@ -422,13 +422,13 @@ export function reviewFenceHoldsCoordinators(task: Task, store: Pick<Store, 'run
  * revision run bound to itself and this task, or the current worker's own
  * initial result (a replacement worker's, which has no Run record): bound to the
  * task's run, authenticated by its receipt, and received in that window. That
- * changes_required → author result → new review sequence is the only history
+ * earlier reviewer result → author result → new review sequence is the only history
  * exception; anything unprovable, contradictory or out of order fences.
  */
 export function reviewResultFencesRun(store: Store, task: Task, run: Run): boolean {
   const review = task.resolution.review;
   if (!review) return false;
-  if (review.status !== 'changes_required' || review.taskId !== task.id || !review.runId || review.runId === run.id || !review.head) return true;
+  if (review.taskId !== task.id || !review.runId || review.runId === run.id || !review.head) return true;
   const source = store.run(review.runId);
   const completion = source?.completion;
   if (!source || !completion || source.taskId !== task.id || source.role !== 'reviewer' || !source.released) return true;

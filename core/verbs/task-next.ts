@@ -7,6 +7,7 @@ import { latestAuthorResult, ownerTaskBudget, retainedCheckpointRun, ownerActive
 import type { OwnerVerbFacts } from './owner-facts';
 import { DEFAULT_STALL_THRESHOLD_MINUTES } from '../../shared/schema/settings';
 import { taskStopVerbs } from '../../shared/task-stop';
+import { reviewResultFencesRun } from '../review/review-continuation';
 
 /** One reviewer run's own recorded verdict with the publication evidence it carries. */
 type RecordedVerdict = {
@@ -153,8 +154,11 @@ function currentReviewOutcome(facts: OwnerVerbFacts): TaskNextReviewOutcome {
   // current run, else the retained checkpoint reviewer. One that belongs to
   // another source head is not reading the current one.
   const current = task.resolution.currentRunId ? runs.find(run => run.id === task.resolution.currentRunId) : undefined;
-  const readingRun = current && current.role === 'reviewer' && !current.released && !current.completion
-    ? current : retainedCheckpointRun(runs) ?? null;
+  const checkpointReader = retainedCheckpointRun(runs) ?? null;
+  const readerRun = current && current.role === 'reviewer' && !current.released && !current.completion
+    ? current : checkpointReader;
+  const readingRun = readerRun && !(readerRun.reviewCheckpoints?.length && reviewResultFencesRun(facts.store, task, readerRun))
+    ? readerRun : null;
   const reader: TaskNextReviewOutcome['reader'] = readingRun && (!head || readingRun.head === head) ? {
     runId: readingRun.id, agentId: readingRun.agentId ?? null, head: readingRun.head ?? null,
     checkpoint: readingRun.reviewCheckpoints?.at(-1)?.ordinal ?? null,

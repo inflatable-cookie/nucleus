@@ -13,6 +13,7 @@ import { blockingRecoveryEffects, recoveryEffectsRefusal } from "../recovery/rec
 import { recoveryBoundStatus } from "../recovery/recovery-bound";
 import { runFenceRefusal, runSettlementFence } from "../intake/run-settlement";
 import { supersededIdleBinding } from "../recovery/fence-settlement";
+import { reviewResultFencesRun } from "../review/review-continuation";
 
 /** Everything the registry reads about one task; a store read, never a remote call. */
 export interface OwnerVerbFacts {
@@ -325,6 +326,10 @@ export function ownerTaskStop(facts: OwnerVerbFacts): TaskNextStop | null {
     detail: withRecoveryNote(stopDetail, boundNote),
     suggestedVerbs: classified.suggestedVerbs,
   };
+  const checkpointed = (kind === "run" || kind === "wait") ? retainedCheckpointRun(runs) : null;
+  const resultFencedCheckpoint = checkpointed?.reviewCheckpoints?.length && reviewResultFencesRun(facts.store, task, checkpointed)
+    ? checkpointed : null;
+  if (resultFencedCheckpoint) stopFields.detail = `A reviewer result fences checkpoint ${resultFencedCheckpoint.reviewCheckpoints!.at(-1)!.ordinal} on run ${resultFencedCheckpoint.id}; continue with restart role=reviewer fresh or move to=review fresh.`;
   const fences = holdsOf(task);
   if (kind === "hold") {
     // A hold stop is its owner's gate whatever wait the task last recorded: a
@@ -368,11 +373,16 @@ export function ownerTaskStop(facts: OwnerVerbFacts): TaskNextStop | null {
     const checkpointed = retainedCheckpointRun(runs);
     if (checkpointed) {
       const ordinal = checkpointed.reviewCheckpoints!.at(-1)!.ordinal;
+      const resultFenced = reviewResultFencesRun(facts.store, task, checkpointed);
       return taskNextStopSchema.parse({
-        kind, ...stopFields, owner: taskOwner(task) || null,
+        kind, ...stopFields,
+        ...(resultFenced ? { detail: `A reviewer result fences checkpoint ${ordinal} on run ${checkpointed.id}; continue with restart role=reviewer fresh or move to=review fresh.` } : {}),
+        owner: taskOwner(task) || null,
         evidence: checkpointed.retainedAgentClosedAt
           ? `reviewer run ${checkpointed.id} (agent ${checkpointed.agentId}) holds checkpoint ${ordinal} at ${checkpointed.head}; its agent was observed closed in ${checkpointed.workspaceId} at ${checkpointed.retainedAgentClosedAt}, so the same-agent continuation is impossible`
-          : `reviewer run ${checkpointed.id} holds checkpoint ${ordinal} at ${checkpointed.head}; continuation needs explicit authorization`,
+          : resultFenced
+            ? `reviewer run ${checkpointed.id} holds checkpoint ${ordinal} at ${checkpointed.head}; recorded ${task.resolution.review?.status} result ${task.resolution.review?.eventId} at ${task.resolution.review?.head} fences another turn on this run`
+            : `reviewer run ${checkpointed.id} holds checkpoint ${ordinal} at ${checkpointed.head}; continuation needs explicit authorization`,
       });
     }
     const author = latestAuthorReport;

@@ -148,8 +148,10 @@ export class RunLaunchReserve {
       }
       if (handoverReview && (latest.prHead !== run.head || latest.directory !== t.directory || latest.entrypoint !== 'review'))
         throw Error('The review source changed before the reviewer run was reserved; no reviewer was created');
-      if(run.ordinaryDetached&&(latest.version!==sourceReservationVersion||this.resolution.ordinaryReviewRuns(t.id)!==ordinaryReservationRuns||latest.prHead!==run.head||dispatchBlocked(latest)||isDispositionActive(latest)))
-        throw Error('Ordinary review source reservation changed during canonical admission');
+      if(run.ordinaryDetached&&(latest.version!==sourceReservationVersion||this.resolution.ordinaryReviewRuns(t.id)!==ordinaryReservationRuns||latest.prHead!==run.head||dispatchBlocked(latest)||isDispositionActive(latest))) {
+        this.resolution.waiting(latest, 'Ordinary review source reservation changed during canonical admission; rechecking before dispatch', 'lifecycle');
+        return false;
+      }
 
       if (latest.resolution.currentRunId !== t.resolution.currentRunId || agentId && threadBusy(agentId)) return false;
       if (coordinatorRouteSwitch && (latest.coordinatorGeneration !== t.coordinatorGeneration
