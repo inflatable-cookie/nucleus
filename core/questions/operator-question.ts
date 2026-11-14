@@ -1,5 +1,5 @@
 import { digest, type Store } from '../store/store';
-import { awaitingProofRoute, awaitingProofTexts, clipDecisionQuestion, holdsOf, isDispositionActive, type Task, type TaskNextVerb } from '../../shared/contracts';
+import { awaitingProofRoute, awaitingProofTexts, clipDecisionQuestion, currentTaskStop, holdsOf, isDispositionActive, type Task, type TaskNextVerb } from '../../shared/contracts';
 import { isWaitingTaskStop, type TaskStopRecord } from '../../shared/task-stop';
 import { taskBudget } from '../../shared/task-budget';
 import { collectOwnerVerbFacts, ownerVerbViews, qualifiedAcceptanceEligibility, type OwnerVerbFacts } from '../verbs/owner-verbs';
@@ -154,9 +154,12 @@ export function operatorQuestionFor(store: Store, task: Task): OperatorQuestion 
   // An unreleased run is a thread still settling its own wait.
   if (facts.runs.some(run => !run.released)) return null;
   if (proofGo) return proofOnlyGoQuestion(store, task);
-  const stop = task.resolution.stop;
-  if (!stop || (holds.merge && stop.reason !== 'budget')) return null;
   const now = Date.now();
+  // nucleus#1187: the question is a projection of the same budget figure every gate
+  // and view reads, so a recorded budget pause that figure no longer shows asks
+  // nothing — nobody is asked to answer a pause the task is not in.
+  const stop = currentTaskStop(task, taskBudget(task, facts.runs, now, facts.events));
+  if (!stop || (holds.merge && stop.reason !== 'budget')) return null;
   const build = (legacy: boolean) => stop.reason === 'budget' ? budgetQuestion(store, task, stop, now, legacy)
     : stop.reason === 'awaiting_proof' && proofWaitApplies(task)
       ? proofWaitQuestion(store, task, stop, facts, legacy)

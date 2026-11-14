@@ -4,6 +4,9 @@ import { taskBudget } from '../shared/task-budget';
 import { summarizeTask, taskDetailView } from '../shared/task-view';
 import { TASK_PROGRESSING_REASON } from '../shared/task-detail-summary';
 import { runSchema } from '../shared/contracts';
+import { DISPATCH_WAIT_REASON } from '../shared/task-stop';
+import { slotRequestFenced } from '../core/dispatch/capacity';
+import { operatorQuestionFor } from '../core/questions/operator-question';
 import { ownerTaskNext, collectOwnerVerbFacts } from '../core/verbs/owner-verbs';
 import { base, fixture, head, tick } from './support/responsible-lifecycle-fixture';
 
@@ -262,16 +265,70 @@ test('a task whose only run has no run row is charged from its recorded run star
     assert.ok(Math.abs(board.budget![3] - gate.wallMs.used) < 1000, `board ${board.budget![3]} vs gate ${gate.wallMs.used}`);
     assert.equal(board.budget![5], gate.exhausted, 'and the same exhaustion');
 
-    // The gate itself: the reviewer the old figure refused starts, and no budget
-    // pause or question is raised.
+    // The stored pause the old measurement left on the row (review 5899747947): the
+    // record is real, and its recorded question is still on the task. Both must
+    // answer to the same figure that clears it, not fence the task on their own.
+    f.engine.resolution.recordStop(f.current(), 'budget',
+      'Budget reached: 1920 minutes of wall time since the responsible lifecycle began');
+    f.store.event(f.submitted.id, 'operator_question',
+      'budget-old: kind budget; stop budget; head none; question deadbeef (3 chars); options Extend the budget | Stop and keep the work');
+    assert.equal(slotRequestFenced(f.current()), true, 'the stored pause fences a dispatch request');
+    assert.equal(operatorQuestionFor(f.store, f.current()), null, 'the same figure raises no budget question');
+    const paused = ownerTaskNext(collectOwnerVerbFacts(f.store, f.current()));
+    assert.equal(paused.stop, null, 'the read reports no budget stop');
+    assert.equal(paused.reason, TASK_PROGRESSING_REASON, 'and not the pause text');
+
+    // The pass clears the pause the figure no longer shows, with its question, and
+    // the reviewer the old figure refused starts.
     await f.engine.wake();
     await f.engine.quiesce();
     const running = f.current();
-    assert.notEqual(running.resolution.stop?.reason, 'budget', running.reason);
+    assert.equal(running.resolution.stop, null, 'the pass cleared the pause the figure no longer shows');
+    assert.equal(f.events('budget_pause_cleared').length, 1);
+    assert.match(f.events('budget_pause_cleared')[0]!.detail, /^The measured budget no longer shows the pause/);
+    assert.equal(f.events('operator_question_superseded')[0]?.detail.startsWith('budget-old: The measured budget no longer shows the pause'), true);
+    assert.equal(f.events('native_question_dismiss_intent').some(event => event.detail.startsWith('budget-old:')), true);
+    assert.equal(slotRequestFenced(running), false, 'nothing fences the task any more');
     assert.equal(f.reviewerRuns().length, 1, `a review run starts: ${running.reason}`);
     assert.equal(f.asks.filter(ask => /budget/i.test(ask.question)).length, 0, 'no budget question is raised');
     assert.equal(f.store.listDecisions({ status: 'open', task: f.submitted.id }).length, 0);
-    assert.equal(f.events('operator_question').filter(event => event.detail.includes('kind budget')).length, 0);
+  } finally { await f.close(); }
+});
+
+/**
+ * Review 5899747947, finding 1: the same 083 shape at the queue. A stored budget
+ * stop used to fence a queued task out of dispatch while every view read it as
+ * under its limit, so the task never dispatched and the board asked about a pause
+ * that was gone. The fence, the question and the reason now read one figure.
+ */
+test('a stored budget pause the figure no longer shows does not fence a queued task', async () => {
+  const f = fixture({ responsible: true });
+  try {
+    f.store.update(f.submitted.id, { complexity: 'high', phase: 'queued', reason: DISPATCH_WAIT_REASON,
+      completion: null, agentIntent: false, prHead: null, prUrl: null }, 'requeued_fixture');
+    f.store.event(f.submitted.id, 'responsible_converted', 'legacy responsible conversion');
+    f.store.db.prepare('UPDATE events SET at=? WHERE id=?')
+      .run(iso(Date.now() - 12 * 24 * 60 * MINUTE), f.events('responsible_converted').at(-1)!.id);
+    f.recordRunStart(iso(Date.now() - 20 * MINUTE));
+    f.engine.resolution.recordStop(f.current(), 'budget',
+      'Budget reached: 1920 minutes of wall time since the responsible lifecycle began');
+    f.store.event(f.submitted.id, 'operator_question',
+      'budget-old: kind budget; stop budget; head none; question deadbeef (3 chars); options Extend the budget | Stop and keep the work');
+    assert.equal(taskBudget(f.current(), f.store.runs(f.submitted.id), Date.now(), f.store.eventsAll(f.submitted.id)).exhausted, null);
+    assert.equal(slotRequestFenced(f.current()), true, 'the stored pause fences the queued request');
+    assert.equal(operatorQuestionFor(f.store, f.current()), null, 'and raises no budget question');
+
+    f.engine.resolution.settleBudgetClock(f.current());
+    const cleared = f.current();
+    assert.equal(cleared.resolution.stop, null);
+    // A queued task's own wait is dispatch, the record every queued task carries.
+    assert.equal(cleared.reason, DISPATCH_WAIT_REASON);
+    assert.equal(slotRequestFenced(cleared), false, 'the queued request is not fenced');
+    const next = ownerTaskNext(collectOwnerVerbFacts(f.store, cleared));
+    assert.equal(next.stop?.kind, 'wait');
+    assert.equal(next.stop?.reason, 'capacity');
+    assert.doesNotMatch(next.reason, /Budget reached/);
+    assert.equal(f.events('operator_question_superseded').some(event => event.detail.startsWith('budget-old:')), true);
   } finally { await f.close(); }
 });
 

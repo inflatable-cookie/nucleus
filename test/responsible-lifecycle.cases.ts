@@ -766,9 +766,14 @@ test('a merge hold does not suppress the budget question', async () => {
   const f = fixture({ responsible: true });
   try {
     const task = f.store.task(f.submitted.id);
+    // The question answers to the measured budget (nucleus#1187): four hours of the
+    // low default limit are spent, so the pause and its question are real.
+    const startedAt = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
     f.store.update(task.id, { held: true, mergeHold: true, holdOwner: 'operator', holdReason: 'dependent task', holdAt: new Date().toISOString(),
+      complexity: 'low', budgetSince: startedAt,
       holds: { merge: { owner: 'operator', reason: 'dependent task', at: new Date().toISOString(), generation: 1, until: null } } } as never, 'merge_held');
-    f.engine.resolution.recordStop(f.store.task(task.id), 'budget', 'Budget reached: 3 hours');
+    f.recordRunStart(startedAt);
+    f.engine.resolution.recordStop(f.store.task(task.id), 'budget', 'Budget reached: 60 minutes of wall time since the responsible lifecycle began');
     const question = operatorQuestionFor(f.store, f.store.task(task.id));
     assert.ok(question);
     assert.match(question.question, /Nucleus starts no new run/);

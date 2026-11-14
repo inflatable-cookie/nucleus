@@ -394,9 +394,11 @@ lifecycle; use a direct PR with operator source acceptance. Historical task rows
   reached, so a run in flight finishes and nothing new starts. The task stops with
   `budget` as its stop reason and the detail names the limit. That detail is fixed for
   the pause, so waiting does not rewrite the stop. A recorded budget pause is current
-  only while the measured budget still shows it, and `task.next`'s reason follows that
-  same figure: a pause the budget no longer supports leaves neither the stop nor
-  "Budget reached" behind (papercut 703b4aa3).
+  only while the measured budget still shows it: the pass that reads the task's runs
+  and events clears the stop and supersedes the question it raised once the figure is
+  under the limit, so the dispatcher's fence, the board's question and `task.next`'s
+  reason answer to one measurement and a pause the budget no longer supports leaves
+  neither the stop nor "Budget reached" behind (nucleus#1187, papercut 703b4aa3).
 - **Always asks, always names its exit** (nucleus#1153). The pause asks its question
   from the task's own pass, in every phase, as well as from the sweep's question step,
   and the stop lists `extend_budget` in `suggestedVerbs` whatever the phase. A task

@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { Incident, Run, Task } from '../../shared/contracts';
 import type { IncidentCause } from '../../shared/incident';
-import { isTransientExternalFailure, taskStopClassification, taskStopRecord, taskStopVerbsFor, type TaskStopReason, type TaskStopVerb } from '../../shared/task-stop';
-import { NUCLEUS_HELD_REFUSAL_EVENTS, nucleusHeldReason, type BudgetClock } from '../../shared/task-budget';
+import { DISPATCH_WAIT_REASON, isTransientExternalFailure, taskStopClassification, taskStopRecord, taskStopVerbsFor, type TaskStopReason, type TaskStopVerb } from '../../shared/task-stop';
+import { NUCLEUS_HELD_REFUSAL_EVENTS, nucleusHeldReason, taskBudget, type BudgetClock } from '../../shared/task-budget';
+import { TASK_PROGRESSING_REASON } from '../../shared/task-detail-summary';
 import { holdsOf } from '../../shared/holds';
 import { incidentKey } from './incident';
 import { isRepositoryContention, repositoryContentionNeedsAttention } from '../scheduling/repository-contention';
@@ -22,7 +23,7 @@ export type { ResolutionChanges };
  * delegate here and cross-method calls go through the public ones, so instance
  * overrides still fire. `store` reads the resolution per call.
  */
-export type TaskStopsContext = Pick<Resolution, 'ensureIncident' | 'recordIncidentEvent' | 'saveIncident' | 'settleAttentionEpisode' | 'stopped' | 'store' | 'update' | 'waiting'>;
+export type TaskStopsContext = Pick<Resolution, 'ensureIncident' | 'questions' | 'recordIncidentEvent' | 'saveIncident' | 'settleAttentionEpisode' | 'stopped' | 'store' | 'update' | 'waiting'>;
 
 export class TaskStops {
   constructor(readonly resolution: TaskStopsContext) {}
@@ -53,7 +54,7 @@ export class TaskStops {
    * returned.
    */
   settleBudgetClock(task: Task, options: { returned?: boolean } = {}): Task {
-    const current = this.store.task(task.id);
+    const current = this.clearPassedBudgetStop(this.store.task(task.id));
     const at = Date.parse(now());
     const clock: BudgetClock = current.resolution.budgetClock ?? { pausedMs: 0, pauses: 0, since: null, reason: null };
     const terminal = current.phase === 'done' || current.phase === 'cancelled';
@@ -112,6 +113,31 @@ export class TaskStops {
       const updated = this.store.setBudgetClock(current.id, next);
       this.store.event(current.id, opening ? 'budget_clock_paused' : 'budget_clock_resumed', detail);
       if (closingOutage) this.store.event(current.id, 'observation_resumed', `the task quantum returned after ${outage}; its lane moves again`);
+      return updated;
+    });
+  }
+  /**
+   * Spec 058 budgets (nucleus#1187): a recorded `budget` stop is a fence like any
+   * other, so it may only stand while the measurement it names still shows the
+   * pause. A changed measurement — a converted task's first recorded run, a
+   * corrected clock, records that no longer add up to the limit — clears it here,
+   * in the pass that already reads the task's runs and events, together with the
+   * budget question it raised. Otherwise the dispatcher would refuse a task the
+   * views read as progressing, and the board would ask about a pause that is gone.
+   */
+  clearPassedBudgetStop(task: Task): Task {
+    if (task.resolution.stop?.reason !== 'budget') return task;
+    const budget = taskBudget(task, this.store.runs(task.id), Date.now(), this.store.eventsAll(task.id));
+    if (budget.exhausted) return task;
+    // A queued task's own wait is dispatch; every other phase is progressing under
+    // whatever it was doing, so the pause's text never survives as the reason.
+    const reason = task.phase === 'queued' ? DISPATCH_WAIT_REASON : TASK_PROGRESSING_REASON;
+    const detail = `The measured budget no longer shows the pause: ${Math.round(budget.wallMs.used / 60_000)} of ${budget.wallMs.limit / 60_000} minutes and ${budget.effectiveTokens.used} of ${budget.effectiveTokens.limit} effective tokens; the task's budget does not stop it`;
+    return this.store.transaction(() => {
+      const latest = this.store.task(task.id);
+      if (latest.resolution.stop?.reason !== 'budget') return latest;
+      const updated = this.resolution.update(latest, { stop: null }, { reason }, 'budget_pause_cleared', detail);
+      this.resolution.questions.supersedeBudgetQuestions(task.id, 'The measured budget no longer shows the pause.');
       return updated;
     });
   }
