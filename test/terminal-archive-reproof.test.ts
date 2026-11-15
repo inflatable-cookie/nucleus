@@ -92,8 +92,7 @@ for (const outcome of ['absent', 'deleted', 'unreadable', 'live'] as const)
       if (outcome === 'unreadable') throw Error('origin read unavailable');
       return outcome === 'absent' ? null : { id, workspaceId: 'ws', title: '', archived: false, deleted: outcome === 'deleted' };
     };
-    const archive = () => f.adapter.archiveTaskWorkspace(task, 'ws', f.directory, f.head,
-      () => true, false, true, attached);
+    const archive = () => f.adapter.archiveTaskWorkspace(task, 'ws', f.directory, f.head, () => true, false, { requirePublished: true, attachedAgentIds: attached });
     if (outcome === 'absent' || outcome === 'deleted') {
       await archive();
       assert.equal(f.remote.archives.length, 1);

@@ -358,7 +358,7 @@ test('cancelled-task archive refuses an idle unrelated thread', async () => {
       observe:async(id:string)=>({id,workspaceId:assigned.workspaceId,status:'idle',active:false,permissions:false,error:''}),
       archiveAgent:async()=>{},
       archiveTaskWorkspace:async(...args:Parameters<NonNullable<Adapter['archiveTaskWorkspace']>>)=>{
-        flags.push(args[9]);
+        flags.push(args[6]?.allowIdleForeignThreads);
         return archiver.archiveTaskWorkspace(...args);
       },
       taskWorkspaceArchived:async()=>false,

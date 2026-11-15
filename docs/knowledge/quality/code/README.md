@@ -148,6 +148,27 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
   their five-part sums, reasons and PR-head evidence are in the updated N2, N3, N4 and N6 rows.
   The shared service client names its typed errors so the transport classifier preserves roll recovery
   for draining, unavailable and elapsed timeout responses; its N6 row is re-rated as well.
+- nucleus#1223 (floor 6, 2026-11-15): the lifecycle modules were re-rated at the PR head and each
+  resulting module carries its own row. Retry routing became typed decisions
+  (`recovery/retry-routes.ts`, 9), recorded evidence (`recovery/retry-evidence.ts`, 9) and one ordered
+  application (`recovery/retry-orchestration.ts`, 9); the queued wait projection reads Queue's declared
+  waits and owns the two dispatch-hold reasons it writes, so a released hold is never re-shown
+  (`recovery/wait-context.ts`, 10); the ask service reads one decoded lifecycle per ask
+  (`questions/agent-ask-events.ts`, 10) while `questions/agent-asks.ts` keeps its remaining
+  routing/wait/resume seams (8); external merge passes one typed acceptance job
+  (`merge/external-merge.ts`, 9), records an observed merge once (`merge/external-merge-record.ts`, 9)
+  and owns the check park in named facts (`merge/external-merge-check.ts`, 8); closeout and its recovery
+  read one stale-base rule that also spends the re-pins recorded under the previous event kind and uses
+  the one named refresh reason (`closeout/closeout-base-refresh.ts`, 10, `closeout.ts` 10,
+  `recovery.ts` 9); a hook occurrence's refusal kind is decoded once (`hooks/hook-refusal.ts`, 10) and
+  `hooks/hook-replay.ts` reads it (8); the archive takes one typed request and refuses with a typed
+  stage (`workspaces/owned-workspace-archive.ts`, 8) beside one thread-inventory owner
+  (`workspaces/owned-workspace-threads.ts`, 10), and `workspaces/archive-failure.ts` (10) classifies a
+  Queue-authored refusal by that stage, leaving message text to foreign failures alone.
+  `core/workspaces/repository-archive-gate.ts` had no product callers since 1173 and is deleted with its
+  row, and its test proved only that dead path. The rows for `terminal-workspace-retirement.ts` and
+  `unused-workspace.ts` were refreshed because the archive call and the failure classification they use
+  changed owner; both keep 7.
 - nucleus#1226 (floor 6, 2026-11-15): QA run kind now comes from its joined typed QA record, validation identity uses the canonical decoder, and the board and scheduler share one settled-run capacity predicate (`shared/host-run-capacity.ts`). The caller encoder and decoder moved to `shared/project-validation-caller.ts` so both the client and core use one owner without crossing the client-to-core boundary. Usage elapsed time and provider labels delegate to their existing shared owners. Pipeline Lead/Papercut presentation and selection moved into `client/board/triage-lead-card.tsx`, where one `triageKind` result drives the label and action. Failed web question refreshes preserve the last known requests and return an explicit error; successful empty reads still clear them. Boundary tests cover failed and empty question reads and the elapsed-window midpoint and reset.
 
   The four requested N6 rows all score at least 7: QA runs is 9 because typed QA records, canonical identity and shared capacity have single owners; usage is 8 because elapsed time and provider labels have shared owners, while unknown-duration wording still uses window names; Pipeline is 9 because the card owns classification and routing while column composition remains proportionate to the board; web questions is 8 because failures are explicit and preserve state, while task polling stays separate from the native observer. The changed native-question row is 8: its snapshot and failure-preserving refresh have one state owner, while polling sources remain distinct. The new triage card row is 10 because one classification result controls both label and selection. The shared capacity rule is 9 because the custody predicate has one owner and boundary coverage. The shared project-validation caller row is 9 because one exact encoder and decoder owns both strings, with plain-string inputs leaving schema proof at 1. `core/host-runs/host-run-capacity.ts` was re-rated at 6 in N4: it consumes the shared custody rule, but its raw SQL history scan and malformed legacy-row skip remain unresolved.
