@@ -8,7 +8,7 @@ import { verifyPr, command } from '../git/index';
 import { reviewMarker, reviewPublicationBody } from '../../shared/review-text';
 import { type Store, digest } from '../store/store';
 import { reviewPublicationKey, claimReviewPublication, type PublicationRecord } from '../review/review-publication';
-import { formalReviewHttp } from './formal-review-http';
+import { formalReviewHttp, FormalReviewHttpError } from './formal-review-http';
 import { LoginSessionFaultError } from '../../shared/session-fault';
 import { classifyGitCommandFailure, GitTransientError, classifyGitTransientFailure } from './forge-health';
 
@@ -108,9 +108,9 @@ function singleFlightPublication(runId: string, begin: () => Promise<Publication
   return flight;
 }
 /** The adapter entry point: the publication ID and whether this call posted it. */
-export function publishReviewOnce(store:Store,t:Task,run:Run,status:string,text:string,allowed:()=>boolean=()=>true,reviewer?:ReviewerSetting|null,runtime?:FormalReviewRuntime):Promise<PublicationOutcome> {
+export function publishReviewOnce(store:Store,t:Task,run:Run,status:string,text:string,allowed:()=>boolean=()=>true,reviewer?:ReviewerSetting|null,runtime?:FormalReviewRuntime,recoveryReason?:string):Promise<PublicationOutcome> {
   return singleFlightPublication(run.id, () => reviewer
-    ? publishFormalReviewOnce(store,t,run,status,text,reviewer,allowed,runtime)
+    ? publishFormalReviewOnce(store,t,run,status,text,reviewer,allowed,runtime,recoveryReason)
     : publishReviewCommentOnce(store,t,run,status,text,allowed));
 }
 /** Bounded wait for the pass that won a publication claim to record its GitHub ID. */
@@ -221,19 +221,13 @@ export function reviewStateForStatus(status: string) { return status === 'ready_
 async function formalGh(_task: Task, endpoint: string, args: string[], token: string): Promise<unknown> {
   return formalReviewHttp(endpoint, args, token);
 }
-const AUTHORITY_REFUSAL = /HTTP 40[13]|Bad credentials|Resource not accessible|write access|Must have write/i;
-/**
- * Pick GitHub's own refusal line. The process output is read before the argv
- * echo, so a review body containing the word "error" can never hide the real
- * permission refusal behind the `Command failed: gh api ... -f body=...` line.
- */
+/** Keep bounded GitHub diagnostics while removing any keychain token. */
 function refusalReason(error: unknown, token: string): string {
   const redact = (value: string) => value.split(token).join('[redacted]');
   const extra = error && typeof error === 'object' ? error as { stderr?: unknown; stdout?: unknown } : {};
   const output = redact(`${String(extra.stderr ?? '')}\n${String(extra.stdout ?? '')}`).split('\n').map(line => line.trim()).filter(Boolean);
   const message = redact(error instanceof Error ? error.message : String(error)).split('\n').map(line => line.trim()).filter(Boolean);
-  const actionable = [...output, ...message].find(line => AUTHORITY_REFUSAL.test(line));
-  return (actionable ?? output[0] ?? message[0] ?? 'unknown refusal').slice(0, 300);
+  return (output[0] ?? message[0] ?? 'unknown refusal').slice(0, 300);
 }
 /** Never let a keychain token ride out in an error; name the org and the actionable GitHub refusal. */
 async function formalCall<T>(org: string, token: string, operation: () => Promise<T>, deliveryUnknown = false): Promise<T> {
@@ -241,7 +235,7 @@ async function formalCall<T>(org: string, token: string, operation: () => Promis
   catch (error) {
     const text = commandErrorText(error).split(token).join('[redacted]');
     if (error instanceof LoginSessionFaultError) throw new LoginSessionFaultError(new Error(text.trim()));
-    if (AUTHORITY_REFUSAL.test(text))
+    if (error instanceof FormalReviewHttpError && (error.status === 401 || error.status === 403))
       throw new Error(`GitHub reviewer identity for org ${org} cannot publish or verify formal reviews: ${refusalReason(error, token)}`);
     const reason = new Error(refusalReason(error, token));
     const kind = classifyGitCommandFailure(error);
@@ -277,7 +271,7 @@ async function formalIdentity(task: Task, reviewer: ReviewerSetting, runtime: Fo
   return { name, org, token, gh };
 }
 export async function publishFormalReview(store: Store, t: Task, run: Run, status: string, text: string, reviewer: ReviewerSetting, allowed: () => boolean = () => true, runtime: FormalReviewRuntime = {}, recoveryReason?: string): Promise<number> {
-  return (await singleFlightPublication(run.id, () => publishFormalReviewOnce(store, t, run, status, text, reviewer, allowed, runtime, recoveryReason))).id;
+  return (await publishReviewOnce(store, t, run, status, text, allowed, reviewer, runtime, recoveryReason)).id;
 }
 async function publishFormalReviewOnce(store: Store, t: Task, run: Run, status: string, text: string, reviewer: ReviewerSetting, allowed: () => boolean = () => true, runtime: FormalReviewRuntime = {}, recoveryReason?: string): Promise<PublicationOutcome> {
   const verify = runtime.verifyPr ?? verifyPr;
