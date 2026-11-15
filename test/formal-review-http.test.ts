@@ -73,8 +73,10 @@ for (const shape of ['foreign-next', 'loop', 'unavailable', 'lost-response', 'ma
       if (shape === 'oversize') return new Response('x'.repeat(32 * 1024 * 1024 + 1));
       return new Response('[]', { headers: { Link: `<${shape === 'loop' ? 'https://api.github.com/reviews' : 'https://elsewhere.example/reviews'}>; rel="next"` } });
     };
-    await assert.rejects(formalReviewHttp('reviews', shape === 'lost-response' ? ['-X', 'POST', '-f', 'body=exact'] : ['--paginate', '--slurp'], 'secret', request),
-      shape === 'unavailable' ? (error: unknown) => error instanceof FormalReviewHttpError && error.status === 403 : undefined);
+    const response = formalReviewHttp('reviews', shape === 'lost-response' ? ['-X', 'POST', '-f', 'body=exact'] : ['--paginate', '--slurp'], 'secret', request);
+    if (shape === 'unavailable')
+      await assert.rejects(response, (error: unknown) => error instanceof FormalReviewHttpError && error.status === 403);
+    else await assert.rejects(response);
     assert.equal(requests, 1);
   });
 }

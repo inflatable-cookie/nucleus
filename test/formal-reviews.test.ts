@@ -224,7 +224,7 @@ test('a missing keychain item, 401/403 and missing write access refuse loudly, n
   const t1 = task(fixture.repo), token = 'ghs_leaky_token';
   // A missing keychain item names the org, the keychain service and what is missing.
   await assert.rejects(readReviewerToken(`ns-missing-${randomUUID()}`), new RegExp(`${REVIEWER_TOKEN_SERVICE}.*account`));
-  for (const [index, [status, reason]] of [[[401, 'Bad credentials'], [403, 'Resource not accessible by personal access token'], [403, 'Must have write access to this repository']] as const].entries()) {
+  for (const [index, [status, reason]] of ([[401, 'Bad credentials'], [403, 'Resource not accessible by personal access token'], [403, 'Must have write access to this repository']] as const).entries()) {
     const calls: Call[] = [];
     const runGh = ghStub(calls, () => { throw new FormalReviewHttpError(status, `${reason}: ${token}`); });
     await assert.rejects(publishFormalReview(store, t1, run(`review-run-${index}`), 'ready_to_merge', 'Findings', reviewer, () => true, {readToken: async () => token, runGh, verifyPr}),
