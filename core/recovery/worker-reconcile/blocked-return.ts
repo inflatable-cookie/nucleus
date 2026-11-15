@@ -29,9 +29,9 @@ const scopedTo = (event: { detail: string }, id: string) => event.detail.startsW
 export function continuationOwnsReturn(engine: WorkerReconcileContext, taskId: string): boolean {
   const latest = engine.store.task(taskId);
   const runId = latest.completion?.runId;
-  return latest.phase === 'changes_requested' && Boolean(runId)
-    && engine.store.eventsAll(taskId).some(event => ['non_delivery_pushback', 'unfinished_pushback'].includes(event.kind)
-      && scopedTo(event, runId));
+  if (latest.phase !== 'changes_requested' || !runId) return false;
+  return engine.store.eventsAll(taskId).some(event => ['non_delivery_pushback', 'unfinished_pushback'].includes(event.kind)
+    && scopedTo(event, runId));
 }
 
 /**
