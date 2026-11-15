@@ -145,7 +145,8 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
 
 ## Re-rates
 
-- nucleus#1248 (floor 7, 2026-11-15): `core/usage/usage-service.ts` (8) now owns paced reads and
+- nucleus#1248 (floor 7, 2026-11-15; implementation commit `926fe82c6`):
+  `core/usage/usage-service.ts` (8) now owns paced reads and
   state projection while `core/store/store-usage.ts` (10) owns usage SQL, deduplication and pruning.
   Provider keys match the canonical profile vocabulary exactly; malformed saved state now surfaces
   instead of resetting backoff, and write/prune failures emit warnings. The last-good fallback is
