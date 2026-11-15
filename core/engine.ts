@@ -91,6 +91,10 @@ import { BriefControls } from "./verbs/brief";
 import { ExternalMergeRefusal, MoveControls } from "./verbs/moves";
 import { RestartControls } from "./verbs/restart";
 import { RetryEffectControls } from "./verbs/retry-effect";
+import { RetryEffectReplay } from "./verbs/retry-effect-replay";
+import { ArchiveEffectRetries } from "./verbs/retry-effect-archive";
+import { RecoveryEffectRetries } from "./verbs/retry-effect-recovery";
+import { OrdinaryEffectRetries } from "./verbs/retry-effect-ordinary";
 import { CallbackIntake } from "./intake/callback-intake";
 import { WorkerReconcile, completionReportsPr, INTERACTIVE_RUNNING_REASON, INTERACTIVE_WAIT_REASON } from "./recovery/worker-reconcile";
 import { WorkerFailover } from "./dispatch/worker-failover";
@@ -110,6 +114,7 @@ import { SettingsControls } from "./verbs/settings";
 import { ForceVerbs } from "./verbs/force";
 import { OwnerStop } from "./verbs/owner-stop";
 import { DeferredOwnerVerbs } from "./verbs/deferred-verbs";
+import { BriefAmendmentDelivery } from "./verbs/brief-amendment";
 import { ReviewerAutoContinue } from "./verbs/reviewer-auto-continue";
 import { PausedStops } from "./verbs/paused-stops";
 import { ProofControls } from "./verbs/proof";
@@ -245,7 +250,7 @@ export class Engine {
     return detail;
   }
   private sweepOwner?: Sweep;
-  private get sweep(): Sweep { return this.sweepOwner ??= new Sweep(schedulingEngineContext(this, ['adapter', 'applyDeferredOwnerVerbs', 'archivePlannerGrants', 'archiveRetiredErroredAgents', 'auditPass', 'clearRetiredInvalidations', 'continueAwaitingReviewers', 'dispatchQueued', 'dispositionDeps', 'drainProjections', 'drainWaiters', 'enqueueTitle', 'ensureSweep', 'flushPrerequisiteReleases', 'host', 'hostAvailable', 'hostIds', 'hostOutages', 'hostWait', 'inventoryHostMatches', 'lastHookCleanupAt', 'lifecycle', 'maxSweepWindows', 'migrateProjectOwnersToPlanners', 'noteStepFailure', 'observeRetiredWorkers', 'quiesce', 'reconcile', 'recoverExhaustedWorkers', 'removeSiblings', 'resumePausedStops', 'retiredObservationKey', 'retiredObservationPlan', 'scheduleLane', 'scheduleLifecycleFollowUp', 'scheduleTaskQuantum', 'settleQuiesce', 'startSweepChain', 'stopped', 'store', 'sweepChain', 'sweepCursor', 'sweepDeferred', 'sweepDeferredCursor', 'sweepMode', 'sweepOrder', 'sweepPending', 'sweepStats', 'sweepTicks', 'taskHostAvailable', 'wakeCapacityWaiter', 'wakePreludes', 'withHost'], ['checkpoints', 'delegateNativeQuestions', 'deliverDecisionNotices', 'deliverDrainNotices', 'deliverHoldNotices', 'deliverHostOutageNotices', 'deliverNotices', 'deliverQueuedMessages', 'observationTargets', 'observe', 'origins', 'raiseOperatorQuestions', 'recovery', 'resumeAskQuestions', 'resumeResponsibleAnsweredQuestions', 'settleBudgetClock'])); }
+  private get sweep(): Sweep { return this.sweepOwner ??= new Sweep(schedulingEngineContext(this, ['adapter', 'applyDeferredOwnerVerbs', 'deliverPendingBriefAmendments', 'archivePlannerGrants', 'archiveRetiredErroredAgents', 'auditPass', 'clearRetiredInvalidations', 'continueAwaitingReviewers', 'dispatchQueued', 'dispositionDeps', 'drainProjections', 'drainWaiters', 'enqueueTitle', 'ensureSweep', 'flushPrerequisiteReleases', 'host', 'hostAvailable', 'hostIds', 'hostOutages', 'hostWait', 'inventoryHostMatches', 'lastHookCleanupAt', 'lifecycle', 'maxSweepWindows', 'migrateProjectOwnersToPlanners', 'noteStepFailure', 'observeRetiredWorkers', 'quiesce', 'reconcile', 'recoverExhaustedWorkers', 'removeSiblings', 'resumePausedStops', 'retiredObservationKey', 'retiredObservationPlan', 'scheduleLane', 'scheduleLifecycleFollowUp', 'scheduleTaskQuantum', 'settleQuiesce', 'startSweepChain', 'stopped', 'store', 'sweepChain', 'sweepCursor', 'sweepDeferred', 'sweepDeferredCursor', 'sweepMode', 'sweepOrder', 'sweepPending', 'sweepStats', 'sweepTicks', 'taskHostAvailable', 'wakeCapacityWaiter', 'wakePreludes', 'withHost'], ['checkpoints', 'delegateNativeQuestions', 'deliverDecisionNotices', 'deliverDrainNotices', 'deliverHoldNotices', 'deliverHostOutageNotices', 'deliverNotices', 'deliverQueuedMessages', 'observationTargets', 'observe', 'origins', 'raiseOperatorQuestions', 'recovery', 'resumeAskQuestions', 'resumeResponsibleAnsweredQuestions', 'settleBudgetClock'])); }
   readonly dispatchOwner = new Dispatch(this);
   private readonly dispatchAdmission = new DispatchAdmission({
     store: () => this.store,
@@ -372,10 +377,15 @@ export class Engine {
   readonly ownerStop: OwnerStop;
   private readonly deferredVerbs: DeferredOwnerVerbs;
   private readonly reviewerAutoContinue: ReviewerAutoContinue;
+  private readonly briefAmendmentDelivery: BriefAmendmentDelivery;
   private readonly reviewerControls: ReviewerControls;
   readonly moveControls: MoveControls;
   readonly restartControls: RestartControls;
   private readonly retryEffectControls: RetryEffectControls;
+  private readonly retryEffectReplay: RetryEffectReplay;
+  private readonly archiveEffectRetries: ArchiveEffectRetries;
+  private readonly recoveryEffectRetries: RecoveryEffectRetries;
+  private readonly ordinaryEffectRetries: OrdinaryEffectRetries;
   private readonly workerReconcile: WorkerReconcile;
   private readonly callbackIntake: CallbackIntake;
   private readonly workerFailover: WorkerFailover;
@@ -536,10 +546,15 @@ export class Engine {
     this.ownerStop = new OwnerStop(this);
     this.deferredVerbs = new DeferredOwnerVerbs(this);
     this.reviewerAutoContinue = new ReviewerAutoContinue(this);
+    this.briefAmendmentDelivery = new BriefAmendmentDelivery(this);
     this.reviewerControls = new ReviewerControls(this);
     this.moveControls = new MoveControls(this);
     this.restartControls = new RestartControls(this);
     this.retryEffectControls = new RetryEffectControls(this);
+    this.retryEffectReplay = new RetryEffectReplay(this);
+    this.archiveEffectRetries = new ArchiveEffectRetries(this);
+    this.recoveryEffectRetries = new RecoveryEffectRetries(this);
+    this.ordinaryEffectRetries = new OrdinaryEffectRetries(this);
     this.workerReconcile = new WorkerReconcile(recoveryEngineContext(this, ['acceptWorkerResult', 'adapter', 'admission', 'branchPrLookupDue', 'compareSiblings', 'continuationOwnsReturn', 'hooks', 'host', 'idleGraceMs', 'note', 'reconcileBlockedReturn', 'reconcileBranchPr', 'reconcileObservation', 'reconcileReportingBinding', 'recordObservation', 'reportingBindingRecheckDue', 'stopped', 'store', 'updateAfterOperatorRemap', 'onTaskHost'], ['adoptReplacementPr', 'attention', 'extendCallbackReminder', 'heavyRunAlive', 'identifyOriginHost', 'withHost', 'reconcileStalledTurnStop', 'recovery', 'remindStoppedWorker', 'resolveIncident', 'responsiblePrReportRefused', 'settleAutomaticReplayHold', 'stalls', 'suppressAutomaticRetry', 'update', 'waiting']));
     const engine = this;
     this.callbackIntake = new CallbackIntake({
@@ -968,18 +983,18 @@ export class Engine {
   reconcileReviewEntryExternalMerge(input:{task:Task;reason:string;caller?:string;qualification?:string;head?:string;
     relayed?:boolean;relayNote?:string;enclosing:()=>VerifiedEnclosingOperation|undefined}): Promise<Task> { return this.moveControls.reconcileReviewEntryExternalMerge(input); }
   retryEffect(input:TaskControlInput,operationId?:string):Promise<Task>{ return this.retryEffectControls.retryEffect(input,operationId); }
-  retryEffectBeforeSettlement(task:Task,input:TaskControlInput):Promise<Task>|null{ return this.retryEffectControls.retryEffectBeforeSettlement(task,input); }
-  retryPublicationBeforeSettlement(task:Task,input:TaskControlInput,publication:OwnerEffect):Promise<Task>{ return this.retryEffectControls.retryPublicationBeforeSettlement(task,input,publication); }
-  retryOwnedToolHold(task:Task,ownedTool:OwnerEffect):Promise<Task>{ return this.retryEffectControls.retryOwnedToolHold(task,ownedTool); }
-  retryCancelledWorkspaceRetirement(task:Task,input:TaskControlInput):Promise<Task>{ return this.retryEffectControls.retryCancelledWorkspaceRetirement(task,input); }
-  retryTerminalArchive(task:Task,input:TaskControlInput,archiveWorkspaceId:string,directory:string|null|undefined):Promise<Task>{ return this.retryEffectControls.retryTerminalArchive(task,input,archiveWorkspaceId,directory); }
-  retrySupersededReviewView(task:Task,input:TaskControlInput,intentWorkspaceId:string):Promise<Task>{ return this.retryEffectControls.retrySupersededReviewView(task,input,intentWorkspaceId); }
-  retryHookEffect(input:TaskControlInput,current:Task,eventId:string):Promise<Task>{ return this.retryEffectControls.retryHookEffect(input,current,eventId); }
-  reconcilePublicationEffect(input:TaskControlInput,current:Task,runId:string):Promise<Task>{ return this.retryEffectControls.reconcilePublicationEffect(input,current,runId); }
-  retryRecoveryEffect(task:Task,input:TaskControlInput,found:OwnerEffect):Promise<Task>{ return this.retryEffectControls.retryRecoveryEffect(task,input,found); }
-  retryTaskControlOperation(task:Task,found:OwnerEffect):Promise<Task>{ return this.retryEffectControls.retryTaskControlOperation(task,found); }
-  retryOrdinaryEffect(task:Task,input:TaskControlInput,found:{effect:string;kind:Exclude<OwnerEffect['kind'],'recovery_effect'|'task_control_operation'>},current:Task,expected:number):Promise<Task>{ return this.retryEffectControls.retryOrdinaryEffect(task,input,found,current,expected); }
-  heldArchiveRetryReason(task: Task, workspaceId: string, recorded: WorkspaceArchiveRetry | null, discard: WorkspaceDiscard | null, discardedNow: boolean): string { return this.retryEffectControls.heldArchiveRetryReason(task, workspaceId, recorded, discard, discardedNow); }
+  retryEffectBeforeSettlement(task:Task,input:TaskControlInput):Promise<Task>|null{ return this.ordinaryEffectRetries.retryEffectBeforeSettlement(task,input); }
+  retryPublicationBeforeSettlement(task:Task,input:TaskControlInput,publication:OwnerEffect):Promise<Task>{ return this.ordinaryEffectRetries.retryPublicationBeforeSettlement(task,input,publication); }
+  retryOwnedToolHold(task:Task,ownedTool:OwnerEffect):Promise<Task>{ return this.ordinaryEffectRetries.retryOwnedToolHold(task,ownedTool); }
+  retryCancelledWorkspaceRetirement(task:Task,input:TaskControlInput):Promise<Task>{ return this.archiveEffectRetries.retryCancelledWorkspaceRetirement(task,input); }
+  retryTerminalArchive(task:Task,input:TaskControlInput,archiveWorkspaceId:string,directory:string|null|undefined):Promise<Task>{ return this.archiveEffectRetries.retryTerminalArchive(task,input,archiveWorkspaceId,directory); }
+  retrySupersededReviewView(task:Task,input:TaskControlInput,intentWorkspaceId:string):Promise<Task>{ return this.archiveEffectRetries.retrySupersededReviewView(task,input,intentWorkspaceId); }
+  retryHookEffect(input:TaskControlInput,current:Task,eventId:string):Promise<Task>{ return this.recoveryEffectRetries.retryHookEffect(input,current,eventId); }
+  reconcilePublicationEffect(input:TaskControlInput,current:Task,runId:string):Promise<Task>{ return this.recoveryEffectRetries.reconcilePublicationEffect(input,current,runId); }
+  retryRecoveryEffect(task:Task,input:TaskControlInput,found:OwnerEffect):Promise<Task>{ return this.recoveryEffectRetries.retryRecoveryEffect(task,input,found); }
+  retryTaskControlOperation(task:Task,found:OwnerEffect):Promise<Task>{ return this.recoveryEffectRetries.retryTaskControlOperation(task,found); }
+  retryOrdinaryEffect(task:Task,input:TaskControlInput,found:OwnerEffect,current:Task,expected:number):Promise<Task>{ return this.ordinaryEffectRetries.retryOrdinaryEffect(task,input,found,current,expected); }
+  heldArchiveRetryReason(task: Task, workspaceId: string, recorded: WorkspaceArchiveRetry | null, discard: WorkspaceDiscard | null, discardedNow: boolean): string { return this.archiveEffectRetries.heldArchiveRetryReason(task, workspaceId, recorded, discard, discardedNow); }
   ownerStopHold(task: Task): boolean { return this.ownerStop.ownerStopHold(task); }
   ownerStopNamesRun(task: Task, runId: string | null | undefined): boolean { return this.ownerStop.ownerStopNamesRun(task, runId); }
 
@@ -993,6 +1008,8 @@ export class Engine {
   continueAwaitingReviewers(tasks: Task[]): Promise<void> { return this.reviewerAutoContinue.continueAwaitingReviewers(tasks); }
   applyDeferredOwnerVerbs(): Promise<void> { return this.deferredVerbs.applyDeferredOwnerVerbs(); }
   dropDeferredOwnerVerb(taskId: string, at: string, kind: string, detail: string): void { this.deferredVerbs.dropDeferredVerb(taskId, at, kind, detail); }
+  /** Deliver every recorded brief-amendment intent that never reached its host. */
+  deliverPendingBriefAmendments(): Promise<void> { return this.briefAmendmentDelivery.deliverPending(); }
   stopTask(input: TaskControlInput): Promise<Task> { return this.ownerStop.stopTask(input); }
 
   stopActiveThreads(input: { caller?: string } = {}): Promise<z.infer<typeof stopThreads.output>> {
@@ -1080,9 +1097,9 @@ export class Engine {
   awaitProjectionOccurrence(key: string, drain: () => Promise<void>): Promise<void> {
     return this.projections.awaitProjectionOccurrence(key, drain);
   }
-  replayedArchiveOutcome(task: Task, input: TaskControlInput, operationId?: string): Task | null { return this.retryEffectControls.replayedArchiveOutcome(task, input, operationId); }
-  replayedCatalogArchiveOutcome(task: Task, input: TaskControlInput, operationId?: string): Task | null { return this.retryEffectControls.replayedCatalogArchiveOutcome(task, input, operationId); }
-  replayedDispositionWorkspaceOutcome(task: Task, input: TaskControlInput, operationId?: string): Task | null { return this.retryEffectControls.replayedDispositionWorkspaceOutcome(task, input, operationId); }
+  replayedArchiveOutcome(task: Task, input: TaskControlInput, operationId?: string): Task | null { return this.retryEffectReplay.replayedArchiveOutcome(task, input, operationId); }
+  replayedCatalogArchiveOutcome(task: Task, input: TaskControlInput, operationId?: string): Task | null { return this.retryEffectReplay.replayedCatalogArchiveOutcome(task, input, operationId); }
+  replayedDispositionWorkspaceOutcome(task: Task, input: TaskControlInput, operationId?: string): Task | null { return this.retryEffectReplay.replayedDispositionWorkspaceOutcome(task, input, operationId); }
   drainProjections(options: { cleanup?: boolean } = {}): Promise<void> {
     return this.projections.drainProjections(options);
   }
