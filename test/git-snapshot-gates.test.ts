@@ -25,8 +25,8 @@ test("merge-candidate proof binds both parents and the tree", async t => {
   await writeFile(join(root, "file"), "content\n");
   await gitRun(root, ["add", "file"]);
   const tree = await gitText(root, "write-tree");
-  const base = await gitTextEnv(root, env, "commit-tree", tree);
-  const commit = await gitTextEnv(root, env, "commit-tree", tree, "-p", base, "-p", base);
+  const base = await gitTextEnv(root, env, "commit-tree", tree, "-m", "base");
+  const commit = await gitTextEnv(root, env, "commit-tree", tree, "-p", base, "-p", base, "-m", "candidate");
   await gitRun(root, ["symbolic-ref", "HEAD", "refs/heads/main"]);
   await gitRun(root, ["update-ref", "refs/heads/main", commit]);
   const candidate = { commit, integrationBase: base, reviewedHead: base, tree };
