@@ -1,4 +1,3 @@
-import { historicalWireLabel } from "../../shared/wire-labels";
 import { existsSync } from "node:fs";
 import { removeTree } from "./tree-removal";
 import type { Run, Task } from "../../shared/contracts";
@@ -11,11 +10,48 @@ import { verifyRecordedOrigin, verifyReportOnlyIdentity, originBranchContaining,
 import { removeOwnedWorktree, repoCommonDir } from "./workspace-allocation";
 import { removeBuildOutput, type BuildOutputCleanupHooks } from "./worktree-cleanup";
 import { assertCanonicalOwnedPath, classifyOrphanWorktree, normalizeOwnedDirectoryPermissions, type WorkspaceDiscard } from "./orphan-worktree";
-import { externalWorkspaceArchivePlacement, type ExternalWorkspaceCatalogView } from "./external-workspace-placement";
+import { workspaceThreadEntries, workspaceThreadFacts, type ArchiveThreadPage, type ArchiveThreadRecord } from "./owned-workspace-threads";
+
+export { type ArchiveThreadPage, type ArchiveThreadRecord } from "./owned-workspace-threads";
+
+/**
+ * The archive's optional inputs, as one typed request instead of eight
+ * positional arguments and bare booleans: each field says what it enables and
+ * callers name it.
+ */
+export interface WorkspaceArchiveOptions {
+  /** The source branch must be proved published before the worktree goes. */
+  requirePublished?: boolean;
+  /** Participants this attempt already knows belong to the archive. */
+  attachedAgentIds?: ReadonlySet<string>;
+  requireDirectory?: boolean;
+  /** A caller that owns every thread may keep foreign idle threads. */
+  allowIdleForeignThreads?: boolean;
+  buildOutputCleanup?: BuildOutputCleanupHooks;
+  /** A released review-source view this archive is retiring. */
+  reviewRun?: Run;
+  discard?: WorkspaceDiscard | null;
+  /** The primary workspace's own archive result, when this is a secondary view. */
+  primaryArchived?: () => boolean;
+}
+
+/**
+ * A local teardown that did not finish. Typed so callers decide from the code,
+ * never from the message text; the message keeps naming the step for the
+ * operator and the recorded reason.
+ */
+export class WorkspaceTeardownRefusal extends Error {
+  constructor(readonly code: 'incomplete' | 'catalogued' | 'failed', message: string) {
+    super(`worktree.teardown failed: ${message}`);
+    this.name = 'WorkspaceTeardownRefusal';
+  }
+}
 
 export class OwnedWorkspaceArchive {
   constructor(private readonly host: OwnedWorkspaceArchiveHost) {}
-  async archiveTaskWorkspace(task:Task,id:string,directory:string,expectedHead:string,allowed:()=>boolean,uncertain:boolean,requirePublished=false,attachedAgentIds:ReadonlySet<string>=new Set(),requireDirectory=false,allowIdleForeignThreads=false,buildOutputCleanup?:BuildOutputCleanupHooks,reviewRun?:Run,discard?:WorkspaceDiscard|null,primaryArchived?:()=>boolean) {
+  async archiveTaskWorkspace(task:Task,id:string,directory:string,expectedHead:string,allowed:()=>boolean,uncertain:boolean,options:WorkspaceArchiveOptions={}) {
+    const { requirePublished=false, attachedAgentIds=new Set<string>(), requireDirectory=false, allowIdleForeignThreads=false,
+      buildOutputCleanup, reviewRun, discard=null, primaryArchived } = options;
     const workspace=this.host.workspaceHost.workspaceRef(id);
     const terminal=task.phase==='done'||task.phase==='cancelled'&&task.disposition?.status==='complete';
     const participantDeleted=async(agentId:string)=>{
@@ -74,37 +110,18 @@ export class OwnedWorkspaceArchive {
         // Catalog absence is only an observation. The retained binding, canonical
         // allocation and published source still supply the authority to tear down.
         if(!ownedCheckout||id!==task.workspaceId||task.directory!==directory||task.reviewEntry||!requirePublished)
-          throw Error(`worktree.teardown failed: worktree directory remains after archive: ${directory}`);
+          throw new WorkspaceTeardownRefusal('incomplete', `worktree directory remains after archive: ${directory}`);
       }else if(!rootOk||!slugOk||workspace.directory!==directory)throw Error('Preserving workspace: ownership or directory changed');
       if(uncertain&&current)throw Error('Workspace archive outcome is uncertain; inspect before retrying');
       if(!existsSync(directory)){
         if(requireDirectory)throw Error('Preserving workspace with missing directory');
         return null;
       }
-      const entries:Awaited<ReturnType<typeof this.host.workspaceHost.archiveThreadPage>>["entries"]=[];
-      let cursor:string|undefined;
-      const cursors=new Set<string>();
-      // The SDK has no workspace filter; labels would omit foreign threads.
-      // Archive history can exceed any fixed page count. Require forward cursor
-      // progress until the provider positively ends the list.
+      // The inventory itself, its completeness proof and its ownership facts are one
+      // owner (`owned-workspace-threads`); this pass reads the typed result.
       const projectKeys=projectBinding?[projectBinding]:undefined,includeArchived=localTeardown||!current;
-      for(;;){
-        const result=await this.host.workspaceHost.archiveThreadPage({filter:{includeArchived,...(projectKeys?{projectKeys}:{})},page:{limit:200,cursor}});
-        entries.push(...result.entries.filter(e=>e.agent.workspaceId===id));
-        if(result.pageInfo.hasMore===false)break;
-        const next=result.pageInfo.nextCursor;
-        if(result.pageInfo.hasMore!==true||!next||cursors.has(next))throw Error('Workspace thread inventory is incomplete');
-        cursors.add(next);cursor=next;
-      }
-      const foreignAgentIds:string[]=[];
-      for(const entry of entries){
-        const agent=entry.agent;
-        if(historicalWireLabel(agent.labels, 'task')!==task.id&&!attachedAgentIds.has(agent.id)){
-          if(!allowIdleForeignThreads)throw Error('Preserving workspace containing an unrelated thread');
-          if(agent.id)foreignAgentIds.push(agent.id);
-        }
-        if(agent.activeTurn||agent.pendingPermissions?.length||!['idle','error','closed'].includes(agent.status??''))throw Error('Waiting for workspace threads to become idle');
-      }
+      const entries=await workspaceThreadEntries(this.host,id,projectBinding??null,includeArchived);
+      const { foreignAgentIds }=workspaceThreadFacts(entries,task.id,attachedAgentIds,allowIdleForeignThreads);
       // A released pinned view is Queue-owned scratch whose declared participants
       // must still be idle and free of a live owned tool before its checkout goes,
       // exactly like a Queue-owned task checkout: catalog membership alone does
@@ -232,7 +249,7 @@ export class OwnedWorkspaceArchive {
       // to finish local teardown, and never reuse pre-await source/tool proofs.
       const fresh=await prove(true);
       if(!fresh)return initial.foreignAgentIds;
-      if(fresh.current)throw Error('worktree.teardown failed: workspace remains catalogued; inspect before retrying');
+      if(fresh.current)throw new WorkspaceTeardownRefusal('catalogued','workspace remains catalogued; inspect before retrying');
       if(fresh.actualHead!==initial.actualHead)throw Error('Preserving workspace with unexpected commits before teardown');
       if(fresh.origin!==initial.origin)throw Error('Preserving workspace: repository origin changed before teardown');
       if(fresh.publication!==initial.publication)throw Error('Preserving workspace: publication evidence changed before teardown');
@@ -266,15 +283,13 @@ export class OwnedWorkspaceArchive {
         if(initial.orphan.orphaned)await removeTree(directory,{force:false});
         else await removeOwnedWorktree(task.repoPath,directory,discarding);
       }
-      catch(error){throw Error(`worktree.teardown failed: ${error instanceof Error?error.message:String(error)}`);}
-      if(existsSync(directory))throw Error(`worktree.teardown failed: Queue-owned worktree directory remains after archive: ${directory}`);
+      catch(error){throw new WorkspaceTeardownRefusal('failed',error instanceof Error?error.message:String(error));}
+      if(existsSync(directory))throw new WorkspaceTeardownRefusal('incomplete',`Queue-owned worktree directory remains after archive: ${directory}`);
     }
     return initial.foreignAgentIds;
   }
 }
 
-export interface ArchiveThreadRecord { id: string; workspaceId?: string | null; labels?: Record<string, string>; activeTurn?: unknown; pendingPermissions?: readonly unknown[] | null; status?: string | null; archivedAt?: string | null }
-export interface ArchiveThreadPage { entries: { agent: ArchiveThreadRecord }[]; pageInfo: { hasMore: boolean; nextCursor?: string | null } }
 export interface OwnedWorkspaceArchiveHost extends WorkspaceContinuationHost {
   readonly workspaceHost: WorkspaceContinuationHost["workspaceHost"] & { workspaceIdAccepted?(id: unknown): boolean; archiveThreadPage(options: { filter: { includeArchived: boolean; projectKeys?: string[] }; page: { limit: number; cursor?: string } }): Promise<ArchiveThreadPage> };
   observe(id: string): Promise<AgentObservation | null>;

@@ -68,7 +68,7 @@ test("dirty or unpushed work keeps its target output", { timeout: HOOK_TEST_TIME
       }
       const head = git(f.directory, "rev-parse", "HEAD");
       const cleanup = buildOutputCleanupHooks(f.store, f.task.id, f.task.workspaceId!, f.directory, () => true);
-      await assert.rejects(archiver.archiveTaskWorkspace(f.store.task(f.task.id), f.task.workspaceId!, f.directory, head, () => true, false, true, new Set(), true, true, cleanup), /uncommitted|unpublished/);
+      await assert.rejects(archiver.archiveTaskWorkspace(f.store.task(f.task.id), f.task.workspaceId!, f.directory, head, () => true, false, { requirePublished: true, attachedAgentIds: new Set(), requireDirectory: true, allowIdleForeignThreads: true, buildOutputCleanup: cleanup }), /uncommitted|unpublished/);
       assert.equal(await stat(f.target).then(() => true), true);
       assert.equal(await stat(f.nestedTarget).then(() => true), true);
       assert.equal(await stat(f.nestedNodeModules).then(() => true), true);
@@ -83,7 +83,7 @@ test("a live workspace agent keeps its target output", { timeout: HOOK_TEST_TIME
   const { adapter: archiver } = archiverFor(f, [live]);
   try {
     const cleanup = buildOutputCleanupHooks(f.store, f.task.id, f.task.workspaceId!, f.directory, () => true);
-    await assert.rejects(archiver.archiveTaskWorkspace(f.store.task(f.task.id), f.task.workspaceId!, f.directory, f.head, () => true, false, true, new Set([live.id]), true, true, cleanup), /become idle/);
+    await assert.rejects(archiver.archiveTaskWorkspace(f.store.task(f.task.id), f.task.workspaceId!, f.directory, f.head, () => true, false, { requirePublished: true, attachedAgentIds: new Set([live.id]), requireDirectory: true, allowIdleForeignThreads: true, buildOutputCleanup: cleanup }), /become idle/);
     assert.equal(await stat(f.target).then(() => true), true);
     assert.equal(await stat(f.nestedTarget).then(() => true), true);
     assert.equal(await stat(f.nestedNodeModules).then(() => true), true);

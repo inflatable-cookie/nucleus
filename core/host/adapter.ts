@@ -1,4 +1,5 @@
 import type { OrphanWorkspace, WorkspaceCreationState, HostProcessFact, BuildOutputCleanupHooks, WorkspaceDiscard, WorktreeValidationScan, RunUsageSource, TimelineEntry, TimelinePage, VerifiedPr } from './types';
+import type { WorkspaceArchiveOptions } from '../workspaces/owned-workspace-archive';
 import type { Run, Profile, ReviewEntryInput, StashEntry, Task } from "../../shared/contracts";
 import type { HostCatalog, HostCatalogOptions, NativeDecisionInput, HostPermissionDecision } from "../../shared/host";
 import type { NucleusProfile } from "../../shared/profiles";
@@ -255,7 +256,7 @@ export interface Adapter extends RunUsageSource {
    * one whose backing it might remove. A complete walk or an explicit refusal.
    */
   externalWorkspaceCatalog?(directory: string): Promise<ExternalWorkspaceCatalog>;
-  archiveTaskWorkspace?(task:Task,id:string,directory:string,expectedHead:string,allowed:()=>boolean,uncertain:boolean,requirePublished?:boolean,attachedAgentIds?:ReadonlySet<string>,requireDirectory?:boolean,allowIdleForeignThreads?:boolean,buildOutputCleanup?:BuildOutputCleanupHooks,reviewRun?:Run,discard?:WorkspaceDiscard|null,primaryArchived?:()=>boolean):Promise<boolean|string[]>;
+  archiveTaskWorkspace?(task:Task,id:string,directory:string,expectedHead:string,allowed:()=>boolean,uncertain:boolean,options?:WorkspaceArchiveOptions):Promise<boolean|string[]>;
   taskWorkspaceArchived?(id:string):Promise<boolean>;
   verifyPr(task: Task, number: number): Promise<VerifiedPr>;
   verifyPrIdentity?(task: Task, number: number, options?: { allowDraft?: boolean }): Promise<VerifiedPr>;
