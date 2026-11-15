@@ -64,10 +64,12 @@ test('one wired set replaces every host question at once', async () => {
     ...ambientHostPorts(() => 't3code:b'),
     taskAvailable: task => { asked.push(`task:${task.id}`); return false; },
     online: id => { asked.push(`online:${id}`); return id === 't3code:b'; },
+    catalogKnown: () => { asked.push('catalog'); return false; },
   };
   assert.equal(resolution.hostAvailable({ id: 'task' } as never), false);
   assert.equal(resolution.hostOnline('t3code:b'), true);
   assert.equal(resolution.hostOnline('paseo:a'), false, 'no question keeps its ambient answer beside the wired set');
+  assert.equal(resolution.catalogKnown(), false, 'an unloaded catalog is never the ambient yes after wire-up');
   assert.equal(await resolution.identifyOriginHost('t3code:b:agent'), 't3code:b');
-  assert.deepEqual(asked, ['task:task', 'online:t3code:b', 'online:paseo:a']);
+  assert.deepEqual(asked, ['task:task', 'online:t3code:b', 'online:paseo:a', 'catalog']);
 });

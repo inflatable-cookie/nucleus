@@ -288,6 +288,8 @@ export class Resolution {
   set awaitHostBridge(wait: ((waitMs: number) => Promise<boolean>) | null) { this.hostPorts.awaitBridge = wait; }
   get hostBridgeWaitMs(): number { return this.hostPorts.bridgeWaitMs; }
   set hostBridgeWaitMs(ms: number) { this.hostPorts.bridgeWaitMs = ms; }
+  /** Whether the daemon profile catalog has loaded since start, read from the one host set. */
+  catalogKnown(): boolean { return this.hostPorts.catalogKnown(); }
   canReuseUnqualifiedOriginWorkspace(): boolean { return this.hostPorts.canReuseUnqualifiedOriginWorkspace(); }
   identifyOriginHost(id: string, identitySource?: IdentitySource): Promise<string | undefined> { return this.hostPorts.identifyOriginHost(id, identitySource); }
   /** The Host contract over this resolution's adapter, read at each call (`core/host/host-facade.ts`). */
@@ -847,8 +849,6 @@ export class Resolution {
    * binds `prUrl`, `resumePrNumber` and `prHead`; otherwise it writes nothing.
    */
   bindContinuedPrInTx(taskId: string, binding: ContinuedPrBinding, via: string): boolean { return this.reviewLifecycle.bindContinuedPrInTx(taskId, binding, via); }
-  /** Engine-provided: whether the daemon profile catalog has loaded since start. */
-  catalogKnown: () => boolean = () => true;
   /**
    * Engine-provided: apply one owner control for an answer the operator gave to
    * Queue's own native question on the task's thread. Spec 058 (task 523): the
