@@ -47,3 +47,26 @@ export const restartRoles = [...routeRoles, "executor"] as const;
 
 export type RestartRole = typeof restartRoles[number];
 
+
+/**
+ * One `restart` handed to the shape owner that serves it: the request as the
+ * caller sent it, the task the verb derived, and the resolved role, shape,
+ * reason and instruction every shape reads.
+ */
+export interface RestartRequest {
+  input: TaskControlInput;
+  task: Task;
+  role: RestartRole;
+  shape: RestartShapeName;
+  reason: string;
+  operationId?: string;
+  /** The caller's instruction, or the one continuation sentence a restart without one carries. */
+  instruction: string;
+}
+
+/** The restart shapes, as `owner-restart.ts` derives them. */
+export type RestartShapeName =
+  | "pre_dispatch" | "absent_worker" | "blocked_worker" | "blocked_with_pr"
+  | "stopped_revision" | "stalled_run" | "retained_worker" | "owner_stopped_worker"
+  | "checkpoint_reviewer" | "stopped_reviewer" | "absent_resolution" | "coordinator"
+  | "unreported_executor";

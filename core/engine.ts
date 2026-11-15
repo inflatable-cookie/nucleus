@@ -90,6 +90,10 @@ import { AgentControls } from "./verbs/agent-controls";
 import { BriefControls } from "./verbs/brief";
 import { ExternalMergeRefusal, MoveControls } from "./verbs/moves";
 import { RestartControls } from "./verbs/restart";
+import { WorkerRestarts } from "./verbs/restart-worker";
+import { ReviewRestarts } from "./verbs/restart-review";
+import { EpisodeRestarts } from "./verbs/restart-episode";
+import { StalledTurnStops } from "./verbs/stalled-turn-stop";
 import { RetryEffectControls } from "./verbs/retry-effect";
 import { RetryEffectReplay } from "./verbs/retry-effect-replay";
 import { ArchiveEffectRetries } from "./verbs/retry-effect-archive";
@@ -116,6 +120,7 @@ import { OwnerStop } from "./verbs/owner-stop";
 import { DeferredOwnerVerbs } from "./verbs/deferred-verbs";
 import { BriefAmendmentDelivery } from "./verbs/brief-amendment";
 import { ReviewerAutoContinue } from "./verbs/reviewer-auto-continue";
+import type { RestartRequest } from "./verbs/owner-shared";
 import { PausedStops } from "./verbs/paused-stops";
 import { ProofControls } from "./verbs/proof";
 import { RouteControls } from "./verbs/route";
@@ -381,6 +386,10 @@ export class Engine {
   private readonly reviewerControls: ReviewerControls;
   readonly moveControls: MoveControls;
   readonly restartControls: RestartControls;
+  readonly workerRestarts: WorkerRestarts;
+  private readonly reviewRestarts: ReviewRestarts;
+  private readonly episodeRestarts: EpisodeRestarts;
+  private readonly stalledTurnStops: StalledTurnStops;
   private readonly retryEffectControls: RetryEffectControls;
   private readonly retryEffectReplay: RetryEffectReplay;
   private readonly archiveEffectRetries: ArchiveEffectRetries;
@@ -550,7 +559,10 @@ export class Engine {
     this.reviewerControls = new ReviewerControls(this);
     this.moveControls = new MoveControls(this);
     this.restartControls = new RestartControls(this);
-    this.retryEffectControls = new RetryEffectControls(this);
+    this.workerRestarts = new WorkerRestarts(this);
+    this.reviewRestarts = new ReviewRestarts(this);
+    this.episodeRestarts = new EpisodeRestarts(this);
+    this.stalledTurnStops = new StalledTurnStops(this);    this.retryEffectControls = new RetryEffectControls(this);
     this.retryEffectReplay = new RetryEffectReplay(this);
     this.archiveEffectRetries = new ArchiveEffectRetries(this);
     this.recoveryEffectRetries = new RecoveryEffectRetries(this);
@@ -846,7 +858,7 @@ export class Engine {
   applyTaskControlSetRouting(input: TaskControlInput, operated: <T>(result: T) => T): Task { return this.settingsControls.applyTaskControlSetRouting(input, operated); }
   applyTaskControlExcludeWorker(input: TaskControlInput, operated: <T>(result: T) => T): Task { return this.settingsControls.applyTaskControlExcludeWorker(input, operated); }
   applyTaskControlLocal(input: TaskControlInput, operated: <T>(result: T) => T): Task { return this.settingsControls.applyTaskControlLocal(input, operated); }
-  restartParkedStep(task: Task, instruction: string | undefined, reviewerInstruction: string | undefined): Task { return this.restartControls.restartParkedStep(task, instruction, reviewerInstruction); }
+  restartParkedStep(task: Task, instruction: string | undefined, reviewerInstruction: string | undefined): Task { return this.workerRestarts.restartParkedStep(task, instruction, reviewerInstruction); }
   applyTaskControlHold(input: TaskControlInput, task: Task): Task { return this.settingsControls.applyTaskControlHold(input, task); }
   removeTask(id: string, version: number): Promise<Task> {
     return this.taskRemoval.removeTask(id, version);
@@ -951,7 +963,7 @@ export class Engine {
   promoteTaskFromAgent(caller:{taskId:string;runId:string;token:string},input:{taskId:string;version:number}) {
     return this.agentControls.promoteTaskFromAgent(caller,input);
   }
-  prepareWorkerResume(input:{taskId:string;version:number;instruction:string;settleFences?:{detail:string;runIds:string[];displacedRunIds?:string[]}}): Promise<() => Task> { return this.restartControls.prepareWorkerResume(input); }
+  prepareWorkerResume(input:{taskId:string;version:number;instruction:string;settleFences?:{detail:string;runIds:string[];displacedRunIds?:string[]}}): Promise<() => Task> { return this.workerRestarts.prepareWorkerResume(input); }
   repinInstruction(input:{taskId:string;version:number}):Promise<Task>{
     return this.briefControls.repinInstruction(input);
   }
@@ -1025,10 +1037,13 @@ export class Engine {
   }
   restartParked(input: TaskControlInput, task: Task, role: RestartRole, reason: string, operationId?: string): Promise<Task> { return this.restartControls.restartParked(input, task, role, reason, operationId); }
   reviewerInstructionHeadProof(task: Task, version: number, commit: () => Task): Promise<Task> | null { return this.restartControls.reviewerInstructionHeadProof(task, version, commit); }
-  executeEpisodeRestart(taskId: string, displacement: { runIds: string[]; cancel: () => Promise<void> }, admit: () => Promise<Task | (() => Task | Promise<Task>)>, runIds?: string[]): Promise<Task> { return this.restartControls.executeEpisodeRestart(taskId, displacement, admit, runIds); }
+  executeEpisodeRestart(taskId: string, displacement: { runIds: string[]; cancel: () => Promise<void> }, admit: () => Promise<Task | (() => Task | Promise<Task>)>, runIds?: string[]): Promise<Task> { return this.episodeRestarts.executeEpisodeRestart(taskId, displacement, admit, runIds); }
   workerRestartArm(task: Task, input: { reason: string; instruction?: string; caller?: string; relayed?: boolean; note?: string;
-    fresh?: boolean; observedWorker?: AgentObservation; supersedeNonDelivery?: boolean }): { afterSettlement: (settled: Task) => Task; afterRevision: (revised: Task) => Task } { return this.restartControls.workerRestartArm(task, input); }
+    fresh?: boolean; observedWorker?: AgentObservation; supersedeNonDelivery?: boolean }): { afterSettlement: (settled: Task) => Task; afterRevision: (revised: Task) => Task } { return this.workerRestarts.workerRestartArm(task, input); }
   restartTask(input: TaskControlInput, operationId?: string): Promise<Task> { return this.restartControls.restartTask(input, operationId); }
+  restartWorker(request: RestartRequest): Promise<Task> { return this.workerRestarts.restartWorker(request); }
+  restartReviewer(request: RestartRequest): Promise<Task> { return this.reviewRestarts.restartReviewer(request); }
+  restartEpisode(request: RestartRequest): Promise<Task> { return this.episodeRestarts.restartEpisode(request); }
 
   continueRetainedReviewer(task: Task, options: {
     version: number; reason: string; instruction: string; ownerStopYields: boolean;
@@ -1043,8 +1058,8 @@ export class Engine {
   private stopRouteRun(task: Task, role: RouteRole, run: Run | null, operationId?: string): Promise<boolean> { return this.routeControls.stopRouteRun(task, role, run, operationId); }
 
   private assertRouteGroupAvailable(profileId: string, role: RouteRole): void { this.routeControls.assertRouteGroupAvailable(profileId, role); }
-  stopStalledTurn(input:{taskId:string;version:number;runId:string}): Promise<Task> { return this.restartControls.stopStalledTurn(input); }
-  prepareAbsentResolution(input:{taskId:string;version:number;settleFences?:{detail:string;runIds:string[];displacedRunIds?:string[]}}, restart?:{input:TaskControlInput;instruction:string}): Promise<Task | (()=>Task | Promise<Task>)> { return this.restartControls.prepareAbsentResolution(input, restart); }
+  stopStalledTurn(input:{taskId:string;version:number;runId:string}): Promise<Task> { return this.stalledTurnStops.stopStalledTurn(input); }
+  prepareAbsentResolution(input:{taskId:string;version:number;settleFences?:{detail:string;runIds:string[];displacedRunIds?:string[]}}, restart?:{input:TaskControlInput;instruction:string}): Promise<Task | (()=>Task | Promise<Task>)> { return this.episodeRestarts.prepareAbsentResolution(input, restart); }
   async stop() {
     this.stopped = true;
     this.unsubscribePrerequisites();

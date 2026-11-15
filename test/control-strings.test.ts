@@ -37,6 +37,7 @@ import { ReviewEntryRefusal } from '../core/review/review-entry';
 import { DurableFenceRefusal, runFenceRefusal } from '../core/intake/run-settlement';
 import { taskControlOperation } from '../core/verbs/task-control-key';
 import { LoginSessionFaultError } from '../shared/session-fault';
+import { TaskChangedRefusal } from '../shared/task-version';
 import { CAPACITY_WAIT_PREFIX, QA_CAPACITY_WAIT_PREFIX } from '../shared/wait-state';
 import { queueOperationSchema } from '../shared/operations';
 import { RETAINED_WORKER_PROFILE_REASON, runSchema, submissionSchema, taskControlInputSchema, type Run, type Task } from '../shared/contracts';
@@ -248,7 +249,7 @@ test('advance funnel: the merged-identity refusal is matched exactly, ahead of t
 // Rule 6: refusal text
 // ---------------------------------------------------------------------------
 
-test('version hint: only a plain or pre-send "Task changed" refusal gets it, and each keeps its class', async t => {
+test('version hint: only the typed stale-version refusal gets it, and it keeps its class', async t => {
   const f = fixture(t);
   const task = f.add();
   const stale = taskControlInputSchema.parse({ taskId: task.id, version: task.version, action: 'stop', reason: 'Pin' });
@@ -260,24 +261,27 @@ test('version hint: only a plain or pre-send "Task changed" refusal gets it, and
     return f.internals.appliedWithVersionHint(stale).then(() => assert.fail('must refuse'), (caught: Error) => caught);
   };
 
-  const plain = await throwing(new Error('Task changed; refresh before retrying'));
-  assert.equal(plain.constructor, Error);
-  assert.equal(plain.message, `Task changed; refresh before retrying ${hint}`);
+  // The stale-version fact is the typed refusal, never the refusal's words.
+  const typed = await throwing(new TaskChangedRefusal('Task changed; refresh before retrying', stale.version, current));
+  assert.ok(typed instanceof TaskChangedRefusal);
+  assert.equal(typed.message, `Task changed; refresh before retrying ${hint}`);
+  assert.equal(typed.expected, stale.version);
+  assert.equal(typed.current, current);
   // The coordinator retries only exactly this shape.
-  assert.match(plain.message, COORDINATOR_VERSION_RETRY);
+  assert.match(typed.message, COORDINATOR_VERSION_RETRY);
 
-  const proven = await throwing(new ProvenPreSendRefusalError('Task changed; refresh before retrying'));
-  assert.ok(proven instanceof ProvenPreSendRefusalError);
-  assert.equal(proven.reason, `Task changed; refresh before retrying ${hint}`);
-  assert.equal(proven.message, `Reviewer continuation refused before send: Task changed; refresh before retrying ${hint}`);
-
-  const typed = new RestartRefusal('Task changed; refresh before retrying');
-  assert.equal(await throwing(typed), typed, 'a typed subclass passes through untouched');
+  // Prose that happens to read like a stale version gets no hint: no reader parses it.
+  const plain = new Error('Task changed; refresh before retrying');
+  assert.equal(await throwing(plain), plain);
+  const proven = new ProvenPreSendRefusalError('Task changed; refresh before retrying');
+  assert.equal(await throwing(proven), proven);
+  const restart = new RestartRefusal('Task changed; refresh before retrying');
+  assert.equal(await throwing(restart), restart, 'a typed subclass passes through untouched');
   const other = new Error('Task moved; refresh before retrying');
   assert.equal(await throwing(other), other, 'other prose passes through untouched');
 
   const fresh = taskControlInputSchema.parse({ ...stale, version: current });
-  const same = new Error('Task changed; refresh before retrying');
+  const same = new TaskChangedRefusal('Task changed; refresh before retrying', fresh.version, current);
   f.internals.performTaskControlApplied = async () => { throw same; };
   await assert.rejects(f.internals.appliedWithVersionHint(fresh), (caught: Error) => caught === same, 'a current version gets no hint');
 });
@@ -595,7 +599,9 @@ const PARSED: ParsedText[] = [
   { site: 'owned-tool retry refusal', re: /^Owned-tool hold .+ remains:/, sample: 'Owned-tool hold run-1 remains: live', writers: ['Owned-tool hold ${runId} remains: ${hold}'], reads: ['startsWith("owned_tool.")'] },
   { site: 'coordinator version retry', re: COORDINATOR_VERSION_RETRY, sample: 'Task changed; refresh before retrying (the task is now version 3; read next again and reassess before retrying)',
     writers: ['Task changed; refresh before retrying', '${message} (the task is now version ${current}; read next again and reassess before retrying)'] },
-  { site: 'version hint', re: /^Task changed\b/, sample: 'Task changed during the move; read next', reads: ['error.constructor === Error'] },
+  // The stale-version hint is decided by the typed refusal, so only its writers
+  // are pinned; nucleus#1218 removed the message reader.
+  { site: 'version hint', writers: ['Task changed; refresh before retrying', '${message} (the task is now version ${current}; read next again and reassess before retrying)'] },
   { site: 'move replan', re: /^(Task changed|Task or run changed|A run started during the move|A run changed during the move)/, sample: 'A run changed during the move; refresh before retrying',
     writers: ['Task changed during the move; read next', 'Task or run changed; refresh before retrying', 'A run started during the move', 'A run changed during the move; refresh before retrying'] },
   { site: 'proof single flight', sample: 'An author-side proof execution was already reserved at abc',
@@ -608,7 +614,9 @@ const PARSED: ParsedText[] = [
     sample: 'A worker run (run-1) still owns this task: live' },
   { site: 'proof hold', reads: ['`Proofs Queue cannot run, left for the planner or operator at ${pr.head}:`', 'proofHold.reason.startsWith(proofHoldPrefix)'],
     writers: ['`Proofs Queue cannot run, left for the planner or operator at ${head}: ${proofs}. Run them through the proof verb or accept the head, then release this merge hold.`'] },
-  { site: 'auto-continue fence cleared', reads: ["refused?.detail.includes('unresolved task incident or recovery fence')"], writers: ['An unresolved task incident or recovery fence blocks reviewer continuation'] },
+  // nucleus#1218: the retry window's fence facts are derived, not read from the
+  // refusal's words, so only the refusal's own sentence stays pinned.
+  { site: 'auto-continue fence cleared', writers: ['An unresolved task incident or recovery fence blocks reviewer continuation'] },
   { site: 'review recovery wait', reads: ["['Ordinary review', 'Review-entry'].some(label =>", 't.reason === `${label} waits for ${refusal}; settle it with retry_effect before continuing`',
       '/^(Ordinary review|Review-entry) waits for .+; settle it with retry_effect before continuing$/'],
     writers: ["`${run.ordinaryDetached?'Ordinary review':'Review-entry'} waits for ${recoveryEffectsRefusal(error.effects)}; settle it with retry_effect before continuing`"] },
@@ -734,7 +742,7 @@ native_question_unknown:1:1 needs_attention:4:168 non_delivery:3:12 non_delivery
 operator_question:8:9 operator_question_answered:10:8 operator_question_applied:3:1 operator_question_decided:1:1 operator_question_decision:4:7
 operator_question_delegation_missed:1:3 operator_question_delegation_unknown:1:3 operator_question_reasked:1:1 operator_question_refused:2:2
 operator_question_stale_answered:3:3 operator_question_superseded:3:5 operator_question_unknown:1:3 owned_tool_hold:3:2 owned_tool_settled:1:1
-owner_control:3:9 owner_restart_instruction_sent:3:2 owner_stop_sent:5:4 owner_stop_uncertain:2:2 owner_stopped:4:1 owner_verb_deferred:1:1
+owner_control:3:9 owner_restart_instruction_sent:2:2 owner_stop_sent:5:4 owner_stop_uncertain:2:2 owner_stopped:3:1 owner_verb_deferred:1:1
 paused_resume_uncertain:1:2 planner_escalation_answered:1:5 planner_escalation_attached:1:1 planner_escalation_decision:1:1
 planner_escalation_decision_linked:1:3 planner_escalation_missed:2:3 planner_escalation_offered:1:1 planner_escalation_payload:2:2
 planner_escalation_refusal_sent:1:1 planner_escalation_resolved:1:2 planner_escalation_sent:1:1 planner_escalation_unknown:1:6
