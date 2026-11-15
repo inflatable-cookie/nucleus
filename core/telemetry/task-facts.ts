@@ -1,6 +1,6 @@
 import type { Task, Run, Notice } from "../../shared/contracts";
 import type { HookRecord } from "../../shared/hooks";
-import { STAGE_META, isSemanticIncidentCause, telemetryStageForTask, type TaskTelemetry, type TelemetryStageKey } from "../../shared/telemetry";
+import { STAGE_META, isSemanticIncidentCause, taskTelemetrySchema, telemetryStageForTask, type TaskTelemetry, type TelemetryStageKey } from "../../shared/telemetry";
 import { taskUsage } from "./run-usage";
 import { nonDeliveryEvents } from "../recovery/non-delivery";
 import { plannerEscalations, reviewerConsults } from "../questions/blocker-ladder";
@@ -130,7 +130,7 @@ function recoveryCauseEvent(run: Run, events: QueueEvent[]) {
     && event.detail.trim()).at(-1);
 }
 
-function revisionKind(run: Run): "review" | "administrative" | "continuation" {
+export function revisionKind(run: Run): "review" | "administrative" | "continuation" {
   return run.revisionCause
     ? (run.revisionCause === "continuation" || run.revisionCause === "non_delivery" || run.revisionCause === "unfinished" || run.revisionCause === "consult" ? "continuation" : run.revisionCause === "administrative" ? "administrative" : "review")
     : (run.instruction != null ? "administrative" : "review");

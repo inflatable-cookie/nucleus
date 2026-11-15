@@ -10,12 +10,17 @@ export type { ReviewerVerdictFact, ReviewerRoundFact, ReviewerIncidentFact } fro
 export { taskControlTelemetry } from "./task-control";
 import type { HookRecord } from "../../shared/hooks";
 import {
-  headlineFacts, telemetryFilterSchema, telemetrySnapshotSchema,
+  STAGE_META, headlineFacts, telemetryFilterSchema, telemetrySnapshotSchema,
   taskTelemetrySchema, type QaValidationAdmission, type TaskTelemetry,
   type TelemetryHeadline, type TelemetryHeadlineKey, type TelemetrySnapshot, type TelemetryStageKey,
   disabledShadowReviewPlan, type TaskUsage, type UsageComplexity,
 } from "../../shared/telemetry";
 import { type Store, type TelemetryFactChunk } from "../store/store";
+
+const ms = (value: string | null | undefined, fallback: number) => {
+  const parsed = value ? Date.parse(value) : NaN;
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
 
 function usageByComplexity(items: TelemetryBaseItem[]): UsageComplexity[] {
   const finished = items.filter(item => item.task.phase === "done");

@@ -1,6 +1,7 @@
 import type { Run, Task } from "../../shared/contracts";
 import { isSemanticIncidentCause, type ReviewerCalibration, type ReviewerCalibrationRow } from "../../shared/telemetry";
 import type { QueueEvent, TelemetryBaseItem } from "./telemetry";
+import { revisionKind } from "./task-facts";
 
 const ms = (value: string | null | undefined, fallback: number) => {
   const parsed = value ? Date.parse(value) : NaN;
