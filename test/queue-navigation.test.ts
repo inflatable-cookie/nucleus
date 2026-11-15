@@ -118,3 +118,11 @@ test('the Tasks tab counts only open tasks in the project selection', async () =
   assert.match(ui, /`Tasks \(\$\{openTaskCount\(state\.tasks, attentionBelongs\) \+ hiddenQueued\} open\)`/, 'the label uses the selection-aware count');
   assert.match(ui, /const queuedCounts = \(state\?\.queuedCounts \?\? \[\]\)\.filter\(item => attentionBelongs\(item\.repoPath\)\)/, 'the left-out count follows the same selection');
 });
+
+test('open-task predicate keeps terminal tasks with either origin error', async () => {
+  const { isOpenTask } = await import('../shared/queue-navigation');
+  assert.equal(isOpenTask({ phase: 'cancelled' }), false);
+  assert.equal(isOpenTask({ phase: 'done', originLookupError: 'unavailable' }), true);
+  assert.equal(isOpenTask({ phase: 'done', originError: 'unavailable' }), true);
+  assert.equal(isOpenTask({ phase: 'queued' }), true);
+});

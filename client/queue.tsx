@@ -11,8 +11,8 @@ import * as api from "../shared/contracts";
 import type { HostRunRecord, TaskSummary } from "../shared/contracts";
 import { hiddenQueuedByProject } from "../shared/queued-more";
 import { planSaveInput } from "../shared/planning-tab";
-import { activeSelection, effectiveSelection, scopeContains } from "../shared/project-scope";
-import { navigationViews, openTaskCount, workspaceNavigationViews, type SettingsTarget } from "../shared/queue-navigation";
+import { activeSelection, effectiveSelection, projectHasRepository, scopeContains } from "../shared/project-scope";
+import { isOpenTask, navigationViews, openTaskCount, workspaceNavigationViews, type SettingsTarget } from "../shared/queue-navigation";
 import { errorText, readErrorText, storedBoardErrorText } from "./error-text";
 import { LaneScreen, isPapercut, type LaneDraft } from "./lane-screen";
 import { UsagePage } from "./usage";
@@ -131,7 +131,7 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard, now }: 
   const selectLead = (id: string, lane: {key:string;title:string}|null) => { setSelected(null); setOpenDecisionId(null); setOpenPapercutId(null); setLeadLane(lane); setSelectedLeadId(id); };
   const selectPapercut = (id: string) => { setSelected(null); setOpenDecisionId(null); setSelectedLeadId(null); setOpenPapercutId(id); };
   const openQaRun = (id: string) => { setSelected(null); setSelectedLeadId(null); setOpenPapercutId(null); setOpenDecisionId(null); setQaFocusId(id); setTab("qa"); };
-  const liveTasks = state?.tasks.filter(t => (!["done","cancelled"].includes(t.phase)||Boolean(t.originError||t.originLookupError))) ?? [];
+  const liveTasks = state?.tasks.filter(isOpenTask) ?? [];
   const setScopeProjects = (projects: string[]) => setScope({ ...scope, projects });
   // Stale saved keys (a removed project) drop out, so every view treats them alike.
   // The Pipeline filter switch scopes the Pipeline view only: off shows all
@@ -141,7 +141,7 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard, now }: 
   const selection = effectiveSelection(state?.projects ?? [], activeSelection(scope));
   const pipelineFilterSelection = selection;
   const belongs = scopeContains(state?.projects ?? [], selection);
-  const projectForRepository = (repoPath: string, origin?: string | null) => state?.projects.find(project => project.repositories.some(repo => origin && repo.origin ? repo.origin === origin : Boolean(repo.path && repo.path === repoPath)));
+  const projectForRepository = (repoPath: string, origin?: string | null) => state?.projects.find(project => projectHasRepository(project, repoPath, origin));
   const parkedRepository = (repoPath: string, origin?: string | null) => projectForRepository(repoPath, origin)?.visibility === 'parked';
   const taskNeedsAttention = (task: TaskSummary) => task.held || task.phase === 'changes_requested' || attention(task);
   const attentionPaths = new Set(liveTasks.filter(task=>taskNeedsAttention(task)).map(task=>task.repoPath));
@@ -149,8 +149,7 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard, now }: 
   const queuedCounts = (state?.queuedCounts ?? []).filter(item => attentionBelongs(item.repoPath));
   const queuedHidden = hiddenQueuedByProject(queuedCounts, state?.tasks ?? []);
   const hiddenQueued = queuedHidden.reduce((sum, item) => sum + item.hidden, 0);
-  const projectForTask = (task: { repoPath: string; repository?: string | null }) => state?.projects.find(project => project.repositories.some(repo =>
-    task.repository && repo.origin ? repo.origin === task.repository : Boolean(repo.path && repo.path === task.repoPath)));
+  const projectForTask = (task: { repoPath: string; repository?: string | null }) => projectForRepository(task.repoPath, task.repository);
   const multiRepository = (task: { repoPath: string; repository?: string | null }) => (projectForTask(task)?.repositories.length ?? 1) > 1;
   /** A read or save failure's message; undefined when there was no failure. */
   const planMessage = (error: unknown) => error == null ? undefined : errorText(error);

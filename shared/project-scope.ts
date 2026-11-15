@@ -21,14 +21,17 @@ export function scopedProjects(projects: Project[], selection: readonly string[]
   return projects.filter(project => keys.length ? keys.includes(project.key) : project.visibility !== 'parked').sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** Match a repository by origin when both have one, otherwise by path. */
+export function projectHasRepository(project: Project, repoPath: string, origin?: string | null): boolean {
+  return project.repositories.some(repo => origin && repo.origin ? repo.origin === origin : Boolean(repo.path && repo.path === repoPath));
+}
+
 /** Whether a record's repository falls inside the selection. Empty selection matches everything. */
 export function scopeContains(projects: Project[], selection: readonly string[]): (repoPath: string, origin?: string | null) => boolean {
   const keys = effectiveSelection(projects, selection);
-  if (!keys.length) return (repoPath, origin) => projects.every(project => project.visibility !== 'parked' || !project.repositories.some(repo =>
-    origin && repo.origin ? repo.origin === origin : Boolean(repo.path && repo.path === repoPath)));
+  if (!keys.length) return (repoPath, origin) => projects.every(project => project.visibility !== 'parked' || !projectHasRepository(project, repoPath, origin));
   const selected = projects.filter(project => keys.includes(project.key));
-  return (repoPath, origin) => selected.some(project => project.repositories.some(repo =>
-    origin && repo.origin ? repo.origin === origin : Boolean(repo.path && repo.path === repoPath)));
+  return (repoPath, origin) => selected.some(project => projectHasRepository(project, repoPath, origin));
 }
 
 /** The Pipeline view's selection: the kept selection when its filter switch is on, all projects when off. */
