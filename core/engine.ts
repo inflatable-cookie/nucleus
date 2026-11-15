@@ -501,6 +501,8 @@ export class Engine {
   setSourcePromotionHandler(handler: (payload: unknown, hostId?: string, selection?: import('../shared/operations').QueueOperation['hostSelection']) => Promise<OperationResult>): void { this.operations.setSourcePromotionHandler(handler); }
   setLeadCheckHandler(handler: (payload: unknown, operationId: string) => Promise<OperationResult>): void { this.operations.setLeadCheckHandler(handler); }
   setRepositoryRekeyHandler(handler: (input: RepositoryRekeyInput) => OperationResult | Promise<OperationResult>): void { this.operations.setRepositoryRekeyHandler(handler); }
+  /** Tests seed a primary catalog snapshot without a host round-trip. */
+  get hostCatalogs() { return this.catalogs.hostCatalogs; }
   refresh(): Promise<void> { return this.catalogs.refresh(); }
   vocabularyFor(id: string | undefined) { return this.catalogs.vocabularyFor(id); }
   rebuildProfiles(): void { this.catalogs.rebuildProfiles(); }

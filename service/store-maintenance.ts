@@ -11,6 +11,8 @@ export interface StoreMaintenanceOwner {
   dataDir: string;
   backupDir: string;
   compaction: StoreCompactor;
+  /** Public `backup.now`: due snapshots go through this so prototype mocks still bind. */
+  backupNow(_input?: Record<string, never>, origin?: 'manual' | 'automatic'): Promise<BackupList>;
 }
 
 /**
@@ -44,7 +46,7 @@ export class StoreMaintenance {
     const newest = newestScheduledSnapshotAt(this.owner.backupDir);
     if (newest !== null && Date.now() - newest < BACKUP_INTERVAL_MS) return;
     if (Date.now() - this.backupFailedAt < BACKUP_FAILURE_RETRY_MS) return;
-    void this.backupNow({}, 'automatic').catch(() => { this.backupFailedAt = Date.now(); });
+    void this.owner.backupNow({}, 'automatic').catch(() => { this.backupFailedAt = Date.now(); });
   }
 
   backupNow(_input: Record<string, never> = {}, origin: 'manual' | 'automatic' = 'manual'): Promise<BackupList> {

@@ -29,7 +29,8 @@ export interface ProfileCatalogsOwner {
 export class ProfileCatalogs {
   private readonly hostProfiles = new Map<string, Profile[]>();
   private readonly hostCatalogRefreshed = new Set<string>();
-  private readonly hostCatalogs = new Map<string, { catalog: HostCatalog; readAt: string }>();
+  /** Tests seed a primary snapshot on Engine.hostCatalogs the way they did before the split. */
+  readonly hostCatalogs = new Map<string, { catalog: HostCatalog; readAt: string }>();
   private primaryHostId: string | undefined;
   private profileCatalogRefreshed = false;
 
