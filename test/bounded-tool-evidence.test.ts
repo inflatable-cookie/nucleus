@@ -86,6 +86,12 @@ test('any unknown bounded signal is inconclusive', async t => {
   assert.match((await f.proof())!, /unreadable working directory/);
   f.setProcesses([]);
   const saved = f.page();
+  f.setPage(toolTimelinePage([{ timestamp: '2026-01-01T00:00:00.000Z', item: {
+    type: 'tool_call', name: 'synthetic-tool', status: 'running' } }], { projection: 'bounded', pendingBackgroundTasks: [] }));
+  assert.match((await f.proof())!, /inconclusive.*incomplete identity/);
+  f.setPage(toolTimelinePage([{ timestamp: '2026-01-01T00:00:00.000Z', item: {
+    type: 'tool_call', callId: 'synthetic-call', name: 'synthetic-tool', status: 'future-state' } }], { projection: 'bounded', pendingBackgroundTasks: [] }));
+  assert.match((await f.proof())!, /inconclusive/);
   f.setPage(null);
   assert.match((await f.proof())!, /inconclusive/);
   f.setPage({ ...saved, pendingBackgroundTasks: undefined });

@@ -11,7 +11,10 @@ export async function boundedToolHold(
 ): Promise<string | null> {
   // Positive live evidence always holds, even when another signal is unknown.
   const tool = liveToolIssueFact(read.entries);
-  if (tool) return `an owned tool is still live: ${formatLiveToolIssue(tool)}`;
+  if (tool) {
+    const live = tool.kind === 'live' && ['pending', 'running', 'waiting'].includes(tool.status);
+    return `${live ? 'an owned tool is still live' : 'owned tool evidence is inconclusive'}: ${formatLiveToolIssue(tool)}`;
+  }
   if (read.pendingBackgroundTasks.length)
     return `an owned tool is still live: provider reports outstanding background work: ${read.pendingBackgroundTasks.join(', ')}`;
   let state: AgentObservation | null = null;
