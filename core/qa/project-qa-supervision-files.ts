@@ -1,12 +1,13 @@
 import type { Store } from "../store/store";
 import type { HostRunScheduler } from "../host-runs/host-run-scheduler";
 import type { ProjectQaRun } from "../../shared/contracts";
-import { constants, chmodSync, closeSync, fstatSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { readdir, lstat, unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod";
 import { writeOwnedJson } from "../machine/owned-file.mjs";
+import { readOwnedJson, type OwnedJsonRead } from "../machine/owned-read";
 import { tailWithTruncationMarker } from "../machine/output-retention";
 import { HOST_RUN_CPU_COVERAGE_FILE, parseCpuCoverageSidecar } from "../host-runs/host-run-cpu-coverage";
 import {
@@ -188,17 +189,19 @@ export function qaSupervisionPaths(runRoot: string, runId: string, attempt = 0):
   };
 }
 
+/**
+ * One of this run's owner-only records, or null. `machine/owned-read` owns the read
+ * itself. A caller that reaps or relaunches on absence reads the typed
+ * `readQaSupervision*File` instead, so a file that exists but cannot be trusted is
+ * never mistaken for one that was never written.
+ */
 function readOwnerOnlyJson<T>(path: string, parse: (value: unknown) => T): T | null {
-  let fd: number;
-  try { fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)); }
-  catch { return null; }
-  try {
-    const info = fstatSync(fd);
-    if (!info.isFile() || (info.mode & 0o777) !== 0o600 || (typeof process.getuid === "function" && info.uid !== process.getuid())) return null;
-    return parse(JSON.parse(readFileSync(fd, "utf8")));
-  } catch { return null; }
-  finally { closeSync(fd); }
+  const read = readOwnedJson(path, parse);
+  return read.kind === "present" ? read.value : null;
 }
+
+/** What one supervision-file read found: the record, a proven absence, or a refusal with its reason. */
+export type QaFileRead<T> = OwnedJsonRead<T>;
 
 /** Write a result exactly once using a durable same-directory publication. */
 export function writeHostRunResult(path: string, record: HostRunResult): HostRunResult {
@@ -246,7 +249,12 @@ export function writeQaSupervisionPlan(path: string, plan: QaSupervisionPlan): v
 }
 
 export function readQaSupervisionPlan(path: string): QaSupervisionPlan | null {
-  try { return qaSupervisionPlanSchema.parse(JSON.parse(readFileSync(path, "utf8"))); } catch { return null; }
+  return readOwnerOnlyJson(path, value => qaSupervisionPlanSchema.parse(value));
+}
+
+/** The plan this run's supervisor was started with, keeping absence apart from an unreadable file. */
+export function readQaSupervisionPlanFile(path: string): QaFileRead<QaSupervisionPlan> {
+  return readOwnedJson(path, value => qaSupervisionPlanSchema.parse(value));
 }
 
 export function writeQaSupervision(path: string, state: QaSupervisionState): void {
@@ -262,7 +270,12 @@ export function readQaCpuCoverage(path: string): unknown {
 }
 
 export function readQaSupervision(path: string): QaSupervisionState | null {
-  try { return qaSupervisionStateSchema.parse(JSON.parse(readFileSync(path, "utf8"))); } catch { return null; }
+  return readOwnerOnlyJson(path, value => qaSupervisionStateSchema.parse(value));
+}
+
+/** The heartbeat this run's supervisor published, keeping absence apart from an unreadable file. */
+export function readQaSupervisionStateFile(path: string): QaFileRead<QaSupervisionState> {
+  return readOwnedJson(path, value => qaSupervisionStateSchema.parse(value));
 }
 
 /** The full-output log paths for one step, kept beside the run under the QA root. */

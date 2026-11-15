@@ -1,7 +1,4 @@
 import {
-  runtimeNodeArgs,
-} from "../../shared/runtime.mjs";
-import {
   HostRunAttach,
 } from "../../core/host-runs/host-run-attach";
 import {
@@ -101,9 +98,6 @@ export * from "../../core/host-runs/host-run-wire";
  * it. Trust is the host uid.
  */
 import {
-  spawn,
-} from "node:child_process";
-import {
   randomBytes,
 } from "node:crypto";
 import {
@@ -128,6 +122,7 @@ import {
 import {
   type HostRunOutputFailureSummary,
 } from "../../core/host-runs/host-run-output-failures";
+import { spawnDetachedSupervisor } from "../../core/qa/supervisor-process";
 import {
   hostRunSocketPath,
 } from "../../core/host-runs/host-run-paths";
@@ -141,14 +136,11 @@ export { HOST_RUN_CLIENT_PROTOCOL_VERSION, HOST_RUN_MAX_REQUEST_BYTES, HOST_RUN_
 
 /** Spawn the detached supervisor that outlives a Queue service roll. */
 function defaultSupervisorSpawn(plan: HostRunSupervisorPlan): void {
-  const entry = fileURLToPath(new URL("../../bin/queue-host-run-supervisor.mjs", import.meta.url));
-  const sourcePath = fileURLToPath(new URL("../..", import.meta.url));
-  const child = spawn(process.execPath, [...runtimeNodeArgs(), entry, plan.stateDir, plan.runId], {
-    detached: true, stdio: "ignore", env: { ...process.env }, cwd: sourcePath,
+  spawnDetachedSupervisor({
+    entry: fileURLToPath(new URL("../../bin/queue-host-run-supervisor.mjs", import.meta.url)),
+    argv: [plan.stateDir, plan.runId],
+    failureMessage: "Nucleus could not start the detached host-run supervisor",
   });
-  child.on("error", () => { /* no result means the run settles lost; it is never relaunched blindly */ });
-  child.unref();
-  if (!child.pid) throw new Error("Nucleus could not start the detached host-run supervisor");
 }
 
 // ---------------------------------------------------------------------------

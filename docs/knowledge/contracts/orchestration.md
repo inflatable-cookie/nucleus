@@ -122,6 +122,9 @@ recorded teardown, and `project-qa-detached-io.ts` holds the real executors and
 durable writes. `project-qa-worktree.ts` owns the run's linked checkout, its
 sibling links, the `paseo.json` worktree hooks and the checkout's removal.
 `project-qa-tap-failures.ts` owns failure parsing, identities and truncation.
+`supervisor-process.ts` owns the detached supervisor's own process lifecycle — the
+launch shape and the stale stop with its proof — for milestone QA, project
+validation and the host-run endpoint alike, so neither family keeps its own copy.
 These modules import downward; none imports its former parent, and file helpers
 have no runtime store dependency.
 

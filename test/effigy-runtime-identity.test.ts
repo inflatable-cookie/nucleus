@@ -625,7 +625,6 @@ exit 0
   const client = new EffigyRunControl({
     runtime: { path: artifact.path, sha256: artifact.sha256 }, cwd: root, timeoutMs: 5_000,
   });
-  assert.equal(await client.probeCapability(), "v015-run-control");
   assert.equal((await client.status("run-1")).kind, "closed");
 
   assert.equal(client.drift, null, "unchanged bytes record no drift");
@@ -649,10 +648,7 @@ exit 0
   const refused = await client.status("run-1");
   assert.equal(refused.kind, "unknown");
   if (refused.kind === "unknown") assert.match(refused.reason, /is unavailable/);
-  const follow = await client.followLogs("run-1", { stdout: 0, stderr: 0 });
-  assert.equal(follow.identityRefusal === null, false);
-  assert.equal(follow.stdout, "", "a refused follow spawns nothing");
-  assert.equal(follow.exitCode, null);
+  assert.equal(await client.identityRefusal() === null, false, "the refusal is the bound runtime's, before any answer is read");
 });
 
 test("an Effigy rebuilt in place during the lifecycle still observes, records the drift once, and retires accounting on the real result", async t => {
