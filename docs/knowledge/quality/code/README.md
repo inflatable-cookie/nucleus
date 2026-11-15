@@ -29,7 +29,7 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
 
 ## Re-rates
 
-- nucleus#1231 (floor 7, 2026-11-15): Queue shares repository and open-task predicates and its record selection has a separate state owner. The remaining tab composition keeps proportion at 0, for a score of 7. Lead action hints come from the core read and status views share one helper; the screen scores 9. Cancellation receipts are schema checked, migrate through the shared storage helper and report storage failures; the session fallback remains, for a score of 8. The new owners and affected shared rules have rows at this PR head. Boundary tests cover repository identity, terminal task errors and receipt parsing and migration.
+- nucleus#1231 (floor 7, 2026-11-15): Queue shares repository and open-task predicates and its record selection has a separate state owner. The remaining tab composition keeps proportion at 0, for a score of 7. Lead action hints come from the core read; status views and brief-frontmatter detection share one owner across the client, planning and store; the screen scores 9. Cancellation receipts are schema checked, migrate through the shared storage helper and report storage failures; the session fallback remains, for a score of 8. The new owners and affected shared rules have rows at this PR head. Boundary tests cover repository identity, terminal task errors and receipt parsing and migration.
 
 - nucleus#1228 (floor 7, 2026-11-15): the three floor-7 client modules were re-rated at this PR's head.
   `client/task/runs.tsx` was split along its named sections: the tab now composes prerequisites and the

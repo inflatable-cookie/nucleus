@@ -2,7 +2,7 @@ import { errorText as message } from "./error-text";
 import React, { useEffect, useState } from "react";
 import { Text, View } from "react-native";
 import type { Lead, LeadDetail, LeadVersion } from "../shared/contracts";
-import { leadApprovalView, leadCheckView } from "../shared/lead-status";
+import { hasBriefFrontmatter, leadApprovalView, leadCheckView } from "../shared/lead-status";
 export { leadApprovalView, leadCheckView } from "../shared/lead-status";
 import { formatLocalDateTime } from "../shared/date-time";
 import { Button, Disclosure, Field, row, type Colors } from "./controls";
@@ -14,14 +14,12 @@ export type LeadRead = { data?: LeadDetail; error?: string };
 
 /** The newest version, other than the current one, whose check the history keeps. */
 export const leadStateWord: Record<Lead["state"], string> = { open: "Open", promoted: "Promoted", dropped: "Dropped", closed: "Closed" };
-/** A lead's body is a brief only with brief frontmatter; prose alone is not a brief to check or approve. */
-export const briefBearing = (body: string) => /^---\r?\n/.test(body);
 /**
  * A brief's body without its frontmatter. The frontmatter is routing mechanics, so it is
  * read under Details and never shown as the operator's text (Tom, 2026-11-07).
  */
 export function briefParts(body: string): { frontmatter: string | null; text: string } {
-  if (!briefBearing(body)) return { frontmatter: null, text: body };
+  if (!hasBriefFrontmatter(body)) return { frontmatter: null, text: body };
   const end = body.indexOf("\n---", 3);
   if (end < 0) return { frontmatter: null, text: body };
   const after = body.indexOf("\n", end + 4);

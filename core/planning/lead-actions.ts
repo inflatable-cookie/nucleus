@@ -1,16 +1,14 @@
-import { leadApprovalView, leadCheckView, type LeadStatusFacts } from "../../shared/lead-status";
-
-const briefBearing = (body: string) => /^---\r?\n/.test(body);
+import { hasBriefFrontmatter, leadApprovalView, leadCheckView, type LeadStatusFacts } from "../../shared/lead-status";
 
 function leadCheckReason(lead: LeadStatusFacts): string | undefined {
   if (lead.state !== "open") return `Only open leads can be checked; this lead is ${lead.state.toLowerCase()}`;
-  if (!briefBearing(lead.body)) return "Lead has no brief to check";
+  if (!hasBriefFrontmatter(lead.body)) return "Lead has no brief to check";
   if (lead.checkOperationId) return "A check is already running";
 }
 function leadApproveReason(lead: LeadStatusFacts): string | undefined {
   const check = leadCheckView(lead), approval = leadApprovalView(lead);
   if (lead.state !== "open") return `Only open leads can be approved; this lead is ${lead.state.toLowerCase()}`;
-  if (!briefBearing(lead.body)) return "Lead has no brief to approve";
+  if (!hasBriefFrontmatter(lead.body)) return "Lead has no brief to approve";
   if (check.kind === "pending") return "A check is running; approve once it passes";
   if (check.kind === "none") return "Check the brief first";
   if (check.kind === "stale") return `The check is for version ${check.version}; check version ${lead.version} first`;

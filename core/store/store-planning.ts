@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Submission } from "../../shared/contracts";
 import { decisionDeliverySchema,decisionSchema,storedDecisionSchema,laneSchema,LEAD_PREVIEW_MAX,leadSchema,leadVersionMetadataSchema,leadVersionSchema,papercutSchema,planEntrySchema,projectPlanSchema,type BoardLead,type BoardLeadLink,type Decision,type Lane,type LaneDocumentPin,type LaneDocumentVersion,type Lead,type LeadVersion,type Papercut,type Project,type ProjectPlan,type Task } from "../../shared/contracts";
 import { laneListsRepository,normalizeRepositoryOrigin } from "../../shared/lanes";
+import { hasBriefFrontmatter } from "../../shared/lead-status";
 import { leadFromPapercut,papercutFromLead } from "../../shared/papercut-lead";
 import { attachableLane } from "../planning/lanes";
 import { appendStoredHistoryVersion,HistoryBodyCache,PlanningHistory,readStoredHistory,updateStoredHistoryMetadata,writeStoredHistory } from "../planning/planning-history";
@@ -369,7 +370,7 @@ export class StorePlanning {
    */
   private putLeadVersion(lead: Lead, author: string) {
     const version = leadVersionSchema.parse({ version: lead.version, title: lead.title, body: lead.body, author, createdAt: lead.updatedAt,
-      ...(/^---\r?\n/.test(lead.body) ? { digest: `sha256:${digest(lead.body)}` } : {}), check: lead.check,
+      ...(hasBriefFrontmatter(lead.body) ? { digest: `sha256:${digest(lead.body)}` } : {}), check: lead.check,
       approval: lead.approval?.version === lead.version ? lead.approval : null });
     // Only the version this one supersedes changes form, and it is the previous latest
     // version, which is stored in full; reading its row is enough to demote it.

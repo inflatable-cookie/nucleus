@@ -1,5 +1,8 @@
 import type { Lead, LeadDetail } from "./contracts";
 
+/** Whether a lead body starts with a frontmatter brief. */
+export const hasBriefFrontmatter = (text: string): boolean => /^---\r?\n/.test(text);
+
 export type LeadStatusFacts = Omit<LeadDetail, "actions">;
 
 /**

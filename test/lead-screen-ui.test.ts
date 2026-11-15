@@ -288,6 +288,10 @@ test("wrapped prose reads as one paragraph while headings, lists and code keep t
 
 test("brief frontmatter is routing mechanics, so the operator reads the brief without it", async () => {
   const { briefParts } = await import("../client/lead-screen");
+  const { hasBriefFrontmatter } = await import("../shared/lead-status");
+  assert.equal(hasBriefFrontmatter("---\r\ntitle: Ledger\r\n"), true);
+  assert.equal(hasBriefFrontmatter("---"), false);
+  assert.equal(hasBriefFrontmatter("text\n---\n"), false);
   const brief = "---\ntitle: Ledger\nlanes: [ui]\n---\n\n# Ledger\n\nBody text.";
   assert.deepEqual(briefParts(brief), { frontmatter: "---\ntitle: Ledger\nlanes: [ui]\n---", text: "# Ledger\n\nBody text." });
   assert.deepEqual(briefParts("Just prose, no frontmatter."), { frontmatter: null, text: "Just prose, no frontmatter." });
