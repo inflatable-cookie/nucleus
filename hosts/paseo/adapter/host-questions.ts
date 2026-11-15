@@ -1,6 +1,6 @@
 import type { PaseoAgentHandle, PaseoAgentTimelineEvent } from '@getpaseo/client';
 import type { Task } from '../../../shared/contracts';
-import type { NativeDecisionInput } from '../../../shared/host';
+import type { AnsweredQuestionRead, NativeDecisionInput } from '../../../shared/host';
 import type { PaseoAdapter } from './paseo';
 
 /**
@@ -46,9 +46,9 @@ export class PaseoQuestionHost {
     if (!(agent.pendingPermissions ?? []).some(request => request.id === requestId && request.kind === 'question')) throw Error('Question is no longer pending');
     await agent.respondToPermission({ requestId, response: { behavior: 'deny' } });
   }
-  async answeredQuestions(agentId: string): Promise<Array<{ requestId: string; question: string; answers: Record<string, string> }>> {
+  async answeredQuestions(agentId: string): Promise<AnsweredQuestionRead> {
     const page = await this.owner.agentTimelinePage(agentId, 40);
-    if (!page) return [];
+    if (!page) return { ok: false, reason: 'the agent timeline page could not be read' };
     const out: Array<{ requestId: string; question: string; answers: Record<string, string> }> = [];
     for (const entry of page.entries) {
       const item = entry.item as unknown as Record<string, unknown>;
@@ -66,7 +66,7 @@ export class PaseoQuestionHost {
         ? item.question : typeof (item as { title?: unknown }).title === 'string' ? String((item as { title?: unknown }).title) : requestId;
       out.push({ requestId, question, answers: clean });
     }
-    return out;
+    return { ok: true, answered: out };
   }
   async raiseTaskDecision(task: Task, input: NativeDecisionInput): Promise<string> {
     if (!task.agentId || !task.workspaceId) throw Error('Task has no thread for a native decision');

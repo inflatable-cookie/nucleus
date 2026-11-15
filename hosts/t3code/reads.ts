@@ -197,9 +197,16 @@ export class T3Reads {
     return { requestId: r.id, questions: item.questions.map(q => ({ header: q.header, question: q.question, options: q.options.map(o => o.label) })) };
   }); }
 
-  async answeredQuestions(id: string) { const p = await this.readProjection(id); return p.runtimeRequests.filter(r => r.kind === 'user_input' && r.status === 'resolved' && r.answers).map(r => ({ requestId: r.id,
-    question: p.turnItems.find(t => t.requestId === r.id)?.questions?.map(q => q.question).join('\n') ?? '',
-    answers: Object.fromEntries(Object.entries(r.answers!).map(([k,v]) => [k, typeof v === 'string' ? v : JSON.stringify(v)])) })); }
+  async answeredQuestions(id: string) {
+    // A projection this read cannot trust answers nothing: the caller must see
+    // an unknown read, not an operator who answered nothing.
+    let p;
+    try { p = await this.readProjection(id); }
+    catch (error) { return { ok: false as const, reason: error instanceof Error ? error.message : String(error) }; }
+    return { ok: true as const, answered: p.runtimeRequests.filter(r => r.kind === 'user_input' && r.status === 'resolved' && r.answers).map(r => ({ requestId: r.id,
+      question: p.turnItems.find(t => t.requestId === r.id)?.questions?.map(q => q.question).join('\n') ?? '',
+      answers: Object.fromEntries(Object.entries(r.answers!).map(([k,v]) => [k, typeof v === 'string' ? v : JSON.stringify(v)])) })) };
+  }
 
   async runtimeRequest(agent: string, workspace: string, id: string, kind: ThreadReadKind = 'observation') {
     this.core.requireConnection();

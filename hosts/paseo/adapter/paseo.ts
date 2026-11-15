@@ -13,7 +13,7 @@ import { DaemonClient as ProvenanceClient } from "paseo-provenance-client/intern
 import type { Run } from "../../../shared/contracts";
 
 import type { Profile, ReviewEntryInput, StashEntry, Task } from "../../../shared/contracts";
-import type { HostAgentSpec, HostCatalog, HostCatalogOptions, HostFeature, HostModel, HostProvider, HostWorkspaceRef, NativeDecisionInput } from "../../../shared/host";
+import type { AnsweredQuestionRead, HostAgentSpec, HostCatalog, HostCatalogOptions, HostFeature, HostModel, HostProvider, HostWorkspaceRef, NativeDecisionInput } from "../../../shared/host";
 import type { NucleusProfile } from "../../../shared/profiles";
 
 import { PaseoWorkspaceHost } from './host-workspaces';
@@ -383,7 +383,7 @@ return class PaseoAdapter extends Policy {
    * an allow behavior and an answers map is one answered question; anything
    * unreadable is empty, never evidence.
    */
-  answeredQuestions(agentId: string): Promise<Array<{ requestId: string; question: string; answers: Record<string, string> }>> { return this.questionHost.answeredQuestions(agentId); }
+  answeredQuestions(agentId: string): Promise<AnsweredQuestionRead> { return this.questionHost.answeredQuestions(agentId); }
 
   async archiveAgent(id: string): Promise<void> {
     const agent = this.api.agents.ref(id);
