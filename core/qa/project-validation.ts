@@ -24,7 +24,7 @@ import { processesForStartIdentity, processStartIdentityLiveness } from "../mach
 import { SupervisorLivenessReader } from "../machine/supervisor-liveness";
 import { findProcessByCommandTokenAsync, pidAlive, processCommandLine } from "../machine/process-identity";
 import { projectValidationSupervisorPaths, readProjectValidationCancellation, readProjectValidationCpuCoverage, readProjectValidationPlan, readProjectValidationResult, readProjectValidationSupervisorState, writeProjectValidationCancellation, writeProjectValidationPlan, type ProjectValidationSupervisorPlan, type ProjectValidationSupervisorResult } from "./project-validation-supervisor";
-import { projectValidationCallerIdentity, projectValidationSchedulerEvidence } from "./project-validation-caller";
+import { projectValidationCallerIdentity, projectValidationSchedulerEvidence } from "../../shared/project-validation-caller";
 import { boundSidecarCoverage } from "../host-runs/host-run-cpu-coverage";
 import { confirmStaleSupervisorHeartbeat, SUPERVISOR_STUCK_CONFIRMATION_MS } from "../machine/supervisor-watchdog";
 import { HookObservationMap, type RepositoryHooksOptions, type ProjectValidationOutcome } from "../hooks/hook-context";

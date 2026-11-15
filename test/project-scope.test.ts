@@ -122,7 +122,8 @@ test('026-14b one header selector scopes every view; its Enabled switch turns fi
   assert.match(ui, /pipelineBoard\(pipelineInput\)/, 'Pipeline');
   assert.match(ui, /lanes=\{state\?\.lanes \?\? \[\]\}/, 'Planning receives the lanes the finder searches');
   assert.match(ui, /selection=\{activeSelection\(scope\)\}/, 'the Planning chooser writes the one project scope');
-  assert.match(ui, /card\.value\.tags\.includes\("papercut"\)/, 'Pipeline Triage routes papercut-tagged leads to their detail modal');
+  assert.match(ui, /const kind = triageKind\(lead\)/, 'Pipeline Triage classifies each lead through the shared helper');
+  assert.match(ui, /kind === "papercut" \? onSelectPapercut\(lead\.id\)/, 'the classified kind routes papercuts to their detail modal');
   assert.match(ui, /const planningProjects = effectiveSelection/, 'Planning');
   assert.match(ui, /planningLaneLeads\(boardLeads, planningLane, state\?\.projects\?\?\[\],/, 'Planning lane leads');
   assert.match(ui, /usePlanningLane\(planningInScope,/);

@@ -9,7 +9,7 @@ import { scopeContains } from "../shared/project-scope";
 import { taskNumberLabel, type HostRunAccountingList, type HostRunAccountingListEntry, type HostRunRecord, type Project, type ProjectQaRun, type QaFence, type QaInventoryItem, type TaskSummary } from "../shared/contracts";
 import { QaFenceNotice } from "./qa-fence-notice";
 import { settledHostRunHoldsCapacity } from "../shared/host-run-capacity";
-import { parseProjectValidationCaller } from "../core/qa/project-validation-caller";
+import { parseProjectValidationCaller } from "../shared/project-validation-caller";
 
 type RunKind = "Milestone QA" | "Task validation" | "Client run";
 type QaRunRow = {
