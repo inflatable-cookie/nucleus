@@ -1,10 +1,9 @@
 import { formatAgentId, parseAgentId } from "../../shared/agent-identity";
 import { hostKindOf } from "../../shared/host-kind";
 import { observationTimeout } from '../recovery/observation-timeout';
-import { DEFAULT_PROJECT_LIMIT, ownerCandidateKind } from "../../shared/contracts";
+import { DEFAULT_PROJECT_LIMIT, ownerCandidateKind, UNRESOLVED_OWNER_SEED } from "../../shared/contracts";
 import { buildProjectSettings, projectSettingsQaKeys } from "./project-settings";
 import { legacyIdentityObservedOn, observedHostIdOf, projectAgentViews } from "./project-agents";
-import { UNRESOLVED_SEED } from "../store/store";
 import type { Engine } from '../engine';
 
 export type ProjectLifecycleContext = Pick<Engine, 'adapter' | 'host' | 'store' | 'activeHostId'> & Partial<Pick<Engine, 'plannerTicketPending'>>;
@@ -86,7 +85,7 @@ export class ProjectLifecycle {
     const observedHostId = this.context.activeHostId ?? observedHostIdOf(this.context.adapter);
     try {
       if (!parseAgentId(owner) && !legacyIdentityObservedOn(observedHostId)) return { kind: "unknown" };
-      if (UNRESOLVED_SEED.test(owner)) return await this.seededOwnerThreadState(owner);
+      if (UNRESOLVED_OWNER_SEED.test(owner)) return await this.seededOwnerThreadState(owner);
       if (!this.context.adapter.originAgent) return { kind: "unknown" };
       const agent = await observationTimeout(this.context.host.originAgent(owner), OWNER_OBSERVATION_TIMEOUT);
       return agent && !agent.archived ? { kind: "live", agentId: owner } : { kind: "missing" };

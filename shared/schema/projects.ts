@@ -143,6 +143,19 @@ export const projectDormant = (project: Pick<Project, "owner" | "ownerMissingAt"
   !project.planner?.agentId && (!project.owner || Boolean(project.ownerMissingAt));
 
 /**
+ * A Spec 042 seed id was a thread id prefix until its first liveness check resolved it. The
+ * owner role is retired, but an old row can still carry an unresolved seed id.
+ */
+export const UNRESOLVED_OWNER_SEED = /^[0-9a-f]{8}$/;
+
+/**
+ * The drain prompts need a recipient Queue can name: a project with no planner and no live
+ * owner record is silent, and an owner id not yet resolved from its seed prefix is not routable.
+ */
+export const projectOwnerRoutable = (project: Pick<Project, "owner" | "ownerMissingAt" | "planner">): boolean =>
+  !projectDormant(project) && !(project.owner && !project.planner?.agentId && UNRESOLVED_OWNER_SEED.test(project.owner.agentId));
+
+/**
  * Spec 027: removing a project record writes a permanent tombstone so an export
  * or import never resurrects it, mirroring the submission tombstones (Spec 029).
  */

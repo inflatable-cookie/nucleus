@@ -34,7 +34,7 @@ surface. The old `server/` and `host/` source roots disappear after migration.
 | `shared/service/` | Shared-safe socket protocol, clients and discovery primitives; no process owner. | Neutral |
 | `core/` | Engine and resolution construction shells and domain composition. | Neutral |
 | `core/host/` | Adapter interface, registration interface, host facade, registry, host admission and the host question contract. | Neutral |
-| `core/store/` | Store, schema, projections, persistence seams, compaction and backups. | Neutral |
+| `core/store/` | Store, schema, persistence seams, compaction and backups. | Neutral |
 | `core/dispatch/` | Queue ordering, capacity, routing, worker launch and run-launch stages. | Neutral |
 | `core/intake/` | Authenticated reports, result application, callback policy and run settlement. | Neutral |
 | `core/review/` | Review source, retained reviewer, verdict, publication and revision orchestration. | Neutral |
@@ -51,7 +51,7 @@ surface. The old `server/` and `host/` source roots disappear after migration.
 | `core/questions/` | Native questions, agent asks/messages, delegation, ladder and origin notices. | Neutral |
 | `core/verbs/` | Owner controls, disposition and control fences. | Neutral |
 | `core/runtime/` | Board, planning, question, settings and repository handlers with restricted contexts. | Neutral |
-| `core/scheduling/` | Lane scheduler, task wakes and bounded reconciliation sweep. | Neutral |
+| `core/scheduling/` | Lane scheduler, task wakes, the projection occurrence ledger and the bounded reconciliation sweep. | Neutral |
 | `core/telemetry/` | Task/board projections, usage, presence and runtime measurements. | Neutral |
 | `core/machine/` | Process identity, execution, tool custody, file facts and supervision primitives. | Neutral |
 | `service/` | Entrypoint and runtime owner: construct core and select host through its public service index. | Composes configured hosts |

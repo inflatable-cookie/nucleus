@@ -29,6 +29,19 @@ export class StoreProjectRegistry {
     this.db.prepare("UPDATE projects SET data=? WHERE key=?").run(JSON.stringify(project), project.key);
   }
 
+  /**
+   * The drain episode a lane-drain evaluation decided for one project; null when the row is gone.
+   * Episode state is operational, so it never bumps the operator-edit version.
+   */
+  setProjectDrain(key: string, drain: Project["drain"]): Project | null {
+    const project = this.projectByKey(key);
+    if (!project) return null;
+    const updated = projectSchema.parse({ ...project, drain });
+    this.persist(updated);
+    this.core.advanceRevision();
+    return updated;
+  }
+
   defaultProject(repo: Project["repositories"][number]): Project {
     const identity = repo.origin ?? repo.path;
     return projectSchema.parse({ key: `repo-${digest(identity).slice(0, 20)}`, name: basename(identity), repositories: [repo], primary: repo, version: 1, visibility: "active" });

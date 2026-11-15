@@ -480,10 +480,12 @@ owner to the rules it enforces.
 - `core/recovery/creation-recovery.ts` recovers a proven-absent worker and an unowned
   workspace creation. `workspaceReplayAllowed` and `absentWorkerStep` are the
   pure rules. Same-name `Engine` methods delegate to it.
-- `core/store/projections.ts` runs what stays outside the delivery lanes: workspace
-  titles, the cleanup drain and its retry timers, runtime-retirement scheduling
-  and the occurrence counts a wake or an effect retry waits on. Same-name
-  `Engine` methods delegate to it.
+- What stays outside the delivery lanes has one owner per mechanism:
+  `core/workspaces/workspace-title-projection.ts` runs the workspace-title intent
+  and its drain, `core/closeout/cleanup-lane.ts` the cleanup drain and its retry
+  timers, `core/runtime/retirement-lane.ts` runtime-retirement scheduling, and
+  `core/scheduling/projection-occurrences.ts` the occurrence ledger and the cut a
+  wake or an effect retry waits on. Same-name `Engine` methods delegate to them.
 - Coordinator recovery is one stage per module under `core/recovery/`.
   `recovery.ts` is the `Recovery` surface `Resolution` constructs and wires the
   stages together. `coordinator-route.ts` decides whether a task needs a
