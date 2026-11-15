@@ -29,6 +29,26 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
 
 ## Re-rates
 
+- nucleus#1228 (floor 7, 2026-11-15): the three floor-7 client modules were re-rated at this PR's head.
+  `client/task/runs.tsx` was split along its named sections: the tab now composes prerequisites and the
+  run-bound cleanup, the runs and their delivery (`client/task/runs.tsx`), the worker exclusions
+  (`client/task/runs-coordination.tsx`) and the closeout facts (`client/task/runs-closeout.tsx`), with the
+  live-versus-released run partition and the cleanup subject as typed functions in
+  `client/task/runs-view.ts`. The terminal `done`/`cancelled` pair the tab wrote inline twice is now the one
+  owner `TERMINAL_PHASES`/`isTerminalPhase` in `shared/task-state.ts`, and the tab's unused `state` and
+  `compact` props are gone. `client/task/parts.tsx` was hardened: the event kind label, the actor its detail
+  names and the bounded detail line moved to `shared/task-events.ts`, which is the one place the reading
+  happens (its own row keeps typed facts at 1 because the event contract has no actor column), and the
+  Overview summary with the pending operator question is now `client/task/summary.tsx`. `client/web/app.tsx`
+  decodes each live frame through `client/web/live-channel.ts` with the same board schemas the RPC path
+  parses, writes the board query through the poll's key and replace-or-merge rule
+  (`client/board-state.ts`), and shows a stream error instead of swallowing it, which is the one silent
+  failure the row named. The four resulting modules that carry direct boundary tests score 10 (runs, runs
+  view, live channel, parts and summary); the two section owners score 9 because the board render tests are
+  their only proof. `client/task/task-dialog.tsx`, `client/task/overview.tsx`, `client/task/activity.tsx` and
+  `client/queue.tsx` were touched only to import from the new owners and keep their rows; the `client board
+  state hook` row was refreshed for the named key and merge rule.
+
 - nucleus#1222 (floor 6, 2026-11-14): the four floor-6 dispatch and host modules were split or
   hardened along their named seams and re-rated at this PR's head. `core/dispatch/prompts.ts` is now
   the barrel over `core/dispatch/prompt-text/`: the rule and block owners (validation, report, proof,
