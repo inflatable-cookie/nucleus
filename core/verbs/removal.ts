@@ -9,6 +9,7 @@ import type { Engine } from "../engine";
 import { LANE_PRIORITY_TASK } from "../scheduling/lane-priorities";
 import { blockingRecoveryEffectsRefusal } from "../recovery/recovery-effects";
 import { digest, hostRunHoldReason, now } from "../store/store";
+import { isAgentGoneRefusal } from "../host/errors";
 import { canRetireCancelledWorkspace } from "../workspaces/terminal-workspace-retirement";
 import { archiveUnusedWorkspace } from "../workspaces/unused-workspace";
 import { buildOutputCheckoutMismatch, removeBuildOutput, type BuildOutputCleanupResult } from "../workspaces/worktree-cleanup";
@@ -59,7 +60,7 @@ export class TaskRemoval {
           if (state.active || state.permissions || !["idle", "error", "closed"].includes(state.status)) throw new Error("A task thread is still active; let it stop before removing the task");
         } catch (error) {
           // The adapter distinguishes a deleted thread from a connection failure.
-          if (!(error instanceof Error) || error.message !== "Agent was not found") throw error;
+          if (!isAgentGoneRefusal(error)) throw error;
         }
       }
       for (const agentId of ids) await this.engine.host.archiveAgent(agentId);

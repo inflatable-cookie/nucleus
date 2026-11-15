@@ -194,6 +194,7 @@ test('Spec 027 #4 project queries and board scope include both repositories with
     const contains = scopeContains(runtime.listProjects(), ['suite']);
     const tasks = [one, two, { ...two, id: 'outside', repoPath: alpha.path, repository: 'other/repo', lanes: [] }];
     assert.equal(tasks.filter(task => contains(task.repoPath, task.repository)).length, 2, 'both repositories are in scope and a contradicting origin is not');
+    assert.equal(visibleTaskSummaries([tasks[2]!], runtime.store.projects())[0]!.repository, 'other/repo', 'path collisions keep the contradicting repository visible');
     assert.ok('projects' in runtime.uiSnapshot({}));
   } finally { await runtime.stop(); }
 });

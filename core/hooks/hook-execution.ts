@@ -1,7 +1,8 @@
 import { EVENT_SCHEMA, type HookRecord, type HookResult, type NormalizedHookDefinition } from "../../shared/hooks";
 import type { Task } from "../../shared/contracts";
 import type { Store } from "../store/store";
-import { gitText, verifyMergeCandidate, verifyRetainedWorktree, verifyReviewedHead, type GitSnapshot } from "../git/git-snapshot";
+import { gitText, type GitSnapshot } from "../git/git-snapshot";
+import { verifyMergeCandidate, verifyRetainedWorktree, verifyReviewedHead } from "./git-gates";
 import { gitRun, } from "../git/git-command";
 import type { ExecutionOutcome, ExecutionRequest } from "../machine/process-exec";
 import {

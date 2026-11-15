@@ -4,6 +4,7 @@ import type { LifecycleAdapter } from './archive-proof';
 import type { Resolution } from '../resolution';
 import { missingOriginHasPlanner } from '../questions/origin';
 import { isStaleIntegrationBaseRefusal } from '../hooks/hooks';
+import { CLOSEOUT_BASE_REFRESH_REASON } from '../recovery/task-reasons';
 import { consumerBlockAdvance, isConsumerDeclaredBlock } from './closeout-renewal';
 
 export type CloseoutRecoveryContext = Pick<Engine, 'adapter' | 'host' | 'onTaskHost' | 'stopped' | 'store'> & {
@@ -88,7 +89,7 @@ export class CloseoutRecovery {
     if (task.resolution.recoveryActive || this.paused()) return;
     const renewals = this.store.events(task.id).filter(event => event.kind === 'closeout_base_renewed').length;
     if (renewals >= 3) return;
-    this.engine.resolution.update(this.store.task(task.id), { currentRunId: null, attention: false }, { phase: 'syncing', reason: 'Refreshing main before retrying closeout' }, 'closeout_base_renewed');
+    this.engine.resolution.update(this.store.task(task.id), { currentRunId: null, attention: false }, { phase: 'syncing', reason: CLOSEOUT_BASE_REFRESH_REASON }, 'closeout_base_renewed');
   }
   /** Remote fetches for consumer-blocked closeouts, at most one per repository per interval. */
   consumerBlockFetchMs=5*60_000;

@@ -5,8 +5,7 @@ import type { DispositionDeps } from "./types";
 import { listOriginRefs } from "./refs";
 import { ownedThreads } from "./state";
 import { proveWorkspaceEmpty, proveRetainedByReplacement } from "./workspace";
-
-const AGENT_NOT_FOUND = "Agent was not found";
+import { isAgentGoneRefusal } from "../../host/errors";
 
 /** Production remote effects: adapter observations, archives and git-backed work proofs. */
 export function productionDeps(options: {
@@ -36,7 +35,7 @@ export function productionDeps(options: {
         const state = await options.observe(id);
         return { stopped: !state.active && !state.permissions && ["idle", "error", "closed"].includes(state.status) };
       } catch (error) {
-        if (error instanceof Error && error.message === AGENT_NOT_FOUND) return { stopped: true };
+        if (isAgentGoneRefusal(error)) return { stopped: true };
         throw error;
       }
     },

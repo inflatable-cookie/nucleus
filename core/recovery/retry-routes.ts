@@ -3,7 +3,7 @@ import { readyReviewAtHead } from './task-reasons';
 import { pidAlive } from '../machine/process-identity';
 import { RETAINED_WORKER_PROFILE_REASON, type Completion, type Run, type Task } from '../../shared/contracts';
 import { digest, now } from '../store/store';
-import { RetainedRunRefusal, ACCEPTED_PR_RECONCILIATION_REASON, NO_RESOLUTION_ACTION, OPERATOR_WORKER_REMAP_REASON, retainedProfileRemapPark, revisionPhases, isAcceptedReview } from './task-reasons';
+import { CLOSEOUT_BASE_REFRESH_REASON, RetainedRunRefusal, ACCEPTED_PR_RECONCILIATION_REASON, NO_RESOLUTION_ACTION, OPERATOR_WORKER_REMAP_REASON, retainedProfileRemapPark, revisionPhases, isAcceptedReview } from './task-reasons';
 import { reviewAuthorizationRequired, REVIEW_AUTHORIZATION_REQUIRED } from '../review/review-continuation';
 import { isCloseoutHookHold } from '../hooks/hooks';
 import { taskHasPr } from '../forge/index';
@@ -363,7 +363,7 @@ export class RetryRoutes {
       };
     }
     if (route === 'no-action') throw new Error(NO_RESOLUTION_ACTION);
-    if (route === 'closeout') return () => this.resolution.update(t, { currentRunId: null, attention: false }, { phase: 'syncing', reason: 'Refreshing main before retrying closeout' }, 'resolution_retry');
+    if (route === 'closeout') return () => this.resolution.update(t, { currentRunId: null, attention: false }, { phase: 'syncing', reason: CLOSEOUT_BASE_REFRESH_REASON }, 'resolution_retry');
     // A held project validation is a failure to run, not a verdict. The gate reuses a settled
     // result for the same candidate so automatic passes never loop; an operator retry clears a
     // hold so the validation actually runs again.

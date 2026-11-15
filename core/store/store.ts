@@ -14,10 +14,21 @@ import {StoreMigration} from "./store-migration";
 import {ContentFingerprint,StoreFacts,StoreReclaim,type ReclaimResult} from "./store-reclaim";
 import {HISTORY_RETENTION_MS,StoreRetention,type RetainedRowPrune} from "./store-retention";
 import {StoreOperations} from "./store-operations";
+import {StoreNotices} from "./store-notices";
+import {StoreMessages} from "./store-messages";
+import {StoreHookEvents} from "./store-hook-events";
+import {StorePendingSubmissions} from "./store-pending-submissions";
+import {StorePreSend} from "./store-pre-send";
 import {buildOutcomeRecord,StoreOutcomes,type TelemetryFactChunk,type VerbOutcome} from "./store-outcomes";
 import {StorePlanning} from "./store-planning";
 import {StoreProjectQa} from "./store-project-qa";
-import {StoreProjects} from "./store-projects";
+import {StoreProjectRegistry} from "./store-project-registry";
+import {StoreRepositorySettings} from "./store-repository-settings";
+import {StoreProjectAgents} from "./store-project-agents";
+import {StoreProjectLimits} from "./store-project-limits";
+import {StoreProjectRemoval} from "./store-project-removal";
+import {StoreProjectMerge} from "./store-project-merge";
+import {StoreProjectManagement} from "./store-project-management";
 import {StoreSubmissions,submissionHash} from "./store-submissions";
 import {StoreTaskWrites,type StoredTaskParts} from "./store-task-writes";
 import {StoreTasks} from "./store-tasks";
@@ -25,7 +36,8 @@ export { digest } from "./store-core";
 export { CACHE_SIZE_KIB,CURRENT_SCHEMA,JOURNAL_SIZE_LIMIT_BYTES } from "./store-admission";
 export { AUTO_VACUUM_INCREMENTAL,AUTO_VACUUM_NONE,ContentFingerprint,STORE_COMPACTION_META_KEY,STORE_MAINTENANCE_META_KEY,StoreFacts,RECLAIM_BUDGET_MS,RECLAIM_CHUNK_PAGES,RECLAIM_DRAIN_BUDGET_MS,RECLAIM_DRAIN_FREE_PAGES,RECLAIM_DRAIN_MAX_PAGES,RECLAIM_MAX_PAGES } from "./store-reclaim";
 export { ASSIGNMENT_HISTORY_KEEP,HISTORY_RETENTION_MS,HOST_RUN_KEEP_PER_SELECTOR,PROJECT_QA_KEEP_PER_REPOSITORY,VERB_OUTCOME_RETENTION_MS } from "./store-retention";
-export { operationIdForKey,operationInputHash,provedPreSendHistory } from "./store-operations";
+export { operationIdForKey,operationInputHash } from "./store-core";
+export { provedPreSendHistory } from "./store-pre-send";
 export { buildOutcomeRecord,type TelemetryFactChunk,type VerbOutcome } from "./store-outcomes";
 export { explicitCriticalFalseSubmissionHash,legacySubmissionHash,submissionHash } from "./store-submissions";
 
@@ -264,18 +276,33 @@ export class Store {
 
   private readonly pendingRunReportingCleanup = new Map<string, string>();
   private readonly authStore = new StoreAuth(this.core);
-  private readonly projectsStore = new StoreProjects(this.core, {
+  private readonly projectRegistry = new StoreProjectRegistry(this.core);
+  private readonly repositorySettingsStore = new StoreRepositorySettings(this.core, this.projectRegistry, {
     rekeyed: () => {
       this.tasksStore.invalidateProjections(); this.laneActivity = null;
       this.planningStore.clearHistoryCache(); this.lanesStore.clearHistoryCache();
       this.advanceLeadRevision(); this.advanceRevision(); this.taskChanged(null);
     },
+  });
+  private readonly projectAgentsStore = new StoreProjectAgents(this.core, this.projectRegistry);
+  private readonly projectLimitsStore = new StoreProjectLimits(this.core, this.projectRegistry);
+  private readonly projectRemovalStore = new StoreProjectRemoval(this.core, this.projectRegistry, this.repositorySettingsStore, this.projectLimitsStore, {
     allTasks: () => this.allTasks(),
     leads: () => this.leads(),
     lanes: () => this.lanes(),
-    listDecisions: (query) => this.listDecisions(query),
     outcomes: () => this.outcomes(),
     taskRepositories: () => this.taskRepositories(),
+    pendingSubmissions: () => this.pendingSubmissions(),
+    listDecisions: (query) => this.listDecisions(query),
+  });
+  private readonly projectMergeStore = new StoreProjectMerge(this.core, this.projectRegistry, this.projectRemovalStore, { storedPlan: (project, version) => this.storedPlan(project, version) });
+  private readonly projectManagementStore = new StoreProjectManagement(this.core, this.projectRegistry, this.projectRemovalStore, {
+    allTasks: () => this.allTasks(),
+    leads: () => this.leads(),
+    lanes: () => this.lanes(),
+    outcomes: () => this.outcomes(),
+    taskRepositories: () => this.taskRepositories(),
+    listDecisions: (query) => this.listDecisions(query),
     pendingSubmissions: () => this.pendingSubmissions(),
     numberedOperation: (data) => this.numberedOperation(data),
     operationPayload: (id) => this.operationPayload(id),
@@ -284,7 +311,6 @@ export class Store {
     updateLead: (lead) => this.updateLead(lead),
     setLaneStatus: (key, status, note) => this.setLaneStatus(key, status, note),
     updateDecision: (decision) => this.updateDecision(decision),
-    storedPlan: (project, version) => this.storedPlan(project, version),
   });
   private readonly hostRunStore = new StoreHostRuns(this.core);
   private readonly projectQaStore = new StoreProjectQa(this.core);
@@ -305,8 +331,23 @@ export class Store {
     taskChanged: (taskId) => this.taskChanged(taskId),
     numberForCached: (taskId) => this.tasksStore.numberForCached(taskId),
     runs: (taskId) => this.runs(taskId),
-    task: (id) => this.task(id),
+  });
+  /** Operator notices, agent messages and hook events: one owner per table, sharing the store's change notifications. */
+  private readonly noticesStore = new StoreNotices(this.core, { taskChanged: taskId => this.taskChanged(taskId) });
+  private readonly messagesStore = new StoreMessages(this.core, { taskChanged: taskId => this.taskChanged(taskId) });
+  private readonly hookEventsStore = new StoreHookEvents(this.core, { taskChanged: taskId => this.taskChanged(taskId) });
+  private readonly pendingSubmissionsStore = new StorePendingSubmissions(this.core, {
     canonicalRepository: (repoPath, origin) => this.canonicalRepository(repoPath, origin),
+    numberedOperation: data => this.numberedOperation(data),
+    operationPayload: id => this.operationsStore.operationPayload(id),
+  });
+  /** The pre-send receipt settlement: an execution-authored no-send refusal, relabelled and never re-run. */
+  private readonly preSendStore = new StorePreSend(this.core, {
+    operation: id => this.operationsStore.operation(id),
+    operationPayload: id => this.operationsStore.operationPayload(id),
+    putOperation: operation => this.operationsStore.putOperation(operation),
+    runs: taskId => this.runs(taskId),
+    task: id => this.task(id),
   });
   get db(): DatabaseSync { return this.core.db; }
   /** True while a bounded service-owned maintenance window holds the write funnels closed. */
@@ -491,7 +532,7 @@ export class Store {
           && this.tasksStore.readProjectionClock() === this.tasksStore.projectionClock;
       },
       rolledBack: () => {
-        this.projectsStore.clearCache();
+        this.projectRegistry.clearCache();
         this.tasksStore.projectionUndo = null;
         if (restorable && undo.clock === this.tasksStore.readProjectionClock()) this.tasksStore.restoreProjection(undo);
         this.pendingRunScratchCleanup.clear();
@@ -779,15 +820,15 @@ export class Store {
   pendingRuns(): Run[] { return this.tasksStore.pendingRuns(); }
   runsForTasks(taskIds: string[]): Run[] { return this.tasksStore.runsForTasks(taskIds); }
   run(id: string): Run | null { return this.tasksStore.run(id); }
-  notices(taskId?: string): Notice[] { return this.operationsStore.notices(taskId); }
-  unsettledNoticeCount(): number { return this.operationsStore.unsettledNoticeCount(); }
-  putNotice(n: Notice) { return this.operationsStore.putNotice(n); }
-  messages(taskId: string): AgentMessageRecord[] { return this.operationsStore.messages(taskId); }
-  queuedMessages(): AgentMessageRecord[] { return this.operationsStore.queuedMessages(); }
-  message(id: string): AgentMessageRecord | null { return this.operationsStore.message(id); }
-  putMessage(record: AgentMessageRecord) { return this.operationsStore.putMessage(record); }
-  hookEventsPage(afterRowid: number, limit: number, throughRowid = Number.MAX_SAFE_INTEGER): { records: HookRecord[]; lastRowid: number } { return this.operationsStore.hookEventsPage(afterRowid, limit, throughRowid); }
-  hookEvents(taskId?: string): HookRecord[] { return this.operationsStore.hookEvents(taskId); }
+  notices(taskId?: string): Notice[] { return this.noticesStore.notices(taskId); }
+  unsettledNoticeCount(): number { return this.noticesStore.unsettledNoticeCount(); }
+  putNotice(n: Notice) { return this.noticesStore.putNotice(n); }
+  messages(taskId: string): AgentMessageRecord[] { return this.messagesStore.messages(taskId); }
+  queuedMessages(): AgentMessageRecord[] { return this.messagesStore.queuedMessages(); }
+  message(id: string): AgentMessageRecord | null { return this.messagesStore.message(id); }
+  putMessage(record: AgentMessageRecord) { return this.messagesStore.putMessage(record); }
+  hookEventsPage(afterRowid: number, limit: number, throughRowid = Number.MAX_SAFE_INTEGER): { records: HookRecord[]; lastRowid: number } { return this.hookEventsStore.hookEventsPage(afterRowid, limit, throughRowid); }
+  hookEvents(taskId?: string): HookRecord[] { return this.hookEventsStore.hookEvents(taskId); }
   /** Permanent outcome row; never rewritten or purged. */
   putOutcome(record: Outcome): Outcome { return this.outcomesStore.putOutcome(record); }
   private insertOutcomeRow(parsed: Outcome): void { return this.outcomesStore.insertOutcomeRow(parsed); }
@@ -858,46 +899,46 @@ export class Store {
   /** Writes a lane's drain episode without touching its activity timestamp, so the evaluation never resets its own window. */
   setTaskLanes(task: Task, keys: string[], origin?: string | null): Task { return this.lanesStore.setTaskLanes(task, keys, origin); }
   /** Spec 022: a repository settings row is keyed by the repository identity — origin when known, else the local path. */
-  repositoryByKey(key: string): RepositorySettings | null { return this.projectsStore.repositoryByKey(key); }
-  repositories(): RepositorySettings[] { return this.projectsStore.repositories(); }
+  repositoryByKey(key: string): RepositorySettings | null { return this.repositorySettingsStore.repositoryByKey(key); }
+  repositories(): RepositorySettings[] { return this.repositorySettingsStore.repositories(); }
   /**
    * Spec 056: what a fresh re-key would do, read-only. It never applies later
    * drifted input: apply re-checks every one of these facts in its transaction.
    */
-  previewRepositoryRekey(input: RepositoryRekeyPreviewInput): RepositoryRekeyPreview { return this.projectsStore.previewRepositoryRekey(input); }
+  previewRepositoryRekey(input: RepositoryRekeyPreviewInput): RepositoryRekeyPreview { return this.repositorySettingsStore.previewRepositoryRekey(input); }
   /**
    * Spec 056: one repository namespace re-key, one transaction, one durable
    * idempotent receipt. A lost reply reads the receipt written by this step;
    * repeating the same key with the same input returns it unchanged, and the
    * same key with different input refuses before any write.
    */
-  rekeyRepository(input: RepositoryRekeyInput): RepositoryRekeyResult { return this.projectsStore.rekeyRepository(input); }
+  rekeyRepository(input: RepositoryRekeyInput): RepositoryRekeyResult { return this.repositorySettingsStore.rekeyRepository(input); }
   /** The durable receipt of one applied re-key, read by its caller key or by its id. */
-  repositoryRekeyReceipt(query: RepositoryRekeyReceiptQuery): RepositoryRekeyReceipt | null { return this.projectsStore.repositoryRekeyReceipt(query); }
+  repositoryRekeyReceipt(query: RepositoryRekeyReceiptQuery): RepositoryRekeyReceipt | null { return this.repositorySettingsStore.repositoryRekeyReceipt(query); }
   /** Every applied re-key receipt, oldest first; operator evidence, never rewritten. */
-  repositoryRekeys(): RepositoryRekeyReceipt[] { return this.projectsStore.repositoryRekeys(); }
+  repositoryRekeys(): RepositoryRekeyReceipt[] { return this.repositorySettingsStore.repositoryRekeys(); }
   /** Match a repository settings row by exact origin slug or exact local path, so a caller may name either. */
-  repositoryFor(repository: string): RepositorySettings | null { return this.projectsStore.repositoryFor(repository); }
+  repositoryFor(repository: string): RepositorySettings | null { return this.repositorySettingsStore.repositoryFor(repository); }
   /** The row a patch or set by this identity reads before it writes: its own key first, then a path-only predecessor it re-keys. */
-  repositorySettingsFor(identity: RepositorySettings["repository"]): RepositorySettings | null { return this.projectsStore.repositorySettingsFor(identity); }
+  repositorySettingsFor(identity: RepositorySettings["repository"]): RepositorySettings | null { return this.repositorySettingsStore.repositorySettingsFor(identity); }
   /**
    * Fill a repository identity that arrived as an origin string. A provided path
    * is kept; an unrecognized origin falls back to that resolved path, as lead
    * and papercut writes did. With no path, the registered checkout is the one
    * `papercut.list` would resolve.
    */
-  resolveRepositoryIdentity(input: { origin: string; path: string }): { origin: string; path: string } { return this.projectsStore.resolveRepositoryIdentity(input); }
+  resolveRepositoryIdentity(input: { origin: string; path: string }): { origin: string; path: string } { return this.repositorySettingsStore.resolveRepositoryIdentity(input); }
   /** Monotonic write ordinal for repository settings rows, allocated inside the caller's transaction: durable latest-setting order independent of clock resolution. */
-  putRepository(identity: RepositorySettings["repository"], closeout: ProjectCloseout | null, note: string, validation: ProjectValidation | null = null, reviewer: RepositorySettings["reviewer"] = null, qa: ProjectQa | null = null, checksPolicy: RepositorySettings["checksPolicy"] | undefined = undefined, scratchNamespace?: string | null, hostKind?: import("../../shared/host-kind").HostKind, affectedTests?: RepositorySettings["affectedTests"]): RepositorySettings { return this.projectsStore.putRepository(identity, closeout, note, validation, reviewer, qa, checksPolicy, scratchNamespace, hostKind, affectedTests); }
+  putRepository(identity: RepositorySettings["repository"], closeout: ProjectCloseout | null, note: string, validation: ProjectValidation | null = null, reviewer: RepositorySettings["reviewer"] = null, qa: ProjectQa | null = null, checksPolicy: RepositorySettings["checksPolicy"] | undefined = undefined, scratchNamespace?: string | null, hostKind?: import("../../shared/host-kind").HostKind, affectedTests?: RepositorySettings["affectedTests"]): RepositorySettings { return this.repositorySettingsStore.putRepository(identity, closeout, note, validation, reviewer, qa, checksPolicy, scratchNamespace, hostKind, affectedTests); }
   /** Patch semantics: only the named fields change; `null` clears one and an absent field keeps its stored value. Returns the full resulting row. */
-  patchRepository(identity: RepositorySettings["repository"], patch: { scratchNamespace?: string | null; closeout?: ProjectCloseout | null; validation?: ProjectValidation | null; reviewer?: RepositorySettings["reviewer"]; qa?: ProjectQa | null; affectedTests?: RepositorySettings["affectedTests"]; checksPolicy?: RepositorySettings["checksPolicy"]; hostKind?: import("../../shared/host-kind").HostKind; note?: string }): RepositorySettings { return this.projectsStore.patchRepository(identity, patch); }
-  scratchNamespaceFor(task: Pick<Task, "repoPath" | "repository">): string { return this.projectsStore.scratchNamespaceFor(task); }
+  patchRepository(identity: RepositorySettings["repository"], patch: { scratchNamespace?: string | null; closeout?: ProjectCloseout | null; validation?: ProjectValidation | null; reviewer?: RepositorySettings["reviewer"]; qa?: ProjectQa | null; affectedTests?: RepositorySettings["affectedTests"]; checksPolicy?: RepositorySettings["checksPolicy"]; hostKind?: import("../../shared/host-kind").HostKind; note?: string }): RepositorySettings { return this.repositorySettingsStore.patchRepository(identity, patch); }
+  scratchNamespaceFor(task: Pick<Task, "repoPath" | "repository">): string { return this.repositorySettingsStore.scratchNamespaceFor(task); }
   /** Task 382: the effective hosted-check policy for a task's repository. An absent or null setting keeps every check blocking, so existing repositories never gain advisory behaviour implicitly. */
-  checksPolicyFor(task: Pick<Task, "repoPath" | "repository">): RepositoryChecksPolicy { return this.projectsStore.checksPolicyFor(task); }
+  checksPolicyFor(task: Pick<Task, "repoPath" | "repository">): RepositoryChecksPolicy { return this.repositorySettingsStore.checksPolicyFor(task); }
   /** The canonical row a repository's settings resolve to: specificity first (origin identity over path hint), then the monotonic write revision — the same row closeout authority reads. */
-  canonicalRepository(repoPath: string, origin?: string | null): RepositorySettings | null { return this.projectsStore.canonicalRepository(repoPath, origin); }
+  canonicalRepository(repoPath: string, origin?: string | null): RepositorySettings | null { return this.repositorySettingsStore.canonicalRepository(repoPath, origin); }
   /** Spec 022: the closeout override for a repository with no manifest, when a repository settings row sets it. The canonical row binds tightest — origin identity over path hint — and among equally specific rows the highest monotonic write revision carries the operator's latest intent, whatever the clock did. */
-  repositoryCloseoutOverride(repoPath: string, origin?: string | null): ProjectCloseout | null { return this.projectsStore.repositoryCloseoutOverride(repoPath, origin); }
+  repositoryCloseoutOverride(repoPath: string, origin?: string | null): ProjectCloseout | null { return this.repositorySettingsStore.repositoryCloseoutOverride(repoPath, origin); }
   qaRequestRecords(input: { requestId: string } | { repository: string; since: string; expectedHead: string }): unknown[] { return this.projectQaStore.qaRequestRecords(input); }
   qaHistoryForRequest(input: { repository: string; since: string; expectedHead: string }): ProjectQaRun[] { return this.projectQaStore.qaHistoryForRequest(input); }
   putQaRun(run: ProjectQaRun): ProjectQaRun { return this.projectQaStore.putQaRun(run); }
@@ -939,69 +980,69 @@ export class Store {
   hostRunsByStates(states: HostRunInternalRecord["state"][]): HostRunInternalRecord[] { return this.hostRunStore.hostRunsByStates(states); }
   appendHostRunJournal(runId: string, event: string, data: unknown, at = now()): number { return this.hostRunStore.appendHostRunJournal(runId, event, data, at); }
   hostRunJournal(runId: string): Array<{ event: string; at: string; data: unknown }> { return this.hostRunStore.hostRunJournal(runId); }
-  projects(): Project[] { return this.projectsStore.projects(); }
-  projectByKey(key: string): Project | null { return this.projectsStore.projectByKey(key); }
+  projects(): Project[] { return this.projectRegistry.projects(); }
+  projectByKey(key: string): Project | null { return this.projectRegistry.projectByKey(key); }
   /** The project that holds this repository's origin, whatever its stored key is. */
-  queueProject(): Project | null { return this.projectsStore.queueProject(); }
-  setProjectVisibility(input: { key: string; version: number }, visibility: Project["visibility"]): Project { return this.projectsStore.setProjectVisibility(input, visibility); }
+  queueProject(): Project | null { return this.projectRegistry.queueProject(); }
+  setProjectVisibility(input: { key: string; version: number }, visibility: Project["visibility"]): Project { return this.projectRegistry.setProjectVisibility(input, visibility); }
   /**
    * Spec 058 (task 540): names the planner thread that answers delegated questions for a project.
    * It is a plain project field, not ownership: it grants no verb, hold or notice.
    */
-  setProjectPlanner(input: { key: string; agentId: string | null; setBy: string; note?: string }, at = now()): Project { return this.projectsStore.setProjectPlanner(input, at); }
+  setProjectPlanner(input: { key: string; agentId: string | null; setBy: string; note?: string }, at = now()): Project { return this.projectRegistry.setProjectPlanner(input, at); }
   /** Task 1110: the project's named, non-task threads, registered and revoked one at a time. */
-  registerProjectAgent(input: { key: string; name: string; purpose: string; agentId: string; hostId: string; registeredBy: string; note?: string }, at = now()): Project { return this.projectsStore.registerProjectAgent(input, at); }
-  unregisterProjectAgent(input: { key: string; name: string; unregisteredBy: string; note?: string }, at = now()): Project { return this.projectsStore.unregisterProjectAgent(input, at); }
-  ensureProjectFallbackAgent(input: { key: string; hostId?: string | null; previousPlannerId?: string | null }, at = now()): Project { return this.projectsStore.ensureProjectFallbackAgent(input, at); }
+  registerProjectAgent(input: { key: string; name: string; purpose: string; agentId: string; hostId: string; registeredBy: string; note?: string }, at = now()): Project { return this.projectAgentsStore.registerProjectAgent(input, at); }
+  unregisterProjectAgent(input: { key: string; name: string; unregisteredBy: string; note?: string }): Project { return this.projectAgentsStore.unregisterProjectAgent(input); }
+  ensureProjectFallbackAgent(input: { key: string; hostId?: string | null; previousPlannerId?: string | null }, at = now()): Project { return this.projectAgentsStore.ensureProjectFallbackAgent(input, at); }
   /**
    * Spec 058 cutover 5: the one-time owner→planner migration drops a project's archived or
    * missing owner record. The live-owner case keeps its owner field as readable history and
    * gains the thread as planner instead; only a dead owner is dropped here.
    */
-  retireProjectOwner(key: string, reason: string, at = now()): Project | null { return this.projectsStore.retireProjectOwner(key, reason, at); }
+  retireProjectOwner(key: string, reason: string): Project | null { return this.projectRegistry.retireProjectOwner(key, reason); }
   /**
    * Spec 058 cutover 5: the project-level notice recipient — the project's planner, else the
    * Queue planner (the project that holds origin `inflatable-cookie/paseo-northstar-queue`),
    * else null. The retired owner field is never read.
    */
-  projectPlannerRecipient(project: Pick<Project, "planner"> | null | undefined): string | null { return this.projectsStore.projectPlannerRecipient(project); }
+  projectPlannerRecipient(project: Pick<Project, "planner"> | null | undefined): string | null { return this.projectRegistry.projectPlannerRecipient(project); }
   /** One read of the project table for many lookups; `projectFor` re-reads it per call. */
-  projectKeyResolver(projects = this.projects()): (task: Pick<Task, "repoPath" | "repository">) => string | null { return this.projectsStore.projectKeyResolver(projects); }
-  projectFor(repoPath: string, origin?: string | null): Project | null { return this.projectsStore.projectFor(repoPath, origin); }
-  projectDispatchLimitOverrides(): Record<string, number> { return this.projectsStore.projectDispatchLimitOverrides(); }
-  setProjectDispatchLimitOverride(projectKey: string, limit: number | null) { return this.projectsStore.setProjectDispatchLimitOverride(projectKey, limit); }
+  projectKeyResolver(projects = this.projects()): (task: Pick<Task, "repoPath" | "repository">) => string | null { return this.projectRegistry.projectKeyResolver(projects); }
+  projectFor(repoPath: string, origin?: string | null): Project | null { return this.projectRegistry.projectFor(repoPath, origin); }
+  projectDispatchLimitOverrides(): Record<string, number> { return this.projectLimitsStore.projectDispatchLimitOverrides(); }
+  setProjectDispatchLimitOverride(projectKey: string, limit: number | null) { return this.projectLimitsStore.setProjectDispatchLimitOverride(projectKey, limit); }
   /**
    * A project's in-flight cap: always twice its effective slot limit (Tom, 2026-11-08).
    * A value an older build stored under `projectInFlightLimitOverrides` is ignored.
    */
-  projectInFlightLimitFor(task: Pick<Task, "repoPath" | "repository">): number { return this.projectsStore.projectInFlightLimitFor(task); }
-  projectDispatchLimitResolver(): (task: Pick<Task, "repoPath" | "repository">) => number { return this.projectsStore.projectDispatchLimitResolver(); }
-  papercutDispatchPolicy() { return this.projectsStore.papercutDispatchPolicy(); }
-  projectDispatchLimitFor(task: Pick<Task, "repoPath" | "repository">): number { return this.projectsStore.projectDispatchLimitFor(task); }
-  ensureProject(repoPath: string, origin?: string | null): Project { return this.projectsStore.ensureProject(repoPath, origin); }
-  upsertProject(input: ProjectUpsertInput): Project { return this.projectsStore.upsertProject(input); }
-  projectTombstones(): ProjectTombstone[] { return this.projectsStore.projectTombstones(); }
+  projectInFlightLimitFor(task: Pick<Task, "repoPath" | "repository">): number { return this.projectLimitsStore.projectInFlightLimitFor(task); }
+  projectDispatchLimitResolver(): (task: Pick<Task, "repoPath" | "repository">) => number { return this.projectLimitsStore.projectDispatchLimitResolver(); }
+  papercutDispatchPolicy() { return this.projectLimitsStore.papercutDispatchPolicy(); }
+  projectDispatchLimitFor(task: Pick<Task, "repoPath" | "repository">): number { return this.projectLimitsStore.projectDispatchLimitFor(task); }
+  ensureProject(repoPath: string, origin?: string | null): Project { return this.projectRegistry.ensureProject(repoPath, origin); }
+  upsertProject(input: ProjectUpsertInput): Project { return this.projectRegistry.upsertProject(input); }
+  projectTombstones(): ProjectTombstone[] { return this.projectRegistry.projectTombstones(); }
   /**
    * Spec 027: the blockers a removal refusal would name, read by the board so its
    * confirmation never recomputes them from a filtered view.
    */
   /** Confirmation identity excludes task progress, but includes every task ID and complete planning records. */
-  projectManagementPreview(input: {key: string; target?: string}): ProjectManagementPreview { return this.projectsStore.projectManagementPreview(input); }
-  resetProjectCancellation(input: {key:string;operationId:string;tasks:Array<{taskId:string;version:number}>}) { return this.projectsStore.resetProjectCancellation(input); }
-  manageRemoveProject(input: ProjectManageInput): ProjectTombstone { return this.projectsStore.manageRemoveProject(input); }
-  removalBlockers(key: string, repository?: string): ProjectRemovalBlocker[] { return this.projectsStore.removalBlockers(key, repository); }
+  projectManagementPreview(input: {key: string; target?: string}): ProjectManagementPreview { return this.projectManagementStore.projectManagementPreview(input); }
+  resetProjectCancellation(input: {key:string;operationId:string;tasks:Array<{taskId:string;version:number}>}) { return this.projectManagementStore.resetProjectCancellation(input); }
+  manageRemoveProject(input: ProjectManageInput): ProjectTombstone { return this.projectManagementStore.manageRemoveProject(input); }
+  removalBlockers(key: string, repository?: string): ProjectRemovalBlocker[] { return this.projectRemovalStore.removalBlockers(key, repository); }
   /**
    * nucleus#967: take a member out of a project and delete the one-repository
    * project it becomes, as one write. A blocker, a stale version or the primary
    * refuses the whole step, so the repository never ends up split off but not removed.
    */
-  removeProjectRepository(input: ProjectRemoveRepositoryInput): { project: Project; tombstone: ProjectTombstone } { return this.projectsStore.removeProjectRepository(input); }
+  removeProjectRepository(input: ProjectRemoveRepositoryInput): { project: Project; tombstone: ProjectTombstone } { return this.projectRemovalStore.removeProjectRepository(input); }
   /**
    * Spec 027: delete a project record. Anything still using it blocks the delete
    * and is named; a durable tombstone keeps an export or import from resurrecting
    * it, and a repository settings row shared with another project stays.
    */
-  removeProject(input: { key: string; version: number; reason: string }): ProjectTombstone { return this.projectsStore.removeProject(input); }
+  removeProject(input: { key: string; version: number; reason: string }): ProjectTombstone { return this.projectRemovalStore.removeProject(input); }
   /**
    * The record side of a removal, inside the caller's transaction: the row, its
    * plan, its slot override and any settings row no remaining project uses go,
@@ -1015,7 +1056,7 @@ export class Store {
    * mid-flight blocks: a queued or running project QA, or an in-flight
    * repository re-key, on a moving repository.
    */
-  mergeCheck(input: ProjectMergeCheckInput): ProjectMergeCheck { return this.projectsStore.mergeCheck(input); }
+  mergeCheck(input: ProjectMergeCheckInput): ProjectMergeCheck { return this.projectMergeStore.mergeCheck(input); }
   /**
    * nucleus#969: move a project, or one of its members, into another project as
    * one write. The target keeps its name, planner, slots and primary. Records
@@ -1024,7 +1065,7 @@ export class Store {
    * target's plan and its slot override goes. Only `mergeBlockers` refuse. A
    * repository is never in two projects.
    */
-  mergeProject(input: ProjectMergeInput): ProjectMergeResult { return this.projectsStore.mergeProject(input); }
+  mergeProject(input: ProjectMergeInput): ProjectMergeResult { return this.projectMergeStore.mergeProject(input); }
   /**
    * nucleus#984: a removed source's saved plan order joins the end of the
    * target's, skipping lanes the target already orders, as one new target plan
@@ -1061,19 +1102,19 @@ export class Store {
    * started episode without its prompt.
    */
   evaluateLaneDrains(at = Date.now()): void { return this.lanesStore.evaluateLaneDrains(at); }
-  hookEvent(id: string): HookRecord | null { return this.operationsStore.hookEvent(id); }
-  deleteHookEvents(ids: readonly string[], batch = 500): number { return this.operationsStore.deleteHookEvents(ids, batch); }
-  putHookEvent(record: HookRecord) { return this.operationsStore.putHookEvent(record); }
+  hookEvent(id: string): HookRecord | null { return this.hookEventsStore.hookEvent(id); }
+  deleteHookEvents(ids: readonly string[], batch = 500): number { return this.hookEventsStore.deleteHookEvents(ids, batch); }
+  putHookEvent(record: HookRecord) { return this.hookEventsStore.putHookEvent(record); }
   operationForKey(key: string): QueueOperation | null { return this.operationsStore.operationForKey(key); }
   operation(id: string): QueueOperation | null { return this.operationsStore.operation(id); }
   operationPayload(id: string): unknown { return this.operationsStore.operationPayload(id); }
-  reconcileTaskControlPreSend(id: string, inputHash: string): QueueOperation { return this.operationsStore.reconcileTaskControlPreSend(id, inputHash); }
+  reconcileTaskControlPreSend(id: string, inputHash: string): QueueOperation { return this.preSendStore.reconcileTaskControlPreSend(id, inputHash); }
   operations(filter: { states?: QueueOperation["state"][]; taskId?: string; limit?: number } = {}): QueueOperation[] { return this.operationsStore.operations(filter); }
   unfinishedSourcePromotion(source: { kind: "lead" | "papercut"; id: string; repository: string; version: number | null; digest: string }): QueueOperation | null { return this.operationsStore.unfinishedSourcePromotion(source); }
   sourcePromotionsForReconciliation(): QueueOperation[] { return this.operationsStore.sourcePromotionsForReconciliation(); }
   operationsForAbsenceProof(submissionId: string): QueueOperation[] { return this.operationsStore.operationsForAbsenceProof(submissionId); }
   operationBacklog(): number { return this.operationsStore.operationBacklog(); }
-  pendingSubmissions(): PendingSubmission[] { return this.operationsStore.pendingSubmissions(); }
+  pendingSubmissions(): PendingSubmission[] { return this.pendingSubmissionsStore.pendingSubmissions(); }
   configuredOperationLimit(): number { return this.operationsStore.configuredOperationLimit(); }
   configuredPaseoCallLimit(): number { return this.operationsStore.configuredPaseoCallLimit(); }
   putOperation(operation: QueueOperation, payload?: unknown): QueueOperation { return this.operationsStore.putOperation(operation, payload); }
