@@ -205,8 +205,9 @@ owner to the rules it enforces.
   consult per cause, then one planner escalation, which a planner or decider
   settles or classifies to the operator. It also settles open escalations when an
   ordinary control moves the task. `ladder.ts` is the public surface and the in-flight
-  state, and each mechanism owns one file beside it: `records.ts` (the durable records
-  and their payload decode), `causes.ts`, `questions.ts`, `replies.ts`, `waits.ts`,
+  state, and each mechanism owns one file beside it: `records.ts` (the durable records;
+  an episode's cause is its intent line, while the run, question and refusal class are
+  the payload's), `causes.ts`, `questions.ts`, `replies.ts`, `waits.ts`,
   `pass.ts` (the classify/wait/continue and recovery decisions), `park.ts`, `routing.ts`,
   `operator.ts`, `hold.ts`, `resume.ts`, `attention.ts`, `continuation.ts` and `proof.ts`.
   `Resolution` keeps each method as a delegate; `Engine` keeps `settleLadderControl`.

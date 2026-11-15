@@ -27,7 +27,7 @@
   (`delegated_decider_archive_failed`) are recorded instead of swallowed, which is the row's named silent
   failure. Ownership stays 1 because the who-may-answer authority is still written once per caller route,
   and proportion stays 1 because the class still owns the prompt, the delivery ledger, settlement, the wait
-  loop, the rungs and the decider profile. Boundary tests were added for the pre-payload record decode, the
+  loop, the rungs and the decider profile. Boundary tests were added for the record identity and its run fallback, the
   recovery writer/reader identity with its repeat occurrence, the task-target read, the recorded ticket
   refusal and the recorded decider-archive failure. The
   `shared/schema/questions.ts` row keeps its 9 with its evidence paths moved to the new prefix-match owner.

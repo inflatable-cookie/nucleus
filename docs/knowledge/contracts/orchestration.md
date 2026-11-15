@@ -674,14 +674,16 @@ decider settles or classifies to the operator. Also settles open escalations
 when an ordinary control moves the task. Enforces
 [Non-converging review ladder](#non-converging-review-ladder-spec-058-cutover-3)
 and [Responsible tasks](#responsible-tasks-spec-058-cutover-1). The folder splits the
-mechanism by job: `ladder.ts` is the public surface and in-flight state, `records.ts`
-decodes each intent from the typed payload the ladder writes (the intent line is the
-pre-payload fallback), `causes.ts` owns cause identity, `questions.ts` and `replies.ts`
-the words it asks and accepts, `waits.ts` the stop details, `pass.ts` the
-classify/wait/continue and recovery decisions, `park.ts` where a completed result
-parks, `routing.ts` the rungs a question travels, `operator.ts` the last rung,
-`hold.ts` the task-side wait, `resume.ts` the restart passes, `attention.ts` the
-unknown-delivery attention and `continuation.ts` the two exits. `operatorQuestionStep`
+mechanism by job: `ladder.ts` is the public surface and in-flight state; `records.ts`
+decodes each intent once — an episode's **cause is always its intent line**, because
+the escalation id is derived from that cause and a caller's payload may carry only a
+category label, while the **run, question and refusal class** come from the typed
+payload written beside it; `causes.ts` owns cause identity; `questions.ts` and
+`replies.ts` the words it asks and accepts; `waits.ts` the stop details; `pass.ts` the
+classify/wait/continue and recovery decisions; `park.ts` where a completed result
+parks; `routing.ts` the rungs a question travels; `operator.ts` the last rung;
+`hold.ts` the task-side wait; `resume.ts` the restart passes; `attention.ts` the
+unknown-delivery attention; and `continuation.ts` the two exits. `operatorQuestionStep`
 lives in `operator-question.ts`. Delegates remain on Resolution; Engine keeps
 `settleLadderControl`.
 

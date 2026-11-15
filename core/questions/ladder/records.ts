@@ -1,8 +1,10 @@
 /**
  * What the ladder's durable records say. The ladder writes each intent twice in
- * one transaction: a readable line, and the typed payload these readers decode.
- * A record written before that payload existed names its cause and run on the
- * line, which stays the one fallback, so no reader re-derives those facts.
+ * one transaction: a readable line, and a typed payload beside it. An episode's
+ * cause is its line, always: the escalation id is derived from that cause, and a
+ * caller's payload may carry only a category label (`recovery-pending`), so the
+ * payload never renames an episode. The run, question and refusal class are the
+ * payload's, with the line as the fallback for records written before it existed.
  *
  * The caller decides from the decoded record; nothing here reads a task, a host
  * or an event kind's wording beyond the record it is decoding.
