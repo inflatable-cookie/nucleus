@@ -47,6 +47,13 @@ export const HOST_RUN_RETENTION_SWEEP_PAGE = 250;
 /** The journal owns durable fact identity; this duplicate cache stays bounded. */
 export const HOST_RUN_FACT_CACHE_BYTES = 4 * 1024 * 1024;
 export const HOST_RUN_FACT_CACHE_ENTRIES = 2_000;
+/**
+ * Bytes one run keeps per retained output stream (stdout, stderr). A run's
+ * output is unbounded work on a shared disk: past this cap the supervisor stops
+ * appending and records the truncation in the stream it truncated, so a saved
+ * stream is never mistaken for the whole of the command's output.
+ */
+export const HOST_RUN_RETAINED_OUTPUT_BYTES = 8 * 1024 * 1024;
 /** Durable restart-safe cursor: the last settled rowid this sweep finished. */
 export const HOST_RUN_RETENTION_CURSOR_META = "hostRunOutputSweepCursor";
 /** The last retention sweep failure, so a refused or unreadable run output is visible. */

@@ -57,26 +57,31 @@ export class HostRunServing {
 
   /** Contract-010 answer evidence: the front's first client since each bind. */
   wireFront(front: HostRunFront): void {
-    front.onAccepted(() => {
-      if (this.answeredSinceBind) return;
-      this.answeredSinceBind = true;
-      this.context.scheduler.recordEndpointEvent("endpoint_answered");
-    });
+    front.onAccepted(() => this.recordAnswer());
   }
 
-  /** True while this endpoint holds a bound, intact socket and a live listener. */
+  /**
+   * Contract-010 answer evidence: a client reached this endpoint's socket since
+   * the last bind. One owner records it, whichever socket the client reached
+   * (the front's contract path or this runtime's inner socket).
+   */
+  recordAnswer(): void {
+    if (this.answeredSinceBind) return;
+    this.answeredSinceBind = true;
+    this.context.scheduler.recordEndpointEvent("endpoint_answered");
+  }
+
+  /**
+   * True while this endpoint holds a bound, intact socket and a live listener.
+   * The public path must name the front's listening inode: an accepting front
+   * alone is not health, because without this runtime's socket it cannot serve a
+   * request, so it never answers for one.
+   */
   serving(): boolean {
-    if (!this.server) return false;
-    if (this.front) {
-      // The public path must name the front's listening inode. An accepting front
-      // alone is not health: without this runtime's socket it cannot
-      // serve a request, so it never answers for one.
-      const ino = this.front.state().ino;
-      if (ino === null || this.innerIno === null) return false;
-      try { return lstatSync(this.context.socketPath).ino === ino; } catch { return false; }
-    }
-    if (this.boundIno === null) return false;
-    try { return lstatSync(this.context.socketPath).ino === this.boundIno; } catch { return false; }
+    if (!this.server || !this.front) return false;
+    const ino = this.front.state().ino;
+    if (ino === null || this.innerIno === null) return false;
+    try { return lstatSync(this.context.socketPath).ino === ino; } catch { return false; }
   }
 
   /**
@@ -188,13 +193,10 @@ export class HostRunServing {
   }
 
   /**
-   * Maintenance self-heal: if the socket this endpoint bound is gone from its path,
-   * bind again so clients stop failing with ENOENT. A path now answered by another
-   * live holder is left alone (fail closed).
-   */
-  /**
-   * Front-mode self-heal: the worker re-asserts a live path that lost our inode,
-   * and refuses a path a live holder owns. Returns true only when it rebound.
+   * Front-mode self-heal: if the socket this endpoint bound is gone from its
+   * path, the worker re-asserts a live path that lost our inode, and refuses a
+   * path a live holder owns, so clients stop failing with ENOENT without a live
+   * holder ever being taken over. Returns true only when it rebound.
    */
   async rebindIfLost(): Promise<boolean> {
     if (this.context.stopping || this.rebinding || !this.front || !this.server) return false;

@@ -1,30 +1,11 @@
-import { tokenRedactor } from "../../core/machine/token-redactor";
-import { pidAlive } from "../../core/machine/pid";
-/**
- * Detached supervisor for contract 010 client-protocol runs (Spec 035 part 3).
- *
- * The Queue service spawns this process detached and unref'd, so it outlives a
- * service roll. It runs the submitted command in its own process group, streams
- * stdout and stderr into the run's retained output files, honours the run
- * timeout and a durable cancel request, and writes the `host.run.result` record
- * atomically beside the run. A restarted Queue endpoint reattaches every
- * unsettled run to that record, so a roll loses neither the run nor its result.
- *
- * Settlement follows contract 010's process-group rule: the result is written
- * only once the group is proven empty, never when the leader's stdio closes, so
- * a same-group descendant cannot be settled over and an escaped `setsid`
- * descendant is inventoried and recorded as a fact.
- */
 import { randomUUID } from "node:crypto";
-import { constants, closeSync, fsyncSync, writeSync } from "node:fs";
-import { spawn } from "node:child_process";
 import { hostRunResultSchema } from "../../shared/contracts";
 import {
   HOST_RUN_SUPERVISOR_PLAN_FORMAT,
   HOST_RUN_SUPERVISOR_STATE_FORMAT,
-  hostRunCancelRequestSchema,
   hostRunSupervisorPlanSchema,
   hostRunSupervisorStateSchema,
+  readHostRunCancelRequest,
   readHostRunLaunchEnv,
   removeHostRunLaunchEnv,
   type HostRunSupervisorPlan,
@@ -32,243 +13,237 @@ import {
 } from "../../core/host-runs/host-run-wire";
 import {
   hostRunProcessStartIdentity,
-  openVerifiedOwnedFile,
   readCheckedHostRunFile,
   writeVerifiedOwnedFile,
 } from "../../core/host-runs/host-run-files";
-import { processGroupEmpty } from "../../core/machine/process-group";
-import { processStartIdentityEnvironment, processesForStartIdentity, processesForStartIdentityInTree } from "../../core/machine/process-identity-search";
-import { ProcessTreeCpuSampler } from "../../core/machine/process-tree-cpu";
-import { startIdentityMatches } from "../../core/machine/start-identity";
+import { HOST_RUN_RETAINED_OUTPUT_BYTES } from "../../core/host-runs/host-run-endpoint-types";
 import { HOST_RUN_CPU_COVERAGE_FILE, hostRunCpuCoverageSidecar } from "../../core/host-runs/host-run-cpu-coverage";
-
-/** How often the endpoint's supervisor samples its command tree's CPU. */
+import { openHostRunRetainedOutput } from "../../core/host-runs/host-run-retained-output";
+import { executeHookProgram, type ExecutionOutcome } from "../../core/machine/process-exec";
+import { EscapedDescendantCustody } from "../../core/machine/escaped-descendants";
+import { ProcessTreeCpuSampler } from "../../core/machine/process-tree-cpu";
+/**
+ * Detached supervisor for contract 010 client-protocol runs (Spec 035 part 3).
+ *
+ * The Queue service spawns this process detached and unref'd, so it outlives a
+ * service roll. It reads the run's plan, runs the submitted command in its own
+ * process group, streams stdout and stderr into the run's retained output files
+ * under a byte cap, honours the run timeout and a durable cancel request, and
+ * writes the `host.run.result` record atomically beside the run. A restarted
+ * Queue endpoint reattaches every unsettled run to that record, so a roll loses
+ * neither the run nor its result.
+ *
+ * The process custody is not this module's: `executeHookProgram` owns the spawn,
+ * the process group, the timeout and cancel signals, output observation and
+ * settle-on-empty-group (the same owner hooks and milestone QA use), and
+ * `EscapedDescendantCustody` owns the escaped-descendant rule contract 010
+ * states — the result is written only once the group is empty *and* no known
+ * escaped descendant is alive. What stays here is the host run's own durable
+ * wiring: the state record, the retained output, and the result envelope.
+ */
 export const HOST_RUN_CPU_SAMPLE_MS = 250;
-
-const CANCEL_POLL_MS = 50;
-const GROUP_POLL_MS = 25;
+/** The process owner's in-memory copy is discarded here; the retained files carry the output. */
+const IN_MEMORY_OUTPUT_BYTES = 64 * 1024;
+const ESCAPE_POLL_MS = 100;
 
 const sleep = (ms: number) => new Promise<void>(resolvePromise => setTimeout(resolvePromise, ms));
 
-/** Preserve chunk boundaries while ensuring a run cannot persist its own token in output. */
-function outputWriter(fd: number, secret: string | undefined): { write(chunk: Buffer): void; flush(): void } {
-  return tokenRedactor(secret, bytes => { if (bytes.length) writeSync(fd, bytes); });
-}
-
-function readCancelRequest(stateDir: string, runId: string): string | null {
-  const raw = readCheckedHostRunFile(stateDir, ["runs", runId, "cancel.json"]);
-  if (!raw) return null;
-  try {
-    const parsed = hostRunCancelRequestSchema.parse(JSON.parse(raw.toString("utf8")));
-    return parsed.runId === runId ? parsed.reason : null;
-  } catch { return null; }
-}
-
-export async function runHostRunSupervisorMain(argv: string[] = process.argv.slice(2)): Promise<void> {
-  const [stateDir, runId] = argv;
-  if (!stateDir || !runId) throw new Error("Host-run supervisor needs its state directory and run id");
+/** Read and validate the plan the endpoint wrote for this run. */
+function readSupervisorPlan(stateDir: string, runId: string): HostRunSupervisorPlan {
   const raw = readCheckedHostRunFile(stateDir, ["runs", runId, "supervisor.plan.json"]);
   if (!raw) throw new Error("Host-run supervisor plan is missing or fails the owned-subtree checks");
   const parsed = JSON.parse(raw.toString("utf8")) as { format?: unknown };
   if (parsed.format !== HOST_RUN_SUPERVISOR_PLAN_FORMAT) throw new Error("Host-run supervisor plan has the wrong format");
   const plan: HostRunSupervisorPlan = hostRunSupervisorPlanSchema.parse(parsed);
   if (plan.stateDir !== stateDir || plan.runId !== runId) throw new Error("Host-run supervisor plan identity does not match its arguments");
+  return plan;
+}
 
-  const startedAt = new Date().toISOString();
-  const supervisorStartIdentity = hostRunProcessStartIdentity(process.pid);
-  let state: HostRunSupervisorState = hostRunSupervisorStateSchema.parse({
-    format: HOST_RUN_SUPERVISOR_STATE_FORMAT, version: 1, runId: plan.runId, epoch: plan.epoch,
-    supervisorPid: process.pid, supervisorStartIdentity,
-    commandPid: null, commandPgid: null, commandStartIdentity: null,
-    termination: null, startedAt, updatedAt: startedAt, endedAt: null,
-  });
-  const persist = (patch: Partial<HostRunSupervisorState>) => {
-    state = hostRunSupervisorStateSchema.parse({ ...state, ...patch, updatedAt: new Date().toISOString() });
-    writeVerifiedOwnedFile(plan.stateDir, ["runs", plan.runId, "supervisor.state.json"], JSON.stringify(state), 0o600);
-  };
-  persist({});
+/**
+ * The supervisor's own record (`supervisor.state.json`). The endpoint's watch
+ * reads it for the command identity and the termination cause, so every write
+ * is the whole record and keeps the contract's shape.
+ */
+class SupervisorState {
+  private state: HostRunSupervisorState;
 
-  const stdoutFd = openVerifiedOwnedFile(plan.stateDir, ["runs", plan.runId, "stdout"], constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND, 0o600);
-  const stderrFd = openVerifiedOwnedFile(plan.stateDir, ["runs", plan.runId, "stderr"], constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND, 0o600);
+  constructor(private readonly plan: HostRunSupervisorPlan, startedAt: string) {
+    this.state = hostRunSupervisorStateSchema.parse({
+      format: HOST_RUN_SUPERVISOR_STATE_FORMAT, version: 1, runId: plan.runId, epoch: plan.epoch,
+      supervisorPid: process.pid, supervisorStartIdentity: hostRunProcessStartIdentity(process.pid),
+      commandPid: null, commandPgid: null, commandStartIdentity: null,
+      termination: null, startedAt, updatedAt: startedAt, endedAt: null,
+    });
+    this.persist({});
+  }
+
+  /** The cause already recorded for the run's stop, if any. */
+  get termination(): "timeout" | "cancel" | null {
+    return this.state.termination;
+  }
+
+  persist(patch: Partial<HostRunSupervisorState>): void {
+    this.state = hostRunSupervisorStateSchema.parse({ ...this.state, ...patch, updatedAt: new Date().toISOString() });
+    writeVerifiedOwnedFile(this.plan.stateDir, ["runs", this.plan.runId, "supervisor.state.json"], JSON.stringify(this.state), 0o600);
+  }
+}
+
+/**
+ * Run one host run: read its plan and launch env, hand the command to the
+ * process owner, keep the run reserved until the escaped-descendant proof holds,
+ * and write the durable result. An unreadable cancel request is unknown, never
+ * absent: the run is stopped and the reason is recorded beside it.
+ */
+export async function runHostRunSupervisorMain(argv: string[] = process.argv.slice(2)): Promise<void> {
+  const [stateDir, runId] = argv;
+  if (!stateDir || !runId) throw new Error("Host-run supervisor needs its state directory and run id");
+  const plan = readSupervisorPlan(stateDir, runId);
   // The plan holds env key names only; the values come from the run's ephemeral launch file.
   const launchEnv = readHostRunLaunchEnv(plan.stateDir, plan.runId);
   if (!launchEnv) throw new Error("Host-run launch env is missing; the run was never launched");
-  const stdout = outputWriter(stdoutFd, launchEnv.HOST_RUN_TOKEN);
-  const stderr = outputWriter(stderrFd, launchEnv.HOST_RUN_TOKEN);
-
+  const state = new SupervisorState(plan, new Date().toISOString());
+  const output = openHostRunRetainedOutput(plan.stateDir, plan.runId, HOST_RUN_RETAINED_OUTPUT_BYTES, launchEnv.HOST_RUN_TOKEN);
   // A private identity marker inherited by the command and every descendant, so
   // the supervisor can inventory an escaped `setsid` descendant at settlement.
   const identity = randomUUID();
-  const child = spawn(plan.argv[0], plan.argv.slice(1), {
-    cwd: plan.cwd, env: { ...launchEnv, ...processStartIdentityEnvironment(identity) }, detached: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  removeHostRunLaunchEnv(plan.stateDir, plan.runId);
-  // CPU used by the command's whole tree, as milestone QA measures it, so the
-  // scheduler can budget this selector from history instead of the whole box.
+  const custody = new EscapedDescendantCustody(identity);
   const cpu = new ProcessTreeCpuSampler(identity, HOST_RUN_CPU_SAMPLE_MS);
-  let pgid: number | null = null;
-  let commandStartIdentity: string | null = null;
-  let termination: "timeout" | "cancel" | null = null;
-  let stopStage: "none" | "term" | "kill" = "none";
-  let graceTimer: NodeJS.Timeout | null = null;
-  let leaderCode: number | null = null;
-  let leaderSignal: NodeJS.Signals | null = null;
-  let finishing = false;
-  let resolveFinished!: () => void;
-  const completion = new Promise<void>(resolvePromise => { resolveFinished = resolvePromise; });
-  const escaped = new Map<string, { pid: number; startIdentity: string }>();
-  let inventoryTimer: NodeJS.Timeout | null = null;
+  const recordedFaults = new Set<string>();
+  let cancelRecorded = false;
+  let execution: ExecutionOutcome;
+  try {
+    execution = await executeHookProgram({
+      root: plan.cwd,
+      executable: plan.argv[0],
+      argv: plan.argv.slice(1),
+      stdin: Buffer.alloc(0),
+      timeoutMs: plan.runTimeoutMs,
+      maxOutputBytes: IN_MEMORY_OUTPUT_BYTES,
+      // The command's exit code is the result; its output is the diagnostic, so a
+      // long stream is capped and marked rather than killed.
+      overflow: "tail",
+      terminationGraceMs: plan.graceMs,
+      processStartIdentity: identity,
+      settleOnProcessGroup: true,
+      env: launchEnv,
+      onOutput: (stream, chunk) => output.write(stream, chunk),
+      cancelReason: () => {
+        const request = readHostRunCancelRequest(plan.stateDir, plan.runId);
+        if (request.state === "absent") return null;
+        if (request.state === "requested") {
+          if (!cancelRecorded) { cancelRecorded = true; state.persist({ termination: "cancel" }); }
+          return request.reason;
+        }
+        // Unreadable is unknown, not absent: the stop is honoured and the fault is
+        // recorded beside the run once, so a cancel nobody can read never reads as
+        // none and the operator can see why the run stopped.
+        if (!recordedFaults.has(request.reason)) {
+          recordedFaults.add(request.reason);
+          state.persist({ termination: "cancel" });
+          recordSupervisorFault(plan, "cancel_request_unreadable", request.reason);
+          console.error(`Host-run cancel request for ${plan.runId} is unreadable; the run is stopped: ${request.reason}`);
+        }
+        return request.reason;
+      },
+      onSpawn: (pid, processGroupId, _identity, startIdentity) => {
+        removeHostRunLaunchEnv(plan.stateDir, plan.runId);
+        if (!pid || !processGroupId || !startIdentity) return;
+        // `detached` makes the command its own group (and session) leader, so the
+        // group id is its pid and the command's own OS start identity scopes the
+        // CPU samples to this group.
+        state.persist({ commandPid: pid, commandPgid: processGroupId, commandStartIdentity: startIdentity });
+        try { cpu.start({ pgid: processGroupId, leaderStartIdentity: startIdentity }); }
+        catch { /* CPU sampling never fails the run it measures. */ }
+      },
+    });
+  } catch (error) {
+    // A command that never spawned is not a result: the run settles lost, and the
+    // supervisor's own exit code says the launch failed.
+    output.close();
+    cpu.stop();
+    throw error;
+  }
 
-  /**
-   * One marker scan: refresh the known escaped set and report whether any known
-   * escaped descendant is still alive. Contract 010: the group is proven dead
-   * only when it is empty *and* no known escaped descendant is alive. An
-   * unreadable listing is never proof of absence — including when the escaped
-   * set is still empty, which is how a short-lived `setsid` child was settled
-   * over when Darwin `ps -E -A` timed out under host load.
-   */
-  const scanEscaped = (): boolean => {
-    const knownPids = [...escaped.values()].map(entry => entry.pid);
-    let found = processesForStartIdentityInTree(identity, { processGroupId: pgid, pids: knownPids });
-    // Last-instant detach: the parent is gone, so the cheap tree walk has no
-    // roots unless we already inventoried the child. Fall back to the full
-    // identity listing once the group is empty.
-    if (found.state === "absent" && escaped.size === 0 && (!pgid || processGroupEmpty(pgid)))
-      found = processesForStartIdentity(identity);
-    if (found.state === "found") {
-      for (const entry of found.processes) {
-        if (entry.processGroupId === pgid) continue;
-        escaped.set(`${entry.pid}:${entry.startIdentity}`, { pid: entry.pid, startIdentity: entry.startIdentity });
-      }
-    }
-    if (found.state === "unknown") {
-      // Known pids the kernel says are gone do not occupy the run by themselves.
-      // An empty escaped set plus an unreadable listing still cannot prove there
-      // was never a descendant.
-      const knownAlive = [...escaped.values()].some(entry => pidAlive(entry.pid));
-      return knownAlive || escaped.size === 0;
-    }
-    const alive = found.state === "found" ? found.processes : [];
-    return [...escaped.values()].some(entry => entry.startIdentity.endsWith("@unknown")
-      || alive.some(process => process.pid === entry.pid && startIdentityMatches(entry.startIdentity, process.startIdentity)));
-  };
-  const signalEscaped = (signal: NodeJS.Signals) => {
-    const found = processesForStartIdentity(identity);
-    if (found.state !== "found") return;
-    for (const entry of found.processes) {
-      if (entry.processGroupId === pgid) continue;
-      try { process.kill(entry.pid, signal); } catch { /* the descendant is already gone */ }
-    }
-  };
-  const signalGroup = (signal: NodeJS.Signals) => {
-    if (!pgid) return;
-    try { process.kill(-pgid, signal); } catch { /* the group is already gone */ }
-  };
-  const beginStop = () => {
-    if (stopStage !== "none") return;
-    stopStage = "term";
-    signalGroup("SIGTERM");
-    graceTimer = setTimeout(() => { stopStage = "kill"; signalGroup("SIGKILL"); }, plan.graceMs);
-    graceTimer.unref?.();
-  };
-  const timeout = setTimeout(() => { termination = "timeout"; persist({ termination }); beginStop(); }, plan.runTimeoutMs);
-  timeout.unref?.();
-  const cancelPoll = setInterval(() => {
-    if (termination) return;
-    const reason = readCancelRequest(plan.stateDir, plan.runId);
-    if (reason === null) return;
-    termination = "cancel";
-    persist({ termination });
-    beginStop();
-  }, CANCEL_POLL_MS);
-  cancelPoll.unref?.();
+  if (execution.timedOut && state.termination === null) state.persist({ termination: "timeout" });
+  await awaitEscapedDescendants(plan, state, custody, execution, () => output.close());
+  recordResult(plan, custody, execution, cpu);
+  state.persist({ endedAt: new Date().toISOString() });
+}
 
-  const closeOutputs = () => {
-    try { stdout.flush(); } catch { /* output loss never fails a run */ }
-    try { stderr.flush(); } catch { /* output loss never fails a run */ }
-    for (const fd of [stdoutFd, stderrFd]) { try { fsyncSync(fd); } catch { /* closed */ } try { closeSync(fd); } catch { /* closed */ } }
-  };
+/**
+ * Contract 010's second settlement condition. The process owner settles the
+ * group; this waits for the descendants that left it, signalling them once the
+ * run is stopping (a timeout or a cancel) and keeping the result unwritten
+ * until two readable scans prove absence.
+ */
+async function awaitEscapedDescendants(
+  plan: HostRunSupervisorPlan,
+  state: SupervisorState,
+  custody: EscapedDescendantCustody,
+  execution: ExecutionOutcome,
+  closeOutput: () => void,
+): Promise<void> {
+  const deadline = Date.parse(plan.startedAt) + plan.runTimeoutMs;
+  let stopStage: "none" | "term" | "kill" = execution.timedOut || execution.cancelled ? "term" : "none";
+  let stopAt = Date.now();
+  if (stopStage === "term") custody.signal("SIGTERM");
+  while (!custody.absenceProven(execution.processGroupId ?? null)) {
+    const now = Date.now();
+    if (stopStage === "none" && now >= deadline) {
+      stopStage = "term";
+      stopAt = now;
+      if (state.termination === null) state.persist({ termination: "timeout" });
+      custody.signal("SIGTERM");
+    } else if (stopStage === "term" && now - stopAt >= plan.graceMs) {
+      stopStage = "kill";
+      custody.signal("SIGKILL");
+    }
+    await sleep(ESCAPE_POLL_MS);
+  }
+  closeOutput();
+}
 
-  /** Settle only when the run's process group is empty and no known escaped descendant lives. */
-  const finish = async (): Promise<void> => {
-    if (finishing) return;
-    finishing = true;
-    if (inventoryTimer) { clearInterval(inventoryTimer); inventoryTimer = null; }
-    // Wait for the original process group to empty, sampling escaped
-    // descendants while it runs.
-    while (pgid && !processGroupEmpty(pgid)) {
-      scanEscaped();
-      if (stopStage === "term") signalEscaped("SIGTERM");
-      if (stopStage === "kill") signalEscaped("SIGKILL");
-      await sleep(GROUP_POLL_MS);
-    }
-    // Contract 010: the group is proven dead only when it is empty and no known
-    // escaped descendant is alive. Two clean scans 150 ms apart prove that a
-    // descendant detaching at the group's last instant is still inventoried.
-    // An unreadable listing is occupied, including when the escaped set is still
-    // empty: settlement stays unresolved until a readable scan proves absence.
-    for (;;) {
-      if (!scanEscaped()) {
-        await sleep(150);
-        if (!scanEscaped()) break;
-      }
-      if (stopStage === "term") signalEscaped("SIGTERM");
-      if (stopStage === "kill") signalEscaped("SIGKILL");
-      await sleep(GROUP_POLL_MS);
-    }
-    clearTimeout(timeout);
-    clearInterval(cancelPoll);
-    const { cpuMs, cpuCoverage } = cpu.stop();
+/** Write the contract's durable result from what the process owner proved. */
+function recordResult(
+  plan: HostRunSupervisorPlan,
+  custody: EscapedDescendantCustody,
+  execution: ExecutionOutcome,
+  cpu: ProcessTreeCpuSampler,
+): void {
+  const { cpuMs, cpuCoverage } = cpu.stop();
+  const pgid = execution.processGroupId ?? null;
+  const startIdentity = execution.startIdentity ?? null;
+  if (pgid && startIdentity) {
     // The CPU reason is Queue-internal: a private sidecar beside the run, written
     // ahead of the Contract 010 result; a failed write never blocks the result.
-    if (pgid && commandStartIdentity) {
-      try {
-        writeVerifiedOwnedFile(plan.stateDir, ["runs", plan.runId, HOST_RUN_CPU_COVERAGE_FILE],
-          JSON.stringify(hostRunCpuCoverageSidecar({ runId: plan.runId, epoch: plan.epoch }, cpuMs, cpuCoverage)), 0o600);
-      } catch { /* the reason stays unknown */ }
-    }
-    if (graceTimer) clearTimeout(graceTimer);
-    child.stdout?.destroy();
-    child.stderr?.destroy();
-    closeOutputs();
+    try {
+      writeVerifiedOwnedFile(plan.stateDir, ["runs", plan.runId, HOST_RUN_CPU_COVERAGE_FILE],
+        JSON.stringify(hostRunCpuCoverageSidecar({ runId: plan.runId, epoch: plan.epoch }, cpuMs, cpuCoverage)), 0o600);
+    } catch { /* the reason stays unknown */ }
+    const exitCode = execution.signal ? null : execution.code;
     const endedAt = new Date().toISOString();
-    if (pgid && commandStartIdentity) {
-      const exitCode = leaderSignal ? null : leaderCode;
-      const result = hostRunResultSchema.parse({
-        format: "host.run.result", version: 1, runId: plan.runId, epoch: plan.epoch,
-        pgid, startIdentity: commandStartIdentity,
-        exitCode, signal: leaderSignal ?? (exitCode === null ? "unknown" : null),
-        startedAt: plan.startedAt, endedAt, wallMs: Math.max(0, Date.now() - Date.parse(plan.startedAt)), cpuMs,
-        escapedDescendants: [...escaped.values()],
-      });
-      writeVerifiedOwnedFile(plan.stateDir, ["runs", plan.runId, "result.json"], JSON.stringify(result), 0o600);
-    }
-    persist({ endedAt });
-    resolveFinished();
-  };
+    writeVerifiedOwnedFile(plan.stateDir, ["runs", plan.runId, "result.json"], JSON.stringify(hostRunResultSchema.parse({
+      format: "host.run.result", version: 1, runId: plan.runId, epoch: plan.epoch,
+      pgid, startIdentity,
+      exitCode, signal: execution.signal ?? (exitCode === null ? "unknown" : null),
+      startedAt: plan.startedAt, endedAt, wallMs: Math.max(0, Date.now() - Date.parse(plan.startedAt)), cpuMs,
+      escapedDescendants: custody.recorded(),
+    })), 0o600);
+  }
+  // A command whose identity was never proven writes no result; the endpoint's
+  // watch settles it lost once the supervisor is gone, never from a guess.
+}
 
-  child.on("spawn", () => {
-    if (!child.pid) return;
-    pgid = child.pid;
-    // The command's real OS start identity, not the sampling time. It also
-    // scopes CPU samples to this group: `detached` makes the child its own
-    // group (and session) leader, so pgid = pid.
-    const measured = hostRunProcessStartIdentity(child.pid);
-    commandStartIdentity = measured;
-    cpu.start({ pgid: child.pid, leaderStartIdentity: measured });
-    persist({ commandPid: child.pid, commandPgid: child.pid, commandStartIdentity });
-    // Inventory while the parent still lives: a `setsid` child leaves the
-    // group, and Darwin's cheap tree walk finds it through ppid only until the
-    // leader exits (after which launchd reparents it).
-    scanEscaped();
-    inventoryTimer = setInterval(() => { scanEscaped(); }, 100);
-    inventoryTimer.unref?.();
-  });
-  child.stdout?.on("data", (chunk: Buffer) => { try { stdout.write(chunk); } catch { /* output loss never fails a run */ } });
-  child.stderr?.on("data", (chunk: Buffer) => { try { stderr.write(chunk); } catch { /* output loss never fails a run */ } });
-  child.on("error", () => { void finish(); });
-  child.on("exit", (code, signal) => { leaderCode = code; leaderSignal = signal; void finish(); });
-
-  await completion;
+/**
+ * A private fault record beside the run (the CPU sidecar's precedent): why the
+ * supervisor stopped or could not prove something. Never the contract's record,
+ * and a failed write never blocks the result.
+ */
+function recordSupervisorFault(plan: HostRunSupervisorPlan, code: string, detail: string): void {
+  try {
+    writeVerifiedOwnedFile(plan.stateDir, ["runs", plan.runId, "supervisor.faults.json"], JSON.stringify({
+      format: "host.run.supervisor.faults", version: 1, runId: plan.runId, epoch: plan.epoch,
+      faults: [{ code, detail, at: new Date().toISOString() }],
+    }), 0o600);
+  } catch { /* the stop itself is what keeps the run honest */ }
 }

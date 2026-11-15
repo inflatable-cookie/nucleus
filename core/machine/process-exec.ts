@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_PROCESS_TERMINATION_GRACE_MS, PROCESS_TERMINATION_GRACE_MAX_MS, type HostRunEscapedDescendant } from "../../shared/contracts";
 import { withSpawnSlot } from "../dispatch/spawn-gate";
+import { escapedDescendantsOf } from "./escaped-descendants";
 import { processGroupEmpty, signalProcessGroup, waitForProcessGroupEmpty } from "./process-group";
 import { processStartIdentityEnvironment, processesForStartIdentity } from "./process-identity-search";
 import { hostRunProcessStartIdentity } from "./start-identity";
@@ -173,11 +174,9 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
       if (!processGroupEmpty(processGroupId)) return;
       finishing = true;
       outcome.processGroupEmpty = true;
-      const descendants = processesForStartIdentity(leaderStartIdentity);
-      outcome.escapedDescendants = descendants.state === "found"
-        ? descendants.processes.filter(process => process.processGroupId !== processGroupId)
-          .map(process => ({ pid: process.pid, startIdentity: process.startIdentity }))
-        : [];
+      // The escaped-descendant rule has one owner: this is its settled inventory,
+      // recorded as a fact so a leak stays visible instead of holding capacity.
+      outcome.escapedDescendants = escapedDescendantsOf(processesForStartIdentity(leaderStartIdentity), processGroupId);
       // Let already-buffered pipe data reach the readers. The process group is
       // the settlement boundary; an escaped descendant holding a pipe cannot
       // keep this step alive after this point.
