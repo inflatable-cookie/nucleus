@@ -26,4 +26,7 @@ export type { ExternalWorkspacePlacement, ExternalWorktreeSource, ExternalWorksp
  */
 export interface Adapter extends RunUsageSource, HostAdapterIdentity, HostObservation, HostRunCreation,
   HostThreadPresentation, HostThreads, HostWorkspaces, HostDelivery, HostNativeQuestions, HostForgeReads,
-  HostWorkspaceArchive {}
+  HostWorkspaceArchive {
+  /** Host-neutral connection probe used by runtime lifecycle owners. */
+  isConnected?(): boolean;
+}

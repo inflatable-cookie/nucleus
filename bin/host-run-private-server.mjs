@@ -22,6 +22,12 @@ import { dataHome } from "../shared/data-home.mjs";
 import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
+import { hostRunAuthoritySchema } from "../shared/schema/host-runs.ts";
+
+function isAuthorityLine(line) {
+  try { return hostRunAuthoritySchema.safeParse(JSON.parse(line)).success; }
+  catch { return false; }
+}
 
 function canonical(path) {
   const resolved = resolve(path);
@@ -69,7 +75,7 @@ async function runSupervisor() {
     const env = { ...process.env };
     if (standbyFor) env.QUEUE_STANDBY_FOR_PID = String(standbyFor); else delete env.QUEUE_STANDBY_FOR_PID;
     const next = spawn(process.execPath, childArgs, { env, stdio: ["ignore", "pipe", "inherit"] });
-    relay(next.stdout, line => { console.log(line); if (waiter && line.startsWith("{")) { const done = waiter; waiter = null; done(line); } });
+    relay(next.stdout, line => { console.log(line); if (waiter && isAuthorityLine(line)) { const done = waiter; waiter = null; done(line); } });
     next.on("exit", code => {
       // Only the current child ends the supervisor; a replaced one is expected to exit.
       if (child === next) { if (!stopping) console.error(`host-run private server child exited (${code}); supervisor stopping`); process.exit(stopping ? 0 : 1); }
@@ -91,16 +97,19 @@ async function runSupervisor() {
   process.on("SIGUSR2", async () => {
     if (stopping || restarting) return;
     restarting = true;
-    const old = child;
-    // The standby holds its authority line back until the old child is gone.
-    const ready = new Promise(resolve => { waiter = resolve; });
-    child = start(old.pid);
-    // Swap the staged socket onto the live path before draining, so followers
-    // reconnecting across the restart never see ENOENT/ECONNREFUSED.
-    await awaitStandbyWarm(child, old);
-    old.kill("SIGTERM");
-    await ready;
-    restarting = false;
+    try {
+      const old = child;
+      // The standby holds its authority line back until the old child is gone.
+      const ready = new Promise(resolve => { waiter = resolve; });
+      child = start(old.pid);
+      // Swap the staged socket onto the live path before draining, so followers
+      // reconnecting across the restart never see ENOENT/ECONNREFUSED.
+      await awaitStandbyWarm(child, old);
+      old.kill("SIGTERM");
+      await ready;
+    } finally {
+      restarting = false;
+    }
   });
   const stopAll = async () => {
     if (stopping) return;
@@ -172,9 +181,9 @@ let stopping = false;
 async function stop() {
   if (stopping) return;
   stopping = true;
-  try { await endpoint.stop(); } catch { /* best effort */ }
-  try { scheduler.stop(); } catch { /* timers only */ }
-  try { store.close(); } catch { /* best effort */ }
+  try { await endpoint.stop(); } catch (error) { console.error("host-run private server endpoint stop failed:", error); }
+  try { scheduler.stop(); } catch (error) { console.error("host-run private server scheduler stop failed:", error); }
+  try { store.close(); } catch (error) { console.error("host-run private server store close failed:", error); }
   process.exit(0);
 }
 process.on("SIGTERM", () => { void stop(); });

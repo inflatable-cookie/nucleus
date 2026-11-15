@@ -3,16 +3,14 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Adapter } from '../core/host/adapter';
-import { hostConnected, hostConnectionRequired } from '../hosts/paseo';
+import { hostConnected } from '../hosts/paseo';
 
-test('runtime connection reads remain late-bound, including missing-client behavior', () => {
-  const host = { client: { isConnected: false } } as unknown as Adapter;
+test('runtime connection reads remain late-bound and missing connection state is offline', () => {
+  const host = { isConnected: () => false } as unknown as Adapter;
   assert.equal(hostConnected(host), false);
-  (host as unknown as { client: { isConnected: boolean } }).client = { isConnected: true };
+  (host as unknown as { isConnected: () => boolean }).isConnected = () => true;
   assert.equal(hostConnected(host), true);
-  assert.equal(hostConnectionRequired(host), true);
   assert.equal(hostConnected({} as Adapter), false);
-  assert.throws(() => hostConnectionRequired({} as Adapter), TypeError);
 });
 
 const concreteAdapterImport = /import\s*(?:type\s+)?\{[^}]*\bPaseoAdapter\b/s;

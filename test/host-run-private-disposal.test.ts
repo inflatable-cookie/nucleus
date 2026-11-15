@@ -13,6 +13,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { connect } from "node:net";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
@@ -45,7 +46,7 @@ interface Started {
 }
 
 function startSupervised(): Started {
-  const root = realpathSync(mkdtempSync("/tmp/hrpd-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "hrpd-")));
   const stateDir = join(root, "s");
   const work = join(root, "w");
   mkdirSync(work, { recursive: true });

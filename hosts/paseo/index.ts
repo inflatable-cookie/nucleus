@@ -9,14 +9,9 @@ export function createHost(Policy: HostPolicyConstructor, url: string, socketPat
   return new PaseoAdapter(url, socketPath, helperPath, password, mcpScriptPath);
 }
 
-/** Preserve the legacy fixture connection seam without exposing the native client to core. */
+/** Read connection state through the host-neutral adapter contract. */
 export function hostConnected(adapter: Adapter): boolean {
-  return Boolean((adapter as unknown as { client?: { isConnected?: boolean } }).client?.isConnected);
-}
-
-/** Refresh requires the original connection surface, including its failure behavior. */
-export function hostConnectionRequired(adapter: Adapter): boolean {
-  return (adapter as unknown as { client: { isConnected: boolean } }).client.isConnected;
+  return adapter.isConnected?.() ?? false;
 }
 
 // Public host entry, including the compatibility surface used by fixtures.

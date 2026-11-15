@@ -254,8 +254,7 @@ export async function buildRuntime(destination) {
   "service/install/roll-request.ts": "server/service/roll-request.ts",
   "service/standalone.ts": "server/service/standalone.ts",
   "service/transport/server.ts": "server/service/server.ts",
-  "service/install/main-channel.mjs": "server/service/main-channel.mjs",
-  "service/install/build.ts": "server/service/build.ts"
+  "service/install/main-channel.mjs": "server/service/main-channel.mjs"
 };
   const installedPath = path => sourceAliases[path] ?? (path === 'shared/service/local-client.ts' ? 'server/service/local-client.ts' : path.startsWith('core/recovery/') ? path.replace('core/recovery/', 'server/') : path.startsWith('core/dispatch/') ? path.replace('core/dispatch/', 'server/') : path.startsWith('core/store/') ? path.replace('core/store/', 'server/') : path.startsWith('core/workspaces/') ? path.replace('core/workspaces/', 'server/') : path);
   const outputPath = entry => entry === 'index.server.ts' ? 'server/index.server.mjs' : installedPath(entry).replace(/\.ts$/, '.mjs');

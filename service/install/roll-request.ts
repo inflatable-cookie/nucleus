@@ -6,9 +6,15 @@ import { dataHome } from "../../shared/data-home.mjs";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { sourcePathFromModule } from "../../shared/service/build";
+import { normalizeRepositoryOrigin } from "../../shared/lanes";
 
 import { SERVICE_ROLL_REQUEST_FILE as SHARED_SERVICE_ROLL_REQUEST_FILE } from "../../shared/service/discovery";
 export const SERVICE_ROLL_REQUEST_FILE = SHARED_SERVICE_ROLL_REQUEST_FILE;
+
+/** Bind the service's advisory effect to the core port during runtime startup. */
+export function registerServiceRollRequest(): void {
+  onRepositorySyncRollRequest(requestServiceRollAfterRepositorySync);
+}
 
 /** Ask the bridge to check its registered source after Queue syncs that checkout. */
 export function requestServiceRollAfterRepositorySync(
@@ -25,8 +31,9 @@ export function requestServiceRollAfterRepositorySync(
       try { matches = realpathSync(channel.repository) === realpathSync(repositoryPath); } catch { /* remote URL */ }
       if (!matches) {
         const remote = execFileSync("git", ["remote", "get-url", "origin"], { cwd: repositoryPath, encoding: "utf8", timeout: 2_000, stdio: ["ignore", "pipe", "ignore"] }).trim();
-        const canonical = (url: string) => url.replace(/^git@([^:]+):/, "https://$1/").replace(/\.git$/, "").replace(/\/$/, "");
-        if (canonical(remote) !== canonical(channel.repository)) return false;
+        const remoteOrigin = normalizeRepositoryOrigin(remote);
+        const channelOrigin = normalizeRepositoryOrigin(channel.repository);
+        if (!remoteOrigin || remoteOrigin !== channelOrigin) return false;
       }
     }
 
@@ -35,7 +42,8 @@ export function requestServiceRollAfterRepositorySync(
     mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     writeAtomicOwnedFile(target, options.force ? "force\n" : "");
     return true;
-  } catch {
+  } catch (error) {
+    console.warn("service roll request could not be recorded:", error);
     return false;
   }
 }
@@ -51,5 +59,3 @@ export function consumeServiceRollRequest(dataDir: string): { force: boolean } |
     return null;
   }
 }
-
-onRepositorySyncRollRequest(requestServiceRollAfterRepositorySync);
