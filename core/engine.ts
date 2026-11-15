@@ -30,8 +30,8 @@ import type { Task, Profile, Completion, CheckpointResult, Run, RecoveryActionBi
 import { isTransportFailure } from "../shared/transport";
 
 import { type TaskStopReason } from "../shared/task-stop";
-export { capacityFor, occupiesSlot, recoveryCapacityFor } from "./dispatch/capacity";
-import { capacityFor, occupiesSlot, recoveryCapacityFor } from "./dispatch/capacity";
+export { capacityFor, occupiesSlot } from "./dispatch/capacity";
+import { capacityFor, occupiesSlot } from "./dispatch/capacity";
 export { isTransportFailure };
 import { DEFAULT_UNCERTAIN_MERGE_RETRY_MS, ownerCandidateKind } from "../shared/contracts";
 import { buildProjectSettings } from "./planning/project-settings";

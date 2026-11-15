@@ -3,6 +3,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { LEAD_BODY_MAX, MAX_TITLE_LENGTH, type Lead, type LeadDetail, type LeadVersion, type LeadListInput, type LeadPage } from "../../shared/contracts";
+import { leadActions } from "./lead-actions";
 import type { Store } from "../store/store";
 
 type Repository = { origin: string; path: string };
@@ -78,7 +79,8 @@ export class Leads {
     const versions = this.store.leadVersionHistory(input.id, lead.version).map(version =>
       version.version === lead.version ? { ...version, approval: lead.approval } : version);
     const taskTargets = lead.targets.filter(target => target.kind === "task");
-    return { ...lead, versions, promotedTaskId: taskTargets.length === 1 ? taskTargets[0].reference : null };
+    const detail = { ...lead, versions, promotedTaskId: taskTargets.length === 1 ? taskTargets[0].reference : null };
+    return { ...detail, actions: leadActions(detail) };
   }
   getVersion(input: { id: string; version: number }): LeadVersion {
     const lead = this.store.lead(input.id);

@@ -29,6 +29,45 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
 
 ## Re-rates
 
+- nucleus#1233 (floor 7, 2026-11-15): the three floor-7 dispatch modules were consolidated and re-rated at
+  this PR's head. `core/dispatch/participant-tickets.ts` became one tidy file group:
+  `core/dispatch/participant-tickets/index.ts` composes issuance, delivery and revocation over the meta-row
+  owner (`records.ts`), the one issuance routine (`issue.ts`) and the task-planner scope
+  (`planned-threads.ts`), so the three near-copy planner/task-planner/named-agent routines are gone, no
+  caller builds or splits a raw meta key, a failed issuance in the caller's own call is recorded, and the
+  wrong-host fallback agent registration is removed. `core/dispatch/routing-signoff.ts` and
+  `core/dispatch/routing-grants.ts` merged into `core/dispatch/routing-signoff/`: `request.ts` owns the
+  sign-off record both writers share and the typed decode of its event detail, `grants.ts` the grant store,
+  `reconcile.ts` the per-task pass, and `index.ts` the public surface. The per-task pass no longer re-runs
+  the queue-wide grant settle, so a sweep is linear in tasks. `core/dispatch/routing.ts` keeps its job and
+  loses its duplicates: the model key is `shared/authors.ts`' one normalisation (which also gains the
+  normalisation itself, and is re-rated for it) and availability comes from the store's typed rows through
+  `shared/pool.ts`, never three raw queries. Ten rows replace the four old ones; scores are recorded per
+  row above with their evidence at this head.
+
+- nucleus#1231 (floor 7, 2026-11-15): Queue shares repository and open-task predicates and its record selection has a separate state owner. The remaining tab composition keeps proportion at 0, for a score of 7. Lead action hints come from the core read; status views and brief-frontmatter detection share one owner across the client, planning and store; the screen scores 9. Cancellation receipts are schema checked, migrate through the shared storage helper and report storage failures; the session fallback remains, for a score of 8. The new owners and affected shared rules have rows at this PR head. Boundary tests cover repository identity, terminal task errors and receipt parsing and migration.
+
+- nucleus#1230 (floor 7, 2026-11-15): the two floor-7 backup and capacity modules were simplified along
+  their named seams and re-rated at this PR's head. `backups` (9) now reads a snapshot file name in one
+  place (`snapshotName`/`snapshotFileName` in `core/store/backup-worker.mjs`), which the listing, the due
+  check and `core/store/data-home-retention.ts` all use; the daily and weekly link rule is one
+  `linkPeriods` both publication paths call; the status file is read once into a status and its own
+  failure, so an unreadable or corrupt status is reported instead of reading as healthy; the replaced
+  admitted source refuses with the typed `BACKUP_SOURCE_CHANGED` code instead of a message comparison;
+  and the four-branch stream-fault catalogue left product code for the pipeline's own stage slots, so each
+  fault still lands where its component would and the faults, their codes and their messages now live in
+  `test/support/backup-faults.mjs` (the `failIntegrity` boolean stays: a corrupt snapshot cannot be
+  produced from a healthy store without one). Its ownership stays 1 because the client
+  panel still derives a snapshot stem for display, which is its own N6 row. `capacity-slots` (9) decides
+  and names the capacity limit in one place (`capacityLimitFor`/`capacityReason`), so the pool scope is a
+  typed value rather than the `Global` message prefix; `capacityFor` is no longer an alias of a second
+  copy; the duplicate-pass memo is one `memoFacts` owner for both the dispatch pass and the board batch;
+  and the wait label rule is written once. Its proportion stays 1 because `slotAdmissionExempt` and
+  `slotRequestDecision` still answer overlapping eligibility questions from different facts, which a
+  structural PR must not merge. `core/store/data-home-retention.ts` (9) gained the worker's name reader,
+  which was the duplicate its row named; its proof stays 1 because the prune itself is only covered
+  through its planner. Boundary tests were added for the snapshot name reader, the unreadable status and
+  the typed capacity limit, and `test/staged-backup.test.ts` now asserts the refusal code.
 - nucleus#1232 (floor 7, 2026-11-15): `core/resolution.ts` was split along the seams its row named and
   re-rated at this PR's head. The four port-wiring styles are one: every port set the shell declares is
   wired with `portsContext`, the one live port context in `core/port-context.ts`, which replaces four

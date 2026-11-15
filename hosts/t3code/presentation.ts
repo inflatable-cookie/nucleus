@@ -9,6 +9,7 @@ import type { T3Reads, Projection } from './reads';
 import { activeStatuses } from './reads';
 import { identity, intentKindOf, intentThreadId, isIntent, presentationThread } from './intents';
 import type { T3IntentLedger } from './intents';
+import { attentionStep, isSupportRole, labelRole, labelRun, labelTask, roleWord, rowStep, rowTitle, SUPPORT_THREAD_TAG } from './one-row';
 
 /** A settled or refused command never runs again, so its identity is spent. */
 const settledOrRefused = (intent: T3State['intents'][string]) => Boolean(intent) && (intent.status === 'refused' || intent.status === 'settled');
@@ -28,6 +29,9 @@ export interface T3PresentationContext {
   reads: T3Reads;
   intents: T3IntentLedger;
 }
+
+/** One recorded support-thread effect pair, as the state file holds it. */
+type T3SupportRow = NonNullable<T3State['supportRows']>[string];
 
 /**
  * What the T3 board shows: thread titles and settle state.
@@ -93,6 +97,227 @@ export class T3Presentation {
   }
 
 
+  /**
+   * The step the task's support threads are doing right now, from their own
+   * native projections: a pending question or permission wins, then a thread
+   * whose latest run ended with a fault, then a live role. Only the thread each
+   * role currently uses counts: a superseded reviewer or recovery thread's last
+   * failed run is history, never the task's attention. Empty when nothing of the
+   * task is running, which is the state the row settles in.
+   */
+  async rowStepFor(taskId: string): Promise<string> {
+    const state = this.core.state.read();
+    const support = Object.entries(state.agents).filter(([id, agent]) =>
+      labelTask(agent.labels) === taskId && isSupportRole(labelRole(agent.labels)) && !this.core.intents.confirmedDeletion(state, id));
+    if (!support.length) return '';
+    const observed: Array<{ role: string; pending: boolean; live: boolean; faulted: boolean }> = [];
+    for (const { id, role } of this.currentSupportThreads(taskId, support)) {
+      try {
+        const projection = await this.core.reads.readProjection(id, 'observation');
+        if (projection.thread.deletedAt) continue;
+        const latest = latestRun(projection);
+        observed.push({ role,
+          pending: projection.runtimeRequests.some(request => request.status === 'pending'),
+          live: Boolean(latest) && activeStatuses.has(latest!.status),
+          faulted: Boolean(latest) && ['failed', 'interrupted'].includes(latest!.status) });
+      } catch { /* an unreadable support thread names no step */ }
+    }
+    return rowStep(observed);
+  }
+
+  /**
+   * One support thread per role: the thread this adapter last created for that
+   * task and role. A role with no recorded replacement keeps every thread it has,
+   * so state written before the marker existed still names its live step.
+   */
+  private currentSupportThreads(taskId: string, support: ReadonlyArray<[string, T3State['agents'][string]]>): Array<{ id: string; role: string }> {
+    const current = this.core.state.read().supportCurrent ?? {};
+    const byRole = new Map<string, Array<{ id: string; role: string }>>();
+    for (const [id, agent] of support) {
+      const role = labelRole(agent.labels)!;
+      byRole.set(role, [...(byRole.get(role) ?? []), { id, role }]);
+    }
+    const chosen: Array<{ id: string; role: string }> = [];
+    for (const [role, threads] of byRole) {
+      const marker = current[`${taskId}:${role}`];
+      chosen.push(...(marker && threads.some(thread => thread.id === marker) ? threads.filter(thread => thread.id === marker) : threads));
+    }
+    return chosen;
+  }
+
+  /**
+   * The worker row's title, kept current without a task title change: a support
+   * role that starts, needs input or stalls changes the row's step, and the row
+   * must say so on the ordinary host sweep. The task's own state title stays the
+   * base it was last given.
+   */
+  async reconcileWorkerRows(tasks: readonly Task[]): Promise<void> {
+    this.core.requireConnection();
+    this.retireDeletedPresentationIntents();
+    for (const task of tasks) {
+      if (task.removedAt != null || ['done', 'cancelled'].includes(task.phase)) continue;
+      const threadId = this.workerThreadFor(task.id);
+      const base = threadId ? this.core.state.read().agents[threadId]?.title : undefined;
+      if (!threadId || !base) continue;
+      const step = await this.rowStepFor(task.id);
+      const desired = capPaseoTitle(rowTitle(base, step));
+      if (this.core.state.read().rowTitles?.[threadId] !== desired) {
+        try { await this.writeWorkerRow(threadId, desired); }
+        catch { /* the step keeps for the next pass */ }
+      }
+      // A support thread that needs input or ended with a fault surfaces the row
+      // even when its own run is not live: a hidden thread's pending approval is
+      // T3's to show, and Nucleus's own attention covers the row instead.
+      if (attentionStep(step)) {
+        try { await this.unsettleWorkerThread(threadId, task.id); } catch { /* the next pass retries */ }
+      }
+    }
+  }
+
+  /** The task's worker-shaped thread: no role label, else a revision thread (nucleus#1154). */
+  workerThreadFor(taskId: string): string | undefined {
+    const agents = Object.entries(this.core.state.read().agents).filter(([, agent]) => labelTask(agent.labels) === taskId);
+    const noRole = agents.find(([, agent]) => labelRole(agent.labels) === undefined);
+    if (noRole) return noRole[0];
+    return agents.find(([, agent]) => labelRole(agent.labels) === 'revision')?.[0];
+  }
+
+  /**
+   * Send one row title. A title the row already sent once gets a fresh command
+   * identity when it comes back: round two's `· reviewing` is the same string as
+   * round one's, a settled command never runs again, and the fresh projection
+   * read above is the row's proof it still needs sending. An unknown delivery
+   * keeps its identity and is reconciled by that same read, never repeated
+   * blindly.
+   */
+  private async writeWorkerRow(threadId: string, title: string): Promise<void> {
+    if (this.core.intents.confirmedDeletion(this.core.state.read(), threadId)) return;
+    const projection = await this.core.reads.readProjection(threadId, 'observation');
+    if (projection.thread.archivedAt || projection.thread.deletedAt) return;
+    const record = () => this.core.state.update(current => { current.rowTitles = { ...current.rowTitles, [threadId]: title }; });
+    if (projection.thread.title === title) { record(); return; }
+    const key = this.commandIdFor('row-title', [this.core.hostId(), threadId, title], settledOrRefused);
+    await this.core.intents.effect(key, 'orchestration.dispatchCommand', { type: 'thread.metadata.update', commandId: key, threadId, title }, undefined, undefined,
+      { resendUnknownAfterRead: true });
+    record();
+  }
+
+  /**
+   * A support thread the one-row model owes work on: its `nucleus-support` tag
+   * and the `thread_created` card in the worker's conversation. Recorded before
+   * the sends, completed by the ordinary host sweep when they cannot be done
+   * now (a worker run that has not appeared yet, a refused send, a lost reply).
+   */
+  async registerSupportThread(entry: { taskId: string; threadId: string; role: string }): Promise<void> {
+    this.core.state.update(state => {
+      // This thread is the one the role now uses; any earlier thread for the same
+      // task and role is displaced and stops naming the row's step.
+      state.supportCurrent = { ...state.supportCurrent, [`${entry.taskId}:${entry.role}`]: entry.threadId };
+      if (state.supportRows?.[entry.threadId]) return;
+      state.supportRows = { ...state.supportRows,
+        [entry.threadId]: { ...entry, recordedAt: new Date().toISOString(), tag: 'pending', card: 'pending' } };
+    });
+    await this.reconcileSupportRows();
+  }
+
+  /** Retry the recorded one-row effects during the ordinary host sweep. */
+  async reconcileSupportRows(): Promise<void> {
+    const rows = Object.values(this.core.state.read().supportRows ?? {});
+    if (!rows.length) return;
+    this.core.requireConnection();
+    this.retireDeletedPresentationIntents();
+    for (const row of rows) {
+      if (this.core.intents.confirmedDeletion(this.core.state.read(), row.threadId)) { this.forgetSupportRow(row.threadId); continue; }
+      if (row.tag !== 'settled' && row.tag !== 'unknown') {
+        try { await this.tagSupportThread(row); } catch { /* the record keeps for the next pass */ }
+      }
+      if (row.card !== 'settled' && row.card !== 'unknown') {
+        try { await this.recordCreatedThread(row); } catch { /* the record keeps for the next pass */ }
+      }
+      const current = this.core.state.read().supportRows?.[row.threadId];
+      if (current && ['settled', 'unknown'].includes(current.tag ?? '') && ['settled', 'unknown'].includes(current.card ?? ''))
+        this.forgetSupportRow(row.threadId);
+    }
+  }
+
+  private forgetSupportRow(threadId: string): void {
+    if (!this.core.state.read().supportRows?.[threadId]) return;
+    this.core.state.update(state => { if (state.supportRows) delete state.supportRows[threadId]; });
+  }
+
+  private supportRowOutcome(threadId: string, field: 'tag' | 'card', outcome: 'settled' | 'unknown'): void {
+    this.core.state.update(state => {
+      const row = state.supportRows?.[threadId];
+      if (row) state.supportRows![threadId] = { ...row, [field]: outcome };
+    });
+  }
+
+  /**
+   * Tag the support thread so the client's own hide setting can leave it out of
+   * the sidebar. Unknown delivery is never resent: the projection carries no tag
+   * to read back, so the recorded intent is the only proof, and the row works
+   * without the tag (the card and the title do not depend on it).
+   */
+  private async tagSupportThread(row: T3SupportRow): Promise<void> {
+    const commandId = identity('support-tag', canonical([this.core.hostId(), row.threadId, SUPPORT_THREAD_TAG]));
+    const prior = this.core.state.read().intents[commandId];
+    if (prior?.status === 'settled') { this.supportRowOutcome(row.threadId, 'tag', 'settled'); return; }
+    if (prior?.status === 'unknown') { this.supportRowOutcome(row.threadId, 'tag', 'unknown'); return; }
+    await this.core.intents.effect(commandId, 'orchestration.dispatchCommand', { type: 'thread.tag.set', commandId,
+      threadId: row.threadId, tag: SUPPORT_THREAD_TAG, tagged: true }, undefined, undefined, { retryRefusedBeforeSend: true });
+    this.supportRowOutcome(row.threadId, 'tag', 'settled');
+  }
+
+  /**
+   * Record the role card in the worker's conversation: the nightly's
+   * `thread.created.record` needs the worker's latest run and that run's own root
+   * node, and it writes one completed `thread_created` card titled with the
+   * support thread's title. Retried on the ordinary sweep until the worker run
+   * exists, and an unknown delivery is only resent after a fresh read proves the
+   * card absent.
+   */
+  private async recordCreatedThread(row: T3SupportRow): Promise<void> {
+    const workerId = this.workerThreadFor(row.taskId);
+    if (!workerId) return;
+    const commandId = identity('created-record', canonical([this.core.hostId(), workerId, row.threadId]));
+    const prior = this.core.state.read().intents[commandId];
+    if (prior?.status === 'settled') { this.supportRowOutcome(row.threadId, 'card', 'settled'); return; }
+    let resendUnknown = false;
+    if (prior?.status === 'unknown') {
+      let present: boolean;
+      try { present = await this.cardPresent(workerId, row.threadId); } catch { return; }
+      if (present) { this.core.state.update(state => {
+        const intent = state.intents[commandId];
+        if (intent?.status === 'unknown') state.intents[commandId] = { ...intent, status: 'settled', result: { observed: true } };
+      }); this.supportRowOutcome(row.threadId, 'card', 'settled'); return; }
+      resendUnknown = true;
+    }
+    const parent = await this.workerRootRun(workerId);
+    if (!parent) return;
+    await this.core.intents.effect(commandId, 'orchestration.dispatchCommand', { type: 'thread.created.record', commandId,
+      parentThreadId: workerId, parentRunId: parent.id, parentNodeId: parent.rootNodeId, targetThreadId: row.threadId, targetRunId: null },
+      undefined, undefined, { retryRefusedBeforeSend: true, ...(resendUnknown ? { resendUnknownAfterRead: true } : {}) });
+    this.supportRowOutcome(row.threadId, 'card', 'settled');
+  }
+
+  /** The worker thread's latest run that names its own root node, which the card must ride. */
+  private async workerRootRun(workerId: string): Promise<{ id: string; rootNodeId: string } | null> {
+    const projection = await this.core.reads.readProjection(workerId, 'observation');
+    if (projection.thread.deletedAt) return null;
+    const runs = projection.runs.filter(run => typeof run.rootNodeId === 'string' && run.rootNodeId);
+    const latest = runs.reduce((best: Projection['runs'][number] | undefined, run) =>
+      !best || (run.ordinal ?? -1) >= (best.ordinal ?? -1) ? run : best, undefined);
+    return latest ? { id: latest.id, rootNodeId: latest.rootNodeId! } : null;
+  }
+
+  /** Whether the worker's conversation already carries the card for this thread. */
+  private async cardPresent(workerId: string, supportThreadId: string): Promise<boolean> {
+    const projection = await this.core.reads.readProjection(workerId, 'observation');
+    if (projection.thread.deletedAt) return false;
+    return projection.turnItems.some(item => item.type === 'thread_created'
+      && (item as { targetThreadId?: unknown }).targetThreadId === supportThreadId);
+  }
+
   numberedThreadTitle(taskNumber: number | null | undefined, role: string | undefined, title: string): string {
     if (!taskNumber) return title;
     const runRole = role && role !== 'worker' ? role : undefined;
@@ -116,18 +341,27 @@ export class T3Presentation {
         || agent.labels[roleLabel] === undefined && (id === task.agentId || task.runId !== undefined && agent.labels[runLabel] === task.runId))?.[0];
     if (!threadId) throw Error('Task worker thread is missing');
     if (this.core.intents.confirmedDeletion(state, threadId)) return;
+    // The task's own state title is the row's base; the step its support threads
+    // are doing rides after it, so the one visible row names both (one row per
+    // task, Tom 2026-11-15). The agent record keeps the base.
+    const step = await this.rowStepFor(task.id);
+    const desired = capPaseoTitle(rowTitle(title, step));
     const projection = await this.core.reads.readProjection(threadId, 'observation');
     const key = identity('thread-title', canonical({ threadId, requestId }));
-    if (!projection.thread.archivedAt && !projection.thread.deletedAt && projection.thread.title === title) {
+    if (!projection.thread.archivedAt && !projection.thread.deletedAt && projection.thread.title === desired) {
       this.core.state.update(current => {
         const prior = current.intents[key];
-        if (prior?.status === 'unknown') current.intents[key] = { ...prior, status: 'settled', result: { title } };
+        if (prior?.status === 'unknown') current.intents[key] = { ...prior, status: 'settled', result: { title: desired } };
         if (current.agents[threadId]) current.agents[threadId].title = title;
+        current.rowTitles = { ...current.rowTitles, [threadId]: desired };
       });
     } else if (!projection.thread.archivedAt && !projection.thread.deletedAt) {
-      await this.core.intents.effect(key, 'orchestration.dispatchCommand', { type: 'thread.metadata.update', commandId: key, threadId, title }, undefined, undefined,
+      await this.core.intents.effect(key, 'orchestration.dispatchCommand', { type: 'thread.metadata.update', commandId: key, threadId, title: desired }, undefined, undefined,
         { resendUnknownAfterRead: true });
-      this.core.state.update(current => { if (current.agents[threadId]) current.agents[threadId].title = title; });
+      this.core.state.update(current => {
+        if (current.agents[threadId]) current.agents[threadId].title = title;
+        current.rowTitles = { ...current.rowTitles, [threadId]: desired };
+      });
     }
 
     // Task state sync also repairs the number-and-role prefix on existing support

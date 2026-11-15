@@ -79,6 +79,35 @@ proof and publishing follow the
 - [Open questions](docs/knowledge/questions.md) — what is deliberately
   undecided.
 
+## T3: one row per task
+
+On T3Code, a task starts one thread per agent: the worker, its reviewer, recovery,
+coordinator and executor threads. Nucleus tags those support threads
+`nucleus-support` and links each one from the worker's conversation as a card, so
+the worker thread is the task's one row and its title names the step. The support
+threads still appear in the sidebar as their own rows until you turn T3's own hide
+setting on. That setting is optional: with it off, everything above works the same
+and the support threads simply stay visible.
+
+The hide switch lives in T3's server settings and has no settings screen:
+`hideTaggedThreads: true` plus `nucleus-support` in `hiddenThreadTags`. A client
+hides a tagged top-level thread only while both are true. Nucleus reads the switch
+at connect and never writes it; `service.health`'s `t3code.supportThreads` line says
+whether support threads are hidden.
+
+To turn it on, paste this into an agent on the machine that runs T3:
+
+> Find T3Code's server settings file (the `settings.json` in T3's data directory),
+> or use T3's own `server.updateSettings` route from a client. Set
+> `hideTaggedThreads` to `true` and add `nucleus-support` to `hiddenThreadTags`,
+> keeping every other setting and any other tag exactly as it is. Show me the
+> diff of the file (or the patch you sent) before saving. To revert, set
+> `hideTaggedThreads` back to `false`; leave the tag list as it is or remove the
+> `nucleus-support` entry.
+
+Answering a reviewer's or recovery thread's question still happens in that
+support thread, opened from its card, or through Nucleus's own routes.
+
 ## Development
 
 From a checkout:

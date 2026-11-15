@@ -79,6 +79,8 @@ export function syntheticTurnItem(threadId: string, ordinal: number, overrides: 
         options: [{ label: 'Yes', description: 'Accept the synthetic choice' }, { label: 'No', description: 'Refuse it' }] }] },
     command_execution: { input: 'synthetic-command', exitCode: 0, outputIndicatesFailure: false, outputOmitted: false },
     reasoning: { text: 'Synthetic reasoning', streaming: false },
+    thread_created: { targetThreadId: 'synthetic-target', targetRunId: null, targetProviderInstanceId: 'synthetic-provider',
+      targetModel: 'synthetic-model' },
   };
   return { ...base, ...(member[type] ?? {}), ...overrides };
 }
@@ -234,7 +236,9 @@ export async function t3Fake(t: TestContext, directory: string) {
     /** A nightly that ignores `acceptBoundedSnapshot` and always answers the whole projection. */
     ignoreBoundedSnapshot: false,
     /** Replaces the single synthetic provider in `server.getConfig` when set (nightly provider shapes). */
-    providers: undefined as Value[] | undefined };
+    providers: undefined as Value[] | undefined,
+    /** `server.getConfig`'s `settings` block; the client's own hide switch lives here. */
+    settings: { hideTaggedThreads: false, hiddenThreadTags: [] as string[] } as Value };
   /** Command receipts make a replayed project mutation answer with its recorded outcome. */
   const projectReceipts = new Map<string, { type: string; projectId: string }>();
   const sockets = new Set<Socket>();
@@ -312,9 +316,11 @@ export async function t3Fake(t: TestContext, directory: string) {
           if (controls.providers) return success({
             environment: { environmentId: controls.environmentId, serverVersion: controls.version, orchestrationProtocolVersion: controls.protocol },
             providers: controls.providers,
+            settings: controls.settings,
           });
           return success({
             environment: { environmentId: controls.environmentId, serverVersion: controls.version, orchestrationProtocolVersion: controls.protocol },
+            settings: controls.settings,
             providers: [
               {
                 instanceId: 'synthetic-provider', displayName: 'Synthetic provider', enabled: true, status: 'ready',
@@ -411,7 +417,9 @@ export async function t3Fake(t: TestContext, directory: string) {
           commands.push({ method: request.tag, ...payload }); controls.mutationObserver();
           if (controls.refuseMutation) return failure({ _tag: 'Die', defect: contract.boundaryDecodeExample });
           if (controls.disconnectMutation) return socket.destroy();
-          const p = threads.get(payload.threadId)!;
+          // `thread.created.record` is the one dispatch command addressed to a
+          // parent thread and a target thread, and carries no single `threadId`.
+          const p = (payload.threadId ? threads.get(payload.threadId) : threads.get(payload.targetThreadId))!;
           switch (payload.type) {
             case 'message.dispatch': p.messages.push({ id: payload.messageId, role: 'user', text: payload.text }); break;
             case 'thread.stop': for (const run of p.runs) run.status = 'cancelled'; break;
@@ -429,6 +437,38 @@ export async function t3Fake(t: TestContext, directory: string) {
               p.thread.settledOverride = 'settled'; p.thread.settledAt = payload.settledAt ?? STAMP; break;
             case 'thread.unsettle': p.thread.settledOverride = 'active'; p.thread.settledAt = null; break;
             case 'thread.metadata.update': if (payload.title !== undefined) p.thread.title = payload.title; break;
+            case 'thread.tag.set': {
+              // The nightly's ThreadTag rule (recorded contract `thread.tag.set`).
+              assert.equal(typeof payload.tag, 'string', 'thread.tag.set.tag is a tag string');
+              assert.ok(payload.tag.trim().length > 0 && payload.tag.length <= 64, 'thread.tag.set.tag obeys TrimmedNonEmptyString and the 64-character cap');
+              assert.ok(!/[\u0000-\u001f\u007f]/.test(payload.tag), 'thread.tag.set.tag is a single line of text');
+              assert.equal(typeof payload.tagged, 'boolean', 'thread.tag.set.tagged is the set or remove flag');
+              const tags: string[] = p.thread.tags ?? [];
+              const next = payload.tagged === true ? [...new Set([...tags.filter(tag => tag !== payload.tag), payload.tag])]
+                : tags.filter(tag => tag !== payload.tag);
+              p.thread.tags = next;
+              break;
+            }
+            case 'thread.created.record': {
+              const parent = threads.get(payload.parentThreadId);
+              assert.ok(parent, 'thread.created.record names an existing parent thread');
+              const parentRun = (parent!.runs ?? []).find((run: Value) => run.id === payload.parentRunId);
+              assert.ok(parentRun, 'thread.created.record names an existing parent run');
+              // The dispatch handler's own guards (recorded contract `parentGuards`).
+              assert.equal(parentRun!.rootNodeId, payload.parentNodeId, 'the parent node is the root of the parent run');
+              assert.equal(parent!.thread.projectId, p.thread.projectId, 'the target thread belongs to the parent project');
+              if (payload.targetRunId !== null)
+                assert.ok((p.runs ?? []).some((run: Value) => run.id === payload.targetRunId), 'the target run belongs to the target thread');
+              // One card per command: the receipt ledger makes a replay idempotent.
+              const itemId = `synthetic-created-${payload.commandId}`;
+              if (!(parent!.turnItems ?? []).some((item: Value) => item.id === itemId))
+                parent!.turnItems = [...(parent!.turnItems ?? []), syntheticTurnItem(payload.parentThreadId, 1, {
+                  id: itemId, type: 'thread_created', runId: payload.parentRunId, nodeId: payload.parentNodeId,
+                  title: p.thread.title, targetThreadId: payload.targetThreadId, targetRunId: payload.targetRunId,
+                  targetProviderInstanceId: p.thread.providerInstanceId, targetModel: p.thread.modelSelection.model,
+                })];
+              break;
+            }
             case 'runtime-request.respond': {
               const item = p.runtimeRequests.find((r: Value) => r.id === payload.requestId)!;
               item.status = 'resolved'; if (payload.answers) item.answers = payload.answers;

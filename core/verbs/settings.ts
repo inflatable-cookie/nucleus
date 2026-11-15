@@ -6,7 +6,7 @@ import { groupIsUnavailable } from "../../shared/pool";
 import type { Engine } from "../engine";
 import { repositoryOrigin } from "../planning/lanes";
 import { holdPatch, keepPatch, releasePatch, OPERATOR_HOLD_OWNER } from "../merge/merge-hold";
-import { coveringGrant, grantSignoff } from "../dispatch/routing-grants";
+import { coveringGrant, grantSignoff } from "../dispatch/routing-signoff";
 import { boardSignoff, OPERATOR_BOARD, priorNonGrantSignoff, reconcileRoutingSignoffs, withdrawOpen } from "../dispatch/routing-signoff";
 import { plainProfileRequest, validateNamedProfile, workerThinking, workerThinkingConflict } from "../dispatch/routing";
 import { now } from "../store/store";

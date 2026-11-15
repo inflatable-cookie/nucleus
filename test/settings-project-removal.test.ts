@@ -66,6 +66,19 @@ test('project removal cancellation migrates the legacy storage key once', async 
   assert.equal(reads.get(oldKey), 1, 'after migration, reads use only the Nucleus key');
 });
 
+test('saved cancellation receipts distinguish absent, malformed and inaccessible storage', async () => {
+  const { readMigratedCancellation } = await import('../client/project-management-view');
+  const storage = (value: string | null) => ({ getItem: () => value, setItem() {} });
+  assert.equal(readMigratedCancellation(undefined, 'p'), null);
+  assert.equal(readMigratedCancellation(storage('null'), 'p'), null);
+  assert.throws(() => readMigratedCancellation(storage('{'), 'p'));
+  assert.throws(() => readMigratedCancellation(storage('{"operationId":"op"}'), 'p'));
+  assert.throws(() => readMigratedCancellation({ getItem() { throw new Error('denied'); }, setItem() {} }, 'p'), /denied/);
+  let migrated = false;
+  assert.throws(() => readMigratedCancellation({ getItem(key) { return key.startsWith('northstar') ? '{}' : null; }, setItem() { migrated = true; } }, 'p'));
+  assert.equal(migrated, false, 'invalid legacy data is not migrated');
+});
+
 test('the section hint is taken once, by the next Settings screen or by one already showing', async () => {
   const { hintSettingsSection, takeSettingsSection } = await import('../client/settings-hint');
   assert.equal(takeSettingsSection(), null);

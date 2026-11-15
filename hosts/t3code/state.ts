@@ -13,6 +13,7 @@ const workspace = z.object({ id: z.string(), directory: z.string(), projectId: z
 const intentKind = z.enum([
   'launchThread', 'project.create', 'project.update',
   'thread.settle', 'thread.unsettle', 'thread.metadata.update', 'thread.delete', 'thread.stop', 'thread.archive',
+  'thread.tag.set', 'thread.created.record',
   'message.dispatch', 'runtime-request.respond', 'thread.user-input.dismiss',
 ]);
 export type T3IntentKind = z.infer<typeof intentKind>;
@@ -44,6 +45,18 @@ const intent = z.object({ payload: z.string(), status: z.enum(['unknown', 'settl
  */
 const settleIntent = z.object({ agentId: z.string(), runId: z.string(), commandId: z.string(),
   expectedLatestRunId: z.string().optional(), recordedAt: z.string() });
+/**
+ * One support thread the one-row model still owes work on: its `nucleus-support`
+ * tag and the `thread_created` card in the worker's conversation. Both are
+ * durable presentation effects recorded here before they are sent, so a lost
+ * reply is reconciled by a fresh read (the card's presence, or the recorded tag
+ * intent) and never resent blindly.
+ */
+const supportRow = z.object({ taskId: z.string(), threadId: z.string(), role: z.string(), recordedAt: z.string(),
+  /** The tag's outcome once known; `unknown` delivery is never resent. */
+  tag: z.enum(['pending', 'settled', 'unknown']).optional(),
+  /** The card's outcome once known; a readback proves it without a resend. */
+  card: z.enum(['pending', 'settled', 'unknown']).optional() });
 const schema = z.object({ version: z.literal(1), hostId: z.string(), lastPassedVersion: z.string(),
   workspaces: z.record(z.string(), workspace), agents: z.record(z.string(), agent), intents: z.record(z.string(), intent),
   pendingSettles: z.record(z.string(), settleIntent).optional(),
@@ -60,7 +73,29 @@ const schema = z.object({ version: z.literal(1), hostId: z.string(), lastPassedV
    * whose delivery is unknown is never resent (nucleus#1154), so the support-thread
    * reconciler must be able to tell it apart from a support report's settle.
    */
-  workerSettles: z.record(z.string(), z.string()).optional() });
+  workerSettles: z.record(z.string(), z.string()).optional(),
+  /**
+   * Support threads owing the one-row presentation effects, by native thread id.
+   * Removed once both the tag and the card reached an outcome.
+   */
+  supportRows: z.record(z.string(), supportRow).optional(),
+  /**
+   * The worker row's composited title last written, by worker thread id. The
+   * agent record's `title` stays the task's own state title; this is the state
+   * title plus the step the row names, so an unchanged row sends nothing.
+   */
+  rowTitles: z.record(z.string(), z.string()).optional(),
+  /**
+   * The thread each (task, role) currently uses, by `${taskId}:${role}`. A role
+   * that gets a replacement thread displaces the old one, whose last run is then
+   * history: a superseded thread's fault must never read as the task's attention.
+   */
+  supportCurrent: z.record(z.string(), z.string()).optional(),
+  /**
+   * What this host read from T3's own settings at connect, never written back:
+   * whether support threads are hidden by the client's tag setting.
+   */
+  supportThreads: z.enum(['hidden', 'setting_off', 'tag_missing']).optional() });
 export type T3State = z.infer<typeof schema>;
 export type T3SettleIntent = z.infer<typeof settleIntent>;
 
