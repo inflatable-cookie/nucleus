@@ -44,6 +44,15 @@ export function isRateLimitError(error: string) {
   return /\b429\b/.test(error) || /\brate[_ -]?limit|too many requests|\b1302\b/i.test(error);
 }
 
+export type WorkerLaunchFailure = { kind: 'rate_limit' } | { kind: 'settings_lock' } | { kind: 'other' };
+
+/** Decode the creation error once before the launcher chooses its existing recovery path. */
+export function classifyWorkerLaunchFailure(error: string): WorkerLaunchFailure {
+  if (isRateLimitError(error)) return { kind: 'rate_limit' };
+  if (isPiSettingsLockFailure(error)) return { kind: 'settings_lock' };
+  return { kind: 'other' };
+}
+
 export const TRANSIENT_BACKOFF_MS = [60_000, 120_000, 240_000, 480_000] as const;
 /** Same-thread resumes before a rate-limit failover routes to another profile. */
 export const TRANSIENT_MAX_RESUMES = TRANSIENT_BACKOFF_MS.length;
