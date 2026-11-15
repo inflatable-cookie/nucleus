@@ -206,13 +206,18 @@ owner to the rules it enforces.
   intent and again before the send. `Resolution` keeps same-name delegates for
   `refusePreMerge`, `verification` and `advanceMerging`.
 - `core/merge/external-merge.ts` accepts or detects a PR merged outside Nucleus: the
-  operator accept verb (ordinary, review-entry and retained jobs), the automatic
-  probe, and the sweep that resumes a task parked on a cleared external-merge
-  check. `Resolution` keeps same-name delegates for `acceptExternalMerge`,
-  `recoverExternalMerge` and `resumeClearedAttention`.
-- `core/recovery/retry-routes.ts` holds where a restart sends a parked task: the
-  continuation a replacement worker resumes, retry, worker resume, and the
-  stopped-revision restart. `Resolution` keeps a same-name delegate for each
+  operator accept verb (ordinary, review-entry and retained jobs) over one typed
+  acceptance job, and the automatic probe. `core/merge/external-merge-record.ts`
+  records an observed merge once for both paths; `core/merge/external-merge-check.ts`
+  owns the transient check park, its recovered proof, the restore of the state it
+  interrupted and the unreviewed-merge stop. `Resolution` keeps same-name
+  delegates for `acceptExternalMerge`, `recoverExternalMerge` and
+  `resumeClearedAttention`.
+- `core/recovery/retry-routes.ts` holds where a restart sends a parked task as
+  typed decisions; `core/recovery/retry-evidence.ts` reads the recorded evidence
+  they need, and `core/recovery/retry-orchestration.ts` applies one retry in one
+  order (the continuation a replacement worker resumes, retry, worker resume, and
+  the stopped-revision restart). `Resolution` keeps a same-name delegate for each
   public moved method, including `retry` so instance overrides still fire.
 - `core/recovery/absent-restarts.ts` recreates proven-absent runs: an absent worker in
   the retained workspace, an absent resolution run, an uncertain-run restart
@@ -526,7 +531,9 @@ owner to the rules it enforces.
   self-calls did. `core/host/host-policies.ts` keeps the five same-name plain-return
   delegates; every refusal, its order and its text stay core's.
 - `core/workspaces/owned-workspace-archive.ts` and `core/workspaces/external-workspace-archive-policy.ts`
-  own archive placement, ownership, source, participant and teardown decisions.
+  own archive placement, ownership, source, participant and teardown decisions;
+  `core/workspaces/owned-workspace-threads.ts` owns one workspace's thread
+  inventory and the ownership and idleness facts read from it.
   They read native workspace and thread observations through the host at their
   original call sites and retain adapter overrides for internal policy seams.
   Uncertain native archive outcomes do not authorize another archive call.
@@ -609,7 +616,8 @@ owner to the rules it enforces.
   prospective-merge gate through a narrow store/Git/delivery context.
   `core/qa/project-validation.ts` owns background validation, supervisor watches
   and durable validation evidence; `core/hooks/hook-replay.ts` owns automatic replay
-  proofs and the shared occurrence renewal path. Both use narrow contexts and
+  proofs and the shared occurrence renewal path, and `core/hooks/hook-refusal.ts`
+  owns the one decode of a recorded hook refusal into its closed kind. Both use narrow contexts and
   keep delivery with `RepositoryHooks`.
   `core/hooks/hook-isolation.ts` owns shared isolation paths;
   `core/hooks/hook-context.ts` owns the hook context and result types plus the

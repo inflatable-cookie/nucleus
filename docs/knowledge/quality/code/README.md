@@ -107,3 +107,19 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
   owner, and the `proofExecutorAgents` re-export through QA is gone. The affected N4 rows were re-rated at
   this PR's head; the `qa-fence` rows in N4 and N6 were re-rated because no caller reads a fence message as
   a fact any more. Modules touched only to import from the new owners keep their rows.
+
+- nucleus#1223 (floor 6, 2026-11-15): the lifecycle modules were re-rated at the PR head and each
+  resulting module carries its own row. Retry routing became typed decisions
+  (`recovery/retry-routes.ts`, 9), recorded evidence (`recovery/retry-evidence.ts`, 9) and one ordered
+  application (`recovery/retry-orchestration.ts`, 9); the queued wait projection reads Queue's declared
+  waits instead of a reason regex (`recovery/wait-context.ts`, 10); the ask service reads one decoded
+  lifecycle per ask (`questions/agent-ask-events.ts`, 10) while `questions/agent-asks.ts` keeps its
+  remaining routing/wait/resume seams (8); external merge passes one typed acceptance job
+  (`merge/external-merge.ts`, 9), records an observed merge once (`merge/external-merge-record.ts`, 9)
+  and owns the check park in named facts (`merge/external-merge-check.ts`, 8); closeout and its recovery
+  read one stale-base rule (`closeout/closeout-base-refresh.ts`, 10, `closeout.ts` 10, `recovery.ts` 9);
+  a hook occurrence's refusal kind is decoded once (`hooks/hook-refusal.ts`, 10) and `hooks/hook-replay.ts`
+  reads it (8); the archive takes one typed request and refuses with a typed teardown code
+  (`workspaces/owned-workspace-archive.ts`, 8) beside one thread-inventory owner
+  (`workspaces/owned-workspace-threads.ts`, 10). `core/workspaces/repository-archive-gate.ts` had no
+  product callers since 1173 and is deleted with its row, and its test proved only that dead path.
