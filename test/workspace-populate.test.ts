@@ -419,10 +419,10 @@ test("archive of a Queue-owned directory leftover uses no-force worktree remove"
   };
   const task = { id: "task", repoPath: dir, branch: "ns-task", workspaceId: "workspace", directory: owned } as Task;
   run("worktree", "lock", owned);
-  await assert.rejects(adapter.archiveTaskWorkspace(task, "workspace", owned, head, () => true, false, true), /worktree\.teardown failed/);
+  await assert.rejects(adapter.archiveTaskWorkspace(task, "workspace", owned, head, () => true, false, { requirePublished: true }), /worktree\.teardown failed/);
   assert.equal(existsSync(owned), true, "non-force removal preserves a locked worktree");
   run("worktree", "unlock", owned);
-  await adapter.archiveTaskWorkspace(task, "workspace", owned, head, () => true, true, true);
+  await adapter.archiveTaskWorkspace(task, "workspace", owned, head, () => true, true, { requirePublished: true });
   assert.equal(archives, 1, "local teardown does not replay the native archive");
   assert.equal(existsSync(owned), false);
   assert.equal(run("worktree", "list", "--porcelain").includes(owned), false);
@@ -452,20 +452,20 @@ test("archive of an external Queue-owned task proves placement and retires its e
   const task = { id: "task", repoPath: repo, branch: "ns-task", workspaceId: "workspace", directory } as Task;
   available = false;
   await assert.rejects(adapter.preflightWorkspaceStorage(task), /storage unavailable/);
-  await assert.rejects(adapter.archiveTaskWorkspace(task, "workspace", directory, head, () => true, false, true), /storage unavailable/);
+  await assert.rejects(adapter.archiveTaskWorkspace(task, "workspace", directory, head, () => true, false, { requirePublished: true }), /storage unavailable/);
   assert.equal(archives, 0); assert.equal(existsSync(directory), true);
   available = true;
   await adapter.preflightWorkspaceStorage(task);
   assert.deepEqual(await adapter.preflightWorkerContinuation(task), { available: true });
   let uncertain = '', observed = false;
-  await assert.rejects(adapter.archiveTaskWorkspace(task, "workspace", directory, head, () => true, false, true, new Set(), false, false, {
+  await assert.rejects(adapter.archiveTaskWorkspace(task, "workspace", directory, head, () => true, false, { requirePublished: true, attachedAgentIds: new Set(), requireDirectory: false, allowIdleForeignThreads: false, buildOutputCleanup: {
     begin: () => { available = false; return 'run'; },
     observed: () => { observed = true; }, uncertain: reason => { uncertain = reason; },
-  }), /storage unavailable/);
+  } }), /storage unavailable/);
   assert.equal(observed, false); assert.match(uncertain, /storage unavailable/);
   assert.equal(archives, 0); assert.equal(existsSync(directory), true);
   available = true;
-  await adapter.archiveTaskWorkspace(task, "workspace", directory, head, () => true, false, true);
+  await adapter.archiveTaskWorkspace(task, "workspace", directory, head, () => true, false, { requirePublished: true });
   assert.equal(archives, 1); assert.equal(existsSync(directory), false);
 });
 
@@ -490,7 +490,7 @@ test("a legacy registered task retires in place while new tasks allocate externa
   }, projects: { list: async () => ({ projects: [] }) }, agents: { list: async () => ({ entries: [], pageInfo: { hasMore: false } }) } };
   const old = { id: "old", title: "Old", repoPath: repo, baseBranch: "main", branch: "ns-old", workspaceId: "old-workspace", directory, resolution: { archiveIntentWorkspaceId: "old-workspace" } } as Task;
   const discard = { workspaceId: "old-workspace", directory, caller: "owner", authority: "operator" as const, note: null, reason: "fixture", at: new Date().toISOString() };
-  await adapter.archiveTaskWorkspace(old, old.workspaceId!, directory, head, () => true, false, true, new Set(), false, false, undefined, undefined, discard);
+  await adapter.archiveTaskWorkspace(old, old.workspaceId!, directory, head, () => true, false, { requirePublished: true, attachedAgentIds: new Set(), requireDirectory: false, allowIdleForeignThreads: false, discard: discard });
   assert.equal(existsSync(directory), false);
   const fresh = { id: "fresh", title: "Fresh", repoPath: repo, baseBranch: "main", branch: "ns-fresh", planningBase: head, planningCommit: head } as Task;
   await assert.rejects(adapter.populateTaskWorktree(fresh), /storage unavailable/);
@@ -524,12 +524,12 @@ test("external orphan retirement requires its exact recorded owner and volume", 
   };
   const task = { id: "task", repoPath: repo, branch: "ns-task", workspaceId: "workspace", directory, resolution: { archiveIntentWorkspaceId: "workspace" } } as Task;
   const discard = { workspaceId: "workspace", directory, caller: "owner", authority: "operator" as const, note: null, reason: "fixture", at: new Date().toISOString() };
-  await assert.rejects(adapter.archiveTaskWorkspace(task, "workspace", directory, head, () => true, false, true, new Set(), false, false, undefined, undefined, discard), /storage unavailable/);
+  await assert.rejects(adapter.archiveTaskWorkspace(task, "workspace", directory, head, () => true, false, { requirePublished: true, attachedAgentIds: new Set(), requireDirectory: false, allowIdleForeignThreads: false, discard: discard }), /storage unavailable/);
   assert.equal(archives, 0); assert.equal(existsSync(directory), true);
   available = true;
-  await assert.rejects(adapter.archiveTaskWorkspace({ ...task, id: "foreign" }, "workspace", directory, head, () => true, false, true, new Set(), false, false, undefined, undefined, discard));
+  await assert.rejects(adapter.archiveTaskWorkspace({ ...task, id: "foreign" }, "workspace", directory, head, () => true, false, { requirePublished: true, attachedAgentIds: new Set(), requireDirectory: false, allowIdleForeignThreads: false, discard: discard }));
   assert.equal(archives, 0); assert.equal(existsSync(directory), true);
-  await adapter.archiveTaskWorkspace(task, "workspace", directory, head, () => true, false, true, new Set(), false, false, undefined, undefined, discard);
+  await adapter.archiveTaskWorkspace(task, "workspace", directory, head, () => true, false, { requirePublished: true, attachedAgentIds: new Set(), requireDirectory: false, allowIdleForeignThreads: false, discard: discard });
   assert.equal(archives, 1); assert.equal(existsSync(directory), false);
 });
 

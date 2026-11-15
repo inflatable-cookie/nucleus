@@ -41,7 +41,7 @@ test('a completed proof-only workspace archives its clean detached commit from t
       reviewerRunId: 'reviewer-run', evidence: 'Qualification passed.' }, prUrl: null, prHead: null,
     resolution: { mergedCommit: null, syncedCommit: null, archivedWorkspaceIds: [] } } as unknown as Task;
 
-  assert.deepEqual(await adapter.archiveTaskWorkspace(task, 'workspace', directory, head, () => true, false, true), []);
+  assert.deepEqual(await adapter.archiveTaskWorkspace(task, 'workspace', directory, head, () => true, false, { requirePublished: true }), []);
   assert.equal(existsSync(directory), false, 'the clean detached workspace is removed after publication is proved on main');
   assert.equal(catalogued, false, 'Paseo workspace archive is confirmed');
 });
@@ -77,9 +77,9 @@ test('an owner-accepted proof-only workspace archives at its commit, not as a re
     planningCommit: head, planningBase: head, phase: 'done', entrypoint: 'proof', proofOnly: { commit: head },
     reportAcceptance: { by: 'owner' }, prUrl: null, prHead: null,
     resolution: { mergedCommit: null, syncedCommit: null, archivedWorkspaceIds: [] } } as unknown as Task;
-  assert.deepEqual(await adapter.archiveTaskWorkspace(task, 'workspace', directory, head, () => true, false, true), []);
+  assert.deepEqual(await adapter.archiveTaskWorkspace(task, 'workspace', directory, head, () => true, false, { requirePublished: true }), []);
   assert.equal(existsSync(directory), false);
   assert.equal(catalogued, false);
-  await assert.rejects(adapter.archiveTaskWorkspace(task, 'workspace', directory, 'b'.repeat(40), () => true, false, true),
+  await assert.rejects(adapter.archiveTaskWorkspace(task, 'workspace', directory, 'b'.repeat(40), () => true, false, { requirePublished: true }),
     /head other than its immutable qualification commit/, 'the commit guard still holds');
 });

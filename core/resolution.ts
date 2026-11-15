@@ -66,7 +66,7 @@ import { Notices } from './questions/notices';
 import { MergeIntent, type MergeIntentContext } from './merge/merge-intent';
 import { RunCallbackIntake } from './intake/run-callback-intake';
 import { MergeGates, type MergeGatesContext } from './merge/merge-gates';
-import { RetryRoutes } from './recovery/retry-routes';
+import { RetryRoutes } from './recovery/retry-orchestration';
 import { ExternalMerge, type ExternalMergeContext } from './merge/external-merge';
 import { AbsentRestarts } from './recovery/absent-restarts';
 import { Delegation } from './questions/delegation';

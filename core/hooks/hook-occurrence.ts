@@ -10,6 +10,7 @@ import { pinProgram, type ManifestDiscovery } from "./hook-manifest";
 import {
   hookRecordTarget, type HookContext, type HookEmissionResult,
 } from "./hook-context";
+import { hookRefusalKind } from "./hook-refusal";
 
 /**
  * The durable record of one hook occurrence: the immutable delivered event, the
@@ -160,7 +161,8 @@ export class HookOccurrences {
         : null,
       workspace: workspacePath ? { path: workspacePath, head: hook.target === "prospective_merge" ? context.candidate!.commit : context.baseCommit } : null,
       result: null, commit: null, remote: null,
-      summary: program.kind === "unavailable_tool" ? program.error : "", error: program.kind === "unavailable_tool" ? program.error : "", createdAt: now(), updatedAt: now(), reconciledAt: null,
+      summary: program.kind === "unavailable_tool" ? program.error : "", error: program.kind === "unavailable_tool" ? program.error : "",
+      refusalKind: program.kind === "unavailable_tool" ? hookRefusalKind(program.error) : null, createdAt: now(), updatedAt: now(), reconciledAt: null,
     });
     this.store.putHookEvent(record);
     this.store.event(task.id, program.kind === "unavailable_tool" ? `hook_${record.state}` : "hook_intent", `${hook.id} ${context.event} ${eventId}${program.kind === "unavailable_tool" ? `: ${program.error}` : ""}`);
@@ -168,7 +170,10 @@ export class HookOccurrences {
   }
 
   save(record: HookRecord, changes: Partial<HookRecord>): HookRecord {
-    const next = hookRecordSchema.parse({ ...record, ...changes, updatedAt: now() });
+    // One write site decodes the refusal kind from the text it stores, so every
+    // reader reads a typed fact and no reader parses the recorded error.
+    const error = changes.error ?? record.error;
+    const next = hookRecordSchema.parse({ ...record, ...changes, refusalKind: hookRefusalKind(error), updatedAt: now() });
     this.store.putHookEvent(next);
     return next;
   }

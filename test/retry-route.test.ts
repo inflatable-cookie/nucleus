@@ -13,7 +13,9 @@ test('blocked retry routes the completed role and reviewer instruction', () => {
     [[run('revision')], undefined, false, null, { kind: 'route', phase: 'changes_requested', reconciledReviewHead: null }],
     [[run('revision')], 'review', true, null, { kind: 'route', phase: 'awaiting_review', reconciledReviewHead: null }],
     [[run('revision')], 'review', false, 'new-head', { kind: 'route', phase: 'awaiting_review', reconciledReviewHead: 'new-head' }],
-    [[run('revision')], 'review', false, null, { kind: 'refuse', message: 'A reviewer instruction requires a blocked or errored reviewer result that returns the task to review' }],
+    // No exact-head evidence in the facts given: the decision asks for it as a typed
+    // fact instead of comparing a refusal sentence (the orchestration reads it once).
+    [[run('revision')], 'review', false, null, { kind: 'needs-review-evidence' }],
   ];
   for (const [runs, instruction, accepted, head, expected] of cases) assert.deepEqual(blockedRetryRoute(task, runs, instruction, accepted, head), expected);
 });

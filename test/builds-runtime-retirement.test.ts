@@ -46,7 +46,7 @@ test("external task archive captures and retires the exact runtime scope after g
     agents: { list: async () => ({ entries: [], pageInfo: { hasMore: false } }) } };
   // The recorded owner discard waives publication only; ownership is still checked.
   const discard = { workspaceId: "workspace", directory, caller: "owner", authority: "operator" as const, note: null, reason: "fixture", at: new Date().toISOString() };
-  await adapter.archiveTaskWorkspace(task, "workspace", directory, head, () => true, false, true, new Set(), false, false, undefined, undefined, discard);
+  await adapter.archiveTaskWorkspace(task, "workspace", directory, head, () => true, false, { requirePublished: true, attachedAgentIds: new Set(), requireDirectory: false, allowIdleForeignThreads: false, discard: discard });
   await runtime.archived(task.id, "workspace");
   assert.equal(store.task(task.id).resolution.runtimeRetirements[0]?.state, "retired");
   assert.deepEqual(calls.map(call => call.args), [["container", "scope", "--json"], ["container", "retire", "--scope", token, "--yes"]]);
@@ -104,7 +104,7 @@ test('a workspace on the retired drive is never archived: the ordinary ownership
       agents: { list: async () => ({ entries: [], pageInfo: { hasMore: false } }) } };
     const discard = { workspaceId: 'workspace', directory, caller: 'owner', authority: 'operator' as const, note: 'volume retired', reason: 'ruling', at: new Date().toISOString() };
     await assert.rejects(adapter.archiveTaskWorkspace(task, 'workspace', directory, '', () => true, false));
-    await assert.rejects(adapter.archiveTaskWorkspace(task, 'workspace', directory, '', () => true, false, true, new Set(), false, false, undefined, undefined, discard));
+    await assert.rejects(adapter.archiveTaskWorkspace(task, 'workspace', directory, '', () => true, false, { requirePublished: true, attachedAgentIds: new Set(), requireDirectory: false, allowIdleForeignThreads: false, discard: discard }));
     assert.equal(sends, 0, 'no catalog archive is sent for a workspace the drive no longer holds');
     const { existsSync } = await import('node:fs');
     assert.equal(existsSync(join(records, 'retired')), true, 'the Git record is left as it is');

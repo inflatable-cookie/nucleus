@@ -148,6 +148,28 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
   their five-part sums, reasons and PR-head evidence are in the updated N2, N3, N4 and N6 rows.
   The shared service client names its typed errors so the transport classifier preserves roll recovery
   for draining, unavailable and elapsed timeout responses; its N6 row is re-rated as well.
+
+- nucleus#1223 (floor 6, 2026-11-15): the lifecycle modules were re-rated at the PR head and each
+  resulting module carries its own row. Retry routing became typed decisions
+  (`recovery/retry-routes.ts`, 9), recorded evidence (`recovery/retry-evidence.ts`, 9) and one ordered
+  application (`recovery/retry-orchestration.ts`, 9); the queued wait projection reads Queue's declared
+  waits and owns the two dispatch-hold reasons it writes, so a released hold is never re-shown
+  (`recovery/wait-context.ts`, 10); the ask service reads one decoded lifecycle per ask
+  (`questions/agent-ask-events.ts`, 10) while `questions/agent-asks.ts` keeps its remaining
+  routing/wait/resume seams (8); external merge passes one typed acceptance job
+  (`merge/external-merge.ts`, 9), records an observed merge once (`merge/external-merge-record.ts`, 9)
+  and owns the check park in named facts (`merge/external-merge-check.ts`, 8); closeout and its recovery
+  read one stale-base rule that also spends the re-pins recorded under the previous event kind and uses
+  the one named refresh reason (`closeout/closeout-base-refresh.ts`, 10, `closeout.ts` 10,
+  `recovery.ts` 9); a hook occurrence's refusal kind is decoded once (`hooks/hook-refusal.ts`, 10) and
+  `hooks/hook-replay.ts` reads it (8); the archive takes one typed request and refuses with a typed
+  stage (`workspaces/owned-workspace-archive.ts`, 8) beside one thread-inventory owner
+  (`workspaces/owned-workspace-threads.ts`, 10), and `workspaces/archive-failure.ts` (10) classifies a
+  Queue-authored refusal by that stage, leaving message text to foreign failures alone.
+  `core/workspaces/repository-archive-gate.ts` had no product callers since 1173 and is deleted with its
+  row, and its test proved only that dead path. The rows for `terminal-workspace-retirement.ts` and
+  `unused-workspace.ts` were refreshed because the archive call and the failure classification they use
+  changed owner; both keep 7.
 - nucleus#1225 (floor 6, 2026-11-15): `service/callbacks/host-run-endpoint.ts` (10) and
   `service/executor/host-run-supervisor.ts` (10) were re-rated at this PR's head. The endpoint now delegates
   each durable mechanism to its own owner — `core/host-runs/host-run-submissions.ts` (10) for the
