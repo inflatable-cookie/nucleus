@@ -444,11 +444,16 @@ export function noTurnLive(state: ObservedTurnState | null | undefined): boolean
 /** Live process facts that keep a finished-turn shell tool from being settled. */
 export function workspaceToolProcessIssue(processes: Array<{ pid: number; ppid?: number | null; command: string; cwd: string | null }>, directory: string, runIds: readonly string[]): string | null {
   if (!runIds.length) return 'the participant has no recorded run identity for process proof';
+  const malformedHelpers = new Set<number>();
   for (const process of processes) {
-    if (runIds.some(runId => process.command.includes('mcp-report.mjs') && process.command.includes(`mcp-${runId}.json`)))
+    const args = process.command.trim().match(/(?:"[^"]*"|'[^']*'|\S+)/g)?.map(arg => arg.replace(/^['"]|['"]$/g, '')) ?? [];
+    const helper = args.findIndex(arg => arg.split(/[\\/]/).pop() === 'mcp-report.mjs');
+    if (helper < 0) continue;
+    const ticket = args[helper + 1];
+    const match = ticket?.match(/^\/(?:.*\/)?tickets\/mcp-([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\.json$/i);
+    if (match && runIds.includes(match[1]))
       return `provider process ${process.pid} still carries the run MCP ticket`;
-    if (process.command.includes('mcp-report.mjs') && process.command.includes('/tickets/mcp-'))
-      return `provider process ${process.pid} carries an unreadable or truncated MCP ticket identity`;
+    if (!match) malformedHelpers.add(process.pid);
   }
   const root = resolve(directory);
   const rooted = new Set<number>();
@@ -467,6 +472,8 @@ export function workspaceToolProcessIssue(processes: Array<{ pid: number; ppid?:
     }
   }
   const process = processes.find(item => rooted.has(item.pid));
+  const malformed = processes.find(item => rooted.has(item.pid) && malformedHelpers.has(item.pid));
+  if (malformed) return `provider process ${malformed.pid} carries an unreadable or truncated MCP ticket identity`;
   return process ? `process ${process.pid} remains in the task workspace process tree` : null;
 }
 

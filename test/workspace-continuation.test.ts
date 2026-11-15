@@ -111,9 +111,10 @@ test("the process proof reads the refresh, then the record, then the host proces
     { ...state(), handle: { refresh: async () => true, record: () => retained, directory: "/workspace" } });
   assert.match((await new WorkspaceContinuation(live).noLiveWorkspaceProcesses("workspace", ["run-1"])) ?? "",
     /task workspace process tree/);
-  const ticket = hostStub({ hostProcessListing: async () => [fact(8, "node /plugin/mcp-report.mjs /tickets/mcp-run-1.json", "/other")] },
+  const ownRun = "123e4567-e89b-42d3-a456-426614174000";
+  const ticket = hostStub({ hostProcessListing: async () => [fact(8, `node /plugin/mcp-report.mjs /tickets/mcp-${ownRun}.json`, "/other")] },
     { ...state(), handle: { refresh: async () => true, record: () => retained, directory: "/workspace" } });
-  assert.match((await new WorkspaceContinuation(ticket).noLiveWorkspaceProcesses("workspace", ["run-1"])) ?? "",
+  assert.match((await new WorkspaceContinuation(ticket).noLiveWorkspaceProcesses("workspace", [ownRun])) ?? "",
     /still carries the run MCP ticket/);
 
   // The host's process table is read at the call: replacing it changes the next answer.

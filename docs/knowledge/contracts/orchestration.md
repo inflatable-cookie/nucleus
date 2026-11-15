@@ -3059,7 +3059,13 @@ movement invalidates source approval and preserves the normal readiness gates.
   proves that process has no descendant except the Nucleus helper (or its own
   descendants) and — once that same fresh observation proves no turn is live —
   the provider's own standing tool runtimes, which outlive every turn by design
-  (Queue #683). Those runtimes take two facts from the listing, never a provider
+  (Queue #683).
+  A canonical ticket helper for another run still goes through cwd and ancestry
+  proof: it blocks inside the task workspace or beneath a workspace process.
+  A malformed or truncated helper ticket is unknown only when that helper is
+  inside the workspace or its process tree; outside it, the helper does not
+  globally block another participant (Nucleus #1256).
+  Those runtimes take two facts from the listing, never a provider
   name list: the program is one the provider ships (inside an application bundle
   such as `Foo.app/Contents/…`, or beside the provider's own executable under
   its own program name, `codex-code-mode-host` beside `codex`), and its own shape

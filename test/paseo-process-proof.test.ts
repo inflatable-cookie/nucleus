@@ -15,10 +15,11 @@ const fact = (pid: number, command: string, cwd: string | null, ppid = 1): HostP
   ({ pid, ppid, pgid: ppid, uid: 501, startIdentity: `${pid}@fixture`, command, cwd });
 
 test('Paseo process proof clears an idle participant only when the host scan is empty', async () => {
-  assert.equal(await adapter([]).noLiveWorkspaceProcesses('workspace', ['run-1']), null);
-  assert.match((await adapter([fact(7, 'bash build', '/workspace/task')]).noLiveWorkspaceProcesses('workspace', ['run-1'])) ?? '', /task workspace process tree/);
-  assert.match((await adapter([fact(8, 'node /plugin/mcp-report.mjs /tickets/mcp-run-1.json', '/other')]).noLiveWorkspaceProcesses('workspace', ['run-1'])) ?? '', /still carries the run MCP ticket/);
-  assert.match((await adapter(null).noLiveWorkspaceProcesses('workspace', ['run-1'])) ?? '', /host process listing is unreadable/);
+  const runId = '123e4567-e89b-42d3-a456-426614174000';
+  assert.equal(await adapter([]).noLiveWorkspaceProcesses('workspace', [runId]), null);
+  assert.match((await adapter([fact(7, 'bash build', '/workspace/task')]).noLiveWorkspaceProcesses('workspace', [runId])) ?? '', /task workspace process tree/);
+  assert.match((await adapter([fact(8, `node /plugin/mcp-report.mjs /tickets/mcp-${runId}.json`, '/other')]).noLiveWorkspaceProcesses('workspace', [runId])) ?? '', /still carries the run MCP ticket/);
+  assert.match((await adapter(null).noLiveWorkspaceProcesses('workspace', [runId])) ?? '', /host process listing is unreadable/);
 });
 
 /**
