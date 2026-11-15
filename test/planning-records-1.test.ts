@@ -152,6 +152,10 @@ test("026-1 lead.reopen through the catalogue refuses malformed, concurrent and 
     assert.match(String(refused.reason), /Only dropped leads can be reopened/);
     const read = await callCatalogueMethod(runtime, "lead.get", { id: lead.id }) as LeadDetail;
     assert.equal(read.state, "open");
+    assert.equal(read.actions.check, "Lead has no brief to check");
+    assert.equal(read.actions.drop, null);
+    assert.equal(read.actions.reopen, "Only a dropped lead can be reopened");
+    assert.equal(read.actions.promote[0].reason, "Approve the checked version first");
     assert.equal(read.dropReason, null);
     assert.deepEqual(read.reopens.map(entry => [entry.by, entry.drop.reason]), [["agent-9", "Wrong call"]]);
     assert.equal(read.versions.length, 1, "no content mutation");

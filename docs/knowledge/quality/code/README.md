@@ -45,6 +45,8 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
   `shared/pool.ts`, never three raw queries. Ten rows replace the four old ones; scores are recorded per
   row above with their evidence at this head.
 
+- nucleus#1231 (floor 7, 2026-11-15): Queue shares repository and open-task predicates and its record selection has a separate state owner. The remaining tab composition keeps proportion at 0, for a score of 7. Lead action hints come from the core read; status views and brief-frontmatter detection share one owner across the client, planning and store; the screen scores 9. Cancellation receipts are schema checked, migrate through the shared storage helper and report storage failures; the session fallback remains, for a score of 8. The new owners and affected shared rules have rows at this PR head. Boundary tests cover repository identity, terminal task errors and receipt parsing and migration.
+
 - nucleus#1230 (floor 7, 2026-11-15): the two floor-7 backup and capacity modules were simplified along
   their named seams and re-rated at this PR's head. `backups` (9) now reads a snapshot file name in one
   place (`snapshotName`/`snapshotFileName` in `core/store/backup-worker.mjs`), which the listing, the due

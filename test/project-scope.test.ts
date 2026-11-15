@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { boardSource } from './support/board-source';
 import {
-  defaultProjectScope, effectiveSelection, pipelineSelection, planningScopeLanes, projectSelectorRows, readProjectScope, scopeContains, scopedProjects,
+  defaultProjectScope, effectiveSelection, pipelineSelection, planningScopeLanes, projectHasRepository, projectSelectorRows, readProjectScope, scopeContains, scopedProjects,
   selectionLabel, statusSelection, toggleProject, writeProjectScope,
 } from '../shared/project-scope';
 import type { Project } from '../shared/contracts';
@@ -131,4 +131,11 @@ test('026-14b one header selector scopes every view; its Enabled switch turns fi
   assert.doesNotMatch(ui, /<ProjectFilterSwitch/, 'no separate switch on the board');
   assert.match(controls, /writeProjectScope\(storage\(\), scope\)/);
   assert.doesNotMatch(ui, /projectFilter/);
+});
+
+test('repository matching prefers origin and falls back to path only when needed', () => {
+  assert.equal(projectHasRepository(consumer, '/consumer', 'owner/other'), false);
+  assert.equal(projectHasRepository(consumer, '/elsewhere', 'owner/consumer'), true);
+  assert.equal(projectHasRepository(consumer, '/consumer', null), true);
+  assert.equal(projectHasRepository(consumer, '', null), false);
 });

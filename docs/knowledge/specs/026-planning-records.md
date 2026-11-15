@@ -87,7 +87,11 @@ whole, so the audit never doubles and nothing is partially written.
 `lead.get` returns the current lead with its latest version in full and earlier
 versions as metadata, including digest, check, approval, author and creation
 time. It also returns `promotedTaskId` when exactly one task target exists;
-multi-repository task links remain in `targets`. This keeps historical body size
+multi-repository task links remain in `targets`. Its `actions` object gives the
+availability of check, approve, drop, reopen and question or knowledge promotion,
+plus task promotion per repository origin. Each reason is a string when the
+action is unavailable and null when available. These are hints for the returned
+version; each mutation rechecks the current record. This keeps historical body size
 out of the summary response. `lead.version`
 reads one full version by lead id and version number; approval metadata remains
 attached to the version it approved. Its CLI reference is in the operator guide; the Nucleus skill names
