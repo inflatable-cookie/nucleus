@@ -119,3 +119,4 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
   owner, and the `proofExecutorAgents` re-export through QA is gone. The affected N4 rows were re-rated at
   this PR's head; the `qa-fence` rows in N4 and N6 were re-rated because no caller reads a fence message as
   a fact any more. Modules touched only to import from the new owners keep their rows.
+- nucleus#1220 (floor 6, 2026-11-15): `core/engine.ts` and `service/runtime-owner.ts` were split along their named seams — host-adapter routing, lane-key parse and profile catalogs from the engine; host-connections, store-maintenance and origin-review wrapping from the runtime. Their N2 and N5 rows, plus `service/t3code-host.ts`, were re-rated at this PR's head. Origin-proof wrapping method-calls `withHost` so a class owner keeps its host context. Engine loc is 1061 after merging #1218's owner-verb wiring into the composition root.
