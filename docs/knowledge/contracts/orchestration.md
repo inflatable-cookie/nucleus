@@ -244,11 +244,14 @@ prepares worktree links and reads the stash list. Enforces
 [Sibling links and preparation](#sibling-links-and-preparation). Delegates
 remain on Engine.
 
-**WorkerReconcile** (`core/recovery/worker-reconcile.ts`). Holds the initial worker's
-reconcile pass in steps: observe and settle a live one, look for its branch PR,
-repair a split reporting binding, take a blocked return, then accept its
-recorded result. Enforces [PR identity from reports](#pr-identity-from-reports)
-and [Liveness and reminders](#liveness-and-reminders). Pures:
+**WorkerReconcile** (`core/recovery/worker-reconcile/`). Holds the initial worker's
+reconcile pass in steps: observe and settle a live one
+(`observation-gates.ts`), look for its branch PR (`branch-pr.ts`), repair a
+split reporting binding (`reporting-binding.ts`), take a blocked return
+(`blocked-return.ts`), then accept its recorded result
+(`result-acceptance.ts`); `index.ts` composes the pass. Enforces
+[PR identity from reports](#pr-identity-from-reports) and
+[Liveness and reminders](#liveness-and-reminders). Pures (`decisions.ts`):
 `classifyWorkerObservation`, `branchPrLookupOutcome`, `blockedReturnDecision`.
 Delegates remain on Engine.
 
@@ -270,13 +273,13 @@ archives retired errored agents so a Paseo workspace stops reporting Failed. An
 unreadable read or a refused archive records a thread-archive wait instead of
 being dropped. `Engine.archiveRetiredErroredAgents` delegates to it.
 
-**CreationRecovery** (`core/recovery/creation-recovery.ts`). Recovers a proven-absent
-worker and an unowned workspace creation, including proof-only dispatch
-recovery. Enforces [Orphan worktree after a timed-out create](#orphan-worktree-after-a-timed-out-create)
+**CreationRecovery** (`core/recovery/absent-creation/creation.ts`). Recovers a
+proven-absent worker and an unowned workspace creation, including proof-only
+dispatch recovery. Enforces [Orphan worktree after a timed-out create](#orphan-worktree-after-a-timed-out-create)
 and [Parked dispatch and workspace repair](#parked-dispatch-and-workspace-repair).
-Pures: `workspaceReplayAllowed`, `absentWorkerStep`. Control-flow strings:
-`ABSENT_WORKER_REASON`, `PRE_AGENT_LAUNCH_FAILURE_REASON`. Delegates remain on
-Engine.
+Pures (`absent-creation/decisions.ts`): `workspaceReplayAllowed`,
+`absentWorkerStep`. Control-flow strings: `ABSENT_WORKER_REASON`,
+`PRE_AGENT_LAUNCH_FAILURE_REASON`. Delegates remain on Engine.
 
 **CallbackIntake** (`core/intake/callback-intake.ts`). Authenticates, validates and
 records one worker report. `CallbackIntake` holds Engine's source gates and the
@@ -650,10 +653,12 @@ restart. Enforces the restart arms in [Verbs](#verbs). Pures: `retryRoute`,
 `resumeRoute`, `blockedRetryRoute`, `revisionRoute`. Delegates remain on
 Resolution, including `retry` so instance overrides still fire.
 
-**AbsentRestarts** (`core/recovery/absent-restarts.ts`). Recreates proven-absent runs:
-an absent worker in the retained workspace, an absent resolution run, an
-uncertain-run restart under the same run ID, and the one-replacement creation
-budget. Enforces [Orphan worktree after a timed-out create](#orphan-worktree-after-a-timed-out-create).
+**AbsentRestarts** (`core/recovery/absent-creation/restarts.ts`). Recreates
+proven-absent runs: an absent worker in the retained workspace, an absent
+resolution run, an uncertain-run restart under the same run ID, and the
+one-replacement creation budget, whose record shape and reader are
+`absent-creation/budget.ts`. Enforces
+[Orphan worktree after a timed-out create](#orphan-worktree-after-a-timed-out-create).
 Delegates remain on Resolution.
 
 **Recovery** (`core/recovery/recovery.ts`). The coordinator surface Resolution
@@ -796,11 +801,16 @@ attention, and closes attention episodes and escalations. A true leaf.
 Enforces the stop and attention writes the other owners call. Delegates remain
 on Resolution, including `waiting` so instance overrides still fire.
 
-**task-reasons.ts**. Reason text, refusal errors and small helpers the owners
-share. A leaf: importing it never closes a cycle through `resolution.ts`.
-Typed pre-send refusals it exports include `ProvenPreSendRefusalError` and
-`RetainedRunRefusal`. **retained-work.ts** reads the retained author's
-receipted results.
+**task-reasons/** (`core/recovery/task-reasons/`). Reason text, refusal errors and
+small helpers the owners share, split by mechanism — `reasons.ts` (recorded task
+reasons and the named readers of them), `verdicts.ts` (review, merge and recovery
+verdicts at an exact head), `parks.ts` (parked-task predicates), `participants.ts`
+(run roles, thread waits and participant identity), `phase-sets.ts`,
+`refusals.ts` and `policy.ts` (bounded windows and the repository QA argv);
+`index.ts` is the barrel. A leaf: importing it never closes a cycle through
+`resolution.ts`. Typed pre-send refusals it exports include
+`ProvenPreSendRefusalError` and `RetainedRunRefusal`. **retained-work.ts** reads
+the retained author's receipted results.
 
 **Operations** (`core/planning/operations.ts`). Durable accept, schedule, run
 and settle. Holds the source-promotion, lead-check and re-key handlers. Enforces
@@ -856,7 +866,7 @@ detail, and the class of an error decides how an operation settles. The pin is
 - `OWNER_STOP_HOLD_PREFIX` `'Owner stop:'` — Holds / OwnerStop
 - `CAPACITY_WAIT_PREFIX` `'Waiting for a project slot…'` — defined in `shared/wait-state.ts`; SlotAdmission compares it
 - `QA_CAPACITY_WAIT_PREFIX` `'Waiting for QA capacity (position '` — defined in `shared/wait-state.ts`; SlotAdmission compares it
-- `RETAINED_WORKER_PROFILE_REASON` `'Retained worker profile is disabled or unavailable'` — defined in `shared/schema/state.ts`; readers Notices, Recovery, RetryRoutes, `task-reasons.ts`, RunLaunchSource
+- `RETAINED_WORKER_PROFILE_REASON` `'Retained worker profile is disabled or unavailable'` — defined in `shared/schema/state.ts`; readers Notices, Recovery, RetryRoutes, `task-reasons/parks.ts`, RunLaunchSource
 - `BACKPRESSURE_DEFERRAL` `'Paseo admission backpressure: '` — Admission (`core/host/admission.ts`)
 - `EXTERNAL_MERGE_CHECK_REASON_PREFIX` `'External merge check:'` — ExternalMerge
 - `EXTERNAL_MERGE_CHECK_RECOVERED_REASON` `'External merge check recovered; resuming task'` — ExternalMerge
@@ -3264,7 +3274,7 @@ inventories have a finite 32 MiB response budget and fail closed when exceeded.
 
 ## Shared task decisions
 
-Ready review at head is derived by `readyReviewAtHead` in `core/recovery/task-reasons.ts`:
+Ready review at head is derived by `readyReviewAtHead` in `core/recovery/task-reasons/verdicts.ts`:
 a ready verdict must name the exact nonempty PR head. Owner source acceptance
 remains a separate route and does not manufacture a review verdict.
 
