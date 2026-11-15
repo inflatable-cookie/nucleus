@@ -190,6 +190,9 @@ async function fixture(t: TestContext): Promise<Fixture> {
   // The forge is a fixture: the lifecycle proof is about the T3 paths, so the
   // PR and merge gates answer locally like every other lifecycle test.
   const forge = t3 as unknown as Record<string, unknown>;
+  // The fake Nightly starts no provider processes. Supply that positive fact
+  // through the real machine port; owned-tool policy still checks its roots.
+  forge.hostProcessListing = async () => [];
   const merges: string[] = [];
   // The forge echoes the worktree's live head: the completion head, the run
   // heads and every gate answer stay the same real commit, so the closeout
