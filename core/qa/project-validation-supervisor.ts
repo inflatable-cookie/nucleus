@@ -1,6 +1,5 @@
-import { writeOwnedJson } from "../machine/owned-file.mjs";
+import { readOwnedJson, writeOwnedJson } from "../machine/owned-file.mjs";
 import { createHash } from "node:crypto";
-import { constants, closeSync, fstatSync, openSync, readFileSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { hostRunResultSchema } from "../../shared/contracts";
@@ -102,16 +101,15 @@ export function projectValidationSupervisorPaths(dataDir: string, runId: string)
     liveOutputPath: projectValidationLiveOutputPath(root) };
 }
 
+/**
+ * One of this run's owner-only records, or null. `machine/owned-file` owns the read
+ * itself; a plan or result this reader cannot decode is reported as absent here,
+ * and the readers that must tell "not written yet" from "unreadable" use
+ * `readOwnedJson` directly.
+ */
 function readOwnerOnly<T>(path: string, parse: (value: unknown) => T): T | null {
-  let fd: number;
-  try { fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)); }
-  catch { return null; }
-  try {
-    const stat = fstatSync(fd);
-    if (!stat.isFile() || (stat.mode & 0o777) !== 0o600 || (typeof process.getuid === "function" && stat.uid !== process.getuid())) return null;
-    return parse(JSON.parse(readFileSync(fd, "utf8")));
-  } catch { return null; }
-  finally { closeSync(fd); }
+  const read = readOwnedJson(path, parse);
+  return read.kind === "present" ? read.value : null;
 }
 
 function writeJson(path: string, value: unknown, exclusive: boolean): void {

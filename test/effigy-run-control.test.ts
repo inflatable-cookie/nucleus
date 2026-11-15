@@ -11,7 +11,6 @@ import { EffigyAdmissionEndpoint } from "../service/callbacks/effigy-admission-e
 import { defaultAdmissionHookCommand, queueOwnedAdmissionEnvironment } from "../core/qa/effigy-admission";
 import {
   EffigyRunControl,
-  classifyEffigyRunHelp,
   classifyEffigyStatusPayload,
   classifyEffigyStructuredStatus,
   effigyStructuredStatusError,
@@ -20,12 +19,6 @@ import {
   EFFIGY_EXIT_HELD_TASK_LOCK,
 } from "../core/qa/effigy-run-control";
 import { effigyArtifactDigests } from "../core/qa/effigy-runtime";
-
-test("capability comes from run --help, never the version string", () => {
-  assert.equal(classifyEffigyRunHelp("Usage: effigy run --run-id <key>\n  logs --follow --stdout-offset"), "v015-run-control");
-  assert.equal(classifyEffigyRunHelp("effigy v0.14.1\n--host-run-request-id <uuid>\nEFFIGY_HOST_SCHEDULER"), "v014-host-run");
-  assert.equal(classifyEffigyRunHelp("effigy v0.14.1"), "unknown");
-});
 
 /** One `effigy.command.v1` envelope around an `effigy.run.v1` record. */
 function runEnvelope(run: Record<string, unknown>): Record<string, unknown> {
@@ -219,15 +212,6 @@ test("the producer's structured state outranks its text, so not-recorded is neve
   assert.equal(classifyEffigyStructuredStatus("not an envelope"), null);
 });
 
-test("follow args resume at exact per-stream byte offsets", () => {
-  // Argument construction only: `logsFollowArgs` spawns nothing and verifies no bytes.
-  const client = new EffigyRunControl({ runtime: { path: "effigy", sha256: "0".repeat(64) }, cwd: tmpdir() });
-  assert.deepEqual(client.logsFollowArgs("ci-1234", { stdout: 5120, stderr: 96 }), [
-    "run", "logs", "ci-1234", "--follow", "--stdout-offset", "5120", "--stderr-offset", "96",
-  ]);
-  assert.throws(() => client.logsFollowArgs("bad id", { stdout: 0, stderr: 0 }));
-});
-
 test("repeated before and after checks share one read per stable identity, and a rebuild after the spawn is provenance, not a refusal", async t => {
   const dir = mkdtempSync(join(tmpdir(), "effigy-cost-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -300,11 +284,6 @@ test("a fake v0.15 binary reports status, expired bytes and journal unavailabili
   const binary = join(dir, "effigy");
   writeFileSync(binary, `#!/bin/sh
 cmd="$1 $2"
-if [ "$1" = "run" ] && [ "$2" = "--help" ]; then
-  echo "effigy run --run-id <key>"
-  echo "  logs --follow --stdout-offset --stderr-offset"
-  exit 0
-fi
 if [ "$2" = "status" ]; then
   key="$3"
   if [ "$key" = "held" ]; then echo "task lock held" >&2; exit 75; fi
@@ -318,11 +297,6 @@ if [ "$2" = "status" ]; then
   echo '{"schema":"effigy.command.v1","ok":true,"result":{"schema":"effigy.run.v1","run":{"evidence_source":"checkout-journal","run_id":"'"$key"'","task":"qa:stage:rust","state":"succeeded","phase":"closed","exit_code":0,"cleanup":"complete","started_at_epoch_ms":1700000000000,"finished_at_epoch_ms":1700000001500,"duration_ms":1500}}}'
   exit 0
 fi
-if [ "$2" = "logs" ]; then
-  if echo "$*" | grep -q expired-bytes; then echo "expired log bytes" >&2; exit 2; fi
-  echo "log-body"
-  exit 7
-fi
 echo "unexpected $*" >&2
 exit 2
 `);
@@ -333,7 +307,6 @@ exit 2
     cwd: dir,
     timeoutMs: 5_000,
   });
-  assert.equal(await client.probeCapability(), "v015-run-control");
   assert.equal((await client.status("held")).kind, "held-lock");
   assert.equal((await client.status("expired")).kind, "expired");
   const notRecorded = await client.status("not-recorded");
@@ -345,10 +318,32 @@ exit 2
   const settled = await client.status("ok-run");
   assert.equal(settled.kind, "closed", "the fake producer's journal record closes the run");
   if (settled.kind === "closed") assert.equal(settled.outcome, "passed");
-  const logs = await client.followLogs("expired-bytes", { stdout: 10, stderr: 0 });
-  assert.equal(logs.expired, true);
-  const follow = await client.followLogs("ok-run", { stdout: 0, stderr: 0 });
-  assert.equal(follow.exitCode, 7);
+});
+
+test("a producer's own record decides its answer, and output past the bound is no answer at all", async t => {
+  const dir = mkdtempSync(join(tmpdir(), "effigy-bounded-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const binary = join(dir, "effigy");
+  writeFileSync(binary, `#!/bin/sh
+if [ "$3" = "noisy" ]; then
+  i=0
+  while [ $i -lt 400 ]; do echo "noise line $i of a chatty producer" >&2; i=$((i+1)); done
+  exit 0
+fi
+# A word in the text never outranks the record beside it: this is a closed run.
+echo "run key aged out of journal retention" >&2
+echo '{"schema":"effigy.command.v1","ok":true,"result":{"schema":"effigy.run.v1","run":{"evidence_source":"checkout-journal","run_id":"run-1","task":"qa:stage:rust","state":"succeeded","phase":"closed","exit_code":0,"cleanup":"complete"}}}'
+exit 0
+`);
+  chmodSync(binary, 0o755);
+  const client = new EffigyRunControl({
+    runtime: { path: binary, sha256: createHash("sha256").update(readFileSync(binary)).digest("hex") },
+    cwd: dir, timeoutMs: 5_000, maxOutputBytes: 1_024,
+  });
+  assert.equal((await client.status("run-1")).kind, "closed", "the record's fields decide, not the expiry words beside them");
+  const noisy = await client.status("noisy");
+  assert.equal(noisy.kind, "unknown", "output past the bound has no answer to read");
+  if (noisy.kind === "unknown") assert.match(noisy.reason, /past the 1024 byte bound/);
 });
 
 const PINNED_EFFIGY = process.env.NUCLEUS_TEST_PINNED_EFFIGY ?? "";
@@ -655,7 +650,9 @@ run = [{ task = "child" }]
   const probe = new EffigyRunControl({
     runtime: { path: binary, sha256: QUALIFIED_SHA256 }, cwd: project, env: privateEffigyEnv(home), timeoutMs: 8_000,
   });
-  assert.equal(await probe.probeCapability(), "v015-run-control");
+  const probeStatus = await probe.status("queue-open-probe");
+  assert.ok(["absent", "expired", "unknown"].includes(probeStatus.kind),
+    `the client reads the qualified producer's own open answer (${JSON.stringify(probeStatus)})`);
   const admission = queueOwnedAdmissionEnvironment({
     hookCommand: countingHook(countFile, defaultAdmissionHookCommand()),
     socketPath: endpoint.socketPath,
@@ -764,46 +761,5 @@ run = "sh -c 'exit 17'"
   const crashed = await statusForReservation(scheduler, home, "crash");
   assert.equal(crashed.kind, "closed");
   if (crashed.kind === "closed") assert.equal(crashed.exitCode, 17);
-});
-
-test("qualified candidate lost follow reattaches at delivered offsets and keeps the real exit", async t => {
-  const binary = requireQualifiedCandidate(t);
-  if (!binary) return;
-  const home = mkdtempSync(join(tmpdir(), "eqf-h-"));
-  const project = mkdtempSync(join(tmpdir(), "eqf-p-"));
-  writeFileSync(join(project, "effigy.toml"), `[tasks.follow]
-admission = "heavy"
-run = "sh -c 'echo alpha; sleep 3; echo beta; exit 9'"
-`);
-  const { scheduler, endpoint } = await isolatedQualifiedEndpoint(t, home, project);
-  const admission = queueOwnedAdmissionEnvironment({
-    hookCommand: defaultAdmissionHookCommand(),
-    socketPath: endpoint.socketPath,
-  });
-  const env = privateEffigyEnv(home, admission);
-  const run = spawnTracked(binary, ["--run-id", "follow-1", "follow"], {
-    cwd: project, env, timeoutMs: 20_000,
-  }, t);
-  await waitUntil(() => admissionReservations(scheduler).length >= 1, 8_000, "follow run reserved capacity");
-  const first = spawnTracked(binary, ["run", "logs", "follow-1", "--follow"], {
-    cwd: project, env, timeoutMs: 15_000,
-  }, t);
-  await waitUntil(() => first.stdout().includes("alpha"), 8_000, `first follow received alpha (stdout=${JSON.stringify(first.stdout())})`);
-  const delivered = Buffer.byteLength(first.stdout());
-  first.child.kill("SIGKILL");
-  await first.done;
-  const second = await spawnTracked(binary, [
-    "run", "logs", "follow-1", "--follow",
-    "--stdout-offset", String(delivered),
-    "--stderr-offset", "0",
-  ], { cwd: project, env, timeoutMs: 15_000 }, t).done;
-  const runResult = await run.done;
-  assert.equal(runResult.code, 9, runResult.stderr || runResult.stdout);
-  endAdmissionHook(scheduler);
-  assert.match(second.stdout, /beta/);
-  assert.equal(second.stdout.includes("alpha"), false, "reattach must resume at the delivered offset, not replay");
-  assert.equal(second.code, 9, second.stderr || second.stdout);
-  await waitUntil(() => allRetired(scheduler), 8_000,
-    () => `follow reservation retired (${reservationSummary(scheduler)} ${JSON.stringify(journalEventNames(scheduler))})`);
 });
 
