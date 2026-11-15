@@ -140,7 +140,7 @@ export class QuestionRaiseRoutes {
     void this.resolution.deliverQueueAsk(task, decision).catch(() => {
       /* the store or adapter failed after shutdown began; the recorded intent stands */
     });
-    void this.resolution.delegateDecision(task.id, decision, null, signal, (fresh, answer) => { this.resolution.resolveQueueRaise(decision.id, answer); return Promise.resolve(); })
+    void this.resolution.delegateDecision(task.id, decision, null, signal, (_fresh, answer) => { this.resolution.resolveQueueRaise(decision.id, answer); return Promise.resolve(); })
       .then(delivered => { if (!delivered && !signal.aborted && this.resolution.queueAskRaises.has(decision.id)) this.resolution.ensureQueueRaiseDecision(task, decision, 'no delegated answer was produced in time'); })
       .catch(() => { /* misses and unknowns are recorded on the events by delegateDecision itself */ });
     return promise;
