@@ -467,6 +467,10 @@ test("friendly labels and reset verdicts read as the brief writes them", async (
   assert.equal(usage.friendlyWindowName(window()), "This week");
   assert.equal(usage.friendlyWindowName(window({ windowSeconds: 5 * 3600, name: "5-hour" })), "Next 5 hours");
   assert.equal(usage.friendlyWindowName(window({ name: "Credits" })), "Billing period");
+  const knownWindow = window({ windowSeconds: WEEK / 1000, resetsAt: new Date(NOW + WEEK).toISOString(), windowStartsAt: new Date(NOW).toISOString() });
+  assert.equal(usage.windowElapsedFraction(knownWindow, NOW + WEEK / 2), 0.5, "the gauge row shares the projection's elapsed-window boundary");
+  assert.equal(usage.windowElapsedFraction(knownWindow, NOW + WEEK), null, "a reset boundary has no elapsed marker");
+  assert.equal(usage.providerLabel("codex"), "Codex", "provider labels use the shared profile vocabulary");
   assert.equal(usage.resetDay(new Date(RESET).toISOString()), "Saturday");
   assert.match(usage.usageVerdict(fixture.subscriptions[2]!, NOW), /^On track\. You should reach Saturday's reset with about \d+% to spare\.$/);
   assert.match(usage.usageVerdict(fixture.subscriptions[1]!, NOW), /^Plenty of room\. On track to use about \d+% by Saturday's reset\.$/);

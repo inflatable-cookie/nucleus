@@ -1,0 +1,1 @@
+The QA runs view uses canonical run identities and shared capacity settlement. Usage gauges share the provider labels and elapsed-window rule, Pipeline lead cards have one owner for triage selection, and failed web question reads keep the last known requests visible.

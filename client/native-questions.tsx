@@ -23,6 +23,7 @@ let questionSnapshot: ReadonlyMap<string, NativeQuestion[]> = new Map();
 const questionListeners = new Set<() => void>();
 const subscribeQuestions = (listener: () => void) => { questionListeners.add(listener); return () => { questionListeners.delete(listener); }; };
 const getQuestions = () => questionSnapshot;
+export const webQuestionsForAgent = (agentId: string): NativeQuestion[] => questionSnapshot.get(agentId) ?? [];
 function setAgentQuestions(id: string, questions: NativeQuestion[]) {
   if (JSON.stringify(questionSnapshot.get(id) ?? []) === JSON.stringify(questions)) return;
   const next = new Map(questionSnapshot);
@@ -59,6 +60,16 @@ export function bindWebQuestions(answer: typeof webAnswer) {
   return () => { if (webAnswer === answer) { webAnswer = null; changed(); } };
 }
 export function updateWebQuestions(agentId: string, questions: NativeQuestion[]) { setAgentQuestions(agentId, questions); }
+/** A failed refresh keeps the last known requests; only a successful empty read clears them. */
+export async function refreshWebQuestions(agentId: string, read: () => Promise<NativeQuestion[]>, current: () => boolean = () => true): Promise<{ ok: true } | { ok: false; error: unknown }> {
+  try {
+    const questions = await read();
+    if (current()) updateWebQuestions(agentId, questions);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error };
+  }
+}
 export async function answerNativeQuestion(agentId: string, requestId: string, answers: Record<string, string>): Promise<void> {
   if (webAnswer) return webAnswer(agentId, requestId, answers);
   const client = questionClient;

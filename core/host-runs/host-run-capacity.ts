@@ -11,6 +11,7 @@ import {
 import { hostRunCpuCoverageMetaKey, hostRunCpuCoverageMetaSchema } from "./host-run-cpu-coverage";
 import type { HostRunSchedulerOptions } from "./host-run-scheduler-types";
 import type { Store } from "../store/store";
+import { settledHostRunHoldsCapacity } from "../../shared/host-run-capacity";
 
 type HostRunCapacitySample = ReturnType<typeof hostRunCapacitySampleSchema.parse>;
 
@@ -84,8 +85,7 @@ export class HostRunCapacity {
   }
   reservesCapacity(run: HostRunInternalRecord): boolean {
     const holds = run.state === "running" || run.state === "admitted"
-      || (run.state === "settled" && !run.capacityReleasedAt
-        && (run.containers.some(container => container.removed !== true) || this.context.hasUnresolvedEscapedDescendants(run)));
+      || (run.state === "settled" && settledHostRunHoldsCapacity(run));
     if (!holds) return false;
     // A durable accounting retirement retires this reservation's charge and keeps
     // it retired through later authentic evidence, whichever basis retired it:
