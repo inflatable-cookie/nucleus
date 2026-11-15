@@ -22,10 +22,10 @@ import { dataHome } from "../shared/data-home.mjs";
 import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
-import { hostRunAuthoritySchema } from "../shared/schema/host-runs.ts";
+import { hostRunAuthorityFileSchema } from "../core/host-runs/host-run-files.ts";
 
 function isAuthorityLine(line) {
-  try { return hostRunAuthoritySchema.safeParse(JSON.parse(line)).success; }
+  try { return hostRunAuthorityFileSchema.safeParse(JSON.parse(line)).success; }
   catch { return false; }
 }
 

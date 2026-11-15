@@ -39,6 +39,7 @@ function hostFixture(
   const client = { isConnected: options.connected ?? true };
   const raw = {
     client,
+    isConnected: () => client.isConnected,
     hostId: "fixture-host",
     socketPath: join(dir, "callback.sock"),
     helperPath: join(dir, "worker-helper.mjs"),

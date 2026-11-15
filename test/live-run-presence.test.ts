@@ -891,6 +891,7 @@ test("the service runtime projects its own live run set into a daemon that offer
   ]);
   const adapter = {
     client: { isConnected: true },
+    isConnected: () => true,
     hostId: "fixture-host",
     socketPath: join(dataDir, "callback.sock"),
     helperPath: join(dataDir, "worker-helper.mjs"),

@@ -313,8 +313,10 @@ function fakeAdapter(
   catalogValue: HostCatalog,
   hostProfiles: () => unknown[],
 ): Adapter {
+  const client = { isConnected: true };
   return {
-    client: { isConnected: true },
+    client,
+    isConnected: () => client.isConnected,
     hostId: "fixture-host",
     socketPath: join(dir, "callback.sock"),
     helperPath: join(dir, "worker-report.mjs"),

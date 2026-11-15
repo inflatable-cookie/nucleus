@@ -9,11 +9,6 @@ export function createHost(Policy: HostPolicyConstructor, url: string, socketPat
   return new PaseoAdapter(url, socketPath, helperPath, password, mcpScriptPath);
 }
 
-/** Read connection state through the host-neutral adapter contract. */
-export function hostConnected(adapter: Adapter): boolean {
-  return adapter.isConnected?.() ?? false;
-}
-
 // Public host entry, including the compatibility surface used by fixtures.
 export * from "./adapter/paseo";
 

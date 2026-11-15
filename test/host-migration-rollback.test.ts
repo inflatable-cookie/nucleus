@@ -17,7 +17,7 @@ test('bootstrap never assigns a host to legacy hostless operations', async () =>
   store.db.exec(`CREATE TRIGGER reject_host_migration BEFORE UPDATE ON operations WHEN NEW.id='${second.operation.id}' BEGIN SELECT RAISE(ABORT,'injected migration failure'); END`);
   store.close();
   const client = { isConnected: false };
-  const adapter = { client, hostId: 'a', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'helper.mjs'), connect: async () => { client.isConnected = true; }, close: async () => { client.isConnected = false; }, catalog: async () => ({ providers: [] }) } as unknown as Adapter;
+  const adapter = { client, isConnected: () => client.isConnected, hostId: 'a', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'helper.mjs'), connect: async () => { client.isConnected = true; }, close: async () => { client.isConnected = false; }, catalog: async () => ({ providers: [] }) } as unknown as Adapter;
   const runtime = new QueueRuntime({ dataDir: dir, adapterFactory: () => adapter, timers: false });
   await runtime.started; await runtime.bootstrap;
   assert.equal(runtime.startError, '');

@@ -10,8 +10,8 @@ import type { Adapter } from '../core/host/adapter';
 test('another registered host stays available when the primary disconnects', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'runtime-cross-host-'));
   const client = { isConnected: false };
-  const primary = { client, hostId: 'a', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'helper.mjs'), connect: async () => { client.isConnected = true; }, close: async () => { client.isConnected = false; }, catalog: async () => ({ providers: [] }) } as unknown as Adapter;
-  const second = { observe: observeIdle('b-workspace') } as Adapter;
+  const primary = { client, isConnected: () => client.isConnected, hostId: 'a', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'helper.mjs'), connect: async () => { client.isConnected = true; }, close: async () => { client.isConnected = false; }, catalog: async () => ({ providers: [] }) } as unknown as Adapter;
+  const second = { isConnected: () => true, observe: observeIdle('b-workspace') } as Adapter;
   const runtime = new QueueRuntime({ dataDir: dir, adapterFactory: () => primary, timers: false });
   try {
     await runtime.started; await runtime.bootstrap;

@@ -831,6 +831,7 @@ test("records written before the binding existed stay readable and keep custody"
 function fakeAdapter(dir: string): Adapter {
   return {
     client: { isConnected: true },
+    isConnected: () => true,
     hostId: "fixture-host",
     socketPath: join(dir, "callback.sock"),
     helperPath: join(dir, "worker-helper.mjs"),

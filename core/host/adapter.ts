@@ -30,3 +30,8 @@ export interface Adapter extends RunUsageSource, HostAdapterIdentity, HostObserv
   /** Host-neutral connection probe used by runtime lifecycle owners. */
   isConnected?(): boolean;
 }
+
+/** Read an adapter's optional host connection through its host-neutral port. */
+export function hostConnected(adapter: Pick<Adapter, "isConnected">): boolean {
+  return adapter.isConnected?.() ?? false;
+}

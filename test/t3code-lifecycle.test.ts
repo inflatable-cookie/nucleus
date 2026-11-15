@@ -187,6 +187,7 @@ async function fixture(t: TestContext): Promise<Fixture> {
   server.controls.providers = config.providers.map(provider => ({ ...provider, instanceId: 'codex', displayName: 'Codex' }));
   await host.connect();
   const t3 = createAdapter(Policy, host, { socketPath, helperPath });
+  assert.equal(t3.isConnected?.(), host.connected, 'the T3 adapter exposes its native connection through the shared adapter port');
   // The forge is a fixture: the lifecycle proof is about the T3 paths, so the
   // PR and merge gates answer locally like every other lifecycle test.
   const forge = t3 as unknown as Record<string, unknown>;

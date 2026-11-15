@@ -26,6 +26,7 @@ import { EXTERNAL_MERGE_CHECK_REASON_PREFIX } from '../core/resolution';
 function fakeAdapter(dir: string): Adapter {
   return {
     client: { isConnected: true },
+    isConnected: () => true,
     hostId: 'fixture-host',
     socketPath: join(dir, 'callback.sock'),
     helperPath: join(dir, 'worker-helper.mjs'),
@@ -912,6 +913,7 @@ test('a transient daemon outage at startup self-heals and resumes accepted durab
   let reachable = false;
   const adapter = {
     client: { isConnected: false },
+    isConnected: () => adapter.client.isConnected,
     hostId: 'fixture-host',
     socketPath: join(dir, 'callback.sock'),
     helperPath: join(dir, 'worker-helper.mjs'),

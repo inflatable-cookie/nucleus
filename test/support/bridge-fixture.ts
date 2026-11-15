@@ -192,7 +192,7 @@ export function bridgeSupport(prefix: string, options: {
   /** Old-backend-shaped fake adapter for the first-cutover fixture. */
   function fakeAdapter(dir: string): Adapter {
     return {
-      client: { isConnected: true }, hostId: 'fixture-host',
+      client: { isConnected: true }, isConnected: () => true, hostId: 'fixture-host',
       socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'worker-helper.mjs'),
       connect: async () => {}, close: async () => {}, profiles: async () => [],
       observe: async () => ({ id: 'w', workspaceId: 'ws', status: 'idle', active: false, permissions: false, error: '' }),

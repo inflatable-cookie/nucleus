@@ -58,7 +58,7 @@ function insertTask(store: Store, index = 0, extra: Partial<Task> = {}): Task {
 
 function fakeAdapter(overrides: Partial<Adapter> & Record<string, unknown> = {}, root?: string): Adapter {
   return {
-    client: { isConnected: true }, hostId: 'fixture-host',
+    client: { isConnected: true }, isConnected: () => true, hostId: 'fixture-host',
     socketPath: '/tmp/ns-callback.sock', helperPath: '/tmp/ns-helper.mjs',
     connect: async () => {}, close: async () => {}, profiles: async () => [profile],
     validate: async () => base, verifyWorkspace: async () => 'ns-branch',

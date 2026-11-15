@@ -11,7 +11,7 @@ import { admissionOf } from '../core/host/admission';
 function fixture(dir: string, identity: string) {
   const client = { isConnected: false, reachable: true };
   const adapter = {
-    client, hostId: identity, socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'worker-helper.mjs'),
+    client, isConnected: () => client.isConnected, hostId: identity, socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'worker-helper.mjs'),
     connect: async () => { if (!client.reachable) throw new Error('offline'); client.isConnected = true; }, close: async () => { client.isConnected = false; },
     catalog: async () => ({ providers: [] }),
     observe: async () => ({ id: 'w', workspaceId: 'ws', status: 'idle', active: false, permissions: false, error: '' }),

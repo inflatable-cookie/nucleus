@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Adapter } from '../core/host/adapter';
-import { hostConnected } from '../hosts/paseo';
+import { hostConnected } from '../core/host';
 
-test('runtime connection reads remain late-bound and missing connection state is offline', () => {
+test('runtime connection reads are host-neutral, late-bound and offline when absent', () => {
   const host = { isConnected: () => false } as unknown as Adapter;
   assert.equal(hostConnected(host), false);
   (host as unknown as { isConnected: () => boolean }).isConnected = () => true;
