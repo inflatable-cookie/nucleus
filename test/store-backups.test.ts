@@ -27,7 +27,7 @@ import { backupBeforeMigration, backupCommand, backupDirForDataDir, backupHealth
 import { timingTest, performanceAssert } from './support/timing';
 import { cpuSample } from './support/cpu-time';
 // The child-process implementation is plain JavaScript so Node can run it without a TS loader.
-import { assertBackupVolume, backupDirState, createBackup, listBackups, liveStorePath, readBackupStatus, volumeRootFor } from '../core/store/backup-worker.mjs';
+import { assertBackupVolume, backupDirState, createBackup, listBackups, liveStorePath, readBackupStatus, snapshotFileName, snapshotName, volumeRootFor } from '../core/store/backup-worker.mjs';
 
 function fixture(t: { after: (fn: () => void) => void }) {
   const dir = mkdtempSync(join(tmpdir(), 'queue-backup-'));
@@ -536,6 +536,31 @@ test('a store with no snapshot takes one at its first start', async t => {
   } finally { await runtime.stop(); }
 });
 
+
+test('a snapshot file name is read once into its period, its shared stem and its tier', () => {
+  const at = '2026-11-05T00-00-00-000Z', uuid = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  for (const kind of ['hourly', 'daily', 'weekly'] as const)
+    assert.deepEqual(snapshotName(`${at}-${uuid}.${kind}.sqlite.gz`), { stem: `${at}-${uuid}`, kind, at: '2026-11-05T00:00:00.000Z' });
+  assert.equal(snapshotFileName(`${at}-${uuid}`, 'daily'), `${at}-${uuid}.daily.sqlite.gz`, 'the tiers of one snapshot share its stem');
+  for (const name of ['backup-status.json', `.${at}-${uuid}.sqlite`, `${at}-${uuid}.hourly.sqlite.gz.tmp`, `${at}-${uuid}.daily.sqlite.gz.${uuid}.tmp`])
+    assert.equal(snapshotName(name), null, `${name} is not a published snapshot`);
+});
+
+test('an unreadable backup status is reported, never read as healthy', async t => {
+  const { dataDir, path, backups, store } = fixture(t);
+  const statusPath = join(dataDir, 'backup-status.json');
+  writeFileSync(statusPath, '{"localError":');
+  assert.match(readBackupStatus(dataDir).localError ?? '', /Backup status is not valid JSON/);
+  assert.match(listBackups(backups, dataDir).localError ?? '', /Backup status is not valid JSON/, 'the listing reports it');
+  assert.match(backupHealth(backups, dataDir).localError ?? '', /Backup status is not valid JSON/, 'so does the board health');
+  // A status that is not a status record is reported too, never treated as no failure.
+  writeFileSync(statusPath, '[]');
+  assert.match(readBackupStatus(dataDir).localError ?? '', /Backup status is not a status record/);
+  // A published snapshot rewrites the status and clears the recorded failure.
+  await createBackup(path, backups);
+  assert.equal(readBackupStatus(dataDir).localError, null);
+  store.close();
+});
 
 test('backup listing reads its one directory and still lists local snapshots', () => {
   const root = mkdtempSync(join(tmpdir(), 'backup-list-'));

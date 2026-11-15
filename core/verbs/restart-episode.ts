@@ -1,7 +1,7 @@
 import { TaskChangedRefusal } from "../../shared/task-version";
 import { COORDINATOR_LOOP_LIMIT, unproductiveCoordinatorRuns } from '../recovery/recovery-bound';
 import { DEFAULT_GLOBAL_LIMIT, type Run, type Task, type TaskControlInput } from "../../shared/contracts";
-import { occupiesSlot, recoveryCapacityFor } from "../dispatch/capacity";
+import { occupiesSlot, capacityFor } from "../dispatch/capacity";
 import { taskPrNumber } from "../forge/index";
 import { runsUnchangedSince } from "../recovery/observation-advance";
 import { coordinatorReportMatches } from "../recovery/coordinator-report";
@@ -174,7 +174,7 @@ export class EpisodeRestarts {
     const admitLocal = () => {
       const current = check();
       if (!occupiesSlot(current, this.store.runs(task.id))) {
-        const capacity = recoveryCapacityFor(current, this.store.activeCapacityTasks(), this.store.getMeta<number>('globalLimit') ?? DEFAULT_GLOBAL_LIMIT, this.store.projectDispatchLimitFor(current), this.store.papercutDispatchPolicy());
+        const capacity = capacityFor(current, this.store.activeCapacityTasks(), this.store.getMeta<number>('globalLimit') ?? DEFAULT_GLOBAL_LIMIT, this.store.projectDispatchLimitFor(current), this.store.papercutDispatchPolicy());
         if (capacity) throw Error(capacity);
       }
       const run = this.resolution.absentResolutionRun(current);
