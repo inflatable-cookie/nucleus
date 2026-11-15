@@ -161,7 +161,7 @@ export class RuntimeBoard {
     // When the level in force flips, advance the revision once so pollers re-project.
     const usage = this.context.store.usageLevel();
     if (this.boardUsageLevel !== null && usage !== this.boardUsageLevel) {
-      try { this.context.store.advanceRevision(); } catch { /* a read-only prewarm store re-projects on its first writable read */ }
+      this.advanceRevisionForProjection("usage level");
     }
     this.boardUsageLevel = usage;
     reconcileRoutingGrants(this.context.store, this.context.decisions);
@@ -171,7 +171,7 @@ export class RuntimeBoard {
     const backup = this.context.backupHealthProjection();
     const backupKey = JSON.stringify(backup);
     if (this.boardBackupKey !== null && backupKey !== this.boardBackupKey) {
-      try { this.context.store.advanceRevision(); } catch { /* a read-only prewarm store re-projects on its first writable read */ }
+      this.advanceRevisionForProjection("backup health");
     }
     this.boardBackupKey = backupKey;
     const facts = this.context.cachedUiSnapshotFacts();
@@ -240,8 +240,7 @@ export class RuntimeBoard {
       const facts = { ...this.ownerVerbFacts(task), operatorBoard: input.caller === "operator (board)", ...(hostProfiles ? { hostProfiles } : {}) };
       if (task.phase !== "queued") return ownerTaskNext(facts);
       const context = taskWaitStateContext(this.context.store, task, null, candidate => this.context.engine.resolution.slotAdmissionReason(candidate));
-      const projected = queuedReason(this.context.store, task, context);
-      const reason = projected === "Waiting for dispatch" ? this.context.engine.queuedExternalWait(task) || projected : projected;
+      const reason = queuedReason(this.context.store, task, context, candidate => this.context.engine.queuedExternalWait(candidate));
       const stop = task.resolution.stop;
       const resolution = stop && (["capacity", "prerequisite"].includes(stop.reason)
         || stop.reason === "route_unavailable" && this.context.store.routingRetryAllowed(task)) ? { ...task.resolution, stop: null } : task.resolution;
@@ -269,6 +268,16 @@ export class RuntimeBoard {
     return evidence.task.version === task.version
       ? { store: this.context.store, task, runs: evidence.runs, events: evidence.events, notices: evidence.notices, hookRecords: evidence.hookRecords }
       : collectOwnerVerbFacts(this.context.store, task);
+  }
+
+  private advanceRevisionForProjection(source: "usage level" | "backup health"): void {
+    try {
+      this.context.store.advanceRevision();
+    } catch (error) {
+      // Read-only prewarm stores cannot publish transient projection changes. Keep
+      // serving their snapshot, but make the skipped revision write observable.
+      console.warn(`[nucleus] Board revision advance failed for ${source}:`, error);
+    }
   }
 
   outcome(input: { taskId?: string; submissionId?: string; reference?: string; repository?: string; number?: number }) {

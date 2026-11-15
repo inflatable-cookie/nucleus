@@ -96,6 +96,15 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
 
 ## Re-rates
 
+- nucleus#1245 (floor 7, 2026-11-15): `core/runtime/planning.ts` (8) now delegates draft checks and
+  handoff preparation to `core/runtime/planning-submission.ts` (9), separating preflight from the lead
+  and lane facade while preserving `submitLead`'s tested wait-to-settlement contract; that remaining
+  wait has no deadline and keeps failure at 1. The board (8) now passes the external-wait callback into `queuedReason`
+  instead of deciding from the rendered reason, and warns when a transient revision advance fails while
+  preserving the read-only prewarm fallback. Existing lead, handoff, board refresh and task-next tests
+  cover these boundaries. The surfaced revision warning is the named exception to structural-only work;
+  no admission or routing rule changed.
+
 - nucleus#1238 (floor 7, 2026-11-15): the four floor-7 planning modules were split, hardened or simplified along
 their named seams and re-rated at this PR's head. `core/planning/operations.ts` (8) keeps acceptance,
 scheduling, resume and settlement, and its pre-send receipt proof is the new owner

@@ -1,0 +1,1 @@
+The runtime planning facade now delegates draft checks and handoff preflight to a dedicated submission owner. Board revision refresh failures are visible, and `task.next` resolves external waits through the queued-reason projection.
