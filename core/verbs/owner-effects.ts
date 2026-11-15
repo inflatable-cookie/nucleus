@@ -29,20 +29,40 @@ export type OwnerEffect = {
   summary: string;
 };
 
+/**
+ * The stable `kind.identity` key an owner names, decoded once here so no handler
+ * slices a prefix to learn what it was asked to retry. A key with no identity is
+ * malformed, not an effect.
+ */
+export function splitOwnerEffectKey(effect: string): { kind: string; identity: string } | null {
+  const separator = effect.indexOf('.');
+  if (separator < 1 || separator === effect.length - 1) return null;
+  return { kind: effect.slice(0, separator), identity: effect.slice(separator + 1) };
+}
+
+/** The identity of one named effect kind, or null when the key names another kind. */
+export function ownerEffectIdentity(effect: string, kind: string): string | null {
+  const split = splitOwnerEffectKey(effect);
+  return split?.kind === kind ? split.identity : null;
+}
+
+/** The key that names one effect kind's identity. */
+export const ownerEffectKey = (kind: string, identity: string): string => `${kind}.${identity}`;
+
 /** Bind a settlement to the recorded occurrence, not its diagnostic text. */
 export function ownerEffectOccurrence(facts: OwnerVerbFacts, effect: OwnerEffect): string {
   if (effect.kind === 'build_output_cleanup') {
-    const workspaceId = effect.effect.slice('build_output_cleanup.'.length);
+    const workspaceId = ownerEffectIdentity(effect.effect, 'build_output_cleanup')!;
     const record = facts.task.resolution.buildOutputCleanups.find(item => item.workspaceId === workspaceId && !item.runId);
     return JSON.stringify([workspaceId, record?.at ?? null]);
   }
   if (effect.kind === 'runtime_retirement') {
-    const workspaceId = effect.effect.slice('runtime_retirement.'.length);
+    const workspaceId = ownerEffectIdentity(effect.effect, 'runtime_retirement')!;
     const record = facts.task.resolution.runtimeRetirements.find(item => item.workspaceId === workspaceId);
     return record ? runtimeRetirementOccurrence(record) : '';
   }
   if (effect.kind === 'external_workspace_archive') {
-    const workspaceId = effect.effect.slice('external_workspace_archive.'.length);
+    const workspaceId = ownerEffectIdentity(effect.effect, 'external_workspace_archive')!;
     return externalArchiveOccurrence(workspaceId, facts.task.resolution.externalWorkspaceArchives.find(item => item.workspaceId === workspaceId));
   }
   if (effect.effect === 'project-validation.project-validation') {
@@ -51,14 +71,14 @@ export function ownerEffectOccurrence(facts: OwnerVerbFacts, effect: OwnerEffect
   }
   if (effect.effect === 'merge-response.merge-response') return facts.task.resolution.mergeRequestedAt ?? '';
   if (effect.kind === 'owned_tool') {
-    const runId = effect.effect.slice('owned_tool.'.length);
+    const runId = ownerEffectIdentity(effect.effect, 'owned_tool')!;
     const event = facts.events.findLast(item => item.kind === 'owned_tool_hold' && (() => {
       try { return JSON.parse(item.detail).runId === runId; } catch { return false; }
     })());
     return String(event?.id ?? '');
   }
   if (effect.kind === 'workspace_archive') {
-    const workspaceId = effect.effect.slice('workspace_archive.'.length);
+    const workspaceId = ownerEffectIdentity(effect.effect, 'workspace_archive')!;
     const retry = facts.task.resolution.workspaceArchiveRetries.find(item => item.workspaceId === workspaceId);
     return JSON.stringify([workspaceId, retry?.attempts ?? null]);
   }
@@ -292,7 +312,7 @@ export function ownerPendingEffects(facts: OwnerVerbFacts): OwnerEffect[] {
   // custody can change). The settlement itself still names a workspace left on disk.
   for (const record of task.resolution.ownerSettlements) {
     if (!record.effect.startsWith('workspace_archive.')) continue;
-    const workspaceId = record.effect.slice('workspace_archive.'.length);
+    const workspaceId = ownerEffectIdentity(record.effect, 'workspace_archive')!;
     if (task.resolution.archivedWorkspaceIds.includes(workspaceId) || effects.some(effect => effect.effect === record.effect)) continue;
     const effect: OwnerEffect = { effect: record.effect, kind: 'workspace_archive', summary: `Workspace ${workspaceId} remains unarchived` };
     if (record.occurrence === ownerEffectOccurrence(facts, effect)) effects.push(effect);
@@ -304,7 +324,7 @@ export function ownerPendingEffects(facts: OwnerVerbFacts): OwnerEffect[] {
     // Force settles the uncertainty, never the workspace on disk. Keep the
     // ordinary retry visible while automatic cleanup honours the settlement.
     return effect.kind === 'workspace_archive' ? [{ ...effect,
-      summary: `Workspace ${effect.effect.slice('workspace_archive.'.length)} left on disk after forced settlement; retry to observe and archive it` }] : [];
+      summary: `Workspace ${ownerEffectIdentity(effect.effect, 'workspace_archive')} left on disk after forced settlement; retry to observe and archive it` }] : [];
   });
 }
 

@@ -78,3 +78,12 @@ test('paused resume counts read the partial index and retain distinct agents and
     assert.match(JSON.stringify(plan), /events_paused_resume/);
   } finally { store.close(); }
 });
+
+
+test('brief amendment sweep uses the partial intent index', () => {
+  const store = new Store(':memory:');
+  try {
+    const plan = store.db.prepare("EXPLAIN QUERY PLAN SELECT DISTINCT taskId FROM events WHERE kind='brief_amendment_delivery_intent'").all();
+    assert.match(JSON.stringify(plan), /events_brief_amendment_intent/);
+  } finally { store.close(); }
+});

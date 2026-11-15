@@ -12,7 +12,7 @@ import { runFenceRefusal, runSettlement } from "../intake/run-settlement";
 import { ownerStoppedRunIds, neverDispatched, workerBlockedOnOwnRun, prIdentity, escalatedEpisode, escalationBackedByLiveWork, retainedWorkerDeliveryRefusal, replacementAllowanceNote } from './owner-facts';
 import type { OwnerVerbFacts } from './owner-facts';
 import { verbInput, restartRoles } from './owner-shared';
-import type { RestartRole, OwnerVerb } from './owner-shared';
+import type { RestartRole, OwnerVerb, RestartShapeName } from './owner-shared';
 import { unreportedExecutorRun } from '../qa/proof-admission';
 
 /**
@@ -119,11 +119,8 @@ export function deriveRestartRole(task: Task, runs: Run[]): RestartRole {
  * and the applied control select the same path. A retained-worker candidate
  * still needs the shared eligibility check and fresh backend observation.
  */
-export type RestartShape =
-  | "pre_dispatch" | "absent_worker" | "blocked_worker" | "blocked_with_pr"
-  | "stopped_revision" | "stalled_run" | "retained_worker" | "owner_stopped_worker"
-  | "checkpoint_reviewer" | "stopped_reviewer" | "absent_resolution" | "coordinator"
-  | "unreported_executor";
+/** The restart shapes; one definition, shared with the owner that serves them. */
+export type RestartShape = RestartShapeName;
 
 /**
  * Whether a reviewer run can be the run a relaunch keeps or continues. A

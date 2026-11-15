@@ -380,6 +380,6 @@ export type { OwnerVerbFacts } from './owner-facts';
 export { unservedParkedStep, restartTakesParkedStep, parkedRestart, deriveRestartRole, isReviewerRelaunchTarget, settledReviewerHistory, plainHandoverFreshRestart, restartShape, RestartRefusal, workerRestartRefusal } from './owner-restart';
 export { unreleasedLaunchFence } from './owner-facts';
 export type { RestartShape } from './owner-restart';
-export { ownerEffectOccurrence, ownerPendingEffects } from './owner-effects';
+export { ownerEffectKey, ownerEffectIdentity, ownerEffectOccurrence, ownerPendingEffects, splitOwnerEffectKey } from './owner-effects';
 export type { OwnerEffect } from './owner-effects';
 export { qualifiedAcceptanceEligibility } from './owner-move';

@@ -1,6 +1,7 @@
 import type { Task } from '../../shared/contracts';
 import { extendedTaskBudgetLimits, taskBudget } from '../../shared/task-budget';
 import { Decisions } from '../planning/decisions';
+import { agentAskDecisionId } from './agent-ask';
 import type { Resolution } from '../resolution';
 
 /** The recorded budget questions a task carries: their ids, in event order. */
@@ -81,6 +82,41 @@ export class QuestionSupersession {
     }
   }
   /**
+   * An applied owner instruction replaces the open asks about the prior task
+   * state: each one is answered with the new instruction, and its linked board
+   * decision is withdrawn so a later answer cannot steer the task. Returns the
+   * ask ids, in event order.
+   */
+  answerOpenAgentAsks(taskId: string, answer: string, reason: string): string[] {
+    return this.settleOpenAgentAsks(taskId, this.store.eventsAll(taskId),
+      (id) => ({ kind: 'agent_ask_answered', detail: `${id}: answered by brief amendment: ${answer}` }), reason);
+  }
+  /**
+   * One rule for every open agent ask: mark it with the owner's own line, and
+   * withdraw the board decision it was linked to. A marked ask is never marked
+   * twice, whichever marker settled it.
+   */
+  private settleOpenAgentAsks(taskId: string, events: Array<{ kind: string; detail: string }>,
+    mark: (id: string) => { kind: string; detail: string }, withdrawReason: string): string[] {
+    const settled = (kind: string, id: string) => events.some(event => event.kind === kind && event.detail.startsWith(`${id}:`));
+    const ids: string[] = [];
+    for (const event of events.filter(item => item.kind === 'agent_ask')) {
+      const id = event.detail.split(':', 1)[0]!;
+      if (!id || settled('agent_ask_answered', id) || settled('agent_ask_superseded', id)) continue;
+      const line = mark(id);
+      this.store.event(taskId, line.kind, line.detail);
+      const link = events.find(item => item.kind === 'agent_ask_decision' && item.detail.startsWith(`${id}: decision `));
+      const decisionId = link ? agentAskDecisionId(link.detail) : null;
+      if (decisionId) {
+        const decision = this.store.decision(decisionId);
+        if (decision.status === 'open') new Decisions(this.store).withdrawInTransaction({ id: decisionId, version: decision.version,
+          reason: withdrawReason, withdrawnBy: 'nucleus' });
+      }
+      ids.push(id);
+    }
+    return ids;
+  }
+  /**
    * Abort the in-turn waits and dismiss the native prompts of the recorded budget
    * questions. Runs after the write that superseded them: a host call belongs
    * outside the transaction that records the intent.
@@ -120,18 +156,8 @@ export class QuestionSupersession {
     this.store.transaction(() => {
       supersede('operator_question', 'operator_question_superseded');
       supersede('responsible_question', 'responsible_question_superseded');
-      for (const event of events.filter(item => item.kind === 'agent_ask')) {
-        const id = event.detail.split(':', 1)[0]!;
-        if (!id || settled('agent_ask_answered', id) || settled('agent_ask_superseded', id)) continue;
-        this.store.event(taskId, 'agent_ask_superseded', `${id}: ${reason}`.slice(0, 2000));
-        const link = events.find(item => item.kind === 'agent_ask_decision' && item.detail.startsWith(`${id}: decision `));
-        const decisionId = link?.detail.match(/decision ([^;\s]+)/)?.[1];
-        if (decisionId) {
-          const decision = this.store.decision(decisionId);
-          if (decision.status === 'open') new Decisions(this.store).withdrawInTransaction({ id: decisionId, version: decision.version,
-            reason, withdrawnBy: 'nucleus' });
-        }
-      }
+      this.settleOpenAgentAsks(taskId, events,
+        (id) => ({ kind: 'agent_ask_superseded', detail: `${id}: ${reason}`.slice(0, 2000) }), reason);
       for (const id of supersededIds) {
         if (events.some(item => item.kind === 'native_question_dismiss_intent' && item.detail.startsWith(`${id}:`))) continue;
         this.store.event(taskId, 'native_question_dismiss_intent', `${id}: ${reason}`.slice(0, 2000));

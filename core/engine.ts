@@ -90,7 +90,15 @@ import { AgentControls } from "./verbs/agent-controls";
 import { BriefControls } from "./verbs/brief";
 import { ExternalMergeRefusal, MoveControls } from "./verbs/moves";
 import { RestartControls } from "./verbs/restart";
+import { WorkerRestarts } from "./verbs/restart-worker";
+import { ReviewRestarts } from "./verbs/restart-review";
+import { EpisodeRestarts } from "./verbs/restart-episode";
+import { StalledTurnStops } from "./verbs/stalled-turn-stop";
 import { RetryEffectControls } from "./verbs/retry-effect";
+import { RetryEffectReplay } from "./verbs/retry-effect-replay";
+import { ArchiveEffectRetries } from "./verbs/retry-effect-archive";
+import { RecoveryEffectRetries } from "./verbs/retry-effect-recovery";
+import { OrdinaryEffectRetries } from "./verbs/retry-effect-ordinary";
 import { CallbackIntake } from "./intake/callback-intake";
 import { WorkerReconcile, completionReportsPr, INTERACTIVE_RUNNING_REASON, INTERACTIVE_WAIT_REASON } from "./recovery/worker-reconcile";
 import { WorkerFailover } from "./dispatch/worker-failover";
@@ -109,6 +117,10 @@ import { TaskCompletion } from "./verbs/complete";
 import { SettingsControls } from "./verbs/settings";
 import { ForceVerbs } from "./verbs/force";
 import { OwnerStop } from "./verbs/owner-stop";
+import { DeferredOwnerVerbs } from "./verbs/deferred-verbs";
+import { BriefAmendmentDelivery } from "./verbs/brief-amendment";
+import { ReviewerAutoContinue } from "./verbs/reviewer-auto-continue";
+import type { RestartRequest } from "./verbs/owner-shared";
 import { PausedStops } from "./verbs/paused-stops";
 import { ProofControls } from "./verbs/proof";
 import { RouteControls } from "./verbs/route";
@@ -243,7 +255,7 @@ export class Engine {
     return detail;
   }
   private sweepOwner?: Sweep;
-  private get sweep(): Sweep { return this.sweepOwner ??= new Sweep(schedulingEngineContext(this, ['adapter', 'applyDeferredOwnerVerbs', 'archivePlannerGrants', 'archiveRetiredErroredAgents', 'auditPass', 'clearRetiredInvalidations', 'continueAwaitingReviewers', 'dispatchQueued', 'dispositionDeps', 'drainProjections', 'drainWaiters', 'enqueueTitle', 'ensureSweep', 'flushPrerequisiteReleases', 'host', 'hostAvailable', 'hostIds', 'hostOutages', 'hostWait', 'inventoryHostMatches', 'lastHookCleanupAt', 'lifecycle', 'maxSweepWindows', 'migrateProjectOwnersToPlanners', 'noteStepFailure', 'observeRetiredWorkers', 'quiesce', 'reconcile', 'recoverExhaustedWorkers', 'removeSiblings', 'resumePausedStops', 'retiredObservationKey', 'retiredObservationPlan', 'scheduleLane', 'scheduleLifecycleFollowUp', 'scheduleTaskQuantum', 'settleQuiesce', 'startSweepChain', 'stopped', 'store', 'sweepChain', 'sweepCursor', 'sweepDeferred', 'sweepDeferredCursor', 'sweepMode', 'sweepOrder', 'sweepPending', 'sweepStats', 'sweepTicks', 'taskHostAvailable', 'wakeCapacityWaiter', 'wakePreludes', 'withHost'], ['checkpoints', 'delegateNativeQuestions', 'deliverDecisionNotices', 'deliverDrainNotices', 'deliverHoldNotices', 'deliverHostOutageNotices', 'deliverNotices', 'deliverQueuedMessages', 'observationTargets', 'observe', 'origins', 'raiseOperatorQuestions', 'recovery', 'resumeAskQuestions', 'resumeResponsibleAnsweredQuestions', 'settleBudgetClock'])); }
+  private get sweep(): Sweep { return this.sweepOwner ??= new Sweep(schedulingEngineContext(this, ['adapter', 'applyDeferredOwnerVerbs', 'deliverPendingBriefAmendments', 'archivePlannerGrants', 'archiveRetiredErroredAgents', 'auditPass', 'clearRetiredInvalidations', 'continueAwaitingReviewers', 'dispatchQueued', 'dispositionDeps', 'drainProjections', 'drainWaiters', 'enqueueTitle', 'ensureSweep', 'flushPrerequisiteReleases', 'host', 'hostAvailable', 'hostIds', 'hostOutages', 'hostWait', 'inventoryHostMatches', 'lastHookCleanupAt', 'lifecycle', 'maxSweepWindows', 'migrateProjectOwnersToPlanners', 'noteStepFailure', 'observeRetiredWorkers', 'quiesce', 'reconcile', 'recoverExhaustedWorkers', 'removeSiblings', 'resumePausedStops', 'retiredObservationKey', 'retiredObservationPlan', 'scheduleLane', 'scheduleLifecycleFollowUp', 'scheduleTaskQuantum', 'settleQuiesce', 'startSweepChain', 'stopped', 'store', 'sweepChain', 'sweepCursor', 'sweepDeferred', 'sweepDeferredCursor', 'sweepMode', 'sweepOrder', 'sweepPending', 'sweepStats', 'sweepTicks', 'taskHostAvailable', 'wakeCapacityWaiter', 'wakePreludes', 'withHost'], ['checkpoints', 'delegateNativeQuestions', 'deliverDecisionNotices', 'deliverDrainNotices', 'deliverHoldNotices', 'deliverHostOutageNotices', 'deliverNotices', 'deliverQueuedMessages', 'observationTargets', 'observe', 'origins', 'raiseOperatorQuestions', 'recovery', 'resumeAskQuestions', 'resumeResponsibleAnsweredQuestions', 'settleBudgetClock'])); }
   readonly dispatchOwner = new Dispatch(this);
   private readonly dispatchAdmission = new DispatchAdmission({
     store: () => this.store,
@@ -368,10 +380,21 @@ export class Engine {
   private readonly briefControls: BriefControls;
   private readonly settingsControls: SettingsControls;
   readonly ownerStop: OwnerStop;
+  private readonly deferredVerbs: DeferredOwnerVerbs;
+  private readonly reviewerAutoContinue: ReviewerAutoContinue;
+  private readonly briefAmendmentDelivery: BriefAmendmentDelivery;
   private readonly reviewerControls: ReviewerControls;
   readonly moveControls: MoveControls;
   readonly restartControls: RestartControls;
+  readonly workerRestarts: WorkerRestarts;
+  private readonly reviewRestarts: ReviewRestarts;
+  private readonly episodeRestarts: EpisodeRestarts;
+  private readonly stalledTurnStops: StalledTurnStops;
   private readonly retryEffectControls: RetryEffectControls;
+  private readonly retryEffectReplay: RetryEffectReplay;
+  private readonly archiveEffectRetries: ArchiveEffectRetries;
+  private readonly recoveryEffectRetries: RecoveryEffectRetries;
+  private readonly ordinaryEffectRetries: OrdinaryEffectRetries;
   private readonly workerReconcile: WorkerReconcile;
   private readonly callbackIntake: CallbackIntake;
   private readonly workerFailover: WorkerFailover;
@@ -530,10 +553,21 @@ export class Engine {
     this.briefControls = new BriefControls(this);
     this.settingsControls = new SettingsControls(this);
     this.ownerStop = new OwnerStop(this);
+    this.deferredVerbs = new DeferredOwnerVerbs(this);
+    this.reviewerAutoContinue = new ReviewerAutoContinue(this);
+    this.briefAmendmentDelivery = new BriefAmendmentDelivery(this);
     this.reviewerControls = new ReviewerControls(this);
     this.moveControls = new MoveControls(this);
     this.restartControls = new RestartControls(this);
+    this.workerRestarts = new WorkerRestarts(this);
+    this.reviewRestarts = new ReviewRestarts(this);
+    this.episodeRestarts = new EpisodeRestarts(this);
+    this.stalledTurnStops = new StalledTurnStops(this);
     this.retryEffectControls = new RetryEffectControls(this);
+    this.retryEffectReplay = new RetryEffectReplay(this);
+    this.archiveEffectRetries = new ArchiveEffectRetries(this);
+    this.recoveryEffectRetries = new RecoveryEffectRetries(this);
+    this.ordinaryEffectRetries = new OrdinaryEffectRetries(this);
     this.workerReconcile = new WorkerReconcile(recoveryEngineContext(this, ['acceptWorkerResult', 'adapter', 'admission', 'branchPrLookupDue', 'compareSiblings', 'continuationOwnsReturn', 'hooks', 'host', 'idleGraceMs', 'note', 'reconcileBlockedReturn', 'reconcileBranchPr', 'reconcileObservation', 'reconcileReportingBinding', 'recordObservation', 'reportingBindingRecheckDue', 'stopped', 'store', 'updateAfterOperatorRemap', 'onTaskHost'], ['adoptReplacementPr', 'attention', 'extendCallbackReminder', 'heavyRunAlive', 'identifyOriginHost', 'withHost', 'reconcileStalledTurnStop', 'recovery', 'remindStoppedWorker', 'resolveIncident', 'responsiblePrReportRefused', 'settleAutomaticReplayHold', 'stalls', 'suppressAutomaticRetry', 'update', 'waiting']));
     const engine = this;
     this.callbackIntake = new CallbackIntake({
@@ -825,7 +859,7 @@ export class Engine {
   applyTaskControlSetRouting(input: TaskControlInput, operated: <T>(result: T) => T): Task { return this.settingsControls.applyTaskControlSetRouting(input, operated); }
   applyTaskControlExcludeWorker(input: TaskControlInput, operated: <T>(result: T) => T): Task { return this.settingsControls.applyTaskControlExcludeWorker(input, operated); }
   applyTaskControlLocal(input: TaskControlInput, operated: <T>(result: T) => T): Task { return this.settingsControls.applyTaskControlLocal(input, operated); }
-  restartParkedStep(task: Task, instruction: string | undefined, reviewerInstruction: string | undefined): Task { return this.restartControls.restartParkedStep(task, instruction, reviewerInstruction); }
+  restartParkedStep(task: Task, instruction: string | undefined, reviewerInstruction: string | undefined): Task { return this.workerRestarts.restartParkedStep(task, instruction, reviewerInstruction); }
   applyTaskControlHold(input: TaskControlInput, task: Task): Task { return this.settingsControls.applyTaskControlHold(input, task); }
   removeTask(id: string, version: number): Promise<Task> {
     return this.taskRemoval.removeTask(id, version);
@@ -930,7 +964,7 @@ export class Engine {
   promoteTaskFromAgent(caller:{taskId:string;runId:string;token:string},input:{taskId:string;version:number}) {
     return this.agentControls.promoteTaskFromAgent(caller,input);
   }
-  prepareWorkerResume(input:{taskId:string;version:number;instruction:string;settleFences?:{detail:string;runIds:string[];displacedRunIds?:string[]}}): Promise<() => Task> { return this.restartControls.prepareWorkerResume(input); }
+  prepareWorkerResume(input:{taskId:string;version:number;instruction:string;settleFences?:{detail:string;runIds:string[];displacedRunIds?:string[]}}): Promise<() => Task> { return this.workerRestarts.prepareWorkerResume(input); }
   repinInstruction(input:{taskId:string;version:number}):Promise<Task>{
     return this.briefControls.repinInstruction(input);
   }
@@ -962,30 +996,33 @@ export class Engine {
   reconcileReviewEntryExternalMerge(input:{task:Task;reason:string;caller?:string;qualification?:string;head?:string;
     relayed?:boolean;relayNote?:string;enclosing:()=>VerifiedEnclosingOperation|undefined}): Promise<Task> { return this.moveControls.reconcileReviewEntryExternalMerge(input); }
   retryEffect(input:TaskControlInput,operationId?:string):Promise<Task>{ return this.retryEffectControls.retryEffect(input,operationId); }
-  retryEffectBeforeSettlement(task:Task,input:TaskControlInput):Promise<Task>|null{ return this.retryEffectControls.retryEffectBeforeSettlement(task,input); }
-  retryPublicationBeforeSettlement(task:Task,input:TaskControlInput,publication:OwnerEffect):Promise<Task>{ return this.retryEffectControls.retryPublicationBeforeSettlement(task,input,publication); }
-  retryOwnedToolHold(task:Task,ownedTool:OwnerEffect):Promise<Task>{ return this.retryEffectControls.retryOwnedToolHold(task,ownedTool); }
-  retryCancelledWorkspaceRetirement(task:Task,input:TaskControlInput):Promise<Task>{ return this.retryEffectControls.retryCancelledWorkspaceRetirement(task,input); }
-  retryTerminalArchive(task:Task,input:TaskControlInput,archiveWorkspaceId:string,directory:string|null|undefined):Promise<Task>{ return this.retryEffectControls.retryTerminalArchive(task,input,archiveWorkspaceId,directory); }
-  retrySupersededReviewView(task:Task,input:TaskControlInput,intentWorkspaceId:string):Promise<Task>{ return this.retryEffectControls.retrySupersededReviewView(task,input,intentWorkspaceId); }
-  retryHookEffect(input:TaskControlInput,current:Task,eventId:string):Promise<Task>{ return this.retryEffectControls.retryHookEffect(input,current,eventId); }
-  reconcilePublicationEffect(input:TaskControlInput,current:Task,runId:string):Promise<Task>{ return this.retryEffectControls.reconcilePublicationEffect(input,current,runId); }
-  retryRecoveryEffect(task:Task,input:TaskControlInput,found:OwnerEffect):Promise<Task>{ return this.retryEffectControls.retryRecoveryEffect(task,input,found); }
-  retryTaskControlOperation(task:Task,found:OwnerEffect):Promise<Task>{ return this.retryEffectControls.retryTaskControlOperation(task,found); }
-  retryOrdinaryEffect(task:Task,input:TaskControlInput,found:{effect:string;kind:Exclude<OwnerEffect['kind'],'recovery_effect'|'task_control_operation'>},current:Task,expected:number):Promise<Task>{ return this.retryEffectControls.retryOrdinaryEffect(task,input,found,current,expected); }
-  heldArchiveRetryReason(task: Task, workspaceId: string, recorded: WorkspaceArchiveRetry | null, discard: WorkspaceDiscard | null, discardedNow: boolean): string { return this.retryEffectControls.heldArchiveRetryReason(task, workspaceId, recorded, discard, discardedNow); }
+  retryEffectBeforeSettlement(task:Task,input:TaskControlInput):Promise<Task>|null{ return this.ordinaryEffectRetries.retryEffectBeforeSettlement(task,input); }
+  retryPublicationBeforeSettlement(task:Task,input:TaskControlInput,publication:OwnerEffect):Promise<Task>{ return this.ordinaryEffectRetries.retryPublicationBeforeSettlement(task,input,publication); }
+  retryOwnedToolHold(task:Task,ownedTool:OwnerEffect):Promise<Task>{ return this.ordinaryEffectRetries.retryOwnedToolHold(task,ownedTool); }
+  retryCancelledWorkspaceRetirement(task:Task,input:TaskControlInput):Promise<Task>{ return this.archiveEffectRetries.retryCancelledWorkspaceRetirement(task,input); }
+  retryTerminalArchive(task:Task,input:TaskControlInput,archiveWorkspaceId:string,directory:string|null|undefined):Promise<Task>{ return this.archiveEffectRetries.retryTerminalArchive(task,input,archiveWorkspaceId,directory); }
+  retrySupersededReviewView(task:Task,input:TaskControlInput,intentWorkspaceId:string):Promise<Task>{ return this.archiveEffectRetries.retrySupersededReviewView(task,input,intentWorkspaceId); }
+  retryHookEffect(input:TaskControlInput,current:Task,eventId:string):Promise<Task>{ return this.recoveryEffectRetries.retryHookEffect(input,current,eventId); }
+  reconcilePublicationEffect(input:TaskControlInput,current:Task,runId:string):Promise<Task>{ return this.recoveryEffectRetries.reconcilePublicationEffect(input,current,runId); }
+  retryRecoveryEffect(task:Task,input:TaskControlInput,found:OwnerEffect):Promise<Task>{ return this.recoveryEffectRetries.retryRecoveryEffect(task,input,found); }
+  retryTaskControlOperation(task:Task,found:OwnerEffect):Promise<Task>{ return this.recoveryEffectRetries.retryTaskControlOperation(task,found); }
+  retryOrdinaryEffect(task:Task,input:TaskControlInput,found:OwnerEffect,current:Task,expected:number):Promise<Task>{ return this.ordinaryEffectRetries.retryOrdinaryEffect(task,input,found,current,expected); }
+  heldArchiveRetryReason(task: Task, workspaceId: string, recorded: WorkspaceArchiveRetry | null, discard: WorkspaceDiscard | null, discardedNow: boolean): string { return this.archiveEffectRetries.heldArchiveRetryReason(task, workspaceId, recorded, discard, discardedNow); }
   ownerStopHold(task: Task): boolean { return this.ownerStop.ownerStopHold(task); }
   ownerStopNamesRun(task: Task, runId: string | null | undefined): boolean { return this.ownerStop.ownerStopNamesRun(task, runId); }
 
   /** Round 4: a direct owner call — not a coordinator report and not a deferred replay. */
   isOwnerCall(): boolean { return this.controlContext.isOwnerCall(); }
 
-  deferredRestartSupersedesOwnerStop(task: Task): boolean { return this.ownerStop.deferredRestartSupersedesOwnerStop(task); }
+  deferredRestartSupersedesOwnerStop(task: Task): boolean { return this.deferredVerbs.deferredRestartSupersedesOwnerStop(task); }
   dispatchWaitsFor(task: Task, ownerStopYields?: boolean, inFlight?: boolean): "paused" | "held" | null { return this.ownerStop.dispatchWaitsFor(task, ownerStopYields, inFlight); }
   releaseOwnerStopHold(taskId: string, allowDeferredReplay?: boolean): boolean { return this.ownerStop.releaseOwnerStopHold(taskId, allowDeferredReplay); }
-  deferOwnerVerb(task: Task, input: TaskControlInput, why: "paused" | "held", target: { runId: string; checkpointOrdinal?: number; head?: string } | null): Task { return this.ownerStop.deferOwnerVerb(task, input, why, target); }
-  continueAwaitingReviewers(tasks: Task[]): Promise<void> { return this.ownerStop.continueAwaitingReviewers(tasks); }
-  applyDeferredOwnerVerbs(): Promise<void> { return this.ownerStop.applyDeferredOwnerVerbs(); }
+  deferOwnerVerb(task: Task, input: TaskControlInput, why: "paused" | "held", target: { runId: string; checkpointOrdinal?: number; head?: string } | null): Task { return this.deferredVerbs.deferOwnerVerb(task, input, why, target); }
+  continueAwaitingReviewers(tasks: Task[]): Promise<void> { return this.reviewerAutoContinue.continueAwaitingReviewers(tasks); }
+  applyDeferredOwnerVerbs(): Promise<void> { return this.deferredVerbs.applyDeferredOwnerVerbs(); }
+  dropDeferredOwnerVerb(taskId: string, at: string, kind: string, detail: string): void { this.deferredVerbs.dropDeferredVerb(taskId, at, kind, detail); }
+  /** Deliver every recorded brief-amendment intent that never reached its host. */
+  deliverPendingBriefAmendments(): Promise<void> { return this.briefAmendmentDelivery.deliverPending(); }
   stopTask(input: TaskControlInput): Promise<Task> { return this.ownerStop.stopTask(input); }
 
   stopActiveThreads(input: { caller?: string } = {}): Promise<z.infer<typeof stopThreads.output>> {
@@ -1001,10 +1038,13 @@ export class Engine {
   }
   restartParked(input: TaskControlInput, task: Task, role: RestartRole, reason: string, operationId?: string): Promise<Task> { return this.restartControls.restartParked(input, task, role, reason, operationId); }
   reviewerInstructionHeadProof(task: Task, version: number, commit: () => Task): Promise<Task> | null { return this.restartControls.reviewerInstructionHeadProof(task, version, commit); }
-  executeEpisodeRestart(taskId: string, displacement: { runIds: string[]; cancel: () => Promise<void> }, admit: () => Promise<Task | (() => Task | Promise<Task>)>, runIds?: string[]): Promise<Task> { return this.restartControls.executeEpisodeRestart(taskId, displacement, admit, runIds); }
+  executeEpisodeRestart(taskId: string, displacement: { runIds: string[]; cancel: () => Promise<void> }, admit: () => Promise<Task | (() => Task | Promise<Task>)>, runIds?: string[]): Promise<Task> { return this.episodeRestarts.executeEpisodeRestart(taskId, displacement, admit, runIds); }
   workerRestartArm(task: Task, input: { reason: string; instruction?: string; caller?: string; relayed?: boolean; note?: string;
-    fresh?: boolean; observedWorker?: AgentObservation; supersedeNonDelivery?: boolean }): { afterSettlement: (settled: Task) => Task; afterRevision: (revised: Task) => Task } { return this.restartControls.workerRestartArm(task, input); }
+    fresh?: boolean; observedWorker?: AgentObservation; supersedeNonDelivery?: boolean }): { afterSettlement: (settled: Task) => Task; afterRevision: (revised: Task) => Task } { return this.workerRestarts.workerRestartArm(task, input); }
   restartTask(input: TaskControlInput, operationId?: string): Promise<Task> { return this.restartControls.restartTask(input, operationId); }
+  restartWorker(request: RestartRequest): Promise<Task> { return this.workerRestarts.restartWorker(request); }
+  restartReviewer(request: RestartRequest): Promise<Task> { return this.reviewRestarts.restartReviewer(request); }
+  restartEpisode(request: RestartRequest): Promise<Task> { return this.episodeRestarts.restartEpisode(request); }
 
   continueRetainedReviewer(task: Task, options: {
     version: number; reason: string; instruction: string; ownerStopYields: boolean;
@@ -1019,8 +1059,8 @@ export class Engine {
   private stopRouteRun(task: Task, role: RouteRole, run: Run | null, operationId?: string): Promise<boolean> { return this.routeControls.stopRouteRun(task, role, run, operationId); }
 
   private assertRouteGroupAvailable(profileId: string, role: RouteRole): void { this.routeControls.assertRouteGroupAvailable(profileId, role); }
-  stopStalledTurn(input:{taskId:string;version:number;runId:string}): Promise<Task> { return this.restartControls.stopStalledTurn(input); }
-  prepareAbsentResolution(input:{taskId:string;version:number;settleFences?:{detail:string;runIds:string[];displacedRunIds?:string[]}}, restart?:{input:TaskControlInput;instruction:string}): Promise<Task | (()=>Task | Promise<Task>)> { return this.restartControls.prepareAbsentResolution(input, restart); }
+  stopStalledTurn(input:{taskId:string;version:number;runId:string}): Promise<Task> { return this.stalledTurnStops.stopStalledTurn(input); }
+  prepareAbsentResolution(input:{taskId:string;version:number;settleFences?:{detail:string;runIds:string[];displacedRunIds?:string[]}}, restart?:{input:TaskControlInput;instruction:string}): Promise<Task | (()=>Task | Promise<Task>)> { return this.episodeRestarts.prepareAbsentResolution(input, restart); }
   async stop() {
     this.stopped = true;
     this.unsubscribePrerequisites();
@@ -1073,9 +1113,9 @@ export class Engine {
   awaitProjectionOccurrence(key: string, drain: () => Promise<void>): Promise<void> {
     return this.projections.awaitProjectionOccurrence(key, drain);
   }
-  replayedArchiveOutcome(task: Task, input: TaskControlInput, operationId?: string): Task | null { return this.retryEffectControls.replayedArchiveOutcome(task, input, operationId); }
-  replayedCatalogArchiveOutcome(task: Task, input: TaskControlInput, operationId?: string): Task | null { return this.retryEffectControls.replayedCatalogArchiveOutcome(task, input, operationId); }
-  replayedDispositionWorkspaceOutcome(task: Task, input: TaskControlInput, operationId?: string): Task | null { return this.retryEffectControls.replayedDispositionWorkspaceOutcome(task, input, operationId); }
+  replayedArchiveOutcome(task: Task, input: TaskControlInput, operationId?: string): Task | null { return this.retryEffectReplay.replayedArchiveOutcome(task, input, operationId); }
+  replayedCatalogArchiveOutcome(task: Task, input: TaskControlInput, operationId?: string): Task | null { return this.retryEffectReplay.replayedCatalogArchiveOutcome(task, input, operationId); }
+  replayedDispositionWorkspaceOutcome(task: Task, input: TaskControlInput, operationId?: string): Task | null { return this.retryEffectReplay.replayedDispositionWorkspaceOutcome(task, input, operationId); }
   drainProjections(options: { cleanup?: boolean } = {}): Promise<void> {
     return this.projections.drainProjections(options);
   }
