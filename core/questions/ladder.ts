@@ -3,7 +3,7 @@ import { delegateQuestion } from './planner-delegation';
 import { escalationOutlived, readyReviewAtHead } from '../recovery/task-reasons';
 import { blockingRecoveryEffects } from '../recovery/recovery-effects';
 import { normalizeRepositoryOrigin } from '../../shared/lanes';
-import { proofWaitApplies } from '../qa/proof-execution';
+import { proofWaitApplies } from '../qa/proof-wait';
 import { openProofOnlyGo } from '../qa/proof-only-go';
 import { clipDecisionQuestion, taskControlInputSchema, taskOwner, type Completion, type DecisionView, type Task, type TaskControlInput, isDispositionActive } from '../../shared/contracts';
 import { digest } from '../store/store';

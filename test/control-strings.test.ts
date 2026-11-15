@@ -31,12 +31,14 @@ import { GitReadTimeoutError, SubmissionUnavailableError, WORKER_BRANCH_REFUSAL_
 import { hookHoldReason, isHookHoldReason } from '../core/hooks/hooks';
 import { OWNER_STOP_HOLD_PREFIX } from '../core/merge/merge-hold';
 import { RestartRefusal } from '../core/verbs/owner-verbs';
-import { ProofExecutionRefusal, ProofSingleFlightError, proofSingleFlightRefusal } from '../core/qa/proof-execution';
+import { proofSingleFlightRefusal, ProofSingleFlightError } from '../core/qa/proof-admission';
+import { ProofExecutionRefusal } from '../core/qa/proof-refusal';
 import { RepositoryRekeyRefused } from '../core/planning/repository-rekey';
 import { ReviewEntryRefusal } from '../core/review/review-entry';
 import { DurableFenceRefusal, runFenceRefusal } from '../core/intake/run-settlement';
 import { taskControlOperation } from '../core/verbs/task-control-key';
 import { LoginSessionFaultError } from '../shared/session-fault';
+import { TaskChangedRefusal } from '../shared/task-version';
 import { CAPACITY_WAIT_PREFIX, QA_CAPACITY_WAIT_PREFIX } from '../shared/wait-state';
 import { queueOperationSchema } from '../shared/operations';
 import { RETAINED_WORKER_PROFILE_REASON, runSchema, submissionSchema, taskControlInputSchema, type Run, type Task } from '../shared/contracts';
@@ -248,7 +250,7 @@ test('advance funnel: the merged-identity refusal is matched exactly, ahead of t
 // Rule 6: refusal text
 // ---------------------------------------------------------------------------
 
-test('version hint: only a plain or pre-send "Task changed" refusal gets it, and each keeps its class', async t => {
+test('version hint: only the typed stale-version refusal gets it, and it keeps its class', async t => {
   const f = fixture(t);
   const task = f.add();
   const stale = taskControlInputSchema.parse({ taskId: task.id, version: task.version, action: 'stop', reason: 'Pin' });
@@ -260,24 +262,27 @@ test('version hint: only a plain or pre-send "Task changed" refusal gets it, and
     return f.internals.appliedWithVersionHint(stale).then(() => assert.fail('must refuse'), (caught: Error) => caught);
   };
 
-  const plain = await throwing(new Error('Task changed; refresh before retrying'));
-  assert.equal(plain.constructor, Error);
-  assert.equal(plain.message, `Task changed; refresh before retrying ${hint}`);
+  // The stale-version fact is the typed refusal, never the refusal's words.
+  const typed = await throwing(new TaskChangedRefusal('Task changed; refresh before retrying', stale.version, current));
+  assert.ok(typed instanceof TaskChangedRefusal);
+  assert.equal(typed.message, `Task changed; refresh before retrying ${hint}`);
+  assert.equal(typed.expected, stale.version);
+  assert.equal(typed.current, current);
   // The coordinator retries only exactly this shape.
-  assert.match(plain.message, COORDINATOR_VERSION_RETRY);
+  assert.match(typed.message, COORDINATOR_VERSION_RETRY);
 
-  const proven = await throwing(new ProvenPreSendRefusalError('Task changed; refresh before retrying'));
-  assert.ok(proven instanceof ProvenPreSendRefusalError);
-  assert.equal(proven.reason, `Task changed; refresh before retrying ${hint}`);
-  assert.equal(proven.message, `Reviewer continuation refused before send: Task changed; refresh before retrying ${hint}`);
-
-  const typed = new RestartRefusal('Task changed; refresh before retrying');
-  assert.equal(await throwing(typed), typed, 'a typed subclass passes through untouched');
+  // Prose that happens to read like a stale version gets no hint: no reader parses it.
+  const plain = new Error('Task changed; refresh before retrying');
+  assert.equal(await throwing(plain), plain);
+  const proven = new ProvenPreSendRefusalError('Task changed; refresh before retrying');
+  assert.equal(await throwing(proven), proven);
+  const restart = new RestartRefusal('Task changed; refresh before retrying');
+  assert.equal(await throwing(restart), restart, 'a typed subclass passes through untouched');
   const other = new Error('Task moved; refresh before retrying');
   assert.equal(await throwing(other), other, 'other prose passes through untouched');
 
   const fresh = taskControlInputSchema.parse({ ...stale, version: current });
-  const same = new Error('Task changed; refresh before retrying');
+  const same = new TaskChangedRefusal('Task changed; refresh before retrying', fresh.version, current);
   f.internals.performTaskControlApplied = async () => { throw same; };
   await assert.rejects(f.internals.appliedWithVersionHint(fresh), (caught: Error) => caught === same, 'a current version gets no hint');
 });
@@ -595,7 +600,9 @@ const PARSED: ParsedText[] = [
   { site: 'owned-tool retry refusal', re: /^Owned-tool hold .+ remains:/, sample: 'Owned-tool hold run-1 remains: live', writers: ['Owned-tool hold ${runId} remains: ${hold}'], reads: ['startsWith("owned_tool.")'] },
   { site: 'coordinator version retry', re: COORDINATOR_VERSION_RETRY, sample: 'Task changed; refresh before retrying (the task is now version 3; read next again and reassess before retrying)',
     writers: ['Task changed; refresh before retrying', '${message} (the task is now version ${current}; read next again and reassess before retrying)'] },
-  { site: 'version hint', re: /^Task changed\b/, sample: 'Task changed during the move; read next', reads: ['error.constructor === Error'] },
+  // The stale-version hint is decided by the typed refusal, so only its writers
+  // are pinned; nucleus#1218 removed the message reader.
+  { site: 'version hint', writers: ['Task changed; refresh before retrying', '${message} (the task is now version ${current}; read next again and reassess before retrying)'] },
   { site: 'move replan', re: /^(Task changed|Task or run changed|A run started during the move|A run changed during the move)/, sample: 'A run changed during the move; refresh before retrying',
     writers: ['Task changed during the move; read next', 'Task or run changed; refresh before retrying', 'A run started during the move', 'A run changed during the move; refresh before retrying'] },
   { site: 'proof single flight', sample: 'An author-side proof execution was already reserved at abc',
@@ -608,7 +615,9 @@ const PARSED: ParsedText[] = [
     sample: 'A worker run (run-1) still owns this task: live' },
   { site: 'proof hold', reads: ['`Proofs Queue cannot run, left for the planner or operator at ${pr.head}:`', 'proofHold.reason.startsWith(proofHoldPrefix)'],
     writers: ['`Proofs Queue cannot run, left for the planner or operator at ${head}: ${proofs}. Run them through the proof verb or accept the head, then release this merge hold.`'] },
-  { site: 'auto-continue fence cleared', reads: ["refused?.detail.includes('unresolved task incident or recovery fence')"], writers: ['An unresolved task incident or recovery fence blocks reviewer continuation'] },
+  // nucleus#1218: the retry window's fence facts are derived, not read from the
+  // refusal's words, so only the refusal's own sentence stays pinned.
+  { site: 'auto-continue fence cleared', writers: ['An unresolved task incident or recovery fence blocks reviewer continuation'] },
   { site: 'review recovery wait', reads: ["['Ordinary review', 'Review-entry'].some(label =>", 't.reason === `${label} waits for ${refusal}; settle it with retry_effect before continuing`',
       '/^(Ordinary review|Review-entry) waits for .+; settle it with retry_effect before continuing$/'],
     writers: ["`${run.ordinaryDetached?'Ordinary review':'Review-entry'} waits for ${recoveryEffectsRefusal(error.effects)}; settle it with retry_effect before continuing`"] },
@@ -617,7 +626,9 @@ const PARSED: ParsedText[] = [
   { site: 'blocked effect attention',
     reads: ['detail.startsWith(BLOCKED_EFFECT_ATTENTION_PREFIX)', 'stop.detail.startsWith(BLOCKED_EFFECT_ATTENTION_PREFIX)'],
     writers: ['BLOCKED_EFFECT_ATTENTION_PREFIX = "An uncertain side effect blocks review"', '`${BLOCKED_EFFECT_ATTENTION_PREFIX}: ${recoveryEffectsRefusal(blocked)}'] },
-  { site: 'external merge check', reads: ['t.reason.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX) || t.reason === EXTERNAL_MERGE_CHECK_RECOVERED_REASON', 't.reason === ACCEPTED_PR_RECONCILIATION_REASON'] },
+  // The check's resume rule moved to its own owner; the parked-phase and accepted-PR
+  // readers are the same two facts at their new site.
+  { site: 'external merge check', reads: ['task.reason.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX) || task.reason === EXTERNAL_MERGE_CHECK_RECOVERED_REASON', 't.reason === ACCEPTED_PR_RECONCILIATION_REASON'] },
   { site: 'revision repair', reads: ['t.reason === WORKER_PR_IDENTITY_REFUSAL'], writers: ["WORKER_PR_IDENTITY_REFUSAL = \"PR must be open, ready, and match the task's branch and base\""] },
   // The checkout refusal is typed at its throw site, so the reader is the class
   // and its codes; the prose below is what the worker reads.
@@ -628,7 +639,11 @@ const PARSED: ParsedText[] = [
   // The owned-tool proof decides on its typed issue fact, so no reader matches
   // this refusal's text any more; the writer's sentence stays pinned.
   { site: 'tool issue', sample: 'observed tool call x is running', writers: [' and is running'] },
-  { site: 'agent gone', reads: ["error.message === 'Agent was not found'", 'error.message !== "Agent was not found"', 'error.message === "Agent was not found"', 'const AGENT_NOT_FOUND = "Agent was not found"'], writers: ['throw new Error("Agent was not found")', "throw Error('Agent was not found')"] },
+  // The host's gone-thread fact is typed at one reader now (nucleus#1222): every
+  // site asks isAgentGoneRefusal, and only the host's own throw sites still write
+  // the host's words. A reword at one reader would leave the others standing, so
+  // the typed reader carries a floor.
+  { site: 'agent gone', reads: ['isAgentGoneRefusal(error)'], writers: ['AGENT_NOT_FOUND = \'Agent was not found\'', 'throw new Error("Agent was not found")', "throw Error('Agent was not found')"] },
   // Task 1090: empty awaitingProofs on source approval names the ready_to_merge
   // route so a reviewer that finished source review with only release gates
   // remaining is not left without a report. Both throw sites stay byte-identical.
@@ -640,15 +655,16 @@ const PARSED: ParsedText[] = [
   { site: 'unverified provider refusal', reads: ['stop.detail.startsWith(`Reviewer run ${run.id} provider refusal is unverified`)'], writers: ['`Reviewer run ${run.id} provider refusal is unverified: ${read.gap}`'] },
   { site: 'legacy delegated answerer', re: /^(planner|decider) (.*)$/, sample: 'planner agent-1' },
   { site: 'delegated answerer id', re: /^(?:delegated )?(?:planner|decider)\s+(\S+)$/, sample: 'delegated planner agent-1' },
-  { site: 'decision link', re: /decision (\S+)/, sample: 'q-1: decision d-1; linked', writers: ['decision ${'] },
+  { site: 'decision link', re: /decision ([^;\s]+)/, sample: 'q-1: decision d-1; linked', writers: ['decision ${'] },
   { site: 'decision link, bounded', re: /decision ([^;\s]+)/, sample: 'q-1: decision d-1; linked' },
   { site: 'ladder decision link', re: /decision ([0-9a-f-]{36})/, sample: 'e-1: decision 00000000-0000-4000-8000-000000000000' },
-  { site: 'ask run', re: /\brun ([^\s(]+)/, sample: 'a-1: kind scope; run r-1 (worker); agent x', writers: ['${ask.id}: kind ${ask.kind}; run ${run.id} (${run.role}); agent ${run.agentId ?? \'unknown\'}; question ${digest(ask.question)} (${ask.question.length} chars)'] },
+  // The ask lifecycle is decoded once, so its identity line is read by one regex.
+  { site: 'ask run', re: /\brun (\S+) \(/, sample: 'a-1: kind scope; run r-1 (worker); agent x', writers: ['${ask.id}: kind ${ask.kind}; run ${run.id} (${run.role}); agent ${run.agentId ?? \'unknown\'}; question ${digest(ask.question)} (${ask.question.length} chars)'] },
   { site: 'ask run and agent', re: /run (\S+) \([^)]+\); agent ([^;\s]+)/, sample: 'a-1: kind scope; run r-1 (worker); agent x; question d (1 chars)' },
-  { site: 'ask joined', re: /queue question (\S+)/, sample: 'a-1: queue question q-1', writers: ['${ask.id}: queue question ${joined}', ': queue question ${decision.id}'], reads: ['`${askId}: queue question `', "split('queue question ')"] },
-  { site: 'ask delegated planner', re: /planner (\S+);/, sample: 'a-1: task planner p-1; asked', writers: ["${rung === 'task' ? 'task planner' : 'project planner'} ${agentId}; asked"], reads: ['`${askId}: planner `', '`${askId}: task planner `', '`${askId}: project planner `'] },
-  { site: 'ask delegated reviewer', re: /reviewer (\S+);/, sample: 'a-1: reviewer r-1; consult', writers: ['${ask.id}: reviewer ${reviewer}; consult'], reads: ['`${askId}: reviewer `'] },
-  { site: 'ask delegated decider', reads: ['`${askId}: decider`'], writers: ['decider requested'] },
+  { site: 'ask joined', re: /queue question (\S+)/, sample: 'a-1: queue question q-1', writers: ['${ask.id}: queue question ${joined}', ': queue question ${decision.id}'], reads: ["split('queue question ')"] },
+  { site: 'ask delegated planner', re: /planner (\S+);/, sample: 'a-1: task planner p-1; asked', writers: ["${rung === 'task' ? 'task planner' : 'project planner'} ${agentId}; asked"], reads: ['body.startsWith(" task planner ")', 'body.startsWith(" project planner ")'] },
+  { site: 'ask delegated reviewer', re: /reviewer (\S+);/, sample: 'a-1: reviewer r-1; consult', writers: ['${ask.id}: reviewer ${reviewer}; consult'] },
+  { site: 'ask delegated decider', reads: ['`${fact.id}: decider`'], writers: ['decider requested'] },
   { site: 'ladder cause', re: /cause ([0-9a-f]{64})/, sample: `e-1: cause ${'f'.repeat(64)}; run r-1; question d (1 chars)`, writers: ['${id}: cause ${input.cause}; run ${input.runId ?? \'worker\'}; question ${digest('] },
   { site: 'ladder run', re: /run (\S+?);/, sample: 'e-1: cause x; run r-1; question d (1 chars)' },
   { site: 'ladder ordinary answer', reads: ['`${id}: answered by ordinary `'], writers: ['${escalation.id}: answered by ordinary ${action}: task control moved the task', '${id}: answered by ordinary progress: the task merged or ended first'] },
@@ -718,15 +734,15 @@ for (const row of PARSED) {
  * A move keeps the counts, and a new kind or a new site needs no edit here. A PR
  * that deletes a reader or writer lowers its floor deliberately.
  */
-const EVENT_KINDS = `absent_creation_replaced:2:1 absent_worker_retry:2:1 adopted:1:0 agent_ask:5:4 agent_ask_answered:6:7 agent_ask_decision:2:4 agent_ask_delegated:4:2
-agent_ask_delegation_missed:1:3 agent_ask_delegation_unknown:1:4 agent_ask_joined:3:2 agent_ask_planning_ruling:2:1 agent_ask_resumed:3:2
-agent_ask_reviewer_missed:1:2 agent_ask_stale_answered:1:2 agent_ask_superseded:4:4 agent_created:1:1 agent_intent:1:3 automatic_retry_suppressed:1:1
+const EVENT_KINDS = `absent_creation_replaced:2:1 absent_worker_retry:2:1 adopted:1:0 agent_ask:2:3 agent_ask_answered:2:7 agent_ask_decision:1:3 agent_ask_delegated:1:2
+agent_ask_delegation_missed:1:3 agent_ask_delegation_unknown:1:3 agent_ask_joined:1:1 agent_ask_planning_ruling:1:1 agent_ask_resumed:1:2
+agent_ask_reviewer_missed:1:2 agent_ask_stale_answered:1:2 agent_ask_superseded:3:3 agent_created:1:1 agent_intent:1:3 automatic_retry_suppressed:1:1
 blocked_pr_identity_deferred:1:1 blocked_review_evidence:1:1 blocker_ladder_classified:1:1 callback_reminder:3:10 callback_reminder_extended:2:1
-callback_reminder_skipped:1:1 cancel:1:52 checkpoint_continued:1:1 closed_out:1:5 closeout_base_renewed:1:1 closeout_hold_refresh:1:1
+callback_reminder_skipped:1:1 cancel:1:52 checkpoint_continued:1:1 closed_out:1:5 closeout_base_renewed:0:1
 closeout_recovery_budget:1:1 completion_received:1:4 coordinator_action_refused:1:2 coordinator_rearm:1:1 delegated_answer:5:1 delegated_closed:3:3
 delegated_decision_route:2:1 delegated_delivery:4:1 dependencies_changed:1:1 dispatch_intent:1:1
 disposition_complete:2:1 disposition_requested:1:1 disposition_turn_interrupted:2:1 environment_deferred:1:3 escalation_resolved:1:1
-external_merge_observed:2:3 external_workspace_archive_archived:1:3 hold:1:100 hold_until_blocked:1:1 hook_blocked:2:0 hook_execution_started:3:2
+external_merge_observed:2:2 external_workspace_archive_archived:1:3 hold:1:100 hold_until_blocked:1:1 hook_blocked:2:0 hook_execution_started:3:2
 hook_failed:1:0 hook_intent:2:2 hook_published:1:0 hook_result:1:0 hook_uncertain:2:1 hook_workspace_created:1:1 hook_workspace_intent:1:1
 incident:3:8 initial_pr_lookup_unavailable:1:1 main_synchronized:1:1 merge_intent:1:1 merge_verified:4:1 native_question_answered:1:1
 native_question_delegated:2:1 native_question_operator:1:1 native_question_response_intent:2:1 native_question_unanswered:1:1
@@ -734,7 +750,7 @@ native_question_unknown:1:1 needs_attention:4:168 non_delivery:3:12 non_delivery
 operator_question:8:9 operator_question_answered:10:8 operator_question_applied:3:1 operator_question_decided:1:1 operator_question_decision:4:7
 operator_question_delegation_missed:1:3 operator_question_delegation_unknown:1:3 operator_question_reasked:1:1 operator_question_refused:2:2
 operator_question_stale_answered:3:3 operator_question_superseded:3:5 operator_question_unknown:1:3 owned_tool_hold:3:2 owned_tool_settled:1:1
-owner_control:3:9 owner_restart_instruction_sent:3:2 owner_stop_sent:5:4 owner_stop_uncertain:2:2 owner_stopped:4:1 owner_verb_deferred:1:1
+owner_control:3:9 owner_restart_instruction_sent:2:2 owner_stop_sent:5:4 owner_stop_uncertain:2:2 owner_stopped:3:1 owner_verb_deferred:1:1
 paused_resume_uncertain:1:2 planner_escalation_answered:1:5 planner_escalation_attached:1:1 planner_escalation_decision:1:1
 planner_escalation_decision_linked:1:3 planner_escalation_missed:2:3 planner_escalation_offered:1:1 planner_escalation_payload:2:2
 planner_escalation_refusal_sent:1:1 planner_escalation_resolved:1:2 planner_escalation_sent:1:1 planner_escalation_unknown:1:6
@@ -758,18 +774,21 @@ workspace_created:1:3 workspace_creation_auto_replay:1:1 workspace_released:1:2`
 const KIND_TEMPLATES = ['`review_delivery_${status}`'];
 
 const directRead = /\bevent\.kind\s*[!=]==?\s*(['"])([a-z][a-z0-9_]+)\1/g, listRead = /\[([^\]\n]+)\]\.includes\(event\.kind\)/g;
+/** A decoded lifecycle reads its kinds as `switch` cases, which is the same reading fact. */
+const switchRead = /\bcase\s*(['"])([a-z][a-z0-9_]+)\1\s*:/g;
 
 test('census: no pinned event kind lost a reader', () => {
   const reads = new Map<string, number>();
   const read = (kind: string) => reads.set(kind, (reads.get(kind) ?? 0) + 1);
   for (const match of source().matchAll(directRead)) read(match[2]!);
   for (const match of source().matchAll(listRead)) for (const kind of match[1]!.matchAll(/['"]([a-z][a-z0-9_]+)['"]/g)) read(kind[1]!);
+  for (const match of source().matchAll(switchRead)) read(match[2]!);
   const lost = EVENT_KINDS.filter(row => (reads.get(row.kind) ?? 0) < row.reads).map(row => `${row.kind}: ${reads.get(row.kind) ?? 0} of ${row.reads}`);
   assert.deepEqual(lost, [], 'a reader was renamed or removed');
 });
 
 test('census: no pinned event kind lost a writer', () => {
-  const rest = source().replace(directRead, '').replace(listRead, '');
+  const rest = source().replace(directRead, '').replace(listRead, '').replace(switchRead, '');
   const count = (kind: string) => occurrences(rest, `'${kind}'`) + occurrences(rest, `"${kind}"`) + occurrences(rest, `\`${kind}\``);
   const lost = EVENT_KINDS.filter(row => count(row.kind) < row.writes).map(row => `${row.kind}: ${count(row.kind)} of ${row.writes}`);
   assert.deepEqual(lost, [], 'a writer was renamed or removed');

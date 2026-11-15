@@ -38,7 +38,7 @@ import type { ProjectQaRun } from "../../shared/contracts";
 import type { HostRunRetainedStream } from "./host-run-output-failures";
 import { qaKeyNamesRepository, qaSameRepository, resolveQaCallerKey, type QaCallerKeyResolution, type QaCallerLineageStep } from "../qa/qa-caller-provenance";
 import type { RepositoryRekeyReceipt } from "../../shared/repository-rekey";
-import { parseProjectValidationCaller } from "../qa/project-validation-caller";
+import { parseProjectValidationCaller } from "../../shared/project-validation-caller";
 
 /** The run fields the classification may read; all are durable record fields. */
 export interface RetainedOutputOwnershipRun {

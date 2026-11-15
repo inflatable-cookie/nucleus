@@ -24,6 +24,7 @@ import { pidAlive } from "../machine/process-identity";
 import { hostRunProcessStartIdentity } from "../machine/start-identity";
 import type { Store } from "../store/store";
 import { HISTORY_RETENTION_MS, now } from "../store/store";
+import { refuseHostRun } from "./host-run-refusal";
 
 export { classifyHostRun } from "./host-run-admission";
 export { defaultBudgetFallback, HISTORY_MEMORY_MARGIN, HISTORY_MEMORY_SHARE_CAP, NO_HISTORY_CPU_SHARE, percentile95, selectorForArgv } from "./host-run-capacity";
@@ -82,7 +83,7 @@ export class HostRunScheduler {
    * the next answered.
    */
   recordEndpointEvent(
-    event: "endpoint_bound" | "endpoint_unbound" | "endpoint_answered" | "endpoint_handoff",
+    event: "endpoint_bound" | "endpoint_unbound" | "endpoint_answered" | "endpoint_handoff" | "endpoint_reattach_refused",
     at = new Date(this.nowMs()).toISOString(),
     extra: Record<string, unknown> = {},
   ): void {
@@ -102,7 +103,7 @@ export class HostRunScheduler {
   private assertCurrentEpoch(epoch: number): void {
     const current = hostRunAuthoritySchema.safeParse(this.store.getMeta<unknown>("hostRunAuthority"));
     if (!current.success || current.data.holder !== "queue") throw new Error("Nucleus is not the current host-run scheduler authority");
-    if (current.data.epoch !== epoch) throw new Error(`stale_epoch: expected ${current.data.epoch}, received ${epoch}`);
+    if (current.data.epoch !== epoch) refuseHostRun("stale_epoch", `expected ${current.data.epoch}, received ${epoch}`);
   }
 
   private currentEpoch(epoch: number): boolean {

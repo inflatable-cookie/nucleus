@@ -31,7 +31,7 @@ import { retainedProgressRun } from './dispatch/retained-work';
 
 import { AsyncLocalStorage } from "node:async_hooks";
 
-import { proofWaitApplies } from './qa/proof-execution';
+import { proofWaitApplies } from './qa/proof-wait';
 import { type VerifiedPr, type CheckHistory, type CheckObservation, type ReviewerSetting, type PublicationOutcome } from './forge/index';
 
 import { type Completion, type Incident, type Profile, type RepositoryChecksPolicy, type ReviewDeliveryAuthorization, type ReviewCheckpointRecord, type Run, type Task, type TaskControlInput, type UsageLevel, type OwnerAcceptanceRecord, type AgentMessageRecord } from '../shared/contracts';
@@ -60,12 +60,13 @@ import { ProviderRefusals, type ProviderRefusalEvidence } from './recovery/provi
 import { CallbackReminders } from './intake/callback-reminders';
 import { CheckWaits, type CheckWaitsContext } from './merge/check-waits';
 import { ParticipantLease } from './dispatch/participant-lease';
+import { WithdrawnQuestion } from './dispatch/withdrawn-question';
 import { IntegrationTurns, type IntegrationTurnsContext } from './merge/integration-turns';
 import { Notices } from './questions/notices';
 import { MergeIntent, type MergeIntentContext } from './merge/merge-intent';
 import { RunCallbackIntake } from './intake/run-callback-intake';
 import { MergeGates, type MergeGatesContext } from './merge/merge-gates';
-import { RetryRoutes } from './recovery/retry-routes';
+import { RetryRoutes } from './recovery/retry-orchestration';
 import { ExternalMerge, type ExternalMergeContext } from './merge/external-merge';
 import { AbsentRestarts } from './recovery/absent-restarts';
 import { Delegation } from './questions/delegation';
@@ -107,7 +108,7 @@ import { type EscalationVerbChoice } from './questions/blocker-ladder';
 export { ABSENT_RESOLUTION_REASON, ABSENT_WORKER_REASON, ACCEPTED_PR_RECONCILIATION_REASON, EXTERNAL_MERGE_CHECK_REASON_PREFIX, EXTERNAL_MERGE_CHECK_RECOVERED_REASON, MERGE_HELD_REASON, OPERATOR_WORKER_REMAP_REASON, PRE_AGENT_LAUNCH_FAILURE_REASON, ProvenPreSendRefusalError, RESPONSIBLE_QUESTION_WAIT, RetainedRunRefusal, VALIDATION_SCAN_PASS_MAX_MS, isAcceptedReview, participantToolRunIds } from './recovery/task-reasons';
 export { retainedProgressRun } from './dispatch/retained-work';
 export { NO_ORIGIN_THREAD_WAIT, originRecipient } from './questions/origin';
-export { docsOnlyProofAutorunSkip, proofAutorunWaitingInputs, proofWaitApplies } from './qa/proof-execution';
+export { docsOnlyProofAutorunSkip, proofAutorunWaitingInputs, proofWaitApplies } from './qa/proof-wait';
 export { reviewContinuationLocalRefusal } from './review/review-continuation';
 
 /** Task 382: the check evidence a merge gate reports beside its wait: the effective hosted-check policy, the required and advisory results at the exact head, and the repository settings revision the policy came from. */
@@ -301,6 +302,7 @@ export class Resolution {
     waiting: (...args) => owner.waiting(...args),
   }))(this));
   readonly participantLease = new ParticipantLease(this);
+  readonly withdrawnQuestion = new WithdrawnQuestion(this);
   readonly integrationTurns = new IntegrationTurns(((owner: Resolution): IntegrationTurnsContext => ({
     assignIntegrationTurn: (...args) => owner.assignIntegrationTurn(...args),
     hasEarlierIntegrationTurn: (...args) => owner.hasEarlierIntegrationTurn(...args),
@@ -624,7 +626,7 @@ export class Resolution {
   lease(t: Task, onBusy?: (agentId: string, state: Awaited<ReturnType<Adapter['observe']>>) => void, supersededRunId?: string): Promise<boolean> { return this.participantLease.lease(t, onBusy, supersededRunId); }
   leaseDeclineText(t: Task, agentId: string, state: Awaited<ReturnType<Adapter['observe']>>): string { return this.participantLease.declineText(t, agentId, state); }
   leaseDeclineReason(t: Task): Promise<string | null> { return this.participantLease.declineReason(t); }
-  resolveWithdrawnPending(t: Task, hint?: { agentId: string; state: Awaited<ReturnType<Adapter['observe']>> }): Promise<boolean> { return this.participantLease.resolveWithdrawnPending(t, hint); }
+  resolveWithdrawnPending(t: Task, hint?: { agentId: string; state: Awaited<ReturnType<Adapter['observe']>> }): Promise<boolean> { return this.withdrawnQuestion.resolve(t, hint); }
   refreshingCloseoutHook(t: Task, syncing: boolean): ReturnType<ParticipantLease['refreshingCloseoutHook']> { return this.participantLease.refreshingCloseoutHook(t, syncing); }
   executionLease(t: Task, enclosing?: VerifiedEnclosingOperation, syncing?: boolean, probe?: boolean): Promise<boolean> { return this.participantLease.executionLease(t, enclosing, syncing, probe); }
   participantToolIssue(taskId: string, agentId: string, workspaceId: string): Promise<string | null> { return this.participantLease.participantToolIssue(taskId, agentId, workspaceId); }
@@ -872,7 +874,8 @@ export class Resolution {
    * once per answered permission: the answered event is the fence, and a lost
    * observation is recorded as unknown and never resent. Observation uses the
    * existing permission-resolution surface (`answeredQuestions`, read from the
-   * agent timeline); a failed read is empty, never evidence.
+   * agent timeline); a read that fails or is refused is recorded as an unknown
+   * observation, never as an operator who answered nothing.
    */
   delegateNativeQuestions(): Promise<void> { return this.nativeQuestions.delegateNativeQuestions(); }
   answerNativeQuestions(taskId: string, agentId: string, workspaceId: string, id: string,
@@ -893,6 +896,7 @@ export class Resolution {
    * or delegated answers inert and close any linked board decision.
    */
   supersedeOpenOwnerQuestions(taskId: string, reason: string): void { return this.questionSupersession.supersedeOpenOwnerQuestions(taskId, reason); }
+  answerOpenAgentAsks(taskId: string, answer: string, reason: string): string[] { return this.questionSupersession.answerOpenAgentAsks(taskId, answer, reason); }
   /** Record the answer, then apply the owner verb it names with the operator's authority. */
   settleOperatorQuestion(taskId: string, question: OperatorQuestion, answer: string, recordAnswer = true): Promise<void> { return this.questions.settleOperatorQuestion(taskId, question, answer, recordAnswer); }
   /**

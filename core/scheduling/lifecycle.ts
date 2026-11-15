@@ -1,7 +1,8 @@
+import { MISSING_CALLBACK_CAUSE } from '../../shared/incident';
 import { stages, ACCEPTED_PR_RECONCILIATION_REASON } from '../recovery/task-reasons';
 import { blockingRecoveryEffects, recoveryEffectsRefusal } from '../recovery/recovery-effects';
 import { blockedEffectAttentionRecorded } from '../recovery/effect-gates';
-import { proofWaitApplies } from '../qa/proof-execution';
+import { proofWaitApplies } from '../qa/proof-wait';
 import { type Task } from '../../shared/contracts';
 import { isDispositionActive } from "../../shared/contracts";
 import { reviewAuthorizationRequired, reviewContinuationWait } from '../review/review-continuation';
@@ -107,7 +108,7 @@ export class SchedulingLifecycle {
     // their incident/stop and any coordinator's cannot outcome until an owner acts.
     const missingCallback = completed && (t.reason===`The ${completed.role} thread stopped without a callback; inspect the thread`
       || t.reason===`The ${completed.role} callback reminder expired`
-      || t.resolution.incident?.runId===completed.id && (t.resolution.incident.cause==='missing_callback' || t.resolution.incident.action==='callback_reminder'));
+      || t.resolution.incident?.runId===completed.id && (t.resolution.incident.cause===MISSING_CALLBACK_CAUSE || t.resolution.incident.action==='callback_reminder'));
     // A stalled run can also deliver its authenticated result after escalation.
     // Only settle its own stall, after release and coordinator release; other
     // incidents (especially publication faults) still require their owner.

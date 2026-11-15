@@ -295,8 +295,14 @@ passes its view function to the task-next assembler. Handlers with I/O remain
 in the existing control modules below.
 
 **TaskControlDispatcher** (`core/verbs/dispatcher.ts`). Every task control
-enters here: audit lines, force and cap gates, the action switch, the authority
-proofs, and the wrappers that wake a task after its verb. Enforces
+enters here: audit lines, the force gate, the action switch, and the wrappers that
+wake a task after its verb. The mechanisms it used to own inline have one owner
+each: `control-outcomes.ts` records the outcome and adds the stale-version hint
+from the typed `TaskChangedRefusal` (`shared/task-version.ts`), `owner-authority.ts`
+proves owner and delegated authority, `receipt-acceptance.ts` records the one
+operator receipt acceptance, `budget-extension.ts` applies an authorized
+extension, `no-automatic-retry-record.ts` records the durable retry rule, and
+`author-revision-cap.ts` gates the exhausted author-revision allowance. Enforces
 [Verbs](#verbs). Delegates remain on Engine.
 
 **ForceVerbs** (`core/verbs/force.ts`). Applies `force: true` on
@@ -314,18 +320,32 @@ Enforces [Retained and replaced readers](#retained-and-replaced-readers),
 `retainedReaderDecision`. Delegates remain on Engine. `ExternalMergeRefusal` is
 the typed pre-send refusal this verb throws.
 
-**RestartControls** (`core/verbs/restart.ts`). The owner `restart` verb: every
-run shape it continues or replaces, the parked step and escalation answer it
-falls back to, the stalled-turn stop and absent-run recovery. Enforces
+**RestartControls** (`core/verbs/restart.ts`). The owner `restart` verb's
+admission: the terminal and disposition gates, role and shape derivation, retained
+workspace recovery, the replacement ceiling, the owner-stop deferral, the parked
+step and escalation answer it falls back to, and the stalled-run handoff. Each
+shape is served by its own owner: `restart-worker.ts` continues or replaces a
+worker run (owner-stopped, pre-dispatch, absent creation, blocked/retained and
+stopped revision) and owns the worker restart arm; `restart-review.ts` continues a
+reviewer checkpoint or relaunches a stopped reader; `restart-episode.ts` owns the
+absent resolution creation and the coordinator episode; `executor-report.ts` makes
+the proof executor's one bounded re-report request; `stalled-turn-stop.ts` owns the
+durable targeted stop. Enforces
 [Retained worker recovery](#retained-worker-recovery) and the restart arms in
 [Verbs](#verbs). Delegates remain on Engine.
 
 **RetryEffectControls** (`core/verbs/retry-effect.ts`). The owner
-`retry_effect` verb, by phase: replayed outcomes, branches that answer before
-observed-idle settlement, recovery effects and uncertain operations, then fence
-settlement and the ordinary effects. Enforces
-[Durable effects](#durable-effects-and-unknown-delivery). Delegates remain on
-Engine.
+`retry_effect` verb's order: replayed outcomes, branches that answer before
+observed-idle settlement, the observation-only settlement, then the named effect.
+Each half has its owner: `retry-effect-replay.ts` decodes the persisted operation
+and answers a replay from its recorded outcome, `retry-effect-ordinary.ts` owns the
+ordered pre-settlement rule chain and the ordinary effect kinds,
+`retry-effect-recovery.ts` observes and settles each recovery effect, and
+`retry-effect-archive.ts` owns the terminal, superseded-view and cancelled-workspace
+archive retries with their discard authority. The `kind.identity` effect key is
+decoded once by `splitOwnerEffectKey`/`ownerEffectIdentity` in `owner-effects.ts`.
+Enforces [Durable effects](#durable-effects-and-unknown-delivery). Delegates remain
+on Engine.
 
 **RouteControls** (`core/verbs/route.ts`). The owner `route` verb, its
 live-run stop and subscription-group refusal, and the profile checks submission
@@ -334,11 +354,13 @@ and brief amendment share. Enforces [Profile selection](#profile-selection) and
 Engine.
 
 **OwnerStop** (`core/verbs/owner-stop.ts`). The owner `stop` verb and the hold
-it places and yields, records owner verbs to replay once their wait clears, and
-continues an awaiting retained reviewer. Enforces
-[Holds](#holds) and one-stop-one-resume in [Checkpoints](#checkpoints).
-Control-flow string: `OWNER_STOP_HOLD_PREFIX` (`'Owner stop:'`). Delegates
-remain on Engine.
+it places and yields. `deferred-verbs.ts` owns a recorded owner verb, its bound
+target, its replay and its one refusal; `reviewer-auto-continue.ts` owns the
+automatic continuation of an awaiting reviewer, and decides its retry window from
+the fence facts it recorded (an open run or incident fence), never from the
+refusal's words. Enforces [Holds](#holds) and one-stop-one-resume in
+[Checkpoints](#checkpoints). Control-flow string: `OWNER_STOP_HOLD_PREFIX`
+(`'Owner stop:'`). Delegates remain on Engine.
 
 **ProofControls** (`core/verbs/proof.ts`) and **proof-activation.ts**.
 Activation refusals, preview and release-GO evidence live as pures in
@@ -357,7 +379,15 @@ Enforces [Lanes](#lanes), [Holds](#holds) and
 
 **BriefControls** (`core/verbs/brief.ts`). Re-pins a committed handoff's
 instruction, amends a Nucleus-held brief, and refuses brief text that still
-declares a stage plan. Enforces
+declares a stage plan. `brief-routing.ts` owns the routing, merge-hold and
+interactive diff an amendment may apply before dispatch; `brief-proof.ts` owns the
+author-side proof declaration's retirement, clearing and re-declaration; and
+`brief-amendment.ts` owns the delivery of an amendment to a live thread — a typed
+intent, one attempt marker, the delivered marker, and a pass that delivers an
+intent the host never reached, while an attempted send with an unknown outcome is
+never resent. An open agent ask is answered and its linked board decision withdrawn
+by `QuestionSupersession.answerOpenAgentAsks`, the owner `task.next`
+supersession already reads. Enforces
 [Submission and instruction source](#submission-and-instruction-source).
 Delegates remain on Engine.
 
@@ -391,8 +421,9 @@ Delegates remain on Engine.
 including the operator and bulk entry points. The compatibility surface re-exports
 `core/verbs/disposition/`: `requests.ts` owns cancel/supersede fences, withdrawal and
 workspace retries; `effects.ts` owns durable intent/results and ordered
-reconciliation; `refs.ts` observes origin evidence; `hook-evidence.ts` settles
-repeated refusals; `workspace.ts` proves preservation; `production.ts` wires
+reconciliation; `refs.ts` observes origin evidence; `hook-evidence.ts` settles a cancellation occurrence
+that repeats a required refusal, decoded as hook records rather than compared as
+prose; `workspace.ts` proves preservation; `production.ts` wires
 remote effects; `controls.ts` owns operator and bulk entry points.
 `state.ts` owns shared serialization, `types.ts` defines dependencies, and
 `read-model.ts` reads stored disposition detail. Board and `task.next` policy
@@ -431,11 +462,13 @@ settings revision before the intent and again before the send. Enforces
 `refusePreMerge`, `verification` and `advanceMerging`.
 
 **ExternalMerge** (`core/merge/external-merge.ts`). Accepts or detects a PR merged
-outside Nucleus: the operator accept verb, the automatic probe, and the sweep
-that resumes a task parked on a cleared external-merge check. Enforces
-[External merge](#external-merge). Control-flow strings:
-`EXTERNAL_MERGE_CHECK_REASON_PREFIX`, `EXTERNAL_MERGE_CHECK_RECOVERED_REASON`.
-Delegates remain on Resolution.
+outside Nucleus: the operator accept verb over one typed acceptance job, and the
+automatic probe. `core/merge/external-merge-record.ts` records an observed merge
+once for both paths; `core/merge/external-merge-check.ts` owns the transient
+check park, its recovered proof, the restore of the state it interrupted and the
+unreviewed-merge stop. Enforces [External merge](#external-merge). Control-flow
+strings: `EXTERNAL_MERGE_CHECK_REASON_PREFIX`,
+`EXTERNAL_MERGE_CHECK_RECOVERED_REASON`. Delegates remain on Resolution.
 
 **IntegrationTurns** (`core/merge/integration-turns.ts`). Each repository's FIFO
 integration turn: sequence assignment, claim, who holds the turn, the closeout
@@ -448,7 +481,12 @@ closeout write frees the turn.
 **ParticipantLease** (`core/dispatch/participant-lease.ts`). Proves a task's
 participants are settled: the lease over identities that still own work, and
 the execution lease merge and closeout read, including retained runs and
-blocking recovery effects. Enforces
+blocking recovery effects. It reads `agentSettled` from
+`core/machine/agent-settled.ts`, the one settled-thread predicate, and host
+failures by their typed readers (`isAgentGoneRefusal`, `isStaleIntegrationBaseRefusal`)
+rather than their text. The withdrawn-native-question settlement dispatch runs
+before a role's lease is `core/dispatch/withdrawn-question.ts`
+(`WithdrawnQuestion`). Enforces
 [Terminal participant liveness](#terminal-participant-liveness). Delegates
 remain on Resolution.
 
@@ -491,8 +529,9 @@ completions, the agent's closeout result, the sync to the integration branch,
 and the write that hands the turn on. Enforces
 [Closeout and outcomes](#closeout-and-outcomes) and
 [Repository hooks](#repository-hooks). Delegates remain on Resolution except
-the two private helpers `reviewDisclosures` and `closeoutRefreshAllowed`, which
-only Closeout calls.
+the private helper `reviewDisclosures`, which only Closeout calls; the automatic
+re-pin of a stale closeout base and its per-merge limit are
+`core/closeout/closeout-base-refresh.ts`'s, shared with closeout recovery.
 
 **ProofAutorun** (`core/qa/proof-autorun.ts`). Starts a brief-named proof at an
 approved head without a question: wait for re-declared inputs, skip a
@@ -584,11 +623,13 @@ arms rate-limit failover when the resumes run out. Enforces
 `transientResumeDecision`, `transientSentDecision`, `transientWaitingDecision`.
 Delegates remain on Resolution.
 
-**RetryRoutes** (`core/recovery/retry-routes.ts`). Where a restart sends a parked task:
-the continuation a replacement worker resumes, retry, worker resume, and the
-stopped-revision restart. Enforces the restart arms in [Verbs](#verbs). Pures:
-`retryRoute`, `resumeRoute`. Delegates remain on Resolution, including `retry`
-so instance overrides still fire.
+**RetryRoutes** (`core/recovery/retry-orchestration.ts`, applied in one order over
+`core/recovery/retry-routes.ts`'s typed decisions and `core/recovery/retry-evidence.ts`'s
+recorded evidence). Where a restart sends a parked task: the continuation a
+replacement worker resumes, retry, worker resume, and the stopped-revision
+restart. Enforces the restart arms in [Verbs](#verbs). Pures: `retryRoute`,
+`resumeRoute`, `blockedRetryRoute`, `revisionRoute`. Delegates remain on
+Resolution, including `retry` so instance overrides still fire.
 
 **AbsentRestarts** (`core/recovery/absent-restarts.ts`). Recreates proven-absent runs:
 an absent worker in the retained workspace, an absent resolution run, an
@@ -693,8 +734,9 @@ kinds (`scope`, `release`). Delegates remain on Resolution.
 **AgentAsks** (`core/questions/agent-asks.ts`). Records, routes, waits on and resumes
 `ask` (alias `nucleus_ask`). Holds the in-flight routing set and the in-turn wait and poll
 cadence. Enforces [Delegated answers](#delegated-answers-preserve-the-planners-conversation).
-`askBinding` is a free function in `core/questions/agent-ask.ts`. Delegates remain on
-Resolution.
+`askBinding` is a free function in `core/questions/agent-ask.ts`, and
+`core/questions/agent-ask-events.ts` decodes one ask's `agent_ask_*` records into its
+typed lifecycle. Delegates remain on Resolution.
 
 **AgentMessages** (`core/questions/agent-messages.ts`). Sends, delivers and sweeps
 `tell` (alias `nucleus_message`). Holds the in-flight delivery set. Delegates remain on
@@ -754,8 +796,13 @@ dispatches on: the retained agent when it is still eligible, or a fresh one
 from the pool, then the hand-off to reserve. Pures: `executorThreadDecision`,
 `reviewerThreadDecision`. Delegates remain on Resolution.
 
-**RunLaunchReserve** (`core/dispatch/run-launch/reserve.ts`). The intent row,
-credential, slot charge, then the post-transaction hand-off to deliver.
+**RunLaunchReserve** (`core/dispatch/run-launch/reserve.ts`). Reads the source
+facts (`RunReservationSource` in `reservation-source.ts`), builds the run
+intent (`runIntent` in `run-intent.ts`), proves the review-entry handover,
+admits the intent, credential, task update and slot charge in one transaction
+(`RunReservationAdmission` in `reservation-admission.ts`), then hands off to
+deliver. A stash read that fails is recorded as unknown on the task and leaves
+the baseline absent, so the dirty-worktree refusal keeps its own proof.
 Delegates remain on Resolution.
 
 **RunLaunchDeliver** (`core/dispatch/run-launch/deliver.ts`). Ordinary-review custody

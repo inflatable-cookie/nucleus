@@ -7,7 +7,7 @@ import { NON_DELIVERY_ROUTE_REASON } from '../../recovery/non-delivery';
 import { assertReviewRunSource, proveReviewRunSource } from '../../review/ordinary-review';
 import { ownerReviewContext } from '../../review/owner-review-context';
 import type { Adapter } from '../../host/adapter';
-import { proofExecutionRecord, recordProofExecution } from '../../qa/proof-execution';
+import { proofExecutionRecord, recordProofExecution } from '../../qa/proof-records';
 import { isPromptTooLargeError, redactDiagnostic } from '../../recovery/provider-refusal';
 import { BlockingRecoveryEffectsError, blockingRecoveryEffects, blockingRecoveryEffectsRefusal, recoveryEffectsRefusal } from '../../recovery/recovery-effects';
 import { settleObservedHostEffectOperations } from '../../recovery/effect-gates';

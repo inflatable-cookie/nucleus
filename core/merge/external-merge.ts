@@ -1,26 +1,52 @@
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
-import { isDispositionActive, isDispositionComplete, mergeReviewEvidenceAt, type Incident, type OwnerAcceptanceRecord, type Run, type Task } from "../../shared/contracts";
+import { mergeReviewEvidenceAt, type OwnerAcceptanceRecord, type Run, type Task } from "../../shared/contracts";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { isLoginSessionFault, LoginSessionFaultError } from "../../shared/session-fault";
 import { isTransportFailure } from "../../shared/transport";
-import { escalationWaitDetail, findOpenPlannerEscalation, PLANNER_ESCALATION_CHOICES, type LadderEvent } from "../questions/blocker-ladder";
-import { dispatchBlocked } from "../dispatch/capacity";
 import { settleSupersededFencesInTx } from "../recovery/fence-settlement";
 import { ForgeOutageError } from "../forge/forge-health";
 import { git, gitAncestrySync, GitReadTimeoutError, queueCheckoutStatus } from "../git/index";
 import { readGitCheckout } from "../git/git-identity";
-import { incidentKey } from "../recovery/incident";
 import { blockingRecoveryEffectsRefusal } from "../recovery/recovery-effects";
 import type { ReviewEntryExternalMerge, RetainedSourceExternalMerge, Resolution } from "../resolution";
 import type { VerifiedEnclosingOperation } from "../planning/enclosing-operation";
 import { DurableFenceRefusal } from "../intake/run-settlement";
-import { digest, now } from "../store/store";
-import { ACCEPTED_PR_RECONCILIATION_REASON, EXTERNAL_MERGE_CHECK_REASON_PREFIX, EXTERNAL_MERGE_CHECK_RECOVERED_REASON, EXTERNAL_MERGE_PROBE_LIMIT, EXTERNAL_MERGE_PROBE_MS, mergedWithNonePatch } from "../recovery/task-reasons";
+import { now } from "../store/store";
+import { EXTERNAL_MERGE_CHECK_REASON_PREFIX, EXTERNAL_MERGE_CHECK_RECOVERED_REASON, EXTERNAL_MERGE_PROBE_LIMIT, EXTERNAL_MERGE_PROBE_MS } from "../recovery/task-reasons";
+import { recordObservedMerge } from "./external-merge-record";
+import { recoveredExternalCheckIncident, resumeClearedAttention as resumeClearedAttentionFor, resumeFromExternalMergeCheck as resumeFromExternalMergeCheckFor, stopUnreviewedExternalMerge } from "./external-merge-check";
 
 export type ExternalMergeContext = Pick<Resolution, 'adapter' | 'assignIntegrationTurn' | 'attention' | 'environmentDeferred' | 'executionLease' | 'gitTransientFailure' | 'hasEarlierIntegrationTurn' | 'host' | 'openPlannerEscalation' | 'paused' | 'resolveIncident' | 'reviewRequired' | 'store' | 'transportDeferred' | 'update' | 'waiting'> & {
   recovery: Pick<Resolution['recovery'], 'releaseWithNotAppliedAction' | 'settledEpisodeChanges'>;
 };
+
+/** The route whose acceptance this merge follows, with the witnesses that route proved. */
+type AcceptanceRoute =
+  | { kind: 'ordinary'; enclosingOperation?: () => VerifiedEnclosingOperation | undefined }
+  | { kind: 'review-entry'; reviewEntry: ReviewEntryExternalMerge }
+  | { kind: 'retained'; retained: RetainedSourceExternalMerge; sourceWitness: string };
+
+/**
+ * Everything one accepted external merge already proved, as one fact bundle.
+ * The three routes differ only in `route`; the ordered settlement reads this
+ * instead of threading ten positional arguments through four methods.
+ */
+export interface AcceptedExternalMergeJob {
+  reason: string;
+  settleFences?: string;
+  appliedCoordinatorRunId?: string;
+  /** Each run the acceptance observed, released in the settlement transaction. */
+  captured: Run[];
+  /** The exact run identity the acceptance read before the forge answer. */
+  allRunIdentity: string;
+  /** The runs still holding the task at settlement time. */
+  leases: () => Run[];
+  /** Re-proves the route's own inactivity after the forge answer. */
+  stopped: () => Promise<void>;
+  result: { head: string; commit: string };
+  route: AcceptanceRoute;
+}
 
 /** Accepts or detects a PR merged outside Nucleus. */
 export class ExternalMerge {
@@ -85,120 +111,123 @@ export class ExternalMerge {
     const sourceWitness = retained ? await this.proveRetainedExternalMergeSource(t) : null;
     const result = await this.adapter.externalMerge(t, true, Boolean(retained));
     if (!result) throw new Error('The task PR is not merged');
-    if (reviewEntry) return this.acceptReviewEntryExternalMerge(t, reason, settleFences, appliedCoordinatorRunId, reviewEntry, captured, allRunIdentity, leases, stopped, result);
-    if (retained) return this.acceptRetainedExternalMerge(t, reason, settleFences, appliedCoordinatorRunId, retained, captured, allRunIdentity, leases, stopped, result, sourceWitness!);
-    return this.acceptOrdinaryExternalMerge(t, reason, settleFences, appliedCoordinatorRunId, enclosingOperation, captured, allRunIdentity, leases, stopped, result);
+    const job: AcceptedExternalMergeJob = { reason, settleFences, appliedCoordinatorRunId, captured, allRunIdentity, leases, stopped, result,
+      route: reviewEntry ? { kind: 'review-entry', reviewEntry }
+        : retained ? { kind: 'retained', retained, sourceWitness: sourceWitness! }
+        : { kind: 'ordinary', enclosingOperation } };
+    await this.acceptRoute(t, job);
+    return this.settleAcceptedExternalMerge(t, job);
   }
-  /** Review-entry job of acceptExternalMerge: ancestry, then workspace, then the shared settlement. */
-  private async acceptReviewEntryExternalMerge(t: Task, reason: string, settleFences: string | undefined, appliedCoordinatorRunId: string | undefined, reviewEntry: ReviewEntryExternalMerge, captured: Run[], allRunIdentity: string, leases: () => Run[], stopped: () => Promise<void>, result: {head:string;commit:string}) {
-    // A positively observed merge names both exact identities; never a
-    // caller-supplied head and never a guessed commit.
-    if (!/^[a-f0-9]{40}$/.test(String(result.head)) || !/^[a-f0-9]{40}$/.test(String(result.commit)))
-      throw Error('The observed external merge did not name an exact merged head and commit');
-    const intake = t.reviewEntry?.verifiedHead, recorded = t.prHead;
-    if (!t.directory || !intake || !recorded || !/^[a-f0-9]{40}$/.test(intake) || !/^[a-f0-9]{40}$/.test(recorded))
-      throw Error('Reconciling a never-dispatched external merge requires the bound external workspace and the recorded intake and source heads');
-    // The merged head must descend from the immutable intake head AND the
-    // task's latest recorded head: a rewritten or unrelated source is never
-    // adopted as this task's work.
-    for (const ancestor of [...new Set([intake, recorded])]) {
-      try { await git(t.directory, 'merge-base', '--is-ancestor', ancestor, result.head); }
-      catch { throw Error(`The observed merged head ${result.head} does not descend from the recorded source head ${ancestor}; this task's work was not merged at that head`); }
+  /** The route whose acceptance this merge follows, with that route's own witnesses. */
+  private async acceptRoute(t: Task, job: AcceptedExternalMergeJob): Promise<void> {
+    const route = job.route;
+    if (route.kind === 'review-entry') {
+      // A positively observed merge names both exact identities; never a
+      // caller-supplied head and never a guessed commit.
+      if (!/^[a-f0-9]{40}$/.test(String(job.result.head)) || !/^[a-f0-9]{40}$/.test(String(job.result.commit)))
+        throw Error('The observed external merge did not name an exact merged head and commit');
+      const intake = t.reviewEntry?.verifiedHead, recorded = t.prHead;
+      if (!t.directory || !intake || !recorded || !/^[a-f0-9]{40}$/.test(intake) || !/^[a-f0-9]{40}$/.test(recorded))
+        throw Error('Reconciling a never-dispatched external merge requires the bound external workspace and the recorded intake and source heads');
+      // The merged head must descend from the immutable intake head AND the
+      // task's latest recorded head: a rewritten or unrelated source is never
+      // adopted as this task's work.
+      for (const ancestor of [...new Set([intake, recorded])]) {
+        try { await git(t.directory, 'merge-base', '--is-ancestor', ancestor, job.result.head); }
+        catch { throw Error(`The observed merged head ${job.result.head} does not descend from the recorded source head ${ancestor}; this task's work was not merged at that head`); }
+      }
+      await job.stopped();
+      // Fresh inactive ownership after every await, then the workspace witness
+      // synchronously before the commit: a moved, dirty or aliased checkout
+      // refuses with nothing written, and no writer is read as absent.
+      await route.reviewEntry.assertQuiet();
+      if (await queueCheckoutStatus(t.directory!, 'status', '--porcelain')) throw Error('The bound external workspace is dirty; the external merge proof is stale');
+      if (readGitCheckout(t.directory!).head !== job.result.head) throw Error('The bound external workspace moved during the external merge proof; nothing was accepted');
+      return;
     }
-    await stopped();
-    // Fresh inactive ownership after every await, then the workspace witness
-    // synchronously before the commit: a moved, dirty or aliased checkout
-    // refuses with nothing written, and no writer is read as absent.
-    await reviewEntry.assertQuiet();
-    if (await queueCheckoutStatus(t.directory!, 'status', '--porcelain')) throw Error('The bound external workspace is dirty; the external merge proof is stale');
-    if (readGitCheckout(t.directory!).head !== result.head) throw Error('The bound external workspace moved during the external merge proof; nothing was accepted');
-    return this.settleAcceptedExternalMerge(t, reason, settleFences, appliedCoordinatorRunId, reviewEntry, undefined, captured, allRunIdentity, leases, result, null);
-  }
-  /** Retained-source job of acceptExternalMerge: descendant-head proof, then the shared settlement. */
-  private async acceptRetainedExternalMerge(t: Task, reason: string, settleFences: string | undefined, appliedCoordinatorRunId: string | undefined, retained: RetainedSourceExternalMerge, captured: Run[], allRunIdentity: string, leases: () => Run[], stopped: () => Promise<void>, result: {head:string;commit:string}, sourceWitness: string) {
-    await stopped();
-    if (!/^[a-f0-9]{40}$/.test(result.head) || !/^[a-f0-9]{40}$/.test(result.commit)) throw Error('External merge identity is incomplete');
-    if (result.head === sourceWitness) throw Error('A retained-source acceptance requires a descendant final head');
-    retained.acceptanceFor(result.head);
-    await retained.assertQuiet();
-    retained.assertState();
-    if (await this.proveRetainedExternalMergeSource(t) !== sourceWitness) throw Error('Retained task source changed during external merge proof');
-    if (gitAncestrySync(t.directory!, sourceWitness, result.head) !== 'ancestor') throw Error('Merged head does not descend from the retained source or ancestry is unreadable');
-    return this.settleAcceptedExternalMerge(t, reason, settleFences, appliedCoordinatorRunId, undefined, retained, captured, allRunIdentity, leases, result, sourceWitness);
-  }
-  /** Ordinary job of acceptExternalMerge: re-lease, then the shared settlement. */
-  private async acceptOrdinaryExternalMerge(t: Task, reason: string, settleFences: string | undefined, appliedCoordinatorRunId: string | undefined, enclosingOperation: (()=>VerifiedEnclosingOperation|undefined) | undefined, captured: Run[], allRunIdentity: string, leases: () => Run[], stopped: () => Promise<void>, result: {head:string;commit:string}) {
-    await stopped();
-    if (!await this.resolution.executionLease(t,enclosingOperation?.())) {
-      const effects=blockingRecoveryEffectsRefusal(this.store,this.store.task(t.id),{enclosing:enclosingOperation?.(),noticeKinds:'all'});
-      throw new DurableFenceRefusal(`Task execution participants or effects changed during external merge proof${effects?`: ${effects}`:''}`);
+    if (route.kind === 'retained') {
+      await job.stopped();
+      if (!/^[a-f0-9]{40}$/.test(job.result.head) || !/^[a-f0-9]{40}$/.test(job.result.commit)) throw Error('External merge identity is incomplete');
+      if (job.result.head === route.sourceWitness) throw Error('A retained-source acceptance requires a descendant final head');
+      route.retained.acceptanceFor(job.result.head);
+      await route.retained.assertQuiet();
+      route.retained.assertState();
+      if (await this.proveRetainedExternalMergeSource(t) !== route.sourceWitness) throw Error('Retained task source changed during external merge proof');
+      if (gitAncestrySync(t.directory!, route.sourceWitness, job.result.head) !== 'ancestor') throw Error('Merged head does not descend from the retained source or ancestry is unreadable');
+      return;
     }
-    return this.settleAcceptedExternalMerge(t, reason, settleFences, appliedCoordinatorRunId, undefined, undefined, captured, allRunIdentity, leases, result, null);
+    await job.stopped();
+    if (!await this.resolution.executionLease(t, route.enclosingOperation?.())) {
+      const effects = blockingRecoveryEffectsRefusal(this.store, this.store.task(t.id), { enclosing: route.enclosingOperation?.(), noticeKinds: 'all' });
+      throw new DurableFenceRefusal(`Task execution participants or effects changed during external merge proof${effects ? `: ${effects}` : ''}`);
+    }
   }
-  /** One transaction: run release, the job's acceptance, and the observed merge. */
-  private settleAcceptedExternalMerge(t: Task, reason: string, settleFences: string | undefined, appliedCoordinatorRunId: string | undefined, reviewEntry: ReviewEntryExternalMerge | undefined, retained: RetainedSourceExternalMerge | undefined, captured: Run[], allRunIdentity: string, leases: () => Run[], result: {head:string;commit:string}, sourceWitness: string | null) {
-    return this.store.transaction(()=>{
+  /** One transaction: run release, the route's acceptance, and the observed merge. */
+  private settleAcceptedExternalMerge(t: Task, job: AcceptedExternalMergeJob) {
+    const { reason, settleFences, appliedCoordinatorRunId, captured, allRunIdentity, leases, result, route } = job;
+    return this.store.transaction(() => {
       const current = this.store.task(t.id);
       if (current.version !== t.version || JSON.stringify(this.store.runs(t.id)) !== allRunIdentity) throw new Error('Task or run changed during external merge verification');
-      let acceptance: OwnerAcceptanceRecord | null = null;
-      if (retained) {
-        retained.assertState();
-        if (this.retainedExternalMergeIdentity(current) !== sourceWitness || gitAncestrySync(current.directory!, sourceWitness!, result.head) !== 'ancestor')
-          throw Error('Retained source or ancestry changed before external merge settlement');
-        acceptance = retained.acceptanceFor(result.head);
-        if (acceptance.head !== result.head || acceptance.kind !== 'operator_source' || acceptance.review !== null)
-          throw Error('The exact-final-head operator source acceptance changed');
-        this.store.event(t.id, 'owner_acceptance', JSON.stringify({taskId:t.id,...acceptance}).slice(0,4000));
-      }
-      if (reviewEntry) {
-        // Re-proved inside the commit: the boundary, the recorded merge and the
-        // authenticated invocation that is executing it. An unverifiable
-        // invocation exempts nothing.
-        const invoking = reviewEntry.enclosing();
-        if (current.resolution.mergeIntent || current.resolution.mergedCommit || !invoking
-          || !this.store.reviewEntryUnrunBeforeFirstRun(current, invoking))
-          throw new Error('The review-entry boundary or recorded merge changed during the external merge proof; nothing was written');
-        const derived = reviewEntry.acceptanceFor(result.head);
-        // The acceptance binds the OBSERVED merged head, never the recorded
-        // source head and never a previous head's ruling.
-        if (derived.head !== result.head || derived.kind !== 'operator_source' || derived.review !== null)
-          throw new Error('The exact-final-head operator source acceptance does not bind the observed merged head');
-        acceptance = derived;
-        this.store.event(t.id, 'owner_acceptance', JSON.stringify({ taskId: t.id, kind: acceptance.kind, prNumber: acceptance.prNumber,
-          head: acceptance.head, missingEvidence: acceptance.missingEvidence, review: acceptance.review, actor: acceptance.actor,
-          authority: acceptance.authority, reason: acceptance.reason, qualification: acceptance.qualification }).slice(0, 4000));
-      }
+      const acceptance = this.acceptanceInTransaction(current, route, result);
       for (const run of leases()) {
         // Spec 050 (#3569): a recovery run released at closeout still records a
         // pending accepted action as not applied instead of closing silently.
         if (run.role === 'recovery' && this.resolution.recovery.releaseWithNotAppliedAction(current, run, `accepted external merge: ${reason}`, appliedCoordinatorRunId)) continue;
-        this.store.putRun({...run,released:true,active:false,status:run.completion?'finished':'superseded'});
+        this.store.putRun({ ...run, released: true, active: false, status: run.completion ? 'finished' : 'superseded' });
       }
-      if(captured.length)this.store.event(t.id,'external_merge_stopped_runs_settled',captured.map(r=>r.id).join(', '));
+      if (captured.length) this.store.event(t.id, 'external_merge_stopped_runs_settled', captured.map(r => r.id).join(', '));
       this.store.event(t.id, 'external_merge_head_accepted', `${t.prHead ?? 'none'} -> ${result.head} at ${result.commit}: ${reason}`.slice(0, 2000));
-      const latest = this.resolution.assignIntegrationTurn(current);
-      const holding = !this.resolution.hasEarlierIntegrationTurn(latest);
-      // A never-dispatched task keeps its recorded source head: the merged head
-      // and commit are recorded beside it, not over it.
-      const headPatch = acceptance ? {} : { prHead: result.head };
-      // Every unreleased run is released above, so an episode one of them held
-      // closes here: the merge is the outcome its coordinator was recovering toward (Queue #680).
-      const episodeDetail = `External merge observed: ${reason}`;
-      const episode = this.resolution.recovery.settledEpisodeChanges(latest, episodeDetail);
-      const updated=this.resolution.update(latest,{externalMerge:true,mergeHead:result.head,mergedCommit:result.commit,currentRunId:null,attention:false,externalMergePreAttention:null,
-        ...(acceptance?{}:mergedWithNonePatch(latest,result.head)),
-        ...(acceptance?{ownerAcceptances:[...(latest.resolution.ownerAcceptances??[]),acceptance]}:{}),
-        ...(episode??{})},holding
-        ? {phase:'syncing',...headPatch,coordinatorGeneration:latest.coordinatorGeneration+1,reason:acceptance?'Exact-final-head operator source acceptance recorded; the external merge is observed and main synchronizes before closeout':'Operator accepted the external merge; synchronizing main before coordinator closeout'}
-        : {phase:'merging',...headPatch,reason:acceptance?'Exact-final-head operator source acceptance recorded; the external merge is observed and waits for the repository integration turn':'Operator accepted the external merge; waiting for repository integration turn'},'external_merge_observed');
-      if (episode) this.store.event(t.id, 'recovery_episode_settled', episodeDetail);
+      recordObservedMerge({ store: this.store, resolution: this.resolution }, current, {
+        head: result.head, commit: result.commit, recordHead: !acceptance, acceptance,
+        settleEpisode: true, episodeDetail: `External merge observed: ${reason}`,
+        // A never-dispatched task keeps its recorded source head: the merged head
+        // and commit are recorded beside it, not over it.
+        reason: acceptance
+          ? { holding: 'Exact-final-head operator source acceptance recorded; the external merge is observed and main synchronizes before closeout',
+              waiting: 'Exact-final-head operator source acceptance recorded; the external merge is observed and waits for the repository integration turn' }
+          : { holding: 'Operator accepted the external merge; synchronizing main before coordinator closeout',
+              waiting: 'Operator accepted the external merge; waiting for repository integration turn' },
+      });
       // Spec 050 atomic verbs: the move's fence settlement rides the accepted
       // merge inside this transaction, after its own update.
-      if(settleFences)settleSupersededFencesInTx(this.store,t.id,settleFences,now(),appliedCoordinatorRunId);
-      if(retained)retained.settleOperation(this.store.task(t.id));
+      if (settleFences) settleSupersededFencesInTx(this.store, t.id, settleFences, now(), appliedCoordinatorRunId);
+      if (route.kind === 'retained') route.retained.settleOperation(this.store.task(t.id));
       return this.store.task(t.id);
     });
   }
+  /** The acceptance the route derives, re-proved inside the settlement transaction. */
+  private acceptanceInTransaction(current: Task, route: AcceptedExternalMergeJob['route'], result: { head: string; commit: string }): OwnerAcceptanceRecord | null {
+    if (route.kind === 'retained') {
+      const { retained, sourceWitness } = route;
+      retained.assertState();
+      if (this.retainedExternalMergeIdentity(current) !== sourceWitness || gitAncestrySync(current.directory!, sourceWitness, result.head) !== 'ancestor')
+        throw Error('Retained source or ancestry changed before external merge settlement');
+      const acceptance = retained.acceptanceFor(result.head);
+      if (acceptance.head !== result.head || acceptance.kind !== 'operator_source' || acceptance.review !== null)
+        throw Error('The exact-final-head operator source acceptance changed');
+      this.store.event(current.id, 'owner_acceptance', JSON.stringify({ taskId: current.id, ...acceptance }).slice(0, 4000));
+      return acceptance;
+    }
+    if (route.kind === 'review-entry') {
+      // Re-proved inside the commit: the boundary, the recorded merge and the
+      // authenticated invocation that is executing it. An unverifiable
+      // invocation exempts nothing. The acceptance binds the OBSERVED merged
+      // head, never the recorded source head and never a previous head's ruling.
+      const invoking = route.reviewEntry.enclosing();
+      if (current.resolution.mergeIntent || current.resolution.mergedCommit || !invoking
+        || !this.store.reviewEntryUnrunBeforeFirstRun(current, invoking))
+        throw new Error('The review-entry boundary or recorded merge changed during the external merge proof; nothing was written');
+      const derived = route.reviewEntry.acceptanceFor(result.head);
+      if (derived.head !== result.head || derived.kind !== 'operator_source' || derived.review !== null)
+        throw new Error('The exact-final-head operator source acceptance does not bind the observed merged head');
+      this.store.event(current.id, 'owner_acceptance', JSON.stringify({ taskId: current.id, kind: derived.kind, prNumber: derived.prNumber,
+        head: derived.head, missingEvidence: derived.missingEvidence, review: derived.review, actor: derived.actor,
+        authority: derived.authority, reason: derived.reason, qualification: derived.qualification }).slice(0, 4000));
+      return derived;
+    }
+    return null;
+  }
+
   /** Exact-head identity of the retained workspace from the filesystem. Safe inside a transaction. */
   private retainedExternalMergeIdentity(t: Task): string {
     if (!t.directory || !t.workspaceId || !t.prHead || t.branch !== `ns-${t.id}` || t.branch === t.baseBranch)
@@ -246,17 +275,14 @@ export class ExternalMerge {
      * provenance rather than restore it.
      */
     const finishExternalMerge = (current: Task, head: string, commit: string, recordHead: boolean, settleEpisode: boolean) => {
-      const latest = this.resolution.assignIntegrationTurn(current);
-      const holding = !this.resolution.hasEarlierIntegrationTurn(latest);
-      const headPatch = recordHead ? { prHead: head } : {};
       // A freshly observed merge supersedes every run the task holds, so the recovery
       // episode they carried closes with the merge instead of outliving it (Queue #680).
-      const episodeDetail = 'External merge observed: the recovery run it superseded no longer holds the episode';
-      const episode = settleEpisode ? this.resolution.recovery.settledEpisodeChanges(latest, episodeDetail) : null;
-      this.resolution.update(latest,{externalMerge:true,mergeHead:head,mergedCommit:commit,currentRunId:null,attention:false,externalMergePreAttention:null,...mergedWithNonePatch(latest,head),...(episode??{})},holding
-        ? {phase:'syncing',...headPatch,coordinatorGeneration:latest.coordinatorGeneration+1,reason:'External merge verified; synchronizing main before coordinator closeout'}
-        : {phase:'merging',...headPatch,reason:'External merge verified; waiting for repository integration turn'},'external_merge_observed');
-      if (episode) this.store.event(latest.id, 'recovery_episode_settled', episodeDetail);
+      recordObservedMerge({ store: this.store, resolution: this.resolution }, current, {
+        head, commit, recordHead, settleEpisode,
+        episodeDetail: 'External merge observed: the recovery run it superseded no longer holds the episode',
+        reason: { holding: 'External merge verified; synchronizing main before coordinator closeout',
+          waiting: 'External merge verified; waiting for repository integration turn' },
+      });
       return true;
     };
     if (t.resolution.mergedCommit) {
@@ -283,14 +309,14 @@ export class ExternalMerge {
         if (!await this.resolution.executionLease(this.store.task(t.id), undefined, false, true) || this.resolution.paused()) return false;
         this.store.transaction(() => {
           const latest = this.store.task(t.id);
-          const incident = this.externalCheckIdentity(latest) === observed ? this.recoveredExternalCheckIncident(latest) : null;
+          const incident = this.externalCheckIdentity(latest) === observed ? recoveredExternalCheckIncident({ store: this.store, resolution: this.resolution }, latest) : null;
           if (incident) {
             this.resolution.resolveIncident(latest, incident.runId, 'Fresh external merge probe found the PR open; external-check incident recovered');
             this.store.event(t.id, 'external_merge_check_incident_resolved', JSON.stringify({ incidentId: incident.id, runId: incident.runId, head: latest.prHead ?? null }));
           }
           const restored = this.store.task(t.id);
           if (restored.resolution.attention && restored.reason.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX))
-            this.resumeFromExternalMergeCheck(restored, EXTERNAL_MERGE_CHECK_RECOVERED_REASON);
+            resumeFromExternalMergeCheckFor({ resolution: this.resolution }, restored, EXTERNAL_MERGE_CHECK_RECOVERED_REASON);
         });
         return false;
       }
@@ -308,7 +334,7 @@ export class ExternalMerge {
       // submission that explicitly skipped PR review keeps its previous merge
       // behavior, the same rule the Queue-owned gates apply.
       if (this.resolution.reviewRequired(current) && !mergeReviewEvidenceAt(current, result.head)) {
-        this.stopUnreviewedExternalMerge(current, result.head, result.commit);
+        stopUnreviewedExternalMerge({ store: this.store, resolution: this.resolution }, current, result.head, result.commit);
         return true;
       }
       this.store.transaction(()=>{
@@ -367,103 +393,12 @@ export class ExternalMerge {
     return JSON.stringify([task.version, task.resolution.incident ?? null, run]);
   }
   /**
-   * The reconciling external-check incident that a fresh successful probe proves
-   * recovered, or null. It must be the reviewer incident of the one unreleased,
-   * running reviewer run whose fingerprint still derives from its own detail, with no
-   * other attention, recovery, stall, merge, publication or uncertain effect.
-   */
-  private recoveredExternalCheckIncident(task: Task): Incident | null {
-    const incident = task.resolution.incident, run = task.resolution.currentRunId ? this.store.run(task.resolution.currentRunId) : null;
-    if (!incident || !run || this.resolution.paused() || task.removedAt || task.phase !== 'reviewing' || isDispositionActive(task) || isDispositionComplete(task) || dispatchBlocked(task)) return null;
-    if (incident.status !== 'reconciling' || incident.action !== '' || incident.role !== 'reviewer' || incident.runId !== run.id) return null;
-    if (!incident.detail.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX)) return null;
-    const runs = this.store.runs(task.id);
-    if (run.role !== 'reviewer' || run.status !== 'running' || run.released || run.completion || runs.some(item => !item.released && item.id !== run.id)) return null;
-    if (incidentKey(task, run, incident.detail, runs).id !== (incident.fingerprint || incident.id)) return null;
-    if (task.resolution.attention && !task.reason.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX)) return null;
-    if (task.resolution.recoveryActive || task.resolution.recovery && task.resolution.recovery.status !== 'resolved') return null;
-    if (task.resolution.stalledTurnStop && task.resolution.stalledTurnStop.status !== 'completed') return null;
-    if (task.resolution.mergeIntent || task.resolution.mergeHead || task.resolution.mergedCommit || task.resolution.externalMerge || task.resolution.integrationTurn ||
-        task.resolution.mergeResponseOutcome === 'uncertain' || task.resolution.mergeRetryOutcome === 'uncertain' || this.store.getMeta(`reviewPublication:${run.id}`))
-      return null;
-    return incident;
-  }
-  /**
-   * Restore the phase and reason a task held before a transient external-merge
-   * check parked it, clearing the flag and the recorded pre-attention state. When
-   * no record exists (an older strand, or a fault that never recorded one) the
-   * remembered reason must not pretend to be a resumable phase, so the recovery
-   * reason alone is written; the lifecycle sweep can then resume it.
-   */
-  private resumeFromExternalMergeCheck(task: Task, fallbackReason: string): Task {
-    const pre = task.resolution.externalMergePreAttention;
-    return this.resolution.update(task, { attention: false, externalMergePreAttention: null },
-      pre ? { phase: pre.phase, reason: pre.reason } : { reason: fallbackReason },
-      'external_merge_check_recovered');
-  }
-  /**
-   * Task 993: a freshly observed external merge at a head no recorded review
-   * evidence binds is a fact, not an outcome. One transaction supersedes the
-   * quiet runs the advance would have released and records the merge fact;
-   * the task then parks inside the blocker ladder for its planner, which owns
-   * the route: a fresh review of the merged head (`move to=review`) or an
-   * operator source acceptance (`move to=closeout`). A repeated observation
-   * on the same cause attaches to the open escalation instead of asking again.
-   */
-  private stopUnreviewedExternalMerge(current: Task, head: string, commit: string): void {
-    // The cause is a stable per-task, per-head digest: the ladder's escalation
-    // parser reads a 64-hex cause, and a repeated observation on the same cause
-    // must join the open escalation instead of opening another one.
-    const cause = digest(["unreviewed-external-merge", current.id, head].join(":"));
-    const prNumber = current.reviewEntry?.prNumber ?? current.resumePrNumber ?? current.completion?.prNumber ?? null;
-    const detail = `The PR${prNumber ? ` #${prNumber}` : ''} merged outside Queue at head ${head} (merge commit ${commit}), but no recorded ready_to_merge review, reviewer source approval, qualified owner acceptance or operator source acceptance binds that merged head. The merge is recorded as an observed fact; the task stopped for its planner and nothing was advanced, synced or reverted.`;
-    const existing = findOpenPlannerEscalation(this.store.eventsAll(current.id) as LadderEvent[], cause);
-    this.store.transaction(() => {
-      const stopped = this.store.runs(current.id).filter(run => !run.released);
-      for (const run of stopped) this.store.putRun({ ...run, released: true, status: 'superseded' });
-      this.store.event(current.id, 'external_merge_unreviewed', `${detail}${stopped.length ? ` Superseded quiet runs: ${stopped.map(run => run.id).join(', ')}.` : ''}`.slice(0, 4000));
-    });
-    if (existing) {
-      this.resolution.waiting(this.store.task(current.id), escalationWaitDetail.attached(existing.id), 'escalated');
-      return;
-    }
-    // The park's phase rides its own write BEFORE the escalation records its
-    // stop: a lifecycle-changing write clears a stop that merely repeats, so
-    // the escalated park is recorded after the phase settled (store.update's
-    // stop rule).
-    const parked = this.store.task(current.id);
-    if (parked.phase !== 'blocked' && !['done', 'cancelled'].includes(parked.phase))
-      this.resolution.update(parked, {}, { phase: 'blocked' }, 'external_merge_unreviewed_stopped');
-    const question = `The responsible task "${current.title}"'s PR${prNumber ? ` #${prNumber}` : ''} merged outside Queue at head ${head} (merge commit ${commit}) with no recorded review evidence binding that merged head, so Nucleus did not count the merge. Existing routes: a fresh review of the merged head through move to=review, or an operator source acceptance through move to=closeout. Choose how it proceeds: ${PLANNER_ESCALATION_CHOICES.join('; ')}. You may also answer directly with the direction Queue should follow.`;
-    this.resolution.openPlannerEscalation(this.store.task(current.id), {
-      cause, runId: null, question, payload: { cause, head, commit, prNumber, question },
-      causeDetail: detail.slice(0, 2000),
-    });
-  }
-  /**
    * Lifecycle sweep (project-a #1837): a task parked in `needs_attention` with the
    * attention flag already cleared, no current run and no unreleased run has
-   * nothing that will advance it. When the previous episode recorded the state a
-   * transient external-merge check interrupted, restore that phase and reason so
+   * nothing that will advance it; the recorded pre-attention state is restored so
    * the ordinary resolution path runs again instead of idling.
    */
   resumeClearedAttention(t: Task): Task | null {
-    if (t.phase !== 'needs_attention' || t.resolution.attention || t.resolution.currentRunId) return null;
-    if (this.store.runs(t.id).some(run => !run.released)) return null;
-    const pre = t.resolution.externalMergePreAttention;
-    const checkReason = t.reason.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX) || t.reason === EXTERNAL_MERGE_CHECK_RECOVERED_REASON;
-    // A record beside any other reason was superseded by the action that wrote that
-    // reason; restoring an old phase over it would undo the pending resolution.
-    if (!checkReason) {
-      if (pre) this.resolution.update(t, { externalMergePreAttention: null }, {}, 'external_merge_pre_attention_superseded');
-      return null;
-    }
-    if (pre) return this.resolution.update(t, { externalMergePreAttention: null }, { phase: pre.phase, reason: pre.reason }, 'external_merge_pre_attention_restored');
-    // A strand from before the record existed carries the recovered reason on a
-    // task whose accepted PR is still final: resume the accepted-PR reconciliation
-    // that was pending when the check failed, and let advance() route it.
-    if (t.reason !== EXTERNAL_MERGE_CHECK_RECOVERED_REASON) return null;
-    if (t.completion?.status !== 'ready_for_review' || !t.prHead || !t.workspaceId) return null;
-    return this.resolution.update(t, { attention: false }, { reason: ACCEPTED_PR_RECONCILIATION_REASON }, 'external_merge_check_recovered_resumed');
+    return resumeClearedAttentionFor({ store: this.store, resolution: this.resolution }, t);
   }
 }

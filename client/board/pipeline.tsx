@@ -3,13 +3,14 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import * as api from "../../shared/contracts";
 import { taskNumberLabel, type DecisionView, type BoardLead, type BoardLeadLink, type LaneView, type TaskSummary, type UiQueueState } from "../../shared/contracts";
-import { pipelineBoard, pipelineColumnHeight, pipelineColumnWidths, pipelineColumns, pipelineStubColumns, triageKind, triagePage, triagePageSize, triageState, type PipelineColumn } from "../../shared/pipeline-board";
+import { pipelineBoard, pipelineColumnHeight, pipelineColumnWidths, pipelineColumns, pipelineStubColumns, triageKind, triagePage, triagePageSize, type PipelineColumn } from "../../shared/pipeline-board";
 import { isGeneralDecision } from "../../shared/decision-project";
 import { useRpc, Icon } from "../shell";
 import { Button, DropdownSelect, muted, row, type Colors } from "../controls";
 import { projectName } from "./text";
 import { RecordChips } from "./badges";
 import { BoardCard, QaRunCard, TaskCard, DecisionCard, HoldPromptCard, LaneDrainCard } from "./cards";
+import { TriageLeadCard } from "./triage-lead-card";
 import type { BoardAct } from "./use-board-data";
 import { space, type as typeScale, radius } from "../design";
 
@@ -422,38 +423,19 @@ const queuedMoreCards = queuedHidden.map(item => <View key={item.repoPath} style
                                 />
                               );
                             return (
-                              <BoardCard
+                              <TriageLeadCard
                                 key={`${card.kind}:${card.id}`}
+                                lead={card.value}
                                 c={c}
-                                label={`${name}: ${card.value.title}`}
                                 eyebrow={eyebrow(
                                   // The project's name, not its repository's: a project can be named differently from its repository (Tom, 2026-11-07).
-                                  [...new Set(card.value.repositories
-                                    .map(
-                                      (repo) =>
-                                        projectForRepository(repo.path, repo.origin)?.name ??
-                                        repo.origin.split("/").at(-1) ??
-                                        repo.origin,
-                                    ))].join(", "),
+                                  [...new Set(card.value.repositories.map(repo =>
+                                    projectForRepository(repo.path, repo.origin)?.name ?? repo.origin.split("/").at(-1) ?? repo.origin,
+                                  ))].join(", "),
                                 )}
-                                title={<Text numberOfLines={1} style={{ color: c.foreground, fontWeight: "600", fontSize: typeScale.body.fontSize, lineHeight: typeScale.body.lineHeight }}>{card.value.title}</Text>}
-                                chips={
-                                  <RecordChips
-                                    c={c}
-                                    chips={[triageKind(card.value) === "papercut" ? api.RESERVED_LEAD_TAGS.papercut : "Lead"]}
-                                  />
-                                }
-                                snippet={<Text numberOfLines={1} ellipsizeMode="tail" style={{ color: c.foregroundMuted, fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>{triageState(card.value)}</Text>}
-                                selected={
-                                  selectedLeadId === card.id ||
-                                  openPapercutId === card.id
-                                }
-                                onPress={() => {
-                                  if (
-                                    card.value.tags.includes("papercut")
-                                  ) onSelectPapercut(card.id);
-                                  else onSelectLead(card.id, null);
-                                }}
+                                selected={selectedLeadId === card.id || openPapercutId === card.id}
+                                onSelectLead={id => onSelectLead(id, null)}
+                                onSelectPapercut={onSelectPapercut}
                               />
                             );
                           });

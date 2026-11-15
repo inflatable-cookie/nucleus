@@ -20,7 +20,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { QueueRuntime } from '../service/runtime-owner';
 import { hostRunRunDir, type HostRunEndpoint } from '../service/callbacks/host-run-endpoint';
-import { projectValidationCallerIdentity, parseProjectValidationCaller, projectValidationSchedulerEvidence } from '../core/qa/project-validation-caller';
+import { projectValidationCallerIdentity, parseProjectValidationCaller, projectValidationSchedulerEvidence } from '../shared/project-validation-caller';
 import { HOST_RUN_OUTPUT_RECLASSIFICATIONS_META, hostRunOutputReclassificationLogSchema } from '../core/host-runs/host-run-output-failures';
 import { hostRunRecordSchema, hostRunSettlementSchema, submissionSchema, type HostRunInternalRecord } from '../shared/contracts';
 import type { Store } from '../core/store/store';

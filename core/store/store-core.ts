@@ -127,6 +127,9 @@ export function deepFreeze<T>(value: T): T {
 /** Normalized input digest used to fence idempotent acceptance. */
 export const operationInputHash = (value: unknown) => digest(JSON.stringify(value ?? null));
 
+/** Stable operation ID for a caller key; deterministic so a lost response reconciles the same record. */
+export const operationIdForKey = (key: string) => digest(`operation\n${key}`);
+
 
 
 /**

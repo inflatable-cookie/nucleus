@@ -1,6 +1,7 @@
 import { archiveFailureKeepsScope } from './archive-failure';
 import { existsSync } from "node:fs";
 import type { TaskControlInput } from '../../shared/contracts';
+import { TaskChangedRefusal } from '../../shared/task-version';
 import { isDispositionActive } from '../../shared/contracts';
 import type { Store } from '../store/store';
 import type { Adapter } from '../host/adapter';
@@ -21,7 +22,7 @@ export type UnusedWorkspaceRetentionGate = (target: { directory: string; head: s
  */
 export async function archiveUnusedWorkspace(store: Store, adapter: Adapter, input: { taskId: string; version: number; unusedWorkspaceId: string }, running: () => boolean, retirement?: RuntimeRetirementService, preArchive?: UnusedWorkspaceRetentionGate) {
   const task = store.task(input.taskId), id = input.unusedWorkspaceId;
-  if (task.version !== input.version) throw Error('Task changed; refresh before retrying');
+  if (task.version !== input.version) throw new TaskChangedRefusal('Task changed; refresh before retrying', input.version, task.version);
   const displaced = store.getMeta<{ id: string; directory: string; branch: string }>(`displacedDispatchWorkspace:${task.id}:${id}`);
   const preDispatch = !(task.runId || task.agentId || task.agentIntent || task.completion || task.prUrl || task.prHead || task.resumePrNumber ||
       task.resolution.currentRunId || task.resolution.recoveryActive || task.resolution.mergeIntent) &&
@@ -44,7 +45,7 @@ export async function archiveUnusedWorkspace(store: Store, adapter: Adapter, inp
   if (displaced && (displaced.id !== id || !new RegExp(`^ns-${task.id}(?:-[0-9]+)?$`).test(branch)))
     throw Error('Displaced workspace does not carry a recorded Nucleus collision branch');
   const archive = async (target: typeof task, directory: string, head: string, allowed: () => boolean, uncertain: boolean) => {
-    try { return await adapter.archiveTaskWorkspace!(target, id, directory, head, allowed, uncertain, uncertain); }
+    try { return await adapter.archiveTaskWorkspace!(target, id, directory, head, allowed, uncertain, { requirePublished: uncertain }); }
     catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       if (retirement && archiveFailureKeepsScope(retirement, task.id, id, error))
@@ -95,7 +96,11 @@ export async function archiveUnusedWorkspace(store: Store, adapter: Adapter, inp
   if (!proof.empty || proof.uncertain) throw Error(proof.uncertain || proof.detail);
   if (prior && (prior.directory !== directory || prior.head !== head || (prior.branch && prior.branch !== branch))) throw Error('Uncertain archive identity changed; preserved');
   const allowed = () => running() && store.task(task.id).version === task.version && unshared();
-  if (!allowed()) throw Error('Task changed during workspace cleanup verification');
+  if (!allowed()) {
+    let current = task.version;
+    try { current = store.task(task.id).version; } catch { /* Keep the original refusal if the task disappeared. */ }
+    throw new TaskChangedRefusal('Task changed during workspace cleanup verification', task.version, current);
+  }
   const evidence: ArchiveEvidence = prior ?? { workspaceId: id, directory, head, branch, status: 'intent' };
   await retentionHold({ directory, head });
   store.setMeta(key, evidence);

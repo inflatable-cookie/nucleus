@@ -27,12 +27,14 @@ import { HookRetentionGate } from "./hook-retention";
 import { HookExecution } from "./hook-execution";
 import { HookRetry } from "./hook-retry";
 
-export { READ_ONLY_BASE_ADVANCED_KIND, STALE_INTEGRATION_BASE_PROOF, isStaleIntegrationBaseRefusal } from "./hook-replay";
+export { READ_ONLY_BASE_ADVANCED_KIND } from "./hook-replay";
+export { STALE_INTEGRATION_BASE_PROOF, isStaleBaseRefusal, isStaleIntegrationBaseRefusal, hookRefusalKind, type HookRefusalKind } from "./hook-refusal";
 export { hookHoldReason, isHookHoldReason, isRecoveredPreDispatchHookHold, isCloseoutHookHold, type HookEmissionResult, type HookContext, type ProspectiveMergeOutcome } from "./hook-context";
 export { isolationDataDirFor, isolationRootFor, isolationPathFor, warmCandidatePathFor, isOwnedIsolationPath } from "./hook-isolation";
 export { blobDigest, repositoryIsGitCheckout, pinInstruction, instructionForCommit, parseManifestBytes, forgetManifestDiscovery, discoverManifest, pinExecutable } from "./hook-manifest";
 export { executeHookProgram, type ExecutionOutcome, type ExecutionRequest } from "../machine/process-exec";
-export { SCRATCH_INDEX_PREFIX, parsePorcelain, statusEntries, ignoredPathCollides, snapshotGit, inspectChangedPaths, verifyReviewedHead } from "../git/git-snapshot";
+export { SCRATCH_INDEX_PREFIX, parsePorcelain, statusEntries, ignoredPathCollides, snapshotGit, inspectChangedPaths } from "../git/git-snapshot";
+export { verifyMergeCandidate, verifyRetainedWorktree, verifyReviewedHead } from "./git-gates";
 export { gitRun as gitRaw } from "../git/git-command";
 export { minimalHookEnvironment, parseHookResult, STDERR_EXCERPT_MAX_BYTES, HOOK_EVIDENCE_MAX_BYTES } from "./hook-result";
 export { RETENTION_TIMEOUT_ATTEMPTS } from "./hook-retention";

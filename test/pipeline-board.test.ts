@@ -263,6 +263,7 @@ test('026-15a pipeline cards open a record modal and carry no action buttons',()
   const ui=boardSource();
   // #1042: the Pipeline view lives in its own module, which the Tasks tab mounts.
   const pipeline=readFileSync(new URL('../client/board/pipeline.tsx',import.meta.url),'utf8');
+  const triageLeadCard=readFileSync(new URL('../client/board/triage-lead-card.tsx',import.meta.url),'utf8');
   assert.match(ui,/\{tab === "queue" && \(\s*<View style=\{\{ flex: 1, minHeight: 0, gap: space.sm, zIndex: 0 \}\}>\s*<PipelineBoard /);
   assert.doesNotMatch(pipeline,/setTab\('papercuts'\)/);
   assert.doesNotMatch(pipeline,/text="Approve"/);
@@ -270,8 +271,8 @@ test('026-15a pipeline cards open a record modal and carry no action buttons',()
   assert.doesNotMatch(pipeline,/text="Drop"/);
   assert.doesNotMatch(pipeline,/text="Check again"/);
   assert.doesNotMatch(pipeline,/actionsLabel/);
-  assert.match(pipeline,/onSelectPapercut\(card\.id\)/);
-  assert.match(pipeline,/onSelectLead\(card\.id, null\)/);
+  assert.match(triageLeadCard,/onSelectPapercut\(lead\.id\)/);
+  assert.match(triageLeadCard,/onSelectLead\(lead\.id\)/);
   assert.match(ui,/const selectPapercut = \(id: string\) => \{[^}]*setOpenPapercutId\(id\); \}/);
   assert.match(ui,/const selectLead = \(id: string, lane: [^)]*\) => \{[^}]*setSelectedLeadId\(id\); \}/);
   assert.match(ui,/label="Lead detail"/);
@@ -338,7 +339,7 @@ test('377 planning lists read the narrow lead.board projection, never every full
   assert.match(ui,/queryFn:\(\)=>fetchLeadBoard\(\{\}\)/,'one narrow read replaces the open-then-promoted page walk');
   assert.doesNotMatch(ui,/fetchLeadPages/,'the client no longer downloads full bodies for lists');
   assert.doesNotMatch(ui,/snippet\(card\.value\.preview\)/,'a Triage card shows one state line; the body preview stays in the record');
-  assert.match(ui,/triageState\(card\.value\)/,'the state line reads the presence facts through the shared helper');
+  assert.match(ui,/triageState\(lead\)/,'the state line reads the presence facts through the shared helper');
   assert.match(ui,/linkedLeads:leadLinks/,'open decisions resolve linked promoted leads from link facts');
 });
 

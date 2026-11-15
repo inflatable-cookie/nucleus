@@ -1,3 +1,4 @@
+import { TaskChangedRefusal } from '../../shared/task-version';
 import type { ReviewerSetting } from '../../core/host/types';
 export type { ReviewerSetting } from '../../core/host/types';
 import { type Task, type Run, type Completion } from '../../shared/contracts';
@@ -288,6 +289,11 @@ async function publishFormalReviewOnce(store: Store, t: Task, run: Run, status: 
   if (previous && previous.hash !== hash) throw new Error('This run already has a different review publication');
   const { name, org, token, gh } = await formalIdentity(t, reviewer, runtime);
   const marker = reviewMarker(t, run.id, run.head, status);
+  const taskChanged = (message: string): TaskChangedRefusal => {
+    let current = t.version;
+    try { current = store.task(t.id).version; } catch { /* Preserve the original refusal if the task is unavailable. */ }
+    return new TaskChangedRefusal(message, t.version, current);
+  };
   const verifyRecorded = async (id: number): Promise<PublicationOutcome> => {
     const review = await formalCall(org, token, () => gh(t, `repos/${name}/pulls/${taskPrNumber(t)}/reviews/${id}`, [], token)) as FormalReview;
     if (String(review.body) !== body || review.user?.login !== reviewer.login || review.commit_id !== run.head || review.state !== reviewStateForStatus(status))
@@ -305,7 +311,7 @@ async function publishFormalReviewOnce(store: Store, t: Task, run: Run, status: 
       const review = uniqueMarkedReview(inventory, reviewer.login, marker);
       if (String(review.body) !== body) throw new Error('Review publication is uncertain; the marked review does not match the persisted findings body hash. Inspect the PR.');
       validateFormalReview(review, reviewer.login, marker, run.head, status);
-      if (!allowed()) throw new Error('Task changed before review publication reconciliation');
+      if (!allowed()) throw taskChanged('Task changed before review publication reconciliation');
       store.setMeta(key, { hash, reviewId: review.id });
       return { id: review.id, published: false };
     }
@@ -319,11 +325,11 @@ async function publishFormalReviewOnce(store: Store, t: Task, run: Run, status: 
       const review = uniqueMarkedReview(second, reviewer.login, marker);
       if (String(review.body) !== body) throw new Error('Review publication body changed during reconciliation');
       validateFormalReview(review, reviewer.login, marker, run.head, status);
-      if (!allowed()) throw new Error('Task changed before review publication reconciliation');
+      if (!allowed()) throw taskChanged('Task changed before review publication reconciliation');
       store.setMeta(key, { hash, reviewId: review.id });
       return { id: review.id, published: false };
     }
-    if (!allowed()) throw new Error('Task changed before review publication recovery');
+    if (!allowed()) throw taskChanged('Task changed before review publication recovery');
     store.setMeta(attemptKey, { hash, head: run.head, login: reviewer.login, reason: recoveryReason, attemptedAt: new Date().toISOString() });
   }
   if (!allowed()) throw new Error('Paused before review publication');
@@ -348,7 +354,7 @@ async function publishFormalReviewOnce(store: Store, t: Task, run: Run, status: 
   if (!Number.isSafeInteger(review.id) || review.user?.login !== reviewer.login || review.commit_id !== run.head || review.state !== reviewStateForStatus(status))
     throw new Error('GitHub returned an unexpected formal review');
   if (String(review.body) !== body) throw new Error('GitHub returned a different formal review body');
-  if (!allowed()) throw new Error('Task changed after formal review publication; reconcile the persisted remote result');
+  if (!allowed()) throw taskChanged('Task changed after formal review publication; reconcile the persisted remote result');
   store.setMeta(key, { hash, reviewId: review.id });
   return { id: review.id as number, published: true };
 }

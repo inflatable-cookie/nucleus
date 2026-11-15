@@ -28,6 +28,7 @@ import { HostRunFront } from "../service/executor/host-run-front";
 import {
   HostRunEndpoint,
   HOST_RUN_HANDOFF_GAP_MS,
+  HOST_RUN_RETAINED_OUTPUT_BYTES,
   HOST_RUN_RECONNECT_WINDOW_MS,
   assertHostRunStateDirSafe,
   appendOwnedFile,
@@ -47,6 +48,7 @@ import {
   hostRunSupervisorStateSchema,
   hostRunTokenKeyPath,
   readCheckedHostRunFile,
+  readCheckedHostRunFileRead,
   readHostRunAuthority,
   readHostRunTokenKeys,
   hostRunTokenKeysSchema,
@@ -2191,4 +2193,190 @@ weighted(2)("a result landing during the supervisor proof settles from the resul
   await waitFor(() => f.scheduler.get(runId)!.state === "settled", HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS);
   assert.equal(f.scheduler.get(runId)!.settlement!.outcome, "passed");
   assert.equal(f.fake.spawnCount(), 1);
+});
+
+// ---------------------------------------------------------------------------
+// The durable records a run reads back: unreadable is never absent
+// ---------------------------------------------------------------------------
+
+weighted(2)("a corrupt submission record refuses the retry and is never overwritten", async t => {
+  const f = await harness(t);
+  const wire = client(f.endpoint.socketPath);
+  t.after(() => wire.destroy());
+  const body = submitBody({ cancelOnDisconnect: false });
+  const submitted = await call(wire, "submit", body, 1);
+  assert.equal(submitted.ok, true);
+  const runId = submitted.body.runId as string;
+  const submissionPath = join(f.stateDir, "runs", runId, "submission.json");
+  // A record that exists but cannot be read is unknown, not missing: the
+  // idempotency key must never be replaced by a resubmission.
+  writeAtomicOwnedFile(submissionPath, "{not json", 0o600);
+  const retry = await call(wire, "submit", body, 1);
+  assert.equal(retry.ok, false, "a resubmit over an unreadable record is refused");
+  assert.equal(retry.error!.code, "conflict");
+  assert.match(retry.error!.message, /cannot be read/i);
+  assert.equal(readFileSync(submissionPath, "utf8"), "{not json", "the unreadable record is left exactly as it was");
+  const byKey = await call(wire, "status", { caller: body.caller, clientRequestId: body.clientRequestId }, 1);
+  assert.equal(byKey.ok, false, "readiness by client request is refused too, never answered as unknown_run");
+  assert.equal(byKey.error!.code, "conflict");
+  const fresh = await call(wire, "submit", submitBody({ caller: body.caller, cancelOnDisconnect: false }), 1);
+  assert.equal(fresh.ok, true, "a different client request is unaffected");
+});
+
+test("the verified read keeps a missing file, an unreadable file and a present file apart", async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), "hre-read-"));
+  t.after(() => rmSync(stateDir, { recursive: true, force: true }));
+  writeAtomicOwnedFile(join(stateDir, "runs", "x", "anchor"), "x", 0o600);
+  writeAtomicOwnedFile(join(stateDir, "runs", "x", "present.json"), "body", 0o600);
+  assert.equal(readCheckedHostRunFileRead(stateDir, ["runs", "x", "absent.json"]).state, "absent");
+  assert.deepEqual(
+    readCheckedHostRunFileRead(stateDir, ["runs", "x", "present.json"]),
+    { state: "present", bytes: Buffer.from("body") },
+    "a readable file is its bytes",
+  );
+  chmodSync(join(stateDir, "runs", "x", "present.json"), 0o644);
+  const unreadable = readCheckedHostRunFileRead(stateDir, ["runs", "x", "present.json"]);
+  assert.equal(unreadable.state, "unreadable", "a file the verified chain refuses is unreadable, never absent");
+  if (unreadable.state === "unreadable") assert.match(unreadable.reason, /verified read/);
+  assert.equal(readCheckedHostRunFile(stateDir, ["runs", "x", "present.json"]), null, "the null-answering read is unchanged");
+});
+
+weighted(3)("an unreadable cancel request stops the run instead of reading as no cancel", async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), "hre-"));
+  t.after(() => rmSync(stateDir, { recursive: true, force: true }));
+  const plan = supervisorPlan(stateDir, "cancel-corrupt", [process.execPath, "-e", "setTimeout(()=>{}, 20000)"], { runTimeoutMs: 20_000 });
+  writeAtomicOwnedFile(hostRunSupervisorPaths(plan.stateDir, plan.runId).planPath, JSON.stringify(plan), 0o600);
+  writeAtomicOwnedFile(hostRunSupervisorPaths(plan.stateDir, plan.runId).cancelPath, "{\"format\":", 0o600);
+  const started = Date.now();
+  await runHostRunSupervisorMain([plan.stateDir, plan.runId]);
+  assert.ok(Date.now() - started < 10_000, "the run is stopped well before its timeout");
+  const result = hostRunResultSchema.parse(JSON.parse(readFileSync(hostRunSupervisorPaths(plan.stateDir, plan.runId).resultPath, "utf8")));
+  assert.equal(result.exitCode, null);
+  assert.equal(result.signal, "SIGTERM", "the command is stopped, not left running");
+  const state = hostRunSupervisorStateSchema.parse(JSON.parse(readFileSync(hostRunSupervisorPaths(plan.stateDir, plan.runId).statePath, "utf8")));
+  assert.equal(state.termination, "cancel");
+  const faults = JSON.parse(readFileSync(join(plan.stateDir, "runs", plan.runId, "supervisor.faults.json"), "utf8")) as { faults: Array<{ code: string; detail: string }> };
+  assert.equal(faults.faults[0]!.code, "cancel_request_unreadable", "why the supervisor stopped the run is recorded beside it");
+  assert.match(faults.faults[0]!.detail, /not a readable host\.run\.cancel record/);
+});
+
+weighted(2)("retained output is bounded per stream and says it was truncated", async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), "hre-"));
+  t.after(() => rmSync(stateDir, { recursive: true, force: true }));
+  const chunk = "x".repeat(HOST_RUN_RETAINED_OUTPUT_BYTES + 1024 * 1024);
+  const plan = supervisorPlan(stateDir, "capped", [process.execPath, "-e", `process.stdout.write('x'.repeat(${chunk.length}))`]);
+  writeAtomicOwnedFile(hostRunSupervisorPaths(plan.stateDir, plan.runId).planPath, JSON.stringify(plan), 0o600);
+  await runHostRunSupervisorMain([plan.stateDir, plan.runId]);
+  const stdout = readFileSync(hostRunSupervisorPaths(plan.stateDir, plan.runId).stdoutPath, "utf8");
+  assert.ok(Buffer.byteLength(stdout) <= HOST_RUN_RETAINED_OUTPUT_BYTES + 1024, `the retained stream is capped (got ${Buffer.byteLength(stdout)} bytes)`);
+  assert.match(stdout, /queue: output truncated: observed=\d+ retained=\d+ omitted=\d+ cap=\d+; beginning kept/);
+  assert.match(stdout, new RegExp(`cap=${HOST_RUN_RETAINED_OUTPUT_BYTES}`));
+  const result = hostRunResultSchema.parse(JSON.parse(readFileSync(hostRunSupervisorPaths(plan.stateDir, plan.runId).resultPath, "utf8")));
+  assert.equal(result.exitCode, 0, "a capped stream never fails the run it records");
+});
+
+// ---------------------------------------------------------------------------
+// Contract 010's escaped-descendant settlement, through the supervisor
+// ---------------------------------------------------------------------------
+
+weighted(3)("an escaped descendant that writes after the group empties keeps its output", async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), "hre-"));
+  t.after(() => rmSync(stateDir, { recursive: true, force: true }));
+  // The leader starts a detached child that outlives it and writes to the run's
+  // stdout after the leader is gone. The run's pipes stay open until that child
+  // is proven absent, so the bytes are retained instead of lost to EPIPE.
+  const script = `const {spawn}=require('child_process');
+spawn(process.execPath,['-e','setTimeout(()=>{process.stdout.write("late-escaped")},700)'],{detached:true,stdio:'inherit'}).unref();
+setTimeout(()=>process.exit(0),100);`;
+  const plan = supervisorPlan(stateDir, "late-escape", [process.execPath, "-e", script], { runTimeoutMs: 15_000 });
+  writeAtomicOwnedFile(hostRunSupervisorPaths(plan.stateDir, plan.runId).planPath, JSON.stringify(plan), 0o600);
+  await runHostRunSupervisorMain([plan.stateDir, plan.runId]);
+  const stdout = readFileSync(hostRunSupervisorPaths(plan.stateDir, plan.runId).stdoutPath, "utf8");
+  assert.match(stdout, /late-escaped/, "output written after the group emptied is retained");
+  const result = hostRunResultSchema.parse(JSON.parse(readFileSync(hostRunSupervisorPaths(plan.stateDir, plan.runId).resultPath, "utf8")));
+  assert.equal(result.exitCode, 0);
+  assert.ok(result.escapedDescendants.length >= 1, "the escaped descendant is recorded");
+  assert.ok(result.wallMs >= 500, `the result waited for the escaped descendant (wallMs ${result.wallMs})`);
+});
+
+weighted(3)("a cancel that arrives while an escaped descendant runs still stops the run", async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), "hre-"));
+  t.after(() => rmSync(stateDir, { recursive: true, force: true }));
+  // The leader leaves a detached child behind and exits at once. The cancel
+  // arrives after the group is empty: the run must still stop well before its
+  // timeout, and the stop must reach that child.
+  const script = `const {spawn}=require('child_process');
+spawn(process.execPath,['-e','setTimeout(()=>{},8000)'],{detached:true,stdio:'ignore'}).unref();
+process.exit(0);`;
+  const plan = supervisorPlan(stateDir, "cancel-escape", [process.execPath, "-e", script], { runTimeoutMs: 30_000 });
+  writeAtomicOwnedFile(hostRunSupervisorPaths(plan.stateDir, plan.runId).planPath, JSON.stringify(plan), 0o600);
+  const started = Date.now();
+  const running = runHostRunSupervisorMain([plan.stateDir, plan.runId]);
+  await waitFor(() => existsSync(hostRunSupervisorPaths(plan.stateDir, plan.runId).statePath), HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS);
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 400));
+  writeAtomicOwnedFile(hostRunSupervisorPaths(plan.stateDir, plan.runId).cancelPath, JSON.stringify({
+    format: "host.run.cancel", version: 1, runId: plan.runId, reason: "test", requestedAt: new Date().toISOString(),
+  }), 0o600);
+  await running;
+  assert.ok(Date.now() - started < 6_000, `the cancel is honoured while the escaped descendant runs (${Date.now() - started} ms)`);
+  const state = hostRunSupervisorStateSchema.parse(JSON.parse(readFileSync(hostRunSupervisorPaths(plan.stateDir, plan.runId).statePath, "utf8")));
+  assert.equal(state.termination, "cancel");
+  const result = hostRunResultSchema.parse(JSON.parse(readFileSync(hostRunSupervisorPaths(plan.stateDir, plan.runId).resultPath, "utf8")));
+  assert.equal(result.exitCode, 0, "the leader had already exited with 0");
+  assert.ok(result.escapedDescendants.length >= 1, "the escapee the stop reached is recorded");
+});
+
+test("a path the verified chain refuses reads as unreadable, never as absent", async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), "hre-read-"));
+  const outside = mkdtempSync(join(tmpdir(), "hre-read-out-"));
+  t.after(() => { rmSync(stateDir, { recursive: true, force: true }); rmSync(outside, { recursive: true, force: true }); });
+  writeAtomicOwnedFile(join(stateDir, "runs", "x", "anchor"), "x", 0o600);
+  writeAtomicOwnedFile(join(outside, "target.json"), "outside", 0o600);
+  // A symlinked component is refused by the chain check whether or not the link
+  // target exists: its presence is unknown, never "no file here".
+  symlinkSync(outside, join(stateDir, "runs", "x", "link"));
+  const linked = readCheckedHostRunFileRead(stateDir, ["runs", "x", "link", "target.json"]);
+  assert.equal(linked.state, "unreadable", "a symlinked ancestor is unknown, not missing");
+  if (linked.state === "unreadable") assert.match(linked.reason, /verified read/);
+  symlinkSync(join(outside, "absent.json"), join(stateDir, "runs", "x", "dangling"));
+  assert.equal(readCheckedHostRunFileRead(stateDir, ["runs", "x", "dangling"]).state, "unreadable",
+    "a dangling symlink target is still a refused component, not an absent file");
+  // A real file whose bytes the verified read cannot take is unreadable too.
+  writeAtomicOwnedFile(join(stateDir, "runs", "x", "present.json"), "body", 0o600);
+  chmodSync(join(stateDir, "runs", "x", "present.json"), 0o644);
+  assert.equal(readCheckedHostRunFileRead(stateDir, ["runs", "x", "present.json"]).state, "unreadable");
+  assert.equal(readCheckedHostRunFileRead(stateDir, ["runs", "x", "gone.json"]).state, "absent",
+    "only a proven missing leaf is absent");
+});
+
+weighted(3)("an orphan escaped after the leader exits is recorded and settled over", async t => {
+  const stateDir = mkdtempSync(join(tmpdir(), "hre-"));
+  const orphanPidPath = join(stateDir, "orphan.pid");
+  t.after(() => rmSync(stateDir, { recursive: true, force: true }));
+  // A recorded escapee exists from early in the run. A same-group survivor waits
+  // for the leader to exit, then detaches its own child and exits at once, so the
+  // orphan is reparented before any scan can reach it through its parent: only the
+  // full identity listing at group-empty can prove it, and a recorded escapee must
+  // not hide it.
+  const detacher = `const {spawn}=require('child_process');const {writeFileSync}=require('fs');
+setTimeout(()=>{
+  const child=spawn(process.execPath,['-e','setTimeout(()=>{},1500)'],{detached:true,stdio:'ignore'});
+  child.unref();writeFileSync(process.env.ORPHAN_PID,String(child.pid));process.exit(0);
+}, 700);`;
+  const script = `const {spawn}=require('child_process');
+spawn(process.execPath,['-e','setTimeout(()=>{},3000)'],{detached:true,stdio:'ignore'}).unref();
+spawn(process.execPath,['-e',${JSON.stringify(detacher)}],{stdio:'ignore',env:{...process.env,ORPHAN_PID:process.env.ORPHAN_PID}});
+setTimeout(()=>process.exit(0),400);`;
+  const plan = supervisorPlan(stateDir, "orphan-escape", [process.execPath, "-e", script], {
+    runTimeoutMs: 20_000, env: { ...process.env, ORPHAN_PID: orphanPidPath },
+  });
+  writeAtomicOwnedFile(hostRunSupervisorPaths(plan.stateDir, plan.runId).planPath, JSON.stringify(plan), 0o600);
+  await runHostRunSupervisorMain([plan.stateDir, plan.runId]);
+  const orphanPid = Number(readFileSync(orphanPidPath, "utf8"));
+  assert.ok(Number.isSafeInteger(orphanPid) && orphanPid > 0, "the survivor recorded its detached child");
+  const result = hostRunResultSchema.parse(JSON.parse(readFileSync(hostRunSupervisorPaths(plan.stateDir, plan.runId).resultPath, "utf8")));
+  const recorded = result.escapedDescendants.map(entry => entry.pid);
+  assert.ok(recorded.includes(orphanPid), `the orphan is recorded (recorded ${recorded.join(",")})`);
+  assert.ok(recorded.length >= 2, "the earlier escapee and the orphan are both recorded");
+  assert.ok(result.wallMs >= 2_000, `the result waited for both descendants (wallMs ${result.wallMs})`);
 });

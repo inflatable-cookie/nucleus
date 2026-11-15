@@ -416,6 +416,9 @@ test('empty enrichment snapshots preserve inventory while missing fields and inc
   // A shape problem names its field through the timeline read too, so the
   // owned-tool reader reports the exact cause instead of `unavailable`.
   await assert.rejects(host.agentTimelinePage(created.id), /hasMoreHistory true with no cursor/);
+  const answers = await host.answeredQuestions(created.id);
+  assert.equal(answers.ok, false, 'an unreadable bounded snapshot is unknown, never an empty answer list');
+  if (!answers.ok) assert.match(answers.reason, /hasMoreHistory true with no cursor/);
   server.controls.incompleteThread = false;
   server.controls.synchronized = false;
   await assert.rejects(host.observe(created.id), (error: T3RpcError) => error instanceof T3RpcError && error.code === 'timeout'
@@ -546,7 +549,7 @@ test('a paged window reads tools and questions, and a complete-transcript read s
   p.turnItems = [syntheticTurnItem(created.id, 1, { type: 'assistant_message', runId: 'synthetic-run-1', updatedAt: at(1) }),
     syntheticTurnItem(created.id, 2, { type: 'assistant_message', runId: 'synthetic-run-1', updatedAt: at(2) }),
     syntheticTurnItem(created.id, 3, { type: 'user_input_request', id: 'synthetic-question-item', requestId: 'synthetic-question',
-      runId: 'synthetic-run-2', updatedAt: at(3) })];
+      runId: 'synthetic-run-2', nodeId: 'synthetic-node-synthetic-question', updatedAt: at(3) })];
   p.runtimeRequests = [syntheticRuntimeRequest({ id: 'synthetic-question', kind: 'user_input', status: 'pending' })];
   // A genuine bounded snapshot with older history; tools never reconstruct it.
   server.controls.boundedRowLimit = 2;
@@ -558,6 +561,10 @@ test('a paged window reads tools and questions, and a complete-transcript read s
   const page = await host.agentTimelinePage(created.id, 2);
   assert.equal(page?.hasOlder, true);
   assert.deepEqual(page?.entries.map(entry => entry.turnId), ['synthetic-run-1', 'synthetic-run-2']);
+  p.runtimeRequests[0].status = 'resolved';
+  p.runtimeRequests[0].answers = { choice: 'Yes' };
+  assert.deepEqual(await host.answeredQuestions(created.id), { ok: true, answered: [{ requestId: 'synthetic-question',
+    question: 'Synthetic question?', answers: { choice: 'Yes' } }] });
   // A read that needs the complete transcript still refuses the same projection.
   await assert.rejects(host.readProjection(created.id, 'transcript'), /subscribeThread: incomplete projection/);
   const read = server.requests.filter(request => request.tag === 'orchestration.subscribeThread').at(-1)!.payload as Record<string, unknown>;
@@ -588,7 +595,7 @@ test('history exceeding the frame limit is observed, listed and titled without a
   // The question and timeline reads come from the bounded window too: no pending
   // request is carried here, and the window is a page rather than null.
   assert.deepEqual(await host.pendingQuestions(created.id), []);
-  assert.deepEqual(await host.answeredQuestions(created.id), []);
+  assert.deepEqual(await host.answeredQuestions(created.id), { ok: true, answered: [] });
   const page = await host.agentTimelinePage(created.id);
   assert.ok(page && page.entries.length > 0, 'the newest window is readable on a thread over the frame limit');
   assert.equal(page.hasOlder, true);
@@ -847,7 +854,9 @@ test('questions and approvals answer exact runtime requests and refuse wrong kin
   assert.deepEqual(responses[0]!.answers, { choice: ['A'] });
   assert.equal(responses[1]!.requestId, 'approval-request');
   assert.equal(responses[1]!.decision, 'accept');
-  assert.equal((await host.answeredQuestions(created.id))[0]?.requestId, 'question-request');
+  const answeredRead = await host.answeredQuestions(created.id);
+  assert.ok(answeredRead.ok);
+  assert.equal(answeredRead.answered[0]?.requestId, 'question-request');
   p.runtimeRequests.push({ id: 'unknown-request', kind: 'future-request-kind', status: 'pending', responseCapability: { type: 'live', providerSessionId: 'session' } });
   await assert.rejects(host.respondRuntimeRequest(created.id, workspace.id, 'unknown-request', { decision: 'accept' }), /unsupported/);
 });

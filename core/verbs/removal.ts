@@ -1,6 +1,7 @@
 import { REMOVED_TASK_REFUSAL } from './control-refusals';
 import { isDeepStrictEqual } from "node:util";
 import type { Run, Task } from "../../shared/contracts";
+import { TaskChangedRefusal } from '../../shared/task-version';
 import { isDispositionActive } from "../../shared/contracts";
 import { cleanupReasonFor, recordRunBuildOutput } from "../hooks/build-output-records";
 import { progressDisposition } from "./disposition";
@@ -8,6 +9,7 @@ import type { Engine } from "../engine";
 import { LANE_PRIORITY_TASK } from "../scheduling/lane-priorities";
 import { blockingRecoveryEffectsRefusal } from "../recovery/recovery-effects";
 import { digest, hostRunHoldReason, now } from "../store/store";
+import { isAgentGoneRefusal } from "../host/errors";
 import { canRetireCancelledWorkspace } from "../workspaces/terminal-workspace-retirement";
 import { archiveUnusedWorkspace } from "../workspaces/unused-workspace";
 import { buildOutputCheckoutMismatch, removeBuildOutput, type BuildOutputCleanupResult } from "../workspaces/worktree-cleanup";
@@ -58,7 +60,7 @@ export class TaskRemoval {
           if (state.active || state.permissions || !["idle", "error", "closed"].includes(state.status)) throw new Error("A task thread is still active; let it stop before removing the task");
         } catch (error) {
           // The adapter distinguishes a deleted thread from a connection failure.
-          if (!(error instanceof Error) || error.message !== "Agent was not found") throw error;
+          if (!isAgentGoneRefusal(error)) throw error;
         }
       }
       for (const agentId of ids) await this.engine.host.archiveAgent(agentId);
@@ -72,7 +74,7 @@ export class TaskRemoval {
           if (shared()) return false;
           this.engine.resolution.update(this.store.task(id), { archiveIntentWorkspaceId: task.workspaceId, archiveIntentHead: null }, {}, "workspace_archive_intent");
           return true;
-        }, false, true, ids, false, false, undefined, undefined, undefined, undefined, () => this.store.runs(id));
+        }, false, { requirePublished: true, attachedAgentIds: ids, participantRuns: () => this.store.runs(id) });
         if (!archived) throw new Error("Workspace became shared before archive; task remains visible");
         await this.engine.retirement.archived(id, task.workspaceId);
       }
@@ -140,7 +142,7 @@ export class TaskRemoval {
     const pendingRetry = retryMarkers.at(-1)?.result === null;
     if (task.version !== version && !pendingRetry) {
       if (retryMarkers.length) return task;
-      throw new Error("Task changed; refresh before retrying");
+      throw new TaskChangedRefusal("Task changed; refresh before retrying", version, task.version);
     }
     if (!pendingRetry) {
       if (task.phase !== "cancelled" || task.disposition?.status !== "complete" || task.disposition.workDisposition !== "archive_if_empty" || task.disposition.workspaceArchived || !task.workspaceId)

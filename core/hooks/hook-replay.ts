@@ -8,6 +8,7 @@ import { isDispositionActive, type Task } from "../../shared/contracts";
 import { type Store, now } from "../store/store";
 import { gitRun } from "../git/git-command";
 import { HookObservationMap, type HeldAutomaticReplay, type AutomaticReplayAttempt } from "./hook-context";
+import { isStaleBaseRefusal } from "./hook-refusal";
 /** Task-history kinds for automatic exact-identity base-advance replay. */
 const AUTOMATIC_REPLAY_INTENT_KIND = "hook_automatic_replay_intent";
 const AUTOMATIC_REPLAY_KIND = "hook_automatic_replay";
@@ -17,24 +18,6 @@ export const READ_ONLY_BASE_ADVANCED_KIND = "hook_read_only_base_advanced";
  * operationally stale rather than semantically refused: the write could not
  * start because the pinned base was no longer the clean synchronized head.
  */
-export const STALE_INTEGRATION_BASE_PROOF = "Integration write requires a clean synchronized base:";
-/**
- * Every refusal that means an occurrence's pinned integration base is *stale* rather than wrong.
- *
- * verifyCleanSynchronizedBase refuses on three conditions - the checkout is not clean and
- * synchronized, its HEAD is not the event's base, or its base is behind origin. The first two and
- * the third are the same operational fact from different angles: the base the occurrence pinned has
- * been overtaken by later merges. Recognising only the first left a closeout holding on "Integration
- * HEAD moved from the event base" unreplayable and unrenewable while an active wave moved main under
- * it, so both retry_effect and discard retry_effect returned it to the same hold.
- */
-const STALE_INTEGRATION_BASE_REFUSALS = [STALE_INTEGRATION_BASE_PROOF,
-  "Integration HEAD moved from the event base", "Local integration base differs from origin"] as const;
-/** True when a held hook's recorded error is a stale-base refusal. */
-export const isStaleIntegrationBaseRefusal = (error: unknown): boolean => {
-  const text = String(error ?? "");
-  return STALE_INTEGRATION_BASE_REFUSALS.some(refusal => text.includes(refusal));
-};
 
 interface HookReplayContext {
   store: Pick<Store, "event" | "hookEvent" | "hookEvents" | "run" | "task">;
@@ -111,7 +94,7 @@ export class HookReplay {
       seen.add(key);
       if (record.state !== "blocked") continue;
       if (record.result !== null || record.commit !== null || record.remote !== null) continue;
-      if (!isStaleIntegrationBaseRefusal(record.error)) continue;
+      if (!isStaleBaseRefusal(record)) continue;
       if (!this.heldEventStillApplies(task, record)) continue;
       return { record, ordinal: this.nextAutomaticReplayOrdinal(task.id, record) };
     }
@@ -357,7 +340,7 @@ export class HookReplay {
     // A retry before synchronization may replace the visible error with base
     // staleness while retaining the original semantic result. That remains a
     // repaired closeout, not an eligible result-free automatic replay.
-    if (!operator && record.result === null && record.error.includes(STALE_INTEGRATION_BASE_PROOF)) return null;
+    if (!operator && record.result === null && isStaleBaseRefusal(record)) return null;
     const baseCommit = task.resolution.syncedCommit;
     if (!baseCommit) return null;
     const review = task.resolution.review?.summary ?? null;
@@ -419,7 +402,7 @@ export class HookReplay {
     if (record.event !== "task.blocked" || record.mode !== "integration_write" || record.state !== "blocked") return null;
     const staleSchema=/^(?:control manifest|event) declares unsupported schema /.test(record.summary);
     const currentRun=task.resolution.currentRunId?this.store.run(task.resolution.currentRunId):null;
-    const detachedBlockedDelivery=record.error.includes(STALE_INTEGRATION_BASE_PROOF)&&
+    const detachedBlockedDelivery=isStaleBaseRefusal(record)&&
       !Boolean(task.completion&&['blocked','error'].includes(task.completion.status))&&
       !Boolean(currentRun?.completion&&['blocked','error'].includes(currentRun.completion.status));
     if (!staleSchema&&!detachedBlockedDelivery) return null;

@@ -632,6 +632,12 @@ const hookRecordObjectSchema = z.object({
   remote: z.string().nullable().default(null),
   summary: z.string().default(""),
   error: z.string().default(""),
+  /**
+   * The closed kind of a recorded refusal, decoded once when the error was
+   * written (`core/hooks/hook-refusal.ts`). Null means no refusal or an
+   * occurrence kept from before the field existed; readers never parse `error`.
+   */
+  refusalKind: z.enum(["stale_base"]).nullable().default(null),
   /** The last attempt ended because the hook ran past its timeout, not because it refused or failed. */
   timedOut: z.boolean().optional(),
   createdAt: z.string(),

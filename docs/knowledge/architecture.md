@@ -136,9 +136,15 @@ owner to the rules it enforces.
   `core/store/sibling-store.ts` shares their objects through one bare store per
   origin
   ([Spec 028](specs/028-fresh-sibling-checkouts.md)).
-- `core/dispatch/prompts.ts` owns every prompt's text, worker included, and the shared
-  rules each one repeats (validation, required proof, blocked, workspace);
-  it owns reviewer, coordinator, checkpoint and continuation prompt text. Ordinary revision rounds
+- `core/dispatch/prompt-text/` owns each prompt mechanism once: `validation.ts`,
+  `report-rules.ts`, `proof-rules.ts`, `review-rules.ts`, `workspace-text.ts` and
+  `task-blocks.ts` hold the rules and context blocks every role repeats,
+  `prompt-context.ts` builds the run's scope and report callback,
+  `run-prompt.ts` dispatches by role, and one module per role owns its text
+  (`worker-prompt.ts`, `revision-prompt.ts`, `reviewer-prompt.ts`,
+  `recovery-prompt.ts`, `executor-prompt.ts`). `core/dispatch/prompts.ts` is the
+  public surface. A run's report route selects a named rule text; no rule is
+  rewritten by string replacement. Ordinary revision rounds
   carry the prior findings and delta, and proof-only rounds judge arriving evidence
   under [Spec 057](specs/057-retained-change-review.md).
 - `core/resolution.ts` is the after-dispatch shell: it wraps the adapter in
@@ -168,7 +174,10 @@ owner to the rules it enforces.
   `ps` reads and parsers, `process-identity-search.ts` answers which processes
   carry a group identity and whether a pid still has the recorded one,
   `process-group.ts` owns group custody and its one signal, and
-  `process-tree-cpu.ts` owns the sampled CPU lower bound.
+  `process-tree-cpu.ts` owns the sampled CPU lower bound. `agent-settled.ts`
+  owns the settled-thread predicate every launch, lease, reap and archive proof
+  reads, including the rule that an errored thread with no live turn and no
+  pending permission is inactive wherever `closed` is.
 - `core/review/pr-adoption.ts` binds an existing PR to a task: identity only under an
   authenticated block, otherwise dead-revision recovery, initial reconciliation
   or replacement. The pure `prAdoptionPlan` reads that route from the task's typed
@@ -206,13 +215,18 @@ owner to the rules it enforces.
   intent and again before the send. `Resolution` keeps same-name delegates for
   `refusePreMerge`, `verification` and `advanceMerging`.
 - `core/merge/external-merge.ts` accepts or detects a PR merged outside Nucleus: the
-  operator accept verb (ordinary, review-entry and retained jobs), the automatic
-  probe, and the sweep that resumes a task parked on a cleared external-merge
-  check. `Resolution` keeps same-name delegates for `acceptExternalMerge`,
-  `recoverExternalMerge` and `resumeClearedAttention`.
-- `core/recovery/retry-routes.ts` holds where a restart sends a parked task: the
-  continuation a replacement worker resumes, retry, worker resume, and the
-  stopped-revision restart. `Resolution` keeps a same-name delegate for each
+  operator accept verb (ordinary, review-entry and retained jobs) over one typed
+  acceptance job, and the automatic probe. `core/merge/external-merge-record.ts`
+  records an observed merge once for both paths; `core/merge/external-merge-check.ts`
+  owns the transient check park, its recovered proof, the restore of the state it
+  interrupted and the unreviewed-merge stop. `Resolution` keeps same-name
+  delegates for `acceptExternalMerge`, `recoverExternalMerge` and
+  `resumeClearedAttention`.
+- `core/recovery/retry-routes.ts` holds where a restart sends a parked task as
+  typed decisions; `core/recovery/retry-evidence.ts` reads the recorded evidence
+  they need, and `core/recovery/retry-orchestration.ts` applies one retry in one
+  order (the continuation a replacement worker resumes, retry, worker resume, and
+  the stopped-revision restart). `Resolution` keeps a same-name delegate for each
   public moved method, including `retry` so instance overrides still fire.
 - `core/recovery/absent-restarts.ts` recreates proven-absent runs: an absent worker in
   the retained workspace, an absent resolution run, an uncertain-run restart
@@ -239,6 +253,8 @@ owner to the rules it enforces.
 - `core/dispatch/participant-lease.ts` proves a task's participants are settled: the
   lease over identities that still own work, and the execution lease merge and
   closeout read, including retained runs and blocking recovery effects.
+  `core/dispatch/withdrawn-question.ts` settles a withdrawn native question that
+  is still pending at dispatch, which is question history rather than liveness.
   `Resolution` keeps a same-name delegate for each moved method.
 - `core/merge/integration-turns.ts` holds each repository's FIFO integration turn: the
   sequence assignment, the claim, who holds the turn, the closeout reservation that
@@ -311,9 +327,11 @@ owner to the rules it enforces.
   hands that selection to reserve. `executorThreadDecision` and
   `reviewerThreadDecision` are the pure keep/fresh/reselect rules over store
   facts. `Resolution.selectLaunchThread` delegates to it.
-- `core/dispatch/run-launch/reserve.ts` reserves the run a launch will deliver: the
-  intent row, credential, slot charge, then the post-transaction hand-off to
-  deliver. `Resolution.reserveLaunchRun` delegates to it.
+- `core/dispatch/run-launch/reserve.ts` reserves the run a launch will deliver: it
+  composes the source facts (`reservation-source.ts`), the run intent
+  (`run-intent.ts`), the review-entry handover proof, the admission transaction
+  (`reservation-admission.ts`) and the hand-off to deliver.
+  `Resolution.reserveLaunchRun` delegates to it.
 - `core/dispatch/run-launch/deliver.ts` delivers a reserved run: the ordinary review
   custody and checkout proofs, the guarded native send or creation, the agent
   binding, and the uncertain or refused settlement when a step throws.
@@ -477,7 +495,13 @@ owner to the rules it enforces.
   `core/host/host-policies.ts` supplies core policy delegates at service composition; the adapter imports no core
   implementation. `core/host/admission.ts` admits,
   coalesces and measures every call by class. `shared/host.ts` is the host
-  interface (its `catalog` method is the first). Core reaches it through
+  interface (its `catalog` method is the first) and `core/host/adapter.ts`
+  composes the adapter side of it from the capability groups in
+  `core/host/contract/` (identity, observation, run creation, thread
+  presentation, threads, workspaces, delivery, native questions, forge reads and
+  workspace archive). A host read that cannot answer says so: the
+  answered-question read returns `AnsweredQuestionRead`, and its consumer records
+  an unknown instead of an operator who answered nothing. Core reaches it through
   `core/host/host-facade.ts`, which reads the owner's adapter at each call. The
   engine adapter proxy also normalizes agent-ID arguments at the transport
   boundary, including legacy direct adapter calls: qualified IDs are unwrapped
@@ -526,7 +550,9 @@ owner to the rules it enforces.
   self-calls did. `core/host/host-policies.ts` keeps the five same-name plain-return
   delegates; every refusal, its order and its text stay core's.
 - `core/workspaces/owned-workspace-archive.ts` and `core/workspaces/external-workspace-archive-policy.ts`
-  own archive placement, ownership, source, participant and teardown decisions.
+  own archive placement, ownership, source, participant and teardown decisions;
+  `core/workspaces/owned-workspace-threads.ts` owns one workspace's thread
+  inventory and the ownership and idleness facts read from it.
   They read native workspace and thread observations through the host at their
   original call sites and retain adapter overrides for internal policy seams.
   Uncertain native archive outcomes do not authorize another archive call.
@@ -609,7 +635,8 @@ owner to the rules it enforces.
   prospective-merge gate through a narrow store/Git/delivery context.
   `core/qa/project-validation.ts` owns background validation, supervisor watches
   and durable validation evidence; `core/hooks/hook-replay.ts` owns automatic replay
-  proofs and the shared occurrence renewal path. Both use narrow contexts and
+  proofs and the shared occurrence renewal path, and `core/hooks/hook-refusal.ts`
+  owns the one decode of a recorded hook refusal into its closed kind. Both use narrow contexts and
   keep delivery with `RepositoryHooks`.
   `core/hooks/hook-isolation.ts` owns shared isolation paths;
   `core/hooks/hook-context.ts` owns the hook context and result types plus the

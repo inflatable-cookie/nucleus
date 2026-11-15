@@ -5,7 +5,7 @@ import { HOST_RUN_IDENTITY_META_PREFIX, hostRunIdentityMetaKey, hostRunIdentityO
 import { hostRunAccountingDispositionMetaKey } from "../host-runs/host-run-meta-keys";
 import { HOST_RUN_OUTPUT_FAILURE_DUE_PAGE, HOST_RUN_OUTPUT_FAILURE_SUMMARY_EXAMPLES, HOST_RUN_OUTPUT_RECLASSIFICATION_LIMIT, HOST_RUN_OUTPUT_RECLASSIFICATIONS_META, hostRunOutputFailureSchema, hostRunOutputReclassificationLogSchema, hostRunOutputReclassificationSchema, parseHostRunOutputFailureRow, type HostRunOutputFailure, type HostRunOutputReclassification, type HostRunOutputReclassificationLog, } from "../host-runs/host-run-output-failures";
 import { redactHostRunData } from "../host-runs/host-run-redact";
-import { projectValidationSchedulerEvidence } from "../qa/project-validation-caller";
+import { projectValidationSchedulerEvidence } from "../../shared/project-validation-caller";
 import { HOST_RUN_SELECTOR, HOST_RUN_VALID_DATA, now, StoreCore } from "./store-core";
 
 export class StoreHostRuns {

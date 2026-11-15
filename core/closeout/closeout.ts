@@ -2,12 +2,12 @@ import { resultApplied, recordResultApplied } from '../intake/applied-result';
 import type { Completion, Run, Task } from '../../shared/contracts';
 import { taskPrNumber } from '../forge/index';
 import { git } from '../git/index';
-import { hookHoldReason, isCloseoutAuthorityHook, STALE_INTEGRATION_BASE_PROOF, type CloseoutAuthority } from '../hooks/hooks';
+import { hookHoldReason, isCloseoutAuthorityHook, type CloseoutAuthority } from '../hooks/hooks';
 import { hostProcessSweepIntent } from '../machine/host-process-reap';
 import { isBlockingRecoveryEffect, recoveryEffects, recoveryEffectsRefusal } from '../recovery/recovery-effects';
 import type { Resolution } from '../resolution';
 import { settlementHeld } from './queue-drain';
-import { CLOSEOUT_REFRESH_LIMIT } from '../recovery/task-reasons';
+import { CLOSEOUT_BASE_RENEWED_KIND, CLOSEOUT_BASE_RENEWAL_TRANSITION, closeoutBaseRenewalAllowed } from './closeout-base-refresh';
 
 export type CloseoutContext = Pick<Resolution, 'adapter' | 'attention' | 'claimIntegrationTurn' | 'closeoutAuthority' | 'closeoutWritten' | 'executionLease' | 'hookCloseout' | 'hooks' | 'launch' | 'paused' | 'queueCloseout' | 'settleAutomaticReplayHold' | 'stopped' | 'store' | 'turnReleased' | 'update' | 'waiting'>;
 
@@ -49,25 +49,6 @@ export class Closeout {
     this.resolution.update(t, { currentRunId: null, hostProcessSweep: hostProcessSweepIntent('done') }, { phase: 'done', reason: 'Nucleus-owned closeout at the synchronized integration commit' }, 'closed_out');
     this.resolution.closeoutWritten(this.store.task(t.id));
   }
-  /**
-   * True while a closeout hold may be repaired automatically. A base advance during
-   * the integration write is the ordinary case in a busy repository, and an operator
-   * retry already knows how to fix it: resync the base and run the hook again. Doing
-   * that here removes the wait, and the limit keeps a base that keeps moving parked
-   * for a human rather than retried forever.
-   */
-  private closeoutRefreshAllowed(t: Task, holdReason: string): boolean {
-    // Only the stale-integration-base class. A hook's own refusal is a semantic finding
-    // and must stay parked for a human, exactly as before.
-    if (!holdReason.includes(STALE_INTEGRATION_BASE_PROOF)) return false;
-    // Events arrive newest first; count this closeout's refreshes back to its merge.
-    const sinceMerge: { kind: string }[] = [];
-    for (const event of this.store.events(t.id)) {
-      if (event.kind === 'merge_verified') break;
-      sinceMerge.push(event);
-    }
-    return sinceMerge.filter(event => event.kind === 'closeout_hold_refresh').length < CLOSEOUT_REFRESH_LIMIT;
-  }
   /** Complete closeout through the repository's authoritative integration-write hook. No closeout run or workspace is created. */
   async hookCloseout(t: Task): Promise<void> {
     if (!this.resolution.claimIntegrationTurn(t)) return;
@@ -87,10 +68,11 @@ export class Closeout {
     if (hookState.hold) {
       const holdReason = hookHoldReason(hookState);
       // A moved integration base is operational staleness, not a finding: refresh the
-      // base and retry, which is exactly what an operator retry does. Bounded, so a
-      // repository whose base keeps moving still parks for a human instead of looping.
-      if (this.closeoutRefreshAllowed(t, holdReason)) {
-        this.resolution.update(this.store.task(t.id), { currentRunId: null, attention: false }, { phase: 'syncing', reason: 'Refreshing main before retrying closeout' }, 'closeout_hold_refresh');
+      // base and retry, which is exactly what an operator retry does. The shared rule
+      // owns the eligible refusal class and the per-merge bound, and the transition it
+      // writes is the one named refresh reason.
+      if (closeoutBaseRenewalAllowed(this.store.events(t.id), hookState.records.at(-1))) {
+        this.resolution.update(this.store.task(t.id), { currentRunId: null, attention: false }, CLOSEOUT_BASE_RENEWAL_TRANSITION, CLOSEOUT_BASE_RENEWED_KIND);
         return;
       }
       this.resolution.attention(this.store.task(t.id), holdReason); return;

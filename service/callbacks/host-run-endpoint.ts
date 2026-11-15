@@ -7,7 +7,6 @@ import {
 import {
   HOST_RUN_CLIENT_PROTOCOL_VERSION,
   HOST_RUN_FACT_CACHE_BYTES,
-  HOST_RUN_FACT_CACHE_ENTRIES,
   HOST_RUN_MAX_REQUEST_BYTES,
   HOST_RUN_OUTPUT_RETENTION_MS,
   HOST_RUN_RECONNECT_WINDOW_MS,
@@ -15,22 +14,22 @@ import {
   HOST_RUN_TERMINATION_GRACE_MS,
   HOST_RUN_TOKEN_GRACE_MS,
   HOST_RUN_UNLAUNCHED_GRACE_MS,
-  HostRunClientErrorCode,
-  HostRunSupervisorSpawn,
-  StoredSubmission,
+  type HostRunClientErrorCode,
+  type HostRunSupervisorSpawn,
+  type StoredSubmission,
   errorText,
   stableJson,
   storedBodyOf,
 } from "../../core/host-runs/host-run-endpoint-types";
 import {
-  appendVerifiedOwnedFile,
   defaultHostRunStateDir,
   ensureVerifiedDirectoryChain,
   hostRunSupervisorPaths,
-  openVerifiedOwnedFile,
-  readCheckedHostRunFile,
   writeVerifiedOwnedFile,
 } from "../../core/host-runs/host-run-files";
+import {
+  HostRunFacts,
+} from "../../core/host-runs/host-run-facts";
 import {
   HostRunRetention,
 } from "../../core/host-runs/host-run-retention";
@@ -49,8 +48,6 @@ import {
 import {
   HOST_RUN_SUPERVISOR_PLAN_FORMAT,
   hostRunCancelBodySchema,
-  hostRunCancelRequestSchema,
-  hostRunFactSchema,
   hostRunLaunchEnvironment,
   hostRunReportBodySchema,
   hostRunStatusBodySchema,
@@ -58,11 +55,20 @@ import {
   hostRunSupervisorPlanSchema,
   readHostRunLaunchEnv,
   removeHostRunLaunchEnv,
-  storedBodySchema,
+  writeHostRunCancelRequest,
   writeHostRunLaunchEnv,
   type HostRunFact,
   type HostRunSupervisorPlan,
 } from "../../core/host-runs/host-run-wire";
+import {
+  listSubmissionRunIds,
+  readStoredSubmission,
+  submissionRunId,
+  writeStoredSubmission,
+} from "../../core/host-runs/host-run-submissions";
+import {
+  hostRunRefusal,
+} from "../../core/host-runs/host-run-refusal";
 export * from "../../core/host-runs/host-run-files";
 export * from "../../core/host-runs/host-run-token";
 export * from "../../core/host-runs/host-run-wire";
@@ -76,16 +82,19 @@ export * from "../../core/host-runs/host-run-wire";
  * - newline-delimited JSON over that socket: `submit`, `attach`, `cancel`,
  *   `status` and `report`, with contract 010's error codes and client actions;
  * - the HMAC run token (`HOST_RUN_TOKEN`) and the allowlisted launch environment;
- * - per-run output retention with byte offsets, and the 5 s reconnect window
- *   behind `cancelOnDisconnect`, and the 60 s grace after which a never-launched
- *   run whose attached client left is cancelled (Tom, 2026-10-21);
- * - durable, idempotent `report` facts keyed by `factId`.
+ * - the 5 s reconnect window behind `cancelOnDisconnect`, and the 60 s grace
+ *   after which a never-launched run whose attached client left is cancelled
+ *   (Tom, 2026-10-21);
+ * - reattaching every unsettled run on startup, so a service roll strands no run
+ *   and never relaunches a command blindly.
  *
- * A run launched here is executed by a detached supervisor
- * (`bin/queue-host-run-supervisor.mjs`) that survives a Queue service roll and
- * writes the durable `host.run.result` record beside the run. The endpoint
- * reattaches every unsettled run to that record on startup, so a roll never
- * strands a run and never relaunches a command blindly.
+ * The durable records it reads and writes have one owner each beside it: the
+ * submission record (`host-run-submissions`), the `report` fact log
+ * (`host-run-facts`), retained output (`host-run-retention`), the supervisor
+ * record and result (`host-run-watch`), and the socket boundary
+ * (`host-run-serving`). A run launched here is executed by a detached
+ * supervisor (`bin/queue-host-run-supervisor.mjs`) that survives a Queue service
+ * roll and writes the durable `host.run.result` record beside the run.
  *
  * The protocol is not the Queue service protocol (Spec 013): it is a second,
  * host-run-specific socket. `caller` attributes a run; it does not authenticate
@@ -95,28 +104,18 @@ import {
   spawn,
 } from "node:child_process";
 import {
-  createHash,
   randomBytes,
 } from "node:crypto";
 import {
-  closeSync,
-  constants,
   existsSync,
-  fstatSync,
   lstatSync,
   mkdirSync,
-  readSync,
-  readdirSync,
   realpathSync,
-  statSync,
   type Stats,
 } from "node:fs";
 import {
   type Socket,
 } from "node:net";
-import {
-  join,
-} from "node:path";
 import {
   fileURLToPath,
 } from "node:url";
@@ -132,16 +131,14 @@ import {
 import {
   hostRunSocketPath,
 } from "../../core/host-runs/host-run-paths";
-import {
-  redactHostRunData,
-} from "../../core/host-runs/host-run-redact";
 import type { HostRunScheduler,HostRunSubmission } from "../../core/host-runs/host-run-scheduler";
 import {
   processGroupEmpty,
   signalProcessGroupByLeader,
 } from "../../core/machine/process-group";
 
-export { HOST_RUN_CLIENT_PROTOCOL_VERSION, HOST_RUN_MAX_REQUEST_BYTES, HOST_RUN_OUTPUT_CHUNK_BYTES, HOST_RUN_OUTPUT_RETENTION_MS, HOST_RUN_RECONNECT_WINDOW_MS, HOST_RUN_UNLAUNCHED_GRACE_MS, HOST_RUN_CLIENT_LEFT_REASON, HOST_RUN_TERMINATION_GRACE_MS, HOST_RUN_TOKEN_GRACE_MS, HOST_RUN_ATTACH_POLL_MS, HOST_RUN_SUPERVISOR_POLL_MS, HOST_RUN_SUPERVISOR_STATE_GRACE_MS, HOST_RUN_FACT_CACHE_BYTES, HostRunRetainedStream, HostRunSupervisorSpawn, HostRunClientErrorCode } from "../../core/host-runs/host-run-endpoint-types";
+export { HOST_RUN_CLIENT_PROTOCOL_VERSION, HOST_RUN_MAX_REQUEST_BYTES, HOST_RUN_OUTPUT_CHUNK_BYTES, HOST_RUN_OUTPUT_RETENTION_MS, HOST_RUN_RECONNECT_WINDOW_MS, HOST_RUN_UNLAUNCHED_GRACE_MS, HOST_RUN_CLIENT_LEFT_REASON, HOST_RUN_TERMINATION_GRACE_MS, HOST_RUN_TOKEN_GRACE_MS, HOST_RUN_ATTACH_POLL_MS, HOST_RUN_SUPERVISOR_POLL_MS, HOST_RUN_SUPERVISOR_STATE_GRACE_MS, HOST_RUN_FACT_CACHE_BYTES, HOST_RUN_RETAINED_OUTPUT_BYTES, HostRunRetainedStream, HostRunSupervisorSpawn, HostRunClientErrorCode } from "../../core/host-runs/host-run-endpoint-types";
+
 /** Spawn the detached supervisor that outlives a Queue service roll. */
 function defaultSupervisorSpawn(plan: HostRunSupervisorPlan): void {
   const entry = fileURLToPath(new URL("../../bin/queue-host-run-supervisor.mjs", import.meta.url));
@@ -188,6 +185,8 @@ export class HostRunEndpoint {
 
   private readonly servingOwner: HostRunServing;
 
+  private readonly facts: HostRunFacts;
+
   readonly stateDir: string;
   readonly socketPath: string;
   private readonly nowMs: () => number;
@@ -202,8 +201,6 @@ export class HostRunEndpoint {
   private readonly supervisorPollMs: number;
   private readonly maintenanceIntervalMs: number;
   private keys: HostRunTokenKeys | null = null;
-  private readonly facts = new Map<string, { body: string; fact: unknown }>();
-  private factCacheBytes = 0;
   private authorityError: string | null = null;
   private readonly sockets = new Set<Socket>();
   private maintenanceTimer: NodeJS.Timeout | null = null;
@@ -245,6 +242,11 @@ export class HostRunEndpoint {
       get nowMs() { return endpoint.nowMs; },
       get stateDir() { return endpoint.stateDir; },
     });
+    this.facts = new HostRunFacts(this.stateDir, {
+      store: this.scheduler.store,
+      note: (...args) => this.scheduler.note(...args),
+      reportContainerFact: (...args) => this.scheduler.reportContainerFact(...args),
+    });
     this.attach = new HostRunAttach({
       get scheduler() { return endpoint.scheduler; },
       writeResponse: (...args) => this.writeResponse(...args),
@@ -253,7 +255,7 @@ export class HostRunEndpoint {
       get stateDir() { return endpoint.stateDir; },
       readOutputRetention: (...args) => this.retention.readOutputRetention(...args),
       readSupervisorState: (...args) => this.watch.readSupervisorState(...args),
-      readSubmission: (...args) => this.readSubmission(...args),
+      readSubmission: (...args) => readStoredSubmission(endpoint.stateDir, ...args),
       get reconnectWindowMs() { return endpoint.reconnectWindowMs; },
       get unlaunchedGraceMs() { return endpoint.unlaunchedGraceMs; },
       get nowMs() { return endpoint.nowMs; },
@@ -265,14 +267,12 @@ export class HostRunEndpoint {
   async start(): Promise<void> {
     this.ensureState();
     this.syncTokenKeys();
-    this.loadFacts();
-    this.reconcileFacts();
-    this.compactFacts();
+    this.facts.start();
     const serving = await this.ensureServing();
     this.startMaintenance();
     if (!serving || !this.servingOwner.serving()) throw new Error(this.servingOwner.serveError ?? `Host-run socket did not bind: ${this.socketPath}`);
     this.servingOwner.serveError = null;
-    try { this.reconcileSubmissions(); } catch (error) { console.error("Host-run endpoint reattach failed:", error instanceof Error ? error.message : String(error)); }
+    try { this.reconcileSubmissions(); } catch (error) { console.error("Host-run endpoint reattach failed:", errorText(error)); }
   }
 
   /** Why this endpoint is not serving the socket; null while it serves. */
@@ -383,60 +383,6 @@ export class HostRunEndpoint {
     this.keys = keys;
   }
 
-  private loadFacts(): void {
-    let fd: number | null = null;
-    try {
-      fd = openVerifiedOwnedFile(this.stateDir, ["facts.jsonl"], constants.O_RDONLY, 0o600);
-      const size = fstatSync(fd).size;
-      const offset = Math.max(0, size - HOST_RUN_FACT_CACHE_BYTES);
-      const buffer = Buffer.alloc(Math.min(size, HOST_RUN_FACT_CACHE_BYTES));
-      const bytes = readSync(fd, buffer, 0, buffer.length, offset);
-      const lines = buffer.subarray(0, bytes).toString("utf8").split("\n");
-      // The first line may be partial; its durable copy is in the journal.
-      if (offset) lines.shift();
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try { this.cacheFact(hostRunFactSchema.parse(JSON.parse(line))); }
-        catch { /* one corrupt line cannot hide the rest */ }
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    } finally { if (fd !== null) closeSync(fd); }
-  }
-
-  private cacheFact(fact: HostRunFact): void {
-    const body = stableJson(fact);
-    const previous = this.facts.get(fact.factId);
-    if (previous) this.factCacheBytes -= Buffer.byteLength(previous.body) + 1;
-    this.facts.delete(fact.factId);
-    this.facts.set(fact.factId, { body, fact });
-    this.factCacheBytes += Buffer.byteLength(body) + 1;
-    while (this.factCacheBytes > HOST_RUN_FACT_CACHE_BYTES || this.facts.size > HOST_RUN_FACT_CACHE_ENTRIES) {
-      const oldest = this.facts.keys().next().value!;
-      this.factCacheBytes -= Buffer.byteLength(this.facts.get(oldest)!.body) + 1;
-      this.facts.delete(oldest);
-    }
-  }
-
-  private compactFacts(): void {
-    writeVerifiedOwnedFile(this.stateDir, ["facts.jsonl"],
-      [...this.facts.values()].map(entry => entry.body + "\n").join(""), 0o600);
-  }
-
-  /**
-   * A durable non-container fact is written before its event. If the process
-   * exited in that gap, the fact is reloaded here and its journal event is
-   * recreated, so a retry that is acked does not leave the journal short.
-   */
-  private reconcileFacts(): void {
-    for (const { fact } of this.facts.values()) {
-      const parsed = fact as { kind?: unknown; factId?: unknown };
-      if (parsed.kind === "nested" || parsed.kind === "override") {
-        try { this.journalFact(hostRunFactSchema.parse(fact)); } catch { /* a corrupt fact is skipped */ }
-      }
-    }
-  }
-
   private maintenance(): void {
     if (this.stopping) return;
     // Bind first: a lost path (or an endpoint that never bound) is the failure
@@ -459,10 +405,7 @@ export class HostRunEndpoint {
   // -- requests -------------------------------------------------------------
 
   private onConnection(socket: Socket): void {
-    if (!this.servingOwner.answeredSinceBind) {
-      this.servingOwner.answeredSinceBind = true;
-      this.scheduler.recordEndpointEvent("endpoint_answered");
-    }
+    this.servingOwner.recordAnswer();
     this.sockets.add(socket);
     let buffer: Buffer = Buffer.alloc(0);
     let failed = false;
@@ -497,7 +440,7 @@ export class HostRunEndpoint {
     const epoch = typeof request.epoch === "number" ? request.epoch : Number.NaN;
     let authorityEpoch: number;
     try { authorityEpoch = this.scheduler.authority().epoch; }
-    catch (error) { this.writeResponse(socket, this.failure(id, "stale_epoch", String(error instanceof Error ? error.message : error))); return; }
+    catch (error) { this.writeResponse(socket, this.failure(id, "stale_epoch", errorText(error))); return; }
     if (epoch !== authorityEpoch) { this.writeResponse(socket, this.failure(id, "stale_epoch", `Request epoch ${JSON.stringify(request.epoch)} is not current epoch ${authorityEpoch}`)); return; }
     try {
       switch (method) {
@@ -509,11 +452,10 @@ export class HostRunEndpoint {
         default: this.writeResponse(socket, this.failure(id, "invalid", `Unknown method ${JSON.stringify(method)}`)); return;
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const code: HostRunClientErrorCode = message.startsWith("stale_epoch") ? "stale_epoch"
-        : message.startsWith("unknown_run") ? "unknown_run"
-          : message.startsWith("conflict") ? "conflict" : "invalid";
-      this.writeResponse(socket, this.failure(id, code, message));
+      // A refusal carries the code decided where its rule lives; anything else
+      // is an invalid request, never a code guessed from the message text.
+      const refusal = hostRunRefusal(error);
+      this.writeResponse(socket, this.failure(id, refusal?.code ?? "invalid", errorText(error)));
     }
   }
 
@@ -530,12 +472,13 @@ export class HostRunEndpoint {
     const parsed = hostRunSubmitBodySchema.safeParse(body);
     if (!parsed.success) return this.failure(id, "invalid", parsed.error.issues.map(issue => `${issue.path.join(".")}: ${issue.message}`).join("; "));
     const submission = parsed.data;
-    const runId = this.runIdFor(submission.caller, submission.clientRequestId);
-    const existing = this.readSubmission(runId);
-    if (existing) {
+    const runId = submissionRunId(submission.caller, submission.clientRequestId);
+    const existing = readStoredSubmission(this.stateDir, runId);
+    if (existing.state === "unreadable") return this.failure(id, "conflict", this.unreadableSubmissionMessage(runId, existing.reason));
+    if (existing.state === "present") {
       // Names-only comparison: values are not retained, so a retry that changes only a value is the same submission.
-      if (stableJson(existing.body) !== stableJson(storedBodyOf(submission))) return this.failure(id, "conflict", `clientRequestId ${submission.clientRequestId} already names a different submission`);
-      const run = this.ensureSubmitted(existing);
+      if (stableJson(existing.stored.body) !== stableJson(storedBodyOf(submission))) return this.failure(id, "conflict", `clientRequestId ${submission.clientRequestId} already names a different submission`);
+      const run = this.ensureSubmitted(existing.stored);
       // A retry re-supplies the ephemeral env a roll or crash may have lost, while the run is unlaunched.
       if ((run.state === "queued" || run.state === "admitted") && !readHostRunLaunchEnv(this.stateDir, runId)) writeHostRunLaunchEnv(this.stateDir, runId, submission.env);
       return this.success(id, { runId, state: run.state === "queued" ? "queued" : "admitted", ...(run.position != null ? { position: run.position } : {}) });
@@ -547,19 +490,32 @@ export class HostRunEndpoint {
       cancelOnDisconnect: submission.cancelOnDisconnect ?? submission.priority === "interactive", body: storedBodyOf(submission),
     };
     writeHostRunLaunchEnv(this.stateDir, runId, submission.env);
-    this.writeSubmission(stored);
-    let record: HostRunInternalRecord;
-    try {
-      record = this.scheduler.submit(this.schedulerInput(stored), this.handlerFor(stored));
-    } catch (error) {
-      // A fenced submission created no run; the durable key is repaired at the
-      // next submit/status/startup, never dropped.
-      throw error;
-    }
-    // scheduler.submit already published the `host.run.submit` request (contract 009); a
-    // second client-named request was outside the pinned stream kinds (nucleus#074, 2026-10-03).
+    writeStoredSubmission(this.stateDir, stored);
+    // `scheduler.submit` publishes the `host.run.submit` request (contract 009)
+    // and is the only submit path: a second client-named request was outside the
+    // pinned stream kinds (nucleus#074, 2026-10-03). A fenced submission created
+    // no run; the durable key is repaired at the next submit, status or startup.
+    const record = this.scheduler.submit(this.schedulerInput(stored), this.handlerFor(stored));
     this.watch.watchRun(runId);
     return this.success(id, { runId, state: record.state === "queued" ? "queued" : "admitted", ...(record.position != null ? { position: record.position } : {}) });
+  }
+
+  /** Why a run's durable submission refusal is a client conflict, not a missing run. */
+  private unreadableSubmissionMessage(runId: string, reason: string): string {
+    return `The stored submission for run ${runId} cannot be read (${reason}); it is left in place and is never overwritten, so this request is refused — retry with a new clientRequestId or have the operator inspect the run directory`;
+  }
+
+  /**
+   * The run's durable submission, or null when it is absent or unreadable. A
+   * caller that must not treat an unreadable record as a missing one reads
+   * `readStoredSubmission` and decides; this is the read for paths that only ask
+   * whether this endpoint holds a submission for the run.
+   */
+  private submission(runId: string): StoredSubmission | null {
+    const read = readStoredSubmission(this.stateDir, runId);
+    if (read.state === "present") return read.stored;
+    if (read.state === "unreadable") console.error(`Host-run submission for ${runId} is unreadable:`, read.reason);
+    return null;
   }
 
   /**
@@ -615,7 +571,6 @@ export class HostRunEndpoint {
     }
     const launched = this.scheduler.markLaunched(run.id);
     if (launched.state !== "running" || !launched.launchedAt) return;
-    const paths = hostRunSupervisorPaths(this.stateDir, launched.id);
     const token = this.tokenForRun(launched, stored);
     const launchEnv = hostRunLaunchEnvironment(listedEnv, { runId: launched.id, token, env: this.env });
     writeHostRunLaunchEnv(this.stateDir, launched.id, launchEnv);
@@ -655,12 +610,21 @@ export class HostRunEndpoint {
    * run is reattached. Queued and admitted runs get their handler back and are
    * admitted normally; running runs are observed through the supervisor record
    * and the durable result, and settle `lost` only once the process group is
-   * proven dead with no result.
+   * proven dead with no result. A submission that cannot be read is reported and
+   * left in place: it is unknown, not absent.
    */
   private reconcileSubmissions(): void {
-    for (const runId of this.listSubmissionRunIds()) {
-      const stored = this.readSubmission(runId);
-      if (!stored) continue;
+    for (const runId of listSubmissionRunIds(this.stateDir)) {
+      const read = readStoredSubmission(this.stateDir, runId);
+      if (read.state !== "present") {
+        if (read.state === "unreadable") {
+          const message = this.unreadableSubmissionMessage(runId, read.reason);
+          console.error(`Host-run endpoint reattach refused one run: ${message}`);
+          this.scheduler.recordEndpointEvent("endpoint_reattach_refused", undefined, { unreadableSubmission: runId, reason: read.reason });
+        }
+        continue;
+      }
+      const stored = read.stored;
       let run = this.scheduler.get(runId);
       if (!run) {
         try { run = this.ensureSubmitted(stored); }
@@ -678,14 +642,6 @@ export class HostRunEndpoint {
       }
       this.watch.watchRun(runId);
     }
-  }
-
-  private listSubmissionRunIds(): string[] {
-    try {
-      const root = realpathSync(this.stateDir);
-      const runsDir = join(root, "runs");
-      return readdirSync(runsDir, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name);
-    } catch { return []; }
   }
 
   // -- cancel ---------------------------------------------------------------
@@ -708,14 +664,18 @@ export class HostRunEndpoint {
       try { return this.scheduler.cancelQueued(runId, reason, run.epoch); }
       catch { return this.scheduler.get(runId); }
     }
+    // A run this endpoint submitted carries a durable submission record. The
+    // record decides whether the stop goes through the supervisor's cancel
+    // request; the process group is the fallback for a run it cannot name.
+    const submitted = this.submission(runId);
     // A running cancel publishes the contract's `host.run.cancel` request; queued and
     // admitted runs get theirs from cancelQueued.
-    if (this.readSubmission(runId) || (run.processGroupId && run.startIdentity))
+    if (submitted || (run.processGroupId && run.startIdentity))
       this.scheduler.note(runId, "request", { method: "host.run.cancel", input: { runId, reason } });
     // A run this endpoint launched is stopped through its supervisor's durable
     // cancel request, so a Queue roll cannot lose the stop.
-    if (this.readSubmission(runId)) {
-      this.writeCancelRequest(runId, reason);
+    if (submitted) {
+      writeHostRunCancelRequest(this.stateDir, runId, reason, new Date(this.nowMs()).toISOString());
       this.watch.watchRun(runId);
       return run;
     }
@@ -723,13 +683,6 @@ export class HostRunEndpoint {
       return signalProcessGroupByLeader(run.processGroupId, run.pid, run.startIdentity, "SIGTERM") ? run : null;
     }
     return null;
-  }
-
-  private writeCancelRequest(runId: string, reason: string): void {
-    const paths = hostRunSupervisorPaths(this.stateDir, runId);
-    writeVerifiedOwnedFile(this.stateDir, ["runs", runId, "cancel.json"], JSON.stringify(hostRunCancelRequestSchema.parse({
-      format: "host.run.cancel", version: 1, runId, reason, requestedAt: new Date(this.nowMs()).toISOString(),
-    })), 0o600);
   }
 
   // -- status ---------------------------------------------------------------
@@ -740,10 +693,11 @@ export class HostRunEndpoint {
     const query = parsed.data;
     if (query.runId) return this.statusForRun(id, query.runId);
     if (query.caller && query.clientRequestId) {
-      const runId = this.runIdFor(query.caller, query.clientRequestId);
-      const stored = this.readSubmission(runId);
-      if (!stored) return this.failure(id, "unknown_run", `No submission for ${query.caller}/${query.clientRequestId}`);
-      const run = this.ensureSubmitted(stored);
+      const runId = submissionRunId(query.caller, query.clientRequestId);
+      const read = readStoredSubmission(this.stateDir, runId);
+      if (read.state === "unreadable") return this.failure(id, "conflict", this.unreadableSubmissionMessage(runId, read.reason));
+      if (read.state === "absent") return this.failure(id, "unknown_run", `No submission for ${query.caller}/${query.clientRequestId}`);
+      const run = this.ensureSubmitted(read.stored);
       return this.statusForRun(id, run.id);
     }
     if (!query.runId && !query.caller && !query.clientRequestId) {
@@ -784,113 +738,9 @@ export class HostRunEndpoint {
   private onReport(id: string, body: unknown) {
     const parsed = hostRunReportBodySchema.safeParse(body);
     if (!parsed.success) return this.failure(id, "invalid", parsed.error.issues.map(issue => `${issue.path.join(".")}: ${issue.message}`).join("; "));
-    const facts = parsed.data.facts;
-    // Dedup and conflict checks happen before any durable write, including a
-    // duplicate factId inside this same batch and a retry that arrives after a
-    // crash gap between the durable journal write and the fact log.
-    const batch = new Map<string, string>();
-    for (const fact of facts) {
-      const encoded = stableJson(fact);
-      const inBatch = batch.get(fact.factId);
-      if (inBatch !== undefined && inBatch !== encoded) return this.failure(id, "conflict", `factId ${fact.factId} appears twice with different bodies`);
-      batch.set(fact.factId, encoded);
-      const known = this.facts.get(fact.factId);
-      if (known && known.body !== encoded) return this.failure(id, "conflict", `factId ${fact.factId} already names a different body`);
-      const durable = this.durableFact(fact);
-      if (durable && stableJson(durable) !== encoded) return this.failure(id, "conflict", `factId ${fact.factId} already names a different journaled body`);
-    }
-    const acked: unknown[] = [];
-    for (const fact of facts) {
-      const known = this.facts.get(fact.factId);
-      if (known) { acked.push(known.fact); continue; }
-      const durable = this.durableFact(fact);
-      if (durable) {
-        // The durable write already happened; only the fact log is short. Repair
-        // it, never re-journal or re-report capacity, and ack the stored copy.
-        this.storeFact(fact);
-        acked.push(durable);
-        continue;
-      }
-      if (fact.kind === "container") {
-        if (fact.removed === undefined && fact.event === "removed") return this.failure(id, "invalid", `factId ${fact.factId}: removed events require removed`);
-        this.scheduler.reportContainerFact({
-          factId: fact.factId, observedAt: fact.observedAt, runId: fact.runId, epoch: fact.epoch,
-          runtime: fact.runtime, containerId: fact.containerId, event: fact.event,
-          ...(fact.removed !== undefined ? { removed: fact.removed } : {}),
-        });
-        this.storeFact(fact);
-      } else {
-        this.journalFact(fact);
-        this.storeFact(fact);
-      }
-      acked.push(fact);
-    }
-    return this.success(id, { facts: acked });
-  }
-
-  /**
-   * The durable journal body for a fact, across every report fact kind, so a
-   * reused `factId` is a global `conflict` even after a crash gap between the
-   * journal write and the fact log. A non-container row carries a synthetic
-   * holder `runId` that is not part of the fact; a container row carries the run
-   * the container belongs to and omits the `kind` discriminator.
-   */
-  private durableFact(fact: HostRunFact): unknown | null {
-    const row = this.scheduler.store.db.prepare(
-      "SELECT event,data FROM host_run_journal WHERE event IN ('nested','override','container_report') AND json_extract(data,'$.factId')=? ORDER BY id LIMIT 1",
-    ).get(fact.factId) as { event: string; data: string } | undefined;
-    if (!row) return null;
-    try {
-      const parsed = JSON.parse(row.data) as Record<string, unknown>;
-      if (row.event === "container_report") return { kind: "container", ...parsed };
-      const { runId: _runId, ...stored } = parsed;
-      return stored;
-    } catch { return null; }
-  }
-
-  /** Journal a non-container fact once, refusing a different body for the same id. */
-  private journalFact(fact: HostRunFact): void {
-    const durable = this.durableFact(fact);
-    if (durable) {
-      if (stableJson(durable) !== stableJson(fact)) throw new Error(`conflict: host-run fact ${fact.factId} changed body`);
-      return;
-    }
-    const holder = fact.kind === "nested" ? fact.parentRunId : "host-run-override";
-    this.scheduler.note(holder, fact.kind, { ...fact });
-  }
-
-  private storeFact(fact: HostRunFact): void {
-    appendVerifiedOwnedFile(this.stateDir, ["facts.jsonl"], `${JSON.stringify(fact)}\n`);
-    this.cacheFact(fact);
-    // Appends may temporarily exceed the cap by one request, then compact.
-    if (statSync(join(this.stateDir, "facts.jsonl")).size > HOST_RUN_FACT_CACHE_BYTES) this.compactFacts();
-  }
-
-  // -- output ---------------------------------------------------------------
-
-  private outputPath(runId: string, stream: "stdout" | "stderr"): string {
-    return hostRunSupervisorPaths(this.stateDir, runId)[stream === "stdout" ? "stdoutPath" : "stderrPath"];
-  }
-
-  // -- durable submission records ------------------------------------------
-
-  private runIdFor(caller: string, clientRequestId: string): string {
-    return createHash("sha256").update(`${caller}\u0000${clientRequestId}`).digest("hex");
-  }
-
-  private readSubmission(runId: string): StoredSubmission | null {
-    const raw = readCheckedHostRunFile(this.stateDir, ["runs", runId, "submission.json"]);
-    if (!raw) return null;
-    try {
-      const parsed = JSON.parse(raw.toString("utf8")) as { stored?: unknown };
-      const body = storedBodySchema.parse(redactHostRunData((parsed.stored as { body?: unknown })?.body));
-      const stored = parsed.stored as StoredSubmission;
-      return { ...stored, body };
-    } catch { return null; }
-  }
-
-  private writeSubmission(stored: StoredSubmission): void {
-    writeVerifiedOwnedFile(this.stateDir, ["runs", stored.runId, "submission.json"], JSON.stringify(redactHostRunData({ format: "host.run.submission", version: 1, stored })), 0o600);
+    const outcome = this.facts.report(parsed.data.facts);
+    if (outcome.state === "refused") return this.failure(id, outcome.code, outcome.detail);
+    return this.success(id, { facts: outcome.facts });
   }
 
   heavyFollowerCount(): number { return this.attach.heavyFollowerCount(); }

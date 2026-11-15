@@ -29,7 +29,8 @@ import { DecisionDialog } from "./records/decision-dialog";
 import type { RecordNoticeValue } from "./task/parts";
 import { space, type as typeScale } from "./design";
 export { TaskCard, DecisionCard } from "./board/cards";
-export { TaskSummaryBlock, taskIdentityFields, EventRow, type TaskDetailTab, TaskDetailTabs, TechnicalActivityEvents, RunRow, MessageRow, RawRecords, DetailField } from "./task/parts";
+export { taskIdentityFields, EventRow, type TaskDetailTab, TaskDetailTabs, TechnicalActivityEvents, RunRow, MessageRow, RawRecords, DetailField } from "./task/parts";
+export { TaskSummaryBlock } from "./task/summary";
 export { NextSection } from "./task/next-section";
 export { ProjectValidationSection, CompactTelemetrySummary } from "./telemetry-parts";
 

@@ -109,9 +109,9 @@ export function noActionEscalationAtAcceptedHead(t: Task): boolean {
     t.resolution.incident?.status === 'escalated' &&
     t.resolution.recovery.incidentId === t.resolution.incident.id;
 }
-/** Automatic closeout refreshes allowed per merge before the hold parks for a human. */
-const CLOSEOUT_REFRESH_LIMIT = 2;
 export const ACCEPTED_PR_RECONCILIATION_REASON = 'Operator requested accepted-PR workspace reconciliation';
+/** The one reason a completion callback's moved PR head records; retry routing reads it as a fact. */
+export const PR_HEAD_CHANGED_REASON = 'PR head changed after the completion callback';
 /** The visible reason a failed external-merge probe parks with; its pre-attention state is recorded for recovery. */
 export const EXTERNAL_MERGE_CHECK_REASON_PREFIX = 'External merge check:';
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -142,6 +142,12 @@ const VALIDATION_SCAN_PASS_LIMIT = 256;
 /** The reason the external-merge probe writes when a transient check clears without a merge. */
 export const EXTERNAL_MERGE_CHECK_RECOVERED_REASON = 'External merge check recovered; resuming task';
 export const MERGE_HELD_REASON = 'Merge held by operator; release to continue';
+/**
+ * The syncing wait that refreshes the integration base before a closeout retry.
+ * Four closeout paths record it and the participant lease reads it to excuse a
+ * held stale-base hook from the merge fence, so it is one named reason.
+ */
+export const CLOSEOUT_BASE_REFRESH_REASON = 'Refreshing main before retrying closeout';
 /**
  * The held wait a merge fence's own kind names: a merge hold keeps the merge
  * wording, while an owner stop reads as the dispatch hold it placed.
@@ -272,7 +278,7 @@ export const PROFILE_CATALOG_LOADING_REFUSAL = "The daemon profile catalog is st
 export const PROFILE_CATALOG_PENDING_REASON = "Waiting for the daemon profile catalog to load after service start";
 export {
   MERGE_GATE_SETTINGS_ATTEMPTS, TRANSIENT_PROVIDER_WAIT, stages, active, assignedThreadWaitReason, coordinative, proofExecutor,
-  mergedWithNonePatch, NO_RESOLUTION_ACTION, CLOSEOUT_REFRESH_LIMIT, message, EXTERNAL_MERGE_PROBE_LIMIT, VALIDATION_SCAN_PASS_LIMIT,
+  mergedWithNonePatch, NO_RESOLUTION_ACTION, message, EXTERNAL_MERGE_PROBE_LIMIT, VALIDATION_SCAN_PASS_LIMIT,
   resolutionCreationRoles, reviewerRefusalKey, PROVIDER_REFUSAL_UNVERIFIED, UNVERIFIABLE_REFUSAL_READ_LIMIT, reminderClock,
   repositoryQaArgv, workingLanes, escalationOutlived, plannerIdMatches,
 };

@@ -4,6 +4,7 @@ import { REMOVED_TASK_REFUSAL } from './control-refusals';
 import { readyReviewAtHead } from '../recovery/task-reasons';
 import { MOVE_REVIEW_PR_REFUSAL, moveStateRefusal } from './control-refusals';
 import type { OwnerAcceptanceRecord, Run, Task, TaskControlInput } from "../../shared/contracts";
+import { TaskChangedRefusal } from '../../shared/task-version';
 import { holdsOf, taskControlInputSchema } from "../../shared/contracts";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import type { VerifiedEnclosingOperation } from "../planning/enclosing-operation";
@@ -23,7 +24,7 @@ import type { ContinuedPrBinding } from "../resolution";
 import { REVIEW_FRESH_REPLACEMENT_EXIT, reviewContinuationState, reviewContinuationWait, reviewInProgress, reviewerIdentityAtHead, retainedReaderStateDecision, retainedReaderStoredRefusal, retainedReaderUnavailableRefusal, keepRetainedReviewer } from "../review/review-continuation";
 import { validateNamedProfile } from "../dispatch/routing";
 import { DurableFenceRefusal, runFenceRefusal, runSettlementFence } from "../intake/run-settlement";
-import { proofOnlyReceiptAwaitingReview } from "../qa/proof-execution";
+import { proofOnlyReceiptAwaitingReview } from "../qa/proof-records";
 import { now } from "../store/store";
 import { OPERATOR_WORKER_REMAP_REASON, operatorReplacementPending } from "../recovery/task-reasons";
 import { randomUUID } from "node:crypto";
@@ -702,7 +703,7 @@ export class MoveControls {
         }
         const routeProfileId=currentRouteProfile(settledTask,'worker');
         const latest=this.store.task(task.id);
-        if(latest.version!==settledTask.version)throw Error('Task changed during the move; refresh before retrying');
+        if(latest.version!==settledTask.version)throw new TaskChangedRefusal('Task changed during the move; refresh before retrying', settledTask.version, latest.version);
         const failoverReason=`${OPERATOR_WORKER_REMAP_REASON}. Continue the existing task: ${instruction}`.slice(0,2000);
         if(routeProfileId&&settledTask.profileRequests?.worker?.ownerRoute)
           this.store.event(task.id,'worker_route_honoured',`move to=work selected pending worker route ${routeProfileId}`);

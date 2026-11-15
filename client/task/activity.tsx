@@ -4,7 +4,8 @@ import { type UseQueryResult } from "@tanstack/react-query";
 import { useRpc } from "../shell";
 import { Button, DetailSection, Field, muted, type Colors } from "../controls";
 import * as api from "../../shared/contracts";
-import { lowValueActivityKinds, EventRow, TechnicalActivityEvents, MessageRow, type BoardAct } from "./parts";
+import { lowValueActivityKinds } from "../../shared/task-events";
+import { EventRow, TechnicalActivityEvents, MessageRow, type BoardAct } from "./parts";
 import type { TaskDetailRead } from "./task-dialog";
 import { space, type as typeScale } from "../design";
 

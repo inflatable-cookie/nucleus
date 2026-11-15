@@ -7,6 +7,7 @@ import { parseHostOutageNoticeId } from '../../shared/host-outage';
 import { isCloseoutHookHold } from '../hooks/hooks';
 import { NO_ORIGIN_THREAD_WAIT, missingOriginHasPlanner, noticeId, noticeTarget, originRecipient } from './origin';
 import type { AgentObservation } from '../host/adapter';
+import { isAgentGoneRefusal } from '../host/errors';
 import { qaScheduleNoticeOwner } from '../qa/project-qa-schedule';
 import type { Resolution } from '../resolution';
 import { now } from '../store/store';
@@ -112,7 +113,7 @@ export class Notices {
     let state: AgentObservation | null;
     try { state = d.observe ? await d.observe() : await this.resolution.host.observe(d.recipient); }
     catch (error) {
-      if (d.gone && error instanceof Error && error.message === 'Agent was not found') { d.gone(); return 'done'; }
+      if (d.gone && isAgentGoneRefusal(error)) { d.gone(); return 'done'; }
       d.wait(d.lookupWait(error instanceof Error ? error.message : String(error)));
       return 'done';
     }

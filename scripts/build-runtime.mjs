@@ -70,7 +70,6 @@ export async function buildRuntime(destination) {
     ...(await readdir(join(root, 'bin'))).filter(name => name.endsWith('.mjs')).map(name => `bin/${name}`),
     'core/store/backup-cli.mjs', 'core/store/backup-worker.mjs',
     'core/machine/owned-file.mjs',
-    'core/intake/callback-client.mjs', 'core/intake/report-binding.mjs',
     'core/workspaces/work-root.mjs', 'core/workspaces/normalize-directory-helper.mjs',
     'service/install/install.mjs', 'service/install/main-channel.mjs',
     'index.server.ts', 'mcp-report.mjs', 'service/executor/executor-worker.ts', 'service/executor/host-run-front-worker.ts',
@@ -99,7 +98,6 @@ export async function buildRuntime(destination) {
   "core/machine/process-identity.ts": "server/process-identity.ts",
   "core/machine/pid.ts": "server/pid.ts",
   "core/machine/start-identity.ts": "server/start-identity.ts",
-  "core/machine/supervisor-liveness.ts": "server/supervisor-liveness.ts",
   "core/machine/supervisor-watchdog.ts": "server/supervisor-watchdog.ts",
   "core/machine/machine-ports.ts": "server/machine-ports.ts",
   "core/machine/owned-file.mjs": "server/owned-file.mjs",
@@ -144,15 +142,11 @@ export async function buildRuntime(destination) {
   "core/closeout/closeout.ts": "server/closeout.ts",
   "core/closeout/closeout-renewal.ts": "server/closeout-renewal.ts",
   "core/closeout/queue-drain.ts": "server/queue-drain.ts",
-  "core/intake/report-binding.mjs": "server/report-binding.mjs",
   "core/intake/result-application.ts": "server/result-application.ts",
   "core/intake/report.ts": "server/report.ts",
   "core/intake/reporting-identity.ts": "server/reporting-identity.ts",
-  "core/intake/callback-client.d.mts": "server/callback-client.d.mts",
   "core/intake/callback-reminders.ts": "server/callback-reminders.ts",
   "core/intake/reporting-files.ts": "server/reporting-files.ts",
-  "core/intake/report-binding.d.mts": "server/report-binding.d.mts",
-  "core/intake/callback-client.mjs": "server/callback-client.mjs",
   "core/intake/applied-result.ts": "server/applied-result.ts",
   "core/intake/report-binding.ts": "server/report-binding.ts",
   "core/intake/current-binding.ts": "server/current-binding.ts",
@@ -161,6 +155,8 @@ export async function buildRuntime(destination) {
   "core/intake/callback-intake.ts": "server/callback-intake.ts",
   "shared/service/callback-client.mjs": "server/callback-client.mjs",
   "shared/service/callback-client.d.mts": "server/callback-client.d.mts",
+  "shared/service/transport.mjs": "server/transport.mjs",
+  "shared/service/transport.d.mts": "server/transport.d.mts",
   "shared/service/report-binding.mjs": "server/report-binding.mjs",
   "shared/service/report-binding.d.mts": "server/report-binding.d.mts",
 
@@ -287,6 +283,7 @@ export async function buildRuntime(destination) {
   }
   // callback.ts appends code to these exact bytes; keep the plain helper intact.
   await writeFile(join(out, 'server/callback-client.mjs'), await readFile(join(root, 'shared/service/callback-client.mjs')));
+  await writeFile(join(out, 'server/transport.mjs'), await readFile(join(root, 'shared/service/transport.mjs')));
   const { version } = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
   await writeFile(join(out, 'package.json'), JSON.stringify({ name: 'nucleus-runtime', type: 'module', version })+'\n');
   await cp(join(root, 'skills'), join(out, 'skills'), { recursive: true });

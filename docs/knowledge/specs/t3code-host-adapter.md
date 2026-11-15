@@ -492,6 +492,8 @@ window is not covered. That is a T3 limitation, not a Nucleus absence claim.
 Pending questions use the retained runtime request and its `user_input_request`
 item. A missing item is refused by that exact field. Answered questions cover
 the retained answered window; an absent question item leaves its text empty.
+Answered reads return an explicit success or unknown result; an unreadable
+bounded snapshot never becomes an empty answer list.
 A complete-transcript read still refuses a paged or locally omitted projection;
 no consumer requests an unbounded snapshot.
 Complete shell

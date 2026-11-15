@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from "react";
 import { useBoardState } from "../board-state";
-import { bindWebQuestions, updateWebQuestions } from "../native-questions";
+import { bindWebQuestions, refreshWebQuestions, updateWebQuestions } from "../native-questions";
 import { useRpc } from "./shell";
 import { nativeQuestionList, nativeQuestionAnswer } from "../../shared/contracts";
 import { formatAgentId } from "../../shared/agent-identity";
@@ -27,10 +27,11 @@ export function WebQuestions() {
     let stopped = false;
     const poll = async () => {
       await Promise.all([...owners].map(async ([agentId, taskId]) => {
-        try {
+        const result = await refreshWebQuestions(agentId, async () => {
           const requests = await list({ taskId, agentRef: agentId });
-          if (!stopped) updateWebQuestions(agentId, requests.map(request => ({ id: request.requestId, questions: request.questions })));
-        } catch { if (!stopped) updateWebQuestions(agentId, []); }
+          return requests.map(request => ({ id: request.requestId, questions: request.questions }));
+        }, () => !stopped);
+        if (!result.ok && !stopped) console.error(`Could not refresh questions for ${agentId}; keeping the last known requests.`, result.error);
       }));
     };
     void poll();

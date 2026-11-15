@@ -12,7 +12,6 @@ import {join} from 'node:path';
 import {Store} from '../core/store/store';
 import {Engine} from '../core/engine';
 import {chooseProfile,eligibilityReasons,validateNamedProfile} from '../core/dispatch/routing';
-import { liveRepositorySharer, repositorySharedWorkspaces, sharedRepositoryArchiveHold } from '../core/workspaces/repository-archive-gate';
 import {parseNorthstarDocument,submissionQueueFields} from '../core/planning/handoff';
 import {
   capabilityLevelSchema,outcomeSchema,poolRecordFromLegacy,poolSchema,scopeSchema,
@@ -341,23 +340,3 @@ test('nucleus#1139: a task\'s host catalog keeps profiles it cannot run out of s
   }finally{await engine.stop();store.close();rmSync(dir,{recursive:true,force:true});}
 });
 
-test("nucleus#1139 review: a shared-project archive holds while a live task shares the repository", () => {
-  const t3Adapter = { capabilities: () => ({ repositorySharedWorkspaces: true }) } as never;
-  const paseoAdapter = { capabilities: () => ({}) } as never;
-  const task = (id: string, over: Partial<Task> = {}): Task => ({
-    ...taskOf(), id, hostId: 't3code:env', repoPath: '/repo', phase: 'working', ...over,
-  }) as Task;
-  const base = task('archiving');
-  // A live sibling on the same host and repository holds the shared registration.
-  const withLiveSibling = [base, task('other')];
-  assert.equal(liveRepositorySharer(withLiveSibling, base), true);
-  assert.match(sharedRepositoryArchiveHold(t3Adapter, withLiveSibling, base) ?? '', /another live task in this repository still uses the shared project registration/);
-  // A terminal, removed, other-host or other-repository sibling holds nothing.
-  assert.equal(liveRepositorySharer([base, task('done', { phase: 'done' })], base), false);
-  assert.equal(liveRepositorySharer([base, task('gone', { removedAt: new Date().toISOString() })], base), false);
-  assert.equal(liveRepositorySharer([base, task('paseo', { hostId: 'paseo:primary' })], base), false);
-  assert.equal(liveRepositorySharer([base, task('elsewhere', { repoPath: '/other' })], base), false);
-  assert.equal(sharedRepositoryArchiveHold(t3Adapter, [base, task('paseo', { hostId: 'paseo:primary' })], base), null);
-  // Paseo worktrees are independent registrations: no gate at all.
-  assert.equal(sharedRepositoryArchiveHold(paseoAdapter, withLiveSibling, base), null);
-});

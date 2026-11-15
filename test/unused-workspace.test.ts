@@ -85,7 +85,7 @@ test('unused workspace archive keeps refusing idle foreign threads', async t => 
   const flags: unknown[] = [];
   const original = f.adapter.archiveTaskWorkspace!;
   f.adapter.archiveTaskWorkspace = async (...args: Parameters<NonNullable<Adapter['archiveTaskWorkspace']>>) => {
-    flags.push(args[9]);
+    flags.push(args[6]?.allowIdleForeignThreads);
     return original(...args);
   };
   await f.run();

@@ -63,6 +63,7 @@ test("the lease holder settles a predecessor's preparation as refused, keeping i
   assert.equal(settled.receivedAt, '2026-10-15T09:02:28.155Z');
   assert.equal(settled.runId, null);
   assert.ok(settled.settledAt);
+  assert.equal(settled.refusalCode, 'interrupted_preparation', 'a predecessor settlement is a typed lifecycle refusal');
   assert.ok(settled.diagnostic.startsWith(`${QA_INTERRUPTED_PREPARATION_PREFIX}: its owner ${predecessor} (pid 33836) is a predecessor of the current writer lease ${f.owner}`));
   assert.match(settled.diagnostic, /claimed no QA run and submitted no host run\. Retry with a new request ID$/);
   assert.deepEqual({ done: f.read('done'), failed: f.read('failed'), mine: f.read('mine') }, before, 'admitted, refused and own preparations are untouched');

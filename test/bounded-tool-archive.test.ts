@@ -28,7 +28,7 @@ async function fixture(t: TestContext, attached = false) {
   f.adapter.hostProcessListing = async () => processes;
   const archive = (inventory: (() => Run[]) | undefined = () => f.store.runs(f.task().id)) =>
     f.adapter.archiveTaskWorkspace(f.task(), 'ws', f.directory, f.head, () => true, false,
-      true, new Set([agentId]), true, false, undefined, undefined, undefined, undefined, inventory);
+      { requirePublished: true, attachedAgentIds: new Set([agentId]), requireDirectory: true, participantRuns: inventory });
   const processAt = (cwd: string): HostProcessFact => ({ pid: 42, ppid: 1, pgid: 42, uid: 501,
     startIdentity: 'synthetic-start', command: 'synthetic-detached-command', cwd });
   return { ...f, agentId, oldScratch, currentScratch, archive, run, processAt,
