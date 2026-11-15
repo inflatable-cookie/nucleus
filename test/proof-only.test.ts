@@ -23,7 +23,7 @@ import { classifyWorkspaceCreation, populateOwnedWorktree, taskCheckoutTarget } 
 import { validateDispatch, verifyWorkspace as verifyTaskWorkspace } from '../core/git/index';
 import { terminalArchiveWorkspaces } from '../core/closeout/terminal-archive';
 import { collectOwnerVerbFacts, ownerTaskNext, ownerVerbViews } from '../core/verbs/owner-verbs';
-import { escalationVerbChoices, plannerEscalationChoicesFor } from '../core/questions/blocker-ladder';
+import { escalationVerbChoices, plannerEscalationChoicesFor } from '../core/questions/ladder';
 
 const runGit = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const commit = 'a'.repeat(40);

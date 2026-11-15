@@ -1762,7 +1762,7 @@ test('two refused coordinator choices reach the planner ladder', async () => {
     await f.coordinatorReport({verb:'retry_effect',reason:'Retry again'},second.id);
     await f.engine.resolution.recovery.route(f.current());
     assert.equal(f.events('planner_escalation').length,1);
-    const { plannerEscalations } = await import('../core/questions/blocker-ladder');
+    const { plannerEscalations } = await import('../core/questions/ladder');
     assert.match(plannerEscalations(f.store.eventsAll(f.submitted.id))[0]!.cause,/^[0-9a-f]{64}$/);
   } finally { await f.close(); }
 });

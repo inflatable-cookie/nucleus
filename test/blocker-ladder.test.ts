@@ -22,7 +22,7 @@ import {
   reviewerConsults,
   revisionCapCauseId,
   PLANNER_ESCALATION_CHOICES,
-} from "../core/questions/blocker-ladder";
+} from "../core/questions/ladder";
 import { nativeDelegationPrompt } from "../core/questions/question-delegation";
 import { deriveTaskTelemetry } from "../core/telemetry/telemetry";
 import {
@@ -32,7 +32,7 @@ import {
 } from "../core/dispatch/prompts";
 import { Decisions } from "../core/planning/decisions";
 import { collectOwnerVerbFacts, ownerVerbViews } from "../core/verbs/owner-verbs";
-import { Store } from "../core/store/store";
+import { Store, digest } from "../core/store/store";
 import { Engine } from "../core/engine";
 import {
   REVISION_BUDGET,
@@ -244,6 +244,78 @@ test("ladder event readers fence sends and find the open escalation for a repeat
     parseAnsweredText("esc-1: answered by planner p1: yes — because"),
     "yes — because",
   );
+});
+
+/**
+ * nucleus#1242: the intent line is the episode's identity and the payload carries the
+ * typed fields beside it. A record written before the ladder wrote a payload still
+ * names its cause and run on the line, and a cause the task raised itself names no run.
+ */
+test("an intent line recorded before the payload still names its cause and run, and a worker run is no run", () => {
+  const cause = "d".repeat(64);
+  const base = (id: number, kind: string, detail: string) => ({
+    id,
+    taskId: "t",
+    at: "2026-11-02T00:00:00Z",
+    kind,
+    detail,
+  });
+  const legacy = [
+    base(1, "reviewer_consult", `consult-1: cause ${cause}; run rev-9; question abc (3 chars)`),
+    base(2, "planner_escalation", `esc-1: cause ${cause}; run worker; question def (3 chars); options none`),
+  ];
+  assert.equal(reviewerConsults(legacy)[0]!.cause, cause, "a pre-payload consult keeps its recorded cause");
+  assert.equal(reviewerConsults(legacy)[0]!.runId, "rev-9");
+  assert.equal(reviewerConsults(legacy)[0]!.question, null, "only the payload carries the question");
+  assert.equal(plannerEscalations(legacy)[0]!.cause, cause, "a pre-payload escalation keeps its recorded cause");
+  assert.equal(plannerEscalations(legacy)[0]!.runId, null, "a cause the task raised itself names no run");
+  const answered = [
+    ...legacy,
+    base(3, "planner_escalation_payload", `esc-1: ${JSON.stringify({ cause, runId: null, question: "Which route?", refusal: "pre_merge" })}`),
+    base(4, "planner_escalation_missed", "esc-1: the project planner gave no usable answer (no answer in time)"),
+  ];
+  const escalation = plannerEscalations(answered)[0]!;
+  assert.equal(escalation.question, "Which route?", "the payload names the question");
+  assert.equal(escalation.refusal, "pre_merge", "the refusal class is typed, never read from text");
+  assert.equal(escalation.missed, true);
+  assert.equal(escalation.answered, false, "a miss stays open for the planner");
+});
+
+/**
+ * nucleus#1242 review: the recovery pass writes the incident digest as the intent
+ * cause and a category label in the payload (`core/recovery/coordinator-pass.ts`),
+ * and the automatic-retry suppression writes `recovery_rerun` the same way. The line
+ * is the identity: a payload category never renames the episode, and a repeat for the
+ * same incident is its own escalation rather than a reuse of the first id, so an
+ * answered, missed or unknown first record cannot suppress the next route.
+ */
+test("a recorded recovery escalation keeps its incident cause, and a repeat is its own episode", async () => {
+  const f = fixture({ responsible: true });
+  try {
+    const task = f.current();
+    const cause = digest(`recovery-pending:${task.id}:recovery-pending-1`);
+    const question = "The recovery episode never started a run; decide how it proceeds.";
+    const open = () => f.engine.resolution.openPlannerEscalation(f.current(), {
+      cause, runId: null, question,
+      payload: { cause: "recovery-pending", taskId: task.id, runId: null, question },
+    });
+    open();
+    const first = plannerEscalations(f.store.eventsAll(task.id))[0]!;
+    assert.equal(first.cause, cause, "the recorded incident digest is the identity, not the payload category");
+    assert.equal(first.question, question, "the payload still carries the question");
+    assert.equal(findOpenPlannerEscalation(f.store.eventsAll(task.id), cause)?.id, first.id, "the incident cause finds its episode");
+    assert.equal(findOpenPlannerEscalation(f.store.eventsAll(task.id), "recovery-pending"), null, "the category names no episode");
+    // An answered first episode must not suppress the route of the next one.
+    f.store.event(task.id, "planner_escalation_answered", `${first.id}: answered by ordinary stop: task control moved the task`);
+    open();
+    const escalations = plannerEscalations(f.store.eventsAll(task.id));
+    assert.equal(escalations.length, 2, "a repeat occurrence opens its own escalation");
+    assert.notEqual(escalations[1]!.id, first.id, "the repeat gets its own id instead of reusing the first");
+    assert.equal(escalations[1]!.cause, cause);
+    assert.equal(escalations[1]!.answered, false, "the new episode is open even though the first was settled");
+    assert.equal(findOpenPlannerEscalation(f.store.eventsAll(task.id), cause)?.id, escalations[1]!.id,
+      "the repeat is the open escalation for that cause");
+  } finally { await f.close(); }
 });
 
 test("worker and revision prompts name the ladder and the reviewer ask target", () => {

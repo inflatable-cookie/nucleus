@@ -1,4 +1,4 @@
-import { blockerCauseId, escalationWaitDetail, findOpenPlannerEscalation, plannerEscalationQuestion, type LadderEvent } from '../questions/blocker-ladder';
+import { blockerCauseId, escalationWaitDetail, findOpenPlannerEscalation, plannerEscalationQuestion, type LadderEvent } from '../questions/ladder';
 import { isFailedChecksReason, taskPrNumber } from '../forge/index';
 import { GitReadTimeoutError } from '../git/index';
 import { hookHoldReason, isStaleIntegrationBaseRefusal, gitRaw, repositoryIsGitCheckout, type HookEmissionResult, type ProspectiveMergeOutcome } from '../hooks/hooks';

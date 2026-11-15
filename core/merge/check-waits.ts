@@ -1,6 +1,6 @@
 import type { Run, Task } from '../../shared/contracts';
 import { isFailedChecksReason, requiredCheckPollMetaKey, REQUIRED_CHECK_ESCALATION_MS, REQUIRED_CHECK_POLL_INTERVAL_MS } from '../forge/index';
-import { plannerEscalations, type LadderEvent, type PlannerEscalation } from '../questions/blocker-ladder';
+import { plannerEscalations, type LadderEvent, type PlannerEscalation } from '../questions/ladder';
 import type { CheckObservationFields, MergeGateResult, OverdueCheckEvidence, RequiredChecksResult, Resolution } from '../resolution';
 import { now } from '../store/store';
 import { CheckEvidence } from './check-evidence';

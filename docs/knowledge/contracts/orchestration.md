@@ -671,15 +671,23 @@ episode opens. Delegates remain on Engine. RecoverySettlement is a separate clas
 because Recovery is built by Resolution without Engine, and the handlers stay
 registered on Engine.
 
-**Ladder** (`core/questions/ladder.ts`) and **blocker-ladder.ts**. A blocked worker gets
+**Ladder** (`core/questions/ladder/`). A blocked worker gets
 one reviewer consult per cause, then one planner escalation, which a planner or
 decider settles or classifies to the operator. Also settles open escalations
 when an ordinary control moves the task. Enforces
 [Non-converging review ladder](#non-converging-review-ladder-spec-058-cutover-3)
-and [Responsible tasks](#responsible-tasks-spec-058-cutover-1). Pures:
-`blockerLadderStep`, `consultRecovery`, `escalationRecovery`, plus the question
-and parse helpers in `blocker-ladder.ts`. `operatorQuestionStep` lives in
-`operator-question.ts`. Delegates remain on Resolution; Engine keeps
+and [Responsible tasks](#responsible-tasks-spec-058-cutover-1). The folder splits the
+mechanism by job: `ladder.ts` is the public surface and in-flight state; `records.ts`
+decodes each intent once — an episode's **cause is always its intent line**, because
+the escalation id is derived from that cause and a caller's payload may carry only a
+category label, while the **run, question and refusal class** come from the typed
+payload written beside it; `causes.ts` owns cause identity; `questions.ts` and
+`replies.ts` the words it asks and accepts; `waits.ts` the stop details; `pass.ts` the
+classify/wait/continue and recovery decisions; `park.ts` where a completed result
+parks; `routing.ts` the rungs a question travels; `operator.ts` the last rung;
+`hold.ts` the task-side wait; `resume.ts` the restart passes; `attention.ts` the
+unknown-delivery attention; and `continuation.ts` the two exits. `operatorQuestionStep`
+lives in `operator-question.ts`. Delegates remain on Resolution; Engine keeps
 `settleLadderControl`.
 
 **Lifecycle** (`core/closeout/workspace-lifecycle.ts`). Workspace cleanup and post-merge
@@ -734,6 +742,10 @@ in `planner-delegation.ts` walks those rungs in order and then the decider: a ru
 observed gone is skipped, a live rung's silence opens the next, and an unknown send
 stops the route. Enforces
 [Delegated answers](#delegated-answers-preserve-the-planners-conversation).
+The window-close reason the advance rule distinguishes from an unknown delivery is one
+exported name, availability is `unavailableGroupNames` over the store's typed rows, and
+the store owns the typed read behind an answer addressed to a task. A refused planner
+ticket and a failed decider archive are each recorded on the delegation stream.
 Pures in `question-delegation.ts`: `binaryApprovalChoice`,
 `delegateApprovedChoice`, `applyBinaryApproval`, `parseDelegatedAnswer`,
 `nativeDelegationPrompt`. `delegateApprovedChoice` fail-closes operator-only

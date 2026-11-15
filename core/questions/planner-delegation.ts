@@ -1,5 +1,5 @@
 import type { Task } from '../../shared/contracts';
-import { DelegatedHostUnavailable, type PlannerRungName } from './delegation';
+import { DelegatedHostUnavailable, NO_COMMAND_ANSWER_IN_WINDOW, type PlannerRungName } from './delegation';
 import { DELEGATED_ANSWER_TIMEOUT_MS, nativeDelegationPrompt, type DelegateRole, type DelegationContext } from './question-delegation';
 import type { Resolution } from '../resolution';
 
@@ -48,7 +48,7 @@ export async function delegateQuestion<T>(resolution: Resolution, task: Task, in
     [deciderId, 'decider', deciderDelivery] as const,
   ]) {
     const events = resolution.store.eventsAll(`delegation:${id}`);
-    if (!events.some(event => event.kind === 'delegated_answer') && events.some(event => event.kind === 'delegated_closed' && event.detail !== 'No command answer in the window')) {
+    if (!events.some(event => event.kind === 'delegated_answer') && events.some(event => event.kind === 'delegated_closed' && event.detail !== NO_COMMAND_ANSWER_IN_WINDOW)) {
       if (current()) input.onUnknown(role, delivery?.recipient, Error('Previous delivery outcome unknown; never resend'));
       return null;
     }

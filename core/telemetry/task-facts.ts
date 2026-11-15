@@ -3,7 +3,7 @@ import type { HookRecord } from "../../shared/hooks";
 import { STAGE_META, isSemanticIncidentCause, taskTelemetrySchema, telemetryStageForTask, type TaskTelemetry, type TelemetryStageKey } from "../../shared/telemetry";
 import { taskUsage } from "./run-usage";
 import { nonDeliveryEvents } from "../recovery/non-delivery";
-import { plannerEscalations, reviewerConsults } from "../questions/blocker-ladder";
+import { plannerEscalations, reviewerConsults } from "../questions/ladder";
 
 export interface QueueEvent { id: number; taskId: string; at: string; kind: string; detail: string }
 

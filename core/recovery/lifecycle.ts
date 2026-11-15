@@ -4,7 +4,7 @@ import { stages } from './task-reasons';
 import { now } from '../store/store';
 import { coordinatorReportMatches } from './coordinator-report';
 import { latestAuthorResult } from '../verbs/owner-verbs';
-import { blockerLadderStep as decideBlockerLadderStep, plannerEscalations, reviewerConsults, blockerCauseId, stalledUnknownEscalation, type LadderEvent } from '../questions/blocker-ladder';
+import { blockerLadderStep as decideBlockerLadderStep, plannerEscalations, reviewerConsults, blockerCauseId, stalledUnknownEscalation, type LadderEvent } from '../questions/ladder';
 import { DEFAULT_STALL_THRESHOLD_MINUTES } from '../../shared/schema/settings';
 import { advanceFailureDisposition } from './resolution-decisions';
 import { isTransportFailure } from '../../shared/transport';

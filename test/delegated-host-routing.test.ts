@@ -51,3 +51,36 @@ test('planner delivery uses the recorded owner host after handover when native I
     assert.equal(JSON.parse(store.eventsAll('delegation:owner-test')[0]!.detail).hostId, 'b');
   } finally { await engine.stop(); store.close(); }
 });
+
+/**
+ * nucleus#1242: a decider is archived on the decider task's own host, and a failed
+ * archive is recorded on the delegation stream so the host keeps a visible orphan
+ * instead of the ledger losing it. The delivery failure still reaches the caller.
+ */
+test('a decider whose archive fails is recorded on the delegation stream', async () => {
+  const store = new Store(':memory:');
+  const archived: string[] = [];
+  const adapter = {
+    runDecider: async () => ({ agentId: 'decider-1' }),
+    askPlanner: async () => { throw Error('delivery unknown'); },
+    archiveAgent: async (id: string) => { archived.push(id); throw Error('archive refused'); },
+  } as unknown as Adapter;
+  const engine = new Engine(store, adapter, 0);
+  engine.resolveHostAdapter = () => adapter;
+  engine.hostAvailable = () => true;
+  engine.resolution.delegatedAnswerWaitMs = 1;
+  try {
+    const task = store.insert(submissionSchema.parse({ submissionId: 'decider-archive', title: 'Task', repoPath: '/repo',
+      planningCommit: 'a'.repeat(40), handoffPath: 'h', originAgentId: 'planner' }), 'b', 'h', 'a'.repeat(40), { originHostId: 'b' });
+    await assert.rejects(
+      engine.resolution.deciderBound(task, { prompt: 'question', profile: { id: 'p' } as never,
+        signal: new AbortController().signal, timeoutMs: 10, decisionId: 'd-1' }),
+      /delivery unknown/,
+      'the delivery failure still reaches the caller',
+    );
+    assert.deepEqual(archived, ['decider-1'], 'the decider is archived on its own host');
+    const failed = store.eventsAll('delegation:ns-decider-d-1').find(event => event.kind === 'delegated_decider_archive_failed');
+    assert.ok(failed, 'the failed archive is recorded');
+    assert.match(failed.detail, /decider-1: archive refused/);
+  } finally { await engine.stop(); store.close(); }
+});

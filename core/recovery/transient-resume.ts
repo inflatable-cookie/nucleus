@@ -2,7 +2,7 @@ import type { Profile, Run, Task, TransientProviderRetry } from '../../shared/co
 import { isDispositionActive, isDispositionComplete, workerProfileIsExcluded } from '../../shared/contracts';
 import { requestOnly, groupIsUnavailable } from '../../shared/pool';
 import { steppedDelay } from '../../shared/backoff';
-import { escalationWaitDetail, plannerEscalations, type LadderEvent } from '../questions/blocker-ladder';
+import { escalationWaitDetail, plannerEscalations, type LadderEvent } from '../questions/ladder';
 import { dispatchBlocked } from '../dispatch/capacity';
 import { TRANSIENT_BACKOFF_MS, TRANSIENT_MAX_RESUMES, isQuotaExhaustion, isRateLimitError, isTransientProviderError, rateLimitCooldownData, transientProviderRetryAt } from './exhaustion';
 import { interactiveSessionOpen } from '../dispatch/interactive';

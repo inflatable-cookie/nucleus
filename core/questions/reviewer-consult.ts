@@ -1,27 +1,10 @@
 import type { Completion, Task } from '../../shared/contracts';
-import type { TaskStopVerb } from '../../shared/task-stop';
-import { proofOnlyReceiptAwaitingReview } from '../qa/proof-records';
 import type { Resolution } from '../resolution';
 import { digest } from '../store/store';
 import { latestAuthorResult } from '../verbs/owner-verbs';
 import { DelegatedHostUnavailable } from './delegation';
 import { parseNativeDelegatedReply, taskContextLines } from './question-delegation';
-import { REVIEWER_CONSULT_TIMEOUT_MS, consultContinuationInstruction, escalationWaitDetail, findOpenPlannerEscalation, plannerEscalationQuestion, reviewerConsultQuestion, reviewerConsults, type LadderEvent } from './blocker-ladder';
-
-/** Owner-verb suffix on a proof-only escalation: receipt review when that is the wait, else proof. */
-export function plannerEscalationOwnerSuffix(t: Task): string {
-  if (proofOnlyReceiptAwaitingReview(t))
-    return ' Available owner verb: move to=review (starts a receipt reviewer at the same commit; the receipt is the subject).';
-  if (t.entrypoint === 'proof')
-    return ' Available owner verb: proof (activate the qualification when authorization evidence is complete).';
-  return '';
-}
-
-export function plannerEscalationSuggestedVerbs(t: Task): TaskStopVerb[] | undefined {
-  if (proofOnlyReceiptAwaitingReview(t)) return ['move'];
-  if (t.entrypoint === 'proof') return ['proof'];
-  return undefined;
-}
+import { REVIEWER_CONSULT_TIMEOUT_MS, consultContinuationInstruction, escalationWaitDetail, findOpenPlannerEscalation, plannerEscalationOwnerSuffix, plannerEscalationQuestion, plannerEscalationSuggestedVerbs, reviewerConsultQuestion, reviewerConsults, type LadderEvent } from './ladder';
 
 /** Owns the retained reviewer consult and its escalation. */
 export class ReviewerConsult {

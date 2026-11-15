@@ -5,7 +5,7 @@ import { queueAskDeliveryId } from './agent-ask';
 import {
 plannerEscalations,
 type LadderEvent
-} from './blocker-ladder';
+} from './ladder';
 import { Decisions,decisionHeadline } from '../planning/decisions';
 import { supportsNativeQuestions } from './native-decision';
 import { questionRoute } from './question-route';

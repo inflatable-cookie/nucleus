@@ -15,7 +15,7 @@ import { Store, digest } from "../core/store/store";
 import { Decisions } from "../core/planning/decisions";
 import { startCallbacks } from "../service/callbacks/callback";
 import { agentAskId, askQuestionRefusal, queueAskDeliveryId } from "../core/questions/agent-ask";
-import { reviewerAskPrompt } from "../core/questions/blocker-ladder";
+import { reviewerAskPrompt } from "../core/questions/ladder";
 import { submissionSchema, type Profile, type Run } from "../shared/contracts";
 import type { Adapter } from "../core/host";
 import {
