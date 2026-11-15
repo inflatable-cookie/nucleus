@@ -481,14 +481,70 @@ function openVerifiedTarget(root: string, parts: string[], flags: number, mode: 
  * with `O_NOFOLLOW` and require its recorded identity, then re-`lstat` the root
  * and every ancestor.
  */
-export function readCheckedHostRunFile(stateDir: string, parts: string[], hooks?: HostRunTraversalHooks): Buffer | null {
+/**
+ * What one verified read of the owned subtree established: three different
+ * facts, never one nullable byte string. `absent` means no file is at the
+ * path; `unreadable` means a file or a path component is there and the read
+ * was refused (a symlinked or relaxed component, a swapped inode, an
+ * unreadable payload), so its contents are unknown rather than empty.
+ */
+export type HostRunFileRead =
+  | { state: "present"; bytes: Buffer }
+  | { state: "absent" }
+  | { state: "unreadable"; reason: string };
+
+function readFailureText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Whether the target path is shown to be missing. Only a missing component
+ * proves absence: an `lstat` that fails for any other reason (permissions, an
+ * I/O fault, a symlink loop), and any symlinked component (which the verified
+ * chain refuses), leave the entry's presence unknown, and a caller that must not
+ * read unknown as absent is told so.
+ */
+function targetAbsent(root: string, parts: string[]): boolean {
+  let current = root;
+  for (const part of parts) {
+    current = join(current, part);
+    let info: Stats;
+    try { info = lstatSync(current); }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      return code === "ENOENT" || code === "ENOTDIR";
+    }
+    if (info.isSymbolicLink()) return false;
+  }
+  return false;
+}
+
+/**
+ * Verified traversal read that keeps `absent` and `unreadable` distinct. A
+ * caller that must not treat an unreadable record as a missing one (a durable
+ * submission, a cancel request, a result) reads this and decides from the
+ * state; `readCheckedHostRunFile` stays the null-answering read for callers
+ * where both mean "nothing usable here".
+ */
+export function readCheckedHostRunFileRead(stateDir: string, parts: string[], hooks?: HostRunTraversalHooks): HostRunFileRead {
+  let root: string;
+  try { root = realpathSync(stateDir); }
+  catch (error) { return { state: "unreadable", reason: `The host-run state root cannot be resolved: ${readFailureText(error)}` }; }
   let fd: number | null = null;
   try {
-    const root = realpathSync(stateDir);
     fd = openVerifiedTarget(root, parts, constants.O_RDONLY, 0o600, hooks);
-    return readFileSync(fd);
-  } catch { return null; }
-  finally { if (fd !== null) closeSync(fd); }
+    try { return { state: "present", bytes: readFileSync(fd) }; }
+    catch (error) { return { state: "unreadable", reason: `The host-run file could not be read: ${readFailureText(error)}` }; }
+  } catch (error) {
+    if (targetAbsent(root, parts)) return { state: "absent" };
+    return { state: "unreadable", reason: `The host-run file failed the verified read: ${readFailureText(error)}` };
+  } finally { if (fd !== null) closeSync(fd); }
+}
+
+/** The bytes of one verified read, or null when the file is absent or unreadable. */
+export function readCheckedHostRunFile(stateDir: string, parts: string[], hooks?: HostRunTraversalHooks): Buffer | null {
+  const read = readCheckedHostRunFileRead(stateDir, parts, hooks);
+  return read.state === "present" ? read.bytes : null;
 }
 
 /** Open one file under the owned subtree, creating it when absent, with the verified chain. */

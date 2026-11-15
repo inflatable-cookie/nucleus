@@ -41,6 +41,7 @@ import { publicHostRunRecord } from "./host-run-identity";
 import { HOST_RUN_ACCOUNTING_DISPOSITION_META_PREFIX, hostRunAccountingDispositionMetaKey } from "./host-run-meta-keys";
 import type { HostRunEvent } from "./host-run-scheduler-types";
 import { digest, operationInputHash, type Store } from "../store/store";
+import { refuseHostRun } from "./host-run-refusal";
 
 export { HOST_RUN_ACCOUNTING_DISPOSITION_META_PREFIX, hostRunAccountingDispositionMetaKey };
 
@@ -374,7 +375,7 @@ export class HostRunAccounting {
     const outcome: { view?: HostRunAccountingView; journal?: HostRunEvent } = {};
     this.context.store.transaction(() => {
       const run = this.context.store.hostRun(parsed.runId);
-      if (!run) throw new Error(`unknown_run: ${parsed.runId}`);
+      if (!run) refuseHostRun("unknown_run", `${parsed.runId}`);
       if (parsed.acceptance.runId !== run.id)
         throw new Error("The exact-run acceptance names a different host run; nothing was written");
       // A stored retirement is the durable observation of the same effect: a
@@ -396,8 +397,8 @@ export class HostRunAccounting {
       }
       const current = this.context.authority();
       if (parsed.expectedEpoch !== current.epoch)
-        throw new Error(`stale_epoch: expected ${current.epoch}, received ${parsed.expectedEpoch}`);
-      if (run.epoch !== current.epoch) throw new Error(`stale_epoch: run epoch ${run.epoch} is not current ${current.epoch}`);
+        refuseHostRun("stale_epoch", `expected ${current.epoch}, received ${parsed.expectedEpoch}`);
+      if (run.epoch !== current.epoch) refuseHostRun("stale_epoch", `run epoch ${run.epoch} is not current ${current.epoch}`);
       if (parsed.acceptance.epoch !== run.epoch)
         throw new Error("The exact-run acceptance names another epoch; nothing was written");
       if (run.settlement !== null)
@@ -465,9 +466,9 @@ export class HostRunAccounting {
     const outcome: { view?: HostRunAccountingView; retirement?: HostRunAccountingRetirement; journal?: HostRunEvent } = {};
     this.context.store.transaction(() => {
       const run = this.context.store.hostRun(input.runId);
-      if (!run) throw new Error(`unknown_run: ${input.runId}`);
+      if (!run) refuseHostRun("unknown_run", `${input.runId}`);
       const current = this.context.authority();
-      if (run.epoch !== current.epoch) throw new Error(`stale_epoch: run epoch ${run.epoch} is not current ${current.epoch}`);
+      if (run.epoch !== current.epoch) refuseHostRun("stale_epoch", `run epoch ${run.epoch} is not current ${current.epoch}`);
       const stored = this.context.store.hostRunAccountingDispositionRaw(run.id);
       if (stored !== undefined) {
         const existing = hostRunAccountingRetirementSchema.safeParse(stored);
@@ -531,9 +532,9 @@ export class HostRunAccounting {
     const outcome: { view?: HostRunAccountingView; retirement?: HostRunAccountingRetirement; journal?: HostRunEvent } = {};
     this.context.store.transaction(() => {
       const run = this.context.store.hostRun(input.runId);
-      if (!run) throw new Error(`unknown_run: ${input.runId}`);
+      if (!run) refuseHostRun("unknown_run", `${input.runId}`);
       const current = this.context.authority();
-      if (run.epoch !== current.epoch) throw new Error(`stale_epoch: run epoch ${run.epoch} is not current ${current.epoch}`);
+      if (run.epoch !== current.epoch) refuseHostRun("stale_epoch", `run epoch ${run.epoch} is not current ${current.epoch}`);
       const stored = this.context.store.hostRunAccountingDispositionRaw(run.id);
       if (stored !== undefined) {
         const existing = hostRunAccountingRetirementSchema.safeParse(stored);

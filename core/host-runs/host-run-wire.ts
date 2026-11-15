@@ -1,7 +1,7 @@
 /** Contract 010 request/supervisor schemas and the allowlisted launch environment. */
 import { realpathSync } from "node:fs";
 import { z } from "zod";
-import { readCheckedHostRunFile, removeVerifiedOwnedFile, writeVerifiedOwnedFile } from "./host-run-files";
+import { readCheckedHostRunFile, readCheckedHostRunFileRead, removeVerifiedOwnedFile, writeVerifiedOwnedFile } from "./host-run-files";
 export const HOST_RUN_SUPERVISOR_PLAN_FORMAT = "host.run.supervisor.plan";
 export const HOST_RUN_SUPERVISOR_STATE_FORMAT = "host.run.supervisor.state";
 
@@ -103,6 +103,40 @@ export const hostRunCancelRequestSchema = z.object({
   reason: z.string().min(1).max(4000),
   requestedAt: z.string().datetime(),
 }).strict();
+
+/**
+ * What a run's durable cancel request says: absent, one named reason, or a
+ * record that cannot be read. The third is never the first: a request whose
+ * bytes are unreadable is unknown, so the supervisor stops the run and records
+ * the fault instead of running on as if nothing had been asked.
+ */
+export type HostRunCancelRequestRead =
+  | { state: "absent" }
+  | { state: "requested"; reason: string }
+  | { state: "unreadable"; reason: string };
+
+const cancelRequestParts = (runId: string) => ["runs", runId, "cancel.json"];
+
+/** Read one run's cancel request, keeping absent, requested and unreadable apart. */
+export function readHostRunCancelRequest(stateDir: string, runId: string): HostRunCancelRequestRead {
+  const read = readCheckedHostRunFileRead(stateDir, cancelRequestParts(runId));
+  if (read.state === "absent") return { state: "absent" };
+  if (read.state === "unreadable") return { state: "unreadable", reason: read.reason };
+  try {
+    const parsed = hostRunCancelRequestSchema.parse(JSON.parse(read.bytes.toString("utf8")));
+    if (parsed.runId !== runId) return { state: "unreadable", reason: `The cancel request names run ${parsed.runId}, not ${runId}` };
+    return { state: "requested", reason: parsed.reason };
+  } catch (error) {
+    return { state: "unreadable", reason: `The cancel request is not a readable host.run.cancel record: ${error instanceof Error ? error.message : String(error)}` };
+  }
+}
+
+/** Record one run's durable cancel request; the supervisor reads it, so a roll cannot lose the stop. */
+export function writeHostRunCancelRequest(stateDir: string, runId: string, reason: string, requestedAt: string): void {
+  writeVerifiedOwnedFile(stateDir, cancelRequestParts(runId), JSON.stringify(hostRunCancelRequestSchema.parse({
+    format: "host.run.cancel", version: 1, runId, reason, requestedAt,
+  })), 0o600);
+}
 
 /** A durable disconnect deadline (`cancelOnDisconnect` or unlaunched), so a service roll cannot lose the window. */
 export const hostRunDisconnectSchema = z.object({
