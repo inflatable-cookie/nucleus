@@ -17,7 +17,7 @@ import type { Adapter } from "../host/adapter";
 import { reportingIdentityMismatch } from "../intake/reporting-identity";
 import { settlementHeld, startsNoRuns } from "../closeout/queue-drain";
 import { latestRunCompletion, now } from "../store/store";
-import { OPERATOR_WORKER_REMAP_REASON, observedActive } from "./task-reasons";
+import { OPERATOR_WORKER_REMAP_REASON, PR_HEAD_CHANGED_REASON, observedActive } from "./task-reasons";
 
 /** Classify an observed branch lookup without treating a failed read as absence. */
 export function branchPrLookupOutcome(error: unknown, count: number): 'unverified' | 'ambiguous' | 'found' | 'empty' {
@@ -492,7 +492,7 @@ export class WorkerReconcile {
         throw error;
       }
       if (settlementHeld(this.store, this.engine.stopped)) return;
-      if (current.prHead && pr.head !== current.prHead) throw new Error("PR head changed after the completion callback");
+      if (current.prHead && pr.head !== current.prHead) throw new Error(PR_HEAD_CHANGED_REASON);
       current = { ...current, prHead: pr.head, prUrl: pr.url };
     }
     if (c.status !== "ready_for_review") {

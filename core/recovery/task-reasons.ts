@@ -110,6 +110,8 @@ export function noActionEscalationAtAcceptedHead(t: Task): boolean {
     t.resolution.recovery.incidentId === t.resolution.incident.id;
 }
 export const ACCEPTED_PR_RECONCILIATION_REASON = 'Operator requested accepted-PR workspace reconciliation';
+/** The one reason a completion callback's moved PR head records; retry routing reads it as a fact. */
+export const PR_HEAD_CHANGED_REASON = 'PR head changed after the completion callback';
 /** The visible reason a failed external-merge probe parks with; its pre-attention state is recorded for recovery. */
 export const EXTERNAL_MERGE_CHECK_REASON_PREFIX = 'External merge check:';
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
