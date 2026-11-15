@@ -19,6 +19,7 @@ import { completionRefusal, sourceApprovalRefusal } from './report-shape';
 import { reportReadyRefusal, settleReportReady } from './report-ready';
 import { proofResultRefusal, settleProofExecution, type ProofOutcome } from './proof-settlement';
 import { threadReleasePendingReason, threadRunningReason } from './thread-waits';
+import { reportRunBinding } from './report-run-binding';
 
 /**
  * Authenticate, validate and record one run report — the resolution side of a
@@ -88,15 +89,15 @@ export class RunCallbackIntake {
       // the current reviewer again and the replacement is settled. Only verdicts;
       // a replaced run cannot be continued.
       if (this.resolution.readoptReplacedReviewer(task, run, input)) { run = this.store.run(run.id)!; task = this.store.task(task.id); }
+      const binding = reportRunBinding(task, run, input);
       const currentRunId=run.role==='recovery'?task.resolution.recovery?.runId:task.resolution.currentRunId;
       // A retained resolution thread may discover that a reported blocker was
       // transient and finish its assigned work before releasing the lease. Keep
       // the first receipt as audit evidence, but allow one forward correction to
       // the role's successful terminal result. Once released or superseded, the
       // immutable run boundary still rejects late callbacks.
-      const correctingBlock=currentRunId===run.id&&!run.released&&run.role!=='recovery'&&
-        Boolean(run.completion&&['blocked','error'].includes(run.completion.status)&&!['blocked','error'].includes(input.status));
-      if (currentRunId !== run.id || run.completion&&!correctingBlock || run.released) {
+      const correctingBlock = binding === 'correcting_block';
+      if (binding === 'stale' || binding === 'superseded_executor') {
         const replacement=currentRunId?this.store.run(currentRunId):null;
         if(replacement&&replacement.id!==run.id&&!replacement.released&&!replacement.completion&&replacement.agentId&&replacement.agentId===run.agentId) {
           recordSupersededRunRefusal(this.store,task.id,run.id);
@@ -109,7 +110,7 @@ export class RunCallbackIntake {
         // Task 560: a superseded executor run that actually ran keeps
         // truthful history. Its agent's late report is recorded as historical
         // evidence on its own execution record instead of rejected as stale.
-        if (run.role === 'executor' && (run.released || currentRunId !== run.id))
+        if (binding === 'superseded_executor')
           return this.resolution.recordSupersededProofEvidence(task, run, input, startEvidence);
         throw new Error('Stale run');
       }

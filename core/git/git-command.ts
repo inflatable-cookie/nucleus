@@ -11,7 +11,7 @@ import { promisify } from "node:util";
 import { githubRepositoryFromRemote } from "./git-remote";
 const GIT_ENV = { GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o ConnectTimeout=10" };
 const exec = promisify(execFile);
-async function gitText(cwd: string, ...args: string[]): Promise<string> {
+export async function gitText(cwd: string, ...args: string[]): Promise<string> {
   const result = await gitRun(cwd, args);
   if (result.code !== 0) throw new Error(result.stderr);
   return result.stdout.toString("utf8").trim();

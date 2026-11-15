@@ -9,7 +9,7 @@
 import { lstatSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { Task } from "../../shared/contracts";
-import { GIT_SLOW_TIMEOUT_MS, git, gitSlow } from "./git-command";
+import { formatGitError, GIT_SLOW_TIMEOUT_MS, git, gitRun, gitSlow } from "./git-command";
 
 /** True only for the dependency link Queue retains from a source checkout. */
 export function isQueueRetainedNodeModulesLink(directory: string): boolean {
@@ -38,6 +38,41 @@ function withoutRetainedNodeModulesStatus(directory: string, status: string): st
 /** OS/editor metadata is not task source and must never make a checkout dirty. */
 export function isOsMetadataPath(path: string): boolean {
   return path.split("/").some(part => part === ".DS_Store" || part === ".localized" || part.startsWith("._"));
+}
+
+export interface CheckoutStatusEntry { index: string; worktree: string; path: string; ignored: boolean }
+
+/** Parse Git's NUL-delimited porcelain status, including paths containing newlines. */
+export function parseCheckoutStatus(bytes: Buffer): CheckoutStatusEntry[] {
+  const tokens = bytes.toString("utf8").split("\0");
+  const entries: CheckoutStatusEntry[] = [];
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+    if (!token) continue;
+    const status = token.slice(0, 2);
+    const path = token.slice(3);
+    if (status[0] === "R" || status[0] === "C" || status[1] === "R" || status[1] === "C") index++;
+    entries.push({ index: status[0], worktree: status[1], path, ignored: status === "!!" });
+  }
+  return entries;
+}
+
+/** One bounded status read and the canonical Queue-owned path exclusions. */
+export async function queueCheckoutStatusEntries(
+  directory: string,
+  options: { includeIgnored?: boolean; noOptionalLocks?: boolean } = {},
+): Promise<CheckoutStatusEntry[]> {
+  const includeIgnored = options.includeIgnored ?? true;
+  const result = await gitRun(directory, [
+    ...(options.noOptionalLocks ? ["--no-optional-locks"] : []),
+    "status", "--porcelain=v1", "-z", ...(includeIgnored ? ["--ignored=matching"] : []), "--untracked-files=all",
+  ]);
+  if (result.code !== 0) throw new Error(formatGitError(["status"], result.code, result.signal, result.stderr));
+  return parseCheckoutStatus(result.stdout).filter(entry => {
+    if (((entry.index === "?" || entry.worktree === "?") || entry.ignored) && isOsMetadataPath(entry.path)) return false;
+    return !(isQueueRetainedNodeModulesLink(directory) && entry.index === "?" && entry.worktree === "?"
+      && (entry.path === "node_modules" || entry.path === "node_modules/"));
+  });
 }
 
 function withoutOsMetadataStatus(status: string): string {

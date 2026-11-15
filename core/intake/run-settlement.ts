@@ -8,6 +8,7 @@
  * same rule without an import cycle.
  */
 import { blockingRecoveryEffects, recoveryEffectsRefusal } from '../recovery/recovery-effects';
+import { agentSettled } from '../machine/agent-settled';
 import type { AgentObservation } from '../host/adapter';
 import type { Store } from '../store/store';
 import type { Run, Task } from '../../shared/contracts';
@@ -74,8 +75,7 @@ export function runSettlement(facts: { store: Store; task: Task }, run: Run, opt
  */
 export function matchingInactiveParticipant(participant: { agentId: string | null; workspaceId: string | null }, observed: AgentObservation,
   statuses: readonly string[] = ['idle', 'error', 'closed']): boolean {
-  const effective = statuses.includes('closed') && !statuses.includes('error') ? [...statuses, 'error'] : statuses;
   return Boolean(participant.agentId && participant.workspaceId && observed.id === participant.agentId
-    && observed.workspaceId === participant.workspaceId && observed.active === false && !observed.activeTurnId
-    && observed.permissions === false && effective.includes(observed.status));
+    && observed.workspaceId === participant.workspaceId && !observed.activeTurnId
+    && agentSettled(observed, statuses));
 }

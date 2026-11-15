@@ -534,7 +534,9 @@ test('a transcript read refuses a paged projection, so partial history is never 
   server.controls.threadCoverage = { hasMoreHistory: true, historyCursor: 'synthetic-history-cursor', latestLocalTurnOrdinal: 0 };
   assert.equal((await host.observe(created.id)).pendingRequest?.id, 'synthetic-question');
   await assert.rejects(host.pendingQuestions(created.id), /incomplete projection/);
-  await assert.rejects(host.answeredQuestions(created.id), /incomplete projection/);
+  const unreadable = await host.answeredQuestions(created.id);
+  assert.equal(unreadable.ok, false, 'an incomplete projection is an unknown read, never an empty answer list');
+  assert.match((unreadable as { reason: string }).reason, /incomplete projection/);
   assert.equal(await host.agentTimelinePage(created.id), null);
   // The transcript read requests a bounded window and refuses missing history.
   const read = server.requests.filter(request => request.tag === 'orchestration.subscribeThread').at(-1)!.payload as Record<string, unknown>;
@@ -563,7 +565,9 @@ test('history exceeding the frame limit is observed, listed and titled without a
   assert.equal(p.thread.title, '225: Bounded title');
   await host.settleReportedThread(created.id, 'synthetic-report');
   await assert.rejects(host.pendingQuestions(created.id), /incomplete projection/);
-  await assert.rejects(host.answeredQuestions(created.id), /incomplete projection/);
+  const unreadable = await host.answeredQuestions(created.id);
+  assert.equal(unreadable.ok, false, 'an incomplete projection is an unknown read, never an empty answer list');
+  assert.match((unreadable as { reason: string }).reason, /incomplete projection/);
   assert.equal(await host.agentTimelinePage(created.id), null);
   const reads = server.requests.slice(start).filter(request => request.tag === 'orchestration.subscribeThread');
   assert.ok(reads.length >= 7);
@@ -615,7 +619,9 @@ test('questions and approvals answer exact runtime requests and refuse wrong kin
   assert.deepEqual(responses[0]!.answers, { choice: ['A'] });
   assert.equal(responses[1]!.requestId, 'approval-request');
   assert.equal(responses[1]!.decision, 'accept');
-  assert.equal((await host.answeredQuestions(created.id))[0]?.requestId, 'question-request');
+  const answeredRead = await host.answeredQuestions(created.id);
+  assert.ok(answeredRead.ok);
+  assert.equal(answeredRead.answered[0]?.requestId, 'question-request');
   p.runtimeRequests.push({ id: 'unknown-request', kind: 'future-request-kind', status: 'pending', responseCapability: { type: 'live', providerSessionId: 'session' } });
   await assert.rejects(host.respondRuntimeRequest(created.id, workspace.id, 'unknown-request', { decision: 'accept' }), /unsupported/);
 });

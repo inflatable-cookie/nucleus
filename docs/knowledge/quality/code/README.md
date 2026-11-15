@@ -29,6 +29,25 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
 
 ## Re-rates
 
+- nucleus#1222 (floor 6, 2026-11-14): the four floor-6 dispatch and host modules were split or
+  hardened along their named seams and re-rated at this PR's head. `core/dispatch/prompts.ts` is now
+  the barrel over `core/dispatch/prompt-text/`: the rule and block owners (validation, report, proof,
+  review, workspace, task blocks), the run scope and callback (`prompt-context.ts`), the role dispatch
+  (`run-prompt.ts`) and one module per role prompt. `core/dispatch/participant-lease.ts` keeps the
+  lease and execution lease, and the withdrawn-question settlement is `core/dispatch/withdrawn-question.ts`;
+  the settled-thread predicate it used to repeat is `core/machine/agent-settled.ts`, the host-gone fact
+  is typed (`isAgentGoneRefusal` in `core/host/errors.ts`) and the closeout base refresh is one named
+  reason. `core/dispatch/run-launch/reserve.ts` is the composition over `reservation-source.ts`,
+  `run-intent.ts` and `reservation-admission.ts`. `core/host/adapter.ts` composes the capability groups
+  in `core/host/contract/`. The `launch-funnel` row rises to 7 because the exclusion refusal it named as
+  copied is one text in `shared/task-view.ts`, and `core/questions/native-questions.ts` re-rates because
+  an unreadable answered-question read is recorded as unknown instead of being skipped. `shared/host.ts`
+  keeps its row: its finding is the free-string status and error fields, which this PR did not change.
+  The reservation family's rows name the serialized run-list stamps the admission still compares, so
+  `reservation-source.ts` and `reservation-admission.ts` score 8 on their remaining typed-fact and
+  proportion defects rather than 9. `hosts/paseo/adapter/host-questions.ts` re-rates to 9 because its
+  failed answered-question read is a typed `{ok: false}` now, leaving only its title-prefix decision match.
+
 - nucleus#1199 (floor 5, 2026-11-14): `core/store/store.ts`, `core/store/store-tasks.ts` and
   `core/store/store-maintenance.ts` were split into one owner per mechanism; `store-maintenance.ts` no
   longer exists. The store rows in `N3.csv` were re-rated at that PR's head.
@@ -120,6 +139,15 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
   this PR's head; the `qa-fence` rows in N4 and N6 were re-rated because no caller reads a fence message as
   a fact any more. Modules touched only to import from the new owners keep their rows.
 - nucleus#1220 (floor 6, 2026-11-15): `core/engine.ts` and `service/runtime-owner.ts` were split along their named seams — host-adapter routing, lane-key parse and profile catalogs from the engine; host-connections, store-maintenance and origin-review wrapping from the runtime. Their N2 and N5 rows, plus `service/t3code-host.ts`, were re-rated at this PR's head. Origin-proof wrapping method-calls `withHost` so a class owner keeps its host context. Engine loc is 1061 after merging #1218's owner-verb wiring into the composition root.
+- nucleus#1224 (floor 6, 2026-11-15): report-run acceptance is one shared classifier; telemetry now has
+  separate owners for task facts, reviewer calibration, task-control rates and snapshot aggregation;
+  Git status and hook gates use their checkout and hook owners; transport phase and loss classification
+  has one shared owner. The task-stop and task-view rows score 6 (O1+T1+F1+P1+Pr2): existing typed
+  records and boundary coverage are sound, while historical stop text, waiting references and
+  escalation holders still need compatibility fallbacks. Other resulting modules score 7 or more;
+  their five-part sums, reasons and PR-head evidence are in the updated N2, N3, N4 and N6 rows.
+  The shared service client names its typed errors so the transport classifier preserves roll recovery
+  for draining, unavailable and elapsed timeout responses; its N6 row is re-rated as well.
 - nucleus#1226 (floor 6, 2026-11-15): QA run kind now comes from its joined typed QA record, validation identity uses the canonical decoder, and the board and scheduler share one settled-run capacity predicate (`shared/host-run-capacity.ts`). The caller encoder and decoder moved to `shared/project-validation-caller.ts` so both the client and core use one owner without crossing the client-to-core boundary. Usage elapsed time and provider labels delegate to their existing shared owners. Pipeline Lead/Papercut presentation and selection moved into `client/board/triage-lead-card.tsx`, where one `triageKind` result drives the label and action. Failed web question refreshes preserve the last known requests and return an explicit error; successful empty reads still clear them. Boundary tests cover failed and empty question reads and the elapsed-window midpoint and reset.
 
   The four requested N6 rows all score at least 7: QA runs is 9 because typed QA records, canonical identity and shared capacity have single owners; usage is 8 because elapsed time and provider labels have shared owners, while unknown-duration wording still uses window names; Pipeline is 9 because the card owns classification and routing while column composition remains proportionate to the board; web questions is 8 because failures are explicit and preserve state, while task polling stays separate from the native observer. The changed native-question row is 8: its snapshot and failure-preserving refresh have one state owner, while polling sources remain distinct. The new triage card row is 10 because one classification result controls both label and selection. The shared capacity rule is 9 because the custody predicate has one owner and boundary coverage. The shared project-validation caller row is 9 because one exact encoder and decoder owns both strings, with plain-string inputs leaving schema proof at 1. `core/host-runs/host-run-capacity.ts` was re-rated at 6 in N4: it consumes the shared custody rule, but its raw SQL history scan and malformed legacy-row skip remain unresolved.

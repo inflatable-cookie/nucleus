@@ -6,6 +6,7 @@ import {reportHeadline} from '../../shared/task-detail-summary';
 import {assertReviewResponsibility} from '../review/review-verdicts';
 import {liveResumeRunSupersedes,recordSupersededRunRefusal,supersededByPendingResume,supersededPriorRevisionRun,supersededResumeRefusal} from '../recovery/superseded-resume';
 import {ownerArmedRetainedWorker} from '../recovery/task-reasons';
+import {reportRunBinding} from './report-run-binding';
 // recoveryAction and replacementAgentId are retired (Spec 050); stored records keep them readable.
 export const reportSchema=completionBaseSchema.omit({reviewCommentId:true,reviewId:true,coordinatorGeneration:true,recoveryAction:true,replacementAgentId:true}).extend({reviewText:z.string().trim().min(1).max(48000).optional()}).strict().superRefine(refineCoordinatorCompletionAction);
 export type ReportInput=z.infer<typeof reportSchema>;
@@ -36,20 +37,8 @@ export class Reports {
     if(prior?.report_hash && prior.hash && prior.task===input.taskId && prior.run===input.runId)return JSON.parse(String(prior.response));
     const task=store.task(input.taskId),run=store.run(input.runId);
     if(task.removedAt)throw Error('Task was removed');
-    // Round 4 (papercut 4b274634): the same forward correction resolution.complete
-    // accepts — the current, unreleased, non-recovery run that reported blocked or
-    // error now reports its role's success — is not a stale report here either.
-    const correctingBlock=Boolean(run && run.role!=='recovery' && !run.released && task.resolution.currentRunId===run.id
-      && run.completion && ['blocked','error'].includes(run.completion.status) && !['blocked','error'].includes(input.status));
-    // Task 560: a superseded proof executor's late report is historical
-    // evidence, recorded by the completion path — never a stale rejection
-    // that strands its execution record as running with no completion. The
-    // bypass stays inside the run's own task: a report about another task's
-    // run is stale here exactly as before.
-    const supersededExecutor = run?.role === 'executor' && run.taskId === task.id && (run.released || task.resolution.currentRunId !== run.id);
-    // Queue #691: a run of a finished task reports as evidence, released or not; the completion path records it.
-    const finishedTaskRun = Boolean(run && run.role !== 'executor' && run.taskId === task.id && ['done', 'cancelled'].includes(task.phase));
-    if(!supersededExecutor && !finishedTaskRun && run && (run.taskId!==task.id || (run.role==='recovery'?task.resolution.recovery?.runId:task.resolution.currentRunId)!==run.id || run.released || run.completion&&!correctingBlock || ['closeout','recovery'].includes(run.role)&&run.generation!==task.coordinatorGeneration))throw this.staleRun(input.runId,identityRunId,input.taskId);
+    const binding = run ? reportRunBinding(task, run, input) : null;
+    if (binding === 'stale') throw this.staleRun(input.runId,identityRunId,input.taskId);
     // Spec 050: an owner-armed replacement that has not retired the retained
     // worker yet is that worker's own binding, so its genuine authenticated
     // result is accepted here exactly as the completion handler accepts it. The

@@ -60,6 +60,7 @@ import { ProviderRefusals, type ProviderRefusalEvidence } from './recovery/provi
 import { CallbackReminders } from './intake/callback-reminders';
 import { CheckWaits, type CheckWaitsContext } from './merge/check-waits';
 import { ParticipantLease } from './dispatch/participant-lease';
+import { WithdrawnQuestion } from './dispatch/withdrawn-question';
 import { IntegrationTurns, type IntegrationTurnsContext } from './merge/integration-turns';
 import { Notices } from './questions/notices';
 import { MergeIntent, type MergeIntentContext } from './merge/merge-intent';
@@ -301,6 +302,7 @@ export class Resolution {
     waiting: (...args) => owner.waiting(...args),
   }))(this));
   readonly participantLease = new ParticipantLease(this);
+  readonly withdrawnQuestion = new WithdrawnQuestion(this);
   readonly integrationTurns = new IntegrationTurns(((owner: Resolution): IntegrationTurnsContext => ({
     assignIntegrationTurn: (...args) => owner.assignIntegrationTurn(...args),
     hasEarlierIntegrationTurn: (...args) => owner.hasEarlierIntegrationTurn(...args),
@@ -624,7 +626,7 @@ export class Resolution {
   lease(t: Task, onBusy?: (agentId: string, state: Awaited<ReturnType<Adapter['observe']>>) => void, supersededRunId?: string): Promise<boolean> { return this.participantLease.lease(t, onBusy, supersededRunId); }
   leaseDeclineText(t: Task, agentId: string, state: Awaited<ReturnType<Adapter['observe']>>): string { return this.participantLease.declineText(t, agentId, state); }
   leaseDeclineReason(t: Task): Promise<string | null> { return this.participantLease.declineReason(t); }
-  resolveWithdrawnPending(t: Task, hint?: { agentId: string; state: Awaited<ReturnType<Adapter['observe']>> }): Promise<boolean> { return this.participantLease.resolveWithdrawnPending(t, hint); }
+  resolveWithdrawnPending(t: Task, hint?: { agentId: string; state: Awaited<ReturnType<Adapter['observe']>> }): Promise<boolean> { return this.withdrawnQuestion.resolve(t, hint); }
   refreshingCloseoutHook(t: Task, syncing: boolean): ReturnType<ParticipantLease['refreshingCloseoutHook']> { return this.participantLease.refreshingCloseoutHook(t, syncing); }
   executionLease(t: Task, enclosing?: VerifiedEnclosingOperation, syncing?: boolean, probe?: boolean): Promise<boolean> { return this.participantLease.executionLease(t, enclosing, syncing, probe); }
   participantToolIssue(taskId: string, agentId: string, workspaceId: string): Promise<string | null> { return this.participantLease.participantToolIssue(taskId, agentId, workspaceId); }
@@ -872,7 +874,8 @@ export class Resolution {
    * once per answered permission: the answered event is the fence, and a lost
    * observation is recorded as unknown and never resent. Observation uses the
    * existing permission-resolution surface (`answeredQuestions`, read from the
-   * agent timeline); a failed read is empty, never evidence.
+   * agent timeline); a read that fails or is refused is recorded as an unknown
+   * observation, never as an operator who answered nothing.
    */
   delegateNativeQuestions(): Promise<void> { return this.nativeQuestions.delegateNativeQuestions(); }
   answerNativeQuestions(taskId: string, agentId: string, workspaceId: string, id: string,

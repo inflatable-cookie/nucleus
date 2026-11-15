@@ -3,6 +3,7 @@ import { dispositionWorkPolicy, isDispositionActive } from "../../../shared/cont
 import { now, type Store } from "../../store/store";
 import { ForeignRecordedPr } from "../../forge/index";
 import { hostProcessSweepIntent, sweepTaskHostProcesses } from "../../machine/host-process-reap";
+import { isAgentGoneRefusal } from "../../host/errors";
 import type { DispositionDeps } from "./types";
 import { dispositionsInFlight, dispositionInFlight, ownedThreads, setDisposition } from "./state";
 import { snapshotOriginRefs, observePostDispositionRefs } from "./refs";
@@ -116,7 +117,7 @@ async function progressDispositionStep(store: Store, deps: DispositionDeps, task
     try {
       stopped = (await deps.observeAgent(thread.agentId)).stopped;
     } catch (error) {
-      if (error instanceof Error && error.message === "Agent was not found") stopped = true;
+      if (isAgentGoneRefusal(error)) stopped = true;
       else {
         recordResult(store, taskId, "stop_thread", thread.agentId, `Thread state is uncertain: ${error instanceof Error ? error.message : String(error)}`, true);
         return store.task(taskId);

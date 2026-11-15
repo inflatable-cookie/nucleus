@@ -6,6 +6,7 @@ import { escalationWaitDetail, plannerEscalations, type LadderEvent } from '../.
 import { message } from '../../recovery/task-reasons';
 import { chooseProfile } from '../routing';
 import { digest } from '../../store/store';
+import { agentSettled } from '../../machine/agent-settled';
 
 /** The alternate-provider attempt for a retained worker that never delivered. */
 export type NonDeliveryRoute =
@@ -58,7 +59,7 @@ export async function resolveNonDeliveryRoute(ctx: LaunchThreadContext, t: Task,
   }
   try {
     const state = await ctx.host.observe(t.agentId);
-    if (state.workspaceId !== t.workspaceId || state.active || state.permissions || !['idle', 'closed', 'error'].includes(state.status)) {
+    if (state.workspaceId !== t.workspaceId || !agentSettled(state)) {
       ctx.waiting(t, 'Waiting for the retained worker to release its workspace before the alternate-provider attempt', 'lifecycle');
       return { kind: 'handled' };
     }

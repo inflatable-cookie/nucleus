@@ -11,7 +11,7 @@ import { readServiceInfo, writeServiceInfo, writeServiceRoll, type ServiceInfo }
 import { localQueueClient } from '../shared/service/local-client';
 import { ServiceBridge } from '../hosts/paseo/plugin/bridge';
 import { RPC_CATALOGUE } from '../shared/rpc-catalogue';
-import { CallNotSentError, callWithRollRecovery, UnknownOutcomeError } from '../shared/service/roll-recovery';
+import { CallNotSentError, callWithRollRecovery, uncertainTransportFailure, UnknownOutcomeError } from '../shared/service/roll-recovery';
 import { readServiceRoll } from '../service/transport/identity';
 import { startRollProxy, type RollProxy } from './support/roll-proxy';
 
@@ -27,6 +27,18 @@ import { startRollProxy, type RollProxy } from './support/roll-proxy';
  */
 
 interface Proxy extends RollProxy {}
+
+test('roll recovery recognizes typed service transport failures', () => {
+  const draining = new ServiceRequestError('draining', 'the service is draining');
+  const unavailable = new ServiceRequestError('unavailable', 'the service connection was torn down');
+  const timedOut = new ServiceRequestError('timeout', 'papercut.add timed out after 1000 ms');
+  assert.equal(draining.name, 'ServiceRequestError');
+  assert.equal(uncertainTransportFailure(draining), true);
+  assert.equal(uncertainTransportFailure(unavailable), true);
+  assert.equal(uncertainTransportFailure(timedOut), true);
+  assert.equal(uncertainTransportFailure(new ServiceRequestError('busy', 'the in-flight limit was reached')), false);
+  assert.equal(uncertainTransportFailure(new ServiceRequestError('timeout', 'authentication timed out')), false);
+});
 
 /**
  * The old side loses one response for `method`; and every outcome ask that

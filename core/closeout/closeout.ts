@@ -7,7 +7,7 @@ import { hostProcessSweepIntent } from '../machine/host-process-reap';
 import { isBlockingRecoveryEffect, recoveryEffects, recoveryEffectsRefusal } from '../recovery/recovery-effects';
 import type { Resolution } from '../resolution';
 import { settlementHeld } from './queue-drain';
-import { CLOSEOUT_REFRESH_LIMIT } from '../recovery/task-reasons';
+import { CLOSEOUT_BASE_REFRESH_REASON, CLOSEOUT_REFRESH_LIMIT } from '../recovery/task-reasons';
 
 export type CloseoutContext = Pick<Resolution, 'adapter' | 'attention' | 'claimIntegrationTurn' | 'closeoutAuthority' | 'closeoutWritten' | 'executionLease' | 'hookCloseout' | 'hooks' | 'launch' | 'paused' | 'queueCloseout' | 'settleAutomaticReplayHold' | 'stopped' | 'store' | 'turnReleased' | 'update' | 'waiting'>;
 
@@ -90,7 +90,7 @@ export class Closeout {
       // base and retry, which is exactly what an operator retry does. Bounded, so a
       // repository whose base keeps moving still parks for a human instead of looping.
       if (this.closeoutRefreshAllowed(t, holdReason)) {
-        this.resolution.update(this.store.task(t.id), { currentRunId: null, attention: false }, { phase: 'syncing', reason: 'Refreshing main before retrying closeout' }, 'closeout_hold_refresh');
+        this.resolution.update(this.store.task(t.id), { currentRunId: null, attention: false }, { phase: 'syncing', reason: CLOSEOUT_BASE_REFRESH_REASON }, 'closeout_hold_refresh');
         return;
       }
       this.resolution.attention(this.store.task(t.id), holdReason); return;

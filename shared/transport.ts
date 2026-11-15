@@ -1,4 +1,5 @@
 import { isSshAuthExhausted } from './ssh-auth';
+import { isConnectionLoss, isHostTransportFailure } from './service/transport.mjs';
 /**
  * True when a failure is the daemon transport rather than anything about the task.
  *
@@ -10,9 +11,7 @@ import { isSshAuthExhausted } from './ssh-auth';
  */
 export function isTransportFailure(error: unknown): boolean {
   if (isSshAuthExhausted(error)) return false;
-  const message = error instanceof Error ? error.message : String(error);
-  // T3Code transport and timeout errors are an observation outage: the read is retried on the next sweep, never attention.
-  return /Transport not connected|not connected|disconnected|ECONNREFUSED|ECONNRESET|EPIPE|socket hang up|Liveness check timed out|Daemon connection did not settle|Daemon client closed|T3Code (transport|timeout)|authenticated host connection is unavailable/i.test(message);
+  return isHostTransportFailure(error);
 }
 
 /**
@@ -21,8 +20,6 @@ export function isTransportFailure(error: unknown): boolean {
  * so a caller decides on one predicate, never on its own message regex.
  */
 export function isTransportOrConnectionLoss(error: unknown): boolean {
-  if (isTransportFailure(error)) return true;
   if (isSshAuthExhausted(error)) return false;
-  const message = error instanceof Error ? error.message : String(error);
-  return /connection (?:lost|reset)/i.test(message);
+  return isTransportFailure(error) || isConnectionLoss(error);
 }
