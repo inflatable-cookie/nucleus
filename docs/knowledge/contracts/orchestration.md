@@ -826,8 +826,9 @@ Delegates remain on Resolution.
 and checkout proofs, the guarded native send or creation, the agent binding,
 and the uncertain or refused settlement when a step throws. The synchronous
 prefix before the adapter call stays synchronous. Delegates remain on
-Resolution. `ordinaryRoundCustody` belongs to `ReviewLifecycle`; its Resolution
-delegate remains available to source and result-application callers.
+Resolution. `ordinaryRoundCustody` belongs to `OrdinaryCustody`
+(`core/review/ordinary-custody.ts`); its Resolution delegate remains available to
+source and result-application callers.
 
 `Resolution.launch` is still the funnel that sequences those four owners. The
 funnel has not moved off Resolution.

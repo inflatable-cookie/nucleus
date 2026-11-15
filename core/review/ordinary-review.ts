@@ -55,7 +55,7 @@ export function assertOrdinaryReviewIdentity(task: Task, head: string, detached:
       // fault says which without reading the message.
       if (["no-git", "unreadable-git", "malformed-git"].includes(error.code))
         throw Error('Ordinary reviewer requires its recorded Queue-owned checkout root');
-      throw Error(`Ordinary reviewer checkout identity could not be read: ${error.message}; expected a clean checkout at ${head} on ${task.branch}`);
+      throw Error(`Ordinary reviewer checkout identity could not be read: ${String(error)}; expected a clean checkout at ${head} on ${task.branch}`);
     }
     throw error;
   }
