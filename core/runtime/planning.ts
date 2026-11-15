@@ -46,7 +46,7 @@ export class RuntimePlanning {
     if ("leadId" in source) return { lead: this.context.store.lead(source.leadId) };
     let lead = await this.checkLeadAfterMutation(source.created);
     if (lead.checkOperationId) {
-      const operation = await this.context.engine.awaitOperation(lead.checkOperationId, OPERATION_COMPATIBILITY_WAIT_MS);
+      const operation = await this.context.engine.awaitOperation(lead.checkOperationId, Infinity);
       if (operation.state !== "succeeded") throw new Error(`Brief check ${operation.id}: ${operation.diagnostic || operation.state}; inspect lead.get before retrying`);
       lead = this.context.store.lead(lead.id);
     }
@@ -60,7 +60,7 @@ export class RuntimePlanning {
       note: request.note, board: false, ...("hostId" in request ? { hostId: request.hostId } : {}),
       ...("identitySource" in request ? { identitySource: request.identitySource } : {}), hold: request.hold });
     if (!("accepted" in result)) return result;
-    const operation = await this.context.engine.awaitOperation(result.operation.id, OPERATION_COMPATIBILITY_WAIT_MS);
+    const operation = await this.context.engine.awaitOperation(result.operation.id, Infinity);
     if (operation.state === "succeeded" && operation.result?.taskId)
       return { ...this.promotion.promotionReply(operation.result.taskId), reference: operation.result.reference ?? "" };
     throw new Error(`Task promotion ${operation.id}: ${operation.diagnostic || operation.state}; inspect lead.get before retrying`);

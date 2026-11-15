@@ -1,1 +1,1 @@
-The runtime planning facade now delegates draft checks and handoff preflight to a dedicated submission owner, and accepted lead checks and promotions use the standard compatibility wait. Board revision refresh failures are visible, and `task.next` resolves external waits through the queued-reason projection.
+The runtime planning facade now delegates draft checks and handoff preflight to a dedicated submission owner. Board revision refresh failures are visible, and `task.next` resolves external waits through the queued-reason projection.

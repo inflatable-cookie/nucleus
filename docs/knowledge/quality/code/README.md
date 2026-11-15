@@ -67,13 +67,12 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
 
 - nucleus#1245 (floor 7, 2026-11-15): `core/runtime/planning.ts` (8) now delegates draft checks and
   handoff preparation to `core/runtime/planning-submission.ts` (9), separating preflight from the lead
-  and lane facade. `submitLead` uses the existing 15-second compatibility wait for accepted checks and
-  promotions instead of waiting indefinitely; the operation remains accepted and its stored state can
-  be inspected after a timeout. The board (8) now passes the external-wait callback into `queuedReason`
+  and lane facade while preserving `submitLead`'s tested wait-to-settlement contract; that remaining
+  wait has no deadline and keeps failure at 1. The board (8) now passes the external-wait callback into `queuedReason`
   instead of deciding from the rendered reason, and warns when a transient revision advance fails while
   preserving the read-only prewarm fallback. Existing lead, handoff, board refresh and task-next tests
-  cover these boundaries. The shared compatibility deadline and surfaced revision warning are the named
-  exceptions to structural-only work; no admission or routing rule changed.
+  cover these boundaries. The surfaced revision warning is the named exception to structural-only work;
+  no admission or routing rule changed.
 
 - nucleus#1238 (floor 7, 2026-11-15): the four floor-7 planning modules were split, hardened or simplified along
 their named seams and re-rated at this PR's head. `core/planning/operations.ts` (8) keeps acceptance,
