@@ -1,3 +1,4 @@
+import { TaskChangedRefusal } from '../../shared/task-version';
 import { assertCanonicalPrSource, authenticatedWorkerBlock, type VerifiedPr } from '../forge/index';
 import type { AgentObservation, Adapter } from '../host/adapter';
 import type { HostFacade } from '../host/host-facade';
@@ -252,7 +253,7 @@ export class PrAdoption {
     if (current.phase !== t.phase || current.reason !== t.reason || current.branch !== branch || current.completion?.eventId !== callbackEvent
       || (current.resolution.currentRunId && current.resolution.currentRunId !== currentRevision?.id) || (currentRevision?.completion?.eventId ?? null) !== revisionEvent
       || current.resolution.mergeIntent || current.resolution.mergedCommit || this.store.runs(t.id).some(run => !run.released))
-      throw Error('Task changed during replacement PR verification');
+      throw new TaskChangedRefusal('Task changed during replacement PR verification', t.version, current.version);
     return this.store.update(t.id, {
       phase: 'awaiting_review', reason: `Verified replacement PR #${prNumber}; awaiting independent review`,
       resumePrNumber: prNumber, prHead: pr.head, prUrl: pr.url,

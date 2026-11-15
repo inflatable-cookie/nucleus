@@ -893,6 +893,7 @@ export class Resolution {
    * or delegated answers inert and close any linked board decision.
    */
   supersedeOpenOwnerQuestions(taskId: string, reason: string): void { return this.questionSupersession.supersedeOpenOwnerQuestions(taskId, reason); }
+  answerOpenAgentAsks(taskId: string, answer: string, reason: string): string[] { return this.questionSupersession.answerOpenAgentAsks(taskId, answer, reason); }
   /** Record the answer, then apply the owner verb it names with the operator's authority. */
   settleOperatorQuestion(taskId: string, question: OperatorQuestion, answer: string, recordAnswer = true): Promise<void> { return this.questions.settleOperatorQuestion(taskId, question, answer, recordAnswer); }
   /**

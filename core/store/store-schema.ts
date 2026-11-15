@@ -24,6 +24,7 @@ export const STORE_OPEN_DDL = [
   // history; and one row per (lead, lane), maintained by the lead write funnels, so the
   // board's lane activity read no longer runs json_each over every retained lead body.
   `CREATE INDEX IF NOT EXISTS events_task ON events(taskId);
+   CREATE INDEX IF NOT EXISTS events_brief_amendment_intent ON events(taskId) WHERE kind='brief_amendment_delivery_intent';
    CREATE INDEX IF NOT EXISTS events_paused_resume ON events(at,json_extract(detail,'$.agentId')) WHERE kind='paused_resume';
    CREATE INDEX IF NOT EXISTS runs_task ON runs(taskId);
    CREATE INDEX IF NOT EXISTS notices_task ON notices(taskId);

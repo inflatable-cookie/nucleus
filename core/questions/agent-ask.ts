@@ -171,6 +171,15 @@ export const queueAskDeliveryId = (
   options: readonly string[],
 ): string => digest(["agent-ask", taskId, question, ...options].join(":"));
 
+/**
+ * The board decision an ask's link event names. The link line is the durable
+ * record's own format (`<askId>: decision <decisionId>; ...`), decoded here once
+ * for every reader that settles the ask.
+ */
+export function agentAskDecisionId(detail: string): string | null {
+  return /decision ([^;\s]+)/.exec(detail)?.[1] ?? null;
+}
+
 /** Read `answered by <who>: <answer>` out of an `agent_ask_answered` detail. */
 export function parseAgentAskAnswer(
   detail: string,

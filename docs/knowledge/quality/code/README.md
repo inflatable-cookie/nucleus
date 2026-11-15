@@ -58,6 +58,37 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
 
 - nucleus#1207 (floor 5, 2026-11-14): the question service and ladder were split by joint review, delegation, supersession, reviewer consult and escalation settlement; their N1 rows were re-rated at this PR’s head.
 
+- nucleus#1218 (floor 6, 2026-11-14): the six floor-5 verbs rows were split or simplified by their
+  named seams, and each resulting module was re-rated at this PR's head. `core/verbs/brief.ts` (9) now
+  composes an amendment while `brief-routing.ts` (8), `brief-proof.ts` (10) and
+  `brief-amendment.ts` (9) own the routing diff, the proof declaration and the delivery; the
+  routing module's 8 is honest — the queue frontmatter is still diffed as untyped records compared by
+  JSON text, and it is covered only through `amend_brief`. `core/verbs/dispatcher.ts` (9) keeps the
+  ordered control switch and its documented record-only catches, with `control-outcomes.ts` (9),
+  `owner-authority.ts` (10), `receipt-acceptance.ts` (10), `budget-extension.ts` (10),
+  `no-automatic-retry-record.ts` (9) and `author-revision-cap.ts` (9) as their own owners.
+  `core/verbs/disposition/hook-evidence.ts` is 9: it decodes hook records once, but still compares
+  refusal prose; its boundary tests live in `test/disposition-hook-evidence.test.ts`. The amendment
+  sweep uses an intent index but still revisits retained history, hence its 9. `owner-effects.ts`
+  remains 7: it owns key decoding while force still slices incident keys.
+  `core/verbs/owner-stop.ts` (10) keeps the stop and its hold, `deferred-verbs.ts` (9) owns recorded
+  verbs and their replay, and `reviewer-auto-continue.ts` (10) owns automatic continuation with a
+  retry window read from fence facts rather than refusal words. `core/verbs/restart.ts` (10) keeps
+  admission while `restart-worker.ts` (7), `restart-review.ts` (10), `restart-episode.ts` (8),
+  `executor-report.ts` (10) and `stalled-turn-stop.ts` (9) serve the shapes; `restart-worker.ts` and
+  `restart-episode.ts` are the two honest 7s and 8s — their continuation rules still overlap the
+  move-to-work author path and resolution's own episode re-arm. `core/verbs/retry-effect.ts` (10)
+  keeps the order while `retry-effect-replay.ts` (9), `retry-effect-ordinary.ts` (9),
+  `retry-effect-recovery.ts` (10) and `retry-effect-archive.ts` (9) own the halves; the effect key is
+  decoded once by `splitOwnerEffectKey`. `shared/task-version.ts` (10) is the one typed stale-version
+  refusal, and its N6 row was added there. The `core/questions/agent-asks.ts` row
+  was re-rated at the same score because its duplicate brief-amendment answer now has one owner in
+  `QuestionSupersession.answerOpenAgentAsks`.
+
+  The owner-path hint revision re-rated `forge/reviews.ts` (6), `review/pr-adoption.ts` (10),
+  `review/review-continuation.ts` (6) and `workspaces/unused-workspace.ts` (7). Their existing
+  responsibilities and remaining defects are unchanged; the refusals now carry task versions.
+
 - nucleus#1219 (floor 6, 2026-11-14): the milestone QA runner was split along its named seams — request
   identity and the atomic admission claim (`project-qa-admission.ts`), placement, checkout identity and
   scratch (`project-qa-placement.ts`), the host-run envelope (`project-qa-scheduler.ts`), supervisor

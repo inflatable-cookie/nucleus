@@ -1,3 +1,4 @@
+import { TaskChangedRefusal } from "../../shared/task-version";
 import { REMOVED_TASK_REFUSAL } from './control-refusals';
 import { completeStateRefusal } from './control-refusals';
 import { isDeepStrictEqual } from "node:util";
@@ -41,7 +42,7 @@ export class TaskCompletion {
       throw new Error("Completion already settled for a different version or acceptance; refresh task detail");
     }
     if (task.removedAt) throw new Error(REMOVED_TASK_REFUSAL);
-    if (!observationAdvanceSince(task, input.version)) throw new Error("Task changed; refresh before completing");
+    if (!observationAdvanceSince(task, input.version)) throw new TaskChangedRefusal("Task changed; refresh before completing", input.version, task.version);
     const refusal = completeStateRefusal(task, this.store.runs(task.id));
     if (refusal) throw new Error(refusal);
     if (artifact) {
@@ -137,7 +138,7 @@ export class TaskCompletion {
     const completed = this.store.transaction(() => {
       ensureCurrent("atomic owner completion");
       const current = this.store.task(task.id);
-      if (!observationAdvanceSince(current, input.version) || current.phase === "done") throw new Error("Task changed before atomic completion");
+      if (!observationAdvanceSince(current, input.version) || current.phase === "done") throw new TaskChangedRefusal("Task changed before atomic completion", input.version, current.version);
       // Finished runs release first: a recovery run's escalation or pending
       // action is recorded by its own release path, then the fences settle.
       for (const run of this.store.runs(task.id).filter(item => !item.released || item.active === true)) {

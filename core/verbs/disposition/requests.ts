@@ -1,3 +1,4 @@
+import { TaskChangedRefusal } from "../../../shared/task-version";
 import type { Completion, Disposition, Task, WorkDisposition } from "../../../shared/contracts";
 import { cancellationWithdrawalRefusal, dispositionWorkPolicy } from "../../../shared/contracts";
 import { digest, now, type Store } from "../../store/store";
@@ -67,7 +68,7 @@ export interface DispositionWorkspaceReopen {
 export function reopenDispositionWorkspace(store: Store, input: DispositionWorkspaceReopen): Task {
   const task = store.task(input.taskId);
   if (task.removedAt) throw new Error("Task was removed from the queue");
-  if (task.version !== input.version) throw new Error("Task changed; refresh before retrying");
+  if (task.version !== input.version) throw new TaskChangedRefusal("Task changed; refresh before retrying", input.version, task.version);
   const disposition = task.disposition;
   if (!disposition) throw new Error("This task has no recorded disposition to recover");
   if (!task.workspaceId || task.workspaceId !== input.workspaceId)
@@ -100,7 +101,7 @@ export function reopenDispositionWorkspace(store: Store, input: DispositionWorks
     : disposition.proofPolicies;
   return store.transaction(() => {
     const current = store.task(input.taskId);
-    if (current.version !== input.version) throw new Error("Task changed; refresh before retrying");
+    if (current.version !== input.version) throw new TaskChangedRefusal("Task changed; refresh before retrying", input.version, current.version);
     const detail = `${input.workspaceId}: owner retry of ${last.kind} under ${policy ?? previous}${policy ? ` (was ${previous})` : ""}; recorded attention: ${disposition.attention || last.result || last.kind}`;
     const reopened = store.update(current.id, {
       disposition: { ...disposition, proofPolicies, status: "preserving", attention: "", completedAt: null },
@@ -116,7 +117,7 @@ export async function withdrawCancellation(store: Store, taskId: string, version
   const step = (prior ? prior.catch(() => undefined) : Promise.resolve()).then(() => {
     const task = store.task(taskId);
     if (task.removedAt) throw new Error("Task was removed from the queue");
-    if (task.version !== version) throw new Error("Task changed; refresh before retrying");
+    if (task.version !== version) throw new TaskChangedRefusal("Task changed; refresh before retrying", version, task.version);
     // One shared rule with `next` (nucleus#1000): intent and draining withdraw
     // while only pending thread-stop requests exist, and a fence parked in
     // needs_attention withdraws so an uncertain step can never strand the task.
@@ -164,16 +165,16 @@ export function fenceDisposition(store: Store, req: DispositionRequest): Task {
     const sameKindReRun = normalized.action === existing.kind
       && (existing.kind === "cancel" || normalized.replacementTaskId === existing.replacementTaskId);
     if (existing.status === "needs_attention" && sameKindReRun) {
-      if (req.version !== task.version) throw new Error("Task changed; refresh before retrying");
+      if (req.version !== task.version) throw new TaskChangedRefusal("Task changed; refresh before retrying", req.version, task.version);
       const requestedBy = (req.requestedBy ?? "operator control").slice(0, 240) || "operator control";
       store.event(task.id, "disposition_retry_requested",
         `${normalized.action} re-run requested by ${requestedBy}: ${normalized.reason}; the parked step re-runs under the recorded fence`);
       return task;
     }
-    if (req.version !== task.version) throw new Error("Task changed; refresh before retrying");
+    if (req.version !== task.version) throw new TaskChangedRefusal("Task changed; refresh before retrying", req.version, task.version);
     throw new Error("A conflicting disposition request cannot replace the recorded fence");
   }
-  if (req.version !== task.version) throw new Error("Task changed; refresh before retrying");
+  if (req.version !== task.version) throw new TaskChangedRefusal("Task changed; refresh before retrying", req.version, task.version);
   const replacement = normalized.action === "supersede" ? replacementEvidence(store, task, normalized.replacementTaskId!) : null;
   const requestedBy = (req.requestedBy ?? "operator control").slice(0, 240) || "operator control";
   // The initial transaction increments the task version: this is the hard

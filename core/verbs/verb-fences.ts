@@ -9,6 +9,7 @@ import { coordinatorReportMatches } from "../recovery/coordinator-report";
 import type { Resolution } from "../resolution";
 import { DurableFenceRefusal, matchingInactiveParticipant, runFenceRefusal, runSettlement, runSettlementFence } from "../intake/run-settlement";
 import { digest, now } from "../store/store";
+import { TaskChangedRefusal } from "../../shared/task-version";
 
 /** Classify a run using only facts already read; observation remains lazy. */
 export function classifyVerbRun(input: {
@@ -207,7 +208,7 @@ export class VerbFences {
    * retried, resent or written.
    */
   requireOwnerControlCurrent(task: Task, version: number, refusal: string): void {
-    if (!observationAdvanceSince(task, version)) throw Error(refusal);
+    if (!observationAdvanceSince(task, version)) throw new TaskChangedRefusal(refusal, version, task.version);
   }
 
   /**

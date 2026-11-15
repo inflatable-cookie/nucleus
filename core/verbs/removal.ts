@@ -1,6 +1,7 @@
 import { REMOVED_TASK_REFUSAL } from './control-refusals';
 import { isDeepStrictEqual } from "node:util";
 import type { Run, Task } from "../../shared/contracts";
+import { TaskChangedRefusal } from '../../shared/task-version';
 import { isDispositionActive } from "../../shared/contracts";
 import { cleanupReasonFor, recordRunBuildOutput } from "../hooks/build-output-records";
 import { progressDisposition } from "./disposition";
@@ -140,7 +141,7 @@ export class TaskRemoval {
     const pendingRetry = retryMarkers.at(-1)?.result === null;
     if (task.version !== version && !pendingRetry) {
       if (retryMarkers.length) return task;
-      throw new Error("Task changed; refresh before retrying");
+      throw new TaskChangedRefusal("Task changed; refresh before retrying", version, task.version);
     }
     if (!pendingRetry) {
       if (task.phase !== "cancelled" || task.disposition?.status !== "complete" || task.disposition.workDisposition !== "archive_if_empty" || task.disposition.workspaceArchived || !task.workspaceId)
