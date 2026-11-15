@@ -85,7 +85,7 @@ export class StoreProjectRegistry {
   /** The member of a project for one repository identity, by origin or path. */
   projectMember(project: Project, repository: string): Project["repositories"][number] {
     const origin = normalizeRepositoryOrigin(repository);
-    const member = project.repositories.find(repo => origin && repo.origin ? repo.origin === origin : Boolean(repo.path && repo.path === repository));
+    const member = project.repositories.find(repo => repositoryMemberMatches(repo, repository, origin));
     if (!member) throw new Error(`Repository ${repository} is not in project ${project.key}`);
     return member;
   }
@@ -154,8 +154,7 @@ export class StoreProjectRegistry {
   upsertProject(input: ProjectUpsertInput): Project {
     const { create, ...parsed } = projectUpsertInputSchema.parse(input);
     const primary = parsed.primary ?? parsed.repositories[0];
-    const primaryIndex = parsed.repositories.findIndex(repo =>
-      repo.origin && primary.origin ? repo.origin === primary.origin : Boolean(repo.path && repo.path === primary.path));
+    const primaryIndex = parsed.repositories.findIndex(repo => repositoryMemberMatches(repo, primary.path, primary.origin));
     if (primaryIndex < 0) throw new Error("Primary repository must belong to the project");
     const repositories = [...parsed.repositories];
     repositories.unshift(...repositories.splice(primaryIndex, 1));
@@ -168,8 +167,7 @@ export class StoreProjectRegistry {
       if (previous) { project.version = previous.version + 1; project.visibility = previous.visibility; }
       // Spec 041: the next-aim episode is operational state; an operator edit never resets it.
       if (previous) { project.drain = previous.drain; project.planner = previous.planner; project.owner = previous.owner; project.ownerMissingAt = previous.ownerMissingAt; project.ownerCheckedAt = previous.ownerCheckedAt; }
-      if (previous && !project.repositories.some(repo =>
-        repo.origin && previous.primary.origin ? repo.origin === previous.primary.origin : Boolean(repo.path && repo.path === previous.primary.path)) &&
+      if (previous && !project.repositories.some(repo => repositoryMemberMatches(repo, previous.primary.path, previous.primary.origin)) &&
         (!parsed.primary || (parsed.primary.origin && previous.primary.origin ? parsed.primary.origin === previous.primary.origin : parsed.primary.path === previous.primary.path)))
         throw new Error("Name another primary repository before removing the current primary");
       for (const repo of project.repositories) {

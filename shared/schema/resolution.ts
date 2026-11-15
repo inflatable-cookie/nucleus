@@ -8,7 +8,7 @@ import { taskPhaseSchema } from "../schema/task-primitives";
 import { incidentSchema } from "../incident";
 import { sharedWorkspaceStateSchema, stalledTurnStopSchema } from "./workspace";
 import { resolutionWorkspaceFields } from "./resolution-workspace";
-import { resolutionMergeFields } from "./resolution-merge";
+import { resolutionMergeGateFields, resolutionMergeRecordFields } from "./resolution-merge";
 import { projectValidationResultSchema } from "./validation";
 import { profileSchema } from "./settings";
 
@@ -38,6 +38,7 @@ export const resolutionSchema = z.object({
   }).strict()).default([]),
   // Explicitly superseded participant identities for the forced merged closeout.
   ownerCloseoutParticipants: z.array(z.object({ agentId: z.string(), workspaceId: z.string() }).strict()).default([]),
+  ...resolutionWorkspaceFields,
   // Advisory task.finished durable intent for a terminal task: present while the
   // repository's finished-task runtime stop still owes one evaluation. A crash
   // after the terminal transition is recovered by the lifecycle scan even when
@@ -64,6 +65,7 @@ export const resolutionSchema = z.object({
   // its question while the host wait still pauses the clock, shows on the card and
   // joins the outage notice. Cleared when the host returns.
   hostWait: taskHostWaitSchema.nullable().default(null),
+  ...resolutionMergeGateFields,
   // Project-a #1837: a transient `External merge check:` fault sets attention and can
   // leave the task in `needs_attention` with no run. The phase and reason it held
   // before the check are recorded so recovery resumes that state instead of
@@ -137,6 +139,7 @@ export const resolutionSchema = z.object({
     runId: z.string().min(1).max(160), head: z.string().regex(/^[a-f0-9]{40}$/),
     proofs: z.array(z.string().trim().min(1).max(2000)).min(1).max(40), at: z.string(),
   }).strict().nullable().default(null),
+  ...resolutionMergeRecordFields,
   // Retained so older task rows parse without rewriting live data. New review
   // intake never creates or acts on shared-checkout branch-switch state.
   sharedWorkspace:sharedWorkspaceStateSchema.nullable().default(null),
@@ -156,4 +159,4 @@ export const resolutionSchema = z.object({
     target: z.object({ runId: z.string(), checkpointOrdinal: z.number().int().positive().optional(), head: z.string().optional() }).strict().nullable().default(null) }).strict().nullable().default(null),
   prePrResumeInstruction: z.string().trim().min(1).max(12000).nullable().default(null),
   attention: z.boolean().default(false),
-}).extend({ ...resolutionWorkspaceFields, ...resolutionMergeFields });
+});

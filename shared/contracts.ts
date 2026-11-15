@@ -51,7 +51,7 @@ export * from "./rpc/settings";
 export * from "./rpc/tasks";
 export * from "./schema/task-control";
 export { checkTaskControlRules } from "./schema/task-control-rules";
-export { resolutionMergeFields } from "./schema/resolution-merge";
+export { resolutionMergeGateFields, resolutionMergeRecordFields } from "./schema/resolution-merge";
 export { resolutionWorkspaceFields } from "./schema/resolution-workspace";
 export * from "./rpc/task-control";
 export * from "./schema/bulk-disposition";
