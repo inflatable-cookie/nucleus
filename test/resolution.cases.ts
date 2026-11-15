@@ -16,7 +16,9 @@ import { holdOwnerOf, taskOwner, QUEUE_REPOSITORY_ORIGIN, RETAINED_WORKER_PROFIL
 import { PaseoAdapter, type Adapter, type AgentObservation } from '../service/paseo-composition';
 import type { ResolutionAdapter } from '../core/resolution';
 import { MERGE_CONFLICT_REASON, requiredCheckPollMetaKey, reviewPublicationBody, taskPrNumber } from '../core/forge/index';
-import { ABSENT_RESOLUTION_REASON, ABSENT_WORKER_REASON, ACCEPTED_PR_RECONCILIATION_REASON, EXTERNAL_MERGE_CHECK_REASON_PREFIX, EXTERNAL_MERGE_CHECK_RECOVERED_REASON, NO_ORIGIN_THREAD_WAIT, originRecipient, proofWaitApplies } from '../core/resolution';
+import { ABSENT_RESOLUTION_REASON, ABSENT_WORKER_REASON, ACCEPTED_PR_RECONCILIATION_REASON, EXTERNAL_MERGE_CHECK_REASON_PREFIX, EXTERNAL_MERGE_CHECK_RECOVERED_REASON } from '../core/recovery/task-reasons';
+import { NO_ORIGIN_THREAD_WAIT, originRecipient } from '../core/questions/origin';
+import { proofWaitApplies } from '../core/qa/proof-wait';
 import { RECOVERY_STOPPED_WITHOUT_RESULT } from '../core/recovery/coordinator-pass';
 import { ACCEPTED_RECOVERY_NOT_APPLIED_PREFIX } from '../core/recovery/coordinator-episode';
 import { runPrompt } from '../core/dispatch/prompts';

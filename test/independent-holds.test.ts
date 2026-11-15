@@ -11,7 +11,7 @@ import { Engine } from "../core/engine";
 import { DISPATCH_HELD_REASON, dispatchBlocked } from "../core/dispatch/capacity";
 import { BOARD_DISPATCH_HOLD_REASON } from "../shared/board-dispatch-hold";
 import { holdPatch } from "../core/merge/merge-hold";
-import { MERGE_HELD_REASON } from "../core/resolution";
+import { MERGE_HELD_REASON } from '../core/recovery/task-reasons';
 import { DISPATCH_WAIT_REASON, taskStopRecord } from "../shared/task-stop";
 import {
   deriveWaitState, CAPACITY_WAIT_PREFIX,
