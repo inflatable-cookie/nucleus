@@ -123,3 +123,8 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
   (`workspaces/owned-workspace-archive.ts`, 8) beside one thread-inventory owner
   (`workspaces/owned-workspace-threads.ts`, 10). `core/workspaces/repository-archive-gate.ts` had no
   product callers since 1173 and is deleted with its row, and its test proved only that dead path.
+  The revision at the same task's review kept what the first pass moved: the unified closeout budget
+  counts the historical `closeout_hold_refresh` records as spent (a rename never refunds a retry), the
+  queued projection still owns the two dispatch-hold reasons so a released hold is never re-shown, and
+  `workspaces/archive-failure.ts` (10) now classifies a Queue-authored refusal by the stage it states
+  (`WorkspaceTeardownRefusal.archiveFailureStage`), leaving message text to foreign failures alone.

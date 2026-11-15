@@ -18,6 +18,12 @@ import { isStaleBaseRefusal } from "../hooks/hooks";
 
 /** The one task-history kind that records an automatic re-pin of the closeout base. */
 export const CLOSEOUT_BASE_RENEWED_KIND = "closeout_base_renewed";
+/**
+ * The kind this record carried before the two copies were unified. A live
+ * closeout may already hold spent re-pins under it, so it keeps spending the
+ * same per-merge budget: a rename never refunds a retry.
+ */
+export const CLOSEOUT_BASE_RENEWED_LEGACY_KIND = "closeout_hold_refresh";
 
 /** Automatic re-pins of a closeout base allowed per merge; beyond this a human decides. */
 export const CLOSEOUT_BASE_RENEWAL_LIMIT = 3;
@@ -29,13 +35,14 @@ export const CLOSEOUT_BASE_RENEWAL_TRANSITION = {
 
 /**
  * How many automatic re-pins this closeout has already spent. Events arrive
- * newest first, so the count stops at the merge that opened this closeout.
+ * newest first, so the count stops at the merge that opened this closeout, and
+ * both its current kind and the kind it carried before the rename spend it.
  */
 export function closeoutBaseRenewalsSinceMerge(events: readonly { kind: string }[]): number {
   let renewals = 0;
   for (const event of events) {
     if (event.kind === "merge_verified") break;
-    if (event.kind === CLOSEOUT_BASE_RENEWED_KIND) renewals += 1;
+    if (event.kind === CLOSEOUT_BASE_RENEWED_KIND || event.kind === CLOSEOUT_BASE_RENEWED_LEGACY_KIND) renewals += 1;
   }
   return renewals;
 }

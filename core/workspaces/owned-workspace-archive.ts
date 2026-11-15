@@ -38,9 +38,12 @@ export interface WorkspaceArchiveOptions {
 /**
  * A local teardown that did not finish. Typed so callers decide from the code,
  * never from the message text; the message keeps naming the step for the
- * operator and the recorded reason.
+ * operator and the recorded reason. Its `archiveFailureStage` is the fact the
+ * archive failure classifier reads, so a teardown refusal keeps the captured
+ * runtime scope without any caller rereading the message.
  */
 export class WorkspaceTeardownRefusal extends Error {
+  readonly archiveFailureStage = 'teardown' as const;
   constructor(readonly code: 'incomplete' | 'catalogued' | 'failed', message: string) {
     super(`worktree.teardown failed: ${message}`);
     this.name = 'WorkspaceTeardownRefusal';

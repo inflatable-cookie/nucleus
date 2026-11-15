@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { CLOSEOUT_BASE_RENEWAL_LIMIT, CLOSEOUT_BASE_RENEWED_KIND, closeoutBaseRenewalAllowed, closeoutBaseRenewalsSinceMerge } from '../core/closeout/closeout-base-refresh';
+import { CLOSEOUT_BASE_RENEWAL_LIMIT, CLOSEOUT_BASE_RENEWED_KIND, CLOSEOUT_BASE_RENEWED_LEGACY_KIND, closeoutBaseRenewalAllowed, closeoutBaseRenewalsSinceMerge } from '../core/closeout/closeout-base-refresh';
 import { hookRefusalKind, isStaleBaseRefusal } from '../core/hooks/hook-refusal';
 import { workspaceThreadFacts } from '../core/workspaces/owned-workspace-threads';
 import { WorkspaceTeardownRefusal } from '../core/workspaces/owned-workspace-archive';
@@ -23,6 +23,19 @@ test('the closeout base rule counts its own re-pins since the merge and stops at
   for (let spent = 0; spent <= CLOSEOUT_BASE_RENEWAL_LIMIT; spent += 1) {
     assert.equal(closeoutBaseRenewalAllowed(renewals(spent), staleBase), spent < CLOSEOUT_BASE_RENEWAL_LIMIT);
   }
+});
+
+test('a rename never refunds spent closeout re-pins: the historical kind still spends the same budget', () => {
+  const event = (kind: string) => ({ kind });
+  // A live closeout upgraded mid-hold: two re-pins under the old kind, one under the new.
+  const mixed = [event(CLOSEOUT_BASE_RENEWED_KIND), event(CLOSEOUT_BASE_RENEWED_LEGACY_KIND), event(CLOSEOUT_BASE_RENEWED_LEGACY_KIND), event('merge_verified')];
+  assert.equal(closeoutBaseRenewalsSinceMerge(mixed), 3);
+  assert.equal(closeoutBaseRenewalAllowed(mixed, staleBase), false, 'the budget is spent, whatever wrote the records');
+  // One spent under the old kind and one under the new leaves exactly one.
+  const oneLeft = [event(CLOSEOUT_BASE_RENEWED_KIND), event(CLOSEOUT_BASE_RENEWED_LEGACY_KIND), event('merge_verified')];
+  assert.equal(closeoutBaseRenewalAllowed(oneLeft, staleBase), true);
+  // Old-kind re-pins from the previous closeout do not spend this one's budget.
+  assert.equal(closeoutBaseRenewalsSinceMerge([event(CLOSEOUT_BASE_RENEWED_KIND), event('merge_verified'), ...Array.from({ length: 4 }, () => event(CLOSEOUT_BASE_RENEWED_LEGACY_KIND))]), 1);
 });
 
 test('only a recorded stale-base refusal may re-pin a closeout base', () => {

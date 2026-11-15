@@ -30,6 +30,17 @@ export function taskWaitStateContext(
   };
 }
 
+/**
+ * The reasons the queued projection owns and therefore never returns as the
+ * current wait: Queue's declared waits (`shared/wait-state`) and the two
+ * dispatch holds the projection itself writes above. A task whose hold was
+ * released can still carry its old hold text for one pass, and re-showing it
+ * would claim dispatch is held and hide a current external wait.
+ */
+function queueOwnedWaitReason(reason: string): boolean {
+  return Boolean(waitReasonFor(reason)) || reason === DISPATCH_HELD_REASON || reason === BOARD_DISPATCH_HOLD_REASON;
+}
+
 /** Wait text for a queued task is a projection of present facts, never a write. */
 export function queuedReason(store: Store, task: Task, context: WaitStateContext, externalWait: (task: Task) => string = () => ''): string {
   if (task.phase !== 'queued') return task.reason;
@@ -39,9 +50,8 @@ export function queuedReason(store: Store, task: Task, context: WaitStateContext
   if (context.slotAdmissionReason) return context.slotAdmissionReason;
   if (routeUnavailableStop(task))
     return store.routingRetryAllowed(task) ? DISPATCH_WAIT_REASON : task.reason;
-  // A reason that is one of Queue's own declared waits (the owner of that list is
-  // `shared/wait-state`) is the wait projection already; free text is the task's
-  // own progress detail and stands. Never re-read a wait out of reason prose.
-  if (task.reason && task.reason !== DISPATCH_WAIT_REASON && !waitReasonFor(task.reason)) return task.reason;
+  // A reason the projection owns is a wait it can rewrite from present facts; free
+  // text is the task's own progress detail and stands. Never read a wait out of prose.
+  if (task.reason && task.reason !== DISPATCH_WAIT_REASON && !queueOwnedWaitReason(task.reason)) return task.reason;
   return externalWait(task) || DISPATCH_WAIT_REASON;
 }
