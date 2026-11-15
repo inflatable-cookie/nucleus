@@ -10,7 +10,7 @@ import { verifyMergeCandidate } from "../core/hooks/git-gates";
 test("Git cleanliness reports probe failures instead of treating them as dirty state", async t => {
   const root = await mkdtemp(join(tmpdir(), "nucleus-git-cleanliness-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  await assert.rejects(repositoryIsCleanAt(root, "a".repeat(40)), /git rev-parse HEAD/);
+  await assert.rejects(repositoryIsCleanAt(root, "a".repeat(40)), /git status/);
 });
 
 test("merge-candidate proof refuses an absent pinned identity", async () => {
