@@ -47,11 +47,11 @@ export class QuestionRaiseRoutes {
       onRequested: request => {
         // Durable native request identity for later withdrawal: a superseded
         // question is dismissed by its recorded requestId, not by matching text.
+        // A repeated callback for the same request writes the identity once.
         try {
-          const intent = `${decision.id}: request ${request.requestId}`;
           const recorded = operatorQuestionRecords(this.store.eventsAll(task.id)).get(decision.id);
-          if (!recorded?.nativeRequest?.startsWith(intent))
-            this.store.event(task.id, 'operator_question_native_request', `${intent} header ${request.header} on ${task.agentId ?? 'unknown'}`);
+          if (!recorded?.nativeRequests.some(item => item.requestId === request.requestId))
+            this.store.event(task.id, 'operator_question_native_request', `${decision.id}: request ${request.requestId} header ${request.header} on ${task.agentId ?? 'unknown'}`);
         } catch { /* the send intent stands without the request link */ }
         void this.resolution.delegateDecision(task.id, decision, request, signal,
           (fresh, answer) => this.adapter.answerTaskDecision!(fresh, { requestId: request.requestId, header: request.header, answer })); } });

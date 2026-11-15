@@ -2,7 +2,7 @@ import { Decisions } from '../planning/decisions';
 import type { Resolution } from '../resolution';
 import { busyGoAnswerRefusal } from '../qa/proof-only-go';
 import { operatorQuestionFor } from './operator-question';
-import { delegatedDecisionRoutes, operatorQuestionRecords, queueAskPayloads } from './question-events';
+import { delegatedDecisionRouteRecords, operatorQuestionRecords, queueAskPayloads, type OperatorQuestionRecord } from './question-events';
 import { questionRoute } from './question-route';
 
 /**
@@ -86,11 +86,14 @@ export class QuestionRecovery {
           } finally { this.resolution.queueAskRaiseAnsweredBy.delete(id); this.resolution.recoveringQueueAsks.delete(id); }
         }
       }
-      for (const { decision, request } of delegatedDecisionRoutes(events)) {
+      for (const entry of delegatedDecisionRouteRecords(events)) {
+        // A route recorded before an unreadable one has already started above;
+        // the unreadable record names itself instead of hiding its predecessors.
+        if (!entry.route) throw Error(`Delegated decision route ${entry.eventId} is not readable JSON`);
+        const { decision, request } = entry.route;
         const recorded = operatorQuestionRecords(events).get(decision.id);
-        const finished = (kinds: string[]) => kinds.some(kind => recorded?.kinds.has(kind) ?? false);
         if (this.resolution.queueAskRaises.has(decision.id) || this.resolution.responsibleQuestions.has(decision.id) || this.resolution.recoveringQueueAsks.has(decision.id)
-          || finished(['operator_question_answered', 'responsible_question_answered', 'operator_question_stale_answered', 'responsible_question_stale_answered'])
+          || this.finishedRoute(recorded)
           || recorded?.noAnswerMissed
           || (recorded?.delegationUnknown
             && !this.resolution.recoverableDelegation([`queue-delegate-${decision.id}`, `queue-delegate-${decision.id}-project`, `ns-decider-${decision.id}`], false))
@@ -112,16 +115,16 @@ export class QuestionRecovery {
         const record = operatorQuestionRecords(events).get(question.id);
         const marked = (kind: string) => record?.kinds.has(kind) ?? false;
         if (board) {
-          if (!this.resolution.queueAskRaises.has(question.id) && !this.resolution.recoveringQueueAsks.has(question.id) && !marked('operator_question_decision') &&
-              !marked('operator_question_answered') && !marked('responsible_question_answered'))
+          if (!this.resolution.queueAskRaises.has(question.id) && !this.resolution.recoveringQueueAsks.has(question.id)
+              && !record?.kinds.has('operator_question_decision') && !marked('operator_question_answered') && !marked('responsible_question_answered'))
             this.resolution.ensureQueueRaiseDecision(task, question, 'the task host cannot take a native question');
           void this.resolution.questionRaiseRoutes.notifyPlannerOfBoardQuestion(task, question);
           continue;
         }
         if (this.resolution.queueAskRaises.has(question.id) && !marked('operator_question_answered') && !marked('responsible_question_answered'))
           await this.resolution.deliverQueueAsk(this.store.task(task.id), question);
-        if (!this.resolution.queueAskRaises.has(question.id) && !this.resolution.recoveringQueueAsks.has(question.id) && !marked('operator_question_decision') &&
-            !marked('operator_question_answered') && !marked('responsible_question_answered'))
+        if (!this.resolution.queueAskRaises.has(question.id) && !this.resolution.recoveringQueueAsks.has(question.id)
+            && !record?.kinds.has('operator_question_decision') && !marked('operator_question_answered') && !marked('responsible_question_answered'))
           this.resolution.ensureQueueRaiseDecision(task, question, 'the previous delivery or answer could not be observed');
       }
       if (board) {
@@ -141,6 +144,13 @@ export class QuestionRecovery {
     }
     // Task 562: pending asks collect their joined answers and every recorded
     // answer resumes its asking agent, even when the in-turn wait already left.
+  }
+  /** A route is settled when any of its answer marks is recorded. */
+  private finishedRoute(recorded: OperatorQuestionRecord | undefined): boolean {
+    return recorded?.kinds.has('operator_question_answered') === true
+      || recorded?.kinds.has('responsible_question_answered') === true
+      || recorded?.kinds.has('operator_question_stale_answered') === true
+      || recorded?.kinds.has('responsible_question_stale_answered') === true;
   }
   abortResponsibleQuestions() {
     for (const controller of this.resolution.responsibleQuestions.values()) controller.abort();

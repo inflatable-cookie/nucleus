@@ -25,6 +25,13 @@ export interface OperatorQuestionIntent {
   options: string[];
 }
 
+/** One native request a question was delivered as. */
+export interface OperatorQuestionNativeRequest {
+  requestId: string;
+  header: string;
+  agentId: string;
+}
+
 /** One question's decoded records. */
 export interface OperatorQuestionRecord {
   id: string;
@@ -36,8 +43,8 @@ export interface OperatorQuestionRecord {
   kinds: ReadonlySet<string>;
   /** The last refusal recorded for this question, as its reason. */
   refusal: string | null;
-  /** The native request this question was delivered as, when it recorded one. */
-  nativeRequest: string | null;
+  /** Every native request this question recorded, in order, so a repeated callback writes one. */
+  nativeRequests: OperatorQuestionNativeRequest[];
   /** Its delegation's delivery is unknown. */
   delegationUnknown: boolean;
   /** A delegation miss that recorded no delegated answer. */
@@ -92,7 +99,7 @@ export function operatorQuestionRecords(events: ReadonlyArray<{ kind: string; de
     if (existing) return existing;
     const created: OperatorQuestionRecord = {
       id, intent: null, link: null, kinds: kinds.get(id) ?? new Set<string>(),
-      refusal: null, nativeRequest: null, delegationUnknown: false, noAnswerMissed: false,
+      refusal: null, nativeRequests: [], delegationUnknown: false, noAnswerMissed: false,
     };
     records.set(id, created);
     return created;
@@ -118,9 +125,14 @@ export function operatorQuestionRecords(events: ReadonlyArray<{ kind: string; de
         decoded.refusal = refusal;
         break;
       }
-      case 'operator_question_native_request':
-        decoded.nativeRequest = parts.body;
+      case 'operator_question_native_request': {
+        const requestId = /request (\S+)/.exec(parts.body)?.[1];
+        if (requestId)
+          decoded.nativeRequests.push({ requestId,
+            header: /header (.*) on /.exec(parts.body)?.[1] ?? '',
+            agentId: /on (\S+)$/.exec(parts.body)?.[1] ?? '' });
         break;
+      }
       case 'operator_question_delegation_unknown':
         decoded.delegationUnknown = true;
         break;
@@ -197,15 +209,25 @@ export interface DelegatedDecisionRoute {
   request: { requestId: string; header: string } | null;
 }
 
-/** Every recorded delegated decision route, in order; an unreadable route names its record. */
-export function delegatedDecisionRoutes(events: ReadonlyArray<{ kind: string; detail: string; id: number }>): DelegatedDecisionRoute[] {
-  const routes: DelegatedDecisionRoute[] = [];
+/** One recorded delegated decision route: what it names, or null when it cannot be read. */
+export interface DelegatedDecisionRouteRecord {
+  eventId: number;
+  route: DelegatedDecisionRoute | null;
+}
+
+/**
+ * Every recorded delegated decision route, in record order, decoded one record at a
+ * time: a route that cannot be read never hides the routes recorded before it, so a
+ * sweep resumes them in the order they were written.
+ */
+export function delegatedDecisionRouteRecords(events: ReadonlyArray<{ kind: string; detail: string; id: number }>): DelegatedDecisionRouteRecord[] {
+  const routes: DelegatedDecisionRouteRecord[] = [];
   for (const event of events) {
     if (event.kind !== 'delegated_decision_route') continue;
     try {
-      routes.push(JSON.parse(event.detail) as DelegatedDecisionRoute);
+      routes.push({ eventId: event.id, route: JSON.parse(event.detail) as DelegatedDecisionRoute });
     } catch {
-      throw Error(`Delegated decision route ${event.id} is not readable JSON`);
+      routes.push({ eventId: event.id, route: null });
     }
   }
   return routes;

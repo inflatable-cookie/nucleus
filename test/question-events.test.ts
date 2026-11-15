@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { digest } from '../core/store/store';
-import { decisionAnswerLinks, delegatedDecisionRoutes, intentNamesQuestion, intentOptions, operatorQuestionRecord,
+import { decisionAnswerLinks, delegatedDecisionRouteRecords, intentNamesQuestion, intentOptions, operatorQuestionRecord,
   operatorQuestionRecords, queueAskPayloads, questionRecordKinds } from '../core/questions/question-events';
 import type { OperatorQuestion } from '../core/questions/operator-question';
 
@@ -96,14 +96,45 @@ test('a Queue payload is recovered when it is well formed and ignored when it is
   assert.deepEqual(payloads, [{ id, kind: 'budget', question: 'Extend?', options: ['A'] }]);
 });
 
-test('a delegated route is recovered, and an unreadable one names its record', () => {
+test('a delegated route is recovered in record order, and an unreadable later record never hides it', () => {
   const decision = { id, kind: 'budget' as const, question: 'Extend?', options: ['A'] };
-  const routes = delegatedDecisionRoutes([
-    event('delegated_decision_route', JSON.stringify({ decision, request: { requestId: 'request-1', header: 'Budget' } })),
+  const valid = { decision, request: { requestId: 'request-1', header: 'Budget' } };
+  const records = delegatedDecisionRouteRecords([
+    event('delegated_decision_route', JSON.stringify(valid), 6),
+    event('delegated_decision_route', '{not json', 7),
   ]);
-  assert.deepEqual(routes, [{ decision, request: { requestId: 'request-1', header: 'Budget' } }]);
-  assert.throws(() => delegatedDecisionRoutes([event('delegated_decision_route', '{not json', 7)]),
-    /Delegated decision route 7 is not readable JSON/);
+  assert.deepEqual(records, [
+    { eventId: 6, route: valid },
+    { eventId: 7, route: null },
+  ]);
+  // The recovery sweep starts each readable route as it meets it, then names the
+  // unreadable record, exactly as the per-record loop did before the decoder.
+  const started: string[] = [];
+  let named: string | null = null;
+  for (const entry of records) {
+    if (!entry.route) { named = `Delegated decision route ${entry.eventId} is not readable JSON`; break; }
+    started.push(entry.route.decision.id);
+  }
+  assert.deepEqual(started, [id]);
+  assert.equal(named, 'Delegated decision route 7 is not readable JSON');
+  assert.deepEqual(delegatedDecisionRouteRecords([event('delegated_decision_route', '{not json', 7)]),
+    [{ eventId: 7, route: null }]);
+});
+
+test('a recorded native request decodes the identity the raise compares', () => {
+  const records = operatorQuestionRecords([
+    event('operator_question', intent('Extend the budget?', [])),
+    event('operator_question_native_request', `${id}: request native-1 header Question 1 on worker`, 2),
+  ]);
+  const recorded = records.get(id)!;
+  assert.deepEqual(recorded.nativeRequests, [{ requestId: 'native-1', header: 'Question 1', agentId: 'worker' }]);
+  // Every record is decoded, so a repeat is visible as two identities of the same request.
+  const repeated = operatorQuestionRecords([
+    event('operator_question', intent('Extend the budget?', [])),
+    event('operator_question_native_request', `${id}: request native-1 header Question 1 on worker`, 2),
+    event('operator_question_native_request', `${id}: request native-1 header Question 1 on worker`, 3),
+  ]).get(id)!;
+  assert.deepEqual(repeated.nativeRequests.map(item => item.requestId), ['native-1', 'native-1']);
 });
 
 test('operator question records keep a question apart from a responsible question', () => {
