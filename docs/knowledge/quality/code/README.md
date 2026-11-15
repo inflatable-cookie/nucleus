@@ -116,11 +116,13 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
   a refusal with the code a typed `core/host-runs/host-run-refusal.ts` (10) carries instead of classifying
   message prefixes. The supervisor runs its command through `core/machine/process-exec.ts` (8), which now
   also owns contract 010's escaped-descendant settlement for host runs: the step stays live while it waits
-  (pipes open, cancel still polled, timeout still applying) and signals a descendant that left the group with
-  the stage the stop reached. The supervisor keeps only the run's durable wiring, which is why it is 10.
+  (pipes open, cancel still polled, timeout still applying), inventories escapees on every settlement tick
+  while the group survives, proves absence only from the full identity listing once it is empty, and signals
+  a descendant only after proving the pid still carries the recorded birth identity. The supervisor keeps only the run's durable wiring, which is why it is 10.
   `core/machine/escaped-descendants.ts` (10) owns that rule, including the absence proof whose first clean
-  instant survives a caller polling faster than the interval, and it is covered directly by
-  `test/escaped-descendants.test.ts`. `core/host-runs/host-run-files.ts` (8) grew
+  instant survives a caller polling faster than the interval and whose global listing finds an orphan that a
+  recorded escapee would otherwise hide, and it is covered directly by `test/escaped-descendants.test.ts`
+  (including a stale recorded pid that must not be signalled). `core/host-runs/host-run-files.ts` (8) grew
   `readCheckedHostRunFileRead`, which keeps a missing, a refused and a present file apart — only a proven
   missing component is absent — and the refusal code is now a field on the owner that refuses in
   `host-run-scheduler` (7), `host-run-admission` (7), `host-run-accounting` (8) and `host-run-settlement` (8);

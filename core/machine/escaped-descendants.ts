@@ -1,7 +1,6 @@
 import type { HostRunEscapedDescendant } from "../../shared/contracts";
 import { pidAlive } from "./pid";
-import { processGroupEmpty } from "./process-group";
-import { processesForStartIdentity, processesForStartIdentityInTree, type ProcessStartIdentitySearch } from "./process-identity-search";
+import { processStartIdentityLiveness, processesForStartIdentity, processesForStartIdentityInTree, type ProcessStartIdentitySearch } from "./process-identity-search";
 import { startIdentityMatches } from "./start-identity";
 
 /**
@@ -38,9 +37,6 @@ export function escapedDescendantsOf(found: ProcessStartIdentitySearch, processG
     .map(process => ({ pid: process.pid, startIdentity: process.startIdentity }));
 }
 
-/** What one custody scan established: whether a live escaped descendant may remain. */
-export interface EscapedDescendantScan { occupied: boolean; clear: boolean }
-
 export class EscapedDescendantCustody {
   private readonly known = new Map<string, HostRunEscapedDescendant>();
   /** The first clean scan of the current clean run; kept across later clean scans. */
@@ -54,57 +50,52 @@ export class EscapedDescendantCustody {
   }
 
   /**
-   * True only when two readable scans `ESCAPED_DESCENDANT_PROOF_MS` apart both
-   * found no live escaped descendant. The first clean instant is kept across
-   * later clean scans, so a caller polling faster than the proof interval still
-   * proves absence on the first scan that lands past it. A scan that could not
-   * read the host is never proof, and neither is a single clean scan: a
-   * descendant detaching at the group's last instant must still be seen.
+   * Cheap inventory for a tick while the run is live: record the descendants the
+   * tree walk reaches from the group and the ones already known. It cannot prove
+   * absence — an orphan whose parent already exited is out of reach — so it never
+   * decides settlement.
+   */
+  scan(processGroupId: number | null): void {
+    const found = processesForStartIdentityInTree(this.identity, { processGroupId, pids: this.recorded().map(entry => entry.pid) });
+    if (found.state !== "found") return;
+    this.record(escapedDescendantsOf(found, processGroupId));
+  }
+
+  /**
+   * Proof of absence: the full identity listing, and only that. Two listings
+   * `ESCAPED_DESCENDANT_PROOF_MS` apart that both show no escaped descendant prove
+   * the run's descendants are gone; the first clean instant is kept across later
+   * clean listings, so a caller polling faster than the interval still proves it
+   * on the first listing that lands past it. A listing that could not be read is
+   * never proof, and neither is a single clean one: a descendant detaching at the
+   * group's last instant must still be seen. The caller proves this only once the
+   * run's own process group is empty, so the listing's group members cannot make
+   * a live run look escaped.
    */
   absenceProven(processGroupId: number | null, nowMs = Date.now()): boolean {
-    const scan = this.scan(processGroupId);
-    if (!scan.clear || scan.occupied) { this.firstClearScanAt = null; return false; }
+    const found = processesForStartIdentity(this.identity);
+    if (found.state === "unknown") { this.firstClearScanAt = null; return false; }
+    const escaped = found.state === "found" ? escapedDescendantsOf(found, processGroupId) : [];
+    this.record(escaped);
+    if (escaped.length) { this.firstClearScanAt = null; return false; }
     this.firstClearScanAt ??= nowMs;
     return nowMs - this.firstClearScanAt >= ESCAPED_DESCENDANT_PROOF_MS;
   }
 
-  /**
-   * One scan: record what a readable listing proves, then answer whether a live
-   * escaped descendant may remain. An unreadable listing is occupied even when
-   * nothing has been recorded yet — an unknown host state is not evidence that
-   * no descendant exists.
-   */
-  scan(processGroupId: number | null): EscapedDescendantScan {
-    const knownPids = this.recorded().map(entry => entry.pid);
-    let found = processesForStartIdentityInTree(this.identity, { processGroupId, pids: knownPids });
-    // Last-instant detach: the parent is gone, so the cheap tree walk has no
-    // roots unless the child was already inventoried. Fall back to the full
-    // identity listing once the group is empty.
-    if (found.state === "absent" && this.known.size === 0 && (!processGroupId || processGroupEmpty(processGroupId)))
-      found = processesForStartIdentity(this.identity);
-    if (found.state === "unknown") {
-      // A recorded pid the kernel says is gone does not occupy the run by itself,
-      // and a listing with nothing recorded cannot prove there was never a
-      // descendant: unknown is occupied until a recorded descendant is proven dead.
-      const occupied = this.known.size === 0 || [...this.known.values()].some(entry => pidAlive(entry.pid));
-      return { occupied, clear: !occupied };
-    }
-    if (found.state === "absent") return { occupied: false, clear: true };
-    const escaped = escapedDescendantsOf(found, processGroupId);
+  private record(escaped: HostRunEscapedDescendant[]): void {
     for (const entry of escaped) this.known.set(`${entry.pid}:${entry.startIdentity}`, entry);
-    // A recorded entry is alive only while the same listing proves its identity;
-    // an unobservable identity is never read as death. The listing names live
-    // processes, so no escaped process in it means no escaped process remains.
-    const listed = new Map(found.processes.map(process => [process.pid, process.startIdentity]));
-    const occupied = [...this.known.values()].some(entry =>
-      entry.startIdentity.endsWith("@unknown")
-      || startIdentityMatches(listed.get(entry.pid) ?? "", entry.startIdentity));
-    return { occupied, clear: escaped.length === 0 };
   }
 
-  /** Signal every recorded escaped descendant; an already-gone descendant is not an error. */
+  /**
+   * Signal the recorded escaped descendants that are still *the same processes*:
+   * the pid must carry the recorded birth identity right now. The recorded set is
+   * a history, so an escapee that exited can have its pid reused by an unrelated
+   * process — that pid is not signalled, and an identity that cannot be observed
+   * is not signalled either (fail closed).
+   */
   signal(signal: NodeJS.Signals): void {
     for (const entry of this.known.values()) {
+      if (processStartIdentityLiveness(entry.pid, entry.startIdentity) !== "alive") continue;
       try { process.kill(entry.pid, signal); } catch { /* the descendant is already gone */ }
     }
   }

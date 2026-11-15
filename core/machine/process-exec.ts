@@ -181,12 +181,12 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
       return termination;
     };
     /**
-     * One bounded escaped-descendant scan. Records what a readable listing proves
-     * and answers whether the run's absence is proven; when the stop has a stage,
-     * the descendants this scan just found are signalled with it, so one that
-     * leaves the group after the escalation is still stopped.
+     * One bounded proof of absence. The full identity listing records every
+     * descendant that left the group and answers whether the run may settle; when
+     * the stop has a stage, the descendants this listing just found are signalled
+     * with it, so one that leaves the group after the escalation is still stopped.
      */
-    const escapedAbsenceProven = (pgid: number, stopAt: number | null): boolean => {
+    const proveEscapedAbsence = (pgid: number, stopAt: number | null): boolean => {
       if (!escapedCustody) return true;
       const now = Date.now();
       if (now - lastEscapedScanAt < ESCAPED_DESCENDANT_SCAN_MS) return false;
@@ -199,13 +199,15 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
       return false;
     };
     /**
-     * One settlement tick: inventory escaped descendants while the command still
-     * runs (a `setsid` child leaves the group, and Darwin's cheap tree walk finds
-     * it through ppid only while the leader lives), then try to settle.
+     * One settlement tick: inventory escaped descendants while the run's group
+     * still holds processes, whatever the leader state. A same-group descendant
+     * can outlive its leader, detach a `setsid` child and exit, so inventorying
+     * only while the leader lives would miss it while the group survives; the
+     * global proof runs once the group is empty. Then try to settle.
      */
     const pollSettlement = () => {
       if (settled || finishing) return;
-      if (escapedCustody && processGroupId && !leaderExited) {
+      if (escapedCustody && processGroupId && !processGroupEmpty(processGroupId)) {
         const now = Date.now();
         if (now - lastEscapedScanAt >= ESCAPED_DESCENDANT_SCAN_MS) {
           lastEscapedScanAt = now;
@@ -225,7 +227,7 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
         return;
       }
       if (!processGroupEmpty(processGroupId)) return;
-      if (escapedCustody && !escapedAbsenceProven(processGroupId, terminationAt)) return;
+      if (escapedCustody && !proveEscapedAbsence(processGroupId, terminationAt)) return;
       finishing = true;
       outcome.processGroupEmpty = true;
       // The escaped-descendant rule has one owner: this is its settled inventory,
