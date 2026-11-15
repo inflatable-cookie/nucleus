@@ -250,8 +250,7 @@ ran the workload is the one that observes it.
   keep the strict pinned shape (see Compatibility).
 - **Observation.** The endpoint builds its client only from the binding's
   recorded path, and `EffigyRunControl` re-reads that executable before every
-  `run status`, `run logs` and capability probe and again once the call
-  returns. An executable that is missing, unreadable or no longer executable
+  `run status` and again once the call returns. An executable that is missing, unreadable or no longer executable
   yields `unknown`: nothing is spawned, no success is invented, and the refusal
   is recorded once per distinct reason as `effigy_observation_refused`. Bytes
   that changed since binding — Effigy rebuilt in place — are not a refusal: the
@@ -2631,12 +2630,14 @@ path for installed v0.14.1 consumers until an explicit operator cutover.
 
 ### Version selection
 
-Capability is probed from `effigy run --help` (`--run-id` and `run logs`),
-never from `--version` or PATH alone. Both the development pin and the
-qualified candidate still print a `v0.14.1…` version string because the
-Effigy workspace version has not bumped; select by explicit path plus
-verified hash and full commit. Installed v0.14.1 keeps the host-run client
-protocol. Nucleus does not retire host.run because Effigy retired its client.
+Nucleus observes and never probes for capability: `core/qa/effigy-run-control.ts`
+makes one call, `run status`, so the follow-log and `run --help` capability paths
+it used to carry are gone (nucleus#1239). Selection is by explicit path plus
+verified hash and full commit, never from `--version` or PATH alone — both the
+development pin and the qualified candidate still print a `v0.14.1…` version
+string because the Effigy workspace version has not bumped. Installed v0.14.1
+keeps the host-run client protocol. Nucleus does not retire host.run because
+Effigy retired its client.
 
 Qualified interop candidate (final packet, not a live install):
 

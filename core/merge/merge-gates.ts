@@ -26,6 +26,13 @@ export class MergeGates {
   get store() { return this.resolution.store; }
   get adapter() { return this.resolution.adapter; }
 
+  /** One acceptance rule activates both pre-merge hook gates. */
+  private preMergeAccepted(t: Task): boolean {
+    const review = t.resolution.review;
+    return Boolean(operatorSourceAcceptance(t)) ||
+      Boolean(review && (review.status === 'ready_to_merge' || qualifiedOwnerAcceptance(t)));
+  }
+
   /**
    * Run every required read-only `task.pre_merge` hook against the accepted
    * exact reviewed head before verification or merge. A confirmed repository
@@ -34,15 +41,13 @@ export class MergeGates {
    * transport and identity drift stay operational holds.
    */
   private async reviewedHeadGate(t: Task): Promise<boolean> {
-    const review = t.resolution.review;
     // Only an accepted exact-head review, a qualified owner acceptance at the
     // current head, or an explicit operator source acceptance of that head
     // activates the gate. A submission that explicitly skipped PR review keeps
     // its previous merge behavior.
     if (!this.resolution.hooks || !t.prHead) return true;
-    const accepted = Boolean(operatorSourceAcceptance(t))
-      || Boolean(review && (review.status === 'ready_to_merge' || qualifiedOwnerAcceptance(t)));
-    if (!accepted) return true;
+    if (!this.preMergeAccepted(t)) return true;
+    const review = t.resolution.review;
     // A stale verdict is history, never this head's review evidence: the payload
     // carries only a review bound to the exact head the gate verifies.
     const reviewAtHead = review && review.head === t.prHead ? review : null;
@@ -195,13 +200,13 @@ export class MergeGates {
    * `INTEGRATION_BASE_RENEWAL_LIMIT` times, before it parks for an operator.
    */
   private async prospectiveMergeGate(t: Task, refresh = 0, renewals = 0): Promise<{ ok: boolean; base: string | null }> {
-    const review = t.resolution.review;
     // Only an accepted exact-head review, a qualified owner acceptance at the
     // current head, or an explicit operator source acceptance of that head
     // activates the gate. A submission that explicitly skipped PR review keeps
     // its previous merge behavior.
     if (!this.resolution.hooks || !t.prHead) return { ok: true, base: null };
-    if (!Boolean(operatorSourceAcceptance(t)) && !(review && (review.status === 'ready_to_merge' || qualifiedOwnerAcceptance(t)))) return { ok: true, base: null };
+    if (!this.preMergeAccepted(t)) return { ok: true, base: null };
+    const review = t.resolution.review;
     const reviewedHead = t.prHead;
     const prNumber = taskPrNumber(t);
     const latest = () => this.store.task(t.id);

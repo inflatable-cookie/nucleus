@@ -2,32 +2,18 @@ import { mkdirSync, writeFileSync, chmodSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import type { LaneDocumentPin, Lane } from '../../shared/contracts';
 
-const keyPattern = '[A-Za-z0-9][A-Za-z0-9._/-]*';
-const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-/** Lane document keys named in prose or a Markdown `## Read` section. */
-export function briefLaneDocumentReferences(text: string, lanes: readonly Lane[]): { keys: string[]; unresolved: string[] } {
-  const known = lanes.map(lane => lane.key);
-  const references = new Set<string>();
-  for (const key of known) {
-    if (new RegExp(`(?:^|[^A-Za-z0-9._/-])${escape(key)}(?:$|[^A-Za-z0-9._/-])`, 'im').test(text)) references.add(key);
-  }
-  const sections = text.split(/^##\s+/m);
-  for (const section of sections) {
-    if (!/^Read\b/i.test(section)) continue;
-    for (const line of section.slice(section.indexOf('\n') + 1).split('\n')) {
-      const item = line.match(/^\s*(?:[-*+]\s+|\d+[.)]\s+)?[`*]*([A-Za-z0-9][A-Za-z0-9._/-]*)/);
-      if (item) references.add(item[1]);
-    }
-  }
-  for (const match of text.matchAll(new RegExp(`lane\\s+document\\s+(?:named\\s+)?(${keyPattern})|(${keyPattern})\\s+lane\\s+document`, 'gi'))) {
-    const candidate = match[1] || match[2];
-    if (candidate) references.add(candidate);
-  }
-  return {
-    keys: [...references].filter(key => known.includes(key)),
-    unresolved: [...references].filter(key => !known.includes(key)),
-  };
+/**
+ * Spec 026: the lane documents a task declared at admission, split into the
+ * keys a lane offers now and the keys it no longer does.
+ *
+ * The declaration is the task's typed `laneDocuments` list (validated against
+ * the lanes and their documents at insert), never an inference from brief
+ * prose: a brief naming a lane in passing pins nothing.
+ */
+export function declaredLaneDocumentKeys(declared: readonly string[] | undefined, lanes: readonly Lane[]): { keys: string[]; unresolved: string[] } {
+  const known = new Set(lanes.map(lane => lane.key));
+  const keys = [...new Set(declared ?? [])];
+  return { keys: keys.filter(key => known.has(key)), unresolved: keys.filter(key => !known.has(key)) };
 }
 
 export function laneDocumentScratchPath(directory: string, key: string): string {

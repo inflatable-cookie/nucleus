@@ -2,8 +2,6 @@ import type { ProspectiveMerge } from "../merge/prospective-merge";
 import { discoverManifest } from "../hooks/hook-manifest";
 import { verifyMergeCandidate } from "../hooks/git-gates";
 import { FileFacts } from "../machine/file-facts";
-import { runtimeNodeArgs } from "../../shared/runtime.mjs";
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
@@ -19,10 +17,11 @@ import { HOST_RUN_CAPACITY_DEADLINE_MS, HostRunScheduler, classifyHostRun, selec
 import type { HostRunHandler } from "../host-runs/host-run-scheduler";
 import { HOST_RUN_TOKEN_GRACE_MS } from "../host-runs/host-run-endpoint-types";
 import { issueHostRunToken } from "../host-runs/host-run-token";
-import { processGroupEmpty, signalProcessGroup, signalProcessGroupByLeader } from "../machine/process-group";
+import { processGroupEmpty } from "../machine/process-group";
 import { processesForStartIdentity, processStartIdentityLiveness } from "../machine/process-identity-search";
 import { SupervisorLivenessReader } from "../machine/start-identity";
-import { findProcessByCommandTokenAsync, pidAlive, processCommandLine } from "../machine/process-identity";
+import { findProcessByCommandTokenAsync } from "../machine/process-identity";
+import { spawnDetachedSupervisor, stopDetachedSupervisor } from "./supervisor-process";
 import { projectValidationSupervisorPaths, readProjectValidationCancellation, readProjectValidationCpuCoverage, readProjectValidationPlan, readProjectValidationResult, readProjectValidationSupervisorState, writeProjectValidationCancellation, writeProjectValidationPlan, type ProjectValidationSupervisorPlan, type ProjectValidationSupervisorResult } from "./project-validation-supervisor";
 import { projectValidationCallerIdentity, projectValidationSchedulerEvidence } from "../../shared/project-validation-caller";
 import { boundSidecarCoverage } from "../host-runs/host-run-cpu-coverage";
@@ -141,7 +140,12 @@ export class ProjectValidationRunner {
         if (this.store.task(task.id).resolution.projectValidation?.state !== "running")
           this.projectValidationDecided.set(task.id, { key, outcome });
       }
-      catch { /* the gate records its own fault on the task; the audit sweep recovers a lost wake */ }
+      catch (error) {
+        // The gate records its own hold on the task. A throw that escaped it would
+        // otherwise vanish with this promise, so the fault is recorded as well.
+        try { this.store.event(task.id, "project_validation_gate_fault", String(error).slice(0, 2000)); }
+        catch { /* a closing store cannot record; the audit sweep recovers a lost wake */ }
+      }
       finally {
         this.projectValidationRuns.delete(task.id);
         try { this.options.wakeTask?.(task.id); } catch { /* a stopped engine has no quantum to wake */ }
@@ -152,15 +156,11 @@ export class ProjectValidationRunner {
   }
 
   private spawnValidationSupervisor(planPath: string, identityToken: string): number {
-    const entry = this.options.validationSupervisorEntry ?? fileURLToPath(new URL("../../bin/queue-validation-supervisor.mjs", import.meta.url));
-    const sourcePath = fileURLToPath(new URL("../..", import.meta.url));
-    const child = spawn(process.execPath, [...runtimeNodeArgs(), entry, planPath, identityToken], {
-      detached: true, stdio: "ignore", env: { ...process.env }, cwd: sourcePath,
+    return spawnDetachedSupervisor({
+      entry: this.options.validationSupervisorEntry ?? fileURLToPath(new URL("../../bin/queue-validation-supervisor.mjs", import.meta.url)),
+      argv: [planPath, identityToken],
+      failureMessage: "Nucleus could not start the detached project-validation supervisor",
     });
-    child.on("error", () => { /* No result means reconciliation holds the run; it never relaunches blindly. */ });
-    child.unref();
-    if (!child.pid) throw new Error("Nucleus could not start the detached project-validation supervisor");
-    return child.pid;
   }
 
   private recordValidationProcess(taskId: string, hostRunId: string, active: NonNullable<ReturnType<typeof readProjectValidationSupervisorState>>["activeProcess"]): void {
@@ -192,36 +192,11 @@ export class ProjectValidationRunner {
       const staleAgeMs = confirmStaleSupervisorHeartbeat(this.staleSupervisorObservations, hostRunId, state.heartbeatAt);
       if (staleAgeMs === null) return false;
       staleHeartbeatEvidence = `heartbeat was stale for ${staleAgeMs}ms and unchanged across checks ${SUPERVISOR_STUCK_CONFIRMATION_MS}ms apart`;
-      const signalSupervisor = (signal: NodeJS.Signals): void => {
-        if (state.supervisorStartIdentity)
-          signalProcessGroupByLeader(state.supervisorPid, state.supervisorPid, state.supervisorStartIdentity, signal);
-        if (!pidAlive(state.supervisorPid) || !processCommandLine(state.supervisorPid)?.includes(plan.identityToken)) return;
-        try { process.kill(state.supervisorPid, signal); } catch { /* the verified supervisor exited */ }
-      };
-      const signalActiveGroup = (signal: NodeJS.Signals): void => {
-        const active = state.activeProcess;
-        if (!active) return;
-        signalProcessGroup(active.processGroupId, plan.identityToken, signal);
-        signalProcessGroupByLeader(active.processGroupId, active.pid, active.startIdentity, signal);
-        const owned = processesForStartIdentity(plan.identityToken);
-        if (owned.state === "found") for (const item of owned.processes) {
-          if (processStartIdentityLiveness(item.pid, item.startIdentity) === "alive") {
-            try { process.kill(item.pid, signal); } catch { /* the identity-checked child exited */ }
-          }
-        }
-      };
-      if (state.activeProcess) signalActiveGroup("SIGTERM");
-      signalSupervisor("SIGTERM");
-      await new Promise(resolve => setTimeout(resolve, 250));
-      if (state.activeProcess && !processGroupEmpty(state.activeProcess.processGroupId)) signalActiveGroup("SIGKILL");
-      if (!processGroupEmpty(state.supervisorPid)) signalSupervisor("SIGKILL");
-      const supervisorCommand = state.supervisorStartIdentity ? null : processCommandLine(state.supervisorPid);
-      const supervisorDead = state.supervisorStartIdentity !== undefined
-        ? processStartIdentityLiveness(state.supervisorPid, state.supervisorStartIdentity) === "dead"
-        : !pidAlive(state.supervisorPid) || (supervisorCommand !== null && !supervisorCommand.includes(plan.identityToken));
-      return supervisorDead && processGroupEmpty(state.supervisorPid)
-        && (!state.activeProcess || processGroupEmpty(state.activeProcess.processGroupId))
-        && processesForStartIdentity(plan.identityToken).state === "absent";
+      return stopDetachedSupervisor({
+        supervisorPid: state.supervisorPid,
+        ...(state.supervisorStartIdentity ? { supervisorStartIdentity: state.supervisorStartIdentity } : {}),
+        identityToken: plan.identityToken, activeProcess: state.activeProcess,
+      });
     };
     for (;;) {
       const result = readProjectValidationResult(paths.resultPath, hostRunId);

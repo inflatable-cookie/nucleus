@@ -7,8 +7,9 @@ import { AUTOMATIC_REPLAY_LIMIT, AUTOMATIC_REPLAY_RETRY_MS, hookReplayLineageSch
 import { isDispositionActive, type Task } from "../../shared/contracts";
 import { type Store, now } from "../store/store";
 import { gitRun } from "../git/git-command";
-import { HookObservationMap, type HeldAutomaticReplay, type AutomaticReplayAttempt } from "./hook-context";
+import { HookObservationMap, isHookHoldReason, type HeldAutomaticReplay, type AutomaticReplayAttempt } from "./hook-context";
 import { isStaleBaseRefusal } from "./hook-refusal";
+import type { Resolution } from "../resolution";
 /** Task-history kinds for automatic exact-identity base-advance replay. */
 const AUTOMATIC_REPLAY_INTENT_KIND = "hook_automatic_replay_intent";
 const AUTOMATIC_REPLAY_KIND = "hook_automatic_replay";
@@ -427,4 +428,40 @@ export class HookReplay {
     }, repair);
   }
 
+}
+
+/** Lifecycle decisions for an exact automatic hook replay stay beside its proof owner. */
+export type HookReplayLifecycleContext = Pick<Resolution, 'store' | 'hooks' | 'paused' | 'stopped' | 'graceMs' | 'update' | 'operatorReturn'>;
+
+export class HookReplayLifecycle {
+  constructor(readonly context: HookReplayLifecycleContext) {}
+  private get store() { return this.context.store; }
+
+  /** True while a held occurrence remains inside its bounded automatic replay window. */
+  automaticHookReplayPending(t: Task): boolean {
+    if (!this.context.hooks || this.context.paused() || this.context.stopped()) return false;
+    if (isDispositionActive(t) || !isHookHoldReason(t.reason)) return false;
+    const held = this.context.hooks.heldAutomaticReplay(t);
+    if (!held || held.ordinal === null) return false;
+    return Date.now() - Date.parse(held.record.updatedAt) < this.context.graceMs;
+  }
+
+  /** Close the attention episode an exact automatic replay resolved. */
+  settleAutomaticReplayHold(t: Task, records: HookRecord[], event: HookEventName): Task {
+    const replayed = records.findLast(record => record.event === event && record.replay !== null);
+    if (!replayed) return this.store.task(t.id);
+    const current = this.store.task(t.id);
+    const detail = `Automatic exact-identity replay ${replayed.replay!.ordinal} of ${AUTOMATIC_REPLAY_LIMIT} at ${replayed.baseCommit} resolved the ${event} hold`;
+    if (!current.resolution.attention && !current.resolution.incident) {
+      this.store.event(t.id, 'hook_replay_resolved', detail);
+      return current;
+    }
+    return this.context.operatorReturn(current, { attention: false }, {}, 'hook_replay_resolved', detail);
+  }
+
+  /** Redrive a held occurrence through its ordinary emission path. */
+  async replayHeldAttention(t: Task): Promise<Task | null> {
+    if (!isHookHoldReason(t.reason) || !await this.context.hooks?.automaticReplayAttemptDue(t)) return null;
+    return this.context.update(t, { attention: false }, { reason: t.reason }, 'hook_replay_redrive');
+  }
 }

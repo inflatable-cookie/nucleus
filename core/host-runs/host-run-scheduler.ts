@@ -27,7 +27,7 @@ import { HISTORY_RETENTION_MS, now } from "../store/store";
 import { refuseHostRun } from "./host-run-refusal";
 
 export { classifyHostRun } from "./host-run-admission";
-export { defaultBudgetFallback, HISTORY_MEMORY_MARGIN, HISTORY_MEMORY_SHARE_CAP, NO_HISTORY_CPU_SHARE, percentile95, selectorForArgv } from "./host-run-capacity";
+export { defaultBudgetFallback, HISTORY_MEMORY_SHARE_CAP, NO_HISTORY_CPU_SHARE, percentile95, selectorForArgv } from "./host-run-capacity";
 export type { HostRunEvent, HostRunHandler, HostRunSchedulerOptions, HostRunSubmission } from "./host-run-scheduler-types";
 export { HOST_RUN_ABANDONED_RELEASE_REASON, HOST_RUN_EXPIRED_RELEASE_REASON, HOST_RUN_SETTLEMENT_IDENTITY_READS_PER_SWEEP } from "./host-run-settlement";
 
@@ -530,7 +530,7 @@ export class HostRunScheduler {
 
   private resolveBudget(repository: HostRunInternalRecord["repository"], selector: string, fallback: { cpu: number; memoryBytes: number }, capacityBytes?: number, cpuCapacity?: number): HostRunInternalRecord["budget"] { return this.capacityOwner.resolveBudget(repository, selector, fallback, capacityBytes, cpuCapacity); }
 
-  private historicalSamples(repository: HostRunInternalRecord["repository"], selector: string): Array<{ cpuMs: number | null; wallMs: number; memoryBytes: number | null }> { return this.capacityOwner.historicalSamples(repository, selector); }
+  private historicalSamples(repository: HostRunInternalRecord["repository"], selector: string): Array<{ cpuMs: number | null; wallMs: number }> { return this.capacityOwner.historicalSamples(repository, selector); }
 
   private priorityValue(priority: HostRunPriority): number { return this.queueOrderOwner.priorityValue(priority); }
   private startLaunch(run: HostRunInternalRecord, handler: HostRunHandler): void { return this.launchOwner.startLaunch(run, handler); }

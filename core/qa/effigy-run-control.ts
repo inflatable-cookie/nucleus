@@ -1,21 +1,21 @@
 /**
- * Queue's v0.15 Effigy run-control client (Spec 035).
+ * Nucleus's v0.15 Effigy run-control client (Spec 035): one observation of one
+ * exact producer run.
  *
- * Capability is probed from `effigy run --help` (`--run-id`, `run logs`), never
- * from `--version` or PATH alone. Installed v0.14.1 stays on contract 010 until
- * an explicit operator cutover. Exit 75 is a held task lock only; 77 has no
- * scheduler meaning. A key whose journal row has aged out of the newest-20
- * settled runs is retention expiry, not proven non-execution: Queue never
- * resubmits that key as a fresh run. The producer's structured
- * `error.details.state`/`recording` is read before any text match, so its
- * "not recorded (foreground or expired)" answer is an absence of evidence
- * (`unknown`, custody retained), never expiry.
+ * Exit 75 is a held task lock only; 77 has no scheduler meaning. A key whose
+ * journal row has aged out of the retained settled runs is retention expiry, not
+ * proven non-execution: Nucleus never resubmits that key as a fresh run. The
+ * producer's structured `error.details.state`/`recording` is the answer it gave,
+ * and its "not recorded (foreground or expired)" answer is an absence of
+ * evidence (`unknown`, custody retained), never expiry. Producer text is read
+ * only when the call produced no payload at all; a payload is decided by its own
+ * record, so a word in a message never outranks the fields beside it.
  *
  * `status` reports the producer's one positive closure (Spec 035, "Producer
  * closure"): a `checkout-journal` record for the exact run id and selector whose
  * `cleanup` is `complete`. `exit_code` and `signal` are that record's workload
  * verdict and nothing more; every other answer is an `unclosed` hold that names
- * the exact field which refused it. Queue maps the producer's numeric signal to
+ * the exact field which refused it. Nucleus maps the producer's numeric signal to
  * this host's own name for the verdict reading and never invents one — and it
  * writes no Contract 010 settlement from it: an admission is observed, not
  * supervised, so closure retires the reservation's accounting and leaves its
@@ -23,15 +23,17 @@
  *
  * Every call is bound to one recorded Effigy runtime (`runtime`): its path is
  * verified before each spawn and again after it, so a missing, unreadable or
- * non-executable artifact refuses instead of spawning a substitute. `status`
- * then reports `unknown` (custody is retained), `followLogs` reports the
- * refusal and spawns nothing, and `probeCapability` reports `unknown`. Bytes
- * that changed since binding (Effigy rebuilt in place) are not a refusal: the
- * same path still observes, the call's answer stands, and the change is kept
- * in `drift` as provenance (Spec 035, Tom 2026-10-26).
+ * non-executable artifact refuses instead of spawning a substitute, and `status`
+ * reports `unknown` with custody retained. Bytes that changed since binding
+ * (Effigy rebuilt in place) are not a refusal: the same path still observes, the
+ * call's answer stands, and the change is kept in `drift` as provenance (Spec
+ * 035, Tom 2026-10-26). The call's own output is bounded, and a producer that
+ * writes past the bound has no answer to read, so that too is `unknown` (custody
+ * retained) rather than a payload cut in half.
  */
 import { spawn } from "node:child_process";
 import { constants as osConstants } from "node:os";
+import { BoundedStreamRetention } from "../machine/output-retention";
 import {
   verifyEffigyRuntime,
   type EffigyRuntimeIdentity,
@@ -40,8 +42,8 @@ import {
 
 export const EFFIGY_RUN_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 export const EFFIGY_EXIT_HELD_TASK_LOCK = 75;
-
-export type EffigyRunCapability = "v015-run-control" | "v014-host-run" | "unknown";
+/** Bound on either stream one status call may collect; a longer answer is not a readable payload. */
+export const EFFIGY_STATUS_MAX_OUTPUT_BYTES = 1_048_576;
 
 /**
  * Why a producer record does not close a reservation. Each cause is a distinct
@@ -123,26 +125,19 @@ export interface EffigyStatusExpectation {
 }
 
 export interface EffigyRunControlOptions {
-  /** The executable Queue runs: the workload's own Effigy, with its bytes at binding. */
+  /** The executable Nucleus runs: the workload's own Effigy, with its bytes at binding. */
   runtime: EffigyRuntimeIdentity;
   cwd: string;
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
+  /** Bound on either collected stream; longer output refuses the call as unreadable. */
+  maxOutputBytes?: number;
   spawn?: typeof spawn;
 }
 
 export function assertEffigyRunId(runId: string): string {
   if (!EFFIGY_RUN_ID_PATTERN.test(runId)) throw new Error(`Effigy --run-id must be 1–128 of A–Z a–z 0–9 . _ : - (got ${JSON.stringify(runId)})`);
   return runId;
-}
-
-export function classifyEffigyRunHelp(helpText: string): EffigyRunCapability {
-  const textValue = helpText.toLowerCase();
-  const hasRunId = /--run-id/.test(textValue);
-  const hasFollowLogs = /--follow/.test(textValue) && (/\brun\s+logs\b/.test(textValue) || /\blogs\b/.test(textValue));
-  if (hasRunId && hasFollowLogs) return "v015-run-control";
-  if (/host-run-request-id|host_run_token|effigy_host_scheduler/.test(textValue)) return "v014-host-run";
-  return "unknown";
 }
 
 /**
@@ -422,13 +417,6 @@ export function classifyEffigyStructuredStatus(payload: unknown): EffigyRunObser
 export class EffigyRunControl {
   constructor(private readonly options: EffigyRunControlOptions) {}
 
-  async probeCapability(): Promise<EffigyRunCapability> {
-    const call = await this.runVerified(["run", "--help"]);
-    if (call.refusal) return "unknown";
-    const help = `${call.stdout}\n${call.stderr}`;
-    return classifyEffigyRunHelp(help);
-  }
-
   /**
    * Why the bound runtime cannot run right now; null when it can. Bytes that
    * changed since binding (Effigy rebuilt in place) are not a refusal: the same
@@ -472,44 +460,14 @@ export class EffigyRunControl {
     // must never outrank the fields that say what the producer actually found.
     const structured = classifyEffigyStructuredStatus(payload);
     if (structured) return structured;
-    if (/journal.*(unavail|unreadable|missing)|unreadable journal/i.test(output))
-      return { kind: "unknown", reason: result.stderr.trim() || "Effigy journal is unavailable" };
-    if (/expired|retention/i.test(output))
-      return { kind: "expired", reason: result.stderr.trim() || "run key aged out of journal retention" };
-    if (trimmed && !parsed) return { kind: "unknown", reason: "run status JSON was unreadable" };
+    // Only an answer with no payload at all is read as text: a record's own
+    // fields decide it, so a word in the message never outranks them.
+    if (!parsed) {
+      const text = classifyEffigyStatusText(output, result.stderr);
+      if (text) return text;
+      if (trimmed) return { kind: "unknown", reason: "run status JSON was unreadable" };
+    }
     return classifyEffigyStatusPayload(payload, result.exitCode, { ...expectation, runId: expectation.runId ?? runId });
-  }
-
-  logsFollowArgs(runId: string, offsets: { stdout: number; stderr: number }): string[] {
-    assertEffigyRunId(runId);
-    return [
-      "run", "logs", runId, "--follow",
-      "--stdout-offset", String(offsets.stdout),
-      "--stderr-offset", String(offsets.stderr),
-    ];
-  }
-
-  async followLogs(runId: string, offsets: { stdout: number; stderr: number }): Promise<{
-    exitCode: number | null;
-    stdout: string;
-    stderr: string;
-    expired: boolean;
-    journalUnavailable: boolean;
-    /** Non-null when the bound runtime refused, so its answer may not be used. */
-    identityRefusal: string | null;
-  }> {
-    const result = await this.runVerified(this.logsFollowArgs(runId, offsets));
-    if (result.refusal)
-      return { exitCode: null, stdout: "", stderr: result.refusal, expired: false, journalUnavailable: false, identityRefusal: result.refusal };
-    const combined = `${result.stdout}\n${result.stderr}`;
-    return {
-      exitCode: result.exitCode,
-      stdout: result.stdout,
-      stderr: result.stderr,
-      expired: /expired/.test(combined),
-      journalUnavailable: /journal.*(unavail|unreadable|missing)|unreadable journal/i.test(combined),
-      identityRefusal: null,
-    };
   }
 
   /**
@@ -517,7 +475,8 @@ export class EffigyRunControl {
    * still a runnable executable: verified before the spawn and again once the
    * child has closed, so a path that vanishes or is re-pointed in between cannot
    * answer for the run. Bytes that changed in place are recorded as provenance
-   * and the answer stands.
+   * and the answer stands. Output past the bound is no answer at all, so the call
+   * refuses instead of reading a payload that was cut in half.
    */
   private async runVerified(args: string[]): Promise<{
     refusal: string | null;
@@ -526,24 +485,34 @@ export class EffigyRunControl {
     stderr: string;
   }> {
     const before = await this.identityRefusal();
-    if (before) return { refusal: before, exitCode: null, stdout: "", stderr: before };
-    const result = await this.run(args, { allowFailure: true });
+    if (before) return { refusal: before, exitCode: null, stdout: "", stderr: "" };
+    const result = await this.run(args);
     const after = await this.identityRefusal();
     if (after)
       return {
         refusal: `Effigy runtime ${this.options.runtime.path} became unavailable during the call: ${after}`,
-        exitCode: null, stdout: "", stderr: after,
+        exitCode: null, stdout: "", stderr: "",
       };
-    return { refusal: null, ...result };
+    if (result.overflowBytes !== null)
+      return {
+        refusal: `effigy ${args.join(" ")} wrote ${result.overflowBytes} bytes, past the ${this.maxOutputBytes()} byte bound; its answer was not read`,
+        exitCode: null, stdout: "", stderr: "",
+      };
+    return { refusal: null, exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr };
   }
 
-  private run(args: string[], options: { allowFailure?: boolean } = {}): Promise<{
+  private maxOutputBytes(): number { return this.options.maxOutputBytes ?? EFFIGY_STATUS_MAX_OUTPUT_BYTES; }
+
+  private run(args: string[]): Promise<{
     exitCode: number | null;
     stdout: string;
     stderr: string;
+    /** The larger observed stream when either passed the bound; null when both fit. */
+    overflowBytes: number | null;
   }> {
     const spawnImpl = this.options.spawn ?? spawn;
     const timeoutMs = this.options.timeoutMs ?? 15_000;
+    const cap = this.maxOutputBytes();
     return new Promise((resolve, reject) => {
       const child = spawnImpl(this.options.runtime.path, args, {
         cwd: this.options.cwd,
@@ -555,24 +524,48 @@ export class EffigyRunControl {
         reject(new Error(`effigy ${args.join(" ")} timed out after ${timeoutMs} ms`));
       }, timeoutMs);
       timer.unref?.();
-      const stdout = collectStream(child.stdout);
-      const stderr = collectStream(child.stderr);
-      child.once("error", error => {
+      const stdout = collectStream(child.stdout, cap);
+      const stderr = collectStream(child.stderr, cap);
+      const overflow = () => {
+        const observed = [stdout.observedBytes, stderr.observedBytes].filter(bytes => bytes > cap);
+        return observed.length ? Math.max(...observed) : null;
+      };
+      child.once("error", () => {
         clearTimeout(timer);
-        if (options.allowFailure) resolve({ exitCode: null, stdout: stdout.value, stderr: stderr.value });
-        else reject(error);
+        // A spawn failure is an unread answer, never a throw out of the observer.
+        resolve({ exitCode: null, stdout: stdout.text(), stderr: stderr.text(), overflowBytes: overflow() });
       });
       child.once("close", (code, signal) => {
         clearTimeout(timer);
-        resolve({ exitCode: signal ? null : code, stdout: stdout.value, stderr: stderr.value });
+        resolve({ exitCode: signal ? null : code, stdout: stdout.text(), stderr: stderr.text(), overflowBytes: overflow() });
       });
     });
   }
 }
 
-function collectStream(stream: NodeJS.ReadableStream | null): { value: string } {
-  const collected = { value: "" };
-  stream?.setEncoding("utf8");
-  stream?.on("data", (chunk: string) => { collected.value += chunk; });
-  return collected;
+/**
+ * Text a producer that emitted no payload leaves: its own words, decoded once.
+ * A text answer can only say the run's journal row is gone; anything else is an
+ * absence of evidence, and the caller keeps custody.
+ */
+function classifyEffigyStatusText(output: string, stderr: string): EffigyRunObservation | null {
+  const detail = stderr.trim();
+  if (/journal.*(unavail|unreadable|missing)|unreadable journal/i.test(output))
+    return { kind: "unknown", reason: detail || "Effigy journal is unavailable" };
+  if (/expired|retention/i.test(output))
+    return { kind: "expired", reason: detail || "run key aged out of journal retention" };
+  return null;
+}
+
+/** One stream's bytes, bounded: the beginning is kept up to the cap and the rest is only counted. */
+function collectStream(stream: NodeJS.ReadableStream | null, cap: number): {
+  text: () => string;
+  observedBytes: number;
+} {
+  const retention = new BoundedStreamRetention(cap, false);
+  stream?.on("data", (chunk: Buffer | string) => retention.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf8")));
+  return {
+    text: () => retention.render(false).toString("utf8"),
+    get observedBytes() { return retention.observedBytes; },
+  };
 }

@@ -4,11 +4,9 @@
  * read the head's worktree hooks, resolve the sibling links from Queue's own
  * records, write the plan, spawn the supervisor and attach to it.
  */
-import { spawn } from "node:child_process";
 import { mkdir, realpath } from "node:fs/promises";
 import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runtimeNodeArgs } from "../../shared/runtime.mjs";
 import { now, type Store } from "../store/store";
 import { projectQaRunSchema, type ProjectQaRun, type ProjectQaStepName } from "../../shared/contracts";
 import { executeHookProgram, gitRaw } from "../hooks/hooks";
@@ -24,6 +22,7 @@ import {
   type ProjectQaWorktreeHooks,
 } from "./project-qa-supervision-files";
 import { parseProjectQaWorktreeHooks } from "./project-qa-worktree";
+import { spawnDetachedSupervisor } from "./supervisor-process";
 import type { QaPipelineOutcome } from "./project-qa-pipeline";
 import type { ProjectQaLaunch, ProjectQaOptions, ResolvedRepository } from "./project-qa-context";
 
@@ -55,22 +54,17 @@ export const projectQaLaunch = {
     return this.options.supervisorEntry ?? fileURLToPath(new URL("../../bin/queue-qa-supervisor.mjs", import.meta.url));
   },
 
-  /** Spawn the detached supervisor for one plan; it owns the run from here. */
+  /**
+   * Spawn the detached supervisor for one plan; it owns the run from here. The
+   * spawn itself is `supervisor-process`'s, and the run leaf is overlaid so the
+   * supervisor's own Node/tsx sockets stay off the internal drive.
+   */
   spawnQaSupervisor(this: QaLaunchContext, planPath: string, identityToken: string, temporaryDirectory?: string): number {
-    const entry = this.supervisorEntry();
-    const sourcePath = fileURLToPath(new URL("../..", import.meta.url));
-    // The identity token is the last argument so the live process's own command
-    // line proves it is this run's supervisor. Overlay the run leaf so the
-    // supervisor's own Node/tsx sockets stay off the internal drive.
-    const child = spawn(process.execPath, [...runtimeNodeArgs(), entry, planPath, identityToken], {
-      detached: true, stdio: "ignore",
-      env: { ...process.env, ...withRunTemporaryDirectory({}, temporaryDirectory) },
-      cwd: sourcePath,
+    return spawnDetachedSupervisor({
+      entry: this.supervisorEntry(), argv: [planPath, identityToken],
+      environment: withRunTemporaryDirectory({}, temporaryDirectory),
+      failureMessage: "Project QA could not start its detached supervisor",
     });
-    child.on("error", () => { /* the run settles as lost when no supervisor appears */ });
-    child.unref();
-    if (!child.pid) throw new Error("Project QA could not start its detached supervisor");
-    return child.pid;
   },
 
   /**

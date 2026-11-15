@@ -8,27 +8,38 @@ import type { Store } from "../store/store";
 import type { HostRunScheduler } from "../host-runs/host-run-scheduler";
 import type { ProjectQaRun, HostRunResult, HostRunEscapedDescendant } from "../../shared/contracts";
 import {
-  readQaSupervision,
-  readQaSupervisionPlan,
+  readQaSupervisionPlanFile,
+  readQaSupervisionStateFile,
   readHostRunResult,
   qaSupervisionPaths,
+  type QaFileRead,
   type QaSupervisionState,
   type QaSupervisionPlan,
 } from "./project-qa-supervision-files";
-import { supervisorLiveness, supervisorLivenessAsync } from "../machine/start-identity";
+import { supervisorLivenessAsync } from "../machine/start-identity";
 import { findProcessByCommandTokenAsync } from "../machine/process-identity";
-import { processGroupEmpty, signalProcessGroup, signalProcessGroupByLeader } from "../machine/process-group";
+import { processGroupEmpty } from "../machine/process-group";
 import { processesForStartIdentity, processStartIdentityLiveness } from "../machine/process-identity-search";
 import { confirmStaleSupervisorHeartbeat, SUPERVISOR_STUCK_CONFIRMATION_MS } from "../machine/supervisor-watchdog";
+import { stopDetachedSupervisor } from "./supervisor-process";
 
-/** What one running row's durable evidence says about its supervisor. */
+/**
+ * What one running row's durable evidence says about its supervisor. A `running`
+ * answer keeps the row as it is and may name why the evidence could not be read:
+ * an unreadable plan or heartbeat is never a run that never started.
+ */
 export type SupervisorInspection =
   | { kind: "settled"; state: QaSupervisionState | null; hostResult: HostRunResult | null }
-  | { kind: "running"; state: QaSupervisionState | null }
+  | { kind: "running"; state: QaSupervisionState | null; reason?: string }
   | { kind: "unstarted"; state: null; plan: QaSupervisionPlan }
-  | { kind: "dead"; state: QaSupervisionState | null; reason: string; escapedDescendants?: HostRunEscapedDescendant[]; staleHeartbeat?: true };
+  | {
+    kind: "dead"; state: QaSupervisionState | null; reason: string; escapedDescendants?: HostRunEscapedDescendant[];
+    /** Set when this verdict followed stopping a stale supervisor, so a late result is re-read. */
+    staleStop?: true;
+  };
 
-const sleep = (ms: number) => new Promise<void>(resolvePromise => { setTimeout(resolvePromise, ms); });
+/** Why one supervision-file read was refused, or null when it was the record or a proven absence. */
+const unreadableReason = (read: QaFileRead<unknown>): string | null => read.kind === "unreadable" ? read.reason : null;
 
 export interface QaRunReadContext {
   store: Pick<Store, "qaRun" | "latestQaRun">;
@@ -83,14 +94,25 @@ export class ProjectQaInspection {
    * unreadable identity stays unresolved rather than being reaped.
    */
   private readonly supervisorLiveness = new SupervisorLivenessReader();
-  private readonly supervisionFacts = new FileFacts(readQaSupervision);
-  private readonly supervisionPlans = new FileFacts(readQaSupervisionPlan);
+  private readonly supervisionFacts = new FileFacts(readQaSupervisionStateFile);
+  private readonly supervisionPlans = new FileFacts(readQaSupervisionPlanFile);
 
   async inspectSupervisor(run: ProjectQaRun): Promise<SupervisorInspection> {
     const attempt = run.teardownRetryAttempt ?? 0;
     const { statePath, planPath, resultPath } = qaSupervisionPaths(this.qaRepositoryRootPath(run.key), run.id, attempt);
-    const state = this.supervisionFacts.read(statePath);
-    const plan = this.supervisionPlans.read(planPath);
+    const stateRead = this.supervisionFacts.read(statePath);
+    const planRead = this.supervisionPlans.read(planPath);
+    // A record this process cannot read is evidence that is missing, not evidence
+    // that the run never started: hold the row instead of reaping or resuming it.
+    const stateRefusal = unreadableReason(stateRead);
+    const planRefusal = unreadableReason(planRead);
+    if (stateRefusal || planRefusal) {
+      const named = [stateRefusal && `the supervision heartbeat (${stateRefusal})`,
+        planRefusal && `the supervision plan (${planRefusal})`].filter(Boolean).join(" and ");
+      return { kind: "running", state: null, reason: `${named} could not be read; the run is held` };
+    }
+    const state = stateRead.kind === "present" ? stateRead.value : null;
+    const plan = planRead.kind === "present" ? planRead.value : null;
     const validPlan = plan?.runId === run.id && plan.key === run.key ? plan : null;
     const hostResult = readHostRunResult(resultPath, run.id);
     const inspect = async (): Promise<SupervisorInspection> => {
@@ -112,40 +134,15 @@ export class ProjectQaInspection {
           && processStartIdentityLiveness(state.pid, state.supervisorStartIdentity) === "alive";
         if (staleAgeMs !== null && (liveness.state === "live" || sameSupervisorAlive)) {
           // A live process with no recent durable heartbeat has a blocked event
-          // loop. Stop its owned child group and detached supervisor group using
-          // the run token carried in each group's inherited environment.
-          const signalActiveGroup = (signal: NodeJS.Signals): void => {
-            const active = state.activeProcess;
-            if (!active) return;
-            signalProcessGroup(active.processGroupId, state.identityToken, signal);
-            signalProcessGroupByLeader(active.processGroupId, active.pid, active.startIdentity, signal);
-            const owned = processesForStartIdentity(state.identityToken);
-            if (owned.state === "found") for (const item of owned.processes) {
-              if (processStartIdentityLiveness(item.pid, item.startIdentity) === "alive") {
-                try { process.kill(item.pid, signal); } catch { /* the identity-checked child exited */ }
-              }
-            }
-          };
-          if (state.activeProcess) signalActiveGroup("SIGTERM");
-          const signalSupervisor = (signal: NodeJS.Signals): void => {
-            if (state.supervisorStartIdentity)
-              signalProcessGroupByLeader(state.pid, state.pid, state.supervisorStartIdentity, signal);
-            if (supervisorLiveness(state.pid, state.identityToken).state !== "live") return;
-            try { process.kill(state.pid, signal); } catch { /* the verified supervisor exited */ }
-          };
-          signalSupervisor("SIGTERM");
-          await sleep(250);
-          if (state.activeProcess && !processGroupEmpty(state.activeProcess.processGroupId)) signalActiveGroup("SIGKILL");
-          if (!processGroupEmpty(state.pid)) signalSupervisor("SIGKILL");
-          const stoppedLiveness = await supervisorLivenessAsync(state.pid, state.identityToken);
-          const stoppedIdentity = state.supervisorStartIdentity
-            ? processStartIdentityLiveness(state.pid, state.supervisorStartIdentity) : "unknown";
-          const stoppedCommands = processesForStartIdentity(state.identityToken);
-          const activeGroupStopped = !state.activeProcess || processGroupEmpty(state.activeProcess.processGroupId);
-          const supervisorGroupStopped = processGroupEmpty(state.pid);
-          if ((stoppedLiveness.state === "dead" || stoppedIdentity === "dead")
-              && activeGroupStopped && supervisorGroupStopped && stoppedCommands.state === "absent")
-            return { kind: "dead", state, staleHeartbeat: true, reason: `the supervisor heartbeat was stale for ${staleAgeMs}ms and unchanged across checks ${SUPERVISOR_STUCK_CONFIRMATION_MS}ms apart; its process groups were stopped` };
+          // loop. The run token in each group's inherited environment is what
+          // proves which processes may be stopped.
+          const stopped = await stopDetachedSupervisor({
+            supervisorPid: state.pid,
+            ...(state.supervisorStartIdentity ? { supervisorStartIdentity: state.supervisorStartIdentity } : {}),
+            identityToken: state.identityToken, activeProcess: state.activeProcess,
+          });
+          if (stopped)
+            return { kind: "dead", state, staleStop: true, reason: `the supervisor heartbeat was stale for ${staleAgeMs}ms and unchanged across checks ${SUPERVISOR_STUCK_CONFIRMATION_MS}ms apart; its process groups were stopped` };
           return { kind: "running", state };
         }
         if (liveness.state === "dead") {
@@ -193,14 +190,14 @@ export class ProjectQaInspection {
     const inspection = await inspect();
     // Detached supervision files can progress while the OS scan yields too.
     const observedState = this.supervisionFacts.read(statePath);
-    if (inspection.kind === "dead" && inspection.staleHeartbeat) {
+    if (inspection.kind === "dead" && inspection.staleStop) {
       const lateResult = readHostRunResult(resultPath, run.id);
       if (!lateResult) return inspection;
     }
-    if (observedState !== state
-        || this.supervisionPlans.read(planPath) !== plan
+    if (JSON.stringify(observedState) !== JSON.stringify(stateRead)
+        || JSON.stringify(this.supervisionPlans.read(planPath)) !== JSON.stringify(planRead)
         || JSON.stringify(readHostRunResult(resultPath, run.id)) !== JSON.stringify(hostResult))
-      return { kind: "running", state: observedState };
+      return { kind: "running", state: observedState.kind === "present" ? observedState.value : null };
     return inspection;
   }
 

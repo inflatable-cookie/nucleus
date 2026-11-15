@@ -3,7 +3,8 @@ export { SOURCE_PROMOTION_NOT_DELIVERED } from "./source-promotion-reconcile";
 import { isTransportFailure } from "../../shared/transport";
 import { assertSupportedSubmission, PlanningSubmission } from "./submission";
 import { PlanningRepairs } from "./planning-repairs";
-import { operationFailureSettlement, typedPreSendRefusal } from "./operation-failure";
+import { operationFailureSettlement } from "./operation-failure";
+import { preSendReceiptProof } from "./operation-receipts";
 export { operationFailureSettlement } from "./operation-failure";
 export type { OperationFailureSettlement } from "./operation-failure";
 import { currentServiceBuildId } from "../../shared/service/build";
@@ -22,29 +23,38 @@ import type { Adapter } from "../host/adapter";
 import { bindReviewEntry, type ReviewEntryAdapter } from "../review/review-entry";
 import { originReviewProof, withOriginReviewAdapter } from "../review/origin-review-adapter";
 import { DurableFenceRefusal } from "../intake/run-settlement";
-import { digest, now, operationIdForKey, operationInputHash, provedPreSendHistory } from "../store/store";
+import { now, operationIdForKey, operationInputHash } from "../store/store";
 import { hostIndependentControlRefusal } from "../host/host-independent-refusals";
-import { ParkedRestartPreSendRefusal } from "../verbs/restart";
 
-/** Deterministic rejection vs. uncertain external outcome, for the operation state. */
-/** Lane key for an accepted operation: task-scoped commands share the task's exclusive lane. */
-function operationLaneKey(payload: unknown, operation: QueueOperation): string {
-  const leadCheckId = (payload as { type?: string; id?: string } | null)?.type === "lead_check"
-    ? (payload as { id?: string }).id : undefined;
-  if (leadCheckId) return `lead:${leadCheckId}`;
-  const controlTaskId = (payload as { control?: { taskId?: string } } | null)?.control?.taskId;
-  const removeTaskId = (payload as { type?: string; taskId?: string } | null)?.type === "task_remove"
-    ? (payload as { taskId?: string }).taskId : undefined;
-  // Spec 056: a re-key serializes with another re-key of the same namespace, and
-  // its own transaction re-checks every precondition against concurrent writers.
-  const rekeySource = (payload as { type?: string; input?: { source?: string } } | null)?.type === "repository_rekey"
-    ? (payload as { input?: { source?: string } }).input?.source : undefined;
-  if (rekeySource) return `repository-rekey:${rekeySource}`;
-  const taskId = operation.taskId ?? controlTaskId ?? removeTaskId ?? null;
-  return taskId ? `task:${taskId}` : `operation:${operation.id}`;
-}
 /** One removal payload shape, shared by refusal and execution. */
 const taskRemoveOperationPayloadSchema = z.object({ type: z.literal("task_remove"), taskId: z.string().min(1).max(160), version: z.number().int().positive() }).strict();
+/** One re-key payload shape, shared by the lane key and the perform step. */
+const repositoryRekeyOperationPayloadSchema = z.object({ type: z.literal("repository_rekey"), input: repositoryRekeyInputSchema }).strict();
+
+/**
+ * Lane key for an accepted operation: task-scoped commands share the task's
+ * exclusive lane. Each small payload shape is decoded by its own schema, so the
+ * key never re-derives a fact from an untyped cast; a submission's payload is
+ * never parsed here, only its recorded task identity is read.
+ */
+function operationLaneKey(payload: unknown, operation: QueueOperation): string {
+  const type = (payload as { type?: unknown } | null)?.type;
+  if (type === "lead_check") {
+    const leadCheck = leadCheckOperationPayloadSchema.safeParse(payload);
+    if (leadCheck.success) return `lead:${leadCheck.data.id}`;
+  }
+  // Spec 056: a re-key serializes with another re-key of the same namespace, and
+  // its own transaction re-checks every precondition against concurrent writers.
+  if (type === "repository_rekey") {
+    const rekey = repositoryRekeyOperationPayloadSchema.safeParse(payload);
+    if (rekey.success) return `repository-rekey:${rekey.data.input.source}`;
+  }
+  const control = taskControlInputSchema.safeParse((payload as { control?: unknown } | null)?.control);
+  const removal = taskRemoveOperationPayloadSchema.safeParse(payload);
+  const taskId = operation.taskId ?? (control.success ? control.data.taskId : undefined)
+    ?? (removal.success ? removal.data.taskId : undefined) ?? null;
+  return taskId ? `task:${taskId}` : `operation:${operation.id}`;
+}
 
 /**
  * Durable operations: accept, schedule, run and settle a generic operation,
@@ -296,36 +306,11 @@ export class Operations {
       const controlPayload = payload as { type?: unknown; control?: unknown } | null;
       const parsedControl = taskControlInputSchema.safeParse(controlPayload?.control);
       const settledBefore = currentOperation ?? running;
-      // A parked restart's refusal is proved by read-only verification or a
-      // transaction that rolls back, so its evidence hashes must still describe
-      // the task and its runs, and nothing may have been bound or sent.
-      const parkedRestartProven = error instanceof ParkedRestartPreSendRefusal && running.kind === "task_control" && running.taskId && running.expectedVersion && effect
-          && currentOperation?.state === "running" && currentOperation.attempts === running.attempts && currentOperation.inputHash === running.inputHash
-          && provedPreSendHistory(currentOperation, running.attempts - 1)
-          && currentOperation.preSendBoundaryStartedAt && isDeepStrictEqual(currentOperation.effect, effect)
-          && operationIdForKey(running.key) === running.id && operationInputHash(payload) === running.inputHash
-          && controlPayload?.type === "task_control" && parsedControl.success && parsedControl.data.action === "restart"
-          && parsedControl.data.taskId === running.taskId && parsedControl.data.version === running.expectedVersion
-          && effect.kind === "task_control" && effect.target === "restart" && effect.status === "intent"
-          && !this.store.runs(running.taskId).some(run => run.reviewDeliveries?.some(delivery => delivery.operationId === id))
-          && digest(JSON.stringify(this.store.task(running.taskId))) === error.taskEvidenceHash
-          && digest(JSON.stringify(this.store.runs(running.taskId))) === error.runEvidenceHash;
-      // Every other typed pre-send refusal of a task control is the same proof:
-      // Queue's own gate answered from store reads before anything was bound or
-      // sent (fence and validation refusals; papercut 4b285a6e), so its receipt
-      // is reconcilable and an interrupted writer stays fenced. Only an effect
-      // whose adapter call may have started is left without one.
-      const typedRefusalProven = running.kind === "task_control" && running.taskId && running.expectedVersion && effect
-          && typedPreSendRefusal(error)
-          && currentOperation?.state === "running" && currentOperation.attempts === running.attempts && currentOperation.inputHash === running.inputHash
-          && !currentOperation.preSendBoundaryStartedAt
-          && provedPreSendHistory(currentOperation, running.attempts - 1)
-          && isDeepStrictEqual(currentOperation.effect, effect)
-          && operationIdForKey(running.key) === running.id && operationInputHash(payload) === running.inputHash
-          && controlPayload?.type === "task_control" && parsedControl.success
-          && parsedControl.data.taskId === running.taskId && parsedControl.data.version === running.expectedVersion
-          && effect.kind === "task_control" && effect.target === parsedControl.data.action && effect.status === "intent"
-          && !this.store.runs(running.taskId).some(run => run.reviewDeliveries?.some(delivery => delivery.operationId === id));
+      // One proof decides whether this refusal may record a pre-send receipt:
+      // the parked restart's own rollback evidence, or Queue's own gate answering
+      // before anything was bound or sent (papercut 4b285a6e).
+      const receiptProof = preSendReceiptProof({ store: this.store, buildId: () => this.engine.currentServiceBuildId(),
+        running, current: currentOperation, payload, effect, error, message });
       const refusedOwnedToolRetry = running.kind === "task_control" && parsedControl.success
         && parsedControl.data.action === "retry_effect" && typeof parsedControl.data.effect === "string"
         && parsedControl.data.effect.startsWith("owned_tool.") && /^Owned-tool hold .+ remains:/.test(message)
@@ -334,9 +319,9 @@ export class Operations {
         committed: Boolean(committed?.result && committed.effect?.status==='reconciled' && !committed.preSendBoundaryStartedAt && !committed.preSendReceipt),
         submissionDeferrable: pending.kind === "submit" || pending.kind === "review_entry",
         validationUnavailable: isTransportFailure(error) || error instanceof SubmissionUnavailableError,
-        parkedRestartProven: Boolean(parkedRestartProven),
-        typedRefusalProven: Boolean(typedRefusalProven),
-        typedPreSendRefusal: typedPreSendRefusal(error),
+        parkedRestartProven: receiptProof.kind === "parked_restart",
+        typedRefusalProven: receiptProof.kind === "typed_refusal",
+        typedPreSendRefusal: receiptProof.typedRefusal,
         preSendBoundaryStarted: Boolean(currentOperation?.preSendBoundaryStartedAt),
         ownedToolRetryRefused: refusedOwnedToolRetry,
         sourcePromotionAbsent: running.kind === 'source_promote' && effect?.kind === 'source_promotion'
@@ -357,31 +342,14 @@ export class Operations {
           diagnostic: `${pending.kind === "review_entry" ? "Review-entry" : "Submission"} validation deferred: ${message}`.slice(0, 4000) });
         return;
       }
-      if (settlement.receipt === "parked_restart" && parkedRestartProven && currentOperation && effect && running.taskId && running.expectedVersion
-          && error instanceof ParkedRestartPreSendRefusal) {
-        try {
-          const receipt = { operationId: running.id, inputHash: running.inputHash, taskId: running.taskId,
-            expectedVersion: running.expectedVersion, attempt: running.attempts, boundary: "parked-restart-rollback-v1" as const,
-            buildId: this.engine.currentServiceBuildId(), taskEvidenceHash: error.taskEvidenceHash, runEvidenceHash: error.runEvidenceHash,
-            diagnostic: message.slice(0, 4000), effect, recordedAt: now() };
-          running = this.store.putOperation({ ...currentOperation, preSendReceipt: receipt });
-        } catch { /* Without the durable receipt the refusal remains uncertain. */ }
-      }
       // The two receipts are mutually exclusive: the parked restart's proof needs
       // a crossed send boundary (`currentOperation.preSendBoundaryStartedAt`) and
-      // every other typed refusal's proof needs none, so settlement names at most
-      // one of them. A parked receipt that could not be written still settles
-      // definite; there is no second receipt to fall back to.
-      if (settlement.receipt === "typed_refusal" && typedRefusalProven && currentOperation && effect && running.taskId && running.expectedVersion) {
-        try {
-          const receipt = { operationId: running.id, inputHash: running.inputHash, taskId: running.taskId,
-            expectedVersion: running.expectedVersion, attempt: running.attempts, boundary: "pre-send-refusal-v1" as const,
-            buildId: this.engine.currentServiceBuildId(),
-            taskEvidenceHash: digest(JSON.stringify(this.store.task(running.taskId))),
-            runEvidenceHash: digest(JSON.stringify(this.store.runs(running.taskId))),
-            diagnostic: message.slice(0, 4000), effect, recordedAt: now() };
-          running = this.store.putOperation({ ...currentOperation, preSendReceipt: receipt });
-        } catch { /* Without the durable receipt the refusal still settles definite. */ }
+      // every other typed refusal's proof needs none, so the proof names at most
+      // one of them. A receipt that could not be written still settles definite;
+      // there is no second receipt to fall back to.
+      if (settlement.receipt && receiptProof.receipt && currentOperation) {
+        try { this.store.putOperation({ ...currentOperation, preSendReceipt: receiptProof.receipt }); }
+        catch { /* Without the durable receipt the refusal remains definite and unfenced. */ }
       }
       const settled = this.store.operation(id) ?? running;
       const effectStatus = settlement.effect;
@@ -470,8 +438,7 @@ export class Operations {
     }
     if (operation.kind === "repository_rekey") {
       if (!this.repositoryRekeyHandler) throw new Error("Repository re-key handler is unavailable");
-      const input = repositoryRekeyInputSchema.parse((payload as { input?: unknown } | null)?.input);
-      return this.repositoryRekeyHandler(input);
+      return this.repositoryRekeyHandler(repositoryRekeyOperationPayloadSchema.parse(payload).input);
     }
     if (operation.kind === "submit") {
       const parsed = submissionSchema.parse(submissionRecordFromLegacy((payload as { submission?: unknown } | null)?.submission, "submit operation"));

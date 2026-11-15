@@ -299,6 +299,34 @@ test('Spec 056 an explicit target path moves the path hints; an origin-only step
   } finally { f.close(); }
 });
 
+test('Spec 056 an undecodable row in a re-keyed family refuses the step instead of being skipped', () => {
+  const f = fixture('unreadable');
+  try {
+    const store = f.store;
+    store.patchRepository(A, { closeout: 'agent', note: 'alpha' });
+    const done = f.task(A.origin, A.path);
+    f.finish(done.id);
+    const before = JSON.stringify({ settings: store.repositories(), tasks: store.db.prepare('SELECT id,data FROM tasks ORDER BY id').all() });
+    // A corrupt row cannot be matched, so the scan cannot prove it read every
+    // record the step must move: preview and apply both refuse, and nothing moves.
+    store.db.prepare('INSERT INTO project_tombstones(key,data) VALUES(?,?)').run('broken-project', 'not json');
+    const preview = store.previewRepositoryRekey({ source: A.origin, target: { origin: 'org/next' },
+      expectedSourceRevision: store.repositoryFor(A.origin)!.revision, reason: 'rename', idempotencyKey: 'unreadable-step' });
+    assert.equal(preview.ready, false);
+    assert.deepEqual(preview.refusals.map(refusal => refusal.code), ['concurrent_change']);
+    assert.match(preview.refusals[0].explanation, /could not be decoded/);
+    assert.throws(() => store.rekeyRepository(step(store, A.origin, { origin: 'org/next' })), /concurrent_change/);
+    store.db.prepare('DELETE FROM project_tombstones WHERE key=?').run('broken-project');
+    assert.equal(before, JSON.stringify({ settings: store.repositories(), tasks: store.db.prepare('SELECT id,data FROM tasks ORDER BY id').all() }));
+    // Undecodable history outside the re-keyed families is untouched, never a refusal.
+    store.db.prepare('INSERT INTO hook_events(id,taskId,eventKey,eventId,data) VALUES(?,?,?,?,?)').run('hook-broken', done.id, 'closeout', 'event-broken', 'not json');
+    assert.equal(store.previewRepositoryRekey({ source: A.origin, target: { origin: 'org/next' },
+      expectedSourceRevision: store.repositoryFor(A.origin)!.revision, reason: 'rename', idempotencyKey: 'unreadable-step' }).ready, true);
+    assert.equal(store.rekeyRepository(step(store, A.origin, { origin: 'org/next' })).receipt.counts.tasks, 1);
+    assert.equal(store.db.prepare('SELECT data FROM hook_events WHERE id=?').get('hook-broken')!.data, 'not json');
+  } finally { f.close(); }
+});
+
 test('Spec 056 parent falsification: without the re-key the vacated name absorbs the old numbering', () => {
   const f = fixture('parent');
   try {

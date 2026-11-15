@@ -51,6 +51,19 @@ export class CheckWaits {
   recordIncidentEvent(...args: Parameters<CheckWaitsContext['recordIncidentEvent']>) { return this.resolution.recordIncidentEvent(...args); }
   settleAttentionEpisode(...args: Parameters<CheckWaitsContext['settleAttentionEpisode']>) { return this.resolution.settleAttentionEpisode(...args); }
 
+  /** An unchanged failed check with an escalation remains gated on its green-gate recovery. */
+  unchangedCheckGateApplies(t: Task): boolean {
+    return t.phase === 'verifying' && t.resolution.stop?.reason === 'escalated' &&
+      this.store.eventsAll(t.id).some(event => event.kind === 'unchanged_check_revision_refused');
+  }
+
+  /** Re-observe the unchanged check and resolve its escalation once the gate passes. */
+  async settleUnchangedCheckGate(t: Task): Promise<Task> {
+    const gate = await this.mergeGateEvidence(t);
+    if (!gate.wait) this.resolvePassedUnchangedCheckEscalation(this.store.task(t.id));
+    return this.store.task(t.id);
+  }
+
   /** Shared merge-gate wait: semantic failures return the same PR to its worker; runnerless jobs get one durable same-head rerun; pending checks yield the integration turn and are re-observed on a durable cadence. */
   async applyMergeGateWait(t: Task, gate: { wait: string; needsRebase?: boolean; checksFailed?: boolean; overdue?: boolean; pendingCheck?: boolean; infrastructure?: boolean; infraRunIds?: string[]; overdueCheck?: OverdueCheckEvidence }): Promise<boolean> {
     if (gate.needsRebase) {

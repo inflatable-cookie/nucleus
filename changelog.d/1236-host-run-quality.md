@@ -1,0 +1,1 @@
+Host-run history now comes only from host-run records, and unreadable supervisor files no longer count as absent when deciding whether a run was lost. Host-run redaction also has direct boundary coverage.

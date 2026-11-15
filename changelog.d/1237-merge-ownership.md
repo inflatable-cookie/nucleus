@@ -1,0 +1,1 @@
+Merge gate acceptance, integration-turn recovery effects, unchanged-check recovery, and automatic hook replay now use their owning shared code paths. Merge phase restoration remains in a focused module. These are structural changes; gate and replay decisions are unchanged.
