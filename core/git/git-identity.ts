@@ -15,8 +15,18 @@ import { isAbsolute, join, resolve } from "node:path";
 
 const SHA = /^[a-f0-9]{40,64}$/;
 
+/**
+ * Why a checkout identity could not be read. Callers decide from this code,
+ * never from the message: `no-git`, `unreadable-git` and `malformed-git` mean
+ * the directory is not a usable checkout root, which is a different answer from
+ * a checkout whose head, ref or origin could not be proved.
+ */
+export type GitIdentityFault =
+  | "no-git" | "unreadable-git" | "malformed-git" | "reftable" | "malformed-head"
+  | "refused-ref" | "ref-loop" | "malformed-ref" | "missing-ref" | "unreadable";
+
 export class GitIdentityError extends Error {
-  constructor(message: string) {
+  constructor(readonly code: GitIdentityFault, message: string) {
     super(message);
     this.name = "GitIdentityError";
   }
@@ -51,7 +61,7 @@ export function readGitCheckout(directory: string): GitCheckoutIdentity {
 /** Resolve a ref (`refs/heads/…`) from loose files then packed-refs. */
 export function readGitRef(identity: Pick<GitCheckoutIdentity, "gitDir" | "commonDir">, ref: string): string {
   if (!ref.startsWith("refs/") || ref.includes("..") || ref.includes("\\"))
-    throw new GitIdentityError(`Refused ref ${ref}`);
+    throw new GitIdentityError("refused-ref", `Refused ref ${ref}`);
   return resolveRef(identity.gitDir, identity.commonDir, ref, 0);
 }
 
@@ -59,12 +69,12 @@ function resolveGitDir(toplevel: string): string {
   const gitPath = join(toplevel, ".git");
   let stat;
   try { stat = lstatSync(gitPath); }
-  catch { throw new GitIdentityError(`No .git at ${toplevel}`); }
+  catch { throw new GitIdentityError("no-git", `No .git at ${toplevel}`); }
   if (stat.isDirectory()) return realpathSync(gitPath);
-  if (!stat.isFile()) throw new GitIdentityError(`Unreadable .git at ${toplevel}`);
+  if (!stat.isFile()) throw new GitIdentityError("unreadable-git", `Unreadable .git at ${toplevel}`);
   const text = readFileSync(gitPath, "utf8");
   const match = text.match(/^gitdir:\s*(.+?)\s*$/m);
-  if (!match) throw new GitIdentityError(`Malformed .git file at ${toplevel}`);
+  if (!match) throw new GitIdentityError("malformed-git", `Malformed .git file at ${toplevel}`);
   const target = isAbsolute(match[1]) ? match[1] : resolve(toplevel, match[1]);
   return realpathSync(target);
 }
@@ -80,31 +90,31 @@ function resolveCommonDir(gitDir: string): string {
 function assertFilesBackend(gitDir: string, commonDir: string) {
   for (const root of unique([gitDir, commonDir])) {
     if (existsSync(join(root, "reftable")))
-      throw new GitIdentityError(`Reftable backend at ${root}`);
+      throw new GitIdentityError("reftable", `Reftable backend at ${root}`);
   }
 }
 
 function resolveHead(gitDir: string, commonDir: string, headText: string): { head: string; branch: string } {
   if (SHA.test(headText)) return { head: headText, branch: "" };
   const match = headText.match(/^ref:\s+(refs\/heads\/.+)$/);
-  if (!match) throw new GitIdentityError("HEAD is neither a commit nor a branch ref");
+  if (!match) throw new GitIdentityError("malformed-head", "HEAD is neither a commit nor a branch ref");
   const ref = match[1];
   return { head: resolveRef(gitDir, commonDir, ref, 0), branch: ref.slice("refs/heads/".length) };
 }
 
 function resolveRef(gitDir: string, commonDir: string, ref: string, depth: number): string {
-  if (depth > 5) throw new GitIdentityError(`Symbolic ref loop at ${ref}`);
+  if (depth > 5) throw new GitIdentityError("ref-loop", `Symbolic ref loop at ${ref}`);
   for (const root of unique([gitDir, commonDir])) {
     const loose = join(root, ref);
     if (!existsSync(loose)) continue;
     const text = readTrimmed(loose);
     if (text.startsWith("ref: ")) return resolveRef(gitDir, commonDir, text.slice(4).trim(), depth + 1);
     if (SHA.test(text)) return text;
-    throw new GitIdentityError(`Malformed loose ref ${ref}`);
+    throw new GitIdentityError("malformed-ref", `Malformed loose ref ${ref}`);
   }
   const packed = packedRef(commonDir, ref) ?? (commonDir !== gitDir ? packedRef(gitDir, ref) : null);
   if (packed) return packed;
-  throw new GitIdentityError(`Missing ref ${ref}`);
+  throw new GitIdentityError("missing-ref", `Missing ref ${ref}`);
 }
 
 function packedRef(root: string, ref: string): string | null {
@@ -148,7 +158,7 @@ function configRemoteUrl(path: string): string | null {
 
 function readTrimmed(path: string): string {
   try { return readFileSync(path, "utf8").trim(); }
-  catch { throw new GitIdentityError(`Unreadable ${path}`); }
+  catch { throw new GitIdentityError("unreadable", `Unreadable ${path}`); }
 }
 
 function unique(paths: string[]): string[] {

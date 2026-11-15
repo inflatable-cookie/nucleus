@@ -6,7 +6,7 @@ import type { TaskStops } from '../recovery/task-stops';
 import type { ReviewerSetting } from '../forge/index';
 
 
-import { reviewPublicationBody } from './review-body';
+import { reviewPublicationBody } from '../../shared/review-text';
 import { digest, type Store } from '../store/store';
 
 export interface ReviewPublicationContext {

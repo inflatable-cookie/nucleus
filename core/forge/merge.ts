@@ -1,4 +1,5 @@
 import { taskPrNumber } from './pr-identity';
+import { reviewRequiredFor } from '../../shared/review-requirement';
 import { type Task, operatorSourceAcceptance, qualifiedOwnerAcceptance, type Run, type RepositoryChecksPolicy, type Completion } from '../../shared/contracts';
 import { withIntegrationCheckout, git, gitStatus, verifyPr, queueCheckoutStatus } from '../git/index';
 import { type ReviewerSetting, type FormalReviewRuntime, verifyReview } from './reviews';
@@ -38,7 +39,7 @@ export async function integrationBaseGate(t: Pick<Task,'repoPath'|'baseBranch'|'
 }
 /** The review evidence a merge requires: the accepted exact-head review, verified under its reviewer identity when the repository opted in. A qualified owner acceptance keeps the same proof burden for the authentic verdict it binds — the recorded `changes_required` review is verified at the exact head instead of being waived. An explicit operator source acceptance (2026-10-20) binds the exact current head with no review identity: nothing is verified or invented here, and GitHub's own branch rules still gate the merge. An opted-in repository cannot skip the gate for a recorded verdict: a review-backed acceptance still needs the authentic reviewed evidence verified at the forge. */
 export async function requiredMergeReview(t: Task, reviewer?: ReviewerSetting | null, runtime?: FormalReviewRuntime) {
-  if (t.skipPRReview && !reviewer) return;
+  if (!reviewRequiredFor(t, reviewer)) return;
   const r = t.resolution.review;
   // A source acceptance binds the current head with no review identity; a verdict
   // at an older head, even an approval, is history it outlived (papercut 209406f4).

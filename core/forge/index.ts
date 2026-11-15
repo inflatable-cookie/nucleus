@@ -7,6 +7,7 @@ export {
 export {
   type VerifiedPr,
   assertCanonicalPrSource,
+  isCanonicalPrSource,
   ForeignPrIdentity,
   assertPullRequestIdentity,
   verifyPrIdentity,

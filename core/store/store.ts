@@ -740,6 +740,8 @@ export class Store {
   setCompletionReceipt(id: string, task: string, run: string, hash: string, response: string): void { return this.authStore.setCompletionReceipt(id, task, run, hash, response); }
   setReportIntent(id: string, task: string, run: string, hash: string): void { return this.authStore.setReportIntent(id, task, run, hash); }
   setReportResponse(id: string, hash: string, response: unknown): void { return this.authStore.setReportResponse(id, hash, response); }
+  /** The stored hash of one receipt bound to this task and run, or null when absent or bound elsewhere. */
+  receiptHash(id: string, task: string, run: string): string | null { return this.authStore.receiptHash(id, task, run); }
   authenticate(run: string, token: string) { return this.authStore.authenticate(run, token); }
   credentialRunForToken(token: string): string | null { return this.authStore.credentialRunForToken(token); }
   runs(taskId?: string): Run[] { return this.tasksStore.runs(taskId); }

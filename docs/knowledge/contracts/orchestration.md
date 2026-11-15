@@ -525,11 +525,17 @@ stop records the answering planner or decider as the dispatch hold owner.
 unpublished ordinary reviewer verdict. Enforces
 [Publication recovery](#publication-recovery). Delegates remain on Resolution.
 
-**ReviewLifecycle** (`core/review/lifecycle.ts`). Owns reviewer opt-in, continued
-PR identity binding, ordinary review custody, source-approval proof waits and
-review/revision advancement. Resolution supplies narrow live contexts to this
-owner, ReviewContinuations, ReviewPublication and PrAdoption; compatibility
-delegates preserve caller overrides and return promises without an async wrapper.
+**Review lifecycle owners** (`core/review/reviewer-setting.ts`,
+`core/review/continued-pr.ts`, `core/review/ordinary-custody.ts`,
+`core/review/review-advances.ts`). One owner per mechanism: the repository
+reviewer opt-in and the review requirement it decides, continued PR identity
+binding, the ordinary review round's custody proof, and the transitions out of
+reviewing (source-approval proof wait, changes-requested revision, skipped
+review). The requirement itself is `shared/review-requirement.ts`' pure rule,
+which the merge gate reads for the same answer. Resolution supplies narrow live
+contexts to these owners, ReviewContinuations, ReviewPublication and PrAdoption;
+compatibility delegates preserve caller overrides and return promises without an
+async wrapper.
 
 **Closeout** (`core/closeout/closeout.ts`). Selects the closeout authority (queue,
 repository hook or agent) and finishes closeout: the queue and hook
@@ -546,9 +552,12 @@ approved head without a question: wait for re-declared inputs, skip a
 docs-only head, or run the existing `proof` route once per head. Enforces
 [Validation and proof](#validation-and-proof). Delegates remain on Resolution.
 
-**ReviewContinuations** (`core/review/review-continuation.ts`). Checkpoint and
-delivery rules of a retained reviewer, and one authorized reviewer turn.
-Enforces [Checkpoints](#checkpoints) and
+**ReviewContinuations** (`core/review/review-continuation/`, public at its
+`index.ts`). One authorized reviewer turn. The folder's owners are the checkpoint
+file and its proof (`checkpoints.ts`), delivery identity and the owner-stop proof
+(`delivery.ts`), the retained reader's state, wait and identity at a head
+(`reader.ts`), the earlier-result fence (`result-fence.ts`) and the gate's local
+refusal order (`gate.ts`). Enforces [Checkpoints](#checkpoints) and
 [Retained and replaced readers](#retained-and-replaced-readers). Pures:
 `keepRetainedReviewer`, `retainedReaderStateDecision`, `reviewContinuationState`,
 `reviewContinuationWait`, `reviewAuthorizationRequired`. Delegates remain on
@@ -829,8 +838,9 @@ Delegates remain on Resolution.
 and checkout proofs, the guarded native send or creation, the agent binding,
 and the uncertain or refused settlement when a step throws. The synchronous
 prefix before the adapter call stays synchronous. Delegates remain on
-Resolution. `ordinaryRoundCustody` belongs to `ReviewLifecycle`; its Resolution
-delegate remains available to source and result-application callers.
+Resolution. `ordinaryRoundCustody` belongs to `OrdinaryCustody`
+(`core/review/ordinary-custody.ts`); its Resolution delegate remains available to
+source and result-application callers.
 
 `Resolution.launch` is still the funnel that sequences those four owners. The
 funnel has not moved off Resolution.

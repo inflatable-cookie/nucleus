@@ -2,7 +2,7 @@ import type { LaunchReserveContext } from '../launch';
 import type { LaunchMachinePorts } from './machine';
 import type { Profile, Run, Task } from '../../../shared/contracts';
 import { assertReviewEntryWriterYielded, reviewEntryInputForTask, ReviewEntryRefusal, type ReviewEntryAdapter } from '../../review/review-entry';
-import { proveReviewRunSource } from '../../review/ordinary-review';
+import { ordinaryReviewSource } from '../../review/ordinary-review';
 import type { Adapter } from '../../host/adapter';
 import type { ProofActivation } from '../../resolution';
 import { RunReservationAdmission } from './reservation-admission';
@@ -37,7 +37,7 @@ export class RunLaunchReserve {
         if (error instanceof ReviewEntryRefusal && error.transient) { this.resolution.waiting(t, error.message, 'origin_busy'); return; }
         throw error;
       }
-      await proveReviewRunSource(this.store.task(t.id), run.head, false);
+      await ordinaryReviewSource(this.store.task(t.id), run.head, false);
     }
     if (source.continuedPr?.progressRunId) {
       const wait = await this.resolution.continuedProgressWait(t, source.continuedPr.head);

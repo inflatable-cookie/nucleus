@@ -2,7 +2,7 @@ import type { LaunchSourceContext } from '../launch';
 import type { LaunchMachinePorts } from './machine';
 import { git } from '../../git/index';
 import { readGitCheckout } from '../../git/git-identity';
-import { proveReviewRunSource } from '../../review/ordinary-review';
+import { ordinaryReviewSource } from '../../review/ordinary-review';
 import { chooseProfile, reviewerFiltersWorker } from '../routing';
 import { OPERATOR_WORKER_REMAP_REASON, proofExecutor } from '../../recovery/task-reasons';
 import { retainedProgressRun } from '../retained-work';
@@ -51,9 +51,9 @@ export class RunLaunchSource {
       const previous = this.store.runs(t.id).findLast(run => run.ordinaryDetached);
       if (!previous?.released || !['finished', 'superseded'].includes(previous.status)) throw Error('Detached ordinary review is still owned');
       await this.resolution.ordinaryRoundCustody(t, previous, true);
-      await proveReviewRunSource(t, previous.head, true);
+      await ordinaryReviewSource(t, previous.head, true);
       await git(t.directory, 'checkout', t.branch);
-      await proveReviewRunSource(t, previous.head, false);
+      await ordinaryReviewSource(t, previous.head, false);
     }
 
     const firstReviewEntryWorker=role==='revision'&&t.entrypoint==='review'&&!t.agentId;

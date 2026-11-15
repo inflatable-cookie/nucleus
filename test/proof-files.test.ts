@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { Engine } from "../core/engine";
 import { runPrompt, workerPrompt } from "../core/dispatch/prompts";
 import { Reports, reportSchema } from "../core/intake/report";
-import { reviewPublicationBody } from "../core/review/review-body";
+import { reviewPublicationBody } from "../shared/review-text";
 import { Store } from "../core/store/store";
 import { completionSchema, submissionSchema } from "../shared/contracts";
 import { runSchema } from "../shared/schema/runs";

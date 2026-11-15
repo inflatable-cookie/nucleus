@@ -4,7 +4,7 @@ import { dispatchBlocked } from '../capacity';
 import { taskPrNumber } from '../../forge/index';
 import { git } from '../../git/index';
 import { NON_DELIVERY_ROUTE_REASON } from '../../recovery/non-delivery';
-import { assertReviewRunSource, proveReviewRunSource } from '../../review/ordinary-review';
+import { assertOrdinaryReviewIdentity, ordinaryReviewSource } from '../../review/ordinary-review';
 import { ownerReviewContext } from '../../review/owner-review-context';
 import type { Adapter } from '../../host/adapter';
 import { proofExecutionRecord, recordProofExecution } from '../../qa/proof-records';
@@ -39,13 +39,13 @@ export class RunLaunchDeliver {
     try {
       if (run.ordinaryDetached) {
         await this.resolution.ordinaryRoundCustody(t, run);
-        await proveReviewRunSource(t, run.head, false);
+        await ordinaryReviewSource(t, run.head, false);
         await git(t.directory!, 'fetch', 'origin', `refs/heads/${t.branch}`);
         await this.machine.verifyPr(t, taskPrNumber(t));
         await this.resolution.ordinaryRoundCustody(t, run);
-        await proveReviewRunSource(t, run.head, false);
+        await ordinaryReviewSource(t, run.head, false);
         await git(t.directory!, 'checkout', '--detach', run.head);
-        await proveReviewRunSource(t, run.head, true);
+        await ordinaryReviewSource(t, run.head, true);
       }
       if (agentId) {
         let fresh = this.store.task(t.id);
@@ -70,7 +70,7 @@ export class RunLaunchDeliver {
           const latest = this.store.task(t.id);
           if (latest.version !== version || latest.resolution.currentRunId !== run.id || latest.prHead !== run.head
             || this.resolution.paused() || dispatchBlocked(latest) || isDispositionActive(latest) || snapshot !== this.resolution.ordinaryReviewRuns(t.id)) return false;
-          assertReviewRunSource(latest, run.head, true);
+          assertOrdinaryReviewIdentity(latest, run.head, true);
           this.resolution.assertReviewProfileIndependent(latest, savedRun);
           const effects=blockingRecoveryEffects(this.store,latest,{noticeKinds:'all'});
           if(effects.length)throw new BlockingRecoveryEffectsError(effects);
@@ -84,7 +84,7 @@ export class RunLaunchDeliver {
             if (pr.head !== run.head || pr.url !== fresh.prUrl) return false;
             if (fresh.reviewEntry)
               await assertReviewEntryWriterYielded(reviewEntryInputForTask(fresh), this.adapter as Adapter & ReviewEntryAdapter, fresh.id);
-            await proveReviewRunSource(this.store.task(fresh.id), run.head, Boolean(run.ordinaryDetached));
+            await ordinaryReviewSource(this.store.task(fresh.id), run.head, Boolean(run.ordinaryDetached));
             return stillAllowed();
           },
           stillAllowed,
@@ -107,7 +107,7 @@ export class RunLaunchDeliver {
           if (pr.head !== run.head || pr.url !== t.prUrl) throw Error('Ordinary reviewer PR identity changed before creation');
           await this.resolution.ordinaryRoundCustody(t, this.store.run(run.id)!);
           if (t.reviewEntry) await assertReviewEntryWriterYielded(reviewEntryInputForTask(t), this.adapter as Adapter & ReviewEntryAdapter, t.id);
-          await proveReviewRunSource(t, run.head, true);
+          await ordinaryReviewSource(t, run.head, true);
         }
         if (role === 'reviewer' && t.reviewEntry && !run.ordinaryDetached) {
           const pr = await this.machine.verifyPrIdentity!(t, taskPrNumber(t));
@@ -117,7 +117,7 @@ export class RunLaunchDeliver {
           if (latest.resolution.currentRunId !== run.id || latest.prHead !== run.head || this.resolution.paused()
             || dispatchBlocked(latest) || isDispositionActive(latest))
             throw Error('Review-entry handover changed before reviewer creation');
-          await proveReviewRunSource(latest, run.head, false);
+          await ordinaryReviewSource(latest, run.head, false);
         }
         const fresh = this.store.task(t.id), savedRun = this.store.run(run.id)!;
         dispatchInvoked = true;
@@ -127,7 +127,7 @@ export class RunLaunchDeliver {
             const latest = this.store.task(t.id);
             if (latest.version !== version || latest.resolution.currentRunId !== run.id || latest.prHead !== run.head
               || this.resolution.paused() || dispatchBlocked(latest) || isDispositionActive(latest) || snapshot !== this.resolution.ordinaryReviewRuns(t.id)) return false;
-            assertReviewRunSource(latest, run.head, Boolean(run.ordinaryDetached));
+            assertOrdinaryReviewIdentity(latest, run.head, Boolean(run.ordinaryDetached));
             this.resolution.assertReviewProfileIndependent(latest, savedRun);
             const effects=blockingRecoveryEffects(this.store,latest,{noticeKinds:'all'});
             if(effects.length)throw new BlockingRecoveryEffectsError(effects);
@@ -138,7 +138,7 @@ export class RunLaunchDeliver {
               const pr = await this.machine.verifyPrIdentity!(fresh, taskPrNumber(fresh));
               if (pr.head !== run.head || pr.url !== fresh.prUrl) return false;
               await assertReviewEntryWriterYielded(reviewEntryInputForTask(fresh), this.adapter as Adapter & ReviewEntryAdapter, fresh.id);
-              await proveReviewRunSource(this.store.task(fresh.id), run.head, Boolean(run.ordinaryDetached));
+              await ordinaryReviewSource(this.store.task(fresh.id), run.head, Boolean(run.ordinaryDetached));
               return stillAllowed();
             },
             stillAllowed,
