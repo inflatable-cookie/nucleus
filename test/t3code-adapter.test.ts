@@ -544,13 +544,12 @@ test('a paged window reads tools and questions, and a complete-transcript read s
   const p = server.threads.get(created.id)!;
   const at = (offset: number) => new Date(Date.parse(STAMP) + offset * 1_000).toISOString();
   p.turnItems = [syntheticTurnItem(created.id, 1, { type: 'assistant_message', runId: 'synthetic-run-1', updatedAt: at(1) }),
-    syntheticTurnItem(created.id, 2, { type: 'user_input_request', id: 'synthetic-question-item', requestId: 'synthetic-question',
-      runId: 'synthetic-run-2', updatedAt: at(2) })];
+    syntheticTurnItem(created.id, 2, { type: 'assistant_message', runId: 'synthetic-run-1', updatedAt: at(2) }),
+    syntheticTurnItem(created.id, 3, { type: 'user_input_request', id: 'synthetic-question-item', requestId: 'synthetic-question',
+      runId: 'synthetic-run-2', updatedAt: at(3) })];
   p.runtimeRequests = [syntheticRuntimeRequest({ id: 'synthetic-question', kind: 'user_input', status: 'pending' })];
-  // A paged projection with an opaque cursor: this arm is defensive — today's
-  // nightly pages only an opted-in read — so it also holds if a later nightly
-  // pages every read.
-  server.controls.threadCoverage = { hasMoreHistory: true, historyCursor: 'synthetic-history-cursor', latestLocalTurnOrdinal: 0 };
+  // A genuine paged snapshot whose cursor the bounded history route can serve.
+  server.controls.boundedRowLimit = 2;
   assert.equal((await host.observe(created.id)).pendingRequest?.id, 'synthetic-question');
   // The bounded window is the read for tools and questions, so a paged answer is
   // no longer unobservable (nucleus#1217).
@@ -558,7 +557,6 @@ test('a paged window reads tools and questions, and a complete-transcript read s
     questions: [{ header: 'Synthetic', question: 'Synthetic question?', options: ['Yes', 'No'] }] }]);
   const page = await host.agentTimelinePage(created.id, 2);
   assert.equal(page?.hasOlder, true);
-  assert.deepEqual(page?.entries.map(entry => entry.turnId), ['synthetic-run-1', 'synthetic-run-2']);
   assert.deepEqual(page?.entries.map(entry => entry.turnId), ['synthetic-run-1', 'synthetic-run-2']);
   // A read that needs the complete transcript still refuses the same projection.
   await assert.rejects(host.readProjection(created.id, 'transcript'), /subscribeThread: incomplete projection/);
