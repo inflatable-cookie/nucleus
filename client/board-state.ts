@@ -6,6 +6,27 @@ import * as api from "../shared/contracts";
 import { isUnchangedBoard, type PlanningRevisions, type UiBoard, type UiQueueState } from "../shared/contracts";
 
 /**
+ * The board's one query key. The poll (this module) and the web live channel
+ * (`client/web/live-channel.ts`) both write this entry, so neither spells the
+ * key out for itself.
+ */
+export const BOARD_STATE_KEY = ["nucleus", "state"] as const;
+
+/**
+ * One board read replaces or merges into the retained projection: a complete
+ * projection replaces it, while the bounded acknowledgement carries only the
+ * global counters, which merge into the retained board instead of transferring
+ * another complete one. The merge happens in query state, so every observing
+ * surface sees it. The paused-stop counters ride the ack because an episode
+ * reset moves them without a board revision (Queue #650).
+ */
+export function nextBoardState(retained: UiBoard | undefined, response: UiBoard): UiBoard {
+  if (!isUnchangedBoard(response)) return response;
+  if (!retained || isUnchangedBoard(retained)) return response;
+  return { ...retained, connected: response.connected, paused: response.paused, dispatchHeld: response.dispatchHeld, drained: response.drained ?? retained.drained, boundRuns: response.boundRuns ?? retained.boundRuns, quiet: response.quiet, activeWorkers: response.activeWorkers, unsettled: response.unsettled, occupiedSlots: response.occupiedSlots ?? retained.occupiedSlots, stoppedThreads: response.stoppedThreads, resumedThreads: response.resumedThreads, error: response.error };
+}
+
+/**
  * The revisioned board read (Contract 007), shared by every Queue surface: the
  * main surface, the workspace panel and the native settings screen all observe
  * one React Query entry. The retained projection and the last observed store
@@ -19,22 +40,13 @@ export function useBoardState() {
   const fetchState = useRpc(api.uiSnapshot);
   const queryClient = useQueryClient();
   const stateQuery = useQuery({
-    queryKey: ["nucleus", "state"],
+    queryKey: BOARD_STATE_KEY,
     refetchInterval: live ? false : 4000,
     queryFn: async (): Promise<UiBoard> => {
-      const cached = queryClient.getQueryData<UiBoard>(["nucleus", "state"]);
+      const cached = queryClient.getQueryData<UiBoard>(BOARD_STATE_KEY);
       const retained = cached && !isUnchangedBoard(cached) ? cached : undefined;
       const response = await fetchState(retained?.revision === undefined ? {} : { revision: retained.revision });
-      if (isUnchangedBoard(response)) {
-        // Bounded delta: merge the fresh global counters into the retained board
-        // projection instead of transferring another complete one. The merge
-        // happens in query state, so every observing surface sees it. The
-        // paused-stop counters ride the ack because an episode reset moves them
-        // without a board revision (Queue #650).
-        if (!retained) return response;
-        return { ...retained, connected: response.connected, paused: response.paused, dispatchHeld: response.dispatchHeld, drained: response.drained ?? retained.drained, boundRuns: response.boundRuns ?? retained.boundRuns, quiet: response.quiet, activeWorkers: response.activeWorkers, unsettled: response.unsettled, occupiedSlots: response.occupiedSlots ?? retained.occupiedSlots, stoppedThreads: response.stoppedThreads, resumedThreads: response.resumedThreads, error: response.error };
-      }
-      return response;
+      return nextBoardState(retained, response);
     },
   });
   const state = boardOf(stateQuery);

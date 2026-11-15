@@ -8,6 +8,15 @@ const labels:Record<Task['phase'],string>={
 };
 export const isTaskPhase = (phase: string): phase is Task['phase'] => phase in labels;
 
+/** The phases a finished task stands in: `done` and `cancelled`. */
+export const TERMINAL_PHASES: ReadonlyArray<Task['phase']> = ['done', 'cancelled'];
+
+/**
+ * Whether the task has finished. One owner for the pair of terminal phases: the
+ * board, the task detail and the cleanup records all read this same set.
+ */
+export const isTerminalPhase = (phase: Task['phase']): boolean => TERMINAL_PHASES.includes(phase);
+
 type StateTask={held:boolean;phase:Task['phase'];holdKind?:HoldKind;holds?:{dispatch?:unknown;merge?:unknown};hold?:{owner?:string;reason?:string};holdOwner?:string|null;waitState?:{owner:string;state?:string};waitingOn?:string|null;disposition?:{status:string;kind:string}|null};
 
 /** Which holds a task carries, from the per-kind fences or the legacy single kind. */

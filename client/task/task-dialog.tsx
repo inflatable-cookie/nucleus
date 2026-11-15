@@ -7,7 +7,8 @@ import { isParkedTask, taskNumberLabel, type DecisionView, type Task, type TaskN
 import { formatSpan, taskElapsed } from "../../shared/task-detail-summary";
 import { projectName, phaseLabel, attention } from "../board/text";
 import { HoldChips, PullRequestBadge, Badge } from "../board/badges";
-import { PendingQuestions, TaskDetailTabs, type BoardAct, type TaskDetailTab } from "./parts";
+import { PendingQuestions } from "./summary";
+import { TaskDetailTabs, type BoardAct, type TaskDetailTab } from "./parts";
 import type { output as ZodOutput } from "zod";
 import { OverviewNext, OverviewSummary } from "./overview";
 import { TechnicalTab } from "./technical";
@@ -204,7 +205,7 @@ export function TaskDialog({ task, detailQuery, nextQuery, state, decisions, qaR
           )}
           <OverviewNext task={task} detailTab={detailTab} nextQuery={nextQuery} state={state} busy={busy} pendingOperation={pendingOperation} c={c} />
           {detailTab === "technical" && <TechnicalTab key={task.id} task={task} detailQuery={detailQuery} nextQuery={nextQuery} state={state} qaRun={taskQaRun} pendingOperation={pendingOperation} compact={compact} busy={busy} act={act} drafts={drafts} navigation={navigation} onClose={onClose} c={c} />}
-          {detailTab === "runs" && <RunsTab key={task.id} task={task} detailQuery={detailQuery} state={state} pendingOperation={pendingOperation} compact={compact} busy={busy} act={act} drafts={drafts} navigation={navigation} onSelectTask={onSelectTask} c={c} />}
+          {detailTab === "runs" && <RunsTab key={task.id} task={task} detailQuery={detailQuery} pendingOperation={pendingOperation} busy={busy} act={act} drafts={drafts} navigation={navigation} onSelectTask={onSelectTask} c={c} />}
           {detailTab === "messages" && <MessagesTab task={task} detailQuery={detailQuery} c={c} />}
           {detailTab === "activity" && <ActivityTab key={task.id} task={task} detailQuery={detailQuery} busy={busy} act={act} drafts={drafts} c={c} />}
           </ScrollView>
