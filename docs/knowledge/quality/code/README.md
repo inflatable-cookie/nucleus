@@ -29,6 +29,25 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
 
 ## Re-rates
 
+- nucleus#1222 (floor 6, 2026-11-14): the four floor-6 dispatch and host modules were split or
+  hardened along their named seams and re-rated at this PR's head. `core/dispatch/prompts.ts` is now
+  the barrel over `core/dispatch/prompt-text/`: the rule and block owners (validation, report, proof,
+  review, workspace, task blocks), the run scope and callback (`prompt-context.ts`), the role dispatch
+  (`run-prompt.ts`) and one module per role prompt. `core/dispatch/participant-lease.ts` keeps the
+  lease and execution lease, and the withdrawn-question settlement is `core/dispatch/withdrawn-question.ts`;
+  the settled-thread predicate it used to repeat is `core/machine/agent-settled.ts`, the host-gone fact
+  is typed (`isAgentGoneRefusal` in `core/host/errors.ts`) and the closeout base refresh is one named
+  reason. `core/dispatch/run-launch/reserve.ts` is the composition over `reservation-source.ts`,
+  `run-intent.ts` and `reservation-admission.ts`. `core/host/adapter.ts` composes the capability groups
+  in `core/host/contract/`. The `launch-funnel` row rises to 7 because the exclusion refusal it named as
+  copied is one text in `shared/task-view.ts`, and `core/questions/native-questions.ts` re-rates because
+  an unreadable answered-question read is recorded as unknown instead of being skipped. `shared/host.ts`
+  keeps its row: its finding is the free-string status and error fields, which this PR did not change.
+  The reservation family's rows name the serialized run-list stamps the admission still compares, so
+  `reservation-source.ts` and `reservation-admission.ts` score 8 on their remaining typed-fact and
+  proportion defects rather than 9. `hosts/paseo/adapter/host-questions.ts` re-rates to 9 because its
+  failed answered-question read is a typed `{ok: false}` now, leaving only its title-prefix decision match.
+
 - nucleus#1199 (floor 5, 2026-11-14): `core/store/store.ts`, `core/store/store-tasks.ts` and
   `core/store/store-maintenance.ts` were split into one owner per mechanism; `store-maintenance.ts` no
   longer exists. The store rows in `N3.csv` were re-rated at that PR's head.

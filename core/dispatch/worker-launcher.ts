@@ -11,6 +11,7 @@ import { workerPrompt } from "./prompts";
 import { runTicketPath } from "./agent-creation";
 import { ABSENT_WORKER_REASON, PRE_AGENT_LAUNCH_FAILURE_REASON, PROFILE_CATALOG_PENDING_REASON, ProvenPreSendRefusalError } from "../recovery/task-reasons";
 import { startsNoRuns } from "../closeout/queue-drain";
+import { agentSettled } from "../machine/agent-settled";
 
 /**
  * Creates a task's worker once: one creation per task at a time, one run identity
@@ -57,7 +58,7 @@ export class WorkerLauncher {
     }
     for (const old of task.retiredWorkers) {
       const state = await this.engine.host.observe(old.agentId);
-      if (state.workspaceId !== task.workspaceId || state.active || state.permissions || !["idle","error","closed"].includes(state.status)) throw new Error("Previous worker has not released the continuation workspace");
+      if (state.workspaceId !== task.workspaceId || !agentSettled(state)) throw new Error("Previous worker has not released the continuation workspace");
     }
     let branch: string;
     // A continuation keeps the retained worktree's work: after a retired worker,

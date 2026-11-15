@@ -1,8 +1,11 @@
-import { active, assignedThreadWaitReason, coordinative, participantToolRunIds } from '../recovery/task-reasons';
+import { assignedThreadWaitReason, coordinative, participantToolRunIds } from '../recovery/task-reasons';
 import { recoveryEffects, isBlockingRecoveryEffect, recoveryEffectsRefusal } from '../recovery/recovery-effects';
 import { executionParticipants } from '../machine/execution-participants';
 import { runBindsCurrentWork, type Run, type Task } from '../../shared/contracts';
-import { STALE_INTEGRATION_BASE_PROOF } from '../hooks/hooks';
+import { CLOSEOUT_BASE_REFRESH_REASON } from '../recovery/task-reasons';
+import { isStaleIntegrationBaseRefusal } from '../hooks/hooks';
+import { agentSettled } from '../machine/agent-settled';
+import { isAgentGoneRefusal } from '../host/errors';
 import { formatHostProcessSweepEvent, reapHostProcesses } from '../machine/host-process-reap';
 import { recordedProcessGroupsForTask } from '../machine/host-process-select';
 import type { Adapter } from '../host/adapter';
@@ -14,120 +17,6 @@ export class ParticipantLease {
   constructor(readonly resolution: Resolution) {}
   get store() { return this.resolution.store; }
   get adapter() { return this.resolution.adapter; }
-
-  /**
-   * Resolve a stale pending Nucleus question found at dispatch (papercut ee9fc161).
-   * When a native question is withdrawn (extension, answer, supersession),
-   * Nucleus resolves the host's pending permission or question on that thread
-   * as a durable effect, and dispatch never waits on a question Nucleus has
-   * withdrawn. Returns true when a withdrawn request was found pending and a
-   * dismiss or cancel was sent; the caller records a short resolving wait and
-   * the next pass launches once the host clears it. Tool and bash permissions
-   * unrelated to a withdrawn question are never touched.
-   */
-  async resolveWithdrawnPending(t: Task, hint?: { agentId: string; state: Awaited<ReturnType<Adapter['observe']>> }): Promise<boolean> {
-    const events = this.store.eventsAll(t.id);
-    const withdrawn = new Set<string>();
-    for (const event of events) {
-      if (event.kind === 'operator_question_superseded' || event.kind === 'native_question_dismiss_intent'
-        || event.kind === 'responsible_question_superseded' || event.kind === 'agent_ask_superseded') {
-        const id = event.detail.split(':')[0]!;
-        if (id) withdrawn.add(id);
-      }
-    }
-    if (!withdrawn.size) return false;
-    const recordedRequests = new Map<string, string>();
-    for (const event of events) {
-      if (event.kind !== 'operator_question_native_request') continue;
-      const id = event.detail.split(':')[0]!;
-      if (!withdrawn.has(id)) continue;
-      const requestId = event.detail.match(/request (\S+)/)?.[1];
-      if (requestId && !recordedRequests.has(requestId)) recordedRequests.set(requestId, id);
-    }
-    const candidates: Array<{ agentId: string; workspaceId: string; state: Awaited<ReturnType<Adapter['observe']>> | null }> = [];
-    if (hint) candidates.push({ agentId: hint.agentId, workspaceId: t.workspaceId ?? hint.state.workspaceId ?? '', state: hint.state });
-    else {
-      const seen = new Set<string>();
-      const add = (agentId: string | null | undefined, workspaceId: string | null | undefined) => {
-        if (!agentId || seen.has(agentId)) return;
-        seen.add(agentId);
-        candidates.push({ agentId, workspaceId: workspaceId ?? t.workspaceId ?? '', state: null });
-      };
-      add(t.agentId, t.workspaceId);
-      const runs = this.store.runs(t.id);
-      const current = t.resolution.currentRunId ? runs.find(run => run.id === t.resolution.currentRunId) : null;
-      add(current?.agentId, current?.workspaceId ?? t.workspaceId);
-      add(t.resolution.reviewerAgentId, runs.find(run => run.role === 'reviewer' && run.agentId === t.resolution.reviewerAgentId)?.workspaceId ?? t.workspaceId);
-    }
-    // A resolving wait is recorded only on a pass that actually sends a dismiss
-    // or cancel toward the host; anything already sent falls through to the
-    // ordinary wait so the task can never sit in "resolving" with nothing sent.
-    const resolving = () => {
-      this.resolution.waiting(this.store.task(t.id), 'Resolving a withdrawn Nucleus question still pending on the retained thread; dispatch proceeds once the host clears it', 'lifecycle');
-    };
-    const dismissed = (match: string, requestId: string) =>
-      this.store.eventsAll(t.id).some(item => item.kind === 'native_question_dismissed' && item.detail.startsWith(`${match}:`) && item.detail.includes(requestId));
-    const cancelSent = (match: string, intentId: string) =>
-      this.store.eventsAll(t.id).some(item => item.kind === 'native_permission_cancel_intent' && item.detail.startsWith(`${match}: ${intentId}`));
-    for (const candidate of candidates) {
-      let state = candidate.state;
-      if (!state) {
-        try { state = await this.resolution.host.observe(candidate.agentId); }
-        catch { continue; }
-      }
-      if (!state.permissions && !state.pendingRequest) continue;
-      const workspaceId = candidate.workspaceId || state.workspaceId || '';
-      // Pending native questions: dismiss by recorded requestId or text prefix.
-      if (this.adapter.pendingQuestions && this.adapter.dismissNativeQuestion) {
-        let pending: Awaited<ReturnType<NonNullable<Adapter['pendingQuestions']>>> | null = null;
-        try { pending = await this.adapter.pendingQuestions(candidate.agentId); }
-        catch { pending = null; }
-        if (pending) {
-          for (const request of pending) {
-            const recorded = recordedRequests.get(request.requestId);
-            const match = (recorded && withdrawn.has(recorded) ? recorded : null)
-              ?? [...withdrawn].find(id => request.questions.some(question => question.question.startsWith(`[Queue decision ${id}]`)));
-            if (!match || dismissed(match, request.requestId)) continue;
-            try {
-              await this.adapter.dismissNativeQuestion(candidate.agentId, workspaceId, request.requestId);
-            } catch { return false; }
-            this.store.event(t.id, 'native_question_dismissed', `${match}: request ${request.requestId} on ${candidate.agentId} (resolved at dispatch)`);
-            resolving();
-            return true;
-          }
-        }
-      }
-      // Pending permission or question observed on the thread: act only when it
-      // is a recorded withdrawn Nucleus request or its text names one, and only
-      // with the host call that settles that kind.
-      const pendingId = state.pendingRequest?.id ?? null;
-      const firstLine = state.pendingRequest?.firstLine ?? '';
-      const kind = state.pendingRequest?.kind;
-      if (!pendingId) continue;
-      const recorded = recordedRequests.get(pendingId);
-      const match = (recorded && withdrawn.has(recorded) ? recorded : null)
-        ?? [...withdrawn].find(id => firstLine.includes(`[Queue decision ${id}]`) || firstLine.includes(id));
-      if (!match) continue;
-      if (kind === 'permission' && this.adapter.answerNativePermission) {
-        const intentId = `ns-withdrawn-${match}-${pendingId}`;
-        if (cancelSent(match, intentId)) continue;
-        this.store.event(t.id, 'native_permission_cancel_intent', `${match}: ${intentId} request ${pendingId} on ${candidate.agentId}`);
-        try { await this.adapter.answerNativePermission(candidate.agentId, workspaceId, pendingId, 'cancel', intentId); }
-        catch { return false; }
-        resolving();
-        return true;
-      }
-      if (kind === 'question' && this.adapter.dismissNativeQuestion) {
-        if (dismissed(match, pendingId)) continue;
-        try { await this.adapter.dismissNativeQuestion(candidate.agentId, workspaceId, pendingId); }
-        catch { return false; }
-        this.store.event(t.id, 'native_question_dismissed', `${match}: request ${pendingId} on ${candidate.agentId} (resolved at dispatch)`);
-        resolving();
-        return true;
-      }
-    }
-    return false;
-  }
 
   private async settleStrayTool(t: Task, agentId: string, workspaceId: string, runIds: string[], issue: string): Promise<string | null> {
     const runId = runIds[0];
@@ -148,7 +37,7 @@ export class ParticipantLease {
       let state: Awaited<ReturnType<Adapter['observe']>>;
       try { state = await this.resolution.host.observe(id); }
       catch { return `${issue}; participant ${id} identity could not be rechecked before reaping`; }
-      if (state.id !== id || state.workspaceId !== workspace || active(state) || !['idle', 'closed', 'error'].includes(state.status))
+      if (state.id !== id || state.workspaceId !== workspace || !agentSettled(state))
         return `${issue}; participant ${id} resumed or its identity changed before reaping`;
     }
 
@@ -191,7 +80,7 @@ export class ParticipantLease {
   async idle(agentId: string, workspaceId?: string, onBusy?: (state: Awaited<ReturnType<Adapter['observe']>>) => void) {
     const state = await this.resolution.host.observe(agentId);
     if (workspaceId && state.workspaceId !== workspaceId) throw new Error('Agent workspace changed; lease is not safe');
-    const idle = !active(state) && ['idle', 'closed', 'error'].includes(state.status);
+    const idle = agentSettled(state);
     if (!idle) onBusy?.(state);
     return idle;
   }
@@ -248,7 +137,13 @@ export class ParticipantLease {
     for (const [id, workspace] of expected) {
       const proofWorkspace = workspace ?? t.workspaceId!;
       try{if (!await this.resolution.idle(id,workspace ?? undefined,state=>onBusy?.(id,state))) return false;}
-      catch(error){if(!(error instanceof Error) || error.message!=='Agent was not found' || !t.resolution.mergedCommit || !this.adapter.workspaceAvailable || await this.adapter.workspaceAvailable(proofWorkspace))throw error;}
+      catch (error) {
+        // A thread the host reports gone is not a participant any more, but only
+        // an already-merged task whose workspace still exists may pass on that
+        // fact; anything else keeps its own fault.
+        if (!isAgentGoneRefusal(error) || !t.resolution.mergedCommit) throw error;
+        if (!this.adapter.workspaceAvailable || await this.adapter.workspaceAvailable(proofWorkspace)) throw error;
+      }
     }
     return true;
   }
@@ -307,9 +202,9 @@ export class ParticipantLease {
   }
 
   refreshingCloseoutHook(t: Task, syncing: boolean) {
-    return syncing && t.reason === 'Refreshing main before retrying closeout'
+    return syncing && t.reason === CLOSEOUT_BASE_REFRESH_REASON
       ? this.store.hookEvents(t.id).findLast(record => record.event === 'task.closeout' && record.state === 'blocked'
-        && record.error.includes(STALE_INTEGRATION_BASE_PROOF))
+        && isStaleIntegrationBaseRefusal(record.error))
       : undefined;
   }
   /** Merge and closeout observe execution bindings, including retained runs. */
@@ -334,7 +229,7 @@ export class ParticipantLease {
         if (!probe) this.resolution.waiting(t, `Merge waits for participant ${id} in workspace ${workspace}: current identity, activity or status does not prove it is settled`, 'lifecycle');
         return false;
       }
-      if (active(state) || !['idle', 'closed', 'error'].includes(state.status)) {
+      if (!agentSettled(state)) {
         if (!probe) this.resolution.waiting(t, `Merge waits for participant ${id} in workspace ${workspace}: ${assignedThreadWaitReason(state)}`, 'lifecycle');
         return false;
       }

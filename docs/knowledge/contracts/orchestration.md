@@ -479,7 +479,12 @@ closeout write frees the turn.
 **ParticipantLease** (`core/dispatch/participant-lease.ts`). Proves a task's
 participants are settled: the lease over identities that still own work, and
 the execution lease merge and closeout read, including retained runs and
-blocking recovery effects. Enforces
+blocking recovery effects. It reads `agentSettled` from
+`core/machine/agent-settled.ts`, the one settled-thread predicate, and host
+failures by their typed readers (`isAgentGoneRefusal`, `isStaleIntegrationBaseRefusal`)
+rather than their text. The withdrawn-native-question settlement dispatch runs
+before a role's lease is `core/dispatch/withdrawn-question.ts`
+(`WithdrawnQuestion`). Enforces
 [Terminal participant liveness](#terminal-participant-liveness). Delegates
 remain on Resolution.
 
@@ -785,8 +790,13 @@ dispatches on: the retained agent when it is still eligible, or a fresh one
 from the pool, then the hand-off to reserve. Pures: `executorThreadDecision`,
 `reviewerThreadDecision`. Delegates remain on Resolution.
 
-**RunLaunchReserve** (`core/dispatch/run-launch/reserve.ts`). The intent row,
-credential, slot charge, then the post-transaction hand-off to deliver.
+**RunLaunchReserve** (`core/dispatch/run-launch/reserve.ts`). Reads the source
+facts (`RunReservationSource` in `reservation-source.ts`), builds the run
+intent (`runIntent` in `run-intent.ts`), proves the review-entry handover,
+admits the intent, credential, task update and slot charge in one transaction
+(`RunReservationAdmission` in `reservation-admission.ts`), then hands off to
+deliver. A stash read that fails is recorded as unknown on the task and leaves
+the baseline absent, so the dirty-worktree refusal keeps its own proof.
 Delegates remain on Resolution.
 
 **RunLaunchDeliver** (`core/dispatch/run-launch/deliver.ts`). Ordinary-review custody

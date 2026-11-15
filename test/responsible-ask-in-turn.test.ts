@@ -108,7 +108,7 @@ test('a blocked responsible task whose worker question is answered resumes that 
     const adapter = {
       answeredQuestions: async (agentId: string) => {
         assert.equal(agentId, 'worker');
-        return answered;
+        return { ok: true as const, answered };
       },
     } as unknown as ConstructorParameters<typeof Resolution>[1];
     const resolution = new Resolution(store, adapter, () => [author], () => false);
@@ -161,7 +161,7 @@ test('a version change between enumeration and control still resumes with a dura
         // and still record a durable outcome, never silently consume.
         store.update(taskId, { reason: 'Worker blocked: which API should it keep? (touched)' }, 'touched');
         touchedVersion = store.task(taskId).version;
-        return [{ requestId: 'q3', question: 'Which API should it keep?', answers: { 'Which API should it keep?': 'Keep the touched API' } }];
+        return { ok: true as const, answered: [{ requestId: 'q3', question: 'Which API should it keep?', answers: { 'Which API should it keep?': 'Keep the touched API' } }] };
       },
     } as unknown as ConstructorParameters<typeof Resolution>[1];
     const resolution = new Resolution(store, adapter, () => [author], () => false);
@@ -199,11 +199,11 @@ test('an answer from a replaced worker is never applied to the new worker', asyn
   try {
     const adapter = {
       answeredQuestions: async (agentId: string) => {
-        if (agentId !== 'worker') return [];
+        if (agentId !== 'worker') return { ok: true as const, answered: [] };
         // Race: the worker was replaced after enumeration; the answer belongs
         // to the obsolete agent and must not resume the new worker.
         store.update(taskId, { agentId: 'worker-2' }, 'worker_remapped');
-        return [{ requestId: 'q4', question: 'Which API?', answers: { 'Which API?': 'Keep it' } }];
+        return { ok: true as const, answered: [{ requestId: 'q4', question: 'Which API?', answers: { 'Which API?': 'Keep it' } }] };
       },
     } as unknown as ConstructorParameters<typeof Resolution>[1];
     const resolution = new Resolution(store, adapter, () => [author], () => false);
@@ -239,11 +239,11 @@ test('an answer from a replaced reviewer is never applied to the new reviewer', 
     } as unknown as Run);
     const adapter = {
       answeredQuestions: async (agentId: string) => {
-        if (agentId !== 'reviewer-1') return [];
+        if (agentId !== 'reviewer-1') return { ok: true as const, answered: [] };
         // Race: the reviewer was replaced after enumeration.
         const run = store.run('rev-1')!;
         store.putRun({ ...run, agentId: 'reviewer-2' });
-        return [{ requestId: 'q5', question: 'Ship?', answers: { 'Ship?': 'Hold' } }];
+        return { ok: true as const, answered: [{ requestId: 'q5', question: 'Ship?', answers: { 'Ship?': 'Hold' } }] };
       },
     } as unknown as ConstructorParameters<typeof Resolution>[1];
     const resolution = new Resolution(store, adapter, () => [author], () => false);
@@ -270,7 +270,7 @@ test('a lost resumption is recorded as unknown and never resent', async () => {
   const { dir, store, taskId, author } = blockedWorkerStore();
   try {
     const adapter = {
-      answeredQuestions: async () => [{ requestId: 'q2', question: 'Ship or hold?', answers: { 'Ship or hold?': 'Hold' } }],
+      answeredQuestions: async () => ({ ok: true as const, answered: [{ requestId: 'q2', question: 'Ship or hold?', answers: { 'Ship or hold?': 'Hold' } }] }),
     } as unknown as ConstructorParameters<typeof Resolution>[1];
     const resolution = new Resolution(store, adapter, () => [author], () => false);
     let calls = 0;
@@ -287,6 +287,54 @@ test('a lost resumption is recorded as unknown and never resent', async () => {
 
     await resolution.resumeResponsibleAnsweredQuestions();
     assert.equal(calls, 1, 'an unknown observation is never resent');
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an unreadable answered-question read is recorded as unknown once and never resumes the task', async () => {
+  const { dir, store, taskId, author } = blockedWorkerStore();
+  try {
+    const adapter = {
+      // The host cannot read the transcript: unknown, not "nothing was answered".
+      answeredQuestions: async () => ({ ok: false as const, reason: 'the agent timeline page could not be read' }),
+    } as unknown as ConstructorParameters<typeof Resolution>[1];
+    const resolution = new Resolution(store, adapter, () => [author], () => false);
+    let calls = 0;
+    resolution.applyOperatorControl = (async () => { calls++; }) as typeof resolution.applyOperatorControl;
+
+    await resolution.resumeResponsibleAnsweredQuestions();
+    assert.equal(calls, 0, 'an unreadable read never resumes the worker');
+    const unknown = store.eventsAll(taskId).filter(event => event.kind === 'worker_question_read_unknown');
+    assert.equal(unknown.length, 1, 'the lost read is recorded once');
+    assert.match(unknown[0]!.detail, /timeline page could not be read/);
+
+    await resolution.resumeResponsibleAnsweredQuestions();
+    assert.equal(store.eventsAll(taskId).filter(event => event.kind === 'worker_question_read_unknown').length, 1,
+      'the same lost read is not recorded again');
+    assert.equal(calls, 0);
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a throwing answered-question read is the same unknown as a refusal', async () => {
+  const { dir, store, taskId, author } = blockedWorkerStore();
+  try {
+    const adapter = {
+      answeredQuestions: async () => { throw Error('T3Code timeout: orchestration.subscribeThread'); },
+    } as unknown as ConstructorParameters<typeof Resolution>[1];
+    const resolution = new Resolution(store, adapter, () => [author], () => false);
+    let calls = 0;
+    resolution.applyOperatorControl = (async () => { calls++; }) as typeof resolution.applyOperatorControl;
+
+    await resolution.resumeResponsibleAnsweredQuestions();
+    assert.equal(calls, 0);
+    const unknown = store.eventsAll(taskId).filter(event => event.kind === 'worker_question_read_unknown');
+    assert.equal(unknown.length, 1);
+    assert.match(unknown[0]!.detail, /T3Code timeout/);
   } finally {
     store.close();
     rmSync(dir, { recursive: true, force: true });
