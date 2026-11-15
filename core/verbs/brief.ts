@@ -9,7 +9,8 @@ import { git } from "../git/index";
 import { parseNorthstarDocument, submissionQueueFields } from "../planning/handoff";
 import { instructionForCommit } from "../hooks/hooks";
 import { holdPatch, releasePatch, HOLD_REASON_NOT_RECORDED } from "../merge/merge-hold";
-import { proofDeclarationSummary, proofInputRedeclarationAllowed, proofReservation, sameProofDeclaration, spentProofExecution } from "../qa/proof-execution";
+import { proofInputRedeclarationAllowed } from "../qa/proof-admission";
+import { proofDeclarationSummary, proofReservation, sameProofDeclaration, spentProofExecution } from "../qa/proof-records";
 import { STEPS_RETIRED_REASON } from "../recovery/retired-steps";
 import { stageDeclarationFromBrief } from "../stages";
 

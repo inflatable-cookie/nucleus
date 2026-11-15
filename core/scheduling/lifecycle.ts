@@ -1,7 +1,7 @@
 import { stages, ACCEPTED_PR_RECONCILIATION_REASON } from '../recovery/task-reasons';
 import { blockingRecoveryEffects, recoveryEffectsRefusal } from '../recovery/recovery-effects';
 import { blockedEffectAttentionRecorded } from '../recovery/effect-gates';
-import { proofWaitApplies } from '../qa/proof-execution';
+import { proofWaitApplies } from '../qa/proof-wait';
 import { type Task } from '../../shared/contracts';
 import { isDispositionActive } from "../../shared/contracts";
 import { reviewAuthorizationRequired, reviewContinuationWait } from '../review/review-continuation';

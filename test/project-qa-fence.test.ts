@@ -124,6 +124,7 @@ test('a new admission is refused at the claim with a durable refused request and
   const refused = f.runner.requestStatus({ requestId: 'fenced' }).requests[0];
   assert.equal(refused.state, 'refused');
   assert.ok(refused.diagnostic.startsWith(QA_FENCE_REFUSAL_PREFIX));
+  assert.equal(refused.refusalCode, 'fence', 'the fence is the typed boundary the scheduler reads');
   assert.equal(refused.runId, null);
   assert.equal(f.store.latestQaRun('fixture')?.id, accepted.id, 'no QA run was written');
   assert.equal(f.submits(), 1, 'no host reservation was submitted');

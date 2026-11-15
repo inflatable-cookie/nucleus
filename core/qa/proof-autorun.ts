@@ -1,5 +1,6 @@
 import { taskControlInputSchema, type Task } from '../../shared/contracts';
-import { docsOnlyProofAutorunSkip, proofAutorunWaitingInputs, proofExecutions, runnableDeclaredProof } from './proof-execution';
+import { proofExecutions } from './proof-records';
+import { docsOnlyProofAutorunSkip, proofAutorunWaitingInputs, runnableDeclaredProof } from './proof-wait';
 import type { Resolution } from '../resolution';
 
 /**

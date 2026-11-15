@@ -15,7 +15,7 @@ import type { Adapter, AgentObservation } from '../core/host';
 import { operatorQuestionFor, proofOnlyGoQuestionText } from '../core/questions/operator-question';
 import { digest } from '../core/store/store';
 import { parseNorthstarDocument } from '../core/planning/handoff';
-import { shellCommandInvokesSelector } from '../core/qa/proof-execution';
+import { shellCommandInvokesSelector } from '../core/qa/proof-selector-evidence';
 import { runPrompt } from '../core/dispatch/prompts';
 import type { TimelinePage } from '../core/recovery/stall';
 import { toolTimelinePage } from './support/tool-timeline';

@@ -31,7 +31,8 @@ import { GitReadTimeoutError, SubmissionUnavailableError, WORKER_BRANCH_REFUSAL_
 import { hookHoldReason, isHookHoldReason } from '../core/hooks/hooks';
 import { OWNER_STOP_HOLD_PREFIX } from '../core/merge/merge-hold';
 import { RestartRefusal } from '../core/verbs/owner-verbs';
-import { ProofExecutionRefusal, ProofSingleFlightError, proofSingleFlightRefusal } from '../core/qa/proof-execution';
+import { proofSingleFlightRefusal, ProofSingleFlightError } from '../core/qa/proof-admission';
+import { ProofExecutionRefusal } from '../core/qa/proof-refusal';
 import { RepositoryRekeyRefused } from '../core/planning/repository-rekey';
 import { ReviewEntryRefusal } from '../core/review/review-entry';
 import { DurableFenceRefusal, runFenceRefusal } from '../core/intake/run-settlement';

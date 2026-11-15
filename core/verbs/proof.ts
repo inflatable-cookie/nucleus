@@ -2,7 +2,7 @@ import type { Task, TaskControlInput } from "../../shared/contracts";
 import { Decisions } from "../planning/decisions";
 import type { Engine } from "../engine";
 import { proofOnlyGoQuestionId, recordedProofOnlyGoQuestion } from "../questions/operator-question";
-import { proofHeadAdmission, proofSingleFlightRefusal } from "../qa/proof-execution";
+import { proofHeadAdmission, proofSingleFlightRefusal } from "../qa/proof-admission";
 import { proofActivationRefusal, proofGoDecision } from "../qa/proof-activation";
 
 /**

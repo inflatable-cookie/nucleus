@@ -57,3 +57,22 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
   reason facts now use shared owners. The changed N6 rows were re-rated at this PR's head.
 
 - nucleus#1207 (floor 5, 2026-11-14): the question service and ladder were split by joint review, delegation, supersession, reviewer consult and escalation settlement; their N1 rows were re-rated at this PR’s head.
+
+- nucleus#1219 (floor 6, 2026-11-14): the milestone QA runner was split along its named seams — request
+  identity and the atomic admission claim (`project-qa-admission.ts`), placement, checkout identity and
+  scratch (`project-qa-placement.ts`), the host-run envelope (`project-qa-scheduler.ts`), supervisor
+  handoff (`project-qa-launch.ts`), observation and re-attachment (`project-qa-reconcile.ts`), lost-run
+  recovery (`project-qa-recovery.ts`), settlement and its notice (`project-qa-settle.ts`), teardown retry
+  (`project-qa-teardown-retry.ts`) and retention (`project-qa-retention.ts`), with the shared declarations
+  and fixed numbers in `project-qa-context.ts` and `project-qa-defaults.ts`; the three module-global
+  supervision maps now have one owner (`project-qa-gates.ts`), and `project-qa.ts` is the public verbs and
+  their composition. Settlement retention left the board read for the hourly retention pass. QA admission
+  refusals carry a typed code on the request record (`project-qa-refusals.ts`, `shared/schema/qa.ts`)
+  instead of being classified by diagnostic text, which `project-qa-schedule.ts` reads, and a settlement
+  notice that cannot be delivered is recorded on the run. `core/qa/proof-execution.ts` no longer exists:
+  refusals (`proof-refusal.ts`), receipts and declarations (`proof-records.ts`), dispatch admission
+  (`proof-admission.ts`), the source proof (`proof-source.ts`), the selector evidence reading
+  (`proof-selector-evidence.ts`) and the proof wait and autorun policy (`proof-wait.ts`) each have one
+  owner, and the `proofExecutorAgents` re-export through QA is gone. The affected N4 rows were re-rated at
+  this PR's head; the `qa-fence` rows in N4 and N6 were re-rated because no caller reads a fence message as
+  a fact any more. Modules touched only to import from the new owners keep their rows.

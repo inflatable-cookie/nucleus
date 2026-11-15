@@ -660,6 +660,10 @@ export class QueueRuntime {
         void (async () => {
           try { await this.store.pruneRetainedHistory(); }
           catch { /* retried next hour */ }
+          // Milestone QA retention is its own owner now: settled checkouts and
+          // expired per-run files age out here, never on a board read.
+          try { await this.projectQaRunner().sweepRetention(); }
+          catch { /* retried next hour */ }
           // Spec 028: freed pages are returned here, in one bounded pass, instead of growing
           // the file until the next full rewrite. A pass with nothing to release writes nothing.
           this.store.reclaimFreedPages();
