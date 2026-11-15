@@ -161,15 +161,21 @@ export class T3Presentation {
     return agents.find(([, agent]) => labelRole(agent.labels) === 'revision')?.[0];
   }
 
-  /** Send one row title under its own content-addressed command identity. */
+  /**
+   * Send one row title. A title the row already sent once gets a fresh command
+   * identity when it comes back: round two's `· reviewing` is the same string as
+   * round one's, a settled command never runs again, and the fresh projection
+   * read above is the row's proof it still needs sending. An unknown delivery
+   * keeps its identity and is reconciled by that same read, never repeated
+   * blindly.
+   */
   private async writeWorkerRow(threadId: string, title: string): Promise<void> {
     if (this.core.intents.confirmedDeletion(this.core.state.read(), threadId)) return;
     const projection = await this.core.reads.readProjection(threadId, 'observation');
     if (projection.thread.archivedAt || projection.thread.deletedAt) return;
     const record = () => this.core.state.update(current => { current.rowTitles = { ...current.rowTitles, [threadId]: title }; });
     if (projection.thread.title === title) { record(); return; }
-    const requestId = identity('row', canonical([this.core.hostId(), threadId, title]));
-    const key = identity('thread-title', canonical({ threadId, requestId }));
+    const key = this.commandIdFor('row-title', [this.core.hostId(), threadId, title], settledOrRefused);
     await this.core.intents.effect(key, 'orchestration.dispatchCommand', { type: 'thread.metadata.update', commandId: key, threadId, title }, undefined, undefined,
       { resendUnknownAfterRead: true });
     record();

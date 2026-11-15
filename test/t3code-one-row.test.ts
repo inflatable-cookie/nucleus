@@ -137,6 +137,53 @@ test('the worker row names the step the task is on and the input a support threa
   assert.equal(titles().at(-1)!.title, 'Review: 225 Synthetic role');
 });
 
+test('a later round writes the same step again under a fresh command identity (acceptance 2)', async t => {
+  const { host, server, spec, task } = await fixture(t);
+  const worker = await host.createAgent(spec('worker-launch'));
+  server.threads.get(worker.id)!.runs = workerRun();
+  const reviewer = await host.createAgent(spec('reviewer-launch', 'reviewer'));
+  const reviewerProjection = server.threads.get(reviewer.id)!;
+  const state = task({ agentId: worker.id });
+  const titles = () => server.commands.filter(command => command.type === 'thread.metadata.update' && command.threadId === worker.id);
+  const running = [syntheticRun('nightly-review-run', 1, { id: 'nightly-review-run', status: 'running', rootNodeId: 'review-node' })];
+  const ended = [syntheticRun('nightly-review-run', 1, { id: 'nightly-review-run', status: 'completed', rootNodeId: 'review-node' })];
+
+  // The task's own state title is the row's base, with no step while nothing runs.
+  reviewerProjection.runs = ended;
+  await host.setTaskWorkspaceTitle(state, taskWorkspaceTitle(state), 'row-base', false);
+  assert.equal(titles().at(-1)!.title, 'Review: 225 Synthetic role');
+
+  // Round one: the reviewer runs and the row names it, then the reviewer ends
+  // and the row drops the step.
+  reviewerProjection.runs = running;
+  await host.reconcileThreadTitles([state]);
+  assert.equal(titles().at(-1)!.title, 'Review: 225 Synthetic role · reviewing');
+  reviewerProjection.runs = ended;
+  await host.reconcileThreadTitles([state]);
+  assert.equal(titles().at(-1)!.title, 'Review: 225 Synthetic role');
+
+  // Round two asks for the same step text again. The settled command from round
+  // one must not stand in for it: the row needs a fresh identity per round, so
+  // the previous title is never left on the row while the reviewer works.
+  reviewerProjection.runs = running;
+  await host.reconcileThreadTitles([state]);
+  assert.equal(titles().at(-1)!.title, 'Review: 225 Synthetic role · reviewing',
+    `round two names the step again (${JSON.stringify(titles().map(command => command.title))})`);
+  assert.equal(server.threads.get(worker.id)!.thread.title, 'Review: 225 Synthetic role · reviewing');
+  // A repeated input question is the same recurrence: it is written again too.
+  reviewerProjection.runs = [];
+  reviewerProjection.runtimeRequests = [syntheticRuntimeRequest({ id: 'reviewer-question-1', status: 'pending', kind: 'user_input' })];
+  await host.reconcileThreadTitles([state]);
+  reviewerProjection.runtimeRequests = [];
+  await host.reconcileThreadTitles([state]);
+  reviewerProjection.runtimeRequests = [syntheticRuntimeRequest({ id: 'reviewer-question-2', status: 'pending', kind: 'user_input' })];
+  await host.reconcileThreadTitles([state]);
+  assert.equal(titles().at(-1)!.title, 'Review: 225 Synthetic role · reviewer needs input');
+  assert.equal(server.threads.get(worker.id)!.thread.title, 'Review: 225 Synthetic role · reviewer needs input');
+  // One command identity per write, none reused.
+  assert.equal(new Set(titles().map(command => command.commandId)).size, titles().length);
+});
+
 test('a task title already naming the step is not repeated on the row (acceptance 2)', async t => {
   const { host, server, spec, task } = await fixture(t);
   const worker = await host.createAgent(spec('worker-launch'));

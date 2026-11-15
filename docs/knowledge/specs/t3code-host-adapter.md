@@ -565,10 +565,11 @@ thread only while its own `hideTaggedThreads` is on and `hiddenThreadTags` lists
 connect and never writes settings; with the switch off, or the tag missing, the
 support threads stay visible and everything else behaves as above.
 `service.health`'s `t3code.supportThreads` reports which case holds and points at
-the README section that enables it. Nucleus does not surface a hidden thread's
-pending approval itself: a support thread that needs input leaves its role name on
-the worker row, and the question is answered in that thread from its card or
-through Nucleus's own routes.
+the README section that enables it. Nucleus surfaces a hidden thread's pending
+question or permission itself: that thread's role name rides the worker row and
+the row is unsettled, so a hidden approval is never invisible. The question is
+still answered in the support thread (open it from its card) or through Nucleus's
+own routes.
 
 ## Thread lifecycle
 
