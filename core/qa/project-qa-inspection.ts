@@ -1,4 +1,4 @@
-import { SupervisorLivenessReader } from "../machine/supervisor-liveness";
+import { SupervisorLivenessReader } from "../machine/start-identity";
 import { FileFacts } from "../machine/file-facts";
 import { isAbsolute } from "node:path";
 import { realpath } from "node:fs/promises";
@@ -15,7 +15,7 @@ import {
   type QaSupervisionState,
   type QaSupervisionPlan,
 } from "./project-qa-supervision-files";
-import { supervisorLiveness, supervisorLivenessAsync } from "../machine/supervisor-liveness";
+import { supervisorLiveness, supervisorLivenessAsync } from "../machine/start-identity";
 import { findProcessByCommandTokenAsync } from "../machine/process-identity";
 import { processGroupEmpty, signalProcessGroup, signalProcessGroupByLeader } from "../machine/process-group";
 import { processesForStartIdentity, processStartIdentityLiveness } from "../machine/process-identity-search";

@@ -14,7 +14,7 @@ import { archiveUnusedWorkspace } from '../core/workspaces/unused-workspace';
 import { requestDisposition, type DispositionDeps } from '../core/verbs/disposition';
 import { controlManifestSchema } from '../shared/hooks';
 import { isDispositionActive, submissionSchema, type Task } from '../shared/contracts';
-import type { Engine } from '../core/engine';
+import { Engine } from '../core/engine';
 import type { Adapter } from '../core/host';
 import { HOOK_TEST_TIMEOUT_MS } from './support/budgets';
 
@@ -25,6 +25,20 @@ const preArchive = (overrides: Record<string, unknown> = {}) => ({
   timeoutMs: HOOK_TEST_TIMEOUT_MS, maxOutputBytes: 65536, allowedPaths: [], commitSubject: null, ...overrides,
 });
 const v6Manifest = (hooks: unknown[]) => ({ schema: 'paseo.queue.control.v6', hooks });
+
+test('engine retention hold preserves the empty-gate result', async () => {
+  const task = { id: 'task' } as Task;
+  const engine = {
+    hooks: { retentionGate: async (observed: Task, target: unknown) => {
+      assert.equal(observed, task);
+      assert.deepEqual(target, { directory: 'worktree', head: 'head', reason: 'archive' });
+      return { hold: false, attention: false, records: [] };
+    } },
+    store: { task: (id: string) => { assert.equal(id, task.id); return task; } },
+  } as unknown as Engine;
+  assert.deepEqual(await Engine.prototype.retentionHold.call(engine, task.id,
+    { directory: 'worktree', head: 'head' }, 'archive'), { hold: false, detail: '' });
+});
 
 /**
  * A repository-neutral retention gate. It records the delivered event beside a

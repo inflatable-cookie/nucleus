@@ -9,6 +9,7 @@ export const REVISION_BUDGET = 6;
 /** The incident causes Queue names itself; free-text classification remains only for external error text. */
 export const incidentCauses = ["provider_unavailable", "workspace_state", "uncertain_delivery", "missing_callback", "repository_identity", "hook_failure", "scheduling", "stalled_turn", "other"] as const;
 export type IncidentCause = typeof incidentCauses[number];
+export const MISSING_CALLBACK_CAUSE: IncidentCause = "missing_callback";
 export const incidentRoleSchema = z.enum(["worker", "reviewer", "coordinator", "closeout", "recovery", "unknown"]);
 export const incidentActionSchema = z.enum(["", "exact_lookup", "callback_reminder", "replacement", "stall_continuation"]);
 /** One deduplicated fault identity: repeated observations update this record instead of appending escalations. */

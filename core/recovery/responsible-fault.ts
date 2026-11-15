@@ -1,3 +1,4 @@
+import { MISSING_CALLBACK_CAUSE } from '../../shared/incident';
 import { digest, } from '../store/store';
 import type { Task } from '../../shared/contracts';
 import { taskControlInputSchema } from '../../shared/contracts';
@@ -37,7 +38,7 @@ export async function settleResponsibleFault(engine: RecoverySettlementContext, 
   const stoppedWithoutResult = Boolean(run.retainedAgentClosedAt)
     || /^The reviewer (?:thread stopped|callback reminder expired)/.test(current.reason)
     || Boolean(incident && incident.role === "reviewer" && incident.status !== "resolved"
-      && (incident.cause === "missing_callback" || incident.cause === "stalled_turn"));
+      && (incident.cause === MISSING_CALLBACK_CAUSE || incident.cause === "stalled_turn"));
   if (!stoppedWithoutResult) return false;
   const identity = digest(`responsible-fault:${current.id}:${run.head}:${shape}`);
   if (engine.store.eventsAll(current.id).some(event => event.kind === "responsible_fault_restart" && event.detail === identity)) return false;

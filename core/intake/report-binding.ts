@@ -49,3 +49,14 @@ export function mcpBindingPathFromProcessListing(
   }
   return null;
 }
+
+/** Resolve the observed binding once, including the best-effort process-list fallback. */
+export async function observedMcpBindingPath(
+  recordedPath: string | null | undefined,
+  bindingKey: string | undefined,
+  processListing?: () => Promise<{ command: string }[] | null | undefined>,
+): Promise<string | null> {
+  if (recordedPath || !bindingKey || !processListing) return recordedPath ?? null;
+  try { return mcpBindingPathFromProcessListing(await processListing() ?? null, bindingKey); }
+  catch { return null; }
+}

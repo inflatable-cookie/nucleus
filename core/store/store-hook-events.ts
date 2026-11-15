@@ -9,6 +9,10 @@ interface HookEventAccess {
 export class StoreHookEvents {
   constructor(private readonly core: StoreCore, private readonly access: HookEventAccess) {}
 
+  hookEventsThroughRowid(): number {
+    return Number(this.core.db.prepare("SELECT COALESCE(MAX(rowid),0) AS last FROM hook_events").get()!.last);
+  }
+
   /** One rowid-ordered page of hook events, for callers that hand the event loop back between pages. */
   hookEventsPage(afterRowid: number, limit: number, throughRowid = Number.MAX_SAFE_INTEGER): { records: HookRecord[]; lastRowid: number } {
     const rows = this.core.db.prepare("SELECT rowid AS rid, data FROM hook_events WHERE rowid>? AND rowid<=? ORDER BY rowid LIMIT ?").all(afterRowid, throughRowid, limit);
