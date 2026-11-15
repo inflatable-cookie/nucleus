@@ -135,14 +135,14 @@ export function readSignoffEvents(store: Store, taskId: string): SignoffEvent[] 
   let rows: Array<{ kind: string; detail: string }>;
   try { rows = store.eventsAll(taskId); } catch { return []; }
   const events: SignoffEvent[] = [];
-  for (const row of rows) {
-    if (row.kind !== "routing_signoff" && row.kind !== "routing_signoff_requested") continue;
+  for (const event of rows) {
+    if (event.kind !== "routing_signoff" && event.kind !== "routing_signoff_requested") continue;
     let raw: unknown;
-    try { raw = JSON.parse(row.detail); } catch { continue; }
+    try { raw = JSON.parse(event.detail); } catch { continue; }
     const record = raw as Record<string, unknown> | null;
     if (!record || typeof record !== "object" || !isRole(record.role)) continue;
     const decisionId = textOf(record.decisionId);
-    if (row.kind === "routing_signoff_requested") {
+    if (event.kind === "routing_signoff_requested") {
       const profileId = textOf(record.profileId);
       if (profileId && decisionId) events.push({ kind: "requested", role: record.role, profileId, decisionId });
       continue;
