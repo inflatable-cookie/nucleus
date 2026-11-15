@@ -8,11 +8,13 @@
   words (`waits.ts`), the advance and restart decisions (`pass.ts`), the park (`park.ts`), the routing
   (`routing.ts`), the operator rung (`operator.ts`), the task-side wait (`hold.ts`), the restart passes
   (`resume.ts`), unknown-delivery attention (`attention.ts`), the two exits (`continuation.ts`) and the
-  proof-only owner-verb hint (`proof.ts`), behind one barrel (`index.ts`). The cause and run a consult or
-  escalation names now come from the typed payload the ladder already writes in the same transaction; the
-  intent line stays one pre-payload fallback, which is what keeps `records.ts` at typed facts 1. Score 10
+  proof-only owner-verb hint (`proof.ts`), behind one barrel (`index.ts`). An escalation's cause stays its
+  intent line, because the escalation id is derived from it and the recovery pass writes only a category
+  label in the payload; a consult's or escalation's run, question and refusal class now come from the typed
+  payload the ladder writes in the same transaction. That identity rule keeps `records.ts` at typed facts 1,
+  and `test/blocker-ladder.test.ts` covers the writer/reader boundary and a repeat occurrence. Score 10
   for the barrel, the driver, the cause identities, the questions, the waits, the decisions, the hold, the
-  attention, the exits and the proof hint; 9 for `records.ts` (the fallback above), `park.ts` (five park
+  attention, the exits and the proof hint; 9 for `records.ts` (the identity line above), `park.ts` (five park
   rules in one file), `replies.ts` (a free-text reply is resolved by prefix match) and `operator.ts` (the
   decision link is read as text); 8 for `resume.ts` (the miss reason is compared as text, and the consult
   and wait passes share the file); 7 for `routing.ts` (two inherited control-string reads and the refusal
@@ -26,7 +28,8 @@
   failure. Ownership stays 1 because the who-may-answer authority is still written once per caller route,
   and proportion stays 1 because the class still owns the prompt, the delivery ledger, settlement, the wait
   loop, the rungs and the decider profile. Boundary tests were added for the pre-payload record decode, the
-  task-target read, the recorded ticket refusal and the recorded decider-archive failure. The
+  recovery writer/reader identity with its repeat occurrence, the task-target read, the recorded ticket
+  refusal and the recorded decider-archive failure. The
   `shared/schema/questions.ts` row keeps its 9 with its evidence paths moved to the new prefix-match owner.
 
 - nucleus#1235 (floor 7, 2026-11-15): PR state display now reads the task's recorded PR number and canonical repository, and failed reads are reported with task IDs while successful tasks remain visible (10: O2 T2 F2 P2 Pr2; test/pr-status.test.ts covers recorded identity, merged-task omission and failure context). Review publication entry points share one single-flight owner, while comment and formal-review reconciliation remain separate for their different remote evidence; formal HTTP 401/403 errors now carry a typed status rather than being classified by message text (reviews 8: O1 T2 F2 P1 Pr2; boundary coverage in test/formal-reviews.test.ts). The changed formal-review transport row remains 9 with typed HTTP status coverage in test/formal-review-http.test.ts. The shared dispatcher is the named consolidation; retaining distinct remote reconciliation is the remaining ownership seam.

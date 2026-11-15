@@ -77,37 +77,40 @@ const payloadOf = (
       ? (decoded as Record<string, unknown>)
       : null;
   } catch {
-    // An unreadable payload proves nothing; the intent line still names the cause.
+    // An unreadable payload proves nothing; the decoded fields stay unknown.
     return null;
   }
 };
 
-/** The cause a pre-payload intent line names. */
+/**
+ * The cause one intent names. The intent line is the identity record: the
+ * escalation id is derived from this cause, and a caller's payload may carry a
+ * category label instead (`recovery-pending` from the recovery pass, or
+ * `recovery_rerun`), so the payload never renames an episode.
+ */
 const lineCause = (line: string): string =>
   line.match(/cause ([0-9a-f]{64})/)?.[1] ?? "";
 
-/** The run a pre-payload intent line names. */
+/** The run an intent names on its line; the pre-payload fallback for the payload's run. */
 const lineRun = (line: string): string | null =>
   line.match(/run (\S+?);/)?.[1] ?? null;
 
 /**
- * The cause and run one intent names: the payload is the record, the intent line
- * is the pre-payload fallback. A run named `worker` is no run at all, which is
- * how the ladder records a cause raised by the task rather than a run.
+ * The run one intent names: the typed payload's own field, with the intent line as
+ * the pre-payload fallback. A run named `worker` is no run at all, which is how the
+ * ladder records a cause raised by the task rather than a run.
  */
-const intentIdentity = (
+const intentRun = (
   payload: Record<string, unknown> | null,
   line: string,
-): { cause: string; runId: string | null } => {
-  const cause =
-    typeof payload?.cause === "string" ? payload.cause : lineCause(line);
+): string | null => {
   const run =
     payload && "runId" in payload
       ? typeof payload.runId === "string"
         ? payload.runId
         : null
       : lineRun(line);
-  return { cause, runId: run && run !== "worker" ? run : null };
+  return run && run !== "worker" ? run : null;
 };
 
 /** One string field of a decoded payload. */
@@ -127,7 +130,8 @@ export function reviewerConsults(events: LadderEvent[]): ReviewerConsult[] {
     );
     return {
       id,
-      ...intentIdentity(payload, intent.detail),
+      cause: lineCause(intent.detail),
+      runId: intentRun(payload, intent.detail),
       reviewer:
         eventsOf(events, "reviewer_consult_reviewer")
           .find((event) => event.detail.startsWith(`${id}:`))
@@ -182,7 +186,8 @@ export function plannerEscalations(events: LadderEvent[]): PlannerEscalation[] {
     ).find((event) => event.detail.startsWith(`${id}:`));
     return {
       id,
-      ...intentIdentity(payload, intent.detail),
+      cause: lineCause(intent.detail),
+      runId: intentRun(payload, intent.detail),
       question: payloadText(payload, "question"),
       refusal:
         refusal === "failed_checks" || refusal === "pre_merge"
