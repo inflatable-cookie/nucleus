@@ -66,6 +66,18 @@ export function workerExclusionFor(task: Pick<Task, "workerExclusions">, agentId
     || Boolean(exclusion.profileId && exclusion.profileId === profileId)) ?? null;
 }
 
+/**
+ * The one refusal text for a durable planner/operator worker exclusion. Launch
+ * and reservation both refuse the same turn, so both name it with this text
+ * rather than each composing its own sentence.
+ */
+export function workerExclusionRefusal(task: Pick<Task, "workerExclusions">, agentId: string | null | undefined, profileId: string | null | undefined): string | null {
+  const exclusion = workerExclusionFor(task, agentId, profileId);
+  if (!exclusion) return null;
+  const identity = exclusion.agentId ? `agent ${exclusion.agentId}` : `profile ${exclusion.profileId}`;
+  return `Planner/operator exclusion prevents another turn for ${identity}: ${exclusion.reason}`;
+}
+
 export function workerProfileIsExcluded(task: Pick<Task, "workerExclusions">, profileId: string): boolean {
   return task.workerExclusions.some(exclusion => exclusion.profileId === profileId);
 }
