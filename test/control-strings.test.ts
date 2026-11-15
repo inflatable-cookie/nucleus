@@ -626,7 +626,9 @@ const PARSED: ParsedText[] = [
   { site: 'blocked effect attention',
     reads: ['detail.startsWith(BLOCKED_EFFECT_ATTENTION_PREFIX)', 'stop.detail.startsWith(BLOCKED_EFFECT_ATTENTION_PREFIX)'],
     writers: ['BLOCKED_EFFECT_ATTENTION_PREFIX = "An uncertain side effect blocks review"', '`${BLOCKED_EFFECT_ATTENTION_PREFIX}: ${recoveryEffectsRefusal(blocked)}'] },
-  { site: 'external merge check', reads: ['t.reason.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX) || t.reason === EXTERNAL_MERGE_CHECK_RECOVERED_REASON', 't.reason === ACCEPTED_PR_RECONCILIATION_REASON'] },
+  // The check's resume rule moved to its own owner; the parked-phase and accepted-PR
+  // readers are the same two facts at their new site.
+  { site: 'external merge check', reads: ['task.reason.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX) || task.reason === EXTERNAL_MERGE_CHECK_RECOVERED_REASON', 't.reason === ACCEPTED_PR_RECONCILIATION_REASON'] },
   { site: 'revision repair', reads: ['t.reason === WORKER_PR_IDENTITY_REFUSAL'], writers: ["WORKER_PR_IDENTITY_REFUSAL = \"PR must be open, ready, and match the task's branch and base\""] },
   // The checkout refusal is typed at its throw site, so the reader is the class
   // and its codes; the prose below is what the worker reads.
@@ -731,11 +733,11 @@ const EVENT_KINDS = `absent_creation_replaced:2:1 absent_worker_retry:2:1 adopte
 agent_ask_delegation_missed:1:3 agent_ask_delegation_unknown:1:4 agent_ask_joined:3:2 agent_ask_planning_ruling:2:1 agent_ask_resumed:3:2
 agent_ask_reviewer_missed:1:2 agent_ask_stale_answered:1:2 agent_ask_superseded:4:4 agent_created:1:1 agent_intent:1:3 automatic_retry_suppressed:1:1
 blocked_pr_identity_deferred:1:1 blocked_review_evidence:1:1 blocker_ladder_classified:1:1 callback_reminder:3:10 callback_reminder_extended:2:1
-callback_reminder_skipped:1:1 cancel:1:52 checkpoint_continued:1:1 closed_out:1:5 closeout_base_renewed:2:1
+callback_reminder_skipped:1:1 cancel:1:52 checkpoint_continued:1:1 closed_out:1:5 closeout_base_renewed:0:1
 closeout_recovery_budget:1:1 completion_received:1:4 coordinator_action_refused:1:2 coordinator_rearm:1:1 delegated_answer:5:1 delegated_closed:3:3
 delegated_decision_route:2:1 delegated_delivery:4:1 dependencies_changed:1:1 dispatch_intent:1:1
 disposition_complete:2:1 disposition_requested:1:1 disposition_turn_interrupted:2:1 environment_deferred:1:3 escalation_resolved:1:1
-external_merge_observed:2:3 external_workspace_archive_archived:1:3 hold:1:100 hold_until_blocked:1:1 hook_blocked:2:0 hook_execution_started:3:2
+external_merge_observed:2:2 external_workspace_archive_archived:1:3 hold:1:100 hold_until_blocked:1:1 hook_blocked:2:0 hook_execution_started:3:2
 hook_failed:1:0 hook_intent:2:2 hook_published:1:0 hook_result:1:0 hook_uncertain:2:1 hook_workspace_created:1:1 hook_workspace_intent:1:1
 incident:3:8 initial_pr_lookup_unavailable:1:1 main_synchronized:1:1 merge_intent:1:1 merge_verified:4:1 native_question_answered:1:1
 native_question_delegated:2:1 native_question_operator:1:1 native_question_response_intent:2:1 native_question_unanswered:1:1
