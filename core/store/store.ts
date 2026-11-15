@@ -742,6 +742,8 @@ export class Store {
   setReportResponse(id: string, hash: string, response: unknown): void { return this.authStore.setReportResponse(id, hash, response); }
   /** The stored hash of one receipt bound to this task and run, or null when absent or bound elsewhere. */
   receiptHash(id: string, task: string, run: string): string | null { return this.authStore.receiptHash(id, task, run); }
+  receiptPosition(id: string, task: string, run: string): { sequence: number; hash: string } | null { return this.authStore.receiptPosition(id, task, run); }
+  firstReceiptSequence(task: string, run: string): number | null { return this.authStore.firstReceiptSequence(task, run); }
   authenticate(run: string, token: string) { return this.authStore.authenticate(run, token); }
   credentialRunForToken(token: string): string | null { return this.authStore.credentialRunForToken(token); }
   runs(taskId?: string): Run[] { return this.tasksStore.runs(taskId); }

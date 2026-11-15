@@ -25,6 +25,20 @@ export class StoreAuth {
     const row = this.db.prepare("SELECT hash FROM receipts WHERE id=? AND task=? AND run=?").get(id, task, run) as { hash?: string } | undefined;
     return row?.hash ?? null;
   }
+  /**
+   * The arrival position and stored hash of one receipt bound to this task and
+   * run, or null when it is absent or bound elsewhere. Position is the row order
+   * the receipts keep, so a later receipt compares greater.
+   */
+  receiptPosition(id: string, task: string, run: string): { sequence: number; hash: string } | null {
+    const row = this.db.prepare("SELECT rowid AS sequence, hash FROM receipts WHERE id=? AND task=? AND run=?").get(id, task, run) as { sequence: number; hash: string } | undefined;
+    return row ?? null;
+  }
+  /** The arrival position of the first receipt a run recorded on its task, or null when it recorded none. */
+  firstReceiptSequence(task: string, run: string): number | null {
+    const row = this.db.prepare("SELECT rowid AS sequence FROM receipts WHERE task=? AND run=? ORDER BY rowid LIMIT 1").get(task, run) as { sequence: number } | undefined;
+    return row?.sequence ?? null;
+  }
   /** Completion writes preserve any report intent/response already attached to the same receipt. */
   setCompletionReceipt(id: string, task: string, run: string, hash: string, response: string): void {
     this.db.prepare("INSERT INTO receipts(id,task,run,hash,response) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET task=excluded.task,run=excluded.run,hash=excluded.hash,response=excluded.response").run(id,task,run,hash,response);

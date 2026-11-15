@@ -331,3 +331,28 @@ test("a host run recorded under a case alias of the workspace holds it on a case
   assert.equal(f.store.hostRunHoldingWorkspace(alias)?.id, live.id);
   f.store.close();
 });
+
+test("a run-bound hold that cannot be observed is written on its record, and the next pass settles it", { timeout: HOOK_TEST_TIMEOUT_MS }, async t => {
+  const f = await setup(t);
+  await installDependencies(f);
+  authorResult(f, "author-hold-failure", "blocked");
+  const healthy = settlingAdapter(f, { active: false });
+  let observing = false;
+  const adapter = { ...healthy, observe: async (id: string) => {
+    if (!observing) throw new Error("host unreachable");
+    return healthy.observe(id);
+  } };
+  const engine = new Engine(f.store, adapter, 0);
+  try {
+    const stateBefore = runRecord(f)?.state;
+    await engine.settleRunBuildOutputs(f.task.id);
+    // The failed observation keeps the record's state and names the failure; nothing is removed.
+    assert.equal(runRecord(f)?.state, stateBefore);
+    assert.match(runRecord(f)?.detail ?? "", /Build output hold could not be observed: host unreachable/);
+    assert.equal(await readFile(sentinel(f.directory), "utf8"), "installed");
+    observing = true;
+    await engine.settleRunBuildOutputs(f.task.id);
+    assert.equal(runRecord(f)?.state, "complete");
+    assert.doesNotMatch(runRecord(f)?.detail ?? "", /could not be observed/);
+  } finally { await engine.stop(); f.store.close(); }
+});

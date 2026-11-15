@@ -1,5 +1,25 @@
 # Code-module quality tables
 
+- nucleus#1249 (floor 7, 2026-11-15): the two floor-7 verb rows were split and hardened along the seams their
+  rows named, and re-rated at this PR's head. `core/verbs/moves.ts` is the folder `core/verbs/moves/`: the
+  controls surface and cancelled-turn re-plan (`controls.ts`, 9), the review move (`review.ts`, 8; its
+  retained-reviewer observation reads a failure as not closed, which the floor leaves as recorded debt),
+  the proof-only receipt review (`review-proof.ts`, 9, same debt), the reviewer displacement every
+  review-side move reads (`review-displacement.ts`, 10), the retained reader (`review-reader.ts`, 10), the
+  one review settlement both reviews commit (`review-settle.ts`, 9), the work move (`work.ts`, 9), the merge
+  move (`merge.ts`, 8; the proof-hold release still reads a reason prefix), the closeout (`closeout.ts`, 10),
+  the external-merge reconciliations (`external-merge.ts`, 8; two participant-quiet loops remain) and the
+  barrel and types (10). The reviewer model preflight is now `shared/authors.ts`' `requestedReviewerRefusal`,
+  one rule over `modelKey`. The proof-only path settles every stopped reviewer, as the task review does; it
+  settled only the first before. `core/verbs/removal.ts` (8) writes a run-bound hold the observation could not
+  reach onto its record instead of dropping it, and reads receipt positions through
+  `core/store/store-auth.ts`' `receiptPosition` and `firstReceiptSequence`, not raw SQL. The move-verb
+  refusals a turn cancel re-plans on still match message prose (`controls.ts:20`); a typed refusal would
+  change the pinned replan test, so it is a follow-up. Boundary coverage: a run-bound hold that cannot be
+  observed is recorded and settled on the next pass (`test/run-bound-dependencies.test.ts`). The moves
+  rows' churn is 0 because the folder's files are new at this PR; their lineage is `core/verbs/moves.ts`
+  (churn 1/1/0).
+
 - nucleus#1244 (floor 7, 2026-11-15): the four floor-7 core/review rows were split, consolidated or
   deleted along the seams their rows named, and re-rated at this PR's head. `core/review/review-continuation.ts`
   is now the folder `core/review/review-continuation/`: the composition and the one authorized reviewer

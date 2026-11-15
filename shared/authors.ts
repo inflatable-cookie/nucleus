@@ -49,6 +49,21 @@ export function modelKey(value: string | null | undefined): string {
 }
 
 /**
+ * Why a requested reviewer cannot prove independence from the author whose head
+ * it reviews, or `null` when it can. The owner move to review refuses with this
+ * before anything is written; the wording names the profile and the model as
+ * the owner entered them.
+ */
+export function requestedReviewerRefusal(input: { profileId: string; reviewerModel: string; authorModels: readonly string[] }): string | null {
+  const reviewer = modelKey(input.reviewerModel);
+  const authors = input.authorModels.map(modelKey);
+  if (reviewer === "default") return `Requested reviewer ${input.profileId} uses an opaque provider-default route that cannot prove review independence`;
+  if (authors.includes("default")) return "The author whose head is under review uses an opaque provider-default route that cannot prove review independence";
+  if (authors.includes(reviewer)) return `Requested reviewer ${input.profileId} shares the current author's model ${input.reviewerModel}; the reviewer model must differ from the model of the worker whose head is under review`;
+  return null;
+}
+
+/**
  * One model string as runtime compares it; a blank, missing, `default` or
  * `unknown` model is the opaque "default". Whitespace-only components are blank.
  */
