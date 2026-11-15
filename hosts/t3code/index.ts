@@ -41,6 +41,7 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
       };
     }
     get hostId() { return this.native.hostId; }
+    isConnected() { return this.native.connected; }
     capabilities() { return { ...this.native.capabilities(), lifecycleDispatch: true, supportsCoordinatorRecovery: true,
       // One project per repository, with task-specific worktree handles.
       // Task workspace archives never retire the shared project registration.

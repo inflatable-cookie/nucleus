@@ -89,7 +89,7 @@ test('the generated key stays inside the caller-key bound and refuses to truncat
 /** Minimal fake adapter: enough of the Paseo surface for a quiet fixture store. */
 function fakeAdapter(dataDir: string): Adapter {
   return {
-    client: { isConnected: true }, hostId: 'fixture-host',
+    client: { isConnected: true }, isConnected: () => true, hostId: 'fixture-host',
     socketPath: join(dataDir, 'callback.sock'), helperPath: join(dataDir, 'worker-helper.mjs'),
     connect: async () => {}, close: async () => {}, catalog: async () => ({ providers: [] }),
     observe: observeIdle('ws', 'worker'),

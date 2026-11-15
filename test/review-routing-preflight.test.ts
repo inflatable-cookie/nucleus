@@ -138,7 +138,7 @@ async function fixture(t: { after: (fn: () => Promise<void> | void) => void }) {
   await git(repo, 'commit', '-m', 'fixture');
   await git(repo, 'push', 'origin', 'main');
   const adapter = {
-    client: { isConnected: true }, hostId: 'fixture-host', socketPath: join(root, 'callback.sock'), helperPath: join(root, 'helper.mjs'),
+    client: { isConnected: true }, isConnected: () => true, hostId: 'fixture-host', socketPath: join(root, 'callback.sock'), helperPath: join(root, 'helper.mjs'),
     connect: async () => {}, close: async () => {}, catalog: async () => ({ providers: [{ key: "test", label: "test", available: true, problem: "", models: profiles.map(p => ({ id: p.model, label: p.model, aliases: [], thinkingOptions: [], defaultThinkingOptionId: null, modes: [], features: [] })) }] }),
     originAgent: async (id: string) => ({ id, workspaceId: 'origin-ws', archived: false }),
   } as unknown as Adapter;

@@ -42,7 +42,7 @@ const local = (result: { snapshots: Array<{ kind: string; name: string; at: stri
 /** A fixture standing in for the mounted external volume; `/tmp` names no volume, so no mount check applies. */
 const fixtureVolume = (dir: string) => join(dir, 'external');
 const copiesAt = (dir: string) => readdirSync(dir).filter(name => name.endsWith('.sqlite.gz')).length;
-const adapterFor = (dir: string) => ({ client: { isConnected: true }, hostId: 'fixture', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'worker-helper.mjs'),
+const adapterFor = (dir: string) => ({ client: { isConnected: true }, isConnected: () => true, hostId: 'fixture', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'worker-helper.mjs'),
   connect: async () => {}, close: async () => {}, catalog: async () => ({ providers: [] }),
   observe: observeIdle('ws', 'worker') } as unknown as Adapter);
 

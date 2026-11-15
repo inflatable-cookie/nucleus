@@ -1,5 +1,5 @@
 import { initializeWorkRoot } from "../core/workspaces/work-root.mjs";
-import "./install/roll-request";
+import { registerServiceRollRequest } from "./install/roll-request";
 import { currentServiceBuildId } from "../shared/service/build";
 import { RuntimeQuestions } from "../core/runtime/questions";
 import { RuntimeSettings } from "../core/runtime/settings";
@@ -39,7 +39,8 @@ import { HostPolicies } from "../core/host/host-policies";
 import type { HostPolicyConstructor } from "../core/host";
 import { formatAgentId, parseAgentId } from "../shared/agent-identity";
 import { hostKindOf, type HostKind } from "../shared/host-kind";
-import { createHost, hostConnectionRequired, paseoHome } from "../hosts/paseo";
+import { hostConnected } from "../core/host";
+import { createHost, paseoHome } from "../hosts/paseo";
 import type { RegistrationAdapter } from "../core/host/registration";
 import type { Adapter } from "../core/host/adapter";
 import { HostFacade } from "../core/host/host-facade";
@@ -400,6 +401,7 @@ export class QueueRuntime {
   private resolveHostRunReady: () => void = () => {};
 
   constructor(options: RuntimeOwnerOptions = {}) {
+    registerServiceRollRequest();
     this.hostRunReady = new Promise<void>(resolve => { this.resolveHostRunReady = resolve; });
     this.connectTimeoutMs = options.connectTimeoutMs ?? 10_000;
     this.requiredCheckTransport = options.requiredCheckTransport;
@@ -1537,7 +1539,7 @@ export class QueueRuntime {
   async refreshCatalog() {
     await this.started;
     const adapter = this.paseo;
-    if (!this.connected() || !hostConnectionRequired(adapter)) {
+    if (!this.connected() || !hostConnected(adapter)) {
       await this.ensureBootstrap();
       if (!this.connected()) throw new Error(this.startError || "Host is offline or its identity is unknown");
     }

@@ -22,7 +22,7 @@ async function fixture(t: any) {
   await mkdir(join(repo, '.paseo'));
   await writeFile(join(repo, '.paseo/queue.json'), JSON.stringify({ schema: 'paseo.queue.control.v5', closeout: 'queue', hooks: [] }));
   await git(repo, 'add', '.'); await git(repo, 'commit', '-m', 'fixture'); await git(repo, 'push', 'origin', 'main');
-  const adapter = { client: { isConnected: true }, hostId: 'fixture-host', socketPath: join(root, 'callback.sock'), helperPath: join(root, 'helper.mjs'),
+  const adapter = { client: { isConnected: true }, isConnected: () => true, hostId: 'fixture-host', socketPath: join(root, 'callback.sock'), helperPath: join(root, 'helper.mjs'),
     connect: async () => {}, close: async () => {}, catalog: async () => ({ providers: [] }),
     originAgent: async (id: string) => ({ id, workspaceId: 'origin-ws', archived: false }) } as unknown as Adapter;
   const runtime = new QueueRuntime({ dataDir: join(root, 'data'), adapterFactory: () => adapter, timers: false });

@@ -47,7 +47,7 @@ function emptyRunDirectory(stateDir: string, runId: string): string {
 }
 
 const fakeAdapter = (dir: string): Adapter => ({
-  client: { isConnected: true }, hostId: 'fixture-host',
+  client: { isConnected: true }, isConnected: () => true, hostId: 'fixture-host',
   socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'worker-helper.mjs'),
   connect: async () => {}, close: async () => {}, profiles: async () => [],
   observe: observeIdle('ws', 'worker'),

@@ -16,6 +16,7 @@ export function profile(id: string, model = id, overrides: Partial<Profile> = {}
 export function fakeAdapter<T>(overrides: Partial<Adapter & ResolutionAdapter> & T): Adapter & T {
   const unexpected = async (): Promise<never> => { throw new Error('Unexpected adapter call'); };
   return {
+    isConnected: () => true,
     validate: unexpected, verifyWorkspace: unexpected, createWorkspace: unexpected,
     createAgent: unexpected, observe: unexpected, verifyPr: unexpected,
     findWorkspaces: async () => [], findAgents: async () => [], archiveAgent: async () => {},

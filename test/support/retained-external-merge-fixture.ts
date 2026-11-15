@@ -36,7 +36,7 @@ export async function fixture(withReview=false,withProof=false) {
   // The tool entry the fake timeline serves, when a test needs one: no entry is
   // complete empty history.
   let toolItem:TimelineEntry['item']|null=null;
-  const adapter={client:{isConnected:true},hostId:'fixture',socketPath:join(root,'cb.sock'),helperPath:join(root,'helper.mjs'),connect:async()=>{},close:async()=>{},
+  const adapter={client:{isConnected:true},isConnected:()=>true,hostId:'fixture',socketPath:join(root,'cb.sock'),helperPath:join(root,'helper.mjs'),connect:async()=>{},close:async()=>{},
     profiles:async()=>[profile,reviewer],validate:async()=>base,
     createWorkspace:async(t:Task)=>{workspace=join(root,t.branch);workspaceId='workspace';git(repo,'worktree','add','-b',t.branch,workspace,'main');return{id:workspaceId,directory:workspace};},
     findWorkspaces:async()=>aliased?[{id:workspaceId,directory:workspace},{id:'alias',directory:workspace}]:[{id:workspaceId,directory:workspace}],verifyWorkspace:async(t:Task)=>t.branch,

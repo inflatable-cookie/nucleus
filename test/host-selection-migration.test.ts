@@ -33,7 +33,7 @@ test('the schema step marks host selection migration complete without rewriting 
   assert.deepEqual(store.eventsAll(old.id), events);
   store.close();
   const client = { isConnected: false };
-  const adapter = { client, hostId: 'a', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'helper.mjs'), connect: async () => { client.isConnected = true; }, close: async () => { client.isConnected = false; }, catalog: async () => ({ providers: [] }) } as unknown as Adapter;
+  const adapter = { client, isConnected: () => client.isConnected, hostId: 'a', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'helper.mjs'), connect: async () => { client.isConnected = true; }, close: async () => { client.isConnected = false; }, catalog: async () => ({ providers: [] }) } as unknown as Adapter;
   const open = () => new QueueRuntime({ dataDir: dir, adapterFactory: () => adapter, timers: false });
   let runtime = open();
   await runtime.started; await runtime.bootstrap;

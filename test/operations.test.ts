@@ -579,6 +579,7 @@ timingTest('queue.remove returns its accepted operation when Effigy retirement o
     markEphemeralCheckout(wsDir);
     const adapter = {
       client: { isConnected: true }, hostId: 'host',
+      isConnected: () => true,
       socketPath: join(root, 'callback.sock'), helperPath: join(root, 'worker-report.mjs'),
       connect: async () => {}, close: async () => {}, profiles: async () => [profile],
       observe: observeIdle('ws'),

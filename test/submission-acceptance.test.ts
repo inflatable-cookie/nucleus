@@ -39,8 +39,9 @@ async function fixture(t: any, offline = false, notify = false, lookup?: (id: st
   await publish();
   let available = !offline, lookups = 0;
   const lookupIds: string[] = [];
+  const client = { isConnected: !offline };
   const adapter = {
-    client: { isConnected: !offline }, hostId: 'fixture-host',
+    client, isConnected: () => client.isConnected, hostId: 'fixture-host',
     socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'helper.mjs'),
     connect: async () => { if (!available) throw Error('Transport not connected'); adapter.client.isConnected = true; },
     close: async () => {}, catalog: async () => ({ providers: [] }),

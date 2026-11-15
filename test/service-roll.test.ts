@@ -2,7 +2,7 @@ import { onRepositorySyncRollRequest, requestServiceRollAfterRepositorySync as r
 import { bridgeProcessActions } from "../service/install/bridge-process-actions";
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {spawn, spawnSync} from 'node:child_process';
+import {execFileSync, spawn, spawnSync} from 'node:child_process';
 import {chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync} from 'node:fs';
 import { boardSource } from './support/board-source';
 import {createServer} from 'node:net';
@@ -510,6 +510,33 @@ test('an installed main channel gets the immediate sync hint only for its build 
     assert.equal(requestServiceRollAfterRepositorySync(repository, { sourcePath: source, dataDir: join(root, 'data') }), true);
     assert.equal(requestServiceRollAfterRepositorySync(root, { sourcePath: source, dataDir: join(root, 'other') }), false);
   } finally { if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome; }
+});
+
+test('roll requests normalize channel and checkout origins and report a failed request', () => {
+  const root = mkdtempSync(join(tmpdir(), 'main-hint-origin-'));
+  const priorHome = process.env.HOME;
+  const priorWarn = console.warn;
+  process.env.HOME = join(root, 'home');
+  const warnings: unknown[][] = [];
+  console.warn = (...args: unknown[]) => { warnings.push(args); };
+  try {
+    const source = join(root, 'package'), repository = join(root, 'repository');
+    mkdirSync(source, { recursive: true });
+    mkdirSync(join(process.env.HOME, '.local/share/nucleus'), { recursive: true });
+    writeFileSync(join(source, 'manifest.json'), '{}');
+    writeFileSync(join(process.env.HOME, '.local/share/nucleus', 'channel.json'), JSON.stringify({ channel: 'main', repository: 'Org/Repo' }));
+    execFileSync('git', ['init', repository], { stdio: 'ignore' });
+    execFileSync('git', ['-C', repository, 'remote', 'add', 'origin', 'git@github.com:org/repo.git'], { stdio: 'ignore' });
+
+    assert.equal(requestServiceRollAfterRepositorySync(repository, { sourcePath: source, dataDir: join(root, 'data') }), true);
+    assert.equal(requestServiceRollAfterRepositorySync(join(root, 'missing'), { sourcePath: source, dataDir: join(root, 'data') }), false);
+    assert.equal(warnings.length, 1, 'a refused request keeps its failure visible');
+    assert.match(String(warnings[0]?.[0]), /service roll request could not be recorded/);
+  } finally {
+    console.warn = priorWarn;
+    if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 

@@ -11,7 +11,7 @@ import { NUCLEUS_REPOSITORY_ORIGIN } from '../shared/contracts';
 test('idle shutdown waits for live runs and a reconnect before latching cancels it', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'idle-host-'));
   const client = { isConnected: false };
-  const raw = { client, hostId: 'host', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'report.mjs'),
+  const raw = { client, isConnected: () => client.isConnected, hostId: 'host', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'report.mjs'),
     connect: async () => { client.isConnected = true; }, close: async () => { client.isConnected = false; },
     catalog: async () => ({ providers: [] }), observe: async () => ({ id: 'w', workspaceId: 'ws', status: 'idle', active: false, permissions: false, error: '' }) } as unknown as Adapter;
   const runtime = new QueueRuntime({ dataDir: dir, adapterFactory: () => raw, timers: false });
@@ -41,7 +41,7 @@ test('idle shutdown waits for live runs and a reconnect before latching cancels 
 test('local host runs launch while the app host is offline during the grace', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'offline-host-'));
   const client = { isConnected: false };
-  const raw = { client, hostId: 'host', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'report.mjs'),
+  const raw = { client, isConnected: () => client.isConnected, hostId: 'host', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'report.mjs'),
     connect: async () => { client.isConnected = true; }, close: async () => { client.isConnected = false; },
     catalog: async () => ({ providers: [] }), observe: async () => ({ id: 'w', workspaceId: 'ws', status: 'idle', active: false, permissions: false, error: '' }) } as unknown as Adapter;
   const runtime = new QueueRuntime({ dataDir: dir, adapterFactory: () => raw, timers: false });
@@ -67,7 +67,7 @@ test('losing plugin presence while a host is connected raises a board fault and 
   const notices: { agentId: string; text: string }[] = [];
   let resolveNotified!: () => void;
   const notified = new Promise<void>(resolve => { resolveNotified = resolve; });
-  const raw = { client, hostId: 'host', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'report.mjs'),
+  const raw = { client, isConnected: () => client.isConnected, hostId: 'host', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'report.mjs'),
     connect: async () => { client.isConnected = true; }, close: async () => { client.isConnected = false; },
     catalog: async () => ({ providers: [] }), observe: async () => ({ id: 'w', workspaceId: 'ws', status: 'idle', active: false, permissions: false, error: '' }),
     notify: async (agentId: string, _id: string, text: string) => { notices.push({ agentId, text }); resolveNotified(); },
