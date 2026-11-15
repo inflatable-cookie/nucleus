@@ -62,8 +62,7 @@ export function settlesPreWorkspaceDispositionHook(store: Store, task: Task, can
  * Early legacy tasks may predate committed instruction artifacts. Cancellation
  * can preserve that legacy evidence when the same required repository hook has
  * already refused the task's blocked transition for exactly that reason: both
- * occurrences carry no instruction artifact, the same hook and mode, and the
- * same refusal line.
+ * occurrences name the same hook and mode and repeat the artifact refusal line.
  */
 export function settlesLegacyInstructionlessDispositionHook(store: Store, task: Task, cancellationRecords: readonly unknown[]): boolean {
   if (task.instruction || !task.completion || !["blocked", "error"].includes(task.completion.status)) return false;
@@ -72,7 +71,7 @@ export function settlesLegacyInstructionlessDispositionHook(store: Store, task: 
     && record.delivery === "required" && refusedTransition(record));
   if (!blocked.length) return false;
   return cancellationOccurrences(cancellationRecords).some(cancelled =>
-    cancelled.delivery === "required" && cancelled.instruction === null && blocked.some(previous =>
-      previous.instruction === null && cancelled.hookId === previous.hookId && cancelled.mode === previous.mode
-      && repeatsRefusal(cancelled, previous)));
+    cancelled.delivery === "required" && blocked.some(previous =>
+      cancelled.hookId === previous.hookId && cancelled.mode === previous.mode
+      && refusalLines(cancelled).some(line => /no committed instruction artifact/i.test(line) && refusalLines(previous).includes(line))));
 }

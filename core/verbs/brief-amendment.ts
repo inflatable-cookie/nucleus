@@ -74,7 +74,8 @@ export class BriefAmendmentDelivery {
   }
 
   private recorded(taskId: string, kind: string, messageId: string): boolean {
-    return this.store.eventsAll(taskId).some(event => event.kind === kind && event.detail.startsWith(`${messageId}:`));
+    return Boolean(this.store.db.prepare('SELECT 1 FROM events WHERE taskId=? AND kind=? AND substr(detail,1,?)=? LIMIT 1')
+      .get(taskId, kind, messageId.length + 1, `${messageId}:`));
   }
 
   /**
@@ -87,15 +88,24 @@ export class BriefAmendmentDelivery {
     if (this.engine.stopped) return;
     // The recorded intent is the index: a task with no intent has nothing to deliver.
     const taskIds = onlyTaskId ? [onlyTaskId]
-      : (this.store.db.prepare('SELECT DISTINCT taskId FROM events WHERE kind=?').all(INTENT) as Array<{ taskId: string }>).map(row => row.taskId);
+      : (this.store.db.prepare("SELECT DISTINCT taskId FROM events WHERE kind='brief_amendment_delivery_intent'").all() as Array<{ taskId: string }>).map(row => row.taskId);
     for (const taskId of taskIds) {
       const task = this.store.task(taskId);
       if (!task.hostId) continue;
-      for (const intent of this.intents(taskId)) {
-        if (this.recorded(taskId, DELIVERED, intent.messageId) || this.recorded(taskId, ATTEMPT, intent.messageId)) continue;
+      const events = this.store.eventsAll(taskId);
+      const intents = events.flatMap(event => {
+        if (event.kind !== INTENT) return [];
+        const intent = decodeIntent(event.detail);
+        return intent ? [intent] : [];
+      });
+      const attempted = new Set(events.filter(event => event.kind === ATTEMPT || event.kind === DELIVERED)
+        .map(event => event.detail.split(':', 1)[0]));
+      for (const intent of intents) {
+        if (attempted.has(intent.messageId)) continue;
         const version = task.briefVersions.find(item => item.version === intent.version);
         if (!version) continue;
         await this.deliver(task, intent, this.message(version));
+        attempted.add(intent.messageId);
       }
     }
   }

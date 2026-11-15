@@ -1,3 +1,4 @@
+import { TaskChangedRefusal } from "../../shared/task-version";
 import { RETAINED_PREREQUISITE_REFUSAL } from './verb-refusal-text';
 import { groupIsUnavailable } from "../../shared/pool";
 import { OPERATOR_BOARD_CALLER, WORKER_REPLACEMENT_CEILING, type Task, type TaskControlInput } from "../../shared/contracts";
@@ -73,7 +74,7 @@ export class WorkerRestarts {
     const check = () => {
       const current = this.store.task(task.id);
       this.engine.requireOwnerControlCurrent(current, input.version, 'Task changed during absent-worker verification');
-      if (!runsUnchangedSince(runs, this.store.runs(task.id))) throw Error('Task changed during absent-worker verification');
+      if (!runsUnchangedSince(runs, this.store.runs(task.id))) throw new TaskChangedRefusal('Task changed during absent-worker verification', input.version, current.version);
       this.engine.rejectFenced(current, 'worker recovery');
       return current;
     };

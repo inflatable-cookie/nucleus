@@ -5,7 +5,7 @@ import { holdPatch, releasePatch, HOLD_REASON_NOT_RECORDED } from "../merge/merg
 import { submissionQueueFields } from "../planning/handoff";
 
 /** The operator's stated reason for a merge hold, or the recorded absence. */
-const mergeHoldReason = (value: unknown): string => typeof value === 'string' && value ? value : HOLD_REASON_NOT_RECORDED;
+const mergeHoldReason = (value: unknown): string => typeof value === 'string' ? value : HOLD_REASON_NOT_RECORDED;
 
 /** The routing fields the ordinary profile validation and sign-off path owns. */
 const ROUTING_KEYS = ['scope', 'complexity', 'preferredProfileId', 'requirePreferred', 'thinkingOptionId', 'profileRequests', 'critical'];
@@ -29,7 +29,6 @@ export function applyBriefRouting(engine: Engine, input: {
   changes: Partial<Task>;
 }): Task {
   const { queue, previous, reason, gateEvents, changes } = input;
-  const store = engine.store;
   // Body-only edits keep stored routing, but delivery mode follows the brief's bytes.
   // Submission conversion omits these delivery fields; amendment comparison must retain them.
   const next: Record<string, unknown> = { completionNotificationAgentIds: [], ...submissionQueueFields(queue ?? previous), reportOnly: queue?.reportOnly, reportLane: queue?.reportLane };

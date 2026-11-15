@@ -1,3 +1,4 @@
+import { TaskChangedRefusal } from "../../shared/task-version";
 import { COORDINATOR_LOOP_LIMIT, unproductiveCoordinatorRuns } from '../recovery/recovery-bound';
 import { DEFAULT_GLOBAL_LIMIT, type Run, type Task, type TaskControlInput } from "../../shared/contracts";
 import { occupiesSlot, recoveryCapacityFor } from "../dispatch/capacity";
@@ -93,7 +94,7 @@ export class EpisodeRestarts {
         const current = this.store.task(task.id);
         this.engine.requireOwnerControlCurrent(current, version, 'Task changed during absent recovery-run verification');
         if (this.resolution.recovery.absentRun(current)?.id !== absentRecovery.id)
-          throw Error('Task changed during absent recovery-run verification');
+          throw new TaskChangedRefusal('Task changed during absent recovery-run verification', version, current.version);
         const others = this.store.runs(task.id).filter(run => !run.released && run.id !== absentRecovery.id);
         if (others.length) throw Error('Resolve the other retained runs before restarting coordinator recovery');
         this.adapter.purgeReportingFiles?.(task.id, [absentRecovery.id]);
@@ -165,7 +166,7 @@ export class EpisodeRestarts {
       if (current.removedAt) throw Error(REMOVED_TASK_REFUSAL);
       this.engine.rejectFenced(current, 'absent resolution recovery');
       this.engine.requireOwnerControlCurrent(current, input.version, 'Task changed during absent resolution-run verification');
-      if (!runsUnchangedSince(runs, this.store.runs(task.id))) throw Error('Task changed during absent resolution-run verification');
+      if (!runsUnchangedSince(runs, this.store.runs(task.id))) throw new TaskChangedRefusal('Task changed during absent resolution-run verification', input.version, current.version);
       return current;
     };
     check();

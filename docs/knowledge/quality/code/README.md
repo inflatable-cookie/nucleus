@@ -61,14 +61,16 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
 - nucleus#1218 (floor 6, 2026-11-14): the six floor-5 verbs rows were split or simplified by their
   named seams, and each resulting module was re-rated at this PR's head. `core/verbs/brief.ts` (9) now
   composes an amendment while `brief-routing.ts` (8), `brief-proof.ts` (10) and
-  `brief-amendment.ts` (10) own the routing diff, the proof declaration and the delivery; the
+  `brief-amendment.ts` (9) own the routing diff, the proof declaration and the delivery; the
   routing module's 8 is honest — the queue frontmatter is still diffed as untyped records compared by
   JSON text, and it is covered only through `amend_brief`. `core/verbs/dispatcher.ts` (9) keeps the
   ordered control switch and its documented record-only catches, with `control-outcomes.ts` (9),
   `owner-authority.ts` (10), `receipt-acceptance.ts` (10), `budget-extension.ts` (10),
   `no-automatic-retry-record.ts` (9) and `author-revision-cap.ts` (9) as their own owners.
-  `core/verbs/disposition/hook-evidence.ts` is 10: it decodes the emitted values once by the hook
-  schema, and its boundary tests live in `test/disposition-hook-evidence.test.ts`.
+  `core/verbs/disposition/hook-evidence.ts` is 9: it decodes hook records once, but still compares
+  refusal prose; its boundary tests live in `test/disposition-hook-evidence.test.ts`. The amendment
+  sweep uses an intent index but still revisits retained history, hence its 9. `owner-effects.ts`
+  remains 7: it owns key decoding while force still slices incident keys.
   `core/verbs/owner-stop.ts` (10) keeps the stop and its hold, `deferred-verbs.ts` (9) owns recorded
   verbs and their replay, and `reviewer-auto-continue.ts` (10) owns automatic continuation with a
   retry window read from fence facts rather than refusal words. `core/verbs/restart.ts` (10) keeps

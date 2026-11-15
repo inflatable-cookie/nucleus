@@ -102,3 +102,18 @@ test('a legacy instructionless disposition settles only for the same hook, mode 
     'a task that carries its instruction artifact is not legacy-instructionless');
   } finally { store.close(); }
 });
+
+
+test('legacy instructionless hooks do not settle a shared unrelated refusal', () => {
+  const { store, task } = storeWithTask();
+  try {
+    const refusal = 'handoff does not reference a roadmap task';
+    const blocked = store.update(task.id, { completion: { eventId: 'worker-blocked', taskId: task.id,
+      runId: 'run-1', status: 'blocked', summary: 'Legacy blocker' },
+      disposition: { kind: 'cancel', status: 'preserving', requestedAt: new Date().toISOString(), requestedBy: 'operator',
+        reason: 'Replacement landed', workDisposition: 'preserve', hookEmitted: false } as Task['disposition'] });
+    store.putHookEvent(record(task.id, 'task.blocked', { hookId: 'lifecycle-state', mode: 'integration_write', refusal }));
+    assert.equal(settlesLegacyInstructionlessDispositionHook(store, blocked, [
+      record(task.id, 'task.cancelled', { hookId: 'lifecycle-state', mode: 'integration_write', refusal })]), false);
+  } finally { store.close(); }
+});

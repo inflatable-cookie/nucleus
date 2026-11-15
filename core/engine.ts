@@ -562,7 +562,8 @@ export class Engine {
     this.workerRestarts = new WorkerRestarts(this);
     this.reviewRestarts = new ReviewRestarts(this);
     this.episodeRestarts = new EpisodeRestarts(this);
-    this.stalledTurnStops = new StalledTurnStops(this);    this.retryEffectControls = new RetryEffectControls(this);
+    this.stalledTurnStops = new StalledTurnStops(this);
+    this.retryEffectControls = new RetryEffectControls(this);
     this.retryEffectReplay = new RetryEffectReplay(this);
     this.archiveEffectRetries = new ArchiveEffectRetries(this);
     this.recoveryEffectRetries = new RecoveryEffectRetries(this);
