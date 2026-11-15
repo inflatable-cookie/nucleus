@@ -117,6 +117,21 @@ test('no table row carries the reason; only internal meta does, and every outbou
   }
 });
 
+test('watch keeps unreadable supervisor state and result distinct from absence', async t => {
+  const h = await harness(t);
+  const run = h.launch('unreadable-result');
+  writeVerifiedOwnedFile(h.dir, ['runs', run.id, 'result.json'], '{torn', 0o600);
+  const watch = new HostRunWatch({ scheduler: h.scheduler, stateDir: h.dir, nowMs: () => Date.now() + 60_000,
+    stopping: false, supervisorPollMs: 100 });
+  await watch.pollRunOnce(run.id);
+  assert.equal(h.scheduler.get(run.id)?.state, 'running', 'a corrupt result cannot be read as absent before settling lost');
+
+  const stateRun = h.launch('unreadable-state');
+  writeVerifiedOwnedFile(h.dir, ['runs', stateRun.id, 'supervisor.state.json'], '{torn', 0o600);
+  await watch.pollRunOnce(stateRun.id);
+  assert.equal(h.scheduler.get(stateRun.id)?.state, 'running', 'a corrupt state cannot be read as absent after its grace period');
+});
+
 test('no meta pattern scan in main can match the internal key', () => {
   const db = new DatabaseSync(':memory:');
   for (const scan of MAIN_META_PATTERN_SCANS) {

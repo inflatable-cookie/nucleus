@@ -17,8 +17,6 @@ type HostRunCapacitySample = ReturnType<typeof hostRunCapacitySampleSchema.parse
 
 const sameRepository = (left: string, right: string) => left.toLowerCase() === right.toLowerCase();
 const positive = (value: number | null | undefined): value is number => typeof value === "number" && Number.isFinite(value) && value > 0;
-/** Margin on a history-derived memory budget over the observed peak (task 191). */
-export const HISTORY_MEMORY_MARGIN = 1.2;
 /**
  * Task 191: no single run reserves more than this share of host memory
  * capacity. A history fallback of the whole capacity — or poisoned samples
@@ -65,7 +63,7 @@ interface HostRunCapacityContext {
   nowMs: () => number;
   hasUnresolvedEscapedDescendants(run: HostRunInternalRecord): boolean;
   store: Store;
-  historicalSamples(repository: HostRunInternalRecord["repository"], selector: string): Array<{ cpuMs: number | null; wallMs: number; memoryBytes: number | null }>;
+  historicalSamples(repository: HostRunInternalRecord["repository"], selector: string): Array<{ cpuMs: number | null; wallMs: number }>;
 }
 
 export class HostRunCapacity {
@@ -102,27 +100,12 @@ export class HostRunCapacity {
     for (const item of history) if (positive(item.cpuMs) && positive(item.wallMs)) cpuRatios.push(item.cpuMs / item.wallMs);
     const cpuP95 = percentile95(cpuRatios);
     const wallP95 = percentile95(history.map(item => item.wallMs));
-    const memoryValues: number[] = [];
-    // Task 191: a legacy peakRss sample at or above the host's own memory
-    // capacity cannot be one run's resident peak. The 64 GiB sample that
-    // pinned all heavy capacity in milestone QA 73c12ae3 was almost certainly
-    // a sampler summing shared or virtual memory across the tree instead of
-    // measuring the peak; such samples are discarded, never budgeted.
-    for (const item of history) {
-      if (!positive(item.memoryBytes)) continue;
-      if (capacityBytes && item.memoryBytes >= capacityBytes) continue;
-      memoryValues.push(item.memoryBytes);
-    }
-    const memoryP95 = percentile95(memoryValues);
-    // Task 191: the history-derived memory budget is the observed peak with a
-    // margin, clamped to a share of host capacity so one settled run with an
-    // escapee can never reserve the whole machine. The share cap also covers
-    // the no-history fallback, which defaults to the full host capacity, and
-    // poisoned samples that leave no valid peak at all.
+    // Host-run history records CPU and wall samples. Memory stays on the
+    // declared fallback budget, capped so one run cannot reserve the machine.
     const clampMemory = (value: number): number =>
       capacityBytes ? Math.min(value, Math.max(1, Math.floor(capacityBytes * HISTORY_MEMORY_SHARE_CAP))) : value;
     if (cpuP95) {
-      const memory = memoryP95 ? clampMemory(Math.ceil(memoryP95 * HISTORY_MEMORY_MARGIN)) : clampMemory(fallback.memoryBytes);
+      const memory = clampMemory(fallback.memoryBytes);
       // A measured tree can average more cores than the heavy capacity (half the
       // logical cores); a budget above capacity could never be admitted.
       const cpu = cpuCapacity ? Math.min(cpuP95, cpuCapacity) : cpuP95;
@@ -132,55 +115,16 @@ export class HostRunCapacity {
     return { cpu, memoryBytes: clampMemory(fallback.memoryBytes),
       wallMs: wallP95 ? Math.ceil(wallP95) : null, source: "fallback" };
   }
-  historicalSamples(repository: HostRunInternalRecord["repository"], selector: string): Array<{ cpuMs: number | null; wallMs: number; memoryBytes: number | null }> {
+  historicalSamples(repository: HostRunInternalRecord["repository"], selector: string): Array<{ cpuMs: number | null; wallMs: number }> {
     const keys = new Set([repository.origin, repository.path].filter(Boolean).map(value => value!.toLowerCase()));
-    const output: Array<{ cpuMs: number | null; wallMs: number; memoryBytes: number | null }> = [];
+    const output: Array<{ cpuMs: number | null; wallMs: number }> = [];
     // Audit A7: only this selector's rows for these repositories, filtered in SQL
     // by the indexed selector, instead of parsing every host-run row on each submit.
     const hostRuns = this.context.store.hostRunSelectorSamples([...keys], selector);
     for (const run of hostRuns) {
       if (![run.repository.origin, run.repository.path].some(value => value && [...keys].some(key => sameRepository(value, key))) || run.selector !== selector || !positive(run.wallMs)) continue;
-      output.push({ cpuMs: positive(run.cpuMs) ? run.cpuMs : null, wallMs: run.wallMs, memoryBytes: null });
+      output.push({ cpuMs: positive(run.cpuMs) ? run.cpuMs : null, wallMs: run.wallMs });
     }
-    // Legacy QA and task rows stay useful budget samples only while no host run
-    // represents them. Collect them first, then ask the store which of those exact
-    // ids exist, so a submit never scans every host-run identity (audit A7).
-    const legacy: Array<{ id: string | undefined; sample: { cpuMs: number | null; wallMs: number; memoryBytes: number | null } }> = [];
-    const placeholders = [...keys].map(() => "?").join(",");
-    const match = ["key", "repository.origin", "repository.path"].map(field =>
-      `lower(json_extract(CASE WHEN json_valid(data) THEN data ELSE '{}' END,'$.${field}')) IN (${placeholders})`).join(" OR ");
-    const qaRows = this.context.store.db.prepare(`SELECT data FROM project_qa_runs WHERE ${match}`)
-      .all(...[...keys], ...[...keys], ...[...keys]) as { data: string }[];
-    for (const row of qaRows) {
-      try {
-        // Historical rows can seed host-run budgets until this repository and selector have scheduler samples.
-        const run = JSON.parse(String(row.data)) as { id?: string; key?: string; repository?: { origin?: string | null; path?: string }; selector?: string; argv?: string[]; durationMs?: number; admission?: { wallMs?: number | null; cpuUserMs?: number | null; cpuSystemMs?: number | null; peakRssBytes?: number | null } | null };
-        if (![run.key, run.repository?.origin, run.repository?.path].some(value => value && [...keys].some(key => sameRepository(value, key)))) continue;
-        const runSelector = run.selector ?? selectorForArgv(run.argv ?? [], "qa");
-        if (runSelector !== selector) continue;
-        const wallMs = run.admission?.wallMs ?? run.durationMs ?? 0;
-        if (!positive(wallMs)) continue;
-        const cpuMs = (run.admission?.cpuUserMs ?? 0) + (run.admission?.cpuSystemMs ?? 0);
-        legacy.push({ id: run.id, sample: { cpuMs: positive(cpuMs) ? cpuMs : null, wallMs, memoryBytes: positive(run.admission?.peakRssBytes) ? run.admission!.peakRssBytes! : null } });
-      } catch { /* One legacy row cannot poison admission. */ }
-    }
-    const taskRows = this.context.store.db.prepare("SELECT data FROM tasks WHERE json_extract(data,'$.resolution.projectValidation') IS NOT NULL").all() as { data: string }[];
-    for (const row of taskRows) {
-      try {
-        // Older project-validation rows remain useful budget samples; new rows use the host-run table above.
-        const task = JSON.parse(String(row.data)) as { repository?: string | null; repoPath?: string; resolution?: { projectValidation?: { hostRunId?: string; selector?: string; argv?: string[]; durationMs?: number; admission?: { wallMs?: number | null; cpuUserMs?: number | null; cpuSystemMs?: number | null; peakRssBytes?: number | null } | null } | null } };
-        const validation = task.resolution?.projectValidation;
-        if (!validation || ![task.repository, task.repoPath].some(value => value && [...keys].some(key => sameRepository(value, key)))) continue;
-        const taskSelector = validation.selector ?? selectorForArgv(validation.argv ?? [], "validation");
-        if (taskSelector !== selector) continue;
-        const wallMs = validation.admission?.wallMs ?? validation.durationMs ?? 0;
-        if (!positive(wallMs)) continue;
-        const cpuMs = (validation.admission?.cpuUserMs ?? 0) + (validation.admission?.cpuSystemMs ?? 0);
-        legacy.push({ id: validation.hostRunId, sample: { cpuMs: positive(cpuMs) ? cpuMs : null, wallMs, memoryBytes: positive(validation.admission?.peakRssBytes) ? validation.admission!.peakRssBytes! : null } });
-      } catch { /* Ignore an unreadable legacy task row. */ }
-    }
-    const represented = this.context.store.hostRunIdsAmong(legacy.flatMap(entry => entry.id ? [entry.id] : []));
-    for (const entry of legacy) if (!entry.id || !represented.has(entry.id)) output.push(entry.sample);
     return output;
   }
 

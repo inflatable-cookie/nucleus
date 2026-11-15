@@ -13,8 +13,8 @@ test('recovery replay reads the current merge owner and returns its exact promis
   let calls = 0;
   let finish!: (task: Task) => void;
   const pending = new Promise<Task>(resolve => { finish = resolve; });
-  resolution.mergePhase.replayHeldAttention = function (current) {
-    assert.equal(this, resolution.mergePhase);
+  resolution.hookReplay.replayHeldAttention = function (current) {
+    assert.equal(this, resolution.hookReplay);
     assert.equal(current, task);
     calls++;
     return pending;
@@ -26,7 +26,7 @@ test('recovery replay reads the current merge owner and returns its exact promis
 
   const failure = new Error('replay failed');
   const rejected = Promise.reject(failure);
-  resolution.mergePhase.replayHeldAttention = () => rejected;
+  resolution.hookReplay.replayHeldAttention = () => rejected;
   assert.equal(replay(task), rejected, 'a retained entry reads a replaced owner at the call boundary');
   await assert.rejects(rejected, error => error === failure);
 });

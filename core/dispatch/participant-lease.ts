@@ -1,5 +1,5 @@
 import { assignedThreadWaitReason, coordinative, participantToolRunIds } from '../recovery/task-reasons';
-import { recoveryEffects, isBlockingRecoveryEffect, recoveryEffectsRefusal } from '../recovery/recovery-effects';
+import { blockingRecoveryEffects, recoveryEffectsRefusal } from '../recovery/recovery-effects';
 import { executionParticipants } from '../machine/execution-participants';
 import { runBindsCurrentWork, type Run, type Task } from '../../shared/contracts';
 import { CLOSEOUT_BASE_REFRESH_REASON } from '../recovery/task-reasons';
@@ -210,8 +210,8 @@ export class ParticipantLease {
   /** Merge and closeout observe execution bindings, including retained runs. */
   async executionLease(t: Task, enclosing?: VerifiedEnclosingOperation, syncing = false, probe = false): Promise<boolean> {
     const refreshing = this.resolution.refreshingCloseoutHook(t, syncing);
-    const blocking = recoveryEffects(this.store,t,{enclosing,kinds:['operation','hook','run-delivery','review-delivery','publication','attention-notice']})
-      .filter(item => isBlockingRecoveryEffect(item) && !(refreshing && item.kind === 'hook' && item.identity === refreshing.id));
+    const blocking = blockingRecoveryEffects(this.store,t,{enclosing,kinds:['operation','hook','run-delivery','review-delivery','publication','attention-notice']})
+      .filter(item => !(refreshing && item.kind === 'hook' && item.identity === refreshing.id));
     if (blocking.length) {
       // A speculative probe (an external-merge read on a task that is nowhere near
       // a merge) records no wait: its fence is a silent no, and the owning phase

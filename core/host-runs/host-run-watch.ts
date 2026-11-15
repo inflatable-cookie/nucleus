@@ -15,6 +15,8 @@ import {
 } from "./host-run-endpoint-types";
 import {
   readCheckedHostRunFile,
+  readCheckedHostRunFileRead,
+  type HostRunFileRead,
 } from "./host-run-files";
 import type { HostRunScheduler } from "./host-run-scheduler";
 import {
@@ -41,6 +43,16 @@ interface HostRunWatchContext {
   scheduler: HostRunScheduler;
   nowMs: () => number;
   stateDir: string;
+}
+
+type HostRunRecordRead<T> =
+  | { state: "present"; value: T }
+  | Exclude<HostRunFileRead, { state: "present" }>;
+
+function readRecord<T>(read: HostRunFileRead, parse: (value: unknown) => T): HostRunRecordRead<T> {
+  if (read.state !== "present") return read;
+  try { return { state: "present", value: parse(JSON.parse(read.bytes.toString("utf8"))) }; }
+  catch (error) { return { state: "unreadable", reason: error instanceof Error ? error.message : String(error) }; }
 }
 
 export class HostRunWatch {
@@ -83,8 +95,13 @@ export class HostRunWatch {
   async pollRunOnce(runId: string): Promise<void> {
     const run = this.context.scheduler.get(runId);
     if (!run || run.state === "settled") { this.stopWatch(runId); return; }
-    const state = this.readSupervisorState(runId);
-    const result = this.readSupervisorResult(runId);
+    const stateRead = this.readSupervisorStateRead(runId);
+    const state = stateRead.state === "present" ? stateRead.value : null;
+    const resultRead = this.readSupervisorResultRead(runId);
+    // A torn or refused result is not evidence that the supervisor never wrote
+    // one. Keep watching until a verified read establishes presence or absence.
+    if (resultRead.state === "unreadable") return;
+    const result = resultRead.state === "present" ? resultRead.value : null;
     if (state?.commandPid && state.commandPgid && state.commandStartIdentity
         && (run.pid !== state.commandPid || run.processGroupId !== state.commandPgid || !startIdentityMatches(run.startIdentity ?? "", state.commandStartIdentity))) {
       try { this.context.scheduler.updateProcess(runId, { pid: state.commandPid, processGroupId: state.commandPgid, startIdentity: state.commandStartIdentity }); }
@@ -108,13 +125,13 @@ export class HostRunWatch {
       this.stopWatch(runId);
       return;
     }
-    if (run.state !== "running" || !run.launchedAt) return;
+    if (stateRead.state === "unreadable" || run.state !== "running" || !run.launchedAt) return;
     const supervisorProof = state ? await this.processMatchesRecordedIdentity(state.supervisorPid, state.supervisorStartIdentity) : false;
     if (this.context.stopping) return;
     // The identity proof awaited a child process: a result may have landed in
     // that window, and the next poll settles from it instead of this one
     // declaring the supervisor lost over a stale snapshot.
-    if (this.readSupervisorResult(runId)) return;
+    if (this.readSupervisorResultRead(runId).state !== "absent") return;
     const current = this.context.scheduler.get(runId);
     if (!current || current.state === "settled") { this.stopWatch(runId); return; }
     const groupAlive = state?.commandPgid ? !processGroupEmpty(state.commandPgid) : false;
@@ -123,7 +140,7 @@ export class HostRunWatch {
       // before declaring the supervisor lost, then re-check the record after
       // the await so a result that landed meanwhile settles instead.
       if (await this.processMatchesRecordedIdentity(state.supervisorPid, state.supervisorStartIdentity, true) !== false) return;
-      if (this.readSupervisorResult(runId)) return;
+      if (this.readSupervisorResultRead(runId).state !== "absent") return;
       const latest = this.context.scheduler.get(runId);
       if (!latest || latest.state === "settled") { this.stopWatch(runId); return; }
       this.settleLost(runId, "supervisor ended without a result record"); this.stopWatch(runId); return;
@@ -135,10 +152,13 @@ export class HostRunWatch {
   }
 
   readSupervisorState(runId: string): HostRunSupervisorState | null {
-    const raw = readCheckedHostRunFile(this.context.stateDir, ["runs", runId, "supervisor.state.json"]);
-    if (!raw) return null;
-    try { return hostRunSupervisorStateSchema.parse(JSON.parse(raw.toString("utf8"))); }
-    catch { return null; }
+    const read = this.readSupervisorStateRead(runId);
+    return read.state === "present" ? read.value : null;
+  }
+
+  private readSupervisorStateRead(runId: string): HostRunRecordRead<HostRunSupervisorState> {
+    return readRecord(readCheckedHostRunFileRead(this.context.stateDir, ["runs", runId, "supervisor.state.json"]),
+      value => hostRunSupervisorStateSchema.parse(value));
   }
 
   /** The run's CPU-reason sidecar, or null when missing or unreadable. */
@@ -148,10 +168,13 @@ export class HostRunWatch {
   }
 
   readSupervisorResult(runId: string): HostRunResult | null {
-    const raw = readCheckedHostRunFile(this.context.stateDir, ["runs", runId, "result.json"]);
-    if (!raw) return null;
-    try { return hostRunResultSchema.parse(JSON.parse(raw.toString("utf8"))); }
-    catch { return null; }
+    const read = this.readSupervisorResultRead(runId);
+    return read.state === "present" ? read.value : null;
+  }
+
+  private readSupervisorResultRead(runId: string): HostRunRecordRead<HostRunResult> {
+    return readRecord(readCheckedHostRunFileRead(this.context.stateDir, ["runs", runId, "result.json"]),
+      value => hostRunResultSchema.parse(value));
   }
 
   /**
