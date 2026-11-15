@@ -560,24 +560,42 @@ owner to the rules it enforces.
   (`dataDir`, `placement`, `ownedPathFor`, `ownedDataDirFor`) and its entry points
   (`findWorkspaces`, `inspectWorkspaceCreation`, `inspectOrphanWorkspace`) through
   the host at every internal call, so an instance override still governs the whole
-  operation exactly as the adapter's own self-calls did. `core/host/host-policies.ts`
+  operation exactly as the adapter's own self-calls did. One private
+  `placementRoots` list is where a checkout may have been allocated, so the three
+  identity proofs cannot disagree; the live data home is `checkout-volume`'s
+  `liveCheckoutDataDir`, never a second derivation of it; and `findWorkspaces`
+  matches the exact allocated path or the task's own slug and id, never a folder
+  whose name merely ends in `ns-<task id>`. An ancestry read that fails refuses on
+  its own cause (`gitAncestry`), not as two diverged lines. `core/host/host-policies.ts`
   keeps the core delegates and the review-entry busy reason; every host fact is read at the call, so a test's
   replaced placement, data home, process scan, progress hook or daemon surface is
   the one used.
-- `core/workspaces/workspace-continuation.ts` (`WorkspaceContinuation`) owns the retained
-  and closeout workspace policy: the continuation preflight's owned-path
-  admission and identity comparison, the process proof over the host's own
-  process table, and the closeout workspace's branch-off identity, its one
-  registration lookup and the exact-head and cleanliness proof a recovered
-  checkout must pass. It reads the host through a narrow surface — one
-  registration's handle and its refresh, the complete inventory and the native
-  worktree registration — and reaches `placement`, `ownedPathFor` and
-  `hostProcessListing` through the host at every internal call, so an instance
-  override still governs the whole operation exactly as the adapter's own
-  self-calls did. `core/host/host-policies.ts` keeps the five same-name plain-return
-  delegates; every refusal, its order and its text stay core's.
+- `core/workspaces/workspace-continuation/` owns two mechanisms that never share a
+  file. `host.ts` (`WorkspaceContinuation`) is the retained and closeout workspace
+  policy: the continuation preflight's owned-path admission and identity
+  comparison, the process proof over the host's own process table, and the
+  closeout workspace's branch-off identity, its one registration lookup and the
+  exact-head and cleanliness proof a recovered checkout must pass. It reads the
+  host through a narrow surface — one registration's handle and its refresh, the
+  complete inventory and the native worktree registration — and reaches
+  `placement`, `ownedPathFor` and `hostProcessListing` through the host at every
+  internal call, so an instance override still governs the whole operation exactly
+  as the adapter's own self-calls did. `accepted-pr.ts` (`AcceptedPrWorkspace`) is
+  the parked accepted PR's workspace reconciliation: an operator or coordinator
+  request, which a workspace identity alone answers, and a retained delivery,
+  whose full retained identity re-creates a replacement checkout. Those are two
+  named conditions that `acceptedPrWorkspaceMayApply` and
+  `reconcileAcceptedPrWorkspace` both read, so a pass is never advanced for one
+  state and acted on in another, and a host that cannot look a registration up is
+  attention rather than a second registration for one folder. `index.ts` is the
+  folder's barrel, so every import path is unchanged.
+  `core/host/host-policies.ts` keeps the five same-name plain-return delegates;
+  every refusal, its order and its text stay core's.
 - `core/workspaces/owned-workspace-archive.ts` and `core/workspaces/external-workspace-archive-policy.ts`
   own archive placement, ownership, source, participant and teardown decisions;
+  `core/workspaces/external-workspace-archive.ts` records one at-most-once catalog
+  operation per registration, and whether a record reached no native request at
+  all is its typed `deferredByAdmission` fact, never a phrase in its `detail`;
   `core/workspaces/owned-workspace-threads.ts` owns one workspace's thread
   inventory and the ownership and idleness facts read from it.
   They read native workspace and thread observations through the host at their

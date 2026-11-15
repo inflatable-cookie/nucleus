@@ -1,5 +1,31 @@
 # Code-module quality tables
 
+- nucleus#1250 (floor 7, 2026-11-15): the three floor-7 core/workspaces rows were simplified and split along
+  the seams their rows named. `core/workspaces/external-workspace-archive.ts` is one pass in four named steps —
+  the task's own debt (`owesCatalogArchive`), the complete same-path inventory (`readCatalogRegistrations`), one
+  registration's turn (`archiveOneRegistration`) and the one record of its outcome (`settleNativeOutcome`) — and a
+  breaker deferral that never reached Paseo is the record's new typed `deferredByAdmission` fact
+  (`shared/schema/workspace.ts`), not a phrase in `detail`. The pre-fix detail-prefix branch is gone with
+  `test/archive-backpressure-retry.test.ts`'s one test that proved it; a cleanup cause is cleared only while the
+  field holds the line this effect itself derived; and observing an unknown answer answers `absent`, `present` or
+  an unreadable cause instead of the error text as a value. `core/workspaces/workspace-lifecycle.ts` has one
+  private `placementRoots` list, takes the live data home from `checkout-volume`'s `liveCheckoutDataDir`, matches a
+  registration by the exact allocated path or the task's own slug and id instead of a folder's basename, answers
+  the same-path registration check as reuse/create/unreadable (a skipped check is on the creation step trail), and
+  reads ancestry through the shared `gitAncestry`, so an unreadable read refuses on its own cause instead of
+  reading as two diverged lines. `core/workspaces/workspace-continuation.ts` is the folder
+  `core/workspaces/workspace-continuation/`: the retained and closeout host policy (`host.ts`, 9), the parked
+  accepted PR's reconciliation (`accepted-pr.ts`, 9) and the barrel that keeps every import path (`index.ts`, 10).
+  The reconciliation is one shared parked state with the operator's request and the retained delivery as two named
+  conditions that the may-apply check and the reconciliation both read; a host that cannot look a registration up
+  is attention instead of reading as none-found and recovering a second registration for one folder. Boundary
+  tests were added for the two typed facts the rows named (the deferral flag, the ancestry refusal), the
+  registration decision and the accepted-PR decision. Two follow-ups are named in the PR rather than built here:
+  the parked reconciliation reason is still read as text (a durable typed flag would silently stop reconciling
+  tasks parked before it existed), and the continuation preflight ignores the answer to `workspace.refresh()`
+  where the process proof treats it as unreadable. `shared/schema/workspace.ts` keeps its 7 with its `loc` and
+  evidence moved to the new lines.
+
 - nucleus#1244 (floor 7, 2026-11-15): the four floor-7 core/review rows were split, consolidated or
   deleted along the seams their rows named, and re-rated at this PR's head. `core/review/review-continuation.ts`
   is now the folder `core/review/review-continuation/`: the composition and the one authorized reviewer
