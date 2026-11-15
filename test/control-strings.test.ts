@@ -674,7 +674,7 @@ const PARSED: ParsedText[] = [
   { site: 'operator question kinds', reads: ["event.detail.includes('kind release')", "event.detail.includes('kind budget')"], writers: ['${question.id}: kind ${question.kind}; stop ${task.resolution.stop?.reason ?? \'none\'}; head ${task.prHead ?? \'none\'}; question ${digest('] },
   { site: 'operator question intent', reads: ['`question ${digest(question.question)} (${question.question.length} chars)`', '`options ${question.choices.map(choice => choice.label).join(\' | \') || \'none\'}`'] },
   { site: 'held proof answer', reads: ["event.detail.includes('Leave held for the planner')", "result.reply.choice === 'Leave held for the planner'"], writers: ["label: 'Leave held for the planner'"] },
-  { site: 'proof GO answer', reads: ['`${questionId}: GO — run the qualification`', '`${goQuestionId}: GO — run the qualification`', "answer.startsWith('GO — run the qualification')"], writers: ["label: 'GO — run the qualification'"] },
+  { site: 'proof GO answer', reads: ['`${questionId}: GO — run the qualification`', "answer.startsWith('GO — run the qualification')"], writers: ["label: 'GO — run the qualification'"] },
   { site: 'absent catalog archive', reads: ["event.detail.includes('observed absent from the catalog and disk without a Queue archive intent')"] },
   { site: 'absent creation', reads: ["event.detail.includes(` ${run.role} creation`)"] },
   { site: 'route stop replay', reads: ["kind LIKE 'route_stop_%'"], writers: ['"route_stop_settled"', '"route_stop_intent"', '"route_stop_uncertain"', '"route_stop_sent"'] },

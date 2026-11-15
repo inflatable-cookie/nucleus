@@ -17,6 +17,7 @@ import {
   type Task,
 } from "../shared/contracts";
 import type { Adapter, AgentObservation, OriginAgent } from "../core/host";
+import { formatAgentId } from "../shared/agent-identity";
 import type { ResolutionAdapter } from "../core/resolution";
 
 /**
@@ -258,6 +259,75 @@ test("an unreadable owner thread defers its project to the next start, and the m
       "flaky",
     );
     assert.equal(f.store.getMeta("projectOwnersToPlanners"), "done");
+  } finally {
+    await f.close();
+  }
+});
+
+/** An old project row whose owner is a pre-host unqualified thread id. */
+function writeLegacyOwner(store: Store, key: string, agentId: string) {
+  writeLegacyProject(store, key, { agentId, assignedBy: "operator", assignedAt: "2026-10-03T00:00:00.000Z", note: "Spec 042 seed" });
+}
+
+test("a legacy owner is never retired from a host that cannot hold the thread", async () => {
+  const f = migrationFixture({});
+  try {
+    writeLegacyOwner(f.store, "legacy-owner", "legacy-thread");
+    // The only host in evidence is a T3Code host, and a bare legacy id belongs to
+    // Paseo: its silence proves nothing about that thread.
+    (f.engine.adapter as unknown as { hostId: string }).hostId = "t3code:synthetic";
+    await f.engine.migrateProjectOwnersToPlanners();
+    assert.equal(f.store.projectByKey("legacy-owner")!.owner?.agentId, "legacy-thread", "a wrong-host read is not absence");
+    assert.ok(!f.store.getMeta("projectOwnersToPlanners"), "no marker while the owner is unresolved");
+    // On a Paseo host the same absence is the thread's own host answering, so the record retires.
+    (f.engine.adapter as unknown as { hostId: string }).hostId = "paseo:synthetic";
+    await f.engine.migrateProjectOwnersToPlanners();
+    assert.equal(f.store.projectByKey("legacy-owner")!.owner, null, "the owning host proved the thread missing");
+    assert.equal(f.store.getMeta("projectOwnersToPlanners"), "done");
+  } finally {
+    await f.close();
+  }
+});
+
+test("a seeded owner resolves on its own host and an unreadable one stays unknown", async () => {
+  const f = migrationFixture({});
+  const adapter = f.engine.adapter as unknown as {
+    hostId: string;
+    listLiveAgents?: () => Promise<Array<{ id: string; title: string; workspaceId: string | null }>>;
+    originAgent: (id: string) => Promise<OriginAgent | null>;
+  };
+  try {
+    writeLegacyOwner(f.store, "seeded-owner", "abcd1234");
+    // No inventory capability: the seed carries no host, so it cannot be proven absent.
+    await f.engine.migrateProjectOwnersToPlanners();
+    assert.equal(f.store.projectByKey("seeded-owner")!.owner?.agentId, "abcd1234");
+    adapter.listLiveAgents = async () => [{ id: "abcd1234ff", title: "Owner", workspaceId: null }];
+    await f.engine.migrateProjectOwnersToPlanners();
+    assert.equal(f.store.projectByKey("seeded-owner")!.planner?.agentId, "abcd1234ff", "the one live thread resolves the seed");
+    assert.equal(f.store.getMeta("projectOwnersToPlanners"), "done");
+  } finally {
+    await f.close();
+  }
+});
+
+test("a qualified owner is read on its own host, not the connected one", async () => {
+  const f = migrationFixture({});
+  const adapter = f.engine.adapter as unknown as {
+    originAgent: (id: string) => Promise<OriginAgent | null>;
+  };
+  const readOn: Array<string | undefined> = [];
+  try {
+    const owner = formatAgentId("paseo:owner-host", "owner-thread");
+    writeLegacyOwner(f.store, "qualified-owner", owner);
+    adapter.originAgent = async (id) => {
+      readOn.push(f.engine.activeHostId);
+      return id === "owner-thread" ? { id, workspaceId: "planning", title: "Owner", archived: false } : null;
+    };
+    // The connected host is a different Paseo host; the qualified owner lives on its own.
+    (f.engine.adapter as unknown as { hostId: string }).hostId = "paseo:connected";
+    await f.engine.migrateProjectOwnersToPlanners();
+    assert.deepEqual(readOn, ["paseo:owner-host"], "the read runs in the owner's own host context");
+    assert.equal(f.store.projectByKey("qualified-owner")!.planner?.agentId, owner);
   } finally {
     await f.close();
   }

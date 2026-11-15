@@ -13,6 +13,7 @@ import { isDelegableQuestionKind,operatorQuestionFor,operatorQuestionStep,type O
 import { delegatedAuthorityNote,type DelegatedAnswer } from './question-delegation';
 import type { Resolution } from '../resolution';
 import { digest } from '../store/store';
+import { busyGoAnswerRefusal } from '../qa/proof-only-go';
 
 export class Questions {
   constructor(readonly resolution: Resolution) {}
@@ -118,7 +119,7 @@ export class Questions {
       if (!id || !events.some(event => event.kind === 'operator_question_answered' && event.detail.startsWith(`${id}:`))) continue;
       if (events.some(event => event.kind === 'operator_question_applied' && event.detail.startsWith(`${id}:`))) continue;
       const refusal = events.findLast(event => event.kind === 'operator_question_refused' && event.detail.startsWith(`${id}:`));
-      if (!refusal || !/worker running|capacity/i.test(refusal.detail)) continue;
+      if (!refusal || !busyGoAnswerRefusal(refusal.detail)) continue;
       const link = events.find(event => event.kind === 'operator_question_decision' && event.detail.startsWith(`${id}: decision `));
       const decisionId = link?.detail.match(/decision (\S+)/)?.[1]?.replace(/;$/, '');
       if (!decisionId) continue;

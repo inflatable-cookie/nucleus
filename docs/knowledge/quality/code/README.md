@@ -31,6 +31,39 @@
   recovery writer/reader identity with its repeat occurrence, the task-target read, the recorded ticket
   refusal and the recorded decider-archive failure. The
   `shared/schema/questions.ts` row keeps its 9 with its evidence paths moved to the new prefix-match owner.
+- nucleus#1240 (floor 7, 2026-11-15): caller provenance (7: O1 T1 F2 P1 Pr2) keeps its bounded
+  historical lineage while shortening its contract note and reusing the identity matcher. QA inspection
+  (9: O2 T2 F2 P1 Pr2) uses the shared supervisor stop owner, holds unreadable records, and reports
+  best-effort reconciliation failures while returning the stored run result. Proof activation (7: O1 T1
+  F2 P1 Pr2) uses `proof-only-go.ts` for question identity and exact answer-event selection; that owner
+  remains at 9 (O2 T1 F2 P2 Pr2) with the typed GO wait and shared refusal rule. The explicit warning
+  is the named failure-visibility exception; no admission or ownership rule changed.
+
+- nucleus#1239 (floor 7, 2026-11-15): the four floor-7 core/qa rows were consolidated or hardened along the
+  seams their rows named, and re-rated at this PR's head. A detached supervisor's process lifecycle now has
+  one owner, `core/qa/supervisor-process.ts`: the spawn shape (entry, the entry's argv with the run token
+  last, repository-root cwd) and the stale stop with its proof are shared by milestone QA, project
+  validation and the host-run endpoint, and identity is always proved through the start-identity owner, so
+  the command-line substring test is gone. `core/qa/project-validation.ts` delegates both halves, and a
+  throw that escapes its background gate is recorded on the task (`project_validation_gate_fault`) instead
+  of vanishing with the promise; its proportion stays 1, so it scores 9. `core/qa/project-qa-inspection.ts`
+  reads every supervision record once and holds a run whose plan or heartbeat exists but cannot be read
+  rather than reporting it never started (9). The duplicate owner-only reader the two supervision-file modules
+  carried is now `core/machine/owned-read.ts` (10), which keeps a proven absence, an unreadable record and the
+  record itself as three answers; `core/qa/project-validation-supervisor.ts` rises to 9 with its
+  tolerant-null reader named, and `core/machine/owned-file.mjs` keeps its row because publication did not
+  change. `core/qa/proof-only-go.ts`
+  decides the GO wait from the reviewer run's typed `proofOnly` intent instead of a substring of the prompt
+  it was handed, and the busy-answer refusal rule it shares with the question service's resume sweep has one
+  owner, so a prompt rewording can no longer close the wait (9). `core/qa/effigy-run-control.ts` loses the
+  follow-logs, capability-probe and help-classifier paths that had no product caller, lets a payload's own
+  record always decide before producer text, and bounds the output it collects so a producer past the bound
+  has no answer to read (9; typed facts stays 1 for the one remaining text read, which applies only to an
+  answer with no payload at all). `core/qa/project-qa-launch.ts` keeps its row at 10 and the host-run
+  endpoint and `core/questions/questions.ts` rows are unchanged, as they moved only to the new owners. New
+  rows: `core/qa/supervisor-process.ts` (9, proof of its spawn shape in `test/supervisor-process.test.ts`
+  and of its stops through both families' fixtures) and `core/machine/owned-read.ts` (10, boundary test in
+  `test/owned-file.test.ts`), plus boundary tests for the supervision-file answers and the GO wait.
 
 - nucleus#1235 (floor 7, 2026-11-15): PR state display now reads the task's recorded PR number and canonical repository, and failed reads are reported with task IDs while successful tasks remain visible (10: O2 T2 F2 P2 Pr2; test/pr-status.test.ts covers recorded identity, merged-task omission and failure context). Review publication entry points share one single-flight owner, while comment and formal-review reconciliation remain separate for their different remote evidence; formal HTTP 401/403 errors now carry a typed status rather than being classified by message text (reviews 8: O1 T2 F2 P1 Pr2; boundary coverage in test/formal-reviews.test.ts). The changed formal-review transport row remains 9 with typed HTTP status coverage in test/formal-review-http.test.ts. The shared dispatcher is the named consolidation; retaining distinct remote reconciliation is the remaining ownership seam.
 
@@ -63,6 +96,27 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
 
 ## Re-rates
 
+- nucleus#1238 (floor 7, 2026-11-15): the four floor-7 planning modules were split, hardened or simplified along
+their named seams and re-rated at this PR's head. `core/planning/operations.ts` (8) keeps acceptance,
+scheduling, resume and settlement, and its pre-send receipt proof is the new owner
+`core/planning/operation-receipts.ts` (9): a typed `ReceiptProof` names the receipt it records, the two long
+conjunctions became one shared unchanged-attempt predicate plus a parked-restart branch proved by its own
+evidence hashes, and a receipt that cannot be built is dropped by a documented catch, which is why failure stays
+1 there and in `operations.ts` alongside its record-only lane catches. The lane key decodes its payload through
+the shared schemas and the perform step reuses one re-key payload shape. `core/planning/repository-rekey.ts` (9)
+now describes each re-keyed family once in one catalogue — read, identity rule, path claim, move — so the plan,
+the occupancy checks and the apply each read a family's stored shape once, and a record that does not decode
+refuses the step with the named `concurrent_change` code and an explanation instead of being skipped while the
+receipt reports success; proportion stays 1 for the length twelve families require.
+`core/planning/project-lifecycle.ts` (9) reads one typed owner-liveness state: a qualified owner is observed on
+its own host and an unqualified legacy thread only on a Paseo host, so wrong-host silence, a missing adapter
+read and an ambiguous seed are unknown and never retire the record; the bare-legacy-host rule is
+`core/planning/project-agents.ts`' one owner (its row keeps 8), and the migration still re-reads every
+unresolved owner per sweep, hence proportion 1. `core/planning/brief-lane-documents.ts` (10) takes its keys
+from the task's typed lane-document declaration alone, so the prose and `## Read` inference is gone and an
+unresolvable declaration is reported. Boundary tests cover the receipt proof, the three owner-liveness host
+cases and the undecodable-row refusal; `test/planning-records-2.test.ts` replaces the prose-inference test with
+the typed declaration's.
 - nucleus#1237 (floor 7, 2026-11-15; implementation commit `91c8a5b72a917dedda5d3fdc7238cfaee2ebcd42`): `merge-gates.ts` now shares one accepted-head predicate across both hook gates (7: O1 T1 F2 P1 Pr2); `integration-turns.ts` uses the shared blocking-effects selector (7: O1 T0 F2 P2 Pr2); `merge-phase.ts` now only restores durable merge intent, while unchanged-check recovery belongs to `CheckWaits` and hook replay lifecycle decisions sit beside hook replay proof (7: O2 T0 F1 P2 Pr2). `hook-replay.ts` is re-rated at 8 with lifecycle settlement included, and the `check-waits.ts` row records its added gate owner. Existing exact-head, integration-turn, merge-intent and automatic-replay boundary tests remain in place; no behavior or test assertions were changed.
 
 - nucleus#1233 (floor 7, 2026-11-15): the three floor-7 dispatch modules were consolidated and re-rated at
