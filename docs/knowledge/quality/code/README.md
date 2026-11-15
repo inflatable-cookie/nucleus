@@ -65,6 +65,29 @@
   and of its stops through both families' fixtures) and `core/machine/owned-read.ts` (10, boundary test in
   `test/owned-file.test.ts`), plus boundary tests for the supervision-file answers and the GO wait.
 
+- nucleus#1241 (floor 7, 2026-11-15): the question service half of the two floor-7 question modules was
+  split along the seam its row named, and re-rated at this PR's head; the ladder half had already been
+  delivered by nucleus#1242, whose `core/questions/ladder/` owners this PR imports and does not change.
+  `core/questions/questions.ts` (9: O2 T2 F2 P2 Pr1) is now the question service's shared in-flight state
+  only: the raises this process holds, the answers it recorded for them, the asks it is recovering and the
+  questions it is observing. Raising split by mechanism: `question-raises.ts` (9: O2 T2 F1 P2 Pr2) decides a
+  question is due and writes its intent, `question-raise-routes.ts` (9) owns where one raise goes — native
+  prompt, MCP ask, board decision or the ladder — the one deferred each route resolves and the native request
+  identity it records once, `question-answers.ts` (8: O2 T1 F1 P2 Pr2) owns the recorded outcome and the
+  ordinary control an answer applies, and `question-recovery.ts` (9) runs the resume sweep over the recorded
+  answers, board decisions, delegated routes and Queue payloads, resuming each readable route in record order
+  before it names an unreadable one. `question-answers.ts` stays at 8 because a free-text answer is still
+  matched to a choice by label prefix, which is the shared question schema's own boundary (N6's
+  `shared/schema/questions.ts` row keeps its 9 and had that citation refreshed to the owner that still reads
+  it). `core/questions/question-events.ts` (9: O2 T2 F1 P2 Pr2) decodes every operator-question record once:
+  the raise intent and the exact question it names, the decision link and its reason, the marks that fence a
+  re-raise, the native request identity and the payloads a restart recovers. Failure stays 1 on the new owners
+  because an unreadable recorded payload is an absent fact rather than a distinct unknown, which is why none
+  of them is rated 10. No behaviour, guard or protocol rule changed: the split moved code and replaced ad-hoc
+  event slicing with the one decoder. Boundary tests are `test/question-events.test.ts` and
+  `test/question-raise-routes.test.ts`; the existing question tests keep their assertions and reach the
+  owners directly.
+
 - nucleus#1235 (floor 7, 2026-11-15): PR state display now reads the task's recorded PR number and canonical repository, and failed reads are reported with task IDs while successful tasks remain visible (10: O2 T2 F2 P2 Pr2; test/pr-status.test.ts covers recorded identity, merged-task omission and failure context). Review publication entry points share one single-flight owner, while comment and formal-review reconciliation remain separate for their different remote evidence; formal HTTP 401/403 errors now carry a typed status rather than being classified by message text (reviews 8: O1 T2 F2 P1 Pr2; boundary coverage in test/formal-reviews.test.ts). The changed formal-review transport row remains 9 with typed HTTP status coverage in test/formal-review-http.test.ts. The shared dispatcher is the named consolidation; retaining distinct remote reconciliation is the remaining ownership seam.
 
 The product-code ratings: 588 modules in `N1.csv`–`N6.csv` (N1 orchestration 96, N2 task lifecycle

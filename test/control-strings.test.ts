@@ -668,11 +668,11 @@ const PARSED: ParsedText[] = [
   // nucleus#1242: the payload is the record, so the intent line is read once, as its fallback.
   { site: 'ladder run', re: /run (\S+?);/, sample: 'e-1: cause x; run r-1; question d (1 chars)' },
   { site: 'ladder ordinary answer', reads: ['`${id}: answered by ordinary `'], writers: ['${escalation.id}: answered by ordinary ${action}: task control moved the task', '${id}: answered by ordinary progress: the task merged or ended first'] },
-  { site: 'escalation missed', reads: ['`${id}: no delegated answer was produced;`', '`${escalation.id}: no delegated answer was produced;`', '`${decision.id}: no delegated answer was produced;`'],
+  { site: 'escalation missed', reads: ['`${escalation.id}: no delegated answer was produced;`', '`${id}: no delegated answer was produced;`', "startsWith('no delegated answer was produced;')"],
     writers: ['${id}: no delegated answer was produced; the escalation stays open for the planner', '${decision.id}: no delegated answer was produced; the question stays on its existing surface'] },
   { site: 'escalation waiting', reads: ['current.resolution.stop?.reason !== expected.stopReason', 'current.resolution.stop.detail !== expected.stopDetail'], writers: ['`Escalation ${id}: waiting for operator decision ${wait.target}`', '`Escalation ${id}: waiting until ${wait.target}`', '`Escalation ${id}: waiting for task ${prerequisite.reference ?? prerequisite.id} to settle`'] },
-  { site: 'operator question kinds', reads: ["event.detail.includes('kind release')", "event.detail.includes('kind budget')"], writers: ['${question.id}: kind ${question.kind}; stop ${task.resolution.stop?.reason ?? \'none\'}; head ${task.prHead ?? \'none\'}; question ${digest('] },
-  { site: 'operator question intent', reads: ['`question ${digest(question.question)} (${question.question.length} chars)`', '`options ${question.choices.map(choice => choice.label).join(\' | \') || \'none\'}`'] },
+  { site: 'operator question kinds', reads: ["record.intent?.kind === 'release'", "event.detail.includes('kind budget')"], writers: ['${question.id}: kind ${question.kind}; stop ${task.resolution.stop?.reason ?? \'none\'}; head ${task.prHead ?? \'none\'}; question ${digest('] },
+  { site: 'operator question intent', reads: ['intent.questionDigest === digest(question.question)', 'intent.questionLength === question.question.length', 'options ${intentOptions(options)}'] },
   { site: 'held proof answer', reads: ["event.detail.includes('Leave held for the planner')", "result.reply.choice === 'Leave held for the planner'"], writers: ["label: 'Leave held for the planner'"] },
   { site: 'proof GO answer', reads: ['`${questionId}: GO — run the qualification`', "answer.startsWith('GO — run the qualification')"], writers: ["label: 'GO — run the qualification'"] },
   { site: 'absent catalog archive', reads: ["event.detail.includes('observed absent from the catalog and disk without a Queue archive intent')"] },
@@ -705,7 +705,7 @@ const SITES: Record<string, number> = {
   '/cause ([0-9a-f]{64})/': 1,
   '${id}: cause ${input.cause}; run ${input.runId ?? \'worker\'}; question ${digest(': 1,
   '/run (\\S+?);/': 1,
-  '${question.id}: kind ${question.kind}; stop ${task.resolution.stop?.reason ?? \'none\'}; head ${task.prHead ?? \'none\'}; question ${digest(': 2,
+  '${question.id}: kind ${question.kind}; stop ${task.resolution.stop?.reason ?? \'none\'}; head ${task.prHead ?? \'none\'}; question ${digest(': 1,
   '"route_stop_settled"': 2,
   '"route_stop_intent"': 2,
   "return 'Source approval requires an exact-head environment blocked review with findings and named awaiting proofs; if only release gates remain, report ready_to_merge'": 1,
@@ -775,6 +775,13 @@ const KIND_TEMPLATES = ['`review_delivery_${status}`'];
 const directRead = /\bevent\.kind\s*[!=]==?\s*(['"])([a-z][a-z0-9_]+)\1/g, listRead = /\[([^\]\n]+)\]\.includes\(event\.kind\)/g;
 /** A decoded lifecycle reads its kinds as `switch` cases, which is the same reading fact. */
 const switchRead = /\bcase\s*(['"])([a-z][a-z0-9_]+)\1\s*:/g;
+/**
+ * A shared record reader takes its kind as an argument, either with the events it
+ * reads or as the kind a helper was handed. Both are one reading site for the kind.
+ */
+const recordRead = /\b(?:recordsOf|firstOf|lastOf|eventDetail|eventsOfKind)\(\s*(?:events\s*,\s*)?(['"])([a-z][a-z0-9_]+)\1/g;
+/** A decoded lifecycle reads the kinds one id wrote as the set it built. */
+const kindsRead = /\bkinds\.has\(\s*(['"])([a-z][a-z0-9_]+)\1\s*\)/g;
 
 test('census: no pinned event kind lost a reader', () => {
   const reads = new Map<string, number>();
@@ -782,6 +789,8 @@ test('census: no pinned event kind lost a reader', () => {
   for (const match of source().matchAll(directRead)) read(match[2]!);
   for (const match of source().matchAll(listRead)) for (const kind of match[1]!.matchAll(/['"]([a-z][a-z0-9_]+)['"]/g)) read(kind[1]!);
   for (const match of source().matchAll(switchRead)) read(match[2]!);
+  for (const match of source().matchAll(recordRead)) read(match[2]!);
+  for (const match of source().matchAll(kindsRead)) read(match[2]!);
   const lost = EVENT_KINDS.filter(row => (reads.get(row.kind) ?? 0) < row.reads).map(row => `${row.kind}: ${reads.get(row.kind) ?? 0} of ${row.reads}`);
   assert.deepEqual(lost, [], 'a reader was renamed or removed');
 });
