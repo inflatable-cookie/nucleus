@@ -650,7 +650,9 @@ const PARSED: ParsedText[] = [
   { site: 'source approval empty proofs', writers: ["return 'Source approval requires an exact-head environment blocked review with findings and named awaiting proofs; if only release gates remain, report ready_to_merge'"] },
   { site: 'ambiguous reference', reads: ["error.message.startsWith('Ambiguous task reference')"], writers: ['Ambiguous task reference; use repository and number'] },
   { site: 'provider MCP refusal', re: /Provider '.+' does not support MCP servers/, sample: "Provider 'x' does not support MCP servers" },
-  { site: 'global capacity', reads: ['capacity.startsWith("Global")'], writers: ['Global concurrent task-slot limit reached'] },
+  // nucleus#1230: the refusing pool is a typed limit (`capacityLimitFor`), so no reader
+  // compares this sentence; it stays pinned as the limit's written name.
+  { site: 'global capacity', writers: ['Global concurrent task-slot limit reached'] },
   { site: 'transient provider wait', reads: ['stop.detail.startsWith(TRANSIENT_PROVIDER_WAIT)'], writers: ["const TRANSIENT_PROVIDER_WAIT = 'Transient provider error'"] },
   { site: 'unverified provider refusal', reads: ['stop.detail.startsWith(`Reviewer run ${run.id} provider refusal is unverified`)'], writers: ['`Reviewer run ${run.id} provider refusal is unverified: ${read.gap}`'] },
   { site: 'legacy delegated answerer', re: /^(planner|decider) (.*)$/, sample: 'planner agent-1' },
@@ -697,7 +699,6 @@ const SITES: Record<string, number> = {
   't.reason === ACCEPTED_PR_RECONCILIATION_REASON': 2,
   "PR must be open, ready, and match the task's branch and base": 1,
   'Worker must remain on queue-owned branch ${task.branch}': 5,
-  'capacity.startsWith("Global")': 2,
   '/decision (\\S+)/': 3,
   'decision ${': 13,
   '/decision ([^;\\s]+)/': 3,
