@@ -898,6 +898,7 @@ test("admission RPC metrics stay bounded and name no run, reservation or path", 
 function fakeAdapter(dir: string): Adapter {
   return {
     client: { isConnected: true },
+    isConnected: () => true,
     hostId: "fixture-host",
     socketPath: join(dir, "callback.sock"),
     helperPath: join(dir, "worker-helper.mjs"),

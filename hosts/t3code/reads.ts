@@ -7,11 +7,46 @@ import { decode, shellSnapshot, projection, threadSnapshot, threadSnapshotCovera
 
 /**
  * What one thread snapshot is for. Observation needs the thread record, its runs
- * and its runtime requests; a transcript read needs every turn item and refuses
- * a bounded window that left history behind. No read requests a full snapshot.
+ * and its runtime requests; a window read needs the newest bounded suffix of the
+ * timeline; a transcript read needs every turn item and refuses a bounded window
+ * that left history behind. No read requests a full snapshot.
  */
-export type ThreadReadKind = 'observation' | 'transcript';
+export type ThreadReadKind = 'observation' | 'window' | 'transcript';
 export type Projection = z.infer<typeof projection>;
+/**
+ * One thread snapshot as the nightly answered it: the projection it sent and
+ * whether its own window left earlier history behind (`hasMoreHistory`).
+ */
+export interface ThreadSnapshotRead {
+  projection: Projection;
+  paged: boolean;
+}
+/** Native executions use shared tool kinds; background commands, children and dynamic tools can outlive their run. */
+const nativeToolKinds: Record<string, string> = { command_execution: 'shell', file_change: 'edit',
+  file_search: 'search', web_search: 'fetch', subagent: 'subagent', dynamic_tool: 'dynamic_tool' };
+/** The one identity a native execution item names, as text the reader can compare. */
+const nativeToolIdentity = (item: Record<string, unknown>): string => {
+  const value = item.input ?? item.fileName ?? item.pattern ?? item.patterns ?? item.subagentId ?? item.toolName;
+  if (typeof value === 'string') return value.slice(0, 200);
+  if (Array.isArray(value)) return value.filter(part => typeof part === 'string').join(' ').slice(0, 200);
+  return '';
+};
+type TimelineRow = { position: number; sourceThreadId?: string; sourceItemId: string; item: { id: string; type: string; ordinal: number;
+  runId?: string | null; createdAt?: string; updatedAt?: string } };
+/** This thread's own rendered rows, oldest first: an inherited row belongs to another agent. */
+const localRows = (rows: readonly TimelineRow[], threadId: string): TimelineRow[] =>
+  rows.filter(row => (row.sourceThreadId ?? threadId) === threadId && row.item).sort((a, b) => a.position - b.position);
+/** One row as the shared timeline entry, with a native execution translated into a tool entry. */
+const timelineEntry = (row: TimelineRow, fallback: string): import('../../shared/host').HostTimelineEntry => {
+  const item = row.item as typeof row.item & Record<string, unknown>;
+  const timestamp = item.updatedAt ?? item.createdAt ?? fallback;
+  const turnId = item.runId ? { turnId: item.runId } : {};
+  const kind = nativeToolKinds[item.type];
+  if (kind === undefined) return { timestamp, ...turnId, item };
+  const name = typeof item.title === 'string' && item.title.trim() ? item.title : item.type;
+  return { timestamp, ...turnId, item: { type: 'tool_call', callId: item.id, name, status: String(item.status ?? ''),
+    detail: { type: kind, command: nativeToolIdentity(item), nativeType: item.type } } };
+};
 /** The statuses that mean a run is live: the only ones a settle, a steer or a stop waits for. */
 export const activeStatuses = new Set(['preparing', 'queued', 'starting', 'running', 'waiting']);
 const inventoryReadAttempts = 5;
@@ -71,34 +106,45 @@ export class T3Reads {
    * shell presents, and every pending or waiting runtime request (nucleus#1188).
    * Older settled runs, resolved requests and the timeline before the window are
    * absent, and none of them changes a status, an active run, a pending request
-   * or a settle marker. Transcript reads also opt in, then refuse an incomplete
-   * projection rather than requesting unbounded history. Both reads strictly
-   * decode the coverage fields.
+   * or a settle marker. A window read takes the same bounded snapshot and hands
+   * back the newest timeline suffix the nightly kept; a transcript read refuses
+   * an incomplete projection rather than requesting unbounded history. Every
+   * read strictly decodes the coverage fields.
    */
-
   async readProjection(threadId: string, kind: ThreadReadKind = 'transcript'): Promise<Projection> {
-    let snapshot: Projection | undefined;
+    return (await this.readThreadSnapshot(threadId, kind)).projection;
+  }
+
+  /** One thread snapshot plus the nightly's own window coverage. */
+  private async readThreadSnapshot(threadId: string, kind: ThreadReadKind): Promise<ThreadSnapshotRead> {
+    let read: ThreadSnapshotRead | undefined;
     try {
       await this.core.rpc.readStream('orchestration.subscribeThread', {
         threadId, requestCompletionMarker: true, acceptBoundedSnapshot: true,
       }, value => {
         const item = decode(z.object({ kind: z.string() }).passthrough(), value, 'subscribeThread');
         if (item.kind === 'snapshot') {
-          if (snapshot) throw new T3CompatibilityError('subscribeThread: duplicate authoritative snapshot');
+          if (read) throw new T3CompatibilityError('subscribeThread: duplicate authoritative snapshot');
           const complete = decode(threadSnapshot, item, 'subscribeThread');
           const coverage = threadSnapshotCoverage(complete);
           if (kind === 'transcript' && (coverage.paged || coverage.omitsTurnItems))
             throw new T3CompatibilityError('subscribeThread: incomplete projection');
-          snapshot = complete.projection;
+          // A window read consumes the turn items themselves. The compact form of
+          // those rows (`turnItemsOmitLocalVisible`) cannot be restored here, so a
+          // nightly that sent it would hand back a silent partial window.
+          if (kind === 'window' && coverage.omitsTurnItems)
+            throw new T3CompatibilityError('subscribeThread.turnItemsOmitLocalVisible');
+          const snapshot = complete.projection;
           if (snapshot.thread.id !== threadId) throw new T3CompatibilityError('subscribeThread.thread.id');
+          read = { projection: snapshot, paged: coverage.paged };
         } else if (item.kind === 'synchronized') {
-          if (!snapshot) throw new T3CompatibilityError('subscribeThread.projection missing');
+          if (!read) throw new T3CompatibilityError('subscribeThread.projection missing');
           return true;
         } else throw new T3CompatibilityError('subscribeThread: state changed during snapshot');
         return false;
       });
       this.pendingThreadShape = false;
-      return snapshot!;
+      return read!;
     } catch (error) {
       if (this.pendingThreadShape && error instanceof T3CompatibilityError) {
         this.compatibilityError = error.message;
@@ -169,39 +215,69 @@ export class T3Reads {
   }
   async listLiveAgents() { return (await this.inventory()).threads.filter(t => !t.archivedAt && !t.deletedAt).map(t => ({ id: t.id, title: t.title, workspaceId: this.workspaceFor(t), labels: this.core.state.read().agents[t.id]?.labels ?? {} })); }
 
-  async agentTimelinePage(id: string, limit = 100): Promise<HostTimelinePage | null> {
-    try {
-      // The canonical projection is the thread's complete turn list, so the
-      // coverage contract is positive by construction: no gap, no reset, no
-      // newer history; the epoch is the thread identity and the cursors are
-      // positions in the full list, stable between doubling reads.
-      const p = await this.readProjection(id);
-      const start = Math.max(0, p.turnItems.length - limit);
-      const entries = p.turnItems.slice(start).map(item => ({ timestamp: item.updatedAt ?? item.createdAt ?? p.updatedAt, item }));
-      return { entries, hasOlder: start > 0, gap: false, staleCursor: false, reset: false, hasNewer: false,
-        epoch: id, startCursor: entries.length ? { epoch: id, seq: start + 1 } : null,
-        endCursor: entries.length ? { epoch: id, seq: p.turnItems.length } : null, projection: 'canonical' };
-    } catch { return null; }
+  /**
+   * The newest bounded tool window, not a reconstruction of thread history.
+   * Retained request/interrupt dependencies are not rendered window rows. Core
+   * combines this window with fresh inactivity and owned-process observations;
+   * an older idle provider thread's internal tasks are a known T3 limitation.
+   */
+  async agentTimelinePage(id: string, _limit = 100): Promise<HostTimelinePage | null> {
+    let read: ThreadSnapshotRead;
+    try { read = await this.readThreadSnapshot(id, 'window'); }
+    catch (error) { if (error instanceof T3CompatibilityError) throw error; return null; }
+    const rows = read.projection.visibleTurnItems;
+    if (!rows) throw new T3CompatibilityError('subscribeThread.visibleTurnItems');
+    if (!read.projection.providerThreads) throw new T3CompatibilityError('subscribeThread.providerThreads');
+    // Never trim the provider's window: doing so could drop live tool evidence.
+    // The shared reader does not widen bounded liveness evidence through history.
+    const block = localRows(rows, id);
+    const entries = block.map(row => timelineEntry(row, read.projection.updatedAt));
+    const oldest = block.at(0), newest = block.at(-1);
+    return { entries, hasOlder: read.paged, gap: false, staleCursor: false, reset: false, hasNewer: false,
+      epoch: id, startCursor: oldest ? { epoch: id, seq: oldest.item.ordinal } : null,
+      endCursor: newest ? { epoch: id, seq: newest.item.ordinal } : null, projection: 'bounded',
+      pendingBackgroundTasks: read.projection.providerThreads.flatMap(thread => (thread.pendingBackgroundTasks ?? [])
+        .map(task => `${task.kind} ${task.taskId}`)) };
   }
 
-  async agentTimeline(id: string, limit?: number) { return (await this.agentTimelinePage(id, limit))?.entries ?? null; }
+  /** The newest page's entries only. A failure reads as no evidence here, as on every host. */
+  async agentTimeline(id: string, limit?: number) {
+    try { return (await this.agentTimelinePage(id, limit))?.entries ?? null; } catch { return null; }
+  }
 
   async activeRunId(id: string): Promise<string | null> {
     const projection = await this.readProjection(id, 'observation');
     const native = (await this.inventory()).threads.find(t => t.id === id);
     return projection.runs.find(r => activeStatuses.has(r.status))?.id ?? native?.activeRunId ?? null;
   }
-  async pendingQuestions(id: string) { const p = await this.readProjection(id); return p.runtimeRequests.filter(r => r.kind === 'user_input' && r.status === 'pending').map(r => {
+  /**
+   * A thread's pending native questions, read from the bounded snapshot. The
+   * nightly keeps every pending runtime request and the `user_input_request` item
+   * that carries its questions, so a long thread answers this read without a
+   * full transcript (nucleus#1217). A pending request whose item the window does
+   * not carry is reported precisely: the item cannot be fetched by itself, and a
+   * window is never widened into the full snapshot.
+   */
+  async pendingQuestions(id: string) { const p = await this.readProjection(id, 'window'); return p.runtimeRequests.filter(r => r.kind === 'user_input' && r.status === 'pending').map(r => {
     const item = p.turnItems.find(t => t.type === 'user_input_request' && t.requestId === r.id);
-    if (!item?.questions) throw new T3CompatibilityError('runtimeRequest.questions');
+    if (!item?.questions) throw new T3CompatibilityError(`runtimeRequest.${r.id}.user_input_request is outside the bounded timeline window`);
     return { requestId: r.id, questions: item.questions.map(q => ({ header: q.header, question: q.question, options: q.options.map(o => o.label) })) };
   }); }
 
+  /**
+   * A thread's answered native questions, read from the bounded snapshot. The
+   * nightly keeps the resolved requests its window still references, so this is
+   * the newest answered window rather than every answer a thread ever had: a
+   * resolved request the window dropped is absent, and one whose question item
+   * the window dropped keeps its answers with no question text rather than an
+   * invented one. Only a complete transcript could enumerate the whole history,
+   * and a long thread has no such read (nucleus#1217).
+   */
   async answeredQuestions(id: string) {
     // A projection this read cannot trust answers nothing: the caller must see
     // an unknown read, not an operator who answered nothing.
     let p;
-    try { p = await this.readProjection(id); }
+    try { p = await this.readProjection(id, 'window'); }
     catch (error) { return { ok: false as const, reason: error instanceof Error ? error.message : String(error) }; }
     return { ok: true as const, answered: p.runtimeRequests.filter(r => r.kind === 'user_input' && r.status === 'resolved' && r.answers).map(r => ({ requestId: r.id,
       question: p.turnItems.find(t => t.requestId === r.id)?.questions?.map(q => q.question).join('\n') ?? '',

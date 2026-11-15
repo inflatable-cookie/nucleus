@@ -562,8 +562,8 @@ records the `owned_tool_*` events. Enforces
 **SlotAdmission** (`core/dispatch/capacity.ts`). Slot occupancy and fair-share order,
 and why a task has no slot now, for one dispatch pass or one board batch.
 Enforces [Admission, limits and priority](#admission-limits-and-priority).
-Pures: `decideSlotAdmission`, `slotRequestDecision`, `capacityFor`,
-`recoveryCapacityFor`, `fairSlotRequestOrder`. Control-flow strings
+Pures: `decideSlotAdmission`, `slotRequestDecision`, `capacityLimitFor`,
+`capacityReason`, `capacityFor`, `fairSlotRequestOrder`. Control-flow strings
 `CAPACITY_WAIT_PREFIX` and `QA_CAPACITY_WAIT_PREFIX` are defined in
 `shared/wait-state.ts`; SlotAdmission and the other slot readers compare them.
 Delegates remain on Resolution.
@@ -3013,7 +3013,19 @@ movement invalidates source approval and preserves the normal readiness gates.
 - Every response needs coverage flags, an epoch and matching cursors. Gaps,
   resets, missing facts, read failures and exhausted budgets refuse. Partial
   history needs turn IDs and a dated boundary into an earlier turn; a partial
-  tail never hides a live or unknown tool.
+  tail never hides a live or unknown tool. A T3Code bounded window is explicitly
+  marked `bounded`, and is not complete-history proof. Owned tools clear only
+  with three positive signals: no active run or pending request, no live tool
+  or provider background task in that window, and no owned workspace or run
+  scratch process. Any live or unknown signal holds. The adapter spec records
+  the residual T3 limitation for idle provider tasks outside the window.
+- A host translates its own native execution records into these tool entries; a
+  record it leaves untranslated is evidence the reader cannot judge. T3Code's
+  `command_execution` is a non-turn-bound shell, its edit, search and fetch records
+  are turn-bound; its native subagent can outlive its parent run, and its `dynamic_tool` or any native state the
+  reader does not know is never settled. A page is built from the host's rendered
+  window, not from a list that also carries rows retained from outside it, so a
+  boundary between turns is never manufactured across a gap.
 - Merge, external-merge, closeout, superseded-run, cleanup and author
   capability-upgrade gates read this proof. In fixtures
   `observedParticipantTimeline` in `test/support/tool-timeline.ts` supplies

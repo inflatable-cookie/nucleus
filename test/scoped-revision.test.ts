@@ -42,7 +42,7 @@ test('instruction stays invalid for controls that do not carry scoped worker aut
 
 test('omitted versions use the current task version and durable controls retain it', async () => {
   const root = mkdtempSync(join(tmpdir(), 'scoped-revision-'));
-  const adapter = { client: { isConnected: true }, hostId: 'fixture-host',
+  const adapter = { client: { isConnected: true }, isConnected: () => true, hostId: 'fixture-host',
     socketPath: join(root, 'callback.sock'), helperPath: join(root, 'helper.mjs'),
     connect: async () => {}, close: async () => {}, catalog: async () => ({ providers: [] }),
     observe: async () => ({ id: 'worker', workspaceId: 'ws', status: 'idle', active: false, permissions: false, error: '' }),

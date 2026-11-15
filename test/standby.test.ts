@@ -22,6 +22,7 @@ import type { Adapter } from "../core/host";
 function fakeAdapter(dir: string): Adapter {
   return {
     client: { isConnected: true },
+    isConnected: () => true,
     hostId: "fixture-host",
     socketPath: join(dir, "callback.sock"),
     helperPath: join(dir, "worker-helper.mjs"),

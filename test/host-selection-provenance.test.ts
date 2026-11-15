@@ -11,7 +11,7 @@ import type { Adapter } from '../core/host/adapter';
 test('the only online host can be selected while another known host is offline, with durable provenance', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'host-selection-'));
   const client = { isConnected: false };
-  const adapter = { client, hostId: 'a', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'helper.mjs'), connect: async () => { client.isConnected = true; }, close: async () => { client.isConnected = false; }, catalog: async () => ({ providers: [] }) } as unknown as Adapter;
+  const adapter = { client, isConnected: () => client.isConnected, hostId: 'a', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'helper.mjs'), connect: async () => { client.isConnected = true; }, close: async () => { client.isConnected = false; }, catalog: async () => ({ providers: [] }) } as unknown as Adapter;
   const runtime = new QueueRuntime({ dataDir: dir, adapterFactory: () => adapter, timers: false });
   try {
     await runtime.started; await runtime.bootstrap;
@@ -38,11 +38,11 @@ test('the only online host can be selected while another known host is offline, 
 test('a repository hostKind selects the unique online host of that kind with durable provenance', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'host-kind-selection-'));
   const client = { isConnected: true };
-  const adapter = { client, hostId: 'paseo-primary', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'helper.mjs'), connect: async () => { client.isConnected = true; }, close: async () => { client.isConnected = false; }, catalog: async () => ({ providers: [] }) } as unknown as Adapter;
+  const adapter = { client, isConnected: () => client.isConnected, hostId: 'paseo-primary', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'helper.mjs'), connect: async () => { client.isConnected = true; }, close: async () => { client.isConnected = false; }, catalog: async () => ({ providers: [] }) } as unknown as Adapter;
   const runtime = new QueueRuntime({ dataDir: dir, adapterFactory: () => adapter, timers: false });
   try {
     await runtime.started; await runtime.bootstrap;
-    const t3 = { client: { isConnected: true }, hostId: 't3code:env', socketPath: join(dir, 't3.sock'), helperPath: join(dir, 't3-helper.mjs'), connect: async () => {}, close: async () => {}, catalog: async () => ({ providers: [] }) } as unknown as Adapter;
+    const t3 = { client: { isConnected: true }, isConnected: () => true, hostId: 't3code:env', socketPath: join(dir, 't3.sock'), helperPath: join(dir, 't3-helper.mjs'), connect: async () => {}, close: async () => {}, catalog: async () => ({ providers: [] }) } as unknown as Adapter;
     runtime.hostRegistry.connect('t3code:env', 'endpoint-t3', { adapter: t3, admission: runtime.admission });
     runtime.store.putRepository({ origin: null, path: '/repo' }, null, '', null, null, null, undefined, undefined, 't3code');
     assert.equal(runtime.engine.selectIngressHost(undefined, '/repo'), 't3code:env');

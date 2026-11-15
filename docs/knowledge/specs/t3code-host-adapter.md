@@ -466,11 +466,37 @@ ones. Settled runs, resolved requests and the timeline before the window are
 absent, and none of them changes a status, an active run, a pending request or a
 settle marker. Observation asks for that bounded snapshot and reports status,
 active run, pending request and archive state from any length of thread, so a
-long thread is never unobservable (nucleus#1188). A read that consumes the
-transcript — timeline pages, question text, answer mapping — also opts in and
-refuses a paged or locally-omitted projection, so partial history is never handed
-out as the whole list and no consumer requests an unbounded thread snapshot.
-Its refusal names the missing coverage, not the thread's length. Complete shell
+long thread is never unobservable (nucleus#1188). The timeline and question reads take the same bounded snapshot. The timeline
+returns the whole newest rendered window (`visibleTurnItems`), with no gap,
+reset or newer history, the thread as its stable epoch and local item ordinals
+as cursors. `hasOlder` follows Nightly's coverage flag; `projection: "bounded"`
+explicitly distinguishes this window from complete tool-history evidence.
+Retained request and interrupt dependencies in `turnItems` are not window rows.
+Native commands, edits, searches, subagents and dynamic tools become shared tool
+entries; pending tasks on the retained provider threads remain positive live
+evidence even without a corresponding tool row.
+
+For a T3 participant, owned tools clear only when all three observations clear:
+no active run or pending runtime request; no live tool or provider background
+task in the newest window; and no owned process in the workspace or recorded
+run temporary directories. Workspace archive resolves every recorded run for
+each participant in that workspace, including attached support roles and the
+task-row worker, and checks every scratch root on each proof pass. A missing
+run inventory, identity or scratch root stays inconclusive.
+History pages are not read or reconstructed (planner ruling, 2026-11-15).
+Provider threads are window-retained: active threads, threads referenced by the
+window or retained nodes, and the latest todo owner. The residual premise is
+explicit: a T3-internal background task on an idle provider thread outside the
+window is not covered. That is a T3 limitation, not a Nucleus absence claim.
+
+Pending questions use the retained runtime request and its `user_input_request`
+item. A missing item is refused by that exact field. Answered questions cover
+the retained answered window; an absent question item leaves its text empty.
+Answered reads return an explicit success or unknown result; an unreadable
+bounded snapshot never becomes an empty answer list.
+A complete-transcript read still refuses a paged or locally omitted projection;
+no consumer requests an unbounded snapshot.
+Complete shell
 and archive inventory reads contain summaries rather than transcript history;
 the Nightly exposes no complete paged shell form. Omitting settled threads or
 subagents cannot establish absence and is not an inventory substitute.
@@ -494,10 +520,13 @@ only to the task owner, so the host's words are shown as they are and nothing is
 certified: a Paseo `Agent was not found` and a T3 `T3Code timeout:
 orchestration.subscribeThread` both appear verbatim.
 
-The canonical thread projection is the whole turn list, so timeline pages carry
-the full coverage contract: no gap, no reset, no newer history, an epoch that
-is the thread identity, and start/end cursors that are positions in the full
-list. The test transport serves only records in the Nightly's own wire shape:
+The canonical thread projection is the whole turn list, while a T3 timeline page
+is the nightly's rendered window: the page carries the window's own coverage (no
+gap, no reset, no newer history, the thread as its stable epoch and cursors as
+positions inside the window), so a page never claims the full list, and its
+entries come from the rendered rows rather than the item list that also holds
+the nightly's retained dependencies. The test transport serves only records in
+the Nightly's own wire shape:
 `test/fixtures/t3code-contract.json` (`wireShapes`) records the field sets
 captured read-only from the nightly, the fake completes every served thread,
 run, runtime request, message and turn item to them (`visibleTurnItems` derived

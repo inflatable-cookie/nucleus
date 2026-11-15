@@ -1,5 +1,6 @@
 import { parseAgentId } from '../shared/agent-identity';
 import { DEFAULT_HOST_KIND, type IdentitySource } from '../shared/host-kind';
+import { hostConnected } from '../core/host';
 import type { Adapter } from '../core/host/adapter';
 import { HostFacade } from '../core/host/host-facade';
 import { resolveIngressHost } from '../core/host/ingress-host';
@@ -7,7 +8,6 @@ import { identitySourceHostEvidence, resolveOriginHost, type HostRegistry, type 
 import type { Admission } from '../core/host/admission';
 import type { Engine } from '../core/engine';
 import type { Store } from '../core/store/store';
-import { hostConnected } from '../hosts/paseo';
 import type { T3HostConnection } from './t3code-host';
 
 export type RegisteredHost = { adapter: Adapter; admission: Admission };

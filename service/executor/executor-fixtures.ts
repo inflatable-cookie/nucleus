@@ -26,6 +26,7 @@ function fakeAdapter(state: FixtureState, context: { dataDir: string }): Adapter
   const client = { get isConnected() { return state.hostOffline !== true; } };
   return {
     client,
+    isConnected: () => client.isConnected,
     hostId: "fixture-host",
     socketPath: `${context.dataDir}/callback.sock`,
     helperPath: `${context.dataDir}/worker-helper.mjs`,
@@ -40,6 +41,7 @@ function fakeAdapter(state: FixtureState, context: { dataDir: string }): Adapter
 function richAdapter(context: { dataDir: string }): Adapter {
   return {
     client: { isConnected: true },
+    isConnected: () => true,
     hostId: "fixture-host",
     socketPath: `${context.dataDir}/callback.sock`,
     helperPath: `${context.dataDir}/worker-helper.mjs`,

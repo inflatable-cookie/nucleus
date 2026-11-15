@@ -19,7 +19,7 @@ function registry() {
 
 test('connected retires a mismatched Paseo claim and anyHostConnected counts the registry', () => {
   const hosts = registry();
-  const adapter = { client: { isConnected: false } } as unknown as Adapter;
+  const adapter = { isConnected: () => false } as unknown as Adapter;
   const admission = new Admission();
   const token = hosts.connect('paseo-env', 'ws://127.0.0.1/ws', { adapter, admission });
   const owner = {
@@ -49,7 +49,7 @@ test('connected retires a mismatched Paseo claim and anyHostConnected counts the
 test('wireEngineHosts refuses an unregistered explicit host and resolves a lone online host', () => {
   const dir = mkdtempSync(join(process.env.TMPDIR || '', 'host-connections-'));
   const store = new Store(join(dir, 'queue.sqlite'));
-  const adapter = { observe: async (id: string) => ({ id, workspaceId: null, status: 'idle', active: false, permissions: false, error: '' }) } as unknown as Adapter;
+  const adapter = { isConnected: () => false, observe: async (id: string) => ({ id, workspaceId: null, status: 'idle', active: false, permissions: false, error: '' }) } as unknown as Adapter;
   const engine = new Engine(store, adapter, 0);
   const hosts = registry();
   hosts.connect('only-host', 'ws://127.0.0.1/ws', { adapter, admission: new Admission() });

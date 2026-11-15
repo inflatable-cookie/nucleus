@@ -10,8 +10,8 @@ import type { Adapter } from '../core/host/adapter';
 test('native answers use the recorded host and an unknown send cannot repeat', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'native-question-host-'));
   const client = { isConnected: false }, calls: string[] = [];
-  const a = { client, hostId: 'a', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'helper.mjs'), connect: async () => { client.isConnected = true; }, close: async () => { client.isConnected = false; }, catalog: async () => ({ providers: [] }) } as unknown as Adapter;
-  const b = { pendingQuestions: async () => [{ requestId: 'q', questions: [{ header: 'H', question: 'Q', options: [] }] }], answerNativeQuestion: async () => { calls.push('b'); throw Error('unknown delivery'); } } as unknown as Adapter;
+  const a = { client, isConnected: () => client.isConnected, hostId: 'a', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'helper.mjs'), connect: async () => { client.isConnected = true; }, close: async () => { client.isConnected = false; }, catalog: async () => ({ providers: [] }) } as unknown as Adapter;
+  const b = { isConnected: () => true, pendingQuestions: async () => [{ requestId: 'q', questions: [{ header: 'H', question: 'Q', options: [] }] }], answerNativeQuestion: async () => { calls.push('b'); throw Error('unknown delivery'); } } as unknown as Adapter;
   const runtime = new QueueRuntime({ dataDir: dir, adapterFactory: () => a, timers: false });
   try {
     await runtime.started; await runtime.bootstrap;

@@ -828,7 +828,7 @@ test('service health publishes the exact durable total with a bounded named samp
   const hostRunStateDir = join(root, 'host-run');
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const fakeAdapter = (dir: string): Adapter => ({
-    client: { isConnected: true }, hostId: 'fixture-host',
+    client: { isConnected: true }, isConnected: () => true, hostId: 'fixture-host',
     socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'worker-helper.mjs'),
     connect: async () => {}, close: async () => {}, profiles: async () => [],
     observe: observeIdle('ws', 'worker'),

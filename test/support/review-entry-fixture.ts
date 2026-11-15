@@ -121,7 +121,7 @@ export function ownerRevisionFixture(){
     const adapter:ReviewEntryAdapter&ResolutionAdapter&Partial<Adapter>
       &{socketPath:string;helperPath:string;connect:()=>Promise<void>;close:()=>Promise<void>}={
       // Unix socket paths are length-bounded on macOS; keep the bound socket name short.
-      hostId:'host',socketPath:join(root,`cb-${socketTag}.sock`),helperPath:join(root,`worker-report-${tag}.mjs`),
+      hostId:'host',isConnected:()=>true,socketPath:join(root,`cb-${socketTag}.sock`),helperPath:join(root,`worker-report-${tag}.mjs`),
       connect:async()=>{},close:async()=>{},
       inspectReviewEntry:async()=>({directory:workspace,originWorkspaceId:'origin-workspace',busyReason:state.busyReason,...(state.busyTransient===undefined?{}:{busyTransient:state.busyTransient})}),
       originAgent:async id=>({id,workspaceId:'origin-workspace',title:'Origin',archived:archivedAgents.has(id)}),
@@ -175,7 +175,7 @@ export function ownerRevisionFixture(){
    * it, exactly as `queue.task` does in production (task 404).
    */
   const buildRuntime=()=>{
-    // Queue #912: a runtime registers its host only when the adapter's client reports connected (`hostConnected`);
+    // Queue #912: a runtime registers its host only when the adapter's connection port reports connected (`hostConnected`);
     // without it every host-routed control waits for the host instead of refusing.
     const runtime=new QueueRuntime({dataDir:join(root,`runtime-${randomUUID()}`),adapterFactory:()=>({...buildAdapter(),client:{isConnected:true}}),timers:false});
     return runtime;

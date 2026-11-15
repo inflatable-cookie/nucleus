@@ -42,9 +42,18 @@ export const threadRecord = z.object({
   worktreePath: z.string().nullable(), branch: z.string().nullable(),
   archivedAt: date.nullable(), deletedAt: date.nullable(), updatedAt: date,
 });
+/**
+ * One pending background task a provider thread reports (nightly
+ * `OrchestrationV2PendingBackgroundTask`). The nightly derives it from the
+ * provider session's own state, so it names work that can outlive its run.
+ */
+export const pendingBackgroundTask = z.object({ taskId: id, kind: id, description: z.string().optional(),
+  parentTaskId: z.string().optional(), awaited: z.literal(true).optional(),
+  providerInstanceId: id.optional(), childThreadId: id.optional() }).passthrough();
 export const shellThread = threadRecord.extend({
   activeRunId: id.nullable(), status: z.enum(['idle', 'preparing', 'queued', 'starting', 'running', 'waiting', 'completed', 'interrupted', 'failed', 'cancelled', 'rolled_back']),
   pendingRuntimeRequest: z.object({ id, kind: id, createdAt: date, blocking: z.boolean().optional() }).nullable(),
+  pendingBackgroundTasks: z.array(pendingBackgroundTask).optional(),
   latestUserMessageAt: date.nullable(), lastError: z.string().nullable().optional(),
 });
 export const project = z.object({ id, title: z.string(), workspaceRoot: id, archivedAt: date.nullable().optional() });
@@ -62,15 +71,33 @@ export const runtimeRequest = z.object({
 });
 const question = z.object({ id, header: z.string(), question: z.string(), options: z.array(z.object({ label: z.string() })) });
 export const turnItem = z.object({ id, type: id, requestId: id.optional(),
+  /** The run that owns the item; one run is one provider turn. Null on thread-level items. */
+  runId: id.nullable().optional(),
+  /** The item's position in its thread: consecutive positions are consecutive rows. */
+  ordinal: z.number().int().nonnegative(),
   questions: z.array(question).optional(), createdAt: date.optional(), updatedAt: date.optional(),
 }).passthrough().superRefine((item, ctx) => {
   if (item.type === 'user_input_request' && (!item.requestId || !item.questions))
     ctx.addIssue({ code: 'custom', path: ['questions'], message: 'Missing question fields' });
 });
+/**
+ * One rendered timeline row (nightly `OrchestrationV2ProjectedTurnItem`). The
+ * nightly windows these rows, so the collection is the visible window itself;
+ * `visibility` is `local` for this thread's own rows and `inherited` or
+ * `synthetic` for a row it shows from elsewhere.
+ */
+export const visibleTurnItem = z.object({ position: z.number().int().nonnegative(), visibility: id.optional(),
+  sourceThreadId: id.optional(), sourceItemId: id, item: turnItem });
+/** Window-retained provider threads: active threads, referenced threads and the latest todo owner. */
+export const providerThread = z.object({ id,
+  pendingBackgroundTasks: z.array(pendingBackgroundTask).optional() }).passthrough();
 export const projection = z.object({
   thread: threadRecord,
   runs: z.array(z.object({ id, status: shellThread.shape.status, startedAt: date.nullable(), ordinal: z.number().int().nonnegative().optional() })),
   runtimeRequests: z.array(runtimeRequest), turnItems: z.array(turnItem),
+  /** The nightly's own visible window; absent only on a projection decoded before this field was read. */
+  visibleTurnItems: z.array(visibleTurnItem).optional(),
+  providerThreads: z.array(providerThread).optional(),
   messages: z.array(z.object({ id, role: id, text: z.string() })), updatedAt: date,
 });
 /** Coverage flags are consumed facts, not optional hints that can be truthiness-tested. */

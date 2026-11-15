@@ -350,7 +350,7 @@ weighted(8)('dispatch and board work stay bounded at 10 and 1000 queued tasks', 
     const f = fixture();
     const adapter = (f.engine as unknown as { adapter: Adapter }).adapter;
     Object.assign(adapter, { socketPath: join(f.dir, 'callback.sock'), helperPath: join(f.dir, 'helper.mjs'), hostId: 'fixture',
-      client: { isConnected: true }, connect: async () => {} });
+      client: { isConnected: true }, isConnected: () => true, connect: async () => {} });
     await f.engine.stop(); f.store.close();
     const runtime = new QueueRuntime({ dataDir: f.dir, hostRunStateDir: join(f.dir, 'host-runs'), timers: false, adapterFactory: () => adapter });
     const lifecycle = runtime as unknown as { started: Promise<void>; bootstrap: Promise<void> | null };

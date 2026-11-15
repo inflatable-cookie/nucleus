@@ -140,7 +140,7 @@ export class ArchiveProof {
       this.context.resolution.update(this.store.task(task.id), { archiveIntentWorkspaceId: id, archiveIntentHead: head }, {}, 'workspace_archive_intent', head);
       return true;
     }, archiveUncertain, { requirePublished: true, attachedAgentIds, requireDirectory: false, allowIdleForeignThreads: !reviewRun,
-      buildOutputCleanup, reviewRun: reviewRun ?? undefined, discard, primaryArchived });
+      buildOutputCleanup, reviewRun: reviewRun ?? undefined, discard, primaryArchived, participantRuns: () => this.store.runs(task.id) });
     if (!archived) {
       // The adapter declined without any effect: no native archive request was
       // sent and nothing was deleted. A retained build-output root is a named,

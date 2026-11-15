@@ -15,13 +15,27 @@ import { Store, qualifiedThreadArchiveEffectKey } from '../core/store/store';
 import { archiveFinishedThreads } from '../core/workspaces/thread-archive';
 import type { Adapter } from '../core/host';
 import { taskWorkspaceTitle } from '../core/workspaces/workspace-title';
+import { liveToolIssueFact, observedTurnState, readToolTimeline } from '../core/recovery/stall';
 import { capPaseoTitle } from '../shared/paseo-title';
 import { WIRE_LABEL_KEYS, WIRE_PLUGIN_LABEL_KEY } from '../shared/wire-labels';
-import { t3Fake, STAMP, threadProjection, syntheticRun, syntheticRuntimeRequest, syntheticTurnItem } from './support/t3code-fake';
+import { t3Fake, STAMP, threadProjection, syntheticProviderThread, syntheticRun, syntheticRuntimeRequest, syntheticTurnItem } from './support/t3code-fake';
 import { storedT3Labels } from './support/t3code-labels';
 
 const profile: Profile = { id: 'synthetic-profile', name: 'Synthetic', provider: 'synthetic-provider', model: 'synthetic-model',
   available: true, problem: '', notes: '', supportedThinking: [] };
+/**
+ * A long thread's turn items: newest last, strictly increasing item time and the
+ * newest five items in a second run, so a bounded window reaches back into an
+ * earlier turn and can prove what it covers.
+ */
+function longThreadItems(threadId: string, count: number, overrides: (index: number) => Record<string, unknown>) {
+  const base = Date.parse(STAMP);
+  return Array.from({ length: count }, (_, index) => syntheticTurnItem(threadId, index + 1, {
+    runId: index < count - 5 ? 'synthetic-run-1' : 'synthetic-run-2',
+    updatedAt: new Date(base + (index + 1) * 1_000).toISOString(),
+    ...overrides(index),
+  }));
+}
 async function fixture(t: TestContext) {
   const root = mkdtempSync(join(tmpdir(), 't3code-adapter-'));
   const directory = await realpath(root);
@@ -399,7 +413,12 @@ test('empty enrichment snapshots preserve inventory while missing fields and inc
   // be used by either read: nothing in it bounds or locates the rest.
   server.controls.incompleteThread = true;
   await assert.rejects(host.observe(created.id), /hasMoreHistory true with no cursor/);
-  assert.equal(await host.agentTimelinePage(created.id), null);
+  // A shape problem names its field through the timeline read too, so the
+  // owned-tool reader reports the exact cause instead of `unavailable`.
+  await assert.rejects(host.agentTimelinePage(created.id), /hasMoreHistory true with no cursor/);
+  const answers = await host.answeredQuestions(created.id);
+  assert.equal(answers.ok, false, 'an unreadable bounded snapshot is unknown, never an empty answer list');
+  if (!answers.ok) assert.match(answers.reason, /hasMoreHistory true with no cursor/);
   server.controls.incompleteThread = false;
   server.controls.synchronized = false;
   await assert.rejects(host.observe(created.id), (error: T3RpcError) => error instanceof T3RpcError && error.code === 'timeout'
@@ -419,7 +438,7 @@ test('coverage fields are strictly decoded before observation or timeline comple
   ] as const) {
     server.controls.threadCoverage = { [field]: value };
     await assert.rejects(host.observe(created.id), new RegExp(field));
-    assert.equal(await host.agentTimelinePage(created.id), null);
+    await assert.rejects(host.agentTimelinePage(created.id), new RegExp(field));
     assert.equal(await host.observationInventory([created.id]), null);
   }
   server.controls.threadCoverage = { hasMoreHistory: false, historyCursor: 'opaque-history-cursor' };
@@ -500,9 +519,10 @@ test('a thread long enough to page stays observable from the nightly bounded sna
   // references, and drops a settled run the window no longer shows
   // (contract `subscribeThread.projectionRetained.runs`).
   assert.equal(served.runs, 2);
-  // Transcript consumers also opt in and refuse missing history without ever
-  // fetching the slow full snapshot.
-  await assert.rejects(host.pendingQuestions(created.id), /incomplete projection/);
+  // The question read comes from the same bounded window: the pending request is
+  // carried, so the refusal names the absent item rather than the whole
+  // projection (nucleus#1217).
+  await assert.rejects(host.pendingQuestions(created.id), /user_input_request is outside the bounded timeline window/);
 });
 
 test('a nightly that ignores the bounded opt-in still observes from its whole projection', async t => {
@@ -521,26 +541,34 @@ test('a nightly that ignores the bounded opt-in still observes from its whole pr
   assert.equal(served.hasMoreHistory, false);
 });
 
-test('a transcript read refuses a paged projection, so partial history is never handed out', async t => {
+test('a paged window reads tools and questions, and a complete-transcript read still refuses it', async t => {
   const { host, server, spec } = await fixture(t);
   const created = await host.createAgent(spec());
   const p = server.threads.get(created.id)!;
-  p.turnItems = [syntheticTurnItem(created.id, 1, { type: 'assistant_message' }),
-    syntheticTurnItem(created.id, 2, { type: 'user_input_request', id: 'synthetic-question-item', requestId: 'synthetic-question' })];
+  const at = (offset: number) => new Date(Date.parse(STAMP) + offset * 1_000).toISOString();
+  p.turnItems = [syntheticTurnItem(created.id, 1, { type: 'assistant_message', runId: 'synthetic-run-1', updatedAt: at(1) }),
+    syntheticTurnItem(created.id, 2, { type: 'assistant_message', runId: 'synthetic-run-1', updatedAt: at(2) }),
+    syntheticTurnItem(created.id, 3, { type: 'user_input_request', id: 'synthetic-question-item', requestId: 'synthetic-question',
+      runId: 'synthetic-run-2', nodeId: 'synthetic-node-synthetic-question', updatedAt: at(3) })];
   p.runtimeRequests = [syntheticRuntimeRequest({ id: 'synthetic-question', kind: 'user_input', status: 'pending' })];
-  // A paged projection with an opaque cursor: observation may use it, a reader of
-  // the transcript may not. This arm is defensive — today's nightly pages only an
-  // opted-in read — so it also holds if a later nightly pages every read.
-  server.controls.threadCoverage = { hasMoreHistory: true, historyCursor: 'synthetic-history-cursor', latestLocalTurnOrdinal: 0 };
+  // A genuine bounded snapshot with older history; tools never reconstruct it.
+  server.controls.boundedRowLimit = 2;
   assert.equal((await host.observe(created.id)).pendingRequest?.id, 'synthetic-question');
-  await assert.rejects(host.pendingQuestions(created.id), /incomplete projection/);
-  const unreadable = await host.answeredQuestions(created.id);
-  assert.equal(unreadable.ok, false, 'an incomplete projection is an unknown read, never an empty answer list');
-  assert.match((unreadable as { reason: string }).reason, /incomplete projection/);
-  assert.equal(await host.agentTimelinePage(created.id), null);
-  // The transcript read requests a bounded window and refuses missing history.
+  // The bounded window is the read for tools and questions, so a paged answer is
+  // no longer unobservable (nucleus#1217).
+  assert.deepEqual(await host.pendingQuestions(created.id), [{ requestId: 'synthetic-question',
+    questions: [{ header: 'Synthetic', question: 'Synthetic question?', options: ['Yes', 'No'] }] }]);
+  const page = await host.agentTimelinePage(created.id, 2);
+  assert.equal(page?.hasOlder, true);
+  assert.deepEqual(page?.entries.map(entry => entry.turnId), ['synthetic-run-1', 'synthetic-run-2']);
+  p.runtimeRequests[0].status = 'resolved';
+  p.runtimeRequests[0].answers = { choice: 'Yes' };
+  assert.deepEqual(await host.answeredQuestions(created.id), { ok: true, answered: [{ requestId: 'synthetic-question',
+    question: 'Synthetic question?', answers: { choice: 'Yes' } }] });
+  // A read that needs the complete transcript still refuses the same projection.
+  await assert.rejects(host.readProjection(created.id, 'transcript'), /subscribeThread: incomplete projection/);
   const read = server.requests.filter(request => request.tag === 'orchestration.subscribeThread').at(-1)!.payload as Record<string, unknown>;
-  assert.equal(read.acceptBoundedSnapshot, true);
+  assert.equal(read.acceptBoundedSnapshot, true, 'no read asks for the unbounded snapshot');
 });
 
 test('history exceeding the frame limit is observed, listed and titled without any full snapshot read', async t => {
@@ -564,16 +592,223 @@ test('history exceeding the frame limit is observed, listed and titled without a
   await host.setTaskWorkspaceTitle(task, '225: Bounded title', 'bounded-title', false);
   assert.equal(p.thread.title, '225: Bounded title');
   await host.settleReportedThread(created.id, 'synthetic-report');
-  await assert.rejects(host.pendingQuestions(created.id), /incomplete projection/);
-  const unreadable = await host.answeredQuestions(created.id);
-  assert.equal(unreadable.ok, false, 'an incomplete projection is an unknown read, never an empty answer list');
-  assert.match((unreadable as { reason: string }).reason, /incomplete projection/);
-  assert.equal(await host.agentTimelinePage(created.id), null);
+  // The question and timeline reads come from the bounded window too: no pending
+  // request is carried here, and the window is a page rather than null.
+  assert.deepEqual(await host.pendingQuestions(created.id), []);
+  assert.deepEqual(await host.answeredQuestions(created.id), { ok: true, answered: [] });
+  const page = await host.agentTimelinePage(created.id);
+  assert.ok(page && page.entries.length > 0, 'the newest window is readable on a thread over the frame limit');
+  assert.equal(page.hasOlder, true);
+  assert.equal(page.hasNewer, false);
+  assert.equal(page.projection, 'bounded');
   const reads = server.requests.slice(start).filter(request => request.tag === 'orchestration.subscribeThread');
   assert.ok(reads.length >= 7);
   assert.ok(reads.every(request => request.payload.acceptBoundedSnapshot === true));
   assert.ok(server.frameBytes.every(bytes => bytes < frameLimit), 'no actual reply crosses the frame limit');
   assert.equal(host.connected, true);
+});
+
+test('a long thread reads its newest native tool calls from the bounded timeline window', async t => {
+  // nucleus#1217 item 1: the owned-tool read must work on a thread whose full
+  // snapshot exceeds the frame limit, and a native tool record in the window must
+  // be judged rather than passed through and ignored. The full projection of this
+  // thread is over 16 MiB; the nightly's newest window stays inside its row
+  // budget. `command_execution` is the nightly's own recorded execution record.
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const p = server.threads.get(created.id)!;
+  const count = 400;
+  p.turnItems = longThreadItems(created.id, count, index => index === count - 2
+    ? { type: 'command_execution', status: 'completed', input: 'synthetic settled command', exitCode: 0 }
+    : index === count - 1
+      ? { type: 'command_execution', status: 'running', input: 'synthetic long command' }
+      : { type: 'assistant_message', text: 'Synthetic history '.repeat(1_200) });
+  // The newest window reaches back into an earlier run, so a partial page proves
+  // which turn it starts in (one T3 run is one provider turn).
+  p.runs = [syntheticRun(created.id, 1, { id: 'synthetic-run-1' }),
+    syntheticRun(created.id, 2, { id: 'synthetic-run-2', status: 'running', completedAt: null })];
+  const frameLimit = 16 * 1024 * 1024;
+  assert.ok(server.fullSnapshotBytes(created.id) > frameLimit, 'the full snapshot exceeds the frame limit');
+  const start = server.requests.length;
+  const read = await readToolTimeline(host, created.id);
+  assert.ok('entries' in read, `the bounded window supplies tool evidence: ${JSON.stringify(read)}`);
+  assert.ok(read.entries.length > 0);
+  const newest = read.entries.at(-1)!.item;
+  assert.equal(newest.type, 'tool_call', 'the newest native execution is tool evidence');
+  assert.equal(newest.name, 'command_execution');
+  assert.equal(newest.status, 'running');
+  assert.deepEqual(newest.detail, { type: 'shell', command: 'synthetic long command', nativeType: 'command_execution' });
+  // A live tool in the window is still detected.
+  const live = liveToolIssueFact(read.entries);
+  assert.equal(live?.kind, 'live');
+  assert.equal(live && 'callId' in live ? live.callId : null, p.turnItems.at(-1)!.id);
+  // The settled native command in the same window is not live evidence.
+  assert.equal(liveToolIssueFact(read.entries.filter(entry => entry.item.callId !== p.turnItems.at(-1)!.id)), null);
+  const reads = server.requests.slice(start).filter(request => request.tag === 'orchestration.subscribeThread');
+  assert.ok(reads.length >= 1);
+  assert.ok(reads.every(request => request.payload.acceptBoundedSnapshot === true), 'every read asks for the bounded snapshot');
+  assert.ok(server.frameBytes.every(bytes => bytes < frameLimit), 'no actual reply crosses the frame limit');
+  // The page describes the window it read, not a full history.
+  const page = (await host.agentTimelinePage(created.id))!;
+  assert.equal(page.hasOlder, true);
+  assert.equal(page.hasNewer, false);
+  assert.equal(page.gap, false);
+  assert.equal(page.reset, false);
+  assert.equal(page.staleCursor, false);
+  assert.equal(page.projection, 'bounded');
+  assert.equal(page.epoch, created.id);
+  assert.equal(page.startCursor?.seq, count - page.entries.length + 1);
+  assert.equal(page.endCursor?.seq, count);
+  assert.equal(host.connected, true);
+});
+
+test('native tool evidence is judged by its own kind and state, never ignored', async t => {
+  // nucleus#1217 finding 1: a real running command must read as live evidence. A
+  // native state the reader does not know is never settled, and only a kind that
+  // cannot outlive its turn may be settled by a finished turn.
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const p = server.threads.get(created.id)!;
+  p.runs = [syntheticRun(created.id, 1, { id: 'synthetic-run-1' })];
+  const message = syntheticTurnItem(created.id, 1, { type: 'user_message', runId: 'synthetic-run-1', messageId: 'synthetic-message', text: 'go' });
+  const native = (overrides: Record<string, unknown>) => syntheticTurnItem(created.id, 2, { runId: 'synthetic-run-1', ...overrides });
+  p.turnItems = [message, native({ type: 'command_execution', status: 'waiting', input: 'synthetic waiting command' })];
+  const owner = await observedTurnState(host, created.id);
+  assert.equal(owner?.active, false, 'the run has finished');
+  const page = (await host.agentTimelinePage(created.id))!;
+  assert.deepEqual(page.entries.map(entry => entry.item.type), ['user_message', 'tool_call']);
+  // An unrecognised native state is not terminal: the hold stays.
+  const waiting = liveToolIssueFact(page.entries, owner);
+  assert.equal(waiting?.kind, 'live');
+  assert.equal(waiting && 'status' in waiting ? waiting.status : null, 'waiting');
+  // A finished turn settles a turn-bound native edit, but never a detached command.
+  p.turnItems = [message, native({ type: 'file_change', status: 'running', fileName: 'synthetic.ts' })];
+  const edit = (await host.agentTimelinePage(created.id))!;
+  assert.equal(edit.entries[1]!.item.detail?.type, 'edit');
+  assert.equal(liveToolIssueFact(edit.entries, owner), null, 'a turn-bound edit ends with its turn');
+  assert.equal(liveToolIssueFact(edit.entries)?.kind, 'live', 'without the turn proof it is still live');
+  p.turnItems = [message, native({ type: 'command_execution', status: 'running', input: 'synthetic waiting command' })];
+  const command = (await host.agentTimelinePage(created.id))!;
+  assert.equal(liveToolIssueFact(command.entries, owner)?.kind, 'live', 'a detached command is not settled by a finished turn');
+  p.turnItems = [message, native({ type: 'dynamic_tool', status: 'running', title: 'nucleus_report', toolName: 'synthetic-tool', input: {} })];
+  const dynamic = (await host.agentTimelinePage(created.id))!;
+  assert.equal(liveToolIssueFact(dynamic.entries, owner)?.kind, 'live', 'a native background tool title never implies it is turn-bound');
+});
+
+test('a retained request outside the window never manufactures a turn boundary', async t => {
+  // nucleus#1217 finding: a bounded projection also carries the request item it
+  // retained from outside the window. Reading `turnItems` would put that old row
+  // beside a partial newest run, hand the shared reader a false turn boundary, and
+  // accept the page while a live tool sits in the missing part of the live turn.
+  // The older live command is outside the first requested page and must refuse.
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const p = server.threads.get(created.id)!;
+  const rows = 400;
+  p.turnItems = longThreadItems(created.id, rows, () => ({ type: 'assistant_message', runId: 'synthetic-run-2' }));
+  // Run one's pending question is retained; run two's live command is older than
+  // the window. The process signal, not reconstructed history, covers it.
+  p.turnItems[0] = syntheticTurnItem(created.id, 1, { type: 'user_input_request', id: 'synthetic-question-item',
+    nodeId: 'synthetic-question-node', requestId: 'synthetic-question', runId: 'synthetic-run-1',
+    updatedAt: p.turnItems[0]!.updatedAt,
+    questions: [{ id: 'synthetic-choice', header: 'Choice', question: 'Pick one', options: [{ label: 'A' }] }] });
+  p.turnItems[2] = syntheticTurnItem(created.id, 3, { type: 'command_execution', id: 'synthetic-live-command',
+    runId: 'synthetic-run-2', updatedAt: p.turnItems[2]!.updatedAt, status: 'running', input: 'synthetic live command' });
+  p.runtimeRequests = [syntheticRuntimeRequest({ id: 'synthetic-question', kind: 'user_input', status: 'pending',
+    nodeId: 'synthetic-question-node' })];
+  p.runs = [syntheticRun(created.id, 1, { id: 'synthetic-run-1' }),
+    syntheticRun(created.id, 2, { id: 'synthetic-run-2', status: 'running', completedAt: null })];
+  // The question read still sees the item the nightly retained for it.
+  assert.deepEqual(await host.pendingQuestions(created.id), [{ requestId: 'synthetic-question',
+    questions: [{ header: 'Choice', question: 'Pick one', options: ['A'] }] }]);
+  // The page is the nightly's own visible window (and the bounded history pages it
+  // widens through), never the retained row: no earlier-run boundary is claimed
+  // while the live turn is only partly covered.
+  const page = (await host.agentTimelinePage(created.id, server.controls.boundedRowLimit))!;
+  assert.equal(page.entries.some(entry => entry.item.callId === 'synthetic-live-command'), false);
+  assert.equal(page.entries.some(entry => entry.item.id === 'synthetic-question-item'), false);
+  assert.ok(page.entries.every(entry => entry.turnId === 'synthetic-run-2'));
+  const read = await readToolTimeline(host, created.id);
+  assert.ok('entries' in read);
+  assert.equal(read.coverage, 'bounded', 'this is a window, never claimed turn coverage');
+});
+
+test('a native background subagent is never settled by its finished parent turn', async t => {
+  // nucleus#1217 finding 1: the nightly's own BACKGROUND_TURN_ITEM_TYPES keeps
+  // subagents as background work that may stay pending after a settled run, so a
+  // finished parent observation never clears a running child.
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const p = server.threads.get(created.id)!;
+  p.runs = [syntheticRun(created.id, 1, { id: 'synthetic-run-1' })];
+  p.turnItems = [
+    syntheticTurnItem(created.id, 1, { type: 'user_message', runId: 'synthetic-run-1', messageId: 'synthetic-message', text: 'go' }),
+    syntheticTurnItem(created.id, 2, { type: 'subagent', runId: 'synthetic-run-1', status: 'running',
+      subagentId: 'synthetic-subagent', origin: 'provider_native', driver: 'codex',
+      providerInstanceId: 'synthetic-provider', childThreadId: null, prompt: 'Synthetic child task', result: null }),
+  ];
+  const owner = await observedTurnState(host, created.id);
+  assert.equal(owner?.active, false, 'the parent run has finished');
+  const page = (await host.agentTimelinePage(created.id))!;
+  const child = page.entries[1]!.item;
+  assert.equal(child.type, 'tool_call');
+  assert.equal(child.detail?.type, 'subagent');
+  // A finished turn never settles the running child.
+  const issue = liveToolIssueFact(page.entries, owner);
+  assert.equal(issue?.kind, 'live');
+  assert.equal(issue && 'callId' in issue ? issue.callId : null, p.turnItems[1]!.id);
+  assert.equal(issue && 'turnBound' in issue ? issue.turnBound : null, false);
+  // A completed child is terminal evidence and settles.
+  p.turnItems[1] = syntheticTurnItem(created.id, 2, { type: 'subagent', runId: 'synthetic-run-1', status: 'completed',
+    subagentId: 'synthetic-subagent', origin: 'provider_native', driver: 'codex',
+    providerInstanceId: 'synthetic-provider', childThreadId: null, prompt: 'Synthetic child task', result: 'done' });
+  assert.equal(liveToolIssueFact((await host.agentTimelinePage(created.id))!.entries, owner), null);
+});
+
+test('bounded provider threads retain active work and omit older idle owners honestly', async t => {
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const p = server.threads.get(created.id)!;
+  p.turnItems = longThreadItems(created.id, 60, () => ({}));
+  p.providerThreads = [
+    syntheticProviderThread({ id: 'synthetic-idle-owner', pendingBackgroundTasks: [{ kind: 'subagent', taskId: 'synthetic-hidden-child' }] }),
+    syntheticProviderThread({ id: 'synthetic-active-owner', status: 'active', pendingBackgroundTasks: [{ kind: 'subagent', taskId: 'synthetic-active-child' }] }),
+  ];
+  const projection = await host.readProjection(created.id, 'window');
+  assert.deepEqual(projection.providerThreads?.map(thread => thread.id), ['synthetic-active-owner']);
+  const read = await readToolTimeline(host, created.id);
+  assert.ok('entries' in read && read.coverage === 'bounded');
+  assert.deepEqual(read.pendingBackgroundTasks, ['subagent synthetic-active-child']);
+  p.providerThreads = [p.providerThreads[0]];
+  const omitted = await readToolTimeline(host, created.id);
+  assert.ok('entries' in omitted && omitted.coverage === 'bounded');
+  assert.deepEqual(omitted.pendingBackgroundTasks, [], 'idle internal work outside the window is the documented T3 limitation');
+});
+
+test('a pending question on a long thread reads from the bounded timeline window', async t => {
+  // nucleus#1217 item 2: the nightly keeps every pending runtime request and the
+  // `user_input_request` item that carries its questions outside the window, so a
+  // long thread's pending question is readable without the full transcript.
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const p = server.threads.get(created.id)!;
+  const count = server.controls.boundedRowLimit + 40;
+  p.turnItems = longThreadItems(created.id, count, index => index === 0
+    ? { type: 'user_input_request', id: 'synthetic-question-item', nodeId: 'synthetic-question-node',
+        requestId: 'synthetic-question',
+        questions: [{ id: 'synthetic-choice', header: 'Choice', question: 'Pick one', options: [{ label: 'A' }, { label: 'B' }] }] }
+    : {});
+  p.runtimeRequests = [syntheticRuntimeRequest({ id: 'synthetic-question', kind: 'user_input', status: 'pending',
+    nodeId: 'synthetic-question-node' })];
+  const start = server.requests.length;
+  assert.deepEqual(await host.pendingQuestions(created.id), [{ requestId: 'synthetic-question',
+    questions: [{ header: 'Choice', question: 'Pick one', options: ['A', 'B'] }] }]);
+  const reads = server.requests.slice(start).filter(request => request.tag === 'orchestration.subscribeThread');
+  assert.equal(reads.length, 1, 'one bounded read answers the question');
+  assert.equal(reads[0]!.payload.acceptBoundedSnapshot, true);
+  const served = server.snapshots.at(-1)!;
+  assert.equal(served.bounded, true);
+  assert.equal(served.hasMoreHistory, true, 'the question came from a paged window, not the whole transcript');
 });
 
 test('inventory repeats moving live/archive snapshot pairs and succeeds when the sequence settles', async t => {

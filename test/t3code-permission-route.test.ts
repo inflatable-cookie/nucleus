@@ -64,7 +64,7 @@ function permissionTask(store: Store, key: string, hostId: string, input: HostPe
 
 async function permissionRuntime(t: TestContext, fixture: Awaited<ReturnType<typeof nativeFixture>>) {
   const directory = join(fixture.directory, 'service');
-  const primary = { client: { isConnected: true }, hostId: 'synthetic-primary', socketPath: join(directory, 'callback.sock'), helperPath: join(directory, 'helper.mjs'),
+  const primary = { client: { isConnected: true }, isConnected: () => true, hostId: 'synthetic-primary', socketPath: join(directory, 'callback.sock'), helperPath: join(directory, 'helper.mjs'),
     connect: async () => {}, close: async () => {}, catalog: async () => ({ providers: [] }) } as unknown as Adapter;
   const runtime = new QueueRuntime({ dataDir: directory, adapterFactory: () => primary, timers: false });
   t.after(() => runtime.drain());

@@ -67,6 +67,22 @@ export function observationFromInventoryEntry(entry: unknown): AgentObservation 
 /** Catalog feature discovery runs at most this many host requests at once. */
 const CATALOG_FEATURE_CONCURRENCY = 4;
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+class AgentInventoryIncompleteError extends Error {}
+class AgentInventoryConflictError extends Error {}
+class AgentInventoryLabelsError extends Error {}
+
+class UnsupportedMcpProviderError extends Error {
+  constructor(message: string, options?: ErrorOptions) { super(message, options); this.name = "UnsupportedMcpProviderError"; }
+}
+
+function unsupportedMcpProviderError(error: unknown): UnsupportedMcpProviderError | null {
+  const message = errorMessage(error);
+  return /Provider '.+' does not support MCP servers/.test(message)
+    ? new UnsupportedMcpProviderError(message, { cause: error })
+    : null;
+}
+
 export function paseoAdapterClass(Policy: HostPolicyConstructor) {
 return class PaseoAdapter extends Policy {
   readonly supportsCoordinatorRecovery = true;
@@ -142,8 +158,9 @@ return class PaseoAdapter extends Policy {
     this.admissionLaunchEnv = env ?? {};
   }
   get reportingViaMcp() { return Boolean(this.mcpScriptPath); }
+  isConnected(): boolean { return this.client.isConnected; }
   private mcpConfig(path:string) { return {nucleus:{type:"stdio" as const,command:"node",args:[this.mcpScriptPath!,path,"report"],alwaysLoad:true}}; }
-  unsupportedMcp(error: unknown) { return /Provider '.+' does not support MCP servers/.test(error instanceof Error ? error.message : String(error)); }
+  unsupportedMcp(error: unknown) { return error instanceof UnsupportedMcpProviderError; }
   async connect() { await this.client.connect(); await this.provenanceClient.connect(); const status = await this.client.getDaemonStatus(); this.hostId = status.serverId; }
   async close() { await this.provenanceClient.close(); await this.client.close(); }
   /**
@@ -198,7 +215,11 @@ return class PaseoAdapter extends Policy {
             ? { type: "toggle", id: feature.id, label: feature.label, value: feature.value, ...(feature.description ? { description: feature.description } : {}) }
             : { type: "select", id: feature.id, label: feature.label, value: feature.value, ...(feature.description ? { description: feature.description } : {}),
                 options: feature.options.map(option => ({ id: option.id, label: option.label, ...(option.isDefault ? { isDefault: true } : {}), ...(option.description ? { description: option.description } : {}) })) });
-        } catch { /* The model keeps its empty feature set; the rest of the catalog still stands. */ }
+        } catch (error) {
+          // Feature support is optional, but a failed read should remain visible
+          // while preserving the catalog's existing empty-feature fallback.
+          console.warn(`Paseo catalog feature lookup failed for ${key}/${model.id}:`, error);
+        }
       }));
     }
   }
@@ -233,7 +254,7 @@ return class PaseoAdapter extends Policy {
       config: { provider: `${p.provider}/${p.model}`, modeId: p.modeId, thinkingOptionId: p.thinkingOptionId, featureValues: p.featureValues, mcpServers: mcp ? this.mcpConfig(spec.mcpBindingPath!) : undefined },
       title: capPaseoTitle(spec.title), prompt: attempt.prompt, autoArchive: false, requestId: attempt.requestId,
       labels: attempt.labels, env: attempt.environment,
-    });
+    }).catch(error => { throw unsupportedMcpProviderError(error) ?? error; });
   }
   /** Query the current labels, requiring complete inventories and one identity per native agent. */
   private async labelledAgents(filters: Record<string, string>[], includeArchived: boolean) {
@@ -246,14 +267,17 @@ return class PaseoAdapter extends Policy {
         for (const entry of result.entries) {
           const agent = entry.agent;
           if (!agent || typeof agent.id !== "string") continue;
-          if (agent.labels) validateWireLabels(agent.labels);
+          if (agent.labels) {
+            try { validateWireLabels(agent.labels); }
+            catch (error) { throw new AgentInventoryLabelsError(errorMessage(error), { cause: error }); }
+          }
           const previous = entries.get(agent.id);
-          if (previous && (previous.agent.workspaceId !== agent.workspaceId || JSON.stringify(previous.agent.labels ?? {}) !== JSON.stringify(agent.labels ?? {}))) throw new Error('Conflicting agent inventory identity');
+          if (previous && (previous.agent.workspaceId !== agent.workspaceId || JSON.stringify(previous.agent.labels ?? {}) !== JSON.stringify(agent.labels ?? {}))) throw new AgentInventoryConflictError('Conflicting agent inventory identity');
           entries.set(agent.id, entry);
         }
         if (!result.pageInfo.hasMore) break;
         const next = result.pageInfo.nextCursor;
-        if (!next || cursors.has(next)) throw new Error('Agent lookup was incomplete');
+        if (!next || cursors.has(next)) throw new AgentInventoryIncompleteError('Agent lookup was incomplete');
         cursors.add(next); cursor = next;
       }
     }
@@ -301,7 +325,7 @@ return class PaseoAdapter extends Policy {
     try {
       entries = await this.labelledAgents([{ 'nucleus.plugin': 'nucleus' }], false);
     } catch (error) {
-      if (error instanceof Error && /Agent lookup was incomplete|Conflicting|Invalid .* plugin label/.test(error.message)) return null;
+      if (error instanceof AgentInventoryIncompleteError || error instanceof AgentInventoryConflictError || error instanceof AgentInventoryLabelsError) return null;
       throw error;
     }
     const observations = new Map<string, AgentObservation>();
@@ -317,21 +341,20 @@ return class PaseoAdapter extends Policy {
     const agent = this.api.agents.ref(id);
     if (!await agent.refresh()) throw new Error("Agent was not found");
     const current = agent.current();
-    const pending = agent.pendingPermissions ?? [];
-    const request = pending.find(item => item.kind === "question") ?? pending[0];
-    const requestText = request?.description?.trim() || request?.title?.trim() || request?.name?.trim() || "";
-    const firstLine = requestText.split(/\r?\n/, 1)[0]?.trim() || null;
-    return { id, workspaceId: agent.workspaceId, status: agent.status ?? "unknown", active: Boolean(agent.activeTurn),
-      model: String(agent.runtimeInfo?.model ?? current?.model ?? ""),
-      provider: String(agent.runtimeInfo?.provider ?? current?.provider ?? ""),
-      modeId: agent.runtimeInfo?.modeId ?? null, thinkingOptionId: agent.runtimeInfo?.thinkingOptionId ?? null,
-      labels: current?.labels,
-      permissions: Boolean(agent.pendingPermissions?.length), pendingPermissionKinds: pending.map(request => request.kind), error: agent.lastError ? typeof agent.lastError === "string" ? agent.lastError : JSON.stringify(agent.lastError) : "",
-      ...(request ? { pendingRequest: { id: request.id, kind: request.kind, firstLine } } : {}),
-      activeTurnId: agent.activeTurn?.turnId ?? null,
-      updatedAt: current?.updatedAt ?? "", turnStartedAt: agent.activeTurn?.startedAt ?? null,
-      lastUserMessageAt: (current as { lastUserMessageAt?: string | null } | undefined)?.lastUserMessageAt ?? null,
-      mcpBindingPath: mcpBindingPathFromHostRecord(current) };
+    const observation = observationFromInventoryEntry({
+      ...current,
+      id,
+      workspaceId: agent.workspaceId,
+      status: agent.status ?? "unknown",
+      activeTurn: agent.activeTurn ?? null,
+      pendingPermissions: agent.pendingPermissions ?? [],
+      runtimeInfo: agent.runtimeInfo,
+      lastError: agent.lastError,
+      model: current?.model,
+      provider: current?.provider,
+    });
+    if (!observation) throw new Error("Agent observation was incomplete");
+    return observation;
   }
   pendingQuestions(agentId: string) { return this.questionHost.pendingQuestions(agentId); }
   answerNativeQuestion(agentId: string, workspaceId: string, requestId: string, answers: Record<string, string>) { return this.questionHost.answerNativeQuestion(agentId, workspaceId, requestId, answers); }

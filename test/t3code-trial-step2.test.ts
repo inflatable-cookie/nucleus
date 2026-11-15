@@ -224,13 +224,13 @@ test('a T3 scope question lands on the board and recovery keeps it off the MCP r
 test('repository hostKind selects the online host of that kind; switching back leaves live tasks', async () => {
   const dir = mkdtempSync(join(tmpdir(), 't3-host-optin-'));
   const client = { isConnected: true };
-  const paseo = { client, hostId: 'paseo-primary', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'helper.mjs'),
+  const paseo = { client, isConnected: () => client.isConnected, hostId: 'paseo-primary', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'helper.mjs'),
     connect: async () => { client.isConnected = true; }, close: async () => { client.isConnected = false; },
     catalog: async () => ({ providers: [] }) } as unknown as HostAdapter;
   const runtime = new QueueRuntime({ dataDir: dir, adapterFactory: () => paseo, timers: false });
   try {
     await runtime.started; await runtime.bootstrap;
-    const t3 = { client: { isConnected: true }, hostId: 't3code:env', socketPath: join(dir, 't3.sock'), helperPath: join(dir, 't3-helper.mjs'),
+    const t3 = { client: { isConnected: true }, isConnected: () => true, hostId: 't3code:env', socketPath: join(dir, 't3.sock'), helperPath: join(dir, 't3-helper.mjs'),
       connect: async () => {}, close: async () => {}, catalog: async () => ({ providers: [] }) } as unknown as HostAdapter;
     runtime.hostRegistry.connect('t3code:env', 'endpoint-t3', { adapter: t3, admission: runtime.admission });
     runtime.store.putRepository({ origin: null, path: '/repo' }, null, '', null, null, null, undefined, undefined, 't3code');
