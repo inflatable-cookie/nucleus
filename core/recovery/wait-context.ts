@@ -3,6 +3,7 @@ import type { WaitStateContext } from "../../shared/wait-state";
 import { boardDispatchHoldApplies, BOARD_DISPATCH_HOLD_REASON } from '../../shared/board-dispatch-hold';
 import { holdsOf } from '../../shared/contracts';
 import { DISPATCH_WAIT_REASON, routeUnavailableStop } from '../../shared/task-stop';
+import { waitReasonFor } from '../../shared/wait-state';
 import { DISPATCH_HELD_REASON, projectInFlightWaitReason } from '../dispatch/capacity';
 import type { Store } from "../store/store";
 
@@ -38,6 +39,9 @@ export function queuedReason(store: Store, task: Task, context: WaitStateContext
   if (context.slotAdmissionReason) return context.slotAdmissionReason;
   if (routeUnavailableStop(task))
     return store.routingRetryAllowed(task) ? DISPATCH_WAIT_REASON : task.reason;
-  if (task.reason && task.reason !== DISPATCH_WAIT_REASON && !/prerequisite|capacity|project slot|task.slot|dispatch held/i.test(task.reason)) return task.reason;
+  // A reason that is one of Queue's own declared waits (the owner of that list is
+  // `shared/wait-state`) is the wait projection already; free text is the task's
+  // own progress detail and stands. Never re-read a wait out of reason prose.
+  if (task.reason && task.reason !== DISPATCH_WAIT_REASON && !waitReasonFor(task.reason)) return task.reason;
   return externalWait(task) || DISPATCH_WAIT_REASON;
 }

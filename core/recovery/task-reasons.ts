@@ -109,8 +109,6 @@ export function noActionEscalationAtAcceptedHead(t: Task): boolean {
     t.resolution.incident?.status === 'escalated' &&
     t.resolution.recovery.incidentId === t.resolution.incident.id;
 }
-/** Automatic closeout refreshes allowed per merge before the hold parks for a human. */
-const CLOSEOUT_REFRESH_LIMIT = 2;
 export const ACCEPTED_PR_RECONCILIATION_REASON = 'Operator requested accepted-PR workspace reconciliation';
 /** The visible reason a failed external-merge probe parks with; its pre-attention state is recorded for recovery. */
 export const EXTERNAL_MERGE_CHECK_REASON_PREFIX = 'External merge check:';
@@ -272,7 +270,7 @@ export const PROFILE_CATALOG_LOADING_REFUSAL = "The daemon profile catalog is st
 export const PROFILE_CATALOG_PENDING_REASON = "Waiting for the daemon profile catalog to load after service start";
 export {
   MERGE_GATE_SETTINGS_ATTEMPTS, TRANSIENT_PROVIDER_WAIT, stages, active, assignedThreadWaitReason, coordinative, proofExecutor,
-  mergedWithNonePatch, NO_RESOLUTION_ACTION, CLOSEOUT_REFRESH_LIMIT, message, EXTERNAL_MERGE_PROBE_LIMIT, VALIDATION_SCAN_PASS_LIMIT,
+  mergedWithNonePatch, NO_RESOLUTION_ACTION, message, EXTERNAL_MERGE_PROBE_LIMIT, VALIDATION_SCAN_PASS_LIMIT,
   resolutionCreationRoles, reviewerRefusalKey, PROVIDER_REFUSAL_UNVERIFIED, UNVERIFIABLE_REFUSAL_READ_LIMIT, reminderClock,
   repositoryQaArgv, workingLanes, escalationOutlived, plannerIdMatches,
 };

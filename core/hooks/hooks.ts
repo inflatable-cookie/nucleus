@@ -27,7 +27,8 @@ import { HookRetentionGate } from "./hook-retention";
 import { HookExecution } from "./hook-execution";
 import { HookRetry } from "./hook-retry";
 
-export { READ_ONLY_BASE_ADVANCED_KIND, STALE_INTEGRATION_BASE_PROOF, isStaleIntegrationBaseRefusal } from "./hook-replay";
+export { READ_ONLY_BASE_ADVANCED_KIND } from "./hook-replay";
+export { STALE_INTEGRATION_BASE_PROOF, isStaleBaseRefusal, isStaleIntegrationBaseRefusal, hookRefusalKind, type HookRefusalKind } from "./hook-refusal";
 export { hookHoldReason, isHookHoldReason, isRecoveredPreDispatchHookHold, isCloseoutHookHold, type HookEmissionResult, type HookContext, type ProspectiveMergeOutcome } from "./hook-context";
 export { isolationDataDirFor, isolationRootFor, isolationPathFor, warmCandidatePathFor, isOwnedIsolationPath } from "./hook-isolation";
 export { blobDigest, repositoryIsGitCheckout, pinInstruction, instructionForCommit, parseManifestBytes, forgetManifestDiscovery, discoverManifest, pinExecutable } from "./hook-manifest";

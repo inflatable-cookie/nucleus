@@ -731,7 +731,7 @@ const EVENT_KINDS = `absent_creation_replaced:2:1 absent_worker_retry:2:1 adopte
 agent_ask_delegation_missed:1:3 agent_ask_delegation_unknown:1:4 agent_ask_joined:3:2 agent_ask_planning_ruling:2:1 agent_ask_resumed:3:2
 agent_ask_reviewer_missed:1:2 agent_ask_stale_answered:1:2 agent_ask_superseded:4:4 agent_created:1:1 agent_intent:1:3 automatic_retry_suppressed:1:1
 blocked_pr_identity_deferred:1:1 blocked_review_evidence:1:1 blocker_ladder_classified:1:1 callback_reminder:3:10 callback_reminder_extended:2:1
-callback_reminder_skipped:1:1 cancel:1:52 checkpoint_continued:1:1 closed_out:1:5 closeout_base_renewed:1:1 closeout_hold_refresh:1:1
+callback_reminder_skipped:1:1 cancel:1:52 checkpoint_continued:1:1 closed_out:1:5 closeout_base_renewed:2:1
 closeout_recovery_budget:1:1 completion_received:1:4 coordinator_action_refused:1:2 coordinator_rearm:1:1 delegated_answer:5:1 delegated_closed:3:3
 delegated_decision_route:2:1 delegated_delivery:4:1 dependencies_changed:1:1 dispatch_intent:1:1
 disposition_complete:2:1 disposition_requested:1:1 disposition_turn_interrupted:2:1 environment_deferred:1:3 escalation_resolved:1:1

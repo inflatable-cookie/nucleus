@@ -425,7 +425,7 @@ process.stdout.write(JSON.stringify({schema:'paseo.queue.hook-result.v1',eventId
     const refreshed = f.current();
     assert.equal(refreshed.phase, 'syncing', `expected an automatic refresh, saw ${refreshed.phase}: ${refreshed.reason}`);
     assert.equal(refreshed.resolution.attention, false, 'a stale base is not an operator matter');
-    assert.equal(f.store.events(f.taskId).filter(event => event.kind === 'closeout_hold_refresh').length, 1);
+    assert.equal(f.store.events(f.taskId).filter(event => event.kind === 'closeout_base_renewed').length, 1);
     // The refreshes are bounded: once spent, the hold parks for a human. A parked
     // closeout hold keeps its phase and raises attention, as it always has.
     let parked = refreshed;
@@ -435,7 +435,7 @@ process.stdout.write(JSON.stringify({schema:'paseo.queue.hook-result.v1',eventId
     }
     assert.equal(parked.resolution.attention, true, `expected the hold to park, saw ${parked.phase}: ${parked.reason}`);
     assert.equal(parked.phase, 'closing');
-    assert.equal(f.store.events(f.taskId).filter(event => event.kind === 'closeout_hold_refresh').length, 2, 'the refresh stays bounded at two per merge');
+    assert.equal(f.store.events(f.taskId).filter(event => event.kind === 'closeout_base_renewed').length, 3, 'the refresh stays bounded at three per merge');
   } finally {
     f.store.close();
   }
