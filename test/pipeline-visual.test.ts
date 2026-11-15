@@ -12,6 +12,8 @@ import { PluginClientStateProvider, PluginRpcProvider } from '@getpaseo/plugin/c
 import { boardShellPlugin, mount, useNativeStubs, type HostNode } from './support/render';
 import { pipelineColumns, pipelineStubWidth } from '../shared/pipeline-board';
 import {Store} from '../core/store/store';
+import { leadActions } from '../core/planning/lead-actions';
+import type { LeadStatusFacts } from '../shared/lead-status';
 import {hostRunRecordSchema, submissionSchema, summarizeTask, type ProjectQaRun} from '../shared/contracts';
 import {CAPACITY_WAIT_PREFIX} from '../shared/wait-state';
 import {createTaskDetailCache} from '../core/telemetry/task-detail';
@@ -140,10 +142,10 @@ const invoke = async (method: string, input: unknown): Promise<unknown> => {
     return hostRunsForUi[0];
   }
   if (method === 'lead.board') return { cards: boardCards([lead, taggedLead()]).map(boardRow), links: [] };
-    if (method === 'lead.get') return {
-      ...lead,
-      versions: [{ version: 1, title: lead.title, body: lead.body, author: lead.author, createdAt: lead.createdAt, check: lead.check }],
-    };
+    if (method === 'lead.get') {
+      const detail = { ...lead, versions: [{ version: 1, title: lead.title, body: lead.body, author: lead.author, createdAt: lead.createdAt, check: lead.check }] };
+      return { ...detail, actions: leadActions(detail as unknown as LeadStatusFacts) };
+    }
   if (method === 'plans') return [plan];
   if (method === 'plan.get') return plan;
   return {};
@@ -1019,7 +1021,8 @@ test('026-15a bundled Pipeline record modals run each action and report in the m
     if (method === 'lead.get') {
       const id = (input as { id: string }).id;
       const item = id === dropLead.id ? dropLead : actionLead;
-      return { ...item, versions: versions(item) };
+      const detail = { ...item, versions: versions(item) };
+      return { ...detail, actions: leadActions(detail as unknown as LeadStatusFacts) };
     }
     if (method === 'lead.check') {
       actionLead.check = { ok: true, message: 'Ready', checkedAt: stamp, planningCommit: 'c'.repeat(40) };

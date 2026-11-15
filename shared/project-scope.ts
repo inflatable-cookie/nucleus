@@ -1,3 +1,4 @@
+import { readMigratedValue, type KeyValueStorage } from './storage-migration';
 import { projectDormant, type LeadListFacts, type Project, type ProjectPlan, type TaskSummary } from './contracts';
 import { projectPlanningCounts } from './planning-tab';
 
@@ -70,7 +71,7 @@ export function projectSelectorRows(projects: Project[], selection: readonly str
   });
 }
 
-type ScopeStorage = { getItem(key: string): string | null; setItem(key: string, value: string): void; removeItem?(key: string): void };
+type ScopeStorage = KeyValueStorage;
 const storageKey = 'nucleus:project-scope';
 // Rows saved under the old plugin name stay readable; no new write uses it.
 const legacyStorageKey = 'northstar-queue:project-scope';
@@ -79,18 +80,14 @@ let sessionScope: ProjectScope = defaultProjectScope;
 /** Persisted across plugin reloads when the surface has local storage; otherwise kept for the session. Never written to Queue's store. */
 export function readProjectScope(storage: ScopeStorage | undefined): ProjectScope {
   try {
-    const current = storage?.getItem(storageKey);
-    const raw = current ?? storage?.getItem(legacyStorageKey);
-    if (!raw) return sessionScope;
-    const value = JSON.parse(raw) as Partial<ProjectScope>;
-    const scope = {
-      projects: Array.isArray(value.projects) ? value.projects.filter((key): key is string => typeof key === 'string') : [],
-      statusFilter: typeof value.statusFilter === 'boolean' ? value.statusFilter : true,
-    };
-    if (current == null) {
-      storage?.setItem(storageKey, JSON.stringify(scope));
-      storage?.removeItem?.(legacyStorageKey);
-    }
+    const scope = readMigratedValue(storage, storageKey, legacyStorageKey, raw => {
+      const value = JSON.parse(raw) as Partial<ProjectScope>;
+      return {
+        projects: Array.isArray(value.projects) ? value.projects.filter((key): key is string => typeof key === 'string') : [],
+        statusFilter: typeof value.statusFilter === 'boolean' ? value.statusFilter : true,
+      };
+    });
+    if (!scope) return sessionScope;
     return scope;
   } catch { return sessionScope; }
 }

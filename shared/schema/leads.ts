@@ -64,7 +64,14 @@ export const leadVersionMetadataSchema = leadVersionSchema.omit({ body: true });
 
 export const leadHistoryVersionSchema = z.union([leadVersionSchema, leadVersionMetadataSchema]);
 
+export const leadActionsSchema = z.object({
+  check: z.string().nullable(), approve: z.string().nullable(), drop: z.string().nullable(),
+  reopen: z.string().nullable(), promoteTo: z.string().nullable(),
+  promote: z.array(z.object({ origin: z.string(), reason: z.string().nullable() }).strict()),
+}).strict();
+
 export const leadDetailSchema = leadSchema.extend({
+  actions: leadActionsSchema,
   versions: z.array(leadHistoryVersionSchema),
   /** Convenient lookup when this lead has exactly one task target; multi-repository leads use `targets`. */
   promotedTaskId: z.string().nullable().default(null),

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import React from "react";
 import { mount, useNativeStubs } from "./support/render";
 import type { LeadDetail, LeadVersion } from "../shared/contracts";
+import { leadActions } from "../core/planning/lead-actions";
 import type { LeadActions, LeadRead } from "../client/lead-screen";
 
 useNativeStubs();
@@ -26,7 +27,7 @@ function lead(over: Partial<LeadDetail> = {}): LeadDetail {
     versions: [version(2), version(1)],
     ...over,
   } as unknown as LeadDetail;
-  return base;
+  return { ...base, actions: leadActions(base) };
 }
 const approved = (forVersion = 2) => ({ version: forVersion, digest: digest(forVersion % 10), approver: "operator (board)", approvedAt: "2026-11-06T10:00:00Z", note: "", relayed: false, baseBranch: "main" });
 

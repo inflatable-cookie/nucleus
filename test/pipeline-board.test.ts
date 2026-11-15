@@ -283,7 +283,7 @@ test('026-15a pipeline cards open a record modal and carry no action buttons',()
   assert.match(leadScreen,/text=\{running === "check" \? "Checking…" : "Check brief"\}/);
   assert.match(leadScreen,/text=\{running === "approve" \? "Approving…" : "Approve"\}/);
   assert.match(leadScreen,/"Promote to task"/);
-  assert.match(leadScreen,/leadApproveReason/);
+  assert.match(leadScreen,/approve: approveReason/);
   assert.match(ui,/text="Close as completed"/);
   assert.match(ui,/text="Close as deprecated"/);
   assert.match(ui,/papercutPromoteReason/);

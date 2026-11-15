@@ -20,6 +20,7 @@ import { QaRunsTab, liveHostRun, type RunAccounting } from "./qa-runs-tab";
 import { attention } from "./board/text";
 import { BoardHeader } from "./board/header";
 import { PipelineBoard, usePipelineState } from "./board/pipeline";
+import { useBoardSelection } from "./board/use-board-selection";
 import { useBoardAct, usePlanningData, useQaData, useRecordQueries, useTaskDetail, type BoardTab } from "./board/use-board-data";
 import { TaskDialog } from "./task/task-dialog";
 import { useTaskDraftStore } from "./task/drafts";
@@ -83,28 +84,20 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard, now }: 
     return () => { boardTabListeners.delete(show); };
   }, []);
   // A board QA card opens the QA runs page on its run (Tom, 2026-11-01).
-  const [qaFocusId, setQaFocusId] = useState<string | null>(null);
   const [surfaceScope, setSurfaceScope] = useProjectScope();
   // Spec 026 row 14c: the workspace panel's selection is preset to the workspace's
   // project and lives in the panel, never in the main surface's persisted scope.
   const [panelScope, setPanelScope] = usePanelScope(workspaceBoard?.key ?? null);
   const scope = workspaceBoard ? panelScope ?? { projects: [workspaceBoard.key], statusFilter: true } : surfaceScope;
   const setScope = workspaceBoard ? setPanelScope : setSurfaceScope;
-  const [scopeOpen, setScopeOpen] = useState(false), [selected, setSelected] = useState<string | null>(null);
+  const [scopeOpen, setScopeOpen] = useState(false);
+  const { selected, setSelected, selectedLeadId, setSelectedLeadId, leadLane, setLeadLane, openPapercutId, setOpenPapercutId, openDecisionId, setOpenDecisionId, qaFocusId, selectTask, selectDecision, selectLead, selectPapercut, openQaRun } = useBoardSelection(setTab);
   // Unsaved plan drafts, one per project section: entries, idle mark and the version they were based on.
   const [planEdits,setPlanEdits] = useState<Record<string,PlanEdit>>({});
   // The last failed save per project. The draft stays; the section says why it was not saved.
   const [planSaveErrors,setPlanSaveErrors] = useState<Record<string,string>>({});
   // The open lane's unsaved document text. Leaving the lane or the Planning tab keeps it until it is saved or discarded.
   const [laneDraft,setLaneDraft] = useState<LaneDraft|null>(null);
-  const [selectedLeadId,setSelectedLeadId] = useState<string|null>(null);
-  // #868: the lane a lead was opened from, so the lead screen says where it sits; the
-  // Triage column opens a lead with no lane and clears it.
-  const [leadLane,setLeadLane] = useState<{key:string;title:string}|null>(null);
-  const [openPapercutId,setOpenPapercutId] = useState<string|null>(null);
-  // Spec 032: the decision dialog keyed by the decision's id; its answer and
-  // withdraw boxes clear when it closes or moves to another decision.
-  const [openDecisionId,setOpenDecisionId] = useState<string|null>(null);
   const [recordNotice,setRecordNotice] = useState<RecordNoticeValue|null>(null);
   // The revisioned board read (Contract 007) lives in the shared board-state
   // hook, so every surface hydrates from one projection and panel mounts never
@@ -125,12 +118,6 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard, now }: 
   const taskDrafts = useTaskDraftStore(`${selected ?? ""}|${tab}`);
   useEffect(() => { setRecordNotice(null); }, [selectedLeadId, openPapercutId, openDecisionId]);
   const recordKey = `${selectedLeadId ?? ""}|${openPapercutId ?? ""}|${openDecisionId ?? ""}`;
-  // Opening a task, decision, lead, papercut or QA run closes whichever other record was open.
-  const selectTask = (id: string) => { setSelectedLeadId(null); setOpenPapercutId(null); setOpenDecisionId(null); setSelected(id); };
-  const selectDecision = (id: string) => { setSelected(null); setSelectedLeadId(null); setOpenPapercutId(null); setOpenDecisionId(id); };
-  const selectLead = (id: string, lane: {key:string;title:string}|null) => { setSelected(null); setOpenDecisionId(null); setOpenPapercutId(null); setLeadLane(lane); setSelectedLeadId(id); };
-  const selectPapercut = (id: string) => { setSelected(null); setOpenDecisionId(null); setSelectedLeadId(null); setOpenPapercutId(id); };
-  const openQaRun = (id: string) => { setSelected(null); setSelectedLeadId(null); setOpenPapercutId(null); setOpenDecisionId(null); setQaFocusId(id); setTab("qa"); };
   const liveTasks = state?.tasks.filter(isOpenTask) ?? [];
   const setScopeProjects = (projects: string[]) => setScope({ ...scope, projects });
   // Stale saved keys (a removed project) drop out, so every view treats them alike.
