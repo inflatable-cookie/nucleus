@@ -14,6 +14,7 @@ import { AcceptedPrWorkspace } from './workspaces/workspace-continuation';
 import { recoveryContext } from './recovery/context';
 import { RecoveryLifecycle } from './recovery/lifecycle';
 import { MergePhase, type MergePhaseContext } from './merge/merge-phase';
+import { HookReplayLifecycle, type HookReplayLifecycleContext } from './hooks/hook-replay';
 import { DispatchLaunch, type DispatchLaunchContext } from './dispatch/launch';
 
 import { intakeContext } from './intake/context';
@@ -260,10 +261,14 @@ export class Resolution {
   readonly acceptedPrWorkspace = new AcceptedPrWorkspace(recoveryContext(this, ['adapter', 'attention', 'startsNoRuns', 'store']));
   readonly recoveryLifecycle = new RecoveryLifecycle(Object.assign(
     recoveryContext(this, ['attention', 'attentionUnknownEscalation', 'environmentDeferred', 'gitTransientFailure', 'responsibleBlockerLadder', 'store', 'update', 'waiting']),
-    { replayHeldAttention: (t: Task) => this.mergePhase.replayHeldAttention(t) },
+    { replayHeldAttention: (t: Task) => this.hookReplay.replayHeldAttention(t) },
   ));
 
   readonly mergePhase = new MergePhase(((owner: Resolution): MergePhaseContext => ({
+    get store() { return owner.store; },
+    update: (...args) => owner.update(...args),
+  }))(this));
+  readonly hookReplay = new HookReplayLifecycle(((owner: Resolution): HookReplayLifecycleContext => ({
     get store() { return owner.store; },
     get hooks() { return owner.hooks; },
     paused: (...args) => owner.paused(...args),
@@ -271,8 +276,6 @@ export class Resolution {
     get graceMs() { return owner.graceMs; },
     update: (...args) => owner.update(...args),
     operatorReturn: (...args) => owner.operatorReturn(...args),
-    mergeGateEvidence: (...args) => owner.mergeGateEvidence(...args),
-    resolvePassedUnchangedCheckEscalation: (...args) => owner.resolvePassedUnchangedCheckEscalation(...args),
   }))(this));
   readonly origins = new OriginRouting(this);
   readonly recovery = new Recovery(recoveryContext(this, ['adapter', 'attention', 'automaticHookReplayPending', 'ensureIncident', 'escalateRefusedCoordinator', 'extendCallbackReminder', 'graceMs', 'host', 'hostAvailable', 'workerProviderUnavailable', 'idle', 'lease', 'onTaskHost', 'openPlannerEscalation', 'openReviewContinuationEscalation', 'recordStop', 'requiredRouteNote', 'responsibleBlockerLadder', 'resumeTransientProviderThread', 'select', 'slotAdmissionReason', 'startsNoRuns', 'stopped', 'store', 'suppressAutomaticRetry', 'update', 'usageCeilingNote', 'validationEvidence', 'waiting']));
@@ -1072,8 +1075,8 @@ export class Resolution {
   queueCloseout(t: Task): Promise<void> { return this.closeout.queueCloseout(t); }
   /** Complete closeout through the repository's authoritative integration-write hook. No closeout run or workspace is created. */
   hookCloseout(t: Task): Promise<void> { return this.closeout.hookCloseout(t); }
-  automaticHookReplayPending(t: Task): boolean { return this.mergePhase.automaticHookReplayPending(t); }
-  settleAutomaticReplayHold(t: Task, records: HookRecord[], event: HookEventName): Task { return this.mergePhase.settleAutomaticReplayHold(t, records, event); }
+  automaticHookReplayPending(t: Task): boolean { return this.hookReplay.automaticHookReplayPending(t); }
+  settleAutomaticReplayHold(t: Task, records: HookRecord[], event: HookEventName): Task { return this.hookReplay.settleAutomaticReplayHold(t, records, event); }
   refusePreMerge(t: Task, reason: string, eventDetail: string) { return this.mergeGates.refusePreMerge(t, reason, eventDetail); }
   verification(t: Task, prepareHooks = true) { return this.mergeGates.verification(t, prepareHooks); }
   reconcileReviewPublication(t: Task, runId: string, reason: string, reportingRunId?: string) { return this.reviewPublication.reconcileReviewPublication(t, runId, reason, reportingRunId); }
@@ -1096,8 +1099,8 @@ export class Resolution {
   reconcileAcceptedPrWorkspace(t: Task): Promise<Task | null> { return this.acceptedPrWorkspace.reconcileAcceptedPrWorkspace(t); }
   /** Advance step: a stored result or late completion settles the attention it answers, and a required-hook retry clears its attention. */
   recordStoredResult(t: Task): Task { return this.schedulingLifecycle.recordStoredResult(t); }
-  unchangedCheckGateApplies(t: Task): boolean { return this.mergePhase.unchangedCheckGateApplies(t); }
-  settleUnchangedCheckGate(t: Task): Promise<Task> { return this.mergePhase.settleUnchangedCheckGate(t); }
+  unchangedCheckGateApplies(t: Task): boolean { return this.checkWaits.unchangedCheckGateApplies(t); }
+  settleUnchangedCheckGate(t: Task): Promise<Task> { return this.checkWaits.settleUnchangedCheckGate(t); }
   /** Advance gate: a parked blocked or errored responsible task climbs the ladder once per receipt. */
   blockerLadderApplies(t: Task): boolean { return this.schedulingLifecycle.blockerLadderApplies(t); }
   /** Advance step: a parked blocked or errored responsible task climbs the ladder once per receipt. Null stops the pass. */
