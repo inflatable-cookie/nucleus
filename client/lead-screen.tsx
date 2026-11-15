@@ -2,6 +2,8 @@ import { errorText as message } from "./error-text";
 import React, { useEffect, useState } from "react";
 import { Text, View } from "react-native";
 import type { Lead, LeadDetail, LeadVersion } from "../shared/contracts";
+import { hasBriefFrontmatter, leadApprovalView, leadCheckView } from "../shared/lead-status";
+export { leadApprovalView, leadCheckView } from "../shared/lead-status";
 import { formatLocalDateTime } from "../shared/date-time";
 import { Button, Disclosure, Field, row, type Colors } from "./controls";
 import { radius, roles, space, type } from "./design";
@@ -12,14 +14,12 @@ export type LeadRead = { data?: LeadDetail; error?: string };
 
 /** The newest version, other than the current one, whose check the history keeps. */
 export const leadStateWord: Record<Lead["state"], string> = { open: "Open", promoted: "Promoted", dropped: "Dropped", closed: "Closed" };
-/** A lead's body is a brief only with brief frontmatter; prose alone is not a brief to check or approve. */
-export const briefBearing = (body: string) => /^---\r?\n/.test(body);
 /**
  * A brief's body without its frontmatter. The frontmatter is routing mechanics, so it is
  * read under Details and never shown as the operator's text (Tom, 2026-11-07).
  */
 export function briefParts(body: string): { frontmatter: string | null; text: string } {
-  if (!briefBearing(body)) return { frontmatter: null, text: body };
+  if (!hasBriefFrontmatter(body)) return { frontmatter: null, text: body };
   const end = body.indexOf("\n---", 3);
   if (end < 0) return { frontmatter: null, text: body };
   const after = body.indexOf("\n", end + 4);
@@ -27,85 +27,10 @@ export function briefParts(body: string): { frontmatter: string | null; text: st
 }
 export const checkLabel = (check: Lead["check"]) => !check ? "Unchecked" : check.ok ? (check.message ? `Checks passed · ${check.message}` : "Checks passed") : (check.message ? `Checks failed · ${check.message}` : "Checks failed");
 
-/**
- * What the check says about the version the operator is looking at. A new version
- * clears the check, so the history's last checked version is named as stale rather
- * than silently shown as this version's result.
- */
-export type LeadCheckView =
-  | { kind: "pending" }
-  | { kind: "none" }
-  | { kind: "current"; check: NonNullable<Lead["check"]> }
-  | { kind: "stale"; version: number; check: NonNullable<Lead["check"]> };
-
-export function leadCheckView(lead: LeadDetail): LeadCheckView {
-  if (lead.checkOperationId) return { kind: "pending" };
-  if (lead.check) return { kind: "current", check: lead.check };
-  const earlier = [...lead.versions]
-    .filter(version => version.check && version.version < lead.version)
-    .sort((a, b) => b.version - a.version)[0];
-  return earlier ? { kind: "stale", version: earlier.version, check: earlier.check! } : { kind: "none" };
-}
-
-/** Approval binds to one version and its digest. An approval for another version is named stale, never implied. */
-export type LeadApprovalView =
-  | { kind: "none" }
-  | { kind: "current"; approval: NonNullable<Lead["approval"]> }
-  | { kind: "stale"; approval: NonNullable<Lead["approval"]> };
-
-export function leadApprovalView(lead: LeadDetail): LeadApprovalView {
-  const approval = lead.approval;
-  if (approval) {
-    if (approval.version !== lead.version || (lead.digest !== undefined && approval.digest !== lead.digest)) return { kind: "stale", approval };
-    return { kind: "current", approval };
-  }
-  // Writing a new version clears the approval on the record, so an ordinary edit would otherwise hide
-  // that the earlier version was approved. The version history keeps it, and it names its version.
-  const earlier = [...lead.versions]
-    .filter(version => version.approval && version.version < lead.version)
-    .sort((a, b) => b.version - a.version)[0];
-  return earlier ? { kind: "stale", approval: earlier.approval! } : { kind: "none" };
-}
-
 /** Who approved which version, and whether an agent relayed the operator's authority (Tom, 2026-09-26). */
 export function approvalLine(approval: NonNullable<Lead["approval"]>): string {
   const who = approval.relayed ? `Approved by ${approval.approver}, relayed with the operator's authority` : `Approved by ${approval.approver}`;
   return approval.note ? `${who} · ${approval.note}` : who;
-}
-
-export function leadCheckReason(lead: LeadDetail): string | undefined {
-  if (lead.state !== "open") return `Only open leads can be checked; this lead is ${lead.state.toLowerCase()}`;
-  if (!briefBearing(lead.body)) return "Lead has no brief to check";
-  if (lead.checkOperationId) return "A check is already running";
-}
-export function leadApproveReason(lead: LeadDetail): string | undefined {
-  const check = leadCheckView(lead), approval = leadApprovalView(lead);
-  if (lead.state !== "open") return `Only open leads can be approved; this lead is ${lead.state.toLowerCase()}`;
-  if (!briefBearing(lead.body)) return "Lead has no brief to approve";
-  if (check.kind === "pending") return "A check is running; approve once it passes";
-  if (check.kind === "none") return "Check the brief first";
-  if (check.kind === "stale") return `The check is for version ${check.version}; check version ${lead.version} first`;
-  if (!check.check.ok) return check.check.message || "The current version failed its check";
-  if (approval.kind === "current") return "Approved";
-}
-export function leadPromoteReason(lead: LeadDetail, origin: string): string | undefined {
-  const approval = leadApprovalView(lead);
-  if (lead.state === "dropped") return "A dropped lead cannot be promoted";
-  if (lead.targets.some(target => target.kind === "task" && target.repository === origin)) return `Already promoted to a task in ${origin}`;
-  if (approval.kind === "stale") return `The approval is for version ${approval.approval.version}; approve version ${lead.version} first`;
-  if (approval.kind === "none") return "Approve the checked version first";
-}
-export function leadDropReason(lead: LeadDetail): string | undefined {
-  if (lead.papercut) return "Close a papercut from its own record";
-  if (lead.state !== "open") return `Only open leads can be dropped; this lead is ${lead.state.toLowerCase()}`;
-}
-export function leadReopenReason(lead: LeadDetail): string | undefined {
-  if (lead.state !== "dropped") return "Only a dropped lead can be reopened";
-  if (lead.papercut) return "A papercut is never reopened by this action";
-}
-export function leadPromoteToReason(lead: LeadDetail): string | undefined {
-  if (lead.papercut) return "Papercuts promote to tasks";
-  if (lead.state === "dropped") return "A dropped lead cannot be promoted";
 }
 
 /** Versions listed at once; a long history offers the next page rather than rendering every row. */
@@ -217,8 +142,7 @@ export function LeadScreen({ read, actions, readVersion, compact, busy, lane, c,
 
   const checkView = leadCheckView(lead), approvalView = leadApprovalView(lead), brief = briefParts(lead.body);
   const { onCheck, onApprove, onPromote, onDrop, onReopen, onPromoteTo } = actions ?? unloaded;
-  const checkReason = leadCheckReason(lead), approveReason = leadApproveReason(lead);
-  const dropReason = leadDropReason(lead), reopenReason = leadReopenReason(lead), promoteToReason = leadPromoteToReason(lead);
+  const { check: checkReason, approve: approveReason, drop: dropReason, reopen: reopenReason, promoteTo: promoteToReason } = lead.actions;
 
   const checkBody = () => {
     if (checkView.kind === "pending") return <Text style={text}>A check is running. Its result replaces this text when it lands.</Text>;
@@ -273,17 +197,17 @@ export function LeadScreen({ read, actions, readVersion, compact, busy, lane, c,
         {" · "}{approvalView.kind === "none" ? "Not approved" : approvalView.kind === "stale" ? `Approval stale · version ${approvalView.approval.version}` : `Approved · version ${approvalView.approval.version}`}
       </Text>
       <View style={row}>
-        <Button small c={c} text={running === "check" ? "Checking…" : "Check brief"} label="Check the brief" disabled={blocked || Boolean(checkReason)} hint={checkReason} onPress={() => void run("check", onCheck)} />
-        <Button small c={c} text={running === "approve" ? "Approving…" : "Approve"} label="Approve the checked version" disabled={blocked || Boolean(approveReason)} hint={approveReason} onPress={() => void run("approve", onApprove)} />
+        <Button small c={c} text={running === "check" ? "Checking…" : "Check brief"} label="Check the brief" disabled={blocked || Boolean(checkReason)} hint={checkReason ?? undefined} onPress={() => void run("check", onCheck)} />
+        <Button small c={c} text={running === "approve" ? "Approving…" : "Approve"} label="Approve the checked version" disabled={blocked || Boolean(approveReason)} hint={approveReason ?? undefined} onPress={() => void run("approve", onApprove)} />
         {lead.repositories.map(repo => {
-          const reason = leadPromoteReason(lead, repo.origin), key = `promote:${repo.origin}`;
+          const reason = lead.actions.promote.find(item => item.origin === repo.origin)?.reason, key = `promote:${repo.origin}`;
           return <Button key={repo.origin} small c={c} text={running === key ? "Promoting…" : "Promote to task"} label={lead.repositories.length > 1 ? `Promote to a task in ${repo.origin}` : "Promote to a task"}
-            disabled={blocked || Boolean(reason)} hint={reason} onPress={() => void run(key, () => onPromote(repo.origin))} />;
+            disabled={blocked || Boolean(reason)} hint={reason ?? undefined} onPress={() => void run(key, () => onPromote(repo.origin))} />;
         })}
       </View>
       {[checkReason && `Check: ${checkReason}`, approveReason && `Approve: ${approveReason}`].filter(Boolean).map(reason => <Text key={reason} style={meta}>{reason}</Text>)}
       {lead.repositories.map(repo => {
-        const reason = leadPromoteReason(lead, repo.origin);
+        const reason = lead.actions.promote.find(item => item.origin === repo.origin)?.reason;
         return reason ? <Text key={repo.origin} style={meta}>Promote: {reason}</Text> : null;
       })}
       <NoticeLine notice={notices.check} label="Check" c={c} />
@@ -323,7 +247,7 @@ export function LeadScreen({ read, actions, readVersion, compact, busy, lane, c,
           <Field c={c} label="Drop reason" value={drop} onChange={setDrop} disabled={blocked || Boolean(dropReason)} />
           <View style={row}>
             <Button small c={c} danger text={running === "drop" ? "Dropping…" : "Drop lead"} label="Drop the lead" disabled={blocked || Boolean(dropReason) || !drop.trim()}
-              hint={dropReason} onPress={() => void run("drop", () => onDrop(drop))} />
+              hint={dropReason ?? undefined} onPress={() => void run("drop", () => onDrop(drop))} />
           </View>
           {dropReason && <Text style={meta}>{dropReason}</Text>}
           <NoticeLine notice={notices.drop} label="Drop" c={c} />
@@ -332,7 +256,7 @@ export function LeadScreen({ read, actions, readVersion, compact, busy, lane, c,
           <Field c={c} label="Reopen reason" value={reopen} onChange={setReopen} disabled={blocked || Boolean(reopenReason)} />
           <View style={row}>
             <Button small c={c} text={running === "reopen" ? "Reopening…" : "Reopen lead"} label="Reopen the lead" disabled={blocked || Boolean(reopenReason) || !reopen.trim()}
-              hint={reopenReason} onPress={() => void run("reopen", () => onReopen(reopen))} />
+              hint={reopenReason ?? undefined} onPress={() => void run("reopen", () => onReopen(reopen))} />
           </View>
           {reopenReason && <Text style={meta}>{reopenReason}</Text>}
           <NoticeLine notice={notices.reopen} label="Reopen" c={c} />
@@ -341,7 +265,7 @@ export function LeadScreen({ read, actions, readVersion, compact, busy, lane, c,
           <Field c={c} label="Question or knowledge reference" value={reference} onChange={setReference} disabled={blocked || Boolean(promoteToReason)}
             detail="Where it landed, such as a question id or the knowledge change on main." />
           <View style={row}>
-            {(["question", "knowledge"] as const).map(kind => <Button key={kind} small c={c} disabled={blocked || Boolean(promoteToReason) || !reference.trim()} hint={promoteToReason}
+            {(["question", "knowledge"] as const).map(kind => <Button key={kind} small c={c} disabled={blocked || Boolean(promoteToReason) || !reference.trim()} hint={promoteToReason ?? undefined}
               text={running === `promoteTo:${kind}` ? "Recording…" : kind === "question" ? "Record as question" : "Record as knowledge change"}
               label={kind === "question" ? "Record promotion to a question" : "Record promotion to a knowledge change"}
               onPress={() => void run(`promoteTo:${kind}`, () => onPromoteTo(kind, reference))} />)}

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import React from "react";
 import { mount, useNativeStubs } from "./support/render";
 import type { LeadDetail, LeadVersion } from "../shared/contracts";
+import { leadActions } from "../core/planning/lead-actions";
 import type { LeadActions, LeadRead } from "../client/lead-screen";
 
 useNativeStubs();
@@ -26,7 +27,7 @@ function lead(over: Partial<LeadDetail> = {}): LeadDetail {
     versions: [version(2), version(1)],
     ...over,
   } as unknown as LeadDetail;
-  return base;
+  return { ...base, actions: leadActions(base) };
 }
 const approved = (forVersion = 2) => ({ version: forVersion, digest: digest(forVersion % 10), approver: "operator (board)", approvedAt: "2026-11-06T10:00:00Z", note: "", relayed: false, baseBranch: "main" });
 
@@ -287,6 +288,10 @@ test("wrapped prose reads as one paragraph while headings, lists and code keep t
 
 test("brief frontmatter is routing mechanics, so the operator reads the brief without it", async () => {
   const { briefParts } = await import("../client/lead-screen");
+  const { hasBriefFrontmatter } = await import("../shared/lead-status");
+  assert.equal(hasBriefFrontmatter("---\r\ntitle: Ledger\r\n"), true);
+  assert.equal(hasBriefFrontmatter("---"), false);
+  assert.equal(hasBriefFrontmatter("text\n---\n"), false);
   const brief = "---\ntitle: Ledger\nlanes: [ui]\n---\n\n# Ledger\n\nBody text.";
   assert.deepEqual(briefParts(brief), { frontmatter: "---\ntitle: Ledger\nlanes: [ui]\n---", text: "# Ledger\n\nBody text." });
   assert.deepEqual(briefParts("Just prose, no frontmatter."), { frontmatter: null, text: "Just prose, no frontmatter." });

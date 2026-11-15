@@ -1,3 +1,4 @@
+import { readMigratedValue, type KeyValueStorage } from './storage-migration';
 import { projectDormant, type LeadListFacts, type Project, type ProjectPlan, type TaskSummary } from './contracts';
 import { projectPlanningCounts } from './planning-tab';
 
@@ -21,14 +22,17 @@ export function scopedProjects(projects: Project[], selection: readonly string[]
   return projects.filter(project => keys.length ? keys.includes(project.key) : project.visibility !== 'parked').sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** Match a repository by origin when both have one, otherwise by path. */
+export function projectHasRepository(project: Project, repoPath: string, origin?: string | null): boolean {
+  return project.repositories.some(repo => origin && repo.origin ? repo.origin === origin : Boolean(repo.path && repo.path === repoPath));
+}
+
 /** Whether a record's repository falls inside the selection. Empty selection matches everything. */
 export function scopeContains(projects: Project[], selection: readonly string[]): (repoPath: string, origin?: string | null) => boolean {
   const keys = effectiveSelection(projects, selection);
-  if (!keys.length) return (repoPath, origin) => projects.every(project => project.visibility !== 'parked' || !project.repositories.some(repo =>
-    origin && repo.origin ? repo.origin === origin : Boolean(repo.path && repo.path === repoPath)));
+  if (!keys.length) return (repoPath, origin) => projects.every(project => project.visibility !== 'parked' || !projectHasRepository(project, repoPath, origin));
   const selected = projects.filter(project => keys.includes(project.key));
-  return (repoPath, origin) => selected.some(project => project.repositories.some(repo =>
-    origin && repo.origin ? repo.origin === origin : Boolean(repo.path && repo.path === repoPath)));
+  return (repoPath, origin) => selected.some(project => projectHasRepository(project, repoPath, origin));
 }
 
 /** The Pipeline view's selection: the kept selection when its filter switch is on, all projects when off. */
@@ -67,7 +71,7 @@ export function projectSelectorRows(projects: Project[], selection: readonly str
   });
 }
 
-type ScopeStorage = { getItem(key: string): string | null; setItem(key: string, value: string): void; removeItem?(key: string): void };
+type ScopeStorage = KeyValueStorage;
 const storageKey = 'nucleus:project-scope';
 // Rows saved under the old plugin name stay readable; no new write uses it.
 const legacyStorageKey = 'northstar-queue:project-scope';
@@ -76,18 +80,14 @@ let sessionScope: ProjectScope = defaultProjectScope;
 /** Persisted across plugin reloads when the surface has local storage; otherwise kept for the session. Never written to Queue's store. */
 export function readProjectScope(storage: ScopeStorage | undefined): ProjectScope {
   try {
-    const current = storage?.getItem(storageKey);
-    const raw = current ?? storage?.getItem(legacyStorageKey);
-    if (!raw) return sessionScope;
-    const value = JSON.parse(raw) as Partial<ProjectScope>;
-    const scope = {
-      projects: Array.isArray(value.projects) ? value.projects.filter((key): key is string => typeof key === 'string') : [],
-      statusFilter: typeof value.statusFilter === 'boolean' ? value.statusFilter : true,
-    };
-    if (current == null) {
-      storage?.setItem(storageKey, JSON.stringify(scope));
-      storage?.removeItem?.(legacyStorageKey);
-    }
+    const scope = readMigratedValue(storage, storageKey, legacyStorageKey, raw => {
+      const value = JSON.parse(raw) as Partial<ProjectScope>;
+      return {
+        projects: Array.isArray(value.projects) ? value.projects.filter((key): key is string => typeof key === 'string') : [],
+        statusFilter: typeof value.statusFilter === 'boolean' ? value.statusFilter : true,
+      };
+    });
+    if (!scope) return sessionScope;
     return scope;
   } catch { return sessionScope; }
 }
