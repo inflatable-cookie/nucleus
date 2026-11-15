@@ -53,6 +53,9 @@ export async function issueTicket(
   const store = engine.store;
   const stored = readTicket(store, scope.key);
   if (stored && sameTicketIdentity(stored, scope.identity)) return stored;
+  // A key something else already holds is neither overwritten nor handed out:
+  // only the ticket issued for this identity ever reaches its caller.
+  if (hasTicket(store, scope.key)) return undefined;
   if (!scope.current()) return undefined;
   if (!engine.withHost(scope.identity.hostId, () => engine.hostAvailable(scope.identity.hostId))) return undefined;
   const participantId = randomUUID(), token = randomBytes(32).toString("hex");
@@ -71,7 +74,12 @@ export async function issueTicket(
     for (const marker of scope.pending) store.deleteMeta(marker);
     written = true;
   });
-  if (!written) return readTicket(store, scope.key) ?? undefined;
+  if (!written) {
+    // Another call issued this key while we were writing: hand back its ticket
+    // only when it is the identity this call was for.
+    const kept = readTicket(store, scope.key);
+    return kept && sameTicketIdentity(kept, scope.identity) ? kept : undefined;
+  }
   if (route === "self") return record;
   const stillOurs = () => readTicket(store, scope.key)?.participantId === participantId;
   try {

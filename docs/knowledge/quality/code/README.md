@@ -29,6 +29,22 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
 
 ## Re-rates
 
+- nucleus#1233 (floor 7, 2026-11-15): the three floor-7 dispatch modules were consolidated and re-rated at
+  this PR's head. `core/dispatch/participant-tickets.ts` became one tidy file group:
+  `core/dispatch/participant-tickets/index.ts` composes issuance, delivery and revocation over the meta-row
+  owner (`records.ts`), the one issuance routine (`issue.ts`) and the task-planner scope
+  (`planned-threads.ts`), so the three near-copy planner/task-planner/named-agent routines are gone, no
+  caller builds or splits a raw meta key, a failed issuance in the caller's own call is recorded, and the
+  wrong-host fallback agent registration is removed. `core/dispatch/routing-signoff.ts` and
+  `core/dispatch/routing-grants.ts` merged into `core/dispatch/routing-signoff/`: `request.ts` owns the
+  sign-off record both writers share and the typed decode of its event detail, `grants.ts` the grant store,
+  `reconcile.ts` the per-task pass, and `index.ts` the public surface. The per-task pass no longer re-runs
+  the queue-wide grant settle, so a sweep is linear in tasks. `core/dispatch/routing.ts` keeps its job and
+  loses its duplicates: the model key is `shared/authors.ts`' one normalisation (which also gains the
+  normalisation itself, and is re-rated for it) and availability comes from the store's typed rows through
+  `shared/pool.ts`, never three raw queries. Ten rows replace the four old ones; scores are recorded per
+  row above with their evidence at this head.
+
 - nucleus#1228 (floor 7, 2026-11-15): the three floor-7 client modules were re-rated at this PR's head.
   `client/task/runs.tsx` was split along its named sections: the tab now composes prerequisites and the
   run-bound cleanup, the runs and their delivery (`client/task/runs.tsx`), the worker exclusions

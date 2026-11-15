@@ -14,7 +14,7 @@ import { now } from "../../store/store";
 import { liveRun, liveRunForRole } from "../../task-decision-rules";
 import { coveringGrant, reconcileGrantDecisions } from "./grants";
 import {
-  OPERATOR_BOARD, ROLES, SIGNOFF_DECLINE, outcome, priorApprovedSignoff, readSignoffEvents, signoffQuestion,
+  ROLES, SIGNOFF_DECLINE, outcome, priorApprovedSignoff, readSignoffEvents, signoffQuestion,
   withGrantSignoff, withdrawOpen, withoutGrantSignoff,
   type ApprovedRoute, type Request, type Role, type Signoff,
 } from "./request";
