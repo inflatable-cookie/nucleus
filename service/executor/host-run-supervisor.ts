@@ -20,7 +20,6 @@ import { HOST_RUN_RETAINED_OUTPUT_BYTES } from "../../core/host-runs/host-run-en
 import { HOST_RUN_CPU_COVERAGE_FILE, hostRunCpuCoverageSidecar } from "../../core/host-runs/host-run-cpu-coverage";
 import { openHostRunRetainedOutput } from "../../core/host-runs/host-run-retained-output";
 import { executeHookProgram, type ExecutionOutcome } from "../../core/machine/process-exec";
-import { EscapedDescendantCustody } from "../../core/machine/escaped-descendants";
 import { ProcessTreeCpuSampler } from "../../core/machine/process-tree-cpu";
 /**
  * Detached supervisor for contract 010 client-protocol runs (Spec 035 part 3).
@@ -34,12 +33,12 @@ import { ProcessTreeCpuSampler } from "../../core/machine/process-tree-cpu";
  * neither the run nor its result.
  *
  * The process custody is not this module's: `executeHookProgram` owns the spawn,
- * the process group, the timeout and cancel signals, output observation and
- * settle-on-empty-group (the same owner hooks and milestone QA use), and
- * `EscapedDescendantCustody` owns the escaped-descendant rule contract 010
- * states — the result is written only once the group is empty *and* no known
- * escaped descendant is alive. What stays here is the host run's own durable
- * wiring: the state record, the retained output, and the result envelope.
+ * the process group, the timeout and cancel signals, output observation,
+ * settle-on-empty-group and contract 010's second condition — the result is
+ * written only once the group is empty *and* no known escaped descendant is
+ * alive, with the stop stages still applied to descendants that left the group
+ * while the run waits. What stays here is the host run's own durable wiring: the
+ * state record, the retained output, and the result envelope.
  */
 export const HOST_RUN_CPU_SAMPLE_MS = 250;
 /** The process owner's in-memory copy is discarded here; the retained files carry the output. */
@@ -104,9 +103,8 @@ export async function runHostRunSupervisorMain(argv: string[] = process.argv.sli
   const state = new SupervisorState(plan, new Date().toISOString());
   const output = openHostRunRetainedOutput(plan.stateDir, plan.runId, HOST_RUN_RETAINED_OUTPUT_BYTES, launchEnv.HOST_RUN_TOKEN);
   // A private identity marker inherited by the command and every descendant, so
-  // the supervisor can inventory an escaped `setsid` descendant at settlement.
+  // the process owner can inventory an escaped `setsid` descendant.
   const identity = randomUUID();
-  const custody = new EscapedDescendantCustody(identity);
   const cpu = new ProcessTreeCpuSampler(identity, HOST_RUN_CPU_SAMPLE_MS);
   const recordedFaults = new Set<string>();
   let cancelRecorded = false;
@@ -125,6 +123,9 @@ export async function runHostRunSupervisorMain(argv: string[] = process.argv.sli
       terminationGraceMs: plan.graceMs,
       processStartIdentity: identity,
       settleOnProcessGroup: true,
+      // Contract 010: the run stays reserved, its pipes open and its cancel
+      // request polled until no escaped descendant is proven alive.
+      settleOnEscapedDescendants: true,
       env: launchEnv,
       onOutput: (stream, chunk) => output.write(stream, chunk),
       cancelReason: () => {
@@ -165,48 +166,16 @@ export async function runHostRunSupervisorMain(argv: string[] = process.argv.sli
   }
 
   if (execution.timedOut && state.termination === null) state.persist({ termination: "timeout" });
-  await awaitEscapedDescendants(plan, state, custody, execution, () => output.close());
-  recordResult(plan, custody, execution, cpu);
+  // Every chunk arrived before the process owner settled; close the retained
+  // streams (which writes any truncation marker) ahead of the result record.
+  output.close();
+  recordResult(plan, execution, cpu);
   state.persist({ endedAt: new Date().toISOString() });
-}
-
-/**
- * Contract 010's second settlement condition. The process owner settles the
- * group; this waits for the descendants that left it, signalling them once the
- * run is stopping (a timeout or a cancel) and keeping the result unwritten
- * until two readable scans prove absence.
- */
-async function awaitEscapedDescendants(
-  plan: HostRunSupervisorPlan,
-  state: SupervisorState,
-  custody: EscapedDescendantCustody,
-  execution: ExecutionOutcome,
-  closeOutput: () => void,
-): Promise<void> {
-  const deadline = Date.parse(plan.startedAt) + plan.runTimeoutMs;
-  let stopStage: "none" | "term" | "kill" = execution.timedOut || execution.cancelled ? "term" : "none";
-  let stopAt = Date.now();
-  if (stopStage === "term") custody.signal("SIGTERM");
-  while (!custody.absenceProven(execution.processGroupId ?? null)) {
-    const now = Date.now();
-    if (stopStage === "none" && now >= deadline) {
-      stopStage = "term";
-      stopAt = now;
-      if (state.termination === null) state.persist({ termination: "timeout" });
-      custody.signal("SIGTERM");
-    } else if (stopStage === "term" && now - stopAt >= plan.graceMs) {
-      stopStage = "kill";
-      custody.signal("SIGKILL");
-    }
-    await sleep(ESCAPE_POLL_MS);
-  }
-  closeOutput();
 }
 
 /** Write the contract's durable result from what the process owner proved. */
 function recordResult(
   plan: HostRunSupervisorPlan,
-  custody: EscapedDescendantCustody,
   execution: ExecutionOutcome,
   cpu: ProcessTreeCpuSampler,
 ): void {
@@ -227,7 +196,7 @@ function recordResult(
       pgid, startIdentity,
       exitCode, signal: execution.signal ?? (exitCode === null ? "unknown" : null),
       startedAt: plan.startedAt, endedAt, wallMs: Math.max(0, Date.now() - Date.parse(plan.startedAt)), cpuMs,
-      escapedDescendants: custody.recorded(),
+      escapedDescendants: execution.escapedDescendants ?? [],
     })), 0o600);
   }
   // A command whose identity was never proven writes no result; the endpoint's

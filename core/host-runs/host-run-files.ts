@@ -497,9 +497,26 @@ function readFailureText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** True when an entry exists at the target path, whatever the verified read decided about it. */
-function targetEntryExists(root: string, parts: string[]): boolean {
-  try { lstatSync(join(root, ...parts)); return true; } catch { return false; }
+/**
+ * Whether the target path is shown to be missing. Only a missing component
+ * proves absence: an `lstat` that fails for any other reason (permissions, an
+ * I/O fault, a symlink loop), and any symlinked component (which the verified
+ * chain refuses), leave the entry's presence unknown, and a caller that must not
+ * read unknown as absent is told so.
+ */
+function targetAbsent(root: string, parts: string[]): boolean {
+  let current = root;
+  for (const part of parts) {
+    current = join(current, part);
+    let info: Stats;
+    try { info = lstatSync(current); }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      return code === "ENOENT" || code === "ENOTDIR";
+    }
+    if (info.isSymbolicLink()) return false;
+  }
+  return false;
 }
 
 /**
@@ -519,7 +536,7 @@ export function readCheckedHostRunFileRead(stateDir: string, parts: string[], ho
     try { return { state: "present", bytes: readFileSync(fd) }; }
     catch (error) { return { state: "unreadable", reason: `The host-run file could not be read: ${readFailureText(error)}` }; }
   } catch (error) {
-    if (!targetEntryExists(root, parts)) return { state: "absent" };
+    if (targetAbsent(root, parts)) return { state: "absent" };
     return { state: "unreadable", reason: `The host-run file failed the verified read: ${readFailureText(error)}` };
   } finally { if (fd !== null) closeSync(fd); }
 }

@@ -32,6 +32,7 @@ import {
   hostRunFactSchema,
   type HostRunFact,
 } from "./host-run-wire";
+import { refuseHostRun } from "./host-run-refusal";
 import type { Store } from "../store/store";
 
 const FACTS_LOG = "facts.jsonl";
@@ -69,19 +70,25 @@ export type HostRunReportOutcome =
   | { state: "accepted"; facts: unknown[] }
   | { state: "refused"; code: HostRunClientErrorCode; detail: string };
 
-/** The journal row one `factId` names, or null when it was never journaled. */
+/**
+ * The journal row one `factId` names, or null when it was never journaled. A
+ * lookup that fails, and a row whose recorded body cannot be read, are unknown
+ * journal state — never "the id is unused" — so they refuse: accepting a body
+ * for an id that may already hold another one, or applying a container update
+ * twice, is exactly what the identity rule exists to prevent.
+ */
 export function readHostRunJournalFactRow(store: Store, factId: string): HostRunJournalFactRow | null {
-  let row: { event: string; data: string } | undefined;
-  try {
-    row = store.db.prepare(
-      `SELECT event,data FROM host_run_journal WHERE event IN ${JOURNAL_EVENTS} AND json_extract(data,'$.factId')=? ORDER BY id LIMIT 1`,
-    ).get(factId) as { event: string; data: string } | undefined;
-  } catch { return null; }
+  const row = store.db.prepare(
+    `SELECT event,data FROM host_run_journal WHERE event IN ${JOURNAL_EVENTS} AND json_extract(data,'$.factId')=? ORDER BY id LIMIT 1`,
+  ).get(factId) as { event: string; data: string } | undefined;
   if (!row) return null;
-  try {
-    const body = JSON.parse(row.data) as Record<string, unknown>;
-    return body && typeof body === "object" ? { event: row.event, body } : null;
-  } catch { return null; }
+  let body: unknown;
+  try { body = JSON.parse(row.data); }
+  catch (error) {
+    refuseHostRun("conflict", `host-run fact ${factId} cannot be read from the journal (${error instanceof Error ? error.message : String(error)}); nothing was written`);
+  }
+  if (!body || typeof body !== "object") refuseHostRun("conflict", `host-run fact ${factId} is journaled without a readable body; nothing was written`);
+  return { event: row.event, body: body as Record<string, unknown> };
 }
 
 /**
@@ -94,11 +101,13 @@ export function readHostRunJournalFactRow(store: Store, factId: string): HostRun
 export function journaledHostRunFact(store: Store, factId: string): HostRunFact | null {
   const row = readHostRunJournalFactRow(store, factId);
   if (!row) return null;
-  try {
-    if (row.event === "container_report") return hostRunFactSchema.parse({ kind: "container", ...row.body });
-    const { runId: _holder, ...stored } = row.body;
-    return hostRunFactSchema.parse(stored);
-  } catch { return null; }
+  const candidate = row.event === "container_report"
+    ? { kind: "container" as const, ...row.body }
+    : (() => { const { runId: _holder, ...stored } = row.body; return stored; })();
+  const parsed = hostRunFactSchema.safeParse(candidate);
+  if (!parsed.success)
+    refuseHostRun("conflict", `host-run fact ${factId} is journaled in a shape this version cannot read (${parsed.error.issues.map(issue => `${issue.path.join(".")}: ${issue.message}`).join("; ")}); nothing was written`);
+  return parsed.data;
 }
 
 export class HostRunFacts {

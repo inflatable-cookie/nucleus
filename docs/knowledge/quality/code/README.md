@@ -109,19 +109,24 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
   a fact any more. Modules touched only to import from the new owners keep their rows.
 - nucleus#1220 (floor 6, 2026-11-15): `core/engine.ts` and `service/runtime-owner.ts` were split along their named seams — host-adapter routing, lane-key parse and profile catalogs from the engine; host-connections, store-maintenance and origin-review wrapping from the runtime. Their N2 and N5 rows, plus `service/t3code-host.ts`, were re-rated at this PR's head. Origin-proof wrapping method-calls `withHost` so a class owner keeps its host context. Engine loc is 1061 after merging #1218's owner-verb wiring into the composition root.
 - nucleus#1225 (floor 6, 2026-11-15): `service/callbacks/host-run-endpoint.ts` (10) and
-  `service/executor/host-run-supervisor.ts` (9) were re-rated at this PR's head. The endpoint now delegates
+  `service/executor/host-run-supervisor.ts` (10) were re-rated at this PR's head. The endpoint now delegates
   each durable mechanism to its own owner — `core/host-runs/host-run-submissions.ts` (10) for the
   submission record, `core/host-runs/host-run-facts.ts` (9) for the `report` fact log and its journal
   identity, `core/host-runs/host-run-retained-output.ts` (10) for the capped retained streams — and answers
   a refusal with the code a typed `core/host-runs/host-run-refusal.ts` (10) carries instead of classifying
-  message prefixes. The supervisor runs its command through `core/machine/process-exec.ts` and takes the
-  escaped-descendant rule from `core/machine/escaped-descendants.ts` (9); its 9 is honest because the wait
-  for descendants that left the group still repeats the process owner's TERM-then-grace-then-KILL schedule.
-  `core/host-runs/host-run-files.ts` (8) grew `readCheckedHostRunFileRead`, which keeps a missing, a refused
-  and a present file apart, and the refusal code is now a field on the owner that refuses in
+  message prefixes. The supervisor runs its command through `core/machine/process-exec.ts` (8), which now
+  also owns contract 010's escaped-descendant settlement for host runs: the step stays live while it waits
+  (pipes open, cancel still polled, timeout still applying) and signals a descendant that left the group with
+  the stage the stop reached. The supervisor keeps only the run's durable wiring, which is why it is 10.
+  `core/machine/escaped-descendants.ts` (10) owns that rule, including the absence proof whose first clean
+  instant survives a caller polling faster than the interval, and it is covered directly by
+  `test/escaped-descendants.test.ts`. `core/host-runs/host-run-files.ts` (8) grew
+  `readCheckedHostRunFileRead`, which keeps a missing, a refused and a present file apart — only a proven
+  missing component is absent — and the refusal code is now a field on the owner that refuses in
   `host-run-scheduler` (7), `host-run-admission` (7), `host-run-accounting` (8) and `host-run-settlement` (8);
   those four rows keep their remaining named defects. `core/host-runs/host-run-wire.ts` (9) also owns the
   cancel request's read and write, `core/host-runs/host-run-attach.ts` (9) reads the typed submission for its
-  disconnect window, and `core/machine/process-exec.ts` (7) takes its settled escaped-descendant inventory
-  from the custody owner without changing what it records. `service/callbacks/host-run-serving.ts` (9) lost
-  the duplicated answer evidence, a dead pre-front branch and a stacked docblock.
+  disconnect window, and `service/callbacks/host-run-serving.ts` (9) lost the duplicated answer evidence, a
+  dead pre-front branch and a stacked docblock. `process-exec`'s 8 is honest: its default path still records
+  an unreadable identity listing as an empty inventory and it still reads the leader's identity
+  synchronously in the spawn handler.

@@ -4,5 +4,7 @@ one: a corrupt submission is refused and left in place instead of being
 overwritten by a resubmit, and an unreadable cancel request stops the run and is
 recorded beside it. The detached host-run supervisor now runs its command through
 the shared process owner, so settle-on-empty-group, output capture and the
-escaped-descendant rule have one implementation, and retained output is capped
-per stream with the truncation recorded in the stream it truncated.
+escaped-descendant rule have one implementation: a run stays live until the
+descendants that left its group are proven gone, keeping their output, still
+polling its cancel request and still bounded by its timeout. Retained output is
+capped per stream with the truncation recorded in the stream it truncated.

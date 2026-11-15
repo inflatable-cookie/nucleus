@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_PROCESS_TERMINATION_GRACE_MS, PROCESS_TERMINATION_GRACE_MAX_MS, type HostRunEscapedDescendant } from "../../shared/contracts";
 import { withSpawnSlot } from "../dispatch/spawn-gate";
-import { escapedDescendantsOf } from "./escaped-descendants";
+import { ESCAPED_DESCENDANT_SCAN_MS, EscapedDescendantCustody, escapedDescendantsOf } from "./escaped-descendants";
 import { processGroupEmpty, signalProcessGroup, waitForProcessGroupEmpty } from "./process-group";
 import { processStartIdentityEnvironment, processesForStartIdentity } from "./process-identity-search";
 import { hostRunProcessStartIdentity } from "./start-identity";
@@ -34,6 +34,15 @@ export interface ExecutionRequest {
   processStartIdentity?: string;
   /** Settle on process-group emptiness and record escaped descendants for host runs. */
   settleOnProcessGroup?: boolean;
+  /**
+   * Contract 010's second settlement condition (host runs): settle only once the
+   * run's escaped descendants are proven absent too. The step stays live while it
+   * waits — its pipes stay open, its cancel request is still polled, its timeout
+   * still applies, and a descendant that left the group is signalled with the
+   * stage the stop reached, including one discovered after escalation. Callers
+   * that do not ask for it keep today's single settled inventory.
+   */
+  settleOnEscapedDescendants?: boolean;
   /** Cancellation request, polled while a cancellable step is running. */
   cancelReason?: () => string | null;
   /**
@@ -75,6 +84,11 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
     const outcome: ExecutionOutcome = { pid: null, code: null, signal: null, timedOut: false,
       stdoutExceeded: false, stderrExceeded: false, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), durationMs: 0,
       processGroupId, leaderStartIdentity, terminationSignal: null, processGroupEmpty: null, terminationError: null };
+    const escapedCustody = request.settleOnEscapedDescendants ? new EscapedDescendantCustody(leaderStartIdentity) : null;
+    /** The last escaped-descendant scan, so a settlement tick never reads the host table every 20 ms. */
+    let lastEscapedScanAt = 0;
+    /** When the stop began, so escaped descendants get the same grace the group does. */
+    let terminationAt: number | null = null;
     const failureFirst = request.trimPassingFirst === true && request.overflow === "tail";
     const retentions = {
       stdout: failureFirst
@@ -113,6 +127,7 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
       if (cause === "timeout" && !outcome.cancelled) outcome.timedOut = true;
       if (cause === "cancel") outcome.cancelled = true;
       if (termination) return termination;
+      terminationAt = Date.now();
       termination = (async () => {
         const pgid = outcome.processGroupId;
         const identity = outcome.leaderStartIdentity;
@@ -122,6 +137,9 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
           return;
         }
         try {
+          // A descendant that left the group takes the same first signal: the
+          // group may already be empty while it still runs.
+          escapedCustody?.signal("SIGTERM");
           const signalWhenProven = async (signal: NodeJS.Signals) => {
             const deadline = Date.now() + PROCESS_GROUP_IDENTITY_WAIT_MS;
             for (;;) {
@@ -149,6 +167,7 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
             outcome.processGroupEmpty = true;
             return;
           }
+          escapedCustody?.signal("SIGKILL");
           if (await signalWhenProven("SIGKILL")) outcome.terminationSignal = "SIGKILL";
           else outcome.terminationError = "Could not prove the recorded process-group identity for SIGKILL";
           outcome.processGroupEmpty = await waitForProcessGroupEmpty(pgid, POST_KILL_PROCESS_GROUP_WAIT_MS);
@@ -161,6 +180,40 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
       })();
       return termination;
     };
+    /**
+     * One bounded escaped-descendant scan. Records what a readable listing proves
+     * and answers whether the run's absence is proven; when the stop has a stage,
+     * the descendants this scan just found are signalled with it, so one that
+     * leaves the group after the escalation is still stopped.
+     */
+    const escapedAbsenceProven = (pgid: number, stopAt: number | null): boolean => {
+      if (!escapedCustody) return true;
+      const now = Date.now();
+      if (now - lastEscapedScanAt < ESCAPED_DESCENDANT_SCAN_MS) return false;
+      lastEscapedScanAt = now;
+      if (escapedCustody.absenceProven(pgid, now)) return true;
+      if (stopAt !== null) {
+        const escalated = outcome.terminationSignal === "SIGKILL" || now - stopAt >= graceMs;
+        escapedCustody.signal(escalated ? "SIGKILL" : "SIGTERM");
+      }
+      return false;
+    };
+    /**
+     * One settlement tick: inventory escaped descendants while the command still
+     * runs (a `setsid` child leaves the group, and Darwin's cheap tree walk finds
+     * it through ppid only while the leader lives), then try to settle.
+     */
+    const pollSettlement = () => {
+      if (settled || finishing) return;
+      if (escapedCustody && processGroupId && !leaderExited) {
+        const now = Date.now();
+        if (now - lastEscapedScanAt >= ESCAPED_DESCENDANT_SCAN_MS) {
+          lastEscapedScanAt = now;
+          escapedCustody.scan(processGroupId);
+        }
+      }
+      void finishWhenGroupIsEmpty();
+    };
     const finishWhenGroupIsEmpty = async () => {
       if (settled || finishing || !leaderExited) return;
       if (!request.settleOnProcessGroup || !processGroupId) {
@@ -172,11 +225,14 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
         return;
       }
       if (!processGroupEmpty(processGroupId)) return;
+      if (escapedCustody && !escapedAbsenceProven(processGroupId, terminationAt)) return;
       finishing = true;
       outcome.processGroupEmpty = true;
       // The escaped-descendant rule has one owner: this is its settled inventory,
       // recorded as a fact so a leak stays visible instead of holding capacity.
-      outcome.escapedDescendants = escapedDescendantsOf(processesForStartIdentity(leaderStartIdentity), processGroupId);
+      outcome.escapedDescendants = escapedCustody
+        ? escapedCustody.recorded()
+        : escapedDescendantsOf(processesForStartIdentity(leaderStartIdentity), processGroupId);
       // Let already-buffered pipe data reach the readers. The process group is
       // the settlement boundary; an escaped descendant holding a pipe cannot
       // keep this step alive after this point.
@@ -213,7 +269,7 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
         }, 50);
       }
       if (request.settleOnProcessGroup && processGroupId) {
-        groupTimer = setInterval(() => { void finishWhenGroupIsEmpty(); }, 20);
+        groupTimer = setInterval(pollSettlement, 20);
         groupTimer.unref?.();
       }
     });

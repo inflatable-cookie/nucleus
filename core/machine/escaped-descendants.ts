@@ -17,8 +17,18 @@ import { startIdentityMatches } from "./start-identity";
  * absence is proven (`EscapedDescendantCustody`) read the same rule here.
  */
 
-/** Two clean scans this far apart prove a descendant detaching at the last instant was still seen. */
+/**
+ * The proof interval: a clean scan only proves absence once another clean scan
+ * confirms it this long after the first one. Shorter than this, a descendant
+ * detaching at the group's last instant could still be missed.
+ */
 export const ESCAPED_DESCENDANT_PROOF_MS = 150;
+/**
+ * How often a caller may scan: frequent enough to prove absence inside the
+ * proof interval, sparse enough that a run waiting for descendants does not
+ * read the host's process table on every settlement tick.
+ */
+export const ESCAPED_DESCENDANT_SCAN_MS = 100;
 
 /** The escaped descendants one identity listing proves, as a result records them. */
 export function escapedDescendantsOf(found: ProcessStartIdentitySearch, processGroupId: number | null): HostRunEscapedDescendant[] {
@@ -29,11 +39,12 @@ export function escapedDescendantsOf(found: ProcessStartIdentitySearch, processG
 }
 
 /** What one custody scan established: whether a live escaped descendant may remain. */
-type EscapedDescendantScan = { occupied: boolean; clear: boolean; found: HostRunEscapedDescendant[] };
+export interface EscapedDescendantScan { occupied: boolean; clear: boolean }
 
 export class EscapedDescendantCustody {
   private readonly known = new Map<string, HostRunEscapedDescendant>();
-  private lastClearScanAt: number | null = null;
+  /** The first clean scan of the current clean run; kept across later clean scans. */
+  private firstClearScanAt: number | null = null;
 
   constructor(private readonly identity: string) {}
 
@@ -44,17 +55,17 @@ export class EscapedDescendantCustody {
 
   /**
    * True only when two readable scans `ESCAPED_DESCENDANT_PROOF_MS` apart both
-   * found no live escaped descendant and one listing proved none exists. A scan
-   * that could not read the host is never proof, and neither is a single clean
-   * scan: a descendant detaching at the group's last instant must still be seen.
+   * found no live escaped descendant. The first clean instant is kept across
+   * later clean scans, so a caller polling faster than the proof interval still
+   * proves absence on the first scan that lands past it. A scan that could not
+   * read the host is never proof, and neither is a single clean scan: a
+   * descendant detaching at the group's last instant must still be seen.
    */
   absenceProven(processGroupId: number | null, nowMs = Date.now()): boolean {
     const scan = this.scan(processGroupId);
-    if (scan.occupied) { this.lastClearScanAt = null; return false; }
-    if (!scan.clear) { this.lastClearScanAt = null; return false; }
-    const proven = this.lastClearScanAt !== null && nowMs - this.lastClearScanAt >= ESCAPED_DESCENDANT_PROOF_MS;
-    this.lastClearScanAt = nowMs;
-    return proven;
+    if (!scan.clear || scan.occupied) { this.firstClearScanAt = null; return false; }
+    this.firstClearScanAt ??= nowMs;
+    return nowMs - this.firstClearScanAt >= ESCAPED_DESCENDANT_PROOF_MS;
   }
 
   /**
@@ -76,9 +87,9 @@ export class EscapedDescendantCustody {
       // and a listing with nothing recorded cannot prove there was never a
       // descendant: unknown is occupied until a recorded descendant is proven dead.
       const occupied = this.known.size === 0 || [...this.known.values()].some(entry => pidAlive(entry.pid));
-      return { occupied, clear: !occupied, found: [] };
+      return { occupied, clear: !occupied };
     }
-    if (found.state === "absent") return { occupied: false, clear: true, found: [] };
+    if (found.state === "absent") return { occupied: false, clear: true };
     const escaped = escapedDescendantsOf(found, processGroupId);
     for (const entry of escaped) this.known.set(`${entry.pid}:${entry.startIdentity}`, entry);
     // A recorded entry is alive only while the same listing proves its identity;
@@ -88,7 +99,7 @@ export class EscapedDescendantCustody {
     const occupied = [...this.known.values()].some(entry =>
       entry.startIdentity.endsWith("@unknown")
       || startIdentityMatches(listed.get(entry.pid) ?? "", entry.startIdentity));
-    return { occupied, clear: escaped.length === 0, found: escaped };
+    return { occupied, clear: escaped.length === 0 };
   }
 
   /** Signal every recorded escaped descendant; an already-gone descendant is not an error. */
