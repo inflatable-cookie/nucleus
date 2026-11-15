@@ -3,7 +3,7 @@ import { escalationOutlived } from '../recovery/task-reasons';
 import { Decisions } from '../planning/decisions';
 import type { Resolution } from '../resolution';
 import { collectOwnerVerbFacts, ownerVerbViews } from '../verbs/owner-verbs';
-import { decodeEscalationChoice, escalationAnswerControl, escalationContinuationInstruction, escalationVerbChoices, extractDecisionIdCandidates, extractFirstIsoTimestamp, extractTaskReferenceCandidates, plannerEscalations, type EscalationVerbChoice, type LadderEvent } from './blocker-ladder';
+import { decodeEscalationChoice, escalationAnswerControl, escalationContinuationInstruction, escalationVerbChoices, extractDecisionIdCandidates, extractFirstIsoTimestamp, extractTaskReferenceCandidates, plannerEscalations, type EscalationVerbChoice, type LadderEvent } from './ladder';
 
 type Answerer = { role: 'planner' | 'decider'; agentId: string } | { role: 'operator' };
 

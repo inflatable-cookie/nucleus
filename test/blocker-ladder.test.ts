@@ -22,7 +22,7 @@ import {
   reviewerConsults,
   revisionCapCauseId,
   PLANNER_ESCALATION_CHOICES,
-} from "../core/questions/blocker-ladder";
+} from "../core/questions/ladder";
 import { nativeDelegationPrompt } from "../core/questions/question-delegation";
 import { deriveTaskTelemetry } from "../core/telemetry/telemetry";
 import {
@@ -244,6 +244,41 @@ test("ladder event readers fence sends and find the open escalation for a repeat
     parseAnsweredText("esc-1: answered by planner p1: yes — because"),
     "yes — because",
   );
+});
+
+/**
+ * nucleus#1242: the payload is the record. A record written before the ladder
+ * wrote one still names its cause and run on the intent line, and a cause the task
+ * raised itself names no run at all.
+ */
+test("an intent line recorded before the payload still names its cause and run, and a worker run is no run", () => {
+  const cause = "d".repeat(64);
+  const base = (id: number, kind: string, detail: string) => ({
+    id,
+    taskId: "t",
+    at: "2026-11-02T00:00:00Z",
+    kind,
+    detail,
+  });
+  const legacy = [
+    base(1, "reviewer_consult", `consult-1: cause ${cause}; run rev-9; question abc (3 chars)`),
+    base(2, "planner_escalation", `esc-1: cause ${cause}; run worker; question def (3 chars); options none`),
+  ];
+  assert.equal(reviewerConsults(legacy)[0]!.cause, cause, "a pre-payload consult keeps its recorded cause");
+  assert.equal(reviewerConsults(legacy)[0]!.runId, "rev-9");
+  assert.equal(reviewerConsults(legacy)[0]!.question, null, "only the payload carries the question");
+  assert.equal(plannerEscalations(legacy)[0]!.cause, cause, "a pre-payload escalation keeps its recorded cause");
+  assert.equal(plannerEscalations(legacy)[0]!.runId, null, "a cause the task raised itself names no run");
+  const answered = [
+    ...legacy,
+    base(3, "planner_escalation_payload", `esc-1: ${JSON.stringify({ cause, runId: null, question: "Which route?", refusal: "pre_merge" })}`),
+    base(4, "planner_escalation_missed", "esc-1: the project planner gave no usable answer (no answer in time)"),
+  ];
+  const escalation = plannerEscalations(answered)[0]!;
+  assert.equal(escalation.question, "Which route?", "the payload names the question");
+  assert.equal(escalation.refusal, "pre_merge", "the refusal class is typed, never read from text");
+  assert.equal(escalation.missed, true);
+  assert.equal(escalation.answered, false, "a miss stays open for the planner");
 });
 
 test("worker and revision prompts name the ladder and the reviewer ask target", () => {

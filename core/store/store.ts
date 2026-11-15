@@ -788,6 +788,15 @@ export class Store {
   prerequisiteReleaseRefreshed(taskId: string): boolean {
     return Boolean(this.db.prepare("SELECT 1 FROM events WHERE taskId=? AND kind='prerequisite_release_refreshed' LIMIT 1").get(taskId));
   }
+  /**
+   * The `delegation:` streams whose delivery record names this task. The record's
+   * task is a field of its payload, so the filter against it belongs beside the
+   * store's other event reads rather than in every caller that asks which question
+   * targets a task.
+   */
+  delegatedDeliveryStreams(taskId: string): string[] {
+    return (this.db.prepare("SELECT DISTINCT taskId FROM events WHERE kind='delegated_delivery' AND json_extract(detail,'$.taskId')=?").all(taskId) as { taskId: string }[]).map(row => row.taskId);
+  }
   /** Spec 053: the host-wide role offsets, defaulting to worker 0, reviewer 0, coordinator −2. */
   demandRoleOffsets(): DemandRoleOffsets { return this.configStore.demandRoleOffsets(); }
   /** Spec 052: the stored usage setting, if the operator set one. */

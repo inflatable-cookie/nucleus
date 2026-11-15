@@ -7,7 +7,7 @@ import { type Task } from '../../shared/contracts';
 import { isDispositionActive } from "../../shared/contracts";
 import { reviewAuthorizationRequired, reviewContinuationWait } from '../review/review-continuation';
 import { staleChangesRequestedPhase } from '../intake/current-binding';
-import { isProviderFailure } from '../questions/blocker-ladder';
+import { isProviderFailure } from '../questions/ladder';
 import type { Resolution } from '../resolution';
 
 export type SchedulingLifecycleContext = Pick<Resolution, 'acceptedPrWorkspaceMayApply' | 'adapter' | 'advanceAttempt' | 'advanceChangesRequested' | 'advanceClosing' | 'advanceCompletedRun' | 'advanceMerging' | 'advancePhase' | 'advanceSkippedReview' | 'advanceSyncing' | 'attentionReplayApplies' | 'blockerLadderApplies' | 'blockerLadderStep' | 'hooks' | 'hostAvailable' | 'launch' | 'operatorReturn' | 'pauseForPrerequisiteWait' | 'paused' | 'reapplyPendingReview' | 'reconcileAcceptedPrWorkspace' | 'recordStoredResult' | 'recovery' | 'reobservePendingChecks' | 'replayHeldAttention' | 'restoreRecordedMergePhase' | 'settleAdvanceFailure' | 'settleSourceApprovalProof' | 'settleUnchangedCheckGate' | 'sourceApprovalWaitApplies' | 'startsNoRuns' | 'stopped' | 'store' | 'supersedeEarlierRecovery' | 'unchangedCheckGateApplies' | 'update' | 'verification' | 'waiting'>;

@@ -1,7 +1,7 @@
 import { delegateQuestion } from './planner-delegation';
 import type { Run, Task } from '../../shared/contracts';
 import { askBinding, askStale, askQuestionRefusal, AGENT_ASK_POLL_MS, AGENT_ASK_WAIT_MS, DEFAULT_AGENT_ASK_KIND, isOperatorOnlyAsk, agentAskId, parseAgentAskAnswer, queueAnswerText, queueAnswerWho, queueAskDeliveryId, type AgentAskReceipt, type AgentAskRequest, type AgentAskShape, type AskRoute } from './agent-ask';
-import { REVIEWER_CONSULT_TIMEOUT_MS, reviewerAskPrompt } from './blocker-ladder';
+import { REVIEWER_CONSULT_TIMEOUT_MS, reviewerAskPrompt } from './ladder';
 import { Decisions } from '../planning/decisions';
 import { applyBinaryApproval, parseNativeDelegatedReply } from './question-delegation';
 import type { Resolution } from '../resolution';

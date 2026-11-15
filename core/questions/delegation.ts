@@ -3,19 +3,27 @@ import type { Profile, Task } from '../../shared/contracts';
 import { awaitingProofTexts, isOperatorOrigin, taskPlanner, taskOwner } from '../../shared/contracts';
 import { sameCallerIdentity } from '../../shared/agent-identity';
 import { normalizeRepositoryOrigin } from '../../shared/lanes';
-import { groupIsUnavailable } from '../../shared/pool';
+import { unavailableGroupNames } from '../../shared/pool';
 import { currentBrief } from '../planning/brief';
 import { parseNativeDelegatedReply } from './question-delegation';
-import { plannerEscalations, type LadderEvent } from './blocker-ladder';
+import { plannerEscalations, type LadderEvent } from './ladder';
 import type { Resolution } from '../resolution';
 import { chooseProfile } from '../dispatch/routing';
 import { plannerParticipantTicketPath } from '../dispatch/participant-tickets';
 import { runTicketPath, writeRunTicket } from '../dispatch/agent-creation';
 import { formatAgentId, nativeAgentId, parseAgentId, qualifyLegacyAgentId } from '../../shared/agent-identity';
 import type { IdentitySource } from '../../shared/host-kind';
+import { onOwnerHost } from '../host/host-ports';
 
 /** The selection failed before an intent or host call was made. */
 export class DelegatedHostUnavailable extends Error {}
+
+/**
+ * The one reason a delivery window closes without a command answer. The advance
+ * rule distinguishes it from an unknown delivery, so the writer and both readers
+ * compare this name rather than its wording.
+ */
+export const NO_COMMAND_ANSWER_IN_WINDOW = 'No command answer in the window';
 
 /** Which planner rung a question is on: the task's own planner, or the project's. */
 export type PlannerRungName = 'task' | 'project';
@@ -140,8 +148,8 @@ export class Delegation {
     this.store.task(taskId);
     const identityCaller = parseAgentId(caller);
     const nativeCaller = identityCaller?.nativeAgentId ?? caller;
-    const rows=this.store.db.prepare("SELECT DISTINCT taskId FROM events WHERE kind='delegated_delivery' AND json_extract(detail,'$.taskId')=?").all(taskId);
-    const ids=rows.map(row=>String(row.taskId).replace(/^delegation:/,''))
+    const rows=this.store.delegatedDeliveryStreams(taskId);
+    const ids=rows.map(stream=>stream.replace(/^delegation:/,''))
       .filter(id=>{
         const delivery=this.delegatedDelivery(id);
         const events=this.store.eventsAll(`delegation:${id}`);
@@ -182,7 +190,7 @@ export class Delegation {
         closed: events.findLast(event => event.kind === 'delegated_closed') };
     });
     return windows.some((window, index) => window.answered || (window.delivered && !window.closed)
-      || (advance && window.delivered && window.closed?.detail === 'No command answer in the window'
+      || (advance && window.delivered && window.closed?.detail === NO_COMMAND_ANSWER_IN_WINDOW
         && index < windows.length - 1 && windows.slice(index + 1).every(next => !next.delivered)));
   }
   /**
@@ -408,7 +416,7 @@ export class Delegation {
       if (signal.aborted || !delivery || Date.now() >= JSON.parse(delivery.detail).deadline) break;
       await new Promise(resolve => setTimeout(resolve, Math.min(100, this.delegatedAnswerWaitMs)));
     }
-    this.store.event(key, 'delegated_closed', 'No command answer in the window');
+    this.store.event(key, 'delegated_closed', NO_COMMAND_ANSWER_IN_WINDOW);
     return null;
   }
   async askBound(task: Task, recipient: string, input: { prompt: string; signal: AbortSignal; timeoutMs: number; messageId: string; sourceAgentId?: string; onIntent?: () => void; rung?: PlannerRungName }, role: 'planner' | 'reviewer'): Promise<string | null> {
@@ -418,8 +426,10 @@ export class Delegation {
     if (!existing) {
       // Task 1109: a planner on a host without per-thread identity needs its ticket
       // before the question names it. Issuance is a convenience for the answer; a
-      // failed delivery keeps the question on its ordinary host identity.
-      if (role === 'planner') await this.resolution.ensurePlannerTicket?.(recipient, hostId!).catch(() => {});
+      // failed issuance is recorded and the question keeps its ordinary host identity.
+      if (role === 'planner') await this.resolution.ensurePlannerTicket?.(recipient, hostId!).catch(error => {
+        this.store.event(`delegation:${input.messageId}`, 'delegated_planner_ticket_failed', error instanceof Error ? error.message : String(error));
+      });
       this.openDelegatedQuestion(task, input.messageId, recipient, input.prompt, input.timeoutMs, role, hostId, input.rung);
       input.onIntent?.();
     }
@@ -457,6 +467,17 @@ export class Delegation {
       throw error;
     }
   }
+  /**
+   * A decider is archived after its window, on the decider task's own host. A
+   * failed archive is recorded, so the host keeps a visible orphan instead of the
+   * delegation ledger losing it.
+   */
+  private async archiveDecider(task: Task, id: string, agentId: string): Promise<void> {
+    try { await onOwnerHost(this.resolution, task, () => this.resolution.host.archiveAgent(agentId)); }
+    catch (error) {
+      this.store.event(`delegation:${id}`, 'delegated_decider_archive_failed', `${agentId}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));
+    }
+  }
   async deciderBound(task: Task, input: { prompt: string; profile: Profile | null; signal: AbortSignal; timeoutMs: number; decisionId: string; sourceAgentId?: string }): Promise<{ agentId: string; text: string | null }> {
     const id = `ns-decider-${input.decisionId}`;
     const existing = this.resolution.delegatedDelivery(id);
@@ -474,7 +495,7 @@ export class Delegation {
       if (this.store.eventsAll(`delegation:${id}`).some(event => event.kind === 'delegated_answer'))
         return { agentId: created.agentId, text: await this.resolution.waitDelegatedAnswer(id, input.signal) };
       this.store.event(`delegation:${id}`, 'delegated_closed', 'Delivery outcome unknown; never resend');
-      await this.resolution.withHost(task.hostId, () => this.resolution.host.archiveAgent(created.agentId)).catch(() => {});
+      await this.archiveDecider(task, id, created.agentId);
       throw error;
     }
   }
@@ -537,12 +558,13 @@ export class Delegation {
     }
     return { planner, failed: true };
   }
-  /** The profile a decider runs on: automatic selection, the cheapest eligible coordinator-class route. */
+  /**
+   * The profile a decider runs on: automatic selection, the cheapest eligible
+   * coordinator-class route. Availability is the store's typed rows through the
+   * shared group rule, never a decode of the durable table here.
+   */
   deciderProfile(task: Task): Profile | null {
-    const unavailable = new Set(this.store.db.prepare('SELECT data FROM availability').all().flatMap(row => {
-      const state = JSON.parse(String(row.data));
-      return groupIsUnavailable(state) ? [state.group as string] : [];
-    }));
+    const unavailable = unavailableGroupNames(this.store.availability());
     const profiles = this.profiles().filter(profile => profile.model !== 'default');
     return chooseProfile({ ...task, preferredProfileId: '', requirePreferred: false, thinkingOptionId: '' }, profiles, this.store.pool(),
       this.store.counts(), unavailable, 'coordinator', this.store.recentCounts(), this.store.usageLevel(), this.store.demandRoleOffsets())?.profile ?? null;

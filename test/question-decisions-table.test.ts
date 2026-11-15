@@ -7,7 +7,7 @@ import {
   escalationWaitDetail,
   type PlannerEscalation,
   type ReviewerConsult,
-} from "../core/questions/blocker-ladder";
+} from "../core/questions/ladder";
 import { answeredQuestionOutcome } from "../core/questions/native-questions";
 import { operatorQuestionStep } from "../core/questions/operator-question";
 import {
