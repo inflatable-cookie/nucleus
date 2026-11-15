@@ -6,6 +6,7 @@ import { escalationWaitState, establishEscalationWait, type EscalationWait } fro
 import type { Ladder } from './ladder';
 import { consultRecovery, escalationRecovery } from './pass';
 import { plannerEscalations, reviewerConsults, type LadderEvent } from './records';
+import { routePlannerEscalation } from './routing';
 import { escalationWaitDetail } from './waits';
 
 /**
@@ -55,7 +56,7 @@ export function resumeDelegations(ladder: Ladder, task: Task): void {
       inFlight: ladder.routingEscalations.has(escalation.id),
     }).kind === 'skip' || !escalation.question) continue;
     ladder.routingEscalations.add(escalation.id);
-    void ladder.resolution.routePlannerEscalation(task, escalation.id, escalation.question)
+    void routePlannerEscalation(ladder, task, escalation.id, escalation.question)
       .catch(error => {
         if (ladder.resolution.stopped()) return;
         ladder.store.event(task.id, 'planner_escalation_unknown', `${escalation.id}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));
