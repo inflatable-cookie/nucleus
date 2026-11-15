@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { recoveryEffects, isBlockingRecoveryEffect, recoveryEffectsRefusal } from '../recovery/recovery-effects';
+import { blockingRecoveryEffects, recoveryEffectsRefusal } from '../recovery/recovery-effects';
 import { mergeFenced, type Task } from '../../shared/contracts';
 import { now } from '../store/store';
 import { mergeFenceReason } from '../recovery/task-reasons';
@@ -34,8 +34,8 @@ export class IntegrationTurns {
     const refresh = this.resolution.refreshingCloseoutHook(t, t.phase === 'syncing');
     const ownedCloseout = new Set(this.store.hookEvents(t.id).filter(record =>
       t.phase === 'closing' && record.event === 'task.closeout' && record.state === 'blocked').map(record => record.id));
-    const effects = recoveryEffects(this.store, t, { kinds: ['operation', 'hook', 'run-delivery', 'review-delivery', 'publication', 'attention-notice'] })
-      .filter(effect => isBlockingRecoveryEffect(effect) && !(effect.kind === 'hook' &&
+    const effects = blockingRecoveryEffects(this.store, t, { kinds: ['operation', 'hook', 'run-delivery', 'review-delivery', 'publication', 'attention-notice'] })
+      .filter(effect => !(effect.kind === 'hook' &&
         (effect.identity === refresh?.id || ownedCloseout.has(effect.identity))));
     return recoveryEffectsRefusal(effects);
   }

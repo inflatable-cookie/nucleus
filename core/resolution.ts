@@ -9,9 +9,9 @@ import { SchedulingLifecycle } from './scheduling/lifecycle';
 
 import { ReviewLifecycle, type ContinuedPrBinding } from './review/lifecycle';
 import { AcceptedPrWorkspace } from './workspaces/workspace-continuation';
-
 import { RecoveryLifecycle } from './recovery/lifecycle';
 import { MergePhase } from './merge/merge-phase';
+import { HookReplayLifecycle } from './hooks/hook-replay';
 import { DispatchLaunch } from './dispatch/launch';
 
 import { JointReviewQuestion } from './questions/joint-review-question';
@@ -201,10 +201,10 @@ export class Resolution {
   readonly acceptedPrWorkspace = new AcceptedPrWorkspace(portsContext(this, ['adapter', 'attention', 'startsNoRuns', 'store']));
   readonly recoveryLifecycle = new RecoveryLifecycle(portsContext(
     this, ['attention', 'attentionUnknownEscalation', 'environmentDeferred', 'gitTransientFailure', 'responsibleBlockerLadder', 'store', 'update', 'waiting'],
-    { replayHeldAttention: (t: Task) => this.mergePhase.replayHeldAttention(t) },
+    { replayHeldAttention: (t: Task) => this.hookReplay.replayHeldAttention(t) },
   ));
-
-  readonly mergePhase = new MergePhase(portsContext(this, ['graceMs', 'hooks', 'mergeGateEvidence', 'operatorReturn', 'paused', 'resolvePassedUnchangedCheckEscalation', 'stopped', 'store', 'update']));
+  readonly mergePhase = new MergePhase(portsContext(this, ['store', 'update']));
+  readonly hookReplay = new HookReplayLifecycle(portsContext(this, ['graceMs', 'hooks', 'operatorReturn', 'paused', 'stopped', 'store', 'update']));
   readonly origins = new OriginRouting(this);
   readonly recovery = new Recovery(portsContext(this, ['adapter', 'attention', 'automaticHookReplayPending', 'ensureIncident', 'escalateRefusedCoordinator', 'extendCallbackReminder', 'graceMs', 'host', 'hostAvailable', 'workerProviderUnavailable', 'idle', 'lease', 'onTaskHost', 'openPlannerEscalation', 'openReviewContinuationEscalation', 'recordStop', 'requiredRouteNote', 'responsibleBlockerLadder', 'resumeTransientProviderThread', 'select', 'slotAdmissionReason', 'startsNoRuns', 'stopped', 'store', 'suppressAutomaticRetry', 'update', 'usageCeilingNote', 'validationEvidence', 'waiting']));
   readonly checkpoints = new Checkpoints(portsContext(this, ['adapter', 'attention', 'hostAvailable', 'paused', 'store', 'withHost']));
@@ -876,8 +876,8 @@ export class Resolution {
   queueCloseout(t: Task): Promise<void> { return this.closeout.queueCloseout(t); }
   /** Complete closeout through the repository's authoritative integration-write hook. No closeout run or workspace is created. */
   hookCloseout(t: Task): Promise<void> { return this.closeout.hookCloseout(t); }
-  automaticHookReplayPending(t: Task): boolean { return this.mergePhase.automaticHookReplayPending(t); }
-  settleAutomaticReplayHold(t: Task, records: HookRecord[], event: HookEventName): Task { return this.mergePhase.settleAutomaticReplayHold(t, records, event); }
+  automaticHookReplayPending(t: Task): boolean { return this.hookReplay.automaticHookReplayPending(t); }
+  settleAutomaticReplayHold(t: Task, records: HookRecord[], event: HookEventName): Task { return this.hookReplay.settleAutomaticReplayHold(t, records, event); }
   refusePreMerge(t: Task, reason: string, eventDetail: string) { return this.mergeGates.refusePreMerge(t, reason, eventDetail); }
   verification(t: Task, prepareHooks = true) { return this.mergeGates.verification(t, prepareHooks); }
   reconcileReviewPublication(t: Task, runId: string, reason: string, reportingRunId?: string) { return this.reviewPublication.reconcileReviewPublication(t, runId, reason, reportingRunId); }
@@ -900,8 +900,8 @@ export class Resolution {
   reconcileAcceptedPrWorkspace(t: Task): Promise<Task | null> { return this.acceptedPrWorkspace.reconcileAcceptedPrWorkspace(t); }
   /** Advance step: a stored result or late completion settles the attention it answers, and a required-hook retry clears its attention. */
   recordStoredResult(t: Task): Task { return this.schedulingLifecycle.recordStoredResult(t); }
-  unchangedCheckGateApplies(t: Task): boolean { return this.mergePhase.unchangedCheckGateApplies(t); }
-  settleUnchangedCheckGate(t: Task): Promise<Task> { return this.mergePhase.settleUnchangedCheckGate(t); }
+  unchangedCheckGateApplies(t: Task): boolean { return this.checkWaits.unchangedCheckGateApplies(t); }
+  settleUnchangedCheckGate(t: Task): Promise<Task> { return this.checkWaits.settleUnchangedCheckGate(t); }
   /** Advance gate: a parked blocked or errored responsible task climbs the ladder once per receipt. */
   blockerLadderApplies(t: Task): boolean { return this.schedulingLifecycle.blockerLadderApplies(t); }
   /** Advance step: a parked blocked or errored responsible task climbs the ladder once per receipt. Null stops the pass. */
