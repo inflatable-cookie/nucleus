@@ -97,13 +97,32 @@ test('a background shell, a worktree setup and an unknown kind keep the fence fr
 
 test('a finished-turn shell settles only after a complete no-process proof', () => {
   const workspace = '/work/task';
+  const ownRun = '123e4567-e89b-42d3-a456-426614174000';
+  const otherRun = '223e4567-e89b-42d3-a456-426614174001';
   const empty: Array<{ pid: number; ppid?: number | null; command: string; cwd: string | null }> = [];
-  assert.equal(workspaceToolProcessIssue(empty, workspace, ['run-1']), null, 'idle pi with no provider process and no workspace process is clear');
-  assert.match(workspaceToolProcessIssue([{ pid: 7, ppid: 1, command: 'bash -lc build', cwd: workspace }], workspace, ['run-1'])!, /remains in the task workspace process tree/);
-  assert.match(workspaceToolProcessIssue([{ pid: 8, ppid: 7, command: 'child', cwd: '/tmp' }, { pid: 7, ppid: 1, command: 'bash', cwd: workspace }], workspace, ['run-1'])!, /remains in the task workspace process tree/);
-  assert.match(workspaceToolProcessIssue([{ pid: 9, ppid: 1, command: 'node mcp-report.mjs /tickets/mcp-run-1.json', cwd: '/tmp' }], workspace, ['run-1'])!, /still carries the run MCP ticket/);
-  assert.match(workspaceToolProcessIssue([{ pid: 10, ppid: 1, command: 'worker', cwd: null }], workspace, ['run-1'])!, /unreadable working directory/);
-  assert.match(workspaceToolProcessIssue([{ pid: 11, command: 'worker', cwd: '/tmp' }], workspace, ['run-1'])!, /unreadable parent identity/);
+  const report = (pid: number, ppid: number, ticket: string, cwd: string) => ({
+    pid, ppid, command: `node /plugin/mcp-report.mjs ${ticket} report`, cwd,
+  });
+  assert.equal(workspaceToolProcessIssue(empty, workspace, [ownRun]), null, 'idle pi with no provider process and no workspace process is clear');
+  assert.match(workspaceToolProcessIssue([{ pid: 7, ppid: 1, command: 'bash -lc build', cwd: workspace }], workspace, [ownRun])!, /remains in the task workspace process tree/);
+  assert.match(workspaceToolProcessIssue([{ pid: 8, ppid: 7, command: 'child', cwd: '/other' }, { pid: 7, ppid: 1, command: 'bash', cwd: workspace }], workspace, [ownRun])!, /remains in the task workspace process tree/);
+  assert.equal(workspaceToolProcessIssue([report(9, 1, `/fixture/tickets/mcp-${otherRun}.json`, '/other')], workspace, [ownRun]), null,
+    'another run helper outside the task workspace does not block this participant');
+  assert.match(workspaceToolProcessIssue([report(10, 1, `/fixture/tickets/mcp-${otherRun}.json`, workspace)], workspace, [ownRun])!, /remains in the task workspace process tree/,
+    'a foreign ticket helper inside the task workspace still blocks');
+  assert.match(workspaceToolProcessIssue([
+    { pid: 11, ppid: 7, command: 'pi child', cwd: workspace },
+    report(12, 11, `/fixture/tickets/mcp-${otherRun}.json`, '/other'),
+  ], workspace, [ownRun])!, /remains in the task workspace process tree/,
+  'a foreign helper descended from a workspace process still blocks');
+  assert.match(workspaceToolProcessIssue([report(13, 1, `/fixture/tickets/mcp-${ownRun}.json`, '/other')], workspace, [ownRun])!, /still carries the run MCP ticket/,
+    'this participant’s own helper blocks even when its cwd is elsewhere');
+  assert.match(workspaceToolProcessIssue([report(14, 1, '/fixture/tickets/mcp-123e4567-e89b-42d3.json', workspace)], workspace, [ownRun])!, /unreadable or truncated MCP ticket identity/,
+    'a truncated helper ticket in the workspace remains unknown');
+  assert.equal(workspaceToolProcessIssue([report(15, 1, '/fixture/tickets/mcp-123e4567-e89b-42d3.json', '/other')], workspace, [ownRun]), null,
+    'a truncated helper outside the task workspace is scoped out');
+  assert.match(workspaceToolProcessIssue([{ pid: 16, ppid: 1, command: 'worker', cwd: null }], workspace, [ownRun])!, /unreadable working directory/);
+  assert.match(workspaceToolProcessIssue([{ pid: 17, command: 'worker', cwd: '/other' }], workspace, [ownRun])!, /unreadable parent identity/);
 });
 
 test('turn settlement never covers partial, status-less or ambiguous evidence', () => {
