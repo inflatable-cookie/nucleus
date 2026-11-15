@@ -6,7 +6,7 @@ import { taskPrNumber } from '../forge/index';
 import type { AgentObservation } from '../host/adapter';
 import type { Resolution } from '../resolution';
 import { reviewAuthorizationRequired } from '../review/review-continuation';
-import { modelKey } from '../dispatch/routing';
+import { modelKey } from '../../shared/authors';
 import type { TimelineEntry, TimelinePage } from './stall';
 import { PROVIDER_REFUSAL_UNVERIFIED, UNVERIFIABLE_REFUSAL_READ_LIMIT, reviewerRefusalKey } from './task-reasons';
 

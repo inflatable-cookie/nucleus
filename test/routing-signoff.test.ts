@@ -7,7 +7,7 @@ import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
 import { Decisions } from '../core/planning/decisions';
 import { chooseProfile } from '../core/dispatch/routing';
-import { reconcileRoutingSignoffs, SIGNOFF_DECLINE, signoffApprove, signoffUse } from '../core/dispatch/routing-signoff';
+import { priorNonGrantSignoff, reconcileRoutingSignoffs, SIGNOFF_DECLINE, signoffApprove, signoffUse } from '../core/dispatch/routing-signoff';
 import { poolSchema, submissionSchema, taskControlInputSchema, type Profile } from '../shared/contracts';
 import type { Adapter } from '../core/host';
 
@@ -173,5 +173,24 @@ test('a later route validates against the honoured thinking level, not an unsign
     await route('opus', { thinkingOptionId: 'xhigh' });
     const cheap = await route('cheap');
     assert.equal(cheap.profileRequests!.worker!.profileId, 'cheap', 'the unsigned xhigh level does not refuse a route to a profile without it');
+  } finally { f.close(); }
+});
+
+test('the recorded sign-off is read from typed events: unreadable rows are skipped, grant rows never mask a board no', () => {
+  const f = fixture(); try {
+    const task = f.submit();
+    f.reconcile(task.id);
+    f.answer(f.store.task(task.id).profileRequests!.reviewer!.signoff!.decisionId!, signoffApprove('Sol oracle'));
+    f.reconcile(task.id);
+    const signed = priorNonGrantSignoff(f.store, task.id, 'reviewer', 'sol');
+    assert.deepEqual([signed?.status, signed?.decisionId === null], ['approved', false]);
+    // A row nothing can read is skipped, not read as an absence of approval.
+    f.store.event(task.id, 'routing_signoff', 'not json');
+    assert.equal(priorNonGrantSignoff(f.store, task.id, 'reviewer', 'sol')?.status, 'approved');
+    // A grant-tagged record is never the board's answer, so a revoked grant cannot mask it.
+    f.store.event(task.id, 'routing_signoff', JSON.stringify({ role: 'reviewer', profileId: 'sol', status: 'declined', grantId: 'grant-1' }));
+    assert.equal(priorNonGrantSignoff(f.store, task.id, 'reviewer', 'sol')?.status, 'approved');
+    // Another profile's record is another request.
+    assert.equal(priorNonGrantSignoff(f.store, task.id, 'reviewer', 'opus'), null);
   } finally { f.close(); }
 });

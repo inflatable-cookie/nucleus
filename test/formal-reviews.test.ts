@@ -13,7 +13,7 @@ import {
 } from '../core/forge/index';
 import {retainReviewPublication} from '../core/review/review-publication';
 import {git} from '../core/git/index';
-import {formalReviewHttp} from '../core/forge/formal-review-http';
+import {formalReviewHttp, FormalReviewHttpError} from '../core/forge/formal-review-http';
 import type {Task, Run, Completion} from '../shared/contracts';
 import { TaskChangedRefusal } from '../shared/task-version';
 
@@ -111,16 +111,11 @@ test('pending-intent recovery refuses a marked review whose findings changed fro
   assert.equal(store.getMeta<{reviewId?: number}>(`reviewPublication:${r.id}`)?.reviewId, undefined, 'the changed review is never adopted');
 });
 
-test('a real gh permission failure keeps the actionable GitHub reason and names the org', async t => {
+test('a typed GitHub permission failure keeps the actionable reason and names the org', async t => {
   const fixture = repoFixture(); await fixture.init(); t.after(() => fixture.cleanup());
   const {store, dir} = storeFixture(fixture.repo); t.after(() => { store.close(); rmSync(dir, {recursive: true, force: true}); });
   const t1 = task(fixture.repo), token = 'ghs_env_only_token';
-  // Shape of an execFile failure: the message is the command echo; the refusal is on stderr.
-  const runGh = ghStub([], () => {
-    const error = new Error('Command failed: gh api repos/acme/app/pulls/1/reviews\n') as Error & {stderr?: string};
-    error.stderr = 'HTTP 403: Resource not accessible by personal access token (https://api.github.com/repos/acme/app/pulls/1/reviews)\n';
-    throw error;
-  });
+  const runGh = ghStub([], () => { throw new FormalReviewHttpError(403, 'Resource not accessible by personal access token'); });
   await assert.rejects(publishFormalReview(store, t1, run('real-gh'), 'ready_to_merge', 'Findings', reviewer, () => true, {readToken: async () => token, runGh, verifyPr}),
     (error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
@@ -132,21 +127,15 @@ test('a real gh permission failure keeps the actionable GitHub reason and names 
     });
 });
 
-test('a permission refusal survives a command echo and findings that mention error', async t => {
+test('typed permission refusal is independent of findings that mention error', async t => {
   const fixture = repoFixture(); await fixture.init(); t.after(() => fixture.cleanup());
   const {store, dir} = storeFixture(fixture.repo); t.after(() => { store.close(); rmSync(dir, {recursive: true, force: true}); });
   const t1 = task(fixture.repo), token = 'ghs_hidden_token';
-  // The argv echo carries the review body's word "error"; the real refusal is on stderr.
-  const refused = ghStub([], () => {
-    const error = new Error('Command failed: gh api repos/acme/app/pulls/1/reviews -X POST -f body=Findings about error handling\n') as Error & {stderr?: string};
-    error.stderr = 'HTTP 403: Resource not accessible by personal access token\n';
-    throw error;
-  });
+  const refused = ghStub([], () => { throw new FormalReviewHttpError(403, 'Resource not accessible by personal access token'); });
   await assert.rejects(publishFormalReview(store, t1, run('echo-error'), 'ready_to_merge', 'Findings about error handling', reviewer, () => true, {readToken: async () => token, runGh: refused, verifyPr}),
     (error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
-      assert.match(message, /Resource not accessible by personal access token/, 'GitHub stderr outranks the command echo');
-      assert.doesNotMatch(message, /Command failed/, 'the argv echo is never the refusal');
+      assert.match(message, /Resource not accessible by personal access token/, 'the typed refusal keeps GitHub\'s reason');
       assert.doesNotMatch(message, /error handling/, 'the review body text is not mistaken for the refusal');
       assert.doesNotMatch(message, /ghs_hidden_token/);
       return true;
@@ -235,9 +224,9 @@ test('a missing keychain item, 401/403 and missing write access refuse loudly, n
   const t1 = task(fixture.repo), token = 'ghs_leaky_token';
   // A missing keychain item names the org, the keychain service and what is missing.
   await assert.rejects(readReviewerToken(`ns-missing-${randomUUID()}`), new RegExp(`${REVIEWER_TOKEN_SERVICE}.*account`));
-  for (const [index, failure] of ['HTTP 401: Bad credentials', 'HTTP 403: Resource not accessible by personal access token', 'Must have write access to this repository'].entries()) {
+  for (const [index, [status, reason]] of ([[401, 'Bad credentials'], [403, 'Resource not accessible by personal access token'], [403, 'Must have write access to this repository']] as const).entries()) {
     const calls: Call[] = [];
-    const runGh = ghStub(calls, () => { throw new Error(`${failure}: ${token}`); });
+    const runGh = ghStub(calls, () => { throw new FormalReviewHttpError(status, `${reason}: ${token}`); });
     await assert.rejects(publishFormalReview(store, t1, run(`review-run-${index}`), 'ready_to_merge', 'Findings', reviewer, () => true, {readToken: async () => token, runGh, verifyPr}),
       (error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { collectOwnerVerbFacts, ownerPendingEffects } from '../core/verbs/owner-verbs';
-import { reviewContinuationLocalRefusal } from '../core/resolution';
+import { reviewContinuationLocalRefusal } from '../core/review/review-continuation';
 import { runSchema } from '../shared/contracts';
 import { fixture } from './support/review-continuation-fixture';
 

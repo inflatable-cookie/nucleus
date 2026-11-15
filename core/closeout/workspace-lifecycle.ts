@@ -2,8 +2,9 @@ import type { Resolution } from '../resolution';
 import { holdsOf, runtimeRetirementFailure, type Task } from '../../shared/contracts';
 import { OWNER_STOP_HOLD_PREFIX, releasePatch } from '../merge/merge-hold';
 import type { Engine } from '../engine';
+import { portsContext } from '../port-context';
 import { CloseoutRecovery } from './recovery';
-import { closeoutContext } from './context';
+
 import { externalWorkspaceArchiveDue, settleExternalWorkspaceArchive } from '../workspaces/external-workspace-archive';
 import { archiveIntentUnreadable, archiveSettledByOwner } from '../workspaces/archive-intent';
 import { archiveRetryWaiting, recordArchiveRetry, terminalArchiveSource, terminalArchiveWorkspaces, workspaceArchiveFailureReason, type WorkspaceArchiveRetry } from './terminal-archive';
@@ -30,7 +31,7 @@ export class Lifecycle {
       get adapter() { return engine.adapter; },
       get host() { return engine.host; },
       get onTaskHost() { return engine.onTaskHost.bind(engine); },
-      get resolution() { return closeoutContext(engine.resolution, ['adapter', 'closeoutAuthority', 'hasEarlierIntegrationTurn', 'lease', 'update']); },
+      get resolution() { return portsContext(engine.resolution, ['adapter', 'closeoutAuthority', 'hasEarlierIntegrationTurn', 'lease', 'update']); },
       get stopped() { return engine.stopped; },
       get store() { return engine.store; },
     });

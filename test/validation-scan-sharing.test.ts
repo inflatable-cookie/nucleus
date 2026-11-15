@@ -24,7 +24,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { Store } from "../core/store/store";
 import { Engine } from "../core/engine";
-import { VALIDATION_SCAN_PASS_MAX_MS } from "../core/resolution";
+import { VALIDATION_SCAN_PASS_MAX_MS } from '../core/recovery/task-reasons';
 import { taskProgressDigest } from "../core/recovery/coordinator-report";
 import { submissionSchema, type Profile, type Run, type Task } from "../shared/contracts";
 import type { Incident } from "../shared/incident";

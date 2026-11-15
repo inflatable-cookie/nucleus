@@ -1,6 +1,6 @@
 import { parseAgentId } from '../../shared/agent-identity';
 import type { Engine } from '../engine';
-import { archiveRoutingGrants, grantArchiveDue, readRoutingGrants } from '../dispatch/routing-grants';
+import { archiveRoutingGrants, grantArchiveDue, readRoutingGrants } from '../dispatch/routing-signoff';
 import { observationTimeout } from '../recovery/observation-timeout';
 
 export type PlannerGrantCleanupContext = Pick<Engine, 'adapter' | 'host' | 'signoffDecisions' | 'store' | 'withHost' | 'hostAvailable'>;

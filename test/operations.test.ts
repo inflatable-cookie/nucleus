@@ -12,7 +12,7 @@ import { Engine } from '../core/engine';
 import { QueueRuntime } from '../service/runtime-owner';
 import { RuntimeRetirementService, type EffigyInvoke } from '../core/runtime/runtime-retirement';
 import { git } from '../core/git/index';
-import { ABSENT_WORKER_REASON } from '../core/resolution';
+import { ABSENT_WORKER_REASON } from '../core/recovery/task-reasons';
 import { operationStart, submissionSchema, type Profile, type Task } from '../shared/contracts';
 import { operationSummarySchema, type OperationAcceptance } from '../shared/operations';
 import type { Adapter, AgentObservation } from '../core/host';

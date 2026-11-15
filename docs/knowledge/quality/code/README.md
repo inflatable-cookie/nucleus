@@ -1,5 +1,7 @@
 # Code-module quality tables
 
+- nucleus#1235 (floor 7, 2026-11-15): PR state display now reads the task's recorded PR number and canonical repository, and failed reads are reported with task IDs while successful tasks remain visible (10: O2 T2 F2 P2 Pr2; test/pr-status.test.ts covers recorded identity, merged-task omission and failure context). Review publication entry points share one single-flight owner, while comment and formal-review reconciliation remain separate for their different remote evidence; formal HTTP 401/403 errors now carry a typed status rather than being classified by message text (reviews 8: O1 T2 F2 P1 Pr2; boundary coverage in test/formal-reviews.test.ts). The changed formal-review transport row remains 9 with typed HTTP status coverage in test/formal-review-http.test.ts. The shared dispatcher is the named consolidation; retaining distinct remote reconciliation is the remaining ownership seam.
+
 The product-code ratings: 588 modules in `N1.csv`–`N6.csv` (N1 orchestration 96, N2 task lifecycle
 81, N3 state and planning 57, N4 machine and workspaces 104, N5 service and hosts 78, N6 shared and
 client 172), rated at commit `136cf0de` on 2026-11-13. The method is in [CHARTER.md](CHARTER.md).
@@ -29,6 +31,22 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
 
 ## Re-rates
 
+- nucleus#1233 (floor 7, 2026-11-15): the three floor-7 dispatch modules were consolidated and re-rated at
+  this PR's head. `core/dispatch/participant-tickets.ts` became one tidy file group:
+  `core/dispatch/participant-tickets/index.ts` composes issuance, delivery and revocation over the meta-row
+  owner (`records.ts`), the one issuance routine (`issue.ts`) and the task-planner scope
+  (`planned-threads.ts`), so the three near-copy planner/task-planner/named-agent routines are gone, no
+  caller builds or splits a raw meta key, a failed issuance in the caller's own call is recorded, and the
+  wrong-host fallback agent registration is removed. `core/dispatch/routing-signoff.ts` and
+  `core/dispatch/routing-grants.ts` merged into `core/dispatch/routing-signoff/`: `request.ts` owns the
+  sign-off record both writers share and the typed decode of its event detail, `grants.ts` the grant store,
+  `reconcile.ts` the per-task pass, and `index.ts` the public surface. The per-task pass no longer re-runs
+  the queue-wide grant settle, so a sweep is linear in tasks. `core/dispatch/routing.ts` keeps its job and
+  loses its duplicates: the model key is `shared/authors.ts`' one normalisation (which also gains the
+  normalisation itself, and is re-rated for it) and availability comes from the store's typed rows through
+  `shared/pool.ts`, never three raw queries. Ten rows replace the four old ones; scores are recorded per
+  row above with their evidence at this head.
+
 - nucleus#1231 (floor 7, 2026-11-15): Queue shares repository and open-task predicates and its record selection has a separate state owner. The remaining tab composition keeps proportion at 0, for a score of 7. Lead action hints come from the core read; status views and brief-frontmatter detection share one owner across the client, planning and store; the screen scores 9. Cancellation receipts are schema checked, migrate through the shared storage helper and report storage failures; the session fallback remains, for a score of 8. The new owners and affected shared rules have rows at this PR head. Boundary tests cover repository identity, terminal task errors and receipt parsing and migration.
 
 - nucleus#1230 (floor 7, 2026-11-15): the two floor-7 backup and capacity modules were simplified along
@@ -52,6 +70,32 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
   which was the duplicate its row named; its proof stays 1 because the prune itself is only covered
   through its planner. Boundary tests were added for the snapshot name reader, the unreadable status and
   the typed capacity limit, and `test/staged-backup.test.ts` now asserts the refusal code.
+- nucleus#1232 (floor 7, 2026-11-15): `core/resolution.ts` was split along the seams its row named and
+  re-rated at this PR's head. The four port-wiring styles are one: every port set the shell declares is
+  wired with `portsContext`, the one live port context in `core/port-context.ts`, which replaces four
+  byte-identical copies (`core/scheduling/context.ts`, `core/recovery/context.ts`, `core/intake/context.ts`
+  and `core/closeout/context.ts`) whose rows named exactly that consolidation. The fail-open default host
+  hooks and the `onTaskHost` the engine duplicated moved to `core/host/host-ports.ts`: one `HostPorts`
+  contract, one ambient set for an unwired root, one task-owner host rule that `Engine.onTaskHost` and
+  `Resolution.onTaskHost` both call, and one wiring point (`Engine` assigns `resolution.hostPorts` once
+  instead of twelve fields). The two mechanisms that were not composition now have their owners: the
+  latest accepted blocked result is `retryContextOf` in `core/recovery/retry-evidence.ts`, and a project
+  agent's send-time address is `projectAgentTarget` in `core/planning/project-agents.ts`. The re-exports
+  kept for tests are gone; the tests import the owners. `core/resolution.ts` is 898 non-blank lines from the row's 1076 and
+  scores 8 (O2 T2 F1 P1 Pr2): one owner for the host questions and one port-wiring style, while the
+  ambient set still answers reachable before the engine wires it and the owners whose port contract their
+  own module declares still read the shell. Its `keep` replaces the old `split`. The engine wired all twelve
+  host questions before this PR; moving them into one set is what makes a forgotten one impossible, and the
+  first pass of the move showed why: `catalogKnown` was left on its ambient default while the other eleven
+  became ports, so dispatch ran on an unloaded catalog until the affected run caught it. The wired answer is
+  pinned by `test/host-ports.test.ts`, the catalog waits by `test/restart.cases.ts`, and the task-owner rule
+  reads the replaceable `withHost` port by the same test. `core/port-context.ts`
+  scores 10 with a boundary test for the live key list, the shaped port and the nested engine context;
+  `core/host/host-ports.ts` scores 8 because the engine root still declares its own defaults for the ports
+  its owners read, and `test/host-ports.test.ts` covers the ambient set, the shared task-owner rule and
+  the one wiring point. `core/engine.ts` keeps 8 with its wiring and host rule refreshed;
+  `core/recovery/retry-evidence.ts` and `core/planning/project-agents.ts` keep 9 and 8 with the moved
+  mechanism added to their reason. The three consolidated context rows are gone.
 
 - nucleus#1228 (floor 7, 2026-11-15): the three floor-7 client modules were re-rated at this PR's head.
   `client/task/runs.tsx` was split along its named sections: the tab now composes prerequisites and the
@@ -247,3 +291,4 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
 - nucleus#1227 (floor 7, 2026-11-15): the private host-run supervisor now recognizes the authority schema, clears its restart flag on every exit path and logs each cleanup failure (8: O1 T2 F2 P1 Pr2; warm-standby supervision remains duplicated beside the bridge). Paseo and T3 connection state cross the optional host-neutral adapter contract; the shared probe treats an absent capability as offline, and the Paseo entry no longer exposes a host-specific wrapper (Paseo entry 10: O2 T2 F2 P2 Pr2; core adapter contract 9: O1 T2 F2 P2 Pr2; T3 entry 7: O1 T2 F1 P1 Pr2, with its delegation and archive pagination seams retained). Paseo observations use `observationFromInventoryEntry` for both inventory and per-agent reads, inventory and MCP failures use named error types, and catalog feature failures are logged while retaining the existing empty-feature fallback (9: O2 T2 F2 P1 Pr2; the adapter still owns a broad native delegate surface). Advisory roll requests use `normalizeRepositoryOrigin`, report caught failures and register explicitly at runtime construction; their synchronous boolean port still runs bounded Git on the caller thread (9: O2 T2 F2 P1 Pr2). The unused `service/install/build.ts` re-export and its runtime package mapping were removed. `service/runtime-owner.ts` was re-rated at 8 because its explicit roll registration changed while its retained delegation and catch-to-null seam remain. The catalog fallback remains the same; logging the failed optional read is the named silent-failure exception. The Paseo-only probe and dead build path are the named removals.
 - nucleus#1229 (floor 7, 2026-11-15): hook cleanup reads its rowid high-water mark through the store owner and all three reap paths use the shared asynchronous tree remover (N4, 7); the one-method retention adapter and the unused intake `.mjs` and declaration shims were deleted, with their callers and build aliases removed. Supervisor liveness now lives beside canonical start-identity proofs (N4, 9), including a boundary test for a recorded identity belonging to a different pid. Callback reminders share binding observation with dispatch, send notifications in the task host context and use one named missing-callback cause (N2, 8). The new cause constant is shared with lifecycle and responsible-fault readers (N6, 9). Deleted shim paths and runtime aliases are covered by a boundary test. The QA inspection and validation modules remain at 6: this task changes only their liveness import; their existing defects remain outside this task's scope.
 - nucleus#1236 (floor 7, 2026-11-15): `host-run-watch` (7) reads supervisor state and results through the verified tri-state file API; invalid JSON or schema data is unreadable, so an unreadable result or a missing/unreadable supervisor state cannot become evidence to settle lost. Boundary coverage verifies a corrupt result keeps a running reservation. Its unknown-identity suffix check, swallowed process-update errors and cache re-proofs remain. `host-run-capacity` (9) uses the indexed host-run rows as its sole historical source and retains its CPU/wall percentile, fallback memory budget and share cap; the legacy QA/task SQL, row casts, malformed-row skips and dead legacy peak-memory branch are removed. One updated boundary test proves legacy QA rows no longer seed history; the current host-run history test remains. `host-run-redact` (7) keeps its key-name policy and now has direct recursive, env-key-only and idempotence coverage; secret values under non-secret-shaped keys remain outside the helper's remit.
+- nucleus#1234 (floor 7, 2026-11-15): `core/dispatch/worker-launcher.ts` is re-rated at 7 (O1 T2 F1 P1 Pr2). Launch failure strings now map to one typed recovery category before the existing rate-limit or settings-lock path is selected, the repeated excluded-profile refusal has one owner, and availability reads through the store's schema-validated API. The typed classifier has direct category coverage and existing launch integration tests continue to prove the rate-limit outcome. Failure remains 1 because the exact-lookup incident ordering is deliberately unchanged; proportion remains 1 because event-backed retry-spent is still read inline and the launcher retains several lifecycle responsibilities. No new launch or recovery behavior was added.

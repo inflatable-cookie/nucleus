@@ -38,11 +38,22 @@ export function externalAuthorModels(task: AuthoredTask): string[] {
 const OPAQUE_MODEL_KEYS = new Set(["default", "unknown"]);
 
 /**
+ * One model string's identity — the last path segment, trimmed and lower-cased —
+ * as every comparison in the codebase reads it. The dispatch selector's worker
+ * and reviewer gates, the retained-restart and verdict guards, the review
+ * preflight and the provider refusals all compare these keys, so the split lives
+ * here and nowhere else.
+ */
+export function modelKey(value: string | null | undefined): string {
+  return value?.split("/").at(-1)?.trim().toLowerCase() ?? "";
+}
+
+/**
  * One model string as runtime compares it; a blank, missing, `default` or
  * `unknown` model is the opaque "default". Whitespace-only components are blank.
  */
 export function authorModelKey(value: string | null | undefined): string {
-  const key = value?.split("/").at(-1)?.trim().toLowerCase() ?? "";
+  const key = modelKey(value);
   return !key || OPAQUE_MODEL_KEYS.has(key) ? "default" : key;
 }
 
