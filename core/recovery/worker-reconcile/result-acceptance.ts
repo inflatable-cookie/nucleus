@@ -3,6 +3,7 @@ import type { Completion, Task } from '../../../shared/contracts';
 import { normalizeRepositoryOrigin } from '../../../shared/lanes';
 import { recordResultApplied, resultApplied } from '../../intake/applied-result';
 import { settlementHeld } from '../../closeout/queue-drain';
+import { continuationOwnsReturn } from './blocked-return';
 import { hookHoldReason } from '../../hooks/hooks';
 import type { Adapter } from '../../host/adapter';
 import type { WorkerReconcileContext } from './context';
@@ -89,7 +90,7 @@ export async function acceptWorkerResult(engine: WorkerReconcileContext, task: T
   const awaitedReminder = current.resolution.incident?.runId === current.runId && current.resolution.incident.action === 'callback_reminder' && current.resolution.incident.status !== 'escalated';
   const stopAttention = current.resolution.attention && (awaitedReminder || current.reason === 'Worker stopped without a completion callback; inspect the thread');
   // The blocked hook above waited on I/O: a push-back recorded meanwhile owns this return.
-  if (c.status !== "ready_for_review" && engine.continuationOwnsReturn(task.id)) return;
+  if (c.status !== "ready_for_review" && continuationOwnsReturn(engine, task.id)) return;
   const applied = store.transaction(() => {
     const latest = store.task(task.id);
     if (latest.completion?.eventId !== c.eventId || latest.runId !== c.runId || resultApplied(store, task.id, c.runId)) return false;

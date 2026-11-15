@@ -1,5 +1,6 @@
 import type { Task } from '../../../shared/contracts';
-import { dispatchBlocked, pausedStopWaitReason } from '../../../shared/contracts';
+import { pausedStopWaitReason } from '../../../shared/contracts';
+import { dispatchBlocked } from '../../dispatch/capacity';
 import { wireLabel } from '../../../shared/wire-labels';
 import { reportingIdentityMismatch } from '../../intake/reporting-identity';
 import { clearLiveEvidence, liveEvidenceEpisode } from '../../machine/live-evidence';

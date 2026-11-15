@@ -1,5 +1,5 @@
 import { isTransientProviderError } from '../exhaustion';
-import type { Adapter } from '../host/adapter';
+import type { Adapter } from '../../host/adapter';
 import type { Task } from '../../../shared/contracts';
 
 /**

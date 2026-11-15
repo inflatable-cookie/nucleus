@@ -1,5 +1,5 @@
 import type { Resolution } from '../../resolution';
-import type { Engine } from '../engine';
+import type { Engine } from '../../engine';
 
 /**
  * The engine and resolution ports the initial worker's reconcile pass reads.
