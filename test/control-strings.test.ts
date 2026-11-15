@@ -745,19 +745,19 @@ external_merge_observed:2:2 external_workspace_archive_archived:1:3 hold:1:100 h
 hook_failed:1:0 hook_intent:2:2 hook_published:1:0 hook_result:1:0 hook_uncertain:2:1 hook_workspace_created:1:1 hook_workspace_intent:1:1
 incident:3:8 initial_pr_lookup_unavailable:1:1 main_synchronized:1:1 merge_intent:1:1 merge_verified:4:1 native_question_answered:1:1
 native_question_delegated:2:1 native_question_operator:1:1 native_question_response_intent:2:1 native_question_unanswered:1:1
-native_question_unknown:1:1 needs_attention:4:168 non_delivery:3:12 non_delivery_pushback:2:2 non_delivery_reset:1:2 operator_control:4:2
-operator_question:8:9 operator_question_answered:10:8 operator_question_applied:3:1 operator_question_decided:1:1 operator_question_decision:4:7
+native_question_unknown:1:1 needs_attention:4:168 non_delivery:3:12 non_delivery_pushback:2:2 non_delivery_reset:1:2 operator_control:4:1
+operator_question:8:9 operator_question_answered:10:8 operator_question_applied:3:1 operator_question_decided:1:1 operator_question_decision:3:7
 operator_question_delegation_missed:1:3 operator_question_delegation_unknown:1:3 operator_question_reasked:1:1 operator_question_refused:2:2
 operator_question_stale_answered:3:3 operator_question_superseded:3:5 operator_question_unknown:1:3 owned_tool_hold:3:2 owned_tool_settled:1:1
 owner_control:3:9 owner_restart_instruction_sent:2:2 owner_stop_sent:5:4 owner_stop_uncertain:2:2 owner_stopped:3:1 owner_verb_deferred:1:1
 paused_resume_uncertain:1:2 planner_escalation_answered:1:5 planner_escalation_attached:1:1 planner_escalation_decision:1:1
-planner_escalation_decision_linked:1:3 planner_escalation_missed:2:3 planner_escalation_offered:1:1 planner_escalation_payload:2:2
-planner_escalation_refusal_sent:1:1 planner_escalation_resolved:1:2 planner_escalation_sent:1:1 planner_escalation_unknown:1:6
+planner_escalation_decision_linked:1:3 planner_escalation_missed:1:3 planner_escalation_offered:1:1 planner_escalation_payload:1:2
+planner_escalation_refusal_sent:1:1 planner_escalation_resolved:1:2 planner_escalation_sent:1:1 planner_escalation_unknown:0:6
 pre_merge_candidate_stale:1:3 pre_merge_refused:2:1 pre_merge_warm_candidate_created:2:1 pre_merge_warm_candidate_missing:2:1 progress_checkpoint:2:5
 project_planner_missing_notified:1:1 proof_autorun_skipped:1:2 proof_autorun_waiting_inputs:1:1 proof_worker_requested:1:2 queue_ask_delivery:1:1
 queue_promoted:1:1 recovery_escalated:2:2 recovery_pending:3:1 release:1:24 report_ready_planner_notice_intent:1:1 reporting_binding_recheck:1:1
 responsible_converted:1:0 responsible_fault_restart:1:1 responsible_question:1:14 responsible_question_answered:3:5
-responsible_question_stale_answered:1:1 responsible_question_superseded:2:2 review_auto_continue_deferred:1:1 review_checkpoint:1:2
+responsible_question_stale_answered:0:1 responsible_question_superseded:2:2 review_auto_continue_deferred:1:1 review_checkpoint:1:2
 review_delivery_delivered:1:0 review_delivery_refused:1:0 review_delivery_reserved:1:1 review_delivery_uncertain:1:0 review_published:1:2
 review_reapplied:4:4 review_result_applied:4:5 reviewer_consult:1:2 reviewer_consult_answered:1:2 reviewer_consult_missed:1:3
 reviewer_consult_payload:1:2 reviewer_consult_reviewer:1:2 reviewer_consult_sent:1:2 reviewer_consult_unknown:2:4 revision_budget_exhausted:2:1

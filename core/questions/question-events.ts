@@ -44,17 +44,22 @@ export interface OperatorQuestionRecord {
   noAnswerMissed: boolean;
 }
 
-/** An operator question's raise intent, decoded. */
+/**
+ * An operator question's raise intent, decoded. A Queue-era intent carries only
+ * the kind, the question and its options; the stop and head are current fields,
+ * so a reader that only needs the question never depends on them.
+ */
 function decodeIntent(body: string): OperatorQuestionIntent | null {
-  const match = /^kind ([^;]+); stop ([^;]+); head (.+?); question (\S+) \((\d+) chars\); options (.*)$/.exec(body);
-  if (!match) return null;
+  const question = /(?:^|; )question (\S+) \((\d+) chars\)/.exec(body);
+  if (!question) return null;
+  const options = /(?:^|; )options (.*)$/.exec(body)?.[1] ?? 'none';
   return {
-    kind: match[1]!,
-    stop: match[2]!,
-    head: match[3]!,
-    questionDigest: match[4]!,
-    questionLength: Number(match[5]),
-    options: match[6] === 'none' ? [] : match[6]!.split(' | '),
+    kind: /(?:^|; )kind ([^;]+)/.exec(body)?.[1] ?? '',
+    stop: /(?:^|; )stop ([^;]+)/.exec(body)?.[1] ?? '',
+    head: /(?:^|; )head (.+?);/.exec(body)?.[1] ?? '',
+    questionDigest: question[1]!,
+    questionLength: Number(question[2]),
+    options: options === 'none' ? [] : options.split(' | '),
   };
 }
 
