@@ -1,5 +1,13 @@
 # Code-module quality tables
 
+- nucleus#1240 (floor 7, 2026-11-15): caller provenance (7: O1 T1 F2 P1 Pr2) keeps its bounded
+  historical lineage while shortening its contract note and reusing the identity matcher. QA inspection
+  (9: O2 T2 F2 P1 Pr2) uses the shared supervisor stop owner, holds unreadable records, and reports
+  best-effort reconciliation failures while returning the stored run result. Proof activation (7: O1 T1
+  F2 P1 Pr2) uses `proof-only-go.ts` for question identity and exact answer-event selection; that owner
+  remains at 9 (O2 T1 F2 P2 Pr2) with the typed GO wait and shared refusal rule. The explicit warning
+  is the named failure-visibility exception; no admission or ownership rule changed.
+
 - nucleus#1239 (floor 7, 2026-11-15): the four floor-7 core/qa rows were consolidated or hardened along the
   seams their rows named, and re-rated at this PR's head. A detached supervisor's process lifecycle now has
   one owner, `core/qa/supervisor-process.ts`: the spawn shape (entry, the entry's argv with the run token

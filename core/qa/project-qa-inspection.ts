@@ -52,12 +52,12 @@ export const projectQaRunReads = {
     if ("id" in input) {
       const run = this.store.qaRun(input.id);
       if (!run) return null;
-      await this.reconcile(run.key, run.id).catch(() => { /* reconciliation is best-effort on reads */ });
+      await reconcileBestEffort(this, run.key, run.id);
       return this.store.qaRun(input.id);
     }
     const origin = isAbsolute(input.repository) ? null : normalizeRepositoryOrigin(input.repository);
     if (origin) {
-      await this.reconcile(origin).catch(() => { /* reconciliation is best-effort on reads */ });
+      await reconcileBestEffort(this, origin);
       const direct = this.store.latestQaRun(origin);
       if (direct) return direct;
     }
@@ -65,13 +65,22 @@ export const projectQaRunReads = {
       const real = await realpath(input.repository).catch(() => input.repository);
       const checkoutOrigin = await repositoryOrigin(real).catch(() => null);
       const key = checkoutOrigin ?? real;
-      await this.reconcile(key).catch(() => { /* reconciliation is best-effort on reads */ });
+      await reconcileBestEffort(this, key);
       return this.store.latestQaRun(key);
     }
     return this.store.latestQaRun(origin ?? input.repository);
   }
 
 };
+
+async function reconcileBestEffort(context: QaRunReadContext, key: string, requestedId?: string): Promise<void> {
+  try {
+    await context.reconcile(key, requestedId);
+  } catch (error) {
+    const subject = requestedId ? `run ${requestedId}` : `repository ${key}`;
+    console.warn(`[nucleus] Project QA read reconciliation failed for ${subject}:`, error);
+  }
+}
 
 export class ProjectQaInspection {
   private readonly staleSupervisorObservations = new Map<string, { heartbeatAt: string; firstObservedAt: number }>();
