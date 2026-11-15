@@ -1,6 +1,6 @@
 import type { AgentObservation } from "../host/adapter";
 import { hostFailureRefusalDetail } from "../host/errors";
-import { unreportedExecutorRun } from "../qa/proof-execution";
+import { unreportedExecutorRun } from "../qa/proof-admission";
 import type { Task, TaskControlInput } from "../../shared/contracts";
 import type { Engine } from "../engine";
 import { RestartRefusal } from "./owner-verbs";

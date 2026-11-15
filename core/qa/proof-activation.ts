@@ -1,6 +1,6 @@
 import { DISPOSITION_CONTROL_REFUSAL, REMOVED_TASK_REFUSAL } from '../verbs/control-refusals';
 import { holdOwnerOf, holdsOf, isDispositionActive, type Run, type Task, type TaskControlInput, type DecisionView } from '../../shared/contracts';
-import { proofHeadAdmission, proofSingleFlightRefusal } from './proof-execution';
+import { proofHeadAdmission, proofSingleFlightRefusal } from './proof-admission';
 import { digest } from '../store/store';
 
 /** Stored proof admission facts shared by previews and activation. */

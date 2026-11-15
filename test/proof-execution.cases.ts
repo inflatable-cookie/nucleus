@@ -22,7 +22,7 @@ import { normalizeRepositoryOrigin } from '../shared/lanes';
 import type { Adapter, AgentObservation } from '../core/host';
 import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
 import { parseNorthstarDocument } from '../core/planning/handoff';
-import { proofHeadAdmission, proofInputRedeclarationAllowed, proofSingleFlightRefusal } from '../core/qa/proof-execution';
+import { proofHeadAdmission, proofInputRedeclarationAllowed, proofSingleFlightRefusal } from '../core/qa/proof-admission';
 import { recordRunStart } from './support/run-start';
 
 /**

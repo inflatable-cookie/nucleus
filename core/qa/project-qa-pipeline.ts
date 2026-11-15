@@ -158,6 +158,12 @@ export function recordLogWriteError(errors: ProjectQaLogWriteError[], entry: { s
   return [...errors, { step: entry.step, stream: entry.stream, error: entry.error.slice(0, 4000) }].slice(-PROJECT_QA_LOG_WRITE_ERRORS_MAX);
 }
 
+/** Merge recorded log-write failures, newest-last and bounded, so a later write never drops an earlier diagnostic. */
+export function mergeLogWriteErrors(existing: ReadonlyArray<ProjectQaLogWriteError> | undefined,
+  added: ReadonlyArray<ProjectQaLogWriteError> | undefined): ProjectQaLogWriteError[] {
+  return [...(existing ?? []), ...(added ?? [])].slice(-PROJECT_QA_LOG_WRITE_ERRORS_MAX);
+}
+
 /** One execution predicate for initial, recovered and retried QA steps. */
 export function qaExecutionFailed(execution: Pick<ExecutionOutcome, "code" | "signal" | "timedOut" | "terminationError" | "processGroupEmpty">): boolean {
   return execution.code !== 0 || Boolean(execution.signal || execution.timedOut || execution.terminationError || execution.processGroupEmpty === false);

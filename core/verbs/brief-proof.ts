@@ -1,5 +1,6 @@
 import type { Task } from "../../shared/contracts";
-import { proofDeclarationSummary, proofInputRedeclarationAllowed, proofReservation, sameProofDeclaration, spentProofExecution } from "../qa/proof-execution";
+import { proofInputRedeclarationAllowed } from "../qa/proof-admission";
+import { proofDeclarationSummary, proofReservation, sameProofDeclaration, spentProofExecution } from "../qa/proof-records";
 import type { Store } from "../store/store";
 
 /** One state transition the amendment records beside its own version pin. */
