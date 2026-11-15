@@ -31,7 +31,7 @@ import { retainedProgressRun } from './dispatch/retained-work';
 
 import { AsyncLocalStorage } from "node:async_hooks";
 
-import { proofWaitApplies } from './qa/proof-execution';
+import { proofWaitApplies } from './qa/proof-wait';
 import { type VerifiedPr, type CheckHistory, type CheckObservation, type ReviewerSetting, type PublicationOutcome } from './forge/index';
 
 import { type Completion, type Incident, type Profile, type RepositoryChecksPolicy, type ReviewDeliveryAuthorization, type ReviewCheckpointRecord, type Run, type Task, type TaskControlInput, type UsageLevel, type OwnerAcceptanceRecord, type AgentMessageRecord } from '../shared/contracts';
@@ -107,7 +107,7 @@ import { type EscalationVerbChoice } from './questions/blocker-ladder';
 export { ABSENT_RESOLUTION_REASON, ABSENT_WORKER_REASON, ACCEPTED_PR_RECONCILIATION_REASON, EXTERNAL_MERGE_CHECK_REASON_PREFIX, EXTERNAL_MERGE_CHECK_RECOVERED_REASON, MERGE_HELD_REASON, OPERATOR_WORKER_REMAP_REASON, PRE_AGENT_LAUNCH_FAILURE_REASON, ProvenPreSendRefusalError, RESPONSIBLE_QUESTION_WAIT, RetainedRunRefusal, VALIDATION_SCAN_PASS_MAX_MS, isAcceptedReview, participantToolRunIds } from './recovery/task-reasons';
 export { retainedProgressRun } from './dispatch/retained-work';
 export { NO_ORIGIN_THREAD_WAIT, originRecipient } from './questions/origin';
-export { docsOnlyProofAutorunSkip, proofAutorunWaitingInputs, proofWaitApplies } from './qa/proof-execution';
+export { docsOnlyProofAutorunSkip, proofAutorunWaitingInputs, proofWaitApplies } from './qa/proof-wait';
 export { reviewContinuationLocalRefusal } from './review/review-continuation';
 
 /** Task 382: the check evidence a merge gate reports beside its wait: the effective hosted-check policy, the required and advisory results at the exact head, and the repository settings revision the policy came from. */

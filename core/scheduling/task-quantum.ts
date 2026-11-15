@@ -11,7 +11,7 @@ import { startsNoRuns } from "../closeout/queue-drain";
 import { isDispositionActive } from "../../shared/contracts";
 import type { Resolution } from "../resolution";
 import { participantToolRunIds } from "../recovery/task-reasons";
-import { proofExecutionRunning } from "../qa/proof-execution";
+import { proofExecutionRunning } from "../qa/proof-admission";
 import { hookHoldReason } from "../hooks/hooks";
 import type { Engine } from '../engine';
 

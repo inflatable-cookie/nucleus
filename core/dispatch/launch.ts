@@ -3,7 +3,7 @@ import { isDispositionActive, workerExclusionFor } from '../../shared/contracts'
 import { budgetPauseDetail, taskBudget } from '../../shared/task-budget';
 import { proofExecutor } from '../recovery/task-reasons';
 import { dispatchBlocked, DISPATCH_HELD_REASON } from './capacity';
-import { proofSingleFlightRefusal, ProofSingleFlightError } from '../qa/proof-execution';
+import { proofSingleFlightRefusal, ProofSingleFlightError } from '../qa/proof-admission';
 import { reviewAuthorizationRequired, reviewContinuationWait } from '../review/review-continuation';
 import type { ProofActivation, Resolution } from '../resolution';
 import { RunLaunchSource } from './run-launch/source';

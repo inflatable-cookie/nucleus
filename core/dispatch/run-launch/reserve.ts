@@ -7,7 +7,7 @@ import { currentBrief } from '../../planning/brief';
 import { checkHistoryFromStore, taskPrNumber } from '../../forge/index';
 import { ordinaryReviewDelta, proveReviewRunSource } from '../../review/ordinary-review';
 import type { Adapter } from '../../host/adapter';
-import { proofSingleFlightRefusal, ProofSingleFlightError } from '../../qa/proof-execution';
+import { proofSingleFlightRefusal, ProofSingleFlightError } from '../../qa/proof-admission';
 import { revisionContinuationAction } from '../prompts';
 import { blockingRecoveryEffectsRefusal } from '../../recovery/recovery-effects';
 import type { ProofActivation, ContinuedPrBinding } from '../../resolution';

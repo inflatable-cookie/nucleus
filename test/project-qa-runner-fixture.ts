@@ -22,7 +22,7 @@ export class ProjectQaRunner extends DetachedProjectQaRunner {
    * Run the pipeline in this process. Used when a fixture injected executors;
    * production uses the detached supervisor so a roll cannot lose a step.
    */
-  protected override async startSupervised(launch: ProjectQaLaunch): Promise<ProjectQaRun> {
+  override async startSupervised(launch: ProjectQaLaunch): Promise<ProjectQaRun> {
     if (!this.options.run && !this.options.worktreeHookRun) return super.startSupervised(launch);
     const record = this.store.qaRun(launch.id);
     if (!record) throw new Error("Project QA run disappeared before launch");
@@ -118,7 +118,7 @@ export class ProjectQaRunner extends DetachedProjectQaRunner {
   }
 
   /** Run the teardown retry in this process for fixtures that injected executors. */
-  protected override async startTeardownRetry(run: ProjectQaRun, command: string, qaExitCode: number | null, reason: string, cleanupOnly: boolean): Promise<ProjectQaRun> {
+  override async startTeardownRetry(run: ProjectQaRun, command: string, qaExitCode: number | null, reason: string, cleanupOnly: boolean): Promise<ProjectQaRun> {
     if (!this.options.run && !this.options.worktreeHookRun) return super.startTeardownRetry(run, command, qaExitCode, reason, cleanupOnly);
     const identityToken = randomUUID();
     const startedAt = now();

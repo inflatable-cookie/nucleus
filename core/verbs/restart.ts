@@ -2,7 +2,7 @@ import { RETAINED_PREREQUISITE_REFUSAL, restartTerminalRefusal } from './verb-re
 import { DISPOSITION_CONTROL_REFUSAL, REMOVED_TASK_REFUSAL, parkedRestartRefusal } from './control-refusals';
 import { restartResumeChoice } from '../task-decision-rules';
 import { COORDINATOR_LOOP_LIMIT, unproductiveCoordinatorRuns } from '../recovery/recovery-bound';
-import { unreportedExecutorRun } from '../qa/proof-execution';
+import { unreportedExecutorRun } from '../qa/proof-admission';
 import type { Run, Task, TaskControlInput } from "../../shared/contracts";
 import { DEFAULT_GLOBAL_LIMIT, OPERATOR_BOARD_CALLER, WORKER_REPLACEMENT_CEILING, isDispositionActive } from "../../shared/contracts";
 import { groupIsUnavailable } from "../../shared/pool";

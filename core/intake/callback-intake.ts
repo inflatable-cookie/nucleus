@@ -1,5 +1,6 @@
 import { readToolTimeline } from '../recovery/stall';
-import { timelineSelectorEvidence, verifyProofSource } from '../qa/proof-execution';
+import { timelineSelectorEvidence } from '../qa/proof-selector-evidence';
+import { verifyProofSource } from '../qa/proof-source';
 import type { CheckpointResult, Completion, Run, Task } from '../../shared/contracts';
 import { CHECKPOINT_BUDGET, isDispositionActive } from '../../shared/contracts';
 import { briefDigest, currentBrief } from '../planning/brief';

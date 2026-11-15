@@ -13,7 +13,7 @@ import { ownerStoppedRunIds, neverDispatched, workerBlockedOnOwnRun, prIdentity,
 import type { OwnerVerbFacts } from './owner-facts';
 import { verbInput, restartRoles } from './owner-shared';
 import type { RestartRole, OwnerVerb } from './owner-shared';
-import { unreportedExecutorRun } from '../qa/proof-execution';
+import { unreportedExecutorRun } from '../qa/proof-admission';
 
 /**
  * Round 4 (Tom, 2026-10-19): what `restart` does when no run of the role needs
