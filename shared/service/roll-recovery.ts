@@ -16,6 +16,7 @@
  * surfaces answer the same way.
  */
 import { randomUUID, createHash } from "node:crypto";
+import { uncertainTransportFailure } from "./transport.mjs";
 import { ServiceRequestError } from "./client";
 import type { ServiceErrorCode } from "./protocol";
 import { readServiceRoll } from "./discovery";
@@ -110,14 +111,7 @@ export class UnknownOutcomeError extends Error {
  * names the replacement as the answer's home. Definite answers (a typed
  * refusal, invalid input, backpressure) are final and never recovered over.
  */
-export function uncertainTransportFailure(error: unknown): boolean {
-  if (error instanceof ServiceRequestError) {
-    if (error.code === "draining" || error.code === "unavailable") return true;
-    return error.code === "timeout" && /timed out after/.test(error.message);
-  }
-  const message = error instanceof Error ? error.message : String(error);
-  return /Service socket closed|ECONNRESET|EPIPE|socket hang up|Connection reset|Connection closed/i.test(message);
-}
+export { uncertainTransportFailure };
 
 /**
  * Run one catalogue call with roll recovery. See the module comment: reads

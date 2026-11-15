@@ -1809,6 +1809,7 @@ test('a daemon transport failure leaves a lane retryable instead of parking it',
     assert.match(String(after.reason), /transport unavailable/i, 'the lane stays retryable and says why');
     // A task fault still parks, so this does not hide real failures.
     assert.equal(isTransportFailure(new Error('Underlying review model is not independent of the worker')), false);
+    assert.equal(isTransportFailure(new Error('This task is not connected to its repository')), false);
     assert.equal(isTransportFailure(new Error('Transport not connected (status: disconnected)')), true);
     assert.equal(isTransportFailure(new Error('Liveness check timed out (15000ms)')), true);
   } finally { await f.close(); }
