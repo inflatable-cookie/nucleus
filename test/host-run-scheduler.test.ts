@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../core/store/store";
-import { NO_HISTORY_CPU_SHARE, HostRunScheduler, HISTORY_MEMORY_MARGIN, classifyHostRun, type HostRunSubmission } from "../core/host-runs/host-run-scheduler";
+import { NO_HISTORY_CPU_SHARE, HostRunScheduler, classifyHostRun, type HostRunSubmission } from "../core/host-runs/host-run-scheduler";
 import { hostRunRecordSchema, hostRunSettlementSchema, hostRunResultSchema } from "../shared/contracts";
 
 const repository = { origin: "https://github.com/example/host-runs", path: "/repo/host-runs" };
@@ -196,7 +196,7 @@ test("010 row 10: selector history supplies p95 CPU and wall, otherwise the subm
   assert.deepEqual(fallback.budget, { cpu: 1, memoryBytes: 256_000_000, wallMs: null, source: "fallback" });
 });
 
-test("010 row 10: legacy Spec 031 telemetry is matched by exact repository and selector", t => {
+test("010 row 10: legacy QA rows no longer seed host-run budget history", t => {
   const store = testStore(t), scheduler = new HostRunScheduler(store, { capacity });
   const insert = store.db.prepare("INSERT INTO project_qa_runs(id,repository,data) VALUES(?,?,?)");
   for (let sample = 1; sample <= 20; sample++) {
@@ -209,61 +209,9 @@ test("010 row 10: legacy Spec 031 telemetry is matched by exact repository and s
   insert.run(wrongSelector.id, repository.origin, JSON.stringify(wrongSelector));
   const run = scheduler.submit(input("legacy-history", { selector: "qa", budgetFallback: { cpu: 1, memoryBytes: 256_000_000 } }),
     { launch: current => { scheduler.markLaunched(current.id); } });
-  assert.equal(run.budget.cpu, 1.9);
-  assert.equal(run.budget.wallMs, 1000);
-  // Task 191: the history memory budget is the observed p95 peak (19 MiB) with a margin.
-  assert.equal(run.budget.memoryBytes, Math.ceil(19_000_000 * HISTORY_MEMORY_MARGIN));
-});
-
-test("task 191: a legacy peakRss sample at whole-host capacity is discarded, and history memory stays below capacity", t => {
-  const store = testStore(t), scheduler = new HostRunScheduler(store, { capacity });
-  const insert = store.db.prepare("INSERT INTO project_qa_runs(id,repository,data) VALUES(?,?,?)");
-  // One poisoned sample at the whole host capacity (the 64 GiB milestone QA 73c12ae3
-  // recorded, likely a sampler summing shared or virtual memory), beside real peaks.
-  for (const [index, peakRssBytes] of [10_000_000, 12_000_000, 68_719_476_736].entries()) {
-    const row = { id: `poisoned-qa-${index}`, key: repository.origin, repository, selector: "qa", argv: ["effigy", "qa"], durationMs: 5000,
-      admission: { wallMs: 1000, cpuUserMs: 500, cpuSystemMs: 0, peakRssBytes } };
-    insert.run(row.id, repository.origin, JSON.stringify(row));
-  }
-  const run = scheduler.submit(input("poisoned-history", { selector: "qa", budgetFallback: { cpu: 1, memoryBytes: 256_000_000 } }),
-    { launch: current => { scheduler.markLaunched(current.id); } });
-  assert.equal(run.budget.source, "history");
-  assert.ok(run.budget.memoryBytes < 8_000_000_000, `one run must not reserve the whole host capacity (got ${run.budget.memoryBytes})`);
-  assert.equal(run.budget.memoryBytes, Math.ceil(12_000_000 * HISTORY_MEMORY_MARGIN));
-});
-
-test("task 191: a history memory peak above host capacity clamps strictly below it", t => {
-  const store = testStore(t);
-  const tiny = () => ({ cpuCapacity: 4, memoryCapacityBytes: 100_000_000, freeMemoryBytes: 100_000_000, loadAverage: [0, 0, 0] });
-  const scheduler = new HostRunScheduler(store, { capacity: tiny });
-  const insert = store.db.prepare("INSERT INTO project_qa_runs(id,repository,data) VALUES(?,?,?)");
-  // Every sample is legitimate but near capacity; the margin would push past it.
-  for (let sample = 0; sample < 5; sample++) {
-    const row = { id: `near-cap-${sample}`, key: repository.origin, repository, selector: "qa", argv: ["effigy", "qa"], durationMs: 5000,
-      admission: { wallMs: 1000, cpuUserMs: 500, cpuSystemMs: 0, peakRssBytes: 95_000_000 } };
-    insert.run(row.id, repository.origin, JSON.stringify(row));
-  }
-  const run = scheduler.submit(input("near-cap", { selector: "qa", budgetFallback: { cpu: 1, memoryBytes: 256_000_000 } }),
-    { launch: current => { scheduler.markLaunched(current.id); } });
-  assert.equal(run.budget.source, "history");
-  assert.equal(run.budget.memoryBytes, 50_000_000);
-});
-
-test("task 191: at 64GiB capacity, poisoned or absent RSS leaves a second heavy run admittable", t => {
-  const big = () => ({ cpuCapacity: 4, memoryCapacityBytes: 68_719_476_736, freeMemoryBytes: 68_719_476_736, loadAverage: [0, 0, 0] });
-  const store = testStore(t), scheduler = new HostRunScheduler(store, { capacity: big });
-  const insert = store.db.prepare("INSERT INTO project_qa_runs(id,repository,data) VALUES(?,?,?)");
-  // Five legacy samples all at whole-host capacity: every one is discarded.
-  for (let sample = 0; sample < 5; sample++) {
-    const row = { id: `all-poisoned-${sample}`, key: repository.origin, repository, selector: "qa", argv: ["effigy", "qa"], durationMs: 5000,
-      admission: { wallMs: 1000, cpuUserMs: 90, cpuSystemMs: 0, peakRssBytes: 68_719_476_736 } };
-    insert.run(row.id, repository.origin, JSON.stringify(row));
-  }
-  const first = scheduler.submit(input("poisoned-first"), { launch: run => { scheduler.markLaunched(run.id); } });
-  assert.ok(first.budget.memoryBytes <= 34_359_738_368, `one run must not reserve the whole 64GiB budget (got ${first.budget.memoryBytes})`);
-  const second = scheduler.submit(input("poisoned-second", { budgetFallback: { cpu: 1, memoryBytes: 256_000_000 } }),
-    { launch: run => { scheduler.markLaunched(run.id); } });
-  assert.equal(second.state, "running", "a 256MiB heavy run still fits beside the poisoned-budget run");
+  assert.equal(run.budget.source, "fallback");
+  assert.equal(run.budget.cpu, 1);
+  assert.equal(run.budget.wallMs, null);
 });
 
 test("task 191: CPU-only host-run history without RSS still leaves room for a second heavy run", t => {
