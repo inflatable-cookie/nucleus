@@ -1,6 +1,6 @@
 import type { Completion, Task } from '../../shared/contracts';
 import type { TaskStopVerb } from '../../shared/task-stop';
-import { proofOnlyReceiptAwaitingReview } from '../qa/proof-execution';
+import { proofOnlyReceiptAwaitingReview } from '../qa/proof-records';
 import type { Resolution } from '../resolution';
 import { digest } from '../store/store';
 import { latestAuthorResult } from '../verbs/owner-verbs';

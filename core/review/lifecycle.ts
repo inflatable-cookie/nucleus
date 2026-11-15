@@ -6,7 +6,7 @@ import { retainedProgressRun, retainedWorkHeads } from '../dispatch/retained-wor
 import { blockingRecoveryEffects, BlockingRecoveryEffectsError } from '../recovery/recovery-effects';
 import { operatorReplacementPending, participantToolRunIds } from '../recovery/task-reasons';
 import { matchingInactiveParticipant } from '../intake/run-settlement';
-import { awaitingProofMatchesSelector, declaredProofSelectors } from '../qa/proof-execution';
+import { awaitingProofMatchesSelector, declaredProofSelectors } from '../qa/proof-wait';
 import type { Adapter } from '../host/adapter';
 import type { HostFacade } from '../host/host-facade';
 import type { TaskStops } from '../recovery/task-stops';

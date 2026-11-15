@@ -5,7 +5,7 @@ import type { HostRetainedAgentRef, HostWorkspaceRef, HostThread } from "../../s
 import type { AgentObservation, OriginAgent } from "../host/adapter";
 import { authorModelKey, queueAuthorModelKey, taskAuthorModelKeys } from "../../shared/authors";
 import { reviewerRuntimeChanged } from "./reviewer-runtime";
-import { proofExecutorAgents } from "../qa/proof-execution";
+import { proofExecutorAgents } from "../dispatch/routing";
 import { isOwnerRoutedReviewer, reviewerIndependence } from "../dispatch/routing";
 import { ProvenPreSendRefusalError } from "../recovery/task-reasons";
 import { assertOrdinaryReviewIdentity, ordinaryReviewSource } from "./ordinary-review";

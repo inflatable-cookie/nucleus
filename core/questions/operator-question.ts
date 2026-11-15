@@ -3,7 +3,7 @@ import { awaitingProofRoute, awaitingProofTexts, clipDecisionQuestion, currentTa
 import { isWaitingTaskStop, type TaskStopRecord } from '../../shared/task-stop';
 import { taskBudget } from '../../shared/task-budget';
 import { collectOwnerVerbFacts, ownerVerbViews, qualifiedAcceptanceEligibility, type OwnerVerbFacts } from '../verbs/owner-verbs';
-import { proofWaitApplies, proofWorkerRequests } from '../qa/proof-execution';
+import { proofWaitApplies, proofWorkerRequests } from '../qa/proof-wait';
 import { isForgeCheckProofText } from '../forge/checks';
 import { openProofOnlyGo, proofOnlyGoQuestionId } from '../qa/proof-only-go';
 

@@ -7,7 +7,7 @@ import { chooseProfile, reviewerFiltersWorker } from '../routing';
 import { OPERATOR_WORKER_REMAP_REASON, proofExecutor } from '../../recovery/task-reasons';
 import { retainedProgressRun } from '../retained-work';
 import { assertCanonicalPrSource, evidenceOnlyPr, taskPrNumber } from '../../forge/index';
-import { verifyProofSource } from '../../qa/proof-execution';
+import { verifyProofSource } from '../../qa/proof-source';
 import { groupIsUnavailable, supersedingRouteProfile } from '../../../shared/pool';
 import { RETAINED_WORKER_PROFILE_REASON, workerProfileIsExcluded, type Profile, type Run, type Task } from '../../../shared/contracts';
 import type { ProofActivation } from '../../resolution';

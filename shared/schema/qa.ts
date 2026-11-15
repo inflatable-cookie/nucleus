@@ -247,6 +247,23 @@ export const projectQaRunInputSchema = z.object({
 
 export type ProjectQaRunInput = z.infer<typeof projectQaRunInputSchema>;
 
+/**
+ * Every way a QA admission can be refused before it claims a run. The code is
+ * the durable fact: a scheduler reads it instead of the diagnostic text it also
+ * stores, and `core/qa/project-qa-refusals.ts` owns which codes let a batch
+ * resume under a new request identity.
+ */
+export const qaAdmissionRefusalCodes = [
+  "schedule_paused", "schedule_owner_closing", "schedule_no_planner",
+  "release_line_acquired", "concurrent_head_moved", "fence", "interrupted_preparation",
+  "request_conflict", "expected_head_mismatch", "existing_head_mismatch", "storage_unavailable",
+  "unclassified",
+] as const;
+
+export const qaAdmissionRefusalCodeSchema = z.enum(qaAdmissionRefusalCodes);
+
+export type QaAdmissionRefusalCode = z.infer<typeof qaAdmissionRefusalCodeSchema>;
+
 /** Durable delivery identity, written before repository lookup/fetch. */
 export const projectQaRequestSchema = z.object({
   id: z.string().min(1).max(160),
@@ -257,6 +274,8 @@ export const projectQaRequestSchema = z.object({
   state: z.enum(["preparing", "admitted", "refused"]),
   runId: z.string().nullable(),
   diagnostic: z.string(),
+  /** The typed boundary a refusal stopped at; null while preparing or admitted. */
+  refusalCode: qaAdmissionRefusalCodeSchema.nullable().default(null),
   /** When Queue settled a predecessor's interrupted preparation as refused. */
   settledAt: z.string().datetime().optional(),
 }).strict();

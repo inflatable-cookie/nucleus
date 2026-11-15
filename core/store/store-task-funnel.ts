@@ -8,6 +8,7 @@ import { operationIsSettled,type QueueOperation } from "../../shared/operations"
 import { telemetryStageForTask } from "../../shared/telemetry";
 import { DISPATCH_WAIT_REASON } from "../../shared/task-stop";
 import { EMPTY_RUN_USAGE } from "../telemetry/run-usage";
+import { TaskChangedRefusal } from "../../shared/task-version";
 import { plainProfileRequest,workerThinkingConflict } from "../dispatch/routing";
 import { runBuildOutputIntent } from "../hooks/build-output-records";
 import { purgeReleasedRunTicket } from "../intake/reporting-files";
@@ -159,7 +160,7 @@ export class StoreTaskFunnel {
     if (!this.services.db.isTransaction) return this.services.transaction(() => this.update(id, change, kind, detail, expected));
     this.services.tasksStore.syncProjectionForWrite();
     const task = this.services.task(id);
-    if (expected !== undefined && task.version !== expected) throw new Error("Task changed; refresh before retrying");
+    if (expected !== undefined && task.version !== expected) throw new TaskChangedRefusal("Task changed; refresh before retrying", expected, task.version);
     if (change.hostId !== undefined && change.hostId !== task.hostId)
       throw new Error("Task host cannot be changed by an update");
     if (change.hostSelection !== undefined && JSON.stringify(change.hostSelection) !== JSON.stringify(task.hostSelection))
