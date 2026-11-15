@@ -64,15 +64,27 @@ const question = z.object({ id, header: z.string(), question: z.string(), option
 export const turnItem = z.object({ id, type: id, requestId: id.optional(),
   /** The run that owns the item; one run is one provider turn. Null on thread-level items. */
   runId: id.nullable().optional(),
+  /** The item's position in its thread: consecutive positions are consecutive rows. */
+  ordinal: z.number().int().nonnegative(),
   questions: z.array(question).optional(), createdAt: date.optional(), updatedAt: date.optional(),
 }).passthrough().superRefine((item, ctx) => {
   if (item.type === 'user_input_request' && (!item.requestId || !item.questions))
     ctx.addIssue({ code: 'custom', path: ['questions'], message: 'Missing question fields' });
 });
+/**
+ * One rendered timeline row (nightly `OrchestrationV2ProjectedTurnItem`). The
+ * nightly windows these rows, so the collection is the visible window itself;
+ * `visibility` is `local` for this thread's own rows and `inherited` or
+ * `synthetic` for a row it shows from elsewhere.
+ */
+export const visibleTurnItem = z.object({ position: z.number().int().nonnegative(), visibility: id.optional(),
+  sourceThreadId: id.optional(), sourceItemId: id, item: turnItem });
 export const projection = z.object({
   thread: threadRecord,
   runs: z.array(z.object({ id, status: shellThread.shape.status, startedAt: date.nullable(), ordinal: z.number().int().nonnegative().optional() })),
   runtimeRequests: z.array(runtimeRequest), turnItems: z.array(turnItem),
+  /** The nightly's own visible window; absent only on a projection decoded before this field was read. */
+  visibleTurnItems: z.array(visibleTurnItem).optional(),
   messages: z.array(z.object({ id, role: id, text: z.string() })), updatedAt: date,
 });
 /** Coverage flags are consumed facts, not optional hints that can be truthiness-tested. */

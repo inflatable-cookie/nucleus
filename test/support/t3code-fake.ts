@@ -71,10 +71,12 @@ export function syntheticTurnItem(threadId: string, ordinal: number, overrides: 
 /**
  * Every record of a projection, completed to the recorded wire shape, plus every
  * projection collection the Nightly's wire carries (an empty array where the test
- * has no data). `visibleTurnItems` is derived from the items actually served, so a
- * windowed projection holds no older rows.
+ * has no data). `visibleTurnItems` is the rendered window: by default every item
+ * served is visible, and a bounded answer passes the window's own item ids so
+ * only those rows appear, exactly as the nightly windows the rows and then
+ * appends what it retains outside them.
  */
-function wireProjection(p: Value): Value {
+function wireProjection(p: Value, windowItemIds?: Set<string>): Value {
   const threadId = p.thread.id;
   const thread = syntheticThread(threadId, p.thread.worktreePath ?? '/synthetic', p.thread);
   const runs = (p.runs ?? []).map((run: Value, index: number) => syntheticRun(threadId, index + 1, run));
@@ -86,8 +88,9 @@ function wireProjection(p: Value): Value {
     attachments: [], streaming: false, createdAt: STAMP, updatedAt: STAMP, ...message }));
   const projection = { ...p, thread, runs, runtimeRequests, turnItems, messages,
     // The wire carries the visible rows beside the items it serves; each row points at its item.
-    visibleTurnItems: turnItems.map((item: Value, index: number) => ({ position: index + 1,
-      sourceItemId: item.id, sourceThreadId: threadId, visibility: 'local', item })),
+    visibleTurnItems: turnItems.filter((item: Value) => !windowItemIds || windowItemIds.has(item.id))
+      .map((item: Value, index: number) => ({ position: index + 1,
+        sourceItemId: item.id, sourceThreadId: threadId, visibility: 'local', item })),
     // Collections the Nightly always projects, empty unless the test supplies them.
     attempts: p.attempts ?? [], nodes: p.nodes ?? [], subagents: p.subagents ?? [],
     providerSessions: p.providerSessions ?? [], providerThreads: p.providerThreads ?? [],
@@ -145,11 +148,17 @@ export async function t3Fake(t: TestContext, directory: string) {
     const p = raw;
     const active = new Set(['queued', 'preparing', 'starting', 'running', 'waiting']);
     const pending = new Set(p.runtimeRequests.filter((request: Value) => ['pending', 'waiting'].includes(request.status)).map((request: Value) => request.id));
-    const kept = new Set(p.turnItems.slice(-rowLimit).map((item: Value) => item.id));
+    // The nightly windows the visible rows, then appends the items it retains from
+    // outside that window (a run interrupt, or a request item whose request is
+    // still pending). Only the window's rows are visible rows.
+    const newest = p.turnItems.slice(-rowLimit);
+    const windowItemIds = new Set<string>(newest.map((item: Value) => item.id));
+    const kept = new Set<string>(windowItemIds);
     for (const item of p.turnItems)
       if (item.type === 'run_interrupt_request' || ['user_input_request', 'approval_request'].includes(item.type) && pending.has(item.requestId))
         kept.add(item.id);
-    const windowItems = p.turnItems.filter((item: Value) => kept.has(item.id));
+    const windowItems = p.turnItems.filter((item: Value) => windowItemIds.has(item.id));
+    const servedItems = [...windowItems, ...p.turnItems.filter((item: Value) => kept.has(item.id) && !windowItemIds.has(item.id))];
     const windowRuns = new Set(windowItems.flatMap((item: Value) => item.runId ? [item.runId] : []));
     const presented = [...p.runs].reverse().find((run: Value) => run.status !== 'queued' || !run.queueHeld);
     const runs = p.runs.filter((run: Value) => active.has(run.status) || windowRuns.has(run.id) || run.id === presented?.id);
@@ -158,10 +167,10 @@ export async function t3Fake(t: TestContext, directory: string) {
     const plans = (p.plans ?? []).filter((plan: Value) => plan.status === 'active');
     const contextHandoffs = (p.contextHandoffs ?? []).filter((handoff: Value) => ['pending', 'ready'].includes(handoff.status));
     const hasMoreHistory = windowItems.length < p.turnItems.length;
-    // Window first, then wire: the served rows and items are the same window, so a
-    // bounded snapshot holds no older rows.
-    const windowed = { ...p, runs, runtimeRequests, plans, contextHandoffs, turnItems: windowItems, messages: p.messages.slice(-1) };
-    const snapshot = { projection: wireProjection(windowed),
+    // Window rows first, then the retained items: the served rows are the window
+    // itself, so a timeline page built from them holds no older row.
+    const windowed = { ...p, runs, runtimeRequests, plans, contextHandoffs, turnItems: servedItems, messages: p.messages.slice(-1) };
+    const snapshot = { projection: wireProjection(windowed, windowItemIds),
       hasMoreHistory, historyCursor: hasMoreHistory ? 'synthetic-history-cursor' : null, latestLocalTurnOrdinal: null };
     // The fixture is checked against the recorded contract on every bounded
     // answer, so a hand-made coverage field cannot enter a test unobserved.

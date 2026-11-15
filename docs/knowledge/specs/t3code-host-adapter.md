@@ -468,17 +468,29 @@ settle marker. Observation asks for that bounded snapshot and reports status,
 active run, pending request and archive state from any length of thread, so a
 long thread is never unobservable (nucleus#1188). The timeline reader and the
 question reads take the same bounded snapshot (nucleus#1217): a timeline page is
-the newest window that read carried, described honestly — a contiguous newest
-suffix (`gap`, `staleCursor`, `reset` and `hasNewer` false), the thread as its
+the nightly's own rendered window, described honestly — a contiguous newest run
+of rows (`gap`, `staleCursor`, `reset` and `hasNewer` false), the thread as its
 stable epoch, `hasOlder` true when the requested depth or the nightly's own
 window left earlier history behind, cursors as positions inside the window, and
-`projection: "projected"`. Each entry's `turnId` is the run that owns the item,
-because one T3 run is one provider turn, so a window that reaches back into an
-earlier run proves its partial coverage. A pending question is read from that
-window: the nightly keeps every pending runtime request and the
-`user_input_request` item that carries its questions, so a long thread answers
-without the full transcript; a pending request whose item the window does not
-carry is refused by that exact field. Answered questions are the newest answered
+`projection: "projected"`. The page reads the projection's `visibleTurnItems`
+rows rather than `turnItems`: a bounded projection also carries the run-interrupt
+and pending-request items the nightly retained from outside its window, so
+reading the item list would hand the reader a false turn boundary across a gap
+exactly when a live tool can sit in the missing segment. A nightly that sends no
+rows cannot prove the window and is refused by that field name. Each native
+execution record is translated into the shared tool entry the owned-tool reader
+judges, so a running native command is live evidence instead of an unrecognised
+record: `command_execution` is `shell` (the provider detaches it, so it may
+outlive its turn), `file_change` is `edit`, `file_search` is `search`,
+`web_search` is `fetch` and `subagent` is `sub_agent`; `dynamic_tool` keeps an
+unknown kind, and a native status the reader does not know is never settled. Each
+entry's `turnId` is the run that owns the item, because one T3 run is one
+provider turn, so a window that reaches back into an earlier run proves its
+partial coverage. A pending question is read from that window: the nightly keeps
+every pending runtime request and the `user_input_request` item that carries its
+questions, so a long thread answers without the full transcript; a pending
+request whose item the window does not carry is refused by that exact field.
+Answered questions are the newest answered
 window: a resolved request the window dropped is absent, and one whose question
 item it dropped keeps its answers with no question text rather than an invented
 one. A read that needs the complete transcript still opts in and refuses a paged
@@ -513,10 +525,12 @@ certified: a Paseo `Agent was not found` and a T3 `T3Code timeout:
 orchestration.subscribeThread` both appear verbatim.
 
 The canonical thread projection is the whole turn list, while a T3 timeline page
-is the newest bounded window: the page carries the window's own coverage (no gap,
-no reset, no newer history, the thread as its stable epoch and cursors as
-positions inside the window), so a page never claims the full list. The test
-transport serves only records in the Nightly's own wire shape:
+is the nightly's rendered window: the page carries the window's own coverage (no
+gap, no reset, no newer history, the thread as its stable epoch and cursors as
+positions inside the window), so a page never claims the full list, and its
+entries come from the rendered rows rather than the item list that also holds
+the nightly's retained dependencies. The test transport serves only records in
+the Nightly's own wire shape:
 `test/fixtures/t3code-contract.json` (`wireShapes`) records the field sets
 captured read-only from the nightly, the fake completes every served thread,
 run, runtime request, message and turn item to them (`visibleTurnItems` derived

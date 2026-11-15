@@ -2972,6 +2972,13 @@ movement invalidates source approval and preserves the normal readiness gates.
   check: the reader never fabricates a deeper page and never reads the window as
   `null`/unavailable. A host shape problem surfaces as that read's own named
   failure, so the refusal starts from the exact cause.
+- A host translates its own native execution records into these tool entries; a
+  record it leaves untranslated is evidence the reader cannot judge. T3Code's
+  `command_execution` is a non-turn-bound shell, its edit, search, fetch and
+  subagent records are turn-bound, and its `dynamic_tool` or any native state the
+  reader does not know is never settled. A page is built from the host's rendered
+  window, not from a list that also carries rows retained from outside it, so a
+  boundary between turns is never manufactured across a gap.
 - Merge, external-merge, closeout, superseded-run, cleanup and author
   capability-upgrade gates read this proof. In fixtures
   `observedParticipantTimeline` in `test/support/tool-timeline.ts` supplies

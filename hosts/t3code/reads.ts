@@ -18,6 +18,25 @@ export type Projection = z.infer<typeof projection>;
  * whether its own window left earlier history behind (`hasMoreHistory`).
  */
 export interface ThreadSnapshotRead { projection: Projection; paged: boolean }
+/**
+ * The Nightly turn items that ran something, and the shared tool kind each one is
+ * (nightly `OrchestrationV2TurnItem` members). A command can outlive its turn —
+ * the provider detaches the process — so it keeps the non-turn-bound `shell`
+ * kind; every other native execution ends with the turn that ran it. A
+ * `dynamic_tool` keeps an empty kind, and the shared reader never settles an
+ * unknown kind just because the turn finished. Any status the reader does not
+ * know is likewise never settled, so a native tool state the adapter has not
+ * seen refuses instead of reading as clear.
+ */
+const nativeToolKinds: Record<string, string> = { command_execution: 'shell', file_change: 'edit',
+  file_search: 'search', web_search: 'fetch', subagent: 'sub_agent', dynamic_tool: '' };
+/** The one identity a native execution item names, as text the reader can compare. */
+const nativeToolIdentity = (item: Record<string, unknown>): string => {
+  const value = item.input ?? item.fileName ?? item.pattern ?? item.patterns ?? item.subagentId ?? item.toolName;
+  if (typeof value === 'string') return value.slice(0, 200);
+  if (Array.isArray(value)) return value.filter(part => typeof part === 'string').join(' ').slice(0, 200);
+  return '';
+};
 /** The statuses that mean a run is live: the only ones a settle, a steer or a stop waits for. */
 export const activeStatuses = new Set(['preparing', 'queued', 'starting', 'running', 'waiting']);
 const inventoryReadAttempts = 5;
@@ -187,16 +206,26 @@ export class T3Reads {
   async listLiveAgents() { return (await this.inventory()).threads.filter(t => !t.archivedAt && !t.deletedAt).map(t => ({ id: t.id, title: t.title, workspaceId: this.workspaceFor(t), labels: this.core.state.read().agents[t.id]?.labels ?? {} })); }
 
   /**
-   * The newest window of one thread's timeline (nucleus#1217). A long thread has
-   * no complete transcript read, so a page describes exactly what the nightly's
-   * bounded snapshot carried instead of asking for one: a contiguous newest
-   * suffix, no gap, no newer history, the thread as its epoch and cursors as
-   * positions inside the window. `hasOlder` is true when either the requested
-   * depth or the nightly's own window left earlier history behind; the shared
-   * owned-tool reader widens by asking for a deeper page, and a window that
-   * cannot go deeper is reported by its own progress check, never as null.
-   * `turnId` is the T3 run that owns the item: one run is one provider turn, so a
-   * window that reaches back into an earlier run proves its partial coverage.
+   * The newest visible window of one thread's timeline (nucleus#1217). A long
+   * thread has no complete transcript read, so a page is exactly the nightly's
+   * own visible window rather than an unbounded fetch: a contiguous newest run
+   * of rendered rows, no gap, no newer history, the thread as its epoch and
+   * cursors as positions inside the window. `hasOlder` is true when either the
+   * requested depth or the nightly's own window left earlier history behind; the
+   * shared owned-tool reader widens by asking for a deeper page, and a window
+   * that cannot go deeper is reported by its own progress check, never as null.
+   *
+   * The rows, not `turnItems`, are the window: a bounded projection also carries
+   * pending-request and interrupt items it retained from outside the window, so
+   * reading the items would hand the reader a manufactured turn boundary across
+   * a gap. A nightly that sends no rows cannot prove the boundary and is refused
+   * by its field name instead.
+   *
+   * Each native execution item is translated into the shared tool entry the
+   * owned-tool reader judges (`nativeToolKinds`), so a running native command is
+   * live evidence rather than an unrecognised record. `turnId` is the T3 run that
+   * owns the item: one run is one provider turn, so a window that reaches back
+   * into an earlier run proves its partial coverage.
    */
   async agentTimelinePage(id: string, limit = 100): Promise<HostTimelinePage | null> {
     let read: ThreadSnapshotRead;
@@ -204,14 +233,24 @@ export class T3Reads {
     // An interrupted read stays unknown (`null`); a shape problem names its field
     // so the reader reports the exact cause instead of `unavailable`.
     catch (error) { if (error instanceof T3CompatibilityError) throw error; return null; }
-    const items = read.projection.turnItems;
-    const take = Number.isFinite(limit) ? Math.max(0, Math.min(items.length, Math.floor(limit))) : items.length;
-    const start = items.length - take;
-    const entries = items.slice(start).map(item => ({ timestamp: item.updatedAt ?? item.createdAt ?? read.projection.updatedAt,
-      ...(item.runId ? { turnId: item.runId } : {}), item }));
+    const rows = read.projection.visibleTurnItems;
+    if (!rows) throw new T3CompatibilityError('subscribeThread.visibleTurnItems');
+    const window = [...rows].sort((a, b) => a.position - b.position);
+    const take = Number.isFinite(limit) ? Math.max(0, Math.min(window.length, Math.floor(limit))) : window.length;
+    const start = window.length - take;
+    const entries = window.slice(start).map(row => {
+      const item = row.item as Record<string, unknown>;
+      const timestamp = row.item.updatedAt ?? row.item.createdAt ?? read.projection.updatedAt;
+      const turnId = row.item.runId ? { turnId: row.item.runId } : {};
+      const kind = nativeToolKinds[row.item.type];
+      if (kind === undefined) return { timestamp, ...turnId, item: row.item };
+      const name = typeof item.title === 'string' && item.title.trim() ? item.title : row.item.type;
+      return { timestamp, ...turnId, item: { type: 'tool_call', callId: row.item.id, name, status: String(item.status ?? ''),
+        detail: { type: kind, command: nativeToolIdentity(item), nativeType: row.item.type } } };
+    });
     return { entries, hasOlder: start > 0 || read.paged, gap: false, staleCursor: false, reset: false, hasNewer: false,
       epoch: id, startCursor: entries.length ? { epoch: id, seq: start + 1 } : null,
-      endCursor: entries.length ? { epoch: id, seq: items.length } : null, projection: 'projected' };
+      endCursor: entries.length ? { epoch: id, seq: window.length } : null, projection: 'projected' };
   }
 
   /** The newest page's entries only. A failure reads as no evidence here, as on every host. */
