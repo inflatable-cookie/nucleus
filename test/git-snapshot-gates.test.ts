@@ -26,12 +26,14 @@ test("merge-candidate proof binds both parents and the tree", async t => {
   await gitRun(root, ["add", "file"]);
   const tree = await gitText(root, "write-tree");
   const base = await gitTextEnv(root, env, "commit-tree", tree, "-m", "base");
-  const commit = await gitTextEnv(root, env, "commit-tree", tree, "-p", base, "-p", base, "-m", "candidate");
+  const reviewedHead = await gitTextEnv(root, env, "commit-tree", tree, "-m", "reviewed head");
+  const commit = await gitTextEnv(root, env, "commit-tree", tree, "-p", base, "-p", reviewedHead, "-m", "candidate");
   await gitRun(root, ["symbolic-ref", "HEAD", "refs/heads/main"]);
   await gitRun(root, ["update-ref", "refs/heads/main", commit]);
-  const candidate = { commit, integrationBase: base, reviewedHead: base, tree };
+  await gitRun(root, ["reset", "--hard", commit]);
+  const candidate = { commit, integrationBase: base, reviewedHead, tree };
   await verifyMergeCandidate(root, candidate);
-  await assert.rejects(verifyMergeCandidate(root, { ...candidate, integrationBase: "f".repeat(40) }), /candidate parents changed/);
-  await assert.rejects(verifyMergeCandidate(root, { ...candidate, reviewedHead: "f".repeat(40) }), /candidate parents changed/);
+  await assert.rejects(verifyMergeCandidate(root, { ...candidate, integrationBase: reviewedHead }), /candidate parents changed/);
+  await assert.rejects(verifyMergeCandidate(root, { ...candidate, reviewedHead: base }), /candidate parents changed/);
   await assert.rejects(verifyMergeCandidate(root, { ...candidate, tree: "f".repeat(40) }), /candidate tree changed/);
 });
