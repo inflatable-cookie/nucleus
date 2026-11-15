@@ -1,3 +1,4 @@
+import { TaskChangedRefusal } from '../../shared/task-version';
 import { REVIEW_CONTINUATION_LIMIT, holdsOf, isDispositionActive, isDispositionComplete, type ReviewCheckpointRecord, type ReviewDeliveryAuthorization, type Run, type Task } from '../../shared/contracts';
 import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -802,7 +803,7 @@ export class ReviewContinuations {
 
   reviewContinuationGate(input: { taskId: string; version: number; runId: string; head: string; checkpointOrdinal: number }, expectedVersion: number, operationId: string, options: { settle?: { runIds: string[]; displacedRunIds?: string[] } } = {}) {
     const task = this.store.task(input.taskId), run = this.store.run(input.runId);
-    if (task.removedAt || task.version !== expectedVersion) throw new Error('Task changed; refresh before continuing reviewer progress');
+    if (task.removedAt || task.version !== expectedVersion) throw new TaskChangedRefusal('Task changed; refresh before continuing reviewer progress', expectedVersion, task.version);
     // Every unreleased run the settling transition displaces is as settled as a
     // finished one for this gate: the continuation's own transaction releases it.
     const settling = options.settle ? { runIds: [...options.settle.runIds, ...(options.settle.displacedRunIds ?? [])] } : undefined;

@@ -84,3 +84,7 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
   refusal, and its N6 row was added there. The `core/questions/agent-asks.ts` row
   was re-rated at the same score because its duplicate brief-amendment answer now has one owner in
   `QuestionSupersession.answerOpenAgentAsks`.
+
+  The owner-path hint revision re-rated `forge/reviews.ts` (6), `review/pr-adoption.ts` (10),
+  `review/review-continuation.ts` (6) and `workspaces/unused-workspace.ts` (7). Their existing
+  responsibilities and remaining defects are unchanged; the refusals now carry task versions.

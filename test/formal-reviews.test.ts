@@ -15,6 +15,7 @@ import {retainReviewPublication} from '../core/review/review-publication';
 import {git} from '../core/git/index';
 import {formalReviewHttp} from '../core/forge/formal-review-http';
 import type {Task, Run, Completion} from '../shared/contracts';
+import { TaskChangedRefusal } from '../shared/task-version';
 
 type Call = {endpoint: string; args: string[]; token: string};
 type Review = {id?: unknown; user?: {login?: string}; body?: unknown; commit_id?: unknown; state?: unknown};
@@ -469,4 +470,24 @@ for (const late of [false, true]) test(`transient publication observes absence b
   assert.equal(await publish(),501);
   assert.equal(posts,late?1:2);
   assert.equal(store.getMeta<{reviewId:number}>(`reviewPublication:${r.id}`)?.reviewId,501);
+});
+
+
+test('publication reconciliation exposes the task versions when its guard closes', async t => {
+  const fixture = repoFixture(); await fixture.init(); t.after(() => fixture.cleanup());
+  const {store, dir} = storeFixture(fixture.repo); t.after(() => { store.close(); rmSync(dir, {recursive: true, force: true}); });
+  const t1 = {...task(fixture.repo), version: 4}, r = run('guard-closed');
+  const text = 'Review findings', body = reviewPublicationBody(t1, r, 'ready_to_merge', text);
+  store.setMeta(`reviewPublication:${r.id}`, {hash: digest(body)});
+  store.task = () => ({...t1, version: 5});
+  const runGh = ghStub([], () => [[{id: 77, user: {login: reviewer.login}, commit_id: head, state: 'APPROVED', body}]]);
+  await assert.rejects(publishFormalReview(store, t1, r, 'ready_to_merge', text, reviewer, () => false,
+    {readToken: async () => 'tok', runGh, verifyPr}), (error: unknown) => {
+    assert.ok(error instanceof TaskChangedRefusal);
+    assert.equal(error.expected, 4);
+    assert.equal(error.current, 5);
+    assert.match(error.message, /Task changed before review publication reconciliation/);
+    return true;
+  });
+  assert.equal(store.getMeta<{reviewId?: number}>(`reviewPublication:${r.id}`)?.reviewId, undefined);
 });

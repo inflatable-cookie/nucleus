@@ -96,7 +96,11 @@ export async function archiveUnusedWorkspace(store: Store, adapter: Adapter, inp
   if (!proof.empty || proof.uncertain) throw Error(proof.uncertain || proof.detail);
   if (prior && (prior.directory !== directory || prior.head !== head || (prior.branch && prior.branch !== branch))) throw Error('Uncertain archive identity changed; preserved');
   const allowed = () => running() && store.task(task.id).version === task.version && unshared();
-  if (!allowed()) throw Error('Task changed during workspace cleanup verification');
+  if (!allowed()) {
+    let current = task.version;
+    try { current = store.task(task.id).version; } catch { /* Keep the original refusal if the task disappeared. */ }
+    throw new TaskChangedRefusal('Task changed during workspace cleanup verification', task.version, current);
+  }
   const evidence: ArchiveEvidence = prior ?? { workspaceId: id, directory, head, branch, status: 'intent' };
   await retentionHold({ directory, head });
   store.setMeta(key, evidence);
