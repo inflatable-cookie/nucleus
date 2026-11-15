@@ -1,5 +1,6 @@
 import type { HookRecord } from "../../shared/hooks";
 import { isStaleBaseRefusal } from "../hooks/hooks";
+import { CLOSEOUT_BASE_REFRESH_REASON } from "../recovery/task-reasons";
 
 /**
  * The one owner of the automatic re-pin of a stale closeout integration base.
@@ -28,9 +29,13 @@ export const CLOSEOUT_BASE_RENEWED_LEGACY_KIND = "closeout_hold_refresh";
 /** Automatic re-pins of a closeout base allowed per merge; beyond this a human decides. */
 export const CLOSEOUT_BASE_RENEWAL_LIMIT = 3;
 
-/** The one transition an automatic re-pin performs, whatever entry point asked. */
+/**
+ * The one transition an automatic re-pin performs, whatever entry point asked.
+ * Its reason is `CLOSEOUT_BASE_REFRESH_REASON`, the named syncing wait the four
+ * closeout paths already record and the participant lease reads.
+ */
 export const CLOSEOUT_BASE_RENEWAL_TRANSITION = {
-  phase: "syncing", reason: "Refreshing main before retrying closeout",
+  phase: "syncing", reason: CLOSEOUT_BASE_REFRESH_REASON,
 } as const;
 
 /**

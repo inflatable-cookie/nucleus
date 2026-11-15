@@ -29,6 +29,25 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
 
 ## Re-rates
 
+- nucleus#1222 (floor 6, 2026-11-14): the four floor-6 dispatch and host modules were split or
+  hardened along their named seams and re-rated at this PR's head. `core/dispatch/prompts.ts` is now
+  the barrel over `core/dispatch/prompt-text/`: the rule and block owners (validation, report, proof,
+  review, workspace, task blocks), the run scope and callback (`prompt-context.ts`), the role dispatch
+  (`run-prompt.ts`) and one module per role prompt. `core/dispatch/participant-lease.ts` keeps the
+  lease and execution lease, and the withdrawn-question settlement is `core/dispatch/withdrawn-question.ts`;
+  the settled-thread predicate it used to repeat is `core/machine/agent-settled.ts`, the host-gone fact
+  is typed (`isAgentGoneRefusal` in `core/host/errors.ts`) and the closeout base refresh is one named
+  reason. `core/dispatch/run-launch/reserve.ts` is the composition over `reservation-source.ts`,
+  `run-intent.ts` and `reservation-admission.ts`. `core/host/adapter.ts` composes the capability groups
+  in `core/host/contract/`. The `launch-funnel` row rises to 7 because the exclusion refusal it named as
+  copied is one text in `shared/task-view.ts`, and `core/questions/native-questions.ts` re-rates because
+  an unreadable answered-question read is recorded as unknown instead of being skipped. `shared/host.ts`
+  keeps its row: its finding is the free-string status and error fields, which this PR did not change.
+  The reservation family's rows name the serialized run-list stamps the admission still compares, so
+  `reservation-source.ts` and `reservation-admission.ts` score 8 on their remaining typed-fact and
+  proportion defects rather than 9. `hosts/paseo/adapter/host-questions.ts` re-rates to 9 because its
+  failed answered-question read is a typed `{ok: false}` now, leaving only its title-prefix decision match.
+
 - nucleus#1199 (floor 5, 2026-11-14): `core/store/store.ts`, `core/store/store-tasks.ts` and
   `core/store/store-maintenance.ts` were split into one owner per mechanism; `store-maintenance.ts` no
   longer exists. The store rows in `N3.csv` were re-rated at that PR's head.
@@ -52,6 +71,18 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
   one queue branch-name shape, thrown by `git-proof.ts` and `git-stash.ts` (their N4 rows keep their
   scores and gained the new loc), and compared as one named text in `core/recovery/retry-routes.ts`
   (its row is unchanged).
+- nucleus#1221 (floor 6, 2026-11-15): `core/store/store-operations.ts` and `core/store/store-projects.ts` were split by
+  owner (operations, pre-send settlement, notices, messages, hook events, pending submissions; registry, repository
+  settings, agents, limits, removal, merge, management), and `shared/schema/task-control.ts` and
+  `shared/schema/resolution.ts` by seam (field bag with a strict entry point, cross-field rules, task.next observation
+  shapes; workspace and merge field groups). The four rows in `N3.csv` and `N6.csv` were replaced by one row per new
+  module, scored at this PR's head. Scores are not all 7 or more: `task-control-rules.ts` stays 7 with proportion 0
+  and `store-project-management.ts` stays 7, both named in the rows; `resolution.ts` stays non-strict by design.
+  The resolution record keeps its original parsed key order (workspace and merge groups spread at their old
+  positions), so task digests do not change. Store member checks share one predicate, `repositoryMemberMatches`
+  (`core/store/store-project-registry.ts`); the shared `projectRepositoryMatches` stays a separate rule for removal
+  and management. `task-control-fields.ts` has its own row. Citations to `store.ts` and `store-maintenance.ts` in rows
+  for unrelated modules predate this PR and are left for their next re-rate.
 - nucleus#1206 (floor 5, 2026-11-14): the project editor and settings profiles were split by screen,
   form, repository and save-queue responsibility; task holds, attention phases and prerequisite
   reason facts now use shared owners. The changed N6 rows were re-rated at this PR's head.
@@ -107,24 +138,35 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
   owner, and the `proofExecutorAgents` re-export through QA is gone. The affected N4 rows were re-rated at
   this PR's head; the `qa-fence` rows in N4 and N6 were re-rated because no caller reads a fence message as
   a fact any more. Modules touched only to import from the new owners keep their rows.
+- nucleus#1220 (floor 6, 2026-11-15): `core/engine.ts` and `service/runtime-owner.ts` were split along their named seams — host-adapter routing, lane-key parse and profile catalogs from the engine; host-connections, store-maintenance and origin-review wrapping from the runtime. Their N2 and N5 rows, plus `service/t3code-host.ts`, were re-rated at this PR's head. Origin-proof wrapping method-calls `withHost` so a class owner keeps its host context. Engine loc is 1061 after merging #1218's owner-verb wiring into the composition root.
+- nucleus#1224 (floor 6, 2026-11-15): report-run acceptance is one shared classifier; telemetry now has
+  separate owners for task facts, reviewer calibration, task-control rates and snapshot aggregation;
+  Git status and hook gates use their checkout and hook owners; transport phase and loss classification
+  has one shared owner. The task-stop and task-view rows score 6 (O1+T1+F1+P1+Pr2): existing typed
+  records and boundary coverage are sound, while historical stop text, waiting references and
+  escalation holders still need compatibility fallbacks. Other resulting modules score 7 or more;
+  their five-part sums, reasons and PR-head evidence are in the updated N2, N3, N4 and N6 rows.
+  The shared service client names its typed errors so the transport classifier preserves roll recovery
+  for draining, unavailable and elapsed timeout responses; its N6 row is re-rated as well.
 
 - nucleus#1223 (floor 6, 2026-11-15): the lifecycle modules were re-rated at the PR head and each
   resulting module carries its own row. Retry routing became typed decisions
   (`recovery/retry-routes.ts`, 9), recorded evidence (`recovery/retry-evidence.ts`, 9) and one ordered
   application (`recovery/retry-orchestration.ts`, 9); the queued wait projection reads Queue's declared
-  waits instead of a reason regex (`recovery/wait-context.ts`, 10); the ask service reads one decoded
-  lifecycle per ask (`questions/agent-ask-events.ts`, 10) while `questions/agent-asks.ts` keeps its
-  remaining routing/wait/resume seams (8); external merge passes one typed acceptance job
+  waits and owns the two dispatch-hold reasons it writes, so a released hold is never re-shown
+  (`recovery/wait-context.ts`, 10); the ask service reads one decoded lifecycle per ask
+  (`questions/agent-ask-events.ts`, 10) while `questions/agent-asks.ts` keeps its remaining
+  routing/wait/resume seams (8); external merge passes one typed acceptance job
   (`merge/external-merge.ts`, 9), records an observed merge once (`merge/external-merge-record.ts`, 9)
   and owns the check park in named facts (`merge/external-merge-check.ts`, 8); closeout and its recovery
-  read one stale-base rule (`closeout/closeout-base-refresh.ts`, 10, `closeout.ts` 10, `recovery.ts` 9);
-  a hook occurrence's refusal kind is decoded once (`hooks/hook-refusal.ts`, 10) and `hooks/hook-replay.ts`
-  reads it (8); the archive takes one typed request and refuses with a typed teardown code
-  (`workspaces/owned-workspace-archive.ts`, 8) beside one thread-inventory owner
-  (`workspaces/owned-workspace-threads.ts`, 10). `core/workspaces/repository-archive-gate.ts` had no
-  product callers since 1173 and is deleted with its row, and its test proved only that dead path.
-  The revision at the same task's review kept what the first pass moved: the unified closeout budget
-  counts the historical `closeout_hold_refresh` records as spent (a rename never refunds a retry), the
-  queued projection still owns the two dispatch-hold reasons so a released hold is never re-shown, and
-  `workspaces/archive-failure.ts` (10) now classifies a Queue-authored refusal by the stage it states
-  (`WorkspaceTeardownRefusal.archiveFailureStage`), leaving message text to foreign failures alone.
+  read one stale-base rule that also spends the re-pins recorded under the previous event kind and uses
+  the one named refresh reason (`closeout/closeout-base-refresh.ts`, 10, `closeout.ts` 10,
+  `recovery.ts` 9); a hook occurrence's refusal kind is decoded once (`hooks/hook-refusal.ts`, 10) and
+  `hooks/hook-replay.ts` reads it (8); the archive takes one typed request and refuses with a typed
+  stage (`workspaces/owned-workspace-archive.ts`, 8) beside one thread-inventory owner
+  (`workspaces/owned-workspace-threads.ts`, 10), and `workspaces/archive-failure.ts` (10) classifies a
+  Queue-authored refusal by that stage, leaving message text to foreign failures alone.
+  `core/workspaces/repository-archive-gate.ts` had no product callers since 1173 and is deleted with its
+  row, and its test proved only that dead path. The rows for `terminal-workspace-retirement.ts` and
+  `unused-workspace.ts` were refreshed because the archive call and the failure classification they use
+  changed owner; both keep 7.

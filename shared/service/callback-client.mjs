@@ -1,12 +1,10 @@
 import {request} from 'node:http';
+import {callbackTransportPhase} from './transport.mjs';
 
 /** Read this launch's callback environment: `NUCLEUS_*` only, never a retained old name. */
 export function callbackEnvValue(name, env = process.env) {
  return env[`NUCLEUS_${name}`];
 }
-
-/** The connect-phase failure codes: the request never reached Queue at all. */
-const CONNECT_CODES = ['ENOENT', 'ECONNREFUSED', 'ENOTSOCK', 'EACCES', 'ELOOP', 'ENAMETOOLONG'];
 
 /**
  * Which transport phase a callback failure happened in, or null when the
@@ -21,23 +19,7 @@ const CONNECT_CODES = ['ENOENT', 'ECONNREFUSED', 'ENOTSOCK', 'EACCES', 'ELOOP', 
  *   the response was lost — the recorded receipt is collectable by an
  *   identical re-ask.
  */
-export function callbackTransportPhase(error) {
- // A Queue answer or refusal (any HTTP status) is never a transport fault, even
- // if its message text happens to name a socket.
- if (error instanceof Error && typeof error.callbackStatus === 'number') return null;
- const message = error instanceof Error ? error.message : String(error);
- const code = error instanceof Error && typeof error.code === 'string' ? error.code : '';
- // The phase tag alone is never evidence of a transport fault: the idle-timeout
- // budget destroys the request with its own message, which is not a fault at
- // all. Only codes and messages the transport actually produces count.
- const transport = CONNECT_CODES.includes(code)
-  || /ENOENT|ECONNREFUSED|ENOTSOCK|EACCES|ELOOP|ENAMETOOLONG|ECONNRESET|EPIPE|socket hang up|aborted|no such file|not connected|disconnected/i.test(message);
- if (!transport) return null;
- const connect = CONNECT_CODES.includes(code)
-  || /connect (?:ENOENT|ECONNREFUSED|ENOTSOCK|EACCES|ELOOP|ENAMETOOLONG)|no such file/i.test(message);
- if (connect) return 'connect';
- return error?.transportPhase === 'response' ? 'response' : 'inflight';
-}
+export {callbackTransportPhase};
 
 /** Shared callback transport for MCP and the standalone reporting helper. Never retries. */
 export function callbackRequest(binding, path, payload, {timeoutMs = 120000, timeoutMessage = 'Queue request timed out; inspect current state before retrying'} = {}) {

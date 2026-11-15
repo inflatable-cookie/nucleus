@@ -6,7 +6,9 @@ import { budgetClockSchema, taskBudgetLimitsSchema } from "../task-budget";
 import { taskHostWaitSchema } from "../host-outage";
 import { taskPhaseSchema } from "../schema/task-primitives";
 import { incidentSchema } from "../incident";
-import { buildOutputCleanupSchema, externalWorkspaceArchiveSchema, runtimeRetirementSchema, sharedWorkspaceStateSchema, stalledTurnStopSchema, workspaceArchiveRetrySchema } from "./workspace";
+import { sharedWorkspaceStateSchema, stalledTurnStopSchema } from "./workspace";
+import { resolutionWorkspaceFields } from "./resolution-workspace";
+import { resolutionMergeGateFields, resolutionMergeRecordFields } from "./resolution-merge";
 import { projectValidationResultSchema } from "./validation";
 import { profileSchema } from "./settings";
 
@@ -36,23 +38,7 @@ export const resolutionSchema = z.object({
   }).strict()).default([]),
   // Explicitly superseded participant identities for the forced merged closeout.
   ownerCloseoutParticipants: z.array(z.object({ agentId: z.string(), workspaceId: z.string() }).strict()).default([]),
-  // Later cleanup authority is separate from the completed cancellation disposition.
-  workspaceRetirement: z.object({
-    workspaceId: z.string(), directory: z.string(), branch: z.string(), head: z.string().nullable(),
-    authorization: z.object({ caller: z.string(), kind: z.enum(['project_owner', 'operator', 'relayed_note']), note: z.string().nullable(), reason: z.string(), at: z.string() }).strict(),
-    state: z.enum(['authorized', 'held', 'intent', 'uncertain', 'archived']),
-    detail: z.string(), intentAt: z.string().nullable(), archivedAt: z.string().nullable(),
-  }).strict().nullable().default(null),
-  closeoutWorkspaceIntent: z.boolean().default(false), closeoutWorkspaceId: z.string().nullable().default(null), closeoutDirectory: z.string().nullable().default(null), closeoutWorkspaceHead: z.string().nullable().default(null),
-  archivedWorkspaceIds: z.array(z.string()).default([]), archiveIntentWorkspaceId: z.string().nullable().default(null),
-  // The exact source head the archive intent bound; an uncertain retry never rederives it.
-  archiveIntentHead: z.string().nullable().default(null), cleanupReason: z.string().default(""),
-  buildOutputCleanups: z.array(buildOutputCleanupSchema).default([]),
-  workspaceArchiveRetries: z.array(workspaceArchiveRetrySchema).default([]),
-  runtimeRetirements: z.array(runtimeRetirementSchema).default([]),
-  // Spec 017: preserved external workspaces whose Paseo sidebar entry is archived
-  // while their folder is kept. Never an archive of the workspace's files.
-  externalWorkspaceArchives: z.array(externalWorkspaceArchiveSchema).default([]),
+  ...resolutionWorkspaceFields,
   // Advisory task.finished durable intent for a terminal task: present while the
   // repository's finished-task runtime stop still owes one evaluation. A crash
   // after the terminal transition is recovered by the lifecycle scan even when
@@ -79,10 +65,7 @@ export const resolutionSchema = z.object({
   // its question while the host wait still pauses the clock, shows on the card and
   // joins the outage notice. Cleared when the host returns.
   hostWait: taskHostWaitSchema.nullable().default(null),
-  externalMerge: z.boolean().default(false),
-  // A verified merge with no applied ready_to_merge verdict and no operator
-  // source acceptance at that head. Closeout uses the merge commit anyway.
-  mergedWithNone: z.boolean().default(false),
+  ...resolutionMergeGateFields,
   // Project-a #1837: a transient `External merge check:` fault sets attention and can
   // leave the task in `needs_attention` with no run. The phase and reason it held
   // before the check are recorded so recovery resumes that state instead of
@@ -156,15 +139,7 @@ export const resolutionSchema = z.object({
     runId: z.string().min(1).max(160), head: z.string().regex(/^[a-f0-9]{40}$/),
     proofs: z.array(z.string().trim().min(1).max(2000)).min(1).max(40), at: z.string(),
   }).strict().nullable().default(null),
-  mergeIntent: z.boolean().default(false), mergeHead: z.string().nullable().default(null), mergeBase: z.string().nullable().default(null),
-  mergeRequestedAt: z.string().nullable().default(null),
-  mergeResponseOutcome: z.enum(["pending", "accepted", "uncertain"]).default("pending"),
-  mergeProofSince: z.string().nullable().default(null),
-  mergeRetryAt: z.string().nullable().default(null),
-  mergeRetryOutcome: z.enum(["pending", "accepted", "uncertain"]).nullable().default(null),
-  mergeAutoRetryExhausted: z.boolean().default(false),
-  mergedCommit: z.string().nullable().default(null), syncedCommit: z.string().nullable().default(null),
-  integrationTurn: z.object({ sequence: z.number().int().positive(), acceptedAt: z.string() }).nullable().default(null),
+  ...resolutionMergeRecordFields,
   // Retained so older task rows parse without rewriting live data. New review
   // intake never creates or acts on shared-checkout branch-switch state.
   sharedWorkspace:sharedWorkspaceStateSchema.nullable().default(null),

@@ -32,13 +32,14 @@ test('answered questions read the adapter timeline page at call time and keep on
       ] };
     },
   });
-  assert.deepEqual(await adapter.answeredQuestions!('worker'), [
+  assert.deepEqual(await adapter.answeredQuestions!('worker'), { ok: true, answered: [
     { requestId: 'q1', question: 'Which route?', answers: { 'Question 1': 'Focused' } },
     { requestId: 'q3', question: 'Titled', answers: { 'Question 1': 'Yes' } },
-  ]);
+  ] });
   assert.deepEqual(limits, [40]);
   Object.assign(adapter, { agentTimelinePage: async () => null });
-  assert.deepEqual(await adapter.answeredQuestions!('worker'), [], 'an unreadable timeline is empty, never evidence');
+  assert.deepEqual(await adapter.answeredQuestions!('worker'), { ok: false, reason: 'the agent timeline page could not be read' },
+    'an unreadable timeline is an unknown read, never an empty answer list');
 });
 
 test('task-level native decisions refuse as rejections, never as synchronous throws', async () => {

@@ -7,6 +7,7 @@ import { DelegatedHostUnavailable } from './delegation';
 import { retainedProgressRun } from '../dispatch/retained-work';
 import { digest } from '../store/store';
 import { qualifyLegacyAgentId } from '../../shared/agent-identity';
+import type { AnsweredQuestionRead } from '../../shared/host';
 
 /** What an answered native question on a blocked worker or reviewer thread does. */
 export type AnsweredQuestionOutcome =
@@ -193,13 +194,20 @@ export class NativeQuestions {
         if (reviewerAgent) watches.push({ kind: 'reviewer', agentId: reviewerAgent });
       }
       for (const watch of watches) {
-        let answered: Array<{ requestId: string; question: string; answers: Record<string, string> }>;
-        try {
-          answered = await this.adapter.answeredQuestions!(watch.agentId);
-        } catch {
+        // A host read that refuses, or throws, is an unknown observation: it is
+        // recorded as unknown once and never read as "the operator answered
+        // nothing", which would silently keep the task blocked.
+        const read = await this.adapter.answeredQuestions!(watch.agentId)
+          .catch((error): AnsweredQuestionRead => ({ ok: false, reason: error instanceof Error ? error.message : String(error) }));
+        if (!read.ok) {
+          const unknownKind = `${watch.kind}_question_read_unknown`;
+          const detail = `${watch.agentId}: ${read.reason}`.slice(0, 4000);
+          const events = this.store.eventsAll(task.id);
+          if (!events.some(event => event.kind === unknownKind && event.detail === detail))
+            this.store.event(task.id, unknownKind, detail);
           continue;
         }
-        for (const item of answered) {
+        for (const item of read.answered) {
           if (!item.requestId.trim() || !Object.keys(item.answers).length) continue;
           const answeredKind = `${watch.kind}_question_answered`;
           const resumedKind = `${watch.kind}_question_resumed`;

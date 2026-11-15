@@ -639,7 +639,11 @@ const PARSED: ParsedText[] = [
   // The owned-tool proof decides on its typed issue fact, so no reader matches
   // this refusal's text any more; the writer's sentence stays pinned.
   { site: 'tool issue', sample: 'observed tool call x is running', writers: [' and is running'] },
-  { site: 'agent gone', reads: ["error.message === 'Agent was not found'", 'error.message !== "Agent was not found"', 'error.message === "Agent was not found"', 'const AGENT_NOT_FOUND = "Agent was not found"'], writers: ['throw new Error("Agent was not found")', "throw Error('Agent was not found')"] },
+  // The host's gone-thread fact is typed at one reader now (nucleus#1222): every
+  // site asks isAgentGoneRefusal, and only the host's own throw sites still write
+  // the host's words. A reword at one reader would leave the others standing, so
+  // the typed reader carries a floor.
+  { site: 'agent gone', reads: ['isAgentGoneRefusal(error)'], writers: ['AGENT_NOT_FOUND = \'Agent was not found\'', 'throw new Error("Agent was not found")', "throw Error('Agent was not found')"] },
   // Task 1090: empty awaitingProofs on source approval names the ready_to_merge
   // route so a reviewer that finished source review with only release gates
   // remaining is not left without a report. Both throw sites stay byte-identical.

@@ -1,4 +1,4 @@
-import { initializeWorkRoot, getWorkRoot } from "../core/workspaces/work-root.mjs";
+import { initializeWorkRoot } from "../core/workspaces/work-root.mjs";
 import "./install/roll-request";
 import { currentServiceBuildId } from "../shared/service/build";
 import { RuntimeQuestions } from "../core/runtime/questions";
@@ -34,21 +34,21 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { Store } from "../core/store/store";
 import { StoreCompactor, freeBytesOn } from "../core/store/store-compaction";
-import { backupCommand, backupDirForDataDir, backupHealth, listBackupSnapshots, newestScheduledSnapshotAt } from "../core/store/backups";
+import { backupDirForDataDir } from "../core/store/backups";
 import { HostPolicies } from "../core/host/host-policies";
 import type { HostPolicyConstructor } from "../core/host";
-import { resolveIngressHost } from "../core/host/ingress-host";
 import { formatAgentId, parseAgentId } from "../shared/agent-identity";
 import { hostKindOf, type HostKind } from "../shared/host-kind";
-import { DEFAULT_HOST_KIND } from "../shared/host-kind";
-import { createHost, hostConnected, hostConnectionRequired, paseoHome } from "../hosts/paseo";
+import { createHost, hostConnectionRequired, paseoHome } from "../hosts/paseo";
 import type { RegistrationAdapter } from "../core/host/registration";
 import type { Adapter } from "../core/host/adapter";
 import { HostFacade } from "../core/host/host-facade";
 import { Admission, admitAdapter, type AdmissionOptions } from "../core/host/admission";
-import { HostRegistry, HOST_IDLE_GRACE_MS, identitySourceHostEvidence, resolveOriginHost, type KnownHost } from "../core/host/host-registry";
+import { HostRegistry, HOST_IDLE_GRACE_MS, type KnownHost } from "../core/host/host-registry";
 import type { IdentitySource } from "../shared/host-kind";
 import { T3HostConnection, type T3ConnectionConfig } from './t3code-host';
+import { HostConnections, wireEngineHosts, type HostConnectionOwner } from './host-connections';
+import { StoreMaintenance, type StoreMaintenanceOwner } from './store-maintenance';
 import { answerHostPermission } from './host-permissions';
 import { lifecycleSignalSchema, type LifecycleSignal, type LifecycleSignalReceipt } from "../shared/lifecycle-signal";
 import { RequestLedger } from "../core/runtime/request-ledger";
@@ -60,7 +60,7 @@ import { startCallbacks } from "./callbacks/callback";
 import type { SnapshotState, SnapshotInput, UsageLevel, DemandRoleOffsets, Submission, PoolEntry, BulkDispositionRequest, ReparentInput, TaskControlRequest, ReviewEntryInput, OutcomeSearchInput } from "../shared/contracts";
 import { taskControlChanges } from "../shared/task-control-changes";
 import { type OperationAcceptance, type OperationResult } from "../shared/operations";
-import { capacitySchema, projectDispatchLimitSchema, DEFAULT_GLOBAL_LIMIT, DEFAULT_UNCERTAIN_MERGE_RETRY_MS, UNCERTAIN_MERGE_PROOF_TIMEOUT_MS, sourcePromotionInputSchema, submissionSchema, submitInstruction as submitInstructionRpc, reviewEntryReconcileInputSchema, BACKUP_INTERVAL_MS, BACKUP_DUE_CHECK_MS, BACKUP_FAILURE_RETRY_MS, BACKUP_HEALTH_REFRESH_MS, type BoundRun } from "../shared/contracts";
+import { capacitySchema, projectDispatchLimitSchema, DEFAULT_GLOBAL_LIMIT, DEFAULT_UNCERTAIN_MERGE_RETRY_MS, UNCERTAIN_MERGE_PROOF_TIMEOUT_MS, sourcePromotionInputSchema, submissionSchema, submitInstruction as submitInstructionRpc, reviewEntryReconcileInputSchema, BACKUP_DUE_CHECK_MS, type BoundRun } from "../shared/contracts";
 import { createTelemetrySnapshotCache, taskControlTelemetry } from '../core/telemetry/telemetry';
 import { RunUsageTracker } from '../core/telemetry/run-usage-tracker';
 import { UsageService, USAGE_TICK_INTERVAL_MS } from '../core/usage/usage-service';
@@ -74,6 +74,7 @@ import { now, operationInputHash } from "../core/store/store";
 import type { HostRunAccountingDisposeInput, RepositorySetInput, ProjectUpsertInput, Task, RepositoryRekeyInput, RepositoryRekeyOutput, RepositoryRekeyPreviewInput, RepositoryRekeyReceiptQuery } from "../shared/contracts";
 import { type PaseoAdmission, type ReconciliationSweep } from '../shared/telemetry';
 import { prepareReviewEntryWorkspace, previewReviewEntry, reconcileReviewEntryOperation, type ReviewEntryAdapter } from '../core/review/review-entry';
+import { originReviewProof, withOriginReviewAdapter } from '../core/review/origin-review-adapter';
 import { Papercuts } from '../core/planning/papercut-operations';
 import { Leads } from '../core/planning/leads';
 import { Decisions } from '../core/planning/decisions';
@@ -327,6 +328,8 @@ export class QueueRuntime {
   readonly hostRegistry: HostRegistry<{ adapter: Adapter; admission: Admission }>;
   private hostSession: { id: string; token: object } | null = null;
   private readonly t3Host: T3HostConnection | null;
+  private readonly hosts: HostConnections;
+  private readonly maintenance: StoreMaintenance;
   readonly engine: Engine;
   readonly settings: HostSettings;
   readonly dataDir: string;
@@ -356,8 +359,6 @@ export class QueueRuntime {
   lastStoreAccessAt: string | null = null;
   private closing = false;
   private idleShutdownLatched = false;
-  private pluginPresenceTimer: NodeJS.Timeout | null = null;
-  private pluginPresenceEpoch = 0;
   private readonly pluginLostGraceMs: number;
   private closeCallbacks: (() => Promise<void>) | undefined;
   /** Contract 010 client-protocol endpoint; on only when the owner options enable it. */
@@ -385,11 +386,6 @@ export class QueueRuntime {
    * best-effort projection; it never admits, schedules, settles or changes a task.
    */
   private liveRunPresence: LiveRunPresence | null = null;
-  private backupRunning: Promise<import('../shared/contracts').BackupList> | null = null;
-  private backupAbort: AbortController | null = null;
-  private backupError: string | null = null;
-  /** Spec 028: snapshot health last read for the board projection, and the value last projected. */
-  private boardBackup: { readAt: number; value: import('../shared/contracts').BackupHealth } | null = null;
   private readonly backupDir: string;
   private readonly connectTimeoutMs: number;
   /** Fixture-only required-check capability transport; production reads the live forge. */
@@ -506,45 +502,16 @@ export class QueueRuntime {
     // Retired contract 009 producer: the runtime no longer observes durable writes for a
     this.engine = new Engine(this.store, this.adapter, 60000, () => this.bootstrapCompleted && this.anyHostConnected(), undefined, this.settings.uncertainMergeRetryMs, this.hostRunStateDir);
     this.engine.currentServiceBuildId = currentServiceBuildId;
-    this.engine.selectIngressHost = (explicit, repoPath, origin) => {
-      const registered = this.hostRegistry.known().map(host => host.id);
-      const online = this.hostRegistry.onlineIds();
-      if (!repoPath && !origin) {
-        if (explicit) {
-          if (!registered.includes(explicit)) throw new Error("Selected host is not registered");
-          return explicit;
-        }
-        return online.length === 1 ? online[0] : undefined;
-      }
-      const settings = this.store.canonicalRepository(repoPath ?? "", origin);
-      const hostKind = settings?.hostKind ?? DEFAULT_HOST_KIND;
-      try {
-        return resolveIngressHost({ explicit, hostKind, registered, online }).hostId;
-      } catch (error) {
-        if (settings) throw new Error(`Cannot select host for repository ${settings.repository.origin ?? settings.repository.path}: ${error instanceof Error ? error.message : String(error)}`);
-        throw error;
-      }
-    };
-    this.engine.resolveHostAdapter = id => this.hostRegistry.get(id)?.adapter;
-    // Per-host routing profiles (nucleus#1139): each registered host's own catalog decides its availability.
-    this.engine.hostIds = () => this.hostRegistry.known().map(host => host.id);
-    this.engine.inventoryHostMatches = id => this.hostSession?.id === id;
-    this.engine.retiredObservationKey = id => id === this.hostRegistry.known()[0]?.id ? 'retiredObservations' : `retiredObservations:${JSON.stringify(id)}`;
-    this.engine.canReuseUnqualifiedOriginWorkspace = () => this.hostRegistry.known().length === 1;
-    this.engine.identifyOriginHost = (agentId, identitySource) => {
-      const qualified = parseAgentId(agentId);
-      if (qualified) return Promise.resolve(this.hostRegistry.get(qualified.hostId) ? qualified.hostId : undefined);
-      return resolveOriginHost(this.hostRegistry, agentId, async (host, id) => {
-        if (!host.adapter.originAgent) return 'unknown';
-        // A thrown read is an unread inventory, never authoritative absence.
-        try { return await new HostFacade({ adapter: host.adapter }).originAgent(id) ? 'mine' : 'not-mine'; }
-        catch { return 'unknown'; }
-      }, identitySourceHostEvidence(agentId, identitySource, this.hostRegistry.known().map(entry => entry.id)));
-    };
-    this.engine.hostAvailable = id => {
-      const selected = this.hostRegistry.get(id);
-      return Boolean(selected && (this.engine.activeHostId ? this.engine.activeHostId === id : selected.adapter === this.adapter && this.connected()));
-    };
+    this.maintenance = new StoreMaintenance(this as unknown as StoreMaintenanceOwner);
+    this.hosts = new HostConnections(this as unknown as HostConnectionOwner);
+    const runtime = this;
+    wireEngineHosts(this.engine, {
+      adapter: this.adapter,
+      hostRegistry: this.hostRegistry,
+      get hostSession() { return runtime.hostSession; },
+      connected: () => runtime.connected(),
+      store: this.store,
+    });
     this.engine.siblingDataDir = this.dataDir;
     this.engine.setSourcePromotionHandler((payload, hostId, selection) => this.executeSourcePromotion(payload, hostId, selection));
     this.engine.setLeadCheckHandler((payload, operationId) => this.executeLeadCheck(payload, operationId));
@@ -556,7 +523,6 @@ export class QueueRuntime {
     this.cachedTelemetrySnapshot = createTelemetrySnapshotCache(this.store);
     this.cachedUiSnapshotFacts = createUiSnapshotFactsCache(this.store, (tasks, runs) => this.engine.resolution.slotAdmissionReader(tasks, runs, true), () => this.hostRuns.liveRuns(),
       (nowMs) => this.store.qaBoardRuns(new Date(nowMs - QA_BOARD_PASS_FADE_MS).toISOString()), task => this.engine.queuedExternalWait(task), () => this.engine.queuedWaitSignature(), () => this.hostSession?.id || this.hostRegistry.known()[0]?.id || "unknown");
-    const runtime = this;
     this.questions = new RuntimeQuestions({
       store: this.store, engine: this.engine, decisions: this.decisions,
       markStoreAccess: () => this.markStoreAccess(),
@@ -684,28 +650,8 @@ export class QueueRuntime {
     if (scheduleBackups) void this.started.then(() => this.backupIfDue()).catch(() => {});
   }
 
-  private backupFailedAt = 0;
-  /**
-   * Spec 028: the recovery route a conversion must have before it may touch the store.
-   * It is the operator's own `backup.now` route (a `VACUUM INTO` snapshot, verified by
-   * `integrity_check`, compressed as a stream and read back), and it names the newest
-   * verified snapshot the conversion's record cites.
-   */
-  private async verifiedSnapshot(): Promise<{ name: string; bytes: number }> {
-    const list = await this.backupNow({}, 'automatic');
-    const newest = list.snapshots.filter(snapshot => snapshot.verified)
-      .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))[0];
-    if (!newest) throw new Error(list.localError ? `the snapshot failed: ${list.localError}` : "no verified snapshot was written");
-    return { name: newest.name, bytes: newest.size };
-  }
-  /** Take a scheduled snapshot once the newest verified one is an interval old (Spec 028); a failure waits before retrying. */
-  private backupIfDue(): void {
-    if (this.closing || this.backupRunning) return;
-    const newest = newestScheduledSnapshotAt(this.backupDir);
-    if (newest !== null && Date.now() - newest < BACKUP_INTERVAL_MS) return;
-    if (Date.now() - this.backupFailedAt < BACKUP_FAILURE_RETRY_MS) return;
-    void this.backupNow({}, 'automatic').catch(() => { this.backupFailedAt = Date.now(); });
-  }
+  private verifiedSnapshot(): Promise<{ name: string; bytes: number }> { return this.maintenance.verifiedSnapshot(); }
+  private backupIfDue(): void { this.maintenance.backupIfDue(); }
 
   /**
    * The RPC handler's second slot is unused, so `backup.now` from Settings records a
@@ -713,24 +659,9 @@ export class QueueRuntime {
    * while a scheduled snapshot runs joins that one, which stays unmarked.
    */
   backupNow(_input: Record<string, never> = {}, origin: 'manual' | 'automatic' = 'manual') {
-    if (this.closing) throw new Error('Nucleus runtime is draining');
-    if (!this.backupRunning) {
-      this.backupAbort = new AbortController();
-      this.backupRunning = backupCommand(origin === 'manual' ? 'manual' : 'now', this.store.path, this.backupDir, this.backupAbort.signal)
-        .then(result => { this.backupError = null; this.boardBackup = null; return result; },
-          error => { if (!this.closing) this.backupError = String(error); this.boardBackup = null; throw error; })
-        .finally(() => { this.backupRunning = null; this.backupAbort = null; });
-    }
-    return this.backupRunning;
+    return this.maintenance.backupNow(_input, origin);
   }
-  async backupList(_input: Record<string, never> = {}) {
-    try {
-      const result = listBackupSnapshots(this.backupDir, this.dataDir);
-      return { ...result, workRoot: getWorkRoot(this.dataDir), localError: this.backupError ?? result.localError };
-    } catch (error) {
-      return { snapshots: [], workRoot: getWorkRoot(this.dataDir), localError: this.backupError ?? String(error) };
-    }
-  }
+  backupList(_input: Record<string, never> = {}) { return this.maintenance.backupList(_input); }
 
   /**
    * Spec 028: verified-snapshot health for the board projection. It is one directory
@@ -738,97 +669,20 @@ export class QueueRuntime {
    * snapshot settles, so no surface polls `backup.list` just to age a snapshot.
    */
   private backupHealthProjection(): import('../shared/contracts').BackupHealth {
-    const at = Date.now();
-    if (!this.boardBackup || at - this.boardBackup.readAt >= BACKUP_HEALTH_REFRESH_MS) {
-      let value: import('../shared/contracts').BackupHealth;
-      try { value = backupHealth(this.backupDir, this.dataDir); }
-      catch (error) { value = { newestSnapshotAt: null, localError: `Snapshot health unreadable: ${error instanceof Error ? error.message : String(error)}` }; }
-      this.boardBackup = { readAt: at, value };
-    }
-    return { ...this.boardBackup.value, localError: this.backupError ?? this.boardBackup.value.localError };
+    return this.maintenance.backupHealthProjection();
   }
 
-  private connected(): boolean {
-    // The connection alone gates lifecycle work. `startError` reports the last failure
-    // and must not lock the runtime out of retrying: gating on it meant a single failed
-    // call could hold every sweep until something else cleared it.
-    if (!hostConnected(this.adapter) || (this.hostSession !== null && this.paseo.hostId !== this.hostSession.id)) {
-      if (this.hostSession) this.hostRegistry.disconnect(this.hostSession.id, this.hostSession.token);
-      this.hostSession = null;
-      this.bootstrapped = false;
-      return false;
-    }
-    return this.hostSession !== null && this.hostRegistry.get(this.hostSession.id)?.adapter === this.adapter;
-  }
-  private anyHostConnected(): boolean {
-    this.connected(); // Retire a disconnected primary claim before counting.
-    this.t3Host?.retireDisconnected();
-    return this.hostRegistry.onlineIds().length > 0;
-  }
+  get paseoHostId(): string { return this.paseo.hostId; }
+  private connected(): boolean { return this.hosts.connected(); }
+  private anyHostConnected(): boolean { return this.hosts.anyHostConnected(); }
 
   /** A lost host connection is not evidence that any host run ended. */
-  hostShutdownDue(): boolean {
-    this.t3Host?.retireDisconnected();
-    if (this.closing || this.idleShutdownLatched || this.connected() || hostConnected(this.adapter) || this.bootstrapRunning || (this.serveHostRunEndpoint && !this.hostRunEndpoint?.serving())) return false;
-    if (!this.hostRegistry.shouldShutdown(this.hostRuns.liveRuns().length)) return false;
-    this.idleShutdownLatched = true;
-    return true;
-  }
-
-  cancelHostShutdown() { this.idleShutdownLatched = false; }
-  hostPresenceClosed() {
-    this.idleShutdownLatched = false;
-    this.hostRegistry.restartGrace();
-    if (this.anyHostConnected()) this.armPluginPresenceWatch();
-    else this.clearPluginPresenceWatch();
-  }
-  hostPresenceOpened() {
-    this.pluginPresenceEpoch++;
-    this.clearPluginPresenceWatch();
-    this.clearPluginPresenceFault();
-  }
-
-  private armPluginPresenceWatch() {
-    this.clearPluginPresenceWatch();
-    const epoch = ++this.pluginPresenceEpoch;
-    this.pluginPresenceTimer = setTimeout(() => {
-      this.pluginPresenceTimer = null;
-      void this.raisePluginPresenceFault(epoch).catch(() => { /* a throwing store write must not kill the executor */ });
-    }, this.pluginLostGraceMs);
-    this.pluginPresenceTimer.unref?.();
-  }
-  private clearPluginPresenceWatch() {
-    if (!this.pluginPresenceTimer) return;
-    clearTimeout(this.pluginPresenceTimer);
-    this.pluginPresenceTimer = null;
-  }
-  private pluginPresenceFaultMessage(): string {
-    if (!this.anyHostConnected()) return "";
-    return this.store.getMeta<{ message?: string }>("pluginPresenceFault")?.message ?? "";
-  }
-  private clearPluginPresenceFault() {
-    if (!this.store.getMeta("pluginPresenceFault")) return;
-    this.store.deleteMeta("pluginPresenceFault");
-    this.store.advanceRevision();
-  }
-  private async raisePluginPresenceFault(epoch: number) {
-    if (epoch !== this.pluginPresenceEpoch) return;
-    if (this.closing) return;
-    if (!this.anyHostConnected()) return;
-    if (this.store.getMeta("pluginPresenceFault")) return;
-    const message = "The Nucleus plugin is not present while Paseo is still connected. The recovery thread cannot act while the plugin is down.";
-    const at = new Date().toISOString();
-    this.store.setMeta("pluginPresenceFault", { at, message });
-    this.store.advanceRevision();
-    const planner = this.store.projectPlannerRecipient(this.store.queueProject());
-    if (!planner || !this.adapter.notify) return;
-    try {
-      const hostId = await this.engine.identifyOriginHost(planner);
-      if (!hostId) return;
-      await this.engine.withHost(hostId, () => this.engine.host.sendMessage(planner, {
-        messageId: `ns-plugin-presence-${at}`, text: `Nucleus: ${message}\nReload the plugin with: paseo plugin reload nucleus` }));
-    } catch { /* the board error is the operator-visible surface */ }
-  }
+  hostShutdownDue(): boolean { return this.hosts.hostShutdownDue(); }
+  cancelHostShutdown() { this.hosts.cancelHostShutdown(); }
+  hostPresenceClosed() { this.hosts.hostPresenceClosed(); }
+  hostPresenceOpened() { this.hosts.hostPresenceOpened(); }
+  private clearPluginPresenceWatch() { this.hosts.clearPluginPresenceWatch(); }
+  private pluginPresenceFaultMessage(): string { return this.hosts.pluginPresenceFaultMessage(); }
   private boardError(): string {
     return this.startError || this.store.getMeta<string>("engineError") || this.store.getMeta<string>("retentionError") || this.store.getMeta<string>("laneIdleError") || this.store.getMeta<string>("laneDrainError") || this.pluginPresenceFaultMessage() || "";
   }
@@ -895,7 +749,7 @@ export class QueueRuntime {
       markMaintenance(this.dataDir, process.pid, this.spawnToken, maintenanceStartedAt);
       try {
         const run = await this.compaction.runIfDue("service-start");
-        if (run?.converted) this.boardBackup = null;
+        if (run?.converted) this.maintenance.clearBoardBackup();
         if (run && run.record.state !== "converted" && run.record.state !== "refused")
           console.error(`Nucleus store maintenance: ${run.record.state}: ${run.record.reason ?? "no reason recorded"}`);
       } catch (error) { console.error("Nucleus store maintenance:", error instanceof Error ? error.message : String(error)); }
@@ -1228,16 +1082,7 @@ export class QueueRuntime {
         const last = state.changes.at(-1) ?? null;
         return { changes: state.changes.length, lastChangeAt: last?.at ?? null, lastSurface: last?.surface ?? null };
       })(),
-      storeCompaction: (() => {
-        const facts = this.store.storeFacts();
-        const record = this.compaction.record();
-        return { autoVacuum: facts.autoVacuum, freePages: facts.freePages, fileBytes: facts.fileBytes,
-          state: record?.state ?? null, attempts: record?.attempts ?? 0, reason: record?.reason ?? null, at: record?.at ?? null,
-          // `landed` is its own answer: the rewrite is in the store but its records were never
-          // proven unchanged, which is not the same fact as `converted`.
-          verification: record?.verification?.content ?? null, fingerprint: record?.fingerprint ?? null,
-          settledFrom: record?.settledFrom ?? null };
-      })(),
+      storeCompaction: this.maintenance.compactionHealth(),
     };
   }
 
@@ -1260,7 +1105,7 @@ export class QueueRuntime {
     this.eventLoopDelay.stop();
     this.liveRunPresence?.stop();
     this.hostRuns.stop();
-    this.backupAbort?.abort();
+    this.maintenance.abort();
     this.engine.stopped = true;
     const settled = (promise: Promise<unknown> | undefined | null, ms: number) =>
       Promise.race([
@@ -1271,7 +1116,7 @@ export class QueueRuntime {
       this.t3Host?.close();
       await settled((this.adapter as unknown as { close?(): Promise<void> }).close?.(), 5_000);
       await settled(this.started, 10_000);
-      await settled(this.backupRunning, 5_000);
+      await settled(this.maintenance.running, 5_000);
       await settled(this.refreshing, 5_000);
       // Bounded quiesce: an effect still in flight when the bound fires is
       // abandoned here, never killed or reissued; every such effect keeps its
@@ -1481,15 +1326,8 @@ export class QueueRuntime {
       const originHost = await this.engine.identifyOriginHost(input.submission.originAgentId, input.submission.originIdentity);
       if (!originHost) throw Error('Review-entry origin host is unknown or ambiguous');
       if (originHost === hostId) return previewReviewEntry(this.store,adapter,input);
-      const proof = await this.engine.withHost(originHost, async () => {
-        const origin = await this.engine.host.originAgent(input.submission.originAgentId);
-        if (!origin || origin.archived || !origin.workspaceId) throw Error('Review entry requires a live originating thread');
-        return { origin, state: await this.engine.host.observe(origin.id) };
-      });
-      const reviewAdapter = new Proxy(adapter, { get: (target, property, receiver) => property === 'inspectReviewEntry'
-        ? (reviewInput: ReviewEntryInput, taskId?: string) => target.inspectReviewEntry(reviewInput, taskId, proof)
-        : Reflect.get(target, property, receiver) });
-      return previewReviewEntry(this.store,reviewAdapter,input);
+      const proof = await originReviewProof(this.engine.host, this.engine.withHost.bind(this.engine), originHost, input.submission.originAgentId);
+      return previewReviewEntry(this.store, withOriginReviewAdapter(adapter, (reviewInput, taskId) => adapter.inspectReviewEntry(reviewInput, taskId, proof)), input);
     });
   }
 
@@ -1507,15 +1345,8 @@ export class QueueRuntime {
       const originHost = originId ? await this.engine.identifyOriginHost(originId, payload.input?.submission.originIdentity) : undefined;
       if (!originHost || !originId) throw Error('Review-entry origin host is unknown or ambiguous');
       if (originHost === selectedHost) return reconcileReviewEntryOperation(this.store, adapter, input.operationId, input.inputHash);
-      const proof = await this.engine.withHost(originHost, async () => {
-        const origin = await this.engine.host.originAgent(originId);
-        if (!origin || origin.archived || !origin.workspaceId) throw Error('Review entry requires a live originating thread');
-        return { origin, state: await this.engine.host.observe(origin.id) };
-      });
-      const reviewAdapter = new Proxy(adapter, { get: (target, property, receiver) => property === 'inspectReviewEntry'
-        ? (reviewInput: ReviewEntryInput, taskId?: string) => target.inspectReviewEntry(reviewInput, taskId, proof)
-        : Reflect.get(target, property, receiver) });
-      return reconcileReviewEntryOperation(this.store, reviewAdapter, input.operationId, input.inputHash);
+      const proof = await originReviewProof(this.engine.host, this.engine.withHost.bind(this.engine), originHost, originId);
+      return reconcileReviewEntryOperation(this.store, withOriginReviewAdapter(adapter, (reviewInput, taskId) => adapter.inspectReviewEntry(reviewInput, taskId, proof)), input.operationId, input.inputHash);
     });
     if (reopened) this.engine.scheduleAcceptedOperation(operation.id);
     return operation;

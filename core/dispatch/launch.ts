@@ -1,5 +1,5 @@
 import type { Profile, Run, Task } from '../../shared/contracts';
-import { isDispositionActive, workerExclusionFor } from '../../shared/contracts';
+import { isDispositionActive, workerExclusionRefusal } from '../../shared/contracts';
 import { budgetPauseDetail, taskBudget } from '../../shared/task-budget';
 import { proofExecutor } from '../recovery/task-reasons';
 import { dispatchBlocked, DISPATCH_HELD_REASON } from './capacity';
@@ -65,11 +65,11 @@ export class DispatchLaunch {
     if (admissionWait) { this.context.waiting(t, admissionWait, 'capacity'); return; }
     if(role==='revision'){ if(await this.context.responsibleJointQuestion(t)) return; }
     if(role==='revision'){
-      const exclusion=workerExclusionFor(t,t.agentId,t.profile?.id);
+      // One refusal text for a durable worker exclusion: shared/task-view.ts owns
+      // it, the reservation reads the same rule inside its transaction.
+      const exclusion=workerExclusionRefusal(t,t.agentId,t.profile?.id);
       if(exclusion){
-        const identity=exclusion.agentId?`agent ${exclusion.agentId}`:`profile ${exclusion.profileId}`;
-        const reason=`Planner/operator exclusion prevents another turn for ${identity}: ${exclusion.reason}`;
-        if(!t.failoverReason)this.context.store.update(t.id,{failoverReason:reason},'excluded_worker_revision_refused',reason);
+        if(!t.failoverReason)this.context.store.update(t.id,{failoverReason:exclusion},'excluded_worker_revision_refused',exclusion);
         return;
       }
     }

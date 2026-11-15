@@ -1,7 +1,7 @@
 import { callerNativeId, foreignIdentityRefusal, parseAgentId } from '../../shared/agent-identity';
 import type { Profile, Task } from '../../shared/contracts';
 import type {
-  AgentId, AnsweredQuestion, Host, HostCapabilities, HostCatalog, HostCatalogOptions, HostLiveAgent, HostMessage,
+  AgentId, AnsweredQuestionRead, Host, HostCapabilities, HostCatalog, HostCatalogOptions, HostLiveAgent, HostMessage,
   HostObservation, HostTimelineEntry, HostTimelinePage, HostWorkspaceCatalog, NativeQuestion, OriginAgent, RequestId, HostPermissionDecision,
   Workspace, WorkspaceId,
 } from '../../shared/host';
@@ -269,7 +269,7 @@ export class HostFacade implements Pick<Host, HostFacadeMethod> {
     });
   }
 
-  answeredQuestions(id: AgentId): Promise<AnsweredQuestion[]> {
+  answeredQuestions(id: AgentId): Promise<AnsweredQuestionRead> {
     return this.#route(id, (adapter, nativeId) => {
       const read = adapter.answeredQuestions;
       if (!read) return refused('This host cannot read answered questions');

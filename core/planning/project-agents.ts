@@ -1,5 +1,6 @@
 import { parseAgentId } from "../../shared/agent-identity";
 import { hostKindOf } from "../../shared/host-kind";
+import { isAgentGoneRefusal } from "../host/errors";
 import type { Project, ProjectAgent, ProjectAgentState, ProjectAgentView } from "../../shared/contracts";
 import type { Host } from "../../shared/host";
 import type { Adapter } from "../host/adapter";
@@ -63,7 +64,7 @@ export async function observeProjectAgent(context: ProjectAgentsContext, agent: 
     return { state: observation.active ? "running" : "idle", lastSeen };
   } catch (error) {
     // A proven absence is the one positive answer; every other read failure is unknown.
-    if (error instanceof Error && error.message === "Agent was not found") return { state: "gone", lastSeen: null };
+    if (isAgentGoneRefusal(error)) return { state: "gone", lastSeen: null };
     return { state: "unknown", lastSeen: null };
   }
 }

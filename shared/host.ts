@@ -131,7 +131,7 @@ export interface Host {
   interruptAndContinue(id: AgentId, messageId: RequestId, text: string): Promise<void>;
 
   pendingQuestions(id: AgentId): Promise<NativeQuestion[]>;
-  answeredQuestions(id: AgentId): Promise<AnsweredQuestion[]>;
+  answeredQuestions(id: AgentId): Promise<AnsweredQuestionRead>;
   answerNativeQuestion(agent: AgentId, workspace: WorkspaceId, request: RequestId, answers: Record<string, string>): Promise<void>;
   /** Optional native permission response; an absent method grants no permission capability. */
   answerNativePermission?(agent: AgentId, workspace: WorkspaceId, request: RequestId, decision: HostPermissionDecision, intentId: RequestId): Promise<void>;
@@ -454,6 +454,15 @@ export interface AnsweredQuestion {
   question: string;
   answers: Record<string, string>;
 }
+
+/**
+ * One answered-question read. A host that cannot read the transcript says so:
+ * an unanswered read is unknown, never the empty list a caller would take for
+ * "the operator answered nothing".
+ */
+export type AnsweredQuestionRead =
+  | { ok: true; answered: AnsweredQuestion[] }
+  | { ok: false; reason: string };
 
 /**
  * A Nucleus-owned decision request; no Paseo permission object crosses it.

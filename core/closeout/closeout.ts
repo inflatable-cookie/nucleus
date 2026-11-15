@@ -69,7 +69,8 @@ export class Closeout {
       const holdReason = hookHoldReason(hookState);
       // A moved integration base is operational staleness, not a finding: refresh the
       // base and retry, which is exactly what an operator retry does. The shared rule
-      // owns the eligible refusal class and the per-merge bound.
+      // owns the eligible refusal class and the per-merge bound, and the transition it
+      // writes is the one named refresh reason.
       if (closeoutBaseRenewalAllowed(this.store.events(t.id), hookState.records.at(-1))) {
         this.resolution.update(this.store.task(t.id), { currentRunId: null, attention: false }, CLOSEOUT_BASE_RENEWAL_TRANSITION, CLOSEOUT_BASE_RENEWED_KIND);
         return;

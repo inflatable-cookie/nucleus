@@ -1,3 +1,15 @@
+/**
+ * The host's own words for a thread that no longer exists. It is a host fact,
+ * not a Nucleus decision, so it lives here beside the other host failure kinds
+ * and every reader asks `isAgentGoneRefusal` instead of comparing the text.
+ */
+export const AGENT_NOT_FOUND = 'Agent was not found';
+
+/** True when a host call failed because that thread is gone. */
+export function isAgentGoneRefusal(error: unknown): boolean {
+  return error instanceof Error && error.message === AGENT_NOT_FOUND;
+}
+
 /** The adapter failed before issuing an archive request. */
 export class ArchiveNotDeliveredError extends Error {
   constructor(cause: unknown) {

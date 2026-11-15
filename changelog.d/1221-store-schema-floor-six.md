@@ -1,0 +1,1 @@
+Control writes now refuse unknown keys instead of silently dropping them. The store's operation, project and repository code is split by owner with no change in what it stores or returns, and an accepted submission whose payload cannot be read stays in the operation journal rather than appearing as a board card.

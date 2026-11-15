@@ -143,6 +143,12 @@ const VALIDATION_SCAN_PASS_LIMIT = 256;
 export const EXTERNAL_MERGE_CHECK_RECOVERED_REASON = 'External merge check recovered; resuming task';
 export const MERGE_HELD_REASON = 'Merge held by operator; release to continue';
 /**
+ * The syncing wait that refreshes the integration base before a closeout retry.
+ * Four closeout paths record it and the participant lease reads it to excuse a
+ * held stale-base hook from the merge fence, so it is one named reason.
+ */
+export const CLOSEOUT_BASE_REFRESH_REASON = 'Refreshing main before retrying closeout';
+/**
  * The held wait a merge fence's own kind names: a merge hold keeps the merge
  * wording, while an owner stop reads as the dispatch hold it placed.
  */
