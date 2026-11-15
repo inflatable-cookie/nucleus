@@ -10,6 +10,7 @@ import { defaultBudgetFallback } from "./host-run-capacity";
 import { redactHostRunData } from "./host-run-redact";
 import type { HostRunHandler, HostRunSubmission } from "./host-run-scheduler-types";
 import type { Store } from "../store/store";
+import { refuseHostRun } from "./host-run-refusal";
 
 type HostRunCapacitySample = ReturnType<typeof hostRunCapacitySampleSchema.parse>;
 
@@ -77,7 +78,7 @@ export class HostRunAdmission {
 
   submit(input: HostRunSubmission, handler: HostRunHandler): HostRunInternalRecord {
     const authority = this.context.authority();
-    if (input.epoch !== authority.epoch) throw new Error(`stale_epoch: expected ${authority.epoch}, received ${input.epoch}`);
+    if (input.epoch !== authority.epoch) refuseHostRun("stale_epoch", `expected ${authority.epoch}, received ${input.epoch}`);
     const existing = this.context.store.hostRun(input.id);
     if (existing) {
       if (existing.epoch !== input.epoch || existing.caller !== input.caller || existing.selector !== input.selector || repoKey(existing.repository) !== repoKey(input.repository)
@@ -159,7 +160,7 @@ export class HostRunAdmission {
     const existing = this.context.store.hostRun(input.id);
     if (existing) return existing;
     const authority = this.context.authority();
-    if (input.epoch !== authority.epoch) throw new Error(`stale_epoch: expected ${authority.epoch}, received ${input.epoch}`);
+    if (input.epoch !== authority.epoch) refuseHostRun("stale_epoch", `expected ${authority.epoch}, received ${input.epoch}`);
     const capacity = this.context.sampleCapacity(this.context.store.hostRunCapacityCandidates());
     const fallback = input.budgetFallback ?? defaultBudgetFallback(capacity);
     const submittedAt = input.submittedAt ?? input.launchedAt;

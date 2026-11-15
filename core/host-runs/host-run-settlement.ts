@@ -12,6 +12,8 @@ import type { HostRunHandler } from "./host-run-scheduler-types";
 import { startIdentityMatches } from "../machine/start-identity";
 import type { Store } from "../store/store";
 import { now } from "../store/store";
+import { readHostRunJournalFactRow } from "./host-run-facts";
+import { refuseHostRun } from "./host-run-refusal";
 
 type HostRunCapacitySample = ReturnType<typeof hostRunCapacitySampleSchema.parse>;
 
@@ -136,7 +138,7 @@ export class HostRunSettlementOwner {
       this.context.assertCurrentEpoch(epoch);
       run = this.context.store.hostRun(id);
       if (!run) throw new Error(`Host run ${id} does not exist`);
-      if (run.epoch !== epoch) throw new Error(`stale_epoch: run epoch ${run.epoch} does not match ${epoch}`);
+      if (run.epoch !== epoch) refuseHostRun("stale_epoch", `run epoch ${run.epoch} does not match ${epoch}`);
       this.context.store.appendHostRunJournal(id, "request", { method: "host.run.cancel", input: { runId: id, reason } });
     });
     run = this.context.store.hostRun(id);
@@ -326,7 +328,7 @@ export class HostRunSettlementOwner {
     const authority = this.context.authority();
     const run = this.context.store.hostRun(id);
     if (!run) throw new Error(`Host run ${id} does not exist`);
-    if (run.epoch !== authority.epoch) throw new Error(`stale_epoch: run epoch ${run.epoch} is not current ${authority.epoch}`);
+    if (run.epoch !== authority.epoch) refuseHostRun("stale_epoch", `run epoch ${run.epoch} is not current ${authority.epoch}`);
     if (!reason.trim()) throw new Error("Capacity release requires an operator reason");
     if (run.state !== "settled") throw new Error("Capacity can be released only after the host run settles");
     if (run.capacityReleasedAt) return run;
@@ -369,10 +371,10 @@ export class HostRunSettlementOwner {
   /** Part 3's durable report seam; container capacity is keyed by run/runtime/container. */
   reportContainerFact(fact: { factId: string; observedAt: string; runId: string; epoch: number; runtime: string; containerId: string; event: "started" | "removed"; removed?: boolean | "unknown" }): HostRunInternalRecord {
     const authority = this.context.authority();
-    if (fact.epoch !== authority.epoch) throw new Error(`stale_epoch: expected ${authority.epoch}, received ${fact.epoch}`);
+    if (fact.epoch !== authority.epoch) refuseHostRun("stale_epoch", `expected ${authority.epoch}, received ${fact.epoch}`);
     const run = this.context.store.hostRun(fact.runId);
-    if (!run) throw new Error(`unknown_run: ${fact.runId}`);
-    if (run.epoch !== fact.epoch) throw new Error(`stale_epoch: run epoch ${run.epoch} does not match ${fact.epoch}`);
+    if (!run) refuseHostRun("unknown_run", `${fact.runId}`);
+    if (run.epoch !== fact.epoch) refuseHostRun("stale_epoch", `run epoch ${run.epoch} does not match ${fact.epoch}`);
     if (!run.launchedAt) throw new Error("Container reports require a launched host run");
     if (!fact.factId || !fact.runtime || !fact.containerId || !Number.isFinite(Date.parse(fact.observedAt))) throw new Error("Container reports require fact ID, observed time, runtime and container ID");
     if (fact.event === "removed" && fact.removed === undefined) throw new Error("Container removed reports require removed");
@@ -380,11 +382,9 @@ export class HostRunSettlementOwner {
     let duplicateFact = false;
     this.context.store.transaction(() => {
       this.context.assertCurrentEpoch(fact.epoch);
-      const duplicate = this.context.store.db.prepare("SELECT run_id,data FROM host_run_journal WHERE event='container_report' AND json_extract(data,'$.factId')=? ORDER BY id LIMIT 1")
-        .get(fact.factId) as { run_id: string; data: string } | undefined;
+      const duplicate = readHostRunJournalFactRow(this.context.store, fact.factId);
       if (duplicate) {
-        const stored = JSON.parse(duplicate.data) as unknown;
-        if (stableJson(stored) !== stableJson(fact)) throw new Error(`conflict: host-run fact ${fact.factId} changed body`);
+        if (stableJson(duplicate.body) !== stableJson(fact)) refuseHostRun("conflict", `host-run fact ${fact.factId} changed body`);
         duplicateFact = true;
         updated = this.context.store.hostRun(run.id)!;
         return;

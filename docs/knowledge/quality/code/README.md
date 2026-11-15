@@ -170,3 +170,30 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
   row, and its test proved only that dead path. The rows for `terminal-workspace-retirement.ts` and
   `unused-workspace.ts` were refreshed because the archive call and the failure classification they use
   changed owner; both keep 7.
+- nucleus#1225 (floor 6, 2026-11-15): `service/callbacks/host-run-endpoint.ts` (10) and
+  `service/executor/host-run-supervisor.ts` (10) were re-rated at this PR's head. The endpoint now delegates
+  each durable mechanism to its own owner — `core/host-runs/host-run-submissions.ts` (10) for the
+  submission record, `core/host-runs/host-run-facts.ts` (9) for the `report` fact log and its journal
+  identity, `core/host-runs/host-run-retained-output.ts` (10) for the capped retained streams — and answers
+  a refusal with the code a typed `core/host-runs/host-run-refusal.ts` (10) carries instead of classifying
+  message prefixes. The supervisor runs its command through `core/machine/process-exec.ts` (8), which now
+  also owns contract 010's escaped-descendant settlement for host runs: the step stays live while it waits
+  (pipes open, cancel still polled, timeout still applying), inventories escapees on every settlement tick
+  while the group survives, and signals a descendant only after proving the pid still carries the recorded
+  birth identity. The supervisor keeps only the run's durable wiring, which is why it is 10.
+  `core/machine/escaped-descendants.ts` (10) owns that rule, including the two-condition absence proof —
+  a readable identity listing with no escaped process *and* every recorded identity proven dead by its own
+  pid-and-identity read, so a known descendant that execs a clean environment or whose identity cannot be
+  read never counts as absent, an orphan a recorded escapee would hide is still found by the global listing,
+  and the first clean instant survives faster polling — and it is covered directly by
+  `test/escaped-descendants.test.ts` (known-live-omitted, dead or reused pid, unobservable identity, and a
+  stale recorded pid that must not be signalled). `core/host-runs/host-run-files.ts` (8) grew
+  `readCheckedHostRunFileRead`, which keeps a missing, a refused and a present file apart — only a proven
+  missing component is absent — and the refusal code is now a field on the owner that refuses in
+  `host-run-scheduler` (7), `host-run-admission` (7), `host-run-accounting` (8) and `host-run-settlement` (8);
+  those four rows keep their remaining named defects. `core/host-runs/host-run-wire.ts` (9) also owns the
+  cancel request's read and write, `core/host-runs/host-run-attach.ts` (9) reads the typed submission for its
+  disconnect window, and `service/callbacks/host-run-serving.ts` (9) lost the duplicated answer evidence, a
+  dead pre-front branch and a stacked docblock. `process-exec`'s 8 is honest: its default path still records
+  an unreadable identity listing as an empty inventory and it still reads the leader's identity
+  synchronously in the spawn handler.

@@ -17,9 +17,9 @@ import {
   HOST_RUN_CLIENT_LEFT_REASON,
   HOST_RUN_OUTPUT_CHUNK_BYTES,
   HostRunClientErrorCode,
-  StoredSubmission,
   neverLaunched,
 } from "./host-run-endpoint-types";
+import type { StoredSubmissionRead } from "./host-run-submissions";
 import {
   hostRunSupervisorPaths,
   openVerifiedOwnedFile,
@@ -42,7 +42,8 @@ interface HostRunAttachContext {
   stateDir: string;
   readOutputRetention: (runId: string) => HostRunOutputRetention | null;
   readSupervisorState: (runId: string) => HostRunSupervisorState | null;
-  readSubmission: (runId: string) => StoredSubmission | null;
+  /** The run's durable submission, keeping absent, present and unreadable apart. */
+  readSubmission: (runId: string) => StoredSubmissionRead;
   reconnectWindowMs: number;
   unlaunchedGraceMs: number;
   nowMs: () => number;
@@ -167,12 +168,15 @@ export class HostRunAttach {
   /**
    * What a dropped last attachment means for this run: `cancel` for a
    * `cancelOnDisconnect` submission, `unlaunched` for any other run that has not
-   * launched, and nothing for a launched run, which keeps going detached.
+   * launched, and nothing for a launched run, which keeps going detached. A
+   * submission that cannot be read is unknown, never "no client": the short
+   * cancel window applies instead of leaving work nobody can identify running.
    */
   disconnectModeFor(run: HostRunInternalRecord): "cancel" | "unlaunched" | null {
-    const stored = this.context.readSubmission(run.id);
-    if (!stored) return null; // Only runs submitted through this endpoint have a client to lose.
-    if (stored.cancelOnDisconnect) return "cancel";
+    const read = this.context.readSubmission(run.id);
+    if (read.state === "absent") return null; // Only runs submitted through this endpoint have a client to lose.
+    if (read.state === "unreadable") return "cancel";
+    if (read.stored.cancelOnDisconnect) return "cancel";
     return neverLaunched(run) ? "unlaunched" : null;
   }
 

@@ -167,6 +167,17 @@ no escaped descendant it knows about is alive. Escapes the supervisor sees are
 recorded as facts, so a leaked server stays visible instead of silently holding
 capacity.
 
+A durable record that cannot be read is unknown, never absent. A
+`submission.json` whose bytes do not parse is refused (`conflict`) and left in
+place, so a resubmit can never replace the idempotency key it cannot read; a
+`cancel.json` the supervisor cannot read stops the run rather than reading as no
+cancel, and the supervisor records why in a private `supervisor.faults.json`
+beside the run (never in the frozen result and state records). Retained output is
+capped per stream (Nucleus holds 8 MiB): past the cap the supervisor stops
+appending and writes one `queue: output truncated: observed=… retained=…
+omitted=… cap=…` line into the stream it truncated, so a saved stream is never
+mistaken for the whole of the command's output. (nucleus#1225)
+
 An empty group proves only that host processes are gone. Containers started
 through a container daemon (nerdctl, colima, docker) run outside the group and
 can outlive it; on 2026-09-30 task d8b9b168's containers did. The runtime that
