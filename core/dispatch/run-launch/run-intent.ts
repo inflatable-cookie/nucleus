@@ -14,8 +14,9 @@ import type { ReservationSource } from './reservation-source';
  * intent, so a reader sees which fact came from the task and which from this
  * launch.
  */
-export function runIntent(input: { task: Task; role: Run['role']; machine: LaunchMachinePorts; resolution: LaunchReserveContext; source: ReservationSource }): Run {
-  const { task: t, role, machine, resolution } = input;
+export function runIntent(input: { task: Task; role: Run['role']; resolution: LaunchReserveContext; source: ReservationSource }): Run {
+  const { task: t, role, resolution } = input;
+  const machine: LaunchMachinePorts = resolution.adapter;
   const s = input.source;
   const brief = currentBrief(t);
   const proofExecution = proofExecutor(role) && s.proofTree ? {

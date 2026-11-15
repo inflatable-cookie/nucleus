@@ -32,8 +32,10 @@ export interface ReservationSourceInput {
  * admission re-checks, and the review round it continues.
  */
 export class RunReservationSource {
-  constructor(readonly resolution: LaunchReserveContext, readonly machine: LaunchMachinePorts) {}
+  constructor(readonly resolution: LaunchReserveContext) {}
   get store() { return this.resolution.store; }
+  /** The machine work this reservation needs, read from the live adapter at call time. */
+  get machine(): LaunchMachinePorts { return this.resolution.adapter; }
 
   async read(input: { task: Task; role: Run['role']; options: ReservationOptions; source: ReservationSourceInput; selection: ReservationSelection }) {
     const { task: t, role, options, source } = input;

@@ -13,22 +13,20 @@ import { runIntent } from './run-intent';
  * Reserve the run a launch will deliver: read the source facts, build the run
  * intent, prove the review-entry handover, then admit the intent, its
  * credential, the task update and the slot charge in one transaction before
- * handing off to delivery.
+ * handing off to delivery. The owners are built per reservation from the live
+ * adapter, so a replaced adapter and a shared instance both read this launch's
+ * machine.
  */
 export class RunLaunchReserve {
-  readonly source: RunReservationSource;
-  readonly admission: RunReservationAdmission;
-  constructor(readonly resolution: LaunchReserveContext) {
-    this.source = new RunReservationSource(resolution, this.machine);
-    this.admission = new RunReservationAdmission(resolution);
-  }
+  constructor(readonly resolution: LaunchReserveContext) {}
   get store() { return this.resolution.store; }
   get adapter() { return this.resolution.adapter; }
   get machine(): LaunchMachinePorts { return this.adapter; }
   async reserveLaunchRun(t: Task, role: Run['role'], options: { profile?: Profile; instruction?: string; proof?: ProofActivation },
     source: ReservationSourceInput, selection: ReservationSelection): Promise<void> {
-    const facts = await this.source.read({ task: t, role, options, source, selection });
-    const run = runIntent({ task: t, role, machine: this.machine, resolution: this.resolution, source: facts });
+    const reservationSource = new RunReservationSource(this.resolution);
+    const facts = await reservationSource.read({ task: t, role, options, source, selection });
+    const run = runIntent({ task: t, role, resolution: this.resolution, source: facts });
     // Spec 017 handover: every review-entry reviewer send runs in the task
     // workspace. The task lease knows only Queue runs and task agents, so writer
     // yield is re-proved here, then the exact branch/head/clean-tree proof
@@ -47,7 +45,7 @@ export class RunLaunchReserve {
     }
     // The checks above awaited the adapter. Two wakes can both pass them, so the
     // admission re-checks inside the transaction that records the run.
-    const settlement = this.admission.admit({ task: t, role, run, options, source: facts, selection, handoverReview: facts.handoverReview });
+    const settlement = new RunReservationAdmission(this.resolution).admit({ task: t, role, run, options, source: facts, selection, handoverReview: facts.handoverReview });
     if (!settlement.reserved) return;
     t = settlement.task;
     this.resolution.launchingRuns.add(run.id);
