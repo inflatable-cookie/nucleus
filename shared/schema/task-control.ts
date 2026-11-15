@@ -23,6 +23,11 @@ export const owningDocumentPathsSchema = z.array(repoRelativePathSchema.refine(p
 const refuseLegacyRoutingCapability = (raw: unknown): unknown => {
   if (raw && typeof raw === "object" && !Array.isArray(raw) && "capability" in (raw as Record<string, unknown>))
     throw new Error('Routing task type is "scope"; the legacy "capability" field is refused on routing writes');
+  // Retired Round 4 field: older clients still send it, so it is dropped here rather than refused.
+  if (raw && typeof raw === "object" && !Array.isArray(raw) && "profile" in (raw as Record<string, unknown>)) {
+    const { profile: _retired, ...rest } = raw as Record<string, unknown>;
+    return rest;
+  }
   return raw;
 };
 
