@@ -35,21 +35,50 @@ test("an unreadable listing is never proof of absence", t => {
     "an unknown host state cannot prove there was never a descendant");
 });
 
-test("a scan that found an escaped descendant restarts the proof and records it", t => {
+test("a known live descendant the identity listing no longer sees does not prove absence", t => {
   overrideIdentityListing({ state: "absent" });
   t.after(() => overrideIdentityListing(null));
   const custody = new EscapedDescendantCustody("fixture-identity");
-  assert.equal(custody.absenceProven(null, 0), false);
   overrideIdentityListing({
     state: "found",
     processes: [{ pid: process.pid, processGroupId: 9_999_999, startIdentity: hostRunProcessStartIdentity(process.pid) }],
   });
-  assert.equal(custody.absenceProven(null, 200), false, "a live escaped descendant is not absence");
+  assert.equal(custody.absenceProven(null, 0), false);
   assert.deepEqual(custody.recorded().map(entry => entry.pid), [process.pid], "the escaped descendant is recorded");
+  // An escapee that execs a clean environment keeps its pid and birth identity but
+  // loses the inherited marker, so the listing alone would call it absent.
   overrideIdentityListing({ state: "absent" });
-  assert.equal(custody.absenceProven(null, 400), false, "the clean run restarts from this scan");
-  assert.equal(custody.absenceProven(null, 500), false);
-  assert.equal(custody.absenceProven(null, 560), true);
+  assert.equal(custody.absenceProven(null, 200), false, "the listing no longer sees it");
+  assert.equal(custody.absenceProven(null, 5_000), false, "but it is recorded and still alive");
+});
+
+test("a recorded descendant that is dead or whose pid was reused does not hold the run", t => {
+  overrideIdentityListing({ state: "absent" });
+  t.after(() => overrideIdentityListing(null));
+  const custody = new EscapedDescendantCustody("fixture-identity");
+  // A reused pid: the recorded birth identity is not the one the pid carries now.
+  overrideIdentityListing({
+    state: "found",
+    processes: [{ pid: process.pid, processGroupId: 9_999_999, startIdentity: `${process.pid}@2020-01-01T00:00:00Z` }],
+  });
+  assert.equal(custody.absenceProven(null, 0), false);
+  overrideIdentityListing({ state: "absent" });
+  assert.equal(custody.absenceProven(null, 200), false, "one clean scan is never proof");
+  assert.equal(custody.absenceProven(null, 400), true, "a proven dead recorded identity does not hold the run");
+});
+
+test("a recorded identity that cannot be observed never proves absence", t => {
+  overrideIdentityListing({ state: "absent" });
+  t.after(() => overrideIdentityListing(null));
+  const custody = new EscapedDescendantCustody("fixture-identity");
+  overrideIdentityListing({
+    state: "found",
+    processes: [{ pid: process.pid, processGroupId: 9_999_999, startIdentity: `${process.pid}@unknown` }],
+  });
+  assert.equal(custody.absenceProven(null, 0), false);
+  overrideIdentityListing({ state: "absent" });
+  assert.equal(custody.absenceProven(null, 200), false);
+  assert.equal(custody.absenceProven(null, 5_000), false, "an unobservable identity is never proof of death");
 });
 
 test("a recorded pid whose identity changed is never signalled", async t => {

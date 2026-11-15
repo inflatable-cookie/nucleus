@@ -2353,13 +2353,16 @@ weighted(3)("an orphan escaped after the leader exits is recorded and settled ov
   const stateDir = mkdtempSync(join(tmpdir(), "hre-"));
   const orphanPidPath = join(stateDir, "orphan.pid");
   t.after(() => rmSync(stateDir, { recursive: true, force: true }));
-  // A recorded escapee exists from early in the run. A same-group survivor then
-  // detaches its own child and exits at once, so the orphan is reparented before
-  // any scan can reach it through its parent: only the full identity listing at
-  // group-empty can prove it, and a recorded escapee must not skip that listing.
+  // A recorded escapee exists from early in the run. A same-group survivor waits
+  // for the leader to exit, then detaches its own child and exits at once, so the
+  // orphan is reparented before any scan can reach it through its parent: only the
+  // full identity listing at group-empty can prove it, and a recorded escapee must
+  // not hide it.
   const detacher = `const {spawn}=require('child_process');const {writeFileSync}=require('fs');
-const child=spawn(process.execPath,['-e','setTimeout(()=>{},1500)'],{detached:true,stdio:'ignore'});
-child.unref();writeFileSync(process.env.ORPHAN_PID,String(child.pid));process.exit(0);`;
+setTimeout(()=>{
+  const child=spawn(process.execPath,['-e','setTimeout(()=>{},1500)'],{detached:true,stdio:'ignore'});
+  child.unref();writeFileSync(process.env.ORPHAN_PID,String(child.pid));process.exit(0);
+}, 700);`;
   const script = `const {spawn}=require('child_process');
 spawn(process.execPath,['-e','setTimeout(()=>{},3000)'],{detached:true,stdio:'ignore'}).unref();
 spawn(process.execPath,['-e',${JSON.stringify(detacher)}],{stdio:'ignore',env:{...process.env,ORPHAN_PID:process.env.ORPHAN_PID}});
@@ -2370,10 +2373,10 @@ setTimeout(()=>process.exit(0),400);`;
   writeAtomicOwnedFile(hostRunSupervisorPaths(plan.stateDir, plan.runId).planPath, JSON.stringify(plan), 0o600);
   await runHostRunSupervisorMain([plan.stateDir, plan.runId]);
   const orphanPid = Number(readFileSync(orphanPidPath, "utf8"));
-  assert.ok(Number.isSafeInteger(orphanPid) && orphanPid > 0, "the detacher recorded its child");
+  assert.ok(Number.isSafeInteger(orphanPid) && orphanPid > 0, "the survivor recorded its detached child");
   const result = hostRunResultSchema.parse(JSON.parse(readFileSync(hostRunSupervisorPaths(plan.stateDir, plan.runId).resultPath, "utf8")));
   const recorded = result.escapedDescendants.map(entry => entry.pid);
   assert.ok(recorded.includes(orphanPid), `the orphan is recorded (recorded ${recorded.join(",")})`);
   assert.ok(recorded.length >= 2, "the earlier escapee and the orphan are both recorded");
-  assert.ok(result.wallMs >= 1_300, `the result waited for both descendants (wallMs ${result.wallMs})`);
+  assert.ok(result.wallMs >= 2_000, `the result waited for both descendants (wallMs ${result.wallMs})`);
 });

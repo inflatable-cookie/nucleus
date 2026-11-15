@@ -62,22 +62,35 @@ export class EscapedDescendantCustody {
   }
 
   /**
-   * Proof of absence: the full identity listing, and only that. Two listings
-   * `ESCAPED_DESCENDANT_PROOF_MS` apart that both show no escaped descendant prove
-   * the run's descendants are gone; the first clean instant is kept across later
-   * clean listings, so a caller polling faster than the interval still proves it
-   * on the first listing that lands past it. A listing that could not be read is
-   * never proof, and neither is a single clean one: a descendant detaching at the
-   * group's last instant must still be seen. The caller proves this only once the
-   * run's own process group is empty, so the listing's group members cannot make
-   * a live run look escaped.
+   * Proof of absence. Contract 010 asks for two things at once: the run's process
+   * group is empty (the caller checks that) *and* no escaped descendant it knows
+   * about is alive. The identity listing alone cannot establish the second: a
+   * known descendant that execs with a clean environment keeps its pid and OS
+   * birth identity but loses the inherited marker, so a listing would report it
+   * absent while it still runs. Both are therefore required, and a recorded
+   * identity that cannot be observed is not proof of death:
+   *
+   * - the full identity listing must be readable and show no escaped process;
+   * - every recorded identity must be proven dead by its own pid-and-identity
+   *   read (an unavailable observation leaves it alive as far as this rule knows).
+   *
+   * Two fully clean scans `ESCAPED_DESCENDANT_PROOF_MS` apart prove it, so a
+   * descendant detaching at the group's last instant is still seen; the first
+   * clean instant is kept across later clean scans, so a caller polling faster
+   * than the interval proves absence on the first scan that lands past it.
    */
   absenceProven(processGroupId: number | null, nowMs = Date.now()): boolean {
     const found = processesForStartIdentity(this.identity);
     if (found.state === "unknown") { this.firstClearScanAt = null; return false; }
     const escaped = found.state === "found" ? escapedDescendantsOf(found, processGroupId) : [];
     this.record(escaped);
-    if (escaped.length) { this.firstClearScanAt = null; return false; }
+    // A recorded descendant that is alive, that was recorded with an identity the
+    // host could not read, or whose identity cannot be observed now, keeps the run
+    // reserved: unknown is not absence.
+    const knowsLive = [...this.known.values()].some(entry =>
+      entry.startIdentity.endsWith("@unknown")
+      || processStartIdentityLiveness(entry.pid, entry.startIdentity) !== "dead");
+    if (escaped.length || knowsLive) { this.firstClearScanAt = null; return false; }
     this.firstClearScanAt ??= nowMs;
     return nowMs - this.firstClearScanAt >= ESCAPED_DESCENDANT_PROOF_MS;
   }
