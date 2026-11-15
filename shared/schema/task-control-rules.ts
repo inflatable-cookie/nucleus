@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { parseHoldUntil } from "./task-holds";
-import type { TaskControlFields } from "./task-control";
+import type { TaskControlFields } from "./task-control-fields";
 
 /** Task controls whose engine paths may carry an operator ruling in `note`. */
 export const TASK_CONTROL_RELAYED_NOTE_ACTIONS = [
