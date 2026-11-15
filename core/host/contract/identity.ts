@@ -30,19 +30,7 @@ export interface HostAdapterIdentity {
    * host with its own profile system answers with it; a host without one has no
    * method, so nothing is imported from it.
    */
-  /**
-   * The host's own profile list, read once into Nucleus's store (Spec 052). A
-   * host with its own profile system answers with it; a host without one has no
-   * method, so nothing is imported from it.
-   */
   hostProfiles?(): Promise<NucleusProfile[]>;
   /** One-minute load average and logical CPU count; creation defers while load exceeds CPUs. */
   hostLoad?(): { load: number; cpus: number };
-  /**
-   * Host-wide scan for worktree validation (QA or tests still running in a task
-   * worktree). Host observations come through the adapter, as `hostLoad` does:
-   * the real adapter reads the live process table, and an adapter without this
-   * method observes none, so synthetic engines never depend on how loaded the
-   * test host is (milestone 6257017a).
-   */
 }

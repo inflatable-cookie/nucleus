@@ -16,11 +16,6 @@ export interface HostDelivery {
    * not wait for idle, and unlike `interruptAndContinue` it does not replace
    * the live turn.
    */
-  /**
-   * Queue a message behind the agent's current step. Unlike `notify` this does
-   * not wait for idle, and unlike `interruptAndContinue` it does not replace
-   * the live turn.
-   */
   enqueueMessage?(agentId: string, messageId: string, text: string, sourceAgentId?: string): Promise<void>;
   /**
    * A message to a participant (tell, relayed answer): steers into the agent's
@@ -29,13 +24,5 @@ export interface HostDelivery {
    * not-sent steer is retried once as a queued send; an unknown outcome throws
    * and is never resent.
    */
-  /**
-   * A message to a participant (tell, relayed answer): steers into the agent's
-   * live turn when one is active, otherwise delivers as `notify` does. A host
-   * without steering omits it and callers fall back to `notify`. A proven
-   * not-sent steer is retried once as a queued send; an unknown outcome throws
-   * and is never resent.
-   */
   steerOrNotify?(agentId: string, messageId: string, text: string): Promise<void>;
-  /** Stop the assigned agent's current turn without delivering a follow-up message. */
 }

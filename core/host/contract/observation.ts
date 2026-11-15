@@ -27,22 +27,13 @@ export interface HostObservation {
    * identity the map does not answer needs `observe`: a missing, partial or
    * unreadable inventory never reads as inactivity.
    */
-  /**
-   * Audit A6: one complete labelled inventory of Queue-created threads, answering
-   * the named identities wherever a list entry carries every field `observe`
-   * reads. `null` means the list could not be walked to its positive end, and an
-   * identity the map does not answer needs `observe`: a missing, partial or
-   * unreadable inventory never reads as inactivity.
-   */
   observationInventory?(agentIds: readonly string[]): Promise<ReadonlyMap<string, AgentObservation> | null>;
   /** Spec 042: live, unarchived threads for the owner picker and seed resolution; a bounded page walk. Labels classify planner vs task threads. */
   listLiveAgents?(): Promise<Array<{ id: string; title: string; workspaceId: string | null; labels?: Record<string, string> }>>;
-  /** Interrupt the active turn and deliver one continuation; used by disposition drain. */
   /** One newest page of the agent's timeline, or null when the read fails; a failed read is never evidence. */
   agentTimeline?(agentId: string, limit?: number): Promise<TimelineEntry[] | null>;
   /** One newest timeline page with its completeness fact, or null when the read fails. */
   agentTimelinePage?(agentId: string, limit?: number): Promise<TimelinePage | null>;
-  /** Complete host-process proof for a finished-turn shell tool. Null means no run process or workspace process remains. */
   /**
    * Host-wide scan for worktree validation (QA or tests still running in a task
    * worktree). Host observations come through the adapter, as `hostLoad` does:
@@ -55,10 +46,4 @@ export interface HostObservation {
   hostProcessListing?(): Promise<HostProcessFact[] | null>;
   /** Complete host-process proof for a finished-turn shell tool. Null means no run process or workspace process remains. */
   noLiveWorkspaceProcesses?(workspaceId: string, runIds: readonly string[]): Promise<string | null>;
-  /**
-   * Spec 058 (task 542): recently answered native questions on one agent, oldest
-   * first. The existing permission-resolution surface owns the read: a failed
-   * read is empty, never evidence, and a lost observation is recorded as
-   * unknown by the caller and never resent.
-   */
 }

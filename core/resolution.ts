@@ -874,7 +874,8 @@ export class Resolution {
    * once per answered permission: the answered event is the fence, and a lost
    * observation is recorded as unknown and never resent. Observation uses the
    * existing permission-resolution surface (`answeredQuestions`, read from the
-   * agent timeline); a failed read is empty, never evidence.
+   * agent timeline); a read that fails or is refused is recorded as an unknown
+   * observation, never as an operator who answered nothing.
    */
   delegateNativeQuestions(): Promise<void> { return this.nativeQuestions.delegateNativeQuestions(); }
   answerNativeQuestions(taskId: string, agentId: string, workspaceId: string, id: string,

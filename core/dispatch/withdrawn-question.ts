@@ -29,16 +29,6 @@ export class WithdrawnQuestion {
    * the next pass launches once the host clears it. Tool and bash permissions
    * unrelated to a withdrawn question are never touched.
    */
-/**
-   * Resolve a stale pending Nucleus question found at dispatch (papercut ee9fc161).
-   * When a native question is withdrawn (extension, answer, supersession),
-   * Nucleus resolves the host's pending permission or question on that thread
-   * as a durable effect, and dispatch never waits on a question Nucleus has
-   * withdrawn. Returns true when a withdrawn request was found pending and a
-   * dismiss or cancel was sent; the caller records a short resolving wait and
-   * the next pass launches once the host clears it. Tool and bash permissions
-   * unrelated to a withdrawn question are never touched.
-   */
   async resolve(t: Task, hint?: { agentId: string; state: Awaited<ReturnType<Adapter['observe']>> }): Promise<boolean> {
     const events = this.store.eventsAll(t.id);
     const withdrawn = new Set<string>();

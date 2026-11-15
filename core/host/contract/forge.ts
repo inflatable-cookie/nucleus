@@ -10,10 +10,5 @@ export interface HostForgeReads {
   findOpenBranchPr?(task: Task): Promise<{ number: number; url: string; head: string }[]>;
   /** Include drafts and PRs targeting any base; report-only completion refuses all open PRs for this branch. */
   findAnyOpenBranchPr?(task: Task): Promise<{ number: number; url: string }[]>;
-  /**
-   * Spec 058: ask a decision through the task's own native Paseo question. The
-   * caller owns the durable send intent; an interrupted observation resolves as
-   * unknown and is never permission to resend.
-   */
   verifyCancelledWorkspacePr?(task: Task): Promise<void>;
 }

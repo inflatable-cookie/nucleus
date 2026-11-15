@@ -6,8 +6,8 @@ export interface HostNativeQuestions {
   /**
    * Spec 058 (task 542): recently answered native questions on one agent, oldest
    * first. The existing permission-resolution surface owns the read. A read
-   * that fails is an explicit `{ok: false}`, never an empty list: the caller
-   * records it as unknown and never resends.
+   * that fails is an explicit `{ok: false}` rather than an empty list, so the
+   * caller records a lost observation as unknown and never resends.
    */
   answeredQuestions?(agentId: string): Promise<AnsweredQuestionRead>;
   pendingQuestions?(agentId: string): Promise<Array<{ requestId: string; questions: Array<{ header: string; question: string; options: string[] }> }>>;
@@ -25,24 +25,13 @@ export interface HostNativeQuestions {
   /**
    * Send one question only when idle. Chat is never an answer; resolution waits for the command receipt.
    */
-  /**
-   * Send one question only when idle. Chat is never an answer; resolution waits for the command receipt.
-   */
   askPlanner?(planner: string, input: { prompt: string; signal: AbortSignal; timeoutMs: number; messageId: string; sourceAgentId?: string }): Promise<string | null>;
-  /**
-   * Spec 058 slice 17 (task 584): ask the task's retained reviewer one consult turn — a second
-   * opinion on a blocked report, never a review round. Answers arrive through the command receipt.
-   */
   /**
    * Spec 058 slice 17 (task 584): ask the task's retained reviewer one consult turn — a second
    * opinion on a blocked report, never a review round. Answers arrive through the command receipt.
    */
   createConsultReviewer?(task: Task, input: { profile: Profile; id: string }): Promise<{ id: string; workspaceId: string | null }>;
   askReviewer?(reviewer: string, input: { prompt: string; signal: AbortSignal; timeoutMs: number; messageId: string; sourceAgentId?: string }): Promise<string | null>;
-  /**
-   * Spec 058 (task 540): start one short-lived decider agent in the task's workspace with the
-   * given profile. Return its idle identity before delivery so the caller can register answer authority.
-   */
   /**
    * Spec 058 (task 540): start one short-lived decider agent in the task's workspace with the
    * given profile. Return its idle identity before delivery so the caller can register answer authority.

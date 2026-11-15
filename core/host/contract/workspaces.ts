@@ -17,17 +17,11 @@ export interface HostWorkspaces {
    * `target: 'branch'` reads the queue branch on origin, which a worker
    * continuation resumes from.
    */
-  /**
-   * Re-create a lost task workspace. The default target is the accepted PR head;
-   * `target: 'branch'` reads the queue branch on origin, which a worker
-   * continuation resumes from.
-   */
   recoverTaskWorkspace?(task: Task, options?: { target?: 'pr_head' | 'branch' }): Promise<{ id: string; directory: string }>;
   setTaskWorkspaceTitle?(task:Task,title:string,requestId:string,uncertain:boolean):Promise<void>;
   findWorkspaces(task: Task): Promise<{ id: string; directory: string }[]>;
   /** Read-only: a Queue-owned unpublished populate leftover or a locked-initializing Paseo leftover with a base-identical unpublished branch. */
   removeOrphanWorkspace?(task: Task, orphan: OrphanWorkspace): Promise<void>;
-  /** One-minute load average and logical CPU count; creation defers while load exceeds CPUs. */
   workspaceAvailable?(id:string):Promise<boolean>;
   verifyResume?(task: Task): Promise<void | string>;
   verifyCheckpoint?(task: Task, head: string): Promise<void>;
@@ -35,9 +29,6 @@ export interface HostWorkspaces {
   /** Fresh, uncached check that the retained worker's registered worktree still belongs to this task. */
   preflightWorkerContinuation?(task: Task): Promise<{ available: true } | { available: false; reason: string }>;
   verifyCleanQueueWorktree?(task: Task): Promise<void>;
-  /** Exact clean planning-head proof for owner acceptance of a report-only task. */
-  /** Read the shared stash list; recorded when a worker or revision run is created. */
-  /** Exact clean planning-head proof for owner acceptance of a report-only task. */
   /** Read the shared stash list; recorded when a worker or revision run is created. */
   readStash?(directory: string): Promise<StashEntry[]>;
   verifyWorkspace(task: Task, directory: string): Promise<string>;

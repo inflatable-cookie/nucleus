@@ -6,7 +6,6 @@ export interface HostThreads {
   findAgents(task: Task): Promise<{ id: string; workspaceId: string | null }[]>;
   /** Stop the assigned agent's current turn without delivering a follow-up message. */
   stopAgentTurn?(agentId: string): Promise<void>;
-  /** One newest page of the agent's timeline, or null when the read fails; a failed read is never evidence. */
   archiveAgent(agentId: string): Promise<void>;
   /**
    * Permanently remove one thread at closeout (nucleus#1155). Present exactly
@@ -14,17 +13,5 @@ export interface HostThreads {
    * stay settled while it is open and are removed when it ends, and a host
    * without this method keeps today's archive behaviour (Paseo).
    */
-  /**
-   * Permanently remove one thread at closeout (nucleus#1155). Present exactly
-   * when the host can remove a thread: on such a host a task's support threads
-   * stay settled while it is open and are removed when it ends, and a host
-   * without this method keeps today's archive behaviour (Paseo).
-   */
   deleteAgent?(agentId: string): Promise<void>;
-  /**
-   * Spec 017: archive one merged review-entry task's Paseo sidebar entry while
-   * preserving its external folder. The implementation must refuse before the
-   * native call unless the source-traced placement proof shows Paseo can only
-   * change its catalog, and must never claim the folder was archived.
-   */
 }

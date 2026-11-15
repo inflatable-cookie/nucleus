@@ -43,6 +43,10 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
   copied is one text in `shared/task-view.ts`, and `core/questions/native-questions.ts` re-rates because
   an unreadable answered-question read is recorded as unknown instead of being skipped. `shared/host.ts`
   keeps its row: its finding is the free-string status and error fields, which this PR did not change.
+  The reservation family's rows name the serialized run-list stamps the admission still compares, so
+  `reservation-source.ts` and `reservation-admission.ts` score 8 on their remaining typed-fact and
+  proportion defects rather than 9. `hosts/paseo/adapter/host-questions.ts` re-rates to 9 because its
+  failed answered-question read is a typed `{ok: false}` now, leaving only its title-prefix decision match.
 
 - nucleus#1199 (floor 5, 2026-11-14): `core/store/store.ts`, `core/store/store-tasks.ts` and
   `core/store/store-maintenance.ts` were split into one owner per mechanism; `store-maintenance.ts` no
