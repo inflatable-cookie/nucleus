@@ -30,7 +30,9 @@ export class ReviewRestarts {
         const refusal = plainHandoverFreshRestart(task, this.store.runs(task.id));
         if (refusal) throw new RestartRefusal(refusal);
       }
-      return this.engine.restartReview(task.id, reason, instruction, input.fresh);
+      // `input.fresh` is absent on a plain restart, and `restartReview`'s own
+      // default is a fresh relaunch: the boolean is resolved here, once.
+      return this.engine.restartReview(task.id, reason, instruction, input.fresh === true);
     }
     throw Error(`restart does not support the ${role} reviewer state`);
   }
