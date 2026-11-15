@@ -53,6 +53,31 @@
       "optional": [],
       "reasons": ["user"]
     },
+    "thread.tag.set": {
+      "required": ["type", "commandId", "threadId", "tag", "tagged"],
+      "optional": [],
+      "sourceBuild": "0.1.10-nightly.20261111.4529",
+      "source": "apps/server bundle: orchestration command union (thread.tag.set) and packages/contracts/src/threadTags.ts (ThreadTag)",
+      "commandQuote": "Struct({ type: Literal(\"thread.tag.set\"), commandId: CommandId, threadId: ThreadId, tag: ThreadTag, tagged: Boolean$2 })",
+      "tagQuote": "const ThreadTag = TrimmedNonEmptyString.check(isMaxLength(64), makeFilter((value) => /[\\p{Cc}]/u.test(value) ? \"A thread tag must be a single line of text.\" : true));",
+      "tagMatching": "Tags match by exact spelling and case after trimming.",
+      "tagMaxLength": 64,
+      "taggedMeaning": "`tagged: true` sets the tag, `tagged: false` removes it"
+    },
+    "thread.created.record": {
+      "required": ["type", "commandId", "parentThreadId", "parentRunId", "parentNodeId", "targetThreadId", "targetRunId"],
+      "optional": [],
+      "sourceBuild": "0.1.10-nightly.20261111.4529",
+      "source": "apps/server bundle: orchestration command union (thread.created.record) and OrchestrationV2.dispatch.createdThreadRecord",
+      "commandQuote": "Struct({ type: Literal(\"thread.created.record\"), commandId: CommandId, parentThreadId: ThreadId, parentRunId: RunId, parentNodeId: NodeId, targetThreadId: ThreadId, targetRunId: NullOr(RunId) })",
+      "parentGuards": [
+        "Parent node ${command.parentNodeId} is not the root of run ${command.parentRunId}.",
+        "Target thread ${command.targetThreadId} belongs to another project.",
+        "Target run ${command.targetRunId} does not belong to thread ${command.targetThreadId}."
+      ],
+      "cardEffect": "One completed `thread_created` turn item on the parent thread under the parent run's root node; its id derives from the command id and its title is the target thread's own title",
+      "noWake": "A card only: no run, no wake, no cascade and no lineage change"
+    },
     "runtime-request.respond": {
       "required": ["type", "commandId", "threadId", "requestId"],
       "optional": ["decision", "feedback", "answers", "attachmentsByQuestionId"],
@@ -147,6 +172,18 @@
     "retainedOutsideWindow": "run_interrupt_request items, and user_input_request or approval_request items whose request is still pending",
     "rowPolicy": { "source": "THREAD_HISTORY_PAGE_POLICY", "maxUserTurns": 10, "maxItems": 75, "maxTurnItems": 500, "maxEncodedBytes": 1048576 },
     "optInFields": "turnItemsOmitLocalVisible and idTable appear only for acceptCompactTurnItems or acceptCompactIds; the plain decode here cannot restore either"
+  },
+  "supportRows": {
+    "sourceBuild": "0.1.10-nightly.20261111.4529",
+    "source": "apps/server bundle: ServerSettings (hideTaggedThreads, hiddenThreadTags) inside server.getConfig's ServerConfig; client bundle: the sidebar's hidden-thread-tags derivation",
+    "settingsKeys": {
+      "hideTaggedThreads": "Boolean$2.pipe(withDecodingDefault(succeed(false)))",
+      "hiddenThreadTags": "ArraySchema(Unknown).pipe(decodeTo(ArraySchema(String$2), ...), withDecodingDefault(succeed([])))"
+    },
+    "clientFilterQuote": "let n=t(h(e));if(n?.hideTaggedThreads!==!0)return null;let r=n.hiddenThreadTags.map(e=>e.trim()).filter(e=>e!==``);return r.length>0?r:null",
+    "readPath": "The settings ride `server.getConfig` (ServerConfig.settings), the same read-only call the adapter already makes at connect; Nucleus never sends `server.updateSettings`",
+    "defaults": { "hideTaggedThreads": false, "hiddenThreadTags": [] },
+    "clientSide": "A client hides a top-level thread whose tag matches; the server keeps serving it"
   },
   "wireShapes": {
     "capturedFrom": {
@@ -360,6 +397,27 @@
         "type",
         "requestId",
         "questions"
+      ],
+      "thread_created": [
+        "id",
+        "threadId",
+        "runId",
+        "nodeId",
+        "providerThreadId",
+        "providerTurnId",
+        "nativeItemRef",
+        "parentItemId",
+        "ordinal",
+        "status",
+        "title",
+        "startedAt",
+        "completedAt",
+        "updatedAt",
+        "type",
+        "targetThreadId",
+        "targetRunId",
+        "targetProviderInstanceId",
+        "targetModel"
       ]
     },
     "visibleTurnItemKeys": ["position", "sourceItemId", "sourceThreadId", "visibility", "item"],

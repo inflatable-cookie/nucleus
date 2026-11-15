@@ -21,6 +21,8 @@ interface NativeConnection {
   readonly version: string;
   readonly threadShapePending?: boolean;
   readonly compatibilityFailure?: string;
+  /** Whether T3's own client hides tagged support threads, read at connect and never written. */
+  readonly supportThreadStatus?: string;
   connect(probeThreadId?: string): Promise<void>;
   close(): void;
 }
@@ -66,10 +68,11 @@ export class T3HostConnection {
   }
 
   /** Only connection facts are returned; no endpoint, credential or native object. */
-  status(): { id: string | null; connected: boolean; error: string; version: string; threadShapePending: boolean; lastDisconnectReason: T3DisconnectReason | null; lastProtocolError: T3ProtocolError | null } {
+  status(): { id: string | null; connected: boolean; error: string; version: string; threadShapePending: boolean; supportThreads: string; lastDisconnectReason: T3DisconnectReason | null; lastProtocolError: T3ProtocolError | null } {
     this.retireDisconnected();
     return { lastDisconnectReason: this.lastDisconnectReason, lastProtocolError: this.lastProtocolError, id: this.lastIdentity, connected: this.session !== null, error: this.errorValue, version: this.versionValue,
-      threadShapePending: this.session !== null && this.host?.threadShapePending === true };
+      threadShapePending: this.session !== null && this.host?.threadShapePending === true,
+      supportThreads: this.session !== null && this.host?.supportThreadStatus ? this.host.supportThreadStatus : '' };
   }
 
   /** A disconnected socket invalidates this claim, never another host's claim. */

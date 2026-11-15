@@ -573,27 +573,35 @@ test('a T3-bound reviewer checkpoint auto-continues on the T3 host (#226)', asyn
   } finally { await f.close(); }
 });
 
-test('a T3 worker thread settles when its task moves to review, and wakes again on revision', async t => {
+test('one row per task: the worker row stays unsettled while a support agent runs and settles when nothing does', async t => {
   const f = await fixture(t);
   try {
     const { taskId, head, workerThreadId, reviewerThreadId, reviewerRun } = await taskWithReviewer(f);
-    // The accepted handover settles the worker thread the nightly shows as ended.
-    const settles = f.server.commands.filter(command => command.type === 'thread.settle');
-    assert.equal(settles.length, 1, `one settle for the accepted handover (${JSON.stringify(settles)})`);
-    assert.equal(settles[0]!.threadId, workerThreadId);
-    assert.equal(settles[0]!.expectedLatestRunId, 'worker-run-1', 'the settle names the run this handover ended');
-    assert.equal(f.server.threads.get(workerThreadId)!.thread.settledOverride, 'settled');
+    // The reviewer is live, so the task's one visible row is the worker's and one
+    // host pass puts it back in T3's main list instead of the settled one (Tom,
+    // 2026-11-15). A handover settle may have landed before the reviewer started;
+    // the row never stays settled while a support agent runs.
+    const workerSettles = () => f.server.commands.filter(command => command.type === 'thread.settle' && command.threadId === workerThreadId);
+    const reviewerToken = ticketToken(f, reviewerRun);
+    await f.runtime.engine.auditPass(false);
+    assert.equal(f.server.threads.get(workerThreadId)!.thread.settledOverride, 'active', 'a live reviewer keeps the worker row unsettled');
+    assert.ok(f.server.commands.some(command => command.type === 'thread.unsettle' && command.threadId === workerThreadId),
+      'the live reviewer surfaces the row');
+    const settledBefore = workerSettles().length;
 
-    // The reviewer asks for changes; the revision wakes the settled worker thread.
+    // The reviewer asks for changes; its verdict wakes the settled worker thread
+    // (when the row had settled) and the revision run the task then waits on
+    // keeps the row unsettled.
     await reportAndWake(f, taskId, {
       eventId: randomUUID(), taskId, runId: reviewerRun.id, status: 'changes_required',
       summary: 'One finding', reviewText: 'Tighten the change set.', reviewResponsibility: 'author', prNumber: 7, head,
-    }, ticketToken(f, reviewerRun));
+    }, reviewerToken);
     await driveUntil(f, () => f.server.commands.some(command => command.type === 'message.dispatch' && command.threadId === workerThreadId),
       'revision sent to the retained worker', taskId);
-    assert.equal(f.server.threads.get(workerThreadId)!.thread.settledOverride, 'active', 'the revision unsettles the thread before its message');
+    assert.equal(f.server.threads.get(workerThreadId)!.thread.settledOverride, 'active', 'the revision unsettles the thread, and its live run keeps it so');
 
-    // The worker's next handover settles it again, under that run's own identity.
+    // The worker's next handover; nothing of the task runs after these runs end,
+    // so the row settles again under that handover's own identity (nucleus#1154).
     const revisionRun = f.runtime.store.runs(taskId).findLast(run => run.role === 'revision');
     assert.ok(revisionRun, 'a revision run was reserved');
     f.server.threads.get(workerThreadId)!.runs = completedWorkerRun();
@@ -602,9 +610,17 @@ test('a T3 worker thread settles when its task moves to review, and wakes again 
     });
     assert.equal(revisionReport.code, 0, revisionReport.err);
     await f.runtime.engine.wakeTask(taskId).catch(() => {});
-    const settlesAfterRevision = f.server.commands.filter(command => command.type === 'thread.settle');
-    assert.equal(settlesAfterRevision.length, 2, `the second handover settles again (${JSON.stringify(settlesAfterRevision)})`);
-    assert.equal(settlesAfterRevision[1]!.threadId, workerThreadId);
+    // The round-two reviewer is live next: the row surfaces while it runs.
+    await f.runtime.engine.auditPass(false);
+    assert.equal(f.server.threads.get(workerThreadId)!.thread.settledOverride, 'active', 'the round-two reviewer keeps the row unsettled');
+    // With every run ended, the row settles and the last settle names the run
+    // whose handover it accepted.
+    for (const run of f.runtime.store.runs(taskId)) if (!run.released) f.runtime.store.putRun({ ...run, status: 'finished', released: true, active: false });
+    const beforeSecond = workerSettles().length;
+    for (let pass = 0; pass < 5 && workerSettles().length === beforeSecond; pass++) await f.runtime.engine.auditPass(false);
+    assert.ok(workerSettles().length > beforeSecond, `a settled row returns once nothing runs (${JSON.stringify(workerSettles())})`);
+    assert.equal(workerSettles().at(-1)!.expectedLatestRunId, 'worker-run-1');
+    assert.ok(workerSettles().length > settledBefore);
   } finally { await f.close(); }
 });
 
@@ -1080,11 +1096,14 @@ test('attention surfaces the worker thread and the return to review settles it a
     assert.equal(unsettles().length, unsettledCount + 1, 'attention unsettles the worker thread exactly once');
     assert.equal(f.server.threads.get(workerThreadId)!.thread.settledOverride, 'active');
 
-    // The task returns to review: the ordinary settle puts the thread back.
+    // The task returns to review: with nothing of the task running any more, the
+    // ordinary settle puts the thread back under a fresh command (the reviewer
+    // run that attention delayed is finished here, so the row waits on nothing).
     const settles = () => f.server.commands.filter(command => command.type === 'thread.settle' && command.threadId === workerThreadId);
     const settledCount = settles().length;
     f.runtime.store.update(taskId, { phase: 'awaiting_review', reason: 'Attention cleared; back to review',
       resolution: { ...f.runtime.store.task(taskId).resolution, attention: false } });
+    for (const run of f.runtime.store.runs(taskId)) if (run.role !== 'revision' && !run.released) f.runtime.store.putRun({ ...run, status: 'finished', released: true, active: false });
     await f.runtime.engine.auditPass(false);
     assert.equal(settles().length, settledCount + 1, 'the return to review settles the worker thread again');
     assert.equal(f.server.threads.get(workerThreadId)!.thread.settledOverride, 'settled');
