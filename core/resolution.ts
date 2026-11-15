@@ -270,9 +270,14 @@ export class Resolution {
   hostOutage(hostId: string): HostOutage | null { return this.hostPorts.outage(hostId); }
   workerProviderUnavailable(task: Task): boolean { return this.hostPorts.workerProviderUnavailable(task); }
   withHost<T>(id: string, fn: () => T): T { return this.hostPorts.withHost(id, fn); }
-  /** The task-owner host binding every agent-naming call reads (#1154); same rule as `Engine.onTaskHost`. */
+  /**
+   * The task-owner host binding every agent-naming call reads (#1154); same rule as
+   * `Engine.onTaskHost`. It goes through this root's `withHost` port, never the set
+   * directly, so a caller that replaces the port also moves every owner-named call
+   * with it.
+   */
   onTaskHost<T>(owner: { hostId?: string | null } | null | undefined, work: () => T): T {
-    return onOwnerHost(this.hostPorts, owner, work);
+    return onOwnerHost(this, owner, work);
   }
   /** Registered and connected, independent of the ambient host context; serves the facade's cross-host routing. */
   hostOnline(id: string): boolean { return this.hostPorts.online(id); }

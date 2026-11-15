@@ -57,6 +57,26 @@ test('a resolution that was not wired keeps the one ambient set', async () => {
   assert.equal(await resolution.hostPorts.awaitBridge?.(1), true);
 });
 
+test('the task-owner rule reads the replaceable withHost port, not the set behind it', () => {
+  const resolution = new Resolution({} as Store, { hostId: 'paseo:a' } as unknown as Adapter, () => [], () => false);
+  const bound: string[] = [];
+  // A caller may replace the port (the engine wires its own host context); the
+  // owner-named rule must move with it instead of reading the set directly.
+  resolution.withHost = <T>(id: string, fn: () => T): T => { bound.push(`port:${id}`); return fn(); };
+  assert.equal(resolution.onTaskHost({ hostId: 't3code:b' }, () => 'ran'), 'ran');
+  assert.deepEqual(bound, ['port:t3code:b']);
+  assert.equal(resolution.onTaskHost({ hostId: null }, () => 'ambient'), 'ambient');
+  assert.deepEqual(bound, ['port:t3code:b'], 'no proven host keeps the caller context');
+  const set = ambientHostPorts(() => 'paseo:a');
+  set.withHost = <T>(id: string, fn: () => T): T => { bound.push(`set:${id}`); return fn(); };
+  resolution.hostPorts = set;
+  assert.equal(resolution.onTaskHost({ hostId: 't3code:c' }, () => 'ran'), 'ran');
+  assert.deepEqual(bound, ['port:t3code:b', 'port:t3code:c'], 'a replaced port is the rule, even after a new set arrives');
+  delete (resolution as { withHost?: unknown }).withHost;
+  resolution.onTaskHost({ hostId: 't3code:d' }, () => 'ran');
+  assert.deepEqual(bound, ['port:t3code:b', 'port:t3code:c', 'set:t3code:d'], 'the unwired port reads the one set');
+});
+
 test('one wired set replaces every host question at once', async () => {
   const resolution = new Resolution({} as Store, { hostId: 'paseo:a' } as unknown as Adapter, () => [], () => false);
   const asked: string[] = [];

@@ -43,10 +43,12 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
   kept for tests are gone; the tests import the owners. `core/resolution.ts` is 898 non-blank lines from the row's 1076 and
   scores 8 (O2 T2 F1 P1 Pr2): one owner for the host questions and one port-wiring style, while the
   ambient set still answers reachable before the engine wires it and the owners whose port contract their
-  own module declares still read the shell. Its `keep` replaces the old `split`, and the split showed the
-  value of one set: `catalogKnown` was the one host hook of twelve that the engine's per-field wiring left on
-  its ambient default, so dispatch ran on an unloaded catalog; the wired answer is now pinned by
-  `test/host-ports.test.ts` and the catalog waits in `test/restart.cases.ts`. `core/port-context.ts`
+  own module declares still read the shell. Its `keep` replaces the old `split`. The engine wired all twelve
+  host questions before this PR; moving them into one set is what makes a forgotten one impossible, and the
+  first pass of the move showed why: `catalogKnown` was left on its ambient default while the other eleven
+  became ports, so dispatch ran on an unloaded catalog until the affected run caught it. The wired answer is
+  pinned by `test/host-ports.test.ts`, the catalog waits by `test/restart.cases.ts`, and the task-owner rule
+  reads the replaceable `withHost` port by the same test. `core/port-context.ts`
   scores 10 with a boundary test for the live key list, the shaped port and the nested engine context;
   `core/host/host-ports.ts` scores 8 because the engine root still declares its own defaults for the ports
   its owners read, and `test/host-ports.test.ts` covers the ambient set, the shared task-owner rule and
