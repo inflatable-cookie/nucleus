@@ -2966,12 +2966,12 @@ movement invalidates source approval and preserves the normal readiness gates.
 - Every response needs coverage flags, an epoch and matching cursors. Gaps,
   resets, missing facts, read failures and exhausted budgets refuse. Partial
   history needs turn IDs and a dated boundary into an earlier turn; a partial
-  tail never hides a live or unknown tool. T3Code widens its newest bounded snapshot through authenticated history pages,
-  retaining local item ordinals as cursors. A shell-derived or provider-reported pending background
-  task absent from the returned live tools refuses by name, so a boundary into
-  an earlier run cannot hide detached work. Exhausted or inconsistent coverage
-  stays inconclusive. A host shape problem surfaces as that read's own named
-  failure, so the refusal starts from the exact cause.
+  tail never hides a live or unknown tool. T3Code reads older bounded history
+  pages at the snapshot's exact sequence and extends its suffix to every
+  non-terminal background tool found. It checks at most 64 pages; exhausted
+  coverage refuses, since a shell summary suppresses background work during an
+  active run. Provider-reported tasks without a matching live native item refuse
+  by name. A host shape problem surfaces as that read's own named failure.
 - A host translates its own native execution records into these tool entries; a
   record it leaves untranslated is evidence the reader cannot judge. T3Code's
   `command_execution` is a non-turn-bound shell, its edit, search and fetch records

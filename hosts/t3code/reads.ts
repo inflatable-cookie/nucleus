@@ -26,7 +26,7 @@ export interface ThreadSnapshotRead {
 }
 /** Native executions use shared tool kinds; background commands, children and dynamic tools can outlive their run. */
 const nativeToolKinds: Record<string, string> = { command_execution: 'shell', file_change: 'edit',
-  file_search: 'search', web_search: 'fetch', subagent: 'subagent', dynamic_tool: '' };
+  file_search: 'search', web_search: 'fetch', subagent: 'subagent', dynamic_tool: 'dynamic_tool' };
 /** The one identity a native execution item names, as text the reader can compare. */
 const nativeToolIdentity = (item: Record<string, unknown>): string => {
   const value = item.input ?? item.fileName ?? item.pattern ?? item.patterns ?? item.subagentId ?? item.toolName;
@@ -52,6 +52,7 @@ const timelineEntry = (row: TimelineRow, fallback: string): import('../../shared
   return { timestamp, ...turnId, item: { type: 'tool_call', callId: item.id, name, status: String(item.status ?? ''),
     detail: { type: kind, command: nativeToolIdentity(item), nativeType: item.type } } };
 };
+const backgroundToolTypes = new Set(['command_execution', 'dynamic_tool', 'subagent']);
 const terminalToolStatuses = new Set(['completed', 'failed', 'cancelled', 'canceled']);
 /**
  * The background work the provider threads still report that no visible live row
@@ -62,9 +63,9 @@ const terminalToolStatuses = new Set(['completed', 'failed', 'cancelled', 'cance
  */
 const hiddenBackground = (rows: readonly TimelineRow[], tasks: z.infer<typeof pendingBackgroundTask>[]): string[] =>
   tasks
-    .filter(task => !rows.some(row => task.itemId !== undefined && row.sourceItemId === task.itemId
-      && ['command_execution', 'dynamic_tool', 'subagent'].includes(row.item.type)
-      && (task.sourceThreadId === undefined || task.sourceThreadId === row.sourceThreadId) && !terminalToolStatuses.has(String((row.item as Record<string, unknown>).status ?? ''))))
+    .filter(task => !rows.some(row => backgroundToolTypes.has(row.item.type)
+      && task.taskId === (((row.item as Record<string, unknown>).nativeItemRef as { nativeId?: string } | null)?.nativeId || row.sourceItemId)
+      && !terminalToolStatuses.has(String((row.item as Record<string, unknown>).status ?? ''))))
     .map(task => `${task.kind} ${task.taskId}${task.description ? ` (${task.description.slice(0, 120)})` : ''}`);
 /** The statuses that mean a run is live: the only ones a settle, a steer or a stop waits for. */
 export const activeStatuses = new Set(['preparing', 'queued', 'starting', 'running', 'waiting']);
@@ -250,9 +251,11 @@ export class T3Reads {
    * a gap. A nightly that sends no rows cannot prove the boundary and is refused
    * by its field name instead.
    *
-   * Absence of older detached work is never inferred from a turn boundary: while
-   * older history is hidden, a pending background task the provider thread still
-   * reports is refused by name, because the window cannot show it.
+   * Older bounded pages also establish background-tool coverage: the shell's
+   * summary suppresses that work while a run is active. The returned suffix
+   * extends to every non-terminal background row found. A provider-reported task
+   * without a matching live row refuses by name; exhausting the page budget
+   * refuses coverage instead of inferring settlement from a turn boundary.
    *
    * Each native execution item is translated into the shared tool entry the
    * owned-tool reader judges (`nativeToolKinds`), so a running native command is
@@ -275,12 +278,12 @@ export class T3Reads {
     const wanted = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : block.length;
     let cursor = read.historyCursor;
     const seenCursors = new Set<string>();
-    for (let fetched = 0; wanted > block.length && cursor && fetched < historyPageBudget; fetched++) {
+    for (let fetched = 0; cursor && fetched < historyPageBudget; fetched++) {
       if (seenCursors.has(cursor)) throw new T3CompatibilityError('threadHistoryPage cursor repeated');
       seenCursors.add(cursor);
       const page = decode(threadHistoryPage, await this.core.rpc.readHistoryPage(id, cursor), 'threadHistoryPage');
       if (page.idTable) throw new T3CompatibilityError('threadHistoryPage.idTable');
-      if (page.snapshotSequence < read.snapshotSequence) throw new T3CompatibilityError('threadHistoryPage.snapshotSequence');
+      if (page.snapshotSequence !== read.snapshotSequence) throw new T3CompatibilityError('threadHistoryPage.snapshotSequence');
       if (page.hasMoreHistory !== (page.nextCursor !== null)) throw new T3CompatibilityError('threadHistoryPage coverage');
       if (!page.items.length) throw new T3CompatibilityError('threadHistoryPage.items');
       const older = localRows(page.items, id);
@@ -293,19 +296,16 @@ export class T3Reads {
       block = [...older, ...block];
       cursor = page.nextCursor;
     }
-    const take = Math.min(block.length, wanted);
-    const kept = block.slice(block.length - take);
-    // A turn boundary inside the window never proves older detached work is gone,
-    // and a task the provider thread still reports is exactly that work.
-    // The shell derives pending work from all native items, not just the window
-    // or the provider's own task list. It also catches an older running command
-    // that has no provider-reported background-task record.
-    const shell = await this.readShell();
-    const owner = [...shell.threads, ...shell.archivedThreads].find(thread => thread.id === id);
-    if (!owner) throw new T3CompatibilityError('subscribeShell tool owner missing');
-    if (shell.snapshotSequence !== read.snapshotSequence) throw new T3CompatibilityError('tool snapshots changed during retrieval');
-    const tasks = [...(owner.pendingBackgroundTasks ?? []),
-      ...read.projection.providerThreads.flatMap(thread => thread.pendingBackgroundTasks ?? [])];
+    // A shell summary suppresses pending background work while a run is active.
+    // Scan older bounded pages instead: a parent-turn boundary cannot establish
+    // that an older detached execution has settled. Keep the contiguous suffix
+    // back to every live/unknown background row, even beyond the requested depth.
+    if (cursor) throw new T3CompatibilityError(`background tool history remains partial after ${historyPageBudget} bounded pages`);
+    const backgroundStart = block.findIndex(row => backgroundToolTypes.has(row.item.type)
+      && !terminalToolStatuses.has(String((row.item as Record<string, unknown>).status ?? '')));
+    const start = Math.min(Math.max(0, block.length - wanted), backgroundStart < 0 ? block.length : backgroundStart);
+    const kept = block.slice(start);
+    const tasks = read.projection.providerThreads.flatMap(thread => thread.pendingBackgroundTasks ?? []);
     const outstanding = hiddenBackground(kept, tasks);
     if (outstanding.length)
       throw new T3CompatibilityError(`subscribeThread reports outstanding background work: ${outstanding.join(', ')}`);

@@ -216,6 +216,7 @@ export async function t3Fake(t: TestContext, directory: string) {
     unsupportedProjectCreate: false, projectMutationFailure: false, projectMutationSecretFailure: false, projectMutationIdSecretFailure: false, secretDefect: false, secretLocationDefect: false, mutationObserver: (() => {}) as () => void,
     /** Rows the bounded snapshot keeps before it pages; the nightly's own limit is a policy, not a contract field. */
     boundedRowLimit: 20,
+    historyPageOverride: {} as Value,
     /**
      * Millisecond delay before a whole-projection answer (a read that did not opt
      * into the bounded snapshot), modelling the measured slow full read of a very
@@ -276,7 +277,7 @@ export async function t3Fake(t: TestContext, directory: string) {
     const page = { snapshotSequence: controls.snapshotSequence,
       items: rows.slice(start, end).map((row: Value, index: number) => ({ ...row, position: index + 1 })),
       nextCursor: start > 0 ? `synthetic-history-${start}` : null, hasMoreHistory: start > 0 };
-    response.end(JSON.stringify(page));
+    response.end(JSON.stringify({ ...page, ...controls.historyPageOverride }));
   });
   const shell = (raw: Value) => {
     const p = wireProjection(raw);
@@ -284,13 +285,13 @@ export async function t3Fake(t: TestContext, directory: string) {
     const pending = p.runtimeRequests.find((request: Value) => request.status === 'pending');
     const value: Value = { ...p.thread, activeRunId: active?.id ?? null, status: active?.status ?? 'idle',
       pendingRuntimeRequest: pending ? { id: pending.id, kind: pending.kind, createdAt: STAMP, blocking: true } : null,
-      pendingBackgroundTasks: raw.pendingBackgroundTasks ?? [
+      pendingBackgroundTasks: raw.pendingBackgroundTasks ?? (active ? [] : [
         ...(p.providerThreads ?? []).flatMap((thread: Value) => thread.pendingBackgroundTasks ?? []),
         ...p.turnItems.filter((item: Value) => ['command_execution', 'dynamic_tool', 'subagent'].includes(item.type)
           && ['running', 'waiting', 'pending', 'queued'].includes(item.status)).map((item: Value) => ({
-            taskId: item.id, itemId: item.id, sourceThreadId: p.thread.id,
+            taskId: item.nativeItemRef?.nativeId || item.id,
             kind: item.type === 'command_execution' ? 'command' : item.type === 'subagent' ? 'subagent' : 'background_task' })),
-      ],
+      ]),
       latestUserMessageAt: p.messages.length ? STAMP : null, lastError: null };
     if (controls.shellMissingField) delete value[controls.shellMissingField];
     return value;

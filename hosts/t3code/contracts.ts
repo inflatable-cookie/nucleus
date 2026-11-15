@@ -48,7 +48,6 @@ export const threadRecord = z.object({
  * provider session's own state, so it names work that can outlive its run.
  */
 export const pendingBackgroundTask = z.object({ taskId: id, kind: id, description: z.string().optional(),
-  command: z.string().optional(), itemId: id.optional(), sourceThreadId: id.optional(),
   parentTaskId: z.string().optional(), awaited: z.literal(true).optional(),
   providerInstanceId: id.optional(), childThreadId: id.optional() }).passthrough();
 export const shellThread = threadRecord.extend({

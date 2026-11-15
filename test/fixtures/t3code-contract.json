@@ -127,6 +127,7 @@
     "sourceBuild": "0.1.10-nightly.20261111.4529",
     "sourceRevision": "d2c25950b4d9",
     "source": "apps/server bundle: OrchestrationV2SubscribeThreadInput, OrchestrationV2ThreadDetailSnapshot and OrchestrationV2ThreadBoundedSnapshot; the windowed reads in readCanonicalProjection (runs, runtimeRequests, plans, contextHandoffs) that feed it; packages/shared/src/orchestrationV2BoundedSnapshot.ts",
+    "backgroundCoverage": {"source": "Installed Nightly ManagedEndpointRuntime-BSDb6iuk.mjs: derivePendingBackgroundWork, pendingBackgroundTurnItems, nativeTaskIdFromTurnItem; read-only bundle inspection", "shellSummary": "Empty while a run is active; absence is not background settlement", "backgroundTypes": ["command_execution", "dynamic_tool", "subagent"], "taskIdentity": "nativeItemRef.nativeId, falling back to item.id"},
     "historyRoute": {"method": "GET", "path": "/api/orchestration/threads/:threadId/history", "header": {"x-t3-orchestration-protocol": "2"}, "query": ["cursor"], "response": ["snapshotSequence", "items", "nextCursor", "hasMoreHistory"], "source": "Installed Nightly ManagedEndpointRuntime-BSDb6iuk.mjs: EnvironmentOrchestrationHttpApi, OrchestrationV2ThreadHistoryPage; read-only bundle inspection"},
     "roundTrip": "A bounded snapshot is sent only to a client that opts in; the plain read returns the complete detail projection instead",
     "input": ["threadId", "afterSequence", "requestCompletionMarker", "acceptBoundedSnapshot", "acceptDeferredWork", "acceptCompactTurnItems", "acceptDedupedBodies", "acceptCompactIds"],

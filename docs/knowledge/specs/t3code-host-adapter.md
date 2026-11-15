@@ -496,13 +496,16 @@ item it dropped keeps its answers with no question text rather than an invented
 one. A read that needs the complete transcript still opts in and refuses a paged
 or locally-omitted projection, so partial history is never handed out as the
 whole list and no consumer requests an unbounded thread snapshot. Its refusal
-names the missing coverage, not the thread's length. The nightly's authenticated history route serves older bounded pages using
-`historyCursor`. Widening joins at most 64 pages per read, with strictly older
-local ordinals and stable newest cursors; exhausted or inconsistent coverage
-remains inconclusive. The shell derives pending work from all native items, including older running
-commands absent from provider task lists. It must match the thread snapshot
-sequence. Pending tasks from either the shell or provider threads must have a live background tool in the returned page; otherwise the read
-refuses with the outstanding task named, even across a parent-run boundary.
+names the missing coverage, not the thread's length. The nightly's authenticated
+history route serves older bounded pages using `historyCursor`. Each timeline
+read checks at most 64 pages at the snapshot's exact sequence, with strictly
+older local ordinals and stable newest cursors. The returned suffix extends to
+every live or unknown background tool found in those pages, including detached
+work from older runs. The shell suppresses its background summary while a run
+is active, so an empty summary cannot establish absence. Exhausted or
+inconsistent history coverage refuses precisely. Provider-reported pending
+tasks require a matching live background row, identified by its native item ID
+(or item ID when absent); otherwise the read refuses with the task named.
 Complete shell
 and archive inventory reads contain summaries rather than transcript history;
 the Nightly exposes no complete paged shell form. Omitting settled threads or
