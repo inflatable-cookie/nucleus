@@ -4,6 +4,7 @@ import type { Adapter, HostPolicyConstructor } from '../core/host';
 import { HostPolicies } from '../core/host/host-policies';
 import { Admission, admitAdapter } from '../core/host/admission';
 import type { HostRegistry } from '../core/host/host-registry';
+import { hostKindOf } from '../shared/host-kind';
 
 /** Owner-only settings; never part of the service's public settings projection. */
 export interface T3ConnectionConfig {
@@ -100,7 +101,7 @@ export class T3HostConnection {
       this.host = candidate;
       await candidate.connect(this.#config.probeThreadId);
       if (this.closed) { candidate.close(); return; }
-      if (!candidate.connected || !candidate.hostId.startsWith('t3code:') || candidate.hostId === 't3code:')
+      if (!candidate.connected || hostKindOf(candidate.hostId) !== 't3code' || candidate.hostId === 't3code:')
         throw new Error('T3Code authenticated environment identity is missing');
       if (this.lastIdentity && candidate.hostId !== this.lastIdentity)
         throw new Error('T3Code endpoint returned a different identity');

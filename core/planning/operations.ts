@@ -20,6 +20,7 @@ import { LANE_PRIORITY_OPERATION } from "../scheduling/lane-priorities";
 import { repositoryOrigin } from "./lanes";
 import type { Adapter } from "../host/adapter";
 import { bindReviewEntry, type ReviewEntryAdapter } from "../review/review-entry";
+import { originReviewProof, withOriginReviewAdapter } from "../review/origin-review-adapter";
 import { DurableFenceRefusal } from "../intake/run-settlement";
 import { digest, now, operationIdForKey, operationInputHash, provedPreSendHistory } from "../store/store";
 import { hostIndependentControlRefusal } from "../host/host-independent-refusals";
@@ -484,17 +485,10 @@ export class Operations {
       const originHostId = await this.engine.identifyOriginHost(input.submission.originAgentId, input.submission.originIdentity);
       if (!originHostId) throw new SubmissionUnavailableError("Review-entry origin host is unknown or ambiguous");
       const target = this.adapter as Adapter & ReviewEntryAdapter;
-      const reviewAdapter = originHostId === operation.hostId ? target : new Proxy(target, { get: (adapter, property, receiver) => {
-        if (property !== 'inspectReviewEntry') return Reflect.get(adapter, property, receiver);
-        return async (reviewInput: import('../../shared/contracts').ReviewEntryInput, taskId?: string) => {
-          const proof = await this.engine.withHost(originHostId, async () => {
-            const origin = await this.engine.host.originAgent(reviewInput.submission.originAgentId);
-            if (!origin || origin.archived || !origin.workspaceId) throw new Error('Review entry requires a live originating thread');
-            return { origin, state: await this.engine.host.observe(origin.id) };
-          });
-          return adapter.inspectReviewEntry(reviewInput, taskId, proof);
-        };
-      } });
+      const reviewAdapter = originHostId === operation.hostId ? target : withOriginReviewAdapter(target, async (reviewInput, taskId) => {
+        const proof = await originReviewProof(this.engine.host, this.engine.withHost.bind(this.engine), originHostId, reviewInput.submission.originAgentId);
+        return target.inspectReviewEntry(reviewInput, taskId, proof);
+      });
       const task=await bindReviewEntry(this.store,reviewAdapter,{...operation,hostSelection:selection},input,originHostId,async id => {
         const identitySource = id === input.submission.originAgentId ? input.submission.originIdentity : undefined;
         const host = await this.engine.identifyOriginHost(id, identitySource);

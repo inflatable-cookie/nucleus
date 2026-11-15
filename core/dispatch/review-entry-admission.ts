@@ -5,11 +5,11 @@ import type { Adapter } from '../host/adapter';
 import type { Resolution } from '../resolution';
 import { capacityRefusal, dispatchBlocked } from './capacity';
 import { startsNoRuns } from '../closeout/queue-drain';
-import type { ReviewEntryInput } from '../../shared/contracts';
 import {
   assertReviewEntryUnowned, assertReviewEntryWriterYielded, reviewEntryInputForTask, ReviewEntryRefusal,
   verifyReviewEntry, type ReviewEntryAdapter,
 } from '../review/review-entry';
+import { originHostReviewAdapter } from '../review/origin-review-adapter';
 
 /** The engine and resolution facts review-entry admission reads. */
 export type ReviewEntryAdmissionContext = Pick<Engine,
@@ -17,29 +17,6 @@ export type ReviewEntryAdmissionContext = Pick<Engine,
   | 'store' | 'wakeRepository' | 'withHost'> & {
     readonly resolution: Pick<Resolution, 'requiredRouteNote' | 'select' | 'usageCeilingNote'>;
   };
-
-/**
- * The review adapter an admission uses when the task's origin host is not the
- * host running this admission: the originating thread and its state are read on
- * the origin host, and the inspection runs there, so acceptance never proves a
- * foreign host's thread against the local catalog.
- */
-function originHostReviewAdapter(context: ReviewEntryAdmissionContext, adapter: Adapter & ReviewEntryAdapter,
-  originHostId: string, reviewInput: ReviewEntryInput): ReviewEntryAdapter {
-  return {
-    hostId: adapter.hostId,
-    originAgent: id => context.host.originAgent(id),
-    ...(adapter.reviewEntryGithubCommand ? { reviewEntryGithubCommand: adapter.reviewEntryGithubCommand.bind(adapter) } : {}),
-    inspectReviewEntry: async (input, taskId) => {
-      const proof = await context.withHost(originHostId, async () => {
-        const origin = await context.host.originAgent(reviewInput.submission.originAgentId);
-        if (!origin || origin.archived || !origin.workspaceId) throw new Error('Review entry requires a live originating thread');
-        return { origin, state: await context.host.observe(origin.id) };
-      });
-      return adapter.inspectReviewEntry(input, taskId, proof);
-    },
-  };
-}
 
 /**
  * Review-entry admission: prove the external submission's source, then bind the
