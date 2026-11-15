@@ -21,10 +21,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Store, operationIdForKey, operationInputHash } from '../core/store/store';
 import { Engine, ExternalMergeRefusal } from '../core/engine';
-import {
-  ABSENT_WORKER_REASON, ACCEPTED_PR_RECONCILIATION_REASON, EXTERNAL_MERGE_CHECK_RECOVERED_REASON, EXTERNAL_MERGE_CHECK_REASON_PREFIX,
-  PRE_AGENT_LAUNCH_FAILURE_REASON, ProvenPreSendRefusalError, RetainedRunRefusal,
-} from '../core/resolution';
+import { ABSENT_WORKER_REASON, ACCEPTED_PR_RECONCILIATION_REASON, EXTERNAL_MERGE_CHECK_RECOVERED_REASON, EXTERNAL_MERGE_CHECK_REASON_PREFIX, PRE_AGENT_LAUNCH_FAILURE_REASON, ProvenPreSendRefusalError, RetainedRunRefusal } from '../core/recovery/task-reasons';
 import { BACKPRESSURE_DEFERRAL, isBackpressureDeferral } from '../core/host/admission';
 import { ForgeOutageError } from '../core/forge/forge-health';
 import { GitReadTimeoutError, SubmissionUnavailableError, WORKER_BRANCH_REFUSAL_PREFIX, WORKER_DIRTY_REFUSAL_PREFIX, WORKER_PR_IDENTITY_REFUSAL, WorkerSourceRefusal } from '../core/git/index';

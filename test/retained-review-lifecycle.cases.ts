@@ -18,7 +18,7 @@ import type { TimelineEntry } from '../core/recovery/stall';
 import { toolTimelinePage } from './support/tool-timeline';
 import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
 import { externalOwnerRevisionReceiptSchema } from '../shared/contracts';
-import { reviewContinuationLocalRefusal } from '../core/resolution';
+import { reviewContinuationLocalRefusal } from '../core/review/review-continuation';
 import { reviewInProgress, reviewerIdentityAtHead } from '../core/review/review-continuation';
 import { briefDigest } from '../core/planning/brief';
 import {ownerRevisionFixture} from './support/review-entry-fixture';

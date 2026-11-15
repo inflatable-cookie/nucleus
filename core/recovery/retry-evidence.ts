@@ -88,3 +88,26 @@ export function stoppedRevisionWithoutCallback(t: Task, runs: Run[]): Run | null
   if (runs.some(other => other.id !== run.id && other.role !== 'recovery' && !other.released)) return null;
   return run;
 }
+
+/**
+ * The latest accepted blocked result relevant to a worker retry, kept separate
+ * from action authority: it may appear in a revision prompt as diagnostic
+ * context and can grant nothing. Read from the task's non-recovery runs, so a
+ * released revision that reported its own `blocked`/`error` wins over the
+ * worker completion it replaced.
+ */
+export function retryContextOf(t: Task, taskRuns: Run[]): NonNullable<Run['retryContext']> | undefined {
+  const latest = taskRuns.at(-1);
+  const revision = latest?.role === 'revision' ? latest : null;
+  if (revision?.released && revision.completion && ['blocked', 'error'].includes(revision.completion.status) &&
+      revision.completion.taskId === t.id && revision.completion.runId === revision.id) {
+    return { source: 'revision', runId: revision.id, status: revision.completion.status as 'blocked' | 'error',
+      head: revision.completion.head ?? revision.head, summary: revision.completion.summary };
+  }
+  const initial = t.completion;
+  const workerBlocked = Boolean(initial && ['blocked', 'error'].includes(initial.status) && initial.runId === t.runId &&
+    !taskRuns.some(run => run.id === initial.runId));
+  if (workerBlocked) return { source: 'worker', runId: initial!.runId, status: initial!.status as 'blocked' | 'error',
+    head: initial!.head ?? null, summary: initial!.summary };
+  return undefined;
+}

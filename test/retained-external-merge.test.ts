@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Task } from '../shared/contracts';
 import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
-import { participantToolRunIds } from '../core/resolution';
+import { participantToolRunIds } from '../core/recovery/task-reasons';
 import { fixture, git } from './support/retained-external-merge-fixture';
 import { ownerEffectHook } from './support/review-entry-fixture';
 import { longToolHistory, toolTimelineTail } from './support/tool-timeline';

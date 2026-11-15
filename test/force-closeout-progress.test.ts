@@ -9,7 +9,7 @@ import { Engine } from "../core/engine";
 import { submissionSchema, taskControlInputSchema, type Completion } from "../shared/contracts";
 import type { Adapter } from "../core/host";
 import type { ResolutionAdapter } from "../core/resolution";
-import { proofWaitApplies } from "../core/resolution";
+import { proofWaitApplies } from '../core/qa/proof-wait';
 
 const head = "a".repeat(40),
   commit = "b".repeat(40);

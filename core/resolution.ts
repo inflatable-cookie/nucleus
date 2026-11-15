@@ -1,22 +1,18 @@
+import { portsContext } from './port-context';
+import { ambientHostPorts, onOwnerHost, type HostPorts } from './host/host-ports';
 import { CriticalReviewFallback } from './dispatch/critical-review-fallback';
 import { ValidationRetry } from './qa/validation-retry';
 import { PlannerPresence } from './questions/planner-presence';
 import { OrphanRuns } from './recovery/orphan-runs';
 import { ProgressContinuation } from './review/progress-continuation';
 import { SchedulingLifecycle } from './scheduling/lifecycle';
-import { schedulingContext } from './scheduling/context';
-import type { ReviewContinuationContext } from './review/review-continuation';
-import type { ReviewPublicationContext } from './review/review-publication';
-import type { PrAdoptionContext } from './review/pr-adoption';
-import type { ReviewLifecycleContext } from './review/lifecycle';
+
 import { ReviewLifecycle, type ContinuedPrBinding } from './review/lifecycle';
 import { AcceptedPrWorkspace } from './workspaces/workspace-continuation';
-import { recoveryContext } from './recovery/context';
-import { RecoveryLifecycle } from './recovery/lifecycle';
-import { MergePhase, type MergePhaseContext } from './merge/merge-phase';
-import { DispatchLaunch, type DispatchLaunchContext } from './dispatch/launch';
 
-import { intakeContext } from './intake/context';
+import { RecoveryLifecycle } from './recovery/lifecycle';
+import { MergePhase } from './merge/merge-phase';
+import { DispatchLaunch } from './dispatch/launch';
 
 import { JointReviewQuestion } from './questions/joint-review-question';
 import { OperatorDelegation } from './questions/operator-delegation';
@@ -26,19 +22,15 @@ import { QuestionSupersession } from './questions/question-supersession';
 import { Questions } from './questions/questions';
 import { NativeQuestions } from './questions/native-questions';
 
-import { ProvenPreSendRefusalError, ABSENT_RESOLUTION_REASON, RESPONSIBLE_QUESTION_WAIT, ACCEPTED_PR_RECONCILIATION_REASON, MERGE_HELD_REASON, OPERATOR_WORKER_REMAP_REASON, participantToolRunIds } from './recovery/task-reasons';
-import { retainedProgressRun } from './dispatch/retained-work';
-
 import { AsyncLocalStorage } from "node:async_hooks";
 
-import { proofWaitApplies } from './qa/proof-wait';
 import { type VerifiedPr, type CheckHistory, type CheckObservation, type ReviewerSetting, type PublicationOutcome } from './forge/index';
 
 import { type Completion, type Incident, type Profile, type RepositoryChecksPolicy, type ReviewDeliveryAuthorization, type ReviewCheckpointRecord, type Run, type Task, type TaskControlInput, type UsageLevel, type OwnerAcceptanceRecord, type AgentMessageRecord } from '../shared/contracts';
 
 import { Store } from './store/store';
 
-import { Holds, type HoldsContext } from './merge/merge-hold';
+import { Holds } from './merge/merge-hold';
 import type { Adapter, AgentObservation } from './host/adapter';
 import { HostFacade } from './host/host-facade';
 
@@ -48,6 +40,7 @@ import { RepositoryHooks, type CloseoutAuthority } from './hooks/hooks';
 
 import type { HookEventName, HookRecord } from '../shared/hooks';
 import type { IdentitySource } from '../shared/host-kind';
+import type { HostOutage } from '../shared/host-outage';
 import { OriginRouting } from './questions/origin';
 import { Recovery } from './recovery/recovery';
 import { Checkpoints } from './intake/checkpoint';
@@ -58,16 +51,16 @@ import { OwnedTools } from './machine/owned-tool';
 import { PrAdoption } from './review/pr-adoption';
 import { ProviderRefusals, type ProviderRefusalEvidence } from './recovery/provider-refusal';
 import { CallbackReminders } from './intake/callback-reminders';
-import { CheckWaits, type CheckWaitsContext } from './merge/check-waits';
+import { CheckWaits } from './merge/check-waits';
 import { ParticipantLease } from './dispatch/participant-lease';
 import { WithdrawnQuestion } from './dispatch/withdrawn-question';
-import { IntegrationTurns, type IntegrationTurnsContext } from './merge/integration-turns';
+import { IntegrationTurns } from './merge/integration-turns';
 import { Notices } from './questions/notices';
-import { MergeIntent, type MergeIntentContext } from './merge/merge-intent';
+import { MergeIntent } from './merge/merge-intent';
 import { RunCallbackIntake } from './intake/run-callback-intake';
-import { MergeGates, type MergeGatesContext } from './merge/merge-gates';
+import { MergeGates } from './merge/merge-gates';
 import { RetryRoutes } from './recovery/retry-orchestration';
-import { ExternalMerge, type ExternalMergeContext } from './merge/external-merge';
+import { ExternalMerge } from './merge/external-merge';
 import { AbsentRestarts } from './recovery/absent-restarts';
 import { Delegation } from './questions/delegation';
 import type { PlannerRung } from './questions/delegation';
@@ -90,7 +83,7 @@ import { type AgentAskReceipt, type AgentAskRequest, type AgentAskShape } from '
 import { AgentAsks } from './questions/agent-asks';
 import { ProofAutorun } from './qa/proof-autorun';
 import { Observation } from './recovery/observation';
-import { observedHostIdOf, resolveProjectAgent } from './planning/project-agents';
+import { projectAgentTarget } from './planning/project-agents';
 import { AgentMessages, type AgentMessageReceipt, type AgentMessageRequest, type AgentMessageRole } from './questions/agent-messages';
 
 import { type WorktreeValidationScan } from './workspaces/worktree-validation';
@@ -100,16 +93,8 @@ import type { OwnerReviewContext } from './review/owner-review-context';
 import { ResultApplication } from './intake/result-application';
 import { Closeout } from './closeout/closeout';
 import { ReviewPublication } from './review/review-publication';
-import { closeoutContext } from './closeout/context';
 
 import { type EscalationVerbChoice } from './questions/blocker-ladder';
-
-// Tests still import these from here; row F2 of the simplify map removes the re-exports with the delegates.
-export { ABSENT_RESOLUTION_REASON, ABSENT_WORKER_REASON, ACCEPTED_PR_RECONCILIATION_REASON, EXTERNAL_MERGE_CHECK_REASON_PREFIX, EXTERNAL_MERGE_CHECK_RECOVERED_REASON, MERGE_HELD_REASON, OPERATOR_WORKER_REMAP_REASON, PRE_AGENT_LAUNCH_FAILURE_REASON, ProvenPreSendRefusalError, RESPONSIBLE_QUESTION_WAIT, RetainedRunRefusal, VALIDATION_SCAN_PASS_MAX_MS, isAcceptedReview, participantToolRunIds } from './recovery/task-reasons';
-export { retainedProgressRun } from './dispatch/retained-work';
-export { NO_ORIGIN_THREAD_WAIT, originRecipient } from './questions/origin';
-export { docsOnlyProofAutorunSkip, proofAutorunWaitingInputs, proofWaitApplies } from './qa/proof-wait';
-export { reviewContinuationLocalRefusal } from './review/review-continuation';
 
 /** Task 382: the check evidence a merge gate reports beside its wait: the effective hosted-check policy, the required and advisory results at the exact head, and the repository settings revision the policy came from. */
 export type OverdueCheckEvidence = {key: string; name: string; state: string; elapsedMs: number; jobUrl: string; runnerLabels: string[]};
@@ -179,201 +164,73 @@ export interface ResolutionAdapter {
   notify(agentId: string, messageId: string, text: string, sourceAgentId?: string): Promise<void>;
 }
 
+import { retryContextOf } from './recovery/retry-evidence';
 import { advanceFailureDisposition } from './recovery/resolution-decisions';
 export { advanceFailureDisposition, type AdvanceFailureDisposition } from './recovery/resolution-decisions';
 import { resolutionAdapter } from './resolution-adapter';
 
+/**
+ * The composition root every lifecycle owner reads its ports from.
+ *
+ * Each owner is wired with `portsContext`, the one live port context
+ * (`core/port-context.ts`): it receives the named ports it calls, and a call
+ * reads this root's current delegate with the root as its receiver, so an
+ * override is live for the next call. An owner whose port contract its own
+ * module declares (`core/questions/questions.ts`, `core/dispatch/capacity.ts`,
+ * `core/review/lifecycle.ts` and their peers) receives that contract instead of
+ * a key list here.
+ *
+ * Host questions are one set (`core/host/host-ports.ts`): the engine that owns
+ * the host registry wires it, and an unwired root keeps the ambient host. This
+ * class is the port surface its owners share; the mechanisms themselves live
+ * with their owners.
+ */
 export class Resolution {
-  readonly criticalReviewFallback = new CriticalReviewFallback(schedulingContext(this, ['store', 'update']));
+  readonly criticalReviewFallback = new CriticalReviewFallback(portsContext(this, ['store', 'update']));
 
-  readonly validationRetry = new ValidationRetry(schedulingContext(this, ['store', 'update']));
+  readonly validationRetry = new ValidationRetry(portsContext(this, ['store', 'update']));
 
-  readonly plannerPresence = new PlannerPresence(schedulingContext(this, ['adapter', 'host', 'identifyOriginHost', 'originHostAvailable', 'plannerThreadGone', 'projectPlannerFor', 'store', 'taskPlannerFor', 'withHost']));
+  readonly plannerPresence = new PlannerPresence(portsContext(this, ['adapter', 'host', 'identifyOriginHost', 'originHostAvailable', 'plannerThreadGone', 'projectPlannerFor', 'store', 'taskPlannerFor', 'withHost']));
 
-  readonly orphanRunsOwner = new OrphanRuns(schedulingContext(this, ['store']));
+  readonly orphanRunsOwner = new OrphanRuns(portsContext(this, ['store']));
 
-  readonly progressContinuation = new ProgressContinuation(schedulingContext(this, ['adapter', 'host', 'onTaskHost', 'ownedToolHold', 'progressEffectsPending', 'startsNoRuns', 'store']));
+  readonly progressContinuation = new ProgressContinuation(portsContext(this, ['adapter', 'host', 'onTaskHost', 'ownedToolHold', 'progressEffectsPending', 'startsNoRuns', 'store']));
 
-  readonly schedulingLifecycle = new SchedulingLifecycle(schedulingContext(this, ['acceptedPrWorkspaceMayApply', 'adapter', 'advanceAttempt', 'advanceChangesRequested', 'advanceClosing', 'advanceCompletedRun', 'advanceMerging', 'advancePhase', 'advanceSkippedReview', 'advanceSyncing', 'attentionReplayApplies', 'attentionUnknownEscalation', 'blockerLadderApplies', 'blockerLadderStep', 'hooks', 'hostAvailable', 'launch', 'operatorReturn', 'pauseForPrerequisiteWait', 'paused', 'reapplyPendingReview', 'reconcileAcceptedPrWorkspace', 'recordStoredResult', 'recovery', 'reobservePendingChecks', 'replayHeldAttention', 'restoreRecordedMergePhase', 'settleAdvanceFailure', 'settleSourceApprovalProof', 'settleUnchangedCheckGate', 'sourceApprovalWaitApplies', 'startsNoRuns', 'stopped', 'store', 'supersedeEarlierRecovery', 'unchangedCheckGateApplies', 'update', 'verification', 'waiting']));
+  readonly schedulingLifecycle = new SchedulingLifecycle(portsContext(this, ['acceptedPrWorkspaceMayApply', 'adapter', 'advanceAttempt', 'advanceChangesRequested', 'advanceClosing', 'advanceCompletedRun', 'advanceMerging', 'advancePhase', 'advanceSkippedReview', 'advanceSyncing', 'attentionReplayApplies', 'attentionUnknownEscalation', 'blockerLadderApplies', 'blockerLadderStep', 'hooks', 'hostAvailable', 'launch', 'operatorReturn', 'pauseForPrerequisiteWait', 'paused', 'reapplyPendingReview', 'reconcileAcceptedPrWorkspace', 'recordStoredResult', 'recovery', 'reobservePendingChecks', 'replayHeldAttention', 'restoreRecordedMergePhase', 'settleAdvanceFailure', 'settleSourceApprovalProof', 'settleUnchangedCheckGate', 'sourceApprovalWaitApplies', 'startsNoRuns', 'stopped', 'store', 'supersedeEarlierRecovery', 'unchangedCheckGateApplies', 'update', 'verification', 'waiting']));
 
-  private reviewLifecycleContext(): ReviewLifecycleContext {
-    const resolution = this;
-    return {
-      get store() { return resolution.store; },
-      get adapter() { return resolution.adapter; },
-      get host() { return resolution.host; },
-      reviewerSetting: (...args: Parameters<Resolution['reviewerSetting']>) => resolution.reviewerSetting(...args),
-      continuedPrBinding: (...args: Parameters<Resolution['continuedPrBinding']>) => resolution.continuedPrBinding(...args),
-      ordinaryReviewRuns: (...args: Parameters<Resolution['ordinaryReviewRuns']>) => resolution.ordinaryReviewRuns(...args),
-      ownedToolHold: (...args: Parameters<Resolution['ownedToolHold']>) => resolution.ownedToolHold(...args),
-      startsNoRuns: (...args: Parameters<Resolution['startsNoRuns']>) => resolution.startsNoRuns(...args),
-      stopped: (...args: Parameters<Resolution['stopped']>) => resolution.stopped(...args),
-      update: (...args: Parameters<Resolution['update']>) => resolution.update(...args),
-      waiting: (...args: Parameters<Resolution['waiting']>) => resolution.waiting(...args),
-      slotAdmissionReason: (...args: Parameters<Resolution['slotAdmissionReason']>) => resolution.slotAdmissionReason(...args),
-      launch: (...args: Parameters<Resolution['launch']>) => resolution.launch(...args),
-    };
-  }
-  private prAdoptionContext(): PrAdoptionContext {
-    const resolution = this;
-    return {
-      get store() { return resolution.store; },
-      get adapter() { return resolution.adapter; },
-      get host() { return resolution.host; },
-      onTaskHost: <T>(owner: { hostId?: string | null } | null | undefined, work: () => T): T => resolution.onTaskHost(owner, work),
-      paused: (...args: Parameters<Resolution['paused']>) => resolution.paused(...args),
-      recordBlockedPrIdentity: (...args: Parameters<Resolution['recordBlockedPrIdentity']>) => resolution.recordBlockedPrIdentity(...args),
-    };
-  }
-  private reviewPublicationContext(): ReviewPublicationContext {
-    const resolution = this;
-    return {
-      get store() { return resolution.store; },
-      get adapter() { return resolution.adapter; },
-      reviewerSetting: (...args: Parameters<Resolution['reviewerSetting']>) => resolution.reviewerSetting(...args),
-      paused: (...args: Parameters<Resolution['paused']>) => resolution.paused(...args),
-      lease: (...args: Parameters<Resolution['lease']>) => resolution.lease(...args),
-      operatorReturn: (...args: Parameters<Resolution['operatorReturn']>) => resolution.operatorReturn(...args),
-    };
-  }
-  private reviewContinuationContext(): ReviewContinuationContext {
-    const resolution = this;
-    return {
-      get store() { return resolution.store; },
-      get adapter() { return resolution.adapter; },
-      get host() { return resolution.host; },
-      onTaskHost: <T>(owner: { hostId?: string | null } | null | undefined, work: () => T): T => resolution.onTaskHost(owner, work),
-      stopResumeState: (...args: Parameters<Resolution['stopResumeState']>) => resolution.stopResumeState(...args),
-      reconcileReviewDelivery: (...args: Parameters<Resolution['reconcileReviewDelivery']>) => resolution.reconcileReviewDelivery(...args),
-      reviewContinuationGate: (...args: Parameters<Resolution['reviewContinuationGate']>) => resolution.reviewContinuationGate(...args),
-      assertIdleReviewerObservation: (...args: Parameters<Resolution['assertIdleReviewerObservation']>) => resolution.assertIdleReviewerObservation(...args),
-      ownedToolHold: (...args: Parameters<Resolution['ownedToolHold']>) => resolution.ownedToolHold(...args),
-      inspectReviewContinuation: (...args: Parameters<Resolution['inspectReviewContinuation']>) => resolution.inspectReviewContinuation(...args),
-      admitReviewContinuation: (...args: Parameters<Resolution['admitReviewContinuation']>) => resolution.admitReviewContinuation(...args),
-      assertReviewCheckpointProvenance: (...args: Parameters<Resolution['assertReviewCheckpointProvenance']>) => resolution.assertReviewCheckpointProvenance(...args),
-      settleVerbFences: (...args: Parameters<Resolution['settleVerbFences']>) => resolution.settleVerbFences(...args),
-      settleReviewDelivery: (...args: Parameters<Resolution['settleReviewDelivery']>) => resolution.settleReviewDelivery(...args),
-      paused: (...args: Parameters<Resolution['paused']>) => resolution.paused(...args),
-      assertReviewProfileIndependent: (...args: Parameters<Resolution['assertReviewProfileIndependent']>) => resolution.assertReviewProfileIndependent(...args),
-    };
-  }
-  readonly acceptedPrWorkspace = new AcceptedPrWorkspace(recoveryContext(this, ['adapter', 'attention', 'startsNoRuns', 'store']));
-  readonly recoveryLifecycle = new RecoveryLifecycle(Object.assign(
-    recoveryContext(this, ['attention', 'attentionUnknownEscalation', 'environmentDeferred', 'gitTransientFailure', 'responsibleBlockerLadder', 'store', 'update', 'waiting']),
+  readonly acceptedPrWorkspace = new AcceptedPrWorkspace(portsContext(this, ['adapter', 'attention', 'startsNoRuns', 'store']));
+  readonly recoveryLifecycle = new RecoveryLifecycle(portsContext(
+    this, ['attention', 'attentionUnknownEscalation', 'environmentDeferred', 'gitTransientFailure', 'responsibleBlockerLadder', 'store', 'update', 'waiting'],
     { replayHeldAttention: (t: Task) => this.mergePhase.replayHeldAttention(t) },
   ));
 
-  readonly mergePhase = new MergePhase(((owner: Resolution): MergePhaseContext => ({
-    get store() { return owner.store; },
-    get hooks() { return owner.hooks; },
-    paused: (...args) => owner.paused(...args),
-    stopped: (...args) => owner.stopped(...args),
-    get graceMs() { return owner.graceMs; },
-    update: (...args) => owner.update(...args),
-    operatorReturn: (...args) => owner.operatorReturn(...args),
-    mergeGateEvidence: (...args) => owner.mergeGateEvidence(...args),
-    resolvePassedUnchangedCheckEscalation: (...args) => owner.resolvePassedUnchangedCheckEscalation(...args),
-  }))(this));
+  readonly mergePhase = new MergePhase(portsContext(this, ['graceMs', 'hooks', 'mergeGateEvidence', 'operatorReturn', 'paused', 'resolvePassedUnchangedCheckEscalation', 'stopped', 'store', 'update']));
   readonly origins = new OriginRouting(this);
-  readonly recovery = new Recovery(recoveryContext(this, ['adapter', 'attention', 'automaticHookReplayPending', 'ensureIncident', 'escalateRefusedCoordinator', 'extendCallbackReminder', 'graceMs', 'host', 'hostAvailable', 'workerProviderUnavailable', 'idle', 'lease', 'onTaskHost', 'openPlannerEscalation', 'openReviewContinuationEscalation', 'recordStop', 'requiredRouteNote', 'responsibleBlockerLadder', 'resumeTransientProviderThread', 'select', 'slotAdmissionReason', 'startsNoRuns', 'stopped', 'store', 'suppressAutomaticRetry', 'update', 'usageCeilingNote', 'validationEvidence', 'waiting']));
-  readonly checkpoints = new Checkpoints(intakeContext(this, ['adapter', 'attention', 'hostAvailable', 'paused', 'store', 'withHost']));
-  readonly stalls = new Stalls(recoveryContext(this, ['adapter', 'attention', 'host', 'onTaskHost', 'paused', 'profiles', 'recordStop', 'recovery', 'saveIncident', 'store', 'update', 'waiting']));
+  readonly recovery = new Recovery(portsContext(this, ['adapter', 'attention', 'automaticHookReplayPending', 'ensureIncident', 'escalateRefusedCoordinator', 'extendCallbackReminder', 'graceMs', 'host', 'hostAvailable', 'workerProviderUnavailable', 'idle', 'lease', 'onTaskHost', 'openPlannerEscalation', 'openReviewContinuationEscalation', 'recordStop', 'requiredRouteNote', 'responsibleBlockerLadder', 'resumeTransientProviderThread', 'select', 'slotAdmissionReason', 'startsNoRuns', 'stopped', 'store', 'suppressAutomaticRetry', 'update', 'usageCeilingNote', 'validationEvidence', 'waiting']));
+  readonly checkpoints = new Checkpoints(portsContext(this, ['adapter', 'attention', 'hostAvailable', 'paused', 'store', 'withHost']));
+  readonly stalls = new Stalls(portsContext(this, ['adapter', 'attention', 'host', 'onTaskHost', 'paused', 'profiles', 'recordStop', 'recovery', 'saveIncident', 'store', 'update', 'waiting']));
   readonly ownedTools = new OwnedTools(this);
-  readonly holds = new Holds(((owner: Resolution): HoldsContext => ({
-    reviewRequired: (...args) => owner.reviewRequired(...args),
-    get store() { return owner.store; },
-  }))(this));
-  readonly reviewLifecycle = new ReviewLifecycle(this.reviewLifecycleContext());
-  readonly prAdoption = new PrAdoption(this.prAdoptionContext());
+  readonly holds = new Holds(portsContext(this, ['reviewRequired', 'store']));
+  readonly reviewLifecycle = new ReviewLifecycle(portsContext(this, ['adapter', 'continuedPrBinding', 'host', 'launch', 'ordinaryReviewRuns', 'ownedToolHold', 'reviewerSetting', 'slotAdmissionReason', 'startsNoRuns', 'stopped', 'store', 'update', 'waiting']));
+  readonly prAdoption = new PrAdoption(portsContext(this, ['adapter', 'host', 'onTaskHost', 'paused', 'recordBlockedPrIdentity', 'store']));
   readonly selection = new RoleSelection(this);
-  readonly providerRefusals = new ProviderRefusals(recoveryContext(this, ['adapter', 'applyReviewerRefusal', 'attention', 'clearUnverifiableRefusalWait', 'host', 'observeStoppedReviewer', 'paused', 'recordRefusalBlocked', 'recordUnverifiableRefusalRead', 'refusalExclusions', 'refusalGap', 'select', 'stopped', 'store', 'unverifiableRefusalReads', 'update', 'usageCeilingNote', 'verifyRefusedRevision', 'waiting']));
+  readonly providerRefusals = new ProviderRefusals(portsContext(this, ['adapter', 'applyReviewerRefusal', 'attention', 'clearUnverifiableRefusalWait', 'host', 'observeStoppedReviewer', 'paused', 'recordRefusalBlocked', 'recordUnverifiableRefusalRead', 'refusalExclusions', 'refusalGap', 'select', 'stopped', 'store', 'unverifiableRefusalReads', 'update', 'usageCeilingNote', 'verifyRefusedRevision', 'waiting']));
   readonly validation = new ValidationEvidence(this);
-  readonly callbackReminders = new CallbackReminders(intakeContext(this, ['adapter', 'attention', 'ensureIncident', 'extendCallbackReminder', 'graceMs', 'heavyRunAlive', 'host', 'onTaskHost', 'ownedJobWait', 'saveIncident', 'store', 'validationEvidence', 'waiting']));
-  readonly checkWaits = new CheckWaits(((owner: Resolution): CheckWaitsContext => ({
-    get adapter() { return owner.adapter; },
-    attention: (...args) => owner.attention(...args),
-    paused: (...args) => owner.paused(...args),
-    recordIncidentEvent: (...args) => owner.recordIncidentEvent(...args),
-    refusePreMerge: (...args) => owner.refusePreMerge(...args),
-    reviewerSetting: (...args) => owner.reviewerSetting(...args),
-    settleAttentionEpisode: (...args) => owner.settleAttentionEpisode(...args),
-    get store() { return owner.store; },
-    update: (...args) => owner.update(...args),
-    waiting: (...args) => owner.waiting(...args),
-  }))(this));
+  readonly callbackReminders = new CallbackReminders(portsContext(this, ['adapter', 'attention', 'ensureIncident', 'extendCallbackReminder', 'graceMs', 'heavyRunAlive', 'host', 'onTaskHost', 'ownedJobWait', 'saveIncident', 'store', 'validationEvidence', 'waiting']));
+  readonly checkWaits = new CheckWaits(portsContext(this, ['adapter', 'attention', 'paused', 'recordIncidentEvent', 'refusePreMerge', 'reviewerSetting', 'settleAttentionEpisode', 'store', 'update', 'waiting']));
   readonly participantLease = new ParticipantLease(this);
   readonly withdrawnQuestion = new WithdrawnQuestion(this);
-  readonly integrationTurns = new IntegrationTurns(((owner: Resolution): IntegrationTurnsContext => ({
-    assignIntegrationTurn: (...args) => owner.assignIntegrationTurn(...args),
-    hasEarlierIntegrationTurn: (...args) => owner.hasEarlierIntegrationTurn(...args),
-    holdLastBlocker: (...args) => owner.holdLastBlocker(...args),
-    holdsIntegrationTurn: (...args) => owner.holdsIntegrationTurn(...args),
-    integrationActive: (...args) => owner.integrationActive(...args),
-    paused: (...args) => owner.paused(...args),
-    refreshingCloseoutHook: (...args) => owner.refreshingCloseoutHook(...args),
-    requiredCheckPollState: (...args) => owner.requiredCheckPollState(...args),
-    slotAdmissionReason: (...args) => owner.slotAdmissionReason(...args),
-    get store() { return owner.store; },
-    update: (...args) => owner.update(...args),
-    waiting: (...args) => owner.waiting(...args),
-  }))(this));
-  readonly mergeIntent = new MergeIntent(((owner: Resolution): MergeIntentContext => ({
-    get adapter() { return owner.adapter; },
-    attention: (...args) => owner.attention(...args),
-    gateSettingsCurrent: (...args) => owner.gateSettingsCurrent(...args),
-    get gitTransientFailure() { return owner.gitTransientFailure?.bind(owner); },
-    mergeGateEvidence: (...args) => owner.mergeGateEvidence(...args),
-    paused: (...args) => owner.paused(...args),
-    get store() { return owner.store; },
-    get uncertainMergeRetryMs() { return owner.uncertainMergeRetryMs; },
-    update: (...args) => owner.update(...args),
-    waiting: (...args) => owner.waiting(...args),
-  }))(this));
-  readonly mergeGates = new MergeGates(((owner: Resolution): MergeGatesContext => ({
-    get adapter() { return owner.adapter; },
-    applyMergeGateWait: (...args) => owner.applyMergeGateWait(...args),
-    attention: (...args) => owner.attention(...args),
-    claimIntegrationTurn: (...args) => owner.claimIntegrationTurn(...args),
-    executionLease: (...args) => owner.executionLease(...args),
-    gateSettingsCurrent: (...args) => owner.gateSettingsCurrent(...args),
-    get hooks() { return owner.hooks; },
-    mergeGateEvidence: (...args) => owner.mergeGateEvidence(...args),
-    openPlannerEscalation: (...args) => owner.openPlannerEscalation(...args),
-    paused: (...args) => owner.paused(...args),
-    reconcileMergeIntent: (...args) => owner.reconcileMergeIntent(...args),
-    refusePreMerge: (...args) => owner.refusePreMerge(...args),
-    reviewRequired: (...args) => owner.reviewRequired(...args),
-    get store() { return owner.store; },
-    update: (...args) => owner.update(...args),
-    verification: (...args) => owner.verification(...args),
-    waiting: (...args) => owner.waiting(...args),
-  }))(this));
-  readonly callbackIntake = new RunCallbackIntake(intakeContext(this, ['adapter', 'completeBookkeeping', 'completeBuildOutput', 'completeProof', 'completeReceipt', 'completeValidate', 'readoptReplacedReviewer', 'reconcileReviewDelivery', 'recordFinishedTaskCompletion', 'recordSupersededProofEvidence', 'resolveIncident', 'store', 'update']));
-  readonly retryRoutes = new RetryRoutes(recoveryContext(this, ['adapter', 'operatorReturn', 'retainedWorkerProfileIssue', 'retry', 'reviewContinuationOwner', 'settleVerbFences', 'store', 'update', 'validationAlive']));
-  readonly externalMerge = new ExternalMerge(((owner: Resolution): ExternalMergeContext => ({
-    get adapter() { return owner.adapter; },
-    assignIntegrationTurn: (...args) => owner.assignIntegrationTurn(...args),
-    attention: (...args) => owner.attention(...args),
-    environmentDeferred: (...args) => owner.environmentDeferred(...args),
-    executionLease: (...args) => owner.executionLease(...args),
-    get gitTransientFailure() { return owner.gitTransientFailure?.bind(owner); },
-    hasEarlierIntegrationTurn: (...args) => owner.hasEarlierIntegrationTurn(...args),
-    get host() { return owner.host; },
-    openPlannerEscalation: (...args) => owner.openPlannerEscalation(...args),
-    paused: (...args) => owner.paused(...args),
-    recovery: {
-      releaseWithNotAppliedAction: (...args) => owner.recovery.releaseWithNotAppliedAction(...args),
-      settledEpisodeChanges: (...args) => owner.recovery.settledEpisodeChanges(...args),
-    },
-    resolveIncident: (...args) => owner.resolveIncident(...args),
-    reviewRequired: (...args) => owner.reviewRequired(...args),
-    get store() { return owner.store; },
-    transportDeferred: (...args) => owner.transportDeferred(...args),
-    update: (...args) => owner.update(...args),
-    waiting: (...args) => owner.waiting(...args),
-  }))(this));
-  readonly absentRestarts = new AbsentRestarts(recoveryContext(this, ['adapter', 'attention', 'ensureIncident', 'graceMs', 'paused', 'recordIncidentEvent', 'resolveIncident', 'resumeWorkerContinuation', 'settleVerbFences', 'store', 'update']));
-  readonly observation = new Observation(recoveryContext(this, ['adapter', 'attention', 'environmentDeferred', 'extendCallbackReminder', 'graceMs', 'heavyRunAlive', 'host', 'hostAvailable', 'inventoryHostMatches', 'launchingRuns', 'onTaskHost', 'orphanRuns', 'paused', 'reconcileAbsentCreation', 'reconcileStalledTurnStop', 'recoverRefusedReviewer', 'remindStoppedRun', 'resolveIncident', 'resumeTransientProviderThread', 'retainedProfileIssue', 'stalls', 'stopped', 'store', 'supersedeOrphans', 'transportDeferred', 'update', 'waiting', 'withHost']));
+  readonly integrationTurns = new IntegrationTurns(portsContext(this, ['assignIntegrationTurn', 'hasEarlierIntegrationTurn', 'holdLastBlocker', 'holdsIntegrationTurn', 'integrationActive', 'paused', 'refreshingCloseoutHook', 'requiredCheckPollState', 'slotAdmissionReason', 'store', 'update', 'waiting']));
+  readonly mergeIntent = new MergeIntent(portsContext(this, ['adapter', 'attention', 'gateSettingsCurrent', 'gitTransientFailure', 'mergeGateEvidence', 'paused', 'store', 'uncertainMergeRetryMs', 'update', 'waiting']));
+  readonly mergeGates = new MergeGates(portsContext(this, ['adapter', 'applyMergeGateWait', 'attention', 'claimIntegrationTurn', 'executionLease', 'gateSettingsCurrent', 'hooks', 'mergeGateEvidence', 'openPlannerEscalation', 'paused', 'reconcileMergeIntent', 'refusePreMerge', 'reviewRequired', 'store', 'update', 'verification', 'waiting']));
+  readonly callbackIntake = new RunCallbackIntake(portsContext(this, ['adapter', 'completeBookkeeping', 'completeBuildOutput', 'completeProof', 'completeReceipt', 'completeValidate', 'readoptReplacedReviewer', 'reconcileReviewDelivery', 'recordFinishedTaskCompletion', 'recordSupersededProofEvidence', 'resolveIncident', 'store', 'update']));
+  readonly retryRoutes = new RetryRoutes(portsContext(this, ['adapter', 'operatorReturn', 'retainedWorkerProfileIssue', 'retry', 'reviewContinuationOwner', 'settleVerbFences', 'store', 'update', 'validationAlive']));
+  readonly externalMerge = new ExternalMerge(portsContext(
+    this, ['adapter', 'assignIntegrationTurn', 'attention', 'environmentDeferred', 'executionLease', 'gitTransientFailure', 'hasEarlierIntegrationTurn', 'host', 'openPlannerEscalation', 'paused', 'resolveIncident', 'reviewRequired', 'store', 'transportDeferred', 'update', 'waiting'],
+    { recovery: portsContext(this.recovery, ['releaseWithNotAppliedAction', 'settledEpisodeChanges']) },
+  ));
+  readonly absentRestarts = new AbsentRestarts(portsContext(this, ['adapter', 'attention', 'ensureIncident', 'graceMs', 'paused', 'recordIncidentEvent', 'resolveIncident', 'resumeWorkerContinuation', 'settleVerbFences', 'store', 'update']));
+  readonly observation = new Observation(portsContext(this, ['adapter', 'attention', 'environmentDeferred', 'extendCallbackReminder', 'graceMs', 'heavyRunAlive', 'host', 'hostAvailable', 'inventoryHostMatches', 'launchingRuns', 'onTaskHost', 'orphanRuns', 'paused', 'reconcileAbsentCreation', 'reconcileStalledTurnStop', 'recoverRefusedReviewer', 'remindStoppedRun', 'resolveIncident', 'resumeTransientProviderThread', 'retainedProfileIssue', 'stalls', 'stopped', 'store', 'supersedeOrphans', 'transportDeferred', 'update', 'waiting', 'withHost']));
   readonly delegation = new Delegation(this);
   readonly reviewerConsult = new ReviewerConsult(this);
   readonly escalationSettlement = new EscalationSettlement(this);
@@ -384,94 +241,55 @@ export class Resolution {
   readonly proofAutorun = new ProofAutorun(this);
   readonly nativeQuestions = new NativeQuestions(this);
   readonly ladder = new Ladder(this);
-  readonly effectReconcile = new EffectReconcile(recoveryContext(this, ['adapter', 'deliveryInTimeline', 'host', 'reconcileReviewDelivery', 'reconcileReviewDeliveryOperations', 'settleReviewDelivery', 'store']));
-  readonly reviewContinuations = new ReviewContinuations(this.reviewContinuationContext());
+  readonly effectReconcile = new EffectReconcile(portsContext(this, ['adapter', 'deliveryInTimeline', 'host', 'reconcileReviewDelivery', 'reconcileReviewDeliveryOperations', 'settleReviewDelivery', 'store']));
+  // Annotated: the continuation's own forwarders below are typed by the owner it reads.
+  readonly reviewContinuations: ReviewContinuations = new ReviewContinuations(portsContext(this, ['adapter', 'admitReviewContinuation', 'assertIdleReviewerObservation', 'assertReviewCheckpointProvenance', 'assertReviewProfileIndependent', 'host', 'inspectReviewContinuation', 'onTaskHost', 'ownedToolHold', 'paused', 'reconcileReviewDelivery', 'reviewContinuationGate', 'settleReviewDelivery', 'settleVerbFences', 'stopResumeState', 'store']));
   readonly agentMessages = new AgentMessages(this);
   readonly agentAsks = new AgentAsks(this);
-  readonly transientResume = new TransientResume(recoveryContext(this, ['adapter', 'attention', 'graceMs', 'host', 'onTaskHost', 'openPlannerEscalation', 'paused', 'profiles', 'store', 'update', 'waiting']));
+  readonly transientResume = new TransientResume(portsContext(this, ['adapter', 'attention', 'graceMs', 'host', 'onTaskHost', 'openPlannerEscalation', 'paused', 'profiles', 'store', 'update', 'waiting']));
   readonly notices = new Notices(this);
   readonly slotAdmission = new SlotAdmission(this);
-  readonly taskStops = new TaskStops(recoveryContext(this, ['ensureIncident', 'questions', 'recordIncidentEvent', 'saveIncident', 'settleAttentionEpisode', 'stopped', 'store', 'update', 'waiting']));
+  readonly taskStops = new TaskStops(portsContext(this, ['ensureIncident', 'questions', 'recordIncidentEvent', 'saveIncident', 'settleAttentionEpisode', 'stopped', 'store', 'update', 'waiting']));
   readonly continuationFences = new ContinuationFences(this);
-  readonly resultApplication = new ResultApplication(intakeContext(this, ['adapter', 'advanceCloseoutResult', 'attention', 'hooks', 'lease', 'openPlannerEscalation', 'ordinaryRoundCustody', 'recordBlockedPrIdentity', 'responsibleBlockerLadder', 'responsiblePrReportRefused', 'reviewerSetting', 'settleAttentionEpisode', 'settleAutomaticReplayHold', 'stopped', 'store', 'suppressAutomaticRetry', 'update', 'waiting']));
-  readonly closeout = new Closeout(closeoutContext(this, ['adapter', 'attention', 'claimIntegrationTurn', 'closeoutAuthority', 'closeoutWritten', 'executionLease', 'hookCloseout', 'hooks', 'launch', 'paused', 'queueCloseout', 'settleAutomaticReplayHold', 'stopped', 'store', 'turnReleased', 'update', 'waiting']));
-  readonly reviewPublication = new ReviewPublication(this.reviewPublicationContext());
-  readonly dispatchLaunch = new DispatchLaunch(((owner: Resolution): DispatchLaunchContext => ({
-    get adapter() { return owner.adapter; },
-    get advanceAttempt() { return owner.advanceAttempt; },
-    assertReviewProfileIndependent: (...args) => owner.assertReviewProfileIndependent(...args),
-    attention: (...args) => owner.attention(...args),
-    authorAgentIds: (...args) => owner.authorAgentIds(...args),
-    bindContinuedPrInTx: (...args) => owner.bindContinuedPrInTx(...args),
-    bindReportedHeadForReview: (...args) => owner.bindReportedHeadForReview(...args),
-    catalogKnown: (...args) => owner.catalogKnown(...args),
-    claimIntegrationTurn: (...args) => owner.claimIntegrationTurn(...args),
-    continuedPrBinding: (...args) => owner.continuedPrBinding(...args),
-    continuedProgressWait: (...args) => owner.continuedProgressWait(...args),
-    deliverLaunchRun: (...args) => owner.deliverLaunchRun(...args),
-    ensureIncident: (...args) => owner.ensureIncident(...args),
-    get host() { return owner.host; },
-    launch: (...args) => owner.launch(...args),
-    get launchingRuns() { return owner.launchingRuns; },
-    lease: (...args) => owner.lease(...args),
-    leaseDeclineText: (...args) => owner.leaseDeclineText(...args),
-    openPlannerEscalation: (...args) => owner.openPlannerEscalation(...args),
-    ordinaryReviewRuns: (...args) => owner.ordinaryReviewRuns(...args),
-    ordinaryRoundCustody: (...args) => owner.ordinaryRoundCustody(...args),
-    orphanRuns: (...args) => owner.orphanRuns(...args),
-    pauseForPrerequisiteWait: (...args) => owner.pauseForPrerequisiteWait(...args),
-    paused: (...args) => owner.paused(...args),
-    profiles: (...args) => owner.profiles(...args),
-    progressEffectsPending: (...args) => owner.progressEffectsPending(...args),
-    recordCriticalReviewFallback: (...args) => owner.recordCriticalReviewFallback(...args),
-    requiredRouteNote: (...args) => owner.requiredRouteNote(...args),
-    reserveLaunchRun: (...args) => owner.reserveLaunchRun(...args),
-    resolveWithdrawnPending: (...args) => owner.resolveWithdrawnPending(...args),
-    responsibleJointQuestion: (...args) => owner.responsibleJointQuestion(...args),
-    retainedProfileIssue: (...args) => owner.retainedProfileIssue(...args),
-    retainedWorkerProfileIssue: (...args) => owner.retainedWorkerProfileIssue(...args),
-    retryContext: (...args) => owner.retryContext(...args),
-    reviewerSetting: (...args) => owner.reviewerSetting(...args),
-    select: (...args) => owner.select(...args),
-    selectLaunchThread: (...args) => owner.selectLaunchThread(...args),
-    signoffIssue: (...args) => owner.signoffIssue(...args),
-    slotAdmissionReason: (...args) => owner.slotAdmissionReason(...args),
-    startsNoRuns: (...args) => owner.startsNoRuns(...args),
-    get store() { return owner.store; },
-    supersedeOrphans: (...args) => owner.supersedeOrphans(...args),
-    update: (...args) => owner.update(...args),
-    usageCeilingNote: (...args) => owner.usageCeilingNote(...args),
-    waiting: (...args) => owner.waiting(...args),
-    workerContinuation: (...args) => owner.workerContinuation(...args),
-  }))(this));
+  readonly resultApplication = new ResultApplication(portsContext(this, ['adapter', 'advanceCloseoutResult', 'attention', 'hooks', 'lease', 'openPlannerEscalation', 'ordinaryRoundCustody', 'recordBlockedPrIdentity', 'responsibleBlockerLadder', 'responsiblePrReportRefused', 'reviewerSetting', 'settleAttentionEpisode', 'settleAutomaticReplayHold', 'stopped', 'store', 'suppressAutomaticRetry', 'update', 'waiting']));
+  readonly closeout = new Closeout(portsContext(this, ['adapter', 'attention', 'claimIntegrationTurn', 'closeoutAuthority', 'closeoutWritten', 'executionLease', 'hookCloseout', 'hooks', 'launch', 'paused', 'queueCloseout', 'settleAutomaticReplayHold', 'stopped', 'store', 'turnReleased', 'update', 'waiting']));
+  readonly reviewPublication = new ReviewPublication(portsContext(this, ['adapter', 'lease', 'operatorReturn', 'paused', 'reviewerSetting', 'store']));
+  readonly dispatchLaunch = new DispatchLaunch(portsContext(this, ['adapter', 'advanceAttempt', 'assertReviewProfileIndependent', 'attention', 'authorAgentIds', 'bindContinuedPrInTx', 'bindReportedHeadForReview', 'catalogKnown', 'claimIntegrationTurn', 'continuedPrBinding', 'continuedProgressWait', 'deliverLaunchRun', 'ensureIncident', 'host', 'launch', 'launchingRuns', 'lease', 'leaseDeclineText', 'openPlannerEscalation', 'ordinaryReviewRuns', 'ordinaryRoundCustody', 'orphanRuns', 'pauseForPrerequisiteWait', 'paused', 'profiles', 'progressEffectsPending', 'recordCriticalReviewFallback', 'requiredRouteNote', 'reserveLaunchRun', 'resolveWithdrawnPending', 'responsibleJointQuestion', 'retainedProfileIssue', 'retainedWorkerProfileIssue', 'retryContext', 'reviewerSetting', 'select', 'selectLaunchThread', 'signoffIssue', 'slotAdmissionReason', 'startsNoRuns', 'store', 'supersedeOrphans', 'update', 'usageCeilingNote', 'waiting', 'workerContinuation']));
   readonly adapter: Adapter & Partial<ResolutionAdapter>;
-  hostAvailable: (task: Task, run?: Run) => boolean = () => true;
+  /**
+   * Every host question this root answers, wired as one set by the runtime that
+   * owns the host registry (`core/host/host-ports.ts`). An unwired root keeps the
+   * ambient host, recorded there once instead of as a silent `true` per question.
+   */
+  hostPorts: HostPorts = ambientHostPorts(() => {
+    const hostId = (this.adapter as { hostId?: unknown }).hostId;
+    return typeof hostId === 'string' && hostId ? hostId : undefined;
+  });
+  hostAvailable(task: Task, run?: Run): boolean { return this.hostPorts.taskAvailable(task, run); }
   /** Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): the open outage for a host, when one exists. */
-  hostOutage: (hostId: string) => import('../shared/host-outage').HostOutage | null = () => null;
-  workerProviderUnavailable: (task: Task) => boolean = () => false;
-  withHost: <T>(id: string, fn: () => T) => T = (_id, fn) => fn();
+  hostOutage(hostId: string): HostOutage | null { return this.hostPorts.outage(hostId); }
+  workerProviderUnavailable(task: Task): boolean { return this.hostPorts.workerProviderUnavailable(task); }
+  withHost<T>(id: string, fn: () => T): T { return this.hostPorts.withHost(id, fn); }
   /** The task-owner host binding every agent-naming call reads (#1154); same rule as `Engine.onTaskHost`. */
   onTaskHost<T>(owner: { hostId?: string | null } | null | undefined, work: () => T): T {
-    const hostId = owner?.hostId;
-    return hostId ? this.withHost(hostId, work) : work();
+    return onOwnerHost(this.hostPorts, owner, work);
   }
   /** Registered and connected, independent of the ambient host context; serves the facade's cross-host routing. */
-  hostOnline: (id: string) => boolean = () => true;
-  inventoryHostMatches: (id: string) => boolean = () => true;
-  originHostAvailable: (id: string) => boolean = () => true;
+  hostOnline(id: string): boolean { return this.hostPorts.online(id); }
+  inventoryHostMatches(id: string): boolean { return this.hostPorts.inventoryMatches(id); }
+  originHostAvailable(id: string): boolean { return this.hostPorts.originAvailable(id); }
   /**
    * Wait, bounded, for the plugin bridge (host connection) to become
    * available, the way a just-rolled service needs before host-dependent
    * answers can be verified; null keeps the immediate refusal. Bound and
    * cadence are the runtime's (`hostBridgeWaitMs`); tests override both.
    */
-  awaitHostBridge: ((waitMs: number) => Promise<boolean>) | null = null;
-  hostBridgeWaitMs = 90_000;
-  canReuseUnqualifiedOriginWorkspace: () => boolean = () => true;
-  identifyOriginHost: (id: string, identitySource?: IdentitySource) => Promise<string | undefined> = async () => {
-    const hostId = (this.adapter as { hostId?: unknown }).hostId;
-    return typeof hostId === 'string' && hostId ? hostId : undefined;
-  };
+  get awaitHostBridge(): ((waitMs: number) => Promise<boolean>) | null { return this.hostPorts.awaitBridge; }
+  set awaitHostBridge(wait: ((waitMs: number) => Promise<boolean>) | null) { this.hostPorts.awaitBridge = wait; }
+  get hostBridgeWaitMs(): number { return this.hostPorts.bridgeWaitMs; }
+  set hostBridgeWaitMs(ms: number) { this.hostPorts.bridgeWaitMs = ms; }
+  canReuseUnqualifiedOriginWorkspace(): boolean { return this.hostPorts.canReuseUnqualifiedOriginWorkspace(); }
+  identifyOriginHost(id: string, identitySource?: IdentitySource): Promise<string | undefined> { return this.hostPorts.identifyOriginHost(id, identitySource); }
   /** The Host contract over this resolution's adapter, read at each call (`core/host/host-facade.ts`). */
   get host(): HostFacade { return new HostFacade(this); }
   get worktreeValidationProbe() { return this.validation.worktreeValidationProbe; }
@@ -578,7 +396,8 @@ export class Resolution {
   resumeTransientProviderThread(task: Task, run: Run, state: Awaited<ReturnType<Adapter['observe']>>): Promise<boolean> { return this.transientResume.resumeTransientProviderThread(task, run, state); }
   resumeTransientWorker(task: Task, state: Awaited<ReturnType<Adapter['observe']>>): Promise<boolean> { return this.transientResume.resumeTransientWorker(task, state); }
   applyMergeGateWait(t: Task, gate: { wait: string; needsRebase?: boolean; checksFailed?: boolean; overdue?: boolean; pendingCheck?: boolean; infrastructure?: boolean; infraRunIds?: string[]; overdueCheck?: OverdueCheckEvidence }): Promise<boolean> { return this.checkWaits.applyMergeGateWait(t, gate); }
-  private resolvePassedUnchangedCheckEscalation(t: Task): void { return this.checkWaits.resolvePassedUnchangedCheckEscalation(t); }
+  /** The merge phase's step through the check wait that owns it (`core/merge/merge-phase.ts`). */
+  resolvePassedUnchangedCheckEscalation(t: Task): void { return this.checkWaits.resolvePassedUnchangedCheckEscalation(t); }
   requiredCheckPollState(t: Task): { head: string; nextAt: number; incidentId?: string | null } | null { return this.checkWaits.requiredCheckPollState(t); }
   private holdPendingCheck(t: Task, wait: string, overdue: boolean): void { return this.checkWaits.holdPendingCheck(t, wait, overdue); }
   private captureRequiredCheckIncident(t: Task): void { return this.checkWaits.captureRequiredCheckIncident(t); }
@@ -794,19 +613,7 @@ export class Resolution {
 
   /** Latest accepted blocked result relevant to a worker retry, kept separate from action authority. */
   retryContext(t: Task, taskRuns: Run[] = this.store.runs(t.id).filter(run => run.role !== 'recovery')): NonNullable<Run['retryContext']> | undefined {
-    const latest = taskRuns.at(-1);
-    const revision = latest?.role === 'revision' ? latest : null;
-    if (revision?.released && revision.completion && ['blocked', 'error'].includes(revision.completion.status) &&
-        revision.completion.taskId === t.id && revision.completion.runId === revision.id) {
-      return { source: 'revision', runId: revision.id, status: revision.completion.status as 'blocked' | 'error',
-        head: revision.completion.head ?? revision.head, summary: revision.completion.summary };
-    }
-    const initial = t.completion;
-    const workerBlocked = Boolean(initial && ['blocked', 'error'].includes(initial.status) && initial.runId === t.runId &&
-      !taskRuns.some(run => run.id === initial.runId));
-    if (workerBlocked) return { source: 'worker', runId: initial!.runId, status: initial!.status as 'blocked' | 'error',
-      head: initial!.head ?? null, summary: initial!.summary };
-    return undefined;
+    return retryContextOf(t, taskRuns);
   }
   /**
    * After a live run's result is applied, an open retained wait must land before
@@ -1005,15 +812,7 @@ export class Resolution {
    * gone or unreadable thread refuses with that state, and nothing is sent.
    */
   async resolveProjectAgentTarget(projectKey: string, name: string | null): Promise<{ agentId: string; hostId: string; name: string }> {
-    const project = this.store.projectByKey(projectKey);
-    if (!project) throw new Error(`Unknown project ${projectKey}`);
-    const entry = name === null
-      ? (project.agents ?? []).find(agent => agent.agentId === project.planner?.agentId)
-      : (project.agents ?? []).find(agent => agent.name === name);
-    const current = () => ({ host: this.host, observedHostId: observedHostIdOf(this.adapter) });
-    if (entry && entry.hostId !== observedHostIdOf(this.adapter) && this.originHostAvailable(entry.hostId))
-      return this.withHost(entry.hostId, () => resolveProjectAgent(current(), this.store.projectByKey(projectKey)!, name));
-    return resolveProjectAgent(current(), project, name);
+    return projectAgentTarget(this, projectKey, name);
   }
   deciderProfile(task: Task): Profile | null { return this.delegation.deciderProfile(task); }
   decisionContext(task: Task): string[] { return this.delegation.decisionContext(task); }

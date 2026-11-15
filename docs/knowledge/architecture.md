@@ -148,10 +148,21 @@ owner to the rules it enforces.
   carry the prior findings and delta, and proof-only rounds judge arriving evidence
   under [Spec 057](specs/057-retained-change-review.md).
 - `core/resolution.ts` is the after-dispatch shell: it wraps the adapter in
-  the Proxy that fires `gitTransientRecovered` and supplies live phase ports.
+  the Proxy that fires `gitTransientRecovered` and composes the phase owners.
+  Every owner it wires with ports receives them through `core/port-context.ts`,
+  the one live port context: the owner sees the named ports it calls, and a call
+  reads the shell's current delegate with the shell as its receiver, so an
+  override is live for the next call. An owner whose port contract its own module
+  declares receives that contract instead. `core/host/host-ports.ts` owns the
+  host question contract, the task-owner host rule the engine and the shell share
+  (#1154), and the ambient set an unwired root keeps; the engine that owns the
+  host registry wires one set. The latest accepted blocked result
+  (`core/recovery/retry-evidence.ts`) and a project agent's send-time address
+  (`core/planning/project-agents.ts`) have their own owners, so the shell keeps
+  composition and the ports its owners share.
   `core/scheduling/lifecycle.ts` owns `owns` and ordered advancement;
-  `core/dispatch/launch.ts` owns the launch funnel. Same-name delegates keep
-  instance overrides live. Durable
+  `core/dispatch/launch.ts` owns the launch funnel.
+  Durable
   rules live in
   [daemon owners](contracts/orchestration.md#daemon-owners)
   ([Spec 038](specs/038-bounded-uncertain-merge-reconciliation.md),

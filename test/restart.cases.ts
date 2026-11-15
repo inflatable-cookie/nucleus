@@ -13,7 +13,8 @@ import { digest, Store, operationIdForKey, operationInputHash } from '../core/st
 import { Engine, controlHasExternalEffect, PROFILE_CATALOG_PENDING_REASON, PROFILE_CATALOG_LOADING_REFUSAL } from '../core/engine';
 import { QueueRuntime } from '../service/runtime-owner';
 import { taskControlOperation } from '../core/verbs/task-control-key';
-import { ABSENT_WORKER_REASON, type ResolutionAdapter } from '../core/resolution';
+import { type ResolutionAdapter } from '../core/resolution';
+import { ABSENT_WORKER_REASON } from '../core/recovery/task-reasons';
 import { REVIEW_AUTHORIZATION_REQUIRED, reviewCheckpointPathFor, writeReviewCheckpoint } from '../core/review/review-continuation';
 import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
 import { runFenceRefusal } from '../core/intake/run-settlement';

@@ -15,7 +15,7 @@ import { LoginSessionFaultError } from '../shared/session-fault';
 import { inFlightSlotWaitReason } from '../shared/wait-state';
 import { taskStopRecord } from '../shared/task-stop';
 import { Admission, admitAdapter } from '../core/host/admission';
-import { ABSENT_WORKER_REASON, PRE_AGENT_LAUNCH_FAILURE_REASON, ProvenPreSendRefusalError } from '../core/resolution';
+import { ABSENT_WORKER_REASON, PRE_AGENT_LAUNCH_FAILURE_REASON, ProvenPreSendRefusalError } from '../core/recovery/task-reasons';
 import { submissionSchema, summarizeTask, DEFAULT_GLOBAL_LIMIT, DEFAULT_PROJECT_LIMIT, formatTaskNumber, type Profile, type Run, type Task, dispositionSchema } from '../shared/contracts';
 import type { Adapter, AgentObservation } from '../core/host';
 import { startCallbacks } from '../service/callbacks/callback';
