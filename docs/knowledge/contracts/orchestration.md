@@ -208,11 +208,13 @@ and `isOwnerCall`. One object per engine, never module-level. Enforces
 [Coordinator and owner verbs](#coordinator-and-owner-verbs) authority that
 reads those values. Engine keeps same-name accessors.
 
-**Projections** (`core/store/projections.ts`). Runs what stays outside the delivery
-lanes: workspace titles, the cleanup drain and its retry timers,
-runtime-retirement scheduling, and the occurrence counts a wake or an effect
-retry waits on. Enforces [Cleanup](#cleanup). Engine.stop calls its `stop()`.
-Delegates remain on Engine.
+**Projections** (`core/workspaces/workspace-title-projection.ts`,
+`core/closeout/cleanup-lane.ts`, `core/runtime/retirement-lane.ts`,
+`core/scheduling/projection-occurrences.ts`). Run what stays outside the delivery
+lanes: the workspace-title intent and its drain, the cleanup drain and its retry
+timers, runtime-retirement scheduling, and the occurrence ledger and cut a wake or
+an effect retry waits on. Enforces [Cleanup](#cleanup). Engine.stop calls the
+cleanup lane's `stop()`. Delegates remain on Engine.
 
 ### Worker-path owners
 

@@ -312,6 +312,18 @@ export class StorePlanning {
     });
   }
 
+  /**
+   * Appends one plan version the drain pass derived from the saved one: it ends an idle
+   * acknowledgement while keeping that version in history, so it does not go through the
+   * read-check-save path that refuses a stale version.
+   */
+  appendPlanVersion(plan: ProjectPlan): ProjectPlan {
+    const value = projectPlanSchema.parse(plan);
+    this.core.db.prepare("INSERT INTO project_plans(project,version,data) VALUES(?,?,?)").run(value.project, value.version, JSON.stringify(value));
+    this.core.advanceRevision();
+    return value;
+  }
+
   /** Same-title submission lookup stays repository-scoped and reads no unrelated bodies. */
   findLeadSubmission(title: string, repository: { origin: string; path: string }): { taskId: string } | { leadId: string } | null {
     const task = this.core.db.prepare(`SELECT n.task_id FROM task_numbers n JOIN (

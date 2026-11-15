@@ -8,6 +8,7 @@ import { taskSchema, externalWorkspaceArchivesSettled, taskReferenceSchema, comp
 import { holdsOf } from "../../shared/holds";
 import { boardVisible, StoreBoardIndex } from "./store-board-index";
 import { StoreQueueIndex } from "./store-queue-index";
+import type { FinishedDrainTask } from "../planning/lane-drains";
 
 /** One stored task's detached parts; a bulk read supplies the side stores for its page. */
 interface StoredTaskParts {
@@ -445,6 +446,24 @@ export class StoreTasks {
       const closeoutWorkspaceId = task.resolution?.closeoutWorkspaceId;
       return closeoutWorkspaceId != null && !archived.includes(closeoutWorkspaceId);
     });
+  }
+  /**
+   * Finished, retained tasks as the lane drain pass reads them: newest finish first, with the
+   * submitter an idle acknowledgement answers. Terminal history stays out of the UI projection,
+   * so this is one bounded column read per drain pass rather than a parse of every task.
+   */
+  finishedDrainFacts(): FinishedDrainTask[] {
+    return this.db.prepare(`SELECT id, json_extract(data,'$.repoPath') AS repoPath, json_extract(data,'$.repository') AS repository,
+        json_extract(data,'$.finishedAt') AS finishedAt, json_extract(data,'$.originAgentId') AS originAgentId FROM tasks
+        WHERE json_extract(data,'$.removedAt') IS NULL AND json_extract(data,'$.finishedAt') IS NOT NULL
+        ORDER BY finishedAt DESC`).all().map(row => ({
+      id: String(row.id),
+      repoPath: String(row.repoPath),
+      repository: row.repository == null ? null : String(row.repository),
+      finishedAt: String(row.finishedAt),
+      // `originAgentId` is required on every task row; a malformed row answers nobody.
+      originAgentId: typeof row.originAgentId === "string" ? row.originAgentId : "",
+    }));
   }
   /**
    * Tasks with an owed runtime retirement proof (Effigy contract 005): the

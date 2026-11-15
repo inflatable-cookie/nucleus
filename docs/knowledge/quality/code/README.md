@@ -96,6 +96,32 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
 
 ## Re-rates
 
+- nucleus#1247 (floor 7, 2026-11-15): the two floor-7 `core/store` rows were consolidated and split along
+  the seams their rows named, and re-rated at this PR's head. The Spec 041 drain pass left
+  `core/store/store-lanes.ts` (9: O1 T2 F2 P2 Pr2) for `core/planning/lane-drains.ts` (9: O2 T1 F2 P2
+  Pr2): the pass asks the owner of each row for one typed fact — the finished-task submits an idle mark
+  answers, the repositories with an active QA run, the saved plan version, the project row, the lane
+  documents — and applies the evaluation in one transaction, so no episode can start without its prompt.
+  A drain episode for an unknown lane now refuses instead of no-opping, the dead `??` fallback behind a
+  throwing `task()` read is gone with the typed read, and the retired-owner seed rule is the shared
+  `projectOwnerRoutable` beside `projectDormant` in `shared/schema/projects.ts`; typed facts stays 1 for
+  that id-shape read. `store-lanes.ts` keeps lane rows, the lane-view caches, idle close and lane
+  documents, and scores 9 because those caches are still declared on `Store` (ownership 1).
+  `core/store/projections.ts` is gone, replaced by one owner per mechanism. The workspace-title intent
+  and its drain are `core/workspaces/workspace-title-projection.ts` (9: O2 T2 F1 P2 Pr2): the meta record
+  it writes is one typed `WorkspaceTitleIntent`, an unknown send stays unknown and is retried only after
+  its recorded backoff, a purged task is a typed absence rather than a caught throw, and a sync reads only
+  the task ids its title names instead of every task; failure stays 1 for the pre-send host fault the
+  drain still swallows. The cleanup drain and its retry timers are `core/closeout/cleanup-lane.ts`
+  (9: O2 T2 F1 P2 Pr2), runtime-retirement scheduling is `core/runtime/retirement-lane.ts` (9: O2 T2 F1
+  P2 Pr2), and the occurrence counts plus the titles-then-cleanup cut are
+  `core/scheduling/projection-occurrences.ts` (9: O2 T2 F1 P2 Pr2), whose two occurrence-key shapes have
+  one owner and whose rejected drain the wait still discards. `test/retirement-lane.test.ts` is the new
+  boundary test for retirement coalescing and a host-less task, `test/workspace-title.test.ts` proves a
+  title reads only the ids it names, and `test/lane-drain.test.ts` proves an unresolved seed owner is not
+  routable. `shared/schema/projects.ts` and `core/workspaces/workspace-title.ts` keep their scores with
+  refreshed loc; the title module now owns the reference-label rule.
+
 - nucleus#1245 (floor 7, 2026-11-15): `core/runtime/planning.ts` (8) now delegates draft checks and
   handoff preparation to `core/runtime/planning-submission.ts` (9), separating preflight from the lead
   and lane facade while preserving `submitLead`'s tested wait-to-settlement contract; that remaining
