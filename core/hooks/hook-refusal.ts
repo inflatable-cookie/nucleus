@@ -24,16 +24,17 @@ export type HookRefusalKind = "stale_base";
 export const STALE_INTEGRATION_BASE_PROOF = "Integration write requires a clean synchronized base:";
 /**
  * Every recorded sentence that means an occurrence's pinned base went *stale*
- * rather than wrong. verifyCleanSynchronizedBase refuses on these exact
+ * rather than wrong. verifyCleanSynchronizedBase refuses on these exact three
  * conditions, and the integration-write wrapper restates them under
- * {@link STALE_INTEGRATION_BASE_PROOF}. The list is closed: a new staleness
- * condition is a new decoder case here, not another substring at a call site.
+ * {@link STALE_INTEGRATION_BASE_PROOF}. A dirty checkout or one on the wrong
+ * branch is a configuration fault, not staleness, and stays parked for a human.
+ * The list is closed: a new staleness condition is a new decoder case here, not
+ * another substring at a call site.
  */
 const STALE_INTEGRATION_BASE_REFUSALS = [
   STALE_INTEGRATION_BASE_PROOF,
   "Integration HEAD moved from the event base",
   "Local integration base differs from origin",
-  "Integration checkout is not on the base branch",
 ] as const;
 
 /**
