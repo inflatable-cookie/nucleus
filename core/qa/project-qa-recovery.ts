@@ -10,7 +10,7 @@ import { minimalHookEnvironment, type ExecutionOutcome } from "../hooks/hooks";
 import { gitText } from "../workspaces/worktree-links";
 import { withRunTemporaryDirectory } from "../workspaces/run-scratch";
 import { findGitWorktreeAdd, findProcessByCommandToken } from "../machine/process-identity";
-import { supervisorLiveness } from "../machine/supervisor-liveness";
+import { supervisorLiveness } from "../machine/start-identity";
 import { parseWorktreeList, repoCommonDir } from "../workspaces/workspace-allocation";
 import { tailWithTruncationMarker } from "../machine/output-retention";
 import { now, type Store } from "../store/store";

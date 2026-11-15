@@ -31,6 +31,9 @@ test("web bundle renders the board against the daemon protocol without Paseo", a
     assert.ok(calls.includes("queue.ui-snapshot"), "board requested the snapshot through HTTP");
     for (let i = 0; i < 200 && !dom.window.document.querySelector('[data-live-channel="connected"]'); i++) await new Promise(resolve => setTimeout(resolve, 10));
     assert.ok(dom.window.document.querySelector('[data-live-channel="connected"]'), "live channel is connected before measuring polling");
+    // A board frame is decoded through the board contract before it reaches the
+    // cache, so a real frame leaves no live-channel refusal behind.
+    assert.equal(dom.window.document.querySelector("[data-live-error]"), null, "the live board frame decoded against the contract");
     const reads = calls.filter(method => method === "queue.ui-snapshot").length;
     await new Promise(resolve => setTimeout(resolve, 4300));
     assert.equal(calls.filter(method => method === "queue.ui-snapshot").length, reads, "the connected live channel suppresses snapshot interval polling");

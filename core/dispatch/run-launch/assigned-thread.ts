@@ -4,7 +4,7 @@ import { dataHome } from '../../../shared/data-home.mjs';
 import { wireLabel } from '../../../shared/wire-labels';
 import { active, assignedThreadWaitReason } from '../../recovery/task-reasons';
 import {
-  mcpBindingPathFromHostRecord, mcpBindingPathFromProcessListing, reportBindingReuseDecision,
+  mcpBindingPathFromHostRecord, observedMcpBindingPath, reportBindingReuseDecision,
 } from '../../intake/report-binding';
 import { unreleasedLaunchFence } from '../../verbs/owner-facts';
 
@@ -35,16 +35,10 @@ export async function observeAssignedThread(ctx: LaunchThreadContext, t: Task, r
     return { kind: 'handled' };
   }
   const state = await ctx.host.observe(agentId);
-  let bindingPath = state.mcpBindingPath ?? mcpBindingPathFromHostRecord(state);
+  const recordedPath = state.mcpBindingPath ?? mcpBindingPathFromHostRecord(state);
   const bindingKey = wireLabel(state.labels, 'mcpBinding');
-  if (!bindingPath && bindingKey) {
-    try {
-      bindingPath = mcpBindingPathFromProcessListing(
-        await ctx.adapter.hostProcessListing?.() ?? null,
-        bindingKey,
-      );
-    } catch { /* process listing is best-effort; unknown keeps the thread */ }
-  }
+  const bindingPath = await observedMcpBindingPath(recordedPath, bindingKey,
+    ctx.adapter.hostProcessListing ? () => ctx.adapter.hostProcessListing!() : undefined);
   let home: string | undefined;
   try { home = dataHome(); } catch { /* unknown home keeps the thread */ }
   if (home && reportBindingReuseDecision({ bindingPath, dataHome: home }) === 'fresh') {

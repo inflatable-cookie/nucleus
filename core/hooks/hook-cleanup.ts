@@ -1,4 +1,4 @@
-import { lstat, readdir, realpath, rm, readFile } from 'node:fs/promises';
+import { lstat, readdir, realpath, readFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import type { Store } from '../store/store';
 import type { Task } from '../../shared/contracts';
@@ -10,6 +10,7 @@ import {
 import { git } from '../git/index';
 import { digest } from '../store/store';
 import { HOOK_CLEANUP_ERROR_LIMIT, hookRecordOwnsIntegrationCheckout } from './hook-retention';
+import { removeTree } from '../workspaces/tree-removal';
 
 export interface HookCleanupHealth {
   checkedAt: string;
@@ -70,7 +71,7 @@ export async function reapHookCheckouts(store: Store, options: { taskIds?: Reado
     health.errorCount++;
     if (health.errors.length < HOOK_CLEANUP_ERROR_LIMIT) health.errors.push(`${identity}: ${String(error)}`.slice(0, 500));
   };
-  const throughRowid = Number(store.db.prepare("SELECT COALESCE(MAX(rowid),0) AS last FROM hook_events").get()!.last);
+  const throughRowid = store.hookEventsThroughRowid();
   async function* records() {
     for (let cursor = 0;;) {
       const page = store.hookEventsPage(cursor, HOOK_READ_PAGE, throughRowid);
@@ -167,7 +168,7 @@ export async function reapHookCheckouts(store: Store, options: { taskIds?: Reado
               const removed = await gitRaw(parent!, [`--git-dir=${commonDir}`, 'worktree', 'remove', '--force', recorded]);
               if (removed.code !== 0) throw new Error(`Git worktree removal failed: ${removed.stderr.trim()}`);
             }
-            await rm(recorded, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+            await removeTree(recorded, { force: true, maxRetries: 3 });
             health.orphanCount++; health.orphanBytes += bytes; health.reapedCount++; health.reapedBytes += bytes;
             reconciled.push(record.id);
           } else {
@@ -219,7 +220,7 @@ export async function reapHookCheckouts(store: Store, options: { taskIds?: Reado
         if (removed.code !== 0) throw new Error(`Git worktree removal failed: ${removed.stderr.trim()}`);
       }
       // Independent clones and interrupted removals may have no Git marker left.
-      await rm(path, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      await removeTree(path, { force: true, maxRetries: 3 });
       health.reapedCount++; health.reapedBytes += bytes;
       store.event(task.id, 'hook_checkout_reaped', `${record.eventId}: ${bytes} bytes`);
     } catch (error) {
@@ -249,7 +250,7 @@ export async function reapHookCheckouts(store: Store, options: { taskIds?: Reado
           if (!info?.isDirectory() || info.isSymbolicLink()
               || !usedBySettledRun(path) && Date.now() - info.mtimeMs < UNOWNED_ISOLATION_RETENTION_MS) continue;
           const bytes = await treeBytes(path);
-          await rm(path, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+          await removeTree(path, { force: true, maxRetries: 3 });
           health.orphanCount++; health.orphanBytes += bytes; health.reapedCount++; health.reapedBytes += bytes;
         }
       }

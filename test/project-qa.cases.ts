@@ -36,7 +36,7 @@ import {
   writeQaSupervision,
   writeQaSupervisionPlan,
 } from '../core/qa/project-qa-supervision-files';
-import { supervisorLiveness } from '../core/machine/supervisor-liveness';
+import { supervisorLiveness } from '../core/machine/start-identity';
 import { parseProjectQaWorktreeHooks, removeQaWorkspace } from '../core/qa/project-qa-worktree';
 import { findProcessByCommandToken, scanTokenVerdict, type ProcCommandLine } from '../core/machine/process-identity';
 import { HostRunScheduler, classifyHostRun } from '../core/host-runs/host-run-scheduler';

@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync, renameSync, unlinkSync } from
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FileFacts } from '../core/machine/file-facts';
-import { SupervisorLivenessReader } from '../core/machine/supervisor-liveness';
+import { SupervisorLivenessReader } from '../core/machine/start-identity';
 import { processCommandLineAsync } from '../core/machine/process-identity';
 import type { StartIdentityRead } from '../core/machine/start-identity';
 
@@ -56,6 +56,16 @@ test('an unknown recorded start identity falls back to the supervisor token inst
   const line = await processCommandLineAsync(process.pid);
   assert.ok(line);
   assert.equal((await liveness.read(process.pid, line, `${process.pid}@unknown`)).state, 'live');
+});
+
+test('a recorded start identity for another pid is ignored and the run token remains the liveness proof', async () => {
+  let identityReads = 0;
+  const liveness = new SupervisorLivenessReader({
+    alive: () => true, command: async () => 'node token',
+    read: async () => { identityReads++; return { kind: 'gone' }; },
+  });
+  assert.equal((await liveness.read(123, 'token', '456@start')).state, 'live');
+  assert.equal(identityReads, 0, 'an identity for another pid is not proof about this supervisor');
 });
 
 
