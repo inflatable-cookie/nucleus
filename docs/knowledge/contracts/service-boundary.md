@@ -77,10 +77,16 @@ callbacks for project and lane access and lane-activity invalidation.
 `store-maintenance.ts` owns database admission, integrity and migration backups,
 retention, pruning, content fingerprints and bounded page reclamation. Store
 callbacks preserve transaction cleanup and projection cache ownership.
-`store-operations.ts` owns operations, notices, messages and hook events, with
-a narrow task-access interface for reads, numbering and change notifications.
-`store-projects.ts` owns projects, repository settings, rekey receipts and project
-management, with callbacks for task, planning and projection access.
+`store-operations.ts` owns the durable operation journal: acceptance, bounded reads
+and admission limits. `store-pre-send.ts` settles task-control pre-send receipts.
+`store-notices.ts`, `store-messages.ts` and `store-hook-events.ts` each own one
+table, and `store-pending-submissions.ts` owns the board's submitting cards.
+Each takes a narrow task-access interface for reads, numbering and change notifications.
+`store-project-registry.ts` owns project rows, membership, default projects and the
+read cache; `store-repository-settings.ts` owns repository settings and rekey receipts.
+`store-project-agents.ts`, `store-project-limits.ts`, `store-project-removal.ts`,
+`store-project-merge.ts` and `store-project-management.ts` own named agents, dispatch
+slots, removal, moves and confirmed management, each writing through the registry.
 `store-auth.ts` owns credentials, callback authentication, completion receipts
 and availability. Projects are parsed once per project-table write clock;
 reads return detached copies and rollback clears the cache. Database triggers

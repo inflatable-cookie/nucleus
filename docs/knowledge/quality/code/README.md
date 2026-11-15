@@ -52,6 +52,18 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
   one queue branch-name shape, thrown by `git-proof.ts` and `git-stash.ts` (their N4 rows keep their
   scores and gained the new loc), and compared as one named text in `core/recovery/retry-routes.ts`
   (its row is unchanged).
+- nucleus#1221 (floor 6, 2026-11-15): `core/store/store-operations.ts` and `core/store/store-projects.ts` were split by
+  owner (operations, pre-send settlement, notices, messages, hook events, pending submissions; registry, repository
+  settings, agents, limits, removal, merge, management), and `shared/schema/task-control.ts` and
+  `shared/schema/resolution.ts` by seam (field bag with a strict entry point, cross-field rules, task.next observation
+  shapes; workspace and merge field groups). The four rows in `N3.csv` and `N6.csv` were replaced by one row per new
+  module, scored at this PR's head. Scores are not all 7 or more: `task-control-rules.ts` stays 7 with proportion 0
+  and `store-project-management.ts` stays 7, both named in the rows; `resolution.ts` stays non-strict by design.
+  The resolution record keeps its original parsed key order (workspace and merge groups spread at their old
+  positions), so task digests do not change. Store member checks share one predicate, `repositoryMemberMatches`
+  (`core/store/store-project-registry.ts`); the shared `projectRepositoryMatches` stays a separate rule for removal
+  and management. `task-control-fields.ts` has its own row. Citations to `store.ts` and `store-maintenance.ts` in rows
+  for unrelated modules predate this PR and are left for their next re-rate.
 - nucleus#1206 (floor 5, 2026-11-14): the project editor and settings profiles were split by screen,
   form, repository and save-queue responsibility; task holds, attention phases and prerequisite
   reason facts now use shared owners. The changed N6 rows were re-rated at this PR's head.
