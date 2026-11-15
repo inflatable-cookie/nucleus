@@ -7,7 +7,10 @@ import { OrphanRuns } from './recovery/orphan-runs';
 import { ProgressContinuation } from './review/progress-continuation';
 import { SchedulingLifecycle } from './scheduling/lifecycle';
 
-import { ReviewLifecycle, type ContinuedPrBinding } from './review/lifecycle';
+import { ContinuedPrs, type ContinuedPrBinding } from './review/continued-pr';
+import { OrdinaryCustody } from './review/ordinary-custody';
+import { ReviewAdvances } from './review/review-advances';
+import { reviewRequiredForTask, reviewerSettingOf } from './review/reviewer-setting';
 import { AcceptedPrWorkspace } from './workspaces/workspace-continuation';
 import { RecoveryLifecycle } from './recovery/lifecycle';
 import { MergePhase } from './merge/merge-phase';
@@ -102,7 +105,7 @@ export type CheckObservationFields = {checksPolicy?: RepositoryChecksPolicy; req
 export type MergeGateResult = { timings?: Record<string, number>; head: string; base: string; wait: string; needsRebase?: boolean; checksFailed?: boolean; overdue?: boolean; pendingCheck?: boolean; infrastructure?: boolean; infraRunIds?: string[] } & CheckObservationFields;
 export type RequiredChecksResult = { head: string; wait: string; needsRebase?: boolean; checksFailed?: boolean; overdue?: boolean; pendingCheck?: boolean; infrastructure?: boolean; infraRunIds?: string[] } & CheckObservationFields;
 /** Project-d #117: an evidence-only PR verified for a continuation, and the task facts the accepting transaction re-checks. */
-export type { ContinuedPrBinding } from './review/lifecycle';
+export type { ContinuedPrBinding } from './review/continued-pr';
 /**
  * Task 405: the owner authorisation one proof execution was activated with, and
  * the operation that recorded it. `tree` is filled by the source proof just
@@ -177,7 +180,7 @@ import { resolutionAdapter } from './resolution-adapter';
  * reads this root's current delegate with the root as its receiver, so an
  * override is live for the next call. An owner whose port contract its own
  * module declares (`core/questions/questions.ts`, `core/dispatch/capacity.ts`,
- * `core/review/lifecycle.ts` and their peers) receives that contract instead of
+ * `core/review/continued-pr.ts` and their peers) receives that contract instead of
  * a key list here.
  *
  * Host questions are one set (`core/host/host-ports.ts`): the engine that owns
@@ -211,7 +214,9 @@ export class Resolution {
   readonly stalls = new Stalls(portsContext(this, ['adapter', 'attention', 'host', 'onTaskHost', 'paused', 'profiles', 'recordStop', 'recovery', 'saveIncident', 'store', 'update', 'waiting']));
   readonly ownedTools = new OwnedTools(this);
   readonly holds = new Holds(portsContext(this, ['reviewRequired', 'store']));
-  readonly reviewLifecycle = new ReviewLifecycle(portsContext(this, ['adapter', 'continuedPrBinding', 'host', 'launch', 'ordinaryReviewRuns', 'ownedToolHold', 'reviewerSetting', 'slotAdmissionReason', 'startsNoRuns', 'stopped', 'store', 'update', 'waiting']));
+  readonly continuedPrs = new ContinuedPrs(portsContext(this, ['adapter', 'continuedPrBinding', 'store']));
+  readonly ordinaryCustody = new OrdinaryCustody(portsContext(this, ['host', 'ownedToolHold', 'startsNoRuns', 'store']));
+  readonly reviewAdvances = new ReviewAdvances(portsContext(this, ['adapter', 'launch', 'slotAdmissionReason', 'stopped', 'store', 'update', 'waiting']));
   readonly prAdoption = new PrAdoption(portsContext(this, ['adapter', 'host', 'onTaskHost', 'paused', 'recordBlockedPrIdentity', 'store']));
   readonly selection = new RoleSelection(this);
   readonly providerRefusals = new ProviderRefusals(portsContext(this, ['adapter', 'applyReviewerRefusal', 'attention', 'clearUnverifiableRefusalWait', 'host', 'observeStoppedReviewer', 'paused', 'recordRefusalBlocked', 'recordUnverifiableRefusalRead', 'refusalExclusions', 'refusalGap', 'select', 'stopped', 'store', 'unverifiableRefusalReads', 'update', 'usageCeilingNote', 'verifyRefusedRevision', 'waiting']));
@@ -426,9 +431,9 @@ export class Resolution {
   /** Resume a held or lost validation through its existing operator retry path. */
   retryProjectValidationEffect(task: Task): Task { return this.validationRetry.retryProjectValidationEffect(task); }
   /** Spec 033: the separate reviewer identity a repository opts into for formal PR reviews, or null for today's comment path. */
-  reviewerSetting(t: Task): ReviewerSetting | null { return this.reviewLifecycle.reviewerSetting(t); }
+  reviewerSetting(t: Task): ReviewerSetting | null { return reviewerSettingOf(this.store, t); }
   /** Spec 033: an opted-in repository requires the reviewer's exact-head approval even when the submission skipped review. */
-  reviewRequired(t: Task): boolean { return this.reviewLifecycle.reviewRequired(t); }
+  reviewRequired(t: Task): boolean { return reviewRequiredForTask(this.store, t); }
   transportDeferred(t: Task, error: unknown) { return this.taskStops.transportDeferred(t, error); }
   environmentDeferred(t: Task, error: unknown) { return this.taskStops.environmentDeferred(t, error); }
 
@@ -833,7 +838,7 @@ export class Resolution {
    * ready gate without that adapter pair). Null when the task's PR is bound.
    * A failed proof throws before anything is written.
    */
-  verifyContinuedPr(t: Task): Promise<ContinuedPrBinding | null> { return this.reviewLifecycle.verifyContinuedPr(t); }
+  verifyContinuedPr(t: Task): Promise<ContinuedPrBinding | null> { return this.continuedPrs.verifyContinuedPr(t); }
   /**
    * Spec 057 (task 553): a worker `blocked` or `ready_for_review` completion
    * that names a pushed head in its report, while `prHead` is null, has that
@@ -845,15 +850,15 @@ export class Resolution {
    * readiness beyond what the report already carries. False when nothing
    * authentic names the observed head, leaving the ordinary refusal to fire.
    */
-  bindReportedHeadForReview(t: Task, pr: VerifiedPr): boolean { return this.reviewLifecycle.bindReportedHeadForReview(t, pr); }
-  continuedPrBinding(t: Task, number: number, pr: VerifiedPr, decided?: ContinuedPrBinding['decided']): ContinuedPrBinding { return this.reviewLifecycle.continuedPrBinding(t, number, pr, decided); }
+  bindReportedHeadForReview(t: Task, pr: VerifiedPr): boolean { return this.continuedPrs.bindReportedHeadForReview(t, pr); }
+  continuedPrBinding(t: Task, number: number, pr: VerifiedPr, decided?: ContinuedPrBinding['decided']): ContinuedPrBinding { return this.continuedPrs.continuedPrBinding(t, number, pr, decided); }
   /**
    * Inside the transaction that accepts the continuation: the task must still
    * know the PR only from the same report, on the same repository, branch,
    * base, worker, workspace and recorded head, with no merge intent. Then it
    * binds `prUrl`, `resumePrNumber` and `prHead`; otherwise it writes nothing.
    */
-  bindContinuedPrInTx(taskId: string, binding: ContinuedPrBinding, via: string): boolean { return this.reviewLifecycle.bindContinuedPrInTx(taskId, binding, via); }
+  bindContinuedPrInTx(taskId: string, binding: ContinuedPrBinding, via: string): boolean { return this.continuedPrs.bindContinuedPrInTx(taskId, binding, via); }
   /**
    * Engine-provided: apply one owner control for an answer the operator gave to
    * Queue's own native question on the task's thread. Spec 058 (task 523): the
@@ -867,8 +872,8 @@ export class Resolution {
   reserveLaunchRun(t: Task, role: Run['role'], options: { profile?: Profile; instruction?: string; proof?: ProofActivation }, source:{firstReviewEntryWorker:boolean;firstWorkerSelection:ReturnType<typeof chooseProfile>|null;prePrWorkerResume:boolean;retainedPrePrHead:string|null;resumingUnpublished:boolean;continuedPr?:ContinuedPrBinding|null}, selection:{agentId:string|null;profile:Profile|null;group:string|null;workspaceId:string;coordinatorRouteSwitch:string|null;replacingReviewer:boolean;orphanRuns:(id:string)=>Run[];threadBusy:(id:string)=>boolean}): Promise<void> { return this.dispatchLaunch.reserve.reserveLaunchRun(t, role, options, source, selection); }
   /** Finished-run observation timestamps are telemetry, not another custody owner.
    * Keep every identity, result, delivery, release and publication field in the fence. */
-  ordinaryReviewRuns(taskId: string): string { return this.reviewLifecycle.ordinaryReviewRuns(taskId); }
-  ordinaryRoundCustody(t: Task, run: Run, restoring = false): Promise<void> { return this.reviewLifecycle.ordinaryRoundCustody(t, run, restoring); }
+  ordinaryReviewRuns(taskId: string): string { return this.ordinaryCustody.ordinaryReviewRuns(taskId); }
+  ordinaryRoundCustody(t: Task, run: Run, restoring = false): Promise<void> { return this.ordinaryCustody.ordinaryRoundCustody(t, run, restoring); }
   deliverLaunchRun(t:Task, role:Run['role'], context:{agentId:string|null;profile:Profile|null;group:string|null;workspaceId:string;firstReviewEntryWorker:boolean;nonDeliveryReplacement:boolean;run:Run;token:string}):Promise<void> { return this.dispatchLaunch.deliver.deliverLaunchRun(t, role, context); }
   /** Select one closeout authority from the manifest pinned at this task's synchronized integration commit. */
   closeoutAuthority(t: Task): Promise<CloseoutAuthority> { return this.closeout.closeoutAuthority(t); }
@@ -892,7 +897,7 @@ export class Resolution {
   /** Advance gate: a source approval whose awaited proof is not yet settled waits at its approved head. */
   sourceApprovalWaitApplies(t: Task): boolean { return this.schedulingLifecycle.sourceApprovalWaitApplies(t); }
   /** Advance step: a source-approved PR waits for its awaited proof at the approved head. Null stops the pass. */
-  settleSourceApprovalProof(t: Task): Promise<Task | null> { return this.reviewLifecycle.settleSourceApprovalProof(t); }
+  settleSourceApprovalProof(t: Task): Promise<Task | null> { return this.reviewAdvances.settleSourceApprovalProof(t); }
   restoreRecordedMergePhase(t: Task): Task { return this.mergePhase.restoreRecordedMergePhase(t); }
   /** Advance gate: an accepted PR whose task workspace may be unavailable needs its reconciliation check. */
   acceptedPrWorkspaceMayApply(t: Task): boolean { return this.acceptedPrWorkspace.acceptedPrWorkspaceMayApply(t); }
@@ -924,11 +929,11 @@ export class Resolution {
   responsiblePrReportRefused(t: Task, runId: string, prNumber: number, error: unknown): boolean { return this.resultApplication.responsiblePrReportRefused(t, runId, prNumber, error); }
   private advanceRevisionResult(t:Task, run:Run, c:Completion): Promise<void> { return this.resultApplication.advanceRevisionResult(t, run, c); }
   advanceCloseoutResult(t:Task, run:Run, c:Completion): Promise<void> { return this.closeout.advanceCloseoutResult(t, run, c); }
-  advanceChangesRequested(t:Task): Promise<void> { return this.reviewLifecycle.advanceChangesRequested(t); }
+  advanceChangesRequested(t:Task): Promise<void> { return this.reviewAdvances.advanceChangesRequested(t); }
   advanceClosing(t:Task): Promise<void> { return this.closeout.advanceClosing(t); }
   advanceMerging(t:Task): Promise<void> { return this.mergeGates.advanceMerging(t); }
   advanceSyncing(t:Task): Promise<void> { return this.closeout.advanceSyncing(t); }
-  advanceSkippedReview(t:Task): void { return this.reviewLifecycle.advanceSkippedReview(t); }
+  advanceSkippedReview(t:Task): void { return this.reviewAdvances.advanceSkippedReview(t); }
   private sendDurably(...args: Parameters<Notices['sendDurably']>): Promise<'paused' | 'done'> { return this.notices.sendDurably(...args); }
   deliverDrainNotices(): Promise<void> { return this.notices.deliverDrainNotices(); }
   /** Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): the one long-outage planner notice. */

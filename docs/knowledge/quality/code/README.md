@@ -1,5 +1,30 @@
 # Code-module quality tables
 
+- nucleus#1244 (floor 7, 2026-11-15): the four floor-7 core/review rows were split, consolidated or
+  deleted along the seams their rows named, and re-rated at this PR's head. `core/review/review-continuation.ts`
+  is now the folder `core/review/review-continuation/`: the composition and the one authorized reviewer
+  turn (`index.ts`, 9), the checkpoint file and its proof (`checkpoints.ts`, 10), the delivery identity and
+  owner-stop proof (`delivery.ts`, 9), the retained reader's state, wait and identity at a head
+  (`reader.ts`, 9), the result fence (`result-fence.ts`, 8) and the gate's local refusal order (`gate.ts`,
+  9). Every existing import path is unchanged because the folder's `index.ts` is its public surface, and
+  the checkpoint proof is the one place a stored checkpoint becomes evidence. `core/review/lifecycle.ts`
+  was split by mechanism: reviewer opt-in and the review requirement (`reviewer-setting.ts`, 10, delegating
+  to the new `shared/review-requirement.ts` rule that `core/forge/merge.ts` reads instead of restating the
+  skip-PR-review condition), continued PR identity (`continued-pr.ts`, 9), ordinary review custody
+  (`ordinary-custody.ts`, 9) and the transitions out of reviewing (`review-advances.ts`, 8). The
+  reported-head binding no longer swallows two answers as one false: a task that records no PR and an
+  observed foreign PR are separate decisions, and the canonical-source predicate is
+  `core/forge/pr-identity.ts`' one rule. `core/review/ordinary-review.ts` lost the alias layer its row
+  named (every caller uses `assertOrdinaryReviewIdentity` or `ordinaryReviewSource`) and classifies a
+  `GitIdentityError` by its new typed fault code (`core/git/git-identity.ts`), not by a regex over the
+  message. `core/review/review-body.ts` is deleted; `core/review/review-publication.ts` imports
+  `shared/review-text` directly. The receipt-hash read that four modules repeated is now
+  `core/store/store-auth.ts`' `receiptHash`, which raises `core/dispatch/retained-work.ts` to 9 and gives
+  the continued-PR owner its report proof. Boundary tests were added for the ordinary reviewer's checkout
+  identity and for the reviewer requirement, the reported-head binding and the continued-PR binding
+  (`test/ordinary-review-identity.test.ts`, `test/review-lifecycle-owners.test.ts`); no existing test was
+  weakened, and only the deleted shim's import moved.
+
 - nucleus#1239 (floor 7, 2026-11-15): the four floor-7 core/qa rows were consolidated or hardened along the
   seams their rows named, and re-rated at this PR's head. A detached supervisor's process lifecycle now has
   one owner, `core/qa/supervisor-process.ts`: the spawn shape (entry, the entry's argv with the run token

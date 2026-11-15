@@ -10,7 +10,7 @@ import { readGitCheckout } from '../git/git-identity';
 import { hookHoldReason } from '../hooks/hooks';
 import { consecutiveNonDeliveries, continuationInstruction, unfinishedContinuationEvents } from '../recovery/non-delivery';
 import { automaticRetryForbidden } from '../../shared/automatic-retry';
-import { proveReviewRunSource } from '../review/ordinary-review';
+import { ordinaryReviewSource } from '../review/ordinary-review';
 import { ProofExecutionRefusal } from '../qa/proof-refusal';
 import { verifyProofSource } from '../qa/proof-source';
 import { proofWorkerRequests } from '../qa/proof-wait';
@@ -136,9 +136,9 @@ export class ResultApplication {
     if (run.ordinaryDetached) {
       await this.resolution.ordinaryRoundCustody(t, run, true);
       const branch = readGitCheckout(t.directory!).branch;
-      await proveReviewRunSource(t, run.head, branch === '');
+      await ordinaryReviewSource(t, run.head, branch === '');
       if (!branch) await git(t.directory!, 'checkout', t.branch);
-      await proveReviewRunSource(t, run.head, false);
+      await ordinaryReviewSource(t, run.head, false);
     }
     // A pass that read this reviewer as current before another pass settled it
     // has nothing left to do, and must not clear whichever run is current now.

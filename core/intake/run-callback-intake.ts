@@ -6,7 +6,7 @@ import { proofExecutions, proofExecutionRecord, recordProofExecution } from '../
 import { proofWaitApplies } from '../qa/proof-wait';
 import { releaseRunFromRecordedCompletion } from '../recovery/fence-settlement';
 import type { Resolution } from '../resolution';
-import { assertReviewRunSource } from '../review/ordinary-review';
+import { assertOrdinaryReviewIdentity } from '../review/ordinary-review';
 import { assertReviewResponsibility } from '../review/review-verdicts';
 import { digest, now } from '../store/store';
 import { recordSupersededRunRefusal, supersededResumeRefusal } from '../recovery/superseded-resume';
@@ -142,8 +142,8 @@ export class RunCallbackIntake {
     // carries structured judgments without a merge verdict.
     const sourceRefusal = sourceApprovalRefusal(input, run);
     if (sourceRefusal) throw Error(sourceRefusal);
-    if (run.ordinaryDetached) assertReviewRunSource(task, run.head, true);
-    else if (input.sourceApproved) assertReviewRunSource(task, run.head, false);
+    if (run.ordinaryDetached) assertOrdinaryReviewIdentity(task, run.head, true);
+    else if (input.sourceApproved) assertOrdinaryReviewIdentity(task, run.head, false);
     assertReviewResponsibility(input, run);
     const response = { accepted: true as const, eventId: input.eventId };
     // A completion is that run's own result, never proof of WHICH delivery

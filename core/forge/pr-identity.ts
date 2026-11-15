@@ -14,13 +14,22 @@ type PullRequestIdentity = {
   base?: {ref?:string};
 };
 /**
+ * Whether the observed PR comes from the canonical repository itself rather
+ * than a fork with the same branch name. The refusal and the predicate are one
+ * rule: a caller that binds looks at the predicate, and one that refuses calls
+ * `assertCanonicalPrSource`.
+ */
+export function isCanonicalPrSource(pr: VerifiedPr, number: number): boolean {
+  return Boolean(pr.repository && pr.headRepository && pr.crossRepository !== true && pr.headRepository.toLowerCase() === pr.repository.toLowerCase());
+}
+/**
  * Project-d #117 review: a PR Queue binds from a report must come from the
  * canonical repository itself, not a fork with the same branch name. Throws,
  * before anything is written, when the head repository differs, is unknown or
  * was deleted. Existing callers keep their own checks.
  */
 export function assertCanonicalPrSource(pr: VerifiedPr, number: number): void {
-  if (pr.repository && pr.headRepository && pr.crossRepository !== true && pr.headRepository.toLowerCase() === pr.repository.toLowerCase()) return;
+  if (isCanonicalPrSource(pr, number)) return;
   throw new Error(`PR #${number} comes from ${pr.headRepository ?? 'an unknown or deleted repository'}, not the canonical ${pr.repository ?? 'repository'}; nothing was bound`);
 }
 /**

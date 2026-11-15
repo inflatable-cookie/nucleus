@@ -10,7 +10,7 @@ export function retainedReviewHeads(store: Store, task: Task, runs: Run[]): stri
   for (const run of runs.filter(item => item.role === 'reviewer' && item.taskId === task.id && item.workspaceId === task.workspaceId)) {
     const completion = run.completion;
     if (!completion?.head && !applied.has(run.id)) continue;
-    const receipt = completion && store.db.prepare('SELECT hash FROM receipts WHERE id=? AND task=? AND run=?').get(completion.eventId,task.id,run.id) as {hash:string}|undefined;
+    const receipt = completion ? store.receiptHash(completion.eventId, task.id, run.id) : null;
     // Review publication may add or reconcile its forge ID after the receipt.
     // The accepted payload itself remains bound by its exact receipt hash.
     const {reviewId: _reviewId, reviewCommentId: _reviewCommentId, ...withoutPublication} = completion ?? {};
@@ -18,7 +18,7 @@ export function retainedReviewHeads(store: Store, task: Task, runs: Run[]): stri
       {...withoutPublication,...(completion.reviewId !== undefined ? {reviewId:completion.reviewId} : {})},
       {...withoutPublication,...(completion.reviewCommentId !== undefined ? {reviewCommentId:completion.reviewCommentId} : {})}] : [];
     if (!completion?.head || completion.taskId !== task.id || completion.runId !== run.id || completion.head !== run.head
-      || !receipt || !variants.some(value => receipt.hash === digest(JSON.stringify(value)))) {
+      || receipt === null || !variants.some(value => receipt === digest(JSON.stringify(value)))) {
       if (applied.has(run.id)) throw Error('Retained review source lacks its authenticated receipt');
       continue;
     }

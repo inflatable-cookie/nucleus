@@ -50,9 +50,12 @@ export function assertOrdinaryReviewIdentity(task: Task, head: string, detached:
     repo = readGitCheckout(task.repoPath);
   } catch (error) {
     if (error instanceof GitIdentityError) {
-      if (/^(No \.git|Unreadable \.git|Malformed \.git)/.test(error.message))
+      // A directory that is not a usable checkout root is a different answer
+      // from a checkout whose head, ref or origin cannot be proved; the typed
+      // fault says which without reading the message.
+      if (["no-git", "unreadable-git", "malformed-git"].includes(error.code))
         throw Error('Ordinary reviewer requires its recorded Queue-owned checkout root');
-      throw Error(`Ordinary reviewer checkout identity could not be read: ${String(error)}; expected a clean checkout at ${head} on ${task.branch}`);
+      throw Error(`Ordinary reviewer checkout identity could not be read: ${error.message}; expected a clean checkout at ${head} on ${task.branch}`);
     }
     throw error;
   }
@@ -98,16 +101,3 @@ export async function ordinaryReviewDelta(task: Task, prior: Run, head: string, 
   const files = boundDeltaSection(await gitPrefix(task.directory!, ['diff', '--name-only', '--no-color', `${prior.head}..${head}`], REVIEW_PROMPT_SECTION_BUDGET), 'changed files');
   return `${header}The delta and range-diff are never inlined; read them in this checkout with the commands below before judging, and do not report a verdict from the stat alone.\nDiff stat:\n${stat}\nChanged files:\n${files}\nExact SHAs: priorHead ${prior.head}, head ${head}, oldBase ${oldBase} (of ${prior.base}..${prior.head}), newBase ${newBase} (of ${base}..${head})\nCommands to read the delta:\n  git diff --no-ext-diff --no-color ${prior.head}..${head}\n  git range-diff --no-color ${oldBase}..${prior.head} ${newBase}..${head}\n${findings}`;
 }
-
-
-/** Exact-head identity from the filesystem. Safe inside a transaction or stillAllowed. */
-function assertReviewRunSource(task: Task, head: string, detached: boolean) {
-  assertOrdinaryReviewIdentity(task, head, detached);
-}
-
-/** Full send-boundary proof: identity plus an async clean-tree walk. Last await before send or a transaction. */
-async function proveReviewRunSource(task: Task, head: string, detached: boolean) {
-  await ordinaryReviewSource(task, head, detached);
-}
-
-export { assertReviewRunSource, proveReviewRunSource };

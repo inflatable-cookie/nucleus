@@ -25,15 +25,13 @@ export function retainedProgressRun(store: Store, task: Task): Pick<Run, 'id' | 
   // Compare identities only after the task has bound one.
   const boundPr = task.reviewEntry?.prNumber ?? task.resumePrNumber ?? task.completion?.prNumber;
   if (completion.prNumber !== undefined && boundPr && completion.prNumber !== boundPr) return null;
-  const receipt = store.db.prepare('SELECT hash FROM receipts WHERE id=? AND task=? AND run=?').get(completion.eventId, task.id, id) as {hash:string} | undefined;
-  return receipt?.hash === digest(JSON.stringify(completion)) ? {id, head: reported?.head ?? completion.head ?? task.planningBase, completion} : null;
+  return store.receiptHash(completion.eventId, task.id, id) === digest(JSON.stringify(completion)) ? {id, head: reported?.head ?? completion.head ?? task.planningBase, completion} : null;
 }
 function retainedWorkHeads(store:Store, task:Task, runs:Run[]): string[] {
   const completions = [task.completion, ...runs.filter(run => run.role === 'revision' && run.workspaceId === task.workspaceId).map(run => run.completion)];
   const heads = completions.flatMap(completion => {
     if (!completion?.head || completion.taskId !== task.id) return [];
-    const receipt = store.db.prepare('SELECT hash FROM receipts WHERE id=? AND task=? AND run=?').get(completion.eventId,task.id,completion.runId) as {hash:string}|undefined;
-    return receipt?.hash === digest(JSON.stringify(completion)) ? [completion.head] : [];
+    return store.receiptHash(completion.eventId, task.id, completion.runId) === digest(JSON.stringify(completion)) ? [completion.head] : [];
   });
   const reviewHeads = retainedReviewHeads(store, task, runs);
   return [...heads,...reviewHeads,...task.checkpoints.records.map(record => record.head)];

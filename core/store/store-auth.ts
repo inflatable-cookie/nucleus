@@ -16,6 +16,15 @@ export class StoreAuth {
   deleteAvailability(group: string): boolean {
     return this.db.prepare("DELETE FROM availability WHERE group_id=?").run(group).changes > 0;
   }
+  /**
+   * The stored hash of one receipt bound to this task and run, or null when the
+   * receipt is absent or bound to another task or run. Callers compare it with
+   * the record's own digest; this is the one read of that column.
+   */
+  receiptHash(id: string, task: string, run: string): string | null {
+    const row = this.db.prepare("SELECT hash FROM receipts WHERE id=? AND task=? AND run=?").get(id, task, run) as { hash?: string } | undefined;
+    return row?.hash ?? null;
+  }
   /** Completion writes preserve any report intent/response already attached to the same receipt. */
   setCompletionReceipt(id: string, task: string, run: string, hash: string, response: string): void {
     this.db.prepare("INSERT INTO receipts(id,task,run,hash,response) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET task=excluded.task,run=excluded.run,hash=excluded.hash,response=excluded.response").run(id,task,run,hash,response);

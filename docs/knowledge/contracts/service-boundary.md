@@ -55,11 +55,10 @@ These modules never import or receive `QueueRuntime`.
 `checks.ts` owns hosted-check evidence, history, checks policy and branch-rule reads;
 and `merge.ts` owns the merge gate, merge execution and integration closeout.
 The modules import downward, never through the entry point.
-`shared/review-text.ts` builds review markers, verdict tables and publication bodies.
-`core/review/review-body.ts`
-keeps existing callers and the plugin bridge on the pure review-text module,
-without loading the store or Git runtime. Merge gates, error messages and
-unknown-delivery handling are unchanged by this split.
+`shared/review-text.ts` builds review markers, verdict tables and publication bodies,
+and every caller (review publication and the plugin bridge) imports it directly;
+no review-side shim re-exports it, so the pure text module loads no store or Git
+runtime. Merge gates, error messages and unknown-delivery handling are unchanged.
 
 ## Store module map
 

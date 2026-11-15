@@ -371,10 +371,19 @@ owner to the rules it enforces.
 - `core/dispatch/capacity.ts` holds slot occupancy and fair-share order, and its
   `SlotAdmission` class says why a task has no slot now, for one dispatch pass
   or one board batch. Same-name `Resolution` methods delegate to it.
-- `core/review/review-continuation.ts` holds the checkpoint and delivery rules of a
-  retained reviewer, and its `ReviewContinuations` class inspects, admits and
-  delivers one authorized reviewer turn. Same-name `Resolution` methods delegate
-  to it.
+- `core/review/review-continuation/` holds the checkpoint and delivery rules of a
+  retained reviewer: `checkpoints.ts` owns the owner-only file and its proof,
+  `delivery.ts` the delivery identity and owner-stop proof, `reader.ts` the
+  retained reader's state and wait, `result-fence.ts` the earlier-result fence
+  and `gate.ts` the local refusal order. Its `index.ts` composes them, and the
+  `ReviewContinuations` class there inspects, admits and delivers one authorized
+  reviewer turn. Same-name `Resolution` methods delegate to it.
+- `core/review/reviewer-setting.ts`, `core/review/continued-pr.ts`,
+  `core/review/ordinary-custody.ts` and `core/review/review-advances.ts` own the
+  review phase's other mechanisms: the repository reviewer opt-in (with the
+  shared review requirement in `shared/review-requirement.ts`), continued PR
+  identity, the ordinary round's custody proof, and the transitions out of
+  reviewing.
 - `core/intake/checkpoint.ts` delivers each persisted worker checkpoint continuation
   to the same retained worker at most twice. `Resolution` constructs
   `Checkpoints`.
