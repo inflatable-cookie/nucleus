@@ -12,12 +12,7 @@ import { PlannerGrantCleanup } from './questions/planner-grants';
 import { intakeContext } from './intake/context';
 
 import { Dispatch } from "./dispatch/dispatch";
-import { hostProviderFor, profileCompatibility, routingProfiles } from "../shared/profiles";
-import { canonicalCatalog, canonicalVocabulary, type HostVocabulary } from "../shared/profile-vocabulary";
-import { HOST_KIND_LABELS, hostKindOf } from "../shared/host-kind";
 import { HOST_WAIT_PRESERVED_STOPS, hostUnavailableDetail } from '../shared/host-outage';
-import type { HostCatalog } from "../shared/host";
-import type { ProfileCompatibilityHost, ProfileCompatibilityRow } from "../shared/rpc/settings";
 import { CreationRecovery } from "./recovery/creation-recovery";
 import type { GitTransientEpisode } from './git/git-transient-backoff';
 
@@ -32,7 +27,7 @@ import { type VerifiedEnclosingOperation } from './planning/enclosing-operation'
 
 import { z } from "zod";
 import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
-import type { Task, Profile, Completion, CheckpointResult, Run, RecoveryActionBinding, BulkDisposition, BulkDispositionRequest, ReparentInput, ReviewEntryInput, WorkspaceArchiveRetry } from "../shared/contracts";
+import type { Task, Profile, Completion, CheckpointResult, Run, RecoveryActionBinding, BulkDisposition, BulkDispositionRequest, ReparentInput, WorkspaceArchiveRetry } from "../shared/contracts";
 import { isTransportFailure } from "../shared/transport";
 
 import { type TaskStopReason } from "../shared/task-stop";
@@ -45,8 +40,10 @@ import { buildProjectSettings } from "./planning/project-settings";
 import { DispatchAdmission } from "./dispatch/admission";
 import { Store, digest, now } from "./store/store";
 import type { Adapter, AgentObservation } from "./host/adapter";
+import { routeHostAdapter } from "./host/adapter-routing";
 import { HostFacade } from "./host/host-facade";
-import { callerNativeId, foreignIdentityRefusal, parseAgentId } from '../shared/agent-identity';
+import { taskIdFromLaneKey } from "./host/lane-host";
+import { ProfileCatalogs } from "./host/profile-catalogs";
 
 import type { TaskControlInput, TaskControlRequest } from "../shared/contracts";
 import type { TaskControlTask } from "../shared/contracts";
@@ -136,8 +133,6 @@ import { TaskWakes } from './scheduling/task-wakes';
 import { CompletionFollowUps } from './closeout/completion-follow-ups';
 import { closeoutContext } from './closeout/context';
 import { TerminalWorkspaceRetirement } from './closeout/terminal-workspace-retirement';
-/** The primary host's catalog key, before (or without) a registered id for it. */
-const PRIMARY_CATALOG = "\u0000primary";
 
 export const STOPPED_BEFORE_DRAIN = () => new Error("Nucleus engine stopped before the requested reconciliation drain covered the fleet");
 
@@ -186,9 +181,10 @@ export class Engine {
    * host the scheduling call ran on.
    */
   private laneHost(key: string): string | undefined {
-    const taskId = /^(?:task|runtime-retirement):(.+)$/.exec(key)?.[1];
+    const taskId = taskIdFromLaneKey(key);
     if (taskId) {
-      try { const hostId = this.store.task(taskId).hostId; if (hostId) return hostId; } catch { /* an unknown key carries no host of its own */ }
+      const hostId = this.store.taskOrNull(taskId)?.hostId;
+      if (hostId) return hostId;
     }
     return this.activeHostId;
   }
@@ -392,87 +388,8 @@ export class Engine {
     this.hostOutages = new HostOutages(store);
     this.primaryAdapter = adapter;
     this.resolveHostAdapter = () => adapter;
-    this.adapter = new Proxy(adapter, {
-      get: (fallback, property) => {
-        const id = this.hostContext.getStore();
-        const selected = id ? this.resolveHostAdapter(id) : fallback;
-        if (!selected) throw new Error(`Transport not connected: host ${id} is unavailable`);
-        const value = Reflect.get(selected, property, selected);
-        if (property === 'inspectReviewEntry' && typeof value === 'function') {
-          return async (input: ReviewEntryInput, taskId?: string, suppliedProof?: { origin: import('./host/adapter').OriginAgent; state: AgentObservation }) => {
-            if (suppliedProof || !taskId) return value.call(selected, input, taskId, suppliedProof);
-            const task = this.store.task(taskId), originHost = task.originHostId;
-            if (!originHost) throw new Error('Transport not connected: review-entry origin host is unknown');
-            if (originHost === task.hostId) return value.call(selected, input, taskId);
-            if (!this.withHost(originHost, () => this.hostAvailable(originHost))) throw new Error(`Transport not connected: waiting for origin host ${originHost}`);
-            const proof = await this.withHost(originHost, async () => {
-              const origin = await this.host.originAgent(input.submission.originAgentId);
-              if (!origin || origin.archived || !origin.workspaceId) throw new Error('Review entry requires a live originating thread');
-              return { origin, state: await this.host.observe(origin.id) };
-            });
-            return value.call(selected, input, taskId, proof);
-          };
-        }
-        if (typeof value !== 'function') return value;
-        // Some older call sites still use adapter methods directly instead of
-        // HostFacade. Keep that compatibility safe at the transport boundary:
-        // qualified IDs are unwrapped only for the selected host, for every
-        // host method whose arguments identify an agent, and a call that names
-        // an agent on another registered host is routed there — the agent's own
-        // transport serves it, never an unwrap against the wrong host.
-        const native = (agentId: unknown): unknown => typeof agentId === 'string'
-          ? callerNativeId(agentId, id ?? (selected as Adapter & { hostId?: string }).hostId)
-          : agentId;
-        const agentArgs: Record<string, number[]> = {
-          originAgent: [0], observe: [0], archiveAgent: [0], stopAgentTurn: [0],
-          agentTimeline: [0], agentTimelinePage: [0], pendingQuestions: [0],
-          answeredQuestions: [0], dismissNativeQuestion: [0], answerNativeQuestion: [0],
-          answerNativePermission: [0], subscribeRunUsage: [0],
-          notify: [0, 3], enqueueMessage: [0, 3], steerOrNotify: [0, 3], interruptAndContinue: [0],
-          askPlanner: [0], askReviewer: [0],
-        };
-        const positions = agentArgs[String(property)];
-        const bound = id ?? (selected as Adapter & { hostId?: string }).hostId;
-        return (...args: unknown[]) => {
-          // The recipient (position 0 of an agent-naming method) decides the
-          // route: a call that names an agent on another registered host
-          // re-enters this proxy inside that host's context, so the agent's own
-          // transport serves it. A secondary identity on yet another host rides
-          // out, the way the delegated ask route drops it; an unknown or offline
-          // host refuses, named.
-          const primary = positions?.[0] === 0 && typeof args[0] === 'string' ? parseAgentId(args[0]) : null;
-          if (primary && primary.hostId !== bound) {
-            if (!this.hostOnline(primary.hostId)) throw new Error(foreignIdentityRefusal(primary.hostId));
-            const rideAlong = args.slice();
-            for (const position of (positions ?? []).slice(1)) {
-              const parsed = typeof rideAlong[position] === 'string' ? parseAgentId(rideAlong[position] as string) : null;
-              if (parsed && parsed.hostId !== primary.hostId) rideAlong[position] = undefined;
-            }
-            const sourceInput = rideAlong[1];
-            if ((property === 'askPlanner' || property === 'askReviewer') && sourceInput
-              && typeof sourceInput === 'object' && 'sourceAgentId' in sourceInput) {
-              const input = sourceInput as { sourceAgentId?: unknown };
-              const parsed = typeof input.sourceAgentId === 'string' ? parseAgentId(input.sourceAgentId) : null;
-              rideAlong[1] = { ...input, ...(parsed && parsed.hostId !== primary.hostId ? { sourceAgentId: undefined } : {}) };
-            }
-            return this.withHost(primary.hostId, () =>
-              (this.adapter as unknown as Record<string, (...callArgs: unknown[]) => unknown>)[String(property)](...rideAlong));
-          }
-          const normalized = args.slice();
-          for (const position of positions ?? []) if (normalized[position] !== undefined)
-            normalized[position] = native(normalized[position]);
-          if ((property === 'askPlanner' || property === 'askReviewer') && normalized[1]
-            && typeof normalized[1] === 'object' && 'sourceAgentId' in normalized[1]) {
-            const input = normalized[1] as { sourceAgentId?: unknown };
-            normalized[1] = { ...input, ...(input.sourceAgentId === undefined ? {} : { sourceAgentId: native(input.sourceAgentId) }) };
-          }
-          if (property === 'observationInventory' && Array.isArray(normalized[0]))
-            normalized[0] = (normalized[0] as unknown[]).map(native);
-          return value.apply(selected, normalized);
-        };
-      },
-      set: (fallback, property, value) => Reflect.set(fallback, property, value, fallback),
-    });
+    this.adapter = routeHostAdapter(this, adapter);
+    this.catalogs = new ProfileCatalogs(this);
     // Lean store 4 (task 989): the `workspace_creation_step_*` events went — nothing read
     // them. The dispatching task's reason line stays: it is the board-visible progress.
     this.adapter.workspaceCreationProgress = (taskId, step, status) => {
@@ -577,121 +494,22 @@ export class Engine {
   flushPrerequisiteReleases(): Promise<void> { return this.prerequisiteReleases.flushPrerequisiteReleases(); }
   /** Registered secondary host ids; the service wires this to the host registry. */
   hostIds: () => readonly string[] = () => [];
-  /** One routing-profile snapshot per secondary host, built from that host's own catalog (nucleus#1139). */
-  private readonly hostProfiles = new Map<string, Profile[]>();
-  private readonly hostCatalogRefreshed = new Set<string>();
-  private readonly primaryAdapter: Adapter;
+  readonly primaryAdapter: Adapter;
+  private readonly catalogs: ProfileCatalogs;
   /** Admission evidence attached to this engine's Paseo adapter, when admitted. */
   get admission() { return admissionOf(this.adapter); }
   setSourcePromotionHandler(handler: (payload: unknown, hostId?: string, selection?: import('../shared/operations').QueueOperation['hostSelection']) => Promise<OperationResult>): void { this.operations.setSourcePromotionHandler(handler); }
   setLeadCheckHandler(handler: (payload: unknown, operationId: string) => Promise<OperationResult>): void { this.operations.setLeadCheckHandler(handler); }
   setRepositoryRekeyHandler(handler: (input: RepositoryRekeyInput) => OperationResult | Promise<OperationResult>): void { this.operations.setRepositoryRekeyHandler(handler); }
-  async refresh() {
-    if (!this.adapter.catalog) throw new Error("Host profile catalog is unavailable");
-    const catalog = await this.adapter.catalog();
-    this.hostCatalogs.set(PRIMARY_CATALOG, { catalog, readAt: new Date().toISOString() });
-    this.profileCatalogRefreshed = true;
-    // Each secondary host's availability is its own catalog's answer: a profile
-    // whose thinking level or feature values that host does not report stays
-    // ineligible there, so selection never sends a launch the host must refuse
-    // (nucleus#1139). A failed read keeps the previous snapshot.
-    for (const id of this.hostIds()) {
-      const selected = this.resolveHostAdapter(id);
-      if (!selected || !selected.catalog) continue;
-      // The primary host's catalog is the profile set read above; only a
-      // secondary host reads its own.
-      if (selected === this.primaryAdapter) { this.primaryHostId = id; this.hostCatalogRefreshed.add(id); continue; }
-      try { this.hostCatalogs.set(id, { catalog: await selected.catalog(), readAt: new Date().toISOString() }); this.hostCatalogRefreshed.add(id); }
-      catch { /* keep any previous snapshot; dispatch waits through its own gates */ }
-    }
-    this.rebuildProfiles();
-  }
-  /**
-   * One host's profile vocabulary table: the adapter's own (Tom, 2026-11-12). An
-   * adapter without one, a test double, speaks canonical values as they are.
-   */
-  vocabularyFor(id: string | undefined): HostVocabulary {
-    const selected = id ? this.resolveHostAdapter(id) : this.primaryAdapter;
-    const kind = hostKindOf(id);
-    return (selected ?? this.primaryAdapter).vocabulary ?? canonicalVocabulary(kind, HOST_KIND_LABELS[kind]);
-  }
-  /**
-   * The routing snapshots from the catalogs last read and the stored canonical
-   * profiles, each translated with its host's table. A Settings edit calls this so
-   * selection follows it at once; no host is read.
-   */
-  rebuildProfiles(): void {
-    const profiles = this.store.profiles();
-    const primary = this.hostCatalogs.get(PRIMARY_CATALOG);
-    if (primary) this.profiles = routingProfiles(profiles, primary.catalog, this.primaryAdapter.vocabulary ?? this.vocabularyFor(this.primaryHostId));
-    for (const [id, read] of this.hostCatalogs)
-      if (id !== PRIMARY_CATALOG) this.hostProfiles.set(id, routingProfiles(profiles, read.catalog, this.vocabularyFor(id)));
-  }
-  /** Each secondary host's last catalog in canonical values, for Settings' profile form. */
-  secondaryCanonicalCatalogs(): HostCatalog[] {
-    return [...this.hostCatalogs].filter(([id]) => id !== PRIMARY_CATALOG && this.resolveHostAdapter(id) !== this.primaryAdapter)
-      .map(([id, read]) => canonicalCatalog(this.vocabularyFor(id), read.catalog));
-  }
-  /**
-   * Each stored profile on each known host: computed on read from the catalog
-   * Nucleus last read from that host and that host's table, so a catalog change or
-   * a Settings edit shows at once. A host never read answers `unknown`.
-   */
-  profileCompatibility(): { hosts: ProfileCompatibilityHost[]; rows: ProfileCompatibilityRow[] } {
-    const profiles = this.store.profiles();
-    const ids = [...new Set([...(this.primaryHostId ? [this.primaryHostId] : []), ...this.hostIds()])];
-    const hosts: ProfileCompatibilityHost[] = [], rows: ProfileCompatibilityRow[] = [];
-    for (const id of ids) {
-      const selected = this.resolveHostAdapter(id);
-      const primary = id === this.primaryHostId || (selected !== undefined && selected === this.primaryAdapter);
-      const read = this.hostCatalogs.get(primary ? PRIMARY_CATALOG : id) ?? null;
-      const kind = hostKindOf(id);
-      const vocabulary = primary ? this.primaryAdapter.vocabulary ?? this.vocabularyFor(id) : this.vocabularyFor(id);
-      hosts.push({ hostId: id, kind, label: vocabulary.label, online: this.hostOnline(id), readAt: read?.readAt ?? null });
-      for (const profile of profiles) {
-        if (!read) { rows.push({ profileId: profile.id, hostId: id, status: "unknown", reason: `${vocabulary.label}'s catalog has not been read yet`, translated: [], launch: null }); continue; }
-        const answer = profileCompatibility(profile, read.catalog, vocabulary);
-        rows.push({ profileId: profile.id, hostId: id, status: answer.status, reason: answer.reason, translated: answer.translated, launch: answer.launch });
-      }
-    }
-    return { hosts, rows };
-  }
-  /** The last catalog read per host; the primary host's under its own key until its id is known. */
-  private readonly hostCatalogs = new Map<string, { catalog: HostCatalog; readAt: string }>();
-  private primaryHostId: string | undefined;
-  private profileCatalogRefreshed = false;
-  /**
-   * Whether the daemon profile catalog is known. A service starts with an empty
-   * catalog until its first refresh; until then a profile's availability is
-   * unknown, not unavailable, so launches, dispatch and named-profile controls
-   * wait instead of parking or refusing (consumer #660: a restart processed 1.4 s
-   * after a roll parked "profile Sol oracle is unavailable").
-   */
-  profileCatalogKnown(): boolean { return this.profileCatalogRefreshed || this.profiles.length > 0; }
-  /** A known host catalog distinguishes provider loss from an invalid model or configuration. */
-  workerProviderUnavailable(task: Task): boolean {
-    if (!task.profile) return false;
-    const selected = task.hostId ? this.resolveHostAdapter(task.hostId) : this.primaryAdapter;
-    const primary = !task.hostId || !selected || selected === this.primaryAdapter;
-    const read = this.hostCatalogs.get(primary ? PRIMARY_CATALOG : task.hostId!);
-    if (!read) return false;
-    const vocabulary = primary ? this.primaryAdapter.vocabulary ?? this.vocabularyFor(task.hostId ?? undefined) : this.vocabularyFor(task.hostId!);
-    const provider = hostProviderFor(task.profile.provider, canonicalCatalog(vocabulary, read.catalog));
-    return !provider || !provider.available;
-  }
-  /** The routing profiles a task's own host reports; a host without a snapshot reads the primary set. */
-  profilesFor(hostId?: string | null): Profile[] { return hostId ? this.hostProfiles.get(hostId) ?? this.profiles : this.profiles; }
-  /**
-   * Dispatch waits until the task's host's catalog is known, not only the primary's.
-   * The primary host's catalog is the primary profile set; only a secondary host
-   * with its own adapter waits for its own snapshot.
-   */
-  profileCatalogKnownFor(hostId?: string | null): boolean {
-    if (!hostId) return this.profileCatalogKnown();
-    const selected = this.resolveHostAdapter(hostId);
-    if (!selected || selected === this.primaryAdapter) return this.profileCatalogKnown();
-    return this.hostCatalogRefreshed.has(hostId);
-  }
+  refresh(): Promise<void> { return this.catalogs.refresh(); }
+  vocabularyFor(id: string | undefined) { return this.catalogs.vocabularyFor(id); }
+  rebuildProfiles(): void { this.catalogs.rebuildProfiles(); }
+  secondaryCanonicalCatalogs() { return this.catalogs.secondaryCanonicalCatalogs(); }
+  profileCompatibility() { return this.catalogs.profileCompatibility(); }
+  profileCatalogKnown(): boolean { return this.catalogs.profileCatalogKnown(); }
+  workerProviderUnavailable(task: Task): boolean { return this.catalogs.workerProviderUnavailable(task); }
+  profilesFor(hostId?: string | null): Profile[] { return this.catalogs.profilesFor(hostId); }
+  profileCatalogKnownFor(hostId?: string | null): boolean { return this.catalogs.profileCatalogKnownFor(hostId); }
   requireProfileCatalog(): void {
     if (!this.profileCatalogKnown()) throw new Error(PROFILE_CATALOG_LOADING_REFUSAL);
   }
