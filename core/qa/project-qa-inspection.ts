@@ -32,7 +32,11 @@ export type SupervisorInspection =
   | { kind: "settled"; state: QaSupervisionState | null; hostResult: HostRunResult | null }
   | { kind: "running"; state: QaSupervisionState | null; reason?: string }
   | { kind: "unstarted"; state: null; plan: QaSupervisionPlan }
-  | { kind: "dead"; state: QaSupervisionState | null; reason: string; escapedDescendants?: HostRunEscapedDescendant[] };
+  | {
+    kind: "dead"; state: QaSupervisionState | null; reason: string; escapedDescendants?: HostRunEscapedDescendant[];
+    /** Set when this verdict followed stopping a stale supervisor, so a late result is re-read. */
+    staleStop?: true;
+  };
 
 /** Why one supervision-file read was refused, or null when it was the record or a proven absence. */
 const unreadableReason = (read: QaFileRead<unknown>): string | null => read.kind === "unreadable" ? read.reason : null;
@@ -129,7 +133,7 @@ export class ProjectQaInspection {
             identityToken: state.identityToken, activeProcess: state.activeProcess,
           });
           if (stopped)
-            return { kind: "dead", state, reason: `the supervisor heartbeat was stale for ${staleAgeMs}ms and unchanged across checks ${SUPERVISOR_STUCK_CONFIRMATION_MS}ms apart; its process groups were stopped` };
+            return { kind: "dead", state, staleStop: true, reason: `the supervisor heartbeat was stale for ${staleAgeMs}ms and unchanged across checks ${SUPERVISOR_STUCK_CONFIRMATION_MS}ms apart; its process groups were stopped` };
           return { kind: "running", state };
         }
         if (liveness.state === "dead") {
@@ -177,8 +181,7 @@ export class ProjectQaInspection {
     const inspection = await inspect();
     // Detached supervision files can progress while the OS scan yields too.
     const observedState = this.supervisionFacts.read(statePath);
-    if (inspection.kind === "dead" && inspection.reason.startsWith("the supervisor heartbeat was stale")
-        ) {
+    if (inspection.kind === "dead" && inspection.staleStop) {
       const lateResult = readHostRunResult(resultPath, run.id);
       if (!lateResult) return inspection;
     }
