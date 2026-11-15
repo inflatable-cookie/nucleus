@@ -4,8 +4,8 @@
  * and the task-workspace archive a closeout asks for. Nothing here may claim a
  * folder was archived on a host call alone.
  */
-import type { BuildOutputCleanupHooks, WorkspaceDiscard } from '../types';
-import type { Run, Task } from '../../../shared/contracts';
+import type { WorkspaceArchiveOptions } from '../../workspaces/owned-workspace-archive';
+import type { Task } from '../../../shared/contracts';
 
 /**
  * Spec 017: the catalog placement a preserved external workspace's archive
@@ -92,6 +92,7 @@ export interface HostWorkspaceArchive {
    * one whose backing it might remove. A complete walk or an explicit refusal.
    */
   externalWorkspaceCatalog?(directory: string): Promise<ExternalWorkspaceCatalog>;
-  archiveTaskWorkspace?(task:Task,id:string,directory:string,expectedHead:string,allowed:()=>boolean,uncertain:boolean,requirePublished?:boolean,attachedAgentIds?:ReadonlySet<string>,requireDirectory?:boolean,allowIdleForeignThreads?:boolean,buildOutputCleanup?:BuildOutputCleanupHooks,reviewRun?:Run,discard?:WorkspaceDiscard|null,primaryArchived?:()=>boolean):Promise<boolean|string[]>;
+  /** One archive attempt; its optional inputs are the typed request, never trailing positionals. */
+  archiveTaskWorkspace?(task:Task,id:string,directory:string,expectedHead:string,allowed:()=>boolean,uncertain:boolean,options?:WorkspaceArchiveOptions):Promise<boolean|string[]>;
   taskWorkspaceArchived?(id:string):Promise<boolean>;
 }

@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { taskSchema } from '../shared/contracts';
 import type { Task } from '../shared/contracts';
-import { archiveFailureIsTeardown, archiveFailureKeepsScope } from '../core/workspaces/archive-failure';
+import { archiveFailureIsTeardown, archiveFailureKeepsScope, archiveFailureStage } from '../core/workspaces/archive-failure';
+import { WorkspaceTeardownRefusal } from '../core/workspaces/owned-workspace-archive';
 import { BACKPRESSURE_DEFERRAL } from '../core/host/admission';
 import { archiveRetryWaiting, terminalArchiveSource, terminalArchiveWorkspaces } from '../core/closeout/terminal-archive';
 
@@ -34,6 +35,28 @@ test('an archive failure keeps a captured runtime scope only for a teardown or r
   assert.equal(archiveFailureIsTeardown(error('worktree.teardown refused')), true);
   assert.equal(archiveFailureIsTeardown(error('runtime retire timed out')), true);
   assert.equal(archiveFailureIsTeardown(error('Workspace archive held by task identity')), false);
+});
+
+test('a Queue-authored refusal states its stage, so the classifier never reads its words', () => {
+  const scoped = { hasScope: () => true }, unscoped = { hasScope: () => false };
+  // The real producer: every teardown refusal keeps the captured scope, at any stage of the teardown.
+  for (const code of ['incomplete', 'catalogued', 'failed'] as const) {
+    const refusal = new WorkspaceTeardownRefusal(code, 'the directory is still there');
+    assert.equal(archiveFailureStage(refusal), 'teardown');
+    assert.equal(archiveFailureKeepsScope(unscoped, 'task-1', 'ws', refusal), true, code);
+    assert.equal(archiveFailureIsTeardown(refusal), true, code);
+  }
+  // A staged refusal whose text names no teardown at all is still classified by its stage.
+  const staged = { archiveFailureStage: 'teardown' as const, message: 'nothing to see' };
+  assert.equal(archiveFailureKeepsScope(unscoped, 'task-1', 'ws', staged), true);
+  assert.equal(archiveFailureIsTeardown(staged), true);
+  const other = { archiveFailureStage: 'other' as const, message: 'worktree.teardown refused' };
+  assert.equal(archiveFailureKeepsScope(scoped, 'task-1', 'ws', other), false, 'a staged non-teardown refusal keeps nothing, whatever its words say');
+  assert.equal(archiveFailureIsTeardown(other), false);
+  // A foreign failure keeps the text compatibility path.
+  assert.equal(archiveFailureStage(new Error('Paseo workspace.archive failed: timeout')), null);
+  assert.equal(archiveFailureKeepsScope(scoped, 'task-1', 'ws', new Error('runtime retirement failed: exit 1')), true);
+  assert.equal(archiveFailureKeepsScope(unscoped, 'task-1', 'ws', new Error('runtime retirement failed: exit 1')), false);
 });
 
 test('a bounded archive retry waits on its backoff and a breaker deferral is due at once', () => {

@@ -3002,7 +3002,7 @@ test('Paseo workspace archive failures preserve their transport cause',async()=>
   Object.defineProperty(adapter,'api',{value:{workspaces:{ref:()=>({directory:git.worktree,refresh:async()=>{},
    current:()=>({projectRootPath:git.repo,worktreeSlug:task.branch}),archive:async()=>{throw Error('Timeout waiting for message');}})},
    agents:{list:async()=>({entries:[],pageInfo:{hasMore:false}})}}});
-  await assert.rejects(adapter.archiveTaskWorkspace(task,'workspace',git.worktree,git.head,()=>true,false,false,new Set(),true,true),
+  await assert.rejects(adapter.archiveTaskWorkspace(task, 'workspace', git.worktree, git.head, ()=>true, false, { requirePublished: false, attachedAgentIds: new Set(), requireDirectory: true, allowIdleForeignThreads: true }),
    /Paseo workspace\.archive failed: Timeout waiting for message/);
  }finally{git.close();await f.close();}
 });
@@ -3016,7 +3016,7 @@ test('workspace archiver rejects unrelated threads and live turns before any del
   Object.defineProperty(adapter,'api',{value:{workspaces:{ref:()=>({directory:git.worktree,refresh:async()=>{},current:()=>({projectRootPath:git.repo,worktreeSlug:`ns-${f.task.id}`}),archive:async()=>{archived++;return{archivedAt:new Date().toISOString()};}})},agents:{list:async()=>({entries:[{agent}],pageInfo:{hasMore:false}})}}});
   await assert.rejects(adapter.archiveTaskWorkspace(task,'workspace',git.worktree,git.head,()=>true,false),/unrelated thread/);
   agent={...agent,status:'running',activeTurn:{}};
-  await assert.rejects(adapter.archiveTaskWorkspace(task,'workspace',git.worktree,git.head,()=>true,false,false,new Set([agent.id])),/become idle/);
+  await assert.rejects(adapter.archiveTaskWorkspace(task, 'workspace', git.worktree, git.head, ()=>true, false, { requirePublished: false, attachedAgentIds: new Set([agent.id]) }),/become idle/);
   agent={...agent,labels:{'nucleus.task':f.task.id},status:'running',activeTurn:{}};
   await assert.rejects(adapter.archiveTaskWorkspace(task,'workspace',git.worktree,git.head,()=>true,false),/become idle/);assert.equal(archived,0);
  }finally{git.close();await f.close();}
@@ -3030,24 +3030,24 @@ test('a done-task archive includes idle foreign threads and still waits or prese
   const adapter=mockWorkspaceArchiver(task,git.worktree,foreign,archived,join(f.dir,'worker-report.mjs'));
   for(const status of ['error','closed'] as const){
     archived.n=0;foreign.status=status;
-    assert.equal(await adapter.archiveTaskWorkspace(task,'workspace',git.worktree,git.head,()=>false,false,false,new Set(),false,true),false);
+    assert.equal(await adapter.archiveTaskWorkspace(task, 'workspace', git.worktree, git.head, ()=>false, false, { requirePublished: false, attachedAgentIds: new Set(), requireDirectory: false, allowIdleForeignThreads: true }),false);
     assert.equal(archived.n,0);
   }
   foreign.status='idle';
   await assert.rejects(adapter.archiveTaskWorkspace(task,'workspace',git.worktree,git.head,()=>true,false),/unrelated thread/);
-  await assert.rejects(adapter.archiveTaskWorkspace(task,'workspace',git.worktree,git.head,()=>true,false,false,new Set(),false,false),/unrelated thread/);
+  await assert.rejects(adapter.archiveTaskWorkspace(task, 'workspace', git.worktree, git.head, ()=>true, false, { requirePublished: false, attachedAgentIds: new Set(), requireDirectory: false, allowIdleForeignThreads: false }),/unrelated thread/);
   foreign.status='running';(foreign as {activeTurn?:object}).activeTurn={};
-  await assert.rejects(adapter.archiveTaskWorkspace(task,'workspace',git.worktree,git.head,()=>true,false,false,new Set(),false,true),/become idle/);
+  await assert.rejects(adapter.archiveTaskWorkspace(task, 'workspace', git.worktree, git.head, ()=>true, false, { requirePublished: false, attachedAgentIds: new Set(), requireDirectory: false, allowIdleForeignThreads: true }),/become idle/);
   delete (foreign as {activeTurn?:object}).activeTurn;foreign.status='idle';
   (foreign as {pendingPermissions?:object[]}).pendingPermissions=[{id:'perm'}];
-  await assert.rejects(adapter.archiveTaskWorkspace(task,'workspace',git.worktree,git.head,()=>true,false,false,new Set(),false,true),/become idle/);
+  await assert.rejects(adapter.archiveTaskWorkspace(task, 'workspace', git.worktree, git.head, ()=>true, false, { requirePublished: false, attachedAgentIds: new Set(), requireDirectory: false, allowIdleForeignThreads: true }),/become idle/);
   delete (foreign as {pendingPermissions?:object[]}).pendingPermissions;
   const archivedAfterIdle=archived.n;
   writeFileSync(join(git.worktree,'dirty.txt'),'keep');
-  await assert.rejects(adapter.archiveTaskWorkspace(task,'workspace',git.worktree,git.head,()=>true,false,false,new Set(),false,true),/uncommitted/);
+  await assert.rejects(adapter.archiveTaskWorkspace(task, 'workspace', git.worktree, git.head, ()=>true, false, { requirePublished: false, attachedAgentIds: new Set(), requireDirectory: false, allowIdleForeignThreads: true }),/uncommitted/);
   assert.equal(archived.n,archivedAfterIdle);
   rmSync(join(git.worktree,'dirty.txt'));
-  assert.deepEqual(await adapter.archiveTaskWorkspace(task,'workspace',git.worktree,git.head,()=>true,false,false,new Set(),false,true),[foreign.id]);
+  assert.deepEqual(await adapter.archiveTaskWorkspace(task, 'workspace', git.worktree, git.head, ()=>true, false, { requirePublished: false, attachedAgentIds: new Set(), requireDirectory: false, allowIdleForeignThreads: true }),[foreign.id]);
   assert.equal(archived.n,1);
  }finally{git.close();await f.close();}
 });
@@ -3071,8 +3071,8 @@ test('a done task with an idle foreign thread archives and records the thread id
  const {Lifecycle}=await import('../core/closeout/workspace-lifecycle');const f=fixture();try{
   const foreign='foreign-calibrator';
   let live=true;const archived:string[]=[];const allowIdle:boolean[]=[];
-  Object.assign(f.adapter,{archiveTaskWorkspace:async(_t:unknown,_id:string,_d:string,_h:string,allowed:()=>boolean,_u:boolean,_p?:boolean,_a?:ReadonlySet<string>,_r?:boolean,allow?:boolean)=>{
-    allowIdle.push(Boolean(allow));
+  Object.assign(f.adapter,{archiveTaskWorkspace:async(_t:unknown,_id:string,_d:string,_h:string,allowed:()=>boolean,_u:boolean,options?:{allowIdleForeignThreads?:boolean})=>{
+    allowIdle.push(Boolean(options?.allowIdleForeignThreads));
     if(live)throw Error('Waiting for workspace threads to become idle');
     if(!allowed())return false;archived.push(_id);return [foreign];
   }});
@@ -3172,8 +3172,8 @@ test('missing-directory preservation applies to disposition archive, not task re
   const adapter=Object.create(PaseoAdapter.prototype) as InstanceType<typeof PaseoAdapter>;
   Object.defineProperty(adapter,'helperPath',{value:join(f.dir,'worker-report.mjs')});
   Object.defineProperty(adapter,'api',{value:{workspaces:{ref:()=>({directory:missing,refresh:async()=>{},current:()=>({projectRootPath:task.repoPath,worktreeSlug:f.task.branch})})}}});
-  assert.deepEqual(await adapter.archiveTaskWorkspace(task,'workspace',missing,'',()=>true,false,true),[]);
-  await assert.rejects(adapter.archiveTaskWorkspace(task,'workspace',missing,'',()=>true,false,true,new Set(),true),/missing directory/);
+  assert.deepEqual(await adapter.archiveTaskWorkspace(task, 'workspace', missing, '', ()=>true, false, { requirePublished: true }),[]);
+  await assert.rejects(adapter.archiveTaskWorkspace(task, 'workspace', missing, '', ()=>true, false, { requirePublished: true, attachedAgentIds: new Set(), requireDirectory: true }),/missing directory/);
  }finally{git.close();await f.close();}
 });
 

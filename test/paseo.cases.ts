@@ -462,10 +462,10 @@ weighted(5)('accepted report-only workspace archives an empty branch only at the
   task.reportAcceptance = { artifact: { key: 'report', version: 1, digest: 'sha256:' + 'a'.repeat(64) },
     acceptedBy: 'owner', reason: 'Report accepted', acceptedAt: new Date().toISOString(), taskVersion: 1 };
   await writeFile(join(directory, 'dirty.txt'), 'keep');
-  await assert.rejects(adapter.archiveTaskWorkspace(task, 'workspace', directory, head, () => true, false, true), /uncommitted/);
+  await assert.rejects(adapter.archiveTaskWorkspace(task, 'workspace', directory, head, () => true, false, { requirePublished: true }), /uncommitted/);
   assert.equal(archives, 0);
   await rm(join(directory, 'dirty.txt'));
-  assert.deepEqual(await adapter.archiveTaskWorkspace(task, 'workspace', directory, head, () => true, false, true), []);
+  assert.deepEqual(await adapter.archiveTaskWorkspace(task, 'workspace', directory, head, () => true, false, { requirePublished: true }), []);
   assert.equal(archives, 1);
   assert.equal(existsSync(directory), false);
   assert.equal(task.resolution.mergedCommit, null);
@@ -518,7 +518,7 @@ weighted(19)('a report-only workspace at its planning base archives after main a
       resolution: { mergedCommit: null, syncedCommit: null } } as Task;
     task.reportAcceptance = { artifact: { key: 'report', version: 1, digest: 'sha256:' + 'a'.repeat(64) },
       acceptedBy: 'owner', reason: 'Negative result accepted', acceptedAt: new Date().toISOString(), taskVersion: 1 };
-    const archiving = adapter.archiveTaskWorkspace(task, 'workspace', directory, base, () => true, false, true);
+    const archiving = adapter.archiveTaskWorkspace(task, 'workspace', directory, base, () => true, false, { requirePublished: true });
     if (shape === 'advanced') {
       assert.deepEqual(await archiving, [], shape);
       assert.equal(archives, 1, 'the planning base is an ancestor of the advanced origin/main');
@@ -568,7 +568,7 @@ weighted(18)('a report-only workspace whose registered root is redirected is ref
   await mkdir(join(moved, 'nested'));
   await symlink(join(moved, 'nested'), directory);
   assert.notEqual(await realpath(directory), await realpath(await git(directory, 'rev-parse', '--show-toplevel')));
-  await assert.rejects(adapter.archiveTaskWorkspace(task, 'workspace', directory, head, () => true, false, true), /registered task worktree root/);
+  await assert.rejects(adapter.archiveTaskWorkspace(task, 'workspace', directory, head, () => true, false, { requirePublished: true }), /registered task worktree root/);
   assert.equal(archives, 0);
 });
 
@@ -679,7 +679,7 @@ weighted(6)("a canonical-project task workspace allocates, registers without a s
   await service.capture(submitted.id, "workspace", f.ownedPath);
 
   // Ordinary closeout: publish-proven, idle, clean, and recognized without a slug.
-  assert.deepEqual(await f.adapter.archiveTaskWorkspace(task, "workspace", f.ownedPath, head, () => true, false, true), []);
+  assert.deepEqual(await f.adapter.archiveTaskWorkspace(task, "workspace", f.ownedPath, head, () => true, false, { requirePublished: true }), []);
   assert.deepEqual(archives, ["ns-archive-task-workspace"]);
   assert.equal(existsSync(f.ownedPath), false, "no retained owned worktree");
   assert.equal((await git(f.primary, "worktree", "list", "--porcelain")).includes(f.ownedPath), false);
@@ -693,7 +693,7 @@ weighted(6)("a canonical-project task workspace allocates, registers without a s
   assert.equal(store.task(submitted.id).resolution.runtimeRetirements[0].state, "retired");
 
   // Retry after the archive stays idempotent: no second archive request.
-  assert.deepEqual(await f.adapter.archiveTaskWorkspace(task, "workspace", f.ownedPath, head, () => true, false, true), []);
+  assert.deepEqual(await f.adapter.archiveTaskWorkspace(task, "workspace", f.ownedPath, head, () => true, false, { requirePublished: true }), []);
   assert.equal(archives.length, 1);
 });
 
@@ -706,7 +706,7 @@ weighted(8)("canonical-project ownership never replaces the preserved-state proo
     await git(f.primary, "worktree", "add", stray, f.baseHead);
     const { archives } = bindCatalog(f.adapter, stray, canonicalDescriptor(f.primary, stray));
     const task = { ...f.task, workspaceId: "workspace", prHead: head } as Task;
-    await assert.rejects(f.adapter.archiveTaskWorkspace(task, "workspace", stray, head, () => true, false, true),
+    await assert.rejects(f.adapter.archiveTaskWorkspace(task, "workspace", stray, head, () => true, false, { requirePublished: true }),
       /Preserving workspace: ownership or directory changed/);
     assert.equal(archives.length, 0);
     assert.equal(existsSync(stray), true);
@@ -718,7 +718,7 @@ weighted(8)("canonical-project ownership never replaces the preserved-state proo
     const head = await commitAndPush(f.ownedPath, f.primary);
     const { archives } = bindCatalog(f.adapter, f.ownedPath, canonicalDescriptor(join(f.root, "elsewhere"), f.ownedPath));
     const task = { ...f.task, workspaceId: "workspace", prHead: head } as Task;
-    await assert.rejects(f.adapter.archiveTaskWorkspace(task, "workspace", f.ownedPath, head, () => true, false, true),
+    await assert.rejects(f.adapter.archiveTaskWorkspace(task, "workspace", f.ownedPath, head, () => true, false, { requirePublished: true }),
       /Preserving workspace: ownership or directory changed/);
     assert.equal(archives.length, 0);
     assert.equal(existsSync(f.ownedPath), true);
@@ -746,7 +746,7 @@ weighted(8)("canonical-project ownership never replaces the preserved-state proo
       { agent: { id: "helper", workspaceId: "workspace", labels: {}, status: "idle" } },
     ], pageInfo: { hasMore: false } }) };
     const task = { ...f.task, workspaceId: "workspace", prHead: head } as Task;
-    await assert.rejects(f.adapter.archiveTaskWorkspace(task, "workspace", f.ownedPath, head, () => true, false, true),
+    await assert.rejects(f.adapter.archiveTaskWorkspace(task, "workspace", f.ownedPath, head, () => true, false, { requirePublished: true }),
       /Preserving workspace containing an unrelated thread/);
     assert.equal(archives.length, 0);
     assert.equal(existsSync(f.ownedPath), true);
@@ -759,11 +759,11 @@ weighted(8)("canonical-project ownership never replaces the preserved-state proo
     const { archives } = bindCatalog(f.adapter, f.ownedPath, canonicalDescriptor(f.primary, f.ownedPath));
     const task = { ...f.task, workspaceId: "workspace", prHead: head } as Task;
     await writeFile(join(f.ownedPath, "dirty.txt"), "keep");
-    await assert.rejects(f.adapter.archiveTaskWorkspace(task, "workspace", f.ownedPath, head, () => true, false, true),
+    await assert.rejects(f.adapter.archiveTaskWorkspace(task, "workspace", f.ownedPath, head, () => true, false, { requirePublished: true }),
       /Preserving workspace with uncommitted files or unexpected commits/);
     await rm(join(f.ownedPath, "dirty.txt"));
     await git(f.ownedPath, "checkout", "-b", "wander");
-    await assert.rejects(f.adapter.archiveTaskWorkspace(task, "workspace", f.ownedPath, head, () => true, false, true),
+    await assert.rejects(f.adapter.archiveTaskWorkspace(task, "workspace", f.ownedPath, head, () => true, false, { requirePublished: true }),
       /Preserving workspace: Git ownership changed/);
     assert.equal(archives.length, 0);
     assert.equal(existsSync(f.ownedPath), true);
@@ -869,8 +869,7 @@ weighted(16)('catalog-absent canonical teardown requires fresh source, inventory
       // Simulate source changing during an awaited pre-effect cleanup.
       task.branch = 'changed-binding';
     }, uncertain: () => {} } : undefined;
-    const attempt = () => f.adapter.archiveTaskWorkspace(task, 'workspace', f.ownedPath, shape === 'head' ? f.baseHead : head,
-      () => { intents++; return true; }, true, true, new Set(), true, false, cleanup);
+    const attempt = () => f.adapter.archiveTaskWorkspace(task, 'workspace', f.ownedPath, shape === 'head' ? f.baseHead : head, () => { intents++; return true; }, true, { requirePublished: true, attachedAgentIds: new Set(), requireDirectory: true, allowIdleForeignThreads: false, buildOutputCleanup: cleanup });
     if (shape === 'eligible' || shape === 'merged-live-tool') {
       assert.deepEqual(await attempt(), []);
       assert.equal(existsSync(f.ownedPath), false);
@@ -965,8 +964,7 @@ weighted(14)('terminal archive proves HEAD on a live canonical-origin branch wit
       sync(f.ownedPath, 'push', 'origin', '--delete', 'donor');
       return 'complete' as const;
     }, observed: () => {}, uncertain: () => {} } : undefined;
-    const attempt = () => f.adapter.archiveTaskWorkspace(task, 'workspace', f.ownedPath, head,
-      () => { intents++; return true; }, false, true, new Set(), true, false, cleanup);
+    const attempt = () => f.adapter.archiveTaskWorkspace(task, 'workspace', f.ownedPath, head, () => { intents++; return true; }, false, { requirePublished: true, attachedAgentIds: new Set(), requireDirectory: true, allowIdleForeignThreads: false, buildOutputCleanup: cleanup });
     if (eligible.has(shape)) {
       assert.deepEqual(await attempt(), []);
       assert.equal(intents, 2, 'native archive and local teardown each pass the owner gate');
@@ -1017,8 +1015,7 @@ weighted(4)('archive inventory reaches workspace threads beyond a large unrelate
     };
     f.adapter.agentTimelinePage = async () => toolTimelineTail([], 200);
     let intents = 0;
-    const attempt = () => f.adapter.archiveTaskWorkspace(task, 'workspace', f.ownedPath, head,
-      () => { intents++; return true; }, false, true, new Set(), true, true);
+    const attempt = () => f.adapter.archiveTaskWorkspace(task, 'workspace', f.ownedPath, head, () => { intents++; return true; }, false, { requirePublished: true, attachedAgentIds: new Set(), requireDirectory: true, allowIdleForeignThreads: true });
     if (shape === 'absent-live-foreign' || shape === 'late-read-failure') {
       await assert.rejects(attempt(), shape === 'late-read-failure' ? /Late inventory page unavailable/ : /threads to become idle/);
       assert.equal(existsSync(f.ownedPath), true);
@@ -1065,8 +1062,7 @@ weighted(200)('archive inventory narrows to the project bound on the first catal
     };
     f.adapter.observe = async id => ({ id, workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '' });
     f.adapter.agentTimelinePage = async () => toolTimelineTail([], 200);
-    const attempt = () => f.adapter.archiveTaskWorkspace(task, 'workspace', f.ownedPath, head,
-      () => true, false, true, new Set(['worker']), true, true);
+    const attempt = () => f.adapter.archiveTaskWorkspace(task, 'workspace', f.ownedPath, head, () => true, false, { requirePublished: true, attachedAgentIds: new Set(['worker']), requireDirectory: true, allowIdleForeignThreads: true });
     if (shape === 'wrong-key-misses-participant') {
       await assert.rejects(attempt(), /inventory is incomplete/);
       assert.equal(existsSync(f.ownedPath), true, 'a narrowed inventory missing an observed participant holds teardown');
@@ -1108,7 +1104,8 @@ weighted(4)('an admitted real archive samples each daemon request through the re
     };
     (f.adapter as any).api = createPaseoApi(timedDaemonRequests(daemon) as any);
     const admission = new Admission({ now: () => clock.now, startIntervalMs: 0 });
-    await admitAdapter(f.adapter, admission).archiveTaskWorkspace!(task, 'workspace', f.ownedPath, head, () => true, false, true, new Set(['worker']), true, true);
+    await admitAdapter(f.adapter, admission).archiveTaskWorkspace!(task, 'workspace', f.ownedPath, head, () => true, false,
+      { requirePublished: true, attachedAgentIds: new Set(['worker']), requireDirectory: true, allowIdleForeignThreads: true });
     assert.equal(existsSync(f.ownedPath), false);
     assert.deepEqual([...new Set(requests.map(r => r.method))].sort(), ['archiveWorkspace', 'fetchAgent', 'fetchAgentTimeline', 'fetchAgents', 'fetchWorkspaces']);
     const latency = admission.snapshot().latency.cleanup, backpressure = admission.snapshot().backpressure;
@@ -1134,8 +1131,7 @@ weighted(4)('archive inventory refuses missing, repeated or cyclic continuation 
       assert.ok(pages < cursors.length, 'invalid cursor must stop pagination');
       return { entries: [], pageInfo: { hasMore: true, nextCursor: cursors[pages++] } };
     };
-    await assert.rejects(f.adapter.archiveTaskWorkspace(task, 'workspace', f.ownedPath, head,
-      () => { assert.fail('incomplete inventory cannot authorize teardown'); }, true, true), /inventory is incomplete/);
+    await assert.rejects(f.adapter.archiveTaskWorkspace(task, 'workspace', f.ownedPath, head, () => { assert.fail('incomplete inventory cannot authorize teardown'); }, true, { requirePublished: true }), /inventory is incomplete/);
     assert.equal(pages, cursors.length);
     assert.equal(existsSync(f.ownedPath), true);
     assert.equal(f.catalog.archives.length, 0);

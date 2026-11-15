@@ -462,11 +462,13 @@ settings revision before the intent and again before the send. Enforces
 `refusePreMerge`, `verification` and `advanceMerging`.
 
 **ExternalMerge** (`core/merge/external-merge.ts`). Accepts or detects a PR merged
-outside Nucleus: the operator accept verb, the automatic probe, and the sweep
-that resumes a task parked on a cleared external-merge check. Enforces
-[External merge](#external-merge). Control-flow strings:
-`EXTERNAL_MERGE_CHECK_REASON_PREFIX`, `EXTERNAL_MERGE_CHECK_RECOVERED_REASON`.
-Delegates remain on Resolution.
+outside Nucleus: the operator accept verb over one typed acceptance job, and the
+automatic probe. `core/merge/external-merge-record.ts` records an observed merge
+once for both paths; `core/merge/external-merge-check.ts` owns the transient
+check park, its recovered proof, the restore of the state it interrupted and the
+unreviewed-merge stop. Enforces [External merge](#external-merge). Control-flow
+strings: `EXTERNAL_MERGE_CHECK_REASON_PREFIX`,
+`EXTERNAL_MERGE_CHECK_RECOVERED_REASON`. Delegates remain on Resolution.
 
 **IntegrationTurns** (`core/merge/integration-turns.ts`). Each repository's FIFO
 integration turn: sequence assignment, claim, who holds the turn, the closeout
@@ -527,8 +529,9 @@ completions, the agent's closeout result, the sync to the integration branch,
 and the write that hands the turn on. Enforces
 [Closeout and outcomes](#closeout-and-outcomes) and
 [Repository hooks](#repository-hooks). Delegates remain on Resolution except
-the two private helpers `reviewDisclosures` and `closeoutRefreshAllowed`, which
-only Closeout calls.
+the private helper `reviewDisclosures`, which only Closeout calls; the automatic
+re-pin of a stale closeout base and its per-merge limit are
+`core/closeout/closeout-base-refresh.ts`'s, shared with closeout recovery.
 
 **ProofAutorun** (`core/qa/proof-autorun.ts`). Starts a brief-named proof at an
 approved head without a question: wait for re-declared inputs, skip a
@@ -620,11 +623,13 @@ arms rate-limit failover when the resumes run out. Enforces
 `transientResumeDecision`, `transientSentDecision`, `transientWaitingDecision`.
 Delegates remain on Resolution.
 
-**RetryRoutes** (`core/recovery/retry-routes.ts`). Where a restart sends a parked task:
-the continuation a replacement worker resumes, retry, worker resume, and the
-stopped-revision restart. Enforces the restart arms in [Verbs](#verbs). Pures:
-`retryRoute`, `resumeRoute`. Delegates remain on Resolution, including `retry`
-so instance overrides still fire.
+**RetryRoutes** (`core/recovery/retry-orchestration.ts`, applied in one order over
+`core/recovery/retry-routes.ts`'s typed decisions and `core/recovery/retry-evidence.ts`'s
+recorded evidence). Where a restart sends a parked task: the continuation a
+replacement worker resumes, retry, worker resume, and the stopped-revision
+restart. Enforces the restart arms in [Verbs](#verbs). Pures: `retryRoute`,
+`resumeRoute`, `blockedRetryRoute`, `revisionRoute`. Delegates remain on
+Resolution, including `retry` so instance overrides still fire.
 
 **AbsentRestarts** (`core/recovery/absent-restarts.ts`). Recreates proven-absent runs:
 an absent worker in the retained workspace, an absent resolution run, an
@@ -729,8 +734,9 @@ kinds (`scope`, `release`). Delegates remain on Resolution.
 **AgentAsks** (`core/questions/agent-asks.ts`). Records, routes, waits on and resumes
 `ask` (alias `nucleus_ask`). Holds the in-flight routing set and the in-turn wait and poll
 cadence. Enforces [Delegated answers](#delegated-answers-preserve-the-planners-conversation).
-`askBinding` is a free function in `core/questions/agent-ask.ts`. Delegates remain on
-Resolution.
+`askBinding` is a free function in `core/questions/agent-ask.ts`, and
+`core/questions/agent-ask-events.ts` decodes one ask's `agent_ask_*` records into its
+typed lifecycle. Delegates remain on Resolution.
 
 **AgentMessages** (`core/questions/agent-messages.ts`). Sends, delivers and sweeps
 `tell` (alias `nucleus_message`). Holds the in-flight delivery set. Delegates remain on

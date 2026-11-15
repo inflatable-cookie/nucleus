@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { CURRENT_SCHEMA, Store } from "../core/store/store";
 import { Engine } from "../core/engine";
 import { DISPATCH_HELD_REASON, dispatchBlocked } from "../core/dispatch/capacity";
+import { BOARD_DISPATCH_HOLD_REASON } from "../shared/board-dispatch-hold";
 import { holdPatch } from "../core/merge/merge-hold";
 import { MERGE_HELD_REASON } from "../core/resolution";
 import { DISPATCH_WAIT_REASON, taskStopRecord } from "../shared/task-stop";
@@ -72,6 +73,36 @@ test("papercut 608903b6: a brief merge hold still allows a dispatch hold, and re
     assert.ok(holdsOf(released).merge);
     assert.equal(dispatchBlocked(released), false);
     assert.equal(released.mergeHold, true);
+  } finally { await f.close(); }
+});
+
+test("a released dispatch hold is never the queued projection, whichever hold wrote the reason", async () => {
+  const f = fixture(); try {
+    const task = f.add("Released hold");
+    f.store.update(task.id, { phase: "queued", reason: DISPATCH_HELD_REASON });
+    const project = (id: string, externalWait: () => string = () => "") => {
+      const current = f.store.task(id);
+      return queuedReason(f.store, current, taskWaitStateContext(f.store, current, null), externalWait);
+    };
+    // The per-task dispatch hold was released, but the task still carries its text for this pass:
+    // the projection recomputes instead of claiming dispatch is still held.
+    assert.equal(project(task.id), DISPATCH_WAIT_REASON);
+    // And it no longer hides a current external wait.
+    assert.equal(project(task.id, () => "Waiting on the external reviewer"), "Waiting on the external reviewer");
+    // The board hold writes its own reason; a task carrying it after the board hold clears projects
+    // the same way, while an applying hold is still the projection.
+    // A paused board never applies the board hold; a held board does.
+    f.store.update(task.id, { reason: BOARD_DISPATCH_HOLD_REASON });
+    f.store.setMeta("paused", false);
+    f.store.setMeta("dispatchHeld", true);
+    assert.equal(project(task.id), BOARD_DISPATCH_HOLD_REASON);
+    f.store.setMeta("dispatchHeld", false);
+    assert.equal(project(task.id), DISPATCH_WAIT_REASON);
+    // A fresh per-task hold is still the projection.
+    const held = await f.engine.performTaskControl({
+      taskId: task.id, version: f.store.task(task.id).version, action: "hold", reason: "Wait for staging",
+    }) as Task;
+    assert.equal(project(held.id), DISPATCH_HELD_REASON);
   } finally { await f.close(); }
 });
 

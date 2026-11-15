@@ -102,7 +102,7 @@ test('a structured owner discard retires a dirty preserved cancelled workspace t
     // The exact recorded decision reached the real retirement preflight and adapter.
     assert.equal(calls.length, 1);
     const bound = f.record();
-    assert.deepEqual(calls[0]![12], bound, 'the real adapter receives the exact recorded discard');
+    assert.deepEqual(calls[0]![6]?.discard, bound, 'the real adapter receives the exact recorded discard');
     assert.deepEqual({ ...bound, at: undefined }, { workspaceId: f.task.workspaceId, directory: f.directory,
       caller: 'operator (board)', authority: 'operator', note: null, reason: RULING, at: undefined });
     assert.equal(f.events('workspace_discard_authorized').length, 1);
