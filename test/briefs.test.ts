@@ -483,7 +483,11 @@ test('8d. amend_brief queues the new brief to a live worker and answers an open 
     assert.equal(amended.briefVersions.at(-1)?.version, 2);
     const events = e.store.eventsAll(live.id);
     assert.ok(events.some(event => event.kind === 'agent_ask_answered' && event.detail.startsWith(`${askId}: answered by brief amendment:`)));
-    assert.ok(events.some(event => event.kind === 'brief_amendment_delivery_intent' && event.detail.includes('role worker')));
+    // The intent is the typed record a later pass replays: message, host, agent,
+    // role and the version it belongs to.
+    const intents = events.filter(event => event.kind === 'brief_amendment_delivery_intent')
+      .map(event => JSON.parse(event.detail) as { messageId: string; hostId: string; agentId: string; role: string; version: number });
+    assert.deepEqual(intents, [{ messageId: `ns-brief-amendment-${live.id}-v2-worker`, hostId: 'host', agentId: 'worker', role: 'worker', version: 2 }]);
     for (let i = 0; i < 20 && queued.length === 0; i++) await new Promise(resolve => setImmediate(resolve));
     assert.equal(queued.length, 1);
     assert.equal(queued[0]!.agentId, 'worker');
@@ -491,6 +495,58 @@ test('8d. amend_brief queues the new brief to a live worker and answers an open 
     assert.match(queued[0]!.text, /amended this task's Nucleus-held brief to version 2/);
     assert.ok(queued[0]!.text.includes(amendedText));
     assert.ok(e.store.eventsAll(live.id).some(event => event.kind === 'brief_amendment_delivered'));
+  } finally { await e.close(); }
+});
+
+test('8f. an amendment intent recorded while the host has no channel is delivered by the next pass', async () => {
+  const e = engineFixture();
+  try {
+    const inserted = e.store.insert(briefSubmission('/repo', 'a'.repeat(40)), 'host', briefText, 'a'.repeat(40));
+    const live = e.store.update(inserted.id, { phase: 'working', agentId: 'worker', runId: 'initial', workspaceId: 'ws' });
+    // The host cannot deliver yet: the intent is recorded and nothing is attempted.
+    const amended = await e.engine.performTaskControl({
+      taskId: live.id, version: live.version, action: 'amend_brief', brief: `${briefText}\nAmended scope ruling.\n`, reason: 'Operator narrowed the scope',
+    });
+    assert.equal(amended.briefVersions.at(-1)?.version, 2);
+    await new Promise(resolve => setImmediate(resolve));
+    const afterAmend = e.store.eventsAll(live.id);
+    assert.ok(afterAmend.some(event => event.kind === 'brief_amendment_delivery_intent'));
+    assert.equal(afterAmend.some(event => event.kind === 'brief_amendment_delivered'), false);
+    assert.equal(afterAmend.some(event => event.kind === 'brief_amendment_delivery_attempt'), false, 'no attempt was made');
+    const queued: Array<{ agentId: string; messageId: string }> = [];
+    e.engine.adapter.enqueueMessage = async (agentId, messageId) => { queued.push({ agentId, messageId }); };
+    await e.engine.deliverPendingBriefAmendments();
+    assert.deepEqual(queued, [{ agentId: 'worker', messageId: `ns-brief-amendment-${live.id}-v2-worker` }],
+      'the recorded intent is delivered once the channel exists');
+    // A second pass never sends twice.
+    await e.engine.deliverPendingBriefAmendments();
+    assert.equal(queued.length, 1);
+    assert.ok(e.store.eventsAll(live.id).some(event => event.kind === 'brief_amendment_delivered'
+      && event.detail.startsWith(`ns-brief-amendment-${live.id}-v2-worker:`)));
+  } finally { await e.close(); }
+});
+
+test('8g. an amendment whose delivery outcome is unknown is recorded as unknown and never resent', async () => {
+  const e = engineFixture();
+  try {
+    const inserted = e.store.insert(briefSubmission('/repo', 'a'.repeat(40)), 'host', briefText, 'a'.repeat(40));
+    const live = e.store.update(inserted.id, { phase: 'working', agentId: 'worker', runId: 'initial', workspaceId: 'ws' });
+    let attempts = 0;
+    e.engine.adapter.enqueueMessage = async () => { attempts++; throw new Error('host connection went away'); };
+    await e.engine.performTaskControl({
+      taskId: live.id, version: live.version, action: 'amend_brief', brief: `${briefText}\nAmended scope ruling.\n`, reason: 'Operator narrowed the scope',
+    });
+    for (let i = 0; i < 20 && !e.store.eventsAll(live.id).some(event => event.kind === 'brief_amendment_delivery_unknown'); i++)
+      await new Promise(resolve => setImmediate(resolve));
+    const events = e.store.eventsAll(live.id);
+    assert.equal(attempts, 1);
+    assert.ok(events.some(event => event.kind === 'brief_amendment_delivery_attempt'));
+    assert.ok(events.some(event => event.kind === 'brief_amendment_delivery_unknown' && /host connection went away/.test(event.detail)));
+    // A later pass with a working channel never sends the same message again.
+    e.engine.adapter.enqueueMessage = async () => { attempts++; };
+    await e.engine.deliverPendingBriefAmendments();
+    assert.equal(attempts, 1, 'an attempted intent is never resent');
+    assert.equal(e.store.eventsAll(live.id).some(event => event.kind === 'brief_amendment_delivered'), false);
   } finally { await e.close(); }
 });
 

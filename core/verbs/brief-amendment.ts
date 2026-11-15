@@ -85,8 +85,9 @@ export class BriefAmendmentDelivery {
    */
   async deliverPending(onlyTaskId?: string): Promise<void> {
     if (this.engine.stopped) return;
+    // The recorded intent is the index: a task with no intent has nothing to deliver.
     const taskIds = onlyTaskId ? [onlyTaskId]
-      : (this.store.db.prepare("SELECT id FROM tasks WHERE json_extract(data,'$.briefVersions') IS NOT NULL").all() as Array<{ id: string }>).map(row => row.id);
+      : (this.store.db.prepare('SELECT DISTINCT taskId FROM events WHERE kind=?').all(INTENT) as Array<{ taskId: string }>).map(row => row.taskId);
     for (const taskId of taskIds) {
       const task = this.store.task(taskId);
       if (!task.hostId) continue;
