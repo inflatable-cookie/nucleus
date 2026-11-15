@@ -1,39 +1,28 @@
-import { hostKindOf } from '../../shared/host-kind';
-import { parseAgentId, sameCallerIdentity } from '../../shared/agent-identity';
 /**
  * Spec 052 planner grants (Tom, 2026-11-06). A planner asks for standing
  * permission to use frontier and above-ceiling profiles for a block of work; the
  * operator says yes on the board; while it stands that planner's own requests
  * and routes take effect without a per-task question. Only a board answer
  * activates a grant.
+ *
+ * A grant's coverage reaches a task's requests through the sign-off rules in
+ * `request.ts`, so the per-task reconcile and this store both write the same
+ * record.
  */
+import { hostKindOf } from '../../../shared/host-kind';
+import { parseAgentId, sameCallerIdentity } from '../../../shared/agent-identity';
 import { randomUUID } from "node:crypto";
-import { requestOnly } from "../../shared/pool";
-import { clipDecisionQuestion, taskOwner, routingGrantSchema, type RoutingGrant, type Task } from "../../shared/contracts";
-import type { Decisions } from "../planning/decisions";
-import type { Store } from "../store/store";
-import { now } from "../store/store";
-
-const ROLES = ["worker", "reviewer", "coordinator"] as const;
-type Role = (typeof ROLES)[number];
-type Request = NonNullable<NonNullable<Task["profileRequests"]>[Role]>;
-type Signoff = NonNullable<Request["signoff"]>;
+import { requestOnly } from "../../../shared/pool";
+import { clipDecisionQuestion, routingGrantSchema, taskOwner, type RoutingGrant, type Task } from "../../../shared/contracts";
+import type { Decisions } from "../../planning/decisions";
+import type { Store } from "../../store/store";
+import { now } from "../../store/store";
+import { ROLES, withdrawOpen, withEndedGrant, withGrantSignoff, type Request } from "./request";
 
 export const GRANT_OPERATOR_BOARD = "operator (board)";
 export const GRANT_APPROVE = "Grant standing permission";
 export const GRANT_DECLINE = "Decline: keep per-task sign-off";
 const GRANT_META = "routingGrants";
-
-export function grantSignoff(grant: RoutingGrant): Signoff {
-  return {
-    status: "approved",
-    decisionId: grant.decisionId,
-    by: GRANT_OPERATOR_BOARD,
-    at: grant.activatedAt ?? now(),
-    note: "",
-    grantId: grant.id,
-  };
-}
 
 export function readRoutingGrants(store: Store): RoutingGrant[] {
   const parsed = routingGrantSchema.array().safeParse(store.getMeta<unknown>(GRANT_META) ?? []);
@@ -92,27 +81,21 @@ export function coveringGrant(store: Store, task: Task, profileId: string, at = 
   return null;
 }
 
-function withdrawOpenGrant(decisions: Decisions, decisionId: string, reason: string): void {
-  try {
-    const decision = decisions.get({ id: decisionId });
-    if (decision.status === "open") decisions.withdraw({ id: decision.id, version: decision.version, reason, withdrawnBy: "queue" });
-  } catch { /* Gone or already closed. */ }
+/** Withdraw a grant's open question, recording a withdrawal that did not happen. */
+function withdrawGrantDecision(store: Store, decisions: Decisions, grant: RoutingGrant, reason: string): void {
+  if (!grant.decisionId || withdrawOpen(decisions, grant.decisionId, reason)) return;
+  store.event('queue', 'routing_grant_withdraw_failed', JSON.stringify({ grantId: grant.id, decisionId: grant.decisionId, reason }));
 }
 
-function stripGrantSignoff(request: Request, grantId: string): Request | null {
-  if (request.signoff?.grantId !== grantId) return null;
-  return { ...request, signoff: { status: "pending", decisionId: null, by: null,
-    at: now(), note: "", endedGrantId: grantId } };
-}
-
+/** The request every live task of the grant's planner carries after the grant ended. */
 function clearGrantSignoffs(store: Store, grantId: string): void {
   for (const task of store.liveTasks()) {
     const requests = { ...task.profileRequests };
     let changed = false;
     for (const role of ROLES) {
-      const request = requests[role];
+      const request: Request | undefined = requests[role];
       if (!request) continue;
-      const stripped = stripGrantSignoff(request, grantId);
+      const stripped = withEndedGrant(request, grantId);
       if (!stripped) continue;
       requests[role] = stripped;
       changed = true;
@@ -127,16 +110,12 @@ function applyGrantToTask(store: Store, decisions: Decisions, task: Task, grant:
   const requests = { ...task.profileRequests };
   let changed = false;
   for (const role of ROLES) {
-    const request = requests[role];
+    const request: Request | undefined = requests[role];
     if (!request) continue;
     if (!grantCoversProfile(store, grant, request.profileId)) continue;
-    const signoff = request.signoff;
-    if (signoff?.status === "approved" && !signoff.grantId) continue;
-    if (signoff?.status === "declined") continue;
-    if (signoff?.status === "approved" && signoff.grantId === grant.id) continue;
-    if (signoff?.status === "pending" && signoff.decisionId)
-      withdrawOpenGrant(decisions, signoff.decisionId, `Covered by planner grant ${grant.id}`);
-    requests[role] = { ...request, signoff: grantSignoff(grant) };
+    const covered = withGrantSignoff(decisions, request, grant);
+    if (!covered) continue;
+    requests[role] = covered;
     changed = true;
   }
   if (!changed) return;
@@ -144,11 +123,20 @@ function applyGrantToTask(store: Store, decisions: Decisions, task: Task, grant:
     JSON.stringify({ status: "approved", grantId: grant.id, decisionId: grant.decisionId, note: "" }));
 }
 
-function settleCoveredTasks(store: Store, decisions: Decisions, grant: RoutingGrant): void {
-  if (!grantIsLive(grant)) return;
+/**
+ * Every live grant applied to every live task it covers, in one scan of the
+ * tasks: a request joins the planner's open grant, so a task's owner has at most
+ * one live grant and the two loops meet once.
+ */
+function settleCoveredTasks(store: Store, decisions: Decisions): void {
+  const live = liveGrants(readRoutingGrants(store), Date.now());
+  if (!live.length) return;
   for (const task of store.liveTasks()) {
-    if (!sameCallerIdentity(taskOwner(task), grant.planner, task.originHostId)) continue;
-    applyGrantToTask(store, decisions, task, grant);
+    const owner = taskOwner(task);
+    for (const grant of live) {
+      if (!sameCallerIdentity(grant.planner, owner, undefined, task.originHostId)) continue;
+      applyGrantToTask(store, decisions, task, grant);
+    }
   }
 }
 
@@ -175,8 +163,8 @@ function applyAnsweredGrants(store: Store, decisions: Decisions): void {
     const answer = decision?.status === "answered" ? decision.answer : null;
     const boardYes = Boolean(answer && !answer.relayed && answer.answeredBy === GRANT_OPERATOR_BOARD && answer.text.trim() === GRANT_APPROVE);
     if (boardYes) {
-      const active = replaceGrant(store, { ...grant, status: "active", activatedAt: at, activatedBy: GRANT_OPERATOR_BOARD });
-      settleCoveredTasks(store, decisions, active);
+      replaceGrant(store, { ...grant, status: "active", activatedAt: at, activatedBy: GRANT_OPERATOR_BOARD });
+      settleCoveredTasks(store, decisions);
       continue;
     }
     const note = !decision ? "The grant decision is gone"
@@ -188,13 +176,20 @@ function applyAnsweredGrants(store: Store, decisions: Decisions): void {
   }
 }
 
-/** Expire, apply answered grant decisions, and settle covered per-task sign-offs. Idempotent. */
+/**
+ * Expire, apply answered grant decisions, and settle covered per-task sign-offs.
+ * Idempotent, and the store-wide entry point: the per-task reconcile reads
+ * `reconcileGrantDecisions` instead so one task's pass never re-settles the queue.
+ */
 export function reconcileRoutingGrants(store: Store, decisions: Decisions): void {
+  reconcileGrantDecisions(store, decisions);
+  settleCoveredTasks(store, decisions);
+}
+
+/** Expire stale grants and apply answered grant decisions, without the queue-wide settle. */
+export function reconcileGrantDecisions(store: Store, decisions: Decisions): void {
   expireStaleGrants(store);
   applyAnsweredGrants(store, decisions);
-  for (const grant of readRoutingGrants(store)) {
-    if (grantIsLive(grant)) settleCoveredTasks(store, decisions, grant);
-  }
 }
 
 /** An archived planner thread ends its grant. `live` is the unarchived agent set; a failed inventory must not call this. */
@@ -206,8 +201,7 @@ export function archiveRoutingGrants(store: Store, decisions: Decisions, live: R
     const plannerHost = parseAgentId(grant.planner)?.hostId;
     if (plannerHost && plannerHost !== observedHostId || !plannerHost && observedHostId && hostKindOf(observedHostId) !== 'paseo') continue;
     if ([...live].some(id => sameCallerIdentity(grant.planner, id, undefined, observedHostId))) continue;
-    if (grant.status === "pending" && grant.decisionId)
-      withdrawOpenGrant(decisions, grant.decisionId, "The planner thread was archived; the grant no longer applies");
+    withdrawGrantDecision(store, decisions, grant, "The planner thread was archived; the grant no longer applies");
     const ended = replaceGrant(store, { ...grant, status: "archived", endedAt: at, endedBy: "queue", endReason: "archived" });
     clearGrantSignoffs(store, ended.id);
   }
@@ -224,8 +218,7 @@ function findGrant(store: Store, grantId: string | undefined, planner?: string):
 
 function endGrant(store: Store, decisions: Decisions, grant: RoutingGrant, endedBy: string, status: "ended" | "revoked", reason: string): RoutingGrant {
   if (grant.status !== "pending" && grant.status !== "active") return grant;
-  if (grant.status === "pending" && grant.decisionId)
-    withdrawOpenGrant(decisions, grant.decisionId, reason);
+  withdrawGrantDecision(store, decisions, grant, reason);
   const ended = replaceGrant(store, { ...grant, status, endedAt: now(), endedBy, endReason: reason.slice(0, 400) });
   clearGrantSignoffs(store, ended.id);
   return ended;

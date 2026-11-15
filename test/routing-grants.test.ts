@@ -12,7 +12,7 @@ import { reconcileRoutingSignoffs, SIGNOFF_DECLINE } from '../core/dispatch/rout
 import {
   GRANT_APPROVE, GRANT_DECLINE, GRANT_OPERATOR_BOARD, activeRoutingGrants, applyRoutingGrant,
   archiveRoutingGrants, coveringGrant, grantArchiveDue, readRoutingGrants, reconcileRoutingGrants,
-} from '../core/dispatch/routing-grants';
+} from '../core/dispatch/routing-signoff';
 import { QueueRuntime } from '../service/runtime-owner';
 import { describeRoutePolicy } from '../shared/pool';
 import { poolSchema, runSchema, submissionSchema, taskControlInputSchema, type Profile } from '../shared/contracts';

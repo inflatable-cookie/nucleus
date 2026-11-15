@@ -2,7 +2,7 @@ import { formatAgentId, nativeAgentId } from "../../shared/agent-identity";
 import { Store, digest as storeDigest } from "../store/store";
 import type { Engine } from "../engine";
 import type { Decisions } from '../planning/decisions';
-import { reconcileRoutingGrants } from "../dispatch/routing-grants";
+import { reconcileRoutingGrants } from "../dispatch/routing-signoff";
 
 /** Narrow dependencies; construction and lifecycle remain runtime-owned. */
 export interface QuestionsContext {

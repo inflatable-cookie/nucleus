@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { reviewerIndependence, type ReviewerIndependence, type ReviewerIndependenceFacts } from '../core/dispatch/routing';
+import { reviewerFiltersWorker, reviewerIndependence, type ReviewerIndependence, type ReviewerIndependenceFacts } from '../core/dispatch/routing';
 
 const s = (...keys: string[]) => new Set(keys);
 
@@ -42,4 +42,14 @@ test('reviewerIndependence outcomes by site', () => {
     ['verify: owner-routed current-author waiver', { site: 'verify', authors: known, currentAuthorModels: known, reviewerModel: 'gpt', namedRequired: true, ownerRouted: true }, 'waived'],
   ];
   for (const [label, facts, expected] of cases) assert.equal(reviewerIndependence(facts), expected, label);
+});
+
+test('reviewerFiltersWorker reads one model key for both sides, opaque included', () => {
+  assert.equal(reviewerFiltersWorker({ model: 'test/Opus-4' }, { model: 'opus-4' }), true, 'the last segment decides, case-insensitively');
+  assert.equal(reviewerFiltersWorker({ model: 'test/Opus-4' }, { model: 'test/sonnet' }), false);
+  assert.equal(reviewerFiltersWorker({ model: 'test/default' }, { model: 'default' }), true);
+  assert.equal(reviewerFiltersWorker({ model: 'test/unknown' }, { model: 'default' }), true, 'one opaque model key cannot be told apart from another');
+  assert.equal(reviewerFiltersWorker({ model: 'test/unknown' }, { model: 'opus' }), false);
+  assert.equal(reviewerFiltersWorker(null, { model: 'default' }), false, 'no recorded reviewer model filters nothing');
+  assert.equal(reviewerFiltersWorker(undefined, { model: 'opus' }), false);
 });

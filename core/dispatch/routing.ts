@@ -1,15 +1,11 @@
 import type { Task, Run, Profile, PoolEntry, DemandRoleOffsets, RoutePolicy, RoutingPolicy, UsageLevel, UsageView, HostEffect, SelectionExplanation } from "../../shared/contracts";
 import type { Resolution } from "../resolution";
 import { authorModelKey, queueAuthorModelKey, taskAuthorModelKeys } from "../../shared/authors";
-import {demandRank,workerThinking} from '../../shared/pool';
+import {activeGroupLimit,demandRank,unavailableGroupNames,workerThinking} from '../../shared/pool';
 export {workerThinking};
 import {automaticSelection, requestOnly, describeRoutePolicy, honouredRequest, requestReaches, groupIsUnavailable, withinUsage} from '../../shared/pool';
 import {DEMAND_ROLE_OFFSETS, DEMAND_USAGE_OFFSETS, demandTier, effectiveWeight, runDemand, workerDemandStep, workerStepDown, workerStepLabel} from '../../shared/demand';
 type Role = "worker"|"reviewer"|"coordinator";
-/** The normalized model key Spec 036 compares: the last path segment, lower-cased. */
-export function modelKey(model: string): string {
-  return model.split("/").at(-1)!.toLowerCase();
-}
 /**
  * Spec 050: whether the task's recorded reviewer request is an owner `route`
  * for this profile. Only the `route` verb writes the marker — `set_routing`
@@ -77,8 +73,8 @@ function resolveProfile(profileId: string, profiles: readonly Profile[]): Resolv
   const profile = profiles.find(candidate => candidate.id === profileId);
   if (!profile) return { kind: "missing", profileId };
   const model = profile.model;
-  const key = modelKey(model);
-  if (!model.trim() || key === "default") return { kind: "opaque", profileId, model };
+  const key = authorModelKey(model);
+  if (key === "default") return { kind: "opaque", profileId, model };
   return { kind: "concrete", profileId, model, key };
 }
 
@@ -98,8 +94,8 @@ function identityRoutes(
     const profile = profiles.find(candidate => candidate.id === entry.profileId);
     if (!entry.enabled || !profile?.available) return [];
     if (requestOnly(entry, routing.usage) && request?.profileId !== entry.profileId) return [];
-    const key = modelKey(profile.model);
-    if (!profile.model.trim() || key === "default") return [];
+    const key = authorModelKey(profile.model);
+    if (key === "default") return [];
     return [{ id: profile.id, model: profile.model, key }];
   });
 }
@@ -132,8 +128,8 @@ export function independentReviewRoutingConflict(
   if (worker?.required && resolvedWorker?.kind === "concrete")
     authorLabels.set(resolvedWorker.key, `required worker ${resolvedWorker.profileId} (${resolvedWorker.model})`);
   for (const model of routing.declaredAuthorModels ?? []) {
-    const key = modelKey(model);
-    if (!model.trim() || key === "default")
+    const key = authorModelKey(model);
+    if (key === "default")
       return correction(`Declared author model ${model || "default"} is opaque and cannot prove review independence`);
     if (!authorLabels.has(key)) authorLabels.set(key, `declared author model ${model}`);
   }
@@ -174,8 +170,10 @@ export function validateNamedProfile(profileId:string, role:Role, scope:Task["sc
  * has no waiver: the reviewer-side owner-route waiver has no worker counterpart.
  */
 export function reviewerFiltersWorker(reviewer: { model: string } | null | undefined, worker: { model: string }): boolean {
-  const reviewerModel = reviewer?.model ? modelKey(reviewer.model) : "";
-  return Boolean(reviewerModel) && (worker.model === "default" || modelKey(worker.model) === reviewerModel);
+  // No recorded reviewer model filters nothing; an opaque one filters the opaque
+  // worker models it cannot be told apart from.
+  const reviewerModel = reviewer?.model ? authorModelKey(reviewer.model) : "";
+  return Boolean(reviewerModel) && authorModelKey(worker.model) === reviewerModel;
 }
 
 /** The reason a reviewer-filtered worker profile is named by, in eligibility and route refusals. */
@@ -230,8 +228,8 @@ export function eligibilityReasons(task:Task,profiles:Profile[],pool:PoolEntry[]
 export function criticalReviewerMeets(task: Task, profile: Profile, pool: readonly PoolEntry[]): boolean {
   const worker = pool.find(entry => entry.profileId === task.profile?.id)?.capability;
   const reviewer = pool.find(entry => entry.profileId === profile.id)?.capability;
-  return Boolean(worker && reviewer && task.profile && modelKey(profile.model) !== 'default'
-    && modelKey(profile.model) !== modelKey(task.profile.model) && demandRank(reviewer) >= demandRank(worker));
+  return Boolean(worker && reviewer && task.profile && authorModelKey(profile.model) !== 'default'
+    && authorModelKey(profile.model) !== authorModelKey(task.profile.model) && demandRank(reviewer) >= demandRank(worker));
 }
 export function chooseProfile(task: Task, profiles: Profile[], pool: PoolEntry[], counts: Record<string, number>, unavailable: Set<string>, role: "worker"|"reviewer"|"coordinator" = "worker", recent:Record<string,number>=counts, usage:UsageLevel="normal", offsets:DemandRoleOffsets=DEMAND_ROLE_OFFSETS, initialWorker = false) {
   // Spec 052 (2026-10-21): an unsigned request for a request-only profile is
@@ -428,7 +426,7 @@ export class RoleSelection {
       ...this.store.runs(t.id).filter(r => r.role === 'revision' && r.agentId).map(r => r.agentId!)].filter((id): id is string => Boolean(id)));
   }
   select(t: Task, role: 'reviewer' | 'coordinator' | 'executor', extraUnavailable: Iterable<string> = [], excludedProfiles: ReadonlySet<string> = new Set(), usage: UsageLevel = this.store.usageLevel()) {
-    const unavailable = new Set([...this.store.db.prepare('SELECT data FROM availability').all().flatMap(r => { const a = JSON.parse(String(r.data)); return groupIsUnavailable(a) ? [a.group as string] : []; }), ...extraUnavailable]);
+    const unavailable = new Set([...unavailableGroupNames(this.store.availability()), ...extraUnavailable]);
     const pool = this.store.pool();
     // Opaque provider routes cannot prove review independence. Every boundary
     // (selection, retained restart, verdict verification) reads the one author
@@ -481,10 +479,10 @@ export class RoleSelection {
     if (!request?.required) return '';
     const entry = this.store.pool().find(item => item.profileId === request.profileId);
     const profile = this.resolution.profiles().find(item => item.id === request.profileId);
-    const availability = entry ? this.store.db.prepare('SELECT data FROM availability WHERE group_id=?').get(entry.group) as { data: string } | undefined : undefined;
+    const availability = entry ? activeGroupLimit(this.store.availability(), entry.group) : undefined;
     const why = !entry ? 'it is not in the profile pool' : !entry.enabled ? 'it is disabled'
       : !profile?.available ? `the profile is unavailable${profile?.problem ? `: ${profile.problem}` : ''}`
-      : availability && groupIsUnavailable(JSON.parse(availability.data)) ? `subscription group ${entry.group} is unavailable` : '';
+      : availability ? `subscription group ${entry.group} is unavailable` : '';
     return why ? `; the required ${role} request names ${request.profileId}, but ${why}: route role=${role} to another profile` : '';
   }
   /**
@@ -509,11 +507,8 @@ export class RoleSelection {
     if(!catalog?.available)return `profile ${assigned.name||assigned.id} is unavailable`;
     const entry=this.store.pool().find(p=>p.profileId===assigned.id);
     if(!entry?.enabled)return `pool profile ${assigned.name||assigned.id} is disabled`;
-    const availability=this.store.db.prepare('SELECT data FROM availability WHERE group_id=?').get(entry.group);
-    if(availability){
-      const state=JSON.parse(String(availability.data));
-      if(groupIsUnavailable(state))return `subscription group ${entry.group} is unavailable`;
-    }
+    const availability=entry?activeGroupLimit(this.store.availability(),entry.group):undefined;
+    if(availability)return `subscription group ${entry.group} is unavailable`;
     return null;
   }
   retainedWorkerProfileIssue(t:Task){return this.resolution.retainedProfileIssue(t.profile)}

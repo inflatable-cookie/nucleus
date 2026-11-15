@@ -9,7 +9,7 @@ import type { PrState } from "../forge/pr-status";
 import { holdsQueueWorkspace } from "../dispatch/capacity";
 import { boundDrainProjection } from "../closeout/queue-drain";
 import { summarizeOperation } from "../../shared/operations";
-import { activeRoutingGrants, reconcileRoutingGrants } from "../dispatch/routing-grants";
+import { activeRoutingGrants, reconcileRoutingGrants } from "../dispatch/routing-signoff";
 import { collectOwnerVerbFacts, ownerTaskNext } from "../verbs/owner-verbs";
 import type { createTaskDetailCache } from "../telemetry/task-detail";
 import type { createUiSnapshotFactsCache, UiSnapshotFacts } from "../telemetry/ui-snapshot";
