@@ -11,6 +11,14 @@ import type { Run, Task } from '../../shared/contracts';
 export const proofOnlyGoQuestionId = (task: Pick<Task, 'id' | 'proofOnly'>): string =>
   digest(['operator-question', task.id, 'proof_only_release_go', task.proofOnly?.commit ?? 'missing'].join(':'));
 
+/** The recorded answer event that names this qualification's release GO. */
+export function proofOnlyGoAnsweredEvent<T extends { kind: string; detail: string }>(
+  events: ReadonlyArray<T>, questionId: string,
+): T | null {
+  return events.find(event => event.kind === 'operator_question_answered'
+    && event.detail.startsWith(`${questionId}: GO — run the qualification`)) ?? null;
+}
+
 /** Why every verb that would start or re-drive a run refuses while the GO is open. */
 export const PROOF_GO_WAIT_REFUSAL = "The release GO for this proof-only qualification is the operator's; the task waits on that answer and no run starts before it";
 /**

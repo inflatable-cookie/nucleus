@@ -1437,6 +1437,9 @@ test('a live supervisor with a stale heartbeat is terminated only after unchange
   await observer.reconcile(started.key, started.id); // first stale observation is never enough to kill
   assert.equal(supervisorLiveness(supervisor.pid, supervisor.identityToken).state, 'live');
   await new Promise(resolve => setTimeout(resolve, 5_100));
+  const staleInspection = await observer.inspectSupervisor(f.store.qaRun(started.id)!);
+  assert.equal(staleInspection.kind, 'dead');
+  if (staleInspection.kind === 'dead') assert.equal(staleInspection.staleHeartbeat, true);
   await observer.reconcile(started.key, started.id); // same stale heartbeat confirms a stuck supervisor
 
   await waitFor(() => !['queued', 'running'].includes(f.store.qaRun(started.id)?.state ?? ''), 40_000, 'the stale-heartbeat run to settle');

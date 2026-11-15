@@ -26,7 +26,7 @@ export type SupervisorInspection =
   | { kind: "settled"; state: QaSupervisionState | null; hostResult: HostRunResult | null }
   | { kind: "running"; state: QaSupervisionState | null }
   | { kind: "unstarted"; state: null; plan: QaSupervisionPlan }
-  | { kind: "dead"; state: QaSupervisionState | null; reason: string; escapedDescendants?: HostRunEscapedDescendant[] };
+  | { kind: "dead"; state: QaSupervisionState | null; reason: string; escapedDescendants?: HostRunEscapedDescendant[]; staleHeartbeat?: true };
 
 const sleep = (ms: number) => new Promise<void>(resolvePromise => { setTimeout(resolvePromise, ms); });
 
@@ -41,12 +41,12 @@ export const projectQaRunReads = {
     if ("id" in input) {
       const run = this.store.qaRun(input.id);
       if (!run) return null;
-      await this.reconcile(run.key, run.id).catch(() => { /* reconciliation is best-effort on reads */ });
+      await reconcileBestEffort(this, run.key, run.id);
       return this.store.qaRun(input.id);
     }
     const origin = isAbsolute(input.repository) ? null : normalizeRepositoryOrigin(input.repository);
     if (origin) {
-      await this.reconcile(origin).catch(() => { /* reconciliation is best-effort on reads */ });
+      await reconcileBestEffort(this, origin);
       const direct = this.store.latestQaRun(origin);
       if (direct) return direct;
     }
@@ -54,13 +54,22 @@ export const projectQaRunReads = {
       const real = await realpath(input.repository).catch(() => input.repository);
       const checkoutOrigin = await repositoryOrigin(real).catch(() => null);
       const key = checkoutOrigin ?? real;
-      await this.reconcile(key).catch(() => { /* reconciliation is best-effort on reads */ });
+      await reconcileBestEffort(this, key);
       return this.store.latestQaRun(key);
     }
     return this.store.latestQaRun(origin ?? input.repository);
   }
 
 };
+
+async function reconcileBestEffort(context: QaRunReadContext, key: string, requestedId?: string): Promise<void> {
+  try {
+    await context.reconcile(key, requestedId);
+  } catch (error) {
+    const subject = requestedId ? `run ${requestedId}` : `repository ${key}`;
+    console.warn(`[nucleus] Project QA read reconciliation failed for ${subject}:`, error);
+  }
+}
 
 export class ProjectQaInspection {
   private readonly staleSupervisorObservations = new Map<string, { heartbeatAt: string; firstObservedAt: number }>();
@@ -136,7 +145,7 @@ export class ProjectQaInspection {
           const supervisorGroupStopped = processGroupEmpty(state.pid);
           if ((stoppedLiveness.state === "dead" || stoppedIdentity === "dead")
               && activeGroupStopped && supervisorGroupStopped && stoppedCommands.state === "absent")
-            return { kind: "dead", state, reason: `the supervisor heartbeat was stale for ${staleAgeMs}ms and unchanged across checks ${SUPERVISOR_STUCK_CONFIRMATION_MS}ms apart; its process groups were stopped` };
+            return { kind: "dead", state, staleHeartbeat: true, reason: `the supervisor heartbeat was stale for ${staleAgeMs}ms and unchanged across checks ${SUPERVISOR_STUCK_CONFIRMATION_MS}ms apart; its process groups were stopped` };
           return { kind: "running", state };
         }
         if (liveness.state === "dead") {
@@ -184,8 +193,7 @@ export class ProjectQaInspection {
     const inspection = await inspect();
     // Detached supervision files can progress while the OS scan yields too.
     const observedState = this.supervisionFacts.read(statePath);
-    if (inspection.kind === "dead" && inspection.reason.startsWith("the supervisor heartbeat was stale")
-        ) {
+    if (inspection.kind === "dead" && inspection.staleHeartbeat) {
       const lateResult = readHostRunResult(resultPath, run.id);
       if (!lateResult) return inspection;
     }

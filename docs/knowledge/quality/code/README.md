@@ -1,5 +1,13 @@
 # Code-module quality tables
 
+- nucleus#1240 (floor 7, 2026-11-15): milestone QA caller provenance (7: O1 T1 F2 P1 Pr2) keeps the
+  bounded historical re-key checks, shortens its contract explanation and reuses the normalized key
+  identity comparison. QA inspection (8: O1 T2 F2 P1 Pr2) marks stale-heartbeat outcomes as typed facts
+  and logs best-effort read reconciliation failures while preserving the stored-run result. Proof
+  activation (7: O1 T1 F2 P1 Pr2) uses `proof-only-go.ts` for the question id and answer event; that owner
+  re-rates to 7 (O1 T0 F2 P2 Pr2) with exact-question boundary coverage. Legacy event detail parsing and
+  the separate preview and activation admission order remain. The explicit warning for the swallowed
+  read failure is the named failure-visibility exception; no admission or ownership rule changed.
 - nucleus#1235 (floor 7, 2026-11-15): PR state display now reads the task's recorded PR number and canonical repository, and failed reads are reported with task IDs while successful tasks remain visible (10: O2 T2 F2 P2 Pr2; test/pr-status.test.ts covers recorded identity, merged-task omission and failure context). Review publication entry points share one single-flight owner, while comment and formal-review reconciliation remain separate for their different remote evidence; formal HTTP 401/403 errors now carry a typed status rather than being classified by message text (reviews 8: O1 T2 F2 P1 Pr2; boundary coverage in test/formal-reviews.test.ts). The changed formal-review transport row remains 9 with typed HTTP status coverage in test/formal-review-http.test.ts. The shared dispatcher is the named consolidation; retaining distinct remote reconciliation is the remaining ownership seam.
 
 The product-code ratings: 588 modules in `N1.csv`–`N6.csv` (N1 orchestration 96, N2 task lifecycle
