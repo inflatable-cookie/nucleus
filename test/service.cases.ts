@@ -20,7 +20,7 @@ import { currentServiceBuildId } from '../shared/service/build';
 import { RPC_CATALOGUE } from '../shared/rpc-catalogue';
 import { formatAgentId } from '../shared/agent-identity';
 import { defaultHostRunStateDir } from '../service/callbacks/host-run-endpoint';
-import { EXTERNAL_MERGE_CHECK_REASON_PREFIX } from '../core/resolution';
+import { EXTERNAL_MERGE_CHECK_REASON_PREFIX } from '../core/recovery/task-reasons';
 
 /** Minimal fake adapter: enough of the Paseo surface for a quiet fixture store. */
 function fakeAdapter(dir: string): Adapter {

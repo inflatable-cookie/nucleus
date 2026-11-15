@@ -19,7 +19,8 @@ import { git } from '../core/git/index';
 import { runPrompt } from '../core/dispatch/prompts';
 import { parseNorthstarDocument, submissionQueueFields } from '../core/planning/handoff';
 import type { Adapter } from '../core/host';
-import { isAcceptedReview, type ResolutionAdapter } from '../core/resolution';
+import { type ResolutionAdapter } from '../core/resolution';
+import { isAcceptedReview } from '../core/recovery/task-reasons';
 import { requiredMergeReview } from '../core/forge/index';
 import { observedParticipantTimeline } from './support/tool-timeline';
 

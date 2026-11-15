@@ -7,10 +7,8 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { Store } from "../core/store/store";
 import { Engine } from "../core/engine";
-import {
-  ProvenPreSendRefusalError,
-  type ResolutionAdapter,
-} from "../core/resolution";
+import { type ResolutionAdapter } from '../core/resolution';
+import { ProvenPreSendRefusalError } from '../core/recovery/task-reasons';
 import {
   summarizeTask,
   runSchema,

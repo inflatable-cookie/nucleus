@@ -91,6 +91,32 @@ the typed declaration's.
   which was the duplicate its row named; its proof stays 1 because the prune itself is only covered
   through its planner. Boundary tests were added for the snapshot name reader, the unreadable status and
   the typed capacity limit, and `test/staged-backup.test.ts` now asserts the refusal code.
+- nucleus#1232 (floor 7, 2026-11-15): `core/resolution.ts` was split along the seams its row named and
+  re-rated at this PR's head. The four port-wiring styles are one: every port set the shell declares is
+  wired with `portsContext`, the one live port context in `core/port-context.ts`, which replaces four
+  byte-identical copies (`core/scheduling/context.ts`, `core/recovery/context.ts`, `core/intake/context.ts`
+  and `core/closeout/context.ts`) whose rows named exactly that consolidation. The fail-open default host
+  hooks and the `onTaskHost` the engine duplicated moved to `core/host/host-ports.ts`: one `HostPorts`
+  contract, one ambient set for an unwired root, one task-owner host rule that `Engine.onTaskHost` and
+  `Resolution.onTaskHost` both call, and one wiring point (`Engine` assigns `resolution.hostPorts` once
+  instead of twelve fields). The two mechanisms that were not composition now have their owners: the
+  latest accepted blocked result is `retryContextOf` in `core/recovery/retry-evidence.ts`, and a project
+  agent's send-time address is `projectAgentTarget` in `core/planning/project-agents.ts`. The re-exports
+  kept for tests are gone; the tests import the owners. `core/resolution.ts` is 898 non-blank lines from the row's 1076 and
+  scores 8 (O2 T2 F1 P1 Pr2): one owner for the host questions and one port-wiring style, while the
+  ambient set still answers reachable before the engine wires it and the owners whose port contract their
+  own module declares still read the shell. Its `keep` replaces the old `split`. The engine wired all twelve
+  host questions before this PR; moving them into one set is what makes a forgotten one impossible, and the
+  first pass of the move showed why: `catalogKnown` was left on its ambient default while the other eleven
+  became ports, so dispatch ran on an unloaded catalog until the affected run caught it. The wired answer is
+  pinned by `test/host-ports.test.ts`, the catalog waits by `test/restart.cases.ts`, and the task-owner rule
+  reads the replaceable `withHost` port by the same test. `core/port-context.ts`
+  scores 10 with a boundary test for the live key list, the shaped port and the nested engine context;
+  `core/host/host-ports.ts` scores 8 because the engine root still declares its own defaults for the ports
+  its owners read, and `test/host-ports.test.ts` covers the ambient set, the shared task-owner rule and
+  the one wiring point. `core/engine.ts` keeps 8 with its wiring and host rule refreshed;
+  `core/recovery/retry-evidence.ts` and `core/planning/project-agents.ts` keep 9 and 8 with the moved
+  mechanism added to their reason. The three consolidated context rows are gone.
 
 - nucleus#1228 (floor 7, 2026-11-15): the three floor-7 client modules were re-rated at this PR's head.
   `client/task/runs.tsx` was split along its named sections: the tab now composes prerequisites and the

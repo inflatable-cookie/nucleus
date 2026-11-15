@@ -12,7 +12,8 @@ import { restartShape, type RestartShape } from '../core/verbs/owner-verbs';
 import { REVIEW_AUTHORIZATION_REQUIRED, reviewCheckpointPathFor, writeReviewCheckpoint } from '../core/review/review-continuation';
 import { REVIEW_CONTINUATION_LIMIT, runSchema, submissionSchema, taskControlInputSchema, type Profile, type Run, type Task } from '../shared/contracts';
 import type { Adapter, AgentObservation } from '../core/host';
-import { ABSENT_WORKER_REASON, type ResolutionAdapter } from '../core/resolution';
+import { type ResolutionAdapter } from '../core/resolution';
+import { ABSENT_WORKER_REASON } from '../core/recovery/task-reasons';
 import { toolTimelinePage } from './support/tool-timeline';
 
 /**

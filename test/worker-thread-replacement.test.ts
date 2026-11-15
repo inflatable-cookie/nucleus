@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
 import { decideWorkerReplacement, isWorkerRouteApproved, retainedWorkerFailureCause } from '../core/recovery/worker-replacement';
-import { OPERATOR_WORKER_REMAP_REASON } from '../core/resolution';
+import { OPERATOR_WORKER_REMAP_REASON } from '../core/recovery/task-reasons';
 import { submissionSchema, taskControlInputSchema, type Profile, type Run } from '../shared/contracts';
 import type { Adapter } from '../core/host';
 import type { ResolutionAdapter } from '../core/resolution';

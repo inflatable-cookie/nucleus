@@ -17,7 +17,7 @@ import {ownerRevisionFixture,runGit} from './support/review-entry-fixture';
 import {paseoCatalog} from './support/pool-shapes';
 import {verifyReviewSourceView} from '../core/review/review-source';
 import type {ResolutionAdapter} from '../core/resolution';
-import {ProvenPreSendRefusalError} from '../core/resolution';
+import { ProvenPreSendRefusalError } from '../core/recovery/task-reasons';
 import {Lifecycle} from '../core/closeout/workspace-lifecycle';
 import {terminalArchiveWorkspaces} from '../core/closeout/terminal-archive';
 import {toolTimelinePage} from './support/tool-timeline';

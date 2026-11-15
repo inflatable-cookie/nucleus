@@ -20,7 +20,7 @@ import {
 } from '../shared/contracts';
 import { collectOwnerVerbFacts, ownerTaskNext, ownerVerbs } from '../core/verbs/owner-verbs';
 import { heldBriefQueuePolicy } from '../core/planning/handoff';
-import { ABSENT_WORKER_REASON } from '../core/resolution';
+import { ABSENT_WORKER_REASON } from '../core/recovery/task-reasons';
 import { reviewCheckpointPathFor } from '../core/review/review-continuation';
 import type { Adapter, AgentObservation } from '../core/host';
 

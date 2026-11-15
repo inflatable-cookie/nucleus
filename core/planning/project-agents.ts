@@ -4,6 +4,7 @@ import { isAgentGoneRefusal } from "../host/errors";
 import type { Project, ProjectAgent, ProjectAgentState, ProjectAgentView } from "../../shared/contracts";
 import type { Host } from "../../shared/host";
 import type { Adapter } from "../host/adapter";
+import type { Store } from "../store/store";
 
 /**
  * Task 1110: a project's named agents, read as one list and resolved by name.
@@ -141,4 +142,35 @@ function refusalText(project: Project, name: string, state: ProjectAgentState): 
 export function observedHostIdOf(adapter: Adapter): string | null {
   const id = (adapter as { hostId?: unknown }).hostId;
   return typeof id === "string" && id ? id : null;
+}
+
+/** What the send-time target resolution reads: the project registry, the host, and the transport binding. */
+export type ProjectAgentTargetPorts = {
+  readonly store: Pick<Store, "projectByKey">;
+  readonly host: Pick<Host, "originAgent" | "observe">;
+  readonly adapter: Adapter;
+  originHostAvailable(hostId: string): boolean;
+  withHost<T>(hostId: string, fn: () => T): T;
+};
+
+/**
+ * Task 1110: the send-time address of one of a project's registered agents.
+ * `name` null is the project's fallback planner, the thread `to: {project}`
+ * resolves to. A named thread is observed on its own host first: this runs under
+ * that host's context so an archived, gone or unreadable thread refuses with that
+ * state, and nothing is sent. A host this process cannot reach keeps the ambient
+ * context, where the observation refuses as its own unknown.
+ */
+export async function projectAgentTarget(
+  ports: ProjectAgentTargetPorts, projectKey: string, name: string | null,
+): Promise<{ agentId: string; hostId: string; name: string }> {
+  const project = ports.store.projectByKey(projectKey);
+  if (!project) throw new Error(`Unknown project ${projectKey}`);
+  const entry = name === null
+    ? (project.agents ?? []).find(agent => agent.agentId === project.planner?.agentId)
+    : (project.agents ?? []).find(agent => agent.name === name);
+  const current = () => ({ host: ports.host, observedHostId: observedHostIdOf(ports.adapter) });
+  if (entry && entry.hostId !== observedHostIdOf(ports.adapter) && ports.originHostAvailable(entry.hostId))
+    return ports.withHost(entry.hostId, () => resolveProjectAgent(current(), ports.store.projectByKey(projectKey)!, name));
+  return resolveProjectAgent(current(), project, name);
 }
