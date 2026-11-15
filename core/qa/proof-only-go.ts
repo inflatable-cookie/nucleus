@@ -11,6 +11,14 @@ import type { Run, Task } from '../../shared/contracts';
 export const proofOnlyGoQuestionId = (task: Pick<Task, 'id' | 'proofOnly'>): string =>
   digest(['operator-question', task.id, 'proof_only_release_go', task.proofOnly?.commit ?? 'missing'].join(':'));
 
+/** The recorded answer event that names this qualification's release GO. */
+export function proofOnlyGoAnsweredEvent<T extends { kind: string; detail: string }>(
+  events: ReadonlyArray<T>, questionId: string,
+): T | null {
+  return events.find(event => event.kind === 'operator_question_answered'
+    && event.detail.startsWith(`${questionId}: GO — run the qualification`)) ?? null;
+}
+
 /**
  * The reviewer run that parked on the GO: the proof-only reviewer that the
  * reservation recorded before any receipt existed, reporting blocked. The fact

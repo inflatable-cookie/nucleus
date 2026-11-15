@@ -25,6 +25,45 @@
   (`test/ordinary-review-identity.test.ts`, `test/review-lifecycle-owners.test.ts`); no existing test was
   weakened, and only the deleted shim's import moved.
 
+- nucleus#1242 (floor 7, 2026-11-15; implementation commit `38190a6ad`): the two floor-7 question
+  modules were consolidated and re-rated at this PR's head. `core/questions/blocker-ladder.ts` and
+  `core/questions/ladder.ts` were two halves of one mechanism and are now `core/questions/ladder/`: the
+  public surface and in-flight state (`ladder.ts`), the durable records (`records.ts`), cause identity
+  (`causes.ts`), the questions and instructions (`questions.ts`), the reply decode (`replies.ts`), the wait
+  words (`waits.ts`), the advance and restart decisions (`pass.ts`), the park (`park.ts`), the routing
+  (`routing.ts`), the operator rung (`operator.ts`), the task-side wait (`hold.ts`), the restart passes
+  (`resume.ts`), unknown-delivery attention (`attention.ts`), the two exits (`continuation.ts`) and the
+  proof-only owner-verb hint (`proof.ts`), behind one barrel (`index.ts`). An escalation's cause stays its
+  intent line, because the escalation id is derived from it and the recovery pass writes only a category
+  label in the payload; a consult's or escalation's run, question and refusal class now come from the typed
+  payload the ladder writes in the same transaction. That identity rule keeps `records.ts` at typed facts 1,
+  and `test/blocker-ladder.test.ts` covers the writer/reader boundary and a repeat occurrence. Score 10
+  for the barrel, the driver, the cause identities, the questions, the waits, the decisions, the hold, the
+  attention, the exits and the proof hint; 9 for `records.ts` (the identity line above), `park.ts` (five park
+  rules in one file), `replies.ts` (a free-text reply is resolved by prefix match) and `operator.ts` (the
+  decision link is read as text); 8 for `resume.ts` (the miss reason is compared as text, and the consult
+  and wait passes share the file); 7 for `routing.ts` (two inherited control-string reads and the refusal
+  follow-up living with the route). The two old rows are gone, and the consolidated files' churn
+  (blocker-ladder 2/2/0, ladder 17/17/1) is recorded on the driver row. `core/questions/delegation.ts`
+  re-rates at 8 (O1 T2 F2 P1 Pr2): the window-close reason the advance rule distinguishes from an unknown
+  delivery is one exported name, the decider's availability is `unavailableGroupNames` over the store's
+  typed rows, an answer addressed to a task is a typed store read (`Store.delegatedDeliveryStreams`), and a
+  refused planner ticket (`delegated_planner_ticket_failed`) and a failed decider archive
+  (`delegated_decider_archive_failed`) are recorded instead of swallowed, which is the row's named silent
+  failure. Ownership stays 1 because the who-may-answer authority is still written once per caller route,
+  and proportion stays 1 because the class still owns the prompt, the delivery ledger, settlement, the wait
+  loop, the rungs and the decider profile. Boundary tests were added for the record identity and its run fallback, the
+  recovery writer/reader identity with its repeat occurrence, the task-target read, the recorded ticket
+  refusal and the recorded decider-archive failure. The
+  `shared/schema/questions.ts` row keeps its 9 with its evidence paths moved to the new prefix-match owner.
+- nucleus#1240 (floor 7, 2026-11-15): caller provenance (7: O1 T1 F2 P1 Pr2) keeps its bounded
+  historical lineage while shortening its contract note and reusing the identity matcher. QA inspection
+  (9: O2 T2 F2 P1 Pr2) uses the shared supervisor stop owner, holds unreadable records, and reports
+  best-effort reconciliation failures while returning the stored run result. Proof activation (7: O1 T1
+  F2 P1 Pr2) uses `proof-only-go.ts` for question identity and exact answer-event selection; that owner
+  remains at 9 (O2 T1 F2 P2 Pr2) with the typed GO wait and shared refusal rule. The explicit warning
+  is the named failure-visibility exception; no admission or ownership rule changed.
+
 - nucleus#1239 (floor 7, 2026-11-15): the four floor-7 core/qa rows were consolidated or hardened along the
   seams their rows named, and re-rated at this PR's head. A detached supervisor's process lifecycle now has
   one owner, `core/qa/supervisor-process.ts`: the spawn shape (entry, the entry's argv with the run token

@@ -97,7 +97,7 @@ import { ResultApplication } from './intake/result-application';
 import { Closeout } from './closeout/closeout';
 import { ReviewPublication } from './review/review-publication';
 
-import { type EscalationVerbChoice } from './questions/blocker-ladder';
+import { type EscalationVerbChoice } from './questions/ladder';
 
 /** Task 382: the check evidence a merge gate reports beside its wait: the effective hosted-check policy, the required and advisory results at the exact head, and the repository settings revision the policy came from. */
 export type OverdueCheckEvidence = {key: string; name: string; state: string; elapsedMs: number; jobUrl: string; runnerLabels: string[]};

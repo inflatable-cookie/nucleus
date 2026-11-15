@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { escalationWaitDetail } from "../core/questions/blocker-ladder";
+import { escalationWaitDetail } from "../core/questions/ladder";
 import { Resolution } from "../core/resolution";
 import { Engine } from "../core/engine";
 import { ANSWERING_WINDOW_MS, waitFor } from "./support/budgets";
@@ -509,5 +509,54 @@ test("a recovered consult failure cannot escalate after cancellation", async () 
     assert.deepEqual(f.current(), cancelled);
     assert.equal(f.events("reviewer_consult_unknown").length, 0);
     assert.equal(f.events("planner_escalation").length, 0);
+  } finally { await f.close(); }
+});
+
+/**
+ * nucleus#1242: an answer addressed to a task selects the one live question for
+ * that caller. The task of a delivery is a field of its payload, so the store owns
+ * the filter and the delegation ledger reads a typed list of its own streams.
+ */
+test("a task target selects the one live question for its caller and refuses none or many", async () => {
+  const f = fixture({ delegates: { planner: null } });
+  const r = f.engine.resolution;
+  r.delegatedAnswerWaitMs = ANSWERING_WINDOW_MS;
+  try {
+    const task = f.current();
+    r.openDelegatedQuestion(task, "ns-task-target-a", "planner", "Question: A", ANSWERING_WINDOW_MS, "planner");
+    assert.equal(r.delegatedQuestionForTask(task.id, "planner"), "ns-task-target-a", "one live question is the task target");
+    assert.throws(() => r.delegatedQuestionForTask(task.id, "someone-else"), /No open question/, "another caller has no target");
+    r.openDelegatedQuestion(task, "ns-task-target-b", "planner", "Question: B", ANSWERING_WINDOW_MS, "planner");
+    assert.throws(() => r.delegatedQuestionForTask(task.id, "planner"), /More than one open question/, "two live questions are ambiguous");
+    for (const id of ["ns-task-target-a", "ns-task-target-b"])
+      r.answerDelegatedQuestion({ questionId: id, answer: "Continue", reason: "Within brief" }, "planner");
+    assert.throws(() => r.delegatedQuestionForTask(task.id, "planner"), /No open question/, "an answered window is no target");
+  } finally { await f.close(); }
+});
+
+/**
+ * nucleus#1242: issuing the planner's ticket is a convenience, so a refused
+ * issuance never blocks the question. It is recorded on the delegation stream
+ * instead of being dropped, and the question keeps its ordinary host identity.
+ */
+test("a failed planner ticket issuance is recorded and the question still goes out", async () => {
+  const f = fixture({ delegates: { planner: null } });
+  const r = f.engine.resolution;
+  r.delegatedAnswerWaitMs = ANSWERING_WINDOW_MS;
+  r.ensurePlannerTicket = async () => { throw Error("ticket issuance refused"); };
+  Object.defineProperty(r, "adapter", { value: { ...f.adapter, askPlanner: async (_recipient: string, input: { messageId: string }) => {
+    r.answerDelegatedQuestion({ questionId: input.messageId, answer: "Continue", reason: "Within brief" }, "planner");
+    return "Answer: Continue\nReason: Within brief";
+  } } });
+  try {
+    const text = await (r as unknown as { askBound: (...args: unknown[]) => Promise<string | null> }).askBound(
+      f.current(), "planner",
+      { prompt: "Question: Proceed?", signal: new AbortController().signal, timeoutMs: ANSWERING_WINDOW_MS, messageId: "ticket-failed" },
+      "planner",
+    );
+    assert.match(String(text), /Answer: Continue/);
+    const failed = f.store.eventsAll("delegation:ticket-failed").find(event => event.kind === "delegated_planner_ticket_failed");
+    assert.ok(failed, "the refused issuance is visible on the delegation stream");
+    assert.match(failed.detail, /ticket issuance refused/);
   } finally { await f.close(); }
 });

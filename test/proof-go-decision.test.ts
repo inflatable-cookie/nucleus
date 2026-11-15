@@ -2,6 +2,14 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import type { DecisionView, Task, TaskControlInput } from '../shared/contracts';
 import { proofGoDecision } from '../core/qa/proof-activation';
+import { proofOnlyGoAnsweredEvent } from '../core/qa/proof-only-go';
+
+test('proof-only GO event recognition is bound to the exact release question', () => {
+  const matching = { kind: 'operator_question_answered', detail: 'qid: GO — run the qualification — answered by operator' };
+  assert.equal(proofOnlyGoAnsweredEvent([matching], 'qid'), matching);
+  assert.equal(proofOnlyGoAnsweredEvent([matching], 'other'), null);
+  assert.equal(proofOnlyGoAnsweredEvent([{ ...matching, detail: 'qid-extra: GO — run the qualification' }], 'qid'), null);
+});
 
 test('proof GO uses recorded evidence before requesting a board decision', () => {
   const task = { id: 'task', phase: 'blocked' } as Task;

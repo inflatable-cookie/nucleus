@@ -2,7 +2,7 @@ import { resultApplied, recordResultApplied } from './applied-result';
 import { REVISION_BUDGET, awaitingProofRoute, awaitingProofText, awaitingProofTexts, type AwaitingProof, type Completion, type Run, type Task } from '../../shared/contracts';
 import {
   plannerEscalations, revisionCapCauseId, revisionCapEscalationQuestion, type LadderEvent,
-} from '../questions/blocker-ladder';
+} from '../questions/ladder';
 import { MERGE_CONFLICT_REASON, isFailedChecksReason, isForgeCheckProofText, taskPrNumber, type PublicationOutcome, type VerifiedPr } from '../forge/index';
 import { classifyGitTransientFailure, gitDeliveryUnknown, ReviewPublicationTransientError } from '../forge/forge-health';
 import { git, WorkerSourceRefusal } from '../git/index';

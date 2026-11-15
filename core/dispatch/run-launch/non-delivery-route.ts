@@ -2,7 +2,7 @@ import type { LaunchThreadContext } from '../launch';
 import type { Profile, Run, Task } from '../../../shared/contracts';
 import { workerProfileIsExcluded } from '../../../shared/contracts';
 import { requestOnly, unavailableGroupNames } from '../../../shared/pool';
-import { escalationWaitDetail, plannerEscalations, type LadderEvent } from '../../questions/blocker-ladder';
+import { escalationWaitDetail, plannerEscalations, type LadderEvent } from '../../questions/ladder';
 import { message } from '../../recovery/task-reasons';
 import { chooseProfile } from '../routing';
 import { digest } from '../../store/store';

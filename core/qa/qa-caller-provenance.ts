@@ -1,55 +1,12 @@
 /**
- * Which repository key a milestone Project QA host-run caller may name (task
- * 445, continuing 444).
- *
- * `ProjectQa` mints every QA host run's caller from the run's one-run key
- * (`qaCallerIdentity`) and the contract-010 host-run row keeps that caller
- * verbatim: it is history, and a repository re-key never rewrites it (Spec 056).
- * A re-key does move the QA row's *current* key and repository, so recomputing
- * the canonical caller from the current key alone rejects the authentic
- * producer of every run the re-key moved. That was the parent bug: the sweep
- * read one re-keyed milestone run as an unowned absence.
- *
- * The correction keeps the same positive evidence and widens it only along
- * durable, exact-run provenance:
- *
- * - the row's own key, when that key still names the row's repository;
- * - the row's submitted key (`submittedKey`), written by the re-key in the same
- *   transaction that moved `key` and never rewritten afterwards;
- * - the row's pre-re-key identities, derived from the applied re-key receipts
- *   that moved *this* repository, walking backwards from the current key.
- *
- * A re-key receipt only corroborates an ancestor identity when the direction is
- * the one that moved the row (its `target` is the identity the row held before
- * that step), the step happened after the run was submitted (a run created
- * after the step cannot have been submitted under the vacated key), the step
- * actually moved at least one QA row, and exactly one step moved the row into
- * each identity (a reused or swapped name is ambiguous and stays unknown). The
- * walk is bounded to `QA_CALLER_LINEAGE_MAX_STEPS` and ordered strictly
- * backwards, so it terminates. A step back into an identity the walk already
- * holds is an out-and-back round trip (`A → B → A`) rather than a loop that
- * proves nothing: it is collapsed as a net no-op and the walk continues from
- * the identity the row returned to, before the step that left it. A longer
- * cycle that leaves no such anchor reaches the same refusal it always did.
- *
- * Two repository checks are deliberately different, because the two kinds of
- * evidence establish different facts. A current key is compared strictly with the
- * row's repository and the run's (origin and checkout path), and so is a
- * receipt-derived ancestor, whose pre-move checkout the receipt reconstructs
- * exactly. The recorded `submittedKey` is not: it is bound by the *identity* the
- * caller names, so the immutable host-run row must name that same origin (or
- * path, for a repository that had no origin), while its historical checkout path
- * may legitimately differ — an explicit-path re-key moves the checkout, and a
- * checkout that had already moved before the run was submitted is the run's own
- * fact. Ranking them that way keeps a production path-changing re-key verifiable
- * from its own recorded provenance, and never lets another repository's identity
- * authorise the row.
- *
- * Nothing here accepts a prefix, a checkout path that merely matches, a guessed
- * digest, an arbitrary earlier receipt or any name the current repository ever
- * held. Every accepted key still has to be the exact inverse of the caller the
- * producer minted for this exact run id, so a foreign run, a foreign digest or
- * a caller naming another run cannot authorise ownership.
+ * Resolve the key an exact milestone QA run caller may name after repository
+ * re-keying (tasks 444/445; Spec 056). The caller is immutable history, while a
+ * re-key changes the QA row's current key. Resolution therefore checks the
+ * current key, the transaction-recorded submitted key, then bounded applied
+ * receipts in reverse order. Every candidate must match the exact caller/run
+ * pair and the host-run repository evidence; ambiguous or incomplete history
+ * refuses instead of guessing. Path-changing submitted keys bind by repository
+ * identity because the old checkout path is not durable in the receipt.
  */
 import type { ProjectQaRun } from "../../shared/contracts";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
@@ -141,8 +98,7 @@ const describeRepository = (repository: QaCallerRepositoryIdentity): string =>
 /** Does this stored key text still name the row's own repository identity? */
 export function qaKeyNamesRepository(key: string, repository: QaCallerRepositoryIdentity): boolean {
   if (repository.path && key.trim() === repository.path) return true;
-  const origin = normalizeRepositoryOrigin(key);
-  return Boolean(repository.origin && origin === repository.origin);
+  return Boolean(repository.origin && sameIdentityText(key, repository.origin));
 }
 
 /** The submitted key's identity: an origin when it has one, else the checkout path. */

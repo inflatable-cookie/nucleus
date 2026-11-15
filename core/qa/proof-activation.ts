@@ -1,7 +1,7 @@
 import { DISPOSITION_CONTROL_REFUSAL, REMOVED_TASK_REFUSAL } from '../verbs/control-refusals';
 import { holdOwnerOf, holdsOf, isDispositionActive, type Run, type Task, type TaskControlInput, type DecisionView } from '../../shared/contracts';
 import { proofHeadAdmission, proofSingleFlightRefusal } from './proof-admission';
-import { digest } from '../store/store';
+import { proofOnlyGoAnsweredEvent, proofOnlyGoQuestionId } from './proof-only-go';
 
 /** Stored proof admission facts shared by previews and activation. */
 function proofActivationFacts(task: Task, runs: Run[]) {
@@ -48,9 +48,8 @@ export function proofActivationRefusal(task: Task, runs: Run[], stage: 'removed'
 export function proofActivationPreview(task: Task, runs: Run[], events: Array<{ kind: string; detail: string }>):
   { available: true; fill: string[]; args: Record<string, unknown> } | { available: false; refusal: string } {
     const goQuestionId = task.entrypoint === 'proof' && task.proofOnly && task.requiresOperatorGo
-      ? digest(['operator-question', task.id, 'proof_only_release_go', task.proofOnly.commit].join(':')) : null;
-    const answeredGo = goQuestionId && events.find(event => event.kind === 'operator_question_answered'
-      && event.detail.startsWith(`${goQuestionId}: GO — run the qualification`));
+      ? proofOnlyGoQuestionId(task) : null;
+    const answeredGo = goQuestionId ? proofOnlyGoAnsweredEvent(events, goQuestionId) : null;
     const proofOnlyGo = Boolean(answeredGo && task.phase === 'blocked' && !task.proofOnlyResult
       && !task.proofExecutions.length && !runs.some(run => run.role === 'executor'));
     // Task 574: a qualification without a declared release GO carries no GO
@@ -101,7 +100,7 @@ export function proofGoDecision(task: Task, input: TaskControlInput,
   events: Array<{kind: string; detail: string; at: string}>, questionId: string, question: string | null, decision?: DecisionView):
   { kind: 'refuse'; message: string } | { kind: 'decision'; id: string } |
   { kind: 'accepted'; evidence: { questionId: string; decisionId: string | null; question: string; answer: string; answeredBy: string; quote: string | null; askedAt: string; answeredAt: string } } {
-  const answerEvent = events.find(event => event.kind === 'operator_question_answered' && event.detail.startsWith(`${questionId}: GO — run the qualification`));
+  const answerEvent = proofOnlyGoAnsweredEvent(events, questionId);
   if (!answerEvent || !input.relayed || !input.note?.includes(questionId))
     return { kind: 'refuse', message: 'A proof-only qualification requires the operator GO from its release-kind question before execution' };
   const questionEvent = events.find(event => event.kind === 'operator_question' && event.detail.startsWith(`${questionId}:`));

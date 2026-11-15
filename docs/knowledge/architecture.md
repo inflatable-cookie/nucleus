@@ -197,13 +197,20 @@ owner to the rules it enforces.
   `recordBlockedPrIdentity` and `adoptReplacementPr` as delegates.
 - `core/questions/delegation.ts` puts one question to one delegate under an answer window,
   on the `delegation:<id>` stream, and finds the planner, the decider profile and
-  the task facts a delegate reads. `Resolution` keeps each method as a delegate.
-- `core/questions/ladder.ts` holds the blocker ladder: a blocked worker gets one reviewer
+  the task facts a delegate reads. Its window-close reason is one named text the
+  advance rule compares, availability is the shared group rule over the store's typed
+  rows, and a refused planner-ticket issuance or a failed decider archive is recorded
+  on the delegation stream instead of dropped. `Resolution` keeps each method as a delegate.
+- `core/questions/ladder/` is the blocker ladder: a blocked worker gets one reviewer
   consult per cause, then one planner escalation, which a planner or decider
   settles or classifies to the operator. It also settles open escalations when an
-  ordinary control moves the task. `Resolution` keeps each method as a delegate;
-  `Engine` keeps `settleLadderControl`. `core/questions/blocker-ladder.ts` owns the pure
-  classify/wait/continue step and the consult and escalation recovery decisions.
+  ordinary control moves the task. `ladder.ts` is the public surface and the in-flight
+  state, and each mechanism owns one file beside it: `records.ts` (the durable records;
+  an episode's cause is its intent line, while the run, question and refusal class are
+  the payload's), `causes.ts`, `questions.ts`, `replies.ts`, `waits.ts`,
+  `pass.ts` (the classify/wait/continue and recovery decisions), `park.ts`, `routing.ts`,
+  `operator.ts`, `hold.ts`, `resume.ts`, `attention.ts`, `continuation.ts` and `proof.ts`.
+  `Resolution` keeps each method as a delegate; `Engine` keeps `settleLadderControl`.
 - `core/intake/callback-reminders.ts` sends one bounded reminder to a run that stopped
   without a result, then hands the fault to attention when its grace expires.
   `reminderDecision` is the pure rule over already-read facts.
@@ -596,7 +603,7 @@ owner to the rules it enforces.
   planner and reviewer asks' idle send and the native agents a consult reviewer and a
   decider start in the task workspace. `hosts/paseo/adapter/paseo.ts` keeps same-name delegates and
   the idle delivery path (`sendWhenIdle`), which the host reads per call. The routers
-  stay in core: `core/questions/delegation.ts`, `core/questions/agent-asks.ts`, `core/questions/ladder.ts` and
+  stay in core: `core/questions/delegation.ts`, `core/questions/agent-asks.ts`, `core/questions/ladder/` and
   `core/questions/questions.ts` choose the recipient and profile, build the stable request and
   label identities, own delegated authority and follow-up, and take the answer from the
   command receipt, never from the recipient's chat output.
