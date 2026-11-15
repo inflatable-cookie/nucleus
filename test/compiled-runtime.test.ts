@@ -33,6 +33,7 @@ test("compiled package runs relocated without sources, dependencies or a loader"
   assert.ok(Array.isArray(receipt.nodeLibraries.libraries));
   assert.ok(receipt.nodeLibraries.systemLibraries.length > 0);
   const manifest = JSON.parse(await readFile(join(root, "build", "manifest.json"), "utf8"));
+  assert.ok(manifest.files["server/transport.mjs"], "the callback helper's shared transport dependency is packaged");
   for (const library of receipt.nodeLibraries.libraries) {
     assert.ok(manifest.files[`runtime/${library.file}`], "bundled library is manifest-covered");
   }

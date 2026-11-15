@@ -25,6 +25,7 @@ export interface ServiceClientOptions {
 export class ServiceRequestError extends Error {
   constructor(readonly code: ServiceErrorCode, message: string) {
     super(`Queue service request failed (${code}): ${message}`);
+    this.name = "ServiceRequestError";
   }
 }
 

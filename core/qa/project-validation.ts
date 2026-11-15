@@ -1,6 +1,6 @@
 import type { ProspectiveMerge } from "../merge/prospective-merge";
 import { discoverManifest } from "../hooks/hook-manifest";
-import { verifyMergeCandidate } from "../git/git-snapshot";
+import { verifyMergeCandidate } from "../hooks/git-gates";
 import { FileFacts } from "../machine/file-facts";
 import { runtimeNodeArgs } from "../../shared/runtime.mjs";
 import { spawn } from "node:child_process";

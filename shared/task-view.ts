@@ -358,6 +358,8 @@ export function visibleTaskSummaries(
 ): TaskSummary[] {
   const visible = tasks.filter(task => !["done", "cancelled"].includes(task.phase) || Boolean(task.originError || task.originLookupError || task.resolution.workspaceArchiveRetries.length));
   const identities = new Map<string, Set<string>>();
+  const projectForTask = (task: Task) => projects.find(project => project.repositories.some(repo =>
+    repo.path === task.repoPath && (!task.repository || task.repository === task.repoPath || !repo.origin || repo.origin === task.repository)));
   const references = new Map(tasks.map(task => [task.id, task.phase === "done" ? "" : task.reference || (task.number ? `#${formatTaskNumber(task.number)}` : "")]));
   for (const task of visible) {
     const found = identities.get(task.repoPath) ?? new Set<string>();
@@ -365,8 +367,7 @@ export function visibleTaskSummaries(
     identities.set(task.repoPath, found);
   }
   return visible.map(task => {
-    const pathIdentifiesMember = projects.some(project => project.repositories.some(repo => repo.path === task.repoPath &&
-      (!task.repository || !repo.origin || repo.origin === task.repository)));
+    const pathIdentifiesMember = Boolean(projectForTask(task));
     const taskRuns = runs.filter(run => run.taskId === task.id);
     const hasUnreleasedRun = taskRuns.some(run => !run.released);
     const until = task.holdUntil?.kind === "task" ? references.get(task.holdUntil.taskId) : undefined;
@@ -383,7 +384,7 @@ export function visibleTaskSummaries(
     const owner = summary.waitState?.state === "merge_hold"
       ? summary.holds?.merge?.owner ?? summary.holds?.dispatch?.owner
       : summary.holds?.dispatch?.owner ?? summary.holds?.merge?.owner;
-    const project = projects.find(candidate => candidate.repositories.some(repo => repo.path === task.repoPath));
+    const project = projectForTask(task);
     const displayOwner = owner ? isOperatorOrigin(owner) ? "you"
       : project?.planner?.agentId === owner ? `${project.name} planner` : "a planner thread" : undefined;
     const escalationHolder = summary.stopRecord?.detail.match(/Waiting with the planner or task owner\s+([0-9a-f-]{36})\s*:/i)?.[1];

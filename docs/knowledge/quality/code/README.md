@@ -120,3 +120,12 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
   this PR's head; the `qa-fence` rows in N4 and N6 were re-rated because no caller reads a fence message as
   a fact any more. Modules touched only to import from the new owners keep their rows.
 - nucleus#1220 (floor 6, 2026-11-15): `core/engine.ts` and `service/runtime-owner.ts` were split along their named seams — host-adapter routing, lane-key parse and profile catalogs from the engine; host-connections, store-maintenance and origin-review wrapping from the runtime. Their N2 and N5 rows, plus `service/t3code-host.ts`, were re-rated at this PR's head. Origin-proof wrapping method-calls `withHost` so a class owner keeps its host context. Engine loc is 1061 after merging #1218's owner-verb wiring into the composition root.
+- nucleus#1224 (floor 6, 2026-11-15): report-run acceptance is one shared classifier; telemetry now has
+  separate owners for task facts, reviewer calibration, task-control rates and snapshot aggregation;
+  Git status and hook gates use their checkout and hook owners; transport phase and loss classification
+  has one shared owner. The task-stop and task-view rows score 6 (O1+T1+F1+P1+Pr2): existing typed
+  records and boundary coverage are sound, while historical stop text, waiting references and
+  escalation holders still need compatibility fallbacks. Other resulting modules score 7 or more;
+  their five-part sums, reasons and PR-head evidence are in the updated N2, N3, N4 and N6 rows.
+  The shared service client names its typed errors so the transport classifier preserves roll recovery
+  for draining, unavailable and elapsed timeout responses; its N6 row is re-rated as well.

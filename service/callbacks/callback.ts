@@ -45,7 +45,11 @@ const helperAnswerSchema = z.object({
 
 // The compiled build rewrites the literal module-URL expression in source text, so the helper spells it
 // in two parts: rewritten, it never matches the helper's own path and the helper exits 0 without reporting.
-export const workerHelper = readFileSync(new URL('../../shared/service/callback-client.mjs', import.meta.url), 'utf8') + String.raw`
+const helperTransport = readFileSync(new URL('../../shared/service/transport.mjs', import.meta.url), 'utf8');
+const helperCallbackClient = readFileSync(new URL('../../shared/service/callback-client.mjs', import.meta.url), 'utf8')
+  .replace("import {callbackTransportPhase} from './transport.mjs';\n", '')
+  .replace('export {callbackTransportPhase};\n', '');
+export const workerHelper = helperTransport + '\n' + helperCallbackClient + String.raw`
 
 import {createHash} from 'node:crypto';
 import {readFileSync,realpathSync} from 'node:fs';

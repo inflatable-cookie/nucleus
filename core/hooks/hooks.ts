@@ -32,7 +32,8 @@ export { hookHoldReason, isHookHoldReason, isRecoveredPreDispatchHookHold, isClo
 export { isolationDataDirFor, isolationRootFor, isolationPathFor, warmCandidatePathFor, isOwnedIsolationPath } from "./hook-isolation";
 export { blobDigest, repositoryIsGitCheckout, pinInstruction, instructionForCommit, parseManifestBytes, forgetManifestDiscovery, discoverManifest, pinExecutable } from "./hook-manifest";
 export { executeHookProgram, type ExecutionOutcome, type ExecutionRequest } from "../machine/process-exec";
-export { SCRATCH_INDEX_PREFIX, parsePorcelain, statusEntries, ignoredPathCollides, snapshotGit, inspectChangedPaths, verifyReviewedHead } from "../git/git-snapshot";
+export { SCRATCH_INDEX_PREFIX, parsePorcelain, statusEntries, ignoredPathCollides, snapshotGit, inspectChangedPaths } from "../git/git-snapshot";
+export { verifyMergeCandidate, verifyRetainedWorktree, verifyReviewedHead } from "./git-gates";
 export { gitRun as gitRaw } from "../git/git-command";
 export { minimalHookEnvironment, parseHookResult, STDERR_EXCERPT_MAX_BYTES, HOOK_EVIDENCE_MAX_BYTES } from "./hook-result";
 export { RETENTION_TIMEOUT_ATTEMPTS } from "./hook-retention";
