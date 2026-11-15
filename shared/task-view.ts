@@ -359,7 +359,7 @@ export function visibleTaskSummaries(
   const visible = tasks.filter(task => !["done", "cancelled"].includes(task.phase) || Boolean(task.originError || task.originLookupError || task.resolution.workspaceArchiveRetries.length));
   const identities = new Map<string, Set<string>>();
   const projectForTask = (task: Task) => projects.find(project => project.repositories.some(repo =>
-    repo.path === task.repoPath && (!task.repository || repo.origin === task.repository)));
+    repo.path === task.repoPath && (!task.repository || task.repository === task.repoPath || !repo.origin || repo.origin === task.repository)));
   const references = new Map(tasks.map(task => [task.id, task.phase === "done" ? "" : task.reference || (task.number ? `#${formatTaskNumber(task.number)}` : "")]));
   for (const task of visible) {
     const found = identities.get(task.repoPath) ?? new Set<string>();

@@ -15,7 +15,7 @@ export function callbackTransportPhase(error) {
   const code = errorCode(error);
   const message = errorMessage(error);
   const transport = CONNECT_CODES.has(code)
-    || /ENOENT|ECONNREFUSED|ENOTSOCK|EACCES|ELOOP|ENAMETOOLONG|ECONNRESET|EPIPE|socket hang up|aborted|no such file|^Transport not connected$|\bdisconnected\b/i.test(message);
+    || /ENOENT|ECONNREFUSED|ENOTSOCK|EACCES|ELOOP|ENAMETOOLONG|ECONNRESET|EPIPE|socket hang up|aborted|no such file|not connected|disconnected/i.test(message);
   if (!transport) return null;
   if (CONNECT_CODES.has(code) || /connect (?:ENOENT|ECONNREFUSED|ENOTSOCK|EACCES|ELOOP|ENAMETOOLONG)|no such file/i.test(message)) return 'connect';
   return error?.transportPhase === 'response' ? 'response' : 'inflight';
@@ -39,5 +39,5 @@ export function isConnectionLoss(error) {
 export function isHostTransportFailure(error) {
   const code = errorCode(error);
   const message = errorMessage(error);
-  return CONNECT_CODES.has(code) || /ECONNRESET|EPIPE|socket hang up|Liveness check timed out|Daemon connection did not settle|Daemon client closed|T3Code (?:transport|timeout)|authenticated host connection is unavailable|^Transport not connected\b|^not connected$/i.test(message);
+  return CONNECT_CODES.has(code) || /\bTransport not connected\b|\bdisconnected\b|ECONNRESET|EPIPE|socket hang up|Liveness check timed out|Daemon connection did not settle|Daemon client closed|T3Code (?:transport|timeout)|authenticated host connection is unavailable/i.test(message);
 }
