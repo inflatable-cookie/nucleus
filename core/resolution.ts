@@ -663,7 +663,7 @@ export class Resolution {
   suppressAutomaticRetry(t: Task, site: string, evidence: string, runId?: string | null): boolean { return this.ladder.suppressAutomaticRetry(t, site, evidence, runId); }
   openReviewerConsult(t: Task, input: { cause: string; runId: string | null; completion: Completion; reviewer: string | null }): void { return this.reviewerConsult.openReviewerConsult(t, input); }
   consultStillOwnsWait(taskId: string, id: string): boolean { return this.reviewerConsult.consultStillOwnsWait(taskId, id); }
-  runReviewerConsult(t: Task, input: { id: string; reviewer: string | null; question: string }): Promise<void> { return this.reviewerConsult.runReviewerConsult(t, input); }
+  runReviewerConsult(t: Task, input: { id: string; reviewer: string | null; question: string }): Promise<void> { return this.ladder.runReviewerConsult(t, input); }
   escalateConsultedBlocker(t: Task, input: { id: string }): void { return this.reviewerConsult.escalateConsultedBlocker(t, input); }
   openReviewContinuationEscalation(t: Task, state: 'exhausted' | 'closed'): string { return this.ladder.openReviewContinuationEscalation(t, state); }
   escalateRefusedCoordinator(t: Task, reason: string): void { return this.ladder.escalateRefusedCoordinator(t, reason); }
