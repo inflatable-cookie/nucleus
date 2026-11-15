@@ -69,7 +69,10 @@ export const turnItem = z.object({ id, type: id, requestId: id.optional(),
 });
 export const projection = z.object({
   thread: threadRecord,
-  runs: z.array(z.object({ id, status: shellThread.shape.status, startedAt: date.nullable(), ordinal: z.number().int().nonnegative().optional() })),
+  // `rootNodeId` is the run's own root node (recorded `runKeys`): the parent node
+  // a `thread.created.record` card on that run must name.
+  runs: z.array(z.object({ id, status: shellThread.shape.status, startedAt: date.nullable(), ordinal: z.number().int().nonnegative().optional(),
+    rootNodeId: id.nullable().optional() })),
   runtimeRequests: z.array(runtimeRequest), turnItems: z.array(turnItem),
   messages: z.array(z.object({ id, role: id, text: z.string() })), updatedAt: date,
 });
@@ -81,6 +84,13 @@ export const threadSnapshot = z.object({
   turnItemsOmitLocalVisible: z.boolean().optional(), idTable: z.literal(true).optional(),
 });
 export const config = z.object({ environment: z.object({ environmentId: id, serverVersion: id, orchestrationProtocolVersion: z.literal(2) }),
+  /**
+   * The server settings this adapter reads, and never writes: a client hides a
+   * top-level thread whose tag is in `hiddenThreadTags` while
+   * `hideTaggedThreads` is on (recorded contract `supportRows`). Absent means a
+   * nightly that reports no settings, which reads as both defaults.
+   */
+  settings: z.object({ hideTaggedThreads: z.boolean().optional(), hiddenThreadTags: z.array(z.string()).optional() }).passthrough().optional(),
   providers: z.array(z.object({ instanceId: id, displayName: z.string().optional(), enabled: z.boolean(),
     /** The nightly `ServerProvider` field: the runtime modes this provider offers. Absent means all four. */
     supportedRuntimeModes: z.array(runtimeMode).optional(),

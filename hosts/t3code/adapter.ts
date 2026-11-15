@@ -12,6 +12,7 @@ import { decode, config, optionDescriptor, T3CompatibilityError, runtimeModes, d
 import { activeStatuses, T3Reads, type Projection, type ThreadReadKind } from './reads';
 import { identity, T3IntentLedger } from './intents';
 import { T3Presentation } from './presentation';
+import { SUPPORT_THREADS_DOC, SUPPORT_THREAD_TAG, isSupportRole, supportThreadVisibility } from './one-row';
 
 export interface T3CodeConfig extends T3ConnectionConfig { statePath: string; probeThreadId?: string }
 const unsupported = (capability: string): never => { throw new ProvenPreSendRefusalError(`T3Code does not support ${capability}`); };
@@ -105,6 +106,18 @@ export class T3CodeHost implements Host {
   get lastProtocolError() { return this.rpc.lastProtocolError; }
   get threadShapePending() { return this.reads.threadShapePending; }
   get compatibilityFailure() { return this.reads.compatibilityFailure; }
+  /**
+   * Whether T3's own client hides tagged support threads, read at connect from
+   * `server.getConfig`'s settings and never written. Reported as a host status
+   * line with the README section that turns it on; the adapter's behaviour is the
+   * same either way, so an unset switch changes nothing but how many rows show.
+   */
+  get supportThreadStatus(): string {
+    const state = this.state.read().supportThreads;
+    if (state === 'hidden') return `support threads hidden by tag ${SUPPORT_THREAD_TAG}`;
+    if (state === 'tag_missing') return `support threads visible: ${SUPPORT_THREAD_TAG} is not in hiddenThreadTags (${SUPPORT_THREADS_DOC})`;
+    return `support threads visible: hide setting not enabled (${SUPPORT_THREADS_DOC})`;
+  }
   capabilities() { return { reportingViaMcp: false, supportsCoordinatorRecovery: false, nativeDecisions: false, uiContributions: false, lifecycleDispatch: false, perThreadEnvironment: false }; }
   async connect(probeThreadId = this.probeThreadId): Promise<void> {
     this.ready = false;
@@ -119,7 +132,9 @@ export class T3CodeHost implements Host {
       const probe = probeThreadId ?? [...shell.threads, ...shell.archivedThreads][0]?.id;
       this.reads.markShapePending(!probe);
       if (probe) await this.reads.readProjection(probe, 'observation');
-      this.state.update(state => { state.hostId = hostId; state.lastPassedVersion = observed.environment.serverVersion; });
+      this.state.update(state => { state.hostId = hostId; state.lastPassedVersion = observed.environment.serverVersion;
+        // Read-only: the client's own hide switch, never a settings write.
+        state.supportThreads = supportThreadVisibility(observed.settings); });
       this.hostId = hostId; this.version = observed.environment.serverVersion; this.ready = true;
     } catch (error) { this.close(); throw error; }
   }
@@ -165,6 +180,16 @@ export class T3CodeHost implements Host {
   async settleWorkerThread(agentId: string, runId: string): Promise<void> { await this.presentation.settleWorkerThread(agentId, runId); }
   async reconcileSettledThreads(): Promise<void> { await this.presentation.reconcileSettledThreads(); }
   async unsettleWorkerThread(agentId: string, taskId: string): Promise<void> { await this.presentation.unsettleWorkerThread(agentId, taskId); }
+  /**
+   * The ordinary host sweep's title pass, and the retry of the one-row effects: a
+   * support thread's card and tag that could not be sent when it was created, and
+   * the worker row's step while a support role acts.
+   */
+  async reconcileThreadTitles(tasks: readonly Task[]): Promise<void> {
+    if (!this.connected) return;
+    await this.presentation.reconcileSupportRows();
+    await this.presentation.reconcileWorkerRows(tasks);
+  }
 
 
 
@@ -297,6 +322,16 @@ export class T3CodeHost implements Host {
     });
     if (decode(z.object({ threadId: z.literal(id) }), result, 'launchThread').threadId !== id) throw new T3CompatibilityError('launchThread.threadId');
     this.state.update(state => { if (state.agents[id]) state.agents[id].title = payload.title; });
+    // One row per task: every support thread is tagged and linked from the
+    // worker's conversation. Both are durable presentation effects, recorded
+    // before send and completed by the ordinary sweep, so a worker run that has
+    // not appeared yet or a lost reply never costs the card.
+    const role = attempt.labels[WIRE_LABEL_KEYS.role];
+    const taskId = attempt.labels[WIRE_LABEL_KEYS.task];
+    if (taskId && isSupportRole(role)) {
+      try { await this.presentation.registerSupportThread({ taskId, threadId: id, role: role! }); }
+      catch { /* the recorded row keeps for the next sweep */ }
+    }
     if (this.reads.threadShapePending) await this.reads.readProjection(id, 'observation');
     return { id, workspaceId: spec.workspaceId };
   }

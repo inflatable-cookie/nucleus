@@ -227,6 +227,8 @@ pretend to be a Paseo workspace.
 Core derives the worker thread title with `taskWorkspaceTitle`, the same
 projection and cap used for Paseo workspace titles. It sends the current title through
 `thread.metadata.update`; support threads keep their task-number and role title.
+The adapter appends the step the task's support threads are doing (see
+[one row per task](#one-row-per-task)).
 The core title projection coalesces queued changes and records failed writes on
 the task for sweep retry. Each title-change request has its own durable command
 identity, so returning to a prior state still updates the thread. Before
@@ -247,7 +249,10 @@ the write if the desired title is already present.
 | Remove | `thread.delete` through dispatch at closeout, never `onlyIfUnused` | Durable intent, then `deletedAt` or absence from a complete inventory proves removal; an unknown outcome is never resent |
 | Settle report | `thread.settle` through dispatch for any completed non-worker role | Immediately after the accepted Nucleus receipt; bind `expectedLatestRunId`, keep an uncertain intent and inspect `settledOverride` before retry |
 | Wake settled support thread | `thread.unsettle` through dispatch before a follow-up message | Stable command intent; a retained reviewer is active again for its next round |
-| Surface a stuck worker thread | `thread.unsettle` through dispatch while the task needs attention | Per-episode command identity; only the worker thread surfaces, and the ordinary settles put it back when attention clears |
+| Surface a stuck worker thread | `thread.unsettle` through dispatch while the task needs attention or any of its agents is working | Per-episode command identity; only the worker thread surfaces, and the ordinary settles put it back once the task waits on nothing Nucleus is running |
+| Tag a support thread | `thread.tag.set` through dispatch with `nucleus-support` | One durable command per thread; never the worker row, and never a settings write |
+| Link a support thread | `thread.created.record` through dispatch from the worker's latest root node | One completed `thread_created` card in the worker's conversation, retried until the worker run names its root node |
+| Read the hide setting | `server.getConfig`'s `settings.hideTaggedThreads` and `settings.hiddenThreadTags` | Read-only, at connect; never `server.updateSettings` |
 | Archive workspace | Mark the task's T3 worktree handle archived in adapter state | Observation reads the handle's `archivedAt`; the shared project registration remains registered and available |
 | Atomic interrupt and continue | `message.dispatch` `steer_active` with the live run's `targetRunId` | The message injects into the active turn; with no active run the refusal is proven before send |
 | Tell or relayed answer (`steerOrNotify`) | `message.dispatch` `steer_active` when the thread has a live run, read immediately before send; otherwise `queue_after_active` as `notify` | A proven not-sent steer falls back to one queued send under its own command identity; a remote steer failure is unknown delivery and is never resent. Nucleus's own reminders and notices keep `queue_after_active` |
@@ -517,6 +522,54 @@ invent a second follow-up. Expired or nonresumable approvals cannot be answered
 again. An interrupted answer remains uncertain even if the request later expires;
 expiry is not evidence that the original answer was never delivered.
 
+## One row per task
+
+One task reads as one row (Tom, 2026-11-15). Three things follow.
+
+**Support threads are tagged.** Every support thread nucleated on T3 — reviewer,
+recovery, verification, closeout and executor; every role but the worker-shaped
+one — carries the tag `nucleus-support`, a constant of the adapter's own table and
+never a setting. The worker thread is never tagged. The tag is presentation only:
+the card and the row title do not depend on it.
+
+**Each support thread is linked from the worker's conversation.** After a support
+thread launches, the adapter records `thread.created.record` in the worker
+thread: the parent is the worker's latest run, the parent node is that run's own
+root node, the target is the new support thread, and `targetRunId` is null. The
+nightly writes one completed `thread_created` card, which opens the support
+thread. That command needs a worker run with a root node, so the intent is
+recorded in the adapter's state before the send and retried on the ordinary host
+sweep until one exists. A replay of the same command id is one card, not two.
+The card's title is the target thread's own title, which already names the role
+(`#225 review: …`), so no second title is invented. Unknown delivery is resent
+only after a fresh read proves the card absent; the worker transcript read stays a
+bounded observation read and never asks for full history.
+
+**The worker row carries the step.** The row's title is the task's own state title
+(`taskWorkspaceTitle`, the shared helper Paseo uses) plus ` · ` and the step its
+support threads report: `reviewing`, `recovery`, `verifying`, `closing`,
+`executing`, `<role> needs input` for a pending question or permission, or
+`blocked: <role>` for a thread whose latest run ended with a fault. A step the
+state title already opens with is not repeated. The step is read from the support
+threads' own projections on the host sweep, so it follows a role that starts,
+needs input or stalls without a task title change. The worker row is unsettled
+while any of the task's runs is live or the task needs attention, and it settles
+once the task waits on nothing Nucleus is running. Being in T3's "Working"
+section is the client's own view of an active run and cannot be set from outside;
+unsettling only keeps the row out of the settled list, which is what Nucleus can
+do.
+
+**The hide setting is optional and read-only.** A client hides a tagged top-level
+thread only while its own `hideTaggedThreads` is on and `hiddenThreadTags` lists
+`nucleus-support`. Nucleus reads both from `server.getConfig`'s `settings` at
+connect and never writes settings; with the switch off, or the tag missing, the
+support threads stay visible and everything else behaves as above.
+`service.health`'s `t3code.supportThreads` reports which case holds and points at
+the README section that enables it. Nucleus does not surface a hidden thread's
+pending approval itself: a support thread that needs input leaves its role name on
+the worker row, and the question is answered in that thread from its card or
+through Nucleus's own routes.
+
 ## Thread lifecycle
 
 While a T3 task is open, its worker, reviewer, recovery, coordinator and executor
@@ -702,6 +755,16 @@ A second lifecycle test keeps a released recovery
 thread settled while the task is open and continues the same thread for the next
 fault instead of opening another. The test fails on a tree
 without the model-option, archive and steering work.
+
+`test/t3code-one-row.test.ts` covers the one-row model on the same fake transport:
+a reviewer launch tags the thread, records exactly one `thread_created` card on the
+worker's latest root node and retries nothing; a card waits for a worker run that
+names its root node; a live support role, a pending question and a fault each name
+the worker row's step, which is not repeated when the state title already says it;
+and with the hide setting off the threads behave as before while the host status
+says so and no settings write is ever sent. The sweep tests prove the row stays
+unsettled while any of the task's runs is live and settles once the task waits on
+nothing.
 
 The settlement sweep skips threads whose terminal archive or deletion is already
 confirmed in the durable cleanup lane, even if settling the thread previously

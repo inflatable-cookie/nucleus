@@ -65,13 +65,17 @@ export class Sweep {
       // attention clears (nucleus#1181 review).
       const attentionActive = task.resolution.attention || ['blocked', 'error', 'needs_attention'].includes(task.phase);
       const runs = this.engine.store.runs(task.id);
+      // One row per task (Tom, 2026-11-15): while any of the task's agents is
+      // still working, the worker row is the task's one visible row and it stays
+      // unsettled. It settles only when the task waits on nothing Nucleus runs.
+      const liveWork = runs.some(run => !run.released && !run.completion);
       for (const run of runs) {
         if (run.hostId !== hostId || !run.agentId || (!run.released && !run.completion)) continue;
         // The terminal lane's confirmed effect covers this thread, even when
         // settling it previously needed no native receipt. An unresolved effect
         // still needs observation and settlement on the next pass.
         if (this.engine.store.threadArchiveEffect(run.agentId, hostId)?.status === 'archived') continue;
-        const settle = run.role === 'revision' && reviewPhases.has(task.phase) && !attentionActive
+        const settle = run.role === 'revision' && reviewPhases.has(task.phase) && !attentionActive && !liveWork
           ? settleWorker : supportRoles.has(run.role) ? settleSupport : undefined;
         if (!settle) continue;
         try { await settle.call(adapter, run.agentId, run.id); }
@@ -82,7 +86,7 @@ export class Sweep {
       }
       // The initial worker run predates the role run ledger on legacy tasks.
       // The task only reaches these phases after its handover was accepted.
-      if (settleWorker && !attentionActive && reviewPhases.has(task.phase) && task.agentId && task.runId && !runs.some(run => run.id === task.runId)
+      if (settleWorker && !attentionActive && !liveWork && reviewPhases.has(task.phase) && task.agentId && task.runId && !runs.some(run => run.id === task.runId)
         && this.engine.store.threadArchiveEffect(task.agentId, hostId)?.status !== 'archived') {
         try { await settleWorker.call(adapter, task.agentId, task.runId); }
         catch (error) {
@@ -94,22 +98,24 @@ export class Sweep {
   }
 
   /**
-   * Attention surfaces the worker thread (nucleus#1181): while a T3-bound task
-   * is blocked, errored, needs attention or carries an attention flag (planner
-   * or operator escalation), its worker thread is unsettled so it shows in
-   * T3's main list instead of the settled list. Only the worker thread
-   * surfaces, never support threads. When the task leaves attention the
-   * ordinary settlement sweep puts the thread back; this pass sends nothing
-   * more. A host without the presentation method (Paseo) keeps its behaviour.
+   * The worker row surfaces (nucleus#1181, one row per task Tom 2026-11-15): while
+   * a T3-bound task is blocked, errored, needs attention or carries an attention
+   * flag (planner or operator escalation), or while any of its agents is still
+   * working, its worker thread is unsettled so it stays in T3's main list instead
+   * of the settled list. Only the worker thread surfaces, never support threads.
+   * When the task waits on nothing Nucleus is running the ordinary settlement
+   * sweep puts the thread back; this pass sends nothing more. A host without the
+   * presentation method (Paseo) keeps its behaviour.
    */
-  private async surfaceAttentionT3Threads(hostId: string): Promise<void> {
+  private async surfaceWorkerRows(hostId: string): Promise<void> {
     const adapter = this.engine.adapter;
     const unsettle = adapter.unsettleWorkerThread;
     if (!unsettle) return;
     for (const task of this.engine.store.tasks()) {
       if (task.hostId !== hostId || task.removedAt != null) continue;
       if (!task.agentId || ['done', 'cancelled'].includes(task.phase)) continue;
-      if (!['blocked', 'error', 'needs_attention'].includes(task.phase) && !task.resolution.attention) continue;
+      const liveWork = this.engine.store.runs(task.id).some(run => !run.released && !run.completion);
+      if (!liveWork && !['blocked', 'error', 'needs_attention'].includes(task.phase) && !task.resolution.attention) continue;
       // The terminal lane owns archived threads; support threads never surface.
       if (this.engine.store.threadArchiveEffect(task.agentId, hostId)?.status === 'archived') continue;
       try { await unsettle.call(adapter, task.agentId, task.id); }
@@ -300,7 +306,7 @@ export class Sweep {
         if (!this.engine.hostAvailable(host)) return;
         try { await this.engine.adapter.reconcileReportedSettlements?.(); } catch { /* durable host intents remain for the next sweep */ }
         try { await this.settleFinishedT3Threads(host); } catch { /* one host's settlement pass never stalls the fleet sweep */ }
-        try { await this.surfaceAttentionT3Threads(host); } catch { /* one host's attention pass never stalls the fleet sweep */ }
+        try { await this.surfaceWorkerRows(host); } catch { /* one host's row pass never stalls the fleet sweep */ }
         try { await this.engine.adapter.reconcileThreadTitles?.(this.engine.store.tasks().filter(task => task.hostId === host)); } catch { /* title intents remain for the next sweep */ }
         const retiredPlan = this.engine.retiredObservationPlan();
         const inventoryIds = [...new Set([...retiredPlan.due, ...this.engine.resolution.observationTargets()])];
