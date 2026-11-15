@@ -17,7 +17,7 @@ const base = taskSchema.parse({
 test('global slot waits qualify task numbers from other repositories', () => {
   const occupant = { ...base, id: 'other', number: 27, repository: 'owner/other', agentActive: true };
   const result = decideSlotAdmission(base, [base, occupant], 1, () => 1,
-    { limit: 1, projectKeyFor: task => task.repoPath }, 'Global concurrent task-slot limit reached', [], []);
+    { limit: 1, projectKeyFor: task => task.repoPath }, 'global', [], []);
   assert.match(result, /owner\/other#027/);
 });
 

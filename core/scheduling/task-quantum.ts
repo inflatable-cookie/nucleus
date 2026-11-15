@@ -5,7 +5,7 @@ import { archiveSupersededWorkers } from '../workspaces/thread-archive-replaceme
 import type { Task } from "../../shared/contracts";
 import { missingOriginHasPlanner } from '../questions/origin';
 import { taskStopClassification, taskStopVerbsFor } from "../../shared/task-stop";
-import { occupiesSlot, recoveryCapacityFor } from "../dispatch/capacity";
+import { occupiesSlot, capacityFor } from "../dispatch/capacity";
 import { DEFAULT_GLOBAL_LIMIT, holdsOf, taskHasUnreleasedRun } from "../../shared/contracts";
 import { startsNoRuns } from "../closeout/queue-drain";
 import { isDispositionActive } from "../../shared/contracts";
@@ -115,7 +115,7 @@ export class TaskQuantum {
         this.context.adapter.workspaceAvailable && !await this.context.adapter.workspaceAvailable(task.workspaceId)) {
         await this.context.resolution.advance(task); return;
       }
-      const probeExternalMerge = occupiesSlot(task, this.context.store.runs(task.id)) || !recoveryCapacityFor(task, this.context.store.activeCapacityTasks(), this.context.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT, this.context.store.projectDispatchLimitFor(task),this.context.store.papercutDispatchPolicy());
+      const probeExternalMerge = occupiesSlot(task, this.context.store.runs(task.id)) || !capacityFor(task, this.context.store.activeCapacityTasks(), this.context.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT, this.context.store.projectDispatchLimitFor(task),this.context.store.papercutDispatchPolicy());
       if (probeExternalMerge) {
         if (await this.context.resolution.recoverExternalMerge(task)) return;
         // The probe may have restored the pre-attention phase and reason it found on

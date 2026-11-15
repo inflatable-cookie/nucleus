@@ -1,8 +1,6 @@
 import { readdirSync, lstatSync, unlinkSync, rmdirSync } from "node:fs";
 import { join } from "node:path";
-import { backupDirForDataDir, isLiveStoreDir, listBackups, liveBackupDir } from "./backup-worker.mjs";
-
-const SNAPSHOT = /^(\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-\d{3}Z)-([a-f0-9-]+)\.(hourly|daily|weekly)\.sqlite\.gz$/;
+import { backupDirForDataDir, isLiveStoreDir, listBackups, liveBackupDir, snapshotName } from "./backup-worker.mjs";
 
 export interface RetentionRemoval { path: string; bytes: number }
 
@@ -25,14 +23,13 @@ export function pruneLiveDataHomeBackupCopies(dataDir: string): RetentionRemoval
     let names: string[];
     try { names = readdirSync(directory); } catch { continue; }
     const candidates = names.flatMap(name => {
-      const match = SNAPSHOT.exec(name);
-      if (!match) return [];
+      const snapshot = snapshotName(name);
+      if (!snapshot) return [];
       const path = join(directory, name);
       try {
         const info = lstatSync(path);
         if (!info.isFile() || info.isSymbolicLink()) return [];
-        const at = match[1].replace(/T(\d\d)-(\d\d)-(\d\d)-(\d{3})Z$/, "T$1:$2:$3.$4Z");
-        return [{ path, at, bytes: info.size }];
+        return [{ path, at: snapshot.at, bytes: info.size }];
       } catch { return []; }
     });
     for (const removal of staleBackupCopies(candidates, newestLiveAt)) {

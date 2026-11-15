@@ -5,20 +5,33 @@
  * the snapshots and their status in its own process.
  */
 import type { BackupList } from '../../shared/contracts';
+import type { Transform } from 'node:stream';
 
-/** The stream stage a test makes fail, as a real read error, compressor error or full disk would. */
-export type BackupFault = 'read' | 'compress' | 'diskFull' | 'mismatch';
+/** A snapshot a backup file name names: its period, its tiers' shared stem and its tier. */
+export interface SnapshotName {
+  /** The snapshot's period as an ISO instant. */
+  at: string;
+  /** The file stem its hourly, daily and weekly names share. */
+  stem: string;
+  kind: 'hourly' | 'daily' | 'weekly';
+}
+/** The snapshot a backup file name names, or null when the name is not a snapshot's. */
+export function snapshotName(name: string): SnapshotName | null;
+/** One snapshot's file name for one of its tiers. */
+export function snapshotFileName(stem: string, kind: SnapshotName['kind']): string;
+
 export interface BackupOptions {
   /** `manual` records the snapshot as the operator's Back up now (nucleus#965). */
   origin?: 'manual';
   /** Internal pre-migration snapshot publication bound to the admitted source. */
   admittedSource?: { path: string; fd: number };
-  /** Fixture seam: a stream stage fails as soon as data reaches it. */
-  fault?: BackupFault;
+  /**
+   * Fixture seam: one stage the snapshot pipeline runs between its digest and its
+   * compressor, so a test can prove that a failed or corrupt stage publishes nothing.
+   */
+  faultStage?: Transform;
   /** Fixture seam: fail the snapshot's own integrity check. */
   failIntegrity?: boolean;
-  /** Spec 029: the daily records export, injected so the worker imports no TypeScript. */
-  records?: { export: (raw: string, target: string) => void; verify: (dir: string) => unknown };
   /**
    * The volume the backup directory must be mounted on. Defaults to the volume root the
    * directory names; null means the directory needs no volume. A

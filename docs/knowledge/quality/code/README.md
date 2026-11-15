@@ -29,6 +29,27 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
 
 ## Re-rates
 
+- nucleus#1230 (floor 7, 2026-11-15): the two floor-7 backup and capacity modules were simplified along
+  their named seams and re-rated at this PR's head. `backups` (9) now reads a snapshot file name in one
+  place (`snapshotName`/`snapshotFileName` in `core/store/backup-worker.mjs`), which the listing, the due
+  check and `core/store/data-home-retention.ts` all use; the daily and weekly link rule is one
+  `linkPeriods` both publication paths call; the status file is read once into a status and its own
+  failure, so an unreadable or corrupt status is reported instead of reading as healthy; the replaced
+  admitted source refuses with the typed `BACKUP_SOURCE_CHANGED` code instead of a message comparison;
+  and the four-branch stream-fault catalogue left product code for one test-supplied stage, the faults
+  themselves now living in `test/support/backup-faults.mjs` (the `failIntegrity` boolean stays: a corrupt
+  snapshot cannot be produced from a healthy store without one). Its ownership stays 1 because the client
+  panel still derives a snapshot stem for display, which is its own N6 row. `capacity-slots` (9) decides
+  and names the capacity limit in one place (`capacityLimitFor`/`capacityReason`), so the pool scope is a
+  typed value rather than the `Global` message prefix; `capacityFor` is no longer an alias of a second
+  copy; the duplicate-pass memo is one `memoFacts` owner for both the dispatch pass and the board batch;
+  and the wait label rule is written once. Its proportion stays 1 because `slotAdmissionExempt` and
+  `slotRequestDecision` still answer overlapping eligibility questions from different facts, which a
+  structural PR must not merge. `core/store/data-home-retention.ts` (9) gained the worker's name reader,
+  which was the duplicate its row named; its proof stays 1 because the prune itself is only covered
+  through its planner. Boundary tests were added for the snapshot name reader, the unreadable status and
+  the typed capacity limit, and `test/staged-backup.test.ts` now asserts the refusal code.
+
 - nucleus#1228 (floor 7, 2026-11-15): the three floor-7 client modules were re-rated at this PR's head.
   `client/task/runs.tsx` was split along its named sections: the tab now composes prerequisites and the
   run-bound cleanup, the runs and their delivery (`client/task/runs.tsx`), the worker exclusions

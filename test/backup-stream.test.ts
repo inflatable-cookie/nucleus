@@ -9,6 +9,7 @@ import { gunzipSync } from 'node:zlib';
 import { DatabaseSync } from 'node:sqlite';
 import { Store } from '../core/store/store';
 import { createBackup, listBackups, verifySnapshot } from '../core/store/backup-worker.mjs';
+import { backupFaultStage } from './support/backup-faults.mjs';
 
 /**
  * Spec 028: a snapshot is compressed and verified as a stream. These prove the shape a
@@ -95,7 +96,7 @@ for (const [fault, pattern] of [
     const published = await createBackup(path, backups, new Date(Date.UTC(2026, 0, 1, 6)).toISOString());
     const verified = only(published.snapshots.filter(entry => entry.kind === 'hourly'), 'the verified snapshot');
     assert.ok(published.snapshots.some(entry => entry.kind === 'weekly'), 'the daily and weekly links are published before the failure');
-    await assert.rejects(() => createBackup(path, backups, new Date(Date.UTC(2026, 0, 1, 12)).toISOString(), { fault }), pattern);
+    await assert.rejects(() => createBackup(path, backups, new Date(Date.UTC(2026, 0, 1, 12)).toISOString(), { faultStage: backupFaultStage(fault) }), pattern);
     const result = listBackups(backups, dataDir);
     assert.deepEqual(result.snapshots, published.snapshots, 'the failed run published nothing, rotated nothing and copied nothing');
     assert.equal(scheduled(backups).length, 1);

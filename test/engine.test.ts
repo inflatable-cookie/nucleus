@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
 import { CURRENT_SCHEMA, Store, digest, explicitCriticalFalseSubmissionHash } from '../core/store/store';
-import { Engine, chooseProfile, capacityFor, recoveryCapacityFor, isTransportFailure, occupiesSlot, queuedDispatchOrder } from '../core/engine';
+import { Engine, chooseProfile, capacityFor, isTransportFailure, occupiesSlot, queuedDispatchOrder } from '../core/engine';
 import { fairSlotRequestOrder } from '../core/dispatch/capacity';
 import { LoginSessionFaultError } from '../shared/session-fault';
 import { inFlightSlotWaitReason } from '../shared/wait-state';
@@ -200,9 +200,9 @@ test('project overrides raise, lower, and zero-stop only their own per-repositor
     assert.equal(working('/project-c'), 5, 'setting a project stop leaves already-running work untouched');
     assert.equal(f.calls.agents, 13);
     const recoveryA = f.add('/project-a'), recoveryB = f.add('/project-b'), recoveryD = f.add('/project-d');
-    assert.match(recoveryCapacityFor(recoveryA, f.store.admissionCandidates(), 20, f.store.projectDispatchLimitFor(recoveryA)), /Project/);
-    assert.match(recoveryCapacityFor(recoveryB, f.store.admissionCandidates(), 20, f.store.projectDispatchLimitFor(recoveryB)), /Project/);
-    assert.match(recoveryCapacityFor(recoveryD, f.store.admissionCandidates(), 20, f.store.projectDispatchLimitFor(recoveryD)), /Project/, 'a zero override provides no recovery capacity even when the project is empty');
+    assert.match(capacityFor(recoveryA, f.store.admissionCandidates(), 20, f.store.projectDispatchLimitFor(recoveryA)), /Project/);
+    assert.match(capacityFor(recoveryB, f.store.admissionCandidates(), 20, f.store.projectDispatchLimitFor(recoveryB)), /Project/);
+    assert.match(capacityFor(recoveryD, f.store.admissionCandidates(), 20, f.store.projectDispatchLimitFor(recoveryD)), /Project/, 'a zero override provides no recovery capacity even when the project is empty');
     f.store.setMeta('globalLimit', 12);
     const waiting = f.add('/project-d');
     assert.match(capacityFor(waiting, f.store.admissionCandidates(), 12, f.store.projectDispatchLimitFor(waiting)), /Global/, 'the global cap still binds across project overrides');
@@ -335,7 +335,7 @@ test('only live or starting agents retain capacity', async () => {
     assert.equal(occupiesSlot(f.store.task(recovering.id), f.store.runs(recovering.id)), false, 'a recovery flag without an agent holds no slot');
     f.store.putRun({ ...liveReview('recovery-live', { taskId: recovering.id, role: 'recovery' }) });
     assert.equal(occupiesSlot(f.store.task(recovering.id), f.store.runs(recovering.id)), true, 'a running recovery turn holds its slot');
-    assert.match(recoveryCapacityFor(queued, f.store.admissionCandidates(), 10, 6), /Project/);
+    assert.match(capacityFor(queued, f.store.admissionCandidates(), 10, 6), /Project/);
     const other = f.add('/project-b');
     assert.equal(capacityFor(other, f.store.admissionCandidates(), 10, 6), '');
     assert.match(capacityFor(other, f.store.admissionCandidates(), 5, 6), /Global/);
@@ -1945,10 +1945,10 @@ test('a multi-repository project shares one papercut allowance, and fully parked
     assert.match(f.engine.resolution.slotAdmissionReason(queued),/in-flight/,'queued papercuts cannot steal a slot owed to a retained review');
     const policy=f.store.papercutDispatchPolicy();
     const held=f.store.update(parked.id,{phase:'blocked',resolution:{...parked.resolution,recoveryActive:true}});
-    assert.equal(recoveryCapacityFor(queued,f.store.admissionCandidates(),10,1,policy),'','a recovery flag without a running agent holds no slot');
+    assert.equal(capacityFor(queued,f.store.admissionCandidates(),10,1,policy),'','a recovery flag without a running agent holds no slot');
     f.store.putRun({id:'recovery-live',taskId:held.id,role:'recovery',generation:1,head:'a'.repeat(40),base:'a'.repeat(40),agentId:'agent-recovery',workspaceId:'workspace',profile:null,status:'running',createdAt:new Date().toISOString(),lastObservedAt:new Date().toISOString(),active:true,idleSince:null,completion:null,released:false});
     assert.equal(occupiesSlot(f.store.task(held.id),f.store.runs(held.id)),true,'a running recovery turn holds its slot');
-    assert.match(recoveryCapacityFor(queued,f.store.admissionCandidates(),10,1,policy),/papercut/,'recovery retains the same allowance');
+    assert.match(capacityFor(queued,f.store.admissionCandidates(),10,1,policy),/papercut/,'recovery retains the same allowance');
     assert.equal(held.papercutTask,true);
   } finally { await f.close(); }
 });

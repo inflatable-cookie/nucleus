@@ -184,19 +184,30 @@ const slotPoolKey = (task: Task, papercuts: PapercutDispatchPolicy) => JSON.stri
 const slotPoolLimit = (task: Task, projectLimit: number, papercuts: PapercutDispatchPolicy) =>
   isPapercutTask(task) ? papercuts.limit : projectLimit;
 
-export function recoveryCapacityFor(task: Task, tasks: Task[], globalLimit: number, projectLimit: number = DEFAULT_PROJECT_LIMIT,
-  papercuts: PapercutDispatchPolicy = defaultPapercutPolicy) {
+/** The limit that refuses a slot request: the global cap, or the request's own pool. */
+export type CapacityLimit = 'global' | 'project' | 'papercut';
+
+/** Which limit refuses this request now, or null when it has capacity. */
+export function capacityLimitFor(task: Task, tasks: Task[], globalLimit: number, projectLimit: number = DEFAULT_PROJECT_LIMIT,
+  papercuts: PapercutDispatchPolicy = defaultPapercutPolicy): CapacityLimit | null {
   const occupied = tasks.filter(task => occupiesSlot(task));
-  if (occupied.length >= globalLimit) return "Global concurrent task-slot limit reached";
+  if (occupied.length >= globalLimit) return 'global';
   const key = slotPoolKey(task, papercuts);
   if (occupied.filter(t => slotPoolKey(t, papercuts) === key).length >= slotPoolLimit(task, projectLimit, papercuts))
-    return isPapercutTask(task) ? "Project papercut task-slot limit reached" : "Project concurrent task-slot limit reached";
-  return "";
+    return isPapercutTask(task) ? 'papercut' : 'project';
+  return null;
 }
 
+/** The sentence one limit is written as; the wait prefix is `CAPACITY_WAIT_PREFIX`. */
+export const capacityReason = (limit: CapacityLimit): string => limit === 'global'
+  ? 'Global concurrent task-slot limit reached'
+  : limit === 'papercut' ? 'Project papercut task-slot limit reached' : 'Project concurrent task-slot limit reached';
+
+/** The capacity refusal a caller writes, or the empty string when the request has capacity. */
 export function capacityFor(task: Task, tasks: Task[], globalLimit: number, projectLimit: number = DEFAULT_PROJECT_LIMIT,
-  papercuts: PapercutDispatchPolicy = defaultPapercutPolicy) {
-  return recoveryCapacityFor(task, tasks, globalLimit, projectLimit, papercuts);
+  papercuts: PapercutDispatchPolicy = defaultPapercutPolicy): string {
+  const limit = capacityLimitFor(task, tasks, globalLimit, projectLimit, papercuts);
+  return limit === null ? '' : capacityReason(limit);
 }
 
 /**
@@ -226,6 +237,26 @@ interface SlotAdmissionView {
 }
 export type { SlotAdmissionView };
 
+/**
+ * The two facts one dispatch pass or one board batch reads once per task: the
+ * integration turn it holds and the prerequisite it waits on. Both order requests
+ * only, so a pass reads each task once instead of once per comparison.
+ */
+function memoFacts(read: Pick<SlotAdmissionView, 'integrationReady' | 'dependencyWait'>): Pick<SlotAdmissionView, 'integrationReady' | 'dependencyWait'> {
+  const integrationReady = new Map<string, boolean>();
+  const dependencies = new Map<string, string>();
+  return {
+    integrationReady: task => {
+      if (!integrationReady.has(task.id)) integrationReady.set(task.id, read.integrationReady(task));
+      return integrationReady.get(task.id)!;
+    },
+    dependencyWait: task => {
+      if (!dependencies.has(task.id)) dependencies.set(task.id, read.dependencyWait(task));
+      return dependencies.get(task.id)!;
+    },
+  };
+}
+
 /** A prerequisite wait or an already occupied slot needs no admission. */
 function slotAdmissionExempt(task: Task, current?: Task, runs: Run[] = []): boolean {
   return Boolean(task.phase === 'changes_requested' && task.prerequisiteWait?.releasedAt) ||
@@ -252,25 +283,28 @@ export function slotRequestDecision(candidate: Task, parkedPhases: readonly stri
   return includeRecovery && candidate.phase === 'needs_attention' && Boolean(candidate.resolution.recovery) && !candidate.resolution.recoveryActive;
 }
 
+/** A waiting task's label: `repo#N` from another repository, `#N` from the same one. */
+const waitLabel = (candidate: Task, task: Task) => candidate.number
+  ? `${candidate.repository && candidate.repository !== task.repository ? `${candidate.repository}#` : "#"}${formatTaskNumber(candidate.number)}` : candidate.id;
+
 /** Decide a slot wait from a snapshot of capacity and eligible requests. */
 export function decideSlotAdmission(task: Task, tasks: Task[], globalLimit: number,
   projectLimitFor: (task: Task) => number, papercuts: PapercutDispatchPolicy,
-  capacity: string, requests: Task[], waiters: Task[]): string {
+  capacity: CapacityLimit | null, requests: Task[], waiters: Task[]): string {
     if (capacity) {
       // Running work fills the pool: name its occupancy against the limit, and
       // list in-flight waiters that hold no slot (checks, merge turn, thread
       // release) separately so they stay visible.
+      const globalScope = capacity === 'global';
       const key = slotPoolKey(task, papercuts);
-      const sameScope = (candidate: Task) => capacity.startsWith("Global") || slotPoolKey(candidate, papercuts) === key;
+      const sameScope = (candidate: Task) => globalScope || slotPoolKey(candidate, papercuts) === key;
       const occupants = tasks.filter(candidate => occupiesSlot(candidate) && sameScope(candidate));
-      const limit = capacity.startsWith("Global") ? globalLimit : slotPoolLimit(task, projectLimitFor(task), papercuts);
-      const label = (candidate: Task) => candidate.number
-        ? `${candidate.repository && candidate.repository !== task.repository ? `${candidate.repository}#` : "#"}${formatTaskNumber(candidate.number)}` : candidate.id;
-      const labels = occupants.map(label).join(", ");
+      const limit = globalScope ? globalLimit : slotPoolLimit(task, projectLimitFor(task), papercuts);
+      const labels = occupants.map(candidate => waitLabel(candidate, task)).join(", ");
 
-      const waiterLabels = waiters.map(label).join(", ");
+      const waiterLabels = waiters.map(candidate => waitLabel(candidate, task)).join(", ");
       const counts = ` (${occupants.length}/${limit} occupied${labels ? `: ${labels}` : ""}${waiterLabels ? `; ${waiters.length} waiting without a slot: ${waiterLabels}` : ""})`;
-      return `${CAPACITY_WAIT_PREFIX} ${capacity}${counts}`;
+      return `${CAPACITY_WAIT_PREFIX} ${capacityReason(capacity)}${counts}`;
     }
     const occupied = tasks.filter(candidate => occupiesSlot(candidate));
     let globalAvailable = globalLimit - occupied.length;
@@ -289,9 +323,7 @@ export function decideSlotAdmission(task: Task, tasks: Task[], globalLimit: numb
       if (request.id === task.id) {
         if (globalAvailable > 0 && projectAvailable > 0) return '';
         if (inFlightAhead.length > 0) {
-          const labels = inFlightAhead.map(candidate => candidate.number
-            ? `${candidate.repository && candidate.repository !== task.repository ? `${candidate.repository}#` : "#"}${formatTaskNumber(candidate.number)}` : candidate.id);
-          return inFlightSlotWaitReason(inFlightAhead.length, labels);
+          return inFlightSlotWaitReason(inFlightAhead.length, inFlightAhead.map(candidate => waitLabel(candidate, task)));
         }
         if (globalAvailable <= 0) return `${CAPACITY_WAIT_PREFIX} Waiting behind ${queuedAhead} earlier queued reservations (${occupied.length}/${globalLimit} global slots occupied)`;
         if (projectAvailable <= 0) {
@@ -300,9 +332,9 @@ export function decideSlotAdmission(task: Task, tasks: Task[], globalLimit: numb
           const limit = slotPoolLimit(request, projectLimitFor(request), papercuts), running = runningByProject.get(key) ?? 0;
           const reserved = (occupiedByProject.get(key) ?? 0) - running;
           const occupants = tasks.filter(candidate => occupiesSlot(candidate) && slotPoolKey(candidate, papercuts) === key);
-          const labels = occupants.map(candidate => candidate.number ? `${candidate.repository && candidate.repository !== task.repository ? `${candidate.repository}#` : "#"}${formatTaskNumber(candidate.number)}` : candidate.id).join(', ');
+          const labels = occupants.map(candidate => waitLabel(candidate, task)).join(', ');
           const counts = ` (${running}/${limit} occupied${labels ? `: ${labels}` : ''}${reserved > 0 ? `, ${reserved} reserved by earlier requests` : ''})`;
-          return `${isPapercutTask(request) ? 'Waiting for a project slot… Project papercut task-slot limit reached' : 'Waiting for a project slot… Project concurrent task-slot limit reached'}${counts}`;
+          return `${CAPACITY_WAIT_PREFIX} ${capacityReason(isPapercutTask(request) ? 'papercut' : 'project')}${counts}`;
         }
         return '';
       }
@@ -337,18 +369,10 @@ export class SlotAdmission {
    */
   async withDispatchPass<T>(pass: () => Promise<T>): Promise<T> {
     if (this.dispatchPassDepth++ === 0) {
-      const dependencies = new Map<string, string>();
-      const integrationReady = new Map<string, boolean>();
-      this.dispatchPassFacts = {
-        integrationReady: task => {
-          if (!integrationReady.has(task.id)) integrationReady.set(task.id, this.resolution.holdsIntegrationTurn(task));
-          return integrationReady.get(task.id)!;
-        },
-        dependencyWait: task => {
-          if (!dependencies.has(task.id)) dependencies.set(task.id, this.store.dependencyWait(task));
-          return dependencies.get(task.id)!;
-        },
-      };
+      this.dispatchPassFacts = memoFacts({
+        integrationReady: task => this.resolution.holdsIntegrationTurn(task),
+        dependencyWait: task => this.store.dependencyWait(task),
+      });
     }
     try { return await pass(); }
     finally { if (--this.dispatchPassDepth === 0) this.dispatchPassFacts = null; }
@@ -359,8 +383,6 @@ export class SlotAdmission {
   }
   /** Read-only board batch; never retained across a revision or used by launch. */
   slotAdmissionReader(tasks: Task[], runs: Run[], includeRecovery = false): (task: Task) => string {
-    const dependencies = new Map<string, string>();
-    const integrationReady = new Map<string, boolean>();
     const runsByTask = new Map<string, Run[]>();
     for (const run of runs) {
       const queue = runsByTask.get(run.taskId);
@@ -371,14 +393,10 @@ export class SlotAdmission {
       tasks, runsByTask, requestFlags: new Map(),
       globalLimit: this.store.getMeta<number>('globalLimit') ?? DEFAULT_GLOBAL_LIMIT,
       projectLimitFor: this.store.projectDispatchLimitResolver(), papercuts: this.store.papercutDispatchPolicy(),
-      integrationReady: task => {
-        if (!integrationReady.has(task.id)) integrationReady.set(task.id, this.resolution.holdsIntegrationTurn(task));
-        return integrationReady.get(task.id)!;
-      },
-      dependencyWait: task => {
-        if (!dependencies.has(task.id)) dependencies.set(task.id, this.store.dependencyWait(task));
-        return dependencies.get(task.id)!;
-      },
+      ...memoFacts({
+        integrationReady: task => this.resolution.holdsIntegrationTurn(task),
+        dependencyWait: task => this.store.dependencyWait(task),
+      }),
     };
     return task => this.resolution.slotAdmissionReason(task, includeRecovery, undefined, view);
   }
@@ -424,12 +442,12 @@ export class SlotAdmission {
       }
       return result === true;
     };
-    const capacity = capacityFor(task, tasks, globalLimit, projectLimitFor(task), papercuts);
+    const capacity = capacityLimitFor(task, tasks, globalLimit, projectLimitFor(task), papercuts);
     let requests: Task[] = [], waiters: Task[] = [];
     if (capacity) {
       const key = slotPoolKey(task, papercuts);
       waiters = tasks.filter(candidate => candidate.id !== task.id &&
-        (capacity.startsWith("Global") || slotPoolKey(candidate, papercuts) === key) &&
+        (capacity === 'global' || slotPoolKey(candidate, papercuts) === key) &&
         isInFlightSlotRequest(candidate) && isRequest(candidate));
     } else {
       requests = view?.requests ?? fairSlotRequestOrder(tasks, isRequest);

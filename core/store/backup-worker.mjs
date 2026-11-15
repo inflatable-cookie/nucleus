@@ -13,6 +13,21 @@ import { createGunzip, createGzip } from 'node:zlib';
 const kinds = { hourly: 24, daily: 14, weekly: 8 };
 const namePattern = /^(\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-\d{3}Z)-([a-f0-9-]+)\.(hourly|daily|weekly)\.sqlite\.gz$/;
 /**
+ * The snapshot a backup file name names, or null when the name is not one: its
+ * period, the stem every tier of that snapshot shares, and the tier. This is the one
+ * reader of the name shape; a listing, the due check and retention all use it.
+ */
+export function snapshotName(name) {
+  const match = namePattern.exec(name);
+  if (!match) return null;
+  return {
+    stem: `${match[1]}-${match[2]}`, kind: match[3],
+    at: match[1].replace(/T(\d\d)-(\d\d)-(\d\d)-(\d{3})Z$/, 'T$1:$2:$3.$4Z'),
+  };
+}
+/** One snapshot's file name for one of its tiers. */
+export const snapshotFileName = (stem, kind) => `${stem}.${kind}.sqlite.gz`;
+/**
  * Spec 028: the durable backup status lives in the data directory beside the store,
  * not in the backup directory. An absent backup volume is exactly the failure it has
  * to report, so it must not be where the report lives (Tom, 2026-10-26, relayed by
@@ -20,14 +35,28 @@ const namePattern = /^(\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-\d{3}Z)-([a-f0-9-]+)\.(hou
  */
 const statusName = 'backup-status.json';
 const statusPath = dataDir => join(dataDir, statusName);
-const loadStatus = dataDir => {
-  try { return JSON.parse(readFileSync(statusPath(dataDir), 'utf8')); }
-  catch { return {}; }
+/**
+ * The status the listing and the board read, and whether the file itself is readable.
+ * An absent file is no status yet; a file that cannot be read or does not hold a status
+ * object is a failure the listing reports, never a healthy one (Spec 028).
+ */
+const readStatusFile = dataDir => {
+  let text;
+  try { text = readFileSync(statusPath(dataDir), 'utf8'); }
+  catch (error) {
+    return { status: {}, error: error?.code === 'ENOENT' ? null : `Backup status could not be read (${error?.code ?? error})` };
+  }
+  try {
+    const status = JSON.parse(text);
+    return status && typeof status === 'object' && !Array.isArray(status)
+      ? { status, error: null } : { status: {}, error: 'Backup status is not a status record' };
+  } catch { return { status: {}, error: 'Backup status is not valid JSON' }; }
 };
+const loadStatus = dataDir => readStatusFile(dataDir).status;
 /** Spec 028: the durable status a listing and the board's snapshot health read. */
 export function readBackupStatus(dataDir) {
-  const status = loadStatus(dataDir);
-  return { localError: status.localError ?? null };
+  const { status, error } = readStatusFile(dataDir);
+  return { localError: status.localError ?? error ?? null };
 }
 /** Record an outage only after the store has successfully admitted its source. */
 export function recordBackupOutage(dataDir, error) {
@@ -141,13 +170,10 @@ export function backupDirState(dir, volumeRoot = volumeRootFor(dir)) {
   catch (error) { return { available: false, error: String(error) }; }
 }
 
-/** A snapshot's file stem: its hourly, daily and weekly names share it (hard links of one file). */
-const snapshotStem = name => name.replace(/\.(?:hourly|daily|weekly)\.sqlite\.gz$/, '');
-const files = dir => existsSync(dir) ? readdirSync(dir).filter(name => namePattern.test(name)).sort().reverse() : [];
+const files = dir => existsSync(dir) ? readdirSync(dir).filter(name => snapshotName(name)).sort().reverse() : [];
 const entries = dir => files(dir).map(name => {
-  const match = name.match(namePattern);
-  return { name, kind: match[3], at: match[1].replace(/T(\d\d)-(\d\d)-(\d\d)-(\d{3})Z$/, 'T$1:$2:$3.$4Z'),
-    size: statSync(join(dir, name)).size, verified: true };
+  const snapshot = snapshotName(name);
+  return { name, kind: snapshot.kind, at: snapshot.at, size: statSync(join(dir, name)).size, verified: true };
 });
 const rotate = (dir, allowed) => {
   for (const kind of allowed) {
@@ -156,14 +182,13 @@ const rotate = (dir, allowed) => {
 };
 /** Spec 028: the verified snapshots in the one backup directory, and why the last one failed. */
 export function listBackups(dir, dataDir = dirname(dir)) {
-  const status = readBackupStatus(dataDir);
+  const { status, error } = readStatusFile(dataDir);
   const state = backupDirState(dir);
   // Manual snapshots are recorded by stem in the status file beside the store.
-  const recorded = loadStatus(dataDir).manual;
-  const manual = new Set(Array.isArray(recorded) ? recorded : []);
-  const snapshots = state.available ? entries(dir).map(entry => manual.has(snapshotStem(entry.name)) ? { ...entry, manual: true } : entry) : [];
+  const manual = new Set(Array.isArray(status.manual) ? status.manual : []);
+  const snapshots = state.available ? entries(dir).map(entry => manual.has(snapshotName(entry.name).stem) ? { ...entry, manual: true } : entry) : [];
   snapshots.sort((a, b) => b.at.localeCompare(a.at));
-  return { snapshots, localError: state.error ?? status.localError, dir, retention: { ...kinds } };
+  return { snapshots, localError: state.error ?? status.localError ?? error ?? null, dir, retention: { ...kinds } };
 }
 const key = at => at.slice(0, 10);
 const week = at => {
@@ -172,6 +197,19 @@ const week = at => {
   const year = date.getUTCFullYear();
   const start = new Date(Date.UTC(year, 0, 1));
   return `${year}-${Math.ceil((((date - start) / 86400000) + 1) / 7)}`;
+};
+/** The stem a new snapshot's hourly, daily and weekly file names share. */
+const stemFor = at => `${at.replace(/:/g, '-').replace('.', '-')}-${randomUUID()}`;
+/**
+ * The daily and weekly tier exist once per period, so a new snapshot links its verified
+ * hourly file only for the periods not already recorded.
+ */
+const linkPeriods = (dir, stem, hourly, at) => {
+  const existing = entries(dir);
+  for (const [kind, samePeriod] of [['daily', entry => key(entry.at) === key(at)], ['weekly', entry => week(entry.at) === week(at)]]) {
+    if (!existing.some(entry => entry.kind === kind && samePeriod(entry)))
+      linkAtomically(hourly, join(dir, snapshotFileName(stem, kind)));
+  }
 };
 // A daily or weekly snapshot is a hard link to its verified hourly file: identical
 // bytes and durability with no second write (Tom, 2026-10-20, to cut writes). A
@@ -192,12 +230,6 @@ const clearInterruptedFiles = dir => {
 };
 /** One bounded chunk in flight, whatever the store's size (Spec 028: never the whole file in memory). */
 const streamChunk = 256 * 1024;
-// A stage that fails as soon as data reaches it: the stream-failure seam for tests, in
-// the same spirit as `options.failIntegrity`, so a full disk, a bad read or a broken
-// compressor can be proved without one.
-const failingStage = (message, code) => new Transform({
-  transform(_chunk, _encoding, callback) { callback(Object.assign(new Error(message), { code })); },
-});
 /**
  * Read a compressed snapshot back through a streaming decompressor and require the
  * digest of the bytes that were verified before compression. This is how a published
@@ -222,28 +254,27 @@ export async function verifySnapshot(compressed, expectedDigest) {
  * compressor, a full disk or an interrupted write leaves no restore point (Spec 028).
  */
 async function compressSnapshot(raw, compressed, options) {
-  const fault = options.fault ?? null;
   const rawDigest = createHash('sha256');
   const digesting = new Transform({ transform(chunk, _encoding, callback) { rawDigest.update(chunk); callback(null, chunk); } });
-  // A valid gzip of other bytes is the "bad snapshot" the round-trip check has to catch.
-  const corrupting = new Transform({ transform(chunk, _encoding, callback) { callback(null, Buffer.alloc(chunk.length, 0)); } });
-  const stages = [
-    createReadStream(raw, { highWaterMark: streamChunk }),
-    fault === 'read' ? failingStage('injected snapshot read failure', 'EIO') : digesting,
-  ];
-  if (fault === 'mismatch') stages.push(corrupting);
-  stages.push(fault === 'compress' ? failingStage('injected compressor failure', 'EIO') : createGzip());
-  // A full disk fails the write stage, so the injected error lands where ENOSPC would.
-  stages.push(fault === 'diskFull' ? failingStage('injected disk full', 'ENOSPC') : createWriteStream(compressed, { flags: 'wx', mode: 0o600 }));
+  // Test seam: one stage after the digest and before the compressor, so a test can prove
+  // that a pipeline which fails or corrupts bytes publishes nothing. Product callers never
+  // set it; the faults and their messages belong to the test that proves them.
+  const stages = [createReadStream(raw, { highWaterMark: streamChunk }), digesting];
+  if (options.faultStage) stages.push(options.faultStage);
+  stages.push(createGzip());
+  stages.push(createWriteStream(compressed, { flags: 'wx', mode: 0o600 }));
   await pipeline(...stages);
   return verifySnapshot(compressed, rawDigest.digest('hex'));
 }
+/** The admitted source no longer names the file a staged snapshot was taken from. */
+const SOURCE_CHANGED = 'BACKUP_SOURCE_CHANGED';
+const sourceChanged = () => Object.assign(new Error('Database changed during admission'), { code: SOURCE_CHANGED });
 /** Publish a verified private snapshot only after rechecking its admitted source. */
 async function publishStagedBackup(dbPath, dir, at, options, dataDir, verifySource) {
-  const stem = `${at.replace(/:/g, '-').replace('.', '-')}-${randomUUID()}`;
+  const stem = stemFor(at);
   const privateCompressed = join(dirname(dbPath), `.${stem}.sqlite.gz.tmp`);
   const managedCompressed = join(dir, `.${stem}.sqlite.gz.tmp`);
-  const hourly = join(dir, `${stem}.hourly.sqlite.gz`);
+  const hourly = join(dir, snapshotFileName(stem, 'hourly'));
   let prepared = false;
   try {
     const snapshot = new DatabaseSync(dbPath, { readOnly: true });
@@ -261,17 +292,14 @@ async function publishStagedBackup(dbPath, dir, at, options, dataDir, verifySour
     await verifySnapshot(managedCompressed, expected);
     verifySource();
     renameSync(managedCompressed, hourly);
-    const existing = entries(dir);
-    for (const [kind, samePeriod] of [['daily', entry => key(entry.at) === key(at)], ['weekly', entry => week(entry.at) === week(at)]]) {
-      if (!existing.some(entry => entry.kind === kind && samePeriod(entry))) linkAtomically(hourly, join(dir, `${stem}.${kind}.sqlite.gz`));
-    }
+    linkPeriods(dir, stem, hourly, at);
     // Startup may still reject a replaced source after this worker returns.
     // Leave existing status, retention and interrupted files to a normal backup.
     return listBackups(dir, dataDir);
   } catch (error) {
     // A failed source identity check must not create or update managed status.
     if (prepared) { rmSync(hourly, { force: true }); rmSync(managedCompressed, { force: true }); }
-    if (error?.message !== 'Database changed during admission') verifySource();
+    if (error?.code !== SOURCE_CHANGED) verifySource();
     throw error;
   } finally { rmSync(privateCompressed, { force: true }); }
 }
@@ -286,7 +314,7 @@ export async function createBackup(dbPath, dir = backupDirForDataDir(dirname(dbP
       const held = fstatSync(admitted.fd), current = statSync(admitted.path);
       if (held.dev === current.dev && held.ino === current.ino) return;
     } catch { /* missing or replaced source */ }
-    throw new Error('Database changed during admission');
+    throw sourceChanged();
   };
   verifySource();
   const dataDir = dirname(admitted ? admitted.path : dbPath);
@@ -309,9 +337,9 @@ export async function createBackup(dbPath, dir = backupDirForDataDir(dirname(dbP
     throw error;
   }
   clearInterruptedFiles(dir);
-  const stem = `${at.replace(/:/g, '-').replace('.', '-')}-${randomUUID()}`;
+  const stem = stemFor(at);
   const raw = join(dir, `.${stem}.sqlite`);
-  const hourly = join(dir, `${stem}.hourly.sqlite.gz`);
+  const hourly = join(dir, snapshotFileName(stem, 'hourly'));
   const compressed = join(dir, `.${stem}.sqlite.gz.tmp`);
   try {
     const source = new DatabaseSync(dbPath, { readOnly: true });
@@ -323,14 +351,11 @@ export async function createBackup(dbPath, dir = backupDirForDataDir(dirname(dbP
     } finally { verify.close(); }
     await compressSnapshot(raw, compressed, options);
     renameSync(compressed, hourly);
-    const existing = entries(dir);
-    for (const [kind, samePeriod] of [['daily', entry => key(entry.at) === key(at)], ['weekly', entry => week(entry.at) === week(at)]]) {
-      if (!existing.some(entry => entry.kind === kind && samePeriod(entry))) linkAtomically(hourly, join(dir, `${stem}.${kind}.sqlite.gz`));
-    }
+    linkPeriods(dir, stem, hourly, at);
     status.localError = null;
     rotate(dir, ['hourly', 'daily', 'weekly']);
     // The manual record keeps only stems that are still on disk, so it stays bounded by retention.
-    const kept = new Set(files(dir).map(snapshotStem));
+    const kept = new Set(files(dir).map(name => snapshotName(name).stem));
     const manual = (Array.isArray(status.manual) ? status.manual : []).filter(item => kept.has(item));
     if (options.origin === 'manual' && kept.has(stem)) manual.push(stem);
     if (manual.length) status.manual = manual; else delete status.manual;
