@@ -1,1 +1,1 @@
-Telemetry snapshots, task reports, Git checks and transport failures now share smaller, explicit owners. Task summaries retain repository identity when two repositories use the same path.
+Telemetry snapshots, task reports, Git checks and transport failures now share smaller, explicit owners. Task summaries retain repository identity when two repositories use the same path. Typed service request errors keep the name used by roll recovery to classify draining, unavailable and elapsed timeouts.

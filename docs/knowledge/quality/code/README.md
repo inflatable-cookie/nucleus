@@ -127,3 +127,5 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
   records and boundary coverage are sound, while historical stop text, waiting references and
   escalation holders still need compatibility fallbacks. Other resulting modules score 7 or more;
   their five-part sums, reasons and PR-head evidence are in the updated N2, N3, N4 and N6 rows.
+  The shared service client names its typed errors so the transport classifier preserves roll recovery
+  for draining, unavailable and elapsed timeout responses; its N6 row is re-rated as well.
