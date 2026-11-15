@@ -14,7 +14,7 @@ test('recovery replay reads the current merge owner and returns its exact promis
   let finish!: (task: Task) => void;
   const pending = new Promise<Task>(resolve => { finish = resolve; });
   resolution.hookReplay.replayHeldAttention = function (current) {
-    assert.equal(this, resolution.mergePhase);
+    assert.equal(this, resolution.hookReplay);
     assert.equal(current, task);
     calls++;
     return pending;
