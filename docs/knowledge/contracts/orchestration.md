@@ -153,15 +153,20 @@ and method ports, and owns host scope, stop state and compatibility delegates.
 including prerequisite waits yielding to live work. Prerequisite release batches
 live in `core/scheduling/prerequisites.ts`; settings and planner migration live
 in planning, owner-control admission in verbs, retention hooks in hooks and
-stop classification in recovery. Phase owners receive only their named ports;
-synchronous delegates add no promise turn.
+stop classification in recovery. Phase owners receive only their named ports
+through `core/port-context.ts`, the one live port context; synchronous delegates
+add no promise turn.
 
 **Resolution** (`core/resolution.ts`). Constructs the phase owners and supplies
-named live ports, compatibility delegates and the retry-witness adapter. Ordered
-advancement lives in `core/scheduling/lifecycle.ts`: its gates, re-reads after
-awaits, run reservation and failure settlement retain their original order.
-Review continuation proof belongs to review; orphan-run settlement belongs to
-recovery; planner presence and stale-answer delivery belong to questions.
+named live ports through the same `core/port-context.ts` context, and the
+retry-witness adapter. Ordered advancement lives in
+`core/scheduling/lifecycle.ts`: its gates, re-reads after awaits, run reservation
+and failure settlement retain their original order. Review continuation proof
+belongs to review; orphan-run settlement belongs to recovery; planner presence
+and stale-answer delivery belong to questions. The host questions both roots ask
+are one contract with one ambient set (`core/host/host-ports.ts`); the engine
+wires the set from its host registry, and the task-owner host rule both use lives
+there.
 
 `core/resolution-adapter.ts` owns the retry-witness Proxy, preserving synchronous
 returns and reading adapter methods on access. Resolution supplies the error-source

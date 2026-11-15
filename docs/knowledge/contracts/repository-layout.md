@@ -33,7 +33,7 @@ surface. The old `server/` and `host/` source roots disappear after migration.
 | `shared/rpc/` | Method contracts grouped by domain. | Neutral |
 | `shared/service/` | Shared-safe socket protocol, clients and discovery primitives; no process owner. | Neutral |
 | `core/` | Engine and resolution construction shells and domain composition. | Neutral |
-| `core/host/` | Adapter interface, registration interface, host facade, registry and host admission. | Neutral |
+| `core/host/` | Adapter interface, registration interface, host facade, registry, host admission and the host question contract. | Neutral |
 | `core/store/` | Store, schema, projections, persistence seams, compaction and backups. | Neutral |
 | `core/dispatch/` | Queue ordering, capacity, routing, worker launch and run-launch stages. | Neutral |
 | `core/intake/` | Authenticated reports, result application, callback policy and run settlement. | Neutral |
@@ -323,9 +323,11 @@ task decision rules live at the core root.
 `core/scheduling/` now owns task quanta, ordered resolution advancement, prerequisite
 release batches, lane scheduling, task wakes and the reconciliation sweep. Engine
 and resolution live at the core root as construction and compatibility shells;
-phase calls use named live ports so adapter replacements and method overrides
-still apply. Terminal archive orchestration lives in `core/closeout/workspace-lifecycle.ts`,
-host policy wiring in `core/host/`, and the request ledger in `core/runtime/`.
+phase calls use named live ports through the one `core/port-context.ts` context,
+so adapter replacements and method overrides still apply. Terminal archive
+orchestration lives in `core/closeout/workspace-lifecycle.ts`,
+host policy wiring and the host question contract (`core/host/host-ports.ts`) in
+`core/host/`, and the request ledger in `core/runtime/`.
 The pure bounded retry helper lives in `shared/backoff.ts`. The legacy `server/`
 source root and folder-import exception list are empty; layout and import gates
 keep them empty while installed package aliases stay unchanged.

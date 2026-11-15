@@ -10,7 +10,7 @@ import { Engine } from '../core/engine';
 import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
 import { taskControlOperation } from '../core/verbs/task-control-key';
 import { Reports } from '../core/intake/report';
-import { ACCEPTED_PR_RECONCILIATION_REASON, EXTERNAL_MERGE_CHECK_RECOVERED_REASON, EXTERNAL_MERGE_CHECK_REASON_PREFIX, ProvenPreSendRefusalError } from '../core/resolution';
+import { ACCEPTED_PR_RECONCILIATION_REASON, EXTERNAL_MERGE_CHECK_RECOVERED_REASON, EXTERNAL_MERGE_CHECK_REASON_PREFIX, ProvenPreSendRefusalError } from '../core/recovery/task-reasons';
 import { incidentKey } from '../core/recovery/incident';
 import { reviewAuthorizationRequired, reviewCheckpointPathFor, REVIEW_AUTHORIZATION_REQUIRED, REVIEW_BUDGET_EXHAUSTED, writeReviewCheckpoint } from '../core/review/review-continuation';
 import { briefDigest } from '../core/planning/brief';

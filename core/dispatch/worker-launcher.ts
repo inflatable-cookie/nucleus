@@ -6,7 +6,7 @@ import { briefLaneDocumentReferences } from "../planning/brief-lane-documents";
 import { CheckoutUnavailableError } from "../workspaces/checkout-volume";
 import { dispatchBlocked, DISPATCH_HELD_REASON } from "./capacity";
 import type { Engine } from "../engine";
-import { isPiSettingsLockFailure, isRateLimitError, rateLimitCooldownData, transientProviderRetryAt } from "../recovery/exhaustion";
+import { classifyWorkerLaunchFailure, rateLimitCooldownData, transientProviderRetryAt } from "../recovery/exhaustion";
 import { workerPrompt } from "./prompts";
 import { runTicketPath } from "./agent-creation";
 import { ABSENT_WORKER_REASON, PRE_AGENT_LAUNCH_FAILURE_REASON, PROFILE_CATALOG_PENDING_REASON, ProvenPreSendRefusalError } from "../recovery/task-reasons";
@@ -23,6 +23,12 @@ export class WorkerLauncher {
   get store() { return this.engine.store; }
   get adapter() { return this.engine.adapter; }
   get resolution() { return this.engine.resolution; }
+  private refuseExcludedWorker(task: Task) {
+    if (task.agentIntent || task.agentId || task.runId || !task.profile || !workerProfileIsExcluded(task, task.profile.id)) return false;
+    const reason = `Selected worker profile ${task.profile.id} is excluded; Nucleus will reselect before worker creation`;
+    this.store.update(task.id, { phase: "queued", profile: null, profileGroup: null, failoverReason: "", reason }, "excluded_worker_dispatch_refused", reason);
+    return true;
+  }
   private readonly workerCreations = new Map<string, Promise<void>>();
   async launchAgent(task: Task) {
     const existing = this.workerCreations.get(task.id);
@@ -51,11 +57,7 @@ export class WorkerLauncher {
     task=structuredClone(this.store.task(task.id));
     if (!task.directory || !task.workspaceId || !task.profile) return;
     if(dispatchBlocked(task)){this.store.update(task.id,{reason:DISPATCH_HELD_REASON});return;}
-    if(!task.agentIntent&&!task.agentId&&!task.runId&&task.profile&&workerProfileIsExcluded(task,task.profile.id)){
-      const reason=`Selected worker profile ${task.profile.id} is excluded; Nucleus will reselect before worker creation`;
-      this.store.update(task.id,{phase:"queued",profile:null,profileGroup:null,failoverReason:"",reason},"excluded_worker_dispatch_refused",reason);
-      return;
-    }
+    if (this.refuseExcludedWorker(task)) return;
     for (const old of task.retiredWorkers) {
       const state = await this.engine.host.observe(old.agentId);
       if (state.workspaceId !== task.workspaceId || !agentSettled(state)) throw new Error("Previous worker has not released the continuation workspace");
@@ -82,11 +84,7 @@ export class WorkerLauncher {
       // overwriting task.runId or issuing a second credential and agent. The
       // context checks fail closed when the task was replaced under this
       // snapshot (a new workspace, route or retired-worker set).
-      if (!current.agentIntent&&!current.agentId&&!current.runId&&current.profile&&workerProfileIsExcluded(current,current.profile.id)){
-        const reason=`Selected worker profile ${current.profile.id} is excluded; Nucleus will reselect before worker creation`;
-        this.store.update(current.id,{phase:"queued",profile:null,profileGroup:null,failoverReason:"",reason},"excluded_worker_dispatch_refused",reason);
-        return false;
-      }
+      if (this.refuseExcludedWorker(current)) return false;
       if(dispatchBlocked(current)){this.store.update(current.id,{reason:DISPATCH_HELD_REASON});return false;}
       if (startsNoRuns(this.store, this.engine.stopped)) return false;
       const restartingRun=Boolean(current.restartRunId&&current.runId===current.restartRunId&&!current.agentId&&!current.agentIntent);
@@ -158,13 +156,14 @@ export class WorkerLauncher {
       this.resolution.ensureIncident(this.store.task(task.id), null, ABSENT_WORKER_REASON, 'exact_lookup');
       const detail=error instanceof Error?error.message:String(error);
       const current=this.store.task(task.id);
+      const failure = classifyWorkerLaunchFailure(detail);
       // Task 646: a 429 at creation paces the provider group (short cool-down
       // in capacity state so new launches prefer other profiles) and requeues
       // this task instead of parking it: a burst of rate-limited launches must
       // spread, not fill the failed list.
-      if (isRateLimitError(detail) && current.profileGroup) {
-        const row = this.store.db.prepare('SELECT data FROM availability WHERE group_id=?').get(current.profileGroup) as { data: string } | undefined;
-        const cooldown = rateLimitCooldownData(row?.data, detail, current.profileGroup);
+      if (failure.kind === 'rate_limit' && current.profileGroup) {
+        const availability = this.store.availability().find(row => row.group === current.profileGroup);
+        const cooldown = rateLimitCooldownData(availability, detail, current.profileGroup);
         this.store.transaction(() => {
           this.store.setAvailability(current.profileGroup!, cooldown);
           if (current.runId) this.store.deleteCredential(current.runId);
@@ -175,7 +174,7 @@ export class WorkerLauncher {
         return;
       }
       const retryAlreadyUsed=this.store.events(task.id).some(event=>event.kind==='absent_worker_retry');
-      if(isPiSettingsLockFailure(detail)&&!retryAlreadyUsed&&current.agentIntent&&!current.agentId&&current.runId){
+      if(failure.kind === 'settings_lock'&&!retryAlreadyUsed&&current.agentIntent&&!current.agentId&&current.runId){
         const retry={runId:current.runId,resumes:0,status:'waiting' as const,error:detail.slice(0,2000),retryAt:transientProviderRetryAt(detail,0),messageId:null,resumedAt:null,observedUpdatedAt:null,sawProgress:false};
         this.store.update(task.id,{phase:'dispatching',reason:PRE_AGENT_LAUNCH_FAILURE_REASON,transientProviderRetry:retry},'transient_provider_retry_scheduled',`worker launch: one creation retry at ${retry.retryAt}; ${detail.slice(0,1200)}`);
         return;

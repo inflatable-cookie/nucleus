@@ -1,3 +1,11 @@
+/** GitHub returned a definite HTTP refusal for a formal-review request. */
+export class FormalReviewHttpError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(`HTTP ${status}: ${message}`);
+    this.name = 'FormalReviewHttpError';
+  }
+}
+
 /** Machine JSON for formal reviews. gh sanitizes JSON response strings for a
  * terminal, including literal Unicode escapes; findings identity needs the
  * original bytes. No response text is printed and no failed request is retried.
@@ -43,7 +51,7 @@ export async function formalReviewHttp(endpoint: string, args: string[], token: 
     if (!response.ok) {
       let message = response.statusText;
       try { const value = JSON.parse(text); if (typeof value.message === 'string') message = value.message; } catch {}
-      throw Error(`HTTP ${response.status}: ${message.slice(0, 300)}`);
+      throw new FormalReviewHttpError(response.status, message.slice(0, 300));
     }
     const value: unknown = JSON.parse(text);
     return { response, value };

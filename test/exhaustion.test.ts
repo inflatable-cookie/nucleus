@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {isQuotaExhaustion,isRateLimitError,isTransientProviderError,rateLimitCooldownData,rateLimitGroupCooldownAt,transientProviderRetryAt} from '../core/recovery/exhaustion';
+import {classifyWorkerLaunchFailure,isQuotaExhaustion,isRateLimitError,isTransientProviderError,rateLimitCooldownData,rateLimitGroupCooldownAt,transientProviderRetryAt} from '../core/recovery/exhaustion';
 test('quota classification requires explicit exhaustion, not generic throttling or task text',()=>{
  for(const message of ['insufficient_quota','usage_limit_reached','Weekly usage limit exceeded','You have reached your weekly usage limit','Monthly quota exhausted','API error (status 402 Payment Required): Grok Build usage balance exhausted','opencode-go API error (429): {"type":"server_error","message":"Upstream request failed: Account budget exceeded"}','Upgrade your plan to continue'])assert.equal(isQuotaExhaustion(message),true,message);
  for(const message of ['HTTP 429 Too Many Requests','ECONNRESET','Model unavailable','rate limit exceeded','Tests failed','context window exceeded','Time budget exceeded','error budget exceeded','Token budget exceeded for this turn'])assert.equal(isQuotaExhaustion(message),false,message);
@@ -46,6 +46,12 @@ test('rate-limit pacing honors provider timing, else a short group cool-down',()
  assert.equal(isRateLimitError('API error (status 503 Service Unavailable)'),false);
  assert.equal(rateLimitGroupCooldownAt('HTTP 429; retry-after: 45',at),'2026-10-02T12:00:45.000Z');
  assert.equal(rateLimitGroupCooldownAt('429: {"code":"1302","message":"Rate limit reached"}',at),'2026-10-02T12:05:00.000Z');
+});
+
+test('worker launch failures decode to one recovery category',()=>{
+ assert.deepEqual(classifyWorkerLaunchFailure('HTTP 429 Too Many Requests'),{kind:'rate_limit'});
+ assert.deepEqual(classifyWorkerLaunchFailure('Invalid settings file ~/.pi/agent/settings.json: Lock file is already being held'),{kind:'settings_lock'});
+ assert.deepEqual(classifyWorkerLaunchFailure('Agent creation failed'),{kind:'other'});
 });
 
 test('a later 429 without Retry-After never shortens a recorded provider deadline',()=>{

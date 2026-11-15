@@ -18,7 +18,7 @@ import {
   taskControlInputSchema,
   taskOwner,
 } from "../shared/contracts";
-import { originRecipient } from "../core/resolution";
+import { originRecipient } from '../core/questions/origin';
 import { queueOperationSchema } from "../shared/operations";
 import type { Adapter } from "../core/host";
 import type { ResolutionAdapter } from "../core/resolution";
