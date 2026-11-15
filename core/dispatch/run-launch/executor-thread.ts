@@ -3,7 +3,7 @@ import { type Run, type Task } from '../../../shared/contracts';
 import type { HostObservation } from '../../../shared/host';
 import { proofExecutor } from '../../recovery/task-reasons';
 import { decideWorkerReplacement, isWorkerRouteApproved, retainedWorkerFailureCause } from '../../recovery/worker-replacement';
-import { modelKey } from '../routing';
+import { modelKey } from '../../../shared/authors';
 import { groupForProfile, type LaunchOptions, type ThreadBinding } from './thread-binding';
 import { executorThreadDecision } from './thread-decisions';
 

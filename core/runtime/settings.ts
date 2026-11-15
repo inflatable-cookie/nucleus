@@ -11,7 +11,7 @@ import type { Engine } from "../engine";
 import type { UsageLevel, DemandRoleOffsets, PoolEntry } from "../../shared/contracts";
 import { capacitySchema, projectDispatchLimitSchema } from "../../shared/contracts";
 import type { Decisions } from '../planning/decisions';
-import { applyRoutingGrant } from "../dispatch/routing-grants";
+import { applyRoutingGrant } from "../dispatch/routing-signoff";
 import type { CapacityChangeJournal } from '../dispatch/capacity-changes';
 import { capacityWriteRefusalMessage, capacityWriteSurface } from '../../shared/capacity-authority';
 /** Meta key prefix of the stored host catalog, one per host and directory (nucleus#970). */

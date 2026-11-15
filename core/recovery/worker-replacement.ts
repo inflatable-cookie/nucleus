@@ -20,7 +20,7 @@ import { requestOnly, honouredRequest } from "../../shared/pool";
 import { WORKER_REPLACEMENT_CEILING } from "../../shared/contracts";
 import type { PoolEntry, Task, UsageLevel } from "../../shared/contracts";
 import { isQuotaExhaustion } from "./exhaustion";
-import { modelKey } from "../dispatch/routing";
+import { modelKey } from "../../shared/authors";
 
 /** Why the retained worker cannot continue. */
 export type WorkerReplacementFailure =

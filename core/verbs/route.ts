@@ -9,7 +9,7 @@ import { requestOnly, groupIsUnavailable, honouredWorkerThinking } from "../../s
 import type { Engine } from "../engine";
 import { collectOwnerVerbFacts, retainedWorkerDeliveryRefusal, reviewerSharesAuthorModel, type RouteRole } from "./owner-verbs";
 import { independentReviewRoutingConflict, reviewerFiltersWorker, validateNamedProfile, workerReviewerRouteRefusal, type RoutingPreflightInput } from "../dispatch/routing";
-import { coveringGrant, grantSignoff } from "../dispatch/routing-grants";
+import { coveringGrant, grantSignoff } from "../dispatch/routing-signoff";
 import { OPERATOR_BOARD, boardSignoff, priorNonGrantSignoff, withdrawOpen } from "../dispatch/routing-signoff";
 import { digest, now } from "../store/store";
 import { OPERATOR_WORKER_REMAP_REASON, PROFILE_CATALOG_LOADING_REFUSAL, isAcceptedReview } from "../recovery/task-reasons";
