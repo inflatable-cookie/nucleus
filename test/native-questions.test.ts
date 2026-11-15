@@ -126,6 +126,19 @@ test('web question projections keep equal native IDs on separate hosts', async (
   stop(); uiA.update(React.createElement('View')); uiB.update(React.createElement('View')); store.close();
 });
 
+test('a failed web question refresh keeps the last known request; a successful empty read clears it', async () => {
+  const { refreshWebQuestions, updateWebQuestions, webQuestionsForAgent } = await import('../client/native-questions');
+  const id = 'host:worker-refresh-boundary';
+  const previous = [{ id: 'request-1', questions: [{ header: 'Q', question: 'Still open?', options: [] }] }];
+  updateWebQuestions(id, previous);
+  const error = new Error('service unavailable');
+  const failed = await refreshWebQuestions(id, async () => { throw error; });
+  assert.deepEqual(failed, { ok: false, error });
+  assert.deepEqual(webQuestionsForAgent(id), previous, 'unknown after a failed read stays distinct from no questions');
+  assert.deepEqual(await refreshWebQuestions(id, async () => []), { ok: true });
+  assert.deepEqual(webQuestionsForAgent(id), [], 'only a successful empty read clears the request');
+});
+
 test('native answer elsewhere clears the pill on refresh', async () => {
   const { registerNativeQuestionPills, nativeQuestions } = await import('../client/native-questions');
   let pending: unknown[] = [request], registered = false, removed = false;

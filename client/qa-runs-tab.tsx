@@ -8,6 +8,8 @@ import { formatTelemetryDuration } from "../shared/telemetry";
 import { scopeContains } from "../shared/project-scope";
 import { taskNumberLabel, type HostRunAccountingList, type HostRunAccountingListEntry, type HostRunRecord, type Project, type ProjectQaRun, type QaFence, type QaInventoryItem, type TaskSummary } from "../shared/contracts";
 import { QaFenceNotice } from "./qa-fence-notice";
+import { settledHostRunHoldsCapacity } from "../shared/host-run-capacity";
+import { parseProjectValidationCaller } from "../shared/project-validation-caller";
 
 type RunKind = "Milestone QA" | "Task validation" | "Client run";
 type QaRunRow = {
@@ -56,16 +58,7 @@ export function liveHostRun(run: HostRunRecord, accounting?: RunAccounting): boo
   return !accounting?.retired.has(run.id);
 }
 
-const hostRunHoldsCapacity = (run: HostRunRecord) => {
-  const holdsContainer = run.containers.some(container => container.removed !== true);
-  const holdsEscapedDescendants = Boolean(run.settlement?.result?.escapedDescendants.length && !run.escapedDescendantsProvenDeadAt);
-  return !run.capacityReleasedAt && (holdsContainer || holdsEscapedDescendants);
-};
-
-function validationIdentity(caller: string): { taskId: string; commit: string } | null {
-  const match = /^queue:validation:(.+):([a-f0-9]{40})$/.exec(caller);
-  return match ? { taskId: match[1], commit: match[2] } : null;
-}
+const hostRunHoldsCapacity = settledHostRunHoldsCapacity;
 
 function projectForRun(projects: Project[], run: HostRunRecord): Project | undefined {
   return projects.find(project => project.repositories.some(repository =>
@@ -78,14 +71,14 @@ function rowsForRuns(runs: HostRunRecord[] = [], qaRuns: ProjectQaRun[] = [], pr
   const qaById = new Map(qaRuns.map(run => [run.id, run] as const));
   return runs.map(run => {
     const qa = qaById.get(run.id);
-    const validation = validationIdentity(run.caller);
-    const kind: RunKind = run.caller.startsWith("queue:milestone:") ? "Milestone QA"
-      : run.caller.startsWith("queue:validation:") ? "Task validation" : "Client run";
+    const validation = parseProjectValidationCaller(run.caller);
+    const kind: RunKind = qa ? "Milestone QA"
+      : validation ? "Task validation" : "Client run";
     return {
       run, qa, project: projectForRun(projects, run),
       taskId: validation?.taskId,
       task: validation ? tasks.find(task => task.id === validation.taskId) : undefined,
-      kind, commit: qa?.base ?? validation?.commit ?? null,
+      kind, commit: qa?.base ?? validation?.head ?? null,
       retirement: accounting?.retired.get(run.id),
       retirementUnreadable: accounting?.unreadable.has(run.id) ?? false,
     };

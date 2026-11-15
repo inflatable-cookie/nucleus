@@ -23,6 +23,8 @@ import type {
   UsageSubscription,
   UsageWindow,
 } from "../shared/schema/usage";
+import { usageWindowElapsed } from "../shared/usage-projection";
+import { PROVIDER_LABELS } from "../shared/profile-vocabulary";
 import { providerLogoSource } from "./provider-logo-assets";
 
 /*
@@ -225,23 +227,7 @@ export function windowElapsedFraction(
   window: UsageWindow,
   now: number,
 ): number | null {
-  if (!window.resetsAt) return null;
-  const reset = Date.parse(window.resetsAt);
-  const length =
-    window.windowSeconds !== null
-      ? window.windowSeconds * 1000
-      : window.windowStartsAt
-        ? reset - Date.parse(window.windowStartsAt)
-        : NaN;
-  if (
-    !Number.isFinite(reset) ||
-    !Number.isFinite(length) ||
-    length <= 0 ||
-    reset <= now ||
-    reset - length > now
-  )
-    return null;
-  return Math.max(0, Math.min(1, (now - (reset - length)) / length));
+  return usageWindowElapsed(window, now);
 }
 
 /** The binding window of a subscription's reading, when the projection names one. */
@@ -266,7 +252,8 @@ export function dialCaption(subscription: UsageSubscription): string {
 
 /** "Codex", "Claude", "Grok" — the provider's display name. */
 export function providerLabel(provider: string): string {
-  return provider.charAt(0).toUpperCase() + provider.slice(1);
+  return PROVIDER_LABELS[provider as keyof typeof PROVIDER_LABELS]
+    ?? provider.charAt(0).toUpperCase() + provider.slice(1);
 }
 
 /** The icon naming the provider inside the rail's rings. */
