@@ -64,7 +64,8 @@ export function originHostReviewAdapter(
     originAgent: id => context.host.originAgent(id),
     ...(adapter.reviewEntryGithubCommand ? { reviewEntryGithubCommand: adapter.reviewEntryGithubCommand.bind(adapter) } : {}),
     inspectReviewEntry: async (input, taskId) => {
-      const proof = await originReviewProof(context.host, context.withHost, originHostId, reviewInput.submission.originAgentId);
+      // Method-call the port: a class withHost (Engine) reads this.hostContext.
+      const proof = await originReviewProof(context.host, (id, fn) => context.withHost(id, fn), originHostId, reviewInput.submission.originAgentId);
       return adapter.inspectReviewEntry(input, taskId, proof);
     },
   };

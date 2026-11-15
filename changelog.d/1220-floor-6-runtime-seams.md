@@ -6,3 +6,5 @@ health, and origin-thread review-entry wrapping each have an owner under
 names as one-line delegates. Behaviour is unchanged except laneHost reads
 `taskOrNull` instead of throwing and swallowing, inspectReviewEntry origin wrapping
 has one owner, and T3 identity uses `hostKindOf` plus the empty `t3code:` sentinel.
+Origin-proof wrapping method-calls `withHost` so a class owner (Engine) keeps its
+host context.

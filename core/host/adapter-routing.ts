@@ -49,7 +49,8 @@ export function routeHostAdapter(owner: HostAdapterRoutingOwner, fallback: Adapt
           if (originHost === task.hostId) return value.call(selected, input, taskId);
           if (!owner.withHost(originHost, () => owner.hostAvailable(originHost)))
             throw new Error(`Transport not connected: waiting for origin host ${originHost}`);
-          const proof = await originReviewProof(owner.host, owner.withHost, originHost, input.submission.originAgentId);
+          // Method-call the port: a class withHost (Engine) reads this.hostContext.
+          const proof = await originReviewProof(owner.host, (id, fn) => owner.withHost(id, fn), originHost, input.submission.originAgentId);
           return value.call(selected, input, taskId, proof);
         };
       }

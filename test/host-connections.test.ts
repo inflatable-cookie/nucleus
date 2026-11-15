@@ -55,8 +55,8 @@ test('wireEngineHosts refuses an unregistered explicit host and resolves a lone 
   hosts.connect('only-host', 'ws://127.0.0.1/ws', { adapter, admission: new Admission() });
   try {
     wireEngineHosts(engine, {
-      adapter, admission: new Admission(), hostRegistry: hosts, hostSession: null,
-      connected: () => true, settings: { daemonUrl: 'ws://127.0.0.1/ws' }, store,
+      adapter, hostRegistry: hosts, hostSession: null,
+      connected: () => true, store,
     });
     assert.equal(engine.selectIngressHost(), 'only-host');
     assert.throws(() => engine.selectIngressHost('missing'), /not registered/);

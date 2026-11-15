@@ -507,11 +507,9 @@ export class QueueRuntime {
     const runtime = this;
     wireEngineHosts(this.engine, {
       adapter: this.adapter,
-      admission: this.admission,
       hostRegistry: this.hostRegistry,
       get hostSession() { return runtime.hostSession; },
       connected: () => runtime.connected(),
-      settings: this.settings,
       store: this.store,
     });
     this.engine.siblingDataDir = this.dataDir;

@@ -11,7 +11,7 @@ export interface StoreMaintenanceOwner {
   dataDir: string;
   backupDir: string;
   compaction: StoreCompactor;
-  /** Public `backup.now`: due snapshots go through this so prototype mocks still bind. */
+  /** Public `backup.now`: due and verified snapshots go through this so prototype mocks still bind. */
   backupNow(_input?: Record<string, never>, origin?: 'manual' | 'automatic'): Promise<BackupList>;
 }
 
@@ -34,7 +34,7 @@ export class StoreMaintenance {
   clearBoardBackup(): void { this.boardBackup = null; }
 
   async verifiedSnapshot(): Promise<{ name: string; bytes: number }> {
-    const list = await this.backupNow({}, 'automatic');
+    const list = await this.owner.backupNow({}, 'automatic');
     const newest = list.snapshots.filter(snapshot => snapshot.verified)
       .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))[0];
     if (!newest) throw new Error(list.localError ? `the snapshot failed: ${list.localError}` : 'no verified snapshot was written');

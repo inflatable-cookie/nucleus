@@ -51,6 +51,33 @@ test('inspectReviewEntry without a proof fetches origin evidence on the task ori
   assert.equal((proofs[0] as { origin: { id: string } }).origin.id, 'origin');
 });
 
+test('inspectReviewEntry keeps this on a class withHost that reads instance state', async () => {
+  class RoutingOwner implements HostAdapterRoutingOwner {
+    hostContext = { run<T>(_id: string, fn: () => T): T { return fn(); } };
+    activeHostId: string | undefined;
+    constructor(private readonly adapters: Record<string, Adapter>, active?: string) { this.activeHostId = active; }
+    resolveHostAdapter(id: string) { return this.adapters[id]; }
+    store = { task: (id: string) => ({ hostId: 'worker-host', originHostId: id === 'cross' ? 'origin-host' : 'worker-host' }) };
+    withHost<T>(id: string, fn: () => T): T { return this.hostContext.run(id, fn); }
+    hostAvailable(id: string) { return Boolean(this.adapters[id]); }
+    host = {
+      originAgent: async (id: string) => ({ id, workspaceId: 'ws', title: 'Origin', archived: false }),
+      observe: async (id: string) => ({ id, workspaceId: 'ws', status: 'idle', active: false, permissions: false, error: '' }),
+    };
+    hostOnline(id: string) { return Boolean(this.adapters[id]); }
+  }
+  const proofs: unknown[] = [];
+  const worker = {
+    hostId: 'worker-host',
+    inspectReviewEntry: async (_input: ReviewEntryInput, _taskId?: string, proof?: unknown) => { proofs.push(proof); return { directory: '/d', originWorkspaceId: 'ws', busyReason: '' }; },
+  } as unknown as Adapter;
+  const origin = { hostId: 'origin-host' } as unknown as Adapter;
+  const adapter = routeHostAdapter(new RoutingOwner({ 'worker-host': worker, 'origin-host': origin }, 'worker-host'), worker);
+  await (adapter.inspectReviewEntry as NonNullable<Adapter['inspectReviewEntry']>)(
+    { submission: { originAgentId: 'origin' } } as ReviewEntryInput, 'cross');
+  assert.equal((proofs[0] as { origin: { id: string } }).origin.id, 'origin');
+});
+
 test('inspectReviewEntry refuses an unknown origin host by name', async () => {
   const worker = { hostId: 'worker-host', inspectReviewEntry: async () => ({ directory: '/d', originWorkspaceId: 'ws', busyReason: '' }) } as unknown as Adapter;
   const routing = makeOwner({ 'worker-host': worker }, 'worker-host');

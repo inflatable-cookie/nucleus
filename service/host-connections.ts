@@ -35,11 +35,9 @@ export interface HostConnectionOwner {
 /** Engine host-hook ports the runtime wires once at construction. */
 export interface EngineHostWiring {
   adapter: Adapter;
-  admission: Admission;
   hostRegistry: HostRegistry<RegisteredHost>;
   hostSession: HostSession | null;
   connected(): boolean;
-  settings: { daemonUrl: string };
   store: Engine['store'];
 }
 

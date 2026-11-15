@@ -54,3 +54,21 @@ test('originHostReviewAdapter fetches the origin on that host at inspect time', 
   assert.deepEqual(hosts, ['origin-host']);
   assert.equal(inspected.originWorkspaceId, 'origin');
 });
+
+test('originHostReviewAdapter keeps this on a class withHost that reads instance state', async () => {
+  class OriginOwner {
+    hostContext = { run<T>(_id: string, fn: () => T): T { return fn(); } };
+    withHost<T>(id: string, fn: () => T): T { return this.hostContext.run(id, fn); }
+    host = {
+      originAgent: async (id: string) => ({ id, workspaceId: 'ws', title: 'Origin', archived: false }),
+      observe: async (id: string) => ({ id, workspaceId: 'ws', status: 'idle', active: false, permissions: false, error: '' }),
+    };
+  }
+  const adapter = {
+    hostId: 'worker',
+    inspectReviewEntry: async (_input: ReviewEntryInput, _taskId?: string, proof?: { origin: { id: string } }) => ({ directory: '/d', originWorkspaceId: proof?.origin.id ?? '', busyReason: '' }),
+    originAgent: async () => null,
+  } as unknown as Adapter & ReviewEntryAdapter;
+  const inspected = await originHostReviewAdapter(new OriginOwner(), adapter, 'origin-host', input).inspectReviewEntry(input, 'task-1');
+  assert.equal(inspected.originWorkspaceId, 'origin');
+});
