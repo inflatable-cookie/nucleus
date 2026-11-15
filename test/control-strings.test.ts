@@ -651,15 +651,16 @@ const PARSED: ParsedText[] = [
   { site: 'unverified provider refusal', reads: ['stop.detail.startsWith(`Reviewer run ${run.id} provider refusal is unverified`)'], writers: ['`Reviewer run ${run.id} provider refusal is unverified: ${read.gap}`'] },
   { site: 'legacy delegated answerer', re: /^(planner|decider) (.*)$/, sample: 'planner agent-1' },
   { site: 'delegated answerer id', re: /^(?:delegated )?(?:planner|decider)\s+(\S+)$/, sample: 'delegated planner agent-1' },
-  { site: 'decision link', re: /decision (\S+)/, sample: 'q-1: decision d-1; linked', writers: ['decision ${'] },
+  { site: 'decision link', re: /decision ([^;\s]+)/, sample: 'q-1: decision d-1; linked', writers: ['decision ${'] },
   { site: 'decision link, bounded', re: /decision ([^;\s]+)/, sample: 'q-1: decision d-1; linked' },
   { site: 'ladder decision link', re: /decision ([0-9a-f-]{36})/, sample: 'e-1: decision 00000000-0000-4000-8000-000000000000' },
-  { site: 'ask run', re: /\brun ([^\s(]+)/, sample: 'a-1: kind scope; run r-1 (worker); agent x', writers: ['${ask.id}: kind ${ask.kind}; run ${run.id} (${run.role}); agent ${run.agentId ?? \'unknown\'}; question ${digest(ask.question)} (${ask.question.length} chars)'] },
+  // The ask lifecycle is decoded once, so its identity line is read by one regex.
+  { site: 'ask run', re: /\brun (\S+) \(/, sample: 'a-1: kind scope; run r-1 (worker); agent x', writers: ['${ask.id}: kind ${ask.kind}; run ${run.id} (${run.role}); agent ${run.agentId ?? \'unknown\'}; question ${digest(ask.question)} (${ask.question.length} chars)'] },
   { site: 'ask run and agent', re: /run (\S+) \([^)]+\); agent ([^;\s]+)/, sample: 'a-1: kind scope; run r-1 (worker); agent x; question d (1 chars)' },
-  { site: 'ask joined', re: /queue question (\S+)/, sample: 'a-1: queue question q-1', writers: ['${ask.id}: queue question ${joined}', ': queue question ${decision.id}'], reads: ['`${askId}: queue question `', "split('queue question ')"] },
-  { site: 'ask delegated planner', re: /planner (\S+);/, sample: 'a-1: task planner p-1; asked', writers: ["${rung === 'task' ? 'task planner' : 'project planner'} ${agentId}; asked"], reads: ['`${askId}: planner `', '`${askId}: task planner `', '`${askId}: project planner `'] },
-  { site: 'ask delegated reviewer', re: /reviewer (\S+);/, sample: 'a-1: reviewer r-1; consult', writers: ['${ask.id}: reviewer ${reviewer}; consult'], reads: ['`${askId}: reviewer `'] },
-  { site: 'ask delegated decider', reads: ['`${askId}: decider`'], writers: ['decider requested'] },
+  { site: 'ask joined', re: /queue question (\S+)/, sample: 'a-1: queue question q-1', writers: ['${ask.id}: queue question ${joined}', ': queue question ${decision.id}'], reads: ["split('queue question ')"] },
+  { site: 'ask delegated planner', re: /planner (\S+);/, sample: 'a-1: task planner p-1; asked', writers: ["${rung === 'task' ? 'task planner' : 'project planner'} ${agentId}; asked"], reads: ['body.startsWith(" task planner ")', 'body.startsWith(" project planner ")'] },
+  { site: 'ask delegated reviewer', re: /reviewer (\S+);/, sample: 'a-1: reviewer r-1; consult', writers: ['${ask.id}: reviewer ${reviewer}; consult'] },
+  { site: 'ask delegated decider', reads: ['`${fact.id}: decider`'], writers: ['decider requested'] },
   { site: 'ladder cause', re: /cause ([0-9a-f]{64})/, sample: `e-1: cause ${'f'.repeat(64)}; run r-1; question d (1 chars)`, writers: ['${id}: cause ${input.cause}; run ${input.runId ?? \'worker\'}; question ${digest('] },
   { site: 'ladder run', re: /run (\S+?);/, sample: 'e-1: cause x; run r-1; question d (1 chars)' },
   { site: 'ladder ordinary answer', reads: ['`${id}: answered by ordinary `'], writers: ['${escalation.id}: answered by ordinary ${action}: task control moved the task', '${id}: answered by ordinary progress: the task merged or ended first'] },
@@ -729,9 +730,9 @@ for (const row of PARSED) {
  * A move keeps the counts, and a new kind or a new site needs no edit here. A PR
  * that deletes a reader or writer lowers its floor deliberately.
  */
-const EVENT_KINDS = `absent_creation_replaced:2:1 absent_worker_retry:2:1 adopted:1:0 agent_ask:5:4 agent_ask_answered:6:7 agent_ask_decision:2:4 agent_ask_delegated:4:2
-agent_ask_delegation_missed:1:3 agent_ask_delegation_unknown:1:4 agent_ask_joined:3:2 agent_ask_planning_ruling:2:1 agent_ask_resumed:3:2
-agent_ask_reviewer_missed:1:2 agent_ask_stale_answered:1:2 agent_ask_superseded:4:4 agent_created:1:1 agent_intent:1:3 automatic_retry_suppressed:1:1
+const EVENT_KINDS = `absent_creation_replaced:2:1 absent_worker_retry:2:1 adopted:1:0 agent_ask:2:3 agent_ask_answered:2:7 agent_ask_decision:1:3 agent_ask_delegated:1:2
+agent_ask_delegation_missed:1:3 agent_ask_delegation_unknown:1:3 agent_ask_joined:1:1 agent_ask_planning_ruling:1:1 agent_ask_resumed:1:2
+agent_ask_reviewer_missed:1:2 agent_ask_stale_answered:1:2 agent_ask_superseded:3:3 agent_created:1:1 agent_intent:1:3 automatic_retry_suppressed:1:1
 blocked_pr_identity_deferred:1:1 blocked_review_evidence:1:1 blocker_ladder_classified:1:1 callback_reminder:3:10 callback_reminder_extended:2:1
 callback_reminder_skipped:1:1 cancel:1:52 checkpoint_continued:1:1 closed_out:1:5 closeout_base_renewed:0:1
 closeout_recovery_budget:1:1 completion_received:1:4 coordinator_action_refused:1:2 coordinator_rearm:1:1 delegated_answer:5:1 delegated_closed:3:3
@@ -769,18 +770,21 @@ workspace_created:1:3 workspace_creation_auto_replay:1:1 workspace_released:1:2`
 const KIND_TEMPLATES = ['`review_delivery_${status}`'];
 
 const directRead = /\bevent\.kind\s*[!=]==?\s*(['"])([a-z][a-z0-9_]+)\1/g, listRead = /\[([^\]\n]+)\]\.includes\(event\.kind\)/g;
+/** A decoded lifecycle reads its kinds as `switch` cases, which is the same reading fact. */
+const switchRead = /\bcase\s*(['"])([a-z][a-z0-9_]+)\1\s*:/g;
 
 test('census: no pinned event kind lost a reader', () => {
   const reads = new Map<string, number>();
   const read = (kind: string) => reads.set(kind, (reads.get(kind) ?? 0) + 1);
   for (const match of source().matchAll(directRead)) read(match[2]!);
   for (const match of source().matchAll(listRead)) for (const kind of match[1]!.matchAll(/['"]([a-z][a-z0-9_]+)['"]/g)) read(kind[1]!);
+  for (const match of source().matchAll(switchRead)) read(match[2]!);
   const lost = EVENT_KINDS.filter(row => (reads.get(row.kind) ?? 0) < row.reads).map(row => `${row.kind}: ${reads.get(row.kind) ?? 0} of ${row.reads}`);
   assert.deepEqual(lost, [], 'a reader was renamed or removed');
 });
 
 test('census: no pinned event kind lost a writer', () => {
-  const rest = source().replace(directRead, '').replace(listRead, '');
+  const rest = source().replace(directRead, '').replace(listRead, '').replace(switchRead, '');
   const count = (kind: string) => occurrences(rest, `'${kind}'`) + occurrences(rest, `"${kind}"`) + occurrences(rest, `\`${kind}\``);
   const lost = EVENT_KINDS.filter(row => count(row.kind) < row.writes).map(row => `${row.kind}: ${count(row.kind)} of ${row.writes}`);
   assert.deepEqual(lost, [], 'a writer was renamed or removed');

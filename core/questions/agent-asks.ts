@@ -8,6 +8,7 @@ import type { Resolution } from '../resolution';
 import { DelegatedHostUnavailable, type PlannerRung } from './delegation';
 import { digest, type Store } from '../store/store';
 import { taskByReference, projectOfTarget } from './agent-targets';
+import { askLifecycle, askLifecycles } from './agent-ask-events';
 import { normalizeAskTarget, type AskTarget } from '../../shared/agent-verbs.mjs';
 
 /**
@@ -60,7 +61,7 @@ export class AgentAsks {
     const answered = this.resolution.recordedAnswer(task.id, ask.id);
     if (answered) return answered;
     const events = store.eventsAll(task.id);
-    const existing = events.some(event => event.kind === 'agent_ask' && event.detail.startsWith(`${ask.id}:`));
+    const existing = Boolean(askLifecycle(events, ask.id)?.asked);
     const joined = existing ? this.resolution.joinedQuestion(events, ask.id) : this.resolution.recordAndRouteAsk(task, run, ask);
     if (existing && !joined) this.resumeAgentAsk(task, ask);
     return await this.resolution.awaitAgentAsk(task.id, ask.id, joined);
@@ -105,13 +106,11 @@ export class AgentAsks {
     }
   }
   recordedAnswer(taskId: string, askId: string): AgentAskReceipt | null {
-    const event = this.store.eventsAll(taskId).find(event => event.kind === 'agent_ask_answered' && event.detail.startsWith(`${askId}:`));
-    const parsed = event ? parseAgentAskAnswer(event.detail) : null;
-    return parsed ? { status: 'answered', askId, answer: parsed.answer, answeredBy: parsed.who } : null;
+    const answered = askLifecycle(this.store.eventsAll(taskId), askId)?.answered;
+    return answered ? { status: 'answered', askId, answer: answered.answer, answeredBy: answered.who } : null;
   }
   joinedQuestion(events: ReturnType<Store['eventsAll']>, askId: string): string | null {
-    const join = events.find(event => event.kind === 'agent_ask_joined' && event.detail.startsWith(`${askId}: queue question `));
-    return join ? join.detail.slice(`${askId}: queue question `.length).trim() || null : null;
+    return askLifecycle(events, askId)?.joined ?? null;
   }
   /** Record the durable ask intent (the fence), then route once. Returns the joined Queue question, if any. */
   recordAndRouteAsk(task: Task, run: Pick<Run, 'id' | 'role' | 'agentId'>, ask: AgentAskShape): string | null {
@@ -141,40 +140,39 @@ export class AgentAsks {
   }
   resumeAgentAsks(task: Task): void {
     let events = this.store.eventsAll(task.id);
-    for (const unknown of events.filter(item => item.kind === 'agent_ask_delegation_unknown')) {
-      const askId = unknown.detail.split(':', 1)[0]!;
-      if (events.some(item => ['agent_ask_answered', 'agent_ask_superseded'].includes(item.kind) && item.detail.startsWith(`${askId}:`))) continue;
-      const ask = events.find(item => item.kind === 'agent_ask' && item.detail.startsWith(`${askId}:`));
-      const runId = ask?.detail.match(/\brun ([^\s(]+)/)?.[1];
+    for (const ask of [...askLifecycles(events).values()].filter(state => state.delegationUnknown && !state.answered && !state.superseded)) {
+      const runId = ask.runId;
       if (!runId) continue;
       const run = this.store.run(runId);
       const ended = Boolean(run?.completion || run?.released || task.completion?.runId === runId
         || (task.resolution.currentRunId !== runId && task.runId !== runId));
       if (!ended) continue;
       const reason = `The originating run ${runId} ended; the task's current stop no longer matches this delegated question.`;
-      this.store.event(task.id, 'agent_ask_superseded', `${askId}: ${reason}`);
+      this.store.event(task.id, 'agent_ask_superseded', `${ask.id}: ${reason}`);
       events = this.store.eventsAll(task.id);
     }
     for (const event of events.filter(item => item.kind === 'agent_ask_payload')) {
-      try {
-        const ask = JSON.parse(event.detail) as AgentAskShape;
-        if (events.some(item => item.kind === 'agent_ask' && item.detail.startsWith(`${ask.id}:`))) this.resumeAgentAsk(task, ask);
-      } catch { /* An invalid durable payload cannot authorize a send. */ }
+      let ask: AgentAskShape;
+      try { ask = JSON.parse(event.detail) as AgentAskShape; } catch { continue; /* An invalid durable payload cannot authorize a send. */ }
+      if (askLifecycle(events, ask.id)?.asked) this.resumeAgentAsk(task, ask);
     }
   }
   resumeAgentAsk(task: Task, ask: AgentAskShape): void {
     if (this.routingAgentAsks.has(ask.id)) return;
     const events = this.store.eventsAll(task.id);
-    if (events.some(event => event.kind === 'agent_ask_delegation_missed' && event.detail.startsWith(`${ask.id}: no planner or decider classification was produced;`))) return;
+    const state = askLifecycle(events, ask.id);
+    if (state?.noClassification) return;
     const windows = [`ns-agent-ask-reviewer-${ask.id}`, `ns-agent-ask-${ask.id}`, `ns-agent-ask-${ask.id}-project`, `ns-decider-${ask.id}`];
     const recoverable = this.resolution.recoverableDelegation(windows);
     const observing = this.resolution.recoverableDelegation(windows, false);
-    if (events.some(event => (['agent_ask_answered', 'agent_ask_decision', 'agent_ask_joined', 'agent_ask_superseded'].includes(event.kind) || (!observing && event.kind === 'agent_ask_delegation_unknown')) && event.detail.startsWith(`${ask.id}:`))) return;
+    const settled = Boolean(state && (state.answered || state.decisionId || state.joined || state.superseded
+      || (!observing && state.delegationUnknown)));
+    if (settled) return;
     this.routingAgentAsks.add(ask.id);
     // A recorded send without an observed outcome may have landed. Never send it again.
-    const reviewerFinished = events.some(event => ['agent_ask_planning_ruling', 'agent_ask_reviewer_missed'].includes(event.kind) && event.detail.startsWith(`${ask.id}:`));
-    const sent = events.some(event => event.kind === 'agent_ask_delegated' && event.detail.startsWith(`${ask.id}: `)
-      && (!event.detail.startsWith(`${ask.id}: reviewer `) || !reviewerFinished))
+    const reviewerFinished = Boolean(state && (state.planningRuling || state.reviewerMissed));
+    const delegatedNonReviewer = Boolean(state?.planner || state?.deciderStarted);
+    const sent = delegatedNonReviewer || (Boolean(state?.reviewer) && !reviewerFinished)
       || windows.some(id => Boolean(this.resolution.delegatedDelivery(id)));
     const route = sent && !recoverable ? Promise.resolve().then(() => this.store.event(task.id, 'agent_ask_delegation_unknown', `${ask.id}: a previous delegate delivery or answer could not be observed; awaiting an explicit planner or decider classification`)) : this.resolution.routeAgentAsk(task, ask);
     void route.catch(error => {
@@ -184,12 +182,13 @@ export class AgentAsks {
   async routeAgentAsk(task: Task, ask: AgentAskShape): Promise<void> {
     // Worker questions reach the retained reviewer first. Only its explicit
     // planning classification (or no retained reviewer) opens the planner rung.
-    const planningRuling = this.store.eventsAll(task.id).some(event => ['agent_ask_planning_ruling', 'agent_ask_reviewer_missed'].includes(event.kind) && event.detail.startsWith(`${ask.id}:`));
+    const lifecycle = askLifecycle(this.store.eventsAll(task.id), ask.id);
+    const planningRuling = Boolean(lifecycle?.planningRuling || lifecycle?.reviewerMissed);
     if (ask.target === 'reviewer' && !planningRuling) return this.resolution.routeReviewerAsk(task, ask);
     // The worker-supplied kind is only a hint. Every worker question is
     // classified by a planner or decider before any operator decision exists.
-    const reviewerRuling = this.store.eventsAll(task.id).find(event => event.kind === 'agent_ask_planning_ruling' && event.detail.startsWith(`${ask.id}:`));
-    const context = { question: ask.question, choices: ask.choices, context: [...this.resolution.decisionContext(task), ...(reviewerRuling ? [reviewerRuling.detail] : [])] };
+    const reviewerRuling = lifecycle?.planningRulingDetail ?? null;
+    const context = { question: ask.question, choices: ask.choices, context: [...this.resolution.decisionContext(task), ...(reviewerRuling ? [reviewerRuling] : [])] };
     const binaryContext = [ask.headline, ask.details ?? '', ...(ask.choiceDetails ?? []).map(choice => choice.consequence)].join(' ');
     const recordAnswer = (who: string, reply: { answer: string; reason: string }, overtakes?: string[]) => {
       const approved = applyBinaryApproval(ask.question, ask.choices, reply.answer, `${binaryContext} ${reply.reason}`);
@@ -287,7 +286,7 @@ export class AgentAsks {
     return this.resolution.routeAgentAsk(task, { ...ask, target: 'planner' });
   }
   recordAgentAskAnswer(taskId: string, askId: string, who: string, answer: string, reason: string, overtakes: string[] = []): void {
-    if (this.store.eventsAll(taskId).some(event => event.kind === 'agent_ask_superseded' && event.detail.startsWith(`${askId}:`))) {
+    if (askLifecycle(this.store.eventsAll(taskId), askId)?.superseded) {
       this.store.event(taskId, 'agent_ask_stale_answered', `${askId}: answered by ${who}: ${answer}${reason ? ` — ${reason}` : ''}; no effect because the question was superseded`);
       this.resolution.notifyStaleQuestionAnswer(taskId, askId, who);
       return;
@@ -318,22 +317,21 @@ export class AgentAsks {
    */
   notifyAskAnswered(taskId: string, askId: string, answer: string, who: string): void {
     try {
-      const events = this.store.eventsAll(taskId);
-      if (events.some(event => ['agent_ask_resumed', 'agent_ask_resume_intent'].includes(event.kind) && event.detail.startsWith(`${askId}:`))) return;
-      const askEvent = events.find(event => event.kind === 'agent_ask' && event.detail.startsWith(`${askId}:`));
-      const match = askEvent?.detail.match(/run (\S+) \([^)]+\); agent ([^;\s]+)/);
+      const state = askLifecycle(this.store.eventsAll(taskId), askId);
+      if (!state || state.resumed || state.resumeIntent) return;
+      const runId = state.runId;
       const task = this.store.task(taskId);
-      const run = match && this.store.runs(taskId).find(item => item.id === match[1]);
-      const agentId = match?.[2] && match[2] !== 'unknown' ? match[2] : null;
+      const run = runId ? this.store.runs(taskId).find(item => item.id === runId) : undefined;
+      const agentId = state.agentId;
       const hostId = run?.hostId ?? task.hostId;
-      const owned = run ? run.agentId === agentId : task.runId === match?.[1] && task.agentId === agentId;
+      const owned = run ? run.agentId === agentId : task.runId === runId && task.agentId === agentId;
       if (!owned || !agentId || !hostId || (run?.hostId && task.hostId && run.hostId !== task.hostId)) return;
       if (!this.resolution.withHost(hostId, () => this.resolution.originHostAvailable(hostId) && Boolean(this.adapter.notify))) return;
       const text = `Your Nucleus question ${askId} was answered by ${who}: ${answer}. Continue the work with this answer.`;
-      this.store.event(taskId, 'agent_ask_resume_intent', `${askId}: host ${hostId}; agent ${agentId}; run ${match![1]}`);
+      this.store.event(taskId, 'agent_ask_resume_intent', `${askId}: host ${hostId}; agent ${agentId}; run ${runId}`);
       void this.resolution.withHost(hostId, () => this.resolution.host.steerOrNotify(agentId, { messageId: `ns-agent-ask-answered-${askId}`, text: text.slice(0, 4000) }))
         .then(() => {
-          if (!this.stopped() && !this.store.eventsAll(taskId).some(event => event.kind === 'agent_ask_resumed' && event.detail.startsWith(`${askId}:`)))
+          if (!this.stopped() && !askLifecycle(this.store.eventsAll(taskId), askId)?.resumed)
             this.store.event(taskId, 'agent_ask_resumed', `${askId}: resumed ${agentId}; answered by ${who}`);
         })
         .catch(() => { /* delivery is unknown; the intent prevents a resend */ });
@@ -348,43 +346,33 @@ export class AgentAsks {
   resumePendingAskAnswers(taskId?: string): void {
     const tasks = taskId ? [this.store.task(taskId)] : this.store.maintenanceTasks(true).map(candidate => this.store.task(candidate.id));
     for (const task of tasks) {
-      let events = this.store.eventsAll(task.id);
-      for (const ask of events.filter(event => event.kind === 'agent_ask')) {
-        const askId = ask.detail.split(':')[0]!;
-        if (events.some(event => (event.kind === 'agent_ask_answered' || event.kind === 'agent_ask_superseded') && event.detail.startsWith(`${askId}:`))) continue;
-        const join = events.find(event => event.kind === 'agent_ask_joined' && event.detail.startsWith(`${askId}: queue question `));
-        const joined = join?.detail.slice(`${askId}: queue question `.length).trim() || null;
-        if (!joined) continue;
-        const settled = events.find(event =>
+      for (const ask of askLifecycles(this.store.eventsAll(task.id)).values()) {
+        if (ask.answered || ask.superseded || !ask.joined) continue;
+        const joined = ask.joined;
+        const settled = this.store.eventsAll(task.id).find(event =>
           (event.kind === 'operator_question_answered' || event.kind === 'responsible_question_answered')
           && event.detail.startsWith(`${joined}:`));
         if (!settled) continue;
         const answer = queueAnswerText(settled.detail), who = queueAnswerWho(settled.detail);
-        if (!this.store.eventsAll(task.id).some(event => event.kind === 'agent_ask_answered' && event.detail.startsWith(`${askId}:`)))
-          this.store.event(task.id, 'agent_ask_answered', `${askId}: answered by ${who}: ${answer}`);
-        this.resolution.notifyAskAnswered(task.id, askId, answer, who);
-        events = this.store.eventsAll(task.id);
+        if (!askLifecycle(this.store.eventsAll(task.id), ask.id)?.answered)
+          this.store.event(task.id, 'agent_ask_answered', `${ask.id}: answered by ${who}: ${answer}`);
+        this.resolution.notifyAskAnswered(task.id, ask.id, answer, who);
       }
-      for (const answered of this.store.eventsAll(task.id).filter(event => event.kind === 'agent_ask_answered')) {
-        const askId = answered.detail.split(':')[0]!;
-        const parsed = parseAgentAskAnswer(answered.detail);
-        if (!parsed) continue;
-        if (this.store.eventsAll(task.id).some(event => event.kind === 'agent_ask_resumed' && event.detail.startsWith(`${askId}:`))) continue;
+      for (const ask of askLifecycles(this.store.eventsAll(task.id)).values()) {
+        if (!ask.answered || !ask.askedAt || ask.resumed) continue;
         // An in-turn waiter still polling collects the answer itself; the sweep
         // only resumes asks whose waiter already returned pending. A waiter that
         // returned pending left no resumed marker, so an unresumed answer older
         // than the in-turn wait is a pending answer that still needs its resume.
-        const askEvent = this.store.eventsAll(task.id).find(event => event.kind === 'agent_ask' && event.detail.startsWith(`${askId}:`));
-        if (!askEvent) continue;
-        if (Date.now() - Date.parse(askEvent.at) < this.agentAskWaitMs) continue;
-        this.resolution.notifyAskAnswered(task.id, askId, parsed.answer, parsed.who);
+        if (Date.now() - Date.parse(ask.askedAt) < this.agentAskWaitMs) continue;
+        this.resolution.notifyAskAnswered(task.id, ask.id, ask.answered.answer, ask.answered.who);
       }
     }
   }
   /** The Spec 032 decision an operator-only ask waits on; created once, linked durably. */
   askOperatorDecision(task: Task, ask: AgentAskShape, why: string): void {
     const events = this.store.eventsAll(task.id);
-    if (events.some(event => event.kind === 'agent_ask_decision' && event.detail.startsWith(`${ask.id}: decision `))) return;
+    if (askLifecycle(events, ask.id)?.decisionId) return;
     this.store.transaction(() => {
       const view = new Decisions(this.store).add({
         question: ask.question,
@@ -428,20 +416,18 @@ export class AgentAsks {
   /** Where a pending ask sits: the tool's pending result names its id and who holds it, and promises a resume. */
   agentAskPendingDetail(taskId: string, askId: string): string {
     const events = this.store.eventsAll(taskId);
+    const state = askLifecycle(events, askId);
     const linked = (prefix: string, kind: string) => events.find(event => event.kind === kind && event.detail.startsWith(`${prefix}: `))?.detail.slice(prefix.length + 2) ?? '';
-    const joined = linked(askId, 'agent_ask_joined').match(/queue question (\S+)/)?.[1];
-    const decision = linked(askId, 'agent_ask_decision').match(/decision (\S+)/)?.[1]
+    const joined = state?.joined ?? undefined;
+    const decision = state?.decisionId
       ?? (joined ? linked(joined, 'operator_question_decision').match(/decision (\S+)/)?.[1] : undefined);
-    const deciderStarted = events.some(event => event.kind === 'agent_ask_delegated' && event.detail.startsWith(`${askId}: decider`));
-    // Task 1109: the rung is named in the event; `planner ` keeps stored events readable.
-    const plannerPrefix = [`${askId}: task planner `, `${askId}: project planner `, `${askId}: planner `]
-      .find(prefix => events.some(event => event.kind === 'agent_ask_delegated' && event.detail.startsWith(prefix)));
-    const planner = plannerPrefix ? events.find(event => event.kind === 'agent_ask_delegated' && event.detail.startsWith(plannerPrefix))?.detail.match(/planner (\S+);/)?.[1] : undefined;
-    const plannerLabel = plannerPrefix === `${askId}: task planner ` ? 'task planner' : plannerPrefix === `${askId}: project planner ` ? 'project planner' : 'planner';
-    const reviewer = events.find(event => event.kind === 'agent_ask_delegated' && event.detail.startsWith(`${askId}: reviewer `))?.detail.match(/reviewer (\S+);/)?.[1];
-    if (!planner && !reviewer && events.some(event => event.kind === 'agent_ask_host_wait' && event.detail.startsWith(`${askId}:`)))
+    const deciderStarted = Boolean(state?.deciderStarted);
+    const planner = state?.planner?.agentId;
+    const plannerLabel = state?.planner?.rung === 'task' ? 'task planner' : state?.planner?.rung === 'project' ? 'project planner' : 'planner';
+    const reviewer = state?.reviewer ?? undefined;
+    if (!planner && !reviewer && state?.hostWait)
       return `Recorded as question ${askId}; waiting for the planner's proven host to be available. You may continue other work or call again to collect the answer.`;
-    if (planner && !deciderStarted && events.some(event => event.kind === 'agent_ask_delegation_unknown' && event.detail.startsWith(`${askId}:`)))
+    if (planner && !deciderStarted && state?.delegationUnknown)
       return `Recorded as question ${askId}; delivery to planner ${planner} is uncertain. Nucleus will not re-ask or start a decider. The question remains with the planner.`;
     const holder = decision ? `Tom as Nucleus operator decision ${decision}` : deciderStarted ? 'a decider' : planner ? `${plannerLabel} ${planner}` : reviewer ? `reviewer ${reviewer}` : 'a planner or a decider';
     return `Recorded as question ${askId}; pending with ${holder}. You'll be resumed with the answer. You may continue other work or end your turn, and call your session's question tool again with the same question to collect the answer.`;
