@@ -3,7 +3,7 @@ import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import type { BackupHealth, BackupList } from '../../shared/contracts';
-import { backupDirState, listBackups, readBackupStatus, recordBackupOutage } from './backup-worker.mjs';
+import { backupDirState, listBackups, readBackupStatus, recordBackupOutage, snapshotName } from './backup-worker.mjs';
 
 /**
  * Spec 028: Queue's one backup location and the rule that picks it belong to the
@@ -29,9 +29,10 @@ export function newestScheduledSnapshotAt(dir: string): number | null {
   try { names = readdirSync(dir); } catch { return null; }
   let newest: number | null = null;
   for (const name of names) {
-    const match = /^(\d{4}-\d\d-\d\d)T(\d\d)-(\d\d)-(\d\d)-(\d{3})Z-[a-f0-9-]+\.hourly\.sqlite\.gz$/.exec(name);
-    if (!match) continue;
-    const at = Date.parse(`${match[1]}T${match[2]}:${match[3]}:${match[4]}.${match[5]}Z`);
+    // The schedule keys off the hourly tier; a daily or weekly name is a hard link of it.
+    const snapshot = snapshotName(name);
+    if (snapshot?.kind !== 'hourly') continue;
+    const at = Date.parse(snapshot.at);
     if (Number.isFinite(at) && (newest === null || at > newest)) newest = at;
   }
   return newest;

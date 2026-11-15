@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { submissionSchema, taskSchema } from '../shared/contracts';
-import { decideSlotAdmission } from '../core/dispatch/capacity';
+import { capacityLimitFor, capacityReason, decideSlotAdmission, type CapacityLimit } from '../core/dispatch/capacity';
 import { dispatchGate } from '../core/dispatch/dispatch-decisions';
 import { taskStopRecord } from '../shared/task-stop';
 
@@ -29,15 +29,29 @@ test('slot admission names occupancy and earlier reservations', () => {
   const running = { ...earlier, agentActive: true };
   const review = { ...earlier, phase: 'awaiting_review' as const };
   const policy = { limit: 1, projectKeyFor: (candidate: typeof task) => candidate.repoPath };
-  const cases = [
-    { tasks: [task], global: 2, project: 2, capacity: '', requests: [task], waiters: [], expected: '' },
-    { tasks: [task, running], global: 1, project: 2, capacity: 'Global concurrent task-slot limit reached', requests: [], waiters: [], expected: 'Waiting for a project slot… Global concurrent task-slot limit reached (1/1 occupied: #001)' },
-    { tasks: [task, running, review], global: 1, project: 2, capacity: 'Global concurrent task-slot limit reached', requests: [], waiters: [review], expected: 'Waiting for a project slot… Global concurrent task-slot limit reached (1/1 occupied: #001; 1 waiting without a slot: #001)' },
-    { tasks: [task, review], global: 1, project: 2, capacity: '', requests: [review, task], waiters: [], expected: 'Waiting for a project slot… waiting behind 1 in-flight: #001' },
-    { tasks: [task, earlier], global: 1, project: 2, capacity: '', requests: [earlier, task], waiters: [], expected: 'Waiting for a project slot… Waiting behind 1 earlier queued reservations (0/1 global slots occupied)' },
-    { tasks: [task, earlier], global: 2, project: 1, capacity: '', requests: [earlier, task], waiters: [], expected: 'Waiting for a project slot… Project concurrent task-slot limit reached (0/1 occupied, 1 reserved by earlier requests)' },
+  const cases: { tasks: (typeof task)[]; global: number; project: number; capacity: CapacityLimit | null; requests: (typeof task)[]; waiters: (typeof task)[]; expected: string }[] = [
+    { tasks: [task], global: 2, project: 2, capacity: null, requests: [task], waiters: [], expected: '' },
+    { tasks: [task, running], global: 1, project: 2, capacity: 'global', requests: [], waiters: [], expected: 'Waiting for a project slot… Global concurrent task-slot limit reached (1/1 occupied: #001)' },
+    { tasks: [task, running, review], global: 1, project: 2, capacity: 'global', requests: [], waiters: [review], expected: 'Waiting for a project slot… Global concurrent task-slot limit reached (1/1 occupied: #001; 1 waiting without a slot: #001)' },
+    { tasks: [task, review], global: 1, project: 2, capacity: null, requests: [review, task], waiters: [], expected: 'Waiting for a project slot… waiting behind 1 in-flight: #001' },
+    { tasks: [task, earlier], global: 1, project: 2, capacity: null, requests: [earlier, task], waiters: [], expected: 'Waiting for a project slot… Waiting behind 1 earlier queued reservations (0/1 global slots occupied)' },
+    { tasks: [task, earlier], global: 2, project: 1, capacity: null, requests: [earlier, task], waiters: [], expected: 'Waiting for a project slot… Project concurrent task-slot limit reached (0/1 occupied, 1 reserved by earlier requests)' },
   ];
   for (const c of cases) assert.equal(decideSlotAdmission(task, c.tasks, c.global, () => c.project, policy, c.capacity, c.requests, c.waiters), c.expected);
+});
+
+test('capacity names the limit that refuses the request, not a message prefix', () => {
+  const running = { ...task, agentActive: true };
+  assert.equal(capacityLimitFor(task, [task], 2, 2), null, 'an idle lifecycle holds no slot');
+  assert.equal(capacityLimitFor(task, [task, running], 1, 2), 'global');
+  assert.equal(capacityLimitFor(task, [task, running], 2, 1), 'project');
+  const papercut = { ...task, papercutTask: true };
+  const policy = { limit: 1, projectKeyFor: (candidate: typeof task) => candidate.repoPath };
+  assert.equal(capacityLimitFor(papercut, [papercut, { ...papercut, agentActive: true }], 9, 9, policy), 'papercut', 'a papercut request is capped by its own project pool');
+  assert.deepEqual(
+    (['global', 'project', 'papercut'] as const).map(capacityReason),
+    ['Global concurrent task-slot limit reached', 'Project concurrent task-slot limit reached', 'Project papercut task-slot limit reached'],
+  );
 });
 
 test('slot request decisions preserve eligibility gates', async () => {

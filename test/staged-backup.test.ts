@@ -25,7 +25,10 @@ test('source replacement at backup publication refuses before managed files are 
     };
     await assert.rejects(createBackup(stage, destination, new Date().toISOString(), {
       admittedSource: { path: source, fd }, volumeRoot: volume, volumeStat,
-    }), /Database changed during admission/);
+    }), (error: { code?: string; message: string }) => {
+      assert.equal(error.code, 'BACKUP_SOURCE_CHANGED', 'the refusal is typed, so no caller reads its message');
+      return /Database changed during admission/.test(error.message);
+    });
     assert.ok(changed);
     assert.equal(existsSync(destination), false);
     assert.equal(existsSync(join(dir, 'backup-status.json')), false);

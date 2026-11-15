@@ -562,8 +562,8 @@ records the `owned_tool_*` events. Enforces
 **SlotAdmission** (`core/dispatch/capacity.ts`). Slot occupancy and fair-share order,
 and why a task has no slot now, for one dispatch pass or one board batch.
 Enforces [Admission, limits and priority](#admission-limits-and-priority).
-Pures: `decideSlotAdmission`, `slotRequestDecision`, `capacityFor`,
-`recoveryCapacityFor`, `fairSlotRequestOrder`. Control-flow strings
+Pures: `decideSlotAdmission`, `slotRequestDecision`, `capacityLimitFor`,
+`capacityReason`, `capacityFor`, `fairSlotRequestOrder`. Control-flow strings
 `CAPACITY_WAIT_PREFIX` and `QA_CAPACITY_WAIT_PREFIX` are defined in
 `shared/wait-state.ts`; SlotAdmission and the other slot readers compare them.
 Delegates remain on Resolution.

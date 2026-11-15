@@ -104,7 +104,9 @@ and persist the common mount derived from their records, with no data move.
 - **A failure is durable and visible, and never blocks Nucleus.** The status file
   moved out of the backup directory to `<data dir>/backup-status.json`, beside the
   store: the absent volume is exactly the failure it has to report, so it cannot
-  be where the report lives. A refused snapshot writes nothing, records the
+  be where the report lives. A status file that cannot be read, or that does not
+  hold a status record, is reported as that failure rather than read as no
+  failure. A refused snapshot writes nothing, records the
   reason there, and the existing due check retries it (at the next 15-minute
   check, or an hour after a failure) with no new retry machinery. `backup.list`
   and the board report the current volume state and the recorded failure. An
