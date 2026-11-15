@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readOwnedFile, readOwnedJson, writeOwnedJson } from "../core/machine/owned-file.mjs";
+import { writeOwnedJson } from "../core/machine/owned-file.mjs";
+import { readOwnedFile, readOwnedJson } from "../core/machine/owned-read";
 import { pidAlive } from "../core/machine/pid";
 import { writeServiceInfo } from "../service/transport/identity";
 

@@ -9,9 +9,11 @@
   throw that escapes its background gate is recorded on the task (`project_validation_gate_fault`) instead
   of vanishing with the promise; its proportion stays 1, so it scores 9. `core/qa/project-qa-inspection.ts`
   reads every supervision record once and holds a run whose plan or heartbeat exists but cannot be read
-  rather than reporting it never started (9); the two supervision-file readers share the one owner-only read
-  in `core/machine/owned-file.mjs`, which is why that row rises to 10 and
-  `core/qa/project-validation-supervisor.ts` to 9 with its tolerant-null reader named. `core/qa/proof-only-go.ts`
+  rather than reporting it never started (9). The duplicate owner-only reader the two supervision-file modules
+  carried is now `core/machine/owned-read.ts` (10), which keeps a proven absence, an unreadable record and the
+  record itself as three answers; `core/qa/project-validation-supervisor.ts` rises to 9 with its
+  tolerant-null reader named, and `core/machine/owned-file.mjs` keeps its row because publication did not
+  change. `core/qa/proof-only-go.ts`
   decides the GO wait from the reviewer run's typed `proofOnly` intent instead of a substring of the prompt
   it was handed, and the busy-answer refusal rule it shares with the question service's resume sweep has one
   owner, so a prompt rewording can no longer close the wait (9). `core/qa/effigy-run-control.ts` loses the
@@ -21,8 +23,8 @@
   answer with no payload at all). `core/qa/project-qa-launch.ts` keeps its row at 10 and the host-run
   endpoint and `core/questions/questions.ts` rows are unchanged, as they moved only to the new owners. New
   rows: `core/qa/supervisor-process.ts` (9, proof of its spawn shape in `test/supervisor-process.test.ts`
-  and of its stops through both families' fixtures) and boundary tests for the owner-only read, the
-  supervision-file answers and the GO wait.
+  and of its stops through both families' fixtures) and `core/machine/owned-read.ts` (10, boundary test in
+  `test/owned-file.test.ts`), plus boundary tests for the supervision-file answers and the GO wait.
 
 - nucleus#1235 (floor 7, 2026-11-15): PR state display now reads the task's recorded PR number and canonical repository, and failed reads are reported with task IDs while successful tasks remain visible (10: O2 T2 F2 P2 Pr2; test/pr-status.test.ts covers recorded identity, merged-task omission and failure context). Review publication entry points share one single-flight owner, while comment and formal-review reconciliation remain separate for their different remote evidence; formal HTTP 401/403 errors now carry a typed status rather than being classified by message text (reviews 8: O1 T2 F2 P1 Pr2; boundary coverage in test/formal-reviews.test.ts). The changed formal-review transport row remains 9 with typed HTTP status coverage in test/formal-review-http.test.ts. The shared dispatcher is the named consolidation; retaining distinct remote reconciliation is the remaining ownership seam.
 

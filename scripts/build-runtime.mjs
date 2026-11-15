@@ -102,6 +102,7 @@ export async function buildRuntime(destination) {
   "core/machine/machine-ports.ts": "server/machine-ports.ts",
   "core/machine/owned-file.mjs": "server/owned-file.mjs",
   "core/machine/owned-file.d.mts": "server/owned-file.d.mts",
+  "core/machine/owned-read.ts": "server/owned-read.ts",
   "core/machine/owned-tool.ts": "server/owned-tool.ts",
   "core/machine/execution-participants.ts": "server/execution-participants.ts",
   "core/machine/file-facts.ts": "server/file-facts.ts",

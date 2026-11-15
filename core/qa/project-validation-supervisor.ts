@@ -1,4 +1,5 @@
-import { readOwnedJson, writeOwnedJson } from "../machine/owned-file.mjs";
+import { writeOwnedJson } from "../machine/owned-file.mjs";
+import { readOwnedJson } from "../machine/owned-read";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { z } from "zod";
@@ -102,9 +103,9 @@ export function projectValidationSupervisorPaths(dataDir: string, runId: string)
 }
 
 /**
- * One of this run's owner-only records, or null. `machine/owned-file` owns the read
+ * One of this run's owner-only records, or null. `machine/owned-read` owns the read
  * itself; a plan or result this reader cannot decode is reported as absent here,
- * and the readers that must tell "not written yet" from "unreadable" use
+ * and a reader that must tell "not written yet" from "unreadable" calls
  * `readOwnedJson` directly.
  */
 function readOwnerOnly<T>(path: string, parse: (value: unknown) => T): T | null {

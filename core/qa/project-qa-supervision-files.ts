@@ -6,7 +6,8 @@ import { readdir, lstat, unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod";
-import { readOwnedJson, writeOwnedJson, type OwnedJsonRead } from "../machine/owned-file.mjs";
+import { writeOwnedJson } from "../machine/owned-file.mjs";
+import { readOwnedJson, type OwnedJsonRead } from "../machine/owned-read";
 import { tailWithTruncationMarker } from "../machine/output-retention";
 import { HOST_RUN_CPU_COVERAGE_FILE, parseCpuCoverageSidecar } from "../host-runs/host-run-cpu-coverage";
 import {
@@ -189,7 +190,7 @@ export function qaSupervisionPaths(runRoot: string, runId: string, attempt = 0):
 }
 
 /**
- * One of this run's owner-only records, or null. `machine/owned-file` owns the read
+ * One of this run's owner-only records, or null. `machine/owned-read` owns the read
  * itself. A caller that reaps or relaunches on absence reads the typed
  * `readQaSupervision*File` instead, so a file that exists but cannot be trusted is
  * never mistaken for one that was never written.
