@@ -221,6 +221,7 @@ export async function buildRuntime(destination) {
   "core/qa/proof-autorun.ts": "server/proof-autorun.ts",
   "core/qa/proof-execution.ts": "server/proof-execution.ts",
   "core/qa/proof-only-go.ts": "server/proof-only-go.ts",
+  "core/qa/supervisor-process.ts": "server/supervisor-process.ts",
   "core/qa/qa-board.ts": "server/qa-board.ts",
   "core/qa/qa-caller-provenance.ts": "server/qa-caller-provenance.ts",
   "core/qa/qa-caller.ts": "server/qa-caller.ts",
