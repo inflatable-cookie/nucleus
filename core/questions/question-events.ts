@@ -189,16 +189,17 @@ export interface QueueAskPayload {
   options: string[];
 }
 
-/** Every recoverable Queue ask payload, in record order; an invalid payload authorizes nothing. */
+/**
+ * Every recoverable Queue ask payload, in record order. Only unreadable JSON is
+ * skipped: a payload that parses is handed to the recovery path exactly as it was
+ * recorded, so an incomplete record surfaces there instead of vanishing here.
+ */
 export function queueAskPayloads(events: ReadonlyArray<{ kind: string; detail: string }>): QueueAskPayload[] {
   const payloads: QueueAskPayload[] = [];
   for (const event of events) {
     if (event.kind !== 'queue_ask_payload') continue;
-    try {
-      const payload = JSON.parse(event.detail) as Partial<QueueAskPayload>;
-      if (typeof payload.id !== 'string' || typeof payload.kind !== 'string' || typeof payload.question !== 'string' || !Array.isArray(payload.options)) continue;
-      payloads.push({ id: payload.id, kind: payload.kind as OperatorQuestionKind, question: payload.question, options: payload.options });
-    } catch { /* Invalid payload cannot authorize recovery. */ }
+    try { payloads.push(JSON.parse(event.detail) as QueueAskPayload); }
+    catch { /* Invalid payload cannot authorize recovery. */ }
   }
   return payloads;
 }

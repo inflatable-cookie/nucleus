@@ -87,13 +87,17 @@ test('the recorded kinds name every question-scoped record an id wrote', () => {
   assert.equal(kinds.get('ask-1')?.has('agent_ask_superseded'), true);
 });
 
-test('a Queue payload is recovered when it is well formed and ignored when it is not', () => {
+test('only unreadable JSON is dropped; an incomplete saved payload is handed on as recorded', () => {
+  const complete = { id, kind: 'budget', question: 'Extend?', options: ['A'] };
+  const incomplete = { id: 'missing-options', kind: 'process', question: 'Continue?' };
   const payloads = queueAskPayloads([
-    event('queue_ask_payload', JSON.stringify({ id, kind: 'budget', question: 'Extend?', options: ['A'] })),
+    event('queue_ask_payload', JSON.stringify(complete)),
     event('queue_ask_payload', '{not json', 2),
-    event('queue_ask_payload', JSON.stringify({ id: 'missing-options' }), 3),
+    event('queue_ask_payload', JSON.stringify(incomplete), 3),
   ]);
-  assert.deepEqual(payloads, [{ id, kind: 'budget', question: 'Extend?', options: ['A'] }]);
+  // The decoder is a boundary, not a filter: an incomplete payload reaches the
+  // recovery path, where its missing field surfaces instead of vanishing here.
+  assert.deepEqual(payloads, [complete, incomplete]);
 });
 
 test('a delegated route is recovered in record order, and an unreadable later record never hides it', () => {
