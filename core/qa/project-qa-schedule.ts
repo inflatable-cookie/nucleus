@@ -1,11 +1,14 @@
 /** Opt-in main-branch milestone scheduling; all execution uses ProjectQaRunner. */
-import { QA_FENCE_REFUSAL_PREFIX } from '../../shared/contracts';
 import type { Notice, ProjectQaRun, RepositorySettings } from '../../shared/contracts';
 import { Decisions } from '../planning/decisions';
 import { gitRaw } from '../hooks/hooks';
 import { repositoryOrigin } from '../planning/lanes';
-import { ProjectQaRunner, QA_INTERRUPTED_PREPARATION_PREFIX } from './project-qa';
+import { ProjectQaRunner } from './project-qa';
+import { QaAdmissionRefusal, qaAdmissionRefusalResumesBatch, refuseQaAdmission } from './project-qa-refusals';
 import { digest, Store } from '../store/store';
+
+/** True when a thrown value is the scheduler's own typed lifecycle refusal. */
+const isQaScheduleRefusal = (error: unknown): error is QaAdmissionRefusal => error instanceof QaAdmissionRefusal;
 
 type Merge = ReturnType<Store['qaScheduleMerges']>[number];
 interface ScheduleState {
@@ -53,10 +56,16 @@ export class ProjectQaSchedules {
     this.advancing = this.advance(row).catch(error => {
       // Never hide a persistent checkout/coverage failure behind health=ready.
       if (this.options.canAdmit?.() === false) return;
-      const key = this.key(row), diagnostic = String(error).slice(0, 2000);
+      // A lifecycle refusal is one process's own pause, roll, handover or
+      // configuration race: nothing was admitted, so nothing is recorded. Any
+      // other failure is, including a guard that cannot read the store at all —
+      // returning silently there hid real faults behind health=ready.
+      if (isQaScheduleRefusal(error)) return;
+      let guardFault: unknown = null;
+      try { this.guard(row); } catch (thrown) { if (isQaScheduleRefusal(thrown)) return; guardFault = thrown; }
+      const key = this.key(row), meta = qaScheduleStateKey(key), stamp = this.stamp();
+      const diagnostic = String(guardFault ? `${String(error)}; ${String(guardFault)}` : error).slice(0, 2000);
       this.store.setMeta(`projectQaScheduleError:${key}`, diagnostic);
-      try { this.guard(row); } catch { return; } // Pause/roll/config races are not owner faults.
-      const stamp = this.stamp(), meta = qaScheduleStateKey(key);
       const state = this.store.getMeta<ScheduleState>(meta) ?? this.initialState(stamp);
       state.diagnostic = diagnostic; state.redSince ??= stamp;
       const text = `Scheduled milestone QA for ${key} is blocked: ${diagnostic}\nMerge inventory/coverage could not be established; inspect outcome records. No QA was resubmitted.`;
@@ -72,14 +81,20 @@ export class ProjectQaSchedules {
   }
   private key(row: RepositorySettings) { return row.repository.origin ?? row.repository.path; }
   private stamp() { return new Date(this.options.clock?.() ?? Date.now()).toISOString(); }
+  /**
+   * Every lifecycle boundary a scheduled admission must survive, thrown as a
+   * typed refusal so the caller knows a race moved the world rather than the
+   * owner failing. The pause/disable/settings case stays one code because one
+   * read proves all three at once.
+   */
   private guard(row: RepositorySettings) {
-    if (this.options.canAdmit?.() === false) throw new Error('Scheduled QA owner is closing or disconnected');
+    if (this.options.canAdmit?.() === false) refuseQaAdmission('schedule_owner_closing', 'Scheduled QA owner is closing or disconnected');
     const current = this.store.repositoryFor(this.key(row));
     if (this.store.getMeta('paused') || !current?.qa?.schedule || current.revision !== row.revision)
-      throw new Error('Scheduled QA paused, disabled or repository settings changed before admission');
+      refuseQaAdmission('schedule_paused', 'Scheduled QA paused, disabled or repository settings changed before admission');
     const project = this.store.projectFor(current.repository.path, current.repository.origin);
     if (!project || project.visibility !== 'active' || !this.store.projectPlannerRecipient(project))
-      throw new Error('Scheduled QA requires an active project with a planner');
+      refuseQaAdmission('schedule_no_planner', 'Scheduled QA requires an active project with a planner');
   }
   private async includes(row: RepositorySettings, merge: Merge, run: ProjectQaRun): Promise<boolean> {
     if (this.options.includes) return this.options.includes(row, merge, run);
@@ -189,13 +204,8 @@ export class ProjectQaSchedules {
         // A post-await lifecycle guard proves no run was claimed. Resume the
         // batch with a new durable identity once eligible; never replay the
         // refused identity or relabel unknown preparing delivery as refusal.
-        const lifecycleRefusal = request.diagnostic.startsWith('Scheduled QA paused, disabled or repository settings changed')
-          || request.diagnostic === 'Scheduled QA owner is closing or disconnected'
-          || request.diagnostic === 'Scheduled QA requires an active project with a planner'
-          || request.diagnostic === 'A release-line QA acquired the repository before scheduled main admission'
-          || request.diagnostic === 'A concurrent main QA is at a different head from the freshly fetched scheduled candidate'
-          || request.diagnostic.startsWith(QA_FENCE_REFUSAL_PREFIX)
-          || request.diagnostic.startsWith(QA_INTERRUPTED_PREPARATION_PREFIX);
+        // The typed code is the fact: no diagnostic text is read to decide this.
+        const lifecycleRefusal = qaAdmissionRefusalResumesBatch(request.refusalCode);
         state.lastSignature = lifecycleRefusal ? null : state.pending.signature;
         state.pending = null; state.diagnostic = lifecycleRefusal ? '' : request.diagnostic;
         if (lifecycleRefusal) state.requestGeneration = (state.requestGeneration ?? 0) + 1;
@@ -230,8 +240,10 @@ export class ProjectQaSchedules {
       await this.runner.run({ repository: key, baseBranch: 'main', requestId: state.pending.id }, (proposed, selected) => {
         this.guard(row);
         const existing = this.store.qaScheduleRuns(key).active;
-        if (existing && existing.baseBranch !== 'main') throw new Error('A release-line QA acquired the repository before scheduled main admission');
-        if (selected.base !== proposed.base) throw new Error('A concurrent main QA is at a different head from the freshly fetched scheduled candidate');
+        if (existing && existing.baseBranch !== 'main')
+          refuseQaAdmission('release_line_acquired', 'A release-line QA acquired the repository before scheduled main admission');
+        if (selected.base !== proposed.base)
+          refuseQaAdmission('concurrent_head_moved', 'A concurrent main QA is at a different head from the freshly fetched scheduled candidate');
       });
     } catch (error) { state.diagnostic = String(error).slice(0, 2000); }
     // Do not erase the pending identity on a lost response. The next pass

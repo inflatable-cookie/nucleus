@@ -1,7 +1,7 @@
 import type { Engine } from '../engine';
 import type { Profile, Task } from '../../shared/contracts';
 import type { Resolution } from '../resolution';
-import { proofSingleFlightRefusal, ProofSingleFlightError } from '../qa/proof-execution';
+import { proofSingleFlightRefusal, ProofSingleFlightError } from '../qa/proof-admission';
 
 /** The launch and store facts a proof-only dispatch needs. */
 export type ProofOnlyLaunchContext = Pick<Engine, 'note' | 'store'> & {

@@ -23,7 +23,7 @@ import type { ContinuedPrBinding } from "../resolution";
 import { REVIEW_FRESH_REPLACEMENT_EXIT, reviewContinuationState, reviewContinuationWait, reviewInProgress, reviewerIdentityAtHead, retainedReaderStateDecision, retainedReaderStoredRefusal, retainedReaderUnavailableRefusal, keepRetainedReviewer } from "../review/review-continuation";
 import { validateNamedProfile } from "../dispatch/routing";
 import { DurableFenceRefusal, runFenceRefusal, runSettlementFence } from "../intake/run-settlement";
-import { proofOnlyReceiptAwaitingReview } from "../qa/proof-execution";
+import { proofOnlyReceiptAwaitingReview } from "../qa/proof-records";
 import { now } from "../store/store";
 import { OPERATOR_WORKER_REMAP_REASON, operatorReplacementPending } from "../recovery/task-reasons";
 import { randomUUID } from "node:crypto";

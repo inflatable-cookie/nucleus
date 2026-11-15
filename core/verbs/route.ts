@@ -14,7 +14,7 @@ import { OPERATOR_BOARD, boardSignoff, priorNonGrantSignoff, withdrawOpen } from
 import { digest, now } from "../store/store";
 import { OPERATOR_WORKER_REMAP_REASON, PROFILE_CATALOG_LOADING_REFUSAL, isAcceptedReview } from "../recovery/task-reasons";
 import { decideWorkerReplacement, retainedWorkerFailureCause } from "../recovery/worker-replacement";
-import { proofOnlyReceiptAwaitingReview } from "../qa/proof-execution";
+import { proofOnlyReceiptAwaitingReview } from "../qa/proof-records";
 
 /** Build the route's task patch from facts captured in the transaction. */
 export function routePatch(f: {

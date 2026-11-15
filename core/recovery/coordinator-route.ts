@@ -17,7 +17,7 @@ import { recoveryDispatchSnapshot, type RecoveryDispatchSnapshot } from './recov
 import { groupIsUnavailable, supersedingRouteProfile } from '../../shared/pool';
 import { requiredCheckPollMetaKey } from '../forge/checks';
 import { RECOVERY_CREATION_FAILURE_PREFIX } from './task-reasons';
-import { unreleasedExecutorRun } from '../qa/proof-execution';
+import { unreleasedExecutorRun } from '../qa/proof-admission';
 import { CoordinatorEpisode, cause, key, needsAttention, type RecoveryContext } from './coordinator-episode';
 import { coordinatorReportMatches, taskProgressDigest } from './coordinator-report';
 import { isPseudoCheckpointError, postBudgetPrePrResumes, pseudoCheckpointEscalation } from './pseudo-checkpoint';

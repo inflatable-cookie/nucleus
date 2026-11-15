@@ -1,5 +1,6 @@
 import type { Completion, Run, Task } from '../../shared/contracts';
-import { awaitingProofMatchesSelector, declaredProofSelectors, proofExecutionRecord, recordProofExecution } from '../qa/proof-execution';
+import { proofExecutionRecord, recordProofExecution } from '../qa/proof-records';
+import { awaitingProofMatchesSelector, declaredProofSelectors } from '../qa/proof-wait';
 import type { Resolution } from '../resolution';
 import type { Store } from '../store/store';
 import { recordResultApplied, resultApplied } from './applied-result';

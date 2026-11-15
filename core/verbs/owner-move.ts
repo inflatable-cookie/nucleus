@@ -4,7 +4,7 @@ import { readyReviewAtHead } from "../recovery/task-reasons";
 import { moveStateRefusal } from "./control-refusals";
 import { DISPOSITION_CONTROL_REFUSAL, REMOVED_TASK_REFUSAL, MOVE_REVIEW_PR_REFUSAL } from "./control-refusals";
 import { groupIsUnavailable } from "../../shared/pool";
-import { proofOnlyReceiptAwaitingReview } from "../qa/proof-execution";
+import { proofOnlyReceiptAwaitingReview } from "../qa/proof-records";
 import { z } from "zod";
 import { isDispositionActive, taskControlInputSchema, taskNextVerbSchema, type Run, type Task, type TaskControlInput, type TaskNextVerb } from "../../shared/contracts";
 import { operatorReplacementPending, revisionPhases } from "../recovery/task-reasons";
