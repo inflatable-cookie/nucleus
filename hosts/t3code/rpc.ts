@@ -52,7 +52,7 @@ const PROTOCOL_TAG = /^[A-Za-z][A-Za-z0-9]{0,40}$/;
 const protocolTag = (value: unknown): string | null => typeof value === 'string' && PROTOCOL_TAG.test(value) ? value : null;
 
 // Bounded thread projections can still be megabytes; small commands keep their deadline.
-const METHOD_TIMEOUT_MS: Readonly<Record<string, number>> = { 'orchestration.subscribeThread': 60_000 };
+const METHOD_TIMEOUT_MS: Readonly<Record<string, number>> = { 'orchestration.subscribeThread': 60_000, 'orchestration.threadHistoryPage': 60_000 };
 // A long thread snapshot plus live updates outlives the default cap.
 const METHOD_STREAM_VALUES: Readonly<Record<string, number>> = { 'orchestration.subscribeThread': 50_000 };
 
@@ -266,6 +266,44 @@ export class T3RpcClient {
 
   readStream(method: string, payload: unknown, accept: (value: unknown) => boolean): Promise<unknown> {
     return this.request(method, payload, accept);
+  }
+
+  /**
+   * One older bounded history page over the nightly's own authenticated HTTP
+   * route (`GET /api/orchestration/threads/:threadId/history?cursor=…`). The
+   * response is returned undecoded so the caller strictly decodes it; a failure
+   * here is a read, never a mutation, so it stays not-sent.
+   */
+  async readHistoryPage(threadId: string, cursor: string): Promise<unknown> {
+    const method = 'orchestration.threadHistoryPage';
+    const url = new URL(`/api/orchestration/threads/${encodeURIComponent(threadId)}/history`, this.base);
+    url.searchParams.set('cursor', cursor);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), METHOD_TIMEOUT_MS[method] ?? this.timeoutMs);
+    try {
+      const response = await fetch(url, { headers: { Authorization: `Bearer ${this.#bearer}`, 'x-t3-orchestration-protocol': '2' }, signal: controller.signal });
+      if (response.status === 401 || response.status === 403) throw new T3RpcError('auth', method, undefined, 'not_sent', { reason: `HTTP ${response.status}` });
+      if (!response.ok) throw new T3RpcError('transport', method, undefined, 'not_sent', { reason: `HTTP ${response.status}` });
+      if (!response.body) throw new T3RpcError('protocol', method, undefined, 'not_sent');
+      const reader = response.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let bytes = 0;
+      while (true) {
+        const item = await reader.read();
+        if (item.done) break;
+        bytes += item.value.byteLength;
+        if (bytes > MAX_FRAME_BYTES) { await reader.cancel(); throw new T3RpcError('protocol', method, undefined, 'not_sent'); }
+        chunks.push(item.value);
+      }
+      const combined = new Uint8Array(bytes);
+      let offset = 0;
+      for (const chunk of chunks) { combined.set(chunk, offset); offset += chunk.byteLength; }
+      try { return JSON.parse(new TextDecoder().decode(combined)); }
+      catch { throw new T3RpcError('protocol', method, undefined, 'not_sent'); }
+    } catch (error) {
+      if (error instanceof T3RpcError) throw error;
+      throw new T3RpcError(controller.signal.aborted ? 'timeout' : 'transport', method, undefined, 'not_sent');
+    } finally { clearTimeout(timer); }
   }
 
   private request(method: string, payload: unknown, accept?: (value: unknown) => boolean): Promise<unknown> {

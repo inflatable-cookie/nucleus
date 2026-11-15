@@ -20,8 +20,23 @@ const shapes = contract.wireShapes as {
   snapshotKeys: string[];
   projectionKeys: string[]; threadKeys: string[]; runKeys: string[]; runtimeRequestKeys: string[];
   turnItemBaseKeys: string[]; turnItemTypeKeys: Record<string, string[]>; messageKeys: string[];
-  visibleTurnItemKeys: string[] };
+  visibleTurnItemKeys: string[]; providerThreadKeys: string[]; pendingBackgroundTaskKeys: string[] };
 const modelSelection = { instanceId: 'synthetic-provider', model: 'synthetic-model' };
+
+/** One pending background task the nightly's provider thread reports (nightly `OrchestrationV2PendingBackgroundTask`). */
+export function syntheticBackgroundTask(overrides: Value = {}): Value {
+  return { taskId: overrides.taskId ?? 'synthetic-background-task', kind: overrides.kind ?? 'command', ...overrides };
+}
+
+/** One provider thread record, completed to the recorded wire shape (nightly `OrchestrationV2ProviderThread`). */
+export function syntheticProviderThread(overrides: Value = {}): Value {
+  const { pendingBackgroundTasks: tasks, ...rest } = overrides;
+  return { id: 'synthetic-provider-thread', driver: 'codex', providerInstanceId: 'synthetic-provider',
+    providerSessionId: 'synthetic-session', appThreadId: null, ownerNodeId: null, nativeThreadRef: null,
+    nativeConversationHeadRef: null, status: 'idle', firstRunOrdinal: 1, lastRunOrdinal: 1, handoffIds: [],
+    forkedFrom: null, contextUsage: null, nativeMetadata: null, goal: null, createdAt: STAMP, updatedAt: STAMP, ...rest,
+    pendingBackgroundTasks: (tasks ?? []).map((task: Value) => syntheticBackgroundTask(task)) };
+}
 
 export function syntheticThread(id: string, directory: string, overrides: Value = {}): Value {
   const thread: Value = { id, projectId: 'synthetic-project', title: 'Synthetic thread',
@@ -93,7 +108,8 @@ function wireProjection(p: Value, windowItemIds?: Set<string>): Value {
         sourceItemId: item.id, sourceThreadId: threadId, visibility: 'local', item })),
     // Collections the Nightly always projects, empty unless the test supplies them.
     attempts: p.attempts ?? [], nodes: p.nodes ?? [], subagents: p.subagents ?? [],
-    providerSessions: p.providerSessions ?? [], providerThreads: p.providerThreads ?? [],
+    providerSessions: p.providerSessions ?? [],
+    providerThreads: (p.providerThreads ?? []).map((thread: Value) => syntheticProviderThread(thread)),
     providerTurns: p.providerTurns ?? [], plans: p.plans ?? [], checkpointScopes: p.checkpointScopes ?? [],
     checkpoints: p.checkpoints ?? [], contextHandoffs: p.contextHandoffs ?? [], contextTransfers: p.contextTransfers ?? [],
     updatedAt: p.updatedAt ?? STAMP };
@@ -115,6 +131,9 @@ function assertWireRecords(projection: Value): void {
   missing(projection.runtimeRequests, shapes.runtimeRequestKeys, 'runtimeRequest');
   missing(projection.messages, shapes.messageKeys, 'message');
   missing(projection.visibleTurnItems, shapes.visibleTurnItemKeys, 'visibleTurnItem');
+  missing(projection.providerThreads, shapes.providerThreadKeys, 'providerThread');
+  for (const thread of projection.providerThreads)
+    missing(thread.pendingBackgroundTasks ?? [], shapes.pendingBackgroundTaskKeys, 'pendingBackgroundTask');
   for (const item of projection.turnItems) {
     const extra = shapes.turnItemTypeKeys[item.type] ?? [];
     missing([item], [...shapes.turnItemBaseKeys, 'type', ...extra.filter((key: string) => !shapes.turnItemBaseKeys.includes(key))], `turnItem ${item.type}`);
@@ -167,11 +186,14 @@ export async function t3Fake(t: TestContext, directory: string) {
     const plans = (p.plans ?? []).filter((plan: Value) => plan.status === 'active');
     const contextHandoffs = (p.contextHandoffs ?? []).filter((handoff: Value) => ['pending', 'ready'].includes(handoff.status));
     const hasMoreHistory = windowItems.length < p.turnItems.length;
+    // The nightly's `historyCursor` names the row boundary before the window; the
+    // history route (`GET .../history?cursor=…`) serves the page before it.
+    const windowStart = p.turnItems.findIndex((item: Value) => windowItemIds.has(item.id));
     // Window rows first, then the retained items: the served rows are the window
     // itself, so a timeline page built from them holds no older row.
     const windowed = { ...p, runs, runtimeRequests, plans, contextHandoffs, turnItems: servedItems, messages: p.messages.slice(-1) };
     const snapshot = { projection: wireProjection(windowed, windowItemIds),
-      hasMoreHistory, historyCursor: hasMoreHistory ? 'synthetic-history-cursor' : null, latestLocalTurnOrdinal: null };
+      hasMoreHistory, historyCursor: hasMoreHistory ? `synthetic-history-${windowStart}` : null, latestLocalTurnOrdinal: null };
     // The fixture is checked against the recorded contract on every bounded
     // answer, so a hand-made coverage field cannot enter a test unobserved.
     for (const field of contract.subscribeThread.boundedRequired)
@@ -212,6 +234,8 @@ export async function t3Fake(t: TestContext, directory: string) {
   const sockets = new Set<Socket>();
   const controlFrames: Value[] = [];
   const frameBytes: number[] = [];
+  /** Every bounded history page this fake served: the thread and the cursor asked for. */
+  const historyReads: Value[] = [];
   const injectors: Array<(text: string) => void> = [];
   let upgrades = 0, closes = 0;
   const wsText = (socket: Socket, text: string) => {
@@ -225,10 +249,34 @@ export async function t3Fake(t: TestContext, directory: string) {
     socket.write(Buffer.concat([header, bytes]));
   };
   const server = createServer((request, response) => {
-    assert.equal(request.url, '/api/auth/websocket-ticket/rpc');
     assert.equal(request.headers.authorization, 'Bearer synthetic-bearer');
     response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ ticket: 'synthetic-ticket', expiresAt: '2099-01-01T00:00:00.000Z' }));
+    const url = new URL(request.url!, 'http://localhost');
+    if (url.pathname === '/api/auth/websocket-ticket/rpc') {
+      response.end(JSON.stringify({ ticket: 'synthetic-ticket', expiresAt: '2099-01-01T00:00:00.000Z' }));
+      return;
+    }
+    // The nightly's authenticated bounded history page: `GET
+    // /api/orchestration/threads/:threadId/history?cursor=…` (recorded contract
+    // `subscribeThread.historyRoute`). The cursor names the row boundary before
+    // the page it returns, and the page renumbers its own row positions.
+    const match = /^\/api\/orchestration\/threads\/([^/]+)\/history$/.exec(url.pathname);
+    assert.ok(match, `unexpected HTTP route ${url.pathname}`);
+    assert.equal(request.headers['x-t3-orchestration-protocol'], '2');
+    assert.deepEqual([...url.searchParams.keys()], ['cursor']);
+    const threadId = decodeURIComponent(match[1]!);
+    const p = threads.get(threadId);
+    const cursor = /^synthetic-history-(\d+)$/.exec(url.searchParams.get('cursor') ?? '');
+    assert.ok(p && cursor, 'the history route needs a known thread and a recorded cursor');
+    historyReads.push({ threadId, cursor: Number(cursor[1]) });
+    const rows = (p.turnItems ?? []).map((item: Value, index: number) => ({ position: index + 1,
+      sourceItemId: item.id, sourceThreadId: threadId, visibility: 'local', item }));
+    const end = Math.min(Number(cursor[1]), rows.length);
+    const start = Math.max(0, end - controls.boundedRowLimit);
+    const page = { snapshotSequence: controls.snapshotSequence,
+      items: rows.slice(start, end).map((row: Value, index: number) => ({ ...row, position: index + 1 })),
+      nextCursor: start > 0 ? `synthetic-history-${start}` : null, hasMoreHistory: start > 0 };
+    response.end(JSON.stringify(page));
   });
   const shell = (raw: Value) => {
     const p = wireProjection(raw);
@@ -236,6 +284,13 @@ export async function t3Fake(t: TestContext, directory: string) {
     const pending = p.runtimeRequests.find((request: Value) => request.status === 'pending');
     const value: Value = { ...p.thread, activeRunId: active?.id ?? null, status: active?.status ?? 'idle',
       pendingRuntimeRequest: pending ? { id: pending.id, kind: pending.kind, createdAt: STAMP, blocking: true } : null,
+      pendingBackgroundTasks: raw.pendingBackgroundTasks ?? [
+        ...(p.providerThreads ?? []).flatMap((thread: Value) => thread.pendingBackgroundTasks ?? []),
+        ...p.turnItems.filter((item: Value) => ['command_execution', 'dynamic_tool', 'subagent'].includes(item.type)
+          && ['running', 'waiting', 'pending', 'queued'].includes(item.status)).map((item: Value) => ({
+            taskId: item.id, itemId: item.id, sourceThreadId: p.thread.id,
+            kind: item.type === 'command_execution' ? 'command' : item.type === 'subagent' ? 'subagent' : 'background_task' })),
+      ],
       latestUserMessageAt: p.messages.length ? STAMP : null, lastError: null };
     if (controls.shellMissingField) delete value[controls.shellMissingField];
     return value;
@@ -476,5 +531,5 @@ export async function t3Fake(t: TestContext, directory: string) {
   const injectRaw = (text: string) => { for (const write of injectors) write(text); };
   const fullSnapshotBytes = (threadId: string) => Buffer.byteLength(JSON.stringify({ _tag: 'Chunk', requestId: 'synthetic-request',
     values: [{ kind: 'snapshot', snapshotSequence: controls.snapshotSequence, projection: wireProjection(threads.get(threadId)!) }] }));
-  return { endpoint: `http://127.0.0.1:${address.port}`, controls, threads, commands, requests, snapshots, controlFrames, frameBytes, fullSnapshotBytes, get upgrades() { return upgrades; }, get closes() { return closes; }, projects: projectRows, dropSockets, inject, injectRaw };
+  return { endpoint: `http://127.0.0.1:${address.port}`, controls, threads, commands, requests, snapshots, controlFrames, frameBytes, historyReads, fullSnapshotBytes, get upgrades() { return upgrades; }, get closes() { return closes; }, projects: projectRows, dropSockets, inject, injectRaw };
 }

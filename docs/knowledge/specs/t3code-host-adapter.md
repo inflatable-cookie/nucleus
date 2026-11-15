@@ -471,7 +471,7 @@ question reads take the same bounded snapshot (nucleus#1217): a timeline page is
 the nightly's own rendered window, described honestly — a contiguous newest run
 of rows (`gap`, `staleCursor`, `reset` and `hasNewer` false), the thread as its
 stable epoch, `hasOlder` true when the requested depth or the nightly's own
-window left earlier history behind, cursors as positions inside the window, and
+window left earlier history behind, cursors as local item ordinals, and
 `projection: "projected"`. The page reads the projection's `visibleTurnItems`
 rows rather than `turnItems`: a bounded projection also carries the run-interrupt
 and pending-request items the nightly retained from outside its window, so
@@ -482,7 +482,7 @@ execution record is translated into the shared tool entry the owned-tool reader
 judges, so a running native command is live evidence instead of an unrecognised
 record: `command_execution` is `shell` (the provider detaches it, so it may
 outlive its turn), `file_change` is `edit`, `file_search` is `search`,
-`web_search` is `fetch` and `subagent` is `sub_agent`; `dynamic_tool` keeps an
+`web_search` is `fetch` and `subagent` is non-turn-bound `subagent`; `dynamic_tool` keeps an
 unknown kind, and a native status the reader does not know is never settled. Each
 entry's `turnId` is the run that owns the item, because one T3 run is one
 provider turn, so a window that reaches back into an earlier run proves its
@@ -496,11 +496,14 @@ item it dropped keeps its answers with no question text rather than an invented
 one. A read that needs the complete transcript still opts in and refuses a paged
 or locally-omitted projection, so partial history is never handed out as the
 whole list and no consumer requests an unbounded thread snapshot. Its refusal
-names the missing coverage, not the thread's length. The nightly exposes no
-history-cursor pagination for a bounded window, so a window that cannot reach
-back into an earlier turn cannot be widened further: the shared owned-tool
-reader's own progress check reports that, never a fabricated deeper page and
-never a `null` read. Complete shell
+names the missing coverage, not the thread's length. The nightly's authenticated history route serves older bounded pages using
+`historyCursor`. Widening joins at most 64 pages per read, with strictly older
+local ordinals and stable newest cursors; exhausted or inconsistent coverage
+remains inconclusive. The shell derives pending work from all native items, including older running
+commands absent from provider task lists. It must match the thread snapshot
+sequence. Pending tasks from either the shell or provider threads must have a live background tool in the returned page; otherwise the read
+refuses with the outstanding task named, even across a parent-run boundary.
+Complete shell
 and archive inventory reads contain summaries rather than transcript history;
 the Nightly exposes no complete paged shell form. Omitting settled threads or
 subagents cannot establish absence and is not an inventory substitute.

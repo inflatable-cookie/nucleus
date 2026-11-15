@@ -127,6 +127,7 @@
     "sourceBuild": "0.1.10-nightly.20261111.4529",
     "sourceRevision": "d2c25950b4d9",
     "source": "apps/server bundle: OrchestrationV2SubscribeThreadInput, OrchestrationV2ThreadDetailSnapshot and OrchestrationV2ThreadBoundedSnapshot; the windowed reads in readCanonicalProjection (runs, runtimeRequests, plans, contextHandoffs) that feed it; packages/shared/src/orchestrationV2BoundedSnapshot.ts",
+    "historyRoute": {"method": "GET", "path": "/api/orchestration/threads/:threadId/history", "header": {"x-t3-orchestration-protocol": "2"}, "query": ["cursor"], "response": ["snapshotSequence", "items", "nextCursor", "hasMoreHistory"], "source": "Installed Nightly ManagedEndpointRuntime-BSDb6iuk.mjs: EnvironmentOrchestrationHttpApi, OrchestrationV2ThreadHistoryPage; read-only bundle inspection"},
     "roundTrip": "A bounded snapshot is sent only to a client that opts in; the plain read returns the complete detail projection instead",
     "input": ["threadId", "afterSequence", "requestCompletionMarker", "acceptBoundedSnapshot", "acceptDeferredWork", "acceptCompactTurnItems", "acceptDedupedBodies", "acceptCompactIds"],
     "boundedRequestField": "acceptBoundedSnapshot",
@@ -362,6 +363,9 @@
     },
     "visibleTurnItemKeys": ["position", "sourceItemId", "sourceThreadId", "visibility", "item"],
   "turnItemTypeSource": "assistant, user and command members come from the captured thread; user_input_request comes from the OrchestrationV2TurnItem union member in the installed bundle",
+    "providerThreadKeys": ["id", "driver", "providerInstanceId", "providerSessionId", "appThreadId", "ownerNodeId", "nativeThreadRef", "nativeConversationHeadRef", "status", "firstRunOrdinal", "lastRunOrdinal", "handoffIds", "forkedFrom", "pendingBackgroundTasks", "contextUsage", "nativeMetadata", "goal", "createdAt", "updatedAt"],
+    "pendingBackgroundTaskKeys": ["kind", "taskId"],
+    "backgroundSource": "Installed Nightly: OrchestrationV2PendingBackgroundTask, OrchestrationV2ProviderThread and BACKGROUND_TURN_ITEM_TYPES; read-only bundle inspection",
     "messageKeys": [
       "id",
       "threadId",

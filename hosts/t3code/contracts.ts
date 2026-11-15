@@ -42,9 +42,19 @@ export const threadRecord = z.object({
   worktreePath: z.string().nullable(), branch: z.string().nullable(),
   archivedAt: date.nullable(), deletedAt: date.nullable(), updatedAt: date,
 });
+/**
+ * One pending background task a provider thread reports (nightly
+ * `OrchestrationV2PendingBackgroundTask`). The nightly derives it from the
+ * provider session's own state, so it names work that can outlive its run.
+ */
+export const pendingBackgroundTask = z.object({ taskId: id, kind: id, description: z.string().optional(),
+  command: z.string().optional(), itemId: id.optional(), sourceThreadId: id.optional(),
+  parentTaskId: z.string().optional(), awaited: z.literal(true).optional(),
+  providerInstanceId: id.optional(), childThreadId: id.optional() }).passthrough();
 export const shellThread = threadRecord.extend({
   activeRunId: id.nullable(), status: z.enum(['idle', 'preparing', 'queued', 'starting', 'running', 'waiting', 'completed', 'interrupted', 'failed', 'cancelled', 'rolled_back']),
   pendingRuntimeRequest: z.object({ id, kind: id, createdAt: date, blocking: z.boolean().optional() }).nullable(),
+  pendingBackgroundTasks: z.array(pendingBackgroundTask).optional(),
   latestUserMessageAt: date.nullable(), lastError: z.string().nullable().optional(),
 });
 export const project = z.object({ id, title: z.string(), workspaceRoot: id, archivedAt: date.nullable().optional() });
@@ -79,14 +89,26 @@ export const turnItem = z.object({ id, type: id, requestId: id.optional(),
  */
 export const visibleTurnItem = z.object({ position: z.number().int().nonnegative(), visibility: id.optional(),
   sourceThreadId: id.optional(), sourceItemId: id, item: turnItem });
+/** The provider-thread facts a bounded read needs; the projection carries these whole, never windowed. */
+export const providerThread = z.object({ id,
+  pendingBackgroundTasks: z.array(pendingBackgroundTask).optional() }).passthrough();
 export const projection = z.object({
   thread: threadRecord,
   runs: z.array(z.object({ id, status: shellThread.shape.status, startedAt: date.nullable(), ordinal: z.number().int().nonnegative().optional() })),
   runtimeRequests: z.array(runtimeRequest), turnItems: z.array(turnItem),
   /** The nightly's own visible window; absent only on a projection decoded before this field was read. */
   visibleTurnItems: z.array(visibleTurnItem).optional(),
+  providerThreads: z.array(providerThread).optional(),
   messages: z.array(z.object({ id, role: id, text: z.string() })), updatedAt: date,
 });
+/**
+ * One older bounded history page (nightly `OrchestrationV2ThreadHistoryPage`,
+ * `GET /api/orchestration/threads/:threadId/history?cursor=…`). Its rows are
+ * the page before the cursor the snapshot gave that window.
+ */
+export const threadHistoryPage = z.object({ snapshotSequence: z.number().int().nonnegative(),
+  items: z.array(visibleTurnItem), nextCursor: id.nullable(), hasMoreHistory: z.boolean(),
+  idTable: z.literal(true).optional() }).passthrough();
 /** Coverage flags are consumed facts, not optional hints that can be truthiness-tested. */
 export const threadSnapshot = z.object({
   kind: z.literal('snapshot'), snapshotSequence: z.number().int().nonnegative(), projection,

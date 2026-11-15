@@ -2966,16 +2966,16 @@ movement invalidates source approval and preserves the normal readiness gates.
 - Every response needs coverage flags, an epoch and matching cursors. Gaps,
   resets, missing facts, read failures and exhausted budgets refuse. Partial
   history needs turn IDs and a dated boundary into an earlier turn; a partial
-  tail never hides a live or unknown tool. A host whose newest window cannot be
-  widened (T3Code's bounded snapshot, whose only timeline read is that window and
-  whose epoch and cursors are window positions) is reported by the same progress
-  check: the reader never fabricates a deeper page and never reads the window as
-  `null`/unavailable. A host shape problem surfaces as that read's own named
+  tail never hides a live or unknown tool. T3Code widens its newest bounded snapshot through authenticated history pages,
+  retaining local item ordinals as cursors. A shell-derived or provider-reported pending background
+  task absent from the returned live tools refuses by name, so a boundary into
+  an earlier run cannot hide detached work. Exhausted or inconsistent coverage
+  stays inconclusive. A host shape problem surfaces as that read's own named
   failure, so the refusal starts from the exact cause.
 - A host translates its own native execution records into these tool entries; a
   record it leaves untranslated is evidence the reader cannot judge. T3Code's
-  `command_execution` is a non-turn-bound shell, its edit, search, fetch and
-  subagent records are turn-bound, and its `dynamic_tool` or any native state the
+  `command_execution` is a non-turn-bound shell, its edit, search and fetch records
+  are turn-bound; its native subagent can outlive its parent run, and its `dynamic_tool` or any native state the
   reader does not know is never settled. A page is built from the host's rendered
   window, not from a list that also carries rows retained from outside it, so a
   boundary between turns is never manufactured across a gap.
