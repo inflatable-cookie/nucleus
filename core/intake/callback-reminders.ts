@@ -15,12 +15,13 @@ import { wireLabel } from '../../shared/wire-labels';
 import { dispatchBlocked } from '../dispatch/capacity';
 import { timelineDispatchState } from '../recovery/provider-refusal';
 import {
-  mcpBindingPathFromHostRecord, mcpBindingPathFromProcessListing, reportBindingReuseDecision,
+  mcpBindingPathFromHostRecord, observedMcpBindingPath, reportBindingReuseDecision,
 } from './report-binding';
 import type { Resolution } from '../resolution';
 import { reviewAuthorizationRequired } from '../review/review-continuation';
 import { latestRunCompletion, now } from '../store/store';
 import { reminderClock } from '../recovery/task-reasons';
+import { MISSING_CALLBACK_CAUSE } from '../../shared/incident';
 
 /** One bounded reminder outcome over already-read facts. */
 export type ReminderDecision = 'skip' | 'skip_undispatched' | 'extend' | 'escalate' | 'wait_grace' | 'already_sent' | 'no_channel' | 'send' | 'relaunch';
@@ -69,7 +70,7 @@ export class CallbackReminders {
     // stopped. The live tool is the wait, and no coordinator is launched over it.
     const job = run.agentId ? await this.resolution.ownedJobWait(run.agentId) : null;
     if (job) { this.resolution.waiting(this.store.task(t.id), `${run.role} is waiting on its own running job: ${job}`, 'lifecycle'); this.resolution.extendCallbackReminder(this.store.task(t.id), run.id); return; }
-    const incident = this.resolution.ensureIncident(t, run, `The ${run.role} thread stopped without a callback; inspect the thread`, '', 'missing_callback');
+    const incident = this.resolution.ensureIncident(t, run, `The ${run.role} thread stopped without a callback; inspect the thread`, '', MISSING_CALLBACK_CAUSE);
     await this.deliverCallbackReminder(this.store.task(t.id), incident, run.agentId!, run.id, run.role, run);
   }
   /** Worker variant: the initial run lives on the task, not the runs table. */
@@ -174,14 +175,10 @@ export class CallbackReminders {
     if (!(blocked || reviewAuth || escalated) && agentId) {
       try {
         const state = await this.resolution.onTaskHost(run ?? { hostId: t.hostId }, () => this.resolution.host.observe(agentId));
-        let bindingPath = state.mcpBindingPath ?? mcpBindingPathFromHostRecord(state);
+        const recordedPath = state.mcpBindingPath ?? mcpBindingPathFromHostRecord(state);
         const bindingKey = wireLabel(state.labels, 'mcpBinding');
-        if (!bindingPath && bindingKey) {
-          bindingPath = mcpBindingPathFromProcessListing(
-            await this.adapter.hostProcessListing?.() ?? null,
-            bindingKey,
-          );
-        }
+        const bindingPath = await observedMcpBindingPath(recordedPath, bindingKey,
+          this.adapter.hostProcessListing ? () => this.adapter.hostProcessListing!() : undefined);
         let home: string | undefined;
         try { home = dataHome(); } catch { /* unknown home does not prove the path is outside */ }
         bindingOutside = Boolean(home) && reportBindingReuseDecision({ bindingPath, dataHome: home }) === 'fresh';
@@ -214,13 +211,13 @@ export class CallbackReminders {
         // existing reminder path.
         if (!this.store.events(t.id).some(event => event.kind === 'callback_reminder_skipped' && event.detail.startsWith(`${runId}:`)))
           this.store.event(t.id, 'callback_reminder_skipped', `${runId}: no dispatch message in the reviewer timeline; the reminder is skipped and the ordinary relaunch applies`.slice(0, 2000));
-        this.resolution.attention(this.store.task(t.id), `Reviewer run ${runId} stopped without a delivered dispatch (its timeline carries no dispatch message); the callback reminder is skipped and the run needs its ordinary relaunch`, 'missing_callback');
+        this.resolution.attention(this.store.task(t.id), `Reviewer run ${runId} stopped without a delivered dispatch (its timeline carries no dispatch message); the callback reminder is skipped and the run needs its ordinary relaunch`, MISSING_CALLBACK_CAUSE);
         return;
       case 'extend':
         this.resolution.extendCallbackReminder(t, runId);
         return;
       case 'escalate':
-        this.resolution.attention(t, `The ${role} thread stopped and its one callback reminder expired without a result; coordinator attention required`, 'missing_callback');
+        this.resolution.attention(t, `The ${role} thread stopped and its one callback reminder expired without a result; coordinator attention required`, MISSING_CALLBACK_CAUSE);
         // Hand the fault to coordinator attention: the reminder window is over.
         this.resolution.saveIncident(this.store.task(t.id), { action: '' });
         return;
@@ -238,7 +235,8 @@ export class CallbackReminders {
         this.resolution.saveIncident(t, { action: 'callback_reminder', status: 'reconciling', detail: 'One bounded callback reminder issued', updatedAt: now() });
         this.store.event(t.id, 'callback_reminder', runId);
         try {
-          await this.adapter.notify!(agentId, `ns-reminder-${runId}`, message, t.agentId ?? undefined);
+          await this.resolution.onTaskHost(run ?? { hostId: t.hostId }, () =>
+            this.adapter.notify!(agentId, `ns-reminder-${runId}`, message, t.agentId ?? undefined));
           this.resolution.saveIncident(this.store.task(t.id), { detail: 'One callback reminder sent; awaiting the authenticated result' });
         } catch (error) {
           this.resolution.attention(this.store.task(t.id), `Callback reminder delivery for the ${role} run failed: ${error instanceof Error ? error.message : String(error)}`);

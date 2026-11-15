@@ -31,11 +31,12 @@ if (process.argv[2] === '--worker') {
   const original = cp.ChildProcess.prototype.spawn;
   cp.ChildProcess.prototype.spawn = function(...args) { spawns++; return original.apply(this, args); };
   syncBuiltinESMExports();
-  const { instructionForCommit } = require(join(source, 'core/hooks/hooks.ts'));
-  const { supervisorLiveness, supervisorLivenessAsync } = require(join(source, 'core/machine/supervisor-liveness.ts'));
-  const { hostRunProcessStartIdentity } = require(machineSource('start-identity.ts'));
   const after = process.env.NUCLEUS_BENCH_VARIANT === 'after';
-  const Reader = after ? require(machineSource('supervisor-liveness.ts')).SupervisorLivenessReader : null;
+  const { instructionForCommit } = require(join(source, 'core/hooks/hooks.ts'));
+  const livenessSource = after ? machineSource('start-identity.ts') : join(source, 'core/machine/supervisor-liveness.ts');
+  const { supervisorLiveness, supervisorLivenessAsync } = require(livenessSource);
+  const { hostRunProcessStartIdentity } = require(machineSource('start-identity.ts'));
+  const Reader = after ? require(livenessSource).SupervisorLivenessReader : null;
   const validation = Reader && new Reader(), qa = Reader && new Reader();
   const state = join(fixture, 'state.json');
   writeFileSync(state, JSON.stringify({ heartbeatAt: new Date().toISOString(), identityToken: '--worker' }));

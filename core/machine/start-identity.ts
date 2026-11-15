@@ -20,6 +20,7 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { pidAlive, processCommandLine, processCommandLineAsync } from "./process-identity";
 
 const MAC_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const PS_TIMEOUT_MS = 5_000;
@@ -316,4 +317,71 @@ export function startIdentityMatches(recorded: string, observed: string): boolea
   const left = comparableStartIdentity(recorded);
   const right = comparableStartIdentity(observed);
   return left !== null && right !== null && left === right;
+}
+
+/** Whether a recorded identity belongs to this pid and carries a readable basis. */
+function knownIdentityForPid(identity: string, pid: number): boolean {
+  const separator = identity.indexOf("@");
+  return separator === String(pid).length && identity.slice(0, separator) === String(pid)
+    && !identity.endsWith("@unknown");
+}
+
+export interface SupervisorLiveness { state: "live" | "dead" | "unknown"; reason: string }
+export interface SupervisorLivenessProbes {
+  alive?(pid: number): boolean;
+  command?(pid: number): string | null;
+}
+
+/** A live pid is this supervisor only while its command line carries the run token. */
+export function supervisorLiveness(pid: number, identityToken: string, probes: SupervisorLivenessProbes = {}): SupervisorLiveness {
+  const alive = probes.alive ?? pidAlive;
+  const command = probes.command ?? processCommandLine;
+  if (!alive(pid)) return { state: "dead", reason: `the supervisor process ${pid} is gone` };
+  const line = command(pid);
+  if (!line) return { state: "unknown", reason: `the command line of process ${pid} could not be read` };
+  if (!line.includes(identityToken)) return { state: "dead", reason: `process ${pid} now belongs to another process` };
+  return { state: "live", reason: "the supervisor is alive with this run's identity" };
+}
+
+/** Service-side polling yields during ps; unreadable identities remain unknown. */
+export async function supervisorLivenessAsync(pid: number, identityToken: string,
+  probes: { alive?: (pid: number) => boolean; command?: (pid: number) => Promise<string | null> } = {},
+): Promise<SupervisorLiveness> {
+  const alive = probes.alive ?? pidAlive;
+  if (!alive(pid)) return supervisorLiveness(pid, identityToken, { alive });
+  const line = await (probes.command ?? processCommandLineAsync)(pid);
+  return supervisorLiveness(pid, identityToken, { alive, command: () => line });
+}
+
+/** Positive observations bind both the OS identity and the unique command token. */
+export class SupervisorLivenessReader {
+  private readonly proofs: RecordedIdentityProofs;
+  private readonly tokenProofs = new Map<string, number>();
+  private readonly options: RecordedIdentityProofOptions & { command: (pid: number) => Promise<string | null> };
+  constructor(options: Partial<RecordedIdentityProofOptions> & { command?: (pid: number) => Promise<string | null> } = {}) {
+    this.options = { read: readHostRunStartIdentity, alive: pidAlive, command: processCommandLineAsync,
+      now: Date.now, cacheMs: HOST_RUN_IDENTITY_PROOF_CACHE_MS, ...options };
+    this.proofs = new RecordedIdentityProofs(this.options);
+  }
+  async read(pid: number, token: string, startIdentity?: string, fresh = false): Promise<SupervisorLiveness> {
+    const probes = { alive: this.options.alive, command: this.options.command };
+    if (!startIdentity || !knownIdentityForPid(startIdentity, pid))
+      return supervisorLivenessAsync(pid, token, probes);
+    const key = JSON.stringify([pid, startIdentity, token]);
+    const proof = await this.proofs.check(pid, startIdentity, fresh);
+    if (proof !== true) {
+      this.tokenProofs.delete(key);
+      return proof === false ? { state: "dead", reason: "the supervisor process ended or changed identity" }
+        : { state: "unknown", reason: "the supervisor start identity could not be read" };
+    }
+    const provenAt = this.tokenProofs.get(key);
+    if (!fresh && provenAt !== undefined && this.options.now() - provenAt <= this.options.cacheMs && this.options.alive(pid))
+      return { state: "live", reason: "the supervisor retains its recorded identity and command token" };
+    const liveness = await supervisorLivenessAsync(pid, token, probes);
+    if (liveness.state === "live") {
+      if (this.tokenProofs.size >= 4096) this.tokenProofs.clear();
+      this.tokenProofs.set(key, this.options.now());
+    } else this.tokenProofs.delete(key);
+    return liveness;
+  }
 }

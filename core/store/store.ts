@@ -828,6 +828,7 @@ export class Store {
   message(id: string): AgentMessageRecord | null { return this.messagesStore.message(id); }
   putMessage(record: AgentMessageRecord) { return this.messagesStore.putMessage(record); }
   hookEventsPage(afterRowid: number, limit: number, throughRowid = Number.MAX_SAFE_INTEGER): { records: HookRecord[]; lastRowid: number } { return this.hookEventsStore.hookEventsPage(afterRowid, limit, throughRowid); }
+  hookEventsThroughRowid(): number { return this.hookEventsStore.hookEventsThroughRowid(); }
   hookEvents(taskId?: string): HookRecord[] { return this.hookEventsStore.hookEvents(taskId); }
   /** Permanent outcome row; never rewritten or purged. */
   putOutcome(record: Outcome): Outcome { return this.outcomesStore.putOutcome(record); }
