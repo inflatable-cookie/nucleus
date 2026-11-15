@@ -115,6 +115,8 @@ export const taskControlFields = <T extends z.ZodType<number | undefined>>(versi
       qualification: z.string().trim().min(1).max(4000).optional(),
       /** Display-only: task.next copies a held or effect summary into prefilled args. The control ignores it; it is named here so it is not refused. */
       summary: z.string().optional(),
+      /** Retired Round 4 field: older clients still send it, so it is accepted and dropped rather than refused. */
+      profile: z.unknown().optional().transform(() => undefined),
       /** Task 645: an owner instruction that forbids (true) or re-permits (false) automatic retry. Only valid for move, restart, route or amend_brief. */
       noAutomaticRetry: z.boolean().optional(),
       /** Spec 050 owner acceptance: the exact PR head named for merge or dispatched external-merge closeout. */
