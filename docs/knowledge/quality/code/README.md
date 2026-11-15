@@ -36,9 +36,10 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
   `linkPeriods` both publication paths call; the status file is read once into a status and its own
   failure, so an unreadable or corrupt status is reported instead of reading as healthy; the replaced
   admitted source refuses with the typed `BACKUP_SOURCE_CHANGED` code instead of a message comparison;
-  and the four-branch stream-fault catalogue left product code for one test-supplied stage, the faults
-  themselves now living in `test/support/backup-faults.mjs` (the `failIntegrity` boolean stays: a corrupt
-  snapshot cannot be produced from a healthy store without one). Its ownership stays 1 because the client
+  and the four-branch stream-fault catalogue left product code for the pipeline's own stage slots, so each
+  fault still lands where its component would and the faults, their codes and their messages now live in
+  `test/support/backup-faults.mjs` (the `failIntegrity` boolean stays: a corrupt snapshot cannot be
+  produced from a healthy store without one). Its ownership stays 1 because the client
   panel still derives a snapshot stem for display, which is its own N6 row. `capacity-slots` (9) decides
   and names the capacity limit in one place (`capacityLimitFor`/`capacityReason`), so the pool scope is a
   typed value rather than the `Global` message prefix; `capacityFor` is no longer an alias of a second
