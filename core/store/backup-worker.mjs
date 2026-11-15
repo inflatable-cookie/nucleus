@@ -253,17 +253,24 @@ export async function verifySnapshot(compressed, expectedDigest) {
  * published only when the compression and its round trip both prove out, so a broken
  * compressor, a full disk or an interrupted write leaves no restore point (Spec 028).
  */
+/**
+ * Test seam (Spec 028): the stages one snapshot pipeline runs in place of its own, one slot
+ * per component. A test supplies only the slots it needs, so a read error, a corrupted
+ * stream, a broken compressor and a full disk are each proved at the position they happen,
+ * and the cleanup that follows is the production one. Product callers never set it; the
+ * faults, their codes and their messages belong to the test that proves them.
+ */
+const pipelineStages = (raw, compressed, digesting, stages = {}) => [
+  stages.source ?? createReadStream(raw, { highWaterMark: streamChunk }),
+  digesting,
+  ...(stages.afterDigest ? [stages.afterDigest] : []),
+  stages.compressor ?? createGzip(),
+  stages.writer ?? createWriteStream(compressed, { flags: 'wx', mode: 0o600 }),
+];
 async function compressSnapshot(raw, compressed, options) {
   const rawDigest = createHash('sha256');
   const digesting = new Transform({ transform(chunk, _encoding, callback) { rawDigest.update(chunk); callback(null, chunk); } });
-  // Test seam: one stage after the digest and before the compressor, so a test can prove
-  // that a pipeline which fails or corrupts bytes publishes nothing. Product callers never
-  // set it; the faults and their messages belong to the test that proves them.
-  const stages = [createReadStream(raw, { highWaterMark: streamChunk }), digesting];
-  if (options.faultStage) stages.push(options.faultStage);
-  stages.push(createGzip());
-  stages.push(createWriteStream(compressed, { flags: 'wx', mode: 0o600 }));
-  await pipeline(...stages);
+  await pipeline(...pipelineStages(raw, compressed, digesting, options.stages));
   return verifySnapshot(compressed, rawDigest.digest('hex'));
 }
 /** The admitted source no longer names the file a staged snapshot was taken from. */

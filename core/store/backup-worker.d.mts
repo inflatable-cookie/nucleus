@@ -20,16 +20,28 @@ export function snapshotName(name: string): SnapshotName | null;
 /** One snapshot's file name for one of its tiers. */
 export function snapshotFileName(stem: string, kind: SnapshotName['kind']): string;
 
+/** The snapshot pipeline's own stages a test may stand in for. */
+export interface BackupPipelineStages {
+  /** The source read stream. */
+  source?: Transform;
+  /** A stage after the digest, before the compressor. */
+  afterDigest?: Transform;
+  /** The gzip compressor. */
+  compressor?: Transform;
+  /** The compressed write stream. */
+  writer?: Transform;
+}
 export interface BackupOptions {
   /** `manual` records the snapshot as the operator's Back up now (nucleus#965). */
   origin?: 'manual';
   /** Internal pre-migration snapshot publication bound to the admitted source. */
   admittedSource?: { path: string; fd: number };
   /**
-   * Fixture seam: one stage the snapshot pipeline runs between its digest and its
-   * compressor, so a test can prove that a failed or corrupt stage publishes nothing.
+   * Fixture seam: the stages the snapshot pipeline runs in place of its own, so a test can
+   * prove that a read, compressor or write failure publishes nothing at the position it
+   * happens.
    */
-  faultStage?: Transform;
+  stages?: BackupPipelineStages;
   /** Fixture seam: fail the snapshot's own integrity check. */
   failIntegrity?: boolean;
   /**
