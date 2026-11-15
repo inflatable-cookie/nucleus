@@ -21,7 +21,7 @@ import { HOST_RUN_TOKEN_GRACE_MS } from "../host-runs/host-run-endpoint-types";
 import { issueHostRunToken } from "../host-runs/host-run-token";
 import { processGroupEmpty, signalProcessGroup, signalProcessGroupByLeader } from "../machine/process-group";
 import { processesForStartIdentity, processStartIdentityLiveness } from "../machine/process-identity-search";
-import { SupervisorLivenessReader } from "../machine/supervisor-liveness";
+import { SupervisorLivenessReader } from "../machine/start-identity";
 import { findProcessByCommandTokenAsync, pidAlive, processCommandLine } from "../machine/process-identity";
 import { projectValidationSupervisorPaths, readProjectValidationCancellation, readProjectValidationCpuCoverage, readProjectValidationPlan, readProjectValidationResult, readProjectValidationSupervisorState, writeProjectValidationCancellation, writeProjectValidationPlan, type ProjectValidationSupervisorPlan, type ProjectValidationSupervisorResult } from "./project-validation-supervisor";
 import { projectValidationCallerIdentity, projectValidationSchedulerEvidence } from "../../shared/project-validation-caller";

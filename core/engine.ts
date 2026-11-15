@@ -1,5 +1,4 @@
 import { TaskControlLifecycle } from './verbs/task-control-lifecycle';
-import { HookRetention } from './hooks/retention';
 import { EngineStop } from './recovery/engine-stop';
 import { ProjectLifecycle } from './planning/project-lifecycle';
 import { schedulingContext } from './scheduling/context';
@@ -128,7 +127,7 @@ import { Projections } from "./store/projections";
 import { Resolution } from "./resolution";
 import { PROFILE_CATALOG_LOADING_REFUSAL, PROFILE_CATALOG_PENDING_REASON } from "./recovery/task-reasons";
 import { reportingIdentityMismatch } from "./intake/reporting-identity";
-import { RepositoryHooks, type HookEmissionResult } from "./hooks/hooks";
+import { RepositoryHooks, hookHoldReason, type HookEmissionResult } from "./hooks/hooks";
 /** Pre-dispatch gates re-run automatically after main fast-forwarded under them; beyond this a human decides. */
 export const PRE_DISPATCH_BASE_ADVANCE_LIMIT = 3;
 import { RuntimeRetirementService } from './runtime/runtime-retirement';
@@ -152,8 +151,6 @@ export class Engine {
   /** Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): the durable host-outage record. */
   readonly hostOutages: HostOutages;
   readonly taskControlLifecycle = new TaskControlLifecycle(schedulingContext(this, ['store', 'resolveTaskControl', 'hostAvailable', 'withHost', 'taskControlDispatcher', 'resolution', 'forceCallerAuthorized', 'selfForceRole']));
-
-  readonly hookRetention = new HookRetention(schedulingContext(this, ['hooks', 'store']));
 
   readonly engineStop = new EngineStop(schedulingContext(this, ['resolution', 'store']));
 
@@ -906,7 +903,10 @@ export class Engine {
    * `task.pre_archive` for the retained worktree and report a hold with the
    * hook's evidence. A repository with no bound hook reports no hold.
    */
-  retentionHold(taskId: string, target: { directory: string; head: string }, reason: string): Promise<{ hold: boolean; detail: string }> { return this.hookRetention.retentionHold(taskId, target, reason); }
+  async retentionHold(taskId: string, target: { directory: string; head: string }, reason: string): Promise<{ hold: boolean; detail: string }> {
+    const outcome = await this.hooks.retentionGate(this.store.task(taskId), { ...target, reason });
+    return outcome.hold ? { hold: true, detail: hookHoldReason(outcome) } : { hold: false, detail: '' };
+  }
   /**
    * Record a stop or wait from the engine. Callers name the stop reason;
    * `classify` is for exception or agent error text Queue did not author.

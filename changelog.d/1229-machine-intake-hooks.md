@@ -1,0 +1,1 @@
+Hook cleanup uses the shared asynchronous tree remover. Callback reminders share report-binding observation with dispatch and deliver notifications in the task's host context. Supervisor liveness now sits with start-identity proofs, and unused intake re-export shims are removed.
