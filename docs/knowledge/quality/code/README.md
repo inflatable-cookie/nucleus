@@ -57,6 +57,27 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
 
 ## Re-rates
 
+- nucleus#1238 (floor 7, 2026-11-15): the four floor-7 planning modules were split, hardened or simplified along
+their named seams and re-rated at this PR's head. `core/planning/operations.ts` (8) keeps acceptance,
+scheduling, resume and settlement, and its pre-send receipt proof is the new owner
+`core/planning/operation-receipts.ts` (9): a typed `ReceiptProof` names the receipt it records, the two long
+conjunctions became one shared unchanged-attempt predicate plus a parked-restart branch proved by its own
+evidence hashes, and a receipt that cannot be built is dropped by a documented catch, which is why failure stays
+1 there and in `operations.ts` alongside its record-only lane catches. The lane key decodes its payload through
+the shared schemas and the perform step reuses one re-key payload shape. `core/planning/repository-rekey.ts` (9)
+now describes each re-keyed family once in one catalogue — read, identity rule, path claim, move — so the plan,
+the occupancy checks and the apply each read a family's stored shape once, and a record that does not decode
+refuses the step with the named `concurrent_change` code and an explanation instead of being skipped while the
+receipt reports success; proportion stays 1 for the length twelve families require.
+`core/planning/project-lifecycle.ts` (9) reads one typed owner-liveness state: a qualified owner is observed on
+its own host and an unqualified legacy thread only on a Paseo host, so wrong-host silence, a missing adapter
+read and an ambiguous seed are unknown and never retire the record; the bare-legacy-host rule is
+`core/planning/project-agents.ts`' one owner (its row keeps 8), and the migration still re-reads every
+unresolved owner per sweep, hence proportion 1. `core/planning/brief-lane-documents.ts` (10) takes its keys
+from the task's typed lane-document declaration alone, so the prose and `## Read` inference is gone and an
+unresolvable declaration is reported. Boundary tests cover the receipt proof, the three owner-liveness host
+cases and the undecodable-row refusal; `test/planning-records-2.test.ts` replaces the prose-inference test with
+the typed declaration's.
 - nucleus#1237 (floor 7, 2026-11-15; implementation commit `91c8a5b72a917dedda5d3fdc7238cfaee2ebcd42`): `merge-gates.ts` now shares one accepted-head predicate across both hook gates (7: O1 T1 F2 P1 Pr2); `integration-turns.ts` uses the shared blocking-effects selector (7: O1 T0 F2 P2 Pr2); `merge-phase.ts` now only restores durable merge intent, while unchanged-check recovery belongs to `CheckWaits` and hook replay lifecycle decisions sit beside hook replay proof (7: O2 T0 F1 P2 Pr2). `hook-replay.ts` is re-rated at 8 with lifecycle settlement included, and the `check-waits.ts` row records its added gate owner. Existing exact-head, integration-turn, merge-intent and automatic-replay boundary tests remain in place; no behavior or test assertions were changed.
 
 - nucleus#1233 (floor 7, 2026-11-15): the three floor-7 dispatch modules were consolidated and re-rated at

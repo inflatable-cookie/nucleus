@@ -1,13 +1,23 @@
-import { formatAgentId } from "../../shared/agent-identity";
+import { formatAgentId, parseAgentId } from "../../shared/agent-identity";
 import { hostKindOf } from "../../shared/host-kind";
 import { observationTimeout } from '../recovery/observation-timeout';
 import { DEFAULT_PROJECT_LIMIT, ownerCandidateKind } from "../../shared/contracts";
 import { buildProjectSettings, projectSettingsQaKeys } from "./project-settings";
-import { observedHostIdOf, projectAgentViews } from "./project-agents";
+import { legacyIdentityObservedOn, observedHostIdOf, projectAgentViews } from "./project-agents";
 import { UNRESOLVED_SEED } from "../store/store";
 import type { Engine } from '../engine';
 
 export type ProjectLifecycleContext = Pick<Engine, 'adapter' | 'host' | 'store' | 'activeHostId'> & Partial<Pick<Engine, 'plannerTicketPending'>>;
+
+const OWNER_OBSERVATION_TIMEOUT = "Owner liveness check timed out";
+
+/**
+ * One owner thread's liveness. `live` resolves the thread the project's planner
+ * becomes; `missing` is the one answer that may retire the owner record, and
+ * only a read on the thread's own host answers it; `unknown` is unreadable
+ * evidence and never absence.
+ */
+type OwnerThreadState = { kind: "live"; agentId: string } | { kind: "missing" } | { kind: "unknown" };
 
 export class ProjectLifecycle {
   constructor(readonly context: ProjectLifecycleContext) {}
@@ -56,24 +66,43 @@ export class ProjectLifecycle {
     for (const project of this.context.store.projects()) {
       if (!project.owner || project.planner?.agentId) continue;
       const owner = project.owner.agentId;
-      let state: "live" | "missing" | "unknown" | { resolved: string } = "unknown";
-      try {
-        if (UNRESOLVED_SEED.test(owner)) {
-          const found = this.context.adapter.listLiveAgents ? (await observationTimeout(this.context.host.listLiveAgents(), "Owner liveness check timed out")).filter(agent => agent.id.startsWith(owner)) : [];
-          state = found.length === 1 ? { resolved: found[0].id } : found.length ? "unknown" : "missing";
-        } else {
-          const agent = this.context.adapter.originAgent ? await observationTimeout(this.context.host.originAgent(owner), "Owner liveness check timed out") : null;
-          state = agent && !agent.archived ? "live" : "missing";
-        }
-      } catch { state = "unknown"; }
-      if (state === "unknown") { unresolved++; continue; }
-      if (state === "missing") this.context.store.retireProjectOwner(project.key, "Spec 058 cutover 5: the owner thread is gone or archived, so the record is dropped");
-      else {
-        const agentId = typeof state === "object" ? state.resolved : owner;
-        this.context.store.setProjectPlanner({ key: project.key, agentId, setBy: "Queue",
-          note: "Spec 058 cutover 5: the live owner thread becomes the planner" });
-      }
+      const state = await this.ownerThreadState(owner);
+      if (state.kind === "unknown") { unresolved++; continue; }
+      if (state.kind === "missing") this.context.store.retireProjectOwner(project.key, "Spec 058 cutover 5: the owner thread is gone or archived, so the record is dropped");
+      else this.context.store.setProjectPlanner({ key: project.key, agentId: state.agentId, setBy: "Queue",
+        note: "Spec 058 cutover 5: the live owner thread becomes the planner" });
     }
     if (!unresolved) this.context.store.setMeta("projectOwnersToPlanners", "done");
+  }
+
+  /**
+   * Read one owner thread's liveness on the host that can answer for it. The
+   * host facade serves a qualified identity on its own host, and an unqualified
+   * legacy thread is observable only on a Paseo host; a host that cannot hold
+   * the thread, an adapter without the read, and an unreadable answer are all
+   * `unknown`, so no wrong-host silence ever retires the record.
+   */
+  private async ownerThreadState(owner: string): Promise<OwnerThreadState> {
+    const observedHostId = this.context.activeHostId ?? observedHostIdOf(this.context.adapter);
+    try {
+      if (!parseAgentId(owner) && !legacyIdentityObservedOn(observedHostId)) return { kind: "unknown" };
+      if (UNRESOLVED_SEED.test(owner)) return await this.seededOwnerThreadState(owner);
+      if (!this.context.adapter.originAgent) return { kind: "unknown" };
+      const agent = await observationTimeout(this.context.host.originAgent(owner), OWNER_OBSERVATION_TIMEOUT);
+      return agent && !agent.archived ? { kind: "live", agentId: owner } : { kind: "missing" };
+    } catch { return { kind: "unknown" }; }
+  }
+
+  /**
+   * A seeded owner names a legacy thread by the start of its id. Exactly one
+   * live thread resolves it (an exact id wins over a prefix); no match is a
+   * proven absence only because the read was made on the thread's own host.
+   */
+  private async seededOwnerThreadState(seed: string): Promise<OwnerThreadState> {
+    if (!this.context.adapter.listLiveAgents) return { kind: "unknown" };
+    const live = await observationTimeout(this.context.host.listLiveAgents(), OWNER_OBSERVATION_TIMEOUT);
+    const found = live.filter(agent => agent.id === seed || agent.id.startsWith(seed));
+    if (found.length === 1) return { kind: "live", agentId: found[0].id };
+    return found.length ? { kind: "unknown" } : { kind: "missing" };
   }
 }
