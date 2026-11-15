@@ -479,7 +479,10 @@ evidence even without a corresponding tool row.
 For a T3 participant, owned tools clear only when all three observations clear:
 no active run or pending runtime request; no live tool or provider background
 task in the newest window; and no owned process in the workspace or recorded
-run temporary directories. Missing or unreadable evidence stays inconclusive.
+run temporary directories. Workspace archive resolves every recorded run for
+each participant in that workspace, including attached support roles and the
+task-row worker, and checks every scratch root on each proof pass. A missing
+run inventory, identity or scratch root stays inconclusive.
 History pages are not read or reconstructed (planner ruling, 2026-11-15).
 Provider threads are window-retained: active threads, threads referenced by the
 window or retained nodes, and the latest todo owner. The residual premise is

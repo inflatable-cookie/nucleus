@@ -165,8 +165,8 @@ export abstract class HostPolicies extends MachinePorts {
 
   verifyCloseoutWorkspace(task:Task,id:string,directory:string) { return this.workspaceContinuation.verifyCloseoutWorkspace(task,id,directory); }
 
-  archiveTaskWorkspace(task:Task,id:string,directory:string,expectedHead:string,allowed:()=>boolean,uncertain:boolean,requirePublished=false,attachedAgentIds:ReadonlySet<string>=new Set(),requireDirectory=false,allowIdleForeignThreads=false,buildOutputCleanup?:BuildOutputCleanupHooks,reviewRun?:Run,discard?:WorkspaceDiscard|null,primaryArchived?:()=>boolean) {
-    return this.ownedWorkspaceArchive.archiveTaskWorkspace(task,id,directory,expectedHead,allowed,uncertain,requirePublished,attachedAgentIds,requireDirectory,allowIdleForeignThreads,buildOutputCleanup,reviewRun,discard,primaryArchived);
+  archiveTaskWorkspace(task:Task,id:string,directory:string,expectedHead:string,allowed:()=>boolean,uncertain:boolean,requirePublished=false,attachedAgentIds:ReadonlySet<string>=new Set(),requireDirectory=false,allowIdleForeignThreads=false,buildOutputCleanup?:BuildOutputCleanupHooks,reviewRun?:Run,discard?:WorkspaceDiscard|null,primaryArchived?:()=>boolean,participantRuns?:()=>Run[]) {
+    return this.ownedWorkspaceArchive.archiveTaskWorkspace(task,id,directory,expectedHead,allowed,uncertain,requirePublished,attachedAgentIds,requireDirectory,allowIdleForeignThreads,buildOutputCleanup,reviewRun,discard,primaryArchived,participantRuns);
   }
 
   externalWorkspaceCatalog(directory: string) { return this.workspaceArchive.externalWorkspaceCatalog(directory); }

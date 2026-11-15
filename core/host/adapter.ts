@@ -255,7 +255,7 @@ export interface Adapter extends RunUsageSource {
    * one whose backing it might remove. A complete walk or an explicit refusal.
    */
   externalWorkspaceCatalog?(directory: string): Promise<ExternalWorkspaceCatalog>;
-  archiveTaskWorkspace?(task:Task,id:string,directory:string,expectedHead:string,allowed:()=>boolean,uncertain:boolean,requirePublished?:boolean,attachedAgentIds?:ReadonlySet<string>,requireDirectory?:boolean,allowIdleForeignThreads?:boolean,buildOutputCleanup?:BuildOutputCleanupHooks,reviewRun?:Run,discard?:WorkspaceDiscard|null,primaryArchived?:()=>boolean):Promise<boolean|string[]>;
+  archiveTaskWorkspace?(task:Task,id:string,directory:string,expectedHead:string,allowed:()=>boolean,uncertain:boolean,requirePublished?:boolean,attachedAgentIds?:ReadonlySet<string>,requireDirectory?:boolean,allowIdleForeignThreads?:boolean,buildOutputCleanup?:BuildOutputCleanupHooks,reviewRun?:Run,discard?:WorkspaceDiscard|null,primaryArchived?:()=>boolean,participantRuns?:()=>Run[]):Promise<boolean|string[]>;
   taskWorkspaceArchived?(id:string):Promise<boolean>;
   verifyPr(task: Task, number: number): Promise<VerifiedPr>;
   verifyPrIdentity?(task: Task, number: number, options?: { allowDraft?: boolean }): Promise<VerifiedPr>;

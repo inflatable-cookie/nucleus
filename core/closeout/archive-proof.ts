@@ -18,7 +18,7 @@ export interface LifecycleAdapter {
   createCloseoutWorkspace(task: Task): Promise<{ id: string; directory: string }>;
   findCloseoutWorkspaces(task: Task): Promise<{ id: string; directory: string }[]>;
   verifyCloseoutWorkspace(task: Task, id: string, directory: string): Promise<void>;
-  archiveTaskWorkspace(task: Task, id: string, directory: string, expectedHead: string, allowed: () => boolean, uncertain: boolean, requirePublished?: boolean, attachedAgentIds?: ReadonlySet<string>, requireDirectory?: boolean, allowIdleForeignThreads?: boolean, buildOutputCleanup?: BuildOutputCleanupHooks, reviewRun?: Run, discard?: WorkspaceDiscard | null, primaryArchived?: () => boolean, viewSuperseded?: boolean): Promise<boolean | string[]>;
+  archiveTaskWorkspace(task: Task, id: string, directory: string, expectedHead: string, allowed: () => boolean, uncertain: boolean, requirePublished?: boolean, attachedAgentIds?: ReadonlySet<string>, requireDirectory?: boolean, allowIdleForeignThreads?: boolean, buildOutputCleanup?: BuildOutputCleanupHooks, reviewRun?: Run, discard?: WorkspaceDiscard | null, primaryArchived?: () => boolean, participantRuns?: () => Run[]): Promise<boolean | string[]>;
   /** Read-only observation of whether Paseo still lists the workspace; used to reconcile a recorded archive intent. */
   taskWorkspaceArchived?(id: string): Promise<boolean>;
 }
@@ -138,7 +138,7 @@ export class ArchiveProof {
       if (!allowed()) return false;
       this.context.resolution.update(this.store.task(task.id), { archiveIntentWorkspaceId: id, archiveIntentHead: head }, {}, 'workspace_archive_intent', head);
       return true;
-    }, archiveUncertain, true, attachedAgentIds, false, !reviewRun, buildOutputCleanup, reviewRun, discard, primaryArchived);
+    }, archiveUncertain, true, attachedAgentIds, false, !reviewRun, buildOutputCleanup, reviewRun, discard, primaryArchived, () => this.store.runs(task.id));
     if (!archived) {
       // The adapter declined without any effect: no native archive request was
       // sent and nothing was deleted. A retained build-output root is a named,

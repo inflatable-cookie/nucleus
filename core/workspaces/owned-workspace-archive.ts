@@ -5,6 +5,7 @@ import type { Run, Task } from "../../shared/contracts";
 import type { AgentObservation, OriginAgent } from "../host/adapter";
 import type { WorkspaceContinuationHost } from "./workspace-continuation";
 import type { TimelinePage } from "../recovery/stall";
+import { participantToolRunIds } from '../recovery/task-reasons';
 import { boundedToolHold } from '../machine/bounded-tool';
 import { readToolTimeline, liveToolIssue, workspaceToolProcessIssue } from "../recovery/stall";
 import { verifyReviewSourceView } from "../review/review-source";
@@ -16,7 +17,7 @@ import { externalWorkspaceArchivePlacement, type ExternalWorkspaceCatalogView } 
 
 export class OwnedWorkspaceArchive {
   constructor(private readonly host: OwnedWorkspaceArchiveHost) {}
-  async archiveTaskWorkspace(task:Task,id:string,directory:string,expectedHead:string,allowed:()=>boolean,uncertain:boolean,requirePublished=false,attachedAgentIds:ReadonlySet<string>=new Set(),requireDirectory=false,allowIdleForeignThreads=false,buildOutputCleanup?:BuildOutputCleanupHooks,reviewRun?:Run,discard?:WorkspaceDiscard|null,primaryArchived?:()=>boolean) {
+  async archiveTaskWorkspace(task:Task,id:string,directory:string,expectedHead:string,allowed:()=>boolean,uncertain:boolean,requirePublished=false,attachedAgentIds:ReadonlySet<string>=new Set(),requireDirectory=false,allowIdleForeignThreads=false,buildOutputCleanup?:BuildOutputCleanupHooks,reviewRun?:Run,discard?:WorkspaceDiscard|null,primaryArchived?:()=>boolean,participantRuns?:()=>Run[]) {
     const workspace=this.host.workspaceHost.workspaceRef(id);
     const terminal=task.phase==='done'||task.phase==='cancelled'&&task.disposition?.status==='complete';
     const participantDeleted=async(agentId:string)=>{
@@ -137,14 +138,17 @@ export class OwnedWorkspaceArchive {
           // running call of a turn-bound kind is settled before its checkout goes.
           const issue='issue' in read?read.issue:read.coverage==='bounded'
             ?await boundedToolHold(read,this.host,agentId,id,async()=>{
-              const run=reviewRun?.agentId===agentId?reviewRun:null;
-              const runId=run?.id??(task.agentId===agentId?task.runId:null);
-              const temporaryDirectory=run?.temporaryDirectory??(task.agentId===agentId?task.temporaryDirectory:undefined);
-              if(!runId||!temporaryDirectory)return 'participant run process identity is unavailable';
+              if(!participantRuns)return 'participant run inventory is unavailable';
+              const runs=participantRuns();
+              const runIds=participantToolRunIds(task,runs,agentId,id);
+              if(!runIds.length)return 'participant run process identity is unavailable';
+              const temporaryDirectories=runIds.map(runId=>runs.find(run=>run.id===runId)?.temporaryDirectory
+                ??(runId===task.runId?task.temporaryDirectory:undefined));
+              if(temporaryDirectories.some(root=>!root))return 'a participant run temporary directory is unrecorded';
               const processes=await this.host.hostProcessListing();
               if(!processes)return 'the host process listing is unreadable';
-              for(const root of [directory,temporaryDirectory]){
-                const why=workspaceToolProcessIssue(processes,root,[runId]);
+              for(const root of new Set([directory,...temporaryDirectories])){
+                const why=workspaceToolProcessIssue(processes,root!,runIds);
                 if(why)return why;
               }
               return null;

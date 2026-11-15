@@ -72,7 +72,7 @@ export class TaskRemoval {
           if (shared()) return false;
           this.engine.resolution.update(this.store.task(id), { archiveIntentWorkspaceId: task.workspaceId, archiveIntentHead: null }, {}, "workspace_archive_intent");
           return true;
-        }, false, true, ids);
+        }, false, true, ids, false, false, undefined, undefined, undefined, undefined, () => this.store.runs(id));
         if (!archived) throw new Error("Workspace became shared before archive; task remains visible");
         await this.engine.retirement.archived(id, task.workspaceId);
       }
