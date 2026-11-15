@@ -207,7 +207,8 @@ export interface TimelinePage {
   entries: TimelineEntry[];
   hasOlder?: boolean; gap?: boolean; hasNewer?: boolean; staleCursor?: boolean; reset?: boolean;
   epoch?: string; startCursor?: TimelineCursor | null; endCursor?: TimelineCursor | null;
-  projection?: 'projected' | 'canonical';
+  projection?: 'projected' | 'canonical' | 'bounded';
+  pendingBackgroundTasks?: string[];
 }
 
 /**

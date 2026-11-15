@@ -487,9 +487,16 @@ export async function observedTurnState(host: { observe(id: string): Promise<Age
  * lifecycle entries across a cursor seam. Every accepted proof is one provider
  * response, with every previously observed entry retained unchanged as a suffix.
  * No turn IDs is normal; then only the whole history supplies positive coverage.
+ * A bounded liveness window is returned explicitly as such; callers must combine
+ * it with inactivity and owned-process observations before clearing tools.
  */
+export type ToolTimelineRead =
+  | { entries: TimelineEntry[]; coverage: 'bounded'; pendingBackgroundTasks: string[] }
+  | { entries: TimelineEntry[]; coverage?: 'turn' }
+  | { issue: string };
+
 export async function readToolTimeline(host: { agentTimelinePage?(id: string, limit?: number): Promise<TimelinePage | null> },
-  agentId: string): Promise<{ entries: TimelineEntry[] } | { issue: string }> {
+  agentId: string): Promise<ToolTimelineRead> {
   if (!host.agentTimelinePage) return { issue: 'tool observations have no completeness evidence' };
   let previous: TimelinePage | undefined;
   let limit = TOOL_TIMELINE_LIMIT;
@@ -512,11 +519,20 @@ export async function readToolTimeline(host: { agentTimelinePage?(id: string, li
     if (page.staleCursor === true || page.reset === true) return { issue: 'tool observations report a stale cursor or history reset' };
     if (page.hasNewer === true) return { issue: 'tool observations omit newer history' };
     if (page.gap !== false || page.staleCursor !== false || page.reset !== false || page.hasNewer !== false
-      || typeof page.hasOlder !== 'boolean' || !page.epoch || !['projected', 'canonical'].includes(page.projection ?? ''))
+      || typeof page.hasOlder !== 'boolean' || !page.epoch || !['projected', 'canonical', 'bounded'].includes(page.projection ?? ''))
       return { issue: 'tool observations are missing positive coverage metadata' };
     // Paseo extends projected tails to include earlier anchors whose tool
     // updates overlap the window. The requested limit is not a response cap.
     if (!Array.isArray(page.entries)) return { issue: 'tool observations have missing entries' };
+    if (page.projection === 'bounded') {
+      if (!Array.isArray(page.pendingBackgroundTasks) || page.pendingBackgroundTasks.some(task => typeof task !== 'string' || !task))
+        return { issue: 'bounded tool observations lack pending-background-task evidence' };
+      if (page.entries.length
+        ? !validCursor(page.startCursor, page.epoch) || !validCursor(page.endCursor, page.epoch) || page.startCursor.seq > page.endCursor.seq
+        : page.startCursor !== null || page.endCursor !== null)
+        return { issue: 'bounded tool observations have inconsistent cursors' };
+      return { entries: page.entries, coverage: 'bounded', pendingBackgroundTasks: page.pendingBackgroundTasks };
+    }
     if (!page.entries.length) {
       if (previous || page.hasOlder || page.startCursor !== null || page.endCursor !== null)
         return { issue: 'empty tool observations have inconsistent cursor coverage' };

@@ -191,7 +191,13 @@ export async function t3Fake(t: TestContext, directory: string) {
     const windowStart = p.turnItems.findIndex((item: Value) => windowItemIds.has(item.id));
     // Window rows first, then the retained items: the served rows are the window
     // itself, so a timeline page built from them holds no older row.
-    const windowed = { ...p, runs, runtimeRequests, plans, contextHandoffs, turnItems: servedItems, messages: p.messages.slice(-1) };
+    const providerIds = new Set([...servedItems, ...runs].map((item: Value) => item.providerThreadId).filter(Boolean));
+    const nodeIds = new Set(servedItems.map((item: Value) => item.nodeId).filter(Boolean));
+    const providerThreads = (p.providerThreads ?? []).filter((thread: Value) => thread.status === 'active'
+      || providerIds.has(thread.id) || nodeIds.has(thread.ownerNodeId)
+      || thread.id === p.latestTodoList?.providerThreadId);
+    const windowed = { ...p, runs, runtimeRequests, plans, contextHandoffs, providerThreads,
+      turnItems: servedItems, messages: p.messages.slice(-1) };
     const snapshot = { projection: wireProjection(windowed, windowItemIds),
       hasMoreHistory, historyCursor: hasMoreHistory ? `synthetic-history-${windowStart}` : null, latestLocalTurnOrdinal: null };
     // The fixture is checked against the recorded contract on every bounded
@@ -216,7 +222,6 @@ export async function t3Fake(t: TestContext, directory: string) {
     unsupportedProjectCreate: false, projectMutationFailure: false, projectMutationSecretFailure: false, projectMutationIdSecretFailure: false, secretDefect: false, secretLocationDefect: false, mutationObserver: (() => {}) as () => void,
     /** Rows the bounded snapshot keeps before it pages; the nightly's own limit is a policy, not a contract field. */
     boundedRowLimit: 20,
-    historyPageOverride: {} as Value,
     /**
      * Millisecond delay before a whole-projection answer (a read that did not opt
      * into the bounded snapshot), modelling the measured slow full read of a very
@@ -235,8 +240,6 @@ export async function t3Fake(t: TestContext, directory: string) {
   const sockets = new Set<Socket>();
   const controlFrames: Value[] = [];
   const frameBytes: number[] = [];
-  /** Every bounded history page this fake served: the thread and the cursor asked for. */
-  const historyReads: Value[] = [];
   const injectors: Array<(text: string) => void> = [];
   let upgrades = 0, closes = 0;
   const wsText = (socket: Socket, text: string) => {
@@ -257,27 +260,7 @@ export async function t3Fake(t: TestContext, directory: string) {
       response.end(JSON.stringify({ ticket: 'synthetic-ticket', expiresAt: '2099-01-01T00:00:00.000Z' }));
       return;
     }
-    // The nightly's authenticated bounded history page: `GET
-    // /api/orchestration/threads/:threadId/history?cursor=…` (recorded contract
-    // `subscribeThread.historyRoute`). The cursor names the row boundary before
-    // the page it returns, and the page renumbers its own row positions.
-    const match = /^\/api\/orchestration\/threads\/([^/]+)\/history$/.exec(url.pathname);
-    assert.ok(match, `unexpected HTTP route ${url.pathname}`);
-    assert.equal(request.headers['x-t3-orchestration-protocol'], '2');
-    assert.deepEqual([...url.searchParams.keys()], ['cursor']);
-    const threadId = decodeURIComponent(match[1]!);
-    const p = threads.get(threadId);
-    const cursor = /^synthetic-history-(\d+)$/.exec(url.searchParams.get('cursor') ?? '');
-    assert.ok(p && cursor, 'the history route needs a known thread and a recorded cursor');
-    historyReads.push({ threadId, cursor: Number(cursor[1]) });
-    const rows = (p.turnItems ?? []).map((item: Value, index: number) => ({ position: index + 1,
-      sourceItemId: item.id, sourceThreadId: threadId, visibility: 'local', item }));
-    const end = Math.min(Number(cursor[1]), rows.length);
-    const start = Math.max(0, end - controls.boundedRowLimit);
-    const page = { snapshotSequence: controls.snapshotSequence,
-      items: rows.slice(start, end).map((row: Value, index: number) => ({ ...row, position: index + 1 })),
-      nextCursor: start > 0 ? `synthetic-history-${start}` : null, hasMoreHistory: start > 0 };
-    response.end(JSON.stringify({ ...page, ...controls.historyPageOverride }));
+    assert.fail(`unexpected HTTP route ${url.pathname}`);
   });
   const shell = (raw: Value) => {
     const p = wireProjection(raw);
@@ -532,5 +515,5 @@ export async function t3Fake(t: TestContext, directory: string) {
   const injectRaw = (text: string) => { for (const write of injectors) write(text); };
   const fullSnapshotBytes = (threadId: string) => Buffer.byteLength(JSON.stringify({ _tag: 'Chunk', requestId: 'synthetic-request',
     values: [{ kind: 'snapshot', snapshotSequence: controls.snapshotSequence, projection: wireProjection(threads.get(threadId)!) }] }));
-  return { endpoint: `http://127.0.0.1:${address.port}`, controls, threads, commands, requests, snapshots, controlFrames, frameBytes, historyReads, fullSnapshotBytes, get upgrades() { return upgrades; }, get closes() { return closes; }, projects: projectRows, dropSockets, inject, injectRaw };
+  return { endpoint: `http://127.0.0.1:${address.port}`, controls, threads, commands, requests, snapshots, controlFrames, frameBytes, fullSnapshotBytes, get upgrades() { return upgrades; }, get closes() { return closes; }, projects: projectRows, dropSockets, inject, injectRaw };
 }

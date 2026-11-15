@@ -3,7 +3,7 @@ import type { HostThread, HostTimelinePage } from '../../shared/host';
 import { ProvenPreSendRefusalError } from '../../core/host';
 import type { T3RpcClient } from './rpc';
 import type { T3StateFile } from './state';
-import { decode, shellSnapshot, projection, threadSnapshot, threadSnapshotCoverage, shellThread, project, threadHistoryPage, pendingBackgroundTask, T3CompatibilityError } from './contracts';
+import { decode, shellSnapshot, projection, threadSnapshot, threadSnapshotCoverage, shellThread, project, T3CompatibilityError } from './contracts';
 
 /**
  * What one thread snapshot is for. Observation needs the thread record, its runs
@@ -20,9 +20,6 @@ export type Projection = z.infer<typeof projection>;
 export interface ThreadSnapshotRead {
   projection: Projection;
   paged: boolean;
-  /** The cursor before the nightly's own window; the route to older bounded history pages. */
-  historyCursor: string | null;
-  snapshotSequence: number;
 }
 /** Native executions use shared tool kinds; background commands, children and dynamic tools can outlive their run. */
 const nativeToolKinds: Record<string, string> = { command_execution: 'shell', file_change: 'edit',
@@ -34,8 +31,6 @@ const nativeToolIdentity = (item: Record<string, unknown>): string => {
   if (Array.isArray(value)) return value.filter(part => typeof part === 'string').join(' ').slice(0, 200);
   return '';
 };
-/** Bound HTTP work as well as the shared reader's six widening reads. */
-const historyPageBudget = 64;
 type TimelineRow = { position: number; sourceThreadId?: string; sourceItemId: string; item: { id: string; type: string; ordinal: number;
   runId?: string | null; createdAt?: string; updatedAt?: string } };
 /** This thread's own rendered rows, oldest first: an inherited row belongs to another agent. */
@@ -52,21 +47,6 @@ const timelineEntry = (row: TimelineRow, fallback: string): import('../../shared
   return { timestamp, ...turnId, item: { type: 'tool_call', callId: item.id, name, status: String(item.status ?? ''),
     detail: { type: kind, command: nativeToolIdentity(item), nativeType: item.type } } };
 };
-const backgroundToolTypes = new Set(['command_execution', 'dynamic_tool', 'subagent']);
-const terminalToolStatuses = new Set(['completed', 'failed', 'cancelled', 'canceled']);
-/**
- * The background work the provider threads still report that no visible live row
- * shows. The nightly derives these tasks from the provider session's own state,
- * never from its window, so this is positive evidence that work can still be
- * running no matter how far back the rendered rows reach. A task it names whose
- * item is not a non-terminal row cannot be judged by the reader at all.
- */
-const hiddenBackground = (rows: readonly TimelineRow[], tasks: z.infer<typeof pendingBackgroundTask>[]): string[] =>
-  tasks
-    .filter(task => !rows.some(row => backgroundToolTypes.has(row.item.type)
-      && task.taskId === (((row.item as Record<string, unknown>).nativeItemRef as { nativeId?: string } | null)?.nativeId || row.sourceItemId)
-      && !terminalToolStatuses.has(String((row.item as Record<string, unknown>).status ?? ''))))
-    .map(task => `${task.kind} ${task.taskId}${task.description ? ` (${task.description.slice(0, 120)})` : ''}`);
 /** The statuses that mean a run is live: the only ones a settle, a steer or a stop waits for. */
 export const activeStatuses = new Set(['preparing', 'queued', 'starting', 'running', 'waiting']);
 const inventoryReadAttempts = 5;
@@ -156,8 +136,7 @@ export class T3Reads {
             throw new T3CompatibilityError('subscribeThread.turnItemsOmitLocalVisible');
           const snapshot = complete.projection;
           if (snapshot.thread.id !== threadId) throw new T3CompatibilityError('subscribeThread.thread.id');
-          read = { projection: snapshot, paged: coverage.paged, historyCursor: complete.historyCursor ?? null,
-            snapshotSequence: complete.snapshotSequence };
+          read = { projection: snapshot, paged: coverage.paged };
         } else if (item.kind === 'synchronized') {
           if (!read) throw new T3CompatibilityError('subscribeThread.projection missing');
           return true;
@@ -237,83 +216,28 @@ export class T3Reads {
   async listLiveAgents() { return (await this.inventory()).threads.filter(t => !t.archivedAt && !t.deletedAt).map(t => ({ id: t.id, title: t.title, workspaceId: this.workspaceFor(t), labels: this.core.state.read().agents[t.id]?.labels ?? {} })); }
 
   /**
-   * One page of a thread's timeline from the nightly's bounded reads
-   * (nucleus#1217). The newest part is the nightly's own visible window; when the
-   * requested depth reaches past it, older bounded history pages are fetched with
-   * the window's `historyCursor` and joined, never the unbounded snapshot. The
-   * page is a contiguous newest run of this thread's own rows, no gap, no newer
-   * history, the thread as its epoch and cursors as the rows' own thread
-   * positions, so a doubling read can widen without changing the newest cursor.
-   *
-   * The rows, not `turnItems`, are the window: a bounded projection also carries
-   * pending-request and interrupt items it retained from outside the window, so
-   * reading the items would hand the reader a manufactured turn boundary across
-   * a gap. A nightly that sends no rows cannot prove the boundary and is refused
-   * by its field name instead.
-   *
-   * Older bounded pages also establish background-tool coverage: the shell's
-   * summary suppresses that work while a run is active. The returned suffix
-   * extends to every non-terminal background row found. A provider-reported task
-   * without a matching live row refuses by name; exhausting the page budget
-   * refuses coverage instead of inferring settlement from a turn boundary.
-   *
-   * Each native execution item is translated into the shared tool entry the
-   * owned-tool reader judges (`nativeToolKinds`), so a running native command is
-   * live evidence rather than an unrecognised record. `turnId` is the T3 run that
-   * owns the item: one run is one provider turn, so a page that reaches back into
-   * an earlier run proves its partial coverage.
+   * The newest bounded tool window, not a reconstruction of thread history.
+   * Retained request/interrupt dependencies are not rendered window rows. Core
+   * combines this window with fresh inactivity and owned-process observations;
+   * an older idle provider thread's internal tasks are a known T3 limitation.
    */
-  async agentTimelinePage(id: string, limit = 100): Promise<HostTimelinePage | null> {
+  async agentTimelinePage(id: string, _limit = 100): Promise<HostTimelinePage | null> {
     let read: ThreadSnapshotRead;
     try { read = await this.readThreadSnapshot(id, 'window'); }
-    // An interrupted read stays unknown (`null`); a shape problem names its field
-    // so the reader reports the exact cause instead of `unavailable`.
     catch (error) { if (error instanceof T3CompatibilityError) throw error; return null; }
     const rows = read.projection.visibleTurnItems;
     if (!rows) throw new T3CompatibilityError('subscribeThread.visibleTurnItems');
-    // This thread's own rows only: an inherited row belongs to another agent, and
-    // only local rows share one thread position space with a stable order.
     if (!read.projection.providerThreads) throw new T3CompatibilityError('subscribeThread.providerThreads');
-    let block = localRows(rows, id);
-    const wanted = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : block.length;
-    let cursor = read.historyCursor;
-    const seenCursors = new Set<string>();
-    for (let fetched = 0; cursor && fetched < historyPageBudget; fetched++) {
-      if (seenCursors.has(cursor)) throw new T3CompatibilityError('threadHistoryPage cursor repeated');
-      seenCursors.add(cursor);
-      const page = decode(threadHistoryPage, await this.core.rpc.readHistoryPage(id, cursor), 'threadHistoryPage');
-      if (page.idTable) throw new T3CompatibilityError('threadHistoryPage.idTable');
-      if (page.snapshotSequence !== read.snapshotSequence) throw new T3CompatibilityError('threadHistoryPage.snapshotSequence');
-      if (page.hasMoreHistory !== (page.nextCursor !== null)) throw new T3CompatibilityError('threadHistoryPage coverage');
-      if (!page.items.length) throw new T3CompatibilityError('threadHistoryPage.items');
-      const older = localRows(page.items, id);
-      const known = new Set(block.map(row => row.sourceItemId));
-      for (const row of older) if (known.has(row.sourceItemId)) throw new T3CompatibilityError('threadHistoryPage.items repeat');
-      // The joined page must stay one strictly older run of this thread's rows.
-      const newest = older.at(-1);
-      if (newest && block.length && newest.item.ordinal >= block[0]!.item.ordinal)
-        throw new T3CompatibilityError('threadHistoryPage.items order');
-      block = [...older, ...block];
-      cursor = page.nextCursor;
-    }
-    // A shell summary suppresses pending background work while a run is active.
-    // Scan older bounded pages instead: a parent-turn boundary cannot establish
-    // that an older detached execution has settled. Keep the contiguous suffix
-    // back to every live/unknown background row, even beyond the requested depth.
-    if (cursor) throw new T3CompatibilityError(`background tool history remains partial after ${historyPageBudget} bounded pages`);
-    const backgroundStart = block.findIndex(row => backgroundToolTypes.has(row.item.type)
-      && !terminalToolStatuses.has(String((row.item as Record<string, unknown>).status ?? '')));
-    const start = Math.min(Math.max(0, block.length - wanted), backgroundStart < 0 ? block.length : backgroundStart);
-    const kept = block.slice(start);
-    const tasks = read.projection.providerThreads.flatMap(thread => thread.pendingBackgroundTasks ?? []);
-    const outstanding = hiddenBackground(kept, tasks);
-    if (outstanding.length)
-      throw new T3CompatibilityError(`subscribeThread reports outstanding background work: ${outstanding.join(', ')}`);
-    const entries = kept.map(row => timelineEntry(row, read.projection.updatedAt));
-    const oldest = kept.at(0), newest = kept.at(-1);
-    return { entries, hasOlder: kept.length < block.length || !!cursor, gap: false, staleCursor: false, reset: false, hasNewer: false,
+    // Never trim the provider's window: doing so could drop live tool evidence.
+    // The shared reader does not widen bounded liveness evidence through history.
+    const block = localRows(rows, id);
+    const entries = block.map(row => timelineEntry(row, read.projection.updatedAt));
+    const oldest = block.at(0), newest = block.at(-1);
+    return { entries, hasOlder: read.paged, gap: false, staleCursor: false, reset: false, hasNewer: false,
       epoch: id, startCursor: oldest ? { epoch: id, seq: oldest.item.ordinal } : null,
-      endCursor: newest ? { epoch: id, seq: newest.item.ordinal } : null, projection: 'projected' };
+      endCursor: newest ? { epoch: id, seq: newest.item.ordinal } : null, projection: 'bounded',
+      pendingBackgroundTasks: read.projection.providerThreads.flatMap(thread => (thread.pendingBackgroundTasks ?? [])
+        .map(task => `${task.kind} ${task.taskId}`)) };
   }
 
   /** The newest page's entries only. A failure reads as no evidence here, as on every host. */

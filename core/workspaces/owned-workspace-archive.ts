@@ -5,7 +5,8 @@ import type { Run, Task } from "../../shared/contracts";
 import type { AgentObservation, OriginAgent } from "../host/adapter";
 import type { WorkspaceContinuationHost } from "./workspace-continuation";
 import type { TimelinePage } from "../recovery/stall";
-import { readToolTimeline, liveToolIssue } from "../recovery/stall";
+import { boundedToolHold } from '../machine/bounded-tool';
+import { readToolTimeline, liveToolIssue, workspaceToolProcessIssue } from "../recovery/stall";
 import { verifyReviewSourceView } from "../review/review-source";
 import { verifyRecordedOrigin, verifyReportOnlyIdentity, originBranchContaining, git, queueCheckoutStatus } from "../git/index";
 import { removeOwnedWorktree, repoCommonDir } from "./workspace-allocation";
@@ -134,7 +135,20 @@ export class OwnedWorkspaceArchive {
           const read=await readToolTimeline(this.host,agentId);
           // The participant observation above also proves no turn is live, so a
           // running call of a turn-bound kind is settled before its checkout goes.
-          const issue='issue' in read?read.issue:liveToolIssue(read.entries,state);
+          const issue='issue' in read?read.issue:read.coverage==='bounded'
+            ?await boundedToolHold(read,this.host,agentId,id,async()=>{
+              const run=reviewRun?.agentId===agentId?reviewRun:null;
+              const runId=run?.id??(task.agentId===agentId?task.runId:null);
+              const temporaryDirectory=run?.temporaryDirectory??(task.agentId===agentId?task.temporaryDirectory:undefined);
+              if(!runId||!temporaryDirectory)return 'participant run process identity is unavailable';
+              const processes=await this.host.hostProcessListing();
+              if(!processes)return 'the host process listing is unreadable';
+              for(const root of [directory,temporaryDirectory]){
+                const why=workspaceToolProcessIssue(processes,root,[runId]);
+                if(why)return why;
+              }
+              return null;
+            }):liveToolIssue(read.entries,state);
           if(issue)throw Error(`Preserving workspace: owned tool evidence: ${issue}`);
         }
       }

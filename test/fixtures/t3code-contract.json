@@ -128,7 +128,6 @@
     "sourceRevision": "d2c25950b4d9",
     "source": "apps/server bundle: OrchestrationV2SubscribeThreadInput, OrchestrationV2ThreadDetailSnapshot and OrchestrationV2ThreadBoundedSnapshot; the windowed reads in readCanonicalProjection (runs, runtimeRequests, plans, contextHandoffs) that feed it; packages/shared/src/orchestrationV2BoundedSnapshot.ts",
     "backgroundCoverage": {"source": "Installed Nightly ManagedEndpointRuntime-BSDb6iuk.mjs: derivePendingBackgroundWork, pendingBackgroundTurnItems, nativeTaskIdFromTurnItem; read-only bundle inspection", "shellSummary": "Empty while a run is active; absence is not background settlement", "backgroundTypes": ["command_execution", "dynamic_tool", "subagent"], "taskIdentity": "nativeItemRef.nativeId, falling back to item.id"},
-    "historyRoute": {"method": "GET", "path": "/api/orchestration/threads/:threadId/history", "header": {"x-t3-orchestration-protocol": "2"}, "query": ["cursor"], "response": ["snapshotSequence", "items", "nextCursor", "hasMoreHistory"], "source": "Installed Nightly ManagedEndpointRuntime-BSDb6iuk.mjs: EnvironmentOrchestrationHttpApi, OrchestrationV2ThreadHistoryPage; read-only bundle inspection"},
     "roundTrip": "A bounded snapshot is sent only to a client that opts in; the plain read returns the complete detail projection instead",
     "input": ["threadId", "afterSequence", "requestCompletionMarker", "acceptBoundedSnapshot", "acceptDeferredWork", "acceptCompactTurnItems", "acceptDedupedBodies", "acceptCompactIds"],
     "boundedRequestField": "acceptBoundedSnapshot",
@@ -141,6 +140,7 @@
       "runs": "every queued, preparing, starting, running or waiting run; the runs its window references; the run the shell presents; the todo-list owner; and, with a plan present, the latest started run. Older settled runs outside that set are absent.",
       "runtimeRequests": "every pending or waiting request; requests on window-referenced nodes or provider turns. Resolved history outside that set is absent.",
       "plans": "active plans plus the latest non-superseded todo_list; a window-referenced proposed_plan loses markdown and a todo_list loses explanation (detailInTurnItem true).",
+      "providerThreads": "active threads, window- or retained-node-referenced threads and the latest todo owner; older idle threads with internal pending tasks may be omitted.",
       "contextHandoffs": "pending or ready handoffs; a window-referenced one loses summaryText (detailInTurnItem true)."
     },
     "projectionWindowed": ["turnItems", "messages", "visibleTurnItems"],

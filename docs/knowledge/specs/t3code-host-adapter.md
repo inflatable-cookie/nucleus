@@ -466,46 +466,31 @@ ones. Settled runs, resolved requests and the timeline before the window are
 absent, and none of them changes a status, an active run, a pending request or a
 settle marker. Observation asks for that bounded snapshot and reports status,
 active run, pending request and archive state from any length of thread, so a
-long thread is never unobservable (nucleus#1188). The timeline reader and the
-question reads take the same bounded snapshot (nucleus#1217): a timeline page is
-the nightly's own rendered window, described honestly — a contiguous newest run
-of rows (`gap`, `staleCursor`, `reset` and `hasNewer` false), the thread as its
-stable epoch, `hasOlder` true when the requested depth or the nightly's own
-window left earlier history behind, cursors as local item ordinals, and
-`projection: "projected"`. The page reads the projection's `visibleTurnItems`
-rows rather than `turnItems`: a bounded projection also carries the run-interrupt
-and pending-request items the nightly retained from outside its window, so
-reading the item list would hand the reader a false turn boundary across a gap
-exactly when a live tool can sit in the missing segment. A nightly that sends no
-rows cannot prove the window and is refused by that field name. Each native
-execution record is translated into the shared tool entry the owned-tool reader
-judges, so a running native command is live evidence instead of an unrecognised
-record: `command_execution` is `shell` (the provider detaches it, so it may
-outlive its turn), `file_change` is `edit`, `file_search` is `search`,
-`web_search` is `fetch` and `subagent` is non-turn-bound `subagent`; `dynamic_tool` keeps an
-unknown kind, and a native status the reader does not know is never settled. Each
-entry's `turnId` is the run that owns the item, because one T3 run is one
-provider turn, so a window that reaches back into an earlier run proves its
-partial coverage. A pending question is read from that window: the nightly keeps
-every pending runtime request and the `user_input_request` item that carries its
-questions, so a long thread answers without the full transcript; a pending
-request whose item the window does not carry is refused by that exact field.
-Answered questions are the newest answered
-window: a resolved request the window dropped is absent, and one whose question
-item it dropped keeps its answers with no question text rather than an invented
-one. A read that needs the complete transcript still opts in and refuses a paged
-or locally-omitted projection, so partial history is never handed out as the
-whole list and no consumer requests an unbounded thread snapshot. Its refusal
-names the missing coverage, not the thread's length. The nightly's authenticated
-history route serves older bounded pages using `historyCursor`. Each timeline
-read checks at most 64 pages at the snapshot's exact sequence, with strictly
-older local ordinals and stable newest cursors. The returned suffix extends to
-every live or unknown background tool found in those pages, including detached
-work from older runs. The shell suppresses its background summary while a run
-is active, so an empty summary cannot establish absence. Exhausted or
-inconsistent history coverage refuses precisely. Provider-reported pending
-tasks require a matching live background row, identified by its native item ID
-(or item ID when absent); otherwise the read refuses with the task named.
+long thread is never unobservable (nucleus#1188). The timeline and question reads take the same bounded snapshot. The timeline
+returns the whole newest rendered window (`visibleTurnItems`), with no gap,
+reset or newer history, the thread as its stable epoch and local item ordinals
+as cursors. `hasOlder` follows Nightly's coverage flag; `projection: "bounded"`
+explicitly distinguishes this window from complete tool-history evidence.
+Retained request and interrupt dependencies in `turnItems` are not window rows.
+Native commands, edits, searches, subagents and dynamic tools become shared tool
+entries; pending tasks on the retained provider threads remain positive live
+evidence even without a corresponding tool row.
+
+For a T3 participant, owned tools clear only when all three observations clear:
+no active run or pending runtime request; no live tool or provider background
+task in the newest window; and no owned process in the workspace or recorded
+run temporary directories. Missing or unreadable evidence stays inconclusive.
+History pages are not read or reconstructed (planner ruling, 2026-11-15).
+Provider threads are window-retained: active threads, threads referenced by the
+window or retained nodes, and the latest todo owner. The residual premise is
+explicit: a T3-internal background task on an idle provider thread outside the
+window is not covered. That is a T3 limitation, not a Nucleus absence claim.
+
+Pending questions use the retained runtime request and its `user_input_request`
+item. A missing item is refused by that exact field. Answered questions cover
+the retained answered window; an absent question item leaves its text empty.
+A complete-transcript read still refuses a paged or locally omitted projection;
+no consumer requests an unbounded snapshot.
 Complete shell
 and archive inventory reads contain summaries rather than transcript history;
 the Nightly exposes no complete paged shell form. Omitting settled threads or

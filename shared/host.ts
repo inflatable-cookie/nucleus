@@ -384,7 +384,9 @@ export interface HostTimelinePage {
   epoch?: string;
   startCursor?: HostTimelineCursor | null;
   endCursor?: HostTimelineCursor | null;
-  projection?: "projected" | "canonical";
+  /** Bounded windows require separate inactivity and owned-process evidence. */
+  projection?: "projected" | "canonical" | "bounded";
+  pendingBackgroundTasks?: string[];
 }
 
 export interface HostProviderUsage {

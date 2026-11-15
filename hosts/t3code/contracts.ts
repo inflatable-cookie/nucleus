@@ -88,7 +88,7 @@ export const turnItem = z.object({ id, type: id, requestId: id.optional(),
  */
 export const visibleTurnItem = z.object({ position: z.number().int().nonnegative(), visibility: id.optional(),
   sourceThreadId: id.optional(), sourceItemId: id, item: turnItem });
-/** The provider-thread facts a bounded read needs; the projection carries these whole, never windowed. */
+/** Window-retained provider threads: active threads, referenced threads and the latest todo owner. */
 export const providerThread = z.object({ id,
   pendingBackgroundTasks: z.array(pendingBackgroundTask).optional() }).passthrough();
 export const projection = z.object({
@@ -100,14 +100,6 @@ export const projection = z.object({
   providerThreads: z.array(providerThread).optional(),
   messages: z.array(z.object({ id, role: id, text: z.string() })), updatedAt: date,
 });
-/**
- * One older bounded history page (nightly `OrchestrationV2ThreadHistoryPage`,
- * `GET /api/orchestration/threads/:threadId/history?cursor=…`). Its rows are
- * the page before the cursor the snapshot gave that window.
- */
-export const threadHistoryPage = z.object({ snapshotSequence: z.number().int().nonnegative(),
-  items: z.array(visibleTurnItem), nextCursor: id.nullable(), hasMoreHistory: z.boolean(),
-  idTable: z.literal(true).optional() }).passthrough();
 /** Coverage flags are consumed facts, not optional hints that can be truthiness-tested. */
 export const threadSnapshot = z.object({
   kind: z.literal('snapshot'), snapshotSequence: z.number().int().nonnegative(), projection,
