@@ -14,7 +14,6 @@ export interface AgentObservation { id: string; workspaceId: string | null; stat
   /** When the agent last received a user message, if Paseo reports it. */
   lastUserMessageAt?: string | null; }
 
-/** What the host reports about its threads and the processes behind them: one thread observation, an inventory of them, live agents, timeline pages, the host process table and a worktree validation scan. */
 import type { HostProcessFact, TimelineEntry, TimelinePage, WorktreeValidationScan } from '../types';
 
 /** What the host reports about its threads and the processes behind them: one thread observation, an inventory of them, live agents, timeline pages, the host process table and a worktree validation scan. */
