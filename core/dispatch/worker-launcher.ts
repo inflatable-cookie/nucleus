@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { workerProfileIsExcluded } from "../../shared/contracts";
 import type { Task } from "../../shared/contracts";
 import { currentBrief } from "../planning/brief";
-import { briefLaneDocumentReferences } from "../planning/brief-lane-documents";
+import { declaredLaneDocumentKeys } from "../planning/brief-lane-documents";
 import { CheckoutUnavailableError } from "../workspaces/checkout-volume";
 import { dispatchBlocked, DISPATCH_HELD_REASON } from "./capacity";
 import type { Engine } from "../engine";
@@ -96,7 +96,7 @@ export class WorkerLauncher {
       // Spec 020: the worker run records the Queue-held brief version it is given.
       const brief = currentBrief(current);
       // Spec 026: linked lane documents are pinned at first dispatch; every worker run records what it was given.
-      const references = brief ? briefLaneDocumentReferences(brief.text, this.store.lanes()) : { keys: [], unresolved: [] };
+      const references = declaredLaneDocumentKeys(current.laneDocuments, this.store.lanes());
       const missingDocuments = references.keys.filter(key => !this.store.laneDocument(key));
       const referencedKeys = references.keys.filter(key => !missingDocuments.includes(key));
       const pinned = this.store.laneDocumentPinsFor(current) ?? current.laneDocumentPins ?? [];

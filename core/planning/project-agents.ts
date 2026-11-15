@@ -41,6 +41,17 @@ export class ProjectAgentTargetRefusal extends Error {
 }
 
 /**
+ * Which host may observe one unqualified legacy identity. A bare legacy id
+ * carries no encoded host, so only a host of the kind that minted legacy ids
+ * (Paseo) may observe it; every other host's silence is incomplete, never gone.
+ * `hostKindOf` answers the default kind for an unnamed host, exactly as the rest
+ * of the queue treats a pre-cutover record.
+ */
+export function legacyIdentityObservedOn(observedHostId: string | null | undefined): boolean {
+  return hostKindOf(observedHostId) === "paseo";
+}
+
+/**
  * An entry is observed only on the host it was registered from. A bare legacy
  * Paseo id has no encoded host, exactly like the planner liveness read, so any
  * Paseo host may observe it. Every other host mismatch is incomplete, not gone.
@@ -49,7 +60,7 @@ export function projectAgentObservedOn(agent: Pick<ProjectAgent, "agentId" | "ho
   if (!observedHostId) return false;
   if (agent.hostId === observedHostId) return true;
   if (parseAgentId(agent.agentId)) return false;
-  return hostKindOf(agent.hostId) === "paseo" && hostKindOf(observedHostId) === "paseo";
+  return legacyIdentityObservedOn(agent.hostId) && legacyIdentityObservedOn(observedHostId);
 }
 
 /** One entry's live state from its own host. A failed read is `unknown`. */

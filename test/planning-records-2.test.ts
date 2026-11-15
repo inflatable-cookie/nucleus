@@ -10,7 +10,7 @@ import { Leads } from "../core/planning/leads";
 import { Papercuts } from "../core/planning/papercut-operations";
 import { runPrompt } from "../core/dispatch/prompts";
 import { briefDigest } from "../core/planning/brief";
-import { briefLaneDocumentReferences, materializeLaneDocuments, laneDocumentScratchPath } from "../core/planning/brief-lane-documents";
+import { declaredLaneDocumentKeys, materializeLaneDocuments, laneDocumentScratchPath } from "../core/planning/brief-lane-documents";
 import { submissionSchema, boardLeadSchema, leadAdd, leadEdit, leadReopen, leadList, leadImport, papercutAdd, planSet, laneDocumentEdit, type LeadDetail, type Profile, type Run, type Submission } from "../shared/contracts";
 import { parseContractValue } from "../shared/schema-refusal";
 import type { Adapter } from "../core/host";
@@ -97,12 +97,17 @@ test("lane edit accepts the read digest and refuses a mismatched digest without 
   } finally { f.close(); }
 });
 
-test("a brief citation pins and materializes named lane documents and reports unresolved Read entries", () => {
+test("a declared lane document pins read-only for the run and an unresolvable declaration is reported", () => {
   const f = setup(); try {
     f.lane("nucleus-t3code");
     const document = f.store.editLaneDocument({ key: "nucleus-t3code", version: 0, text: "Current lane guidance\n", author: "planner" });
-    const references = briefLaneDocumentReferences("Read the nucleus-t3code lane document first.\n\n## Read\n- nucleus-t3code\n- missing-lane\n", f.store.lanes());
-    assert.deepEqual(references, { keys: ["nucleus-t3code"], unresolved: ["missing-lane"] });
+    // The typed declaration is the whole source: a lane named only in prose or a
+    // Markdown `## Read` list is not a declaration and pins nothing.
+    assert.deepEqual(declaredLaneDocumentKeys(["nucleus-t3code", "missing-lane"], f.store.lanes()),
+      { keys: ["nucleus-t3code"], unresolved: ["missing-lane"] });
+    assert.deepEqual(declaredLaneDocumentKeys(["nucleus-t3code"], []), { keys: [], unresolved: ["nucleus-t3code"] });
+    assert.deepEqual(declaredLaneDocumentKeys(undefined, f.store.lanes()), { keys: [], unresolved: [] });
+    assert.deepEqual(declaredLaneDocumentKeys(["nucleus-t3code", "nucleus-t3code"], f.store.lanes()), { keys: ["nucleus-t3code"], unresolved: [] });
     const directory = join(f.dir, "run"); mkdirSync(directory);
     const pin = { key: document.key, version: document.version, digest: document.digest, text: document.text };
     const paths = materializeLaneDocuments(directory, [pin]);
