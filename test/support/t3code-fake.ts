@@ -17,10 +17,26 @@ export const STAMP = '2026-01-01T00:00:00.000Z';
  * partial one (nucleus#1188 review).
  */
 const shapes = contract.wireShapes as {
+  snapshotKeys: string[];
   projectionKeys: string[]; threadKeys: string[]; runKeys: string[]; runtimeRequestKeys: string[];
   turnItemBaseKeys: string[]; turnItemTypeKeys: Record<string, string[]>; messageKeys: string[];
-  visibleTurnItemKeys: string[] };
+  visibleTurnItemKeys: string[]; providerThreadKeys: string[]; pendingBackgroundTaskKeys: string[] };
 const modelSelection = { instanceId: 'synthetic-provider', model: 'synthetic-model' };
+
+/** One pending background task the nightly's provider thread reports (nightly `OrchestrationV2PendingBackgroundTask`). */
+export function syntheticBackgroundTask(overrides: Value = {}): Value {
+  return { taskId: overrides.taskId ?? 'synthetic-background-task', kind: overrides.kind ?? 'command', ...overrides };
+}
+
+/** One provider thread record, completed to the recorded wire shape (nightly `OrchestrationV2ProviderThread`). */
+export function syntheticProviderThread(overrides: Value = {}): Value {
+  const { pendingBackgroundTasks: tasks, ...rest } = overrides;
+  return { id: 'synthetic-provider-thread', driver: 'codex', providerInstanceId: 'synthetic-provider',
+    providerSessionId: 'synthetic-session', appThreadId: null, ownerNodeId: null, nativeThreadRef: null,
+    nativeConversationHeadRef: null, status: 'idle', firstRunOrdinal: 1, lastRunOrdinal: 1, handoffIds: [],
+    forkedFrom: null, contextUsage: null, nativeMetadata: null, goal: null, createdAt: STAMP, updatedAt: STAMP, ...rest,
+    pendingBackgroundTasks: (tasks ?? []).map((task: Value) => syntheticBackgroundTask(task)) };
+}
 
 export function syntheticThread(id: string, directory: string, overrides: Value = {}): Value {
   const thread: Value = { id, projectId: 'synthetic-project', title: 'Synthetic thread',
@@ -70,10 +86,12 @@ export function syntheticTurnItem(threadId: string, ordinal: number, overrides: 
 /**
  * Every record of a projection, completed to the recorded wire shape, plus every
  * projection collection the Nightly's wire carries (an empty array where the test
- * has no data). `visibleTurnItems` is derived from the items actually served, so a
- * windowed projection holds no older rows.
+ * has no data). `visibleTurnItems` is the rendered window: by default every item
+ * served is visible, and a bounded answer passes the window's own item ids so
+ * only those rows appear, exactly as the nightly windows the rows and then
+ * appends what it retains outside them.
  */
-function wireProjection(p: Value): Value {
+function wireProjection(p: Value, windowItemIds?: Set<string>): Value {
   const threadId = p.thread.id;
   const thread = syntheticThread(threadId, p.thread.worktreePath ?? '/synthetic', p.thread);
   const runs = (p.runs ?? []).map((run: Value, index: number) => syntheticRun(threadId, index + 1, run));
@@ -85,11 +103,13 @@ function wireProjection(p: Value): Value {
     attachments: [], streaming: false, createdAt: STAMP, updatedAt: STAMP, ...message }));
   const projection = { ...p, thread, runs, runtimeRequests, turnItems, messages,
     // The wire carries the visible rows beside the items it serves; each row points at its item.
-    visibleTurnItems: turnItems.map((item: Value, index: number) => ({ position: index + 1,
-      sourceItemId: item.id, sourceThreadId: threadId, visibility: 'local', item })),
+    visibleTurnItems: turnItems.filter((item: Value) => !windowItemIds || windowItemIds.has(item.id))
+      .map((item: Value, index: number) => ({ position: index + 1,
+        sourceItemId: item.id, sourceThreadId: threadId, visibility: 'local', item })),
     // Collections the Nightly always projects, empty unless the test supplies them.
     attempts: p.attempts ?? [], nodes: p.nodes ?? [], subagents: p.subagents ?? [],
-    providerSessions: p.providerSessions ?? [], providerThreads: p.providerThreads ?? [],
+    providerSessions: p.providerSessions ?? [],
+    providerThreads: (p.providerThreads ?? []).map((thread: Value) => syntheticProviderThread(thread)),
     providerTurns: p.providerTurns ?? [], plans: p.plans ?? [], checkpointScopes: p.checkpointScopes ?? [],
     checkpoints: p.checkpoints ?? [], contextHandoffs: p.contextHandoffs ?? [], contextTransfers: p.contextTransfers ?? [],
     updatedAt: p.updatedAt ?? STAMP };
@@ -111,6 +131,9 @@ function assertWireRecords(projection: Value): void {
   missing(projection.runtimeRequests, shapes.runtimeRequestKeys, 'runtimeRequest');
   missing(projection.messages, shapes.messageKeys, 'message');
   missing(projection.visibleTurnItems, shapes.visibleTurnItemKeys, 'visibleTurnItem');
+  missing(projection.providerThreads, shapes.providerThreadKeys, 'providerThread');
+  for (const thread of projection.providerThreads)
+    missing(thread.pendingBackgroundTasks ?? [], shapes.pendingBackgroundTaskKeys, 'pendingBackgroundTask');
   for (const item of projection.turnItems) {
     const extra = shapes.turnItemTypeKeys[item.type] ?? [];
     missing([item], [...shapes.turnItemBaseKeys, 'type', ...extra.filter((key: string) => !shapes.turnItemBaseKeys.includes(key))], `turnItem ${item.type}`);
@@ -144,11 +167,17 @@ export async function t3Fake(t: TestContext, directory: string) {
     const p = raw;
     const active = new Set(['queued', 'preparing', 'starting', 'running', 'waiting']);
     const pending = new Set(p.runtimeRequests.filter((request: Value) => ['pending', 'waiting'].includes(request.status)).map((request: Value) => request.id));
-    const kept = new Set(p.turnItems.slice(-rowLimit).map((item: Value) => item.id));
+    // The nightly windows the visible rows, then appends the items it retains from
+    // outside that window (a run interrupt, or a request item whose request is
+    // still pending). Only the window's rows are visible rows.
+    const newest = p.turnItems.slice(-rowLimit);
+    const windowItemIds = new Set<string>(newest.map((item: Value) => item.id));
+    const kept = new Set<string>(windowItemIds);
     for (const item of p.turnItems)
       if (item.type === 'run_interrupt_request' || ['user_input_request', 'approval_request'].includes(item.type) && pending.has(item.requestId))
         kept.add(item.id);
-    const windowItems = p.turnItems.filter((item: Value) => kept.has(item.id));
+    const windowItems = p.turnItems.filter((item: Value) => windowItemIds.has(item.id));
+    const servedItems = [...windowItems, ...p.turnItems.filter((item: Value) => kept.has(item.id) && !windowItemIds.has(item.id))];
     const windowRuns = new Set(windowItems.flatMap((item: Value) => item.runId ? [item.runId] : []));
     const presented = [...p.runs].reverse().find((run: Value) => run.status !== 'queued' || !run.queueHeld);
     const runs = p.runs.filter((run: Value) => active.has(run.status) || windowRuns.has(run.id) || run.id === presented?.id);
@@ -157,15 +186,31 @@ export async function t3Fake(t: TestContext, directory: string) {
     const plans = (p.plans ?? []).filter((plan: Value) => plan.status === 'active');
     const contextHandoffs = (p.contextHandoffs ?? []).filter((handoff: Value) => ['pending', 'ready'].includes(handoff.status));
     const hasMoreHistory = windowItems.length < p.turnItems.length;
-    // Window first, then wire: the served rows and items are the same window, so a
-    // bounded snapshot holds no older rows.
-    const windowed = { ...p, runs, runtimeRequests, plans, contextHandoffs, turnItems: windowItems, messages: p.messages.slice(-1) };
-    const snapshot = { projection: wireProjection(windowed),
-      hasMoreHistory, historyCursor: hasMoreHistory ? 'synthetic-history-cursor' : null, latestLocalTurnOrdinal: null };
+    // The nightly's `historyCursor` names the row boundary before the window; the
+    // history route (`GET .../history?cursor=…`) serves the page before it.
+    const windowStart = p.turnItems.findIndex((item: Value) => windowItemIds.has(item.id));
+    // Window rows first, then the retained items: the served rows are the window
+    // itself, so a timeline page built from them holds no older row.
+    const providerIds = new Set([...servedItems, ...runs].map((item: Value) => item.providerThreadId).filter(Boolean));
+    const nodeIds = new Set(servedItems.map((item: Value) => item.nodeId).filter(Boolean));
+    const providerThreads = (p.providerThreads ?? []).filter((thread: Value) => thread.status === 'active'
+      || providerIds.has(thread.id) || nodeIds.has(thread.ownerNodeId)
+      || thread.id === p.latestTodoList?.providerThreadId);
+    const windowed = { ...p, runs, runtimeRequests, plans, contextHandoffs, providerThreads,
+      turnItems: servedItems, messages: p.messages.slice(-1) };
+    const snapshot = { projection: wireProjection(windowed, windowItemIds),
+      hasMoreHistory, historyCursor: hasMoreHistory ? `synthetic-history-${windowStart}` : null, latestLocalTurnOrdinal: null };
     // The fixture is checked against the recorded contract on every bounded
     // answer, so a hand-made coverage field cannot enter a test unobserved.
     for (const field of contract.subscribeThread.boundedRequired)
       assert.ok(field === 'snapshotSequence' || Object.hasOwn(snapshot, field), `bounded snapshot.${field}`);
+    // A bounded answer carries exactly the recorded key set (the `kind` tag and
+    // the sequence ride its frame), so a test can never read a field the live
+    // Nightly does not send. A test that deliberately serves a malformed shape
+    // overrides a coverage field, and then only the required set is checked.
+    if (!Object.keys(controls.threadCoverage).length && !controls.incompleteThread)
+      assert.deepEqual(Object.keys({ kind: 'snapshot', snapshotSequence: 1, ...snapshot }).sort(), [...shapes.snapshotKeys].sort(),
+        'a bounded snapshot carries exactly the recorded key set');
     return snapshot;
   };
   const controls = { environmentId: 'synthetic-environment', version: 'nightly-synthetic-unseen', protocol: 2,
@@ -208,10 +253,14 @@ export async function t3Fake(t: TestContext, directory: string) {
     socket.write(Buffer.concat([header, bytes]));
   };
   const server = createServer((request, response) => {
-    assert.equal(request.url, '/api/auth/websocket-ticket/rpc');
     assert.equal(request.headers.authorization, 'Bearer synthetic-bearer');
     response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ ticket: 'synthetic-ticket', expiresAt: '2099-01-01T00:00:00.000Z' }));
+    const url = new URL(request.url!, 'http://localhost');
+    if (url.pathname === '/api/auth/websocket-ticket/rpc') {
+      response.end(JSON.stringify({ ticket: 'synthetic-ticket', expiresAt: '2099-01-01T00:00:00.000Z' }));
+      return;
+    }
+    assert.fail(`unexpected HTTP route ${url.pathname}`);
   });
   const shell = (raw: Value) => {
     const p = wireProjection(raw);
@@ -219,6 +268,13 @@ export async function t3Fake(t: TestContext, directory: string) {
     const pending = p.runtimeRequests.find((request: Value) => request.status === 'pending');
     const value: Value = { ...p.thread, activeRunId: active?.id ?? null, status: active?.status ?? 'idle',
       pendingRuntimeRequest: pending ? { id: pending.id, kind: pending.kind, createdAt: STAMP, blocking: true } : null,
+      pendingBackgroundTasks: raw.pendingBackgroundTasks ?? (active ? [] : [
+        ...(p.providerThreads ?? []).flatMap((thread: Value) => thread.pendingBackgroundTasks ?? []),
+        ...p.turnItems.filter((item: Value) => ['command_execution', 'dynamic_tool', 'subagent'].includes(item.type)
+          && ['running', 'waiting', 'pending', 'queued'].includes(item.status)).map((item: Value) => ({
+            taskId: item.nativeItemRef?.nativeId || item.id,
+            kind: item.type === 'command_execution' ? 'command' : item.type === 'subagent' ? 'subagent' : 'background_task' })),
+      ]),
       latestUserMessageAt: p.messages.length ? STAMP : null, lastError: null };
     if (controls.shellMissingField) delete value[controls.shellMissingField];
     return value;

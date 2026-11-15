@@ -44,7 +44,7 @@ export class Dispositions {
         });
         await this.engine.retirement.capture(task.id, task.workspaceId!, task.directory!);
         const archived = Boolean(await this.adapter.archiveTaskWorkspace(task, task.workspaceId!, task.directory!, "", allowed, false,
-          { requirePublished: true, attachedAgentIds, requireDirectory: true, buildOutputCleanup }));
+          { requirePublished: true, attachedAgentIds, requireDirectory: true, buildOutputCleanup, participantRuns: () => this.store.runs(task.id) }));
         if (archived) await this.engine.retirement.archived(task.id, task.workspaceId!);
         return archived;
       },
