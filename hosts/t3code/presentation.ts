@@ -100,8 +100,10 @@ export class T3Presentation {
   /**
    * The step the task's support threads are doing right now, from their own
    * native projections: a pending question or permission wins, then a thread
-   * whose latest run ended with a fault, then a live role. Empty when nothing of
-   * the task is running, which is the state the row settles in.
+   * whose latest run ended with a fault, then a live role. Only the thread each
+   * role currently uses counts: a superseded reviewer or recovery thread's last
+   * failed run is history, never the task's attention. Empty when nothing of the
+   * task is running, which is the state the row settles in.
    */
   async rowStepFor(taskId: string): Promise<string> {
     const state = this.core.state.read();
@@ -109,8 +111,7 @@ export class T3Presentation {
       labelTask(agent.labels) === taskId && isSupportRole(labelRole(agent.labels)) && !this.core.intents.confirmedDeletion(state, id));
     if (!support.length) return '';
     const observed: Array<{ role: string; pending: boolean; live: boolean; faulted: boolean }> = [];
-    for (const [id, agent] of support) {
-      const role = labelRole(agent.labels)!;
+    for (const { id, role } of this.currentSupportThreads(taskId, support)) {
       try {
         const projection = await this.core.reads.readProjection(id, 'observation');
         if (projection.thread.deletedAt) continue;
@@ -122,6 +123,26 @@ export class T3Presentation {
       } catch { /* an unreadable support thread names no step */ }
     }
     return rowStep(observed);
+  }
+
+  /**
+   * One support thread per role: the thread this adapter last created for that
+   * task and role. A role with no recorded replacement keeps every thread it has,
+   * so state written before the marker existed still names its live step.
+   */
+  private currentSupportThreads(taskId: string, support: ReadonlyArray<[string, T3State['agents'][string]]>): Array<{ id: string; role: string }> {
+    const current = this.core.state.read().supportCurrent ?? {};
+    const byRole = new Map<string, Array<{ id: string; role: string }>>();
+    for (const [id, agent] of support) {
+      const role = labelRole(agent.labels)!;
+      byRole.set(role, [...(byRole.get(role) ?? []), { id, role }]);
+    }
+    const chosen: Array<{ id: string; role: string }> = [];
+    for (const [role, threads] of byRole) {
+      const marker = current[`${taskId}:${role}`];
+      chosen.push(...(marker && threads.some(thread => thread.id === marker) ? threads.filter(thread => thread.id === marker) : threads));
+    }
+    return chosen;
   }
 
   /**
@@ -189,6 +210,9 @@ export class T3Presentation {
    */
   async registerSupportThread(entry: { taskId: string; threadId: string; role: string }): Promise<void> {
     this.core.state.update(state => {
+      // This thread is the one the role now uses; any earlier thread for the same
+      // task and role is displaced and stops naming the row's step.
+      state.supportCurrent = { ...state.supportCurrent, [`${entry.taskId}:${entry.role}`]: entry.threadId };
       if (state.supportRows?.[entry.threadId]) return;
       state.supportRows = { ...state.supportRows,
         [entry.threadId]: { ...entry, recordedAt: new Date().toISOString(), tag: 'pending', card: 'pending' } };

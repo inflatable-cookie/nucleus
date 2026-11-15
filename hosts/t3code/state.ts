@@ -86,6 +86,12 @@ const schema = z.object({ version: z.literal(1), hostId: z.string(), lastPassedV
    */
   rowTitles: z.record(z.string(), z.string()).optional(),
   /**
+   * The thread each (task, role) currently uses, by `${taskId}:${role}`. A role
+   * that gets a replacement thread displaces the old one, whose last run is then
+   * history: a superseded thread's fault must never read as the task's attention.
+   */
+  supportCurrent: z.record(z.string(), z.string()).optional(),
+  /**
    * What this host read from T3's own settings at connect, never written back:
    * whether support threads are hidden by the client's tag setting.
    */

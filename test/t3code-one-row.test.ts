@@ -184,6 +184,34 @@ test('a later round writes the same step again under a fresh command identity (a
   assert.equal(new Set(titles().map(command => command.commandId)).size, titles().length);
 });
 
+test('a superseded support thread never leaves its fault on the row (acceptance 2)', async t => {
+  const { host, server, spec, task } = await fixture(t);
+  const worker = await host.createAgent(spec('worker-launch'));
+  server.threads.get(worker.id)!.runs = workerRun();
+  const state = task({ agentId: worker.id });
+  const titles = () => server.commands.filter(command => command.type === 'thread.metadata.update' && command.threadId === worker.id);
+  await host.setTaskWorkspaceTitle(state, taskWorkspaceTitle(state), 'row-base', false);
+
+  // A recovery thread whose run failed names the fault on the row.
+  const failedRecovery = await host.createAgent(spec('recovery-launch-1', 'recovery'));
+  server.threads.get(failedRecovery.id)!.runs = [syntheticRun('recovery-run-1', 1, { id: 'recovery-run-1', status: 'failed', rootNodeId: 'recovery-node-1' })];
+  await host.reconcileThreadTitles([state]);
+  assert.equal(titles().at(-1)!.title, 'Review: 225 Synthetic role · blocked: recovery');
+
+  // The replacement recovery thread runs and completes: the displaced thread's
+  // fault is history, so the row goes back to the task's own state title.
+  const recovery = await host.createAgent(spec('recovery-launch-2', 'recovery'));
+  server.threads.get(recovery.id)!.runs = [syntheticRun('recovery-run-2', 1, { id: 'recovery-run-2', status: 'completed', rootNodeId: 'recovery-node-2' })];
+  await host.reconcileThreadTitles([state]);
+  assert.equal(titles().at(-1)!.title, 'Review: 225 Synthetic role',
+    `the superseded thread's fault is dropped (${JSON.stringify(titles().map(command => command.title))})`);
+  assert.equal(server.threads.get(worker.id)!.thread.title, 'Review: 225 Synthetic role');
+  // The live replacement still names its own step.
+  server.threads.get(recovery.id)!.runs = [syntheticRun('recovery-run-3', 1, { id: 'recovery-run-3', status: 'running', rootNodeId: 'recovery-node-2' })];
+  await host.reconcileThreadTitles([state]);
+  assert.equal(titles().at(-1)!.title, 'Review: 225 Synthetic role · recovery');
+});
+
 test('a task title already naming the step is not repeated on the row (acceptance 2)', async t => {
   const { host, server, spec, task } = await fixture(t);
   const worker = await host.createAgent(spec('worker-launch'));

@@ -526,7 +526,7 @@ expiry is not evidence that the original answer was never delivered.
 
 One task reads as one row (Tom, 2026-11-15). Three things follow.
 
-**Support threads are tagged.** Every support thread nucleated on T3 — reviewer,
+**Support threads are tagged.** Every support thread created on T3 — reviewer,
 recovery, verification, closeout and executor; every role but the worker-shaped
 one — carries the tag `nucleus-support`, a constant of the adapter's own table and
 never a setting. The worker thread is never tagged. The tag is presentation only:
@@ -552,7 +552,10 @@ support threads report: `reviewing`, `recovery`, `verifying`, `closing`,
 `blocked: <role>` for a thread whose latest run ended with a fault. A step the
 state title already opens with is not repeated. The step is read from the support
 threads' own projections on the host sweep, so it follows a role that starts,
-needs input or stalls without a task title change. The worker row is unsettled
+needs input or stalls without a task title change. Only the thread each role
+currently uses counts: a role that gets a replacement thread displaces the old one,
+so a superseded thread's last failed run is history rather than the task's
+attention. The worker row is unsettled
 while any of the task's runs is live or the task needs attention, and it settles
 once the task waits on nothing Nucleus is running. Being in T3's "Working"
 section is the client's own view of an active run and cannot be set from outside;
