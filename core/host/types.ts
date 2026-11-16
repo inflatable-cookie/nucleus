@@ -1,4 +1,4 @@
-import type { Task, TaskNext, TaskNextReviewOutcome, TaskNextVerb } from '../../shared/contracts';
+import type { Task, TaskNext, TaskNextReviewOutcome, TaskNextVerb, TaskRegistrationBinding } from '../../shared/contracts';
 import type { AgentObservation } from './index';
 
 /**
@@ -14,8 +14,12 @@ import type { AgentObservation } from './index';
  */
 export interface RegistrationAdapter {
   hostId: string;
-  /** Create the authenticated callback ticket for the existing registering thread. */
-  prepareRegistration?(task: Task, token: string): void;
+  /**
+   * Create the authenticated callback ticket for the existing registering
+   * thread and answer its reporting binding: this thread was not launched by
+   * Nucleus, so the response is where it first learns its run and ticket.
+   */
+  prepareRegistration?(task: Task, token: string): TaskRegistrationBinding | void;
   observe(agentId: string): Promise<AgentObservation>;
   /**
    * Prove the calling thread is live and resolve the worktree it is already

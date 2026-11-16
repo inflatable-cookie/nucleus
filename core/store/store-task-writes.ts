@@ -243,6 +243,9 @@ export class StoreTaskWrites {
     const { briefVersions: _briefVersions, resolution: { review: _review, reviews: _reviews, ...resolution }, handoffText: _handoffText,
       lastObservedAt: _observedAt, agentActive: _active, lastAgentStatus: _agentStatus, idleSince: _idleSince, ...row } = task;
     if (row.completionNotificationAgentIds.length === 0) delete (row as Partial<Task>).completionNotificationAgentIds;
+    // The schema default restores a Queue allocation on read; only an external
+    // workspace has to travel in the row (nucleus#1261).
+    if (row.workspaceOwnership === "queue") delete (row as Partial<Task>).workspaceOwnership;
     // Defaults are restored by the resolution schema on read; empty histories
     // need not consume space in every task row.
     for (const key of ["buildOutputCleanups", "runtimeRetirements", "externalWorkspaceArchives", "ownerAcceptances", "reviewSupersessions"] as const) {

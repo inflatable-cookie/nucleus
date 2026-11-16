@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import type { Engine } from '../engine';
 import type { Resolution } from '../resolution';
 import { holdsOf, runtimeRetirementFailure, type Run, type Task } from '../../shared/contracts';
+import { externalWorkspace } from '../../shared/workspace-ownership';
 import { hookHoldReason } from '../hooks/hooks';
 import { buildOutputCleanupHooks, type BuildOutputCleanupHooks } from '../workspaces/worktree-cleanup';
 import { workspaceDiscardKey, type WorkspaceDiscard } from '../workspaces/orphan-worktree';
@@ -118,7 +119,7 @@ export class ArchiveProof {
       }
       return !this.paused() && current.phase === 'done' && !holdsOf(current).dispatch
         && current.workspaceId === task.workspaceId && current.directory === task.directory && current.branch === task.branch
-        && !(id === current.workspaceId && current.reviewEntry?.preserveWorkspace)
+        && !(id === current.workspaceId && externalWorkspace(current))
         && !this.store.runs(task.id).some(run => !run.released) && !this.store.workspaceUsedByOtherTaskRun(task.id, id) && !this.store.hostRunHoldingWorkspace(directory)
         && !this.store.tasks().some(other => other.id !== task.id &&
           ([other.workspaceId, other.resolution.coordinatorWorkspaceId, other.resolution.closeoutWorkspaceId].includes(id) || other.directory === directory));

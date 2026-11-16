@@ -1,5 +1,6 @@
 import type { Completion, Run, Task } from '../../shared/contracts';
 import { isDispositionActive, isDispositionComplete } from '../../shared/contracts';
+import { externalWorkspace } from '../../shared/workspace-ownership';
 import { reviewPublicationBody } from '../forge/index';
 import { recordLateCallbackEvidence } from '../verbs/disposition';
 import { proofExecutions, proofExecutionRecord, recordProofExecution } from '../qa/proof-records';
@@ -193,7 +194,7 @@ export class RunCallbackIntake {
   completeBuildOutput(run: Run, task: Task) {
     // Queue #342: a revision or reviewer result makes its own build output a settlement candidate. The
     // directory is the task checkout when the run shares the task workspace.
-    const queueOwnedWorkspace = task.reviewEntry?.preserveWorkspace !== true;
+    const queueOwnedWorkspace = !externalWorkspace(task);
     const outputDirectory = run.workspaceId === task.workspaceId && queueOwnedWorkspace ? task.directory : null;
     if ((run.role === 'revision' || run.role === 'reviewer') && outputDirectory) {
       const current = this.store.task(task.id);

@@ -11,6 +11,7 @@ import { capPaseoTitle, taskWorkspaceTitle } from "./workspace-title";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Task } from "../../shared/contracts";
+import { externalWorkspace } from "../../shared/workspace-ownership";
 import type { HostProjectRef, HostWorkspaceSpec } from "../../shared/host";
 
 /**
@@ -77,6 +78,10 @@ export class WorkspaceLifecycle {
   async preflightWorkspaceStorage(task: Task): Promise<void> {
     const placement = this.host.placement();
     if (!placement) return;
+    // An external workspace is the registering thread's own worktree, not a
+    // Queue allocation: there is no allocation path to prove and nothing to
+    // create on the Queue volume (nucleus#1261).
+    if (externalWorkspace(task)) return;
     const ownedPath = await this.host.ownedPathFor(task);
     const common = await repoCommonDir(task.repoPath);
     if (!isOwnedWorkspacePath(ownedPath, this.host.dataDir(), common, task.id)) placement.admit(ownedPath);
@@ -349,10 +354,13 @@ export class WorkspaceLifecycle {
     // Identity is the exact path this task's allocation derives, or the task's own
     // slug or recorded workspace id inside its repository. A folder whose name
     // merely ends in `ns-<task id>` proves nothing: any other directory can be
-    // called that.
+    // called that. An external registered workspace is the task's own binding
+    // wherever Paseo roots its project, so its recorded id matches as well
+    // (nucleus#1261).
     const allocated = [ownedPath, legacyPath].filter((path): path is string => Boolean(path));
     const matches = entries.filter(w => allocated.some(path => w.workspaceDirectory === path || w.projectRootPath === path)
-      || (w.projectRootPath === task.repoPath && (w.worktreeSlug === slug || w.id === task.workspaceId)))
+      || (w.projectRootPath === task.repoPath && (w.worktreeSlug === slug || w.id === task.workspaceId))
+      || (externalWorkspace(task) && w.id === task.workspaceId))
       .map(w => ({ id: w.id, directory: w.workspaceDirectory ?? "" }));
     const placement = this.host.placement();
     if (placement && ownedPath && matches.some(match => match.directory === ownedPath)) placement.admit(ownedPath);

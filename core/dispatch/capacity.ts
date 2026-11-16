@@ -1,4 +1,5 @@
 import { DEFAULT_PROJECT_LIMIT, DEFAULT_PAPERCUT_PROJECT_LIMIT } from "../../shared/contracts";
+import { externalWorkspace } from "../../shared/workspace-ownership";
 import { currentTaskStop, holdsOf, isDispositionActive, mergeHeld, runHoldsSlot, type Run, type Task } from "../../shared/contracts";
 import { DEFAULT_GLOBAL_LIMIT, formatTaskNumber, isParkedTask } from "../../shared/contracts";
 import { routeUnavailableStop } from "../../shared/task-stop";
@@ -23,7 +24,7 @@ export const DISPATCH_HELD_REASON = "Dispatch held; release to continue";
 /** Count only nonterminal tasks that own, or are creating, a Queue workspace. */
 export function holdsQueueWorkspace(task: Task): boolean {
   return !["done", "cancelled"].includes(task.phase) && !task.removedAt &&
-    task.reviewEntry?.preserveWorkspace !== true &&
+    !externalWorkspace(task) &&
     Boolean(task.workspaceId || task.workspaceIntent || task.reviewEntry?.workspaceId);
 }
 

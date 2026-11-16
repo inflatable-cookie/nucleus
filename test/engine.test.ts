@@ -1556,6 +1556,20 @@ test('removal resolves every attached thread, revokes callbacks and suppresses f
     await f.engine.wake();assert.equal(f.store.tasks().length,0);assert.equal(f.store.notices(task.id).length,0);assert.equal(notices,0);
   } finally { await f.close(); }
 });
+test('removal leaves a registered external workspace in place', async () => {
+  const f = fixture(); try {
+    f.store.setMeta('paused',false);const original=f.add();await f.engine.wake();f.idle();
+    const task=f.store.update(original.id,{phase:'blocked',workspaceOwnership:'external'});
+    const removed=await f.engine.removeTask(task.id,task.version);
+    // The task is hidden and its threads archived; the caller's own checkout is
+    // never a Queue archive (nucleus#1261).
+    assert.ok(removed.removedAt);
+    assert.deepEqual(f.calls.workspaceArchives,[],'no external worktree is archived');
+    assert.equal(removed.resolution.archiveIntentWorkspaceId,null);
+    assert.deepEqual(removed.resolution.archivedWorkspaceIds,[]);
+    assert.match(f.store.events(task.id)[0].detail,/its external workspace is left in place/);
+  } finally { await f.close(); }
+});
 test('removal archives worker, coordinator, reviewer and retained run threads before hiding the task', async () => {
   const f = fixture(); try {
     const original=f.add();

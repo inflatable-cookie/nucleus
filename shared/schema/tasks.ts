@@ -58,6 +58,15 @@ export const taskSchema = submissionSchema.extend({
   // Task version at the last non-observation update; permits a hold across newer observations only.
   lastSubstantiveVersion: z.number().int().positive().optional(),
   workspaceId: z.string().nullable(), directory: z.string().nullable(), branch: z.string(),
+  /**
+   * Who owns the directory this task is bound to. `queue` is a Queue
+   * allocation, which the lifecycle admits, cleans and archives. `external` is
+   * a worktree Nucleus did not create — a registered thread's own worktree —
+   * which it never archives or deletes (nucleus#1261). Review entry keeps its
+   * own `reviewEntry.preserveWorkspace` record; both are the same ownership
+   * class and `externalWorkspace` reads either.
+   */
+  workspaceOwnership: z.enum(["queue", "external"]).default("queue"),
   agentId: z.string().nullable(), runId: z.string().nullable(),
   /** Queue-owned temp root for the task row's current author run. */
   temporaryDirectory: z.string().max(2000).optional(), profile: profileSchema.nullable(),
@@ -158,9 +167,24 @@ export const taskRegistrationSchema = z.object({
 
 export type TaskRegistrationInput = z.infer<typeof taskRegistrationSchema>;
 
+/**
+ * The reporting binding a freshly registered thread reports through: its run
+ * identity, the helper that accepts its result, and the host's own credential
+ * paths. The ticket carries the token, so the response names the file and never
+ * the secret; a host that reports through MCP also returns that binding path.
+ */
+export const taskRegistrationBindingSchema = z.object({
+  runId: z.string().min(1), helperPath: z.string().min(1), ticketPath: z.string().min(1),
+  mcpBindingPath: z.string().min(1).nullable().default(null),
+}).strict();
+
+export type TaskRegistrationBinding = z.infer<typeof taskRegistrationBindingSchema>;
+
 export const taskRegistrationResultSchema = z.object({
   task: taskSchema, workspaceId: z.string(), directory: z.string(), branch: z.string(),
   workerAgentId: z.string(), runId: z.string(), status: z.string(), model: z.string(),
+  /** Null only for a host with no callback ticket; a real host always names one. */
+  binding: taskRegistrationBindingSchema.nullable().default(null),
 });
 
 export type TaskRegistrationResult = z.infer<typeof taskRegistrationResultSchema>;

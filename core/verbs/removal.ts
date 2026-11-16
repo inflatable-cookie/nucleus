@@ -11,6 +11,7 @@ import { blockingRecoveryEffectsRefusal } from "../recovery/recovery-effects";
 import { digest, hostRunHoldReason, now } from "../store/store";
 import { isAgentGoneRefusal } from "../host/errors";
 import { canRetireCancelledWorkspace } from "../workspaces/terminal-workspace-retirement";
+import { externalWorkspace } from "../../shared/workspace-ownership";
 import { archiveUnusedWorkspace } from "../workspaces/unused-workspace";
 import { buildOutputCheckoutMismatch, removeBuildOutput, type BuildOutputCleanupResult } from "../workspaces/worktree-cleanup";
 
@@ -65,7 +66,9 @@ export class TaskRemoval {
       }
       for (const agentId of ids) await this.engine.host.archiveAgent(agentId);
       await this.engine.removeSiblings(id);
-      if (task.workspaceId && task.directory) {
+      // A registered external workspace is the caller's own checkout: removal
+      // hides the task and archives its threads, and leaves the worktree alone.
+      if (task.workspaceId && task.directory && !externalWorkspace(task)) {
         if (!this.engine.adapter.archiveTaskWorkspace) throw new Error("Workspace cleanup is unavailable; task remains visible");
         const shared = () => this.store.tasks().some(other => other.id !== task.id && other.workspaceId === task.workspaceId);
         if (shared()) throw new Error("Workspace is referenced by another task");
@@ -79,7 +82,9 @@ export class TaskRemoval {
         await this.engine.retirement.archived(id, task.workspaceId);
       }
       return this.store.transaction(() => {
-        const removed = this.store.update(id, { removedAt: now() }, "removed", "Removed from queue by operator; history retained", this.store.task(id).version);
+        const removed = this.store.update(id, { removedAt: now() }, "removed",
+          `Removed from queue by operator; history retained${externalWorkspace(task) ? '; its external workspace is left in place' : ''}`,
+          this.store.task(id).version);
         for (const runId of [task.runId, ...task.retiredWorkers.map(w => w.runId), ...runs.map(r => r.id)].filter(Boolean)) this.store.deleteCredential(runId!);
         for (const notice of this.store.notices(id)) if (notice.status === "pending") this.store.putNotice({ ...notice, status: "superseded" });
         return removed;
