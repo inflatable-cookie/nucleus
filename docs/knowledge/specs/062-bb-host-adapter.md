@@ -403,7 +403,9 @@ exclusive slot does not care which plugin owns it.
 - **line two:** the task's state from the shared title helper — phase label, then whichever of hold,
   wait, stop or attention applies (`shared/task-state.ts` via `phaseStateLabel`/`taskStateLabel`,
   which the Paseo client already reads, so the two hosts name a state the same way);
-- **line three, when the task has them:** the PR number from the card's `prUrl`/`completionPrNumber`,
+- **line three, when the task has them:** the PR number from the card's `prUrl`/`completionPrNumber`
+  with its state — `OPEN`, `CLOSED` or `MERGED` from the board's own `prStates` record, which the
+  service refreshes for every task that has a PR and no merged commit (`core/forge/pr-status.ts`) —
   and the recorded wait that says what the task is waiting for (`Waiting for QA capacity (position
   N)`, `Merge hold`, `Needs operator input`);
 - the rolled-up agent-status glyph upstream draws while the group is collapsed stays, from
@@ -427,8 +429,8 @@ existing RPC catalogue, `bb.sidebar-groups`, returns one bounded projection:
 
 - `groups[]` — for every live task whose workspace handle records a BB environment id: the
   environment id, the task id, number, reference, title, phase, held/blocking hold, wait state, stop
-  kind, `prUrl`, `completionPrNumber`, the recorded resolution/attention flags, and the label strings
-  the sidebar draws;
+  kind, `prUrl`, `completionPrNumber`, its `prStates` entry, the recorded resolution/attention flags,
+  and the label strings the sidebar draws;
 - `threads[]` — the thread ids Nucleus knows per Nucleus project: its planner thread, its named-agent
   threads, and each task's role threads with their environment id, for 5d's tab visibility.
 
@@ -448,13 +450,22 @@ indicator (fact 19), which is exactly the collapsed-by-default case. The labels 
 helper the Paseo client and the board already use, so the sidebar and the board cannot drift
 (`shared/task-state.ts`).
 
-**Where the state comes from, and where it stops.** The header draws only facts the service
-publishes. Per-check CI state and per-task QA run state are not on the board card today: a task's
-validation and merge stage is its phase and its recorded wait, and the QA runs the board carries are
-keyed per repository and selector, not per task (`shared/schema/state.ts`, `shared/schema/qa.ts`). So
-the header says `Reviewing`, `Verifying`, `Merging`, `Waiting for QA capacity (position N)` or
-`Merge hold` rather than inventing a check list, and the sidebar never calls GitHub or the forge. When
-the service later publishes check state on the card, the header adds one field and no new read.
+**Where the state comes from, and where it stops.** The header draws exactly the facts the service
+publishes in the snapshot it already reads: the task's phase, holds, waits and stop, and its PR number
+with its PR state by task id (`prStates`, `shared/schema/state.ts`). It draws no QA row: the QA runs
+the board carries are keyed per repository and selector rather than per task
+(`shared/schema/qa.ts`), so the task's validation and merge stage is its phase and its recorded
+wait.
+
+**One stated departure from the brief's list: CI check conclusions.** The brief asks the header to
+carry checks; the service publishes no per-task check conclusion — the merge gate reads check state
+live from the forge at merge time, and the only check facts a task records are merge-time exceptions
+(`resolution.forcedChecks`). The header therefore names the stage and the wait the task is in
+(`Reviewing`, `Verifying`, `Merging`, `Waiting for QA capacity (position N)`, `Merge hold`) instead of
+inventing a check list, and the sidebar never calls GitHub or the forge. Adding a live check read from
+the sidebar would put a second, unbounded forge client in the UI and let it disagree with the merge
+gate, so it is not done here. When the service publishes check state per task, the header adds one
+field from the same read and nothing else changes.
 
 **Rejected alternative: read the task's identity from the threads' plugin metadata.** It is the same
 durable key adoption uses (decision 6), but it costs a metadata read per candidate group and it is
@@ -561,9 +572,9 @@ even pace on each window bar, the difference coloured red when usage is ahead of
 naming the delta and the time without quota ("17% ahead of pace (1d 4h)", "runs out Sun 00:03 · 2d 15h
 without quota"). It projects no pace in the first 5% of a window (`MIN_ELAPSED_FRACTION = 0.05`), treats
 a custom "Monthly" window as one calendar month before its reset with UTC month arithmetic, publishes
-Grok Build usage so the card gains that row, and adds an optional footer strip and a dialog. Its numbers
-match the board's pace to within a point or two (Tom's observation), and it is a fork of Usage Bar by
-Dmitrii Kapustin with the Grok usage from MacHatter1's Grok Build Usage plugin, both MIT (fact 32).
+Grok Build usage so the card gains that row, and adds an optional footer strip and a dialog. The thread
+records that its numbers match the board's pace to within a point or two, and it is a fork of Usage Bar
+by Dmitrii Kapustin with the Grok usage from MacHatter1's Grok Build Usage plugin, both MIT (fact 32).
 
 **It is a recommendation, not a dependency.** Nucleus works on BB with or without it: the card is BB's,
 Usage Pace only adds nodes to it, and nothing in Nucleus reads either. A new BB install gets the card and
@@ -580,7 +591,7 @@ its degradation is BB's card minus one metric.
 
 **One projection, and it is the board's.** The pace Nucleus states is `shared/usage-projection.ts` behind
 `usage.state`, which the board's Usage screen and the Paseo row draw (Spec 059). Usage Pace has its own
-implementation of the same idea, and Tom's reading is that the two agree within a point or two; the
+implementation of the same idea, which the thread records as agreeing within a point or two; the
 difference that matters is that Nucleus's keeps Spec 059's rules (every pool profile keeps its gauge, a
 reset window counts as unused, no projection early in a window) while the card's shows BB's providers.
 Because Nucleus adds no BB surface, there is no second copy of the projection to keep in sync — and if
@@ -591,8 +602,8 @@ Nucleus fork.
 re-verified at the pinned commit; BB's Grok provider publishes no usage and none of the bundled sources
 covers it (fact 31); the community plugin's licence, structure, pace rules and Grok source are fact 32,
 re-verified at its own commit; and the 0.49 breakage is fact 33, verified from BB's side and from the
-plugin's open issue. Tom's operator ruling is the reason for the change, not a technical claim: he tried
-both and the card plus Usage Pace carries more than the mini gauges did.
+plugin's open issue. The change itself is Tom's ruling, quoted above, not a technical claim of this
+spec's: the evidence below it is what makes the ruling implementable.
 
 **Rejected alternative: fork `plugins/provider-usage` to add the pace.** It was the previous draft and it
 is withdrawn: the community plugin already draws the pace on that card, so a fork would maintain a second
@@ -614,7 +625,9 @@ operator installs it instead, and Nucleus keeps one fork instead of three.
 
 #### 5f. What does not change, and the deferred exit path
 
-Decisions 1–4, 6 and 7 are unchanged and this amendment does not reopen them. The fork adds no host
+Decisions 1–4 and 7 are unchanged and this amendment does not reopen them. Decision 6 keeps its
+observation and adoption rules and loses only the `system.usageLimits` clause that served a BB Usage
+page 5e no longer has. The fork adds no host
 operation, no workspace fact, no reporting route and no thread presentation: it reads records the
 adapter already owns, and it draws a task's state one level up from the row decision 4 already titles.
 Decision 4's worker title keeps carrying the step; the group header repeats it where a collapsed group
@@ -631,7 +644,11 @@ upstream slot can absorb it. Usage needs no such exit: there is nothing of ours 
 
 **Recommendation.** Per-run usage comes from `threads.context`'s `usage` (tokens, context window,
 optional cost) read on the run's finish path, with `thread/tokenUsage/updated` as the timeline
-fallback; provider subscription windows come from `system.usageLimits` for the Usage page.
+fallback; provider subscription windows come from `system.usageLimits`. The first draft fed a BB Usage
+page with that read, and 5e removed that page along with every other Nucleus usage surface in BB, so
+the adapter reads no subscription windows of its own and the board's Usage page keeps `usage.state`
+(Spec 059). That clause is the one change this amendment makes to decision 6, and it is here because
+the usage decision forces it.
 
 `observationInventory(agentIds)` takes an arbitrary list, so it chunks the ids into runs of at most
 200 — the SDK's cap per `threads.list({ threadIds })` call — and reads the chunks one after another.
@@ -937,13 +954,16 @@ mechanical and a stray edit to a vendored file fails a test instead of surviving
 - `effigy bb:sidebar-drift` reports no drift at the pin, and the selector is absent from
   `effigy check` (it needs the network).
 - The fork's own test files for the paths the patch set does not touch pass unchanged, including the
-  group disclosure, the section and thread drag-and-drop, keyboard shortcuts, inline rename and the
-  row action menu (`ProjectThreadTree.disclosure.test.tsx`, `useSectionThreadDnd.test.ts`,
-  `ThreadRow.test.tsx`, `SidebarInlineRename.test.tsx`, `ThreadRowActionsCustomize.test.tsx`).
+  group disclosure, the section and thread drag-and-drop, keyboard shortcuts, **split drag** (the pane
+  drag from a row, and the group's split indicator and mini-map), inline rename and the row action menu
+  (`ProjectThreadTree.disclosure.test.tsx`, `useSectionThreadDnd.test.ts`, `ThreadRow.test.tsx`,
+  `SidebarInlineRename.test.tsx`, `ThreadRowActionsCustomize.test.tsx`).
+- A test proves the header patch leaves the row's drag bindings and split props untouched, so a task
+  group is still draggable and still opens in a split from the same gestures as an upstream group.
 - A test proves a Nucleus task group renders collapsed with the number and title, the state label from
-  `shared/task-state.ts`, the PR number when the task has one, and the collapsed roll-up glyph; that an
-  explicit expand is written to `expandedTaskGroups` and read back on a fresh mount; and that
-  `collapsedEnvironments` is never written for a task group.
+  `shared/task-state.ts`, the PR number and its `OPEN`/`CLOSED`/`MERGED` state when the task has one,
+  and the collapsed roll-up glyph; that an explicit expand is written to `expandedTaskGroups` and read
+  back on a fresh mount; and that `collapsedEnvironments` is never written for a task group.
 - A test proves a non-Nucleus group renders upstream's header with no state line and no call to the
   header read, and that an unknown, failed or not-yet-landed read renders upstream's header rather
   than blocking or blanking the sidebar.
@@ -969,8 +989,8 @@ makes the fork a bounded commitment (5f).
 left rail, the same board per project in a fixed thread tab and a sub-path route reachable from the
 forked sidebar's project and planner rows, a task-detail tab on a task's role threads, Settings in a
 `settingsSection`, decision and native-question composer pills, the pending-interaction slot for a
-Nucleus-raised blocking question, usage on the board and its nav badge from `system.usageLimits`, and
-lifecycle hints forwarded from BB's events into the existing signal path. `bb nucleus terminal` ships
+Nucleus-raised blocking question, the board's own Usage view over `usage.state`, and lifecycle hints
+forwarded from BB's events into the existing signal path. `bb nucleus terminal` ships
 with the plugin CLI as the thread-scoped planner tab; the task-directory `host_path` terminal ships
 only if phase 0 proved it appears where an operator would look.
 
