@@ -458,7 +458,7 @@ export class QueueService {
           // arrives, or arrives late, is reported in health and never closes the link.
           const executor = connection.hostExecutor;
           if (executor && this.hostExecutors.get(executor.hostId) === executor) {
-            void this.executor.callHandler("bbHostHeartbeat", { hostId: executor.hostId, at: new Date().toISOString() }).catch(() => {});
+            this.notifyHostRuntime("bbHostHeartbeat", { hostId: executor.hostId, at: new Date().toISOString() });
           }
           return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result: this.health() }, false, request.method);
         }
@@ -566,15 +566,17 @@ export class QueueService {
         request.method,
       );
     }
-    const verified = (await this.executor
-      .callHandler("bbHostVerified", {
-        hostId,
-        dataDir: probe.dataDir,
-        bbVersion: probe.bbVersion,
-        sdkVersion: probe.sdkVersion,
-        hostIds: probe.hostIds,
-        connectedAt: link.connectedAt,
-      })
+    const verified = (await Promise.resolve()
+      .then(() =>
+        this.executor.callHandler("bbHostVerified", {
+          hostId,
+          dataDir: probe.dataDir,
+          bbVersion: probe.bbVersion,
+          sdkVersion: probe.sdkVersion,
+          hostIds: probe.hostIds,
+          connectedAt: link.connectedAt,
+        }),
+      )
       .catch((error: unknown) => ({
         ok: false,
         field: "identity.probe",
@@ -693,17 +695,28 @@ export class QueueService {
   }
 
   /** Record one unproven identity with the runtime, so health names why the host is offline. */
-  private async recordHostRefusal(input: {
+  private recordHostRefusal(input: {
     hostId: string;
     dataDir: string;
     field: string;
     reason: string;
-  }): Promise<void> {
-    await this.executor
-      .callHandler("bbHostRejected", { ...input, at: new Date().toISOString() })
-      .catch(() => {
-        /* health then reports the recorded identity, never a guess */
-      });
+  }) {
+    this.notifyHostRuntime("bbHostRejected", { ...input, at: new Date().toISOString() });
+  }
+
+  /**
+   * Send one lifecycle hint to the runtime without ever failing the caller.
+   *
+   * A terminated persistence executor throws *synchronously* from `callHandler`, so a
+   * `.catch` alone is not enough: a teardown that closes an executor connection while
+   * the executor is already gone must not take the service (or a drain) down with it.
+   * A hint that cannot be delivered is no loss: the durable record is the authority and
+   * a replacement runtime re-reads it.
+   */
+  private notifyHostRuntime(handler: string, input: unknown): void {
+    try {
+      void this.executor.callHandler(handler, input).catch(() => {});
+    } catch { /* the executor is gone; nothing to tell it */ }
   }
 
   /** Detach one executor link from the registry and settle its work as unknown delivery. */
@@ -717,13 +730,11 @@ export class QueueService {
     // belongs to this connection's `connectedAt`, so a close that lands between the
     // identity proof and the registration still retires it (the runtime ignores a
     // release whose `connectedAt` a newer connection already replaced).
-    void this.executor
-      .callHandler("bbHostReleased", {
-        hostId: link.hostId,
-        connectedAt: link.connectedAt,
-        reason,
-      })
-      .catch(() => {});
+    this.notifyHostRuntime("bbHostReleased", {
+      hostId: link.hostId,
+      connectedAt: link.connectedAt,
+      reason,
+    });
     for (const connection of this.connections) {
       if (connection.hostExecutor !== link) continue;
       connection.hostExecutor = null;
