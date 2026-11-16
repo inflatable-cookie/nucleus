@@ -27,7 +27,7 @@ same planning. Nothing about the handover is written into the repository.
    Everything durable already lives in the repository. The brief only points at
    it.
 3. **Move task routing** so completion and attention notices reach the
-   successor. From the plugin root (see [SKILL.md](../SKILL.md)), from this thread with its Nucleus ticket or host identity, reparent its open tasks for each project:
+   successor. From this thread with its Nucleus ticket or host identity, reparent its open tasks for each project:
 
    ```sh
    nucleus helper reparent SUCCESSOR_AGENT_ID --project PROJECT --from OLD_OWNER_AGENT_ID --reason "Planner handover"

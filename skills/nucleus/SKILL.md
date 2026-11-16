@@ -1157,7 +1157,7 @@ questions when the asking task's own planner cannot, receives the project-level
 notices that once went to the retired owner, and is the thread `to: {project}`
 resolves to; it grants no verb, hold or acceptance authority. A task's planner is
 recorded on the task itself — its submitting owner, or the thread its brief named
-— and `helper reparent` moves it. `project.agents` lists the project's named,
+— and `nucleus helper reparent` moves it. `project.agents` lists the project's named,
 non-task threads, and `agent.register`/`agent.unregister` maintain them (Spec 060).
 
 ## Review entry for external PRs

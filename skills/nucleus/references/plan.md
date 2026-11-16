@@ -4,7 +4,7 @@ The plan says what matters next and why. It lives in Queue, not in the
 repository: a project's plan is its ordering of lanes, and each lane's intent
 is in its lane document. It is intent, not status.
 
-Run commands from the plugin root with JSON on stdin as described in [SKILL.md](../SKILL.md). A shared payload file can be
+Run `nucleus` commands from any directory with JSON on stdin as described in [SKILL.md](../SKILL.md). A shared payload file can be
 overwritten between a read and a write such as `plan.get` and `plan.set`.
 
 ## Lanes

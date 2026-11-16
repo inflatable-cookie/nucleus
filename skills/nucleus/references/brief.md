@@ -72,7 +72,7 @@ convention.
 
 ## Lead, approve, promote
 
-From the Queue plugin root, with the payload on stdin
+From any directory, with the payload on stdin
 (`nucleus METHOD - <<'JSON'`, the JSON, then a closing `JSON`
 line; see [SKILL.md](../SKILL.md)):
 

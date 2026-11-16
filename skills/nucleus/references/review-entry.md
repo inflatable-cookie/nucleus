@@ -5,8 +5,8 @@ worker. Do not fabricate a worker, callback or approval.
 Review entry uses an existing isolated workspace. `shared_canonical` is
 unsupported and returns `exclusive_writer_unavailable` before workspace
 inspection or binding because Nucleus cannot enforce an exclusive-writer
-reservation for a canonical checkout. Resolve the real plugin root as described
-in SKILL.md; all commands below run there and connect directly to Nucleus.
+reservation for a canonical checkout. Run the commands below from any directory;
+they connect directly to Nucleus.
 
 A scoped review-entry authorization applies only to its named consumer PR. It
 does not authorize shared-canonical intake, consumer acceptance tests, source-thread
