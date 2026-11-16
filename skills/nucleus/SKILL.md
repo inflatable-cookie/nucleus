@@ -691,7 +691,14 @@ The CLI fills `caller` from the authenticated Paseo thread. The calling thread b
 its current branch, and the task runs the responsible lifecycle: open the PR from that same branch
 (never a new one), report `ready_for_review` with its number and head, and work with the one
 reviewer Nucleus assigns until it merges. Refusals name their reason (registered checkout, detached or
-dirty tree, foreign repository, an already-owned workspace).
+dirty tree, foreign repository, a directory a live task still owns).
+
+The response carries `binding`: the run ID, the helper and the ticket path this thread reports
+through (plus the MCP binding path on a host that reports that way). A registered thread was not
+launched by Nucleus, so it holds no ticket until then; put the ticket in `NUCLEUS_TICKET` or hand it
+to the helper, and never print it. The worktree is recorded as an **external workspace**: Nucleus
+never archives or deletes it, never cleans its build output, and closeout leaves the folder, its
+files and the branch in place for its owner.
 
 Planned briefs run the responsible lifecycle. Explicit `queue.responsible: false` is refused; absence means true. `manualVerification` is retired (Spec 058 cutover 2): the verification coordinator is deleted, so no submission can select an old lifecycle; stored rows keep the field readable.
 

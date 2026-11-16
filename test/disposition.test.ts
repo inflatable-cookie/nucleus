@@ -270,6 +270,22 @@ test('cancel fences before stopping, drains the idle worker and archives the pro
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('a registered external workspace is preserved on cancellation whatever policy was requested', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'ns-external-cancel-'));
+  const store = new Store(join(root, 'queue.sqlite'));
+  try {
+    const task = store.update(dispatched(store, 'Registered in its own worktree').id, { workspaceOwnership: 'external' });
+    const deps = stubDeps();
+    const result = await requestDisposition(store, deps, { taskId: task.id, version: task.version, action: 'cancel',
+      reason: 'Superseded by the follow-up task', workDisposition: 'archive_if_empty' });
+    assert.equal(result.phase, 'cancelled');
+    assert.equal(result.disposition?.status, 'complete');
+    assert.deepEqual(deps.archived, [], 'Nucleus never archives a worktree it did not create');
+    assert.equal(deps.proofs, 0, 'no empty-work proof runs against the caller worktree');
+    assert.match(result.disposition!.workspaceEvidence, /Registered external workspace preserved/);
+  } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
 test('published PR work is archivable; dirty, unpushed and missing work are preserved with evidence', async () => {
   const root=mkdtempSync(join(tmpdir(),'ns-published-'));
   const repo=join(root,'repo'), remote=join(root,'origin.git'), workspace=join(root,'worktree');

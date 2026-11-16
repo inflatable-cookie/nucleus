@@ -30,6 +30,22 @@ export class StoreMigration {
   }
 
   /**
+   * nucleus#1261: a task registered by `task.register` before this build has no
+   * `workspaceOwnership` field, so the schema default would read its own
+   * worktree as a Queue allocation and the preflight would refuse it. The
+   * `registered` event is the durable proof that this row's directory is the
+   * caller's own checkout, so those rows are marked external on every open: the
+   * one-time backlog and any row a rolled-back older build wrote are one rule.
+   * Planned rows never carry that event.
+   */
+  markRegisteredExternalWorkspaces(): void {
+    this.db.exec(`UPDATE tasks SET data=json_set(data,'$.workspaceOwnership','external')
+      WHERE json_type(data,'$.workspaceOwnership') IS NULL
+        AND json_extract(data,'$.directory') IS NOT NULL
+        AND EXISTS (SELECT 1 FROM events e WHERE e.taskId=tasks.id AND e.kind='registered')`);
+  }
+
+  /**
    * Task 985: the per-repository validation policy is retired (Tom, 2026-11-09); the values are
    * archived outside the store. Strip stored copies on every open so rows written by an older
    * build parse the current schema, and drop the retired Nucleus-wide default.

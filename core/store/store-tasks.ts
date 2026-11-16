@@ -4,7 +4,7 @@ import { realpathSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { PREREQUISITE_WAIT_PREFIX } from "../../shared/wait-state";
-import { taskSchema, externalWorkspaceArchivesSettled, taskReferenceSchema, compactTaskVerdicts, compactLiveTask, SNAPSHOT_DEFAULT_LIMIT, formatTaskNumber, runSchema, type Task, type Run, type Notice, type Project, type SnapshotInput, type BriefVersion } from "../../shared/contracts";
+import { taskSchema, externalWorkspace, externalWorkspaceArchivesSettled, taskReferenceSchema, compactTaskVerdicts, compactLiveTask, SNAPSHOT_DEFAULT_LIMIT, formatTaskNumber, runSchema, type Task, type Run, type Notice, type Project, type SnapshotInput, type BriefVersion } from "../../shared/contracts";
 import { holdsOf } from "../../shared/holds";
 import { boardVisible, StoreBoardIndex } from "./store-board-index";
 import { StoreQueueIndex } from "./store-queue-index";
@@ -441,8 +441,8 @@ export class StoreTasks {
       if (task.reviewEntry?.preserveWorkspace === true && task.workspaceId != null
         && !externalWorkspaceArchivesSettled(task)) return true;
       const archived = task.resolution?.archivedWorkspaceIds ?? [];
-      if ((task.reviewEntry == null || task.reviewEntry.preserveWorkspace === false)
-        && task.workspaceId != null && !archived.includes(task.workspaceId)) return true;
+      // An external registered workspace is never archived, so it owes no pass.
+      if (!externalWorkspace(task) && task.workspaceId != null && !archived.includes(task.workspaceId)) return true;
       const closeoutWorkspaceId = task.resolution?.closeoutWorkspaceId;
       return closeoutWorkspaceId != null && !archived.includes(closeoutWorkspaceId);
     });

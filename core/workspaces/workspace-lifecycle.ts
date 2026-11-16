@@ -12,7 +12,7 @@ import {
 import { capPaseoTitle, taskWorkspaceTitle } from "./workspace-title";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { Task } from "../../shared/contracts";
+import { externalWorkspace, type Task } from "../../shared/contracts";
 import type { HostProjectRef, HostWorkspaceSpec } from "../../shared/host";
 
 /**
@@ -64,6 +64,10 @@ export class WorkspaceLifecycle {
   async preflightWorkspaceStorage(task: Task): Promise<void> {
     const placement = this.host.placement();
     if (!placement) return;
+    // An external workspace is the registering thread's own worktree, not a
+    // Queue allocation: there is no allocation path to prove and nothing to
+    // create on the Queue volume (nucleus#1261).
+    if (externalWorkspace(task)) return;
     const ownedPath = await this.host.ownedPathFor(task);
     const common = await repoCommonDir(task.repoPath);
     if (!isOwnedWorkspacePath(ownedPath, this.host.dataDir(), common, task.id)) placement.admit(ownedPath);
@@ -328,6 +332,10 @@ export class WorkspaceLifecycle {
     const matches = entries.filter(w => {
       const directory = w.workspaceDirectory ?? "";
       if (w.projectRootPath === task.repoPath && (w.worktreeSlug === slug || w.id === task.workspaceId)) return true;
+      // An external workspace is the task's own binding, wherever its project is
+      // rooted: a worktree Paseo reports as its own project still matches the
+      // recorded workspace identity (nucleus#1261).
+      if (externalWorkspace(task) && task.workspaceId && w.id === task.workspaceId) return true;
       if ([ownedPath, legacyPath].some(path => path && (directory === path || w.projectRootPath === path)))
         return w.worktreeSlug === slug || w.id === task.workspaceId || directory.split("/").at(-1) === slug || w.projectRootPath.split("/").at(-1) === slug;
       return false;

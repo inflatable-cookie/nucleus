@@ -4,7 +4,7 @@ export type { RegistrationAdapter } from './types';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import { complexityRefusal } from '../../shared/demand';
-import { submissionSchema, type Profile, type Task, type TaskRegistrationInput, type TaskRegistrationResult } from '../../shared/contracts';
+import { submissionSchema, type Profile, type Task, type TaskRegistrationBinding, type TaskRegistrationInput, type TaskRegistrationResult } from '../../shared/contracts';
 import type { AgentObservation } from './adapter';
 import { git, validateSubmission } from '../git/index';
 import { repositoryOrigin } from '../planning/lanes';
@@ -38,8 +38,25 @@ export async function verifyRegistrationGit(directory: string, repoPath: string,
   return branch;
 }
 
+/** A directory has one live writer; a terminal task has given its work up (nucleus#1261). */
+function liveDirectoryOwner(t: Task): boolean {
+  return !t.removedAt && !['done', 'cancelled'].includes(t.phase);
+}
+
 /** A workspace, agent or branch already on the board belongs to its task; registration never takes it twice. */
-export function assertRegistrationUnowned(store: Store, input: { workspaceId: string; agentId: string; branch: string; repoPath: string; hostId?: string }) {
+export function assertRegistrationUnowned(store: Store, input: { workspaceId: string; agentId: string; branch: string; repoPath: string; hostId?: string; directory?: string }) {
+  // The registering worktree is external to Queue (nucleus#1261): it must have
+  // no live task writer already. A superseded or cancelled task whose
+  // disposition preserved the folder kept the files but gave up the claim, so
+  // its directory is free for the thread that now registers there.
+  // A directory is a path on one machine, so only a task proven on the same
+  // host (or of unknown provenance) can be its live writer.
+  const directoryOwner = input.directory
+    ? store.tasks().find(t => t.directory === input.directory && liveDirectoryOwner(t)
+      && (!input.hostId || !t.hostId || t.hostId === input.hostId))
+    : undefined;
+  if (directoryOwner)
+    throw Error(`Registration worktree ${input.directory} already belongs to queue task ${directoryOwner.id}; resume that task instead`);
   for (const t of store.tasks()) {
     const runs = store.runs(t.id);
     const agents = [t.agentId, t.coordinatorAgentId, t.resolution.reviewerAgentId, ...t.retiredWorkers.map(w => w.agentId)];
@@ -97,7 +114,7 @@ export async function registerTask(
   const branch = await verifyRegistrationGit(directory, repoPath, baseBranch);
   // Fast fail before the expensive remote reads; the claim below rechecks
   // authoritatively inside the write transaction.
-  const claimed = { workspaceId, agentId: caller, branch, repoPath, hostId: adapter.hostId };
+  const claimed = { workspaceId, agentId: caller, branch, repoPath, directory, hostId: adapter.hostId };
   assertRegistrationUnowned(store, claimed);
   let planningCommit: string;
   try {
@@ -118,6 +135,10 @@ export async function registerTask(
   const validated = await validateSubmission(submission);
   const runId = randomUUID(), token = randomBytes(32).toString('hex');
   const profile = workerProfileFor(profiles, observation);
+  // The binding the registering thread reports through, written by the host in
+  // the same write as the task row. Its ticket path is returned to the caller
+  // because this thread was not launched by Nucleus and holds no ticket yet.
+  let binding: TaskRegistrationBinding | null = null;
   // The authoritative claim runs with no await between the recheck and the
   // insert inside one write transaction. Concurrent registrations serialize
   // here, so the same workspace, agent or branch is never claimed twice.
@@ -128,18 +149,18 @@ export async function registerTask(
       originHostId: adapter.hostId,
       phase: 'working', reason: `Registered by ${input.caller} on ${branch}; awaiting work and the worker's authenticated report`,
       workspaceId, directory, branch, agentId: caller, runId,
-      workspaceIntent: true, agentIntent: true,
+      workspaceIntent: true, workspaceOwnership: 'external', agentIntent: true,
       profile, profileGroup: profile ? store.pool().find(p => p.profileId === profile.id)?.group ?? null : null,
       originWorkspaceId: workspaceId,
       workerModel: observation.model || null, workerModels: observation.model ? [observation.model] : [],
       agentActive: observation.active || observation.permissions, lastAgentStatus: observation.status, lastObservedAt: now(),
-    }, { runId, token, prepare: task => adapter.prepareRegistration?.(task, token) }, origin);
+    }, { runId, token, prepare: task => { binding = adapter.prepareRegistration?.(task, token) ?? null; } }, origin);
   });
-  store.event(task.id, 'registered', `Worker ${input.caller} registered from its own worktree on ${branch}; responsible lifecycle, no planner or coordinator`);
+  store.event(task.id, 'registered', `Worker ${input.caller} registered from its own worktree on ${branch}; the worktree is retained as an external workspace; responsible lifecycle, no planner or coordinator`);
   const current = store.task(task.id);
   return {
     task: current, workspaceId, directory, branch, workerAgentId: caller, runId,
-    status: observation.status, model: observation.model ?? '',
+    status: observation.status, model: observation.model ?? '', binding,
   };
 }
 

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import type { SQLInputValue } from "node:sqlite";
-import { taskReferenceSchema, type Notice, type Run, type Task } from "../../shared/contracts";
+import { externalWorkspace, taskReferenceSchema, type Notice, type Run, type Task } from "../../shared/contracts";
 import type { HookRecord } from "../../shared/hooks";
 import { hookRetentionBlocksPurge } from "../hooks/hook-retention";
 import { HOST_RUN_SELECTOR, qualifiedThreadArchiveEffectKey, StoreCore } from "./store-core";
@@ -132,7 +132,7 @@ export class StoreRetention {
       if(task.resolution.workspaceRetirement && task.resolution.workspaceRetirement.state!=='archived')return false;
       if(task.resolution.runtimeRetirements.some(record=>record.state==='pending'||record.state==='failed'))return false;
       if(task.resolution.externalWorkspaceArchives.some(record=>record.state==='intent'||record.state==='uncertain'))return false;
-      if(!task.removedAt && task.phase==='done' && [task.reviewEntry?.preserveWorkspace ? null : task.workspaceId,task.resolution.closeoutWorkspaceId,...runs.filter(run=>run.reviewSourceView).map(run=>run.workspaceId)].some(id=>id&&!task.resolution.archivedWorkspaceIds.includes(id)))return false;
+      if(!task.removedAt && task.phase==='done' && [externalWorkspace(task) ? null : task.workspaceId,task.resolution.closeoutWorkspaceId,...runs.filter(run=>run.reviewSourceView).map(run=>run.workspaceId)].some(id=>id&&!task.resolution.archivedWorkspaceIds.includes(id)))return false;
       if(this.hooks.notices(task.id).some(n=>['pending','intent','uncertain'].includes(n.status)))return false;
       return true;
   }

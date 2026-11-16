@@ -1,4 +1,4 @@
-import type { Completion, Run, Task } from '../../shared/contracts';
+import type { Completion, Run, Task, TaskRegistrationBinding } from '../../shared/contracts';
 import type { HostAgentSpec, HostWorkspaceRef } from '../../shared/host';
 import type { Adapter, ExternalWorkspaceArchiveInput, ExternalWorkspaceArchiveOutcome, ExternalWorkspaceCatalog, ExternalWorkspaceSourceExpectation, ExternalWorktreeSource } from './index';
 import type { CreationOwner, OwnerReviewContext, RecoveryDispatchSnapshot, RegistrationAdapter, ReviewerSetting, RunScratchPlacement } from './types';
@@ -31,7 +31,7 @@ export interface HostPolicyPort extends Required<Pick<Adapter,
   catalogEntryPresent(workspace: HostWorkspaceRef): Promise<boolean>;
   preservedGitIdentity(directory: string): Promise<string | null>;
   inspectRegistration: RegistrationAdapter['inspectRegistration'];
-  prepareRegistration(task: Task, token: string): void;
+  prepareRegistration(task: Task, token: string): TaskRegistrationBinding | void;
   createRun(task: Task, run: Run, token: string, context?: RecoveryDispatchSnapshot | null, ownerContext?: OwnerReviewContext | null, guard?: { allowed(): Promise<boolean>; stillAllowed(): boolean }, affectedTestsCommand?: string): Promise<{ id: string; workspaceId: string | null }>;
   guardedNativeAgentCreate(spec: HostAgentSpec, mcp: boolean, retry: boolean): Promise<{ id: string; workspaceId: string | null }>;
   sendRun(task: Task, run: Run, token: string, context?: RecoveryDispatchSnapshot | null, ownerContext?: OwnerReviewContext | null, guard?: { allowed(): Promise<boolean>; stillAllowed(): boolean }, affectedTestsCommand?: string): Promise<void>;

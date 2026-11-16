@@ -1,5 +1,5 @@
 import type { Disposition, Task } from "../../../shared/contracts";
-import { dispositionWorkPolicy, isDispositionActive } from "../../../shared/contracts";
+import { dispositionWorkPolicy, externalWorkspace, isDispositionActive } from "../../../shared/contracts";
 import { now, type Store } from "../../store/store";
 import { ForeignRecordedPr } from "../../forge/index";
 import { hostProcessSweepIntent, sweepTaskHostProcesses } from "../../machine/host-process-reap";
@@ -222,8 +222,13 @@ async function progressDispositionStep(store: Store, deps: DispositionDeps, task
   if (task.workspaceId) {
     if (task.disposition!.workspaceArchived) {
       // An acknowledged archive is terminal evidence even when its directory has gone.
-    } else if (task.reviewEntry) {
-      const detail = "Review-entry workspace preserved; Nucleus never archives externally owned work";
+    } else if (task.reviewEntry || externalWorkspace(task)) {
+      // A registered worktree and a review entry's checkout are both external:
+      // Nucleus never archives what it did not create, whatever policy the
+      // cancellation requested (nucleus#1261).
+      const detail = task.reviewEntry
+        ? "Review-entry workspace preserved; Nucleus never archives externally owned work"
+        : "Registered external workspace preserved; Nucleus never archives a worktree it did not create";
       task = setDisposition(store, task, { ...task.disposition!, workspaceId: task.workspaceId, workspaceEvidence: detail }, "disposition_workspace_preserved", detail);
     } else if (workDisposition === "preserve") {
       const detail = "Operator requested preserve; workspace, branch, commits and PR remain intact";

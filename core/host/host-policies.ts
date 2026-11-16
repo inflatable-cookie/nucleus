@@ -11,7 +11,7 @@ import * as forge from "../forge/index";
 import type { VerifiedPr } from "../forge/index";
 import type { ResolutionAdapter } from "../resolution";
 import { ProvenPreSendRefusalError } from "../recovery/task-reasons";
-import type { Profile, ReviewEntryInput, StashEntry, Task } from "../../shared/contracts";
+import type { Profile, ReviewEntryInput, StashEntry, Task, TaskRegistrationBinding } from "../../shared/contracts";
 import type { HostAgentSpec, HostCatalog, HostCatalogOptions, HostFeature, HostModel, HostProvider, HostWorkspaceRef, NativeDecisionInput } from "../../shared/host";
 import type { NucleusProfile } from "../../shared/profiles";
 import { git } from "../git/index";
@@ -191,8 +191,15 @@ export abstract class HostPolicies extends MachinePorts {
 
   inspectReviewEntry(input:ReviewEntryInput,taskId?:string,originProof?:Parameters<ReviewPolicy['inspectReviewEntry']>[2]) { return this.reviewPolicy.inspectReviewEntry(input,taskId,originProof); }
 
-  prepareRegistration(task: Task, token: string) {
-    this.ticket(task, { id: task.runId! } as Run, token);
+  /**
+   * The registering thread's own ticket, written before its task row commits.
+   * Its response is the agent's reporting binding: this thread was not created
+   * by Nucleus, so it holds no ticket and no MCP binding yet (nucleus#1261).
+   */
+  prepareRegistration(task: Task, token: string): TaskRegistrationBinding {
+    const ticketPath = this.ticket(task, { id: task.runId! } as Run, token);
+    const mcpBindingPath = this.reportingViaMcp ? writeMcpBinding(this.creationOwner(), task.runId!, task, task.runId!, token) : null;
+    return { runId: task.runId!, helperPath: this.helperPath, ticketPath, mcpBindingPath };
   }
 
   protected ticket(task: Task, run: Run, token: string) { return writeRunTicket(this.creationOwner(), task, run, token); }

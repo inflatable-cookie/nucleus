@@ -1165,9 +1165,9 @@ request identities and submitted handoffs are not rewritten.
   nonterminal task with a Nucleus-owned workspace or workspace-creation intent.
   Parked faults and explicit holds without a live agent do not reserve first-
   dispatch admission; their workspaces remain retained. Mechanical verification
-  waits do not reserve agent slots. Adopted workspaces and
-  review-entry tasks preserving an external workspace do not count; proof-only
-  tasks count when Nucleus owns their workspace. Intake-owned review-entry
+  waits do not reserve agent slots. Adopted workspaces, registered external
+  worktrees and review-entry tasks preserving an external workspace do not
+  count; proof-only tasks count when Nucleus owns their workspace. Intake-owned review-entry
   workspaces count once bound, but their first admission creates no workspace
   and therefore does not enter this creation gate. Only the first queued
   dispatch that creates a Nucleus workspace waits at the cap, with a visible
@@ -2549,6 +2549,17 @@ movement invalidates source approval and preserves the normal readiness gates.
   never a typed name; the worktree must be a clean separate worktree on a branch
   of a registered repository, and checkout, detached, dirty, foreign or
   already-owned registrations are refused with the reason.
+- A registered worktree is an **external workspace** (nucleus#1261), the
+  ownership class review entry records as `preserveWorkspace`, not a Nucleus
+  allocation. Registration refuses a directory a live task still writes in (a
+  superseded or cancelled task whose disposition preserved the folder kept the
+  files, not the claim) and records `workspaceOwnership: external`; preflight,
+  continuation, build-output cleanup and closeout then leave the directory,
+  files and branch in place, and the `task.register` response carries the
+  caller's reporting binding (run ID, helper, ticket path, and the MCP binding
+  path when the host uses one) because that thread was not launched by Nucleus.
+  A row registered before the ownership field existed is proved external from
+  its stored `registered` event on every store open.
 - The old `set_responsible` control, native conversion question and
   `queue.responsible-convert` RPC were removed in cutover 1 (Spec 058); historical
   rows and frozen submission identities remain readable.
@@ -3147,8 +3158,9 @@ movement invalidates source approval and preserves the normal readiness gates.
   notices and hook records. These defer the purge: unreleased runs; a
   pending archive intent or a merge without a recorded commit; an unfinished
   build-output cleanup, workspace retirement or runtime retirement; an
-  external workspace archive in `intent` or `uncertain`; a done task's
-  workspace, closeout workspace or review-source view not yet archived; a
+  external workspace archive in `intent` or `uncertain`; a done task's Nucleus-
+  owned workspace, closeout workspace or review-source view not yet archived (a
+  registered external workspace is never archived and owes none); a
   notice in `pending`, `intent` or `uncertain`; unsettled hook custody; and
   an origin that never resolved. Pausing pauses retention.
   A task whose hook retention is not settled keeps its whole history: hook
