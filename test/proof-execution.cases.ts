@@ -205,7 +205,7 @@ function fixture() {
     briefDocument, buildRuntime, connectHost, settle,
 
     setCreateFailure: () => { createFailure = true; }, createCount: () => createCount,
-    close: () => { store.close(); rmSync(root, { recursive: true, force: true }); },
+    close: async () => { await engine.stop(); store.close(); rmSync(root, { recursive: true, force: true }); },
   };
 }
 
@@ -250,10 +250,10 @@ weighted(9)('a held workerless review-entry activates one Queue-created executor
     assert.deepEqual(activated.reviewEntry?.authorDeclaration.models, ['openai/gpt-5']);
     assert.equal(holdsOf(f.task()).merge?.owner, owner, 'the merge hold still stands after activation');
     assert.equal(holdsOf(f.task()).dispatch, undefined);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
-weighted(1)('proof admission accepts the latest legacy revision at the reviewed published head only', () => {
+weighted(1)('proof admission accepts the latest legacy revision at the reviewed published head only', async () => {
   const f = fixture();
   try {
     const task = f.task();
@@ -290,10 +290,10 @@ weighted(1)('proof admission accepts the latest legacy revision at the reviewed 
       externalOwnerRevisions: [{ head: f.head }] } } as unknown as Task;
     assert.match(proofHeadAdmission(historicalOwnerReceipt, noRevisionRuns, f.head) ?? '', /requires an authenticated author revision/);
     assert.equal(proofInputRedeclarationAllowed(historicalOwnerReceipt, noRevisionRuns, f.head), false);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
-weighted(1)('a legacy inferred refusal cannot free its exact head', () => {
+weighted(1)('a legacy inferred refusal cannot free its exact head', async () => {
   const f = fixture();
   try {
     const task = f.task();
@@ -324,10 +324,10 @@ weighted(1)('a legacy inferred refusal cannot free its exact head', () => {
     const withStarted = [...runs, started] as unknown as Parameters<typeof proofHeadAdmission>[1];
     assert.match(proofHeadAdmission(reviewedTask, withStarted, f.head) ?? '', /already reserved at/);
     assert.match(proofSingleFlightRefusal(reviewedTask, withStarted as unknown as Parameters<typeof proofSingleFlightRefusal>[1], f.head) ?? '', /already dispatched and unreleased/);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
-weighted(1)('proof admission treats an authenticated exact-head ready review as source approval', () => {
+weighted(1)('proof admission treats an authenticated exact-head ready review as source approval', async () => {
   const f = fixture();
   try {
     const task = f.task();
@@ -348,7 +348,7 @@ weighted(1)('proof admission treats an authenticated exact-head ready review as 
     const runs = [historicalExecutor, revision, reviewer] as unknown as Parameters<typeof proofHeadAdmission>[1];
     assert.equal(proofHeadAdmission(reviewedTask, runs, f.head), null);
     assert.equal(proofInputRedeclarationAllowed(reviewedTask, runs, f.head), true);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 weighted(2)('a second activation observes the spent allowance and never repeats the counted proof', async () => {
@@ -362,7 +362,7 @@ weighted(2)('a second activation observes the spent allowance and never repeats 
     assert.equal(f.createCount(), 1, 'no second executor is created');
     assert.equal(f.task().proofExecutions!.length, 1);
     assert.equal(f.task().version, spent.version);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 weighted(8)('a failed proof can run once at a corrected, source-approved head with a new input declaration', async () => {
@@ -421,7 +421,7 @@ weighted(8)('a failed proof can run once at a corrected, source-approved head wi
     await assert.rejects(f.engine.performTaskControl(activation()), /already reserved at/);
     assert.equal(f.store.runs(task.id).filter(run => run.role === 'executor').length, 2);
     assert.equal(current().version, version);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 weighted(2)('source drift refuses activation before any dispatch and keeps the allowance unspent', async () => {
@@ -433,7 +433,7 @@ weighted(2)('source drift refuses activation before any dispatch and keeps the a
     assert.equal(f.created.length, 0);
     assert.equal(f.task().proofExecutions!.length, 0);
     assert.equal(f.store.tasks().some(task => f.store.runs(task.id).some(run => run.role === 'executor')), false);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 weighted(2)('tracked source mutation at the pinned head refuses activation', async () => {
@@ -446,7 +446,7 @@ weighted(2)('tracked source mutation at the pinned head refuses activation', asy
     assert.equal(f.task().proofExecutions!.length, 0);
   } finally {
     runGit(f.workspace, 'checkout', '--', 'README.md');
-    f.close();
+    await f.close();
   }
 });
 
@@ -474,7 +474,7 @@ weighted(4)('an authenticated passing report records separate executor evidence 
     assert.equal(f.store.runs(task.id).filter(item => item.role === 'reviewer').length, 0);
     assert.equal(f.store.eventsAll(task.id).some(event => event.kind === 'proof_execution_settled' && /a distinct independent review is still required/.test(event.detail)), true);
     assert.equal(holdsOf(task).merge?.owner, owner);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 weighted(4)('an owner can retire a settled proof declaration once and cannot name another selector', async () => {
@@ -515,7 +515,7 @@ weighted(4)('an owner can retire a settled proof declaration once and cannot nam
     const unchanged = f.store.task(task.id);
     assert.equal(unchanged.version, amended.version, 'a later declaration is refused without a partial write');
     assert.deepEqual(unchanged.proofExecutions, history);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 weighted(3)('a result naming another selector or omitting proofResult is refused', async () => {
@@ -528,7 +528,7 @@ weighted(3)('a result naming another selector or omitting proofResult is refused
     await assert.rejects(f.report(run, { status: 'proof_executed', summary: 'wrong selector',
       proofResult: { status: 'passed', selector: 'cargo test', exitCode: 0 } }), /must name the run's declared selector/);
     assert.equal(f.store.run(run.id)!.completion, null);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 weighted(2)('source mutation during execution refuses the passing claim and retains conservative evidence', async () => {
@@ -549,7 +549,7 @@ weighted(2)('source mutation during execution refuses the passing claim and reta
     assert.equal(task.proofExecutions![0]!.selectorStart, 'unknown');
     assert.match(task.proofExecutions![0]!.evidence, /Source moved during the run/);
     assert.equal(task.resolution.review, null);
-  } finally { await f.engine.stop(); f.close(); }
+  } finally { await f.close(); }
 });
 
 weighted(2)('a lost agent-creation reply is never retried and the allowance stays spent', async () => {
@@ -565,7 +565,7 @@ weighted(2)('a lost agent-creation reply is never retried and the allowance stay
     await assert.rejects(f.engine.performTaskControl(f.activation()), /already reserved at/);
     assert.equal(f.createCount(), 1, 'unknown delivery is observed, never re-dispatched');
     assert.equal(f.store.runs(f.task().id).length, 1);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 weighted(2)('the durable task-control operation is the activation route and reports the same run', async () => {
@@ -590,10 +590,10 @@ weighted(2)('the durable task-control operation is the activation route and repo
     assert.ok('accepted' in repeated);
     assert.equal(repeated.operation.id, accepted.operation.id);
     assert.equal(f.createCount(), 1);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
-weighted(1)('a brief frontmatter names the one authorized selector and its input hashes', () => {
+weighted(1)('a brief frontmatter names the one authorized selector and its input hashes', async () => {
   const text = `---\ntitle: External source proof\nqueue_approval: 'Owner approved'\nqueue:\n  complexity: high\n  proofExecution:\n    selector: "effigy test unit -- test/x.test.ts"\n    inputs: ["sha256:${'e'.repeat(64)}"]\n---\n\nBody scope.\n`;
   const metadata = parseNorthstarDocument(text, 'brief') as { queue: { proofExecution?: { selector: string; inputs: string[]; role: string } } };
   assert.equal(metadata.queue.proofExecution?.selector, 'effigy test unit -- test/x.test.ts');
@@ -616,7 +616,7 @@ weighted(2)('task.next offers the proof activation and then names the spent allo
     const after = next().verbs.find(verb => verb.verb === 'proof')!;
     assert.equal(after.available, false);
     assert.match(after.refusal!, /already reserved at/);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 weighted(3)('an exhausted awaiting_proof task can extend its budget before activating proof', async () => {
@@ -639,7 +639,7 @@ weighted(3)('an exhausted awaiting_proof task can extend its budget before activ
     await f.engine.performTaskControl(f.activation());
     assert.equal(f.store.runs(f.task().id).filter(run => run.role === 'executor').length, 1);
     assert.equal(f.created.length, 1);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 weighted(3)('the public RuntimeOwner.taskControl route admits a relayed operator activation over its durable operation', async () => {
@@ -680,7 +680,7 @@ weighted(3)('the public RuntimeOwner.taskControl route admits a relayed operator
     await assert.rejects(runtime.engine.performTaskControl(f.activationFor(runtime.store, task.id, runtime.store.task(task.id).version,
       { caller: 'relay-thread', relayed: true, note: 'Second attempt' })), /already reserved at/);
     assert.equal(f.created.length, 1);
-  } finally { await runtime.stop(); f.close(); }
+  } finally { await runtime.stop(); await f.close(); }
 });
 
 weighted(2)('the executor prompt forbids source writes and carries no worker validation or commit instruction', async () => {
@@ -699,7 +699,7 @@ weighted(2)('the executor prompt forbids source writes and carries no worker val
       'run the checks the operator validation rule requires', 'northstar-report']) {
       assert.equal(prompt.includes(forbidden), false, `the executor prompt must not carry: ${forbidden}`);
     }
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 /**
@@ -791,7 +791,7 @@ weighted(2)('a public amend_brief binds the declaration an existing held brief a
     const operation = runtime.store.operationForKey(taskControlOperation(control).key)!;
     assert.equal(operation.state, 'succeeded', operation.diagnostic);
     assert.equal(activated.proofExecutions![0]!.operationId, operation.id);
-  } finally { await runtime.stop(); f.close(); }
+  } finally { await runtime.stop(); await f.close(); }
 });
 
 weighted(2)('once the executor is reserved only a body-only amendment is compatible and nothing resets the allowance', async () => {
@@ -849,7 +849,7 @@ weighted(2)('once the executor is reserved only a body-only amendment is compati
     await assert.rejects(runtime.taskControl(proofControl(task.id, runtime.store.task(task.id).version)),
       /already reserved at/);
     assert.equal(f.created.length, 1);
-  } finally { await runtime.stop(); f.close(); }
+  } finally { await runtime.stop(); await f.close(); }
 });
 
 weighted(1)('before any reservation an amendment may correct or clear the declaration without minting an execution', async () => {
@@ -878,7 +878,7 @@ weighted(1)('before any reservation an amendment may correct or clear the declar
     assert.equal(redeclared.proofExecution?.selector, f.selector);
     assert.deepEqual(redeclared.proofExecutions, []);
     assert.equal(f.store.eventsAll(task.id).filter(event => event.kind === 'brief_proof_execution_changed').length, 4);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 weighted(6)('the amendment is what binds the declaration: the parent-shaped write leaves the proof verb refusing', async () => {
@@ -913,7 +913,7 @@ weighted(6)('the amendment is what binds the declaration: the parent-shaped writ
     const activated = await runtime.taskControl(proofControl(task.id, runtime.store.task(task.id).version)) as Task;
     assert.equal(runtime.store.runs(task.id).length, 1);
     assert.equal(activated.proofExecutions!.length, 1);
-  } finally { await runtime.stop(); f.close(); }
+  } finally { await runtime.stop(); await f.close(); }
 });
 
 weighted(5)('a stale version fences a concurrent amend and proof pair to one binding and one allowance', async () => {
@@ -943,7 +943,7 @@ weighted(5)('a stale version fences a concurrent amend and proof pair to one bin
     assert.equal(after.briefVersions.length, reserved.briefVersions.length);
     assert.equal(f.store.runs(task.id).length, runs);
     assert.equal(f.created.length, 1);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 weighted(5)('an uncertain, failed or historical executor reservation also makes the declaration immutable', async () => {
@@ -1010,7 +1010,7 @@ weighted(5)('an uncertain, failed or historical executor reservation also makes 
     await assert.rejects(f.engine.performTaskControl(amend(failed.id, f.briefDocument({ inputs: [`sha256:${'a'.repeat(64)}`],
       body: 'Attempt another input change.' }))), /input hashes may be re-declared only for a new head/);
     assert.equal(f.store.runs(failed.id).length, 1);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 weighted(2)('schema and merge fences refuse a declaration amendment without a partial write', async () => {
@@ -1036,7 +1036,7 @@ weighted(2)('schema and merge fences refuse a declaration amendment without a pa
     assert.equal(afterMerge.proofExecution, undefined);
     assert.equal(afterMerge.briefVersions.length, beforeMerge.briefVersions.length);
     assert.deepEqual(afterMerge.proofExecutions, []);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 weighted(2)('a concurrent amendment and durable proof activation leave one binding and one allowance', async () => {
@@ -1074,7 +1074,7 @@ weighted(2)('a concurrent amendment and durable proof activation leave one bindi
       // reservation transaction; both name the changed brief and reserve nothing.
       assert.match(settled.diagnostic ?? '', /Task changed|Proof-execution source or brief reservation changed during admission/);
     }
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 /**
@@ -1139,7 +1139,7 @@ weighted(3)('a second proof replaces the retained executor whose session now run
     assert.equal(secondReceipt.runId, secondRun.id);
     assert.equal(secondReceipt.agentId, secondRun.agentId);
     assert.equal(secondRun.agentId, 'executor-agent-2', 'the fresh create minted its own agent identity');
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 weighted(3)('a second proof replaces the retained executor on observed provider exhaustion', async () => {
@@ -1158,5 +1158,5 @@ weighted(3)('a second proof replaces the retained executor on observed provider 
     const secondReceipt = current().proofExecutions!.at(-1)!;
     assert.equal(secondReceipt.runId, secondRun.id);
     assert.equal(secondReceipt.agentId, secondRun.agentId);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
