@@ -311,7 +311,7 @@ export function blockingTaskOperations(store: Store, task: Task, options: { excl
 }
 
 /** The two labels the review-dispatch wait records for itself, in that writer's terms. */
-const REVIEW_EFFECT_WAIT = /^(Ordinary review|Review-entry) waits for .+; settle it with retry_effect before continuing$/;
+const REVIEW_EFFECT_WAIT = /^(?:Ordinary review|Review-entry) waits for (.+); settle it with retry_effect before continuing$/;
 
 /**
  * The review-dispatch wait this task still records: the first moment it was
@@ -325,6 +325,17 @@ export function reviewEffectWait(task: Task): { since: string; detail: string } 
   const stop = task.resolution.stop;
   if (!stop || stop.reason !== 'lifecycle' || !REVIEW_EFFECT_WAIT.test(stop.detail)) return null;
   return { since: stop.since, detail: stop.detail };
+}
+
+/**
+ * The blocking set a recorded review-dispatch wait names, for the lifecycle pass
+ * that decides whether this phase still waits on exactly that set. The writer is
+ * `RunLaunchDeliver`; decoding its sentence here is what keeps the reader from
+ * rebuilding the writer's words.
+ */
+export function reviewEffectWaitRefusal(task: Task): string | null {
+  const wait = reviewEffectWait(task);
+  return wait ? REVIEW_EFFECT_WAIT.exec(wait.detail)?.[1] ?? null : null;
 }
 
 /** Refusal text for the complete blocking set, in projection order. */

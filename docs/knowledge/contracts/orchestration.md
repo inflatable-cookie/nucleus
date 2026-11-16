@@ -169,7 +169,10 @@ add no promise turn.
 named live ports through the same `core/port-context.ts` context, and the
 retry-witness adapter. Ordered advancement lives in
 `core/scheduling/lifecycle.ts`: its gates, re-reads after awaits, run reservation
-and failure settlement retain their original order. Review continuation proof
+and failure settlement retain their original order. Its two text-shaped gates are
+typed facts with one owner each: `task-reasons` owns the callback-reminder stop
+sentences and `recovery-effects` decodes the blocking set its own review wait
+recorded, so this pass compares facts instead of rebuilding either sentence. Review continuation proof
 belongs to review; orphan-run settlement belongs to recovery; planner presence
 and stale-answer delivery belong to questions. The host questions both roots ask
 are one contract with one ambient set (`core/host/host-ports.ts`); the engine
@@ -200,12 +203,21 @@ retry timers, the git-transient backoff, and the scheduled task quantum.
 Enforces the follow-up cadence in [Durable effects](#durable-effects-and-unknown-delivery)
 and the git-transient episode close on a successful retry of the failed
 resolution operation. Pures: `quantumFollowUps`, `gitTransientPlan`,
-`stepFailureRoute`. Engine.stop calls its `stop()`. Delegates remain on Engine.
+`stepFailureRoute`. `gitTransientPlan` alone decides the uncertain-delivery skip,
+and a wake that throws while the engine runs is recorded on the task
+(`wake_failed`) instead of dropped. Engine.stop calls its `stop()`. Delegates
+remain on Engine.
 
 **Sweep** (`core/scheduling/sweep.ts`). Coalesces reconciliation windows and drains and
 conducts the audit pass. Enforces the cursor-sweep as the restart and
 missed-signal fallback in [Durable effects](#durable-effects-and-unknown-delivery).
-Delegates remain on Engine, including test-facing sweep state accessors.
+Delegates remain on Engine, including test-facing sweep state accessors. The
+periodic chores and one host's steps belong to their own owners: **SweepMaintenance**
+(`core/scheduling/sweep-maintenance.ts`) runs the hourly and daily store chores and
+the owner/lane passes on their own cadence, and **HostPass**
+(`core/scheduling/host-pass.ts`) runs one host's settlement, row-surfacing,
+inventory, retired-worker, title and finished-thread steps, recording a step that
+throws as `hostPassError` instead of dropping it.
 
 **ControlContext** (`core/verbs/control-context.ts`). Holds the hidden parameters of
 every verb (`selfForceRunId`, `coordinatorActionRunId`, `replayingDeferredVerb`)

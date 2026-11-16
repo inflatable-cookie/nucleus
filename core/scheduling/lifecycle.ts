@@ -1,6 +1,6 @@
 import { MISSING_CALLBACK_CAUSE } from '../../shared/incident';
-import { stages, ACCEPTED_PR_RECONCILIATION_REASON } from '../recovery/task-reasons';
-import { blockingRecoveryEffects, recoveryEffectsRefusal } from '../recovery/recovery-effects';
+import { stages, ACCEPTED_PR_RECONCILIATION_REASON, missingCallbackStopReasonFor } from '../recovery/task-reasons';
+import { blockingRecoveryEffects, recoveryEffectsRefusal, reviewEffectWaitRefusal } from '../recovery/recovery-effects';
 import { blockedEffectAttentionRecorded } from '../recovery/effect-gates';
 import { proofWaitApplies } from '../qa/proof-wait';
 import { type Task } from '../../shared/contracts';
@@ -106,8 +106,9 @@ export class SchedulingLifecycle {
     // A stored result is not new evidence on each wake. Only a missing-callback
     // stop may be satisfied by finding that result; publication faults keep
     // their incident/stop and any coordinator's cannot outcome until an owner acts.
-    const missingCallback = completed && (t.reason===`The ${completed.role} thread stopped without a callback; inspect the thread`
-      || t.reason===`The ${completed.role} callback reminder expired`
+    // The two stop sentences belong to `task-reasons`, which writes them, so this
+    // pass asks that owner whether the recorded reason is one of them.
+    const missingCallback = completed && (missingCallbackStopReasonFor(t.reason, completed.role)
       || t.resolution.incident?.runId===completed.id && (t.resolution.incident.cause===MISSING_CALLBACK_CAUSE || t.resolution.incident.action==='callback_reminder'));
     // A stalled run can also deliver its authenticated result after escalation.
     // Only settle its own stall, after release and coordinator release; other
@@ -177,8 +178,10 @@ export class SchedulingLifecycle {
     else if (t.phase === 'awaiting_review' || t.phase === 'reviewing') {
       const effects = blockingRecoveryEffects(this.context.store, t, { noticeKinds: 'all' });
       const refusal = recoveryEffectsRefusal(effects);
-      if (refusal && ['Ordinary review', 'Review-entry'].some(label =>
-        t.reason === `${label} waits for ${refusal}; settle it with retry_effect before continuing`)) return;
+      // The recorded wait is `recovery-effects`' sentence: it decodes the blocking
+      // set it named, so this pass compares the set read now with it instead of
+      // rebuilding the writer's words.
+      if (refusal && reviewEffectWaitRefusal(t) === refusal) return;
       // Nucleus#1159: once this blocked phase is the recorded attention, only
       // later evidence or the owner's observation-first retry changes it;
       // relaunching would rewrite the wait and hide the attention again.

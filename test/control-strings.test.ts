@@ -606,8 +606,10 @@ const PARSED: ParsedText[] = [
     writers: ['is already dispatched and unreleased (', 'already spent its one execution (', 'was already reserved at ${head}'],
     reads: ['error instanceof ProofSingleFlightError'] },
   { site: 'reviewer crash', re: /^The reviewer (?:thread stopped|callback reminder expired)/, sample: 'The reviewer thread stopped without a callback; inspect the thread',
-    writers: ['The ${run.role} thread stopped without a callback; inspect the thread', 'callback reminder expired'] },
-  { site: 'missing callback', reads: ['t.reason===`The ${completed.role} thread stopped without a callback; inspect the thread`', 't.reason===`The ${completed.role} callback reminder expired`'] },
+    writers: ['`The ${role} thread stopped without a callback; inspect the thread`', '`The ${role} callback reminder expired`'] },
+  // nucleus#1257: the writer (`callback-reminders`) and the reader (`Lifecycle`)
+  // ask `task-reasons` for the sentence pair, so one owner holds the words.
+  { site: 'missing callback', reads: ['missingCallbackStopReasonFor(t.reason, completed.role)'] },
   { site: 'store fence', re: /^A ([a-z]+) run \(([^)]+)\) (?:holds a durable side effect Queue will not act over blindly \(.+\); (?:restart re-creates it under the same run, or wait for reconciliation to settle it|wait for that delivery or effect to settle, or retry_effect it)|still owns this task: .+)$/,
     sample: 'A worker run (run-1) still owns this task: live' },
   { site: 'proof hold', reads: ['`Proofs Queue cannot run, left for the planner or operator at ${pr.head}:`', 'proofHold.reason.startsWith(proofHoldPrefix)'],
@@ -615,8 +617,8 @@ const PARSED: ParsedText[] = [
   // nucleus#1218: the retry window's fence facts are derived, not read from the
   // refusal's words, so only the refusal's own sentence stays pinned.
   { site: 'auto-continue fence cleared', writers: ['An unresolved task incident or recovery fence blocks reviewer continuation'] },
-  { site: 'review recovery wait', reads: ["['Ordinary review', 'Review-entry'].some(label =>", 't.reason === `${label} waits for ${refusal}; settle it with retry_effect before continuing`',
-      '/^(Ordinary review|Review-entry) waits for .+; settle it with retry_effect before continuing$/'],
+  { site: 'review recovery wait', reads: ['reviewEffectWaitRefusal(t) === refusal',
+      '/^(?:Ordinary review|Review-entry) waits for (.+); settle it with retry_effect before continuing$/'],
     writers: ["`${run.ordinaryDetached?'Ordinary review':'Review-entry'} waits for ${recoveryEffectsRefusal(error.effects)}; settle it with retry_effect before continuing`"] },
   // Nucleus#1159: the blocked review's attention is one authored sentence; the
   // stop classification and the reconciler's reader both key on its constant.
@@ -695,7 +697,7 @@ const SITES: Record<string, number> = {
   'Task or run changed; refresh before retrying': 3,
   'A run started during the move': 4,
   'was already reserved at ${head}': 2,
-  'The ${run.role} thread stopped without a callback; inspect the thread': 1,
+  'The ${role} thread stopped without a callback; inspect the thread': 1,
   'callback reminder expired': 3,
   'An unresolved task incident or recovery fence blocks reviewer continuation': 2,
   't.reason === ACCEPTED_PR_RECONCILIATION_REASON': 2,

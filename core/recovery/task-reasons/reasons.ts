@@ -25,6 +25,18 @@ export const ABSENT_RESOLUTION_REASON = 'Run creation is uncertain; no duplicate
 export const RESPONSIBLE_QUESTION_WAIT = 'Waiting for the operator to answer the joint worker/reviewer question on the third non-converging review round';
 export const NO_RESOLUTION_ACTION = 'No resolution action needs retry';
 export const ACCEPTED_PR_RECONCILIATION_REASON = 'Operator requested accepted-PR workspace reconciliation';
+/**
+ * The two stops a callback reminder writes for one role: the thread stopped
+ * without its callback, or its one reminder expired first. The reminder writes
+ * the first; the lifecycle pass reads either as the same run-scoped fact, so the
+ * sentence pair has one owner here instead of a copy at its reader.
+ */
+export const missingCallbackStopReason = (role: string) => `The ${role} thread stopped without a callback; inspect the thread`;
+export const expiredCallbackReminderReason = (role: string) => `The ${role} callback reminder expired`;
+/** True when this recorded reason is one of those two stops for that role. */
+export function missingCallbackStopReasonFor(reason: string, role: string): boolean {
+  return reason === missingCallbackStopReason(role) || reason === expiredCallbackReminderReason(role);
+}
 /** The one reason a completion callback's moved PR head records; retry routing reads it as a fact. */
 export const PR_HEAD_CHANGED_REASON = 'PR head changed after the completion callback';
 /** The visible reason a failed external-merge probe parks with; its pre-attention state is recorded for recovery. */

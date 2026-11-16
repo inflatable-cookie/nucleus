@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Store, digest, operationIdForKey, operationInputHash } from '../core/store/store';
 import { classifyReviewPublication, reviewPublicationKey } from '../core/review/review-publication';
-import { recoveryEffects, blockingRecoveryEffects, blockingRecoveryEffectsRefusal, isBlockingRecoveryEffect, blockingTaskOperations, observedHostEffectEvidence, reviewEffectWait } from '../core/recovery/recovery-effects';
+import { recoveryEffects, blockingRecoveryEffects, blockingRecoveryEffectsRefusal, isBlockingRecoveryEffect, blockingTaskOperations, observedHostEffectEvidence, reviewEffectWait, reviewEffectWaitRefusal } from '../core/recovery/recovery-effects';
 import { verifyEnclosingOperation } from '../core/planning/enclosing-operation';
 import { taskControlOperation } from '../core/verbs/task-control-key';
 import { reviewPublicationBody } from '../core/forge/index';
@@ -368,5 +368,13 @@ test('the blocked-review wait is read from the stop Queue itself records', () =>
     assert.equal(reviewEffectWait(stopFor(`Ordinary review waits for ${refusal}; settle it with retry_effect before continuing`, 'operator_needed')), null,
       'the attention record is not the wait it replaced');
     assert.equal(reviewEffectWait(stopFor('Another unresolved task operation fences reviewer continuation')), null);
+    // nucleus#1257: the lifecycle pass compares the set this wait named with the
+    // set it reads now, so the decoder is the reader's whole text dependency.
+    assert.equal(reviewEffectWaitRefusal(stopFor(`Ordinary review waits for ${refusal}; settle it with retry_effect before continuing`)), refusal);
+    assert.equal(reviewEffectWaitRefusal(stopFor(`Review-entry waits for ${refusal}; settle it with retry_effect before continuing`)), refusal);
+    assert.equal(reviewEffectWaitRefusal(stopFor(`Ordinary review waits for ${refusal}; settle it with retry_effect before continuing`, 'operator_needed')), null,
+      'a stop that is not the review wait decodes nothing');
+    assert.equal(reviewEffectWaitRefusal(stopFor('Another unresolved task operation fences reviewer continuation')), null);
+    assert.equal(reviewEffectWaitRefusal(store.task(task.id)), null, 'a task with no recorded wait decodes nothing');
   } finally { store.close(); }
 });
