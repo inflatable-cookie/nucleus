@@ -408,7 +408,7 @@ export class Resolution {
   private escalationLiveWork(t: Task): string | null { return this.taskStops.escalationLiveWork(t); }
   resolveEscalation(t: Task, reason: string, operator?: boolean): Task { return this.taskStops.resolveEscalation(t, reason, operator); }
   attention(t: Task, reason: string, cause?: IncidentCause) { return this.taskStops.attention(t, reason, cause); }
-  waiting(t: Task, reason: string, stop: TaskStopReason | 'classify', suggestedVerbs?: TaskStopVerb[]) { return this.taskStops.waiting(t, reason, stop, suggestedVerbs); }
+  waiting(t: Task, reason: string, stop: TaskStopReason | 'classify', options: { suggestedVerbs?: TaskStopVerb[]; holderAgentId?: string } = {}) { return this.taskStops.waiting(t, reason, stop, options); }
   private recordDeferredDuringPrerequisiteWait(task: Task, kind: 'transport_deferred' | 'environment_deferred', detail: string): boolean { return this.taskStops.recordDeferredDuringPrerequisiteWait(task, kind, detail); }
   private clearResumedProviderWait(taskId: string): void { this.transientResume.clearResumedProviderWait(taskId); }
   private recordRateLimitCooldown(group: string | null | undefined, error: string): void { this.transientResume.recordRateLimitCooldown(group, error); }

@@ -1381,9 +1381,9 @@ test('owner continuation gates disclose recorded run-bound cleanup without chang
     const before = cleanupNoteFixture(f);
     const at = '2026-10-24T00:00:00.000Z';
     f.store.update(f.taskId, { resolution: { ...f.task().resolution, buildOutputCleanups: [
-      { workspaceId: 'workspace', directory: '/worktree', runId: 'worker-run', agentId: 'worker-agent', state: 'complete', at,
+      { workspaceId: 'workspace', directory: '/worktree', runId: 'worker-run', agentId: 'worker-agent', state: 'complete', at, observations: ['removed', 'retained'],
         detail: 'Removed task-local Cargo target output at /worktree/target. Retained node_modules at /worktree/node_modules for the task\'s next continuation' },
-      { workspaceId: 'review-view', directory: '/review-view', runId: 'review-run', state: 'complete', at: '2026-10-24T01:00:00.000Z',
+      { workspaceId: 'review-view', directory: '/review-view', runId: 'review-run', state: 'complete', at: '2026-10-24T01:00:00.000Z', observations: ['link'],
         detail: 'Left build output symlinks: /review-view/target (Cargo target): symlink left in place; target untouched' },
     ] } });
     const after = f.next();

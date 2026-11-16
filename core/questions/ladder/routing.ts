@@ -41,7 +41,7 @@ export function openPlannerEscalation(ladder: Ladder, t: Task, input: OpenEscala
   // A caller inside an open transaction (the review application) joins it.
   if (ladder.store.db.isTransaction) write(); else ladder.store.transaction(write);
   const waitDetail = `${escalationWaitDetail.planner(id)}${input.causeDetail ? `; reported cause: ${input.causeDetail.slice(0, 2000)}` : ''}`;
-  ladder.resolution.waiting(ladder.store.task(t.id), waitDetail, 'escalated', input.suggestedVerbs);
+  ladder.resolution.waiting(ladder.store.task(t.id), waitDetail, 'escalated', { suggestedVerbs: input.suggestedVerbs });
   // The in-flight guard is synchronous, so the maintenance sweep can never start a
   // second drive; the launch itself waits for any open transaction to commit, so a
   // rollback never leaves a routing promise running against rolled-back intents.
@@ -93,7 +93,7 @@ export async function routePlannerEscalation(ladder: Ladder, t: Task, id: string
     current: () => !plannerEscalations(events() as LadderEvent[]).find(item => item.id === id)?.answered,
     canAdvance: () => !escalationOutlived(ladder.store.task(t.id)),
     onIntent: (role, agentId, rung) => {
-      if (role === 'planner') ladder.resolution.waiting(ladder.store.task(t.id), `Waiting with the planner or task owner ${agentId}: blocker escalation ${id} (${rung === 'task' ? 'task planner' : 'project planner'} rung) is open`, 'escalated');
+      if (role === 'planner') ladder.resolution.waiting(ladder.store.task(t.id), `Waiting with the planner or task owner ${agentId}: blocker escalation ${id} (${rung === 'task' ? 'task planner' : 'project planner'} rung) is open`, 'escalated', { holderAgentId: agentId });
       ladder.store.event(t.id, 'planner_escalation_delegated', `${id}: ${role === 'planner' ? `${rung === 'task' ? 'task planner' : 'project planner'} ${agentId}; asked` : 'decider requested'}`);
     },
     onSkip: (rung, agentId, detail) => ladder.store.event(t.id, 'planner_escalation_delegation_skipped', `${id}: ${rung} planner ${agentId} skipped: ${detail}`.slice(0, 4000)),

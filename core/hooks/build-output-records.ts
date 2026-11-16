@@ -1,4 +1,4 @@
-import type { BuildOutputCleanup } from "../../shared/contracts";
+import type { BuildOutputCleanup, BuildOutputObservation } from "../../shared/contracts";
 
 /** Shared prefix for a task's cleanup reason when build output is retained. */
 export const buildOutputCleanupReasonPrefix = "Build output cleanup blocked: ";
@@ -19,8 +19,8 @@ export function runBuildOutputIntent(cleanups: BuildOutputCleanup[], run: { id: 
 }
 
 /** Settles one run-bound record. Other records and the run's history are untouched. */
-export function recordRunBuildOutput(cleanups: BuildOutputCleanup[], runId: string, workspaceId: string, state: RecordState, detail: string, at: string): BuildOutputCleanup[] {
-  return cleanups.map(item => item.runId === runId && item.workspaceId === workspaceId ? { ...item, state, detail, at } : item);
+export function recordRunBuildOutput(cleanups: BuildOutputCleanup[], runId: string, workspaceId: string, state: RecordState, detail: string, at: string, observations: BuildOutputObservation[] = []): BuildOutputCleanup[] {
+  return cleanups.map(item => item.runId === runId && item.workspaceId === workspaceId ? { ...item, state, detail, observations, at } : item);
 }
 
 /**
@@ -29,7 +29,7 @@ export function recordRunBuildOutput(cleanups: BuildOutputCleanup[], runId: stri
  */
 export function coverRunBuildOutput(cleanups: BuildOutputCleanup[], workspaceId: string, directory: string, at: string): BuildOutputCleanup[] {
   return cleanups.map(item => item.runId && item.workspaceId === workspaceId && item.directory === directory && item.state !== "complete"
-    ? { ...item, state: "complete" as const, detail: "Covered by the settled workspace build output cleanup", at }
+    ? { ...item, state: "complete" as const, detail: "Covered by the settled workspace build output cleanup", observations: [], at }
     : item);
 }
 

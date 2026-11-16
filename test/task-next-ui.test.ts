@@ -475,7 +475,7 @@ test('task detail shows the recorded run-bound build output cleanup beside the c
       reason: 'Blocked after a build',
       completion: completionSchema.parse({ eventId: 'e1', taskId: inserted.id, runId: 'worker-run', status: 'blocked', summary: 'Blocked after a build', head }),
       resolution: { ...inserted.resolution, buildOutputCleanups: [
-        { workspaceId: 'workspace', directory: '/app', runId: 'worker-run', agentId: 'worker-agent', state: 'complete', at,
+        { workspaceId: 'workspace', directory: '/app', runId: 'worker-run', agentId: 'worker-agent', state: 'complete', at, observations: ['removed', 'retained'],
           detail: `${longDetail}. Retained node_modules at /app/node_modules for the task's next continuation` },
         { workspaceId: 'review-view', directory: '/review-view', runId: 'review-run', state: 'skipped', at,
           detail: 'Skipped build output roots: /review-view/target: Git reports tracked files at or under this build root' },

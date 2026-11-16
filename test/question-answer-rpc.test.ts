@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { questionAnswerInputSchema, questionAnswerRequestSchema, submissionSchema } from "../shared/contracts";
 import { hostCallerIdentity } from "../hosts/paseo/cli/index.mjs";
-import { resolveQuestionAnswerCaller } from "../shared/question-caller.mjs";
+import { callerSource } from "../shared/caller.mjs";
 import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
 import type { Adapter } from '../core/host';
@@ -130,15 +130,15 @@ test("question.answer caller resolver prefers an existing run ticket over PASEO_
   const ticket = join(dir, "run.json");
   writeFileSync(ticket, "{}");
   try {
-    assert.deepEqual(resolveQuestionAnswerCaller({ NUCLEUS_TICKET: ticket, PASEO_AGENT_ID: "paseo-thread" }, hostCallerIdentity),
+    assert.deepEqual(callerSource({ NUCLEUS_TICKET: ticket, PASEO_AGENT_ID: "paseo-thread" }, hostCallerIdentity),
       { source: "ticket", path: ticket });
-    assert.deepEqual(resolveQuestionAnswerCaller({ NUCLEUS_TICKET: join(dir, "gone.json"), PASEO_AGENT_ID: "paseo-thread" }, hostCallerIdentity),
+    assert.deepEqual(callerSource({ NUCLEUS_TICKET: join(dir, "gone.json"), PASEO_AGENT_ID: "paseo-thread" }, hostCallerIdentity),
       { source: "host", hostKind: "paseo", nativeAgentId: "paseo-thread" });
-    assert.deepEqual(resolveQuestionAnswerCaller({ PASEO_AGENT_ID: "paseo-thread" }, hostCallerIdentity),
+    assert.deepEqual(callerSource({ PASEO_AGENT_ID: "paseo-thread" }, hostCallerIdentity),
       { source: "host", hostKind: "paseo", nativeAgentId: "paseo-thread" });
-    assert.throws(() => resolveQuestionAnswerCaller({ NUCLEUS_TICKET: join(dir, "gone.json") }),
+    assert.throws(() => callerSource({ NUCLEUS_TICKET: join(dir, "gone.json") }),
       /Nucleus run or participant ticket.*host-supplied identity/);
-    assert.throws(() => resolveQuestionAnswerCaller({}), /Nucleus run or participant ticket.*host-supplied identity/);
+    assert.throws(() => callerSource({}), /Nucleus run or participant ticket.*host-supplied identity/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

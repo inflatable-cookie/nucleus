@@ -1,4 +1,4 @@
-import type { Task, TaskNext, TaskNextReviewOutcome, TaskNextVerb } from '../../shared/contracts';
+import type { BuildOutputObservation, Task, TaskNext, TaskNextReviewOutcome, TaskNextVerb } from '../../shared/contracts';
 import type { AgentObservation } from './index';
 
 /**
@@ -54,7 +54,17 @@ export interface HostProcessFact {
   cwd: string | null;
 }
 
-export type BuildOutputCleanupResult = { detail: string; removed: boolean; safe: boolean };
+/**
+ * What one cleanup observed, with the sentence it reports. The record keeps both:
+ * `observations` is the fact a reader decides on, `detail` is the text a human reads.
+ */
+export type BuildOutputCleanupResult = {
+  detail: string;
+  removed: boolean;
+  safe: boolean;
+  /** What this cleanup observed; the record's state alone never says it. */
+  observations: BuildOutputObservation[];
+};
 
 export interface BuildOutputCleanupHooks {
   begin(): "run" | "complete" | false;

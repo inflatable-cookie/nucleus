@@ -66,7 +66,7 @@ test("a recorded directory off the checkout volume is absent history: no scope, 
   const entry = await runtime.capture(task.id, "workspace", directory);
   assert.equal(entry?.state, "none");
   const { removeBuildOutput } = await import("../core/workspaces/worktree-cleanup");
-  assert.deepEqual(await removeBuildOutput(directory), { detail: "directory absent; nothing to clean up", removed: false, safe: true });
+  assert.deepEqual(await removeBuildOutput(directory), { detail: "directory absent; nothing to clean up", removed: false, safe: true, observations: [] });
 });
 
 test("a finished task that names a retired Builds path still reads from the store", t => {

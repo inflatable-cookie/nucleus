@@ -95,7 +95,7 @@ export async function responsibleBlockerLadder(ladder: Ladder, parked: Task, inp
     if (!events.some(event => event.kind === 'planner_escalation_attached' && event.detail === attach))
       ladder.store.event(t.id, 'planner_escalation_attached', attach);
     ladder.resolution.waiting(ladder.store.task(t.id), `${escalationWaitDetail.attached(open.id)}; reported cause: ${completion.summary.slice(0, 2000)}`,
-      'escalated', plannerEscalationSuggestedVerbs(t));
+      'escalated', { suggestedVerbs: plannerEscalationSuggestedVerbs(t) });
     return true;
   }
   const consults = reviewerConsults(events as LadderEvent[]);

@@ -359,7 +359,7 @@ export class TaskStops {
    * free text was fragile (a reworded message changed what the task was waiting
    * for). `classify` is only for restoring a reason Queue did not just author.
    */
-  waiting(t: Task, reason: string, stop: TaskStopReason | 'classify', suggestedVerbs?: TaskStopVerb[]) {
+  waiting(t: Task, reason: string, stop: TaskStopReason | 'classify', options: { suggestedVerbs?: TaskStopVerb[]; holderAgentId?: string } = {}) {
     const current = this.store.task(t.id);
     // A newly launched run is ordinary forward progress, not a task stop.
     // Keep its visible lifecycle reason while clearing any prior stop record.
@@ -371,7 +371,7 @@ export class TaskStops {
     const classification = stop === 'classify' ? taskStopClassification(reason) : { reason: stop, suggestedVerbs: taskStopVerbsFor(stop) };
     const retainedSuggestions = classification.reason === 'escalated' && current.resolution.stop?.reason === 'escalated'
       ? current.resolution.stop.suggestedVerbs : classification.suggestedVerbs;
-    const record = taskStopRecord(classification.reason, reason, current.resolution.stop, now(), suggestedVerbs ?? retainedSuggestions);
+    const record = taskStopRecord(classification.reason, reason, current.resolution.stop, now(), options.suggestedVerbs ?? retainedSuggestions, options.holderAgentId);
     const visible = visibleTaskReason(reason, record);
     // Compare against what this writes. The stop detail is capped at 4000
     // characters; the task reason keeps the full text, in the one form every stop
