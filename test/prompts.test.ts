@@ -1193,7 +1193,8 @@ test('affected-test prompts are opt-in and use the repository command', () => {
   const optedIn = [workerPrompt(task,true,[],null,undefined,undefined,configured), runPrompt(task,{id:'run',role:'revision',generation:1,head:'a'.repeat(40)} as Run,'/helper','/ticket',true,null,null,configured), runPrompt(task,{id:'run',role:'reviewer',generation:1,head:'a'.repeat(40)} as Run,'/helper','/ticket',true,null,null,configured)];
   for (const prompt of optedIn) assert.match(prompt,/effigy test:affected --run/);
   for (const prompt of optedIn) {
-    assert.match(prompt,/rerun that file alone on `origin\/main`/);
+    assert.match(prompt,/effigy test:baseline <file>/);
+    assert.match(prompt,/queue-test-failures-<pid>-<ts>\.txt/);
     assert.match(prompt,/it was already broken/);
     assert.match(prompt,/Only failures unique to your branch block review|Only failures unique to the branch block review/);
     assert.match(prompt,/list the file and failing test/);
