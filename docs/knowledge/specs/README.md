@@ -57,7 +57,7 @@ implemented; the contracts summarise the durable rules and link here.
 | [059 — Subscription usage pressure gauge](059-usage-gauge.md) | implemented: readers, samples, projection and `usage.state`, plus the Usage page and Paseo sidebar rail |
 | [060 — Named project agents](060-named-project-agents.md) | implemented |
 | [061 — Worker proof files reach the retained reviewer](061-worker-proof-files.md) | implemented |
-| [062 — BB host adapter](062-bb-host-adapter.md) | approved, not implemented; the phased plan starts with a transport spike |
+| [062 — BB host adapter](062-bb-host-adapter.md) | approved; phase 0 (the transport spike) implemented and proved, phases 1–6 not implemented |
 
 ## Host adapters
 

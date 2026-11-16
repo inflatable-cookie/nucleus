@@ -185,13 +185,25 @@ retains transaction cleanup, listener notifications and dependency-control trans
 The transport authenticates the owner account, not a caller. `QueueService`
 (`service/transport/server.ts`) mints one credential, publishes it in the
 owner-only `queue-service.json` beside the socket, and treats every
-authenticated connection as that owner. No frame names a caller, role or
-capability; `callCatalogueMethod` (`service/transport/dispatch.ts`) validates
+authenticated connection as that owner. No frame names a caller or a capability;
+`callCatalogueMethod` (`service/transport/dispatch.ts`) validates
 input, calls the owner handler and validates output. Caller claims that methods
 record (`host.run.accounting.dispose`'s `authority`, `qa-fence`,
 `lead.approve`, `decision.answer`, `project.set-planner`) are stored as
 provenance and authenticate nothing; the CLI refuses some of them when they
 claim the operator's own identity.
+
+One handshake names a *connection role*, and it grants nothing. After the
+credential handshake a connection may declare `service.host-executor` with the BB
+server it can reach; the service derives `bb:<sha256 of the real data directory>`
+from that declaration and, on that connection only, writes bounded reverse
+`host.op` requests (`service/host-executor.ts`, Spec 062). The declaration adds a
+direction, not an authority: the connection could call the catalogue before it
+declared the role and the role changes no answer, the one presence claim, roll
+recovery and the idle clock ignore it except that an executor connection is never
+swept as idle, one operation's fault settles that operation instead of the
+connection, and an unknown delivery is never resent. In phase 0 the service
+registers no host from it and no dispatch path reaches it.
 
 The CLI and helpers resolve the calling thread from a Nucleus-issued run or
 participant ticket first, then a host-supplied identity; caller records are

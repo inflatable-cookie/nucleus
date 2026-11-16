@@ -1,9 +1,11 @@
 # BB host adapter
 
-Status: approved, not implemented. This document is the design and the phased plan; phase 0 proves
-the transport before any phase depends on it. Amended 2026-11-16: decision 5 now carries the forked
-sidebar, the two boards and BB usage left to BB's card plus the operator's Usage Pace plugin, and the
-experimental inventory and the plan from phase 5 on follow it; phases 0–4 are unchanged.
+Status: approved. Phase 0 (the transport spike) is implemented and proved; phases 1–6 are not
+implemented. This document is the design and the phased plan, and [phase 0
+evidence](#phase-0-evidence-2026-11-16) answers its eight assumptions. Amended 2026-11-16: decision 5
+now carries the forked sidebar, the two boards and BB usage left to BB's card plus the operator's Usage
+Pace plugin, and the experimental inventory and the plan from phase 5 on follow it; phases 0–4 are
+unchanged.
 Owner: Nucleus runtime maintainers
 
 BB ([getbb.app](https://getbb.app)) is a third Nucleus host beside Paseo and T3Code (Tom,
@@ -50,7 +52,7 @@ Each fact is marked with the evidence that establishes it:
 | 1 | `bb thread spawn --environment <path>` attaches a thread to an existing worktree as an unmanaged environment; a later attach by the same path or by environment ID resolves to the same environment; BB runs no setup or teardown hook for an unmanaged path and never retires it | spike |
 | 2 | `--parent-thread <planner> --parent-notifications off` with role threads in one worktree draws planner → worktree group → role threads in BB's built-in thread list with no plugin code; `bb thread update --clear-parent-thread` / `--parent-thread` re-parents a live group | spike |
 | 3 | The parent link is display and notification only. `lifecycleOwnerThreadId` is separate and immutable, and archiving or deleting an owner cascades to its dependents. `threads.delete` requires `childThreadsConfirmed`, and `threads.experimental_listCascade` names the threads an `archive` or `delete` would also affect | spike, sdk |
-| 4 | Terminals are core, in the right panel (⌘J). A terminal created for a thread target appears in that thread's panel; an environment-scoped terminal does not appear in a thread-scoped list. A thread-scoped terminal records `thread-archived` as its close reason | spike, sdk |
+| 4 | Terminals are core, in the right panel (⌘J). A terminal created for a thread target appears only in that thread's terminal list; an environment-scoped terminal appears in neither a thread's nor a host's list; a `host_path` terminal appears only in its host's list. Archiving a thread does **not** close its terminal: the terminal stayed `running` with no close reason, and only an explicit close recorded `user` (corrected by phase 0; see [below](#corrections-to-the-verified-facts)) | spike, sdk |
 | 5 | Every BB thread carries `BB_THREAD_ID`, `BB_ENVIRONMENT_ID` and `BB_PROJECT_ID`, the counterpart of `PASEO_AGENT_ID` for calling-thread identity | guide |
 | 6 | `bb.sdk` is "the full BB SDK, bound to this server over loopback", typed and supported; plugins are full-trust code; `bb plugin types` re-pins a plugin's SDK surface to the running bb | guide, sdk |
 | 7 | Thread operations: `spawn` (with `environment`, `parentThreadId`, `parentNotifications`, `visibility`, `pluginMetadata`, `startedOnBehalfOf`, provider/model/reasoning/session options, permission mode, title), `send` with steer/queue, `stop`, `archive`, `unarchive`, `delete`, `update` (title, parent, notifications, visibility, section, model, options), `get`, `list` (by `threadIds`, at most 200 per call), `count`, `timeline`, `context`, `interactions` (list/get/respond/resolve/cancel), `retry`, `tabs`, `queuedMessages`, `markRead`/`markUnread`, `getPluginMetadata`/`updatePluginMetadata` | sdk |
@@ -84,7 +86,8 @@ Each fact is marked with the evidence that establishes it:
 ## Assumptions phase 0 must prove
 
 These are the facts this design rests on that no evidence above establishes. Phase 0 is not complete,
-and no later phase starts, until each is answered in writing.
+and no later phase starts, until each is answered in writing. All eight are answered, with their
+verdicts and evidence, in [phase 0 evidence](#phase-0-evidence-2026-11-16).
 
 1. A BB plugin server entry can hold a long-lived outbound Unix-socket connection to the Nucleus
    service, and re-establish it after `bb plugin reload` and after a BB server restart. The Paseo
@@ -1037,6 +1040,128 @@ written back into this document.
   not assume it).
 
 **Dependencies.** Phases 0–6.
+
+
+## Phase 0 evidence (2026-11-16)
+
+Phase 0 is implemented and proved against an isolated BB 0.49.0 server. `effigy proof:bb` runs the
+whole spike in one process, in its own scratch root: it starts a BB server with its own data directory
+and port, enrolls a host daemon into that server, starts an isolated Nucleus service (the real socket
+with a fake persistence fixture), installs this repository's plugin skeleton into that server only, and
+then drives the five-step lifecycle through the reverse channel.
+
+What landed:
+
+- `shared/host-operation.ts` — the operation vocabulary, the executor declaration, the identity
+  derivation `hostId = bb:<sha256(real data directory)>` and the `bb-worktree-<40 hex>` handle shape.
+- `shared/service/host-channel.ts` — the strict schemas both ends are validated against.
+- `service/host-executor.ts` and the `service.host-executor` role in `service/transport/server.ts` — one
+  declared executor connection per host identity, bounded reverse `host.op` requests, and the fault
+  rules below.
+- `hosts/bb/plugin/` — the plugin skeleton: a self-contained BB plugin package whose backend connects
+  out to the service, declares the role and executes the bounded operations through `bb.sdk`.
+- `effigy proof:bb` (`scripts/acceptance/bb-private.ts`) — the private spike, and
+  `test/bb-host-channel.test.ts`, `test/bb-host-executor.test.ts`, `test/bb-plugin-operations.test.ts`,
+  `test/bb-plugin-protocol.test.ts`, `test/bb-proof-isolation.test.ts` for the parts a fake can prove.
+
+What did not land, on purpose: no host registration, no `bb` host kind, no routing, no board, no
+skill, and no code path from a task to a BB operation. The service's `sendHostOperation` has no
+catalogue caller.
+
+On the wire, the role is a method (`service.host-executor`) and a direction: after the owner credential
+handshake a connection declares `{ role: "host-executor", host: { dataDir, bbVersion, sdkVersion } }`,
+and on that connection the service writes ordinary Contract 007 request frames whose method is
+`host.op` with `{ op, input }`, which the plugin answers with ordinary response frames. The framing,
+the presence claim, roll recovery and the catalogue path are unchanged.
+
+### The eight assumptions
+
+1. **A plugin backend holds a long-lived outbound Unix-socket connection, and re-establishes it after
+   `bb plugin reload` and after a BB server restart. — Proven.** The proof records the connection the
+   service accepted, then runs `bb plugin reload nucleus` and a full server restart of the same data
+   directory. Each produces a *new* connection — a later `connectedAt` for the same host identity — and
+   operations run on the new one. The plugin's reconnect loop re-reads `queue-service.json` on every
+   attempt, so a service roll underneath it is also a reconnect.
+2. **The service carries the reverse role on the existing owner-only socket without disturbing the
+   bridge presence claim, roll recovery or the request path. — Proven.** `test/bb-host-channel.test.ts`
+   runs the real `QueueService` socket: a bridge claims presence before the executor declares and holds
+   it afterwards, a second claim still answers `{ active: false }`, `service.health` and
+   `service.request-outcome` still answer while the executor connection is held, and the idle sweep
+   never closes a connection that holds the role. One operation's fault settles that operation: the
+   same connection answers the next one.
+3. **An unmanaged environment id is stable across a plugin reload and a BB restart. — Proven.** The
+   worker attached a fresh worktree as an unmanaged environment; the same id is read back after the
+   reload and after the restart, and the environment is still listed, still unmanaged, at the same
+   path. A second role thread spawned onto the same path resolved to the same environment, which is
+   decision 2's "every role of one task shares one environment".
+4. **A lost spawn is discoverable by its own plugin metadata across projects, hidden rows and archived
+   rows. — Partly proven.** The metadata does bind exactly: a thread spawned with
+   `{ nucleus: { task: "spike", run: "phase-0" } }` reads that metadata back through
+   `threads.experimental_listPluginMetadata`. The proof also ran both halves of decision 6's identity
+   search: `threads.list({ originPluginId: "nucleus", includeHidden: true })` — no project or planner
+   filter, hidden rows included — named the worker, and the same walk with `archived: true` named it
+   after its archive. What phase 0 did not do: page a walk past 200 rows (the executor issues one
+   `threads.list` call per walk today), prove the walk complete when a chunk fails or a row is omitted,
+   and run the adoption algorithm itself. Those are phase 3's acceptance and stay unproven here.
+5. **Archiving a role thread leaves its planner, its siblings and the worktree group untouched when
+   nothing depends on it. — Proven.** The archive was preceded by its own cascade read, which named
+   nothing; the planner's row kept its status and timestamps, and a sibling role thread in the same
+   worktree stayed unarchived.
+6. **`threads.spawn` returns when the row is committed, not when the first turn starts. — Proven.**
+   The attach answered in tens of milliseconds with status `starting`, the environment id already
+   recorded; the provider turn had not started. A spawn created with a future `sendAt` answers
+   `pending` with one queued message and no environment work at all, which is the sharper form of the
+   same fact.
+7. **An isolated BB server can be driven on this machine for proof, without touching the live BB. —
+   Proven.** The proof starts `bb-server.js` with `--data-dir <this run's root> --server-port <free>`,
+   enrolls its own host daemon with `bb-host-daemon join`, and uses only that data directory. It refuses
+   a data directory that is, contains, is contained by, or symlinks into the operator's live directory
+   (`~/.bb` or `BB_DATA_DIR`), and refuses one outside its own scratch root; `--data-dir ~/.bb` prints
+   the refusal and exits 2 before starting anything. `test/bb-proof-isolation.test.ts` pins that matrix.
+8. **A `host_path` terminal at a task worktree appears where an operator would look. — Refuted for the
+   task-directory convenience.** It appears in the host's own terminal list and in no thread's terminal
+   list, so a planner looking at their thread does not see it. Phase 6 drops the task-directory
+   `host_path` terminal and keeps the planner's native ⌘J tab plus the thread-scoped command, which
+   phase 0 did prove: a thread-scoped terminal appeared in its own thread's list, with the thread's
+   environment path as its initial working directory, and in no host list.
+
+### Terminal scope
+
+The same run answers the second acceptance bullet. A thread-scoped terminal belongs to its thread's
+panel: it is created against the thread, requires that thread's environment, and is listed only under
+that thread. A `host_path` terminal at a task worktree belongs to the host, not to any thread: it is
+listed only under the host. An environment-scoped list showed neither. So the planner tab is the
+planner's own thread-scoped terminal (⌘J needs no adapter work), and the task-directory convenience is
+dropped from phase 6 unless a later BB release puts host-path terminals in a thread's panel.
+
+### Corrections to the verified facts
+
+Fact 4 said a thread-scoped terminal records `thread-archived` as its close reason. In the isolated
+BB 0.49.0 server, archiving a thread left its terminal `running` with `closeReason: null`, and only an
+explicit close recorded `user`. Phase 0 therefore closes the terminals it creates itself and reads no
+terminal state as a lifecycle fact; decision 7's "a planner terminal is retired with the planner" claim
+is not relied on, and phase 6 must re-check it before it does.
+
+### Fault rules as implemented
+
+One operation's fault settles that operation: a malformed answer, a projection missing a required
+field, an answer naming a different operation, and a passed deadline are all *unknown delivery*
+(`HostOperationUnknownDeliveryError`), because the write may have landed. A dropped connection settles
+every in-flight operation as unknown and never replays one. A second declaration for the same host
+identity replaces the first — that is what a plugin reload looks like — and the replaced connection's
+in-flight work settles unknown. Nothing is ever resent on a guess.
+
+Only two answer codes are a definite refusal a caller may act on: `invalid_input`, refused before
+anything is written, and `refused`, a policy answer the plugin proves before its own write (a cascade
+that names a thread the task does not own). `unavailable` and `internal` are *not* refusals: the plugin
+raises them after a call that may already have committed, so they settle as unknown delivery and the
+work is adopted by observation instead of resent. The case that fix exists for is the attach — BB
+commits the thread and provisions the environment afterwards, so an attach whose environment id never
+arrives answers `unavailable` naming the committed thread, which is unknown delivery, never a spawn to
+try again. `shared/host-operation.ts` owns the two-code list, `service/host-executor.ts` classifies with
+it, the plugin's own list is pinned to it, and `test/bb-host-executor.test.ts`,
+`test/bb-host-channel.test.ts`, `test/bb-plugin-operations.test.ts` and `test/bb-plugin-protocol.test.ts`
+pin both ends.
 
 ## Verification
 

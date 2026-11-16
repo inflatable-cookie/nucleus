@@ -1,0 +1,21 @@
+{
+  "name": "bb-plugin-nucleus",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "bb": ">=0.49",
+    "bbPluginSdk": ">=0.6.132"
+  },
+  "bb": {
+    "name": "Nucleus",
+    "description": "Nucleus host executor: executes bounded host operations for this BB server over the Nucleus service channel.",
+    "branding": {
+      "icon": "Boxes"
+    },
+    "server": "./server.ts"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.132"
+  }
+}
