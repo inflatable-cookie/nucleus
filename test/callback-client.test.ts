@@ -72,7 +72,7 @@ test('generated CLI helper remains standalone and preserves callback identity an
  const helper=join(dir,'worker-report.mjs'),ticket=join(dir,'ticket.json');
  writeFileSync(helper,workerHelper);writeFileSync(ticket,JSON.stringify({socketPath,token:'fixture-secret',taskId:'t',runId:'r'}));
  const run=()=>new Promise<string>((resolve,reject)=>{
-  const child=spawn(process.execPath,[helper,ticket],{stdio:['pipe','pipe','pipe']});let output='',error='';
+  const child=spawn(process.execPath,[new URL('../bin/nucleus.mjs', import.meta.url).pathname,'helper','report'],{stdio:['pipe','pipe','pipe'],env:{...process.env, NUCLEUS_HELPER:helper, NUCLEUS_TICKET:ticket, NUCLEUS_CONTINUATION_TICKET:'', NUCLEUS_CONTINUATION_RUN_ID:''}});let output='',error='';
   child.stdout.on('data',c=>output+=c);child.stderr.on('data',c=>error+=c);child.on('error',reject);child.on('close',code=>code===0?resolve(output):reject(Error(error)));
   child.stdin.end(JSON.stringify({status:'blocked',summary:'fixture'}));
  });

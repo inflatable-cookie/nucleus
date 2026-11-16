@@ -1,5 +1,6 @@
+// Internal implementation; agents use the installed `nucleus` command.
 // Bulk disposition operator helper: start, follow or retry one bulk request.
-// Run it directly from the plugin checkout; it is not part of `nucleus helper`.
+// Exposed through `nucleus helper bulk-dispose`.
 
 import { queueClient } from './queue-client.mjs';
 const viaPaseo=process.argv.includes('--via-paseo');
@@ -8,7 +9,7 @@ import { readFileSync } from 'node:fs';
 
 const [command, value] = process.argv.slice(2);
 if (!['start', 'status', 'retry'].includes(command) || !value)
-  throw new Error('Usage: node bin/nucleus-bulk-dispose.mjs start REQUEST.json | status OPERATION_ID | retry OPERATION_ID');
+  throw new Error('Usage: nucleus helper bulk-dispose start REQUEST.json | status OPERATION_ID | retry OPERATION_ID');
 const input = command === 'start' ? JSON.parse(readFileSync(value, 'utf8')) : { operationId: value };
 const method = command === 'start' ? 'queue.bulk-disposition' : command === 'status' ? 'queue.bulk-disposition-detail' : 'queue.bulk-disposition-retry';
 const client=await queueClient({viaPaseo});

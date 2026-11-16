@@ -1,3 +1,4 @@
+// Internal implementation; agents use the installed `nucleus` command.
 import { resolveCliCaller } from './caller.mjs';
 // Task ownership helper: change the owner of open tasks in one write each.
 
@@ -8,8 +9,8 @@ process.argv=process.argv.filter(arg=>arg!=='--via-paseo');
 // Spec 040: change the owner of open tasks in one write each. The caller is this
 // calling thread: the tasks' current owner, registered project/Queue
 // planner, or the operator at the board.
-const usage='Usage: node bin/nucleus-reparent.mjs TO_AGENT_ID --task TASK_ID [--task TASK_ID ...] --reason TEXT | '
- +'node bin/nucleus-reparent.mjs TO_AGENT_ID --project PROJECT --from AGENT_ID --reason TEXT';
+const usage='Usage: nucleus helper reparent TO_AGENT_ID --task TASK_ID [--task TASK_ID ...] --reason TEXT | '
+ +'nucleus helper reparent TO_AGENT_ID --project PROJECT --from AGENT_ID --reason TEXT';
 const args=process.argv.slice(2);
 const [toAgentId,...rest]=args;
 const taskIds=[];let project=null,fromAgentId=null,reason=null;

@@ -30,7 +30,7 @@ same planning. Nothing about the handover is written into the repository.
    successor. From the plugin root (see [SKILL.md](../SKILL.md)), from this thread with its Nucleus ticket or host identity, reparent its open tasks for each project:
 
    ```sh
-   node bin/nucleus-reparent.mjs SUCCESSOR_AGENT_ID --project PROJECT --from OLD_OWNER_AGENT_ID --reason "Planner handover"
+   nucleus helper reparent SUCCESSOR_AGENT_ID --project PROJECT --from OLD_OWNER_AGENT_ID --reason "Planner handover"
    ```
 
    For tasks outside those projects, use the `--task` form in

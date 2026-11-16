@@ -28,7 +28,7 @@ function cliContractDigests() {
   });
 }
 
-export async function callerCliFixture() {
+export async function callerCliFixture(mismatch = false) {
   const rpcContracts = await cliContractDigests();
   const dir = mkdtempSync(join(tmpdir(), 'caller-cli-'));
   const store = new Store(':memory:');
@@ -54,7 +54,7 @@ export async function callerCliFixture() {
   const server = socketServer(socket => {
     const reader = createFrameReader((frame: any) => {
       let result: unknown = {};
-      if (frame.method === 'service.health') result = {protocolVersion:PROTOCOL_VERSION,rpcContracts};
+      if (frame.method === 'service.health') result = {protocolVersion:PROTOCOL_VERSION,rpcContracts: mismatch ? {} : rpcContracts};
       else if (frame.method === 'caller.resolve') {hostResolutions.push(frame.input);result = {caller:formatAgentId('paseo-fixture',frame.input.nativeAgentId),hostId:'paseo-fixture',source:'host',...(hostParticipantTicket?{participantTicket:hostParticipantTicket}:{})};}
       else if (frame.method !== 'service.auth') {
         calls.push({method:frame.method,input:frame.input});

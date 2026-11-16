@@ -23,14 +23,14 @@ was created specifically for this intake, or `--workspace-ownership external`
 if it predates the intake. The route requires this explicit classification:
 
 ```sh
-node bin/nucleus-review-entry.mjs --lead LEAD_ID --pr PR_NUMBER \
+nucleus helper review-entry --lead LEAD_ID --pr PR_NUMBER \
   --workspace HOST_WORKSPACE_ID --workspace-ownership intake \
   --authority 'operator-authorized scope' \
   --models provider/model --github-author AUTHOR_LOGIN \
   --authoring-system SYSTEM --attested-by OPERATOR \
   --provenance 'how author identity was checked' --preview
 
-node bin/nucleus-review-entry.mjs --lead LEAD_ID --pr PR_NUMBER \
+nucleus helper review-entry --lead LEAD_ID --pr PR_NUMBER \
   --authority 'operator-authorized scope' \
   --models provider/model --github-author AUTHOR_LOGIN \
   --authoring-system SYSTEM --attested-by OPERATOR \
@@ -119,7 +119,7 @@ the retained reviewer thread. No extra review workspace is created.
 Derive the canonical `submission` without dispatching a worker:
 
 ```sh
-node bin/nucleus-submit.mjs --dry-run /absolute/repo/docs/handoffs/handoff.md
+nucleus helper submit --dry-run /absolute/repo/docs/handoffs/handoff.md
 ```
 
 Copy its returned `submission` into a review-entry JSON file. Add:
@@ -143,7 +143,7 @@ record. The stored source is the approval authority; do not synthesize
 provenance from brief frontmatter or author attestation.
 
 ```sh
-node bin/nucleus-review-entry.mjs --preview /absolute/path/review-entry.json
+nucleus helper review-entry --preview /absolute/path/review-entry.json
 ```
 
 Require `eligible: true` with no refusals. Read `pendingHandover`: a non-null
@@ -157,8 +157,8 @@ If head/base changes, inspect again and regenerate the pinned request.
 ## Submit and verify
 
 ```sh
-node bin/nucleus-review-entry.mjs --key STABLE_INTAKE_KEY /absolute/path/review-entry.json
-node bin/queue-cli.mjs operation-status /absolute/path/operation-id.json
+nucleus helper review-entry --key STABLE_INTAKE_KEY /absolute/path/review-entry.json
+nucleus operation-status /absolute/path/operation-id.json
 ```
 
 The status file contains `{"operationId":"returned-operation-id"}`. Keep the
@@ -198,7 +198,7 @@ An operation in `needs_attention` is different. Its diagnostic is prose, not
 proof. Reconcile it only when the operator asks for that exact operation:
 
 ```sh
-node bin/queue-cli.mjs queue.review-entry-reconcile /absolute/path/reconcile.json
+nucleus queue.review-entry-reconcile /absolute/path/reconcile.json
 ```
 
 The file contains `{"operationId":"…","inputHash":"…"}`, copied from

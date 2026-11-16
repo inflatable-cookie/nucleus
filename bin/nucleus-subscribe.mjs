@@ -1,3 +1,4 @@
+// Internal implementation; agents use the installed `nucleus` command.
 // Completion-subscription helper: subscribe or unsubscribe the calling thread.
 //
 // The calling thread comes from the shared caller resolver, and the write is one
@@ -12,7 +13,7 @@ const viaPaseo = process.argv.includes('--via-paseo');
 process.argv = process.argv.filter(arg => arg !== '--via-paseo');
 
 const [taskId, action] = process.argv.slice(2);
-if (!taskId || !['subscribe', 'unsubscribe'].includes(action)) throw Error('Usage: node bin/nucleus-subscribe.mjs TASK_ID subscribe|unsubscribe');
+if (!taskId || !['subscribe', 'unsubscribe'].includes(action)) throw Error('Usage: nucleus helper subscribe TASK_ID subscribe|unsubscribe');
 const agentId = (await resolveCliCaller({ viaPaseo })).caller;
 const client = await queueClient({ viaPaseo });
 try {
