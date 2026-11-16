@@ -1456,21 +1456,26 @@ request identities and submitted handoffs are not rewritten.
   The task row or resolution-run row records the exact temp root before launch.
   Nucleus removes only a recorded direct child after re-proving the mounted
   volume and checking it is a real directory; symlinked or foreign paths are
-  logged and left in place. A released run keeps its leaf while its thread can
-  still take another turn, because that thread's long-lived tool processes
-  started with its environment. Removal happens when the thread is archived or
-  its task is terminal or removed, and takes every recorded leaf that thread
-  started with through the same recorded-leaf path; a run that releases after
-  its thread is already archived removes its leaf at release. Terminal cleanup
-  removes every leaf the task recorded, on either volume.
+  logged and left in place. Reporting, release, cancellation and thread archive
+  durably owe cleanup of the run's own tools: TERM, then KILL after a short grace,
+  with OS start identity rechecked before each signal. Only an inherited run ticket,
+  inherited scratch path or command naming that run's scratch proves ownership;
+  a shared checkout or process group alone never does. Agent hosts, their standing
+  runtimes, reporting helpers and processes carrying a live run's identity are
+  protected. Only reparented roots with no live non-init ancestor are stopped;
+  an environment-only root also needs the helper proof to exclude the agent host.
+  Reused threads' live runs defer earlier-run cleanup, and a protected runtime
+  keeps its launch scratch until it releases it. Each proven member is stopped individually so a shared group cannot
+  take another run or the operator's processes with it. Survivors retain their
+  scratch and appear on the task timeline with PID and start identity.
+  Scratch removal follows the stop attempt and the existing volume proof. The
+  hourly host sweep applies the same ownership proof to settled historical runs,
+  including runs settled before this rule, and retries missed cleanup.
   Prompts name the current run's directory, direct agents to prefix commands
   with that directory in `TMPDIR`, `TMP` and `TEMP` (including retained agents
   whose launch environment is older), direct agents to put fixtures in a child
-  `mktemp` directory, and forbid deleting the owned root or its parent. A shell
-  command prefix and a tool process in one thread therefore agree on what
-  survives the run: every leaf that thread was launched with lives until the
-  thread retires. Two runs therefore never share a test runner's temporary
-  IPC socket, and one run's leftovers are never another run's environment fault.
+  `mktemp` directory, and forbid deleting the owned root or its parent. A
+  continuation recreates and proves its recorded leaf before it runs again.
   The directory is created only after the mounted volume proves its own identity
   — the expected volume UUID, external and writable — and every existing
   component down to the scratch root is canonical on that device, so an absent,

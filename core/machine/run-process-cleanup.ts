@@ -1,0 +1,131 @@
+import { dirname, join } from "node:path";
+import type { Store } from "../store/store";
+import type { HostProcessFact } from "../host/types";
+import { readHostUidProcesses } from "./host-process-listing";
+import { runProcessEnvironments, runProcessLiveness, type RunProcessEnvironment } from "./run-process-identity";
+import { runInfrastructurePids } from "./owned-tool-process-proof";
+import { protectedHostPids } from "./host-process-select";
+import { terminateHostProcessTargets } from "./host-process-reap";
+
+interface CleanupRun { id: string; taskId: string; hostId?: string; agentId?: string | null; temporaryDirectory?: string; pending?: boolean }
+const key = (id: string) => `runProcessCleanup:${id}`;
+const terminal = (phase: string) => ["done", "cancelled"].includes(phase);
+
+/** Exact inherited ticket or scratch identity; a shared checkout is never ownership. */
+export function processBelongsToRun(fact: HostProcessFact, environment: RunProcessEnvironment | null | undefined,
+  run: CleanupRun, dataHome: string): boolean {
+  const ticket = join(dataHome, "tickets", `${run.id}.json`);
+  if ([environment?.NUCLEUS_TICKET, environment?.NUCLEUS_CONTINUATION_TICKET].includes(ticket)) return true;
+  const scratch = run.temporaryDirectory;
+  if (!scratch) return false;
+  if ([environment?.TMPDIR, environment?.TMP, environment?.TEMP].includes(scratch)) return true;
+  const escaped = scratch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:^|[\\s='\"])${escaped}(?:/|$|[\\s'\"])`).test(fact.command);
+}
+
+/** Settled runs, including pre-upgrade history. Pending intents retain displaced initial workers. */
+function cleanupRuns(store: Store, hostId: string, taskId?: string): { settled: CleanupRun[]; live: CleanupRun[] } {
+  const settled = new Map<string, CleanupRun>();
+  const live = new Map<string, CleanupRun>();
+  const tasks = store.db.prepare("SELECT data FROM tasks WHERE json_extract(data,'$.hostId')=?").all(hostId);
+  for (const row of tasks) {
+    const task = JSON.parse(String(row.data));
+    for (const retired of task.retiredWorkers ?? [])
+      settled.set(retired.runId, { id: retired.runId, taskId: task.id, hostId, agentId: retired.agentId });
+    if (!task.runId) continue;
+    const run = { id: task.runId, taskId: task.id, hostId, agentId: task.agentId, temporaryDirectory: task.temporaryDirectory };
+    (task.completion || terminal(task.phase) || task.removedAt ? settled : live).set(run.id, run);
+  }
+  for (const row of store.db.prepare("SELECT data FROM runs WHERE json_extract(data,'$.hostId')=?").all(hostId)) {
+    const run = JSON.parse(String(row.data));
+    const task = store.task(run.taskId);
+    if (run.released || run.completion || terminal(task.phase) || task.removedAt) {
+      settled.set(run.id, run); live.delete(run.id);
+    } else { live.set(run.id, run); settled.delete(run.id); }
+  }
+  for (const row of store.db.prepare("SELECT value FROM meta WHERE key LIKE 'runProcessCleanup:%'").all()) {
+    const run: CleanupRun = JSON.parse(String(row.value));
+    if (run.hostId === hostId && !live.has(run.id)) settled.set(run.id, { ...run, ...settled.get(run.id) });
+  }
+  for (const id of live.keys()) settled.delete(id);
+  return { settled: [...settled.values()].filter(run => !taskId || run.taskId === taskId), live: [...live.values()] };
+}
+
+// A task lane and the periodic maintenance lane can reach the same run. Coalesce them per store.
+const running = new WeakMap<Store, Promise<void>>();
+export function sweepSettledRunProcesses(store: Store, hostId: string, options: {
+  taskId?: string; pendingOnly?: boolean; graceMs?: number;
+  readProcesses?: () => Promise<HostProcessFact[] | null>;
+  readEnvironments?: typeof runProcessEnvironments;
+  terminate?: typeof terminateHostProcessTargets;
+} = {}): Promise<void> {
+  const previous = running.get(store) ?? Promise.resolve();
+  const next = previous.catch(() => {}).then(() => sweep(store, hostId, options));
+  running.set(store, next);
+  void next.finally(() => { if (running.get(store) === next) running.delete(store); }).catch(() => {});
+  return next;
+}
+
+async function sweep(store: Store, hostId: string, options: Parameters<typeof sweepSettledRunProcesses>[2], round = 0): Promise<void> {
+  const candidates = cleanupRuns(store, hostId, options?.taskId);
+  const runs = candidates.settled.filter(run => {
+    const intent = store.getMeta<CleanupRun>(key(run.id));
+    return !options?.pendingOnly || Boolean(intent && intent.pending !== false);
+  });
+  if (!runs.length) return;
+  const facts = options?.readProcesses ? await options.readProcesses() : await readHostUidProcesses().then(read => read.state === "listed" ? read.processes : null);
+  if (!facts) return; // Intents and scratch survive an unavailable observation.
+  const environments = await (options?.readEnvironments ?? runProcessEnvironments)(facts.map(fact => fact.pid));
+  const protectedPids = protectedHostPids(runInfrastructurePids(facts));
+  const dataHome = dirname(store.path);
+  let stopped = false;
+  for (const run of runs) {
+    // A run may have resumed while the OS reads were in flight.
+    const stillSettled = () => {
+      const current = store.run(run.id);
+      if (run.agentId && store.unreleasedRunsForAgent(run.agentId, hostId).some(other => other.id !== run.id && !other.completion)) return false;
+      const task = store.task(run.taskId);
+      if (run.agentId && task.agentId === run.agentId && task.runId !== run.id && task.runId && !task.completion && !terminal(task.phase)) return false;
+      if (terminal(task.phase) || task.removedAt) return true;
+      if (current) return Boolean(current.released || current.completion);
+      return task.runId !== run.id || Boolean(task.completion);
+    };
+    if (!stillSettled()) continue;
+    // A retained thread's next turn inherits its first launch environment. An
+    // earlier ticket must never give custody over that next turn's tools.
+    if (run.agentId && candidates.live.some(live => live.agentId === run.agentId)) continue;
+    const ownedFacts = facts.filter(fact => !protectedPids.has(fact.pid) && !fact.state?.startsWith("Z")
+      && !fact.startIdentity.endsWith("@unknown") && processBelongsToRun(fact, environments.get(fact.pid), run, dataHome)
+      && !candidates.live.some(live => processBelongsToRun(fact, environments.get(fact.pid), live, dataHome)));
+    const anchoredHost = facts.some(fact => protectedPids.has(fact.pid)
+      && (processBelongsToRun(fact, environments.get(fact.pid), run, dataHome)
+        || fact.command.includes(`/tickets/mcp-${run.id}.json`)));
+    // A live non-init parent can be a reused host running a later turn with an
+    // old environment. Environment-only orphan roots also need a known host
+    // anchor, otherwise that root could be the host itself with a missing helper.
+    const owned = ownedFacts.filter(fact => fact.ppid === 1
+      && (anchoredHost || processBelongsToRun(fact, null, run, dataHome)));
+    const result = await (options?.terminate ?? terminateHostProcessTargets)(owned.map(fact => ({ ...fact, cwd: fact.cwd ?? "", startTime: fact.startIdentity, via: "cwd" as const })),
+      { graceMs: options?.graceMs, identityLiveness: (pid, identity) => stillSettled() ? runProcessLiveness(pid, identity) : "unknown" });
+    if (result.terminated.length || result.failed.length) store.event(run.taskId, "run_process_cleanup", JSON.stringify({ runId: run.id,
+      stopped: result.terminated.map(fact => ({ pid: fact.pid, startIdentity: fact.startIdentity })),
+      survivors: result.failed.map(fact => ({ pid: fact.pid, startIdentity: fact.startIdentity, reason: fact.reason })) }));
+    stopped ||= result.terminated.length > 0;
+    // A positively identified survivor keeps its scratch and timeline evidence.
+    // Unrelated unreadable processes are not evidence about this run.
+    if (result.terminated.length || result.failed.length || ownedFacts.some(fact => !result.terminated.some(target => target.pid === fact.pid))) continue;
+    if (!stillSettled()) continue;
+    // A protected standing runtime can still use the launch leaf. Retire that
+    // leaf only after the host releases it, rather than breaking its next turn.
+    if (run.temporaryDirectory && facts.some(fact => protectedPids.has(fact.pid) && processBelongsToRun(fact, environments.get(fact.pid), run, dataHome)
+      && [environments.get(fact.pid)?.TMPDIR, environments.get(fact.pid)?.TMP, environments.get(fact.pid)?.TEMP].includes(run.temporaryDirectory))) continue;
+    if (run.temporaryDirectory && !store.removeRunScratchAfterProcesses(run.temporaryDirectory)) continue;
+    // Retain a displaced initial worker's identity for historical sweeps even
+    // after its task row moves to another run; support runs also have run rows.
+    if (store.getMeta<CleanupRun>(key(run.id))?.pending !== false)
+      store.setMeta(key(run.id), { id: run.id, taskId: run.taskId, hostId, agentId: run.agentId, temporaryDirectory: run.temporaryDirectory, pending: false });
+  }
+  // Stopping a reparented root can orphan its children. Re-read before deleting
+  // their scratch; a bounded pass retains anything still attached for retry.
+  if (stopped && round < 8) await sweep(store, hostId, options, round + 1);
+}

@@ -1,0 +1,1 @@
+Settled runs stop their own leftover tool processes before their scratch is removed. An hourly sweep catches missed cleanup, protects live runs and agent hosts, and records any process that could not be stopped.

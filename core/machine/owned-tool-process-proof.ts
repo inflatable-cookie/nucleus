@@ -178,6 +178,25 @@ function providerRuntimePids(provider: HostProcessFact, processes: readonly Host
   return runtimes;
 }
 
+/** Agent hosts, their standing runtimes and report helpers are infrastructure, never run cleanup targets. */
+export function runInfrastructurePids(processes: readonly HostProcessFact[]): Set<number> {
+  const protectedPids = new Set<number>();
+  for (const helper of processes) {
+    const args = commandArgv(helper.command);
+    if (argvBase(args[0]) !== "node" || !["mcp-report.mjs", "worker-report.mjs"].includes(argvBase(args[1]) ?? "")) continue;
+    protectedPids.add(helper.pid);
+    const provider = processes.find(fact => fact.pid === helper.ppid);
+    if (!provider) continue;
+    for (const pid of providerRuntimePids(provider, processes)) protectedPids.add(pid);
+    let ancestor: HostProcessFact | undefined = provider;
+    while (ancestor && !protectedPids.has(ancestor.pid)) {
+      protectedPids.add(ancestor.pid);
+      ancestor = processes.find(fact => fact.pid === ancestor!.ppid);
+    }
+  }
+  return protectedPids;
+}
+
 export interface OwnedToolProcessProofOptions {
   /**
    * The same agent's own fresh observation already proves no provider turn is

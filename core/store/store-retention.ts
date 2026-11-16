@@ -86,6 +86,7 @@ export class StoreRetention {
         // explicit field pick does not name it.
         this.db.prepare("INSERT INTO tombstones VALUES(?,?,?,?)").run(task.id,task.submissionId,String(row.input_hash),JSON.stringify({...taskReferenceSchema.parse(task),goalUnmet:task.resolution.goalUnmet??null,purgedAt:new Date(at).toISOString()}));
         for(const id of runIds){this.hooks.deleteCredential(id);this.db.prepare("DELETE FROM meta WHERE key=?").run(`reviewPublication:${id}`);}
+        this.db.prepare("DELETE FROM meta WHERE key LIKE 'runProcessCleanup:%' AND json_extract(value,'$.taskId')=?").run(task.id);
         this.db.prepare("DELETE FROM meta WHERE key=?").run(`workspaceTitle:${task.id}`);
         // Lean store 2 (task 987): the task's own check-policy observation goes with it.
         this.db.prepare("DELETE FROM meta WHERE key=?").run(`checkPolicyObservation:${task.id}`);
