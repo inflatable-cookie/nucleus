@@ -1,0 +1,1 @@
+Spec 064 now proposes one conditional proof route through existing host-run, capture and retention code. It preserves the independent qualification gates and names the unresolved image-backing owner policy and unqualified census candidate as separate conditions. No implementation or proof run is authorized.
