@@ -97,3 +97,68 @@ A module's row is re-rated in the PR that changes it.
 - **B. Floor 6** (75 rows, 32%).
 - **C. Floor 7** (154 rows, 51%), Effigy's test floor, as the longer-term target. A mean of 8.5 would be a
   later stretch goal.
+
+## Calibration of the re-rates (2026-11-16)
+
+**Result.** A blind pass over **60 re-rated rows** gives a mean of **8.32**, against **8.70** given:
+**−0.38 points** (blind minus given). **54/60 (90%)** agree within ±1. Differences are −3:1, −2:5,
+−1:20, 0:24, +1:10. One blind score is below 7; its follow-up candidate is listed below. No existing
+score in `N1.csv`–`N6.csv` changed.
+
+**Snapshot and blindness.** This pass applies the five-part [charter](CHARTER.md) to main at
+`28e21da5b236304191adf9acea2a0df6fea86283`, replacing the original sweep's snapshot and write constraints
+for this docs-only calibration. Source and behavioral test assertions were read before the given
+scores, reasons or PR discussions. A selector read rating history privately and exposed only module
+identity, files, domain, round and size. All 60 scores, actions and evidence were committed in
+`b148d9c60` before comparison; the later CSV change fills only `given`. Product source is unchanged at
+this PR's head, so its `path:line` citations apply there too.
+
+**Selection.** At that snapshot, 126 current rows crossed at least one of floors 5–7 in an upward
+numeric re-rate after `136cf0de`. The initial table publication is excluded. Assign each row to the
+lowest floor it crossed in that history: 5 before 6 before 7, even if it crossed another floor later. This gives distinct historical
+round strata; it does not claim that their current scores are 5 or 6.
+
+Take ten rows per domain: three from floor 5, three from floor 6 and four from floor 7. N3 has only
+two eligible floor-6 rows, so its spare place goes to floor 5. In each of these 18 strata, take the
+largest current module first (module-name order breaks ties). Fill the remaining places without
+replacement by ascending `-ln(u)/w`, where:
+
+- `u = (int(SHA256("nucleus-1263-calibration-2026-11:" + domain + ":" + module), 16) + 1) / (2^256 + 1)`;
+- `w = ln(1 + loc) × 3` for a given score of exactly 7, otherwise `ln(1 + loc)`.
+
+Thus size and exactly-7 scores receive extra selection weight without exposing them to the rater.
+The realized sample includes six exactly-7 rows out of 16 eligible, all 18 stratum maxima, and
+22,406 non-blank lines. Median module size is 302 lines, versus 231.5 in the eligible pool. These
+purposive and weighted choices make the figures sample comparisons, not population estimates or a
+certificate for all 894 current rows.
+
+| Domain | Eligible | Sample: floor 5 / 6 / 7 | Given mean | Blind mean | Blind − given | Within ±1 |
+|---|---:|---:|---:|---:|---:|---:|
+| N1 orchestration | 18 | 3 / 3 / 4 | 8.80 | 8.40 | −0.40 | 10/10 |
+| N2 task lifecycle | 28 | 3 / 3 / 4 | 8.50 | 8.30 | −0.20 | 9/10 |
+| N3 state and planning | 13 | 4 / 2 / 4 | 8.80 | 8.10 | −0.70 | 8/10 |
+| N4 machine and workspaces | 29 | 3 / 3 / 4 | 8.30 | 8.10 | −0.20 | 9/10 |
+| N5 service and hosts | 14 | 3 / 3 / 4 | 8.80 | 8.00 | −0.80 | 8/10 |
+| N6 shared and client | 24 | 3 / 3 / 4 | 9.00 | 9.00 | 0.00 | 10/10 |
+
+By historical crossing round: floor 5 has 19 rows, mean difference −0.42 and 18/19 within ±1;
+floor 6 has 17, −0.71 and 14/17; floor 7 has 24, −0.13 and 22/24. The earlier calibration was
++0.50 with 73% within ±1. This pass is slightly stricter on average; neither sample supports a
+uniform score correction.
+
+**Below-7 candidate — complete list (one row).** `service/runtime-owner.ts`: **given 8, blind 6**
+(`O=2, T=1, F=1, P=0, Pr=2`). PR-state read failure publishes an empty map at
+`service/runtime-owner.ts:709`; retention-summary failure becomes null at
+`service/runtime-owner.ts:1043`; host conflict is inferred from `startError` text at
+`service/runtime-owner.ts:1062`. The 1,543 non-blank-line owner combines bootstrap, refresh and health
+with RPC controls, including `service/runtime-owner.ts:1283`; its 30/90-day churn is 35 commits.
+Candidate for a planner-chosen follow-up: separate bootstrap/refresh/health from RPC controls and
+preserve unknown read outcomes and typed host-conflict facts. The table's existing 8 remains intact.
+
+**Ledger.** [calibration-2026-11.csv](calibration-2026-11.csv) retains the table columns plus `given`
+and `blind`; `score` equals the sum of the blind `O,T,F,P,Pr` parts and equals `blind`. Each reason
+names its domain, historical crossing commit, all five judgments and a source citation; evidence
+also names the inspected test boundary. LOC and churn/fix counts are recomputed at the snapshot
+(one commit counted once across grouped files; case-insensitive `fix|repair|stuck|refuse|wedge|loop|regression`
+in subjects for fixes). The pre-comparison CSV SHA-256 is
+`372acadb7a4eec6e5e872af3866360434cbffeceae5a8c953bb0096c46047aac`.
