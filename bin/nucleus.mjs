@@ -1,7 +1,9 @@
 #!/usr/bin/env node
+// Internal implementation; agents use the installed `nucleus` command.
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { DATA_HOME_ENTRIES, dataHome, isDataHomeError, resolveDataHome } from '../shared/data-home.mjs';
 
 /** One diagnostic line; a refused configuration reports itself instead of throwing twice. */
@@ -33,9 +35,13 @@ try {
       submit: './nucleus-submit.mjs',
       reparent: './nucleus-reparent.mjs',
       'review-entry': './nucleus-review-entry.mjs',
+      'bulk-dispose': './nucleus-bulk-dispose.mjs',
+      subscribe: './nucleus-subscribe.mjs',
     };
-    if (!Object.hasOwn(helpers, name)) throw Error('Choose a helper: nucleus helper submit, reparent, or review-entry');
-    const child = spawnSync(process.execPath, [fileURLToPath(new URL(helpers[name], import.meta.url)), ...helperArgs], { stdio: 'inherit' });
+    if (!Object.hasOwn(helpers, name) && name !== 'report') throw Error('Choose a helper: submit, reparent, review-entry, bulk-dispose, subscribe, or report');
+    const script = name === 'report' ? (process.env.NUCLEUS_HELPER || join(dataHome(), 'worker-report.mjs')) : fileURLToPath(new URL(helpers[name], import.meta.url));
+    const ticket = name === 'report' ? (await import('./run-ticket.mjs')).runTicketPath() : null;
+    const child = spawnSync(process.execPath, [script, ...(ticket ? [ticket] : []), ...helperArgs], { stdio: 'inherit' });
     if (child.error) throw child.error;
     if (child.signal) throw Error(`Helper stopped by ${child.signal}; inspect its result before retrying`);
     process.exitCode = child.status ?? 1;

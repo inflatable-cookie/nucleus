@@ -23,6 +23,8 @@ next with `plan.get` (see the Nucleus skill, `nucleus`).
 
 ## Commands
 
+- Agents use the installed `nucleus` command from any directory (Tom, 2026-11-16); repository CLI files are internal.
+
 - `effigy tasks` — task inventory; `effigy test --plan` shows the test shape.
 - `effigy check` — typecheck and publication gate.
 - `effigy qa:docs` — docs checks.

@@ -1278,7 +1278,7 @@ timer, row, journal entry or file write is added.
 `service.profile` (`{seconds}`, 1–60, default 10) writes a V8 CPU profile of
 that thread to `<data dir>/profiles/runtime-<time>.cpuprofile` (mode 600) and
 returns the path, for stalls a store-backup replay does not reproduce
-(`node bin/queue-cli.mjs service.profile payload.json`).
+(`nucleus service.profile payload.json`).
 
 The slot, live, maintenance and lifecycle task lists scan task blobs with
 `json_extract`; Store memoises their rows per task/run write version (advanced
@@ -1461,3 +1461,5 @@ sidecars after the four-day history window. Active runs, pending checkout
 cleanup and the latest retryable teardown evidence stay retained; orphan files
 expire by modification time. QA execution paths share step records, escapee
 merging and failure classification; streamed output shares one token redactor.
+
+Agents use the installed `nucleus` command from any directory; repository CLI files are internal implementation (Tom, 2026-11-16).

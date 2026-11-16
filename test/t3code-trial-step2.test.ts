@@ -45,7 +45,7 @@ const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 const boundAnswerCommand = (commands: Array<{ type?: string; threadId?: string; commandId?: string; text?: string }>, threadId: string, helperPath: string, runId: string, commandId?: string) => {
   const ticketPath = join(dirname(helperPath), 'tickets', `${runId}.json`);
   const cli = `NUCLEUS_TICKET=${quote(ticketPath)} nucleus question.answer -`;
-  const helper = `node ${quote(helperPath)} ${quote(ticketPath)} answer`;
+  const helper = `NUCLEUS_TICKET=${quote(ticketPath)} NUCLEUS_CONTINUATION_TICKET= nucleus helper report answer`;
   return commands.find(command => command.type === 'message.dispatch' && command.threadId === threadId
     && (commandId === undefined || command.commandId === commandId)
     && typeof command.text === 'string'
@@ -137,12 +137,12 @@ test('a Paseo worker prompt still names nucleus_report MCP; a T3 prompt names th
   assert.match(paseo, /call the ask MCP tool once inside the current turn/);
   const t3 = workerPrompt(helperTask, false, [], null, helper, ticket);
   assert.match(t3, /report through the packaged nucleus helper with this run's ticket/);
-  assert.match(t3, /node '\/data\/worker-report\.mjs' '\/data\/tickets\/run-t3\.json'/);
+  assert.match(t3, /nucleus helper report/);
   assert.match(t3, /The ticket binds this report to exactly this run; a report for any other run is refused/);
   assert.match(t3, /feed the question JSON on stdin to `nucleus ask`/);
   assert.match(t3, /feed JSON \{to, role, text\} on stdin to `nucleus tell`/);
   const reviewer = runPrompt(helperTask, { id: 'run-t3', role: 'reviewer', generation: 1, head: 'a'.repeat(40) } as Run, helper, ticket, false);
-  assert.match(reviewer, /node '\/data\/worker-report\.mjs' '\/data\/tickets\/run-t3\.json'/);
+  assert.match(reviewer, /nucleus helper report/);
 });
 
 test('workerAgentSpec writes no MCP binding on T3 and an empty environment', t => {
@@ -486,13 +486,20 @@ test('T3 adapter asks a retained reviewer and binds uncertain run creation', asy
     const askId = store.eventsAll(task.id).find(event => event.kind === 'agent_ask')!.detail.split(':')[0]!;
     const consult = boundAnswerCommand(server.commands, reviewer.id, helperPath, 'run-review-later', `ns-agent-ask-reviewer-${askId}`)!;
     assert.match(consult.text!, /nucleus question.answer -/);
+    assert.doesNotMatch(consult.text!, /node .*worker-report/);
     assert.equal(consult.text!.includes('PASEO_AGENT_ID='), false);
     assert.equal(consult.text!.includes(`tickets/run-review.json`), false);
     const reviewerTicket = join(directory, 'tickets', 'run-review-later.json');
     await waitUntil(() => existsSync(reviewerTicket), 'reissued reviewer ticket');
-    const helperAnswer = await spawnHelper(helperPath, reviewerTicket, {
-      questionId: `ns-agent-ask-reviewer-${askId}`, answer: 'Keep the current T3 approach.', reason: 'Within the approved outcome.',
-    }, ['answer']);
+    const helperAnswer = await new Promise<{ code: number | null; out: string; err: string }>((resolve, reject) => {
+      const child = spawn(process.execPath, [new URL('../bin/nucleus.mjs', import.meta.url).pathname, 'helper', 'report', 'answer'], {
+        stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, NUCLEUS_HELPER: helperPath, NUCLEUS_TICKET: reviewerTicket, NUCLEUS_CONTINUATION_TICKET: '', NUCLEUS_CONTINUATION_RUN_ID: '' },
+      });
+      let out = '', err = '';
+      child.stdout.on('data', chunk => { out += chunk; }); child.stderr.on('data', chunk => { err += chunk; });
+      child.on('error', reject); child.on('close', code => resolve({ code, out, err }));
+      child.stdin.end(JSON.stringify({ questionId: `ns-agent-ask-reviewer-${askId}`, answer: 'Keep the current T3 approach.', reason: 'Within the approved outcome.' }));
+    });
     assert.equal(helperAnswer.code, 0, helperAnswer.err);
     const answered = await pending;
     assert.equal(answered.code, 0, answered.err);

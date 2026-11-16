@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { QueueRuntime } from '../service/runtime-owner';
 import { git } from '../core/git/index';
 import { leadSubmit, submissionSchema, type Profile } from '../shared/contracts';
@@ -25,7 +25,7 @@ const waitUntil = async (ready: () => boolean, label: string, timeoutMs = 10_000
 
 interface HostRecording {
   workspaces: string[];
-  agents: Array<{ id: string; promptIncludesTicket: boolean }>;
+  agents: Array<{ id: string; promptIncludesReport: boolean }>;
   asks: Array<{ recipient: string; prompt: string }>;
   notifications: Array<{ id: string; text: string; messageId?: string }>;
   origins: string[];
@@ -100,7 +100,7 @@ async function fixture(): Promise<Fixture> {
       // The host policy writes the worker's run ticket before create; the fake
       // writes the same ticket so the helper can report through the callback.
       writeRunTicket({ socketPath, helperPath }, task, { id: task.runId ?? '', role: 'worker', generation: 0 }, token);
-      t3Record.agents.push({ id: `t3-agent-${task.id}`, promptIncludesTicket: prompt.includes(runTicketMarker(helperPath)) });
+      t3Record.agents.push({ id: `t3-agent-${task.id}`, promptIncludesReport: prompt.includes('nucleus helper report') });
       return Promise.resolve({ id: `t3-agent-${task.id}`, workspaceId: task.workspaceId ?? null });
     },
     observe: async (id: string) => ({ id, workspaceId: `t3-ws-${id}`, status: 'idle', active: false, permissions: false, error: '' }),
@@ -137,7 +137,6 @@ async function fixture(): Promise<Fixture> {
 }
 
 /** The worker run ticket the dispatch writes under the shared helper directory. */
-const runTicketMarker = (helperPath: string) => join(dirname(helperPath), 'tickets');
 
 const leadBody = `---\ntitle: Cross-host lead\nqueue:\n  complexity: medium\n  notifyOriginOnCloseout: true\n---\n\n## Outcome\n\nBuild the cross-host fixture.\n`;
 
@@ -179,7 +178,7 @@ test('a paseo planner submits a lead for a t3code repository, the task dispatche
     assert.equal(f.paseo.workspaces.length, 0, 'no workspace was created on Paseo');
     assert.equal(f.t3.workspaces.length, 1, 'the workspace was created on T3');
     assert.equal(f.t3.agents.length, 1, 'the worker was created on T3');
-    assert.ok(f.t3.agents[0]!.promptIncludesTicket, 'the T3 worker prompt carries its run ticket');
+    assert.ok(f.t3.agents[0]!.promptIncludesReport, 'the T3 worker prompt names the installed report command');
     const runId = f.runtime.store.task(task.id).runId!;
     const runTicketPath = join(f.root, 'tickets', `${runId}.json`);
     assert.ok(existsSync(runTicketPath), 'the worker run ticket exists for helper reporting');
