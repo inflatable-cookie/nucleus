@@ -965,3 +965,13 @@ Failed canonical-path or Git common-directory reads wait; empty or relative
 Git output is not a directory identity. A positively foreign allocation still
 refuses. Cleanup on a finished task retains the failure without changing its
 finished phase (see Spec 058).
+
+An intake-owned review-entry workspace is a recorded task workspace, even when
+its directory sits outside Queue's allocation roots. Admission may use that
+directory without a Queue-allocation proof only while the task's
+`reviewEntry.workspaceId` and `reviewEntry.directory` exactly match its recorded
+`workspaceId` and `directory`, and `preserveWorkspace` is false. Its volume is
+checked at the directory itself. This admission rule does not make the workspace
+external: Nucleus still archives its workspace entry at closeout. A Queue-owned
+task with an unbound directory continues to require the ordinary allocation
+proof.

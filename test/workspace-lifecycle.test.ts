@@ -8,6 +8,8 @@ import { PaseoAdapter } from "../service/paseo-composition";
 import { ownedWorkspacePath, repoCommonDir, workspaceCreationRefusal } from "../core/workspaces/workspace-allocation";
 import { WorkspaceLifecycle, type WorkspaceLifecycleHost, type WorkspacePlacementFixture } from "../core/workspaces/workspace-lifecycle";
 import type { Task } from "../shared/contracts";
+import { reviewEntryRecordSchema } from "../shared/contracts";
+import { terminalArchiveWorkspaces } from "../core/closeout/terminal-archive";
 
 /**
  * Step 4 row 1 of the Paseo split (task 902): workspace preflight, population,
@@ -122,6 +124,37 @@ test("the storage preflight proves the owned path against the placement the host
   await assert.rejects(lifecycle.preflightWorkspaceStorage(task({ repoPath: repo, directory: join(root, "foreign") })),
     { message: "Recorded workspace directory is not a Queue allocation" });
   assert.deepEqual(admissions, [recorded], "a refused path admits nothing");
+});
+
+test("intake-owned review entry admits its recorded directory outside Queue placement", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "ns-workspace-lifecycle-intake-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repo = join(root, "repo"), intakeDirectory = join(root, "paseo-worktrees", "source");
+  mkdirSync(repo, { recursive: true });
+  gitRepo(repo);
+  const admissions: string[] = [];
+  const host = hostStub({ testPlacement: { dataDir: join(root, "queue"), admit: path => admissions.push(path) } });
+  const entry = reviewEntryRecordSchema.parse({
+    operationId: "a".repeat(64), prNumber: 41, repository: "example/repo", branch: "feature/source",
+    workspaceId: "wks_65f907ac97222689", verifiedHead: "b".repeat(40), verifiedBase: "c".repeat(40),
+    dispatchBase: null, planningCommit: "c".repeat(40), authority: "Operator approved intake",
+    authorDeclaration: { models: ["openai/gpt-5"], githubAuthor: "author", authoringSystem: "agent", attestedBy: "operator", provenance: "fixture" },
+    checkedAt: new Date().toISOString(), preserveWorkspace: false, directory: intakeDirectory,
+  });
+  const intakeTask = task({ id: "intake", repoPath: repo, workspaceId: entry.workspaceId, directory: entry.directory, reviewEntry: entry });
+  const lifecycle = policy(host);
+
+  await lifecycle.preflightWorkspaceStorage(intakeTask);
+  assert.equal(await lifecycle.ownedPathFor(intakeTask), intakeDirectory);
+  assert.deepEqual(admissions, [intakeDirectory], "the intake directory gets its own volume admission, not Queue-root proof");
+  const closeout = terminalArchiveWorkspaces({ ...intakeTask, phase: "done", prHead: "d".repeat(40),
+    resolution: { ...intakeTask.resolution, mergedCommit: "d".repeat(40), syncedCommit: "d".repeat(40) } }, []);
+  assert.deepEqual(closeout[0], { id: entry.workspaceId, directory: intakeDirectory, head: "d".repeat(40), reportSource: false },
+    "the intake workspace remains Nucleus-owned for closeout archive");
+
+  // Exact identity matters: the same review-entry record cannot authorize a different task directory.
+  await assert.rejects(lifecycle.preflightWorkspaceStorage(task({ id: "intake", repoPath: repo, workspaceId: entry.workspaceId,
+    directory: join(root, "foreign"), reviewEntry: entry })), { message: "Recorded workspace directory is not a Queue allocation" });
 });
 
 test("the moved inspection reports its steps and scans with the hook the host holds at that call", async (t) => {

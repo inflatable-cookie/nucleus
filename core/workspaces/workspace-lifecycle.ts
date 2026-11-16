@@ -11,7 +11,7 @@ import { capPaseoTitle, taskWorkspaceTitle } from "./workspace-title";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Task } from "../../shared/contracts";
-import { externalWorkspace } from "../../shared/workspace-ownership";
+import { externalWorkspace, workspaceOutsideQueueAllocation } from "../../shared/workspace-ownership";
 import type { HostProjectRef, HostWorkspaceSpec } from "../../shared/host";
 
 /**
@@ -78,15 +78,20 @@ export class WorkspaceLifecycle {
   async preflightWorkspaceStorage(task: Task): Promise<void> {
     const placement = this.host.placement();
     if (!placement) return;
-    // An external workspace is the registering thread's own worktree, not a
-    // Queue allocation: there is no allocation path to prove and nothing to
-    // create on the Queue volume (nucleus#1261).
+    // External workspaces are not Queue allocations. An intake-owned review
+    // workspace is also outside Queue placement, but its own directory still
+    // receives volume admission because Nucleus archives its workspace entry.
     if (externalWorkspace(task)) return;
+    if (workspaceOutsideQueueAllocation(task)) {
+      placement.admit(task.directory!);
+      return;
+    }
     const ownedPath = await this.host.ownedPathFor(task);
     const common = await repoCommonDir(task.repoPath);
     if (!isOwnedWorkspacePath(ownedPath, this.host.dataDir(), common, task.id)) placement.admit(ownedPath);
   }
   async ownedPathFor(task: Task): Promise<string> {
+    if (workspaceOutsideQueueAllocation(task) && task.directory) return task.directory;
     const common = await repoCommonDir(task.repoPath), placement = this.host.placement();
     if (placement && task.directory) {
       const recorded = this.placementRoots().find(root => isOwnedWorkspacePath(task.directory!, root, common, task.id));
@@ -360,7 +365,7 @@ export class WorkspaceLifecycle {
     const allocated = [ownedPath, legacyPath].filter((path): path is string => Boolean(path));
     const matches = entries.filter(w => allocated.some(path => w.workspaceDirectory === path || w.projectRootPath === path)
       || (w.projectRootPath === task.repoPath && (w.worktreeSlug === slug || w.id === task.workspaceId))
-      || (externalWorkspace(task) && w.id === task.workspaceId))
+      || (workspaceOutsideQueueAllocation(task) && w.id === task.workspaceId))
       .map(w => ({ id: w.id, directory: w.workspaceDirectory ?? "" }));
     const placement = this.host.placement();
     if (placement && ownedPath && matches.some(match => match.directory === ownedPath)) placement.admit(ownedPath);
