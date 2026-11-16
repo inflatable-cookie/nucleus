@@ -30,8 +30,25 @@ test('registered host identity rejects mismatches and retains admission across r
   await runtime.started;
   await runtime.bootstrap;
   assert.match(runtime.startError, /identity changed/);
-  assert.deepEqual(runtime.store.getMeta('hostRegistry'), [{ id: 'old-host', endpoint: 'ws://127.0.0.1:6767/ws' }]);
-  assert.equal(runtime.hostRegistry.get('other-host'), undefined);
+  const conflict = runtime.health().hostIdentityConflict;
+  assert.equal(
+    conflict?.kind,
+    "identity",
+    "the conflict is a typed fact, not startError text",
+  );
+  assert.equal(
+    conflict?.hostId,
+    "old-host",
+    "the typed fact names the recorded host it refused",
+  );
+  assert.equal(
+    runtime.health().hosts?.find((host) => host.id === "old-host")?.state,
+    "conflict",
+  );
+  assert.deepEqual(runtime.store.getMeta("hostRegistry"), [
+    { id: "old-host", endpoint: "ws://127.0.0.1:6767/ws" },
+  ]);
+  assert.equal(runtime.hostRegistry.get("other-host"), undefined);
   await runtime.drain();
 
   f.adapter.hostId = 'old-host';

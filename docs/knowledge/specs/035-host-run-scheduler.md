@@ -1077,9 +1077,13 @@ every submit's history samples, and the board called it twice per refresh.
     `retentionError()` renders "N retained-output failures (M more recorded
     durably, not named in this 5-run summary): …" so a truncated answer can never
     read as an all-clear, and `service.health.hostRunEndpoint.retentionFailures`
-    publishes the same exact total, sighting window and bounded sample (null only
-    when nothing is unresolved). A store read that fails reports the failure
-    instead of a zero count.
+    publishes that summary as a typed read outcome: `clear` for a positively read
+    empty set, `unresolved` carrying the same exact total, sighting window,
+    bounded sample and the `unreadable` reason when the stored set itself could
+    not be read, and `unknown` with its reason when the read throws. A set that
+    cannot be read is never published as clear, and null is reserved for a process
+    that does not serve the endpoint. A store read that fails reports the failure
+    as `unreadable` instead of a zero count.
   - Retained-output failures live only in `host_run_output_failures`; the completed import of the old bounded meta value is retired (Tom, 2026-11-09).
 - **Positive Project-QA ownership clears a false positive, and only that (task 444
   amendment, Supervisor `2b96d20c`).** Every one of the 100 live failures was a

@@ -455,6 +455,13 @@ function emptyHealth(): RuntimeHealth {
     phase: "constructing", ready: false, startError: "", engineError: "", retentionError: "",
     paused: true, drained: false, boundRuns: [], hostId: "", connected: false, schema: null, lastStoreAccessAt: null,
     taskIdentities: 0, admission: {} as RuntimeHealth["admission"], reconciliation: {} as RuntimeHealth["reconciliation"],
+    hostIdentityConflict: null,
+    prStateRead: {
+      state: "unknown",
+      reason: "the runtime has not read PR states",
+      readAt: null,
+      lastKnownAt: null,
+    },
     bootstrap: { pending: false, startedAt: null },
     eventLoop: { windowSeconds: 0, p50Ms: 0, p99Ms: 0, maxMs: 0, maxSinceStartMs: 0 },
     hostRunEndpoint: null,

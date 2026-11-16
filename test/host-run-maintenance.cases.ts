@@ -839,7 +839,8 @@ test('service health publishes the exact durable total with a bounded named samp
   t.after(() => runtime.drain());
   await runtime.hostRunReady;
 
-  assert.equal(runtime.health().hostRunEndpoint?.retentionFailures, null, 'a clean endpoint publishes null, not a zero-shaped summary');
+  assert.deepEqual(runtime.health().hostRunEndpoint?.retentionFailures, { state: 'clear', summary: null, reason: null },
+    'a clean endpoint says clear, not a zero-shaped summary');
   assert.equal(runtime.health().hostRunEndpoint?.retentionError, '');
   for (let index = 0; index < 104; index++) runtime.store.putHostRunOutputFailure({
     runId: `health-${index}`, epoch: 1,
@@ -848,11 +849,12 @@ test('service health publishes the exact durable total with a bounded named samp
     reason: 'Retained output is absent for a launched run (no stdout file, no stderr file)',
   });
   const health = runtime.health().hostRunEndpoint;
-  assert.equal(health?.retentionFailures?.count, 104, 'health reports the exact total past the summary cap');
-  assert.equal(health?.retentionFailures?.examples.length, 5, 'the named sample is bounded');
-  assert.equal(health?.retentionFailures?.examplesOmitted, 99);
-  assert.equal(health?.retentionFailures?.firstSeen, new Date(Date.parse(STAMP)).toISOString());
-  assert.equal(health?.retentionFailures?.lastSeen, STAMP);
+  assert.equal(health?.retentionFailures?.state, 'unresolved', 'the set is reported as unresolved');
+  assert.equal(health?.retentionFailures?.summary?.count, 104, 'health reports the exact total past the summary cap');
+  assert.equal(health?.retentionFailures?.summary?.examples.length, 5, 'the named sample is bounded');
+  assert.equal(health?.retentionFailures?.summary?.examplesOmitted, 99);
+  assert.equal(health?.retentionFailures?.summary?.firstSeen, new Date(Date.parse(STAMP)).toISOString());
+  assert.equal(health?.retentionFailures?.summary?.lastSeen, STAMP);
   assert.match(health?.retentionError ?? '', /^104 retained-output failures \(99 more recorded durably/,
     'the health text cannot read as an all-clear');
   assert.equal(runtime.store.hostRunOutputFailureTotals().count, 104, 'the store holds every identity');
@@ -860,10 +862,11 @@ test('service health publishes the exact durable total with a bounded named samp
   // Clearing is per run: the count falls by one and never reads as resolved while
   // another unresolved row exists.
   runtime.store.deleteHostRunOutputFailure('health-103');
-  assert.equal(runtime.health().hostRunEndpoint?.retentionFailures?.count, 103);
+  assert.equal(runtime.health().hostRunEndpoint?.retentionFailures?.summary?.count, 103);
   assert.notEqual(runtime.health().hostRunEndpoint?.retentionError, '');
   for (let index = 0; index < 103; index++) runtime.store.deleteHostRunOutputFailure(`health-${index}`);
-  assert.equal(runtime.health().hostRunEndpoint?.retentionFailures, null, 'the last resolution clears the evidence');
+  assert.deepEqual(runtime.health().hostRunEndpoint?.retentionFailures, { state: 'clear', summary: null, reason: null },
+    'the last resolution reads clear, not unknown');
   assert.equal(runtime.health().hostRunEndpoint?.retentionError, '');
 
   // A set that cannot be read is not an all-clear: the structured field carries
@@ -877,11 +880,21 @@ test('service health publishes the exact durable total with a bounded named samp
   patched.hostRunOutputFailureTotals = () => { throw new Error('store gone'); };
   const unreadable = runtime.health().hostRunEndpoint;
   assert.ok(unreadable?.retentionFailures, 'an unreadable set is published, never null');
-  assert.equal(unreadable?.retentionFailures?.unreadable !== undefined, true);
-  assert.match(unreadable?.retentionFailures?.unreadable ?? '', /could not be read \(store gone\)/);
+  assert.equal(unreadable?.retentionFailures?.state, 'unresolved', 'the unreadable set is unresolved, not clear');
+  assert.match(unreadable?.retentionFailures?.summary?.unreadable ?? '', /could not be read \(store gone\)/);
   assert.match(unreadable?.retentionError ?? '', /could not be read \(store gone\)/, 'the text names the fault too');
   patched.hostRunOutputFailureTotals = originalTotals;
-  assert.equal(runtime.health().hostRunEndpoint?.retentionFailures?.count, 1, 'a readable set is reported again');
+  assert.equal(runtime.health().hostRunEndpoint?.retentionFailures?.summary?.count, 1, 'a readable set is reported again');
+
+  // A read that throws is unknown and named, never null-as-clear (blind calibration #1263).
+  const endpoint = (runtime as unknown as { hostRunEndpoint: { retentionFailureSummary(): unknown } }).hostRunEndpoint;
+  const originalSummary = endpoint.retentionFailureSummary;
+  endpoint.retentionFailureSummary = () => { throw new Error('endpoint is gone'); };
+  assert.deepEqual(runtime.health().hostRunEndpoint?.retentionFailures,
+    { state: 'unknown', summary: null, reason: 'endpoint is gone' },
+    'a retention summary that cannot be read stays unknown and named');
+  endpoint.retentionFailureSummary = originalSummary;
+  assert.equal(runtime.health().hostRunEndpoint?.retentionFailures?.state, 'unresolved', 'the readable set is reported again');
 });
 
 // Lean store 2 (task 987): output that is still absent after the history retention settles its failure

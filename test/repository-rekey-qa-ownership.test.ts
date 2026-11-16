@@ -226,7 +226,7 @@ test('Spec 056/445 a re-keyed milestone QA run keeps its submitted caller throug
   const unknown = restarted.hostRunOutputFailure('generic-unknown');
   assert.ok(unknown, 'a generic-supervised absence stays a retained-output failure');
   assert.match(unknown.reason, /no Project QA record names host run generic-unknown/);
-  assert.equal(f.runtime.health().hostRunEndpoint?.retentionFailures?.count, 1, 'health publishes the exact remaining total');
+  assert.equal(f.runtime.health().hostRunEndpoint?.retentionFailures?.summary?.count, 1, 'health publishes the exact remaining total');
   assert.match(f.runtime.health().hostRunEndpoint?.retentionError ?? '', /generic-unknown/);
 
   // Idempotent across a second pass and a repeated (lost-reply) re-key step.
@@ -312,6 +312,6 @@ test('Spec 056/445 a path-changing re-key still accepts the run’s recorded sub
   for (const id of ['milestone-path', 'milestone-path-legacy'])
     assert.equal(existsSync(join(hostRunRunDir(f.stateDir, id), 'output.retention.json')), false, `${id} gets no invented marker`);
   assert.equal(readFileSync(qaLogs[0]!, 'utf8'), 'qa output for milestone-path\n', 'the QA step logs are untouched');
-  assert.equal(f.runtime.health().hostRunEndpoint?.retentionFailures, null, 'health reports nothing unresolved');
+  assert.deepEqual(f.runtime.health().hostRunEndpoint?.retentionFailures, { state: 'clear', summary: null, reason: null }, 'health reports nothing unresolved');
   await f.runtime.stop();
 });

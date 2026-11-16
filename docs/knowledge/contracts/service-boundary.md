@@ -1189,14 +1189,34 @@ reports why; a live holder (pid plus start identity) is never taken over.
 bridge reads it from live health on each roll decision, so a settled follower
 cannot hold the 15-minute cap. `retentionError` is the bounded summary of the
 output-retention sweep's failures (exact count, up to 5 named runs, and how many
-more are recorded), and `retentionFailures` is `{ count, firstSeen, lastSeen,
-examples, examplesOmitted }` or null (Spec 035, "One stuck run does not pin the
-sweep" and "Every failure identity is durable; only the summary is bounded").
+more are recorded), and `retentionFailures` is the typed read outcome
+(`RetentionFailureEvidence` in `service/runtime-health.ts`, Spec 035, "One stuck
+run does not pin the sweep" and "Every failure identity is durable; only the
+summary is bounded"):
+
+- `{ state: "clear", summary: null, reason: null }` for a positively read set
+  with nothing unresolved;
+- `{ state: "unresolved", summary: { count, firstSeen, lastSeen, examples,
+  examplesOmitted, unreadable? }, reason: null }` while rows are unresolved, and
+  also when the stored set itself could not be read (`unreadable` names why);
+- `{ state: "unknown", summary: null, reason }` when the read threw.
+
+A set that cannot be read never reads as clear, and the field is null only when
+this process does not serve the endpoint at all.
 Failures are rows in `host_run_output_failures` (one per run id: epoch, reason,
 first and last sighting, attempts, next retry). A run that could not expire
 keeps its bytes and stays listed until its own success (or verified Project-QA
 ownership clears a false positive, with durable evidence), never blocks another
 row, survives restart and cursor wrap, and is retried from its own due page.
+
+Two other health facts are read outcomes rather than values, `prStateRead` and
+`hostIdentityConflict`. `prStateRead` is the display-only PR-state observation's
+latest attempt (`state`, `reason`, `readAt`, `lastKnownAt`): a failed read keeps
+the last known map and names its cause instead of publishing an empty one.
+`hostIdentityConflict` is the typed conflict the bootstrap observed between the
+configured daemon and the recorded host (`kind`, `hostId`, `message`, `at`), or
+null; a host is presented as `conflict` only from that fact, never from
+`startError` text.
 
 The host-run state root follows the data directory: only the live data directory
 uses `~/.local/state/host-run`; a non-live service defaults to

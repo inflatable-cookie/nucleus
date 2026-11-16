@@ -13,7 +13,6 @@ import { sourcePathFromModule } from "../shared/service/build";
 import { pluginRegistration } from "../shared/plugin-discovery.mjs";
 import { qaFenceStatus } from "../core/qa/qa-fence";
 import type { ProjectQaFenceInput } from "../shared/contracts";
-import type { HookCleanupHealth } from '../core/hooks/hook-cleanup';
 import { pidAlive } from "../core/machine/process-identity";
 import { defaultDataDir, markMaintenance, markMigration, SPAWN_TOKEN_ENV } from "./install/standby";
 /**
@@ -25,7 +24,7 @@ import { defaultDataDir, markMaintenance, markMigration, SPAWN_TOKEN_ENV } from 
  * into the owner instead of an import-time throw. Handler behavior is
  * unchanged: every method below keeps its previous name, schema and semantics.
  */
-import { readPrStates, type PrState } from '../core/forge/pr-status';
+import { readPrStates } from "../core/forge/pr-status";
 import { type ProfileSettings } from "../shared/pool";
 
 import { join } from "node:path";
@@ -47,8 +46,17 @@ import { HostFacade } from "../core/host/host-facade";
 import { Admission, admitAdapter, type AdmissionOptions } from "../core/host/admission";
 import { HostRegistry, HOST_IDLE_GRACE_MS, type KnownHost } from "../core/host/host-registry";
 import type { IdentitySource } from "../shared/host-kind";
-import { T3HostConnection, type T3ConnectionConfig } from './t3code-host';
-import { HostConnections, wireEngineHosts, type HostConnectionOwner } from './host-connections';
+import { T3HostConnection, type T3ConnectionConfig } from "./t3code-host";
+import {
+  HostConnections,
+  wireEngineHosts,
+  type HostConnectionOwner,
+} from "./host-connections";
+import { RuntimeLifecycle, type RuntimePhase } from "./runtime-lifecycle";
+import { RuntimeHealthProjection, type RuntimeHealth } from "./runtime-health";
+
+/** The health contract and phase are owned by those modules; re-exported for the service's own surfaces. */
+export type { RuntimeHealth, RuntimePhase };
 import { StoreMaintenance, type StoreMaintenanceOwner } from './store-maintenance';
 import { answerHostPermission } from './host-permissions';
 import { lifecycleSignalSchema, type LifecycleSignal, type LifecycleSignalReceipt } from "../shared/lifecycle-signal";
@@ -73,25 +81,34 @@ import { type CheckRequirementTransport } from "../core/forge/index";
 import { now, operationInputHash } from "../core/store/store";
 
 import type { HostRunAccountingDisposeInput, RepositorySetInput, ProjectUpsertInput, Task, RepositoryRekeyInput, RepositoryRekeyOutput, RepositoryRekeyPreviewInput, RepositoryRekeyReceiptQuery } from "../shared/contracts";
-import { type PaseoAdmission, type ReconciliationSweep } from '../shared/telemetry';
 import { prepareReviewEntryWorkspace, previewReviewEntry, reconcileReviewEntryOperation, type ReviewEntryAdapter } from '../core/review/review-entry';
 import { originReviewProof, withOriginReviewAdapter } from '../core/review/origin-review-adapter';
 import { Papercuts } from '../core/planning/papercut-operations';
 import { Leads } from '../core/planning/leads';
 import { Decisions } from '../core/planning/decisions';
 
-import { ProjectQaRunner } from '../core/qa/project-qa';
-import { ProjectQaSchedules } from '../core/qa/project-qa-schedule';
-import { HostRunScheduler } from '../core/host-runs/host-run-scheduler';
-import { captureCpuProfile } from '../core/telemetry/cpu-profile';
-import { EventLoopDelayMonitor, type EventLoopDelayReport } from '../core/telemetry/event-loop-delay';
-import { LiveRunPresence, LIVE_RUN_PRESENCE_INTERVAL_MS, type RunPresenceDaemon } from '../core/telemetry/live-run-presence';
-import { assertHostRunStateDirSafe, HostRunEndpoint, hostRunStateDirForDataDir } from './callbacks/host-run-endpoint';
-import type { HostRunOutputFailureSummary } from '../core/host-runs/host-run-output-failures';
-import type { HostRunFront } from './executor/host-run-front';
-import { EffigyAdmissionEndpoint } from './callbacks/effigy-admission-endpoint';
-import type { AdmissionRpcMetrics } from '../core/qa/effigy-admission-metrics';
-import { effigyRuntimeSettingsSchema, type EffigyRuntimeSettings, type EffigyVersion } from '../core/qa/effigy-runtime';
+import { ProjectQaRunner } from "../core/qa/project-qa";
+import { ProjectQaSchedules } from "../core/qa/project-qa-schedule";
+import { HostRunScheduler } from "../core/host-runs/host-run-scheduler";
+import { captureCpuProfile } from "../core/telemetry/cpu-profile";
+import { EventLoopDelayMonitor } from "../core/telemetry/event-loop-delay";
+import {
+  LiveRunPresence,
+  LIVE_RUN_PRESENCE_INTERVAL_MS,
+  type RunPresenceDaemon,
+} from "../core/telemetry/live-run-presence";
+import {
+  assertHostRunStateDirSafe,
+  HostRunEndpoint,
+  hostRunStateDirForDataDir,
+} from "./callbacks/host-run-endpoint";
+import type { HostRunFront } from "./executor/host-run-front";
+import { EffigyAdmissionEndpoint } from "./callbacks/effigy-admission-endpoint";
+import {
+  effigyRuntimeSettingsSchema,
+  type EffigyRuntimeSettings,
+  type EffigyVersion,
+} from "../core/qa/effigy-runtime";
 
 import { CapacityChangeJournal } from '../core/dispatch/capacity-changes';
 
@@ -106,24 +123,8 @@ import type { Papercut } from '../shared/contracts';
  * rotating page of the capacity-blocked queue.
  */
 const SWEEP_INTERVAL_MS = 20_000;
-/**
- * Bound on a post-connect bootstrap step. Only the connect used to be bounded, so a
- * stalled catalog refresh or reconciliation drain hung the shared bootstrap promise
- * with no retry and nothing reported.
- */
-const BOOTSTRAP_STEP_TIMEOUT_MS = 60_000;
-/**
- * A bootstrap step that reports progress is timed out only after this long
- * without any, and never runs past the cap: the first reconciliation after a
- * roll walks the whole fleet and can take minutes on a busy host while every
- * quantum completes (2026-10-21: four rolls reported a 60 s timeout that then
- * cleared on its own).
- */
-export const BOOTSTRAP_PROGRESS_CAP_MS = 10 * 60_000;
 /** Subscription availability changes slowly; refreshing it is its own separate pass. */
 const PROFILE_REFRESH_INTERVAL_MS = 120_000;
-
-export type RuntimePhase = "constructing" | "starting" | "ready" | "draining" | "stopped";
 
 /** After the last plugin presence closes while a host is still connected, wait this long before raising the board fault. A successful reload inside the window is silent. */
 const PLUGIN_PRESENCE_GRACE_MS = 45_000;
@@ -215,94 +216,6 @@ export interface RuntimeOwnerOptions {
   storeCompaction?: false | { snapshot?: (path: string) => Promise<{ name: string; bytes: number }> };
 }
 
-export interface RuntimeHealth {
-  phase: RuntimePhase;
-  ready: boolean;
-  startError: string;
-  /** Set while the plugin's presence is lost and a host is still connected; empty otherwise. */
-  pluginPresenceError?: string;
-  engineError: string;
-  retentionError: string;
-  hookCleanup?: HookCleanupHealth | null;
-  paused: boolean;
-  drained: boolean;
-  boundRuns: BoundRun[];
-  hostId: string;
-  connected: boolean;
-  hosts?: Array<{ id: string; state: "online" | "offline" | "conflict" | "unknown"; reason: string }>;
-  t3code?: ReturnType<T3HostConnection['status']>;
-  schema: number | null;
-  lastStoreAccessAt: string | null;
-  taskIdentities: number;
-  /** Queue-observed outbound Paseo admission: depth, coalescing, waits and backpressure. */
-  admission: PaseoAdmission;
-  /** Durable cursor evidence for the bounded safety sweep. */
-  reconciliation: ReconciliationSweep;
-  /**
-   * Whether the post-connect bootstrap is pending and since when. A bootstrap that
-   * hangs is otherwise invisible: health reported ready throughout the wedge that
-   * stopped reconciliation for thirteen minutes.
-   */
-  bootstrap: { pending: boolean; startedAt: string | null };
-  /** Event-loop delay of the runtime thread, which serves the host-run endpoint and every store read. */
-  eventLoop: EventLoopDelayReport;
-  /**
-   * Contract-010 endpoint state. The process serving `queue-service.sock` must
-   * always serve the host-run endpoint or report itself unhealthy (2026-10-04,
-   * a roll fallback that left it unbound machine-wide).
-   */
-  hostRunEndpoint: {
-    serving: boolean; error: string; heavyFollowers: number; retentionError?: string;
-    /**
-     * Unresolved retained-output expiries: the exact durable total, its sighting
-     * window and a bounded named sample. A truncated summary names how many more
-     * rows it withheld; the count is always the stored size (task 444).
-     */
-    retentionFailures?: HostRunOutputFailureSummary | null;
-  } | null;
-  /** Settings-only capacity writes: the applied-change record's compact state; the full read is `queue.capacity-state`. */
-  capacityAuthority?: { changes: number; lastChangeAt: string | null; lastSurface: string | null };
-  /**
-   * Bounded admission RPC metrics (Spec 035, "Admission RPC metrics"): the
-   * service's own dispatch latency, reply delivery and the intervals between
-   * confirms it processed, so a late still-queued confirm can be diagnosed from
-   * health instead of a journal scan. Memory-only; `serving` is the admission
-   * socket's own truth, and the field is null when this process does not serve
-   * that socket at all.
-   */
-  admissionRpc?: (AdmissionRpcMetrics & { serving: boolean }) | null;
-  /**
-   * Spec 028: the store's compaction facts and the last durable maintenance record.
-   * `autoVacuum` is 0 until the one-shot conversion lands, so a store that never
-   * converted says so here instead of being silently unable to return freed pages.
-   * `state` distinguishes a positively verified conversion (`converted`) from a rewrite
-   * that is in the store but was never verified (`landed`) and from an attempt that did
-   * not land (`refused`/`failed`), so health can never read a landed rewrite as verified.
-   */
-  storeCompaction?: {
-    autoVacuum: number; freePages: number; fileBytes: number;
-    state: "running" | "converted" | "landed" | "refused" | "failed" | null;
-    attempts: number; reason: string | null; at: string | null;
-    verification?: "verified" | "changed" | "not-run" | null;
-    fingerprint?: string | null;
-    settledFrom?: "running" | "landed" | "refused" | "failed" | null;
-  };
-}
-
-interface BootstrapStepSettlement {
-  /** A value that changes while the step makes progress; the timeout then bounds a stall, not the whole step. */
-  progress?(): unknown;
-  onTimeout?(error: Error): void;
-  onLateSuccess?(): void;
-  onLateFailure?(error: Error): void;
-}
-
-interface PostBootstrapDiagnostic {
-  attemptId: number;
-  message: string;
-  startErrorRevision: number;
-}
-
 export class QueueRuntime {
   readonly store: Store;
   /** Settings-only capacity writes: the applied-change record `queue.capacity-state` reads back. */
@@ -346,19 +259,10 @@ export class QueueRuntime {
   private readonly cachedUiSnapshotFacts: ReturnType<typeof createUiSnapshotFactsCache>;
   /** The narrow planning-list projection, rebuilt once per durable board revision (lead.board). */
   private boardLeadsCache: { revision: number; value: ReturnType<Store["listBoardLeads"]> } | null = null;
-  /** Detached startup bootstrap; settles when the first connect attempt (or a later retry) finishes. */
-  bootstrap: Promise<void> | null = null;
-  private bootstrapRunning: Promise<void> | null = null;
-  private bootstrapStartedAt: string | null = null;
-  private bootstrapAttemptId = 0;
-  private postBootstrapDiagnostic: PostBootstrapDiagnostic | null = null;
-  private startErrorValue = "";
-  private startErrorRevision = 0;
-  bootstrapped = false;
-  private bootstrapCompleted = false;
-  phase: RuntimePhase = "constructing";
-  lastStoreAccessAt: string | null = null;
-  private closing = false;
+  /** Phase, bootstrap, refresh and the honest read facts; composition stays here. */
+  private readonly lifecycle: RuntimeLifecycle;
+  /** Presentation of this runtime's facts; owns what health does and does not know. */
+  private readonly healthProjection: RuntimeHealthProjection;
   private idleShutdownLatched = false;
   private readonly pluginLostGraceMs: number;
   private closeCallbacks: (() => Promise<void>) | undefined;
@@ -374,9 +278,6 @@ export class QueueRuntime {
   private readonly effigyEnvironment: NodeJS.ProcessEnv;
   private readonly effigyVersion: ((path: string) => EffigyVersion | null | Promise<EffigyVersion | null>) | undefined;
   private readonly hostRunFront: HostRunFront | undefined;
-  private refreshing: Promise<void> | null = null;
-  private prStates: Record<string, PrState> = {};
-  private prRefreshing: Promise<void> | null = null;
   private timers: NodeJS.Timeout[] = [];
   /** The lifecycle sweep cadence this instance runs (production default, fixture override). */
   private readonly sweepIntervalMs: number;
@@ -399,6 +300,39 @@ export class QueueRuntime {
    */
   readonly hostRunReady: Promise<void>;
   private resolveHostRunReady: () => void = () => {};
+
+  /**
+   * The runtime's lifecycle facts stay readable under their historical names:
+   * the host-connection seam and the settings surface read them on every call,
+   * and `service.health` presents them.
+   */
+  get phase(): RuntimePhase {
+    return this.lifecycle.phase;
+  }
+  get closing(): boolean {
+    return this.lifecycle.closing;
+  }
+  get bootstrapped(): boolean {
+    return this.lifecycle.bootstrapped;
+  }
+  set bootstrapped(value: boolean) {
+    this.lifecycle.bootstrapped = value;
+  }
+  get bootstrap(): Promise<void> | null {
+    return this.lifecycle.bootstrap;
+  }
+  get bootstrapRunning(): Promise<void> | null {
+    return this.lifecycle.bootstrapRunning;
+  }
+  get startError(): string {
+    return this.lifecycle.startError;
+  }
+  set startError(value: string) {
+    this.lifecycle.startError = value;
+  }
+  get lastStoreAccessAt(): string | null {
+    return this.lifecycle.lastStoreAccessAt;
+  }
 
   constructor(options: RuntimeOwnerOptions = {}) {
     registerServiceRollRequest();
@@ -502,7 +436,15 @@ export class QueueRuntime {
       return adapter ? new HostFacade({ adapter }) : undefined;
     });
     // Retired contract 009 producer: the runtime no longer observes durable writes for a
-    this.engine = new Engine(this.store, this.adapter, 60000, () => this.bootstrapCompleted && this.anyHostConnected(), undefined, this.settings.uncertainMergeRetryMs, this.hostRunStateDir);
+    this.engine = new Engine(
+      this.store,
+      this.adapter,
+      60000,
+      () => runtime.lifecycle.bootstrapCompleted && this.anyHostConnected(),
+      undefined,
+      this.settings.uncertainMergeRetryMs,
+      this.hostRunStateDir,
+    );
     this.engine.currentServiceBuildId = currentServiceBuildId;
     this.maintenance = new StoreMaintenance(this as unknown as StoreMaintenanceOwner);
     this.hosts = new HostConnections(this as unknown as HostConnectionOwner);
@@ -568,8 +510,61 @@ export class QueueRuntime {
       anyHostConnected: () => this.anyHostConnected(),
       backupHealthProjection: () => this.backupHealthProjection(),
       boardError: () => this.boardError(),
-      get prStates() { return runtime.prStates; },
-      get hostId() { return runtime.hostSession?.id || runtime.hostRegistry.known()[0]?.id || "unknown"; },
+      get prStates() {
+        return runtime.lifecycle.prStateMap();
+      },
+      get hostId() {
+        return (
+          runtime.hostSession?.id ||
+          runtime.hostRegistry.known()[0]?.id ||
+          "unknown"
+        );
+      },
+    });
+    this.lifecycle = new RuntimeLifecycle({
+      store: this.store,
+      engine: this.engine,
+      adapter: this.adapter,
+      admission: this.admission,
+      hostRegistry: this.hostRegistry,
+      plannerTickets: this.plannerTickets,
+      t3Host: this.t3Host,
+      daemonUrl: this.settings.daemonUrl,
+      connectTimeoutMs: this.connectTimeoutMs,
+      readPrStates: (tasks) => readPrStates(tasks),
+      get paseoHostId() {
+        return runtime.paseoHostId;
+      },
+      get hostSession() {
+        return runtime.hostSession;
+      },
+      set hostSession(value) {
+        runtime.hostSession = value;
+      },
+      get idleShutdownLatched() {
+        return runtime.idleShutdownLatched;
+      },
+      connected: () => runtime.connected(),
+    });
+    this.healthProjection = new RuntimeHealthProjection({
+      store: this.store,
+      engine: this.engine,
+      lifecycle: this.lifecycle,
+      hostRegistry: this.hostRegistry,
+      t3Host: this.t3Host,
+      admission: this.admission,
+      capacityChanges: this.capacityChanges,
+      maintenance: this.maintenance,
+      eventLoopDelay: this.eventLoopDelay,
+      serveHostRunEndpoint: this.serveHostRunEndpoint,
+      anyHostConnected: () => runtime.anyHostConnected(),
+      drainProjection: () => runtime.drainProjection(),
+      pluginPresenceFaultMessage: () => runtime.pluginPresenceFaultMessage(),
+      hostSessionId: () => runtime.hostSession?.id ?? null,
+      hostRunEndpoint: () => runtime.hostRunEndpoint,
+      hostRunEndpointError: () => runtime.hostRunEndpointError,
+      admissionRpcMetrics: () =>
+        runtime.admissionEndpoint?.rpcMetrics() ?? null,
     });
     this.liveRunPresence = this.createLiveRunPresence();
     this.eventLoopDelay.start();
@@ -691,51 +686,17 @@ export class QueueRuntime {
 
   private get paseo(): Adapter & RegistrationAdapter & { socketPath: string; helperPath: string } { return this.adapter as Adapter & RegistrationAdapter & { socketPath: string; helperPath: string }; }
 
-  get startError(): string { return this.startErrorValue; }
-  set startError(value: string) {
-    this.startErrorValue = value;
-    this.startErrorRevision++;
+  private markStoreAccess() {
+    this.lifecycle.markStoreAccess();
   }
 
-  private markStoreAccess() { this.lastStoreAccessAt = new Date().toISOString(); }
-
-  private refreshPrStates() {
-    if (this.prRefreshing || this.closing) return;
-    const publish = (states: Record<string, PrState>) => {
-      if (this.closing || JSON.stringify(states) === JSON.stringify(this.prStates)) return;
-      this.prStates = states;
-      this.store.advanceRevision();
-    };
-    this.prRefreshing = readPrStates(this.store.prStateTasks()).then(publish).catch(() => publish({})).finally(() => { this.prRefreshing = null; });
-  }
-
-  async refresh(): Promise<void> {
-    if (this.refreshing) return this.refreshing;
-    this.refreshing = (async () => {
-      await this.engine.refresh();
-      this.refreshPrStates();
-      if (!this.postBootstrapDiagnostic) this.startError = "";
-    })().finally(() => { this.refreshing = null; });
-    return this.refreshing;
-  }
-
-  /** A secondary host's last known connection state, for the arrival refresh below. */
-  private secondaryOnline = false;
-  /**
-   * One catalog refresh when a secondary host actually comes online, so its
-   * own routing snapshot exists before any host-bound dispatch; steady-state
-   * ticks and a disconnected primary change nothing and reject nothing
-   * (nucleus#1139 review). Later refreshes ride the periodic profile pass.
-   */
-  private async refreshOnSecondaryArrival(): Promise<void> {
-    const online = this.t3Host?.status().connected === true;
-    if (!online || this.secondaryOnline) { this.secondaryOnline = online; return; }
-    await this.refresh();
-    this.secondaryOnline = true;
+  /** One catalog refresh; the lifecycle owns the pass, its coalescing and its typed facts. */
+  refresh(): Promise<void> {
+    return this.lifecycle.refresh();
   }
 
   private async start(): Promise<void> {
-    this.phase = "starting";
+    this.lifecycle.beginStart();
     // Spec 028: a store that still says `auto_vacuum=0` is converted here, before the
     // service binds anything or releases work. This is the one window in which no Queue
     // writer can be in flight: the conversion's own quiet gate still proves the file is
@@ -816,20 +777,17 @@ export class QueueRuntime {
       // startup error and the periodic timer keeps retrying the daemon side.
       this.startError = error instanceof Error ? error.message : String(error);
       console.error("Nucleus startup:", this.startError);
-      this.phase = "ready";
+      this.lifecycle.markReady();
       return;
     }
     // Local reads are safe as soon as the callback surface and SQLite owner
     // exist. Daemon connection, profile refresh, durable operation resume and
     // the first reconciliation sweep continue in the background.
-    this.phase = "ready";
+    this.lifecycle.markReady();
     // The daemon connect is bounded, but it never abandons the rest of
     // bootstrap: when it settles — immediately or on a later retry — the
     // identity check, catalog refresh and durable-operation resume all run.
-    this.bootstrap = this.ensureBootstrap().then(() => undefined, error => {
-      this.startError = error instanceof Error ? error.message : String(error);
-      console.error("Nucleus startup:", this.startError);
-    });
+    this.lifecycle.startBootstrap();
   }
 
   /**
@@ -854,241 +812,25 @@ export class QueueRuntime {
   }
 
   /**
-   * One bounded connect plus the full post-connect bootstrap. Retried by the
+   * One bounded connect plus the full post-connect bootstrap, retried by the
    * periodic timers and by queue.refresh, so a transient daemon outage at
    * startup (or later) resumes reconciliation and accepted durable operations
    * without an operator action.
    */
-  async ensureBootstrap(): Promise<boolean> {
-    if (this.closing || this.idleShutdownLatched) return false;
-    // The legacy primary identity is recorded first; a secondary reconnect
-    // remains independent of primary availability after that first bootstrap.
-    // A secondary host coming online owes one catalog refresh so its own
-    // routing snapshot exists before any host-bound dispatch; later refreshes
-    // ride the periodic profile pass. The chain runs on every bootstrap tick
-    // and must never reject unhandled (a disconnected primary rejects refresh),
-    // so the transition-guarded refresh is caught here.
-    if (this.hostRegistry.known().length) void this.t3Host?.ensureConnected().then(() => this.plannerTickets.ensure()).then(() => this.refreshOnSecondaryArrival()).catch(() => { /* the next tick reconnects; the catalog rides the periodic profile pass */ });
-    if (this.bootstrapped && this.connected()) {
-      await this.plannerTickets.ensure();
-      return true;
-    }
-    if (this.bootstrapRunning) return this.bootstrapRunning.then(() => this.bootstrapped, () => this.bootstrapped);
-    const attemptId = ++this.bootstrapAttemptId;
-    this.bootstrapStartedAt = new Date().toISOString();
-    this.bootstrapRunning = (async () => {
-      let reconciliationTimedOut = false;
-      try {
-        await this.boundedConnect();
-        if (this.closing) return;
-        const observed = this.paseo.hostId;
-        if (!this.hostSession) {
-          const recorded = this.hostRegistry.known()[0]?.id;
-          if (recorded && recorded !== observed) throw new Error("Configured daemon identity changed; existing tasks belong to another host");
-          const token = this.hostRegistry.connect(observed, this.settings.daemonUrl, { adapter: this.adapter, admission: this.admission }, () => {
-            const previousHost = this.hostRegistry.known()[0]?.id;
-            if (previousHost && previousHost !== observed) throw new Error("Configured daemon identity changed; existing tasks belong to another host");
-            const admission = this.hostRegistry.resource(observed, () => this.admission);
-            if (admission !== this.admission) throw new Error("Host admission identity conflicts with the selected adapter");
-
-          });
-          this.hostSession = { id: observed, token };
-        } else if (this.hostSession.id !== observed) {
-          throw new Error("Configured daemon identity changed; existing tasks belong to another host");
-        }
-        void this.t3Host?.ensureConnected();
-        await this.boundedBootstrapStep("Daemon catalog refresh", this.refresh());
-        await this.plannerTickets.ensure();
-        if (this.closing) return;
-        this.engine.resumeBulkDispositions();
-        // Bootstrap unfinished durable operations from their stored identity; an
-        // uncertain external effect is reconciled by its own gates, never reissued
-        // blindly.
-        await this.engine.hooks.disposeLegacyWarmCheckouts().catch(error => console.error("Legacy warm checkout disposal:", String(error)));
-        this.bootstrapped = true;
-        const reconcileInterrupted = !this.bootstrapCompleted;
-        this.bootstrapCompleted = true;
-        this.engine.resumeOperations(reconcileInterrupted);
-        this.startError = "";
-        if (!this.closing) await this.boundedBootstrapStep("Post-bootstrap reconciliation", this.engine.wake(), BOOTSTRAP_STEP_TIMEOUT_MS, {
-          progress: () => this.engine.progressMark(),
-          onTimeout: error => {
-            reconciliationTimedOut = true;
-            this.recordPostBootstrapTimeout(attemptId, error);
-          },
-          onLateSuccess: () => this.settlePostBootstrapDiagnostic(attemptId, { ok: true }),
-          onLateFailure: error => this.settlePostBootstrapDiagnostic(attemptId, { ok: false, error }),
-        });
-      } catch (error) {
-        if (!reconciliationTimedOut) this.startError = error instanceof Error ? error.message : String(error);
-        throw error;
-      }
-    })().finally(() => { this.bootstrapRunning = null; });
-    try {
-      await this.bootstrapRunning;
-    } catch {
-      // The caller (timer or start) records the error via startError; the next
-      // timer tick retries the whole bootstrap.
-    }
-    return this.bootstrapped;
+  ensureBootstrap(): Promise<boolean> {
+    return this.lifecycle.ensureBootstrap();
   }
 
-  /**
-   * Bound a post-connect bootstrap step. Only the connect used to be bounded, so a
-   * stalled catalog refresh or reconciliation drain hung the shared bootstrap promise
-   * forever: no retry, no backoff, and `startError` set only when a step throws rather
-   * than when it hangs. A timeout makes it fail, retry on a later tick, and say so.
-   */
-  private boundedBootstrapStep<T>(step: string, work: Promise<T>, timeoutMs = BOOTSTRAP_STEP_TIMEOUT_MS, settlement?: BootstrapStepSettlement): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      let timedOut = false;
-      const startedAt = Date.now();
-      let mark = settlement?.progress?.();
-      let timer: NodeJS.Timeout;
-      let rearmed = false;
-      // With a progress signal the timeout bounds a stall: each window that saw
-      // progress re-arms it, up to the cap, so a long pass that keeps finishing
-      // quanta is not reported as hung. Without one it bounds the whole step.
-      const arm = (delayMs = timeoutMs) => {
-        timer = setTimeout(() => {
-          let progressed = false;
-          if (settlement?.progress) {
-            const next = settlement.progress();
-            progressed = next !== mark;
-            mark = next;
-            // Re-arm for at most what is left of the cap, so a late window never extends it.
-            const remaining = BOOTSTRAP_PROGRESS_CAP_MS - (Date.now() - startedAt);
-            if (progressed && remaining > 0) { rearmed = true; arm(Math.min(timeoutMs, remaining)); return; }
-          }
-          timedOut = true;
-          const elapsed = Date.now() - startedAt;
-          const capped = Boolean(settlement?.progress) && elapsed >= BOOTSTRAP_PROGRESS_CAP_MS;
-          const error = new Error(progressed || capped ? `${step} did not settle inside ${BOOTSTRAP_PROGRESS_CAP_MS} ms`
-            : rearmed ? `${step} made no progress for ${timeoutMs} ms (running ${elapsed} ms)`
-            : `${step} did not settle inside ${timeoutMs} ms`);
-          settlement?.onTimeout?.(error);
-          reject(error);
-        }, delayMs);
-        if (typeof timer.unref === "function") timer.unref();
-      };
-      arm();
-      work.then(value => {
-        clearTimeout(timer);
-        if (timedOut) settlement?.onLateSuccess?.();
-        resolve(value);
-      }, error => {
-        clearTimeout(timer);
-        const failure = error instanceof Error ? error : new Error(String(error));
-        if (timedOut) settlement?.onLateFailure?.(failure);
-        reject(failure);
-      });
-    });
-  }
-
-  private recordPostBootstrapTimeout(attemptId: number, error: Error): void {
-    this.startError = error.message;
-    this.postBootstrapDiagnostic = { attemptId, message: error.message, startErrorRevision: this.startErrorRevision };
-  }
-
-  private settlePostBootstrapDiagnostic(attemptId: number, outcome: { ok: true } | { ok: false; error: Error }): void {
-    const diagnostic = this.postBootstrapDiagnostic;
-    if (!diagnostic || diagnostic.attemptId !== attemptId) return;
-    if (this.startErrorRevision !== diagnostic.startErrorRevision || this.startError !== diagnostic.message) {
-      this.postBootstrapDiagnostic = null;
-      return;
-    }
-    if (outcome.ok) {
-      this.postBootstrapDiagnostic = null;
-      this.startError = "";
-    } else {
-      this.startError = outcome.error.message;
-      this.postBootstrapDiagnostic = { attemptId, message: outcome.error.message, startErrorRevision: this.startErrorRevision };
-    }
-  }
-
-  /** A completed full wake is an owned followup that can settle an older timeout. */
+  /** A completed full wake can settle an older post-bootstrap timeout diagnostic. */
   private wakeAndSettlePostBootstrapTimeout(): Promise<void> {
-    const diagnostic = this.postBootstrapDiagnostic;
-    const work = this.engine.wake();
-    if (!diagnostic) return work.catch(() => { /* recorded as engineError */ });
-    return work.then(() => {
-      this.settlePostBootstrapDiagnostic(diagnostic.attemptId, { ok: true });
-    }, error => {
-      // Every caller is fire-and-forget: the diagnostic and engineError record the failure.
-      this.settlePostBootstrapDiagnostic(diagnostic.attemptId, { ok: false, error: error instanceof Error ? error : new Error(String(error)) });
-    });
+    return this.lifecycle.wakeAndSettlePostBootstrapTimeout();
   }
 
-  /** Connect with a hard bound so an unreachable daemon cannot block lifecycle. */
-  private boundedConnect(): Promise<void> {
-    const timeoutMs = this.connectTimeoutMs;
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`Daemon connection did not settle inside ${timeoutMs} ms`)), timeoutMs);
-      if (typeof timer.unref === "function") timer.unref();
-      (this.adapter as unknown as { connect(): Promise<void> }).connect().then(() => { clearTimeout(timer); resolve(); }, (error: unknown) => { clearTimeout(timer); reject(error instanceof Error ? error : new Error(String(error))); });
-    });
-  }
-
-  /**
-   * The endpoint's durable retained-output failure set as an exact total plus a
-   * bounded named sample, or null when nothing is unresolved. A failing run
-   * names itself in `retentionError`; this says how many are waiting, since
-   * when, and which few the summary could show (task 444).
-   */
-  private retentionFailureEvidence(): HostRunOutputFailureSummary | null {
-    try {
-      const summary = this.hostRunEndpoint?.retentionFailureSummary();
-      // An unreadable set is evidence too: publishing null would read as "clear".
-      return summary && (summary.count > 0 || summary.unreadable !== undefined) ? summary : null;
-    } catch { return null; }
-  }
-
+  /** This runtime's facts, presented by the single health projection owner. */
   health(): RuntimeHealth {
-    const t3 = this.t3Host?.status();
-    return {
-      phase: this.phase, ready: this.phase === "ready" && !this.closing,
-      startError: this.startError,
-      pluginPresenceError: this.pluginPresenceFaultMessage() || undefined,
-      engineError: this.store.getMeta<string>("engineError") ?? "",
-      retentionError: this.store.getMeta<string>("retentionError") ?? "",
-      hookCleanup: this.store.getMeta<HookCleanupHealth>("hookCleanup") ?? null,
-      paused: this.store.getMeta<boolean>("paused") ?? true,
-      ...this.drainProjection(),
-      hostId: this.hostSession?.id || this.hostRegistry.known()[0]?.id || "unknown",
-      connected: this.anyHostConnected(),
-      ...(t3 ? { t3code: t3 } : {}),
-      hosts: this.hostRegistry.known().length ? this.hostRegistry.known().map(host => ({
-        id: host.id,
-        state: this.hostRegistry.get(host.id) ? "online" : this.startError.includes("identity") && host.id === this.hostRegistry.known()[0]?.id ? "conflict" : "offline",
-        reason: this.hostRegistry.get(host.id) ? host.id === t3?.id && t3.threadShapePending ? 'thread shape pending first thread' : "" : host.id === t3?.id ? t3.error || 'T3Code is offline' : host.id === this.hostRegistry.known()[0]?.id ? this.startError || "Host is offline" : "Host is offline",
-      })) : [{ id: "unknown", state: "unknown", reason: this.startError || "Host identity is unknown" }],
-      bootstrap: { pending: Boolean(this.bootstrapRunning), startedAt: this.bootstrapStartedAt },
-      hostRunEndpoint: this.serveHostRunEndpoint
-        ? {
-          serving: this.hostRunEndpoint?.serving() ?? false,
-          error: this.hostRunEndpointError,
-          heavyFollowers: this.hostRunEndpoint?.heavyFollowerCount() ?? 0,
-          retentionError: this.hostRunEndpoint?.retentionError() ?? "",
-          retentionFailures: this.hostRunEndpoint ? this.retentionFailureEvidence() : null,
-        }
-        : null,
-      schema: this.store.getMeta<number>("schema") ?? null,
-      lastStoreAccessAt: this.lastStoreAccessAt,
-      taskIdentities: this.store.countTasks(),
-      admission: this.admission.snapshot(),
-      admissionRpc: this.serveHostRunEndpoint ? this.admissionEndpoint?.rpcMetrics() ?? null : null,
-      reconciliation: this.engine.reconciliationSnapshot(),
-      eventLoop: this.eventLoopDelay.report(),
-      capacityAuthority: (() => {
-        const state = this.capacityChanges.state();
-        const last = state.changes.at(-1) ?? null;
-        return { changes: state.changes.length, lastChangeAt: last?.at ?? null, lastSurface: last?.surface ?? null };
-      })(),
-      storeCompaction: this.maintenance.compactionHealth(),
-    };
+    return this.healthProjection.health();
   }
 
-  /** Drain to a durable safe point and release every owned resource. */
   /**
    * Drain to a durable safe point and release every owned resource.
    *
@@ -1099,8 +841,7 @@ export class QueueRuntime {
    */
   async drain(): Promise<void> {
     if (this.closing) return;
-    this.closing = true;
-    this.phase = "draining";
+    this.lifecycle.beginDrain();
     this.clearPluginPresenceWatch();
     for (const timer of this.timers) clearInterval(timer);
     this.timers = [];
@@ -1119,7 +860,7 @@ export class QueueRuntime {
       await settled((this.adapter as unknown as { close?(): Promise<void> }).close?.(), 5_000);
       await settled(this.started, 10_000);
       await settled(this.maintenance.running, 5_000);
-      await settled(this.refreshing, 5_000);
+      await settled(this.lifecycle.pendingRefresh, 5_000);
       // Bounded quiesce: an effect still in flight when the bound fires is
       // abandoned here, never killed or reissued; every such effect keeps its
       // stored durable intent and is reconciled by its own gates on the next
@@ -1134,7 +875,7 @@ export class QueueRuntime {
       this.usage.stop();
       if (this.store.getMeta<{ owner: string }>("processOwner")?.owner === this.owner) this.store.deleteMeta("processOwner");
       this.store.close();
-      this.phase = "stopped";
+      this.lifecycle.markStopped();
     }
   }
 
