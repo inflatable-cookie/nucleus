@@ -1464,8 +1464,11 @@ request identities and submitted handoffs are not rewritten.
   runtimes, reporting helpers and processes carrying a live run's identity are
   protected. Host observation retains helper-proven provider and standing-runtime
   PID/start identities, so attached tools and orphans remain distinguishable after
-  the helper exits; saved protection never follows a recycled PID. Without an
-  observed host identity, an indistinguishable environment-only holder is left
+  the helper exits; runtimes identified from a still-live saved provider are also
+  retained before it can exit. Saved protection never follows a recycled PID. Without an
+  observed host identity, only an orphan directly executing a program or script
+  inside the recorded scratch supplies a non-host proof; a path mentioned in
+  flags, configuration or a prompt does not. An indistinguishable holder is left
   alone with a visible uncertainty record. Any unreadable process environment,
   including a partial failed host read, retains the cleanup intent and scratch
   until a later observation can rule out ownership. Reused threads' live runs

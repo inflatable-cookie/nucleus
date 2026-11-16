@@ -1,4 +1,4 @@
-import { dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { Store } from "../store/store";
 import type { HostProcessFact } from "../host/types";
 import { readHostUidProcesses } from "./host-process-listing";
@@ -21,6 +21,22 @@ export function processBelongsToRun(fact: HostProcessFact, environment: RunProce
   if ([environment?.TMPDIR, environment?.TMP, environment?.TEMP].includes(scratch)) return true;
   const escaped = scratch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(?:^|[\\s='\"])${escaped}(?:/|$|[\\s'\"])`).test(fact.command);
+}
+
+/** Legacy non-host proof: an orphan executing a scratch artifact, not a host merely mentioning scratch. */
+export function orphanExecutesRunScratch(fact: Pick<HostProcessFact, "ppid" | "command">, scratch: string | undefined): boolean {
+  if (fact.ppid !== 1 || !scratch) return false;
+  const args = fact.command.trim().match(/(?:"[^"]*"|'[^']*'|\S+)/g)?.map(arg => arg.replace(/^["']|["']$/g, "")) ?? [];
+  const program = args[0];
+  if (!program || /\.app[\\/]Contents[\\/]/i.test(program)
+    || args.some(arg => /^--?(?:session[-_]id|working[-_](?:dir|directory))(?:=|$)/i.test(arg))) return false;
+  const inside = (arg: string | undefined) => Boolean(arg && isAbsolute(arg) && resolve(arg).startsWith(`${resolve(scratch)}/`));
+  if (inside(program)) return true;
+  const interpreter = basename(program).toLowerCase();
+  if (!/^(?:node|nodejs|bun|deno|python(?:3(?:\.\d+)?)?|sh|bash|zsh|dash|fish|perl|ruby)$/.test(interpreter)) return false;
+  // Only a direct script operand proves execution. Flags, loaders, config paths,
+  // cwd and inline expressions cannot establish that a provider is a tool.
+  return inside(["bun", "deno"].includes(interpreter) && args[1] === "run" ? args[2] : args[1]);
 }
 
 /** Settled runs, including pre-upgrade history. Pending intents retain displaced initial workers. */
@@ -72,7 +88,7 @@ async function sweep(store: Store, hostId: string, options: Parameters<typeof sw
     const intent = store.getMeta<CleanupRun>(key(run.id));
     return !options?.pendingOnly || Boolean(intent && intent.pending !== false);
   });
-  if (!runs.length && !candidates.live.length) return;
+  if (!runs.length && !candidates.live.some(run => !options?.taskId || run.taskId === options.taskId)) return;
   const facts = options?.readProcesses ? await options.readProcesses() : await readHostUidProcesses().then(read => read.state === "listed" ? read.processes : null);
   if (!facts) return; // Intents and scratch survive an unavailable observation.
   rememberRunProcessHosts(store, candidates.known, facts);
@@ -101,7 +117,7 @@ async function sweep(store: Store, hostId: string, options: Parameters<typeof sw
       && !candidates.live.some(live => processBelongsToRun(fact, environments.get(fact.pid), live, dataHome)));
     // Saved host identities remain a positive exclusion after the helper exits.
     // With no observed host, an environment-only holder can still be that host.
-    const owned = ownedFacts.filter(fact => fact.command.trim() && (hasRunProcessHost(store, run) || processBelongsToRun(fact, null, run, dataHome)));
+    const owned = ownedFacts.filter(fact => fact.command.trim() && (hasRunProcessHost(store, run) || orphanExecutesRunScratch(fact, run.temporaryDirectory)));
     const result = await (options?.terminate ?? terminateHostProcessTargets)(owned.map(fact => ({ ...fact, cwd: fact.cwd ?? "", startTime: fact.startIdentity, via: "cwd" as const })),
       { graceMs: options?.graceMs, identityLiveness: (pid, identity) => stillSettled() ? runProcessLiveness(pid, identity) : "unknown" });
     if (result.terminated.length || result.failed.length) store.event(run.taskId, "run_process_cleanup", JSON.stringify({ runId: run.id,

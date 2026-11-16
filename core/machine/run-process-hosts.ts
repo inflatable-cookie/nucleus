@@ -25,6 +25,19 @@ export function rememberRunProcessHosts(store: Store, runs: ProcessRunIdentity[]
       if (JSON.stringify(previous) !== JSON.stringify(record)) store.setMeta(key(run.id), record);
     }
   }
+  // A retained provider can start another standing runtime after its helper
+  // exits. Preserve that positive observation before the provider can exit too.
+  for (const run of runs) {
+    const record = store.getMeta<RunProcessHost>(key(run.id));
+    const provider = record && facts.find(fact => fact.pid === record.provider.pid
+      && startIdentityMatches(record.provider.startIdentity, fact.startIdentity));
+    if (!record || !provider) continue;
+    const runtimes = providerRuntimePids(provider, facts);
+    const additions = facts.filter(fact => runtimes.has(fact.pid) && startIdentityMatches(fact.startIdentity, fact.startIdentity)
+      && !record.infrastructure.some(identity => identity.pid === fact.pid && startIdentityMatches(identity.startIdentity, fact.startIdentity)));
+    if (additions.length) store.setMeta(key(run.id), { ...record,
+      infrastructure: [...record.infrastructure, ...additions.map(fact => ({ pid: fact.pid, startIdentity: fact.startIdentity }))] });
+  }
 }
 
 /** A saved identity excludes exactly that host incarnation, never a recycled PID. */
