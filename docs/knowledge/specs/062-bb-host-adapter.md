@@ -54,6 +54,7 @@ Each fact is marked with the evidence that establishes it:
 | 13 | BB's HTTP API answers on loopback without a credential from the same user (`GET /api/v1/threads` → 200 on bb 0.49.0, observed 2026-11-16), but no `bb guide` chapter documents the HTTP routes as a contract; `bb guide json` documents CLI JSON only | probe, guide |
 | 14 | A BB server's data directory is the one holding `config.json`, `bb.db` and `plugins/<id>/`; a plugin reads it through `bb.server.experimental_dataDir` | sdk, probe |
 | 15 | There is no standalone environment create: the environments area offers list, get, paths, commit, update, delete, archive and cleanup, and an environment comes into being when a thread attaches to a path | sdk, spike |
+| 16 | A thread's origin and plugin origin are fixed at creation — `threads.update` can change only title, parent, notifications, visibility, section, model, reasoning and session options — while its parent, section and visibility can change at any time, and archived rows need their own list filter | sdk |
 
 ## Assumptions phase 0 must prove
 
@@ -68,8 +69,8 @@ and no later phase starts, until each is answered in writing.
 3. An unmanaged environment ID is stable across a BB server restart and a plugin reload, not only
    within one run.
 4. A `threads.spawn` is discoverable after a lost reply: the thread's own plugin metadata names this
-   exact task and run, so an uncertain spawn can be adopted by observation instead of resent, and a
-   complete candidate walk that names none proves it did not land.
+   exact task and run, and the search for it can be made complete across projects, hidden rows and
+   archived rows, so an uncertain spawn can be adopted by observation instead of resent.
 5. Archiving a role thread leaves its planner, its siblings and the worktree group untouched when
    nothing depends on it (the cascade read names only itself or rows already archived).
 6. `threads.spawn` returns when the row is committed, not when the first turn starts, so "spawned"
@@ -150,8 +151,8 @@ environment, so the handle is the only archive fact. `workspaceIdAccepted` accep
 **Binding sequence for one run**, each step recorded as durable intent before its write: handle
 recorded → project registered → spawn with the run's exact metadata → environment ID recorded on the
 handle → run creation complete. A spawn whose reply is lost is never resent on a guess: adoption needs
-the exact recorded task and run identity (decision 6), and only a complete candidate walk that names
-none allows one retry under the same intent.
+the exact recorded task and run identity (decision 6), and an empty search never authorizes a resend —
+the run stays uncreated and unknown until an owner action takes it on.
 
 **Evidence.** An unmanaged path is exactly the spike's verified case (fact 1): no setup or teardown
 hooks run, BB never retires the folder, and re-attaching is idempotent. That leaves worktree creation,
@@ -228,6 +229,14 @@ Threads are archived children first, so a recorded child is already archived whe
 runs, and the read then names only already-archived rows or nothing. Nucleus never deletes a thread:
 `threads.delete` is destructive, cascades, and needs `childThreadsConfirmed` (fact 3).
 
+No other read substitutes for that proof, so there is no exception to fail closed. The parent link
+is display and notification only (fact 3): a thread's lifecycle dependents are a separate relation
+that can sit in another project, another environment or another host, so a parent-child count
+(`threads.count` with `parentThreadId`) counts sidebar children and says nothing about them. A zero
+child count with a foreign lifecycle dependent is exactly the case that would slip through, and an
+absence from any thread list is weaker still, because hidden and archived rows need their own filters
+(fact 16). A thread with no cascade proof stays unarchived, and that is recorded.
+
 **Rejected alternative: emulate settle by hiding or archiving released threads.** Archiving removes a
 thread from the planner's group and from the task's one place to look, so a released reviewer would
 disappear until its next round; hiding it with `visibility: "hidden"` would remove it from the group
@@ -281,17 +290,31 @@ omits, makes the inventory incomplete, and the caller falls back to per-agent `o
 reading absence. Timelines stay per-thread.
 
 **Adoption after an unknown spawn.** A lost `threads.spawn` reply is settled by reading, never by
-resending on a guess, and never by a title. The candidates are the project's threads for this planner
-with this plugin's origin (`threads.list({ projectId, parentThreadId, originPluginId })`, archived
-included), and their plugin metadata is read in chunked `experimental_listPluginMetadata` calls. A
-thread is adopted only when its metadata names this exact task and this exact run. Zero matches after
-a complete candidate walk prove the spawn did not land and allow one retry under the recorded intent;
-an unreadable or partial walk leaves the delivery unknown with nothing bound; two or more matches are
-refused and recorded, because a repeated pair is not an identity.
+resending on a guess, and never by a title. The search is the widest identity read BB offers and it is
+complete, not filtered: every thread with this plugin's origin on this host, over every project, walked
+twice so archived rows are covered too (`threads.list({ originPluginId, includeHidden: true })` and
+`threads.list({ originPluginId, includeHidden: true, archived: true })`, each paged to its positive
+end). Origin and plugin origin are fixed at creation and no `threads.update` field can change them, so
+a reparented or hidden thread keeps them; the search therefore never filters on the current planner or
+project, which is what a reparented or hidden thread would defeat. Each candidate's plugin metadata is
+read in chunked `experimental_listPluginMetadata` calls, and a thread is adopted only when its
+metadata names this exact task and this exact run. Two or more matches are refused and recorded,
+because a repeated pair is not an identity; an unreadable or partial walk leaves the delivery unknown
+with nothing bound.
+
+Zero matches never authorizes a resend. A read taken immediately after a lost reply can precede a
+spawn that is still landing, so an empty complete search proves only that the thread is not visible
+yet. The search repeats on each host sweep for a bounded window, and a spawn that lands late is
+adopted then. If the window expires with nothing found, the creation stays unknown delivery: the run
+is left uncreated rather than duplicated, the task goes to attention with the recorded intent and
+what was tried, and any later attempt is an explicit owner action under a new intent — never an
+automatic retry of the uncertain one. A refusal the plugin proved before the write is known
+non-delivery and is retryable as it is on every host; unknown delivery is not.
 
 **Evidence.** Fact 12 (row fields), fact 7 (`threadIds`, at most 200 per call, archived rows included
-when named explicitly, deleted IDs omitted) and fact 11 (usage) are the whole surface these reads
-need. `threads.count` answers capacity questions without paging rows.
+when named explicitly, deleted IDs omitted), fact 16 (origin is immutable, parent and visibility are
+not) and fact 11 (usage) are the whole surface these reads need. `threads.count` answers capacity
+questions without paging rows; it is never an archive or delivery proof.
 
 **Rejected alternative: per-thread `threads.get` for every participant on every sweep.** It is the
 same data one request per thread, against a limit of 200 ids per list call.
@@ -351,11 +374,13 @@ a visible fault, and its recovery hint must name the plugin's own reload command
 
 **Faults.** One operation's fault settles that operation as unknown delivery, never the connection: a
 malformed result, a refused schema, an operation past its deadline, or an error the SDK reports after
-the call was written. A write is resent only when a fresh read proves it did not land, and every
-write is reconciled by observation: a created thread by its recorded plugin metadata and origin, a
-title by reading the title, an archive by the row's `archivedAt`, a stop by the thread's status.
-Loss of the connection is a host outage: observation defers for that host, and no task is ever read
-as idle because its host is unreachable.
+the call was written. An unknown write is never resent automatically. A create is not resent even when
+a read finds nothing: observation can adopt the thread it names, and an empty read only means nothing
+is visible yet (decision 6). A non-create write is retried only when a fresh read proves its
+postcondition absent *and* the host's own answer establishes the write could not have landed; a
+recorded plugin metadata identity, a title, an archive's `archivedAt` and a stop's status are the
+reads that settle it. Loss of the connection is a host outage: observation defers for that host, and
+no task is ever read as idle because its host is unreachable.
 
 **Operation table.** Each is one `host_op` request with a deadline and a bounded reply.
 
@@ -364,7 +389,7 @@ as idle because its host is unreachable.
 | Register project | `projects.create` with the repository root, `projects.list` first | One project per repository root; never deleted |
 | Create workspace | Register the project, mint the task's handle, persist it; no `threads.spawn` | A handle bound to the canonical directory and the project; no thread exists yet |
 | Create a run | `threads.spawn` with the unmanaged path, parent, `parentNotifications: "off"`, plugin metadata, provider/model/options and the run prompt | Thread ID whose metadata names the run, and the environment ID recorded on the handle |
-| Adopt an unknown spawn | `threads.list` by project, planner and origin, then chunked `experimental_listPluginMetadata` | One thread whose metadata names this exact task and run; none after a complete walk proves non-delivery |
+| Adopt an unknown spawn | Two complete `threads.list` walks by `originPluginId` across every project, hidden included, live then archived, then chunked `experimental_listPluginMetadata` | One thread whose metadata names this exact task and run; zero matches leave delivery unknown and never authorize a resend |
 | Follow-up | `threads.send` with the message identity recorded | Accepted row; unknown delivery reconciled by reading the thread |
 | Steer or notify | `threads.send` steer when a turn is live, otherwise a queued send | Same rule as T3Code's `steerOrNotify` |
 | Observe | `threads.get`, or a chunked row read from `threads.list({ threadIds })` | Status, active turn, pending interaction, archive state |
@@ -401,7 +426,7 @@ changes.
 | `bb.server.experimental_dataDir` | Host identity (`bb:<hash>`) and the data-directory probe | Identity refuses by name and the host stays offline; the fallback is to derive identity from the machine host record and version, which is weaker, so the phase-1 probe must fail closed instead |
 | `threads.experimental_listPluginMetadata` | Adopting a thread after an uncertain spawn, in one chunked read | Adoption falls back to per-thread `threads.getPluginMetadata`, which is the same exact identity one call per candidate; if that is also missing, the uncertain spawn stays unknown with nothing bound and no retry |
 | `threads.experimental_listAncestors` | Proving a role thread's planner before reparenting or archiving | Reparenting reads the parent link per thread instead; a deeper planner chain is then unproven |
-| `threads.experimental_listCascade` | Proving an archive would touch only this task's own threads | Archive fails closed: without the read there is no authoritative cascade proof, so a thread is left unarchived and closeout records the cleanup as incomplete unless `threads.count({ parentThreadId })` answers 0, which proves it has no dependents |
+| `threads.experimental_listCascade` | Proving an archive would touch only this task's own threads | Archive fails closed with no substitute: without the read there is no authoritative cascade proof, so the thread is left unarchived and closeout records the cleanup as incomplete. A sidebar child count or a list absence never stands in for it |
 | `composer.customize` `experimental_popups` | A pill's popover content | Pills fall back to host-rendered menus and the board opens the same action |
 | `slots.experimental_threadList` | Deferred; not used by this design | Nothing, because the built-in sidebar is the plan |
 | `experimental_setThreadRowStatus` | Deferred row decoration; not used by this plan | Nothing; the worker title carries the step |
@@ -503,10 +528,12 @@ wire shapes pinned.
   and reused by the next role; an inventory of more than 200 threads chunked into bounded calls with a
   complete map; one failed or short chunk, or an omitted row, answering `null` and falling back to
   `observe`; a row with a pending interaction costing one interaction read; a lost `threads.spawn`
-  reply adopted only from metadata naming the exact task and run; a lost spawn with an unreadable
-  candidate walk staying unknown and unbound; a lost spawn with two metadata matches refused; a lost
-  spawn with a complete walk naming none retried once under the same intent; a title write read back
-  before retry; and an archive preceded by its cascade read.
+  reply adopted only from metadata naming the exact task and run; a reparented thread and a hidden
+  thread still found by the complete origin search; a spawn that lands after an empty search adopted
+  on the later sweep; a lost spawn with an unreadable or partial walk staying unknown and unbound; a
+  lost spawn with two metadata matches refused; an empty complete search never resending, leaving the
+  run uncreated and the task in attention with what was tried; a title write read back before retry;
+  and an archive preceded by its cascade read.
 - `effigy check` and `effigy test:affected --run`.
 
 **Dependencies.** Phases 0–2.
@@ -527,7 +554,8 @@ durable archive effect.
   reviewer replacement archives only the displaced thread; closeout archives recorded children before
   their parents and records completion once; an archive whose cascade read is unavailable, or names a
   thread this task does not own, is refused with the thread left unarchived and the cleanup recorded
-  as incomplete.
+  as incomplete, including the case where the thread has no sidebar children but a foreign lifecycle
+  dependent, where a zero child count is not accepted as a cascade proof.
 - `effigy check` and `effigy test:affected --run`.
 
 **Dependencies.** Phases 0–3.
