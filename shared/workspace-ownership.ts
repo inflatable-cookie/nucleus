@@ -13,3 +13,16 @@ import type { Task } from "./schema/tasks";
 export function externalWorkspace(task: Pick<Task, "workspaceOwnership" | "reviewEntry">): boolean {
   return task.workspaceOwnership === "external" || task.reviewEntry?.preserveWorkspace === true;
 }
+
+/**
+ * Whether the task's recorded directory may be used without proving it is a
+ * Queue allocation. Intake-owned review-entry workspaces are still archived
+ * by Nucleus at closeout, so keep this admission rule separate from
+ * `externalWorkspace`'s cleanup and retention meaning.
+ */
+export function workspaceOutsideQueueAllocation(task: Pick<Task, "workspaceOwnership" | "reviewEntry" | "workspaceId" | "directory">): boolean {
+  if (externalWorkspace(task)) return true;
+  const entry = task.reviewEntry;
+  return Boolean(entry && entry.preserveWorkspace === false && task.workspaceId
+    && task.directory && entry.workspaceId === task.workspaceId && entry.directory === task.directory);
+}
