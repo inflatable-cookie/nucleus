@@ -1,11 +1,10 @@
 /**
- * Nucleus's BB plugin backend (Spec 062, phase 0).
+ * Nucleus's BB plugin backend (Spec 062, phases 0–3).
  *
- * This is the transport skeleton, not the adapter: it declares a service channel
- * role, executes the bounded host operations the service asks for, and nothing
- * else. It registers no host, adds no host kind, contributes no UI and cannot
- * dispatch a task. The Nucleus skill and the routing that selects BB per
- * repository are later phases.
+ * Keeps the reverse service channel, executes bounded BB host operations and
+ * supplies helper-reporting bindings from run metadata. Host registration,
+ * repository routing and task lifecycle remain service-owned; sidebar and board
+ * UI belong to later phases.
  */
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { runHostChannel } from "./channel";
