@@ -20,6 +20,7 @@ import { RECOVERY_CREATION_FAILURE_PREFIX } from './task-reasons';
 import { unreleasedExecutorRun } from '../qa/proof-admission';
 import { CoordinatorEpisode, cause, key, needsAttention, type RecoveryContext } from './coordinator-episode';
 import { coordinatorReportMatches, taskProgressDigest } from './coordinator-report';
+import { reopenLiveNoopAfterStall } from './live-noop';
 import { isPseudoCheckpointError, postBudgetPrePrResumes, pseudoCheckpointEscalation } from './pseudo-checkpoint';
 
 /** Open-PR identity or leftover proof wait after a verified merge: Resolution closes out; a coordinator cannot. */
@@ -240,7 +241,7 @@ export class CoordinatorRoute {
    refusedAction=incident.action;
    incident=null;
   }
-  if(incident&&sameEpisode){
+  if(incident&&sameEpisode&&!reopenLiveNoopAfterStall(t)){
    if(incident.status==='resolved'||incident.status==='uncertain'||incident.status==='escalated')return incident.summary||null;
    if(incident.status==='nudged'){
     const idle=await this.resolution.idle(incident.agentId!).catch(()=>false);

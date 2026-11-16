@@ -6,6 +6,7 @@ import { reviewFenceHoldsCoordinators } from '../review/review-continuation';
 import { dispatchBlocked } from '../dispatch/capacity';
 import {RECOVERY_ESCALATION_FAILURE_PREFIX} from './task-reasons';
 import {ACCEPTED_RECOVERY_NOT_APPLIED_PREFIX, cause, needsAttention, type CoordinatorEpisode, type RecoveryContext} from './coordinator-episode';
+import {isLiveRecoveryNoop} from './live-noop';
 
 /**
  * How long a recovery episode may sit pending with no run before it escalates.
@@ -172,15 +173,25 @@ export class CoordinatorPass {
      }
      continue;
     }
-    if(!await this.resolution.lease(t)||this.resolution.startsNoRuns())continue;
     const finishedRun=run;
     const accepted=this.episode.bindingFrom(run,incident);
     const reported=accepted?this.episode.completionFromBinding(t,finishedRun,accepted):null;
+    // A live no-op starts no work: do not wait for the working participant's
+    // lease. That participant staying active is the reason the report exists.
+    if(accepted?.status==='pending'&&accepted.reportStatus==='recovered'&&!accepted.coordinatorAction){
+     this.store.transaction(()=>this.episode.settleLiveNoOp(this.store.task(t.id),finishedRun,accepted));
+     continue;
+    }
     if(t.responsible&&accepted&&reported&&['blocked','error'].includes(accepted.reportStatus)&&reported.providerUnavailable!==true){
+     if(isLiveRecoveryNoop(accepted.summary)){
+      this.store.transaction(()=>this.episode.settleLiveNoOp(this.store.task(t.id),finishedRun,accepted));
+      continue;
+     }
      this.store.transaction(()=>this.episode.settleFinishedRun(this.store.task(t.id),finishedRun,`Recovery reported ${accepted.reportStatus}: ${accepted.summary}; handing it to the responsible-task planner ladder`));
      await this.resolution.responsibleBlockerLadder(this.store.task(t.id),{source:'recovery',runId:finishedRun.id,completion:reported});
      continue;
     }
+    if(!await this.resolution.lease(t)||this.resolution.startsNoRuns())continue;
     if(accepted?.status==='pending'&&accepted.coordinatorAction){
      if(this.coordinatorActionHandler)await this.coordinatorActionHandler(t,run,accepted);
      else this.episode.refuseAcceptedAction(t,run,accepted,'the task reconciler cannot apply coordinator owner verbs in this context',false);

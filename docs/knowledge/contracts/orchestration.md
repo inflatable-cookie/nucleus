@@ -2609,10 +2609,12 @@ movement invalidates source approval and preserves the normal readiness gates.
 - Nucleus records one current stop per task (`{reason, detail, since,
   suggestedVerbs}`). A coordinator returns one typed `coordinatorAction`
   (`restart`, `route`, `move`, `retry_effect` or `cannot`) with its recovery run
-  identity; Nucleus applies it through the shared verb registry. A report without
-  the structured action is refused at intake with its shape. A `cannot` over a
-  still-bound initial or revision worker waits for that worker after a fresh
-  matching agent and workspace observation; otherwise it escalates to the owner.
+  identity; Nucleus applies it through the shared verb registry. A recovered
+  report with no action is a live no-op: the coordinator found a worker or
+  reviewer still working, the episode settles, and no planner escalation opens.
+  A `cannot` over a still-bound initial or revision worker waits for that worker
+  after a fresh matching agent and workspace observation; otherwise it escalates
+  to the owner.
 - A coordinator cannot grant acceptance or relay an operator replacement instruction.
 - A report binds to its episode, coordinator generation and the task's progress
   when the episode opened (phase, head, worker, completion and review, run,

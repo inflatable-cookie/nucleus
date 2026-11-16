@@ -86,7 +86,18 @@ const workerHoldsSlot = (task: Task): boolean => {
 // order. Terminal tasks never hold slots.
 export const occupiesSlot = (task: CapacityTask, runs: Run[] = []) =>
   !["done", "cancelled"].includes(task.phase) &&
-  (workerHoldsSlot(task) || runs.some(runHoldsSlot) || task.hasLiveRun === true);
+  (workerHoldsSlot(task) || runs.some(runHoldsSlot) || task.hasLiveRun === true
+    || Boolean(task.resolution.restartSlotHold));
+
+/** True when this launch is the continuation the restart hold was keeping a slot for. */
+export function consumeRestartSlotHold(task: Task, role: Run['role']): boolean {
+  const hold = task.resolution.restartSlotHold;
+  if (!hold) return false;
+  if (hold.role === 'reviewer') return role === 'reviewer';
+  if (hold.role === 'worker') return role === 'revision';
+  if (hold.role === 'executor') return role === 'executor';
+  return false;
+}
 
 /** Never-dispatched `queued` work. Every other slot request is in-flight. */
 function isInFlightSlotRequest(task: Task): boolean {
