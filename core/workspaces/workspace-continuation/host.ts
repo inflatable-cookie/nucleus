@@ -1,6 +1,6 @@
 import type { HostProcessFact, HostWorktreeWorkspaceSpec } from "../../host/types";
 import type { Task } from "../../../shared/contracts";
-import { externalWorkspace } from "../../../shared/workspace-ownership";
+import { workspaceOutsideQueueAllocation } from "../../../shared/workspace-ownership";
 import type { HostWorkspaceRef } from "../../../shared/host";
 import { existsSync } from "node:fs";
 import { git, queueCheckoutStatus } from "../../git/index";
@@ -60,11 +60,13 @@ export class WorkspaceContinuation {
     const unavailable = (reason: string) => ({ available: false as const, reason });
     if (!task.workspaceId || !task.directory) return unavailable('Retained worker workspace identity is incomplete; no continuation was sent');
     const placement = this.host.placement();
-    // An external workspace lives where its registering thread put it; only a
-    // Queue allocation owes the owned-path proof and the volume admission, and
-    // the retained workspace's own record and folder are proved below either
-    // way (nucleus#1261).
-    if (placement && !externalWorkspace(task)) {
+    // External and intake-owned review-entry workspaces live outside Queue
+    // placement. The latter still receive a direct volume check; every binding
+    // is then checked against the retained workspace's own record and folder.
+    if (placement && workspaceOutsideQueueAllocation(task)) {
+      try { if (task.reviewEntry?.preserveWorkspace === false) placement.admit(task.directory); }
+      catch (error) { return unavailable(error instanceof Error ? error.message : String(error)); }
+    } else if (placement) {
       try { if (task.directory === await this.host.ownedPathFor(task)) placement.admit(task.directory); }
       catch (error) { return unavailable(error instanceof Error ? error.message : String(error)); }
     }

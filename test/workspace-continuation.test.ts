@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { PaseoAdapter } from "../service/paseo-composition";
 import type { HostProcessFact } from "../core/host/types";
 import type { Task } from "../shared/contracts";
+import { reviewEntryRecordSchema } from "../shared/contracts";
 import type { HostWorkspaceRecord } from "../shared/host";
 import {
   WorkspaceContinuation, type HostWorktreeWorkspaceSpec, type WorkspaceContinuationHost,
@@ -159,6 +160,29 @@ test("the continuation preflight proves the owned path through the host before i
   assert.deepEqual(await continuation.preflightWorkerContinuation(task({ directory })),
     { available: false, reason: "storage unavailable" });
   assert.deepEqual(host.calls, ["placement", "ownedPathFor"], "no registration is read after a refused admission");
+});
+
+test("an intake-owned review-entry continuation admits its exact directory directly", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "ns-workspace-continuation-intake-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const directory = join(root, "paseo-worktrees", "source");
+  mkdirSync(directory, { recursive: true });
+  const admitted: string[] = [];
+  const entry = reviewEntryRecordSchema.parse({
+    operationId: "a".repeat(64), prNumber: 41, repository: "example/repo", branch: "feature/source",
+    workspaceId: "wks_65f907ac97222689", verifiedHead: "b".repeat(40), verifiedBase: "c".repeat(40),
+    dispatchBase: null, planningCommit: "c".repeat(40), authority: "Operator approved intake",
+    authorDeclaration: { models: ["openai/gpt-5"], githubAuthor: "author", authoringSystem: "agent", attestedBy: "operator", provenance: "fixture" },
+    checkedAt: new Date().toISOString(), preserveWorkspace: false, directory,
+  });
+  const host = hostStub({ placement: () => ({ dataDir: "/queue", admit: path => admitted.push(path) }) }, {
+    ...state(), handle: { refresh: async () => true, record: () => ({ projectRootPath: "/repo" }), directory },
+  });
+  const intakeTask = task({ workspaceId: entry.workspaceId, directory, reviewEntry: entry });
+
+  assert.deepEqual(await new WorkspaceContinuation(host).preflightWorkerContinuation(intakeTask), { available: true });
+  assert.deepEqual(admitted, [directory], "the intake directory receives volume admission without Queue-root allocation proof");
+  assert.deepEqual(host.calls.filter(call => call !== "directory"), ["workspaceRef:wks_65f907ac97222689", "refresh", "current"]);
 });
 
 test("the continuation preflight keeps its incomplete, archived, removed and changed-identity refusals", async (t) => {

@@ -12,7 +12,8 @@ import { DEFAULT_PROCESS_TERMINATION_GRACE_MS, PROCESS_TERMINATION_GRACE_MAX_MS 
  * `validation`, which also runs on every task's prospective merge, so a repository can
  * set its own milestone command without bringing back per-task full QA (Tom, 2026-09-30).
  */
-export const PROJECT_QA_TIMEOUT_MAX_MS = 7_200_000;
+/** Task 1286: one QA timeout and a staged run's stage total may each run up to 6 hours, so a long milestone stage is never capped at 2 hours. */
+export const PROJECT_QA_TIMEOUT_MAX_MS = 21_600_000;
 
 /** Bound on one stream's retained bytes when the setting names no cap. */
 export const PROJECT_QA_DEFAULT_MAX_OUTPUT_BYTES = 65_536;

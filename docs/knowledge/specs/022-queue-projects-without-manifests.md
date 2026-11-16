@@ -462,11 +462,11 @@ an independently gated live attempt.
   checkout is removed only by a teardown that succeeds, never by Nucleus on its
   own initiative.
 
-- **Command:** the repository's `qa` setting (`repository.set` `qa: {argv, timeoutMs, maxOutputBytes}`, timeout up to 2 hours), else `effigy qa`. It is separate from `validation`, which also runs on every task's prospective merge, so a repository can set a milestone command (project-k: `effigy ci:fresh`, one hour) without bringing back per-task full QA (project-k planner via Northstar, 2026-09-30).
+- **Command:** the repository's `qa` setting (`repository.set` `qa: {argv, timeoutMs, maxOutputBytes}`, timeout up to 6 hours, Task #1286), else `effigy qa`. It is separate from `validation`, which also runs on every task's prospective merge, so a repository can set a milestone command (project-k: `effigy ci:fresh`, one hour) without bringing back per-task full QA (project-k planner via Northstar, 2026-09-30).
 - **Stages (Task #121):** the `qa` setting also accepts `stages:
   [{name, argv, timeoutMs, maxOutputBytes?}]`, 1 to 8 stages whose names are
   unique and slug-shaped (`setup` and `teardown` are reserved for the run's own
-  steps) and whose timeouts total within `PROJECT_QA_TIMEOUT_MAX_MS`. A staged
+  steps) and whose timeouts total within `PROJECT_QA_TIMEOUT_MAX_MS` (6 hours, Task #1286). A staged
   setting replaces the single `argv`/`timeoutMs`; it cannot set both. When
   `stages` is present the stages run in order in the one owned checkout after
   `setup` and before `teardown`, each as its own recorded step built by the
