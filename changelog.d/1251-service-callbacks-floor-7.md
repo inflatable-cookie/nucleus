@@ -12,6 +12,8 @@ The admission socket shares the host-run socket's one liveness probe instead of
 carrying its own copy, asks the start-identity owner whether a hook's recorded
 identity can prove anything at all instead of testing an `@unknown` suffix, and
 records a reconciliation tick that throws on the reservation it was observing,
-once per distinct reason, instead of swallowing it every tick. The request bound,
+once per distinct reason, instead of swallowing it every tick — and when the
+journal refuses that record, both the fault and the refusal are reported on the
+service's error stream rather than lost. The request bound,
 the framing, the bind and the teardown keep the behaviour they had. No admission
 rule, protocol shape or capacity decision changes.

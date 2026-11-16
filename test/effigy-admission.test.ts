@@ -1021,3 +1021,40 @@ test("a request past the socket's bound is closed undecoded, even with its newli
   assert.equal(inside.ok, true);
   assert.equal(endpoint.rpcMetrics().methods.status.requests, 1, "a request inside the bound is dispatched");
 });
+
+test("a reconciliation fault whose journal note is refused is reported instead of lost", async t => {
+  const scheduler = isolatedScheduler(t);
+  const root = socketFixtureRoot("qadm-");
+  assertSocketPathFits(hostRunAdmissionSocketPath(join(root, "host-run")));
+  // The service's own error stream is the only place left when the row cannot
+  // carry the cause, so this test owns that stream for its duration.
+  const logged: string[] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+  t.after(() => { console.error = originalError; });
+  const endpoint = new EffigyAdmissionEndpoint(scheduler, {
+    stateDir: join(root, "host-run"), watchMs: 20, effigyVersion: SELF_EFFIGY,
+    // The tick's own liveness read fails, and the journal it would record the
+    // fault on refuses the write: the fault has nowhere durable to go.
+    hookAlive: () => { throw new Error("kernel liveness read refused"); },
+  });
+  await endpoint.start();
+  t.after(async () => { await endpoint.stop(); });
+  (scheduler as unknown as { note: () => never }).note = () => { throw new Error("journal is read-only"); };
+
+  const cwd = mkdtempSync(join(tmpdir(), "adm-fault-"));
+  const reserved = await endpoint.reserve(request("fault-run", cwd), selfAncestry());
+  assert.ok(reserved.reservationId, `reservation accepted (${JSON.stringify(reserved.observation)})`);
+  const reservationId = reserved.reservationId!;
+  endpoint.bindHook(reservationId, process.pid, hostRunProcessStartIdentity(process.pid));
+
+  await waitUntil(() => logged.some(line => line.includes("Admission reconciliation")), 6_000,
+    "the fault reaches the error stream");
+  const line = logged.find(entry => entry.includes("Admission reconciliation"))!;
+  assert.match(line, /kernel liveness read refused/, "the fault itself is named");
+  assert.match(line, /the row refused its fault note: journal is read-only/, "and the journal's own refusal is named");
+  // A fault is never a settlement and never releases the slot it observed.
+  const record = scheduler.get(reservationId)!;
+  assert.notEqual(record.state, "settled", "a fault never settles the reservation");
+  assert.equal(record.settlement, null);
+});

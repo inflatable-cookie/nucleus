@@ -426,18 +426,23 @@ export class EffigyAdmissionEndpoint {
   /**
    * A tick that threw is visible on the row it was observing, once per distinct
    * reason, and the watch keeps its cadence either way. A row too unreadable to
-   * note goes to the service's error stream rather than nowhere.
+   * note, or a journal that refuses the note, both go to the service's error
+   * stream: a fault with nowhere durable to go is said rather than lost twice.
    */
   private noteReconcileFault(reservationId: string, error: unknown): void {
     const reason = error instanceof Error ? error.message : String(error);
+    let failure = "the reservation row could not be read";
     try {
       const record = this.scheduler.get(reservationId);
       if (record && record.submissionSource === "admission") {
-        this.noteReason(record, "effigy_observation_refused", "reconcile-fault", reason);
-        return;
+        const note = this.noteReason(record, "effigy_observation_refused", "reconcile-fault", reason);
+        if (note.recorded) return;
+        failure = `the row refused its fault note: ${note.refusal ?? "no reason given"}`;
       }
-    } catch { /* the row itself is unreadable; the error stream below still names the fault */ }
-    console.error(`Admission reconciliation for ${reservationId} failed: ${reason}`);
+    } catch (readError) {
+      failure = `the reservation row could not be read: ${readError instanceof Error ? readError.message : String(readError)}`;
+    }
+    console.error(`Admission reconciliation for ${reservationId} failed (${reason}); ${failure}`);
   }
 
   /**
@@ -575,11 +580,21 @@ export class EffigyAdmissionEndpoint {
    * journal, then a structured not-found, then a real expiry) records each cause
    * once, so the row always carries everything it observed.
    */
-  private noteOnce(record: HostRunInternalRecord, event: string, key: string, data: Record<string, unknown>): void {
+  /**
+   * One durable note per reservation and exact dedupe key. A tick that sees the
+   * same answer or hold again adds nothing; a cause that changed (an unreadable
+   * journal, then a structured not-found, then a real expiry) records each cause
+   * once, so the row always carries everything it observed.
+   *
+   * The answer says whether the cause is on the row now: `recorded` is false only
+   * when the journal refused the write, and `refusal` names why, so the caller
+   * whose whole job is making a failure visible can say so instead of losing it.
+   */
+  private noteOnce(record: HostRunInternalRecord, event: string, key: string, data: Record<string, unknown>): { recorded: boolean; refusal?: string } {
     const dedupeKey = `${event}\u0000${key}`;
     let noted = this.notedReasons.get(record.id);
     if (!noted) { noted = new Set(); this.notedReasons.set(record.id, noted); }
-    if (noted.has(dedupeKey)) return;
+    if (noted.has(dedupeKey)) return { recorded: true };
     noted.add(dedupeKey);
     try {
       this.scheduler.note(record.id, event, {
@@ -589,12 +604,15 @@ export class EffigyAdmissionEndpoint {
         runtimeSha256: record.effigyRuntime?.sha256 ?? null,
         bindingRefusal: record.effigyRuntimeRefusal ?? null,
       });
-    } catch { /* a settled or unreadable row needs no note */ }
+      return { recorded: true };
+    } catch (error) {
+      return { recorded: false, refusal: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   /** A hold or refusal, once per note kind and exact reason. */
-  private noteReason(record: HostRunInternalRecord, event: string, kind: string, reason: string): void {
-    this.noteOnce(record, event, `${kind}\u0000${reason}`, { kind, reason });
+  private noteReason(record: HostRunInternalRecord, event: string, kind: string, reason: string): { recorded: boolean; refusal?: string } {
+    return this.noteOnce(record, event, `${kind}\u0000${reason}`, { kind, reason });
   }
 
   /**
