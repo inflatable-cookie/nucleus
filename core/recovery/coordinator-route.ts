@@ -16,7 +16,7 @@ import { COORDINATOR_LOOP_LIMIT, COORDINATOR_LOOP_SUMMARY, taskWorkIdentity, unp
 import { recoveryDispatchSnapshot, type RecoveryDispatchSnapshot } from './recovery-context';
 import { groupIsUnavailable, supersedingRouteProfile } from '../../shared/pool';
 import { requiredCheckPollMetaKey } from '../forge/checks';
-import { RECOVERY_CREATION_FAILURE_PREFIX } from './task-reasons';
+import { creationFailureSummary } from './task-reasons';
 import { unreleasedExecutorRun } from '../qa/proof-admission';
 import { CoordinatorEpisode, cause, key, needsAttention, type RecoveryContext } from './coordinator-episode';
 import { coordinatorReportMatches, taskProgressDigest } from './coordinator-report';
@@ -364,6 +364,6 @@ export class CoordinatorRoute {
     if(this.store.task(t.id).coordinatorGeneration===run.generation)this.store.update(t.id,{coordinatorAgentId:agentId},'coordinator_assigned',agentId);
    }
    this.store.putRun({...run,agentId,status:'running'});this.episode.save(t,{agentId});return null;
-  }catch(error){return this.episode.escalate(this.store.task(t.id),`${RECOVERY_CREATION_FAILURE_PREFIX}${error instanceof Error?error.message:String(error)}`);}
+  }catch(error){return this.episode.escalate(this.store.task(t.id),creationFailureSummary(error instanceof Error?error.message:String(error)));}
  }
 }

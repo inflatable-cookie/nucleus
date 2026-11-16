@@ -134,7 +134,6 @@ export async function buildRuntime(destination) {
   "core/scheduling/repository-contention.ts": "server/repository-contention.ts",
   "core/planning/enclosing-operation.ts": "server/enclosing-operation.ts",
   "core/recovery/fence-settlement.ts": "server/fence-settlement.ts",
-  "core/recovery/task-reasons.ts": "server/task-reasons.ts",
   "core/recovery/wait-context.ts": "server/wait-context.ts",
   "core/stages.ts": "server/stages.ts",
   "core/task-decision-rules.ts": "server/task-decision-rules.ts",

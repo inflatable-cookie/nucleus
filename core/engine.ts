@@ -12,7 +12,7 @@ import { PlannerGrantCleanup } from './questions/planner-grants';
 
 import { Dispatch } from "./dispatch/dispatch";
 import { HOST_WAIT_PRESERVED_STOPS, hostUnavailableDetail } from '../shared/host-outage';
-import { CreationRecovery } from "./recovery/creation-recovery";
+import { CreationRecovery } from "./recovery/absent-creation";
 import type { GitTransientEpisode } from './git/git-transient-backoff';
 
 import { type WorkspaceDiscard } from './workspaces/orphan-worktree';
@@ -123,7 +123,10 @@ import { RouteControls } from "./verbs/route";
 import { TaskRemoval } from "./verbs/removal";
 import { WorkerLauncher } from "./dispatch/worker-launcher";
 import { WorkspaceProvisioning } from "./workspaces/workspace-provisioning";
-import { Projections } from "./store/projections";
+import { CleanupLane } from "./closeout/cleanup-lane";
+import { RetirementLane } from "./runtime/retirement-lane";
+import { ProjectionOccurrences, drainProjectionCut } from "./scheduling/projection-occurrences";
+import { WorkspaceTitleProjection } from "./workspaces/workspace-title-projection";
 import { Resolution } from "./resolution";
 import { PROFILE_CATALOG_LOADING_REFUSAL, PROFILE_CATALOG_PENDING_REASON } from "./recovery/task-reasons";
 import { reportingIdentityMismatch } from "./intake/reporting-identity";
@@ -330,26 +333,32 @@ export class Engine {
   private set activeLanes(value: Set<string>) { this.laneScheduler.activeLanes = value; }
   get wakePreludes(): number { return this.laneScheduler.wakePreludes; }
   set wakePreludes(value: number) { this.laneScheduler.wakePreludes = value; }
-  private projectionsOwner?: Projections;
+  private occurrencesOwner?: ProjectionOccurrences;
   /** Built on first use: tests reach the delegates on an `Object.create(Engine.prototype)` engine. */
-  private get projections(): Projections { return this.projectionsOwner ??= new Projections(this); }
+  private get occurrences(): ProjectionOccurrences { return this.occurrencesOwner ??= new ProjectionOccurrences(); }
+  private titleProjectionOwner?: WorkspaceTitleProjection;
+  private get titles(): WorkspaceTitleProjection { return this.titleProjectionOwner ??= new WorkspaceTitleProjection(this, this.occurrences); }
+  private cleanupLaneOwner?: CleanupLane;
+  private get cleanups(): CleanupLane { return this.cleanupLaneOwner ??= new CleanupLane(this, this.occurrences); }
+  private retirementLaneOwner?: RetirementLane;
+  private get retirementLane(): RetirementLane { return this.retirementLaneOwner ??= new RetirementLane(this); }
   // Tests seed and read this state on a bare engine; these go with the delegates in F2.
-  get titleQueue(): Set<string> { return this.projections.titleQueue; }
-  set titleQueue(value: Set<string>) { this.projections.titleQueue = value; }
-  get projectionEnqueued(): Map<string, number> { return this.projections.projectionEnqueued; }
-  set projectionEnqueued(value: Map<string, number>) { this.projections.projectionEnqueued = value; }
-  get projectionDone(): Map<string, number> { return this.projections.projectionDone; }
-  set projectionDone(value: Map<string, number>) { this.projections.projectionDone = value; }
-  get projectionWaiters(): (() => void)[] { return this.projections.projectionWaiters; }
-  set projectionWaiters(value: (() => void)[]) { this.projections.projectionWaiters = value; }
-  get projectionInFlight(): Set<string> { return this.projections.projectionInFlight; }
-  set projectionInFlight(value: Set<string>) { this.projections.projectionInFlight = value; }
-  get titleDraining(): Promise<void> | null { return this.projections.titleDraining; }
-  set titleDraining(value: Promise<void> | null) { this.projections.titleDraining = value; }
-  get cleanupQueue(): Array<{taskId:string;retryWorkspaceId?:string}> { return this.projections.cleanupQueue; }
-  set cleanupQueue(value: Array<{taskId:string;retryWorkspaceId?:string}>) { this.projections.cleanupQueue = value; }
-  get cleanupDraining(): Promise<void> | null { return this.projections.cleanupDraining; }
-  set cleanupDraining(value: Promise<void> | null) { this.projections.cleanupDraining = value; }
+  get titleQueue(): Set<string> { return this.titles.queue; }
+  set titleQueue(value: Set<string>) { this.titles.queue = value; }
+  get projectionEnqueued(): Map<string, number> { return this.occurrences.enqueued; }
+  set projectionEnqueued(value: Map<string, number>) { this.occurrences.enqueued = value; }
+  get projectionDone(): Map<string, number> { return this.occurrences.done; }
+  set projectionDone(value: Map<string, number>) { this.occurrences.done = value; }
+  get projectionWaiters(): (() => void)[] { return this.occurrences.waiters; }
+  set projectionWaiters(value: (() => void)[]) { this.occurrences.waiters = value; }
+  get projectionInFlight(): Set<string> { return this.occurrences.inFlight; }
+  set projectionInFlight(value: Set<string>) { this.occurrences.inFlight = value; }
+  get titleDraining(): Promise<void> | null { return this.titles.draining; }
+  set titleDraining(value: Promise<void> | null) { this.titles.draining = value; }
+  get cleanupQueue(): Array<{taskId:string;retryWorkspaceId?:string}> { return this.cleanups.queue; }
+  set cleanupQueue(value: Array<{taskId:string;retryWorkspaceId?:string}>) { this.cleanups.queue = value; }
+  get cleanupDraining(): Promise<void> | null { return this.cleanups.draining; }
+  set cleanupDraining(value: Promise<void> | null) { this.cleanups.draining = value; }
   readonly resolution: Resolution;
   readonly hooks: RepositoryHooks;
   readonly retirement: RuntimeRetirementService;
@@ -488,7 +497,7 @@ export class Engine {
     this.archiveEffectRetries = new ArchiveEffectRetries(this);
     this.recoveryEffectRetries = new RecoveryEffectRetries(this);
     this.ordinaryEffectRetries = new OrdinaryEffectRetries(this);
-    this.workerReconcile = new WorkerReconcile(enginePorts(this, ['acceptWorkerResult', 'adapter', 'admission', 'branchPrLookupDue', 'compareSiblings', 'continuationOwnsReturn', 'hooks', 'host', 'idleGraceMs', 'note', 'reconcileBlockedReturn', 'reconcileBranchPr', 'reconcileObservation', 'reconcileReportingBinding', 'recordObservation', 'reportingBindingRecheckDue', 'stopped', 'store', 'updateAfterOperatorRemap', 'onTaskHost'], ['adoptReplacementPr', 'attention', 'extendCallbackReminder', 'heavyRunAlive', 'identifyOriginHost', 'withHost', 'reconcileStalledTurnStop', 'recovery', 'remindStoppedWorker', 'resolveIncident', 'responsiblePrReportRefused', 'settleAutomaticReplayHold', 'stalls', 'suppressAutomaticRetry', 'update', 'waiting']));
+    this.workerReconcile = new WorkerReconcile(enginePorts(this, ['adapter', 'admission', 'compareSiblings', 'hooks', 'host', 'idleGraceMs', 'note', 'onTaskHost', 'stopped', 'store', 'updateAfterOperatorRemap'], ['adoptReplacementPr', 'attention', 'extendCallbackReminder', 'heavyRunAlive', 'identifyOriginHost', 'withHost', 'reconcileStalledTurnStop', 'recovery', 'remindStoppedWorker', 'resolveIncident', 'responsiblePrReportRefused', 'settleAutomaticReplayHold', 'stalls', 'suppressAutomaticRetry', 'update', 'waiting']));
     const engine = this;
     this.callbackIntake = new CallbackIntake({
       get adapter() { return engine.adapter; },
@@ -888,7 +897,7 @@ export class Engine {
     this.stopped = true;
     this.unsubscribePrerequisites();
     this.taskWakes.stop();
-    this.projections.stop();
+    this.cleanups.stop();
     this.dispatchOwner.stop();
     // A native decision this process observes is left unknown rather than resent.
     this.resolution.abortResponsibleQuestions();
@@ -919,34 +928,42 @@ export class Engine {
    */
   note(id: string, reason: string, stop: TaskStopReason | "classify", phase?: Task["phase"]): void { return this.engineStop.note(id, reason, stop, phase); }
   enqueueTitle(taskId: string): void {
-    this.projections.enqueueTitle(taskId);
+    this.titles.enqueue(taskId);
   }
   drainTitles(): Promise<void> {
-    return this.projections.drainTitles();
+    return this.titles.drain();
   }
   scheduleRetirement(taskId: string): void {
-    this.projections.scheduleRetirement(taskId);
+    this.retirementLane.schedule(taskId);
   }
   enqueueCleanup(taskId: string, retryWorkspaceId?:string): void {
-    this.projections.enqueueCleanup(taskId, retryWorkspaceId);
+    this.cleanups.enqueue(taskId, retryWorkspaceId);
   }
   drainCleanup(): Promise<void> {
-    return this.projections.drainCleanup();
+    return this.cleanups.drain();
   }
   scheduleCleanupRetry(taskId: string): void {
-    this.projections.scheduleCleanupRetry(taskId);
+    this.cleanups.scheduleRetry(taskId);
   }
+  /** True until the engine stops or the store pauses: every projection wait ends then. */
+  private projectionsWaiting(): boolean { return !this.stopped && this.store.getMeta('paused') !== true; }
   awaitProjectionOccurrence(key: string, drain: () => Promise<void>): Promise<void> {
-    return this.projections.awaitProjectionOccurrence(key, drain);
+    return this.occurrences.awaitOccurrence(key, drain, () => this.projectionsWaiting());
   }
   replayedArchiveOutcome(task: Task, input: TaskControlInput, operationId?: string): Task | null { return this.retryEffectReplay.replayedArchiveOutcome(task, input, operationId); }
   replayedCatalogArchiveOutcome(task: Task, input: TaskControlInput, operationId?: string): Task | null { return this.retryEffectReplay.replayedCatalogArchiveOutcome(task, input, operationId); }
   replayedDispositionWorkspaceOutcome(task: Task, input: TaskControlInput, operationId?: string): Task | null { return this.retryEffectReplay.replayedDispositionWorkspaceOutcome(task, input, operationId); }
   drainProjections(options: { cleanup?: boolean } = {}): Promise<void> {
-    return this.projections.drainProjections(options);
+    return drainProjectionCut({
+      occurrences: this.occurrences,
+      titles: { queue: this.titles.queue, drain: () => this.drainTitles() },
+      cleanups: { queue: this.cleanups.queue, drain: () => this.drainCleanup() },
+      awaitCleanup: options.cleanup !== false,
+      keepWaiting: () => this.projectionsWaiting(),
+    });
   }
   syncWorkspaceTitle(task: Task): Promise<void> {
-    return this.projections.syncWorkspaceTitle(task);
+    return this.titles.sync(task);
   }
   /** Live Paseo threads the planner picker offers, each with a kind so task threads can be left out. */
   projectOwnerCandidates(): Promise<{ id: string; title: string; workspaceId: string | null; kind: ReturnType<typeof ownerCandidateKind> }[]> { return this.projectLifecycle.projectOwnerCandidates(); }

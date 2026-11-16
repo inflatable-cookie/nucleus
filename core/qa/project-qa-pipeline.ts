@@ -30,7 +30,7 @@ import {
 } from "./project-qa-supervision-files";
 import { PROJECT_QA_FAILURES_BYTES, StreamingTapFailures, boundedFailureLocation, redactFailureIndex, failureCoverageDetail, appendFailuresLog } from "./project-qa-tap-failures";
 import { reapQaWorktreeEscapees } from "./project-qa-escapees";
-import { preparePipelineCheckout, projectQaWorktreeHooks, removeQaWorkspace } from "./project-qa-worktree";
+import { preparePipelineCheckout, projectQaWorktreeHooks, removePartialPipelineCheckout, removeQaWorkspace } from "./project-qa-worktree";
 
 /**
  * The milestone QA pipeline: checkout, setup, the ordered QA stages, teardown and
@@ -55,6 +55,15 @@ export function qaSupervisionCpuCoverage(runId: string, state: QaSupervisionStat
 
 /** Bytes of each stream kept as one step's own head and tail on the run record. */
 export const PROJECT_QA_STEP_OUTPUT_BYTES = 512;
+
+/**
+ * Task 1255: the bounded backoff between a milestone QA run's two
+ * checkout-creation attempts. One retry after this delay rides out a kill
+ * under host load; a failure that survives it settles as a plain failure.
+ */
+export const QA_CHECKOUT_CREATION_RETRY_DELAY_MS = 1000;
+
+const sleep = (ms: number) => new Promise<void>(resolvePromise => { setTimeout(resolvePromise, ms); });
 
 /**
  * The bounded head and tail of one stream, so one step cannot evict another's
@@ -107,6 +116,37 @@ export interface QaSpawnedProcess {
   startIdentity: string;
 }
 
+/**
+ * Task 1255: create the run's checkout, retrying once when creation dies
+ * mid-way (the clone or worktree add exits non-zero, or is killed under host
+ * load, before the run starts). The partial checkout is removed under the
+ * run's existing ownership proof before a bounded backoff and the one retry;
+ * a checkout that still cannot be created settles as a plain failure below,
+ * never as an uncertain checkout retained for reconciliation.
+ */
+async function prepareCheckoutWithRetry(run: QaPipelineRun, io: QaPipelineIo, state: QaSupervisionState): Promise<void> {
+  try {
+    io.onCheckoutAttempt?.(1);
+    await preparePipelineCheckout(run);
+    return;
+  } catch (firstError) {
+    if (io.cancellation?.()) throw firstError;
+    let cleanup: string;
+    try {
+      await removePartialPipelineCheckout({ registeredPath: run.registeredPath, checkoutPath: run.checkoutPath, admission: run.checkoutAdmission });
+      cleanup = "removed the partial checkout";
+    } catch (cleanupError) {
+      cleanup = `partial-checkout cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`;
+    }
+    state.detail = `${state.detail}${state.detail ? "\n" : ""}QA checkout creation failed (attempt 1 of 2): ${firstError instanceof Error ? firstError.message : String(firstError)}; ${cleanup} and retrying once.`;
+    io.persist(state);
+    await sleep(io.checkoutRetryDelayMs ?? QA_CHECKOUT_CREATION_RETRY_DELAY_MS);
+    if (io.cancellation?.()) throw firstError;
+    io.onCheckoutAttempt?.(2);
+    await preparePipelineCheckout(run);
+  }
+}
+
 /** The observable identity of the process running the pipeline. */
 export interface QaPipelineIdentity { pid: number; identityToken: string }
 
@@ -127,6 +167,10 @@ export interface QaPipelineIo {
   cpu?(): ProcessTreeCpu | null;
   /** Write one step's full-output log; production uses the mode-0600 file writer, tests inject one. */
   log?(path: string, buffer: Buffer): { bytes: number | null; error: string | null };
+  /** Observed before each checkout-creation attempt (1, then 2 on retry); tests count attempts. */
+  onCheckoutAttempt?(attempt: number): void;
+  /** Delay between the two checkout-creation attempts; tests inject a small value. */
+  checkoutRetryDelayMs?: number;
   now(): number;
 }
 
@@ -299,7 +343,7 @@ export async function runProjectQaPipeline(base: QaPipelineIdentity, run: QaPipe
       if (updateCancellation()) {
         // A cancellation before any step is launched has no checkout to tear down.
       } else {
-      await preparePipelineCheckout(run);
+      await prepareCheckoutWithRetry(run, io, state);
       checkoutPrepared = true;
       run.checkoutAdmission?.();
       hooks = await projectQaWorktreeHooks(run.checkoutPath);
@@ -411,11 +455,17 @@ export async function runProjectQaPipeline(base: QaPipelineIdentity, run: QaPipe
     const durationMs = io.now() - run.startedAtMs;
     try {
       if (!teardownFailed && (!run.checkoutAdmission || checkoutPrepared)) await removeQaWorkspace({ registeredPath: run.registeredPath, checkoutPath: run.checkoutPath, admission: run.checkoutAdmission, expectedHead: run.base });
-      else if (run.checkoutAdmission && !checkoutPrepared) state.detail += "\nQA checkout creation is uncertain; retained for reconciliation.";
+      else if (run.checkoutAdmission && !checkoutPrepared) {
+        // Task 1255: a checkout that never completed is a partial directory and
+        // possibly a half-registration, not an uncertain checkout that needs a
+        // person. Remove it under the same ownership proof; whatever survives
+        // is reaped by the hourly retention sweep.
+        await removePartialPipelineCheckout({ registeredPath: run.registeredPath, checkoutPath: run.checkoutPath, admission: run.checkoutAdmission });
+      }
     } catch (error) {
       stateName = "hold";
-      if (run.checkoutAdmission) checkoutCleanupPending = true;
-      state.detail = `${state.detail}${state.detail ? "\n" : ""}QA checkout cleanup requires reconciliation: ${String(error)}`;
+      if (run.checkoutAdmission && checkoutPrepared) checkoutCleanupPending = true;
+      state.detail = `${state.detail}${state.detail ? "\n" : ""}QA checkout cleanup failed: ${String(error)}`;
     }
     updateCancellation();
     const finishedAt = new Date(io.now()).toISOString();

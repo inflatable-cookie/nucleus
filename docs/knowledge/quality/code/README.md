@@ -124,6 +124,29 @@
   and of its stops through both families' fixtures) and `core/machine/owned-read.ts` (10, boundary test in
   `test/owned-file.test.ts`), plus boundary tests for the supervision-file answers and the GO wait.
 
+- nucleus#1241 (floor 7, 2026-11-15): the question service half of the two floor-7 question modules was
+  split along the seam its row named, and re-rated at this PR's head; the ladder half had already been
+  delivered by nucleus#1242, whose `core/questions/ladder/` owners this PR imports and does not change.
+  `core/questions/questions.ts` (9: O2 T2 F2 P2 Pr1) is now the question service's shared in-flight state
+  only: the raises this process holds, the answers it recorded for them, the asks it is recovering and the
+  questions it is observing. Raising split by mechanism: `question-raises.ts` (9: O2 T2 F1 P2 Pr2) decides a
+  question is due and writes its intent, `question-raise-routes.ts` (9) owns where one raise goes — native
+  prompt, MCP ask, board decision or the ladder — the one deferred each route resolves and the native request
+  identity it records once, `question-answers.ts` (8: O2 T1 F1 P2 Pr2) owns the recorded outcome and the
+  ordinary control an answer applies, and `question-recovery.ts` (9) runs the resume sweep over the recorded
+  answers, board decisions, delegated routes and Queue payloads, resuming each readable route in record order
+  before it names an unreadable one. `question-answers.ts` stays at 8 because a free-text answer is still
+  matched to a choice by label prefix, which is the shared question schema's own boundary (N6's
+  `shared/schema/questions.ts` row keeps its 9 and had that citation refreshed to the owner that still reads
+  it). `core/questions/question-events.ts` (9: O2 T2 F1 P2 Pr2) decodes every operator-question record once:
+  the raise intent and the exact question it names, the decision link and its reason, the marks that fence a
+  re-raise, the native request identity and the payloads a restart recovers. Failure stays 1 on the new owners
+  because an unreadable recorded payload is an absent fact rather than a distinct unknown, which is why none
+  of them is rated 10. No behaviour, guard or protocol rule changed: the split moved code and replaced ad-hoc
+  event slicing with the one decoder. Boundary tests are `test/question-events.test.ts` and
+  `test/question-raise-routes.test.ts`; the existing question tests keep their assertions and reach the
+  owners directly.
+
 - nucleus#1235 (floor 7, 2026-11-15): PR state display now reads the task's recorded PR number and canonical repository, and failed reads are reported with task IDs while successful tasks remain visible (10: O2 T2 F2 P2 Pr2; test/pr-status.test.ts covers recorded identity, merged-task omission and failure context). Review publication entry points share one single-flight owner, while comment and formal-review reconciliation remain separate for their different remote evidence; formal HTTP 401/403 errors now carry a typed status rather than being classified by message text (reviews 8: O1 T2 F2 P1 Pr2; boundary coverage in test/formal-reviews.test.ts). The changed formal-review transport row remains 9 with typed HTTP status coverage in test/formal-review-http.test.ts. The shared dispatcher is the named consolidation; retaining distinct remote reconciliation is the remaining ownership seam.
 
 The product-code ratings: 588 modules in `N1.csv`–`N6.csv` (N1 orchestration 96, N2 task lifecycle
@@ -148,12 +171,39 @@ Calibration, distribution, recurring defect classes and the target are in [SUMMA
 ## Re-rating
 
 A PR that splits, consolidates or deletes a rated module updates its rows here. It removes or replaces
-the old row, adds a row per new module with the charter's five parts and evidence at the PR head, and
-notes the commit. Scores are never edited without a re-rate. Code that has moved since `136cf0de` keeps
+the old row, adds a row per new module with the charter's five parts and evidence at the PR head. How each score
+was reached goes in the PR body and the row's `reason`, not in this README: don't add per-PR entries
+here (they collide between parallel PRs; planner, 2026-11-16). Scores are never edited without a re-rate. Code that has moved since `136cf0de` keeps
 its old row until its module is next changed. Re-rating changes the row count: the 588 rows above are
 the `136cf0de` sweep, and these tables carry every row added or replaced since.
 
 ## Re-rates
+
+- nucleus#1247 (floor 7, 2026-11-15): the two floor-7 `core/store` rows were consolidated and split along
+  the seams their rows named, and re-rated at this PR's head. The Spec 041 drain pass left
+  `core/store/store-lanes.ts` (9: O1 T2 F2 P2 Pr2) for `core/planning/lane-drains.ts` (9: O2 T1 F2 P2
+  Pr2): the pass asks the owner of each row for one typed fact — the finished-task submits an idle mark
+  answers, the repositories with an active QA run, the saved plan version, the project row, the lane
+  documents — and applies the evaluation in one transaction, so no episode can start without its prompt.
+  A drain episode for an unknown lane now refuses instead of no-opping, the dead `??` fallback behind a
+  throwing `task()` read is gone with the typed read, and the retired-owner seed rule is the shared
+  `projectOwnerRoutable` beside `projectDormant` in `shared/schema/projects.ts`; typed facts stays 1 for
+  that id-shape read. `store-lanes.ts` keeps lane rows, the lane-view caches, idle close and lane
+  documents, and scores 9 because those caches are still declared on `Store` (ownership 1).
+  `core/store/projections.ts` is gone, replaced by one owner per mechanism. The workspace-title intent
+  and its drain are `core/workspaces/workspace-title-projection.ts` (9: O2 T2 F1 P2 Pr2): the meta record
+  it writes is one typed `WorkspaceTitleIntent`, an unknown send stays unknown and is retried only after
+  its recorded backoff, a purged task is a typed absence rather than a caught throw, and a sync reads only
+  the task ids its title names instead of every task; failure stays 1 for the pre-send host fault the
+  drain still swallows. The cleanup drain and its retry timers are `core/closeout/cleanup-lane.ts`
+  (9: O2 T2 F1 P2 Pr2), runtime-retirement scheduling is `core/runtime/retirement-lane.ts` (9: O2 T2 F1
+  P2 Pr2), and the occurrence counts plus the titles-then-cleanup cut are
+  `core/scheduling/projection-occurrences.ts` (9: O2 T2 F1 P2 Pr2), whose two occurrence-key shapes have
+  one owner and whose rejected drain the wait still discards. `test/retirement-lane.test.ts` is the new
+  boundary test for retirement coalescing and a host-less task, `test/workspace-title.test.ts` proves a
+  title reads only the ids it names, and `test/lane-drain.test.ts` proves an unresolved seed owner is not
+  routable. `shared/schema/projects.ts` and `core/workspaces/workspace-title.ts` keep their scores with
+  refreshed loc; the title module now owns the reference-label rule.
 
 - nucleus#1245 (floor 7, 2026-11-15): `core/runtime/planning.ts` (8) now delegates draft checks and
   handoff preparation to `core/runtime/planning-submission.ts` (9), separating preflight from the lead

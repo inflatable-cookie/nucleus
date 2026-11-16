@@ -1,8 +1,16 @@
 import { hostRunEscapedDescendantSchema, projectQaRunSchema, type HostRunEscapedDescendant, type ProjectQaRun } from "../../shared/contracts";
 import { StoreCore } from "./store-core";
+import type { ActiveQaRunRepository } from "../planning/lane-drains";
 
 export class StoreProjectQa {
   constructor(private readonly core: StoreCore) {}
+
+  /** Repositories holding a queued or running milestone QA run; the lane drain pass counts them per project. */
+  activeRunRepositories(): ActiveQaRunRepository[] {
+    return this.core.db.prepare(`SELECT json_extract(data,'$.repository.path') AS path, json_extract(data,'$.repository.origin') AS origin
+      FROM project_qa_runs WHERE json_extract(data,'$.state') IN ('queued','running')`).all()
+      .map(row => ({ path: String(row.path), origin: row.origin == null ? null : String(row.origin) }));
+  }
 
   /** Exact request delivery lookup; never fetches, reconciles or submits a host run. */
   qaRequestRecords(input: { requestId: string } | { repository: string; since: string; expectedHead: string }): unknown[] {

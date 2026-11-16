@@ -167,9 +167,14 @@ owner to the rules it enforces.
   [daemon owners](contracts/orchestration.md#daemon-owners)
   ([Spec 038](specs/038-bounded-uncertain-merge-reconciliation.md),
   [Spec 007](specs/007-reviewed-head-pre-merge-hooks.md)).
-- `core/recovery/task-reasons.ts` holds the reason text, refusal errors and small
-  helpers the owners share. It's a leaf, so importing it never closes a cycle
-  through `core/resolution.ts`. `core/dispatch/retained-work.ts` reads the retained
+- `core/recovery/task-reasons/` holds the reason text, refusal errors and small
+  helpers the owners share, split by mechanism: the recorded reasons
+  (`reasons.ts`), review and merge verdicts (`verdicts.ts`), parked-task
+  predicates (`parks.ts`), run roles and thread waits (`participants.ts`), the
+  phase sets (`phase-sets.ts`), the refusal classes (`refusals.ts`) and the
+  bounded windows and repository QA argv (`policy.ts`). `index.ts` is the barrel
+  every caller imports. It's a leaf, so importing it never closes a cycle through
+  `core/resolution.ts`. `core/dispatch/retained-work.ts` reads the retained
   author's receipted results.
 - `core/machine/owned-tool.ts` proves no live tool holds a run and records the
   `owned_tool_*` events. It decides on the typed tool-issue facts in
@@ -246,10 +251,13 @@ owner to the rules it enforces.
   order (the continuation a replacement worker resumes, retry, worker resume, and
   the stopped-revision restart). `Resolution` keeps a same-name delegate for each
   public moved method, including `retry` so instance overrides still fire.
-- `core/recovery/absent-restarts.ts` recreates proven-absent runs: an absent worker in
-  the retained workspace, an absent resolution run, an uncertain-run restart
-  under the same run ID, and the one-replacement creation budget.
-  `Resolution` keeps a same-name delegate for each moved method.
+- `core/recovery/absent-creation/` owns proven-absent creation. `restarts.ts`
+  recreates proven-absent runs: an absent worker in the retained workspace, an
+  absent resolution run, an uncertain-run restart under the same run ID, and the
+  one-replacement creation budget, which is the typed record in `budget.ts`.
+  `creation.ts` recovers the engine-side creation intent, and `decisions.ts`
+  holds the pure step rules. `Resolution` keeps a same-name delegate for each
+  moved method.
 - `core/intake/result-application.ts` applies a released result: reviewer, revision,
   proof-executor, and the interrupted-review reapply path. Its pure `advanceOwner`
   names the owner one completed run advances through. Proof settlement and the
@@ -298,7 +306,16 @@ owner to the rules it enforces.
 - `core/questions/agent-asks.ts` records, routes, waits on and resumes `ask` (alias `nucleus_ask`). Its
   `AgentAsks` class holds the in-flight routing set and the in-turn wait and poll
   cadence; `Resolution` keeps a same-name delegate for each moved method.
-- `core/questions/questions.ts` handles raised and delegated decisions, and `core/questions/native-questions.ts` handles native task-thread questions. `Resolution` retains delegates; `Questions` holds the shared in-flight state. `operatorQuestionStep` and `answeredQuestionOutcome` are the pure raise and answered-native decisions; `applyBinaryApproval` in `question-delegation.ts` is the named final reply for a binary approval.
+- `core/questions/questions.ts` holds the question service's one shared in-flight state, and the
+  raised and delegated decisions are split by mechanism: `question-raises.ts` decides a question is
+  due and records its intent, `question-raise-routes.ts` owns where one raise goes (native prompt,
+  MCP ask, board decision or planner ladder) and the deferred each route resolves, `question-answers.ts`
+  owns what an answer does, and `question-recovery.ts` runs the resume sweep.
+  `core/questions/question-events.ts` decodes every operator-question record once, including the
+  exact question an intent names. `core/questions/native-questions.ts` handles native task-thread
+  questions. `Resolution` retains delegates. `operatorQuestionStep` and `answeredQuestionOutcome` are
+  the pure raise and answered-native decisions; `applyBinaryApproval` in `question-delegation.ts` is
+  the named final reply for a binary approval.
 - `core/qa/proof-autorun.ts` starts a brief-named proof at an approved head without a question: wait for re-declared inputs, skip a docs-only head, or run the existing `proof` route once per head. `Resolution.startRunnableProof` delegates to it.
 - `core/recovery/observation.ts` runs one sweep of unreleased runs: it reads each pending run's agent and settles, recovers, reminds or leaves it. `Resolution.observe` and `Resolution.observationTargets` delegate to it.
 - `core/scheduling/lifecycle.ts` runs the task's advance steps in order through
@@ -432,10 +449,13 @@ owner to the rules it enforces.
 - `core/verbs/proof.ts` reads those facts and activates the one author-side
   proof execution a task's brief names. The same-name `Engine` method delegates
   to it.
-- `core/recovery/worker-reconcile.ts` holds the initial worker's reconcile pass, in
-  steps: observe it and settle a live one, look for its branch PR, repair a split
-  reporting binding, take a blocked return, then accept its recorded result.
-  Same-name `Engine` methods delegate to its `WorkerReconcile`.
+- `core/recovery/worker-reconcile/` holds the initial worker's reconcile pass, in
+  steps: observe it and settle a live one (`observation-gates.ts`), look for its
+  branch PR (`branch-pr.ts`), repair a split reporting binding
+  (`reporting-binding.ts`), take a blocked return (`blocked-return.ts`), then
+  accept its recorded result (`result-acceptance.ts`). `index.ts` composes the
+  pass and `decisions.ts` holds its pure outcomes. Same-name `Engine` methods
+  delegate to its `WorkerReconcile`.
 - `core/intake/callback-intake.ts` authenticates, validates and records one worker
   report: `CallbackIntake` holds Engine's source gates and the checkpoint and
   review-progress receipts. `core/intake/run-callback-intake.ts` holds
@@ -477,13 +497,15 @@ owner to the rules it enforces.
 - `core/dispatch/worker-launcher.ts` creates a task's worker: one creation per task at
   a time on each engine, one run identity claimed in a transaction, then the
   agent and its launch failures. Same-name `Engine` methods delegate to it.
-- `core/recovery/creation-recovery.ts` recovers a proven-absent worker and an unowned
-  workspace creation. `workspaceReplayAllowed` and `absentWorkerStep` are the
-  pure rules. Same-name `Engine` methods delegate to it.
-- `core/store/projections.ts` runs what stays outside the delivery lanes: workspace
-  titles, the cleanup drain and its retry timers, runtime-retirement scheduling
-  and the occurrence counts a wake or an effect retry waits on. Same-name
-  `Engine` methods delegate to it.
+- `core/recovery/absent-creation/creation.ts` recovers a proven-absent worker and an
+  unowned workspace creation. `workspaceReplayAllowed` and `absentWorkerStep`
+  (`decisions.ts`) are the pure rules. Same-name `Engine` methods delegate to it.
+- What stays outside the delivery lanes has one owner per mechanism:
+  `core/workspaces/workspace-title-projection.ts` runs the workspace-title intent
+  and its drain, `core/closeout/cleanup-lane.ts` the cleanup drain and its retry
+  timers, `core/runtime/retirement-lane.ts` runtime-retirement scheduling, and
+  `core/scheduling/projection-occurrences.ts` the occurrence ledger and the cut a
+  wake or an effect retry waits on. Same-name `Engine` methods delegate to them.
 - Coordinator recovery is one stage per module under `core/recovery/`.
   `recovery.ts` is the `Recovery` surface `Resolution` constructs and wires the
   stages together. `coordinator-route.ts` decides whether a task needs a
@@ -613,16 +635,17 @@ owner to the rules it enforces.
   answering a decision on the task thread, including the native decision wire
   (`raiseNativeDecision`). `hosts/paseo/adapter/paseo.ts` keeps same-name delegates; the identity
   checks and the permission reads and answers are the host's. Core keeps delegation,
-  intents and the event sequence in `core/questions/native-questions.ts` and `core/questions/questions.ts`,
-  and the provider list `supportsNativeQuestions` in `core/questions/native-decision.ts`, which
+  intents and the event sequence in `core/questions/native-questions.ts`, `core/questions/question-raises.ts`
+  and `core/questions/question-raise-routes.ts`, and the provider list `supportsNativeQuestions` in
+  `core/questions/native-decision.ts`, which
   routing reads synchronously. The host reads the adapter's daemon surface and timeline
   read per call.
 - `hosts/paseo/adapter/host-asks.ts` owns the Paseo host's native ask, consult and decider calls: the
   planner and reviewer asks' idle send and the native agents a consult reviewer and a
   decider start in the task workspace. `hosts/paseo/adapter/paseo.ts` keeps same-name delegates and
   the idle delivery path (`sendWhenIdle`), which the host reads per call. The routers
-  stay in core: `core/questions/delegation.ts`, `core/questions/agent-asks.ts`, `core/questions/ladder/` and
-  `core/questions/questions.ts` choose the recipient and profile, build the stable request and
+  stay in core: `core/questions/delegation.ts`, `core/questions/agent-asks.ts`, `core/questions/ladder/`,
+  `core/questions/question-raises.ts` and `core/questions/question-raise-routes.ts` choose the recipient and profile, build the stable request and
   label identities, own delegated authority and follow-up, and take the answer from the
   command receipt, never from the recipient's chat output.
 - `core/dispatch/agent-creation.ts` builds a launch's callback facts: the run ticket,
