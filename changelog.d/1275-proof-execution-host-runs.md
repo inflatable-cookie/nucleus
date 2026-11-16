@@ -1,0 +1,1 @@
+Document why host-run ownership cannot yet qualify proof execution within the unchanged 600 RAW / 512 MiB / 445 envelope, with source-bound verdicts and separate reap, census, capture and backing obligations.

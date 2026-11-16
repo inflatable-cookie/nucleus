@@ -58,6 +58,7 @@ implemented; the contracts summarise the durable rules and link here.
 | [060 — Named project agents](060-named-project-agents.md) | implemented |
 | [061 — Worker proof files reach the retained reviewer](061-worker-proof-files.md) | implemented |
 | [062 — BB host adapter](062-bb-host-adapter.md) | approved; phase 0 (the transport spike) implemented and proved, phases 1–6 not implemented |
+| [063 — Proof execution through host runs](063-proof-execution-host-runs.md) | fits:false; design only |
 
 ## Host adapters
 
