@@ -145,6 +145,7 @@ test("a workspace step registers the project and mints a handle without spawning
     assert.equal(value.spawned, 0);
     assert.match(value.handle, /^bb-worktree-[a-f0-9]{40}$/);
     assert.equal(sdk.calls.includes("threads.spawn"), false);
+    assert.equal(sdk.calls.includes("projects.delete"), false);
     // The handle is the worktree's own identity, not the repository's.
     const worktreeHandle = await operations.execute("workspace.create", { repositoryRoot: worktree, name: "Synthetic worktree" });
     assert.notEqual((worktreeHandle.value as { handle: string }).handle, value.handle);
@@ -157,6 +158,26 @@ test("a workspace step registers the project and mints a handle without spawning
     assert.equal(againValue.handle, value.handle);
     assert.equal(againValue.spawned, 0);
     assert.equal(sdk.calls.filter(call => call === "projects.create").length, 2);
+    assert.equal(sdk.calls.includes("threads.spawn"), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("workspace inspection reads the recorded BB project shape and distinguishes an unregistered root", async () => {
+  const root = fixtureDirectory();
+  try {
+    const repository = join(root, "repository");
+    mkdirSync(repository);
+    const sdk = fakeSdk();
+    const operations = createHostOperations({ sdk, pluginId: "nucleus", sdkVersion: "0.6.132", dataDir: () => "/synthetic/bb-data" });
+    const created = await operations.execute("workspace.create", { repositoryRoot: repository, workspacePath: join(root, "task-worktree"), name: "Synthetic" });
+    const projectId = (created.value as { projectId: string }).projectId;
+    const found = await operations.execute("workspace.inspect", { repositoryRoot: repository, projectId });
+    assert.deepEqual(found.value, { projectId, projectFound: true, path: repository });
+    assert.deepEqual(sdk.calls.slice(-1), ["projects.list"]);
+    const absent = await operations.execute("workspace.inspect", { repositoryRoot: join(root, "other"), projectId });
+    assert.deepEqual(absent.value, { projectId: null, projectFound: false, path: null });
     assert.equal(sdk.calls.includes("threads.spawn"), false);
   } finally {
     rmSync(root, { recursive: true, force: true });

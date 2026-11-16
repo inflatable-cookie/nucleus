@@ -60,7 +60,7 @@ import {
   type HostOperationName,
   type HostOperationOutcome,
 } from "../../shared/host-operation";
-import { parseHostExecutorDeclaration } from "../../shared/service/host-channel";
+import { parseHostExecutorDeclaration, parseHostOperationRequest } from "../../shared/service/host-channel";
 import { probeDiagnostics } from "../bb-host";
 import { WebBoard, defaultWebBundleDir, uiLinkInputSchema, type WebBoardHost, type WebBoardOptions } from "../web/web-board";
 
@@ -70,6 +70,7 @@ import { currentServiceBuildId } from "../../shared/service/build";
 const authInputSchema = z.object({ credential: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 /** A recovery ask names one request key; anything else fails closed. */
 const requestOutcomeInputSchema = z.object({ key: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,120}$/) }).strict();
+const bbHostOperationEnvelope = z.object({ hostId: z.string().regex(/^bb:[a-f0-9]{32}$/), op: z.string(), input: z.unknown() }).strict();
 const SERVICE_RPC_CONTRACTS = rpcContractDigests();
 /** A bridge roll names the builds so the drain can record it on the tasks it may interrupt. */
 const drainInputSchema = z.object({ roll: z.object({ fromBuild: z.string().max(64), toBuild: z.string().max(64) }).strict().optional() }).passthrough();
@@ -466,6 +467,14 @@ export class QueueService {
         // that never declares it sees the service exactly as before, and the one
         // presence claim, roll recovery and the catalogue path never read it.
         case HOST_EXECUTOR_METHOD: return this.handleHostExecutor(connection, request);
+        case "service.bb-host-operation": {
+          const envelope = bbHostOperationEnvelope.safeParse(request.input);
+          if (!envelope.success) return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: serviceError("invalid_input", envelope.error) }, false, request.method);
+          const parsed = parseHostOperationRequest({ op: envelope.data.op, input: envelope.data.input });
+          if (!parsed.ok) return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: parsed.failure.code, message: parsed.failure.message } }, false, request.method);
+          const result = await this.sendHostOperation(envelope.data.hostId, parsed.value.op, parsed.value.input);
+          return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result }, false, request.method);
+        }
         case "service.request-outcome": {
           // Roll recovery: the replacement answers what happened to one keyed
           // request the old service received before it drained. A store read,

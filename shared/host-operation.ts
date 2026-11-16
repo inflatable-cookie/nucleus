@@ -46,6 +46,7 @@ export const HOST_OPERATION_DEADLINE_MS = 20_000;
 export const HOST_OPERATIONS = [
   "identity.probe",
   "workspace.create",
+  "workspace.inspect",
   "run.attach",
   "thread.observe",
   "thread.stop",

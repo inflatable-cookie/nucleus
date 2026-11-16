@@ -1,0 +1,1 @@
+BB host tasks now register a repository project and keep a durable Nucleus-owned handle for each task worktree. Workspace checks and archive markers operate without creating or retiring BB threads, projects, or sibling task workspaces.
