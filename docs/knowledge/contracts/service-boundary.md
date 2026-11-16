@@ -219,9 +219,8 @@ reports the registered identity with the versions its executor announced, when
 its last heartbeat arrived, and — while it is offline — the field that refused it.
 Liveness is that heartbeat (the plugin reads `service.health` on its retained
 connection); a late heartbeat is reported as stale and never closes the connection
-or settles another operation. The registered adapter refuses
-every task-workflow call by name, so no dispatch path reaches a task yet. The
-plugin also requests the one `service.nucleus-bridge-presence` claim, retrying a
+or settles another operation. The plugin also requests the one
+`service.nucleus-bridge-presence` claim, retrying a
 refused claim on its retained connection like the Paseo bridge.
 
 The CLI and helpers resolve the calling thread from a Nucleus-issued run or
@@ -1315,9 +1314,11 @@ Paseo identity is recorded first; subsequent T3 reconnects are independent.
 
 A BB host registers from the reverse channel instead of a settings entry
 (Spec 062 phase 1), so its identity is proved by the plugin rather than
-configured here. It counts as a live host for presence, the idle clock and health
-— a live claim is a live host — and never as an available work host: `hostAvailable`
-reads it unavailable and its adapter refuses every task-workflow call before send. The host kind is `bb`, chosen per repository
+configured here. Its live claim counts for presence, the idle clock and health.
+Since [Spec 062 phase 3](../specs/062-bb-host-adapter.md#phase-3--worker-runs-observation-and-presentation),
+the composed adapter makes a connected BB host available for repository-selected
+tasks, using shared lifecycle policies and helper reporting; the workspace-only
+adapter keeps `lifecycleDispatch: false`. The host kind is `bb`, chosen per repository
 (`repository.set hostKind: "bb"`) beside `paseo` and `t3code`, and `hostKindOf`
 answers it from the `bb:` prefix. "The primary host" is the Paseo entry and only
 the Paseo entry: there is no fallback to whichever host registered first, because a

@@ -4,7 +4,7 @@ import { connect, type Socket } from "node:net";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { QueueService } from "../service/transport/server";
-import { createBbHostAdapter } from "../service/bb-host";
+import { createBbWorkspaceAdapter } from "../service/bb-host";
 import { Store } from "../core/store/store";
 import { readServiceInfo } from "../service/transport/identity";
 import { ServiceClient, ServiceRequestError } from "../shared/service/client";
@@ -119,7 +119,7 @@ test("the BB adapter route preserves proven pre-send refusals and releases works
   const unknownDirectory = join(dir, "unknown-worktree");
   for (const path of [bbDataDir, repositoryRoot, noExecutorDirectory, refusedDirectory, unknownDirectory]) mkdirSync(path);
   const hostId = hostIdFromDataDir(bbDataDir);
-  const adapter = createBbHostAdapter(hostId, () => true, dir, store);
+  const adapter = createBbWorkspaceAdapter(hostId, () => true, dir, store);
   const taskAt = (directory: string) => ({ id: "task_synthetic", title: "Synthetic task", repoPath: repositoryRoot, directory }) as unknown as Task;
   let executor: ExecutorClient | null = null;
   try {
@@ -228,7 +228,7 @@ test("the host-executor role rides the owner-only socket without disturbing pres
       operation: op,
       at: "2026-11-16T00:00:00.000Z",
       calls: { "threads.get": 1 },
-      value: { threadId: (input as { threadId: string }).threadId, title: "Synthetic", status: "idle", displayStatus: "idle", environmentId: "env_1", parentThreadId: null, parentNotifications: "off", pluginMetadata: null, archivedAt: null, queuedWork: null },
+      value: { threadId: (input as { threadId: string }).threadId, title: "Synthetic", status: "idle", displayStatus: "idle", environmentId: "env_1", parentThreadId: null, parentNotifications: "off", pluginMetadata: null, archivedAt: null, queuedWork: "none", providerId: "codex", execution: null, environmentPath: "/synthetic/worktree", originPluginId: "nucleus", updatedAt: 1, hasPendingInteraction: false, interactions: [] },
     });
     const observed = await service.sendHostOperation(hostId, "thread.observe", { threadId: "thr_1" });
     assert.equal((observed.value as { environmentId: string }).environmentId, "env_1");

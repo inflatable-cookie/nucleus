@@ -86,11 +86,9 @@ export function wireEngineHosts(engine: Engine, runtime: EngineHostWiring): void
     id === runtime.hostRegistry.primary()?.id
       ? "retiredObservations"
       : `retiredObservations:${JSON.stringify(id)}`;
-  // A host that can host no task yet (a registered BB host, Spec 062 phase 1) cannot
-  // make an unqualified origin workspace ambiguous, so it never changes Paseo's reuse.
+  // Every registered work host counts when an origin workspace is unqualified.
   engine.canReuseUnqualifiedOriginWorkspace = () =>
-    runtime.hostRegistry.known().filter((host) => hostKindOf(host.id) !== "bb")
-      .length === 1;
+    runtime.hostRegistry.known().length === 1;
   engine.identifyOriginHost = (agentId, identitySource?: IdentitySource) => {
     const qualified = parseAgentId(agentId);
     if (qualified) return Promise.resolve(runtime.hostRegistry.get(qualified.hostId) ? qualified.hostId : undefined);
