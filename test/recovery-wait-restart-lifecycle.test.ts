@@ -26,7 +26,13 @@ const head = 'a'.repeat(40), base = 'b'.repeat(40);
 const worker = profile('worker', 'test/worker');
 const reviewer = profile('reviewer', 'test/reviewer');
 const coordinator = profile('coordinator', 'test/coordinator');
-const lastActivity = '2026-11-16T04:12:08.000Z';
+// The wall-clock budget charges run starts against a 180-minute default limit:
+// pin the fixture's activity a few minutes ago so the limit never exhausts
+// mid-test, however long after 2026-11-16 the file runs (nucleus#1268). Fixed
+// timestamps aged past the limit, and the launch's correct budget park fenced
+// the restart hold the slot tests assert, failing 4 pass / 3 fail with no
+// code change.
+const lastActivity = new Date(Date.now() - 5 * 60 * 1000).toISOString();
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'ns-1258-lifecycle-'));
