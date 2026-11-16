@@ -294,7 +294,7 @@ test('every task and decision card keeps stored IDs and hashes out of visible an
     ];
     const plannerProject = projectSchema.parse({ ...project, planner: { agentId: uuid, setBy: 'operator', setAt: at } });
     const escalation = store.task(rows[1]!.id);
-    store.update(escalation.id, { resolution: { ...escalation.resolution, stop: { reason: 'escalated', detail: `Waiting with the planner or task owner ${uuid}: blocker escalation ${digest}`, since: at, suggestedVerbs: [], holderAgentId: uuid } } });
+    store.update(escalation.id, { resolution: { ...escalation.resolution, stop: { reason: 'escalated', detail: `Waiting with the planner or task owner ${uuid}: blocker escalation ${digest}`, since: at, suggestedVerbs: [] } } });
     const base = visibleTaskSummaries(rows.map(row => store.task(row.id)), [plannerProject]);
     const decision = {
       id: 'decision-card', version: 1, question: `Should we keep ${uuid} at ${digest}?`,
@@ -306,7 +306,7 @@ test('every task and decision card keeps stored IDs and hashes out of visible an
     };
     const cards = [
       { ...base[0]!, waitState: { state: 'needs_operator_input' as const, owner: 'operator', nextAction: `Answer ${uuid}`, decisionId: uuid }, reason: `Waiting on ${uuid} ${digest}` },
-      { ...base[1]!, stop: 'run' as const, stopRecord: { reason: 'escalated' as const, detail: `Waiting with the planner or task owner ${uuid}: blocker escalation ${digest}`, since: at, suggestedVerbs: [], holderAgentId: uuid } },
+      { ...base[1]!, stop: 'run' as const, stopRecord: { reason: 'escalated' as const, detail: `Waiting with the planner or task owner ${uuid}: blocker escalation ${digest}`, since: at, suggestedVerbs: [] } },
       { ...base[2]!, waitState: { state: 'needs_source_rights' as const, owner: 'operator', nextAction: `Accept ${digest}` } },
       { ...base[3]!, holdEscalated: true, hold: { owner: uuid, reason: `receipt ${uuid} ${digest}`, since: at } },
       { ...base[4]!, reason: `Working on ${uuid}; ref ${digest}` },

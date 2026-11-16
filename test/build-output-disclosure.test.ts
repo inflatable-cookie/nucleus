@@ -2,14 +2,16 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   BUILD_OUTPUT_DETAIL_LIMIT, BUILD_OUTPUT_NOTE_LIMIT, BUILD_OUTPUT_RECORD_LIMIT,
-  boundedBuildOutputDetail, buildOutputDisclosure,
+  boundedBuildOutputDetail, buildOutputDisclosure, buildOutputObservations,
 } from '../shared/build-output-disclosure';
 import type { BuildOutputCleanup } from '../shared/contracts';
 
 /**
- * What a cleanup observed is the record's own typed field (nucleus#1252). These
- * are the boundary reads a disclosure makes: the observation, the quoted detail,
- * the record bound, the subject's order and the one named run with no record.
+ * What a cleanup observed is the record's own typed field (nucleus#1252), and a
+ * record written before that field existed keeps the labels its sentence already
+ * gave a continuation. These are the boundary reads a disclosure makes: the
+ * observation, the quoted detail, the record bound, the subject's order and the
+ * one named run with no record.
  */
 const at = (hour: number) => `2026-10-24T0${hour}:00:00.000Z`;
 const record = (overrides: Partial<BuildOutputCleanup> = {}): BuildOutputCleanup => ({
@@ -25,15 +27,33 @@ test('a record’s own observations say what it saw, never its detail sentence',
   assert.match(link.text, /, a symlink left in place whose target was untouched\./);
   const empty = buildOutputDisclosure([record({ observations: ['empty'] })])!;
   assert.match(empty.text, /, no build output root present\./);
-  // The sentence is quoted, and the same sentence with no recorded observation
-  // claims nothing: a reader never recovers the fact from the prose.
-  const unrecorded = buildOutputDisclosure([record({ detail: 'Removed task-local Cargo target output at /worktree/target' })])!;
-  assert.doesNotMatch(unrecorded.text, /a recorded removal|output retained/);
-  assert.match(unrecorded.text, /Recorded detail: "Removed task-local Cargo target output at \/worktree\/target"/);
+  // The typed field decides even when the sentence would say something else.
+  const typed = buildOutputDisclosure([record({ detail: 'Removed task-local Cargo target output at /worktree/target', observations: [] })])!;
+  assert.doesNotMatch(typed.text, /a recorded removal/);
+  assert.match(typed.text, /Recorded detail: "Removed task-local Cargo target output at \/worktree\/target"/);
   // A cleanup that found the directory absent observed nothing; that is not "empty".
   const absent = buildOutputDisclosure([record({ detail: 'directory absent; nothing to clean up', observations: [] })])!;
   assert.equal(absent.entries[0]!.observations.length, 0);
   assert.doesNotMatch(absent.text, /no build output root present/);
+});
+
+test('a record written before the typed field keeps the label its sentence gave', () => {
+  const legacy = buildOutputDisclosure([record({
+    detail: 'Removed task-local Cargo target output at /worktree/target. Retained node_modules at /worktree/node_modules for the task\'s next continuation',
+  })])!;
+  assert.deepEqual(legacy.entries[0]!.observations, ['removed', 'retained']);
+  assert.match(legacy.text, /a recorded removal and output retained for the next continuation/);
+  const link = buildOutputDisclosure([record({ detail: 'Left build output symlinks: /worktree/target (Cargo target): symlink left in place; target untouched' })])!;
+  assert.deepEqual(link.entries[0]!.observations, ['link']);
+  const empty = buildOutputDisclosure([record({ detail: 'No build output roots were present' })])!;
+  assert.deepEqual(empty.entries[0]!.observations, ['empty']);
+  // A sentence that claims no observation claims none, as it always did.
+  assert.deepEqual(buildOutputObservations(record({ detail: 'Covered by the settled workspace build output cleanup' })), []);
+  // The whole recorded sentence is read, so a detail cut by the quote bound still
+  // names the observation it makes.
+  const long = buildOutputDisclosure([record({ detail: `${'x'.repeat(BUILD_OUTPUT_DETAIL_LIMIT)}. Removed node_modules at /worktree/node_modules` })])!;
+  assert.deepEqual(long.entries[0]!.observations, ['removed']);
+  assert.ok(long.entries[0]!.detail.endsWith('…'));
 });
 
 test('every observation is named once, in the record’s own order', () => {

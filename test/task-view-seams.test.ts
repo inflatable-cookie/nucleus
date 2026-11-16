@@ -7,7 +7,8 @@ import { taskStopRecord } from '../shared/task-stop';
 /**
  * The board projection reads typed facts for the two things it used to decode
  * from detail text (nucleus#1252): the prerequisite a wait names, and the agent a
- * blocker escalation waits with. These are those two boundaries.
+ * blocker escalation waits with. A record written before those fields existed
+ * keeps the projection it had, so these are those boundaries on both shapes.
  */
 const head = 'a'.repeat(40), at = '2026-10-27T00:00:00.000Z';
 const repo = { origin: 'owner/app', path: '/app' };
@@ -33,23 +34,35 @@ test('the board names the prerequisite a generated dependency wait refers to', (
   } finally { store.close(); }
 });
 
-test('an escalation wait names the holder the record typed, and never one read from its sentence', () => {
+test('an escalation names the holder its record typed, and a record from before the field keeps its owner', () => {
   const store = new Store(':memory:');
   try {
     const holder = '7a3c4bc4-e0db-48bb-9071-4ae6f3a09222';
     const plannerProject = projectSchema.parse({ ...project, planner: { agentId: holder, setBy: 'operator', setAt: at } });
     const detail = `Waiting with the planner or task owner ${holder}: blocker escalation ${'f'.repeat(64)} is open`;
     const task = seed(store, 'escalated', { phase: 'blocked' });
-    store.update(task.id, { resolution: { ...store.task(task.id).resolution, stop: taskStopRecord('escalated', detail, null, at, [], holder) } });
-    const [card] = visibleTaskSummaries([store.task(task.id)], [plannerProject]);
-    assert.equal(card.stopRecord?.holderAgentId, holder);
-    assert.equal(card.stopDisplayOwner, 'App planner');
+    const withStop = (stop: ReturnType<typeof taskStopRecord>) => store.update(task.id, {
+      resolution: { ...store.task(task.id).resolution, stop },
+    });
 
-    // A row written before the holder was typed names no owner: the sentence is
-    // display text, so the board says "the task owner" instead of parsing it.
-    store.update(task.id, { resolution: { ...store.task(task.id).resolution, stop: taskStopRecord('escalated', detail, null, at) } });
-    const [untyped] = visibleTaskSummaries([store.task(task.id)], [plannerProject]);
-    assert.equal(untyped.stopRecord?.holderAgentId, undefined);
-    assert.equal(untyped.stopDisplayOwner, undefined);
+    // A record from before the field: the stop owner's legacy decode keeps the name.
+    withStop(taskStopRecord('escalated', detail, null, at));
+    const [legacy] = visibleTaskSummaries([store.task(task.id)], [plannerProject]);
+    assert.equal(legacy.stopRecord?.holderAgentId, undefined);
+    assert.equal(legacy.stopDisplayOwner, 'App planner');
+
+    // A record the ladder writes now: the typed field is the fact.
+    withStop(taskStopRecord('escalated', detail, null, at, [], holder));
+    const [typed] = visibleTaskSummaries([store.task(task.id)], [plannerProject]);
+    assert.equal(typed.stopRecord?.holderAgentId, holder);
+    assert.equal(typed.stopDisplayOwner, 'App planner');
+
+    // The field decides, even when the sentence still names another thread: a
+    // requester that is not the project planner reads as "a planner thread".
+    const other = '0b355fd4-1111-4222-8333-944455556666';
+    withStop(taskStopRecord('escalated', detail, null, at, [], other));
+    const [mismatch] = visibleTaskSummaries([store.task(task.id)], [plannerProject]);
+    assert.equal(mismatch.stopRecord?.holderAgentId, other);
+    assert.equal(mismatch.stopDisplayOwner, 'a planner thread');
   } finally { store.close(); }
 });

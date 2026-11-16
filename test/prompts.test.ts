@@ -1059,8 +1059,8 @@ const cleanupTask = (resolution: Record<string, unknown>) => ({
 
 test('a revision continuation discloses recorded run-bound cleanup before its reuse instruction', () => {
   const task = cleanupTask({ buildOutputCleanups: [
-    cleanupRecord({ runId: 'worker-run', agentId: 'worker-agent', at: '2026-10-24T03:00:00.000Z', observations: ['removed', 'retained'], detail: 'Removed task-local Cargo target output at /worktree/target. Retained node_modules at /worktree/node_modules for the task\'s next continuation' }),
-    cleanupRecord({ runId: 'review-run', workspaceId: 'review-view', at: '2026-10-24T04:00:00.000Z', observations: ['link'], detail: 'Left build output symlinks: /review-view/target (Cargo target): symlink left in place; target untouched' }),
+    cleanupRecord({ runId: 'worker-run', agentId: 'worker-agent', at: '2026-10-24T03:00:00.000Z', detail: 'Removed task-local Cargo target output at /worktree/target. Retained node_modules at /worktree/node_modules for the task\'s next continuation' }),
+    cleanupRecord({ runId: 'review-run', workspaceId: 'review-view', at: '2026-10-24T04:00:00.000Z', detail: 'Left build output symlinks: /review-view/target (Cargo target): symlink left in place; target untouched' }),
     cleanupRecord({ runId: 'older-run', state: 'skipped', at: '2026-10-24T02:00:00.000Z', detail: 'Skipped build output roots: /worktree/target: Git reports tracked files at or under this build root' }),
     cleanupRecord({ runId: 'uncertain-run', state: 'uncertain', at: '2026-10-24T01:00:00.000Z', detail: 'Build output cleanup is uncertain: its Git common directory no longer matches the task repository' }),
   ] });

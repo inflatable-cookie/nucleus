@@ -71,6 +71,31 @@ export const boundedBuildOutputDetail = (detail: string, limit = BUILD_OUTPUT_DE
   return text.length <= limit ? text : `${text.slice(0, limit - 1).trimEnd()}…`;
 };
 
+/**
+ * What a stored record's detail sentence says its cleanup observed, for a record
+ * written before the typed field existed. The record's own `observations` decide
+ * whenever they are present; only an older row is read this way, so the labels a
+ * continuation already saw never disappear when the field is introduced. The
+ * whole recorded detail is read, because the bounded quote can cut the sentence
+ * that names an observation.
+ */
+function recordedBuildOutputObservations(detail: string | null | undefined): BuildOutputObservation[] {
+  const text = detail ?? "";
+  const found: BuildOutputObservation[] = [];
+  if (/Removed (?:task-local )?(?:Cargo target output|node_modules) at /.test(text)) found.push("removed");
+  if (/Retained node_modules at /.test(text)) found.push("retained");
+  if (/symlink left in place; target untouched/.test(text)) found.push("link");
+  if (!found.length && /No build output roots were present/.test(text)) found.push("empty");
+  return found;
+}
+
+/**
+ * What a cleanup record observed: its own typed field when the record has one,
+ * the recorded sentence only for a row written before that field existed.
+ */
+export const buildOutputObservations = (record: Pick<BuildOutputCleanup, "detail" | "observations">): BuildOutputObservation[] =>
+  record.observations ?? recordedBuildOutputObservations(record.detail);
+
 const stateLabel = (state: BuildOutputCleanup["state"]) => state === "intent"
   ? "recorded, awaiting settlement"
   : `recorded ${state}`;
@@ -100,7 +125,7 @@ export function buildOutputDisclosure(
   const quoted = ordered.slice(0, BUILD_OUTPUT_RECORD_LIMIT);
   const entries = quoted.map((record): BuildOutputDisclosureEntry => ({
     runId: record.runId ?? null, workspaceId: record.workspaceId, at: record.at, state: record.state,
-    observations: record.observations ?? [],
+    observations: buildOutputObservations(record),
     detail: boundedBuildOutputDetail(record.detail),
     sameWorkspace: workspaceId !== null && record.workspaceId === workspaceId,
     subjectRun: Boolean(runId) && record.runId === runId,

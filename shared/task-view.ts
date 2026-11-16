@@ -7,7 +7,7 @@ import { deriveWaitState, prerequisiteReasonEntries, type WaitStateContext } fro
 import { taskBudget, taskBudgetBoardView, type BudgetEvent, type TaskBudgetView } from "./task-budget";
 import { reportHeadline, TASK_PROGRESSING_REASON } from "./task-detail-summary";
 import { taskSummarySchema } from "./schema/task-view";
-import { DISPATCH_WAIT_REASON, isWaitingTaskStop, type TaskStopRecord, type TaskStopKind } from "./task-stop";
+import { DISPATCH_WAIT_REASON, isWaitingTaskStop, legacyStopHolderAgentId, type TaskStopRecord, type TaskStopKind } from "./task-stop";
 export * from "./task-stop";
 
 /**
@@ -407,8 +407,10 @@ export function visibleTaskSummaries(
     const project = projectForTask(task);
     const displayOwner = owner ? isOperatorOrigin(owner) ? "you"
       : project?.planner?.agentId === owner ? `${project.name} planner` : "a planner thread" : undefined;
-    // The typed holder the stop's own writer recorded, never the sentence it also wrote.
-    const escalationHolder = summary.stopRecord?.holderAgentId;
+    // The typed holder the stop's own writer recorded. A stop written before that
+    // field existed reads through the record owner's legacy decode, so an existing
+    // escalation keeps naming the planner or owner it waits with.
+    const escalationHolder = summary.stopRecord?.holderAgentId ?? legacyStopHolderAgentId(summary.stopRecord?.detail);
     const stopDisplayOwner = escalationHolder
       ? project?.planner?.agentId === escalationHolder ? `${project.name} planner`
         : taskOwner(task) === escalationHolder ? isOperatorOrigin(escalationHolder) ? "you" : "the task owner"

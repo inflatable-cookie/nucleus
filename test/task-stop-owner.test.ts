@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  recordedStopIsHeld, recordedStopIsWait, taskStopClassification, taskStopRecord, taskStopVerbsFor, unclassifiedTaskStop,
+  legacyStopHolderAgentId, recordedStopIsHeld, recordedStopIsWait, taskStopClassification, taskStopRecord, taskStopVerbsFor, unclassifiedTaskStop,
 } from '../shared/task-stop';
 
 /**
@@ -50,4 +50,12 @@ test('the escalation holder is a typed fact on the record, absent when the write
   const again = taskStopRecord('escalated', 'Waiting with the planner or task owner agent-1: still open', held, '2026-10-27T01:00:00.000Z', [], 'agent-1');
   assert.equal(again.since, held.since);
   assert.equal(again.holderAgentId, 'agent-1');
+});
+
+test('a stop written before the holder field still names the agent its sentence named', () => {
+  const holder = '7a3c4bc4-e0db-48bb-9071-4ae6f3a09222';
+  assert.equal(legacyStopHolderAgentId(`Waiting with the planner or task owner ${holder}: blocker escalation e1 is open`), holder);
+  assert.equal(legacyStopHolderAgentId('Waiting with the planner: blocker escalation e1 is open'), undefined);
+  assert.equal(legacyStopHolderAgentId(null), undefined);
+  assert.equal(legacyStopHolderAgentId(undefined), undefined);
 });

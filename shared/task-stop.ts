@@ -167,6 +167,16 @@ export function recordedStopIsWait(record: Pick<TaskStopRecord, "reason" | "deta
   return isWaitingTaskStop(record.reason) || isWaitingTaskStop(taskStopClassification(record.detail).reason);
 }
 
+/**
+ * The agent a recorded stop's detail names as the one the task waits with, for a
+ * row written before `holderAgentId` existed. A record that carries the field is
+ * never read this way: its own writer recorded the holder, and the sentence stays
+ * display text.
+ */
+export function legacyStopHolderAgentId(detail: string | null | undefined): string | undefined {
+  return detail?.match(/Waiting with the planner or task owner\s+([0-9a-f-]{36})\s*:/i)?.[1] ?? undefined;
+}
+
 /** Whether a recorded stop is a hold; read exactly like `recordedStopIsWait`. */
 export function recordedStopIsHeld(record: Pick<TaskStopRecord, "reason" | "detail">): boolean {
   return record.reason === "held" || taskStopClassification(record.detail).reason === "held";
