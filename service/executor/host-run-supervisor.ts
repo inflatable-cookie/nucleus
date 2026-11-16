@@ -3,6 +3,7 @@ import { hostRunResultSchema } from "../../shared/contracts";
 import {
   HOST_RUN_SUPERVISOR_PLAN_FORMAT,
   HOST_RUN_SUPERVISOR_STATE_FORMAT,
+  QUALIFICATION_FOUNDATION_INCOMPLETE,
   hostRunSupervisorPlanSchema,
   hostRunSupervisorStateSchema,
   readHostRunCancelRequest,
@@ -20,7 +21,6 @@ import { HOST_RUN_RETAINED_OUTPUT_BYTES } from "../../core/host-runs/host-run-en
 import { HOST_RUN_CPU_COVERAGE_FILE, hostRunCpuCoverageSidecar } from "../../core/host-runs/host-run-cpu-coverage";
 import { openHostRunRetainedOutput } from "../../core/host-runs/host-run-retained-output";
 import { executeHookProgram, type DirectChildWait, type ExecutionOutcome } from "../../core/machine/process-exec";
-import { QUALIFICATION_FOUNDATION_INCOMPLETE } from "../../core/host-runs/qualification-subject";
 import { ProcessTreeCpuSampler } from "../../core/machine/process-tree-cpu";
 /**
  * Detached supervisor for contract 010 client-protocol runs (Spec 035 part 3).

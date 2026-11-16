@@ -45,6 +45,7 @@ import {
 } from "../../core/host-runs/host-run-token";
 import {
   HOST_RUN_SUPERVISOR_PLAN_FORMAT,
+  QUALIFICATION_FOUNDATION_INCOMPLETE,
   hostRunCancelBodySchema,
   hostRunLaunchEnvironment,
   hostRunQualificationBodySchema,
@@ -60,7 +61,6 @@ import {
   type HostRunSupervisorPlan,
 } from "../../core/host-runs/host-run-wire";
 import {
-  QUALIFICATION_FOUNDATION_INCOMPLETE,
   type QualificationRefusalCode,
   type QualificationSubjectResolve,
 } from "../../core/host-runs/qualification-subject";

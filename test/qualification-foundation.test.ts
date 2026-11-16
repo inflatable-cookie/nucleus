@@ -26,9 +26,10 @@ import { submissionSchema } from "../shared/contracts";
 import { qualificationEnvironmentDigest, qualificationSubjectDigest } from "../core/host-runs/qualification-binding";
 import { Store } from "../core/store/store";
 import { HostRunScheduler } from "../core/host-runs/host-run-scheduler";
-import { qualificationSubjectResolver, QUALIFICATION_FOUNDATION_INCOMPLETE } from "../core/host-runs/qualification-subject";
+import { qualificationSubjectResolver } from "../core/host-runs/qualification-subject";
 import {
   HostRunEndpoint,
+  QUALIFICATION_FOUNDATION_INCOMPLETE,
   hostRunRunDir,
   hostRunSupervisorPlanSchema,
   readHostRunTokenKeys,

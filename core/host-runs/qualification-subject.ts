@@ -17,13 +17,6 @@ import { ProofExecutionRefusal } from "../qa/proof-refusal";
 import type { QualificationBinding, QualificationSubject } from "../../shared/schema/review/proof";
 import { qualificationEnvironmentDigest, qualificationSubjectDigest } from "./qualification-binding";
 
-/**
- * The refusal every mode entry shares until Spec 064 P4–P7 land their named
- * missing-input refusals (brief amendment, 2026-11-16). Authentication alone
- * never starts a real proof and never implies readiness.
- */
-export const QUALIFICATION_FOUNDATION_INCOMPLETE = "qualification foundation incomplete";
-
 /** Why a qualification submit was refused before any write. */
 export type QualificationRefusalCode = "invalid" | "unauthenticated" | "subject_mismatch" | "source_unavailable" | "not_permitted";
 
