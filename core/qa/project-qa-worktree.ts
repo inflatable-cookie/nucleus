@@ -102,6 +102,32 @@ export async function removeQaWorkspace(paths: { registeredPath: string; checkou
   if (!paths.admission) await gitRun(paths.registeredPath, ["worktree", "prune"]).catch(() => { /* Legacy cleanup. */ });
 }
 
+/**
+ * Remove a checkout that died mid-creation: a partial directory and possibly a
+ * half-registration whose HEAD cannot equal the run's base. The caller proves
+ * the same ownership first (the run's own allocation identity); a live `git
+ * worktree add` still targeting the path is never touched. A half-registration
+ * is removed without requiring its HEAD to match, which is exactly what
+ * distinguishes a partial checkout from a completed one. Afterwards the run
+ * retries creation once; whatever is left after that is reaped by retention.
+ */
+export async function removePartialPipelineCheckout(paths: { registeredPath: string; checkoutPath: string; admission?: () => void }): Promise<void> {
+  paths.admission?.();
+  if (paths.admission && findGitWorktreeAdd(paths.checkoutPath).state !== "absent")
+    throw new Error("Project QA checkout creation may still be running; preserving it");
+  if (existsSync(paths.checkoutPath)) {
+    const trees = parseWorktreeList(await gitText(paths.registeredPath, "worktree", "list", "--porcelain"))
+      .filter(tree => tree.path === paths.checkoutPath);
+    let removed = false;
+    if (trees.length) removed = (await gitRun(paths.registeredPath, ["worktree", "remove", "--force", paths.checkoutPath])).code === 0;
+    if (!removed) await removeTree(paths.checkoutPath);
+    await gitRun(paths.registeredPath, ["worktree", "prune"]).catch(() => { /* A stale half-registration is best effort. */ });
+  } else {
+    await gitRun(paths.registeredPath, ["worktree", "prune"]).catch(() => { /* Nothing to remove. */ });
+  }
+  paths.admission?.();
+}
+
 
 /** Create the run's checkout as a linked worktree and place its sibling links. */
 export async function preparePipelineCheckout(run: QaPipelineRun): Promise<void> {
