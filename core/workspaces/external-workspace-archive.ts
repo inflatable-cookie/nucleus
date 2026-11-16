@@ -78,14 +78,32 @@ const settledByOwner = (task: Task, workspaceId: string) => ownerSettlementMatch
 /** The bounded automatic retry after a hold or an unknown answer. */
 export const externalArchiveRetryDelay = (attempts: number) => doublingDelay(RETRY_BASE_MS, RETRY_MAX_MS, attempts);
 
+/**
+ * The opening every cleanup line this effect writes begins with. The shared
+ * `cleanupReason` field carries several owners' causes, so this effect rewrites
+ * it only while it still holds a line under this opening. Nothing else in Queue
+ * writes a cleanup cause under it, and older releases' wordings start here too,
+ * so a line left by a previous version stays this effect's to clear.
+ */
+const CLEANUP_REASON_OPENING = "External workspace";
+
+/** The one visible cause this effect records for each unsettled state. */
+const HOLD_REASON = {
+  failed: "archive failed",
+  uncertain: "archive is uncertain; observe before retrying",
+  held: "catalog entry held",
+} as const;
+
 /** The recorded cause of an unresolved catalog archive, for the task's cleanup line. */
 export function externalArchiveHoldReason(task: Task): string {
   const record = task.resolution.externalWorkspaceArchives.find(item => (item.state === "held" || item.state === "uncertain" || item.state === "failed") && !settledByOwner(task, item.workspaceId));
   if (!record) return "";
-  const prefix = record.state === "failed" ? "External workspace archive failed" : record.state === "uncertain"
-    ? "External workspace archive is uncertain; observe before retrying" : "External workspace catalog entry held";
-  return `${prefix} for ${record.workspaceId}: ${record.detail}`;
+  const cause = record.state === "failed" ? HOLD_REASON.failed : record.state === "uncertain" ? HOLD_REASON.uncertain : HOLD_REASON.held;
+  return `${CLEANUP_REASON_OPENING} ${cause} for ${record.workspaceId}: ${record.detail}`;
 }
+
+/** Whether a stored cleanup cause is one this effect wrote. */
+const ownsCleanupReason = (reason: string) => reason.startsWith(CLEANUP_REASON_OPENING);
 
 /** Replace this workspace's record and keep every other one. */
 const upsert = (task: Task, record: ExternalWorkspaceArchive): ExternalWorkspaceArchive[] =>
@@ -530,12 +548,13 @@ const retryAt = (attempts: number) => new Date(Date.now() + externalArchiveRetry
 /** Record one outcome without ever taking a preserved-folder absence as success. */
 function settle(ports: ExternalWorkspaceArchivePorts, task: Task, record: ExternalWorkspaceArchive, event: string): Task {
   const externalWorkspaceArchives = upsert(task, record);
-  // A catalog success clears only this effect's own visible cause: the field
-  // holds exactly the line this effect derived on the previous records, so that
-  // is the only line it owns. Every other cleanup cause (a runtime retirement,
-  // build output, an owned archive, a sibling registration's hold) is left
-  // exactly as it was.
-  const cleanupReason = !task.resolution.cleanupReason || task.resolution.cleanupReason === externalArchiveHoldReason(task)
+  // A catalog success clears only this effect's own visible cause. Ownership is
+  // the line's opening, not a comparison with the cause derived from the current
+  // records: a record an owner has since settled drops out of that derivation, so
+  // a comparison would keep the cause the owner's settlement made stale. Every
+  // other cleanup cause (a runtime retirement, build output, an owned archive, a
+  // sibling registration's hold) is left exactly as it was.
+  const cleanupReason = !task.resolution.cleanupReason || ownsCleanupReason(task.resolution.cleanupReason)
     ? externalArchiveHoldReason({ ...task, resolution: { ...task.resolution, externalWorkspaceArchives } })
     : task.resolution.cleanupReason;
   return ports.resolution.update(task, { externalWorkspaceArchives, cleanupReason }, {}, event, JSON.stringify(record));

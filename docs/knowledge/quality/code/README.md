@@ -7,7 +7,7 @@
   breaker deferral that never reached Paseo is the record's new typed `deferredByAdmission` fact
   (`shared/schema/workspace.ts`), not a phrase in `detail`. The pre-fix detail-prefix branch is gone with
   `test/archive-backpressure-retry.test.ts`'s one test that proved it; a cleanup cause is cleared only while the
-  field holds the line this effect itself derived; and observing an unknown answer answers `absent`, `present` or
+  field holds a line under the opening this effect writes; and observing an unknown answer answers `absent`, `present` or
   an unreadable cause instead of the error text as a value. `core/workspaces/workspace-lifecycle.ts` reaches 8
   (O2 T2 F1 P1 Pr2): it has one private `placementRoots` list, takes the live data home from `checkout-volume`'s
   `liveCheckoutDataDir`, matches a registration by the exact allocated path or the task's own slug and id instead
