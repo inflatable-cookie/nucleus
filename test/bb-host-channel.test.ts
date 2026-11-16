@@ -29,7 +29,9 @@ class ExecutorClient {
    * test says otherwise.
    */
   answer: (op: string, input: unknown) => Promise<unknown> = async (op: string) => {
-    if (op === "identity.probe") return { operation: op, at: "2026-11-16T00:00:00.000Z", calls: { "system.version": 1, "threads.list": 1 }, value: { dataDir: this.declaration.host.dataDir, bbVersion: this.declaration.host.bbVersion, sdkVersion: this.declaration.host.sdkVersion, hostIds: ["host_1"] } };
+    // The declaration's probe is the four reads the real executor makes (Spec 062,
+    // "Identity"): status.get, system.version, one threads.list and hosts.list.
+    if (op === "identity.probe") return { operation: op, at: "2026-11-16T00:00:00.000Z", calls: { "status.get": 1, "system.version": 1, "threads.list": 1, "hosts.list": 1 }, value: { dataDir: this.declaration.host.dataDir, bbVersion: this.declaration.host.bbVersion, sdkVersion: this.declaration.host.sdkVersion, hostIds: ["host_1"] } };
     throw Object.assign(new Error("this executor answers nothing"), { name: "HostOperationError", code: "unavailable" });
   };
   received: Array<{ id: string; op: string; input: unknown }> = [];
