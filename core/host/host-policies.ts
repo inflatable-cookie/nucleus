@@ -120,7 +120,7 @@ export abstract class HostPolicies extends MachinePorts {
   createWorkspace(task: Task, options: { freshlyPopulated?: boolean } = {}) { return this.workspaceLifecycle.createWorkspace(task, options); }
 
   /**
-   * Core's retained and closeout workspace policy (`core/workspaces/workspace-continuation.ts`)
+   * Core's retained and closeout workspace policy (`core/workspaces/workspace-continuation/host.ts`)
    * over this host: the continuation preflight, the process proof and the
    * closeout workspace's identity and source proof. Built once and read at each
    * call, so a test's replaced placement, owned path, process table or daemon

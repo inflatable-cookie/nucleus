@@ -1,17 +1,15 @@
 import type { ExternalWorkspaceCatalog } from "../host/adapter";
 import type { ProcessSearch } from "../machine/process-identity";
-import { assertCheckoutAvailable, CheckoutRefusalError, CheckoutUnavailableError } from "./checkout-volume";
-import { getWorkRoot } from "./work-root.mjs";
-import { git, gitBulk, queueCheckoutStatus } from "../git/index";
-import { defaultDataDir } from "../../shared/service/default-data-dir";
+import { assertCheckoutAvailable, CheckoutRefusalError, CheckoutUnavailableError, liveCheckoutDataDir } from "./checkout-volume";
+import { git, gitAncestry, gitBulk, queueCheckoutStatus } from "../git/index";
 import {
   classifyWorkspaceCreation, isOwnedWorkspacePath, ownedWorkspacePath, populateOwnedWorktree, removeOrphanCheckout,
-  repoCommonDir, sameWorkspacePath, workspaceCreationRefusal, workspaceDataDirFor, type OrphanWorkspace,
+  repoCommonDir, workspaceCreationRefusal, workspaceDataDirFor, type OrphanWorkspace,
   type WorkspaceCreationState,
 } from "./workspace-allocation";
 import { capPaseoTitle, taskWorkspaceTitle } from "./workspace-title";
 import { existsSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import type { Task } from "../../shared/contracts";
 import type { HostProjectRef, HostWorkspaceSpec } from "../../shared/host";
 
@@ -56,10 +54,25 @@ export class WorkspaceLifecycle {
     }
   }
   dataDir() { return workspaceDataDirFor(this.host.helperPath); }
+  /**
+   * The placed allocation surface, or null when this machine has none. Whether
+   * the data home is the live one is the checkout volume's own answer; deriving
+   * it a second time here is how the two proofs drifted apart.
+   */
   placement() {
     if (this.host.testPlacement) return this.host.testPlacement;
-    const live = sameWorkspacePath(this.host.dataDir(), defaultDataDir());
-    return live ? { dataDir: join(getWorkRoot(), 'queue'), admit: (path:string) => assertCheckoutAvailable({ target: path }) } : null;
+    const live = liveCheckoutDataDir(this.host.dataDir());
+    return live ? { dataDir: live, admit: (path:string) => assertCheckoutAvailable({ target: path }) } : null;
+  }
+  /**
+   * Every root a recorded checkout may have been allocated under: the placed
+   * root, then the retained roots a fixture names. One owner for the list, so
+   * the identity proofs below cannot disagree about where Queue allocates.
+   */
+  private placementRoots(): string[] {
+    const placement = this.host.placement();
+    if (!placement) return [];
+    return [placement.dataDir, ...(this.host.testPlacement?.retainedDataDirs ?? [])];
   }
   async preflightWorkspaceStorage(task: Task): Promise<void> {
     const placement = this.host.placement();
@@ -71,8 +84,7 @@ export class WorkspaceLifecycle {
   async ownedPathFor(task: Task): Promise<string> {
     const common = await repoCommonDir(task.repoPath), placement = this.host.placement();
     if (placement && task.directory) {
-      const roots = this.host.testPlacement ? [placement.dataDir, ...(this.host.testPlacement.retainedDataDirs ?? [])] : [join(getWorkRoot(), "queue")];
-      const recorded = roots.find(root => isOwnedWorkspacePath(task.directory!, root, common, task.id));
+      const recorded = this.placementRoots().find(root => isOwnedWorkspacePath(task.directory!, root, common, task.id));
       if (recorded) return task.directory;
       if (!isOwnedWorkspacePath(task.directory, this.host.dataDir(), common, task.id))
         throw new Error("Recorded workspace directory is not a Queue allocation");
@@ -82,17 +94,14 @@ export class WorkspaceLifecycle {
   async ownedDataDirFor(task: Task, directory: string): Promise<string | null> {
     const common = await repoCommonDir(task.repoPath), placement = this.host.placement();
     if (isOwnedWorkspacePath(directory, this.host.dataDir(), common, task.id)) return this.host.dataDir();
-    const roots = placement ? (this.host.testPlacement ? [placement.dataDir, ...(this.host.testPlacement.retainedDataDirs ?? [])] : [join(getWorkRoot(), "queue")]) : [];
-    for (const root of roots) if (isOwnedWorkspacePath(directory, root, common, task.id)) {
+    for (const root of this.placementRoots()) if (isOwnedWorkspacePath(directory, root, common, task.id)) {
       placement!.admit(directory);
       return root;
     }
     return null;
   }
   private admitObservedWorkspace(task: Task, common: string, directory: string): void {
-    const placement = this.host.placement();
-    const roots = placement ? (this.host.testPlacement ? [placement.dataDir, ...(this.host.testPlacement.retainedDataDirs ?? [])] : [join(getWorkRoot(), "queue")]) : [];
-    if (roots.some(root => isOwnedWorkspacePath(directory, root, common, task.id))) placement!.admit(directory);
+    if (this.placementRoots().some(root => isOwnedWorkspacePath(directory, root, common, task.id))) this.host.placement()!.admit(directory);
   }
   /**
    * Only a creation in progress reports steps. A reconciliation's inspection stays silent:
@@ -156,15 +165,22 @@ export class WorkspaceLifecycle {
    * cannot be read is not a duplicate: creation proceeds exactly as before, so a
    * daemon read failure never blocks dispatch on a guess.
    */
-  private async samePathRegistration(task: Task, directory: string): Promise<{ reuse: { id: string; directory: string } } | null> {
-    if (!this.host.externalWorkspaceCatalog) return null;
+  private async samePathRegistration(task: Task, directory: string): Promise<RegistrationDecision> {
+    if (!this.host.externalWorkspaceCatalog) return { kind: "create" };
     const catalog = await this.host.externalWorkspaceCatalog(directory);
-    if (!catalog.ok) return null;
+    if (!catalog.ok) {
+      // An inventory that cannot be read is not a duplicate: creation proceeds
+      // exactly as before, so a daemon read failure never blocks dispatch on a
+      // guess. The skipped check is on the step trail rather than reported as a
+      // check that found nothing.
+      this.host.workspaceCreationProgress?.(task.id, "path_registration_check", "skipped", 0);
+      return { kind: "unreadable", reason: catalog.reason };
+    }
     const own = task.workspaceId ? catalog.entries.find(entry => entry.workspaceId === task.workspaceId && entry.directory === directory) : undefined;
     const aliases = catalog.entries.filter(entry => entry.workspaceId !== task.workspaceId);
     if (aliases.length)
       throw Error(`Workspace registration for ${directory} was not sent: the folder already has workspace registration${aliases.length === 1 ? '' : 's'} ${aliases.map(entry => entry.workspaceId).join(', ')}, which ${aliases.length === 1 ? 'is' : 'are'} not this task's. Nucleus never adds a second registration for one folder and never reparents another owner's workspace; inspect the existing registration instead.`);
-    return own ? { reuse: { id: own.workspaceId, directory: own.directory } } : null;
+    return own ? { kind: "reuse", reuse: { id: own.workspaceId, directory: own.directory } } : { kind: "create" };
   }
   /**
    * The host project rooted at the task's repository, read through the host.
@@ -195,7 +211,7 @@ export class WorkspaceLifecycle {
     const ownedPath = await this.creationStep(task, "owned_path_proof", () => this.host.ownedPathFor(task));
     if (placement && state.directory === ownedPath) placement.admit(state.directory);
     const registered = await this.creationStep(task, "path_registration_check", () => this.samePathRegistration(task, state.directory));
-    if (registered) return registered.reuse;
+    if (registered.kind === "reuse") return registered.reuse;
     const project = await this.creationStep(task, "repository_project_lookup", () => this.repositoryProject(task));
     const workspace = await this.creationStep(task, "workspace_creation", () => this.host.workspaceHost.createWorkspace({ title: capPaseoTitle(taskWorkspaceTitle(task)), requestId: `ns-workspace-${task.id}`,
       directory: state.directory, project }));
@@ -238,12 +254,16 @@ export class WorkspaceLifecycle {
     const remote = advertised.split(/\s+/)[0] ?? "";
     const remoteHead = /^[a-f0-9]{40}$/.test(remote) ? remote : "";
     if (local && remoteHead && local !== remoteHead) {
-      const remoteNewer = await git(task.repoPath, "merge-base", "--is-ancestor", local, remoteHead).then(() => true).catch(() => false);
-      const localNewer = await git(task.repoPath, "merge-base", "--is-ancestor", remoteHead, local).then(() => true).catch(() => false);
-      if (!remoteNewer && !localNewer)
+      // Only a proven "no" is divergence: an ancestry read that failed refuses on
+      // its own cause instead of being reported as two divergent lines.
+      const remoteNewer = await gitAncestry(task.repoPath, local, remoteHead);
+      const localNewer = await gitAncestry(task.repoPath, remoteHead, local);
+      if (remoteNewer === "unknown" || localNewer === "unknown")
+        throw new Error(`The queue branch ${task.branch} ancestry at ${local} and origin ${remoteHead} is unreadable; inspect before recovering the worktree`);
+      if (remoteNewer === "diverged" && localNewer === "diverged")
         throw new Error(`The queue branch ${task.branch} is at ${local} locally and ${remoteHead} on origin with no fast-forward between them; inspect before recovering the worktree`);
-      if (remoteNewer) await gitBulk(task.repoPath, "fetch", "origin", `+refs/heads/${task.branch}:refs/remotes/origin/${task.branch}`);
-      return { head: remoteNewer ? remoteHead : local, local };
+      if (remoteNewer === "ancestor") await gitBulk(task.repoPath, "fetch", "origin", `+refs/heads/${task.branch}:refs/remotes/origin/${task.branch}`);
+      return { head: remoteNewer === "ancestor" ? remoteHead : local, local };
     }
     if (remoteHead) {
       if (remoteHead !== local) await gitBulk(task.repoPath, "fetch", "origin", `+refs/heads/${task.branch}:refs/remotes/origin/${task.branch}`);
@@ -311,7 +331,8 @@ export class WorkspaceLifecycle {
       } else throw new Error(workspaceCreationRefusal(state));
       const placement = this.host.placement();
       if (placement && directory === await this.host.ownedPathFor(task)) placement.admit(directory);
-      const workspace = (await this.samePathRegistration(task, directory))?.reuse
+      const registered = await this.samePathRegistration(task, directory);
+      const workspace = (registered.kind === "reuse" ? registered.reuse : null)
         ?? await this.host.workspaceHost.createWorkspace({ title: capPaseoTitle(taskWorkspaceTitle(task)), requestId: `ns-recover-workspace-${task.id}`,
           directory, project: await this.repositoryProject(task) });
       if (!workspace.directory) throw new Error("Recovered task workspace returned no directory");
@@ -325,18 +346,29 @@ export class WorkspaceLifecycle {
     const ownedPath = await this.host.ownedPathFor(task).catch(() => null);
     const common = await repoCommonDir(task.repoPath).catch(() => null);
     const legacyPath = common ? ownedWorkspacePath(this.host.dataDir(), common, task.id) : null;
-    const matches = entries.filter(w => {
-      const directory = w.workspaceDirectory ?? "";
-      if (w.projectRootPath === task.repoPath && (w.worktreeSlug === slug || w.id === task.workspaceId)) return true;
-      if ([ownedPath, legacyPath].some(path => path && (directory === path || w.projectRootPath === path)))
-        return w.worktreeSlug === slug || w.id === task.workspaceId || directory.split("/").at(-1) === slug || w.projectRootPath.split("/").at(-1) === slug;
-      return false;
-    }).map(w => ({ id: w.id, directory: w.workspaceDirectory ?? "" }));
+    // Identity is the exact path this task's allocation derives, or the task's own
+    // slug or recorded workspace id inside its repository. A folder whose name
+    // merely ends in `ns-<task id>` proves nothing: any other directory can be
+    // called that.
+    const allocated = [ownedPath, legacyPath].filter((path): path is string => Boolean(path));
+    const matches = entries.filter(w => allocated.some(path => w.workspaceDirectory === path || w.projectRootPath === path)
+      || (w.projectRootPath === task.repoPath && (w.worktreeSlug === slug || w.id === task.workspaceId)))
+      .map(w => ({ id: w.id, directory: w.workspaceDirectory ?? "" }));
     const placement = this.host.placement();
     if (placement && ownedPath && matches.some(match => match.directory === ownedPath)) placement.admit(ownedPath);
     return matches;
   }
 }
+
+/**
+ * What one folder's registration inventory answered: this task's own entry to
+ * reuse, a create with nothing of this task's registered there, or an inventory
+ * Queue could not read. An unreadable inventory is never proof of a duplicate.
+ */
+type RegistrationDecision =
+  | { kind: "reuse"; reuse: { id: string; directory: string } }
+  | { kind: "create" }
+  | { kind: "unreadable"; reason: string };
 
 /**
  * What the workspace lifecycle reads from the host it runs on. The Paseo adapter
