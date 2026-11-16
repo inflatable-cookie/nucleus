@@ -1,3 +1,4 @@
+import { qaLostDiagnosticDetail, qaServiceWindow } from "./project-qa-diagnostics";
 import { SupervisorLivenessReader } from "../machine/start-identity";
 import { FileFacts } from "../machine/file-facts";
 import { isAbsolute } from "node:path";
@@ -10,6 +11,7 @@ import type { ProjectQaRun, HostRunResult, HostRunEscapedDescendant } from "../.
 import {
   readQaSupervisionPlanFile,
   readQaSupervisionStateFile,
+  readQaHeartbeat,
   readHostRunResult,
   qaSupervisionPaths,
   type QaFileRead,
@@ -84,7 +86,7 @@ async function reconcileBestEffort(context: QaRunReadContext, key: string, reque
 
 export class ProjectQaInspection {
   private readonly staleSupervisorObservations = new Map<string, { heartbeatAt: string; firstObservedAt: number }>();
-  constructor(readonly hostRuns: Pick<HostRunScheduler, "get">, readonly qaRepositoryRootPath: (key: string) => string) {}
+  constructor(readonly hostRuns: Pick<HostRunScheduler, "get">, readonly qaRepositoryRootPath: (key: string) => string, readonly serviceHistory?: Pick<Store, "getMeta">) {}
 
   /**
    * Classify a running row's supervisor from its durable evidence. The
@@ -99,7 +101,7 @@ export class ProjectQaInspection {
 
   async inspectSupervisor(run: ProjectQaRun): Promise<SupervisorInspection> {
     const attempt = run.teardownRetryAttempt ?? 0;
-    const { statePath, planPath, resultPath } = qaSupervisionPaths(this.qaRepositoryRootPath(run.key), run.id, attempt);
+    const { statePath, planPath, resultPath, heartbeatPath } = qaSupervisionPaths(this.qaRepositoryRootPath(run.key), run.id, attempt);
     const stateRead = this.supervisionFacts.read(statePath);
     const planRead = this.supervisionPlans.read(planPath);
     // A record this process cannot read is evidence that is missing, not evidence
@@ -111,7 +113,10 @@ export class ProjectQaInspection {
         planRefusal && `the supervision plan (${planRefusal})`].filter(Boolean).join(" and ");
       return { kind: "running", state: null, reason: `${named} could not be read; the run is held` };
     }
-    const state = stateRead.kind === "present" ? stateRead.value : null;
+    const state = stateRead.kind === "present"
+      ? { ...stateRead.value, heartbeatAt: readQaHeartbeat(heartbeatPath, stateRead.value) } : null;
+    let observedLiveness = "unknown";
+    let observedGroupEmpty: boolean | null = null;
     const plan = planRead.kind === "present" ? planRead.value : null;
     const validPlan = plan?.runId === run.id && plan.key === run.key ? plan : null;
     const hostResult = readHostRunResult(resultPath, run.id);
@@ -129,13 +134,18 @@ export class ProjectQaInspection {
       }
       if (state) {
         const liveness = await this.supervisorLiveness.read(state.pid, state.identityToken, state.supervisorStartIdentity);
+        observedLiveness = liveness.state;
+        observedGroupEmpty = state.activeProcess ? processGroupEmpty(state.activeProcess.processGroupId) : null;
+        // The OS liveness read yielded: a heartbeat may have advanced meanwhile.
+        state.heartbeatAt = readQaHeartbeat(heartbeatPath, state);
         const staleAgeMs = confirmStaleSupervisorHeartbeat(this.staleSupervisorObservations, run.id, state.heartbeatAt);
         const sameSupervisorAlive = staleAgeMs !== null && state.supervisorStartIdentity
           && processStartIdentityLiveness(state.pid, state.supervisorStartIdentity) === "alive";
         if (staleAgeMs !== null && (liveness.state === "live" || sameSupervisorAlive)) {
-          // A live process with no recent durable heartbeat has a blocked event
-          // loop. The run token in each group's inherited environment is what
+          // A live process with no recent heartbeat may be hung or unable to write.
+          // Keep pre-stop evidence. The run token in each group's environment
           // proves which processes may be stopped.
+          if (sameSupervisorAlive) observedLiveness = "live";
           const stopped = await stopDetachedSupervisor({
             supervisorPid: state.pid,
             ...(state.supervisorStartIdentity ? { supervisorStartIdentity: state.supervisorStartIdentity } : {}),
@@ -179,6 +189,7 @@ export class ProjectQaInspection {
       }
       if (!run.pid || supervisor.state !== "absent") return { kind: "running", state: null };
       const liveness = await supervisorLivenessAsync(run.pid, validPlan.identityToken);
+      observedLiveness = liveness.state;
       if (liveness.state === "dead") {
         const steps = processesForStartIdentity(validPlan.identityToken);
         const scheduledGroup = this.hostRuns.get(run.id)?.processGroupId;
@@ -187,17 +198,24 @@ export class ProjectQaInspection {
       }
       return { kind: "running", state: null };
     };
-    const inspection = await inspect();
+    let inspection = await inspect();
+    if (inspection.kind === "dead") {
+      const through = new Date().toISOString();
+      const window = qaServiceWindow(this.serviceHistory ?? { getMeta: () => undefined }, state?.heartbeatAt ?? run.startedAt, through);
+      inspection = { ...inspection, reason: `${inspection.reason}. ${qaLostDiagnosticDetail(state, observedLiveness, observedGroupEmpty, window)}` };
+    }
     // Detached supervision files can progress while the OS scan yields too.
     const observedState = this.supervisionFacts.read(statePath);
     if (inspection.kind === "dead" && inspection.staleStop) {
       const lateResult = readHostRunResult(resultPath, run.id);
       if (!lateResult) return inspection;
     }
-    if (JSON.stringify(observedState) !== JSON.stringify(stateRead)
+    if (state && readQaHeartbeat(heartbeatPath, state) !== state.heartbeatAt
+        || JSON.stringify(observedState) !== JSON.stringify(stateRead)
         || JSON.stringify(this.supervisionPlans.read(planPath)) !== JSON.stringify(planRead)
         || JSON.stringify(readHostRunResult(resultPath, run.id)) !== JSON.stringify(hostResult))
-      return { kind: "running", state: observedState.kind === "present" ? observedState.value : null };
+      return { kind: "running", state: observedState.kind === "present"
+        ? { ...observedState.value, heartbeatAt: readQaHeartbeat(heartbeatPath, observedState.value) } : null };
     return inspection;
   }
 

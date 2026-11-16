@@ -143,7 +143,7 @@ export const qaSupervisionStateSchema = z.object({
   heartbeatAt: z.string().min(1),
   /** The step currently running, so a proven-dead supervisor names what was in flight. */
   inFlight: projectQaStepNameSchema.nullable(),
-  /** Published synchronously from the child's spawn event, before the step can run. */
+  /** Published from the spawn event; pendingProcessIdentity covers the publication window. */
   activeProcess: qaActiveProcessSchema.nullable().default(null),
   /** Published before spawn so a restart can prove whether launch happened. */
   pendingProcessIdentity: z.string().min(16).max(128).nullable().default(null),
@@ -178,9 +178,10 @@ export function qaRunRootPath(dataDir: string, key: string): string {
 }
 
 /** The per-run supervision and plan paths under one repository's QA root. A retry attempt uses its own file names. */
-export function qaSupervisionPaths(runRoot: string, runId: string, attempt = 0): { statePath: string; planPath: string; resultPath: string; cancelPath: string; cpuCoveragePath: string } {
+export function qaSupervisionPaths(runRoot: string, runId: string, attempt = 0): { statePath: string; planPath: string; resultPath: string; cancelPath: string; cpuCoveragePath: string; heartbeatPath: string } {
   const stem = attempt > 0 ? `${runId}.retry-${attempt}` : runId;
   return {
+    heartbeatPath: join(runRoot, `${stem}.heartbeat.json`),
     cpuCoveragePath: join(runRoot, `${stem}.${HOST_RUN_CPU_COVERAGE_FILE}`),
     statePath: join(runRoot, `${stem}.supervisor.json`),
     planPath: join(runRoot, `${stem}.plan.json`),
@@ -264,6 +265,15 @@ export function writeQaSupervision(path: string, state: QaSupervisionState): voi
   writeOwnedJson(path, { ...state, detail: tailWithTruncationMarker(state.detail, PROJECT_QA_DETAIL_BYTES) });
 }
 
+/** A heartbeat is a live observation, separate from fsynced lifecycle evidence. */
+const qaHeartbeatSchema = qaSupervisionStateSchema.pick({ runId: true, pid: true, identityToken: true, heartbeatAt: true }).strict();
+
+export function readQaHeartbeat(path: string, state: QaSupervisionState): string {
+  const heartbeat = readOwnerOnlyJson(path, value => qaHeartbeatSchema.parse(value));
+  return heartbeat?.runId === state.runId && heartbeat.pid === state.pid && heartbeat.identityToken === state.identityToken
+    && Date.parse(heartbeat.heartbeatAt) > Date.parse(state.heartbeatAt) ? heartbeat.heartbeatAt : state.heartbeatAt;
+}
+
 /** The private CPU-reason sidecar beside the supervision state; null when missing or unreadable. */
 export function readQaCpuCoverage(path: string): unknown {
   try { return parseCpuCoverageSidecar(readFileSync(path)); } catch { return null; }
@@ -306,8 +316,8 @@ export function writeQaStepLog(path: string, buffer: Buffer): { bytes: number | 
 
 /** Remove a settled run's per-run plan and supervision files; the store owns the record now. */
 export function removeQaSupervisionFiles(runRoot: string, runId: string, attempt = 0): void {
-  const { statePath, planPath, cancelPath, cpuCoveragePath } = qaSupervisionPaths(runRoot, runId, attempt);
-  for (const path of [statePath, planPath, cancelPath, cpuCoveragePath]) rmSync(path, { force: true });
+  const { statePath, planPath, cancelPath, cpuCoveragePath, heartbeatPath } = qaSupervisionPaths(runRoot, runId, attempt);
+  for (const path of [statePath, planPath, cancelPath, cpuCoveragePath, heartbeatPath]) rmSync(path, { force: true });
 }
 
 export interface QaFilePruningContext {
