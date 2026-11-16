@@ -43,14 +43,16 @@ export class RuntimePlanning {
         baseBranch: request.baseBranch, lanes: request.lanes, tags: request.tags, author: request.agent }) };
     })();
     if ("taskId" in source) return { ...this.promotion.promotionReply(source.taskId), reference: this.context.store.numberFor(source.taskId)!.reference };
-    if ("leadId" in source) return { lead: this.context.store.lead(source.leadId) };
-    let lead = await this.checkLeadAfterMutation(source.created);
+    const submitted = "leadId" in source ? this.context.store.lead(source.leadId) : source.created;
+    if (briefDigest(submitted.body) !== briefDigest(request.body))
+      throw new Error(`Lead ${submitted.id} has a different brief; use lead.edit, then submit again`);
+    let lead = await this.checkLeadAfterMutation(submitted);
     if (lead.checkOperationId) {
       const operation = await this.context.engine.awaitOperation(lead.checkOperationId, Infinity);
       if (operation.state !== "succeeded") throw new Error(`Brief check ${operation.id}: ${operation.diagnostic || operation.state}; inspect lead.get before retrying`);
       lead = this.context.store.lead(lead.id);
     }
-    if (lead.version !== source.created.version || briefDigest(lead.body) !== briefDigest(request.body))
+    if (lead.version !== submitted.version || briefDigest(lead.body) !== briefDigest(request.body))
       throw new Error("Lead changed during submission; reload before approval");
     if (!lead.check) lead = this.recordLeadCheckNotQueued(lead, "Lead has no brief to check");
     if (!lead.check?.ok) return { lead };

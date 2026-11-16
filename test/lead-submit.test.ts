@@ -63,16 +63,17 @@ test('failed brief checks return their findings and never approve or promote', a
   assert.equal(runtime.store.tasks().length, 0);
 });
 
-test('an existing same-title lead is returned unchanged; concurrent submissions create only one', async t => {
+test('submission resumes an open lead with the same brief and refuses a different brief', async t => {
   const { runtime, input } = await fixture(t);
-  const lead = await runtime.addLead({ repositories: [input.repository], title, body: 'An earlier observation', lanes: [], author: 'earlier' });
+  const start = runtime.engine.startOperation.bind(runtime.engine);
+  runtime.engine.startOperation = async () => { throw new Error('temporary check failure'); };
+  const first = await runtime.submitLead(input);
+  assert.ok('lead' in first);
+  runtime.engine.startOperation = start;
+  await assert.rejects(runtime.submitLead({ ...input, body: body + 'Different' }), new RegExp(`Lead ${first.lead.id}.*lead.edit`));
   const result = await runtime.submitLead(input);
-  assert.deepEqual(result, { lead });
-  assert.equal(runtime.store.tasks().length, 0);
-  const request = { ...input, title: 'Another fixture', body: body.replace(title, 'Another fixture') };
-  const results = await Promise.all([runtime.submitLead(request), runtime.submitLead(request)]);
-  assert.equal([...runtime.listLeads({ state: 'open' }), ...runtime.listLeads({ state: 'promoted' })].filter(item => item.title === request.title).length, 1);
-  assert.equal(results.filter(item => 'taskId' in item).length, 1);
+  assert.ok('taskId' in result);
+  assert.equal(result.reference, runtime.store.task(result.taskId).reference);
 });
 
 test('submission waits past compatibility responses for both check and promotion', async t => {

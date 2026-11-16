@@ -106,7 +106,7 @@ and waits for the existing promotion operation to return the task reference.
 Failed checks return the lead's findings without approval or promotion.
 
 Same-title matching is case-insensitive and trims outer whitespace, scoped to
-the resolved repository. Existing leads are returned unchanged; numbered tasks,
+the resolved repository. An open lead with the same brief digest is checked, approved and promoted; a different brief is refused with the lead ID and `lead.edit` route. Numbered tasks,
 including completed, removed and purged tasks, return their task reference.
 Lookup and creation do not yield in the service's sole-writer turn, so concurrent
 calls cannot create duplicates. Backpressure and uncertain delivery preserve the

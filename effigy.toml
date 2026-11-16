@@ -35,6 +35,7 @@ setup = "npm ci"
 check = [{ task = "check:types" }, { task = "check:publication" }]
 # Test files a change can affect, from the import graph; `--run` runs them. See scripts/test-affected.mjs.
 "test:affected" = "node scripts/test-affected.mjs {args}"
+"test:baseline" = "node scripts/test-baseline.mjs {args}"
 "check:types" = "npm run typecheck"
 "check:publication" = "npm run publication:check"
 # Proves a move PR changed no moved code; see scripts/check-moves.ts.
