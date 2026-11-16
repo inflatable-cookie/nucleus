@@ -1265,7 +1265,9 @@ historical wall-time estimates; history does not lengthen the enforced limit.
 operator, or an agent relaying the operator's recorded ruling (`relayed: true`
 plus the authorization `note`), can fence NEW project QA with
 `project.qa.fence` (`action: "set"`, `expectedRevision`, `reason`, `minutes`
-default 10, at most 120). It covers project QA only, never task validation or
+default 10, at most 120, and `caller`: the calling agent's identity; a relayed
+`set` or `clear` also needs `note`). Clear with `action: "clear"` and the
+current `expectedRevision`. It covers project QA only, never task validation or
 Effigy client runs, and Nucleus has no per-task pause for those. Never set or
 clear a fence without that authority. While a fence is in force a new
 `project.qa.run` is refused with a diagnostic starting "QA admission is
