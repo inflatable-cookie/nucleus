@@ -27,6 +27,9 @@ test('connected retires a mismatched Paseo claim and anyHostConnected counts the
     hostSession: { id: 'paseo-env', token },
     hostRegistry: hosts,
     t3Host: null,
+    // Spec 062 phase 1: the runtime's BB claim owner. This stub has no BB host, so the
+    // registry is the only thing anyHostConnected counts here.
+    bbHost: { retireDisconnected() {}, connected: () => false },
     bootstrapped: true,
     closing: false,
     idleShutdownLatched: false,
