@@ -23,7 +23,8 @@ interface FakeSdk extends BbHostSdk {
   calls: string[];
 }
 
-function fakeSdk(seed: { projects?: ProjectRow[]; threads?: ThreadRow[] } = {}): FakeSdk {
+function fakeSdk(seed: { projects?: ProjectRow[]; threads?: ThreadRow[]; attachEnvironment?: boolean } = {}): FakeSdk {
+  const attachEnvironment = seed.attachEnvironment ?? true;
   const projects = [...(seed.projects ?? [])];
   const threads = [...(seed.threads ?? [])];
   const calls: string[] = [];
@@ -47,7 +48,9 @@ function fakeSdk(seed: { projects?: ProjectRow[]; threads?: ThreadRow[] } = {}):
         calls.push("threads.spawn");
         const created: ThreadRow = {
           id: "thr_fixture",
-          environmentId: `env_${args.environment.workspace.type}`,
+          // A fresh unmanaged path is provisioned after the row lands, so an attach
+          // that never records one is the case this executor must not read as refused.
+          environmentId: attachEnvironment ? `env_${args.environment.workspace.type}` : null,
           status: "starting",
           parentThreadId: args.parentThreadId ?? null,
           parentNotifications: args.parentNotifications ?? "auto",
@@ -176,6 +179,28 @@ test("attaching a run spawns in the recorded worktree under the planner with not
   assert.deepEqual(value.pluginMetadata, { task: "1262", run: "spike" });
   assert.equal(value.spawned, 1);
   assert.deepEqual(sdk.calls.filter(call => call === "threads.spawn").length, 1);
+});
+
+test("an attach whose environment id never arrives is unknown delivery, never a refused retry", async () => {
+  const sdk = fakeSdk({ attachEnvironment: false });
+  const operations = createHostOperations({ sdk, pluginId: "nucleus", sdkVersion: "0.6.132", dataDir: () => "/tmp/bb-data", attachWaitMs: 30 });
+  await assert.rejects(
+    operations.execute("run.attach", {
+      projectId: "proj_1",
+      title: "Synthetic worker",
+      environmentPath: "/tmp/worktree",
+      prompt: "Do nothing.",
+    }),
+    (error: unknown) => {
+      // The spawn committed, so this can never be the code a caller may retry.
+      assert.ok(error instanceof HostOperationError);
+      assert.equal(error.code, "unavailable");
+      assert.match(error.message, /committed thread thr_fixture/);
+      assert.match(error.message, /not retryable/);
+      return true;
+    },
+  );
+  assert.equal(sdk.calls.filter(call => call === "threads.spawn").length, 1);
 });
 
 test("an archive is preceded by its own cascade read, and refuses one it does not own", async () => {

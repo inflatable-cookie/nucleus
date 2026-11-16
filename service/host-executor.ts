@@ -13,7 +13,11 @@
  * - one operation's fault settles that operation, never the connection;
  * - a malformed answer, a missing field or a passed deadline is unknown delivery,
  *   because the write may have landed before the answer went wrong;
- * - a bounded refusal the plugin proved before the write is a definite answer;
+ * - only a refusal the plugin proved *before* its write is a definite answer
+ *   (`invalid_input`, `refused`); `unavailable` and `internal` are reported after a
+ *   call that may already have committed, so they are unknown delivery too — a
+ *   `threads.spawn` whose environment never arrived is exactly that case, and
+ *   resending it would duplicate the thread;
  * - a dropped connection settles every in-flight operation as unknown delivery and
  *   never replays one.
  */
@@ -21,6 +25,7 @@ import { randomUUID } from "node:crypto";
 import {
   HOST_OPERATION_DEADLINE_MS,
   HOST_OPERATION_METHOD,
+  isHostOperationNonDelivery,
   type HostExecutorDeclaration,
   type HostOperationFailure,
   type HostOperationName,
@@ -146,7 +151,14 @@ export class HostExecutorLink {
         this.settleOperation(answer.id, "the answer's refusal was malformed");
         return true;
       }
-      this.settleOperation(answer.id, null, new HostOperationRefusedError(pending.op, failure));
+      // A definite refusal is only the one the plugin proved before its write. An
+      // `unavailable` or `internal` answer comes from a call that may have
+      // committed, so it must never read as permission to send the work again.
+      if (isHostOperationNonDelivery(failure.code)) {
+        this.settleOperation(answer.id, null, new HostOperationRefusedError(pending.op, failure));
+      } else {
+        this.settleOperation(answer.id, `the host answered ${failure.code} after the request was written: ${failure.message}`);
+      }
       return true;
     }
     const parsed = parseHostOperationOutcome(pending.op, answer.result);

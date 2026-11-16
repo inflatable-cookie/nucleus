@@ -13,8 +13,18 @@ import {
   createFrameReader,
   encodeFrame,
 } from "../shared/service/protocol";
-import { HOST_OPERATIONS as SHARED_OPERATIONS } from "../shared/host-operation";
-import { HOST_OPERATIONS as PLUGIN_OPERATIONS, workspaceHandleForPath as pluginHandle } from "../hosts/bb/plugin/operations";
+import {
+  HOST_OPERATION_ERROR_CODES as SHARED_ERROR_CODES,
+  HOST_OPERATION_NON_DELIVERY_CODES as SHARED_NON_DELIVERY_CODES,
+  HOST_OPERATIONS as SHARED_OPERATIONS,
+  isHostOperationNonDelivery,
+} from "../shared/host-operation";
+import {
+  HOST_OPERATION_ERROR_CODES as PLUGIN_ERROR_CODES,
+  HOST_OPERATION_NON_DELIVERY_CODES as PLUGIN_NON_DELIVERY_CODES,
+  HOST_OPERATIONS as PLUGIN_OPERATIONS,
+  workspaceHandleForPath as pluginHandle,
+} from "../hosts/bb/plugin/operations";
 import { hostIdFromDataDir, workspaceHandleForPath } from "../shared/host-operation";
 
 /**
@@ -70,6 +80,19 @@ test("the plugin narrows a frame to a request only when it is one", () => {
   assert.equal(asServiceRequest({ v: PROTOCOL_VERSION, id: "", method: "host.op" }), null);
   assert.equal(asServiceRequest({ v: PROTOCOL_VERSION, id: "x" }), null);
   assert.equal(asServiceRequest(null), null);
+});
+
+test("both ends agree on which refusals prove nothing was written", () => {
+  assert.deepEqual([...PLUGIN_ERROR_CODES], [...SHARED_ERROR_CODES]);
+  assert.deepEqual([...PLUGIN_NON_DELIVERY_CODES], [...SHARED_NON_DELIVERY_CODES]);
+  // A post-write failure is never in the definite set: these are the codes the
+  // plugin answers when BB may already have committed the call.
+  for (const code of ["unavailable", "internal"] as const) {
+    assert.equal(isHostOperationNonDelivery(code), false, `${code} must be unknown delivery`);
+  }
+  for (const code of ["invalid_input", "refused"] as const) {
+    assert.equal(isHostOperationNonDelivery(code), true, `${code} must be a definite refusal`);
+  }
 });
 
 test("the plugin executes exactly the operations the service can send it", () => {

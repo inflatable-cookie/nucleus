@@ -377,6 +377,11 @@ async function main() {
     assert.equal(observed.value.archivedAt, null);
     const inventory = await send<{ complete: boolean; rows: Array<{ threadId: string; environmentId: string | null; parentThreadId: string | null }> }>("thread.inventory", { projectId: workspace.value.projectId });
     assert.ok(inventory.value.rows.some(row => row.threadId === worker.value.threadId && row.environmentId === worker.value.environmentId), "the inventory names the worker and its environment");
+    // The adoption search of decision 6: this plugin's origin across every project,
+    // hidden rows included, not filtered by the current planner or project.
+    const originWalk = await send<{ complete: boolean; rows: Array<{ threadId: string; originPluginId: string | null; archivedAt: number | null }> }>("thread.inventory", { originPluginId: "nucleus", includeHidden: true });
+    assert.ok(originWalk.value.rows.some(row => row.threadId === worker.value.threadId), "the unfiltered origin walk names the worker");
+    assert.ok(originWalk.value.rows.every(row => row.originPluginId === "nucleus"), "every row of the origin walk belongs to this plugin");
     const stopped = await send<{ threadId: string; status: string; displayStatus: string }>("thread.stop", { threadId: worker.value.threadId });
     note("thread-observed", true, { status: observed.value.status, displayStatus: observed.value.displayStatus, environment: observed.value.environmentId, parent: observed.value.parentThreadId, pluginMetadata: observed.value.pluginMetadata, afterStop: stopped.value.status });
 
@@ -441,6 +446,10 @@ async function main() {
     }, 120_000);
     const reloadIdentity = await send<Identity>("identity.probe", {});
     assert.equal(hostIdFromDataDir(reloadIdentity.value.dataDir), hostId, "the reloaded plugin proves the same identity");
+    // Decision 6's second walk: archived rows need their own filter.
+    const archivedWalk = await send<{ complete: boolean; rows: Array<{ threadId: string; archivedAt: number | null }> }>("thread.inventory", { originPluginId: "nucleus", includeHidden: true, archived: true });
+    assert.ok(archivedWalk.value.rows.some(row => row.threadId === worker.value.threadId && row.archivedAt !== null), "the archived origin walk names the archived worker");
+    note("origin-walks", true, { unarchivedOriginRows: originWalk.value.rows.length, archivedOriginRows: archivedWalk.value.rows.length, projectFilterUsed: false, hiddenIncluded: true, archivedWalkInsteadOfResend: true });
     const afterReloadObserved = await send<Observed>("thread.observe", { threadId: worker.value.threadId });
     assert.equal(afterReloadObserved.value.environmentId, worker.value.environmentId, "the environment id is the same after the plugin reload");
     note("plugin-reload-reconnect", true, { previousConnectedAt: firstConnection.connectedAt, reconnectedAt: afterReload.connectedAt, hostId, environmentId: afterReloadObserved.value.environmentId });

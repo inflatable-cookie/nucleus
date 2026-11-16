@@ -6,6 +6,7 @@ import {
   HostOperationRefusedError,
   HostOperationUnknownDeliveryError,
 } from "../service/host-executor";
+import { isHostOperationNonDelivery } from "../shared/host-operation";
 import { PROTOCOL_VERSION } from "../shared/service/protocol";
 import type { HostExecutorDeclaration, HostOperationOutcome } from "../shared/host-operation";
 
@@ -83,6 +84,25 @@ test("a bounded refusal the plugin proved is a definite answer, not an unknown w
   const pending = instance.request("thread.archive", { threadId: "thr_1", expectedCascadeThreadIds: [] });
   instance.settle({ v: PROTOCOL_VERSION, id: written[0].id, error: { code: "refused", message: "Archive refused: the cascade also names thr_foreign" } });
   await assert.rejects(pending, (error: unknown) => error instanceof HostOperationRefusedError && error.failure.code === "refused" && /thr_foreign/.test(error.message));
+});
+
+test("a post-write failure the host reports is unknown delivery, never a refusal a caller may retry", async () => {
+  for (const code of ["unavailable", "internal"] as const) {
+    assert.equal(isHostOperationNonDelivery(code), false);
+    const { instance, written } = link();
+    const pending = instance.request("run.attach", {
+      projectId: "proj_1",
+      title: "Synthetic worker",
+      environmentPath: "/tmp/worktree",
+      prompt: "Do nothing.",
+    });
+    instance.settle({ v: PROTOCOL_VERSION, id: written[0].id, error: { code, message: `committed thread thr_1 then failed (${code})` } });
+    await assert.rejects(pending, (error: unknown) => {
+      assert.ok(error instanceof HostOperationUnknownDeliveryError, `${code} must settle as unknown delivery, got ${(error as Error)?.name}`);
+      assert.match(error.message, new RegExp(`answered ${code}`));
+      return true;
+    });
+  }
 });
 
 test("a passed deadline, a malformed refusal and a closed connection are all unknown delivery", async () => {

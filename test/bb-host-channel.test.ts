@@ -5,7 +5,7 @@ import { QueueService } from "../service/transport/server";
 import { readServiceInfo } from "../service/transport/identity";
 import { ServiceClient } from "../shared/service/client";
 import { createFrameReader, encodeFrame, PROTOCOL_VERSION } from "../shared/service/protocol";
-import { HostOperationUnknownDeliveryError } from "../service/host-executor";
+import { HostOperationRefusedError, HostOperationUnknownDeliveryError } from "../service/host-executor";
 import { hostIdFromDataDir, type HostExecutorDeclaration } from "../shared/host-operation";
 import { socketFixtureDirectory } from "./support/socket-fixture";
 
@@ -214,6 +214,42 @@ test("a malformed executor answer settles that operation, and the connection kee
     const counters = await service.sendHostOperation(hostId, "call.counters", {});
     assert.deepEqual(counters.value, { counters: {}, loadedAt: 1 });
     assert.equal(executor.received.length, 2);
+  } finally {
+    executor?.close();
+    await service.stop();
+  }
+});
+
+test("over the real socket only a proven pre-write refusal is definite; a post-write failure is unknown", async () => {
+  const dir = socketFixtureDirectory("queue-service.sock");
+  const service = new QueueService({ owner: { dataDir: dir, timers: false }, fixture: "fake" });
+  await service.start();
+  const info = readServiceInfo(dir)!;
+  const hostId = hostIdFromDataDir("/tmp/bb-data");
+  let executor: ExecutorClient | null = null;
+  try {
+    executor = await ExecutorClient.connect(info, declarationFor("/tmp/bb-data"));
+    // The plugin proved this before writing: a caller may stop here.
+    executor.answer = async () => { throw Object.assign(new Error("the cascade also names thr_foreign"), { code: "refused" }); };
+    await assert.rejects(
+      service.sendHostOperation(hostId, "thread.archive", { threadId: "thr_1", expectedCascadeThreadIds: [] }),
+      (error: unknown) => error instanceof HostOperationRefusedError,
+    );
+    // The plugin reported this after its spawn committed: a caller may not resend.
+    for (const code of ["unavailable", "internal"] as const) {
+      executor.answer = async () => { throw Object.assign(new Error(`committed then failed (${code})`), { code }); };
+      await assert.rejects(
+        service.sendHostOperation(hostId, "run.attach", { projectId: "proj_1", title: "Synthetic worker", environmentPath: "/tmp/worktree", prompt: "Do nothing." }),
+        (error: unknown) => {
+          assert.ok(error instanceof HostOperationUnknownDeliveryError, `${code} must be unknown delivery, got ${(error as Error)?.name}`);
+          assert.match(error.message, new RegExp(`answered ${code}`));
+          return true;
+        },
+      );
+    }
+    // The connection survived every one of those faults.
+    executor.answer = async op => ({ operation: op, at: "2026-11-16T00:00:00.000Z", calls: {}, value: { counters: {}, loadedAt: 1 } });
+    assert.deepEqual((await service.sendHostOperation(hostId, "call.counters", {})).value, { counters: {}, loadedAt: 1 });
   } finally {
     executor?.close();
     await service.stop();

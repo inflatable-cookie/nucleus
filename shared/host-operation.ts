@@ -102,7 +102,28 @@ export interface HostOperationOutcome {
   value: unknown;
 }
 
-export type HostOperationErrorCode = "invalid_input" | "refused" | "unavailable" | "internal";
+/** Every code a plugin may answer an operation with. */
+export const HOST_OPERATION_ERROR_CODES = ["invalid_input", "refused", "unavailable", "internal"] as const;
+
+export type HostOperationErrorCode = (typeof HOST_OPERATION_ERROR_CODES)[number];
+
+/**
+ * The only codes that prove an operation's write could not have landed.
+ *
+ * `invalid_input` is refused before anything is written, and `refused` is a policy
+ * answer the plugin proves before its write. Everything else is unknown delivery:
+ * `unavailable` and `internal` are reported after a call that may already have
+ * committed, and a `threads.spawn` whose environment id never arrived is exactly
+ * that case — the thread exists, so resending it would duplicate the spawn (Spec
+ * 062, decision 6).
+ */
+export const HOST_OPERATION_NON_DELIVERY_CODES = ["invalid_input", "refused"] as const;
+
+export type HostOperationNonDeliveryCode = (typeof HOST_OPERATION_NON_DELIVERY_CODES)[number];
+
+export function isHostOperationNonDelivery(code: HostOperationErrorCode): code is HostOperationNonDeliveryCode {
+  return (HOST_OPERATION_NON_DELIVERY_CODES as readonly string[]).includes(code);
+}
 
 /** One operation refusal, carried in a `ServiceResponse` error like any protocol refusal. */
 export interface HostOperationFailure {

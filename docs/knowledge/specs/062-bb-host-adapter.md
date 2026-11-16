@@ -659,10 +659,12 @@ the presence claim, roll recovery and the catalogue path are unchanged.
 4. **A lost spawn is discoverable by its own plugin metadata across projects, hidden rows and archived
    rows. — Partly proven.** The metadata does bind exactly: a thread spawned with
    `{ nucleus: { task: "spike", run: "phase-0" } }` reads that metadata back through
-   `threads.experimental_listPluginMetadata`, and `threads.list({ originPluginId })` walks every project
-   (no project filter) with `includeHidden`, carrying status, environment, parent and archive state on
-   each row. What phase 0 did not exercise: the archived-row walk (`archived: true`), paging past 200
-   rows, and the adoption algorithm itself. Those are phase 3's acceptance and stay unproven here.
+   `threads.experimental_listPluginMetadata`. The proof also ran both halves of decision 6's identity
+   search: `threads.list({ originPluginId: "nucleus", includeHidden: true })` — no project or planner
+   filter, hidden rows included — named the worker, and the same walk with `archived: true` named it
+   after its archive. What phase 0 did not do: page a walk past 200 rows (the executor issues one
+   `threads.list` call per walk today), prove the walk complete when a chunk fails or a row is omitted,
+   and run the adoption algorithm itself. Those are phase 3's acceptance and stay unproven here.
 5. **Archiving a role thread leaves its planner, its siblings and the worktree group untouched when
    nothing depends on it. — Proven.** The archive was preceded by its own cascade read, which named
    nothing; the planner's row kept its status and timestamps, and a sibling role thread in the same
@@ -706,11 +708,22 @@ is not relied on, and phase 5 must re-check it before it does.
 
 One operation's fault settles that operation: a malformed answer, a projection missing a required
 field, an answer naming a different operation, and a passed deadline are all *unknown delivery*
-(`HostOperationUnknownDeliveryError`), because the write may have landed. A bounded refusal the plugin
-proved before the write is a definite answer (`HostOperationRefusedError`). A dropped connection settles
+(`HostOperationUnknownDeliveryError`), because the write may have landed. A dropped connection settles
 every in-flight operation as unknown and never replays one. A second declaration for the same host
 identity replaces the first — that is what a plugin reload looks like — and the replaced connection's
 in-flight work settles unknown. Nothing is ever resent on a guess.
+
+Only two answer codes are a definite refusal a caller may act on: `invalid_input`, refused before
+anything is written, and `refused`, a policy answer the plugin proves before its own write (a cascade
+that names a thread the task does not own). `unavailable` and `internal` are *not* refusals: the plugin
+raises them after a call that may already have committed, so they settle as unknown delivery and the
+work is adopted by observation instead of resent. The case that fix exists for is the attach — BB
+commits the thread and provisions the environment afterwards, so an attach whose environment id never
+arrives answers `unavailable` naming the committed thread, which is unknown delivery, never a spawn to
+try again. `shared/host-operation.ts` owns the two-code list, `service/host-executor.ts` classifies with
+it, the plugin's own list is pinned to it, and `test/bb-host-executor.test.ts`,
+`test/bb-host-channel.test.ts`, `test/bb-plugin-operations.test.ts` and `test/bb-plugin-protocol.test.ts`
+pin both ends.
 
 ## Verification
 

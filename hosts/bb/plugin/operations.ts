@@ -38,7 +38,22 @@ export const HOST_OPERATIONS = [
 
 export type HostOperationName = (typeof HOST_OPERATIONS)[number];
 
-export type HostOperationErrorCode = "invalid_input" | "refused" | "unavailable" | "internal";
+/**
+ * Every code this executor may answer with. Kept identical to the service's list by
+ * `test/bb-plugin-protocol.test.ts`.
+ */
+export const HOST_OPERATION_ERROR_CODES = ["invalid_input", "refused", "unavailable", "internal"] as const;
+
+export type HostOperationErrorCode = (typeof HOST_OPERATION_ERROR_CODES)[number];
+
+/**
+ * The codes that prove nothing was written. `refused` is only ever raised before a
+ * write (a policy answer such as a cascade that names a thread this task does not
+ * own). A failure that can follow a committed call — a spawn whose environment id
+ * did not arrive, a read that failed after an archive — must answer `unavailable`
+ * or `internal`, because those are unknown delivery and are never resent.
+ */
+export const HOST_OPERATION_NON_DELIVERY_CODES = ["invalid_input", "refused"] as const;
 
 export class HostOperationError extends Error {
   constructor(readonly code: HostOperationErrorCode, message: string) {
@@ -142,6 +157,8 @@ export interface HostOperationsOptions {
   /** The BB server's data directory, read lazily by `identity.probe`. */
   dataDir: () => string;
   now?: () => number;
+  /** How long an attach waits for BB to record the environment (tests shorten it). */
+  attachWaitMs?: number;
 }
 
 /** The workspace handle shape decision 2 mints, derived exactly as the service derives it. */
@@ -339,7 +356,7 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
         // does not count as created until the environment id is recorded, so wait for
         // that bounded window rather than reporting a half-attached run.
         let row = thread;
-        const deadline = now() + ATTACH_WAIT_MS;
+        const deadline = now() + (options.attachWaitMs ?? ATTACH_WAIT_MS);
         while (!row.environmentId && now() < deadline) {
           await sleep(ATTACH_POLL_MS);
           try {
@@ -349,7 +366,11 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
             throw new HostOperationError("unavailable", `threads.get failed while waiting for the environment: ${error instanceof Error ? error.message : String(error)}`);
           }
         }
-        if (!row.environmentId) throw new HostOperationError("refused", `BB committed thread ${thread.id} without attaching an environment within ${ATTACH_WAIT_MS} ms, so the worktree is not attached`);
+        if (!row.environmentId) {
+          // The thread exists; only the environment is late. That is unknown
+          // delivery, never a refusal: resending the spawn would duplicate it.
+          throw new HostOperationError("unavailable", `BB committed thread ${thread.id} but did not record an environment within ${options.attachWaitMs ?? ATTACH_WAIT_MS} ms; the spawn landed and is not retryable, adopt thread ${thread.id}`);
+        }
         return {
           threadId: row.id,
           environmentId: row.environmentId,
