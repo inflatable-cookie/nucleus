@@ -330,31 +330,16 @@ test('recovered without action and no live participant is refused; the stop is n
 });
 
 /** nucleus#1217: released reviewer, empty currentRunId, raising recovery gone, timed wait due. */
-function load1217Wait(
-  f: ReturnType<typeof fixture>,
-  kind: "time" | "task" = "time",
-) {
-  const recoveryId = "recovery-1217";
-  const escalationId = "c".repeat(64);
-  const target = "2020-01-01T00:00:00.000Z";
+function load1217Wait(f: ReturnType<typeof fixture>, kind: 'time' | 'task' = 'time') {
+  const recoveryId = 'recovery-1217';
+  const escalationId = 'c'.repeat(64);
+  const target = '2020-01-01T00:00:00.000Z';
   const stopDetail = `Escalation ${escalationId}: waiting until ${target}`;
   const waitId = randomUUID();
   let prerequisite: Task | null = null;
-  if (kind === "task") {
-    prerequisite = f.store.insert(
-      submissionSchema.parse({
-        submissionId: randomUUID(),
-        title: "Synthetic wait target",
-        repoPath: "/upstream",
-        planningCommit: base,
-        brief: { text: "Synthetic" },
-        originAgentId: "origin",
-      }),
-      "host",
-      "brief",
-      base,
-    );
-    f.store.update(prerequisite.id, { phase: "done" });
+  if (kind === 'task') {
+    prerequisite = f.store.insert(submissionSchema.parse({ submissionId: randomUUID(), title: 'Synthetic wait target', repoPath: '/upstream', planningCommit: base, brief: { text: 'Synthetic' }, originAgentId: 'origin' }), 'host', 'brief', base);
+    f.store.update(prerequisite.id, { phase: 'done' });
   }
   f.store.putRun({ ...f.store.run('review-run')!, released: true, active: false, status: 'finished', completion: null });
   f.idle('review-agent');
@@ -364,74 +349,20 @@ function load1217Wait(
     createdAt: lastActivity, lastObservedAt: lastActivity, active: false, idleSince: lastActivity,
     completion: { eventId: 'esc-report', taskId: f.submitted.id, runId: recoveryId, status: 'blocked', summary: 'no justified recovery verb' },
     released: true,
-    active: false,
-    status: "finished",
-    completion: null,
-  });
-  f.idle("review-agent");
-  f.store.putRun(
-    runSchema.parse({
-      id: recoveryId,
-      taskId: f.submitted.id,
-      role: "recovery",
-      generation: 1,
-      head,
-      base,
-      agentId: "coord-1217",
-      workspaceId: "workspace",
-      profile: coordinator,
-      status: "finished",
-      createdAt: lastActivity,
-      lastObservedAt: lastActivity,
-      active: false,
-      idleSince: lastActivity,
-      completion: {
-        eventId: "esc-report",
-        taskId: f.submitted.id,
-        runId: recoveryId,
-        status: "blocked",
-        summary: "no justified recovery verb",
-      },
-      released: true,
-    }),
-  );
-  f.store.event(
-    f.submitted.id,
-    "planner_escalation",
-    `${escalationId}: cause ${"d".repeat(64)}; run ${recoveryId}; question ${"e".repeat(64)} (80 chars); options Restart | Wait until a time`,
-  );
-  f.store.event(
-    f.submitted.id,
-    "planner_escalation_payload",
-    `${escalationId}: ${JSON.stringify({ id: escalationId, runId: recoveryId, question: "How should the task proceed?" })}`,
-  );
-  f.store.event(
-    f.submitted.id,
-    "planner_escalation_answered",
-    `${escalationId}: answered by planner-1: Choice: Wait until a time\nReason: ${target}`,
-  );
-  f.store.event(
-    f.submitted.id,
-    "planner_escalation_applied",
-    `${escalationId}: waiting until ${target}`,
-  );
-  f.store.event(
-    f.submitted.id,
-    "planner_escalation_wait",
-    `${escalationId}: ${JSON.stringify({ kind, target: prerequisite?.id ?? target, ...(prerequisite ? { waitId } : {}), stopDetail, stopReason: "lifecycle" })}`,
-  );
+  }));
+  f.store.event(f.submitted.id, 'planner_escalation',
+    `${escalationId}: cause ${'d'.repeat(64)}; run ${recoveryId}; question ${'e'.repeat(64)} (80 chars); options Restart | Wait until a time`);
+  f.store.event(f.submitted.id, 'planner_escalation_payload',
+    `${escalationId}: ${JSON.stringify({ id: escalationId, runId: recoveryId, question: 'How should the task proceed?' })}`);
+  f.store.event(f.submitted.id, 'planner_escalation_answered',
+    `${escalationId}: answered by planner-1: Choice: Wait until a time\nReason: ${target}`);
+  f.store.event(f.submitted.id, 'planner_escalation_applied',
+    `${escalationId}: waiting until ${target}`);
+  f.store.event(f.submitted.id, 'planner_escalation_wait',
+    `${escalationId}: ${JSON.stringify({ kind, target: prerequisite?.id ?? target, ...(prerequisite ? { waitId } : {}), stopDetail, stopReason: 'lifecycle' })}`);
   f.store.update(f.submitted.id, {
-    phase: "blocked",
-    ...(prerequisite
-      ? {
-          prerequisiteWait: {
-            id: waitId,
-            waitsFor: [prerequisite.id],
-            reason: "Waiting for synthetic target",
-            releasedAt: null,
-          },
-        }
-      : {}),
+    phase: 'blocked',
+    ...(prerequisite ? { prerequisiteWait: { id: waitId, waitsFor: [prerequisite.id], reason: 'Waiting for synthetic target', releasedAt: null } } : {}),
     reason: stopDetail,
     resolution: {
       ...f.current().resolution,
@@ -447,223 +378,100 @@ function load1217Wait(
   return { recoveryId, escalationId };
 }
 
-for (const kind of ["time", "task"] as const) {
-  test(`a ${kind} wait on a recovery escalation whose raising run has released wakes into the ordinary next step`, async () => {
-    const f = fixture();
-    try {
-      load1217Wait(f, kind);
-      const recoveriesBefore = f.coordinatorRuns().length;
-      await f.engine.resolution.ladder.resumeEscalationWaits(f.current());
-      assert.equal(
-        f.events("planner_escalation_wake_refused").length,
-        0,
-        f
-          .events("planner_escalation_wake_refused")
-          .map((event) => event.detail)
-          .join("\n") || "no refusal",
-      );
-      assert.equal(
-        f.events("planner_escalation_woke").length,
-        1,
-        JSON.stringify(
-          f.store
-            .eventsAll(f.submitted.id)
-            .map((event) => ({
-              kind: event.kind,
-              detail: event.detail.slice(0, 160),
-            })),
-        ),
-      );
-      const woke = f.events("planner_escalation_woke").at(-1)?.detail ?? "";
-      assert.doesNotMatch(woke, new RegExp(NO_RESOLUTION_RUN_REFUSAL));
-      assert.match(woke, /ordinary restart/, woke);
-      assert.doesNotMatch(f.current().reason, /wake was refused/);
-      assert.equal(
-        f.current().phase,
-        "awaiting_review",
-        `ordinary next must resume review; phase=${f.current().phase} reason=${f.current().reason}`,
-      );
-      await f.engine.wake();
-      assert.equal(
-        f.coordinatorRuns().length,
-        recoveriesBefore,
-        `wake must not start another recovery; runs=${f
-          .coordinatorRuns()
-          .map((run) => run.id)
-          .join(",")}`,
-      );
-    } finally {
-      await f.close();
-    }
-  });
+for (const kind of ['time', 'task'] as const) {
+test(`a ${kind} wait on a recovery escalation whose raising run has released wakes into the ordinary next step`, async () => {
+  const f = fixture();
+  try {
+    load1217Wait(f, kind);
+    const recoveriesBefore = f.coordinatorRuns().length;
+    await f.engine.resolution.ladder.resumeEscalationWaits(f.current());
+    assert.equal(f.events('planner_escalation_wake_refused').length, 0,
+      f.events('planner_escalation_wake_refused').map(event => event.detail).join('\n') || 'no refusal');
+    assert.equal(f.events('planner_escalation_woke').length, 1,
+      JSON.stringify(f.store.eventsAll(f.submitted.id).map(event => ({ kind: event.kind, detail: event.detail.slice(0, 160) }))));
+    const woke = f.events('planner_escalation_woke').at(-1)?.detail ?? '';
+    assert.doesNotMatch(woke, new RegExp(NO_RESOLUTION_RUN_REFUSAL));
+    assert.match(woke, /ordinary restart/, woke);
+    assert.doesNotMatch(f.current().reason, /wake was refused/);
+    assert.equal(f.current().phase, 'awaiting_review', `ordinary next must resume review; phase=${f.current().phase} reason=${f.current().reason}`);
+    await f.engine.wake();
+    assert.equal(f.coordinatorRuns().length, recoveriesBefore,
+      `wake must not start another recovery; runs=${f.coordinatorRuns().map(run => run.id).join(',')}`);
+  } finally { await f.close(); }
+});
 
-  test(`a ${kind} wait whose retained reviewer is closed resumes recovery without replacing that reviewer`, async () => {
-    const f = fixture();
-    try {
-      load1217Wait(f, kind);
-      f.states.set("review-agent", {
-        id: "review-agent",
-        workspaceId: "workspace",
-        status: "closed",
-        active: false,
-        permissions: false,
-        error: "",
-        provider: "test",
-        model: reviewer.model,
-      });
-      const recoveriesBefore = f.coordinatorRuns().length;
-      const reviewerRunsBefore = f.store
-        .runs(f.submitted.id)
-        .filter((run) => run.role === "reviewer")
-        .map((run) => run.id);
-      await f.engine.resolution.ladder.resumeEscalationWaits(f.current());
-      assert.equal(
-        f.events("planner_escalation_wake_refused").length,
-        0,
-        f
-          .events("planner_escalation_wake_refused")
-          .map((event) => event.detail)
-          .join("\n") || "no refusal",
-      );
-      assert.equal(
-        f.events("planner_escalation_woke").length,
-        1,
-        JSON.stringify(
-          f.store
-            .eventsAll(f.submitted.id)
-            .map((event) => ({
-              kind: event.kind,
-              detail: event.detail.slice(0, 160),
-            })),
-        ),
-      );
-      const woke = f.events("planner_escalation_woke").at(-1)?.detail ?? "";
-      assert.doesNotMatch(woke, /ordinary restart/, woke);
-      assert.match(woke, /ordinary recovery/, woke);
-      assert.doesNotMatch(f.current().reason, /wake was refused/);
-      assert.notEqual(
-        f.current().phase,
-        "awaiting_review",
-        `closed reviewer must not be replaced; phase=${f.current().phase} reason=${f.current().reason}`,
-      );
-      assert.equal(f.current().resolution.reviewerAgentId, "review-agent");
-      await f.engine.quiesce();
-      assert.ok(
-        f.coordinatorRuns().length > recoveriesBefore,
-        "a fresh recovery owns the remaining fault",
-      );
-      await f.engine.wake();
-      assert.equal(
-        f.coordinatorRuns().length,
-        recoveriesBefore + 1,
-        "one recovery resumes the ended wait",
-      );
-      const reviewerRuns = f.store
-        .runs(f.submitted.id)
-        .filter((run) => run.role === "reviewer")
-        .map((run) => run.id);
-      assert.deepEqual(
-        reviewerRuns,
-        reviewerRunsBefore,
-        "wake must not start a fresh reviewer",
-      );
-      assert.equal(
-        f.createdRuns.filter((run) => run.role === "reviewer").length,
-        0,
-      );
-    } finally {
-      await f.close();
-    }
-  });
+test(`a ${kind} wait whose retained reviewer is closed resumes recovery without replacing that reviewer`, async () => {
+  const f = fixture();
+  try {
+    load1217Wait(f, kind);
+    f.states.set('review-agent', {
+      id: 'review-agent', workspaceId: 'workspace', status: 'closed', active: false,
+      permissions: false, error: '', provider: 'test', model: reviewer.model,
+    });
+    const recoveriesBefore = f.coordinatorRuns().length;
+    const reviewerRunsBefore = f.store.runs(f.submitted.id).filter(run => run.role === 'reviewer').map(run => run.id);
+    await f.engine.resolution.ladder.resumeEscalationWaits(f.current());
+    assert.equal(f.events('planner_escalation_wake_refused').length, 0,
+      f.events('planner_escalation_wake_refused').map(event => event.detail).join('\n') || 'no refusal');
+    assert.equal(f.events('planner_escalation_woke').length, 1,
+      JSON.stringify(f.store.eventsAll(f.submitted.id).map(event => ({ kind: event.kind, detail: event.detail.slice(0, 160) }))));
+    const woke = f.events('planner_escalation_woke').at(-1)?.detail ?? '';
+    assert.doesNotMatch(woke, /ordinary restart/, woke);
+    assert.match(woke, /ordinary recovery/, woke);
+    assert.doesNotMatch(f.current().reason, /wake was refused/);
+    assert.notEqual(f.current().phase, 'awaiting_review',
+      `closed reviewer must not be replaced; phase=${f.current().phase} reason=${f.current().reason}`);
+    assert.equal(f.current().resolution.reviewerAgentId, 'review-agent');
+    await f.engine.quiesce();
+    assert.ok(f.coordinatorRuns().length > recoveriesBefore, 'a fresh recovery owns the remaining fault');
+    await f.engine.wake();
+    assert.equal(f.coordinatorRuns().length, recoveriesBefore + 1, 'one recovery resumes the ended wait');
+    const reviewerRuns = f.store.runs(f.submitted.id).filter(run => run.role === 'reviewer').map(run => run.id);
+    assert.deepEqual(reviewerRuns, reviewerRunsBefore, 'wake must not start a fresh reviewer');
+    assert.equal(f.createdRuns.filter(run => run.role === 'reviewer').length, 0);
+  } finally { await f.close(); }
+});
+
 }
 
-for (const occupant of ["reviewer", "recovery"] as const) {
-  test(`reviewer restart keeps the task slot held by ${occupant} and returns to reviewing ahead of queued work`, async () => {
-    const f = fixture();
-    try {
-      f.store.putRun({ ...f.store.run("review-run")!, active: null });
-      f.states.set("review-agent", {
-        id: "review-agent",
-        workspaceId: "workspace",
-        status: "idle",
-        active: false,
-        permissions: false,
-        error: "",
-        provider: "test",
-        model: reviewer.model,
-      });
-      if (occupant === "recovery") {
-        f.store.putRun({ ...f.store.run("review-run")!, active: false });
-        f.store.update(f.submitted.id, {
-          reason: "Reviewer provider failure",
-          resolution: { ...f.current().resolution, attention: true },
-        });
-        await f.engine.resolution.recovery.route(f.current());
-        await f.engine.quiesce();
-        assert.ok(f.coordinatorRuns().at(-1));
-      }
-      const holding = f.current();
-      assert.equal(
-        occupiesSlot(holding, f.store.runs(holding.id)),
-        true,
-        "the reviewer run holds the only slot",
-      );
-      const queued = f.store.insert(
-        submissionSchema.parse({
-          submissionId: randomUUID(),
-          title: "Queued behind the live review",
-          repoPath: "/repo",
-          planningCommit: base,
-          handoffPath: "handoff.md",
-          originAgentId: "origin",
-        }),
-        "host",
-        "handoff",
-        base,
-      );
-      assert.match(
-        f.engine.resolution.slotAdmissionReason(f.store.task(queued.id)),
-        /1\/1 occupied/,
-        "the queued task waits behind the slot-holding review",
-      );
-      await f.engine.performTaskControl(
-        taskControlInputSchema.parse({
-          taskId: holding.id,
-          version: holding.version,
-          action: "restart",
-          role: "reviewer",
-          reason: "Owner restart of the idle reviewer",
-          caller: "owner-thread",
-        }),
-      );
-      const restarted = f.store.task(holding.id);
-      assert.equal(
-        occupiesSlot(restarted, f.store.runs(restarted.id)),
-        true,
-        "restart keeps the task's slot",
-      );
-      assert.equal(f.store.task(queued.id).phase, "queued");
-      assert.match(
-        f.engine.resolution.slotAdmissionReason(f.store.task(queued.id)),
-        /1\/1 occupied/,
-        "the queued task does not take the restarted task's slot",
-      );
-      await f.engine.wake();
-      assert.equal(
-        occupiesSlot(f.store.task(holding.id), f.store.runs(holding.id)),
-        true,
-      );
-      assert.equal(f.store.task(queued.id).phase, "queued");
-      assert.equal(f.current().phase, "reviewing", f.current().reason);
-      assert.equal(
-        f.current().resolution.restartSlotHold,
-        null,
-        "the new reviewer consumed the task slot hold",
-      );
-    } finally {
-      await f.close();
+for (const occupant of ['reviewer', 'recovery'] as const) {
+test(`reviewer restart keeps the task slot held by ${occupant} and returns to reviewing ahead of queued work`, async () => {
+  const f = fixture();
+  try {
+    f.store.putRun({ ...f.store.run('review-run')!, active: null });
+    f.states.set('review-agent', { id: 'review-agent', workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '', provider: 'test', model: reviewer.model });
+    if (occupant === 'recovery') {
+      f.store.putRun({ ...f.store.run('review-run')!, active: false });
+      f.store.update(f.submitted.id, { reason: 'Reviewer provider failure', resolution: { ...f.current().resolution, attention: true } });
+      await f.engine.resolution.recovery.route(f.current());
+      await f.engine.quiesce();
+      assert.ok(f.coordinatorRuns().at(-1));
     }
-  });
+    const holding = f.current();
+    assert.equal(occupiesSlot(holding, f.store.runs(holding.id)), true, 'the reviewer run holds the only slot');
+    const queued = f.store.insert(submissionSchema.parse({
+      submissionId: randomUUID(), title: 'Queued behind the live review', repoPath: '/repo', planningCommit: base,
+      handoffPath: 'handoff.md', originAgentId: 'origin',
+    }), 'host', 'handoff', base);
+    assert.match(f.engine.resolution.slotAdmissionReason(f.store.task(queued.id)), /1\/1 occupied/,
+      'the queued task waits behind the slot-holding review');
+    await f.engine.performTaskControl(taskControlInputSchema.parse({
+      taskId: holding.id, version: holding.version, action: 'restart', role: 'reviewer',
+      reason: 'Owner restart of the idle reviewer', caller: 'owner-thread',
+    }));
+    const restarted = f.store.task(holding.id);
+    assert.equal(occupiesSlot(restarted, f.store.runs(restarted.id)), true, 'restart keeps the task\'s slot');
+    assert.equal(f.store.task(queued.id).phase, 'queued');
+    assert.match(f.engine.resolution.slotAdmissionReason(f.store.task(queued.id)), /1\/1 occupied/,
+      'the queued task does not take the restarted task\'s slot');
+    await f.engine.wake();
+    assert.equal(occupiesSlot(f.store.task(holding.id), f.store.runs(holding.id)), true);
+    assert.equal(f.store.task(queued.id).phase, 'queued');
+    assert.equal(f.current().phase, 'reviewing', f.current().reason);
+    assert.equal(f.current().resolution.restartSlotHold, null);
+  } finally { await f.close(); }
+});
+
 }
 
 test('a fenced restart hold does not keep the slot', async () => {
@@ -694,108 +502,31 @@ test('a fenced restart hold does not keep the slot', async () => {
   } finally { await f.close(); }
 });
 
-for (const occupant of ["worker", "recovery"] as const) {
-  test(`worker restart keeps the task slot held by ${occupant} while another task is queued`, async () => {
-    const f = fixture();
-    try {
-      f.store.putRun({
-        ...f.store.run("review-run")!,
-        released: true,
-        active: false,
-        status: "finished",
-      });
-      f.idle("review-agent");
-      f.store.putRun(
-        runSchema.parse({
-          id: "revision-run",
-          taskId: f.submitted.id,
-          role: "revision",
-          generation: 1,
-          head,
-          base,
-          agentId: "worker",
-          workspaceId: "workspace",
-          profile: worker,
-          status: "running",
-          createdAt: lastActivity,
-          briefVersion: f.submitted.briefVersions.at(-1)?.version ?? null,
-          lastObservedAt: lastActivity,
-          active: null,
-          idleSince: lastActivity,
-          completion: null,
-          released: false,
-        }),
-      );
-      f.store.update(f.submitted.id, {
-        phase: "changes_requested",
-        reason: "Idle worker",
-        agentActive: false,
-        lastAgentStatus: "idle",
-        resolution: {
-          ...f.current().resolution,
-          currentRunId: "revision-run",
-          reviewerAgentId: null,
-          reviewerProfile: null,
-        },
-      });
-      if (occupant === "recovery") {
-        f.store.putRun({ ...f.store.run("revision-run")!, active: false });
-        f.store.update(f.submitted.id, {
-          reason: "Worker provider failure",
-          resolution: { ...f.current().resolution, attention: true },
-        });
-        await f.engine.resolution.recovery.route(f.current());
-        await f.engine.quiesce();
-        assert.ok(f.coordinatorRuns().at(-1));
-      }
-      const holding = f.current();
-      assert.equal(
-        occupiesSlot(holding, f.store.runs(holding.id)),
-        true,
-        "the idle revision run holds the only slot",
-      );
-      const queued = f.store.insert(
-        submissionSchema.parse({
-          submissionId: randomUUID(),
-          title: "Queued behind the idle worker",
-          repoPath: "/repo",
-          planningCommit: base,
-          handoffPath: "handoff.md",
-          originAgentId: "origin",
-        }),
-        "host",
-        "handoff",
-        base,
-      );
-      assert.match(
-        f.engine.resolution.slotAdmissionReason(f.store.task(queued.id)),
-        /1\/1 occupied/,
-        "the queued task waits behind the slot-holding worker",
-      );
-      await f.engine.performTaskControl(
-        taskControlInputSchema.parse({
-          taskId: holding.id,
-          version: holding.version,
-          action: "restart",
-          role: "worker",
-          reason: "Owner restart of the idle worker",
-          caller: "owner-thread",
-        }),
-      );
-      const restarted = f.store.task(holding.id);
-      assert.equal(
-        occupiesSlot(restarted, f.store.runs(restarted.id)),
-        true,
-        "worker restart keeps the task's slot",
-      );
-      assert.equal(f.store.task(queued.id).phase, "queued");
-      assert.match(
-        f.engine.resolution.slotAdmissionReason(f.store.task(queued.id)),
-        /1\/1 occupied/,
-        "the queued task does not take the restarted worker's slot",
-      );
-    } finally {
-      await f.close();
+for (const occupant of ['worker', 'recovery'] as const) {
+test(`worker restart keeps the task slot held by ${occupant} while another task is queued`, async () => {
+  const f = fixture();
+  try {
+    f.store.putRun({ ...f.store.run('review-run')!, released: true, active: false, status: 'finished' });
+    f.idle('review-agent');
+    f.store.putRun(runSchema.parse({
+      id: 'revision-run', taskId: f.submitted.id, role: 'revision', generation: 1, head, base,
+      agentId: 'worker', workspaceId: 'workspace', profile: worker, status: 'running',
+      createdAt: lastActivity, briefVersion: f.submitted.briefVersions.at(-1)?.version ?? null,
+      lastObservedAt: lastActivity, active: null, idleSince: lastActivity, completion: null, released: false,
+    }));
+    f.store.update(f.submitted.id, {
+      phase: 'changes_requested',
+      reason: 'Idle worker',
+      agentActive: false,
+      lastAgentStatus: 'idle',
+      resolution: { ...f.current().resolution, currentRunId: 'revision-run', reviewerAgentId: null, reviewerProfile: null },
+    });
+    if (occupant === 'recovery') {
+      f.store.putRun({ ...f.store.run('revision-run')!, active: false });
+      f.store.update(f.submitted.id, { reason: 'Worker provider failure', resolution: { ...f.current().resolution, attention: true } });
+      await f.engine.resolution.recovery.route(f.current());
+      await f.engine.quiesce();
+      assert.ok(f.coordinatorRuns().at(-1));
     }
     const holding = f.current();
     assert.equal(occupiesSlot(holding, f.store.runs(holding.id)), true, 'the idle revision run holds the only slot');
@@ -817,7 +548,6 @@ for (const occupant of ["worker", "recovery"] as const) {
   } finally { await f.close(); }
 });
 }
-
 test("a blocked recovery report on an idle fault still escalates", async () => {
   const f = fixture();
   try {
