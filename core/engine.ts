@@ -12,7 +12,7 @@ import { PlannerGrantCleanup } from './questions/planner-grants';
 
 import { Dispatch } from "./dispatch/dispatch";
 import { HOST_WAIT_PRESERVED_STOPS, hostUnavailableDetail } from '../shared/host-outage';
-import { CreationRecovery } from "./recovery/creation-recovery";
+import { CreationRecovery } from "./recovery/absent-creation";
 import type { GitTransientEpisode } from './git/git-transient-backoff';
 
 import { type WorkspaceDiscard } from './workspaces/orphan-worktree';
@@ -497,7 +497,7 @@ export class Engine {
     this.archiveEffectRetries = new ArchiveEffectRetries(this);
     this.recoveryEffectRetries = new RecoveryEffectRetries(this);
     this.ordinaryEffectRetries = new OrdinaryEffectRetries(this);
-    this.workerReconcile = new WorkerReconcile(enginePorts(this, ['acceptWorkerResult', 'adapter', 'admission', 'branchPrLookupDue', 'compareSiblings', 'continuationOwnsReturn', 'hooks', 'host', 'idleGraceMs', 'note', 'reconcileBlockedReturn', 'reconcileBranchPr', 'reconcileObservation', 'reconcileReportingBinding', 'recordObservation', 'reportingBindingRecheckDue', 'stopped', 'store', 'updateAfterOperatorRemap', 'onTaskHost'], ['adoptReplacementPr', 'attention', 'extendCallbackReminder', 'heavyRunAlive', 'identifyOriginHost', 'withHost', 'reconcileStalledTurnStop', 'recovery', 'remindStoppedWorker', 'resolveIncident', 'responsiblePrReportRefused', 'settleAutomaticReplayHold', 'stalls', 'suppressAutomaticRetry', 'update', 'waiting']));
+    this.workerReconcile = new WorkerReconcile(enginePorts(this, ['adapter', 'admission', 'compareSiblings', 'hooks', 'host', 'idleGraceMs', 'note', 'onTaskHost', 'stopped', 'store', 'updateAfterOperatorRemap'], ['adoptReplacementPr', 'attention', 'extendCallbackReminder', 'heavyRunAlive', 'identifyOriginHost', 'withHost', 'reconcileStalledTurnStop', 'recovery', 'remindStoppedWorker', 'resolveIncident', 'responsiblePrReportRefused', 'settleAutomaticReplayHold', 'stalls', 'suppressAutomaticRetry', 'update', 'waiting']));
     const engine = this;
     this.callbackIntake = new CallbackIntake({
       get adapter() { return engine.adapter; },

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { absentWorkerStep } from '../core/recovery/creation-recovery';
+import { absentWorkerStep } from '../core/recovery/absent-creation';
 
 test('absent worker decisions and map bug 15: the budget uses the supplied recent window', () => {
   const base = { launchRetry: false, retryDue: false, matches: 0, graceElapsed: true };

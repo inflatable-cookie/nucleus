@@ -1,43 +1,24 @@
-import type { Resolution } from '../resolution';
-import type { Task } from "../../shared/contracts";
-import { holdsOf, isDispositionActive } from "../../shared/contracts";
-import type { Engine } from "../engine";
-import { isPiSettingsLockFailure } from "./exhaustion";
-import { worktreeLinksForBinding, worktreeLinksForClearedIntent } from "../workspaces/worktree-links";
-import { retainNodeModules, workspaceCreationRefusal } from "../workspaces/workspace-allocation";
-import { startsNoRuns } from "../closeout/queue-drain";
-import { ABSENT_WORKER_REASON, ABSENT_WORKER_REPLACEMENT_REASON, PRE_AGENT_LAUNCH_FAILURE_REASON } from "./task-reasons";
-
-/** Facts needed before an unowned workspace creation may be replayed. A parked
- * refusal for this exact classified state stands where the dispatching phase
- * would: the stop exists because the proven orphan was not yet removed, its
- * detail names the replay as the exit, and nothing else holds the task — so the
- * same recovery path clears it and replays once (nucleus#1106). */
-export function workspaceReplayAllowed(task: Task, kind: string, canRemoveOrphan: boolean, hasRuns: boolean, replayRecorded: boolean, parkedRefusal?: string | null): boolean {
-  const parked = task.phase === 'needs_attention' && !task.resolution.attention && !holdsOf(task).dispatch
-    && Boolean(parkedRefusal) && task.resolution.stop?.detail === parkedRefusal;
-  return (kind === 'absent' || kind === 'partial' && canRemoveOrphan) &&
-    (task.phase === 'dispatching' || parked) && !task.agentIntent && !task.agentId && !task.runId && !task.completion &&
-    !task.prUrl && !task.prHead && !task.resolution.recoveryActive && !task.resolution.attention &&
-    (!task.resolution.incident || task.resolution.incident.status === 'resolved') &&
-    (!task.resolution.recovery || task.resolution.recovery.status === 'resolved') && !hasRuns && !replayRecorded;
-}
-
-/** Choose the next absent-worker step from facts available at this point.
- * A missing replacement budget requests that read only after the grace gate. */
-export function absentWorkerStep(facts: { launchRetry: boolean; retryDue: boolean; matches: number; graceElapsed: boolean; replacementSpent?: boolean }):
-  'wait' | 'launch_retry' | 'read_budget' | 'escalate' | 'ambiguous' | 'replace' {
-  if (facts.launchRetry && facts.matches === 0) return facts.retryDue ? 'launch_retry' : 'wait';
-  if (!facts.graceElapsed) return 'wait';
-  if (facts.replacementSpent === undefined) return 'read_budget';
-  if (facts.replacementSpent) return 'escalate';
-  if (facts.matches > 1) return 'ambiguous';
-  return 'replace';
-}
+import type { Resolution } from '../../resolution';
+import type { Task } from "../../../shared/contracts";
+import { isDispositionActive } from "../../../shared/contracts";
+import type { Engine } from '../../engine';
+import { isPiSettingsLockFailure } from '../exhaustion';
+import { worktreeLinksForBinding, worktreeLinksForClearedIntent } from '../../workspaces/worktree-links';
+import { retainNodeModules, workspaceCreationRefusal } from '../../workspaces/workspace-allocation';
+import { startsNoRuns } from '../../closeout/queue-drain';
+import { ABSENT_WORKER_REASON, ABSENT_WORKER_REPLACEMENT_REASON, PRE_AGENT_LAUNCH_FAILURE_REASON } from '../task-reasons';
+import { absentWorkerStep, workspaceReplayAllowed } from './decisions';
 
 export type CreationRecoveryContext = Pick<Engine, 'adapter' | 'idleGraceMs' | 'launchAgent' | 'launchProofOnly' | 'note' | 'reconcileAbsentWorker' | 'recoverProofOnlyDispatch' | 'stopped' | 'store'>
   & { readonly resolution: Pick<Resolution, 'ensureIncident' | 'resolveIncident' | 'resumeAbsentWorker' | 'returnToDispatch' | 'saveIncident'> };
 
+/**
+ * The engine-side half of absence: recover an unowned workspace creation or an
+ * agent-creation intent, replay one proven-empty workspace, and reconcile an
+ * absent worker with one replacement. The resolution-side half — the run and
+ * worker restarts and the creation replacement — is `AbsentRestarts` in
+ * `restarts.ts`; both read the same decisions (`decisions.ts`).
+ */
 export class CreationRecovery {
   constructor(readonly engine: CreationRecoveryContext) {}
   get store() { return this.engine.store; }
