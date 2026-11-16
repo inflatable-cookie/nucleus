@@ -16,7 +16,7 @@ import type { Profile, Task } from "./contracts";
  * then only the contract names it.
  *
  * Errors keep their classes. A proven pre-send refusal is `ProvenPreSendRefusalError`
- * (`core/recovery/task-reasons.ts`) or a `refused` result, and any other rejection from a
+ * (`core/recovery/task-reasons/reasons.ts`) or a `refused` result, and any other rejection from a
  * send is unknown delivery: nothing retries it, and an observation settles it.
  */
 export interface Host {

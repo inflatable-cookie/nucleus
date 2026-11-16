@@ -203,7 +203,8 @@ test('Sol #609 P2: wake() waits only for projections queued at its cut, not ones
     const engine = f.engine as unknown as { syncWorkspaceTitle: (task: { id: string }) => Promise<void>; enqueueTitle: (id: string) => void };
     const gates = new Map<string, () => void>();
     engine.syncWorkspaceTitle = task => new Promise<void>(resolve => { gates.set(task.id, resolve); });
-    (f.store as unknown as { task: (id: string) => { id: string; hostId: string } }).task = id => ({ id, hostId: "host" }); // #912: titles run inside their task host
+    const tasks = f.store as unknown as { task: (id: string) => { id: string; hostId: string }; taskOrNull: (id: string) => { id: string; hostId: string } }; // #912: titles run inside their task host
+    tasks.task = id => ({ id, hostId: "host" }); tasks.taskOrNull = id => ({ id, hostId: "host" });
     engine.enqueueTitle('cut-title');
     const wake = f.settled(f.engine.wake());
     await f.nextPass(1);
@@ -225,7 +226,8 @@ test('Sol #609 P2: a queued projection behind an in-flight one for the same key 
     const engine = f.engine as unknown as { syncWorkspaceTitle: (task: { id: string }) => Promise<void>; enqueueTitle: (id: string) => void };
     const gates: (() => void)[] = [];
     engine.syncWorkspaceTitle = () => new Promise<void>(resolve => { gates.push(resolve); });
-    (f.store as unknown as { task: (id: string) => { id: string; hostId: string } }).task = id => ({ id, hostId: "host" }); // #912: titles run inside their task host
+    const tasks = f.store as unknown as { task: (id: string) => { id: string; hostId: string }; taskOrNull: (id: string) => { id: string; hostId: string } }; // #912: titles run inside their task host
+    tasks.task = id => ({ id, hostId: "host" }); tasks.taskOrNull = id => ({ id, hostId: "host" });
     engine.enqueueTitle('task-a');
     await f.flush();
     assert.equal(gates.length, 1, 'the old title is in flight');

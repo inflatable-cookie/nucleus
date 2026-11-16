@@ -222,6 +222,22 @@ test('Spec 042: a lane that leaves the plan ends its episode, and a project with
   } finally { void f.close(); }
 });
 
+test('Spec 042: an owner thread still on an unresolved seed id is not routable, so no episode opens', () => {
+  const f = fixture();
+  try {
+    f.store.upsertLane({ key: 'alpha', title: 'Alpha lane', aim: 'Done looks like alpha shipped.', repositories: [repoA] });
+    f.store.upsertProject({ key: 'app', name: 'App', repositories: [repoA] });
+    // A retired-role owner record whose id is still its seed prefix, and no planner: the pass cannot name a recipient.
+    const project = f.store.projectByKey('app')!;
+    f.store.db.prepare('UPDATE projects SET data=? WHERE key=?').run(JSON.stringify({ ...project, owner: { agentId: '0a1b2c3d', assignedBy: 'operator', assignedAt: minutesAgo(30), note: '' } }), 'app');
+    f.store.setPlan({ project: 'app', version: 0, author: 'operator (board)', entries: [{ lane: 'alpha', note: '', horizon: 'now' as const, doneWhen: 'Alpha shipped' }] });
+    backdate(f, 200);
+    f.store.evaluateLaneDrains();
+    assert.equal(drainNotices(f).length, 0, 'an unresolved seed owner is never prompted');
+    assert.equal(f.store.laneByKey('alpha')!.drain, null, 'nor does its lane open an episode');
+  } finally { void f.close(); }
+});
+
 test('Spec 041 row 9: a project with no unfinished task sends the plan owner its next aim', async () => {
   const f = fixture();
   try {

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { branchPrLookupOutcome, blockedReturnDecision, classifyWorkerObservation } from '../core/recovery/worker-reconcile';
-import { workspaceReplayAllowed } from '../core/recovery/creation-recovery';
+import { workspaceReplayAllowed } from '../core/recovery/absent-creation';
 import type { Task } from '../shared/contracts';
 import type { AgentObservation } from '../core/host';
 

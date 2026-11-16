@@ -3,6 +3,8 @@ import {StoreConfig} from "./store-config";
 import {digest,now,StoreCore} from "./store-core";
 import {StoreHostRuns} from "./store-host-runs";
 import {StoreLanes} from "./store-lanes";
+import {LaneDrainPass} from "../planning/lane-drains";
+import {DEFAULT_LANE_DRAIN_ESCALATION_MINUTES,DEFAULT_LANE_DRAIN_MINUTES} from "../../shared/contracts";
 import {StorePrerequisites} from "./store-prerequisites";
 import {StoreSourcePromotion} from "./store-source-promotion";
 import {StoreTaskFunnel} from "./store-task-funnel";
@@ -22,6 +24,7 @@ import {StorePreSend} from "./store-pre-send";
 import {buildOutcomeRecord,StoreOutcomes,type TelemetryFactChunk,type VerbOutcome} from "./store-outcomes";
 import {StorePlanning} from "./store-planning";
 import {StoreProjectQa} from "./store-project-qa";
+import {StoreUsage,type UsageSample} from "./store-usage";
 import {StoreProjectRegistry} from "./store-project-registry";
 import {StoreRepositorySettings} from "./store-repository-settings";
 import {StoreProjectAgents} from "./store-project-agents";
@@ -69,7 +72,6 @@ import type {BudgetClock} from "../../shared/task-budget";
  * start a transaction, and the window itself proves no other connection holds a lock.
  */
 export { now,qualifiedThreadArchiveEffectKey,StoreMaintenanceError } from "./store-core";
-export { UNRESOLVED_SEED } from "./store-lanes";
 
 /** Latest accepted non-recovery run completion by run creation, optionally limited to statuses. */
 export const latestRunCompletion = (runs: Run[], statuses?: string[]) =>
@@ -261,18 +263,36 @@ export class Store {
       get laneActivity() { return store.laneActivity; },
       set laneActivity(value) { store.laneActivity = value; },
       ensureLeadLaneIndex: this.ensureLeadLaneIndex.bind(this),
-      projects: this.projects.bind(this),
-      projectKeyResolver: this.projectKeyResolver.bind(this),
-      openLeads: this.openLeads.bind(this),
-      task: this.task.bind(this),
-      plan: this.plan.bind(this),
-      projectPlannerRecipient: this.projectPlannerRecipient.bind(this),
-      getMeta: this.getMeta.bind(this),
-      projectByKey: this.projectByKey.bind(this),
-      notices: this.notices.bind(this),
-      putNotice: this.putNotice.bind(this),
     });
   })();
+
+  /**
+   * Spec 041's drain pass, owned by planning: the store supplies the typed lane, project,
+   * plan, QA, notice and finished-task facts it reads, and its owners write what it decides.
+   */
+  private readonly laneDrainPass = new LaneDrainPass({
+    transaction: work => this.transaction(work),
+    projects: () => this.projects(),
+    projectKeyResolver: projects => this.projectKeyResolver(projects),
+    projectByKey: key => this.projectByKey(key),
+    projectPlannerRecipient: project => this.projectPlannerRecipient(project),
+    setProjectDrain: (key, drain) => this.projectRegistry.setProjectDrain(key, drain),
+    uiTasks: () => this.uiTasks(),
+    laneViews: () => this.lanesStore.laneViews({}),
+    openLeads: () => this.openLeads(),
+    plan: input => this.plan(input),
+    appendPlanVersion: plan => this.planningStore.appendPlanVersion(plan),
+    laneDocument: key => this.lanesStore.laneDocument(key),
+    notices: taskId => this.notices(taskId),
+    putNotice: notice => this.putNotice(notice),
+    setLaneDrain: (key, drain) => this.lanesStore.setLaneDrain(key, drain),
+    drainSettings: () => ({
+      drainMinutes: this.getMeta<number>("laneDrainMinutes") ?? DEFAULT_LANE_DRAIN_MINUTES,
+      escalationMinutes: this.getMeta<number>("laneDrainEscalationMinutes") ?? DEFAULT_LANE_DRAIN_ESCALATION_MINUTES,
+    }),
+    activeQaRunRepositories: () => this.projectQaStore.activeRunRepositories(),
+    finishedDrainTasks: () => this.tasksStore.finishedDrainFacts(),
+  });
 
   private readonly pendingRunReportingCleanup = new Map<string, string>();
   private readonly authStore = new StoreAuth(this.core);
@@ -314,6 +334,7 @@ export class Store {
   });
   private readonly hostRunStore = new StoreHostRuns(this.core);
   private readonly projectQaStore = new StoreProjectQa(this.core);
+  private readonly usageStore = new StoreUsage(this.core);
   private readonly planningStore = new StorePlanning(this.core, {
     requireLaneDocuments: (keys, repoPath, origin) => this.lanesStore.requireLaneDocuments(keys, repoPath, origin),
     laneDocumentPinsFor: task => this.lanesStore.laneDocumentPinsFor(task),
@@ -505,6 +526,9 @@ export class Store {
   /** One truncating WAL checkpoint; `busy` reports a reader that kept the WAL in place. */
   checkpointWal(): { busy: number; log: number; checkpointed: number } { return this.reclaimStore.checkpointWal(); }
   transaction<T>(fn: () => T): T { return this.core.transaction(fn); }
+  usageReadState(key: string): string | null { return this.usageStore.readState(key); }
+  recordUsageRead(key: string, data: string, samples: readonly UsageSample[]): void { return this.usageStore.recordRead(key, data, samples); }
+  pruneUsageSamples(before: string): void { return this.usageStore.pruneSamples(before); }
   private transactionHooks() {
     const undo = this.tasksStore.projectionUndo = { projection: this.tasksStore.taskProjection, clock: this.tasksStore.projectionClock, sequence: this.tasksStore.newestSequence,
       tasks: new Map(), runs: new Map(), counts: new Map() };
@@ -1110,12 +1134,11 @@ export class Store {
    */
   closeIdleLanes(at = Date.now()): string[] { return this.lanesStore.closeIdleLanes(at); }
   /**
-   * Spec 041: one drain pass over the active projects' saved plans. Parked projects
-   * and plans nobody saved start no episode; a stored episode still escalates by its
-   * timer. Episodes and notices land in one transaction, so a pass never leaves a
-   * started episode without its prompt.
+   * Spec 041: one drain pass over the active projects' saved plans. The pass is the
+   * planning owner `core/planning/lane-drains.ts`; this store supplies its typed reads
+   * and writes, so no lane or plan policy lives here.
    */
-  evaluateLaneDrains(at = Date.now()): void { return this.lanesStore.evaluateLaneDrains(at); }
+  evaluateLaneDrains(at = Date.now()): void { return this.laneDrainPass.evaluate(at); }
   hookEvent(id: string): HookRecord | null { return this.hookEventsStore.hookEvent(id); }
   deleteHookEvents(ids: readonly string[], batch = 500): number { return this.hookEventsStore.deleteHookEvents(ids, batch); }
   putHookEvent(record: HookRecord) { return this.hookEventsStore.putHookEvent(record); }

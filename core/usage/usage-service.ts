@@ -46,11 +46,9 @@ export const USAGE_TICK_INTERVAL_MS = 60_000;
 
 /** The subscription kind a stored provider key reads as, or null when no reader covers it. */
 export function providerUsageKind(provider: string): UsageProvider | null {
-  const key = provider.toLowerCase();
-  if (key.includes("codex")) return "codex";
-  if (key.includes("claude")) return "claude";
-  if (key.includes("grok")) return "grok";
-  return null;
+  return provider === "codex" || provider === "claude" || provider === "grok"
+    ? provider
+    : null;
 }
 
 /** Codex reads run against this subscription's CODEX_HOME (default under the home directory). */
@@ -192,13 +190,13 @@ export class UsageService {
       (target) => {
         const stored = this.readState(target);
         const hasFailure = Boolean(stored?.lastError);
-        let lastGoodReading = stored?.lastGoodReading ??
-          (stored?.reading?.status === "ok" ? stored.reading : null);
-        if (
+        const candidateLastGood = stored ? lastGoodReadingFrom(stored) : null;
+        const lastGoodReading =
           hasFailure &&
           stored?.reading?.accountId &&
-          stored.reading.accountId !== lastGoodReading?.accountId
-        ) lastGoodReading = null;
+          stored.reading.accountId !== candidateLastGood?.accountId
+            ? null
+            : candidateLastGood;
         const staleReading = hasFailure ? lastGoodReading : null;
         const reading = staleReading ?? stored?.reading ?? notSampledReading();
         // A passed reset still tells us that the window reset; project it as
@@ -284,14 +282,8 @@ export class UsageService {
   }
 
   private readState(target: UsageSubscriptionTarget): StoredReadState | null {
-    try {
-      const row = this.store.db
-        .prepare("SELECT data FROM usage_read_state WHERE group_key=?")
-        .get(readStateKey(target)) as { data: string } | undefined;
-      return row ? parseReadState(row.data) : null;
-    } catch {
-      return null;
-    }
+    const data = this.store.usageReadState(readStateKey(target));
+    return data === null ? null : parseReadState(data);
   }
 
   /** Store the reading, its samples and the next due time; a lost write never fails a read. */
@@ -315,67 +307,26 @@ export class UsageService {
       reading,
       lastGoodReading: reading.status === "ok"
         ? reading
-        : stored?.lastGoodReading ?? (stored?.reading?.status === "ok" ? stored.reading : null),
+        : stored ? lastGoodReadingFrom(stored) : null,
     };
     try {
-      this.store.transaction(() => {
-        this.store.db
-          .prepare(
-            "INSERT INTO usage_read_state(group_key,data) VALUES(?,?) ON CONFLICT(group_key) DO UPDATE SET data=excluded.data",
-          )
-          .run(readStateKey(target), JSON.stringify(next));
-        if (reading.status === "ok") this.insertSamples(target, reading);
-      });
-    } catch {
-      /* the store closed or refused; the next paced read rewrites both */
-    }
-  }
-
-  /** One sample per window unless the latest stored row already carries exactly this reading. */
-  private insertSamples(
-    target: UsageSubscriptionTarget,
-    reading: UsageReading,
-  ): void {
-    for (const window of reading.windows) {
-      const latest = this.store.db
-        .prepare(
-          "SELECT used_fraction,resets_at,sampled_at FROM usage_samples WHERE group_id=? AND provider=? AND account_id IS ? AND window_id=? ORDER BY id DESC LIMIT 1",
-        )
-        .get(
-          target.group,
-          target.provider,
-          reading.accountId,
-          window.windowId,
-        ) as
-        | {
-            used_fraction: number;
-            resets_at: string | null;
-            sampled_at: string;
-          }
-        | undefined;
-      if (
-        latest &&
-        latest.sampled_at === reading.asOf &&
-        latest.used_fraction === window.usedFraction &&
-        latest.resets_at === window.resetsAt
-      )
-        continue;
-      this.store.db
-        .prepare(
-          "INSERT INTO usage_samples(group_id,provider,account_id,window_id,used_fraction,window_seconds,window_starts_at,resets_at,sampled_at,source) VALUES(?,?,?,?,?,?,?,?,?,?)",
-        )
-        .run(
-          target.group,
-          target.provider,
-          reading.accountId,
-          window.windowId,
-          window.usedFraction,
-          window.windowSeconds,
-          window.windowStartsAt,
-          window.resetsAt,
-          reading.asOf,
-          reading.source,
-        );
+      const samples = reading.status === "ok"
+        ? reading.windows.map((window) => ({
+            group: target.group,
+            provider: target.provider,
+            accountId: reading.accountId,
+            windowId: window.windowId,
+            usedFraction: window.usedFraction,
+            windowSeconds: window.windowSeconds,
+            windowStartsAt: window.windowStartsAt,
+            resetsAt: window.resetsAt,
+            sampledAt: reading.asOf,
+            source: reading.source,
+          }))
+        : [];
+      this.store.recordUsageRead(readStateKey(target), JSON.stringify(next), samples);
+    } catch (error) {
+      console.warn(`[nucleus] Usage read state write failed for ${target.group}/${target.provider}:`, error);
     }
   }
 
@@ -386,12 +337,10 @@ export class UsageService {
       const last = this.store.getMeta<number>(META_PRUNED_AT);
       const nowMs = this.now().getTime();
       if (typeof last === "number" && nowMs - last < 24 * 60 * 60_000) return;
-      this.store.db
-        .prepare("DELETE FROM usage_samples WHERE sampled_at < ?")
-        .run(new Date(nowMs - this.retentionMs).toISOString());
+      this.store.pruneUsageSamples(new Date(nowMs - this.retentionMs).toISOString());
       this.store.setMeta(META_PRUNED_AT, nowMs);
-    } catch {
-      /* retried the next tick */
+    } catch (error) {
+      console.warn("[nucleus] Usage sample pruning failed:", error);
     }
   }
 }
@@ -408,31 +357,42 @@ function notSampledReading(): UsageReading {
   });
 }
 
-function parseReadState(data: string): StoredReadState | null {
+function parseReadState(data: string): StoredReadState {
   try {
     const parsed = JSON.parse(data) as Partial<StoredReadState>;
-    if (!parsed || typeof parsed !== "object") return null;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      throw new Error("Expected an object");
+    if (
+      !(typeof parsed.nextReadAt === "string" || parsed.nextReadAt === null) ||
+      !(typeof parsed.lastAttemptAt === "string" || parsed.lastAttemptAt === null) ||
+      !(typeof parsed.lastError === "string" || parsed.lastError === null) ||
+      typeof parsed.failures !== "number" || !Number.isInteger(parsed.failures) || parsed.failures < 0 ||
+      !(parsed.reading === null || typeof parsed.reading === "object") ||
+      !(parsed.lastGoodReading === null || typeof parsed.lastGoodReading === "object")
+    ) throw new Error("Stored usage read state has an invalid shape");
+    const reading = parsed.reading === null
+      ? null
+      : usageReadingSchema.parse(parsed.reading);
+    const lastGoodReading = parsed.lastGoodReading === null
+      ? null
+      : usageReadingSchema.parse(parsed.lastGoodReading);
+    const lastGood = lastGoodReadingFrom({ reading, lastGoodReading });
     return {
-      nextReadAt:
-        typeof parsed.nextReadAt === "string" ? parsed.nextReadAt : null,
-      lastAttemptAt:
-        typeof parsed.lastAttemptAt === "string" ? parsed.lastAttemptAt : null,
-      lastError:
-        typeof parsed.lastError === "string"
-          ? parsed.lastError.slice(0, 500)
-          : null,
-      failures:
-        typeof parsed.failures === "number" && Number.isFinite(parsed.failures)
-          ? parsed.failures
-          : 0,
-      reading: parsed.reading ? usageReadingSchema.parse(parsed.reading) : null,
-      lastGoodReading: parsed.lastGoodReading
-        ? usageReadingSchema.parse(parsed.lastGoodReading)
-        : (parsed.reading?.status === "ok" ? usageReadingSchema.parse(parsed.reading) : null),
+      nextReadAt: parsed.nextReadAt,
+      lastAttemptAt: parsed.lastAttemptAt,
+      lastError: parsed.lastError?.slice(0, 500) ?? null,
+      failures: parsed.failures,
+      reading,
+      lastGoodReading: lastGood,
     };
-  } catch {
-    return null;
+  } catch (error) {
+    throw new Error("Stored usage read state is unreadable", { cause: error });
   }
+}
+
+function lastGoodReadingFrom(state: Pick<StoredReadState, "reading" | "lastGoodReading">): UsageReading | null {
+  return state.lastGoodReading ??
+    (state.reading?.status === "ok" ? state.reading : null);
 }
 
 function readingAgeMs(reading: UsageReading, now: number): number {

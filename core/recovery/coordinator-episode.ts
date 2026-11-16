@@ -6,7 +6,7 @@ import type { Resolution } from '../resolution';
 import { missingOriginHasPlanner } from '../questions/origin';
 import { taskOwner } from '../../shared/contracts';
 import { randomUUID } from 'node:crypto';
-import { RECOVERY_CREATION_FAILURE_PREFIX } from './task-reasons';
+import { creationFailureDetail } from './task-reasons';
 import { taskProgressDigest } from './coordinator-report';
 import { recoveryApplicationsInFlight } from './coordinator-settlement';
 
@@ -242,7 +242,7 @@ export class CoordinatorEpisode {
  }
  failedCreationRun(t:Task,run:Run){
   const incident=t.resolution.recovery;
-  return this.absentRun(t)?.id===run.id&&run.generation===t.coordinatorGeneration&&incident?.generation===run.generation&&incident.summary.startsWith(RECOVERY_CREATION_FAILURE_PREFIX);
+  return this.absentRun(t)?.id===run.id&&run.generation===t.coordinatorGeneration&&incident?.generation===run.generation&&creationFailureDetail(incident.summary)!==null;
  }
  /** Releases a proven-absent recovery run; the escalation stays open for the operator and nothing is launched. */
  releaseAbsent(t:Task,runId:string,proof:string){
