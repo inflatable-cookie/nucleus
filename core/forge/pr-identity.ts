@@ -2,7 +2,7 @@ import type { VerifiedPr } from '../../core/host/types';
 export type { VerifiedPr } from '../../core/host/types';
 import { type Task, type Completion } from '../../shared/contracts';
 import { repo, api } from './github-client';
-import { git, queueCheckoutStatus, verifyReportOnlyIdentity, githubRepositoryFromRemote, verifyResume, command } from '../git/index';
+import { git, queueCheckoutStatus, verifyTaskWorktreeIdentity, githubRepositoryFromRemote, verifyResume, command } from '../git/index';
 
 
 
@@ -89,7 +89,7 @@ export async function verifyContinuedProgress(t:Task, number:number, expected:st
     if (pr.url !== t.prUrl || pr.head !== expected) throw Error('Continued progress PR identity or head changed');
   };
   const proveWorktree = async () => {
-    await verifyReportOnlyIdentity(t,{allowDirty:options.requireClean === false});
+    await verifyTaskWorktreeIdentity(t,{allowDirty:options.requireClean === false});
     const planningOrigin = githubRepositoryFromRemote(await git(t.repoPath, 'remote', 'get-url', 'origin'));
     const worktreeOrigin = githubRepositoryFromRemote(await git(t.directory!, 'remote', 'get-url', 'origin'));
     if (!planningOrigin || !worktreeOrigin || planningOrigin.toLowerCase() !== worktreeOrigin.toLowerCase())

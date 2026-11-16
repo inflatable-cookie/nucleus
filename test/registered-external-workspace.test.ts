@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Engine } from '../core/engine';
 import { Lifecycle } from '../core/closeout/workspace-lifecycle';
-import { git } from '../core/git/index';
+import { git, verifyTaskWorktreeIdentity } from '../core/git/index';
 import { assertRegistrationUnowned, registerTask, type RegistrationAdapter } from '../core/host/registration';
 import { dispositionSchema, submissionSchema, type Profile, type Task } from '../shared/contracts';
 import { runTicketPath, writeRunTicket } from '../core/dispatch/agent-creation';
@@ -31,7 +31,7 @@ const newTaskId = 'registeredtasksynthetic239';
 const profile = (id: string, model = id): Profile =>
   ({ id, name: id, model, provider: 'fixture', available: true, problem: '', notes: '', supportedThinking: [] });
 
-async function externalFixture(t: Pick<TestContext, 'after'>, options: { oldTask?: boolean } = {}) {
+async function externalFixture(t: Pick<TestContext, 'after'>, options: { oldTask?: boolean; branch?: string } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'ns-registered-external-')));
   const data = join(root, 'data'), repo = join(root, 'repo'), origin = join(root, 'origin.git');
   mkdirSync(data);
@@ -48,7 +48,7 @@ async function externalFixture(t: Pick<TestContext, 'after'>, options: { oldTask
   // this machine's workspace root: Nucleus did not create this one either.
   const directory = ownedWorkspacePath(data, await repoCommonDir(repo), oldTaskId);
   mkdirSync(dirname(directory), { recursive: true });
-  await git(repo, 'worktree', 'add', '-b', `ns-${newTaskId}`, directory, 'main');
+  await git(repo, 'worktree', 'add', '-b', options.branch ?? `ns-${newTaskId}`, directory, 'main');
   const head = await git(directory, 'rev-parse', 'HEAD');
 
   const store = new Store(join(root, 'queue.sqlite'));
@@ -171,6 +171,22 @@ test('a row registered before the ownership field existed is proved external fro
   t.after(() => reopened.close());
   assert.equal(reopened.task(task.id).workspaceOwnership, 'external', 'the registration event proves the stored worktree external');
   assert.equal(reopened.task(planned.id).workspaceOwnership, 'queue', 'a planned task keeps the Queue allocation class');
+});
+
+test('continuation worktree proof accepts the migrated registered branch but still binds the current branch', async (t) => {
+  const f = await externalFixture(t, { oldTask: false, branch: 'feature/registered-work' });
+  const { task } = await f.register();
+  // Reproduce the pre-1261 row and let the real store migration restore ownership.
+  f.store.db.prepare("UPDATE tasks SET data=json_remove(data,'$.workspaceOwnership') WHERE id=?").run(task.id);
+  const reopened = new Store(join(f.root, 'queue.sqlite'));
+  t.after(() => reopened.close());
+  const migrated = reopened.task(task.id);
+  assert.equal(migrated.workspaceOwnership, 'external');
+  assert.equal(migrated.branch, 'feature/registered-work');
+  await verifyTaskWorktreeIdentity(migrated);
+  await assert.rejects(verifyTaskWorktreeIdentity({ ...migrated, workspaceOwnership: 'queue' }), /immutable task branch identity/);
+  await git(f.directory, 'checkout', '-b', 'feature/other');
+  await assert.rejects(verifyTaskWorktreeIdentity(migrated), /worktree is on the wrong branch/);
 });
 
 test('closeout of a registered task leaves its external directory and branch in place', async (t) => {

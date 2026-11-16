@@ -8,7 +8,7 @@ import { participantToolRunIds } from '../recovery/task-reasons';
 import { boundedToolHold } from '../machine/bounded-tool';
 import { readToolTimeline, liveToolIssue, workspaceToolProcessIssue } from "../recovery/stall";
 import { verifyReviewSourceView } from "../review/review-source";
-import { verifyRecordedOrigin, verifyReportOnlyIdentity, originBranchContaining, git, queueCheckoutStatus } from "../git/index";
+import { verifyRecordedOrigin, verifyTaskWorktreeIdentity, originBranchContaining, git, queueCheckoutStatus } from "../git/index";
 import { removeOwnedWorktree, repoCommonDir } from "./workspace-allocation";
 import { removeBuildOutput, type BuildOutputCleanupHooks } from "./worktree-cleanup";
 import { assertCanonicalOwnedPath, classifyOrphanWorktree, normalizeOwnedDirectoryPermissions, type WorkspaceDiscard } from "./orphan-worktree";
@@ -188,7 +188,7 @@ export class OwnedWorkspaceArchive {
       // Under a discard, report-only identity is still proved (root, common
       // dir, origin, branch); only its clean-state content proof is waived. An
       // orphan has no Git identity to read: its identity is the owned path.
-      if(reportOnly&&!orphan.orphaned)await verifyReportOnlyIdentity(task,{allowDirty:discarding});
+      if(reportOnly&&!orphan.orphaned)await verifyTaskWorktreeIdentity(task,{allowDirty:discarding});
       // Publication is proved against the origin of this pass, which must name
       // the recorded repository; every later pass must see the same origin.
       const origin=requirePublished&&!discarding?await git(directory,'remote','get-url','origin'):'';

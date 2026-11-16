@@ -8,6 +8,7 @@
 import { realpath } from "node:fs/promises";
 import type { Run, Task } from "../../shared/contracts";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
+import { externalWorkspace } from "../../shared/workspace-ownership";
 import { command, git, gitAncestry } from "./git-command";
 import { queueCheckoutStatus, currentWorkerBranch } from "./git-checkout";
 import { githubRepositoryFromRemote } from "./git-remote";
@@ -53,7 +54,7 @@ export async function reportOnlySourceHead(task: Task, runs: readonly Run[]): Pr
   for (const recorded of new Set(reported.filter((value): value is string => Boolean(value))))
     await contain(recorded, `Report-only source ${head} does not contain authenticated reported head ${recorded}; workspace preserved`);
   if (head === task.planningBase) return head;
-  await verifyReportOnlyIdentity(task);
+  await verifyTaskWorktreeIdentity(task);
   await contain(task.planningBase, `Report-only source ${head} does not descend from planning base ${task.planningBase}; workspace preserved`);
   return head;
 }
@@ -66,16 +67,15 @@ export async function verifyRecordedOrigin(task: Task, directory: string): Promi
   if (expectedOrigin && normalizeRepositoryOrigin(await git(directory, "remote", "get-url", "origin")) !== expectedOrigin)
     throw new Error("Task worktree repository origin does not match the recorded task identity");
 }
-/** The retained canonical task worktree: registered root, Git root, origin, branch and a clean tree. */
-/** The report-only task's own registered worktree: root, Git common dir, origin, branch and clean state. */
-export async function verifyReportOnlyIdentity(task: Task, options: { allowDirty?: boolean } = {}): Promise<void> {
+/** Prove the retained task worktree root, Git common dir, origin, branch and clean state. */
+export async function verifyTaskWorktreeIdentity(task: Task, options: { allowDirty?: boolean } = {}): Promise<void> {
   if (!task.directory || !task.workspaceId || !task.branch || !task.baseBranch)
-    throw new Error("Report-only completion requires the retained task workspace and branch identity");
-  if (task.branch !== `ns-${task.id}`) throw new Error("Report-only completion requires the immutable task branch identity");
+    throw new Error("Task worktree proof requires the retained workspace and branch identity");
+  if (!externalWorkspace(task) && task.branch !== `ns-${task.id}`) throw new Error("Task worktree proof requires the immutable task branch identity");
   const taskRoot = await realpath(task.directory);
   const worktreeRoot = await realpath(await git(task.directory, "rev-parse", "--show-toplevel"));
   if (taskRoot !== worktreeRoot || worktreeRoot === await realpath(task.repoPath))
-    throw new Error("Report-only completion requires the registered task worktree root");
+    throw new Error("Task worktree proof requires the registered task worktree root");
   const common = await git(task.directory, "rev-parse", "--path-format=absolute", "--git-common-dir");
   const planningCommon = await git(task.repoPath, "rev-parse", "--path-format=absolute", "--git-common-dir");
   if (common !== planningCommon) throw new Error("Task worktree and planning checkout belong to different Git roots");
@@ -83,7 +83,7 @@ export async function verifyReportOnlyIdentity(task: Task, options: { allowDirty
   if (await currentWorkerBranch(task, task.directory!) !== task.branch)
     throw new Error("Task worktree is on the wrong branch");
   if (!options.allowDirty && await queueCheckoutStatus(task.directory, "status", "--porcelain"))
-    throw new Error("Task worktree is dirty; report-only completion cannot preserve uncommitted work");
+    throw new Error("Task worktree is dirty; worktree proof requires committed work");
 }
 /**
  * The worker checkout's current branch, reattaching it first when ordinary review left it detached.
