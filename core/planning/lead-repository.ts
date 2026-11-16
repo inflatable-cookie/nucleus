@@ -9,6 +9,6 @@ export function leadRepository(store: Store, input: { origin: string; path: stri
       .find(repository => repository.origin === identity.origin && repository.path.trim())?.path;
   const path = registered || identity.path;
   if (requireCheckout && !existsSync(path))
-    throw new Error(`No usable checkout for ${identity.origin}: ${registered ? "registered checkout is unavailable" : "no checkout is registered and the stored path is unavailable"}`);
+    throw new Error(`No usable checkout for ${identity.origin}: no usable checkout is registered and the stored path is unavailable`);
   return { origin: identity.origin, path };
 }

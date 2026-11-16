@@ -74,7 +74,7 @@ weighted(3)('leads filed from an archived worktree check and promote in the regi
 
   // A historical row keeps its original bytes and identity while its path is resolved at use time.
   const stamp=new Date().toISOString();
-  const historical=f.runtime.store.addLead({id:randomUUID(),title:'Historical lead',body:text,repositories:[{origin,path:worktree}],lanes:[],author:'planner',
+  const historical=f.runtime.store.addLead({id:randomUUID(),title:'Historical lead',body:text,digest:briefDigest(text),repositories:[{origin,path:worktree}],lanes:[],author:'planner',
     state:'open',version:1,dropReason:null,targets:[],source:null,createdAt:stamp,updatedAt:stamp,closedAt:null},'planner');
   const before=f.runtime.store.lead(historical.id);
   const historicalCheck=await f.runtime.checkLead({id:historical.id});
@@ -86,8 +86,8 @@ weighted(3)('leads filed from an archived worktree check and promote in the regi
 weighted(1)('a missing unregistered lead checkout names its origin',async t=>{
   const f=await fixture(t), origin='acme/missing';
   const lead=await f.runtime.addLead({repositories:[{origin,path:join(f.root,'gone')}],title:'Missing checkout',body:text,lanes:[],author:'planner'});
-  assert.match(lead.check?.message??'',/acme\/missing.*no checkout is registered/);
-  await assert.rejects(f.runtime.checkLead({id:lead.id}),/acme\/missing.*no checkout is registered/);
+  assert.match(lead.check?.message??'',/acme\/missing.*no usable checkout is registered/);
+  await assert.rejects(f.runtime.checkLead({id:lead.id}),/acme\/missing.*no usable checkout is registered/);
 });
 
 weighted(3)('a promoted report-only lead gets the report-only prompt and can report_ready',async t=>{
