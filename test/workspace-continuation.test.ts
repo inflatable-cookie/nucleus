@@ -182,7 +182,7 @@ test("an intake-owned review-entry continuation admits its exact directory direc
 
   assert.deepEqual(await new WorkspaceContinuation(host).preflightWorkerContinuation(intakeTask), { available: true });
   assert.deepEqual(admitted, [directory], "the intake directory receives volume admission without Queue-root allocation proof");
-  assert.deepEqual(host.calls.filter(call => call !== "directory"), ["placement", "workspaceRef:wks_65f907ac97222689", "refresh", "current"]);
+  assert.deepEqual(host.calls.filter(call => call !== "directory"), ["workspaceRef:wks_65f907ac97222689", "refresh", "current"]);
 });
 
 test("the continuation preflight keeps its incomplete, archived, removed and changed-identity refusals", async (t) => {
