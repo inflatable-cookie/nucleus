@@ -128,6 +128,13 @@ const refusal = (capability: string): never => {
   );
 };
 
+class BbHostOperationNotSentError extends Error {
+  constructor(reason: string) {
+    super(`BB host operation was not sent: ${reason}`);
+    this.name = "BbHostOperationNotSentError";
+  }
+}
+
 /**
  * The adapter a registered BB host answers with in phase 1. Its identity is real
  * (the health surface, the routing snapshot and the host kind all read it), and
@@ -141,13 +148,21 @@ export function createBbHostAdapter(
   requestOperation?: (op: HostOperationName, input: unknown) => Promise<HostOperationOutcome>,
 ): Adapter {
   async function operation(op: HostOperationName, input: unknown): Promise<HostOperationOutcome> {
-    if (!connected()) throw new Error("BB host executor is offline");
+    let online: boolean;
+    try { online = connected(); }
+    catch (error) { throw new BbHostOperationNotSentError(error instanceof Error ? error.message : String(error)); }
+    if (!online) throw new BbHostOperationNotSentError("BB host executor is offline");
     if (requestOperation) return requestOperation(op, input);
-    const info = readServiceInfo(dataDir);
-    if (!info) throw new Error("Nucleus service identity is unavailable");
-    const client = new ServiceClient({ socketPath: info.socketPath, credential: info.credential });
+    let client: ServiceClient;
     try {
+      const info = readServiceInfo(dataDir);
+      if (!info) throw new Error("Nucleus service identity is unavailable");
+      client = new ServiceClient({ socketPath: info.socketPath, credential: info.credential });
       await client.connect();
+    } catch (error) {
+      throw new BbHostOperationNotSentError(error instanceof Error ? error.message : String(error));
+    }
+    try {
       return await client.request("service.bb-host-operation", { hostId, op, input }, 25_000) as HostOperationOutcome;
     } finally { client.close(); }
   }
@@ -211,9 +226,10 @@ export function createBbHostAdapter(
       let result: HostOperationOutcome;
       try { result = await operation("workspace.create", { repositoryRoot, workspacePath: directory, name: basename(repositoryRoot) || task.title }); }
       catch (error) {
-        // Only a typed refusal proves the SDK write could not have landed. Unknown
+        // A local failure before the service request, or a typed refusal before the
+        // SDK write, proves the project create could not have landed. Unknown
         // outcomes keep the reservation so a later call must observe, never resend.
-        if (error instanceof ServiceRequestError && (error.code === "invalid_input" || error.code === "refused")) removeWorkspace(id);
+        if (error instanceof BbHostOperationNotSentError || (error instanceof ServiceRequestError && (error.code === "invalid_input" || error.code === "refused"))) removeWorkspace(id);
         throw error;
       }
       const value = result.value as { projectId: string; handle: string; path: string; spawned: number };

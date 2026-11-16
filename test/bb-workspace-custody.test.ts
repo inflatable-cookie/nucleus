@@ -42,6 +42,42 @@ test("BB workspace creation records a canonical handle without creating a thread
   } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
+test("an offline BB host releases the reservation so a later create can retry", async () => {
+  const root = mkdtempSync(join(tmpdir(), "bb-workspace-"));
+  const repositoryRoot = join(root, "repository"), directory = join(root, "task-worktree");
+  mkdirSync(repositoryRoot); mkdirSync(directory);
+  const store = new Store(":memory:");
+  let online = false;
+  let writes = 0;
+  const adapter = createBbHostAdapter(hostId, () => online, "", store, async (op, input) => {
+    writes++;
+    const path = (input as { workspacePath: string }).workspacePath;
+    return outcome(op, { projectId: "proj_synthetic", projectCreated: true, projectCount: 1, handle: workspaceHandleForPath(path), path, spawned: 0 });
+  });
+  const request = task("Synthetic task", repositoryRoot, directory);
+  try {
+    await assert.rejects(adapter.createWorkspace!(request), /operation was not sent: BB host executor is offline/);
+    assert.deepEqual(store.getMeta("bbWorkspaces"), {}, "an offline pre-send failure removes its reservation");
+    assert.equal(writes, 0);
+    online = true;
+    const created = await adapter.createWorkspace!(request);
+    assert.equal(created.id, workspaceHandleForPath(directory));
+    assert.equal(writes, 1, "the later create reaches the host once");
+  } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a missing service identity releases the reservation before any host operation is sent", async () => {
+  const root = mkdtempSync(join(tmpdir(), "bb-workspace-"));
+  const repositoryRoot = join(root, "repository"), directory = join(root, "task-worktree"), dataDir = join(root, "service");
+  mkdirSync(repositoryRoot); mkdirSync(directory); mkdirSync(dataDir);
+  const store = new Store(":memory:");
+  const adapter = createBbHostAdapter(hostId, () => true, dataDir, store);
+  try {
+    await assert.rejects(adapter.createWorkspace!(task("Synthetic task", repositoryRoot, directory)), /operation was not sent: Nucleus service identity is unavailable/);
+    assert.deepEqual(store.getMeta("bbWorkspaces"), {}, "a missing service identity cannot leave a reserved handle");
+  } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
 test("BB archive marks one task handle and leaves the shared project and sibling workspace alone", async () => {
   const root = mkdtempSync(join(tmpdir(), "bb-workspace-"));
   const repositoryRoot = join(root, "repository"), first = join(root, "first"), second = join(root, "second");

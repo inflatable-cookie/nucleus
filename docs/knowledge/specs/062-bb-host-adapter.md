@@ -951,7 +951,8 @@ Tests: `test/bb-workspace-custody.test.ts` covers creation, handle identity, loo
 archived-handle reuse, missing directories, unregistered projects and unreadable reads;
 `test/bb-plugin-operations.test.ts` covers project registration/reuse, read-only project inspection
 and zero `threads.spawn` calls; `test/bb-host-channel.test.ts` covers the adapter's production
-service-to-executor route, pre-send refusal classification and reservation cleanup; the shared
+service-to-executor route, offline and missing-service-identity pre-send cleanup, typed refusal
+classification and reservation recovery; the shared
 operation schemas and `test/bb-host-executor.test.ts` retain the bounded reply and unknown delivery
 rules.
 
