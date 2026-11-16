@@ -182,16 +182,17 @@ export class CoordinatorPass {
      this.store.transaction(()=>this.episode.settleLiveNoOp(this.store.task(t.id),finishedRun,accepted));
      continue;
     }
+    if(t.responsible&&accepted&&reported&&['blocked','error'].includes(accepted.reportStatus)&&reported.providerUnavailable!==true
+      &&isLiveRecoveryNoop(accepted.summary)){
+     this.store.transaction(()=>this.episode.settleLiveNoOp(this.store.task(t.id),finishedRun,accepted));
+     continue;
+    }
+    if(!await this.resolution.lease(t)||this.resolution.startsNoRuns())continue;
     if(t.responsible&&accepted&&reported&&['blocked','error'].includes(accepted.reportStatus)&&reported.providerUnavailable!==true){
-     if(isLiveRecoveryNoop(accepted.summary)){
-      this.store.transaction(()=>this.episode.settleLiveNoOp(this.store.task(t.id),finishedRun,accepted));
-      continue;
-     }
      this.store.transaction(()=>this.episode.settleFinishedRun(this.store.task(t.id),finishedRun,`Recovery reported ${accepted.reportStatus}: ${accepted.summary}; handing it to the responsible-task planner ladder`));
      await this.resolution.responsibleBlockerLadder(this.store.task(t.id),{source:'recovery',runId:finishedRun.id,completion:reported});
      continue;
     }
-    if(!await this.resolution.lease(t)||this.resolution.startsNoRuns())continue;
     if(accepted?.status==='pending'&&accepted.coordinatorAction){
      if(this.coordinatorActionHandler)await this.coordinatorActionHandler(t,run,accepted);
      else this.episode.refuseAcceptedAction(t,run,accepted,'the task reconciler cannot apply coordinator owner verbs in this context',false);
