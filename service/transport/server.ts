@@ -37,6 +37,9 @@ import {
   type ServiceErrorCode, type ServiceRequest, type ServiceResponse,
 } from "../../shared/service/protocol";
 import { currentLoginSession, newCredential, onLoginSessionFault, pidAlive, readServiceInfo, removeServiceInfo, serviceSocketPath, writeServiceExecutorFault, writeServiceInfo } from "./identity";
+import { HostExecutorLink, HostExecutorUnavailableError } from "../host-executor";
+import { HOST_EXECUTOR_METHOD, hostIdFromDataDir, type HostExecutorAcceptance, type HostOperationName, type HostOperationOutcome } from "../../shared/host-operation";
+import { parseHostExecutorDeclaration } from "../../shared/service/host-channel";
 import { WebBoard, defaultWebBundleDir, uiLinkInputSchema, type WebBoardHost, type WebBoardOptions } from "../web/web-board";
 
 export { SERVICE_BUILD, currentServiceBuildId } from "../../shared/service/build";
@@ -95,6 +98,12 @@ interface Connection {
   inFlight: number;
   closing: boolean;
   hostPresence: boolean;
+  /**
+   * The reverse host-operation role this connection declared, when it declared one
+   * (Spec 062, phase 0). A connection without it is exactly the client it was
+   * before: this field adds a role, never a shape.
+   */
+  hostExecutor: HostExecutorLink | null;
 }
 
 function serviceError(code: ServiceErrorCode, error: unknown): { code: ServiceErrorCode; message: string } {
@@ -117,6 +126,8 @@ export class QueueService {
   /** The local web board's HTTP server; null when it did not start, and the socket still serves. */
   private web: WebBoard | null = null;
   private connections = new Set<Connection>();
+  /** One declared executor connection per host identity; the newest wins a reload. */
+  private readonly hostExecutors = new Map<string, HostExecutorLink>();
   private draining = false;
   private drained: Promise<void> | null = null;
   private idleTimer: NodeJS.Timeout | null = null;
@@ -330,7 +341,9 @@ export class QueueService {
     const now = Date.now();
     for (const connection of this.connections) {
       const idleFor = now - Math.max((connection.socket as Socket & { _nsLastSeen?: number })._nsLastSeen ?? now, 0);
-      if (!connection.hostPresence && idleFor >= this.idleTimeoutMs && connection.inFlight === 0) {
+      // A host executor is a long-lived role like the presence claim: idleness is
+      // its normal state, so the idle sweep never closes it.
+      if (!connection.hostPresence && !connection.hostExecutor && idleFor >= this.idleTimeoutMs && connection.inFlight === 0) {
         connection.socket.end();
         connection.closing = true;
       }
@@ -342,7 +355,7 @@ export class QueueService {
       socket.destroy();
       return;
     }
-    const connection: Connection = { socket, authed: false, inFlight: 0, closing: false, hostPresence: false };
+    const connection: Connection = { socket, authed: false, inFlight: 0, closing: false, hostPresence: false, hostExecutor: null };
     this.connections.add(connection);
     (socket as Socket & { _nsLastSeen?: number })._nsLastSeen = Date.now();
     const reader = createFrameReader(
@@ -353,6 +366,7 @@ export class QueueService {
     socket.on("error", () => {});
     socket.on("close", () => {
       this.connections.delete(connection);
+      this.releaseHostExecutor(connection, "the host executor connection closed");
       if (connection.hostPresence) this.hostPresenceRevision++;
       if (connection.hostPresence && !this.draining && ![...this.connections].some(other => other.hostPresence && !other.closing))
         void this.executor.callHandler("hostPresenceClosed", {}).catch(() => {});
@@ -361,6 +375,10 @@ export class QueueService {
 
   private async handleFrame(connection: Connection, frame: unknown) {
     if (connection.closing) return;
+    // A frame without a method on a declared executor connection is that
+    // connection's answer to one reverse request. It settles exactly that
+    // operation; anything else falls through to the ordinary request path.
+    if (connection.hostExecutor && typeof (frame as { method?: unknown } | null)?.method !== "string" && connection.hostExecutor.settle(frame)) return;
     const parsed = parseRequest(frame);
     if (!parsed.ok) {
       const id = typeof (frame as { id?: unknown })?.id === "string" ? (frame as { id: string }).id : "protocol";
@@ -394,6 +412,10 @@ export class QueueService {
           return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result: { active: true } }, false, request.method);
         }
         case "service.health": return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result: this.health() }, false, request.method);
+        // The reverse host-operation role (Spec 062, decision 1). Additive: a client
+        // that never declares it sees the service exactly as before, and the one
+        // presence claim, roll recovery and the catalogue path never read it.
+        case HOST_EXECUTOR_METHOD: return this.handleHostExecutor(connection, request);
         case "service.request-outcome": {
           // Roll recovery: the replacement answers what happened to one keyed
           // request the old service received before it drained. A store read,
@@ -418,6 +440,77 @@ export class QueueService {
       const mapped = serviceError("internal", error);
       this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: mapped }, false, request.method);
     }
+  }
+
+  /**
+   * A connection becomes this server's host executor for one BB host identity.
+   *
+   * The identity is derived here, never taken from the plugin: the same real data
+   * directory always answers the same `bb:` id. A second declaration for the same
+   * identity replaces the older connection, which is what a plugin reload looks
+   * like, and the older connection's in-flight operations settle as unknown
+   * delivery rather than being replayed on the new one. Nothing is registered as a
+   * host, so this cannot route a task.
+   */
+  private handleHostExecutor(connection: Connection, request: ServiceRequest) {
+    if (!connection.authed) return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: "unauthenticated", message: "Authenticate before declaring a host executor" } }, true, request.method);
+    const parsed = parseHostExecutorDeclaration(request.input);
+    if (!parsed.ok) return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: "invalid_input", message: parsed.failure.message } }, false, request.method);
+    if (connection.hostExecutor) {
+      return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: "refused", message: `This connection already executes host operations for ${connection.hostExecutor.hostId}` } }, false, request.method);
+    }
+    const hostId = hostIdFromDataDir(parsed.value.host.dataDir);
+    const previous = this.hostExecutors.get(hostId);
+    if (previous) this.releaseHostExecutor(previous, "a newer connection declared this host's executor role");
+    const link = new HostExecutorLink({
+      hostId,
+      declaration: parsed.value,
+      write: frame => { connection.socket.write(encodeFrame(frame)); },
+    });
+    connection.hostExecutor = link;
+    this.hostExecutors.set(hostId, link);
+    const result: HostExecutorAcceptance = { ok: true, hostId, dataDir: parsed.value.host.dataDir, acceptedAt: new Date().toISOString() };
+    this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result }, false, request.method);
+  }
+
+  /** Detach one executor link from the registry and settle its work as unknown delivery. */
+  private releaseHostExecutor(connectionOrLink: Connection | HostExecutorLink, reason: string) {
+    const link = connectionOrLink instanceof HostExecutorLink ? connectionOrLink : connectionOrLink.hostExecutor;
+    if (!link) return;
+    link.close(reason);
+    if (this.hostExecutors.get(link.hostId) === link) this.hostExecutors.delete(link.hostId);
+    for (const connection of this.connections) {
+      if (connection.hostExecutor !== link) continue;
+      connection.hostExecutor = null;
+      // A replaced executor connection is finished: the plugin that held it is
+      // reloading, so its socket goes and its replacement declares afresh.
+      if (!connection.socket.destroyed) { connection.closing = true; connection.socket.destroy(); }
+    }
+  }
+
+  /** The host identities currently holding an executor connection, for adapters and tests. */
+  hostExecutorIds(): string[] { return [...this.hostExecutors.keys()].sort(); }
+
+  /**
+   * What one declared executor connection announces, or null when none holds it.
+   * `connectedAt` is the evidence a reload produced a new connection rather than a
+   * resumed one, and the declared data directory is what identity is re-proved from.
+   */
+  hostExecutorStatus(hostId: string): { hostId: string; dataDir: string; bbVersion: string; sdkVersion: string; connectedAt: string } | null {
+    const link = this.hostExecutors.get(hostId);
+    if (!link) return null;
+    return { hostId, ...link.declaration.host, connectedAt: link.connectedAt };
+  }
+
+  /**
+   * Run one bounded host operation on a declared executor connection. Phase 0 wires
+   * nothing to this: no catalogue method, no dispatch path and no host registration
+   * calls it, so the only callers are the proof and its tests.
+   */
+  sendHostOperation(hostId: string, op: HostOperationName, input: unknown): Promise<HostOperationOutcome> {
+    const link = this.hostExecutors.get(hostId);
+    if (!link) return Promise.reject(new HostExecutorUnavailableError(hostId));
+    return link.request(op, input);
   }
 
   private async handleAuth(connection: Connection, request: ServiceRequest) {

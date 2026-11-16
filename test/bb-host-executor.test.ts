@@ -1,0 +1,123 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  HostExecutorLink,
+  HostExecutorUnavailableError,
+  HostOperationRefusedError,
+  HostOperationUnknownDeliveryError,
+} from "../service/host-executor";
+import { PROTOCOL_VERSION } from "../shared/service/protocol";
+import type { HostExecutorDeclaration, HostOperationOutcome } from "../shared/host-operation";
+
+/**
+ * The link is the service's half of the reverse channel: it writes one bounded
+ * request, waits for the answer that names it, and settles exactly that operation.
+ *
+ * The fault boundaries are the point of this file: an answer for another operation,
+ * a projection missing a field and a passed deadline are all unknown delivery, while
+ * a bounded refusal the plugin proved before the write is a definite answer.
+ */
+const declaration: HostExecutorDeclaration = {
+  role: "host-executor",
+  host: { dataDir: "/tmp/bb-data", bbVersion: "0.49.0", sdkVersion: "0.6.132" },
+};
+
+function link(deadlineMs = 1_000) {
+  const written: Array<{ v: number; id: string; method: string; input: { op: string; input: unknown } }> = [];
+  const instance = new HostExecutorLink({
+    hostId: "bb:0123456789abcdef0123456789abcdef",
+    declaration,
+    deadlineMs,
+    write: frame => { written.push(frame as (typeof written)[number]); },
+  });
+  return { instance, written };
+}
+
+function outcome(op: string, value: unknown, calls: Record<string, number> = {}): HostOperationOutcome {
+  return { operation: op as HostOperationOutcome["operation"], at: "2026-11-16T00:00:00.000Z", calls, value };
+}
+
+test("one operation is written as a bounded host.op request and settles from its own answer", async () => {
+  const { instance, written } = link();
+  const pending = instance.request("thread.observe", { threadId: "thr_1" });
+  assert.equal(written.length, 1);
+  assert.equal(written[0].method, "host.op");
+  assert.equal(written[0].v, PROTOCOL_VERSION);
+  assert.deepEqual(written[0].input, { op: "thread.observe", input: { threadId: "thr_1" } });
+  assert.equal(instance.settle({
+    v: PROTOCOL_VERSION,
+    id: written[0].id,
+    result: outcome("thread.observe", {
+      threadId: "thr_1",
+      title: null,
+      status: "idle",
+      displayStatus: "idle",
+      environmentId: "env_1",
+      parentThreadId: null,
+      parentNotifications: "off",
+      pluginMetadata: null,
+      archivedAt: null,
+      queuedWork: null,
+    }),
+  }), true);
+  const settled = await pending;
+  assert.equal(settled.operation, "thread.observe");
+  assert.equal((settled.value as { environmentId: string }).environmentId, "env_1");
+  assert.equal(instance.inFlight, 0);
+});
+
+test("an answer for a different operation, or a projection missing a field, is unknown delivery", async () => {
+  const first = link();
+  const other = first.instance.request("thread.observe", { threadId: "thr_1" });
+  first.instance.settle({ v: PROTOCOL_VERSION, id: first.written[0].id, result: outcome("thread.stop", { threadId: "thr_1", status: "idle", displayStatus: "idle" }) });
+  await assert.rejects(other, (error: unknown) => error instanceof HostOperationUnknownDeliveryError && /named thread.stop/.test(error.message));
+
+  const second = link();
+  const partial = second.instance.request("thread.observe", { threadId: "thr_1" });
+  second.instance.settle({ v: PROTOCOL_VERSION, id: second.written[0].id, result: outcome("thread.observe", { threadId: "thr_1" }) });
+  await assert.rejects(partial, (error: unknown) => error instanceof HostOperationUnknownDeliveryError && /environmentId/.test(error.message));
+});
+
+test("a bounded refusal the plugin proved is a definite answer, not an unknown write", async () => {
+  const { instance, written } = link();
+  const pending = instance.request("thread.archive", { threadId: "thr_1", expectedCascadeThreadIds: [] });
+  instance.settle({ v: PROTOCOL_VERSION, id: written[0].id, error: { code: "refused", message: "Archive refused: the cascade also names thr_foreign" } });
+  await assert.rejects(pending, (error: unknown) => error instanceof HostOperationRefusedError && error.failure.code === "refused" && /thr_foreign/.test(error.message));
+});
+
+test("a passed deadline, a malformed refusal and a closed connection are all unknown delivery", async () => {
+  const expired = link(10);
+  await assert.rejects(expired.instance.request("call.counters", {}), (error: unknown) => error instanceof HostOperationUnknownDeliveryError && /no answer within 10 ms/.test(error.message));
+
+  const malformed = link();
+  const pendingMalformed = malformed.instance.request("call.counters", {});
+  malformed.instance.settle({ v: PROTOCOL_VERSION, id: malformed.written[0].id, error: { code: "not-a-code" } });
+  await assert.rejects(pendingMalformed, (error: unknown) => error instanceof HostOperationUnknownDeliveryError);
+
+  const closed = link();
+  const pendingClosed = closed.instance.request("identity.probe", {});
+  closed.instance.close("the host executor connection closed");
+  await assert.rejects(pendingClosed, (error: unknown) => error instanceof HostOperationUnknownDeliveryError && /connection closed/.test(error.message));
+  await assert.rejects(closed.instance.request("identity.probe", {}), (error: unknown) => error instanceof HostExecutorUnavailableError);
+});
+
+test("an input the service refuses is never written to the host", async () => {
+  const { instance, written } = link();
+  await assert.rejects(
+    instance.request("thread.observe", { threadId: "" }),
+    (error: unknown) => error instanceof HostOperationRefusedError && error.failure.code === "invalid_input",
+  );
+  await assert.rejects(
+    instance.request("run.attach", { projectId: "proj_1" }),
+    (error: unknown) => error instanceof HostOperationRefusedError && /title/.test(error.failure.message),
+  );
+  assert.deepEqual(written, []);
+});
+
+test("an answer frame that names no in-flight operation is reported, not guessed at", () => {
+  const { instance } = link();
+  assert.equal(instance.settle({ v: PROTOCOL_VERSION, id: "host-op-unknown", result: outcome("call.counters", {}) }), false);
+  assert.equal(instance.settle({ v: 99, id: "host-op-unknown" }), false);
+  assert.equal(instance.settle(null), false);
+  assert.equal(instance.settle({ v: PROTOCOL_VERSION, id: "host-op-unknown", method: "host.op" }), false);
+});

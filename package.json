@@ -10,6 +10,7 @@
     "release:prepare": "node scripts/prepare-release.mjs"
   },
   "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.132",
     "@getpaseo/plugin": "0.9.1",
     "@tanstack/react-query": "^5.90.11",
     "@types/jsdom": "^30.0.0",
