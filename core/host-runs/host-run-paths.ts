@@ -30,6 +30,17 @@ export function isHostRunInnerSocketLeaf(leaf: string): boolean {
   return INNER_SOCKET_LEAF.test(leaf);
 }
 
+/**
+ * True for a leaf that names a socket the host-run owner binds inside `run/`:
+ * the contract path, its staged handoff name, the admission hook socket and a
+ * private runtime socket. Socket ownership checks take this set, so a socket
+ * this owner never binds can never be treated as one of its own.
+ */
+export function isHostRunOwnedSocketLeaf(leaf: string): boolean {
+  return leaf === HOST_RUN_SOCKET_LEAF || leaf === HOST_RUN_STAGED_SOCKET_LEAF
+    || leaf === HOST_RUN_ADMISSION_SOCKET_LEAF || isHostRunInnerSocketLeaf(leaf);
+}
+
 /** The pid a private runtime socket belongs to, or null for any other leaf. */
 export function hostRunInnerSocketOwnerPid(leaf: string): number | null {
   const match = INNER_SOCKET_LEAF.exec(leaf);

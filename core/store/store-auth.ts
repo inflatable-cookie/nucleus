@@ -3,6 +3,15 @@ import { availabilitySchema } from "../../shared/contracts";
 import type { Completion } from "../../shared/contracts";
 import { StoreCore, digest } from "./store-core";
 
+/**
+ * A callback that presented no credential, a revoked one, or another run's
+ * token. It carries the refusal as a type so a caller (the callback socket's
+ * status choice) decides from the class, never by matching this message.
+ */
+export class UnauthorizedCallbackError extends Error {
+  constructor() { super("Unauthorized callback"); this.name = "UnauthorizedCallbackError"; }
+}
+
 export class StoreAuth {
   constructor(private readonly core: StoreCore) {}
   private get db() { return this.core.db; }
@@ -37,7 +46,7 @@ export class StoreAuth {
   }
   authenticate(run: string, token: string) {
     const credential = this.db.prepare("SELECT hash, revoked FROM credentials WHERE run=?").get(run);
-    if (!credential || credential.revoked || credential.hash !== digest(token)) throw new Error("Unauthorized callback");
+    if (!credential || credential.revoked || credential.hash !== digest(token)) throw new UnauthorizedCallbackError();
     const binding = this.db.prepare(`SELECT json_extract(r.data,'$.hostId') AS runHost,
         json_extract(t.data,'$.hostId') AS taskHost FROM runs r LEFT JOIN tasks t ON t.id=r.taskId WHERE r.id=?`).get(run);
     if (binding && (!binding.taskHost || binding.runHost !== binding.taskHost)) throw new Error('Waiting for a proven run host');

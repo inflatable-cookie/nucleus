@@ -1,8 +1,9 @@
 import { resolveTicketCaller } from "../../core/dispatch/participant-tickets";
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage } from "node:http";
 import { chmodSync, readFileSync, existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { bulkDispositionRequestSchema, completionSchema, dependencyIdsSchema, taskControlRequestSchema } from "../../shared/contracts";
 import {Reports,reportSchema} from "../../core/intake/report";
+import {UnauthorizedCallbackError} from "../../core/store/store-auth";
 import {agentAskSchema, AGENT_ASK_WAIT_MS} from "../../core/questions/agent-ask";
 import {agentMessageSchema} from "../../core/questions/agent-messages";
 import type { Engine } from "../../core/engine";
@@ -45,11 +46,10 @@ const helperAnswerSchema = z.object({
 
 // The compiled build rewrites the literal module-URL expression in source text, so the helper spells it
 // in two parts: rewritten, it never matches the helper's own path and the helper exits 0 without reporting.
-const helperTransport = readFileSync(new URL('../../shared/service/transport.mjs', import.meta.url), 'utf8');
-const helperCallbackClient = readFileSync(new URL('../../shared/service/callback-client.mjs', import.meta.url), 'utf8')
-  .replace("import {callbackTransportPhase} from './transport.mjs';\n", '')
-  .replace('export {callbackTransportPhase};\n', '');
-export const workerHelper = helperTransport + '\n' + helperCallbackClient + String.raw`
+// The shared client is self-contained for exactly this reason: these bytes are the helper's only other
+// source text, so nothing here edits or re-exports it and no import has to be resolved from the data home.
+const helperCallbackClient = readFileSync(new URL('../../shared/service/callback-client.mjs', import.meta.url), 'utf8');
+export const workerHelper = helperCallbackClient + String.raw`
 
 import {createHash} from 'node:crypto';
 import {readFileSync,realpathSync} from 'node:fs';
@@ -98,79 +98,171 @@ console.log(JSON.stringify(result));
 }
 `;
 
+/** The caller a route authenticates: the bearer token plus the task and run it was issued for. */
+interface CallbackCaller { taskId: string; runId: string; token: string }
+
+/** The caller fields every caller-addressed request carries beside its own payload. */
+interface CallerFacts { callerTaskId: string; callerRunId: string }
+
+/** One callback route: its own body bound, and its own decode-and-apply step. */
+interface CallbackRoute {
+  /** Largest request body this route accepts. */
+  bodyBytes: number;
+  /** Decode one request body and apply it. A throw is this route's refusal: `callbackStatus` answers it. */
+  handle(input: unknown, token: string): unknown;
+}
+
+/** Completion and report bodies carry receipts, so they get the large bound; every other route is small. */
+const LARGE_CALLBACK_BODY_BYTES = 5 * 1024 * 1024;
+const SMALL_CALLBACK_BODY_BYTES = 64 * 1024;
+
+const asCaller = (request: CallerFacts, token: string): CallbackCaller =>
+  ({ taskId: request.callerTaskId, runId: request.callerRunId, token });
+
+/** A body past its route's bound: refused before any of it is decoded. */
+class CallbackBodyTooLarge extends Error {
+  constructor() { super("Callback too large"); }
+}
+
+/** A body that is not JSON at all: the caller's own malformed input, never a conflict. */
+class CallbackBodyMalformed extends Error {
+  constructor(error: unknown) {
+    super(error instanceof Error ? error.message : "Callback body is not JSON");
+  }
+}
+
+/**
+ * The status one refused callback becomes. A body past its bound is the 413 the
+ * socket has always answered, a body it cannot decode is a 400 the caller must
+ * correct, a credential this service does not accept is a 401, and the engine's
+ * refusal of a well-formed call (a conflict with the task's current state) is a
+ * 409. The engine's internal faults still answer 409: giving them their own
+ * class is a follow-up, not a rule this socket may invent.
+ */
+function callbackStatus(error: unknown): number {
+  if (error instanceof CallbackBodyTooLarge) return 413;
+  if (error instanceof z.ZodError || error instanceof CallbackBodyMalformed) return 400;
+  if (error instanceof UnauthorizedCallbackError) return 401;
+  return 409;
+}
+
+/** One bounded body read, so a route never buffers more than its own bound. */
+async function readCallbackBody(req: IncomingMessage, limit: number): Promise<string> {
+  let bytes = 0; const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    bytes += chunk.length;
+    if (bytes > limit) throw new CallbackBodyTooLarge();
+    chunks.push(Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString();
+}
+
+function parseCallbackBody(body: string): unknown {
+  try { return JSON.parse(body); }
+  catch (error) { throw new CallbackBodyMalformed(error); }
+}
+
 export async function startCallbacks(socketPath: string, helperPath: string, engine: Engine) {
   if (existsSync(socketPath)) unlinkSync(socketPath); // Caller holds the live-process ownership lock.
   writeFileSync(helperPath, workerHelper, { mode: 0o600 });
   const reports=new Reports(engine);
-  const server = createServer(async (req, res) => {
-    res.setHeader("content-type", "application/json");
-    if (req.method !== "POST" || !["/caller","/complete","/report","/ask","/message","/answer","/task-dependencies","/set-dependencies","/project-queue","/promote-task","/task-disposition","/task-next","/dispose-task","/bulk-task-disposition","/bulk-task-disposition-detail","/bulk-task-disposition-retry","/task-control"].includes(req.url ?? "")) { res.writeHead(404).end('{"error":"Not found"}'); return; }
-    const auth = req.headers.authorization;
-    if (!auth?.startsWith("Bearer ")) { res.writeHead(401).end('{"error":"Unauthorized callback"}'); return; }
-    const maxRequestBytes = req.url === "/complete" || req.url === "/report" ? 5 * 1024 * 1024 : 65536;
-    try {
-      let bytes = 0; const chunks: Buffer[] = [];
-      for await (const chunk of req) {
-        bytes += chunk.length;
-        if (bytes > maxRequestBytes) { res.writeHead(413).end('{"error":"Callback too large"}'); return; }
-        chunks.push(Buffer.from(chunk));
-      }
-      const input = JSON.parse(Buffer.concat(chunks).toString());
-      let receipt:unknown;
-      if(req.url==="/caller")receipt=resolveTicketCaller(engine.store,callerTicketSchema.parse(input),auth.slice(7));
-      else if(req.url==="/report")receipt=await reports.report(reportSchema.parse(input),auth.slice(7));
-      else if(req.url==="/ask")receipt=await engine.resolution.agentAsk(agentAskSchema.parse(input),auth.slice(7));
-      else if(req.url==="/message")receipt=await engine.resolution.agentMessage(agentMessageSchema.parse(input),auth.slice(7));
-      else if(req.url==="/answer")receipt=await engine.resolution.answerDelegatedQuestionFromTicket(helperAnswerSchema.parse(input),auth.slice(7));
-      else if(req.url==="/task-control"){
-        const request=selfControlSchema.parse(input);
-        receipt=await engine.taskControlFromAgent({taskId:request.callerTaskId,runId:request.callerRunId,token:auth.slice(7)},request.input);
-      }else if(req.url==="/complete")receipt=await engine.complete(completionSchema.parse(input),auth.slice(7));
-      else if(req.url==="/task-dependencies"){
-        const request=dependencyDetailSchema.parse(input);
-        receipt=engine.dependencyDetail({taskId:request.callerTaskId,runId:request.callerRunId,token:auth.slice(7)},request.taskId);
-      }else if(req.url==="/set-dependencies"){
-        const request=dependencyUpdateSchema.parse(input);
-        receipt=engine.updateDependenciesFromAgent({taskId:request.callerTaskId,runId:request.callerRunId,token:auth.slice(7)},request);
+  // The one route list: the allowlist and the dispatch are this table, so a route
+  // can never be listed and then handled by another branch, or listed twice.
+  const routes: Record<string, CallbackRoute> = {
+    "/caller": { bodyBytes: SMALL_CALLBACK_BODY_BYTES,
+      handle: (input, token) => resolveTicketCaller(engine.store, callerTicketSchema.parse(input), token) },
+    "/report": { bodyBytes: LARGE_CALLBACK_BODY_BYTES,
+      handle: (input, token) => reports.report(reportSchema.parse(input), token) },
+    "/ask": { bodyBytes: SMALL_CALLBACK_BODY_BYTES,
+      handle: (input, token) => engine.resolution.agentAsk(agentAskSchema.parse(input), token) },
+    "/message": { bodyBytes: SMALL_CALLBACK_BODY_BYTES,
+      handle: (input, token) => engine.resolution.agentMessage(agentMessageSchema.parse(input), token) },
+    "/answer": { bodyBytes: SMALL_CALLBACK_BODY_BYTES,
+      handle: (input, token) => engine.resolution.answerDelegatedQuestionFromTicket(helperAnswerSchema.parse(input), token) },
+    "/complete": { bodyBytes: LARGE_CALLBACK_BODY_BYTES,
+      handle: (input, token) => engine.complete(completionSchema.parse(input), token) },
+    "/task-control": { bodyBytes: SMALL_CALLBACK_BODY_BYTES,
+      handle: (input, token) => {
+        const request = selfControlSchema.parse(input);
+        return engine.taskControlFromAgent(asCaller(request, token), request.input);
+      } },
+    "/task-dependencies": { bodyBytes: SMALL_CALLBACK_BODY_BYTES,
+      handle: (input, token) => {
+        const request = dependencyDetailSchema.parse(input);
+        return engine.dependencyDetail(asCaller(request, token), request.taskId);
+      } },
+    "/set-dependencies": { bodyBytes: SMALL_CALLBACK_BODY_BYTES,
+      handle: (input, token) => {
+        const request = dependencyUpdateSchema.parse(input);
+        const receipt = engine.updateDependenciesFromAgent(asCaller(request, token), request);
         void engine.wakeTask(request.callerTaskId);
-      }else if(req.url==="/project-queue"){
-        const request=dependencyDetailSchema.parse(input);
-        receipt=engine.projectQueueDetail({taskId:request.callerTaskId,runId:request.callerRunId,token:auth.slice(7)},request.taskId);
-      }else if(req.url==="/task-disposition"){
-        const request=dispositionDetailSchema.parse(input);
-        receipt=engine.authenticatedDispositionDetail({taskId:request.callerTaskId,runId:request.callerRunId,token:auth.slice(7)},request.taskId);
-      }else if(req.url==="/task-next"){
-        const request=recoveryTaskNextSchema.parse(input);
-        receipt=engine.recoveryTaskNextFromAgent({taskId:request.callerTaskId,runId:request.callerRunId,token:auth.slice(7)});
-      }else if(req.url==="/dispose-task"){
-        const request=disposeTaskSchema.parse(input);
-        const caller={taskId:request.callerTaskId,runId:request.callerRunId,token:auth.slice(7)};
-        if(request.action==="withdraw_cancel") receipt=await engine.withdrawCancellationFromAgent(caller,request);
-        else if(request.action==="cancel"||request.action==="supersede") receipt=await engine.disposeTaskFromAgent(caller,{
-          taskId:request.taskId,version:request.version,action:request.action,reason:request.reason,
-          replacementTaskId:request.replacementTaskId,workDisposition:request.workDisposition,
-        });
+        return receipt;
+      } },
+    "/project-queue": { bodyBytes: SMALL_CALLBACK_BODY_BYTES,
+      handle: (input, token) => {
+        const request = dependencyDetailSchema.parse(input);
+        return engine.projectQueueDetail(asCaller(request, token), request.taskId);
+      } },
+    "/task-disposition": { bodyBytes: SMALL_CALLBACK_BODY_BYTES,
+      handle: (input, token) => {
+        const request = dispositionDetailSchema.parse(input);
+        return engine.authenticatedDispositionDetail(asCaller(request, token), request.taskId);
+      } },
+    "/task-next": { bodyBytes: SMALL_CALLBACK_BODY_BYTES,
+      handle: (input, token) => {
+        const request = recoveryTaskNextSchema.parse(input);
+        return engine.recoveryTaskNextFromAgent(asCaller(request, token));
+      } },
+    "/dispose-task": { bodyBytes: SMALL_CALLBACK_BODY_BYTES,
+      handle: async (input, token) => {
+        const request = disposeTaskSchema.parse(input);
+        const caller = asCaller(request, token);
+        const receipt = request.action === "withdraw_cancel"
+          ? await engine.withdrawCancellationFromAgent(caller, request)
+          : await engine.disposeTaskFromAgent(caller, {
+            taskId: request.taskId, version: request.version, action: request.action, reason: request.reason,
+            replacementTaskId: request.replacementTaskId, workDisposition: request.workDisposition,
+          });
         void engine.wakeTask(request.taskId);
         void engine.wakeRepository(engine.store.task(request.taskId).repoPath);
-      }else if(req.url==="/bulk-task-disposition"){
-        const request=bulkDispositionSchema.parse(input);
-        const {callerTaskId,callerRunId,...operation}=request;
-        receipt=await engine.startBulkDispositionFromAgent({taskId:callerTaskId,runId:callerRunId,token:auth.slice(7)},operation);
-      }else if(req.url==="/bulk-task-disposition-detail"){
-        const request=bulkDispositionDetailSchema.parse(input);
-        receipt=engine.bulkDispositionDetailFromAgent({taskId:request.callerTaskId,runId:request.callerRunId,token:auth.slice(7)},request.operationId);
-      }else if(req.url==="/bulk-task-disposition-retry"){
-        const request=bulkDispositionDetailSchema.parse(input);
-        receipt=await engine.retryBulkDispositionFromAgent({taskId:request.callerTaskId,runId:request.callerRunId,token:auth.slice(7)},request.operationId);
-      }else{
-        const request=taskPromotionSchema.parse(input);
-        receipt=engine.promoteTaskFromAgent({taskId:request.callerTaskId,runId:request.callerRunId,token:auth.slice(7)},request);
+        return receipt;
+      } },
+    "/bulk-task-disposition": { bodyBytes: SMALL_CALLBACK_BODY_BYTES,
+      handle: async (input, token) => {
+        const request = bulkDispositionSchema.parse(input);
+        const { callerTaskId, callerRunId, ...operation } = request;
+        return engine.startBulkDispositionFromAgent(asCaller({ callerTaskId, callerRunId }, token), operation);
+      } },
+    "/bulk-task-disposition-detail": { bodyBytes: SMALL_CALLBACK_BODY_BYTES,
+      handle: (input, token) => {
+        const request = bulkDispositionDetailSchema.parse(input);
+        return engine.bulkDispositionDetailFromAgent(asCaller(request, token), request.operationId);
+      } },
+    "/bulk-task-disposition-retry": { bodyBytes: SMALL_CALLBACK_BODY_BYTES,
+      handle: (input, token) => {
+        const request = bulkDispositionDetailSchema.parse(input);
+        return engine.retryBulkDispositionFromAgent(asCaller(request, token), request.operationId);
+      } },
+    "/promote-task": { bodyBytes: SMALL_CALLBACK_BODY_BYTES,
+      handle: (input, token) => {
+        const request = taskPromotionSchema.parse(input);
+        const receipt = engine.promoteTaskFromAgent(asCaller(request, token), request);
         void engine.wakeTask(request.callerTaskId);
-      }
-      res.end(JSON.stringify(receipt));
+        return receipt;
+      } },
+  };
+  const server = createServer(async (req, res) => {
+    res.setHeader("content-type", "application/json");
+    const route = req.method === "POST" && req.url ? routes[req.url] : undefined;
+    if (!route) { res.writeHead(404).end('{"error":"Not found"}'); return; }
+    const auth = req.headers.authorization;
+    if (!auth?.startsWith("Bearer ")) { res.writeHead(401).end('{"error":"Unauthorized callback"}'); return; }
+    try {
+      const input = parseCallbackBody(await readCallbackBody(req, route.bodyBytes));
+      res.end(JSON.stringify(await route.handle(input, auth.slice(7))));
     } catch (error) {
       const message = error instanceof Error ? error.message : "Invalid callback";
-      res.writeHead(message === "Unauthorized callback" ? 401 : 409).end(JSON.stringify({ error: message }));
+      res.writeHead(callbackStatus(error)).end(JSON.stringify({ error: message }));
     }
   });
   server.requestTimeout = 10000;

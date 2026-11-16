@@ -3,9 +3,8 @@
  * and is not a catalogue RPC: callers are the hook process Queue launched, on
  * the same uid, talking NDJSON over `run/admission.sock`.
  */
-import { chmodSync, existsSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
-import { dirname } from "node:path";
-import { connect, createServer, type Server, type Socket } from "node:net";
+import { chmodSync, existsSync, lstatSync } from "node:fs";
+import { createServer, type Server, type Socket } from "node:net";
 import { z } from "zod";
 import {
   hostRunAccountingRetirementSchema,
@@ -13,9 +12,16 @@ import {
   type HostRunInternalRecord,
 } from "../../shared/contracts";
 import { HostRunScheduler, type HostRunHandler } from "../../core/host-runs/host-run-scheduler";
-import { hostRunAdmissionSocketPath } from "../../core/host-runs/host-run-paths";
+import { HOST_RUN_ADMISSION_SOCKET_LEAF, hostRunAdmissionSocketPath } from "../../core/host-runs/host-run-paths";
+import {
+  assertOwnedRunDirectory,
+  ensureHostRunRunDirectory,
+  hostRunSocketAnswers,
+  hostRunSocketIsOwnerOnly,
+  removeOwnedSocketAt,
+} from "../../core/host-runs/host-run-files";
 import { pidAlive } from "../../core/machine/process-identity";
-import { hostRunProcessStartIdentity, startIdentityMatches } from "../../core/machine/start-identity";
+import { hostRunProcessStartIdentity, startIdentityMatches, startIdentityProves } from "../../core/machine/start-identity";
 import {
   ADMISSION_CALLER,
   admissionReservationId,
@@ -90,8 +96,8 @@ const reserveParamsSchema = z.object({
 }).strict();
 
 export interface EffigyAdmissionEndpointOptions {
-  socketPath?: string;
-  stateDir?: string;
+  /** Contract 010's host-run state root: the admission socket is bound inside its `run` directory. */
+  stateDir: string;
   now?: () => number;
   watchMs?: number;
   /** Timer seam for deterministic watch cadence tests. */
@@ -132,6 +138,8 @@ interface Watch {
 
 export class EffigyAdmissionEndpoint {
   readonly socketPath: string;
+  /** The contract-010 state root whose verified chain owns this socket's path. */
+  private readonly stateDir: string;
   private server: Server | null = null;
   private boundIno: number | null = null;
   private stopping = false;
@@ -163,9 +171,9 @@ export class EffigyAdmissionEndpoint {
   private readonly environment: NodeJS.ProcessEnv | undefined;
   private readonly afterBind: ((socketPath: string) => void) | undefined;
 
-  constructor(readonly scheduler: HostRunScheduler, options: EffigyAdmissionEndpointOptions = {}) {
-    const stateDir = options.stateDir;
-    this.socketPath = options.socketPath ?? (stateDir ? hostRunAdmissionSocketPath(stateDir) : "");
+  constructor(readonly scheduler: HostRunScheduler, options: EffigyAdmissionEndpointOptions) {
+    this.stateDir = options.stateDir;
+    this.socketPath = hostRunAdmissionSocketPath(this.stateDir);
     if (!this.socketPath) throw new Error("Effigy admission endpoint requires socketPath or stateDir");
     this.nowMs = options.now ?? Date.now;
     this.metrics = new AdmissionRpcMetricsRecorder(this.nowMs);
@@ -208,23 +216,40 @@ export class EffigyAdmissionEndpoint {
     if (this.stopping) return false;
     if (this.server && this.serving()) return true;
     if (this.server) await this.stopListen();
-    mkdirSync(dirname(this.socketPath), { recursive: true, mode: 0o700 });
+    // The socket is bound inside contract 010's run directory, so that owner
+    // creates and re-verifies the chain: a symlinked or foreign component
+    // refuses here instead of being bound through.
+    ensureHostRunRunDirectory(this.stateDir);
     if (existsSync(this.socketPath)) {
-      const live = await socketAnswers(this.socketPath, 250);
-      if (live) return false;
-      try { unlinkSync(this.socketPath); } catch { /* gone between probe and unlink */ }
+      // One probe owner, shared with the host-run socket: a live holder is never
+      // taken over.
+      if (await hostRunSocketAnswers(this.socketPath, 250)) return false;
+      // And one owned-removal owner: a stale socket is cleared, while a symlink,
+      // a regular file or a foreign socket refuses instead of being replaced.
+      try { removeOwnedSocketAt(this.socketPath); } catch (error) {
+        throw new Error(`Admission socket path is not an owned socket: ${this.socketPath} (${error instanceof Error ? error.message : String(error)})`);
+      }
     }
     await new Promise<void>((resolve, reject) => {
       const server = createServer(socket => this.onConnection(socket));
       server.on("error", reject);
       server.listen(this.socketPath, () => {
         try {
-          chmodSync(this.socketPath, 0o700);
+          chmodSync(this.socketPath, 0o600);
+          // The same ownership proof the contract socket carries: the chain is
+          // re-`lstat`ed, so a socket bound outside `run/`, or a path swapped
+          // between bind and check, refuses.
+          if (!hostRunSocketIsOwnerOnly(this.stateDir, HOST_RUN_ADMISSION_SOCKET_LEAF))
+            throw new Error("Admission socket failed the verified chain check after bind");
           this.boundIno = lstatSync(this.socketPath).ino;
           this.server = server;
           this.afterBind?.(this.socketPath);
           resolve();
-        } catch (error) { reject(error); }
+        } catch (error) {
+          try { server.close(); } catch { /* not listening */ }
+          try { removeOwnedSocketAt(this.socketPath); } catch { /* not an owned socket to remove */ }
+          reject(error);
+        }
       });
     });
     return this.serving();
@@ -376,9 +401,10 @@ export class EffigyAdmissionEndpoint {
   private scheduleWatch(reservationId: string, delayMs: number): void {
     if (this.stopping) return;
     // One unreadable tick (a draining store, a raced row) is retried on the next
-    // tick: it never settles, releases or refuses capacity by itself.
+    // tick: it never settles, releases or refuses capacity by itself, and the row
+    // records why the tick failed instead of the failure vanishing.
     const timer = this.watchTimer.set(() => {
-      void this.reconcile(reservationId).catch(() => { /* retried next tick */ });
+      void this.reconcile(reservationId).catch(error => this.noteReconcileFault(reservationId, error));
     }, delayMs);
     timer.unref?.();
     this.watches.set(reservationId, { reservationId, timer });
@@ -418,6 +444,23 @@ export class EffigyAdmissionEndpoint {
     this.hookIdentityProofs.delete(reservationId);
     this.notedReasons.delete(reservationId);
     this.metrics.forgetReservation(reservationId);
+  }
+
+  /**
+   * A tick that threw is visible on the row it was observing, once per distinct
+   * reason, and the watch keeps its cadence either way. A row too unreadable to
+   * note goes to the service's error stream rather than nowhere.
+   */
+  private noteReconcileFault(reservationId: string, error: unknown): void {
+    const reason = error instanceof Error ? error.message : String(error);
+    try {
+      const record = this.scheduler.get(reservationId);
+      if (record && record.submissionSource === "admission") {
+        this.noteReason(record, "effigy_observation_refused", "reconcile-fault", reason);
+        return;
+      }
+    } catch { /* the row itself is unreadable; the error stream below still names the fault */ }
+    console.error(`Admission reconciliation for ${reservationId} failed: ${reason}`);
   }
 
   /**
@@ -524,18 +567,19 @@ export class EffigyAdmissionEndpoint {
    * settled on the proof, because `dead` and `unknown` are never remembered and
    * a proof only ever answers `alive`. A binding that moved (pid, epoch or
    * recorded identity), a pid whose liveness the kernel no longer reports, an
-   * unreadable identity and an `@unknown` recorded identity all go back to a
-   * fresh read, and nothing here reads an unknown as absence or as permission.
+   * unreadable identity and a recorded identity that carries no readable basis
+   * (`startIdentityProves`) all go back to a fresh read, and nothing here reads
+   * an unknown as absence or as permission.
    */
   private hookDeath(record: HostRunInternalRecord): "alive" | "dead" | "unknown" {
     if (!record.pid || !record.startIdentity) return "unknown";
-    if (record.startIdentity.endsWith("@unknown")) return "unknown";
+    if (!startIdentityProves(record.startIdentity)) return "unknown";
     if (!this.hookAlive(record.pid)) { this.forgetHookIdentity(record.id); return "dead"; }
     const proof = this.hookIdentityProofs.get(record.id);
     if (proof && proof.pid === record.pid && proof.epoch === record.epoch && proof.startIdentity === record.startIdentity
       && this.nowMs() - proof.at < this.hookIdentityRevalidateMs) return "alive";
     const liveIdentity = this.hookStartIdentity(record.pid);
-    if (liveIdentity.endsWith("@unknown")) { this.forgetHookIdentity(record.id); return "unknown"; }
+    if (!startIdentityProves(liveIdentity)) { this.forgetHookIdentity(record.id); return "unknown"; }
     if (!startIdentityMatches(record.startIdentity, liveIdentity)) { this.forgetHookIdentity(record.id); return "dead"; }
     this.hookIdentityProofs.set(record.id, {
       pid: record.pid, epoch: record.epoch, startIdentity: record.startIdentity, at: this.nowMs(),
@@ -672,7 +716,7 @@ export class EffigyAdmissionEndpoint {
   private hookLivenessUnknownReason(record: HostRunInternalRecord): string {
     if (!record.pid || !record.startIdentity)
       return `the admission hook is not bound yet (reservation ${record.state}); its liveness cannot be proven`;
-    if (record.startIdentity.endsWith("@unknown"))
+    if (!startIdentityProves(record.startIdentity))
       return `admission hook pid ${record.pid} has an unreadable start identity; its liveness cannot be proven`;
     return `admission hook pid ${record.pid} identity could not be re-read; its liveness cannot be proven`;
   }
@@ -705,15 +749,21 @@ export class EffigyAdmissionEndpoint {
   private onConnection(socket: Socket): void {
     this.sockets.add(socket);
     let buffer = "";
+    // One reply chain per connection: a client that wrote two request lines in
+    // one segment has both answered in order, and a line still incomplete stays
+    // buffered for the next read.
+    let replies = Promise.resolve();
     socket.setEncoding("utf8");
     socket.on("data", chunk => {
       buffer += chunk;
-      if (buffer.length > MAX_REQUEST_BYTES) { socket.destroy(); return; }
-      const index = buffer.indexOf("\n");
-      if (index < 0) return;
-      const line = buffer.slice(0, index);
-      buffer = buffer.slice(index + 1);
-      void this.reply(socket, line).catch(() => { /* the caller is gone; nothing to answer */ });
+      let index = buffer.indexOf("\n");
+      while (index >= 0) {
+        const line = buffer.slice(0, index);
+        buffer = buffer.slice(index + 1);
+        replies = replies.then(() => this.reply(socket, line)).catch(() => { /* the caller is gone; nothing to answer */ });
+        index = buffer.indexOf("\n");
+      }
+      if (buffer.length > MAX_REQUEST_BYTES) socket.destroy();
     });
     socket.on("close", () => this.sockets.delete(socket));
     socket.on("error", () => this.sockets.delete(socket));
@@ -812,10 +862,24 @@ export class EffigyAdmissionEndpoint {
     this.sockets.clear();
     const server = this.server;
     this.server = null;
+    if (server) await new Promise<void>(resolve => server.close(() => resolve()));
+    this.removeSocket();
+  }
+
+  /**
+   * Remove this endpoint's own socket, and only while the path still names the
+   * inode it bound: a path another process rebound is left alone, and the run
+   * directory is verified before anything is unlinked inside it.
+   */
+  private removeSocket(): void {
+    const ino = this.boundIno;
     this.boundIno = null;
-    if (!server) return;
-    await new Promise<void>(resolve => server.close(() => resolve()));
-    try { if (existsSync(this.socketPath)) unlinkSync(this.socketPath); } catch { /* already gone */ }
+    if (ino === null) return;
+    try {
+      assertOwnedRunDirectory(this.stateDir);
+      if (lstatSync(this.socketPath).ino !== ino) return;
+      removeOwnedSocketAt(this.socketPath);
+    } catch { /* already gone, or not this endpoint's to remove */ }
   }
 }
 
@@ -874,17 +938,6 @@ function retainedObservation(observation: Exclude<EffigyRunObservation, { kind: 
       reason: `Effigy run status reports state "${observation.state}"; the admission hook is gone, so capacity is held`,
     };
   return { kind: observation.kind, reason: `${observation.reason}; the admission hook is gone, so capacity is held` };
-}
-
-export function socketAnswers(socketPath: string, timeoutMs = 1_000): Promise<boolean> {
-  return new Promise(resolvePromise => {
-    if (!existsSync(socketPath)) { resolvePromise(false); return; }
-    const probe = connect(socketPath);
-    const done = (live: boolean) => { clearTimeout(timer); probe.destroy(); resolvePromise(live); };
-    const timer = setTimeout(() => done(false), timeoutMs);
-    probe.once("connect", () => done(true));
-    probe.once("error", () => done(false));
-  });
 }
 
 /** Monotonic server-side dispatch duration in milliseconds (metrics only, never a durable clock). */

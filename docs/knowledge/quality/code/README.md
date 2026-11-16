@@ -121,6 +121,32 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
 
 ## Re-rates
 
+- nucleus#1251 (floor 7, 2026-11-15): the two floor-7 `service/callbacks` rows were simplified and
+  hardened along the seams their rows named, and re-rated at this PR's head. `service/callbacks/callback.ts`
+  (8: O2 T2 F1 P1 Pr2) keeps every route in one table that is both the allowlist and the dispatch, so the
+  if/else chain and its second route list are gone; the status of a refused call comes from the refusal's
+  own type — an oversized body keeps its 413, an undecodable or schema-invalid body is a 400, and the
+  authentication refusal is `core/store/store-auth.ts`' typed `UnauthorizedCallbackError` (401) instead of a
+  message the socket compared against — while an engine internal fault still answers 409, because that needs
+  typed engine refusals and is left as a follow-up (failure 1). The generated helper is the shared
+  client's own bytes plus its report program: `shared/service/callback-client.mjs` is self-contained again,
+  its `callbackTransportPhase` re-export moved to `shared/service/transport.mjs` where the phase contract is
+  owned, and `bin/mcp-report.mjs` imports that owner directly, so the helper's two text replacements are
+  gone (proportion 1: the helper program still shares the file with the socket).
+  `service/callbacks/effigy-admission-endpoint.ts` (9: O2 T2 F2 P1 Pr2) binds, probes and clears through the
+  host-run socket owner (`ensureHostRunRunDirectory`, `hostRunSocketAnswers`, `removeOwnedSocketAt`, and the
+  after-bind `hostRunSocketIsOwnerOnly` proof whose owned-leaf set is now
+  `core/host-runs/host-run-paths.ts`' `isHostRunOwnedSocketLeaf`), so the endpoint's own probe and its raw
+  bind/unlink are gone and the socket is owner-only 0600 like the contract path; its alive/dead/unknown
+  liveness asks `core/machine/start-identity.ts`' new `startIdentityProves` instead of testing an `@unknown`
+  suffix; every complete request line in one read is answered in order; and a tick that throws records
+  `reconcile-fault` on the reservation it was observing (or the service error stream when the row itself
+  cannot be read) instead of being swallowed. Proportion stays 1: the file still carries the bind, the RPC
+  surface, the reserve rules, the watch cadence and reconciliation. Boundary tests were added for the
+  callback socket's statuses (`test/callback-client.test.ts`) and for two request lines in one socket write
+  (`test/effigy-admission.test.ts`); no existing test was weakened, and the admission hold fixture's options
+  type moved to `Partial` because the socket root is now the endpoint's own required anchor.
+
 - nucleus#1247 (floor 7, 2026-11-15): the two floor-7 `core/store` rows were consolidated and split along
   the seams their rows named, and re-rated at this PR's head. The Spec 041 drain pass left
   `core/store/store-lanes.ts` (9: O1 T2 F2 P2 Pr2) for `core/planning/lane-drains.ts` (9: O2 T1 F2 P2
