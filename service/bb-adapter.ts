@@ -32,7 +32,8 @@ export function composeBbAdapter(input: {
       const workspace = handles.find(w => w.environmentId === row.environmentId && w.directory === row.environmentPath);
       return { id: row.threadId, workspaceId: workspace?.id ?? null, labels: threads.agents().find(a => a.id === row.threadId)?.labels,
         archived: row.archivedAt !== null, status: row.archivedAt !== null ? 'closed' : row.status,
-        activeTurn: ['active', 'starting', 'stopping'].includes(row.status) ? {} : null,
+        activeTurn: ['pending', 'active', 'starting', 'stopping'].includes(row.status) ||
+          ['provisioning', 'waiting-for-host'].includes(row.displayStatus) || row.queuedWork === 'waiting' ? {} : null,
         pendingPermissionKinds: row.interactions.filter(i => ['pending', 'resolving'].includes(i.status)).map(i => i.kind) };
     });
   }
@@ -87,7 +88,7 @@ export function composeBbAdapter(input: {
         let observed: Awaited<ReturnType<BbThreads['observe']>> | null = null;
         return { get workspaceId() { return observed?.workspaceId ?? null; }, get archivedAt() { return observed?.status === 'closed' ? true : null; },
           get status() { return observed?.status ?? null; }, get activeTurn() { return observed?.active ? {} : null; },
-          get pendingPermissions() { return observed?.pendingPermissionKinds ?? null; }, get runtimeInfo() { return null; },
+          get pendingPermissions() { return observed?.pendingPermissionKinds ?? null; }, get runtimeInfo() { return observed ? { provider: observed.provider, model: observed.model, modeId: observed.modeId, thinkingOptionId: observed.thinkingOptionId } : null; },
           refresh: async () => { observed = await threads.observe(id); return observed; }, current: () => observed,
           send: async (text: string, options: { messageId: string }) => threads.send(id, text, options.messageId),
         };
@@ -110,8 +111,8 @@ export function composeBbAdapter(input: {
     archiveAgent(id: string) { return threads.archiveAgent(id); }
     catalog() { return threads.catalog(); }
     async profiles() { return []; }
-    async agentTimelinePage() { return null; }
-    async agentTimeline() { return null; }
+    agentTimelinePage(id: string) { return threads.timeline(id); }
+    async agentTimeline(id: string) { try { return (await threads.timeline(id)).entries; } catch { return null; } }
     async setTaskWorkspaceTitle(task: Task, title: string, requestId: string, _uncertain: boolean) {
       if (!task.agentId) return;
       const step = await this.step(task);

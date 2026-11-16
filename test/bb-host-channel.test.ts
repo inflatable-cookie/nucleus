@@ -228,7 +228,7 @@ test("the host-executor role rides the owner-only socket without disturbing pres
       operation: op,
       at: "2026-11-16T00:00:00.000Z",
       calls: { "threads.get": 1 },
-      value: { threadId: (input as { threadId: string }).threadId, title: "Synthetic", status: "idle", displayStatus: "idle", environmentId: "env_1", parentThreadId: null, parentNotifications: "off", pluginMetadata: null, archivedAt: null, queuedWork: "none", environmentPath: "/synthetic/worktree", originPluginId: "nucleus", updatedAt: 1, hasPendingInteraction: false, interactions: [] },
+      value: { threadId: (input as { threadId: string }).threadId, title: "Synthetic", status: "idle", displayStatus: "idle", environmentId: "env_1", parentThreadId: null, parentNotifications: "off", pluginMetadata: null, archivedAt: null, queuedWork: "none", providerId: "codex", execution: null, environmentPath: "/synthetic/worktree", originPluginId: "nucleus", updatedAt: 1, hasPendingInteraction: false, interactions: [] },
     });
     const observed = await service.sendHostOperation(hostId, "thread.observe", { threadId: "thr_1" });
     assert.equal((observed.value as { environmentId: string }).environmentId, "env_1");

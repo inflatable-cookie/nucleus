@@ -405,5 +405,262 @@
   "send": {
     "ok": true,
     "delivery": "sent"
+  },
+  "project": {
+    "id": "proj_synthetic",
+    "kind": "standard",
+    "name": "Synthetic project",
+    "gitRemoteUrl": null,
+    "createdAt": 1794852040116,
+    "updatedAt": 1794852040116,
+    "sources": [
+      {
+        "id": "src_synthetic",
+        "projectId": "proj_synthetic",
+        "type": "local_path",
+        "hostId": "host_synthetic",
+        "path": "/synthetic/worktree",
+        "isDefault": true,
+        "createdAt": 1794852040116,
+        "updatedAt": 1794852040116
+      }
+    ]
+  },
+  "stop": {
+    "ok": true
+  },
+  "archive": {
+    "ok": true,
+    "archivedThreadIds": [
+      "thr_synthetic"
+    ]
+  },
+  "execution": {
+    "model": "synthetic-model",
+    "permissionMode": "full",
+    "reasoningLevel": "medium",
+    "serviceTier": "default",
+    "source": "client/turn/requested"
+  },
+  "environment": {
+    "id": "env_synthetic",
+    "name": null,
+    "projectId": "proj_synthetic",
+    "hostId": "host_synthetic",
+    "path": "/synthetic/worktree",
+    "isGitRepo": true,
+    "isWorktree": true,
+    "branchName": "nucleus-proof",
+    "baseBranch": null,
+    "defaultBranch": "master",
+    "mergeBaseBranch": null,
+    "status": "ready",
+    "environmentProviderId": "project-checkout",
+    "lifecycle": {
+      "phase": "active",
+      "retireAt": null,
+      "teardown": null
+    },
+    "hostLifecycle": "active",
+    "environmentProviderSelection": {
+      "machine": {
+        "type": "existing",
+        "hostId": "host_synthetic"
+      },
+      "inputs": {
+        "path": "/synthetic/worktree"
+      }
+    },
+    "environmentProviderInstanceKey": "thr_synthetic",
+    "managed": false,
+    "workspaceProvisionType": "unmanaged",
+    "createdAt": 1794852042431,
+    "updatedAt": 1794852042813
+  },
+  "timeline": {
+    "maxSeq": 16,
+    "rows": [
+      {
+        "id": "thr_vv6fhuaxfm:user-seed:1",
+        "threadId": "thr_vv6fhuaxfm",
+        "turnId": null,
+        "sourceSeqStart": 1,
+        "sourceSeqEnd": 1,
+        "startedAt": 1794852755925,
+        "createdAt": 1794852755925,
+        "kind": "conversation",
+        "role": "user",
+        "messageSeq": 1,
+        "text": "Synthetic worker fixture. Do not run any tools; this thread is a fixture for an attach proof.",
+        "mentions": [],
+        "attachments": {
+          "webImages": 0,
+          "localImages": 0,
+          "localFiles": 0,
+          "imageUrls": [],
+          "localImagePaths": [],
+          "localFilePaths": [],
+          "localFileDetails": []
+        },
+        "initiator": "user",
+        "senderThreadId": null,
+        "systemMessageKind": "unlabeled",
+        "systemMessageSubject": null,
+        "turnRequest": {
+          "isGrouped": false,
+          "kind": "message",
+          "status": "accepted"
+        }
+      },
+      {
+        "id": "thr_vv6fhuaxfm:op:thread-provisioning:3",
+        "threadId": "thr_vv6fhuaxfm",
+        "turnId": null,
+        "sourceSeqStart": 3,
+        "sourceSeqEnd": 8,
+        "startedAt": 1794852756267,
+        "createdAt": 1794852757409,
+        "kind": "system",
+        "systemKind": "operation",
+        "operationKind": "thread-provisioning",
+        "title": "Provisioned thread",
+        "detail": "Preparing workspace\nPreparing Project checkout\u2026\nUsing workspace: /synthetic/path\nUsing branch: nucleus-proof (6455615)\nProvisioned thread (1s)",
+        "status": "completed",
+        "completedAt": 1794852757409
+      },
+      {
+        "id": "thr_vv6fhuaxfm:op:thread-interrupted:15",
+        "threadId": "thr_vv6fhuaxfm",
+        "turnId": null,
+        "sourceSeqStart": 15,
+        "sourceSeqEnd": 15,
+        "startedAt": 1794852763419,
+        "createdAt": 1794852763419,
+        "kind": "system",
+        "systemKind": "operation",
+        "operationKind": "thread-interrupted",
+        "title": "Stopped manually",
+        "detail": null,
+        "status": "interrupted",
+        "completedAt": 1794852763419
+      }
+    ],
+    "contextBoundarySeq": null,
+    "completedTurnDisplay": "collapse",
+    "activePromptMode": null,
+    "activeThinking": null,
+    "activeWorkflows": [],
+    "activeBackgroundCommands": [],
+    "pendingTodos": null,
+    "extensionStates": {},
+    "providerCommands": null,
+    "sessionOptions": null,
+    "modelFallback": null,
+    "timelinePage": {
+      "returnedSegmentCount": 1,
+      "olderCursor": null,
+      "historySnapshot": "{\"version\":3,\"threadId\":\"thr_vv6fhuaxfm\",\"maxSeq\":16,\"status\":\"idle\",\"surface\":\"[false,false,true,true,32000,\\\"Pi\\\",\\\"Synthetic worker\\\",\\\"/synthetic/path\",\\\"collapse\\\",true]\"}",
+      "olderRowsSourceSeqEnd": null
+    },
+    "tag": "uLR3Plgg4wRK513ddrHZPS"
+  },
+  "timelinePending": {
+    "maxSeq": 4,
+    "rows": [
+      {
+        "id": "thr_axyb66cb75:user-seed:1",
+        "threadId": "thr_axyb66cb75",
+        "turnId": null,
+        "sourceSeqStart": 1,
+        "sourceSeqEnd": 1,
+        "startedAt": 1794852756552,
+        "createdAt": 1794852756552,
+        "kind": "conversation",
+        "role": "user",
+        "messageSeq": 1,
+        "text": "Synthetic sibling fixture. Do not run any tools.",
+        "mentions": [],
+        "attachments": {
+          "webImages": 0,
+          "localImages": 0,
+          "localFiles": 0,
+          "imageUrls": [],
+          "localImagePaths": [],
+          "localFilePaths": [],
+          "localFileDetails": []
+        },
+        "initiator": "user",
+        "senderThreadId": null,
+        "systemMessageKind": "unlabeled",
+        "systemMessageSubject": null,
+        "turnRequest": {
+          "isGrouped": false,
+          "kind": "message",
+          "status": "pending"
+        }
+      },
+      {
+        "id": "thr_axyb66cb75:op:thread-interrupted:3",
+        "threadId": "thr_axyb66cb75",
+        "turnId": null,
+        "sourceSeqStart": 3,
+        "sourceSeqEnd": 3,
+        "startedAt": 1794852756604,
+        "createdAt": 1794852756604,
+        "kind": "system",
+        "systemKind": "operation",
+        "operationKind": "thread-interrupted",
+        "title": "Stopped manually",
+        "detail": null,
+        "status": "interrupted",
+        "completedAt": 1794852756604
+      },
+      {
+        "id": "thr_axyb66cb75:form:pint_q8m2vcbnpv",
+        "threadId": "thr_axyb66cb75",
+        "turnId": null,
+        "sourceSeqStart": 4,
+        "sourceSeqEnd": 4,
+        "startedAt": 1794852756624,
+        "createdAt": 1794852756624,
+        "kind": "work",
+        "workKind": "form",
+        "status": "pending",
+        "interactionId": "pint_q8m2vcbnpv",
+        "lifecycle": "pending",
+        "pluginId": "nucleus",
+        "rendererId": "wire-fixture",
+        "title": "Synthetic question",
+        "statusReason": null,
+        "presentation": {
+          "label": {
+            "pending": "Waiting for Synthetic question",
+            "completed": "Submitted Synthetic question"
+          },
+          "icon": {
+            "glyph": "Boxes"
+          }
+        },
+        "payload": null
+      }
+    ],
+    "contextBoundarySeq": null,
+    "completedTurnDisplay": "collapse",
+    "activePromptMode": null,
+    "activeThinking": null,
+    "activeWorkflows": [],
+    "activeBackgroundCommands": [],
+    "pendingTodos": null,
+    "extensionStates": {},
+    "providerCommands": null,
+    "sessionOptions": null,
+    "modelFallback": null,
+    "timelinePage": {
+      "returnedSegmentCount": 1,
+      "olderCursor": null,
+      "historySnapshot": "{\"version\":3,\"threadId\":\"thr_axyb66cb75\",\"maxSeq\":4,\"status\":\"idle\",\"surface\":\"[false,false,true,true,32000,\\\"Pi\\\",\\\"Synthetic reviewer\\\",\\\"/synthetic/path\",\\\"collapse\\\",true]\"}",
+      "olderRowsSourceSeqEnd": null
+    },
+    "tag": "L5hTTrfuL-NQpDuRQ3TypL"
   }
 }

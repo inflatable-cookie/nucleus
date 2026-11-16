@@ -68,10 +68,9 @@ export const hostOperationInputSchemas = {
     projectId: boundedText(128),
     title: boundedText(200),
     environmentPath: boundedText(4_096),
-    environmentId: boundedText(128).optional(),
     reasoningLevel: boundedText(32).optional(),
     permissionMode: boundedText(32).optional(),
-    sessionOptions: z.record(z.string(), z.unknown()).optional(),
+    sessionOptions: z.record(z.string(), z.union([z.string(), z.boolean()])).optional(),
     parentThreadId: boundedText(128).optional(),
     parentNotifications: z.enum(["auto", "stuck", "off"]).optional(),
     prompt: boundedText(500_000),
@@ -104,6 +103,7 @@ export const hostOperationInputSchemas = {
   "thread.read": z.object({ threadIds: z.array(boundedText(128)).min(1).max(200) }).strict(),
   "thread.metadata": z.object({ threadIds: z.array(boundedText(128)).min(1).max(200) }).strict(),
   "thread.title": z.object({ threadId: boundedText(128), title: boundedText(200) }).strict(),
+  "thread.timeline": z.object({ threadId: boundedText(128) }).strict(),
   "thread.send": z.object({ threadId: boundedText(128), text: boundedText(500_000), messageId: boundedText(200) }).strict(),
   "provider.catalog": z.object({}).strict(),
   "environment.list": z.object({}).strict(),
@@ -149,7 +149,9 @@ export const hostOperationValueSchemas = {
     createdAt: timestamp,
     spawned: z.number().int().positive(),
   }).strict(),
-  "thread.observe": bbObservationRowSchema().extend({ pluginMetadata: pluginMetadataSchema.nullable() }).strict(),
+  "thread.observe": bbObservationRowSchema().extend({ pluginMetadata: pluginMetadataSchema.nullable(), execution: z.object({
+    model: boundedText(200), permissionMode: boundedText(32), reasoningLevel: boundedText(32),
+  }).strict().nullable() }).strict(),
   "thread.stop": z.object({
     threadId: boundedText(128),
     status: boundedText(32),
@@ -172,6 +174,10 @@ export const hostOperationValueSchemas = {
   "thread.read": z.object({ rows: z.array(bbObservationRowSchema()).max(200) }).strict(),
   "thread.metadata": z.object({ threads: z.array(z.object({ threadId: boundedText(128), metadata: pluginMetadataSchema.nullable() }).strict()).max(200) }).strict(),
   "thread.title": z.object({ threadId: boundedText(128), title: nullableText(400) }).strict(),
+  "thread.timeline": z.object({ threadId: boundedText(128), hasOlder: z.boolean(), pendingBackgroundTasks: z.array(boundedText(128)).max(32),
+    entries: z.array(z.object({ id: boundedText(200), seq: timestamp, at: timestamp, turnId: nullableText(128),
+      status: z.enum(["pending", "completed", "error", "interrupted"]), name: boundedText(128) }).strict()).max(2000),
+  }).strict(),
   "thread.send": z.object({ threadId: boundedText(128), delivery: z.enum(["sent", "queued"]) }).strict(),
   "provider.catalog": z.object({ providers: z.array(z.object({
     id: boundedText(128), modes: z.array(boundedText(32)).max(16), models: z.array(z.object({ id: boundedText(200), reasoningLevels: z.array(boundedText(32)).max(32) }).strict()).max(1000),
@@ -197,7 +203,7 @@ export const hostOperationValueSchemas = {
 /** Fields read from BB 0.49's list rows; active turn identity is not a row field. */
 function bbObservationRowSchema() {
   return z.object({
-    threadId: boundedText(128), title: nullableText(400), status: z.enum(["pending", "idle", "starting", "active", "stopping", "error"]),
+    threadId: boundedText(128), title: nullableText(400), providerId: boundedText(128), status: z.enum(["pending", "idle", "starting", "active", "stopping", "error"]),
     displayStatus: boundedText(32), environmentId: nullableText(128), environmentPath: nullableText(4096),
     parentThreadId: nullableText(128), parentNotifications: boundedText(16), originPluginId: nullableText(128),
     archivedAt: timestamp.nullable(), updatedAt: timestamp, queuedWork: z.enum(["none", "waiting", "failed"]),

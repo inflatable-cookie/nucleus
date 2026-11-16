@@ -1,7 +1,7 @@
 import { HostUnknownDeliveryError, ProvenPreSendRefusalError } from '../../core/host/errors';
+import type { TimelinePage } from '../../core/host/types';
 import type { AgentObservation } from '../../core/host/adapter';
 import type { HostAgentSpec, HostCatalog } from '../../shared/host';
-import type { Task } from '../../shared/contracts';
 import type { HostOperationName, HostOperationOutcome } from '../../shared/host-operation';
 import { parseHostOperationOutcome } from '../../shared/service/host-channel';
 import { WIRE_LABEL_KEYS, wireLabels } from '../../shared/wire-labels';
@@ -30,7 +30,8 @@ export interface BbThreadPorts {
   now?: () => number;
 }
 export interface BbRow {
-  threadId: string; title: string | null; status: string; displayStatus: string;
+  threadId: string; title: string | null; status: string; displayStatus: string; providerId: string;
+  execution?: { model: string; permissionMode: string; reasoningLevel: string } | null;
   environmentId: string | null; environmentPath: string | null; parentThreadId: string | null;
   parentNotifications: string; originPluginId: string | null; archivedAt: number | null;
   updatedAt: number; queuedWork: string; hasPendingInteraction: boolean;
@@ -45,7 +46,10 @@ export class BbThreads {
   private async read<T>(op: HostOperationName, input: unknown): Promise<T> {
     const answer = parseHostOperationOutcome(op, await this.ports.operation(op, input));
     if (!answer.ok) throw new HostUnknownDeliveryError({ command: `bb.${op}`, guidance: answer.failure.message });
-    return answer.value.value as T;
+    const value = answer.value.value as Record<string, unknown>;
+    const id = (input as { threadId?: string } | null)?.threadId;
+    if (id && value.threadId !== id) throw new HostUnknownDeliveryError({ command: `bb.${op}`, guidance: 'The answer named a different thread' });
+    return value as T;
   }
   private observation(row: BbRow): AgentObservation {
     const agent = this.ports.state().agents[row.threadId];
@@ -54,11 +58,21 @@ export class BbThreads {
     const pending = row.interactions.filter(i => i.status === 'pending' || i.status === 'resolving');
     if (row.hasPendingInteraction && !pending.length) throw new Error('BB pending interaction flag has no readable interaction');
     const active = ['starting', 'active', 'stopping'].includes(row.status) || ['provisioning', 'waiting-for-host'].includes(row.displayStatus) || row.queuedWork === 'waiting';
+    if (!active) {
+      const state = this.ports.state(); let changed = false;
+      for (const [key, intent] of Object.entries(state.writes)) if (key.startsWith(`stop:${row.threadId}:`) && intent.status === 'unknown') { intent.status = 'settled'; changed = true; }
+      if (changed) this.ports.save(state);
+    }
     return {
       id: row.threadId, workspaceId,
       status: row.archivedAt !== null ? 'closed' : row.status,
       active, permissions: pending.length > 0,
+      // A terminal execution status proves no tracked turn. Busy/pending rows
+      // keep its identity unknown; BB sends no positive turn id in a list row.
+      ...(!active && ['idle', 'error'].includes(row.status) ? { activeTurnId: null } : {}),
       error: row.status === 'error' ? 'BB thread failed' : row.queuedWork === 'failed' ? 'BB queued work failed' : '',
+      provider: row.providerId,
+      ...(row.execution ? { model: row.execution.model, modeId: row.execution.permissionMode, thinkingOptionId: row.execution.reasoningLevel } : {}),
       labels: agent?.labels, updatedAt: new Date(row.updatedAt).toISOString(),
       // BB list rows expose execution status, not an active-turn id or start stamp.
       ...(pending[0] ? { pendingRequest: { id: pending[0].id, kind: pending[0].kind, firstLine: pending[0].title }, pendingPermissionKinds: pending.map(i => i.kind) } : {}),
@@ -129,7 +143,8 @@ export class BbThreads {
       }
       throw error;
     }
-    if (value.parentThreadId !== parentThreadId || value.parentNotifications !== 'off' || JSON.stringify(value.pluginMetadata) !== JSON.stringify(input.pluginMetadata)) throw unknown('The attach answer changed the run metadata or parent');
+    const metadata = value.pluginMetadata?.nucleus as Record<string, unknown> | undefined;
+    if (value.parentThreadId !== parentThreadId || value.parentNotifications !== 'off' || !metadata || !Object.entries(input.pluginMetadata.nucleus).every(([key, expected]) => metadata[key] === expected)) throw unknown('The attach answer changed the run metadata or parent');
     return this.bind(value.threadId, value.environmentId, task, run, spec.workspaceId, role);
   }
   /** Both origin walks must reach their positive end before any identity is bound. */
@@ -185,7 +200,8 @@ export class BbThreads {
     if (state.writes[key]?.status === 'settled') return;
     state.writes[key] = { status: 'unknown', ...(op === 'thread.title' ? { value: (input as { title: string }).title } : {}) }; this.ports.save(state);
     try {
-      const result = await this.read<{ title?: string }>(op, input);
+      const result = await this.read<{ title?: string; status?: string }>(op, input);
+      if (op === 'thread.stop' && !['idle', 'error', 'pending'].includes(result.status ?? '')) throw new HostUnknownDeliveryError({ command: 'bb.thread.stop' });
       if (op === 'thread.title' && result.title !== (input as { title: string }).title) throw new HostUnknownDeliveryError({ command: 'bb.thread.title' });
       const next = this.ports.state(); next.writes[key] = { ...next.writes[key], status: 'settled' }; this.ports.save(next);
     } catch (error) {
@@ -214,7 +230,7 @@ export class BbThreads {
       for (const [key, intent] of Object.entries(state.writes)) if (key.startsWith(`title:${id}:`) && intent.value === title) intent.status = 'settled';
       this.ports.save(state); return;
     }
-    const key = `title:${id}:${requestId}`;
+    const key = `title:${id}:${requestId}:${title}`;
     if (Object.entries(this.ports.state().writes).some(([other, intent]) => other.startsWith(`title:${id}:`) && intent.status === 'unknown')) throw new HostUnknownDeliveryError({ command: 'bb.thread.title' });
     await this.write(key, 'thread.title', { threadId: id, title });
   }
@@ -224,6 +240,17 @@ export class BbThreads {
       id: m.id, label: m.id, aliases: [], thinkingOptions: m.reasoningLevels.map(id => ({ id, label: id })), defaultThinkingOptionId: null,
       modes: p.modes.map(id => ({ id, label: id })), features: [],
     })) })) };
+  }
+  /** A bounded liveness window, always combined with core's inactivity and process proof. */
+  async timeline(id: string): Promise<TimelinePage> {
+    const read = await this.read<{ entries: Array<{ id: string; seq: number; at: number; turnId: string | null; status: string; name: string }>; hasOlder: boolean; pendingBackgroundTasks: string[] }>('thread.timeline', { threadId: id });
+    const status: Record<string, string> = { pending: 'running', completed: 'completed', error: 'failed', interrupted: 'canceled' };
+    return { entries: read.entries.map(row => ({ timestamp: new Date(row.at).toISOString(), ...(row.turnId ? { turnId: row.turnId } : {}),
+      item: { type: 'tool_call', callId: row.id, name: row.name, status: status[row.status], detail: { type: 'unknown' } } })),
+      epoch: id, startCursor: read.entries[0] ? { epoch: id, seq: read.entries[0].seq } : null,
+      endCursor: read.entries.length ? { epoch: id, seq: read.entries.at(-1)!.seq } : null,
+      hasOlder: read.hasOlder, hasNewer: false, gap: false, staleCursor: false, reset: false,
+      projection: 'bounded', pendingBackgroundTasks: read.pendingBackgroundTasks };
   }
   async send(id: string, text: string, messageId: string) {
     if (!this.ports.state().agents[id]) throw new ProvenPreSendRefusalError('BB delivery needs a recorded task thread');

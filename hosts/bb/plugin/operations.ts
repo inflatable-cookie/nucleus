@@ -34,6 +34,7 @@ export const HOST_OPERATIONS = [
   "thread.metadata",
   "thread.title",
   "thread.send",
+  "thread.timeline",
   "provider.catalog",
   "environment.list",
   "terminal.create",
@@ -80,6 +81,7 @@ export interface ThreadRow {
   id: string;
   title?: string | null;
   status?: string;
+  providerId?: string;
   environmentId?: string | null;
   parentThreadId?: string | null;
   parentNotifications?: string | null;
@@ -92,6 +94,7 @@ export interface ThreadRow {
   runtime?: { displayStatus?: string };
   environmentPath?: string | null;
   updatedAt?: number;
+  activity?: Record<string, number>;
   createdAt?: number;
 }
 
@@ -150,6 +153,12 @@ export interface BbHostSdk {
     send?(args: { threadId: string; input: Array<{ type: "text"; text: string }>; mode: "queue-if-active"; pluginSubmission: { pluginId: string; data: { messageId: string } } }): Promise<{ ok: true; delivery: "sent" | "queued" }>;
     update?(args: { threadId: string; title: string }): Promise<unknown>;
     interactions?: { list(args: { threadId: string }): Promise<Array<{ id: string; threadId: string; status: string; payload: { kind: string; title?: string } }>> };
+    timeline?(args: { threadId: string; segmentLimit: string; includeNestedRows: "true"; deferContent: "true" }): Promise<{
+      rows: Array<Record<string, unknown>>; maxSeq: number;
+      timelinePage: { historySnapshot: string; olderCursor: unknown | null };
+      activeBackgroundCommands: unknown[]; activeWorkflows: unknown[];
+    }>;
+    defaultExecutionOptions?(args: { threadId: string }): Promise<{ model: string; permissionMode: string; reasoningLevel: string } | null>;
     get(args: { threadId: string }): Promise<ThreadRow>;
     stop(args: { threadId: string }): Promise<unknown>;
     archive(args: { threadId: string }): Promise<unknown>;
@@ -157,7 +166,7 @@ export interface BbHostSdk {
     experimental_listCascade(args: { threadIds: string[]; action: "archive" }): Promise<{ threads?: Array<{ threadId: string; cascadeThreadIds?: string[] }> }>;
     experimental_listPluginMetadata(args: { pluginId: string; threadIds: string[] }): Promise<{ threads?: Array<{ threadId: string; metadata?: unknown }> }>;
   };
-  providers?: { list(): Promise<Array<{ id: string; available: boolean; capabilities: { permissionModes: string[] } }>>; models(args: { providerId: string }): Promise<{ models: Array<{ model: string; supportedReasoningEfforts: Array<{ reasoningEffort: string }> }> }> };
+  providers?: { list(): Promise<Array<{ id: string; available: boolean; capabilities: { permissionModes: string[] } }>>; models(args: { providerId: string; preferCached?: boolean }): Promise<{ models: Array<{ model: string; supportedReasoningEfforts: Array<{ reasoningEffort: string }> }> }> };
   environments: { list(): Promise<EnvironmentRow[]> };
   terminals: {
     create(args: { cols: number; rows: number; scope: TerminalScope; start?: { mode: "shell" }; title: string }): Promise<TerminalSessionRow>;
@@ -231,11 +240,11 @@ function metadataOf(value: unknown): Record<string, unknown> | null {
 
 function threadProjection(row: ThreadRow) {
   // No manufactured status or flags: a changed SDK row must fail this request.
-  if (!["id", "title", "status", "environmentId", "environmentPath", "parentThreadId", "parentNotifications", "originPluginId", "archivedAt", "updatedAt", "queuedWork", "runtime", "hasPendingInteraction"].every(key => Object.hasOwn(row, key)) || !row.runtime || typeof row.hasPendingInteraction !== "boolean" || typeof row.updatedAt !== "number" ||
+  if (!["id", "title", "status", "providerId", "environmentId", "environmentPath", "parentThreadId", "parentNotifications", "originPluginId", "archivedAt", "updatedAt", "queuedWork", "runtime", "hasPendingInteraction"].every(key => Object.hasOwn(row, key)) || !row.runtime || typeof row.hasPendingInteraction !== "boolean" || typeof row.updatedAt !== "number" ||
       typeof row.queuedWork !== "string" || !Object.hasOwn(row, "environmentPath"))
     throw new HostOperationError("unavailable", "threads.list row is missing runtime, interaction, activity or environment fields");
   return {
-    threadId: row.id, title: row.title ?? null, status: row.status,
+    threadId: row.id, title: row.title ?? null, status: row.status, providerId: row.providerId,
     displayStatus: row.runtime.displayStatus, environmentId: row.environmentId ?? null,
     environmentPath: row.environmentPath, parentThreadId: row.parentThreadId ?? null,
     parentNotifications: row.parentNotifications, originPluginId: row.originPluginId ?? null,
@@ -314,7 +323,7 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
         ? await call("threads.interactions.list", () => sdk.threads.interactions!.list({ threadId: row.id })) : [];
       if (!Array.isArray(interactions) || interactions.length > 200 || interactions.some(i => i.threadId !== row.id))
         throw new HostOperationError("unavailable", "interactions.list did not answer a bounded thread-scoped list");
-      answer.push({ ...projection, interactions: interactions.map(i => ({ id: i.id, kind: i.payload.kind, status: i.status, title: i.payload.title ?? null })) });
+      answer.push({ ...projection, interactions: interactions.map(i => ({ id: i.id, kind: i.payload.kind, status: i.status, title: Object.hasOwn(i.payload, "title") ? i.payload.title ?? null : null })) });
     }
     return answer;
   }
@@ -422,14 +431,16 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
           // delivery, never a refusal: resending the spawn would duplicate it.
           throw new HostOperationError("unavailable", `BB committed thread ${thread.id} but did not record an environment within ${options.attachWaitMs ?? ATTACH_WAIT_MS} ms; the spawn landed and is not retryable, adopt thread ${thread.id}`);
         }
+        if (typeof row.createdAt !== "number" || !Object.hasOwn(row, "parentThreadId") || typeof row.parentNotifications !== "string")
+          throw new HostOperationError("unavailable", "run.attach returned no creation stamp or parent fields; the committed spawn must be adopted");
         return {
           threadId: row.id,
           environmentId: row.environmentId,
-          status: row.status ?? "unknown",
-          parentThreadId: row.parentThreadId ?? null,
-          parentNotifications: row.parentNotifications ?? parentNotifications,
-          pluginMetadata,
-          createdAt: Number(row.createdAt ?? thread.createdAt ?? now()),
+          status: row.status,
+          parentThreadId: row.parentThreadId,
+          parentNotifications: row.parentNotifications,
+          pluginMetadata: await threadMetadata(row.id),
+          createdAt: row.createdAt,
           spawned: spawnCalls - spawnsBefore,
         };
       }
@@ -437,7 +448,12 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
         const threadId = text(input.threadId, "threadId", 128);
         const rows = await call("threads.list", () => sdk.threads.list({ threadIds: [threadId], includeHidden: true, limit: 200 }));
         if (rows.length !== 1 || rows[0].id !== threadId) throw new HostOperationError("unavailable", "threads.list omitted the requested thread");
-        return { ...(await observedRows(rows))[0], pluginMetadata: await threadMetadata(threadId) };
+        const observed = (await observedRows(rows))[0];
+        const execution = await call("threads.defaultExecutionOptions", () => sdk.threads.defaultExecutionOptions!({ threadId }));
+        return { ...observed, pluginMetadata: await threadMetadata(threadId), execution: execution === null ? null : {
+          model: execution.model, permissionMode: execution.permissionMode, reasoningLevel: execution.reasoningLevel,
+        } };
+
       }
       case "thread.read": {
         const threadIds = input.threadIds as string[];
@@ -451,6 +467,49 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
         const read = await call("threads.experimental_listPluginMetadata", () => sdk.threads.experimental_listPluginMetadata({ pluginId, threadIds }));
         if (!Array.isArray(read?.threads)) throw new HostOperationError("unavailable", "plugin metadata list is unreadable");
         return { threads: read.threads.map(row => ({ threadId: row.threadId, metadata: metadataOf(row) })) };
+      }
+      case "thread.timeline": {
+        const threadId = text(input.threadId, "threadId", 128);
+        const page = await call("threads.timeline", () => sdk.threads.timeline!({ threadId, segmentLimit: "20", includeNestedRows: "true", deferContent: "true" }));
+        if (!Array.isArray(page.rows) || !Number.isSafeInteger(page.maxSeq) || page.maxSeq < 0 || !page.timelinePage ||
+            typeof page.timelinePage.historySnapshot !== "string" || !page.timelinePage.historySnapshot || !Object.hasOwn(page.timelinePage, "olderCursor") ||
+            !Array.isArray(page.activeBackgroundCommands) || !Array.isArray(page.activeWorkflows))
+          throw new HostOperationError("unavailable", "threads.timeline omitted its window or background-work evidence");
+        const entries: Array<{ id: string; seq: number; at: number; turnId: string | null; status: string; name: string }> = [];
+        let visited = 0;
+        function visit(rows: Array<Record<string, unknown>>, depth: number) {
+          if (depth > 8) throw new HostOperationError("unavailable", "threads.timeline nesting exceeded its bound");
+          for (const row of rows) {
+            if (++visited > 2000 || row.threadId !== threadId) throw new HostOperationError("unavailable", "threads.timeline exceeded its row bound or named another thread");
+            if (row.kind === "turn") {
+              if (row.children !== null) {
+                if (!Array.isArray(row.children)) throw new HostOperationError("unavailable", "threads.timeline turn children are unreadable");
+                visit(row.children, depth + 1);
+              }
+            } else if (row.kind === "work") {
+              if (typeof row.id !== "string" || !Number.isSafeInteger(row.sourceSeqStart) || (row.sourceSeqStart as number) < 0 ||
+                  (row.sourceSeqStart as number) > page.maxSeq || typeof row.startedAt !== "number" || typeof row.workKind !== "string" ||
+                  !["pending", "completed", "error", "interrupted"].includes(String(row.status)))
+                throw new HostOperationError("unavailable", "threads.timeline work row is missing its identity, sequence or status");
+              entries.push({ id: row.id, seq: row.sourceSeqStart as number, at: row.startedAt,
+                turnId: typeof row.turnId === "string" ? row.turnId : null, status: String(row.status), name: row.workKind });
+            } else if (row.kind !== "conversation" && row.kind !== "system") {
+              throw new HostOperationError("unavailable", "threads.timeline returned an unrecognised row kind");
+            }
+          }
+        }
+        visit(page.rows, 0);
+        entries.sort((a, b) => a.seq - b.seq);
+        const rows = await call("threads.list", () => sdk.threads.list({ threadIds: [threadId], includeHidden: true, limit: 200 }));
+        const activity = rows.length === 1 && rows[0].id === threadId ? rows[0].activity : null;
+        const kinds = ["activeWorkflowCount", "activeBackgroundAgentCount", "activeBackgroundCommandCount", "activePlanModeCount"];
+        if (!activity || kinds.some(kind => !Number.isSafeInteger(activity[kind]) || activity[kind] < 0))
+          throw new HostOperationError("unavailable", "threads.list omitted background activity counts");
+        const labels: Record<string, string> = { activeWorkflowCount: "workflows", activeBackgroundAgentCount: "background agents", activeBackgroundCommandCount: "background commands", activePlanModeCount: "active plans" };
+        const pendingBackgroundTasks = kinds.filter(kind => activity[kind] > 0).map(kind => `${labels[kind]}: ${activity[kind]}`);
+        if (page.activeBackgroundCommands.length) pendingBackgroundTasks.push(`background commands: ${page.activeBackgroundCommands.length}`);
+        if (page.activeWorkflows.length) pendingBackgroundTasks.push(`workflows: ${page.activeWorkflows.length}`);
+        return { threadId, entries, hasOlder: page.timelinePage.olderCursor !== null, pendingBackgroundTasks };
       }
       case "thread.send": {
         const threadId = text(input.threadId, "threadId", 128), messageId = text(input.messageId, "messageId", 200);
@@ -470,7 +529,7 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
         const providers = await call("providers.list", () => sdk.providers!.list());
         const answer = [];
         for (const provider of providers.filter(p => p.available)) {
-          const result = await call("providers.models", () => sdk.providers!.models({ providerId: provider.id }));
+          const result = await call("providers.models", () => sdk.providers!.models({ providerId: provider.id, preferCached: true }));
           answer.push({ id: provider.id, modes: provider.capabilities.permissionModes, models: result.models.map(m => ({ id: m.model, reasoningLevels: m.supportedReasoningEfforts.map(r => r.reasoningEffort) })) });
         }
         return { providers: answer };

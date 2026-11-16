@@ -50,7 +50,7 @@ test('BB inventory chunks more than 200 threads and reads interactions only for 
   assert.equal(f.calls.filter(c => c.method === 'threads.interactions.list').length, 1);
   assert.equal(inventory?.get(ids[0])?.permissions, true);
   assert.equal(inventory?.get(ids[0])?.pendingRequest?.kind, 'plugin');
-  assert.equal(inventory?.get(ids[0])?.activeTurnId, undefined, 'the fixture does not invent activeTurnId');
+  assert.equal(inventory?.get(ids[0])?.activeTurnId, null, 'idle is a positive absence of a tracked turn, with no invented turn identity');
 });
 
 for (const fault of ['failed chunk', 'short chunk', 'omitted row', 'partial row'] as const) test(`BB ${fault} answers null and per-agent observe remains available`, async () => {
@@ -69,7 +69,7 @@ test('BB unknown spawn adopts exact metadata across complete origin walks, hidde
   await assert.rejects(f.native.createAgent(f.spec()), /unknown delivery/);
   const spawned = [...f.rows.values()][0];
   spawned.parentThreadId = 'thr_other_planner'; spawned.projectId = 'proj_other'; spawned.visibility = 'hidden'; spawned.archivedAt = 42;
-  for (let i = 0; i < 401; i++) { const id = `thr_other_${i}`; f.rows.set(id, bbWire('list', { id, hasPendingInteraction: false, archivedAt: null })); }
+  for (let i = 0; i < 401; i++) { const id = `thr_other_${i}`; f.rows.set(id, bbWire('list', { id, hasPendingInteraction: false, archivedAt: null })); f.metadata.set(id, { nucleus: { task: 'task_other', run: `other_${i}` } }); }
   const found = await f.restart().findAgents('task_synthetic', 'run_synthetic');
   assert.equal(found[0]?.id, spawned.id);
   const walks = f.calls.filter(c => c.method === 'threads.list' && c.args.originPluginId);
@@ -116,6 +116,14 @@ test('BB unknown title write is read back before another write; missing postcond
   assert.equal(f.calls.filter(c => c.method === 'threads.update').length, 2);
 });
 
+test('BB an observed step change updates the title within the same task version', async () => {
+  const f = fixture(), agent = await f.native.createAgent(f.spec());
+  await f.native.title(agent.id, 'Reviewing: Synthetic · reviewing', 'same-version');
+  await f.native.title(agent.id, 'Reviewing: Synthetic · reviewer needs input', 'same-version');
+  assert.equal(f.rows.get(agent.id).title, 'Reviewing: Synthetic · reviewer needs input');
+  assert.equal(f.calls.filter(c => c.method === 'threads.update').length, 2);
+});
+
 test('BB stop observes idle and archive is preceded by cascade proof; foreign dependents remain untouched', async () => {
   const f = fixture(), agent = await f.native.createAgent(f.spec());
   f.rows.get(agent.id).status = 'active';
@@ -147,4 +155,48 @@ test('BB observation never carries an old workspace binding after the native env
   const f = fixture(), agent = await f.native.createAgent(f.spec());
   f.rows.get(agent.id).environmentId = 'env_foreign';
   assert.equal((await f.native.observe(agent.id)).workspaceId, null);
+});
+
+test('BB per-agent observation reads fresh execution options without widening the batch inventory', async () => {
+  const f = fixture(), agent = await f.native.createAgent(f.spec());
+  assert.equal((await f.native.observe(agent.id)).model, 'synthetic-model');
+  f.executions.get(agent.id).model = 'synthetic-model-2';
+  assert.equal((await f.restart().observe(agent.id)).model, 'synthetic-model-2');
+  const before = f.calls.filter(c => c.method === 'threads.defaultExecutionOptions').length;
+  await f.native.observationInventory([agent.id]);
+  assert.equal(f.calls.filter(c => c.method === 'threads.defaultExecutionOptions').length, before);
+});
+
+test('BB fake SDK rejects a field missing from the recorded DTO', async () => {
+  const f = fixture(), agent = await f.native.createAgent(f.spec());
+  const row = await f.sdk.threads.get({ threadId: agent.id });
+  assert.throws(() => (row as unknown as { invented: string }).invented, /no field invented/);
+});
+
+test('BB timeline is bounded, retains pending work and reports background activity independently of an idle turn', async () => {
+  const f = fixture(), agent = await f.native.createAgent(f.spec());
+  const page = await f.native.timeline(agent.id);
+  assert.equal(page.projection, 'bounded'); assert.deepEqual(page.pendingBackgroundTasks, []);
+  f.controls.liveTimeline = true;
+  assert.ok((await f.native.timeline(agent.id)).entries.some(row => row.item.type === 'tool_call' && row.item.status === 'running'));
+  f.controls.liveTimeline = false; f.rows.get(agent.id).activity.activeBackgroundAgentCount = 1;
+  assert.deepEqual((await f.native.timeline(agent.id)).pendingBackgroundTasks, ['background agents: 1']);
+  for (const call of f.calls.filter(c => c.method === 'threads.timeline')) assert.deepEqual(call.args, { threadId: agent.id, segmentLimit: '20', includeNestedRows: 'true', deferContent: 'true' });
+});
+
+test('an unknown BB stop settles by a fresh idle observation before a later turn can be stopped', async () => {
+  const f = fixture(), agent = await f.native.createAgent(f.spec());
+  f.rows.get(agent.id).status = 'active'; f.controls.loseStop = true;
+  await assert.rejects(f.native.stopAgentTurn(agent.id));
+  assert.equal((await f.native.observe(agent.id)).active, false);
+  f.controls.loseStop = false; f.rows.get(agent.id).status = 'active'; f.rows.get(agent.id).updatedAt += 1;
+  await f.native.stopAgentTurn(agent.id);
+  assert.equal(f.calls.filter(c => c.method === 'threads.stop').length, 2);
+});
+
+test('BB busy rows never fabricate a positive turn id or prove turn absence', async () => {
+  const f = fixture(), agent = await f.native.createAgent(f.spec());
+  f.rows.get(agent.id).status = 'active';
+  const state = await f.native.observe(agent.id);
+  assert.equal(state.active, true); assert.equal(state.activeTurnId, undefined);
 });

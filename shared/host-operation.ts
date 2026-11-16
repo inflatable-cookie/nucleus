@@ -57,6 +57,7 @@ export const HOST_OPERATIONS = [
   "thread.metadata",
   "thread.title",
   "thread.send",
+  "thread.timeline",
   "provider.catalog",
   "environment.list",
   "terminal.create",

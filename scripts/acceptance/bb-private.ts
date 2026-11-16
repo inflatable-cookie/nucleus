@@ -314,6 +314,9 @@ function recordSdk(sdk: any, bb: any, prefix = ""): any {
         recordAppend(${JSON.stringify(wirePath)}, JSON.stringify({ method: "threads.interactions.list", args: [args[0]], result: interactions }) + "\\n");
         const list = await sdkRoot.threads.list({ threadIds: [args[0].threadId], includeHidden: true });
         recordAppend(${JSON.stringify(wirePath)}, JSON.stringify({ method: "threads.list", args: [{threadIds: [args[0].threadId]}], result: list }) + "\\n");
+        const timelineArgs = { threadId: args[0].threadId, segmentLimit: "20", includeNestedRows: "true", deferContent: "true" };
+        const timeline = await sdkRoot.threads.timeline(timelineArgs);
+        recordAppend(${JSON.stringify(wirePath)}, JSON.stringify({ method: "threads.timeline", args: [timelineArgs], result: timeline }) + "\\n");
         for (const i of interactions) await sdkRoot.threads.interactions.cancel({ threadId: args[0].threadId, interactionId: i.id });
         for (const [method, args] of [["providers.list", {}], ["providers.models", {providerId: "codex"}]]) {
           const [area, verb] = method.split(".");
@@ -431,6 +434,8 @@ let sdkRoot: any;
     assert.ok(originWalk.value.rows.every(row => row.originPluginId === "nucleus"), "every row of the origin walk belongs to this plugin");
     const stopped = await send<{ threadId: string; status: string; displayStatus: string }>("thread.stop", { threadId: worker.value.threadId });
     note("thread-observed", true, { status: observed.value.status, displayStatus: observed.value.displayStatus, environment: observed.value.environmentId, parent: observed.value.parentThreadId, pluginMetadata: observed.value.pluginMetadata, afterStop: stopped.value.status });
+    const timeline = await send<{ entries: unknown[]; pendingBackgroundTasks: string[] }>("thread.timeline", { threadId: worker.value.threadId });
+    note("bounded-thread-timeline", true, { entries: timeline.value.entries.length, pendingBackgroundTasks: timeline.value.pendingBackgroundTasks.length });
 
     // 9. The terminal-scope question: where each kind of terminal actually appears.
     const threadTerminal = await send<{ session: { id: string; threadId: string | null } }>("terminal.create", { scope: { kind: "thread", threadId: worker.value.threadId }, title: "nucleus worker terminal" });

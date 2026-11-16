@@ -136,9 +136,8 @@ class BbHostOperationNotSentError extends Error {
 }
 
 /**
- * The adapter a registered BB host answers with in phase 1. Its identity is real
- * (the health surface, the routing snapshot and the host kind all read it), and
- * every task-workflow call refuses by name before anything is sent.
+ * Native workspace custody, also usable for registration before a durable store
+ * and helper route are available. The full adapter composes this with BB threads.
  */
 export function createBbWorkspaceAdapter(
   hostId: string,
