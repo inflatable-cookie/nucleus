@@ -10,8 +10,8 @@ worktree and attaches it as an unmanaged path, threads report through the
 packaged Nucleus helper with a run ticket, presentation keeps the planner's group
 and BB's own list instead of inventing a settle state, the board and Settings
 live in BB's plugin slots with composer pills for decisions and questions, usage
-and observation come from one batched thread read plus the thread's own context,
-and a planner gets its terminal as a native tab.
+and observation come from bounded chunked thread reads plus the thread's own
+context, and a planner gets its terminal as a native tab.
 
 BB stays opt-in per repository and Paseo stays the primary host. The plan starts
 with a spike that proves the transport and the create → spawn → observe → archive

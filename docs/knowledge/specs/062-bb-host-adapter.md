@@ -53,6 +53,7 @@ Each fact is marked with the evidence that establishes it:
 | 12 | A `threads.list` row already carries `status`, `runtime.displayStatus`, `archivedAt`, `hasPendingInteraction`, `queuedWork`, `activity`, `environmentId`, `environmentPath`, `environmentIsWorktree`, `parentThreadId`, `lifecycleOwnerThreadId`, pinned and read state | sdk, probe |
 | 13 | BB's HTTP API answers on loopback without a credential from the same user (`GET /api/v1/threads` → 200 on bb 0.49.0, observed 2026-11-16), but no `bb guide` chapter documents the HTTP routes as a contract; `bb guide json` documents CLI JSON only | probe, guide |
 | 14 | A BB server's data directory is the one holding `config.json`, `bb.db` and `plugins/<id>/`; a plugin reads it through `bb.server.experimental_dataDir` | sdk, probe |
+| 15 | There is no standalone environment create: the environments area offers list, get, paths, commit, update, delete, archive and cleanup, and an environment comes into being when a thread attaches to a path | sdk, spike |
 
 ## Assumptions phase 0 must prove
 
@@ -66,15 +67,17 @@ and no later phase starts, until each is answered in writing.
    without disturbing the bridge presence claim, roll recovery or the existing request path.
 3. An unmanaged environment ID is stable across a BB server restart and a plugin reload, not only
    within one run.
-4. A `threads.spawn` is discoverable after a lost reply: `pluginMetadata` plus `originPluginId`
-   identify the created thread, so an uncertain spawn can be adopted by observation instead of
-   resent.
-5. Archiving a leaf role thread leaves its planner, its siblings and the worktree group untouched
-   (the cascade read names only itself).
+4. A `threads.spawn` is discoverable after a lost reply: the thread's own plugin metadata names this
+   exact task and run, so an uncertain spawn can be adopted by observation instead of resent, and a
+   complete candidate walk that names none proves it did not land.
+5. Archiving a role thread leaves its planner, its siblings and the worktree group untouched when
+   nothing depends on it (the cascade read names only itself or rows already archived).
 6. `threads.spawn` returns when the row is committed, not when the first turn starts, so "spawned"
    is never read as "running".
 7. An isolated BB server (its own data directory and port) can be driven on this machine for proof,
    without touching the operator's live BB.
+8. A `host_path` terminal appears where an operator would look for it, so the task-directory
+   convenience is worth shipping; if it does not, phase 5 drops it and the planner tab stays native.
 
 ## Decisions
 
@@ -119,19 +122,43 @@ presence claim that makes the service's idle shutdown correct.
 surface, but it would add a second transport and a second credential beside the authenticated socket
 already in place, and the token would need out-of-band discovery and rotation.
 
-### 2. Workspaces: a Nucleus-created worktree, attached as an unmanaged path
+### 2. Workspaces: a Nucleus-minted handle over a Nucleus-created worktree, attached as an unmanaged path
 
-**Recommendation.** Nucleus creates the task's Git worktree as it does for every host, then spawns
-each role thread with `environment: { type: "host", workspace: { type: "unmanaged", path } }`. The
-first attach creates the BB environment; later attaches by path or by the recorded environment ID
-resolve to the same one. Nucleus records the environment ID as the task's `workspaceId` on its
-recorded BB host.
+**Recommendation.** Workspace creation and run creation stay separate, in the order core already
+uses: first dispatch records the workspace through `createWorkspace` and only then calls `launchAgent`,
+which reaches `createRun` with the run and its ticket (`core/dispatch/first-dispatch.ts`,
+`core/host/contract/run-creation.ts`). BB has no standalone environment create — an environment comes
+into being when a thread attaches to a path (facts 1 and 15) — so `createWorkspace` does what T3Code's
+does: it resolves the repository root, registers the BB project for it when there is none, and mints a
+Nucleus-owned handle (`bb-worktree-<hash>`) bound to the canonical directory and the project ID,
+persisted through the durable intent boundary. It spawns nothing, so no worker exists before its run
+does and no thread is created that no run owns.
+
+The first role run attaches the worktree. `createRun(task, run, ticket)` spawns its thread with
+`environment: { type: "host", workspace: { type: "unmanaged", path } }`, the task's planner as parent,
+`parentNotifications: "off"` and the run's plugin metadata, then records the returned `environmentId`
+on the handle before the run counts as created. Later attaches by the same path or by the recorded
+environment ID resolve to the same environment, so every role of one task shares one environment.
+
+`workspaceAvailable` and `inspectWorkspaceCreation` read the handle and the project, never a spawn:
+before the first attach the handle is available because the recorded directory and project are, and
+after it the recorded environment must also be listed and not destroyed. `archiveTaskWorkspace` marks
+the handle archived and `taskWorkspaceArchived` reads that marker; BB never retires an unmanaged
+environment, so the handle is the only archive fact. `workspaceIdAccepted` accepts exactly the minted
+`bb-worktree-<40 hex>` shape, so a handle from another host never resolves here.
+
+**Binding sequence for one run**, each step recorded as durable intent before its write: handle
+recorded → project registered → spawn with the run's exact metadata → environment ID recorded on the
+handle → run creation complete. A spawn whose reply is lost is never resent on a guess: adoption needs
+the exact recorded task and run identity (decision 6), and only a complete candidate walk that names
+none allows one retry under the same intent.
 
 **Evidence.** An unmanaged path is exactly the spike's verified case (fact 1): no setup or teardown
-hooks run, BB never retires the folder, and re-attaching is idempotent. That leaves worktree
-creation, inspection, recovery and archive custody where they already are — Nucleus — with the
-source-publication proofs Spec 017 requires before a folder is removed (fact 1, SDK
-`createThreadRequest.environment` in fact 7).
+hooks run, BB never retires the folder, and re-attaching is idempotent. That leaves worktree creation,
+inspection, recovery and archive custody where they already are — Nucleus — with the source-publication
+proofs Spec 017 requires before a folder is removed (fact 1, `createThreadRequest.environment` in fact
+7). The split matches T3Code's own: it mints `nucleus-worktree-<hash>` in `createWorkspace` without a
+thread and attaches `existing_worktree` at launch.
 
 **Rejected alternative: a Nucleus environment provider (`bb.experimental_environments.register`).**
 A provider owns `create` and `remove` (SDK `PluginEnvironmentProviderDefinition`), so BB would decide
@@ -190,8 +217,16 @@ own wake-ups out of a planner that Nucleus already notifies through its own dura
 3). `off` is the only value that does not duplicate the owner-owns-blockers rule: `auto` reports
 every finished, failed or interrupted turn, and `stuck` still reports failures, interruptions and
 blockers. Titles and reparenting are ordinary `threads.update` writes (fact 7). Archive is BB's
-non-destructive retirement; `threads.delete` is destructive, cascades, and needs
-`childThreadsConfirmed` (fact 3), and nothing Nucleus would delete outlives its records anyway.
+non-destructive retirement, but it is not a leaf-local operation: `threads.archive` cascades, and
+`threads.experimental_listCascade` is the only read that names what it would also affect. So every
+archive is preceded by that read and fails closed. If the read is unavailable or unreadable, or if it
+names any thread outside the set this task's own records hold, the archive is refused, the thread is
+left unarchived, and closeout records the cleanup as incomplete instead of guessing. A role thread's
+dependents can include a thread its own agent spawned, which Nucleus did not create; that is exactly
+the case the read catches, and the promise that Nucleus archives only what it created survives it.
+Threads are archived children first, so a recorded child is already archived when its parent's read
+runs, and the read then names only already-archived rows or nothing. Nucleus never deletes a thread:
+`threads.delete` is destructive, cascades, and needs `childThreadsConfirmed` (fact 3).
 
 **Rejected alternative: emulate settle by hiding or archiving released threads.** Archiving removes a
 thread from the planner's group and from the task's one place to look, so a released reviewer would
@@ -231,37 +266,65 @@ plugin forwards the RPC catalogue over the same socket (Spec 013).
 Paseo plugin, which is an operator requirement, and it would put a blocked question where the agent
 is not.
 
-### 6. Usage and observation: per-thread reads, one batched inventory
+### 6. Usage and observation: chunked inventory, exact-identity adoption
 
 **Recommendation.** Per-run usage comes from `threads.context`'s `usage` (tokens, context window,
 optional cost) read on the run's finish path, with `thread/tokenUsage/updated` as the timeline
 fallback; provider subscription windows come from `system.usageLimits` for the Usage page.
-`observationInventory(agentIds)` is one batched `threads.list({ threadIds })` read per sweep: each
-row already carries the status, runtime status, archive state, pending-interaction flag, queued work,
-activity and environment path, so a task's whole cast resolves in one request. A row with
-`hasPendingInteraction` costs one `interactions.list` read; a thread the list omits, or a read that
-fails, answers nothing and falls back to `observe`, never to inactivity. Timelines stay per-thread.
 
-**Evidence.** Fact 12 (row fields) and fact 7 (`threadIds`, at most 200 per call, archived rows
-included when named explicitly, deleted IDs omitted) are exactly the A6 inventory contract; fact 11 is
-the usage surface. `threads.count` answers capacity questions without paging rows.
+`observationInventory(agentIds)` takes an arbitrary list, so it chunks the ids into runs of at most
+200 — the SDK's cap per `threads.list({ threadIds })` call — and reads the chunks one after another.
+Each row already carries the status, runtime status, archive state, pending-interaction flag, queued
+work, activity and environment path. A row with `hasPendingInteraction` costs one `interactions.list`
+read. The answer is a complete map or `null`: a failed, refused or short chunk, or a row the list
+omits, makes the inventory incomplete, and the caller falls back to per-agent `observe` rather than
+reading absence. Timelines stay per-thread.
+
+**Adoption after an unknown spawn.** A lost `threads.spawn` reply is settled by reading, never by
+resending on a guess, and never by a title. The candidates are the project's threads for this planner
+with this plugin's origin (`threads.list({ projectId, parentThreadId, originPluginId })`, archived
+included), and their plugin metadata is read in chunked `experimental_listPluginMetadata` calls. A
+thread is adopted only when its metadata names this exact task and this exact run. Zero matches after
+a complete candidate walk prove the spawn did not land and allow one retry under the recorded intent;
+an unreadable or partial walk leaves the delivery unknown with nothing bound; two or more matches are
+refused and recorded, because a repeated pair is not an identity.
+
+**Evidence.** Fact 12 (row fields), fact 7 (`threadIds`, at most 200 per call, archived rows included
+when named explicitly, deleted IDs omitted) and fact 11 (usage) are the whole surface these reads
+need. `threads.count` answers capacity questions without paging rows.
 
 **Rejected alternative: per-thread `threads.get` for every participant on every sweep.** It is the
 same data one request per thread, against a limit of 200 ids per list call.
 
-### 7. Planner terminal: a native tab plus one plugin command
+**Rejected alternative: identify an adopted thread by its title.** Titles repeat across tasks, are
+operator-editable and change with the task's state, so a title can bind a different attempt to a run.
+Metadata is durable and per-plugin; it is the only adoption key.
 
-**Recommendation.** Requirement 3 needs no adapter work: a planner opens its own terminal with ⌘J,
-and BB keeps it as a tab in the planner's workspace. Nucleus adds one convenience command,
-`bb nucleus terminal [--task <ref>]`, which creates a *thread-scoped* terminal in the calling
-planner's thread — named after the task when one is named — and, for a terminal at a task's worktree,
-a `host_path` terminal with that worktree as its cwd. Nucleus never lists, reads, resizes, writes to
-or closes a terminal it did not create, and never reads terminal output as a lifecycle fact.
+### 7. Planner terminal: a thread-scoped tab, and a separate task-directory convenience
+
+**Recommendation.** Requirement 3 needs no adapter work and no new surface: BB's terminals are core
+and ⌘J opens one in the planner's own pane, so a planner already keeps a terminal as a tab in its
+workspace. Nucleus adds one convenience command, `bb nucleus terminal`, which creates a
+*thread-scoped* terminal in the calling planner's thread (`target: { kind: "thread", threadId }`,
+`start: { mode: "shell" }`, and a title naming the task when one is given). That is the whole of the
+requirement.
+
+A terminal in a task's *worktree* is a separate thing, not the same one. The SDK's terminal target is
+exactly one of `thread`, `environment` or `host_path`, and a thread target carries no cwd, so a
+terminal cannot both belong to a planner and start in a task's directory. The task-directory
+convenience is therefore a `host_path` terminal (`{ kind: "host_path", hostId, cwd: <task
+worktree> }`), which appears in the right panel but belongs to no thread. It is an assumption to
+prove in phase 0 before phase 5 includes it; if it does not appear where an operator expects, it is
+dropped, and requirement 3 is still met by ⌘J and the thread-scoped command.
+
+Nucleus never lists, reads, resizes, writes to or closes a terminal it did not create, and never
+reads terminal output as a lifecycle fact.
 
 **Evidence.** A thread-scoped terminal appears in that thread's panel and an environment-scoped one
 does not (fact 4); `terminals.create` takes a `thread`, `environment` or `host_path` target with an
-optional `start` command and title (fact 7); a terminal closes with `thread-archived` when its thread
-is archived, so a planner terminal is retired with the planner, not with a task.
+optional `start` command and title, and no target carries both a thread and a cwd (fact 7); a terminal
+closes with `thread-archived` when its thread is archived, so a planner terminal is retired with the
+planner, not with a task.
 
 **Rejected alternative: Nucleus creates a terminal in each planner's thread at task dispatch.** It
 would mutate a thread Nucleus does not own, multiply terminals with every task, and leave the planner
@@ -299,17 +362,18 @@ as idle because its host is unreachable.
 | Host operation | BB call | Result the adapter needs |
 | --- | --- | --- |
 | Register project | `projects.create` with the repository root, `projects.list` first | One project per repository root; never deleted |
-| Create workspace | `threads.spawn` of the worker thread with the unmanaged path | Environment ID for the task worktree |
-| Create a run | `threads.spawn` with parent, `parentNotifications: "off"`, plugin metadata, provider/model/options and the run prompt | Thread ID whose metadata names the run |
+| Create workspace | Register the project, mint the task's handle, persist it; no `threads.spawn` | A handle bound to the canonical directory and the project; no thread exists yet |
+| Create a run | `threads.spawn` with the unmanaged path, parent, `parentNotifications: "off"`, plugin metadata, provider/model/options and the run prompt | Thread ID whose metadata names the run, and the environment ID recorded on the handle |
+| Adopt an unknown spawn | `threads.list` by project, planner and origin, then chunked `experimental_listPluginMetadata` | One thread whose metadata names this exact task and run; none after a complete walk proves non-delivery |
 | Follow-up | `threads.send` with the message identity recorded | Accepted row; unknown delivery reconciled by reading the thread |
 | Steer or notify | `threads.send` steer when a turn is live, otherwise a queued send | Same rule as T3Code's `steerOrNotify` |
-| Observe | `threads.get` or a row from the batched list | Status, active turn, pending interaction, archive state |
+| Observe | `threads.get`, or a chunked row read from `threads.list({ threadIds })` | Status, active turn, pending interaction, archive state |
 | Answer a question or permission | `threads.interactions.respond` (or `resolve`) | The exact interaction and thread; unknown delivery never resent |
 | Dismiss a question | `threads.interactions.cancel` | Same request scope |
 | Stop | `threads.stop`, then status read | Status settles the intent; a stop stays stopping until it reads |
 | Set a title | `threads.update` | Title read back before any retry |
 | Reparent | `threads.update` with `parentThreadId` | Read back before any retry |
-| Archive a thread | `threads.archive` after a cascade read | `archivedAt` on the thread |
+| Archive a thread | `experimental_listCascade` for `archive`, then `threads.archive` | A cascade that names only this task's recorded threads; `archivedAt` on the thread; refusal when it names anything else |
 | Archive a workspace | Mark the task's worktree handle archived in adapter state | The handle's own marker; BB keeps the unmanaged environment |
 
 ## Composition and unsupported capabilities
@@ -335,9 +399,9 @@ changes.
 | Experimental API | Why the design needs it | What breaks if it changes |
 | --- | --- | --- |
 | `bb.server.experimental_dataDir` | Host identity (`bb:<hash>`) and the data-directory probe | Identity refuses by name and the host stays offline; the fallback is to derive identity from the machine host record and version, which is weaker, so the phase-1 probe must fail closed instead |
-| `threads.experimental_listPluginMetadata` | Adopting a thread after an uncertain spawn, in one batched read | Adoption falls back to `threads.list({ originPluginId })` plus a title match, per thread; an uncertain spawn stays unknown longer |
+| `threads.experimental_listPluginMetadata` | Adopting a thread after an uncertain spawn, in one chunked read | Adoption falls back to per-thread `threads.getPluginMetadata`, which is the same exact identity one call per candidate; if that is also missing, the uncertain spawn stays unknown with nothing bound and no retry |
 | `threads.experimental_listAncestors` | Proving a role thread's planner before reparenting or archiving | Reparenting reads the parent link per thread instead; a deeper planner chain is then unproven |
-| `threads.experimental_listCascade` | Preventing an archive from touching a thread's siblings or planner | A parent thread is never archived by Nucleus; a leaf archive still runs but the cascade proof narrows to the row itself |
+| `threads.experimental_listCascade` | Proving an archive would touch only this task's own threads | Archive fails closed: without the read there is no authoritative cascade proof, so a thread is left unarchived and closeout records the cleanup as incomplete unless `threads.count({ parentThreadId })` answers 0, which proves it has no dependents |
 | `composer.customize` `experimental_popups` | A pill's popover content | Pills fall back to host-rendered menus and the board opens the same action |
 | `slots.experimental_threadList` | Deferred; not used by this design | Nothing, because the built-in sidebar is the plan |
 | `experimental_setThreadRowStatus` | Deferred row decoration; not used by this plan | Nothing; the worker title carries the step |
@@ -357,19 +421,26 @@ before any of them starts.
 
 **Outcome.** A scratch BB plugin and a scratch adapter prove, end to end and against an isolated BB
 server (its own data directory and port), that the reverse host-operation channel works through
-`bb.sdk`: create workspace → spawn worker under the planner → observe → archive. The PR lands the
-transport skeleton (the socket role, the plugin skeleton, the operation envelope) and an Effigy proof
-selector; it registers no host, adds no host kind and cannot dispatch a task. It answers every
-assumption above in writing, including plugin reload and BB restart.
+`bb.sdk`: mint a workspace handle and register the project without spawning → attach the worktree by
+spawning a synthetic worker thread under a synthetic planner → observe → archive. The spawned thread
+is the spike's own fixture, not a Nucleus run: the spike proves BB's behaviour and the attach order,
+not run identity binding. The PR lands the transport skeleton (the socket role, the plugin skeleton,
+the operation envelope) and an Effigy proof selector; it registers no host, adds no host kind and
+cannot dispatch a task. It answers every assumption above in writing, including plugin reload and BB
+restart.
 
 **Acceptance.**
 
 - `effigy proof:bb` prints, from one run: the connection established and re-established after a
-  plugin reload, the host identity derived and re-proved, a worktree created by Nucleus and attached
-  as an unmanaged environment, a worker thread spawned with the planner as parent and notifications
-  off, that thread observed (status, environment, parent, metadata) and archived, and the cascade
-  read for the archive. Synthetic repository, synthetic project, everything the run created removed
-  or archived at the end.
+  plugin reload; the host identity derived and re-proved; the project registered and a handle minted
+  with **zero** `threads.spawn` calls in that step; a Nucleus-created worktree attached as an
+  unmanaged environment by a synthetic thread spawned with the planner as parent and notifications
+  off; that same environment ID read back after the restart; the thread observed (status, environment,
+  parent, metadata) and archived after its cascade read. Synthetic repository, synthetic project,
+  everything the run created removed or archived at the end.
+- The same run answers the terminal-scope question: whether a `host_path` terminal at a task worktree
+  appears where an operator would find it, and whether a thread-scoped terminal really belongs to its
+  thread's panel.
 - The proof refuses to run against the operator's live BB data directory, and reports what it tried
   if it cannot find an isolated server.
 - `effigy check` and `effigy test:affected --run` at the pushed head.
@@ -396,38 +467,46 @@ is reachable.
 
 **Dependencies.** Phase 0.
 
-### Phase 2 — workspace custody
+### Phase 2 — workspace custody, without a thread
 
-**Outcome.** The adapter creates the task's Git worktree as it does on Paseo, attaches it as an
-unmanaged BB environment, records the environment ID, inspects a creation, recovers a lost
-workspace, and proves archive from its own handle marker. One BB project per repository root, never
-deleted; a task's closeout archives its worktree handle while the project stays.
+**Outcome.** The adapter records the task's Git worktree as a Nucleus-owned handle: it registers one BB
+project per repository root (never deleted), mints and persists the handle bound to the canonical
+directory and project, inspects a creation, recovers a lost workspace, and proves archive from its own
+handle marker. It spawns no thread, so a workspace-only PR has an outcome it can actually meet and can
+be tested without a run.
 
 **Acceptance.**
 
-- Tests: create → attach → inspect → archive with the recorded marker; a second attach resolves to
-  the same environment; a missing environment reads honestly; an unreadable read stays unknown; the
-  shared project is never deleted; a task's archive does not retire another task's workspace.
+- Tests: create → inspect → archive with the recorded marker; a create issues **no** `threads.spawn`
+  and records no agent identity; the handle survives a restart; a second create for the same task
+directory reuses the handle; a missing directory or unregistered project reads honestly; an unreadable
+  read stays unknown; the shared project is never deleted; a task's archive does not retire another
+  task's workspace or its project.
 - `effigy check` and `effigy test:affected --run`.
 
 **Dependencies.** Phases 0–1.
 
 ### Phase 3 — worker runs, observation and presentation
 
-**Outcome.** A task can dispatch on BB: `hostKind: "bb"` selects the host, the worker thread spawns
-in the task worktree under the planner with notifications off and its run ticket bound by plugin
-metadata, the helper reports, and the sweep observes status, active turn, pending interaction and
-archive state through the batched inventory. Worker titles carry the step, attention shows on the
-worker row, stop and archive work, and a replaced worker is archived. One end-to-end lifecycle test
-runs the ordinary path — dispatch, worker report, independent reviewer, revision, verdict, merge,
-closeout and archive — on a fake transport with the BB wire shapes pinned.
+**Outcome.** A task can dispatch on BB: `hostKind: "bb"` selects the host; `createRun` spawns the
+worker in the recorded worktree under the planner with notifications off, plugin metadata binding its
+run ticket and the returned environment ID recorded on the handle; the helper reports; and the sweep
+observes status, active turn, pending interaction and archive state from a chunked inventory. Worker
+titles carry the step, attention shows on the worker row, stop and archive work, and a replaced worker
+is archived. One end-to-end lifecycle test runs the ordinary path — dispatch, worker report,
+independent reviewer, revision, verdict, merge, closeout and archive — on a fake transport with the BB
+wire shapes pinned.
 
 **Acceptance.**
 
-- The lifecycle test above, plus tests for: inventory in one list call, a row with a pending
-  interaction costing one interaction read, an omitted row falling back to `observe`, a lost
-  `threads.spawn` reply adopted by metadata instead of resent, a title write read back before retry,
-  and an archive cascade read.
+- The lifecycle test above, plus tests for: the environment ID recorded on the handle at run creation
+  and reused by the next role; an inventory of more than 200 threads chunked into bounded calls with a
+  complete map; one failed or short chunk, or an omitted row, answering `null` and falling back to
+  `observe`; a row with a pending interaction costing one interaction read; a lost `threads.spawn`
+  reply adopted only from metadata naming the exact task and run; a lost spawn with an unreadable
+  candidate walk staying unknown and unbound; a lost spawn with two metadata matches refused; a lost
+  spawn with a complete walk naming none retried once under the same intent; a title write read back
+  before retry; and an archive preceded by its cascade read.
 - `effigy check` and `effigy test:affected --run`.
 
 **Dependencies.** Phases 0–2.
@@ -445,8 +524,10 @@ durable archive effect.
 - Tests: a follow-up while a turn is live steers and falls back to one queued send only when a steer
   is proven not sent; an unknown delivery is never resent; an interaction answer binds the thread and
   request before reading status; a reparent writes every thread's parent once and reads it back; a
-  reviewer replacement archives only the displaced thread; closeout archives each leaf after its
-  cascade read and records completion once.
+  reviewer replacement archives only the displaced thread; closeout archives recorded children before
+  their parents and records completion once; an archive whose cascade read is unavailable, or names a
+  thread this task does not own, is refused with the thread left unarchived and the cleanup recorded
+  as incomplete.
 - `effigy check` and `effigy test:affected --run`.
 
 **Dependencies.** Phases 0–3.
@@ -457,7 +538,8 @@ durable archive effect.
 `settingsSection`, decision and native-question composer pills, the pending-interaction slot for a
 Nucleus-raised blocking question, usage on the board and its nav badge from `system.usageLimits`, and
 lifecycle hints forwarded from BB's events into the existing signal path. `bb nucleus terminal` ships
-with the plugin CLI.
+with the plugin CLI as the thread-scoped planner tab; the task-directory `host_path` terminal ships
+only if phase 0 proved it appears where an operator would look.
 
 **Acceptance.**
 
@@ -465,6 +547,8 @@ with the plugin CLI.
   reach the service, Settings opens, a decision pill appears and resolves, a native question pill
   shows and answers, the pending-interaction slot submits and cancels, and usage renders from a
   synthetic snapshot.
+- The terminal command creates one thread-scoped terminal in the calling thread and nothing else; a
+  test proves the task-directory variant is absent when phase 0 did not prove it.
 - A test proves no settings write, no lifecycle-owner write and no terminal read ever leaves the
   adapter.
 - `effigy check`, `effigy qa:docs` and `effigy test:affected --run`.
