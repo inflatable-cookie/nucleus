@@ -30,6 +30,11 @@ export const HOST_OPERATIONS = [
   "thread.cascade",
   "thread.archive",
   "thread.inventory",
+  "thread.read",
+  "thread.metadata",
+  "thread.title",
+  "thread.send",
+  "provider.catalog",
   "environment.list",
   "terminal.create",
   "terminal.list",
@@ -85,6 +90,8 @@ export interface ThreadRow {
   queuedWork?: unknown;
   displayStatus?: string;
   runtime?: { displayStatus?: string };
+  environmentPath?: string | null;
+  updatedAt?: number;
   createdAt?: number;
 }
 
@@ -126,23 +133,31 @@ export interface BbHostSdk {
       projectId: string;
       providerId?: string;
       model?: string;
+      reasoningLevel?: string;
+      permissionMode?: string;
+      sessionOptions?: Record<string, unknown>;
       title?: string;
       input?: Array<{ type: "text"; text: string }>;
       prompt?: string;
       environment: { type: "host"; hostId: string; workspace: { type: "unmanaged"; path: string } };
       parentThreadId?: string;
       parentNotifications?: "auto" | "stuck" | "off";
+      visibility?: "visible";
       origin?: "plugin";
       originPluginId?: string;
       pluginMetadata?: Record<string, unknown>;
     }): Promise<ThreadRow>;
+    send?(args: { threadId: string; input: Array<{ type: "text"; text: string }>; mode: "queue-if-active"; pluginSubmission: { pluginId: string; data: { messageId: string } } }): Promise<{ ok: true; delivery: "sent" | "queued" }>;
+    update?(args: { threadId: string; title: string }): Promise<unknown>;
+    interactions?: { list(args: { threadId: string }): Promise<Array<{ id: string; threadId: string; status: string; payload: { kind: string; title?: string } }>> };
     get(args: { threadId: string }): Promise<ThreadRow>;
     stop(args: { threadId: string }): Promise<unknown>;
     archive(args: { threadId: string }): Promise<unknown>;
-    list(args: { originPluginId?: string; projectId?: string; includeHidden?: boolean; archived?: boolean; limit?: number }): Promise<ThreadRow[]>;
+    list(args: { originPluginId?: string; projectId?: string; includeHidden?: boolean; archived?: boolean; limit?: number; offset?: number; threadIds?: readonly string[] }): Promise<ThreadRow[]>;
     experimental_listCascade(args: { threadIds: string[]; action: "archive" }): Promise<{ threads?: Array<{ threadId: string; cascadeThreadIds?: string[] }> }>;
     experimental_listPluginMetadata(args: { pluginId: string; threadIds: string[] }): Promise<{ threads?: Array<{ threadId: string; metadata?: unknown }> }>;
   };
+  providers?: { list(): Promise<Array<{ id: string; available: boolean; capabilities: { permissionModes: string[] } }>>; models(args: { providerId: string }): Promise<{ models: Array<{ model: string; supportedReasoningEfforts: Array<{ reasoningEffort: string }> }> }> };
   environments: { list(): Promise<EnvironmentRow[]> };
   terminals: {
     create(args: { cols: number; rows: number; scope: TerminalScope; start?: { mode: "shell" }; title: string }): Promise<TerminalSessionRow>;
@@ -214,18 +229,18 @@ function metadataOf(value: unknown): Record<string, unknown> | null {
   return typeof metadata === "object" && metadata !== null ? metadata as Record<string, unknown> : null;
 }
 
-function threadProjection(row: ThreadRow, pluginMetadata: Record<string, unknown> | null) {
+function threadProjection(row: ThreadRow) {
+  // No manufactured status or flags: a changed SDK row must fail this request.
+  if (!["id", "title", "status", "environmentId", "environmentPath", "parentThreadId", "parentNotifications", "originPluginId", "archivedAt", "updatedAt", "queuedWork", "runtime", "hasPendingInteraction"].every(key => Object.hasOwn(row, key)) || !row.runtime || typeof row.hasPendingInteraction !== "boolean" || typeof row.updatedAt !== "number" ||
+      typeof row.queuedWork !== "string" || !Object.hasOwn(row, "environmentPath"))
+    throw new HostOperationError("unavailable", "threads.list row is missing runtime, interaction, activity or environment fields");
   return {
-    threadId: row.id,
-    title: row.title ?? null,
-    status: row.status ?? "unknown",
-    displayStatus: row.runtime?.displayStatus ?? row.displayStatus ?? row.status ?? "unknown",
-    environmentId: row.environmentId ?? null,
-    parentThreadId: row.parentThreadId ?? null,
-    parentNotifications: row.parentNotifications ?? "auto",
-    pluginMetadata,
-    archivedAt: row.archivedAt ?? null,
-    queuedWork: typeof row.queuedWork === "string" ? row.queuedWork : null,
+    threadId: row.id, title: row.title ?? null, status: row.status,
+    displayStatus: row.runtime.displayStatus, environmentId: row.environmentId ?? null,
+    environmentPath: row.environmentPath, parentThreadId: row.parentThreadId ?? null,
+    parentNotifications: row.parentNotifications, originPluginId: row.originPluginId ?? null,
+    archivedAt: row.archivedAt ?? null, updatedAt: row.updatedAt, queuedWork: row.queuedWork,
+    hasPendingInteraction: row.hasPendingInteraction,
   };
 }
 
@@ -273,7 +288,8 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
     const read = await call("threads.experimental_listCascade", () => sdk.threads.experimental_listCascade({ threadIds: [threadId], action: "archive" }));
     const row = (read?.threads ?? []).find(candidate => candidate.threadId === threadId);
     if (!row) throw new HostOperationError("unavailable", `The cascade read did not answer for ${threadId}, so no archive can be proven`);
-    return row.cascadeThreadIds ?? [];
+    if (!Array.isArray(row.cascadeThreadIds)) throw new HostOperationError("unavailable", "The cascade read omitted cascadeThreadIds; no archive can be proven");
+    return row.cascadeThreadIds;
   }
 
   /**
@@ -288,6 +304,19 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
     } catch {
       return null;
     }
+  }
+
+  async function observedRows(rows: ThreadRow[]) {
+    const answer = [];
+    for (const row of rows) {
+      const projection = threadProjection(row);
+      const interactions = row.hasPendingInteraction
+        ? await call("threads.interactions.list", () => sdk.threads.interactions!.list({ threadId: row.id })) : [];
+      if (!Array.isArray(interactions) || interactions.length > 200 || interactions.some(i => i.threadId !== row.id))
+        throw new HostOperationError("unavailable", "interactions.list did not answer a bounded thread-scoped list");
+      answer.push({ ...projection, interactions: interactions.map(i => ({ id: i.id, kind: i.payload.kind, status: i.status, title: i.payload.title ?? null })) });
+    }
+    return answer;
   }
 
   async function execute(op: HostOperationName, raw: unknown): Promise<unknown> {
@@ -347,7 +376,7 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
         const projectId = text(input.projectId, "projectId", 128);
         const title = text(input.title, "title", 200);
         const environmentPath = text(input.environmentPath, "environmentPath", 4_096);
-        const prompt = text(input.prompt, "prompt", 20_000);
+        const prompt = text(input.prompt, "prompt", 500_000);
         const parentThreadId = optionalText(input.parentThreadId, "parentThreadId", 128);
         const parentNotifications = oneOf(input.parentNotifications, ["auto", "stuck", "off"] as const, "parentNotifications") ?? "off";
         const providerId = optionalText(input.providerId, "providerId", 64);
@@ -360,10 +389,14 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
           ...(providerId ? { providerId } : {}),
           ...(model ? { model } : {}),
           title,
+          ...(input.reasoningLevel ? { reasoningLevel: text(input.reasoningLevel, "reasoningLevel", 32) } : {}),
+          ...(input.permissionMode ? { permissionMode: text(input.permissionMode, "permissionMode", 32) } : {}),
+          ...(input.sessionOptions ? { sessionOptions: projectMetadata(input.sessionOptions) } : {}),
           input: [{ type: "text", text: prompt }],
           environment: { type: "host", hostId, workspace: { type: "unmanaged", path: environmentPath } },
           ...(parentThreadId ? { parentThreadId } : {}),
           parentNotifications,
+          visibility: "visible",
           origin: "plugin",
           originPluginId: pluginId,
           ...(pluginMetadata ? { pluginMetadata } : {}),
@@ -402,8 +435,45 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
       }
       case "thread.observe": {
         const threadId = text(input.threadId, "threadId", 128);
+        const rows = await call("threads.list", () => sdk.threads.list({ threadIds: [threadId], includeHidden: true, limit: 200 }));
+        if (rows.length !== 1 || rows[0].id !== threadId) throw new HostOperationError("unavailable", "threads.list omitted the requested thread");
+        return { ...(await observedRows(rows))[0], pluginMetadata: await threadMetadata(threadId) };
+      }
+      case "thread.read": {
+        const threadIds = input.threadIds as string[];
+        if (!Array.isArray(threadIds) || !threadIds.length || threadIds.length > 200) throw new HostOperationError("invalid_input", "threadIds must name 1 to 200 threads");
+        const rows = await call("threads.list", () => sdk.threads.list({ threadIds, includeHidden: true, limit: 200 }));
+        return { rows: await observedRows(rows) };
+      }
+      case "thread.metadata": {
+        const threadIds = input.threadIds as string[];
+        if (!Array.isArray(threadIds) || !threadIds.length || threadIds.length > 200) throw new HostOperationError("invalid_input", "threadIds must name 1 to 200 threads");
+        const read = await call("threads.experimental_listPluginMetadata", () => sdk.threads.experimental_listPluginMetadata({ pluginId, threadIds }));
+        if (!Array.isArray(read?.threads)) throw new HostOperationError("unavailable", "plugin metadata list is unreadable");
+        return { threads: read.threads.map(row => ({ threadId: row.threadId, metadata: metadataOf(row) })) };
+      }
+      case "thread.send": {
+        const threadId = text(input.threadId, "threadId", 128), messageId = text(input.messageId, "messageId", 200);
+        const message = text(input.text, "text", 500_000);
+        const sent = await call("threads.send", () => sdk.threads.send!({ threadId, input: [{ type: "text", text: message }], mode: "queue-if-active", pluginSubmission: { pluginId, data: { messageId } } }));
+        if (sent.ok !== true) throw new HostOperationError("unavailable", "threads.send did not acknowledge the message");
+        return { threadId, delivery: sent.delivery };
+      }
+      case "thread.title": {
+        const threadId = text(input.threadId, "threadId", 128), title = text(input.title, "title", 200);
+        await call("threads.update", () => sdk.threads.update!({ threadId, title }));
         const row = await call("threads.get", () => sdk.threads.get({ threadId }));
-        return threadProjection(row, await threadMetadata(threadId));
+        return { threadId, title: row.title ?? null };
+      }
+      case "provider.catalog": {
+        if (!sdk.providers) throw new HostOperationError("unavailable", "providers API is unavailable");
+        const providers = await call("providers.list", () => sdk.providers!.list());
+        const answer = [];
+        for (const provider of providers.filter(p => p.available)) {
+          const result = await call("providers.models", () => sdk.providers!.models({ providerId: provider.id }));
+          answer.push({ id: provider.id, modes: provider.capabilities.permissionModes, models: result.models.map(m => ({ id: m.model, reasoningLevels: m.supportedReasoningEfforts.map(r => r.reasoningEffort) })) });
+        }
+        return { providers: answer };
       }
       case "thread.stop": {
         const threadId = text(input.threadId, "threadId", 128);
@@ -426,29 +496,19 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
         if (unaccepted.length > 0) throw new HostOperationError("refused", `Archive refused: the cascade for ${threadId} would also archive ${unaccepted.join(", ")}, which this task does not own`);
         await call("threads.archive", () => sdk.threads.archive({ threadId }));
         const row = await call("threads.get", () => sdk.threads.get({ threadId }));
-        return { threadId, archivedAt: Number(row.archivedAt ?? now()), cascadeThreadIds };
+        if (typeof row.archivedAt !== "number") throw new HostOperationError("unavailable", "Archive has not been observed on the thread");
+        return { threadId, archivedAt: row.archivedAt, cascadeThreadIds };
       }
       case "thread.inventory": {
         const originPluginId = optionalText(input.originPluginId, "originPluginId", 128);
         const projectId = optionalText(input.projectId, "projectId", 128);
+        const offset = typeof input.offset === "number" && Number.isInteger(input.offset) && input.offset >= 0 ? input.offset : 0;
         const rows = await call("threads.list", () => sdk.threads.list({
-          ...(originPluginId ? { originPluginId } : {}),
-          ...(projectId ? { projectId } : {}),
-          includeHidden: input.includeHidden === true,
-          archived: input.archived === true,
+          ...(originPluginId ? { originPluginId } : {}), ...(projectId ? { projectId } : {}),
+          includeHidden: input.includeHidden === true, archived: input.archived === true, limit: 200, offset,
         }));
-        return {
-          complete: true,
-          rows: rows.map(row => ({
-            threadId: row.id,
-            status: row.status ?? "unknown",
-            environmentId: row.environmentId ?? null,
-            parentThreadId: row.parentThreadId ?? null,
-            originPluginId: row.originPluginId ?? null,
-            archivedAt: row.archivedAt ?? null,
-            hasPendingInteraction: row.hasPendingInteraction === true,
-          })),
-        };
+        if (!Array.isArray(rows) || rows.length > 200) throw new HostOperationError("unavailable", "threads.list exceeded its page bound");
+        return { complete: rows.length < 200, rows: await observedRows(rows) };
       }
       case "environment.list": {
         const rows = await call("environments.list", () => sdk.environments.list());

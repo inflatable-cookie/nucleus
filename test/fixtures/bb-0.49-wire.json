@@ -1,0 +1,409 @@
+{
+  "bbVersion": "0.49.0",
+  "sdkVersion": "0.6.132",
+  "get": {
+    "id": "thr_planner",
+    "projectId": "proj_synthetic",
+    "environmentId": "env_ibfb5xpswf",
+    "providerId": "pi",
+    "title": "Synthetic planner",
+    "titleFallback": "Synthetic planner fixture. Do not run any tools.",
+    "sectionId": null,
+    "status": "starting",
+    "parentThreadId": null,
+    "sourceThreadId": null,
+    "lifecycleOwnerThreadId": null,
+    "originKind": null,
+    "originPluginId": "nucleus",
+    "visibility": "visible",
+    "parentNotifications": "off",
+    "archivedAt": null,
+    "pinnedAt": null,
+    "deletedAt": null,
+    "lastReadAt": 1794849609719,
+    "latestAttentionAt": 1794849609702,
+    "createdAt": 1794849609702,
+    "updatedAt": 1794849610081,
+    "runtime": {
+      "displayStatus": "starting"
+    },
+    "activeBackgroundAgentCount": 0,
+    "canRestoreEnvironment": false,
+    "canEditMessages": true,
+    "canSpawnChild": true,
+    "queuedMessageCount": 0
+  },
+  "list": {
+    "id": "thr_synthetic",
+    "projectId": "proj_synthetic",
+    "environmentId": "env_synthetic",
+    "providerId": "pi",
+    "title": "Synthetic reviewer",
+    "titleFallback": "Synthetic sibling fixture. Do not run any tools.",
+    "sectionId": null,
+    "status": "idle",
+    "parentThreadId": "thr_planner",
+    "sourceThreadId": null,
+    "lifecycleOwnerThreadId": null,
+    "originKind": null,
+    "originPluginId": "nucleus",
+    "visibility": "visible",
+    "parentNotifications": "off",
+    "archivedAt": null,
+    "pinnedAt": null,
+    "deletedAt": null,
+    "lastReadAt": 1794849610440,
+    "latestAttentionAt": 1794849610431,
+    "createdAt": 1794849610431,
+    "updatedAt": 1794849610455,
+    "activity": {
+      "activeBackgroundAgentCount": 0,
+      "activeBackgroundCommandCount": 0,
+      "activePlanModeCount": 0,
+      "activeWorkflowCount": 0
+    },
+    "queuedWork": "none",
+    "pinSortKey": null,
+    "environmentBranchName": "nucleus-proof",
+    "environmentHostId": "host_synthetic",
+    "environmentName": null,
+    "environmentPath": "/synthetic/worktree",
+    "environmentProviderId": "project-checkout",
+    "environmentIsWorktree": true,
+    "environmentWorkspaceDisplayKind": "unmanaged-worktree",
+    "hasPendingInteraction": true,
+    "runtime": {
+      "displayStatus": "idle"
+    }
+  },
+  "interaction": {
+    "id": "pint_synthetic",
+    "threadId": "thr_synthetic",
+    "status": "pending",
+    "statusReason": null,
+    "createdAt": 1794849610461,
+    "expiresAt": 1794849612460,
+    "resolvedAt": null,
+    "turnId": null,
+    "origin": {
+      "kind": "plugin",
+      "pluginId": "nucleus",
+      "rendererId": "wire-fixture"
+    },
+    "payload": {
+      "kind": "plugin",
+      "title": "Synthetic question",
+      "data": {},
+      "presentation": {
+        "label": {
+          "pending": "Waiting for Synthetic question",
+          "completed": "Submitted Synthetic question"
+        },
+        "icon": {
+          "glyph": "Boxes"
+        }
+      }
+    },
+    "resolution": null
+  },
+  "providers": [
+    {
+      "id": "codex",
+      "pluginId": "provider-codex",
+      "displayName": "Codex",
+      "available": true,
+      "maintenance": {
+        "health": true,
+        "usage": true,
+        "installation": true
+      },
+      "logoUrl": "/api/v1/system/providers/codex/logo?h=688b78b75ffe1a5c",
+      "capabilities": {
+        "supportsThreadArchive": true,
+        "supportsThreadRename": true,
+        "supportsServiceTier": true,
+        "supportsNativeUserQuestion": false,
+        "permissionModes": [
+          "accept-edits",
+          "auto",
+          "full"
+        ],
+        "supportsFork": true,
+        "supportsSessionRewind": true,
+        "modelCatalogScope": "host"
+      },
+      "composerActions": [
+        {
+          "kind": "skills",
+          "trigger": "/"
+        },
+        {
+          "kind": "skills",
+          "trigger": "$"
+        },
+        {
+          "kind": "plan",
+          "command": {
+            "trigger": "/",
+            "name": "plan",
+            "trailingText": " "
+          }
+        },
+        {
+          "kind": "goal",
+          "command": {
+            "trigger": "/",
+            "name": "goal",
+            "trailingText": " "
+          }
+        }
+      ],
+      "completedTurnDisplay": "collapse",
+      "strings": {
+        "signInHint": "Run `codex` on the machine to sign in.",
+        "expiredHint": "Your Codex session expired. Run `codex`, then reload.",
+        "installUrl": "https://developers.openai.com/codex/cli",
+        "brandPrefix": "GPT-"
+      },
+      "reasoningLevels": [
+        {
+          "id": "none",
+          "label": "None"
+        },
+        {
+          "id": "low",
+          "label": "Low"
+        },
+        {
+          "id": "medium",
+          "label": "Medium"
+        },
+        {
+          "id": "high",
+          "label": "High"
+        },
+        {
+          "id": "xhigh",
+          "label": "Extra High"
+        },
+        {
+          "id": "max",
+          "label": "Max"
+        },
+        {
+          "id": "ultra",
+          "label": "Ultra",
+          "description": "Max effort plus automatic task delegation."
+        }
+      ],
+      "serviceTiers": [
+        {
+          "id": "default",
+          "label": "Default"
+        },
+        {
+          "id": "fast",
+          "label": "Fast"
+        },
+        {
+          "id": "ultrafast",
+          "label": "Ultrafast",
+          "icon": "provider-codex/ultrafast"
+        }
+      ],
+      "extensionKinds": {
+        "provider-codex/goal": {
+          "item": false,
+          "state": true
+        },
+        "provider-codex/macos-permission": {
+          "item": true,
+          "state": false
+        },
+        "provider-codex/async-question": {
+          "item": false,
+          "state": true
+        }
+      }
+    }
+  ],
+  "models": {
+    "providers": [
+      {
+        "id": "codex",
+        "pluginId": "provider-codex",
+        "displayName": "Codex",
+        "available": true,
+        "maintenance": {
+          "health": true,
+          "usage": true,
+          "installation": true
+        },
+        "logoUrl": "/api/v1/system/providers/codex/logo?h=688b78b75ffe1a5c",
+        "capabilities": {
+          "supportsThreadArchive": true,
+          "supportsThreadRename": true,
+          "supportsServiceTier": true,
+          "supportsNativeUserQuestion": false,
+          "permissionModes": [
+            "accept-edits",
+            "auto",
+            "full"
+          ],
+          "supportsFork": true,
+          "supportsSessionRewind": true,
+          "modelCatalogScope": "host"
+        },
+        "composerActions": [
+          {
+            "kind": "skills",
+            "trigger": "/"
+          },
+          {
+            "kind": "skills",
+            "trigger": "$"
+          },
+          {
+            "kind": "plan",
+            "command": {
+              "trigger": "/",
+              "name": "plan",
+              "trailingText": " "
+            }
+          },
+          {
+            "kind": "goal",
+            "command": {
+              "trigger": "/",
+              "name": "goal",
+              "trailingText": " "
+            }
+          }
+        ],
+        "completedTurnDisplay": "collapse",
+        "strings": {
+          "signInHint": "Run `codex` on the machine to sign in.",
+          "expiredHint": "Your Codex session expired. Run `codex`, then reload.",
+          "installUrl": "https://developers.openai.com/codex/cli",
+          "brandPrefix": "GPT-"
+        },
+        "reasoningLevels": [
+          {
+            "id": "none",
+            "label": "None"
+          },
+          {
+            "id": "low",
+            "label": "Low"
+          },
+          {
+            "id": "medium",
+            "label": "Medium"
+          },
+          {
+            "id": "high",
+            "label": "High"
+          },
+          {
+            "id": "xhigh",
+            "label": "Extra High"
+          },
+          {
+            "id": "max",
+            "label": "Max"
+          },
+          {
+            "id": "ultra",
+            "label": "Ultra",
+            "description": "Max effort plus automatic task delegation."
+          }
+        ],
+        "serviceTiers": [
+          {
+            "id": "default",
+            "label": "Default"
+          },
+          {
+            "id": "fast",
+            "label": "Fast"
+          },
+          {
+            "id": "ultrafast",
+            "label": "Ultrafast",
+            "icon": "provider-codex/ultrafast"
+          }
+        ],
+        "extensionKinds": {
+          "provider-codex/goal": {
+            "item": false,
+            "state": true
+          },
+          "provider-codex/macos-permission": {
+            "item": true,
+            "state": false
+          },
+          "provider-codex/async-question": {
+            "item": false,
+            "state": true
+          }
+        }
+      }
+    ],
+    "permissionCeiling": "full",
+    "models": [
+      {
+        "id": "synthetic-model",
+        "model": "synthetic-model",
+        "displayName": "Synthetic model",
+        "description": "Synthetic model fixture",
+        "reasoningDiscovery": "known",
+        "supportedReasoningEfforts": [
+          {
+            "reasoningEffort": "low",
+            "description": "Fast responses with lighter reasoning"
+          },
+          {
+            "reasoningEffort": "medium",
+            "description": "Balances speed and reasoning depth for everyday tasks"
+          },
+          {
+            "reasoningEffort": "high",
+            "description": "Greater reasoning depth for complex problems"
+          },
+          {
+            "reasoningEffort": "xhigh",
+            "description": "Extra high reasoning depth for complex problems"
+          },
+          {
+            "reasoningEffort": "max",
+            "description": "Maximum reasoning depth for the hardest problems"
+          },
+          {
+            "reasoningEffort": "ultra",
+            "description": "Maximum reasoning with automatic task delegation"
+          }
+        ],
+        "defaultReasoningEffort": "low",
+        "supportedServiceTiers": [
+          {
+            "id": "fast",
+            "label": "Fast",
+            "description": "2x speed, increased usage"
+          },
+          {
+            "id": "ultrafast",
+            "label": "Ultrafast",
+            "description": "The fastest available responses for latency-sensitive work."
+          }
+        ],
+        "isDefault": true
+      }
+    ],
+    "selectedOnlyModels": [],
+    "modelLoadError": null
+  },
+  "send": {
+    "ok": true,
+    "delivery": "sent"
+  }
+}

@@ -295,6 +295,46 @@ async function main() {
     const pluginDir = join(proofRoot, "plugin");
     mkdirSync(pluginDir);
     for (const name of ["package.json", "server.ts", "channel.ts", "operations.ts", "protocol.ts"]) cpSync(join(pluginSource, name), join(pluginDir, name));
+    // Record unprojected SDK answers from this isolated server. The wrapper exists
+    // only in the proof copy: installed production plugins never record wire data.
+    const wirePath = join(proofRoot, "sdk-wire.jsonl");
+    const recorder = `
+import { appendFileSync as recordAppend } from "node:fs";
+function recordSdk(sdk: any, bb: any, prefix = ""): any {
+  return new Proxy(sdk, { get(target, key) {
+    const value = target[key], name = prefix ? prefix + "." + String(key) : String(key);
+    if (typeof value === "function") return async (...args: any[]) => {
+      const result = await value.apply(target, args);
+      recordAppend(${JSON.stringify(wirePath)}, JSON.stringify({ method: name, args, result }) + "\\n");
+      if (name === "threads.stop" && !recordInteraction) {
+        recordInteraction = true;
+        void bb.ui.requestInput({ threadId: args[0].threadId, rendererId: "wire-fixture", title: "Synthetic question", payload: {}, timeoutMs: 2000 }).catch(() => {});
+        await new Promise(resolve => setTimeout(resolve, 100));
+        const interactions = await sdkRoot.threads.interactions.list({ threadId: args[0].threadId });
+        recordAppend(${JSON.stringify(wirePath)}, JSON.stringify({ method: "threads.interactions.list", args: [args[0]], result: interactions }) + "\\n");
+        const list = await sdkRoot.threads.list({ threadIds: [args[0].threadId], includeHidden: true });
+        recordAppend(${JSON.stringify(wirePath)}, JSON.stringify({ method: "threads.list", args: [{threadIds: [args[0].threadId]}], result: list }) + "\\n");
+        for (const i of interactions) await sdkRoot.threads.interactions.cancel({ threadId: args[0].threadId, interactionId: i.id });
+        for (const [method, args] of [["providers.list", {}], ["providers.models", {providerId: "codex"}]]) {
+          const [area, verb] = method.split(".");
+          const result = await sdkRoot[area][verb](args);
+          recordAppend(${JSON.stringify(wirePath)}, JSON.stringify({ method, args: [args], result }) + "\\n");
+        }
+        const sendArgs = { threadId: args[0].threadId, input: [{type: "text", text: "Synthetic revision fixture. Do not run tools."}], mode: "queue-if-active", pluginSubmission: { pluginId: "nucleus", data: {messageId: "synthetic-message"} } };
+        const sent = await sdkRoot.threads.send(sendArgs);
+        recordAppend(${JSON.stringify(wirePath)}, JSON.stringify({ method: "threads.send", args: [sendArgs], result: sent }) + "\\n");
+        await sdkRoot.threads.stop({ threadId: args[0].threadId });
+      }
+      return result;
+    };
+    return value && typeof value === "object" ? recordSdk(value, bb, name) : value;
+  }});
+}
+let recordInteraction = false;
+let sdkRoot: any;
+`;
+    const entry = join(pluginDir, "server.ts");
+    writeFileSync(entry, recorder + readFileSync(entry, "utf8").replace("sdk: bb.sdk as unknown as BbHostSdk,", "sdk: recordSdk(sdkRoot = bb.sdk, bb) as unknown as BbHostSdk,"));
     await cli(["plugin", "install", `path:${pluginDir}`, "--yes"]);
     await cli(["plugin", "config", "nucleus", "set", "serviceDataDir", join(proofRoot, "ns")]);
     await cli(["plugin", "reload", "nucleus"]);

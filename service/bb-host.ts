@@ -1,5 +1,5 @@
 /**
- * The BB host's registration, identity, health and workspace custody (Spec 062, phases 1–2).
+ * The BB host's registration, identity, health and workspace custody (Spec 062).
  *
  * Phase 0 landed the reverse host-operation channel: the BB plugin connects out to
  * the service, declares `service.host-executor` and answers `host.op` requests from
@@ -8,11 +8,9 @@
  * records that identity durably, registers one `bb:` host in the host registry with
  * its own admission and breaker state, and reports it in `service.health`.
  *
- * The registered adapter owns each task worktree through a durable local handle and
- * the host's shared project. It still refuses run and thread workflow calls by name:
- * phase 2 adds workspace custody only, not worker execution or observation. A
- * refusal is the honest answer, and it is a `ProvenPreSendRefusalError` — nothing
- * was sent to the host.
+ * Workspace custody uses a durable local handle and the host's shared project.
+ * The service composes that native surface with core policy and BB thread operations
+ * once the durable store and helper route are available (phase 3).
  *
  * Spec 062: "The service derives `hostId = bb:<hash of the real data directory>`
  * and registers that identity only after a read-only probe through the channel
@@ -22,6 +20,8 @@
  * declaration) and a declaration that names a different data directory refuses by
  * `dataDir` instead of quietly registering a second BB host.
  */
+import { composeBbAdapter } from "./bb-adapter";
+import type { BbWorkspaceRecord } from "../hosts/bb/threads";
 import { ProvenPreSendRefusalError } from "../core/host/errors";
 import { Admission, admitAdapter } from "../core/host/admission";
 import type { Adapter } from "../core/host/adapter";
@@ -114,7 +114,7 @@ type RegisteredHost = { adapter: Adapter; admission: Admission };
 
 const META_KEY = "bbHostIdentity";
 const WORKSPACES_KEY = "bbWorkspaces";
-interface BbWorkspaceRecord { id: string; directory: string; repositoryRoot: string; projectId: string; title: string; archivedAt?: string }
+
 
 /** The durable identity one BB server keeps across service restarts. */
 interface RecordedIdentity {
@@ -140,13 +140,13 @@ class BbHostOperationNotSentError extends Error {
  * (the health surface, the routing snapshot and the host kind all read it), and
  * every task-workflow call refuses by name before anything is sent.
  */
-export function createBbHostAdapter(
+export function createBbWorkspaceAdapter(
   hostId: string,
   connected: () => boolean,
   dataDir = "",
   store?: Store,
   requestOperation?: (op: HostOperationName, input: unknown) => Promise<HostOperationOutcome>,
-): Adapter {
+) {
   async function operation(op: HostOperationName, input: unknown): Promise<HostOperationOutcome> {
     let online: boolean;
     try { online = connected(); }
@@ -179,10 +179,17 @@ export function createBbHostAdapter(
       record = { ...record, projectId: inspected.projectId };
       putWorkspace(record);
     }
-    return inspected.projectFound;
+    if (!inspected.projectFound) return false;
+    if (record.environmentId) {
+      const read = await operation("environment.list", {});
+      const rows = (read.value as { environments: Array<{ environmentId: string; path: string; status: string }> }).environments;
+      return rows.some(row => row.environmentId === record.environmentId && row.path === record.directory && row.status !== "destroyed");
+    }
+    return true;
   }
-  return {
+  const native = {
     hostId,
+    operation, records: workspaces, put: putWorkspace,
     isConnected: connected,
     capabilities: () => ({
       reportingViaMcp: false,
@@ -265,7 +272,20 @@ export function createBbHostAdapter(
     verifyCleanQueueWorktree: async () => refusal("worktree verification"),
     verifyWorkspace: async () => refusal("workspace verification"),
     verifyPr: async () => refusal("forge reads"),
-  } as unknown as Adapter;
+  };
+  return native;
+}
+
+export function createBbHostAdapter(
+  hostId: string, connected: () => boolean, dataDir = "", store?: Store,
+  requestOperation?: (op: HostOperationName, input: unknown) => Promise<HostOperationOutcome>,
+): Adapter {
+  const native = createBbWorkspaceAdapter(hostId, connected, dataDir, store, requestOperation);
+  if (!store) return native as unknown as Adapter;
+  return composeBbAdapter({ hostId, connected, dataDir, store, workspaces: native, operation: native.operation,
+    records: native.records, put: native.put,
+    notSent: error => error instanceof BbHostOperationNotSentError || (error instanceof ServiceRequestError && (error.code === "invalid_input" || error.code === "refused")),
+  });
 }
 
 /**

@@ -1,7 +1,7 @@
 # BB host adapter
 
 Status: approved. Phase 0 (the transport spike) is implemented and proved, phase 1 (host
-registration, identity and health) and phase 2 (workspace custody) are implemented; phases 3–6 are not implemented. This document is the design and the phased plan, and [phase 0
+registration, identity and health) phase 2 (workspace custody) and phase 3 (worker runs, observation and presentation) are implemented; phases 4–6 are not implemented. This document is the design and the phased plan, and [phase 0
 evidence](#phase-0-evidence-2026-11-16) answers its eight assumptions. Amended 2026-11-16: decision 5
 now carries the forked sidebar, the two boards and BB usage left to BB's card plus the operator's Usage
 Pace plugin, and the experimental inventory and the plan from phase 5 on follow it; phases 0–4 are
@@ -982,6 +982,32 @@ wire shapes pinned.
 - `effigy check` and `effigy test:affected --run`.
 
 **Dependencies.** Phases 0–2.
+
+**Implemented (2026-11-16).** The service composes BB's native operations with the shared
+workspace, launch, helper-ticket and forge policies. A spawn records intent before send and
+binds its environment to the workspace before returning a created run. Its parent is the task's
+BB planner; roles stay visible with parent notifications off and no lifecycle owner.
+
+Observation reads complete list rows in chunks of 200, with one interaction read per flagged
+row. A partial or failed chunk returns `null` for the existing per-agent fallback. BB's rows
+report execution status, not a turn id; starting, provisioning and waiting for a host remain
+busy without claiming a provider turn has begun. Unknown spawns walk live and archived origin
+pages, including hidden rows across every project, then read metadata in chunks. Only one exact
+task/run/host match binds. Empty, partial and ambiguous reads never authorize another spawn,
+including after the observation window; the existing attention path retains the intent.
+
+Worker titles carry the shared task title and the active role's step or need for input. Title,
+stop and archive writes retain durable intents; uncertain writes are read before another write
+and never blindly replayed. Archive requires a fresh leaf cascade proof. The minimal queued
+send needed by the ordinary revision/review lifecycle is included; steering, native question
+responses, reparenting and multi-role cascade ordering remain phase 4.
+
+Tests: `test/bb-worker-runs.test.ts` names the phase acceptance cases;
+`test/bb-lifecycle.test.ts` exercises dispatch, helper reporting, independent review, retained
+revision, verdict, merge, closeout and archive through the real operation executor. Its thread,
+list and interaction fixtures are captured from the isolated BB 0.49 / SDK 0.6.132 proof route,
+with synthetic identities and paths. `effigy proof:bb` retains the raw SDK records only in its
+own scratch root; the production plugin records none.
 
 ### Phase 4 — delivery, questions and the support roles
 

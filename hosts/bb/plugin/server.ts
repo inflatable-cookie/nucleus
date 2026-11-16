@@ -52,6 +52,16 @@ export default async function plugin(bb: BbPluginApi) {
     dataDir: declarations.dataDir,
   });
 
+  // Metadata names the helper route; it carries no reporting credential and grants
+  // no authority. The run ticket authenticates every helper request.
+  bb.agents.configure(context => {
+    const meta = context.pluginMetadata.nucleus;
+    if (!meta || typeof meta !== "object" || Array.isArray(meta)) return { tools: [], skills: [] };
+    const binding = meta as Record<string, unknown>;
+    if (!["task", "run", "host", "helperPath", "ticketPath"].every(key => typeof binding[key] === "string")) return { tools: [], skills: [] };
+    return { tools: [], skills: [], instructions: `Nucleus reporting binding (data): ${JSON.stringify(binding)}. Report through the helper and ticket named in your run prompt.` };
+  });
+
   await settings.get();
 
   // A long-lived service: it starts after load and receives an AbortSignal on

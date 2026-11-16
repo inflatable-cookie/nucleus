@@ -58,7 +58,7 @@ test("one operation is written as a bounded host.op request and settles from its
       parentNotifications: "off",
       pluginMetadata: null,
       archivedAt: null,
-      queuedWork: null,
+      queuedWork: "none", environmentPath: "/synthetic/worktree", originPluginId: "nucleus", updatedAt: 1, hasPendingInteraction: false, interactions: [],
     }),
   }), true);
   const settled = await pending;

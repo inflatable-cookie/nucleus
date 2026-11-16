@@ -68,9 +68,13 @@ export const hostOperationInputSchemas = {
     projectId: boundedText(128),
     title: boundedText(200),
     environmentPath: boundedText(4_096),
+    environmentId: boundedText(128).optional(),
+    reasoningLevel: boundedText(32).optional(),
+    permissionMode: boundedText(32).optional(),
+    sessionOptions: z.record(z.string(), z.unknown()).optional(),
     parentThreadId: boundedText(128).optional(),
     parentNotifications: z.enum(["auto", "stuck", "off"]).optional(),
-    prompt: boundedText(20_000),
+    prompt: boundedText(500_000),
     providerId: boundedText(64).optional(),
     model: boundedText(200).optional(),
     pluginMetadata: pluginMetadataSchema.optional(),
@@ -95,7 +99,13 @@ export const hostOperationInputSchemas = {
     projectId: boundedText(128).optional(),
     includeHidden: z.boolean().optional(),
     archived: z.boolean().optional(),
+    offset: z.number().int().min(0).max(100_000).optional(),
   }).strict(),
+  "thread.read": z.object({ threadIds: z.array(boundedText(128)).min(1).max(200) }).strict(),
+  "thread.metadata": z.object({ threadIds: z.array(boundedText(128)).min(1).max(200) }).strict(),
+  "thread.title": z.object({ threadId: boundedText(128), title: boundedText(200) }).strict(),
+  "thread.send": z.object({ threadId: boundedText(128), text: boundedText(500_000), messageId: boundedText(200) }).strict(),
+  "provider.catalog": z.object({}).strict(),
   "environment.list": z.object({}).strict(),
   "terminal.create": z.object({
     scope: terminalScopeSchema,
@@ -139,18 +149,7 @@ export const hostOperationValueSchemas = {
     createdAt: timestamp,
     spawned: z.number().int().positive(),
   }).strict(),
-  "thread.observe": z.object({
-    threadId: boundedText(128),
-    title: nullableText(400),
-    status: boundedText(32),
-    displayStatus: boundedText(32),
-    environmentId: nullableText(128),
-    parentThreadId: nullableText(128),
-    parentNotifications: boundedText(16),
-    pluginMetadata: pluginMetadataSchema.nullable(),
-    archivedAt: z.number().int().nonnegative().nullable(),
-    queuedWork: nullableText(32),
-  }).strict(),
+  "thread.observe": bbObservationRowSchema().extend({ pluginMetadata: pluginMetadataSchema.nullable() }).strict(),
   "thread.stop": z.object({
     threadId: boundedText(128),
     status: boundedText(32),
@@ -168,16 +167,15 @@ export const hostOperationValueSchemas = {
   }).strict(),
   "thread.inventory": z.object({
     complete: z.boolean(),
-    rows: z.array(z.object({
-      threadId: boundedText(128),
-      status: boundedText(32),
-      environmentId: nullableText(128),
-      parentThreadId: nullableText(128),
-      originPluginId: nullableText(128),
-      archivedAt: z.number().int().nonnegative().nullable(),
-      hasPendingInteraction: z.boolean(),
-    }).strict()).max(2_000),
+    rows: z.array(bbObservationRowSchema()).max(200),
   }).strict(),
+  "thread.read": z.object({ rows: z.array(bbObservationRowSchema()).max(200) }).strict(),
+  "thread.metadata": z.object({ threads: z.array(z.object({ threadId: boundedText(128), metadata: pluginMetadataSchema.nullable() }).strict()).max(200) }).strict(),
+  "thread.title": z.object({ threadId: boundedText(128), title: nullableText(400) }).strict(),
+  "thread.send": z.object({ threadId: boundedText(128), delivery: z.enum(["sent", "queued"]) }).strict(),
+  "provider.catalog": z.object({ providers: z.array(z.object({
+    id: boundedText(128), modes: z.array(boundedText(32)).max(16), models: z.array(z.object({ id: boundedText(200), reasoningLevels: z.array(boundedText(32)).max(32) }).strict()).max(1000),
+  }).strict()).max(100) }).strict(),
   "environment.list": z.object({
     environments: z.array(z.object({
       environmentId: boundedText(128),
@@ -195,6 +193,18 @@ export const hostOperationValueSchemas = {
     loadedAt: timestamp,
   }).strict(),
 } satisfies Record<HostOperationName, z.ZodType>;
+
+/** Fields read from BB 0.49's list rows; active turn identity is not a row field. */
+function bbObservationRowSchema() {
+  return z.object({
+    threadId: boundedText(128), title: nullableText(400), status: z.enum(["pending", "idle", "starting", "active", "stopping", "error"]),
+    displayStatus: boundedText(32), environmentId: nullableText(128), environmentPath: nullableText(4096),
+    parentThreadId: nullableText(128), parentNotifications: boundedText(16), originPluginId: nullableText(128),
+    archivedAt: timestamp.nullable(), updatedAt: timestamp, queuedWork: z.enum(["none", "waiting", "failed"]),
+    hasPendingInteraction: z.boolean(),
+    interactions: z.array(z.object({ id: boundedText(128), kind: boundedText(64), status: boundedText(32), title: nullableText(400) }).strict()).max(200),
+  }).strict();
+}
 
 function hostTerminalSessionSchema() {
   return z.object({
