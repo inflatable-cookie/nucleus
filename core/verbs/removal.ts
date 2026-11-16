@@ -184,8 +184,12 @@ export class TaskRemoval {
       if (!record || record.state !== "intent" && record.state !== "uncertain") continue;
       let hold: string | null;
       try { hold = await this.engine.runBuildOutputHold(task, record); }
-      // A failed observation leaves the record as it is; the next pass observes again.
-      catch { continue; }
+      // A failed observation keeps the record's state, so the next pass observes
+      // again, and the failure is written on the record rather than dropped.
+      catch (error) {
+        this.engine.recordRunBuildOutputState(taskId, record, record.state, `Build output hold could not be observed: ${error instanceof Error ? error.message : String(error)}`);
+        continue;
+      }
       if (hold) { this.engine.recordRunBuildOutputState(taskId, record, record.state, hold); continue; }
       if (this.engine.stopped || this.store.getMeta('paused')) return;
       // The hold's observations await; a host run admitted meanwhile still owns the
@@ -237,14 +241,12 @@ export class TaskRemoval {
       const superseded = task.runId !== runId && !task.agentIntent && !["queued", "dispatching", "working"].includes(task.phase);
       const completion = task.completion;
       const revision = completion && completion.runId !== runId ? this.store.run(completion.runId) : null;
-      const receipt = completion ? this.store.db.prepare('SELECT rowid AS sequence, hash FROM receipts WHERE id=? AND task=? AND run=?')
-        .get(completion.eventId, task.id, completion.runId) as { sequence: number; hash: string } | undefined : undefined;
-      const authorReceipt = this.store.db.prepare('SELECT rowid AS sequence FROM receipts WHERE task=? AND run=? ORDER BY rowid LIMIT 1')
-        .get(task.id, runId) as { sequence: number } | undefined;
+      const receipt = completion ? this.store.receiptPosition(completion.eventId, task.id, completion.runId) : null;
+      const authorSequence = this.store.firstReceiptSequence(task.id, runId);
       const terminal = task.phase === 'done' || task.phase === 'cancelled' && task.disposition?.status === 'complete';
       const laterApplied = terminal && revision?.taskId === task.id && revision.role === 'revision' && revision.released
         && revision.status === 'finished' && revision.workspaceId === record.workspaceId
-        && authorReceipt && receipt && receipt.sequence > authorReceipt.sequence && completion?.status === 'ready_for_review'
+        && authorSequence !== null && receipt && receipt.sequence > authorSequence && completion?.status === 'ready_for_review'
         && isDeepStrictEqual(revision.completion, completion) && receipt?.hash === digest(JSON.stringify(completion));
       if (!applied && !superseded && !laterApplied) return `author result ${runId} is not applied yet`;
     }

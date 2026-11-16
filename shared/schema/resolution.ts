@@ -159,4 +159,14 @@ export const resolutionSchema = z.object({
     target: z.object({ runId: z.string(), checkpointOrdinal: z.number().int().positive().optional(), head: z.string().optional() }).strict().nullable().default(null) }).strict().nullable().default(null),
   prePrResumeInstruction: z.string().trim().min(1).max(12000).nullable().default(null),
   attention: z.boolean().default(false),
+  /**
+   * Owner restart released the occupying run before its continuation exists.
+   * Occupancy honors this until the matching continuation intent is admitted
+   * (papercut fedca2e8). Parked awaiting_review still does not occupy on its own.
+   */
+  restartSlotHold: z.object({
+    role: z.enum(["worker", "reviewer", "executor"]),
+    at: z.string(),
+    fromRunId: z.string().min(1),
+  }).strict().nullable().default(null),
 });

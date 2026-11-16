@@ -45,6 +45,12 @@ export interface HostProcessFact {
   pid: number;
   /** Process parent, when available from the host process table. */
   ppid?: number | null;
+  /**
+   * Process state from the same read that produced this fact (the `ps` state
+   * column, or the `/proc` stat letter). `Z` marks a zombie, which holds no
+   * tools and is never judged. Null when the read could not report it.
+   */
+  state?: string | null;
   pgid: number;
   uid: number;
   startIdentity: string;

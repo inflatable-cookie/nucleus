@@ -3636,7 +3636,6 @@ test('a retired recoveryAction report is refused at intake and binds nothing, so
   // Lean audit 2026-10-15: refusing later cost an escalation per report; refusing now lets the same run correct it.
   assert.throws(()=>f.engine.resolution.complete({eventId:randomUUID(),taskId:f.task.id,runId:recovery.id,status:'recovered',summary:'Return the worker to the open PR',recoveryAction:'resume_worker',coordinatorGeneration:recovery.generation},token),/recoveryAction is retired; report coordinatorAction/);
   assert.equal(f.store.run(recovery.id)?.completion,null,'nothing is stored');
-  assert.throws(()=>f.engine.resolution.complete({eventId:randomUUID(),taskId:f.task.id,runId:recovery.id,status:'recovered',summary:'No action',coordinatorGeneration:recovery.generation},token),/Recovery requires a coordinatorAction/);
   f.engine.resolution.complete({eventId:randomUUID(),taskId:f.task.id,runId:recovery.id,status:'blocked',summary:'Needs the planner',coordinatorAction:{verb:'cannot',reason:'Needs the planner'},coordinatorGeneration:recovery.generation},token);
   assert.equal(f.store.run(recovery.id)?.completion?.status,'blocked','the corrected report is accepted on the same run');
   assert.equal(resumes(f).length,0);

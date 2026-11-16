@@ -1,7 +1,7 @@
 import { TaskChangedRefusal } from "../../shared/task-version";
 import { RETAINED_PREREQUISITE_REFUSAL } from './verb-refusal-text';
 import { groupIsUnavailable } from "../../shared/pool";
-import { OPERATOR_BOARD_CALLER, WORKER_REPLACEMENT_CEILING, type Task, type TaskControlInput } from "../../shared/contracts";
+import { OPERATOR_BOARD_CALLER, WORKER_REPLACEMENT_CEILING, runHoldsSlot, type Task, type TaskControlInput } from "../../shared/contracts";
 import type { AgentObservation } from "../host/adapter";
 import { hostFailureRefusalDetail } from "../host/errors";
 import { DurableFenceRefusal } from "../intake/run-settlement";
@@ -10,7 +10,8 @@ import { runsUnchangedSince } from "../recovery/observation-advance";
 import { decideWorkerReplacement, isWorkerRouteApproved, retainedWorkerFailureCause } from "../recovery/worker-replacement";
 import { OPERATOR_WORKER_REMAP_REASON } from "../recovery/task-reasons";
 import { taskHasPr } from "../forge/index";
-import { digest } from "../store/store";
+import { digest, now } from "../store/store";
+import { occupiesSlot } from "../dispatch/capacity";
 import type { Engine } from "../engine";
 import { restartResumeChoice } from "../task-decision-rules";
 import { collectOwnerVerbFacts, currentRouteProfile, RestartRefusal, workerRestartRefusal } from "./owner-verbs";
@@ -391,14 +392,27 @@ export class WorkerRestarts {
         };
         if (shape === "stopped_revision") {
           // Stopped-revision recovery owns its transaction and settles inside
-          // it; calling it here would nest a transaction.
+          // it; calling it here would nest a transaction. The slot hold is
+          // written in that same transaction (restartStoppedRevision).
           return continueWorker();
         }
         return this.store.transaction(() => {
+          this.preserveWorkerRestartSlot(task.id);
           settle();
           return continueWorker();
         });
       };
     }, finished.settleable.map(run => run.id)), `task:${task.id}`);
+  }
+
+  /** Keep the slot this worker already held until the continuation is admitted. */
+  private preserveWorkerRestartSlot(taskId: string): void {
+    const current = this.store.task(taskId);
+    if (current.resolution.restartSlotHold) return;
+    const runs = this.store.runs(taskId);
+    if (!occupiesSlot(current, runs)) return;
+    const from = runs.find(runHoldsSlot)?.id ?? current.resolution.currentRunId ?? current.runId;
+    if (!from) return;
+    this.resolution.update(current, { restartSlotHold: { role: 'worker', at: now(), fromRunId: from } }, {}, 'restart_worker_slot_hold');
   }
 }

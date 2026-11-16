@@ -441,11 +441,18 @@ export function noTurnLive(state: ObservedTurnState | null | undefined): boolean
     && ['idle', 'error', 'closed'].includes(state.status ?? ''));
 }
 
+/** A zombie holds no tools and owns no working directory: only its parent can reap it, so it is never judged. */
+function isZombieProcess(process: { state?: string | null }): boolean {
+  return Boolean(process.state && process.state.toUpperCase().startsWith('Z'));
+}
 /** Live process facts that keep a finished-turn shell tool from being settled. */
-export function workspaceToolProcessIssue(processes: Array<{ pid: number; ppid?: number | null; command: string; cwd: string | null }>, directory: string, runIds: readonly string[]): string | null {
+export function workspaceToolProcessIssue(processes: Array<{ pid: number; ppid?: number | null; state?: string | null; command: string; cwd: string | null }>, directory: string, runIds: readonly string[]): string | null {
   if (!runIds.length) return 'the participant has no recorded run identity for process proof';
+  // Exited processes never arrive: the readers drop a process whose inspection
+  // proves it is gone. What remains is filtered for zombies here.
+  const live = processes.filter(process => !isZombieProcess(process));
   const malformedHelpers = new Set<number>();
-  for (const process of processes) {
+  for (const process of live) {
     const args = process.command.trim().match(/(?:"[^"]*"|'[^']*'|\S+)/g)?.map(arg => arg.replace(/^['"]|['"]$/g, '')) ?? [];
     const helper = args.findIndex(arg => arg.split(/[\\/]/).pop() === 'mcp-report.mjs');
     if (helper < 0) continue;
@@ -455,25 +462,40 @@ export function workspaceToolProcessIssue(processes: Array<{ pid: number; ppid?:
       return `provider process ${process.pid} still carries the run MCP ticket`;
     if (!match) malformedHelpers.add(process.pid);
   }
+  // First build the task's tree: processes whose readable cwd is in the
+  // workspace, plus their descendants. An unreadable fact only matters when it
+  // could reach that tree: its parent is in the tree, or its parent identity
+  // is itself unreadable. A process whose known parent is outside the tree is
+  // not the task's, whatever its own cwd readability.
   const root = resolve(directory);
   const rooted = new Set<number>();
-  for (const process of processes) {
-    if (!process.command.trim()) return `process ${process.pid} has an unreadable command identity`;
-    if (process.cwd === null) return `process ${process.pid} has an unreadable working directory`;
+  for (const process of live) {
+    if (process.cwd === null) continue;
     const cwd = resolve(process.cwd);
     if (cwd === root || cwd.startsWith(`${root}${sep}`)) rooted.add(process.pid);
-    else if (process.ppid == null) return `process ${process.pid} has an unreadable parent identity`;
   }
   let changed = true;
   while (changed) {
     changed = false;
-    for (const process of processes) if (!rooted.has(process.pid) && process.ppid != null && rooted.has(process.ppid)) {
+    for (const process of live) if (!rooted.has(process.pid) && process.ppid != null && rooted.has(process.ppid)) {
       rooted.add(process.pid); changed = true;
     }
   }
-  const process = processes.find(item => rooted.has(item.pid));
-  const malformed = processes.find(item => rooted.has(item.pid) && malformedHelpers.has(item.pid));
+  for (const process of live) {
+    if (rooted.has(process.pid)) {
+      if (!process.command.trim()) return `process ${process.pid} has an unreadable command identity`;
+      if (process.cwd === null) return `process ${process.pid} has an unreadable working directory`;
+      continue;
+    }
+    if (process.ppid == null) {
+      if (!process.command.trim()) return `process ${process.pid} has an unreadable command identity`;
+      if (process.cwd === null) return `process ${process.pid} has an unreadable working directory`;
+      return `process ${process.pid} has an unreadable parent identity`;
+    }
+  }
+  const malformed = live.find(item => rooted.has(item.pid) && malformedHelpers.has(item.pid));
   if (malformed) return `provider process ${malformed.pid} carries an unreadable or truncated MCP ticket identity`;
+  const process = live.find(item => rooted.has(item.pid));
   return process ? `process ${process.pid} remains in the task workspace process tree` : null;
 }
 

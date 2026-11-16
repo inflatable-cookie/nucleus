@@ -13,7 +13,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readFileSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
 import { cwdMapFromLsof, type CwdState } from "../workspaces/worktree-validation";
-import { linuxProcCommandLine } from "./process-identity";
+import { linuxProcCommandLine, type ProcCommandLine } from "./process-identity";
 import { linuxStartIdentity, macStartIdentity } from "./start-identity";
 
 /** The longest command a process fact retains; the tail carries the arguments a proof reads. */
@@ -25,6 +25,29 @@ const execFileAsync = promisify(execFile);
 export type HostProcessListRead =
   | { state: "listed"; processes: HostProcessFact[] }
   | { state: "unknown"; reason: string };
+
+/**
+ * Whether one process's inspection reads prove it exited between the listing
+ * and its inspection. A gone process holds no tools: it leaves the table
+ * instead of blocking a proof with an unreadable cwd or command. Only a read
+ * that proves absence drops it; an unreadable or empty read stays unknown.
+ */
+export function inspectedProcessGone(command: ProcCommandLine, cwd: CwdState): boolean {
+  return command.state === "gone" || cwd.state === "gone";
+}
+
+/**
+ * Drop table rows whose cwd inspection proved the process exited between the
+ * ps listing and the lsof read. A missing map (an unusable lsof pass) keeps
+ * every row unknown; only a completed pass proves an omitted pid is gone.
+ */
+export function dropExitedProcesses(facts: HostProcessFact[], cwds: Map<number, CwdState> | null): HostProcessFact[] {
+  if (!cwds) return facts;
+  return facts.filter(fact => {
+    const cwd = cwds.get(fact.pid) ?? { state: "unreadable" as const };
+    return !inspectedProcessGone({ state: "read", line: fact.command }, cwd);
+  });
+}
 
 /** Preserve command failure and partial output; never turn an OS error into absence. */
 async function processListing(command: string, args: string[], env = process.env) {
@@ -82,8 +105,11 @@ async function linuxProcesses(uid: number): Promise<HostProcessListRead> {
       const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
       const command = linuxProcCommandLine(pid);
       const cwd = linuxCwd(pid);
+      // Exited between the listing and its inspection: absence from the table
+      // is the truthful fact, never an unreadable cwd or command for a proof.
+      if (inspectedProcessGone(command, cwd)) continue;
       listed.push({
-        pid, ppid: Number(fields[1]), pgid: Number(fields[2]), uid,
+        pid, ppid: Number(fields[1]), state: fields[0] || null, pgid: Number(fields[2]), uid,
         startIdentity: linuxStartIdentity(pid, stat, bootId),
         command: command.state === "read" ? truncateCommand(command.line) : "",
         cwd: cwd.state === "read" ? cwd.path : null,
@@ -94,19 +120,19 @@ async function linuxProcesses(uid: number): Promise<HostProcessListRead> {
 }
 
 async function darwinProcesses(uid: number): Promise<HostProcessListRead> {
-  const listing = await processListing("ps", ["-axo", "uid=,pid=,ppid=,pgid=,lstart=,command="],
+  const listing = await processListing("ps", ["-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="],
     { ...process.env, LC_ALL: "C", TZ: "UTC" });
   if (listing.status !== 0 || !listing.stdout)
     return { state: "unknown", reason: `the host process listing failed: ${listing.error ? String(listing.error) : `ps exited with code ${listing.status}`}` };
   const facts: HostProcessFact[] = [];
   for (const line of listing.stdout.split("\n")) {
-    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+[A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.*)$/.exec(line);
+    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+[A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.*)$/.exec(line);
     if (!match || Number(match[1]) !== uid) continue;
     const pid = Number(match[2]);
     facts.push({
-      pid, ppid: Number(match[3]), pgid: Number(match[4]), uid,
-      startIdentity: macStartIdentity(pid, match[5]),
-      command: truncateCommand(match[6]),
+      pid, ppid: Number(match[3]), state: match[5] || null, pgid: Number(match[4]), uid,
+      startIdentity: macStartIdentity(pid, match[6]),
+      command: truncateCommand(match[7]),
       cwd: null,
     });
   }
@@ -119,7 +145,7 @@ async function darwinProcesses(uid: number): Promise<HostProcessListRead> {
     const cwd = cwds.get(fact.pid);
     if (cwd?.state === "read") fact.cwd = cwd.path;
   }
-  return { state: "listed", processes: facts };
+  return { state: "listed", processes: dropExitedProcesses(facts, cwds) };
 }
 
 /**

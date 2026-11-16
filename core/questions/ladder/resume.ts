@@ -1,13 +1,125 @@
-import type { DecisionView, Task } from '../../../shared/contracts';
+import type { DecisionView, Run, Task } from '../../../shared/contracts';
 import { taskControlInputSchema } from '../../../shared/contracts';
 import { Decisions } from '../../planning/decisions';
 import { DelegatedHostUnavailable } from '../delegation';
+import { threadRunningReason } from '../../intake/thread-waits';
+import { liveWorkingParticipant } from '../../recovery/live-noop';
+import { collectOwnerVerbFacts, ownerVerbViews, restartShape } from '../../verbs/owner-verbs';
+import { NO_RESOLUTION_RUN_REFUSAL } from '../../verbs/verb-refusal-text';
 import { escalationWaitState, establishEscalationWait, type EscalationWait } from './hold';
 import type { Ladder } from './ladder';
 import { consultRecovery, escalationRecovery } from './pass';
 import { plannerEscalations, reviewerConsults, type LadderEvent } from './records';
 import { routePlannerEscalation } from './routing';
 import { escalationWaitDetail } from './waits';
+
+/** Owner verbs that resume parked work. stop and route do not. */
+const ORDINARY_RESUME_VERBS = new Set(['restart', 'move', 'retry_effect']);
+
+/** The run that raised this escalation is missing or already released. */
+function raisingRunReleased(ladder: Ladder, task: Task, id: string): boolean {
+  const escalation = plannerEscalations(ladder.store.eventsAll(task.id)).find(item => item.id === id);
+  if (!escalation?.runId) return true;
+  const run = ladder.store.run(escalation.runId);
+  return !run || Boolean(run.released);
+}
+
+function restoreLiveWait(ladder: Ladder, task: Task, live: Run, id: string, wait: { kind: string; target: string }): void {
+  const current = ladder.store.task(task.id);
+  const recovery = current.resolution.recovery;
+  const phase = ['blocked', 'error', 'needs_attention'].includes(current.phase)
+    ? live.role === 'reviewer' ? 'reviewing' : live.role === 'revision' ? 'changes_requested' : 'working'
+    : undefined;
+  ladder.resolution.update(current, {
+    stop: null,
+    attention: false,
+    ...(recovery && recovery.status !== 'resolved' ? {
+      recovery: { ...recovery, status: 'resolved' as const, summary: `Escalation ${id} wait ended; ${live.role} is live` },
+      recoveryActive: false,
+    } : {}),
+  }, { ...(phase ? { phase } : {}) }, 'planner_escalation_wake', `${id}: ordinary next`);
+  ladder.resolution.waiting(ladder.store.task(task.id), threadRunningReason(live.role), 'lifecycle');
+  ladder.store.event(task.id, 'planner_escalation_woke', `${id}: ${wait.kind} ${wait.target} settled; ordinary next; ${live.role} is live`);
+}
+
+function parkAfterEscalationWait(
+  ladder: Ladder, task: Task, id: string, wait: { kind: string; target: string },
+  refusal?: string,
+): void {
+  const current = ladder.store.task(task.id);
+  const recovery = current.resolution.recovery;
+  const clipped = refusal?.slice(0, 1200);
+  const detail = clipped
+    ? `Escalation ${id} wait ended; ${clipped}`
+    : `Escalation ${id} wait ended; no parked step to resume`;
+  if (recovery && recovery.status !== 'resolved') {
+    ladder.resolution.update(current, {
+      recovery: { ...recovery, status: 'resolved' as const, summary: detail },
+      recoveryActive: false,
+    }, {}, 'planner_escalation_wake', `${id}: wait ended`);
+  }
+  // Visible lifecycle stop, empty suggested verbs: recovery treats it as a wait
+  // and does not open another episode. Event text names that nothing ran, or
+  // the refusal that stopped the retained resume — never a silent fresh replacement.
+  ladder.resolution.waiting(ladder.store.task(task.id), detail, 'lifecycle');
+  ladder.store.event(task.id, 'planner_escalation_woke', clipped
+    ? `${id}: ${wait.kind} ${wait.target} settled; ${clipped}`.slice(0, 4000)
+    : `${id}: ${wait.kind} ${wait.target} settled; no resume verb ran`);
+}
+
+async function applyOrdinaryResume(
+  ladder: Ladder, taskId: string, id: string, wait: { kind: string; target: string },
+  extra: Record<string, unknown>, verbLabel: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (!ladder.resolution.applyOperatorControl) return { ok: false, message: 'No control applier is bound' };
+  const current = ladder.store.task(taskId);
+  try {
+    await ladder.resolution.applyOperatorControl(taskControlInputSchema.parse({
+      ...extra,
+      taskId: current.id, version: current.version,
+      reason: `Escalation ${id}: ${wait.kind} ${wait.target} settled`,
+    }));
+    ladder.store.event(taskId, 'planner_escalation_woke', `${id}: ${wait.kind} ${wait.target} settled; ordinary ${verbLabel}`);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** Wake into a live wait, `next`'s first resume verb, or a visible stop. Never a dead wake-refused stop, never a silent fresh reviewer, and never event text for an action that did not run. */
+async function wakeIntoOrdinaryNext(ladder: Ladder, task: Task, id: string, wait: { kind: string; target: string }): Promise<void> {
+  const current = ladder.store.task(task.id);
+  const live = liveWorkingParticipant(current, ladder.store.runs(current.id));
+  if (live) {
+    restoreLiveWait(ladder, current, live, id, wait);
+    return;
+  }
+  const facts = collectOwnerVerbFacts(ladder.store, current);
+  const view = ownerVerbViews(facts)
+    .find(item => item.available && ORDINARY_RESUME_VERBS.has(item.verb) && item.args
+      && (item.fill ?? []).every(field => field === 'reason')
+      && item.args.fresh !== true);
+  if (view?.args) {
+    const attempt = await applyOrdinaryResume(ladder, current.id, id, wait, view.args, view.verb);
+    if (attempt.ok) return;
+    // #1217: default restart is the worker parked step, which refuses with
+    // "No resolution run to resume" when the last non-recovery run has no
+    // completion. Ordinary next is retained restart of that released reviewer.
+    // Any other refusal stays visible; the wake never retries as fresh.
+    if (!attempt.message.includes(NO_RESOLUTION_RUN_REFUSAL)) {
+      parkAfterEscalationWait(ladder, current, id, wait, attempt.message);
+      return;
+    }
+  }
+  const reviewerShape = restartShape(current, facts.runs, 'reviewer', facts.events);
+  if (reviewerShape === 'stopped_reviewer' || reviewerShape === 'checkpoint_reviewer') {
+    const attempt = await applyOrdinaryResume(ladder, current.id, id, wait, { action: 'restart', role: 'reviewer' }, 'restart');
+    if (attempt.ok) return;
+    parkAfterEscalationWait(ladder, current, id, wait, attempt.message);
+    return;
+  }
+  parkAfterEscalationWait(ladder, current, id, wait);
+}
 
 /**
  * What a restarted service re-attaches to. A recorded consult or escalation resumes
@@ -140,15 +252,29 @@ export async function resumeEscalationWaits(ladder: Ladder, task: Task): Promise
     }
     try {
       if (!ladder.resolution.applyOperatorControl) throw Error('No control applier is bound');
-      // Restart is the ordinary owner verb for resuming the parked step. It
-      // rechecks the saved task and all delivery and exact-head gates.
-      await ladder.resolution.applyOperatorControl(taskControlInputSchema.parse({ taskId: current.id, version: current.version,
-        action: 'restart', reason: `Escalation ${id}: ${wait.kind} ${wait.target} settled` }));
-      ladder.store.event(task.id, 'planner_escalation_woke', `${id}: ${wait.kind} ${wait.target} settled; restarted the parked step`);
+      if (raisingRunReleased(ladder, current, id)) {
+        await wakeIntoOrdinaryNext(ladder, current, id, wait);
+      } else {
+        // Restart is the ordinary owner verb for resuming the parked step while
+        // the raising run still owns it. It rechecks the saved task and all
+        // delivery and exact-head gates.
+        await ladder.resolution.applyOperatorControl(taskControlInputSchema.parse({ taskId: current.id, version: current.version,
+          action: 'restart', reason: `Escalation ${id}: ${wait.kind} ${wait.target} settled` }));
+        ladder.store.event(task.id, 'planner_escalation_woke', `${id}: ${wait.kind} ${wait.target} settled; restarted the parked step`);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      ladder.store.event(task.id, 'planner_escalation_wake_refused', `${id}: ${message}`.slice(0, 4000));
-      ladder.resolution.waiting(ladder.store.task(task.id), `Escalation ${id} wake was refused: ${message}`, 'escalated');
+      if (raisingRunReleased(ladder, current, id)) {
+        parkAfterEscalationWait(ladder, current, id, wait, message);
+      } else if (message.includes(NO_RESOLUTION_RUN_REFUSAL)) {
+        try { await wakeIntoOrdinaryNext(ladder, current, id, wait); }
+        catch (inner) {
+          parkAfterEscalationWait(ladder, current, id, wait, inner instanceof Error ? inner.message : String(inner));
+        }
+      } else {
+        ladder.store.event(task.id, 'planner_escalation_wake_refused', `${id}: ${message}`.slice(0, 4000));
+        ladder.resolution.waiting(ladder.store.task(task.id), `Escalation ${id} wake was refused: ${message}`, 'escalated');
+      }
     } finally { ladder.resolution.wakingEscalations.delete(id); }
   }
 }

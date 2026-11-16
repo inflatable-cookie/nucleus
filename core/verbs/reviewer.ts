@@ -7,6 +7,7 @@ import { reviewerIdentityAtHead } from "../review/review-continuation";
 import { DurableFenceRefusal, matchingInactiveParticipant } from "../intake/run-settlement";
 import type { AgentObservation } from "../host/adapter";
 import { digest, now } from "../store/store";
+import { occupiesSlot } from "../dispatch/capacity";
 
 /**
  * The owner verbs that keep or replace a task's reviewer: continuing the retained
@@ -212,6 +213,10 @@ export class ReviewerControls {
           // and the next reader takes the retained reviewer route on a fresh
           // agent. The superseded run is history, never the reader that starts.
           const terminal = threadArchived || Boolean(run?.retainedAgentClosedAt) || Boolean(live?.retainedAgentClosedAt);
+          // Capture occupancy before releasing the occupying run: the continuation
+          // intent does not exist yet, so a restart-specific hold keeps the slot.
+          const occupying = occupiesSlot(current, this.store.runs(taskId));
+          const holdFrom = (run && !run.released ? run.id : null) ?? live?.id ?? current.resolution.currentRunId;
           if (run && run.role === "reviewer" && !run.completion && !run.released) {
             this.store.putRun({ ...run, status: "superseded", released: fresh || observedClosed || terminal || run.retainedAgentClosedAt !== undefined,
               active: false, replacedAt: now(), ...(terminal && !run.retainedAgentClosedAt ? { retainedAgentClosedAt: now() } : {}) });
@@ -220,7 +225,8 @@ export class ReviewerControls {
             phase: "awaiting_review",
             reason: `Restarted with ${fresh ? 'a fresh' : 'the retained'} reviewer: ${reason}`,
             resolution: { ...current.resolution, currentRunId: null, reviewerAgentId: fresh || terminal ? null : retainedAgent, reviewerProfile: fresh ? null : retainedProfile,
-              integrationTurn: null, attention: false, recoveryActive: false, pendingReviewReason: instruction },
+              integrationTurn: null, attention: false, recoveryActive: false, pendingReviewReason: instruction,
+              ...(occupying && holdFrom ? { restartSlotHold: { role: 'reviewer' as const, at: now(), fromRunId: holdFrom } } : {}) },
           }, fresh ? "restart_review_fresh" : "restart_review_retained");
           // A run the restart could not release still owns the task, so nothing
           // launches. Say so in the reply, with the rule and what releases it,
