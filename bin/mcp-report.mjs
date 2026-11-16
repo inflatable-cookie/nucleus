@@ -22,7 +22,7 @@ const server=new McpServer({name:'nucleus',version:'1.0.0'});
 // Run tools expose only the Nucleus names. The legacy catalog (dependencies, dispositions,
 // promotion, trusted runners) was deleted on 2026-10-15; owners steer through the CLI. A scope
 // argument from an older launch is accepted and ignored.
-// Papercut 8647384e: the list rule is shared with shared/schema/review.ts, so a refusal
+// Papercut 8647384e: the list rule is shared with shared/schema/review/evidence.ts, so a refusal
 // names the exact entry, field and expected shape and harmless duplicates are de-duplicated.
 const reviewedInputList=z.array(z.unknown()).transform(rows=>dedupeReviewedInputs(rows)).superRefine((rows,context)=>{
  for(const issue of reviewedInputListRefusals(rows))context.addIssue({code:'custom',path:issue.path,message:issue.message});

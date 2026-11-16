@@ -883,7 +883,7 @@ detail, and the class of an error decides how an operation settles. The pin is
 - `OWNER_STOP_HOLD_PREFIX` `'Owner stop:'` — Holds / OwnerStop
 - `CAPACITY_WAIT_PREFIX` `'Waiting for a project slot…'` — defined in `shared/wait-state.ts`; SlotAdmission compares it
 - `QA_CAPACITY_WAIT_PREFIX` `'Waiting for QA capacity (position '` — defined in `shared/wait-state.ts`; SlotAdmission compares it
-- `RETAINED_WORKER_PROFILE_REASON` `'Retained worker profile is disabled or unavailable'` — defined in `shared/schema/state.ts`; readers Notices, Recovery, RetryRoutes, `task-reasons/parks.ts`, RunLaunchSource
+- `RETAINED_WORKER_PROFILE_REASON` `'Retained worker profile is disabled or unavailable'` — defined in `shared/retained-profile.ts`, with the one reader `isRetainedProfileReason`; Notices, CoordinatorRoute, RetryRoutes, `task-reasons/parks.ts` and RunLaunchSource call it instead of matching the text themselves
 - `BACKPRESSURE_DEFERRAL` `'Paseo admission backpressure: '` — Admission (`core/host/admission.ts`)
 - `EXTERNAL_MERGE_CHECK_REASON_PREFIX` `'External merge check:'` — ExternalMerge
 - `EXTERNAL_MERGE_CHECK_RECOVERED_REASON` `'External merge check recovered; resuming task'` — ExternalMerge

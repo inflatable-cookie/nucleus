@@ -10,7 +10,7 @@
  * their hashes, in the retained reviewer's prompt for that head. Nothing is
  * uploaded to the forge.
  *
- * One rule for both surfaces: the report schema (`shared/schema/review.ts`) and
+ * One rule for both surfaces: the report schema (`shared/schema/review/evidence.ts`) and
  * the `nucleus_report` bridge (`bin/mcp-report.mjs`) read these functions, so the
  * words a worker reads are the words intake applies. This module owns the shape
  * only; containment inside the task's own scratch or worktree, the regular-file

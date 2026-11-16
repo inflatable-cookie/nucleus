@@ -6,7 +6,7 @@ import {git,validateSubmission,verifyPublishedPlanning} from '../git/index';
 import {instructionForCommit,assertReviewSkipSupported} from '../hooks/hooks';
 import {digest} from '../store/store';
 import {briefDigest} from './brief';
-import {BRIEF_MAX_LENGTH,capabilityLevelSchema,laneKeyListSchema,laneKeySchema,MAX_REVIEW_VERDICTS,reviewPassGateSchema,reviewVerdictsOptInSchema,scopeSchema,submissionRecordFromLegacy,submissionSchema,taskTitleSchema,type Submission} from '../../shared/contracts';
+import {BRIEF_MAX_LENGTH,capabilityLevelSchema,laneKeyListSchema,laneKeySchema,retiredSubmissionRefusals,reviewContinuationIdsSchema,reviewPassGateSchema,reviewVerdictsOptInSchema,scopeSchema,submissionRecordFromLegacy,submissionSchema,taskTitleSchema,type Submission} from '../../shared/contracts';
 import {stageGoalSchema,stageDefinitionInputSchema,stageSubjectSetsSchema,stageDeclarationSchema,type StageDefinition} from '../stages';
 const laneSelectionSchema=z.union([laneKeySchema,laneKeyListSchema,z.null()]);
 /**
@@ -42,10 +42,9 @@ const requireProofOnlyQueue=<T extends {proofOnly?:unknown;proofExecution?:unkno
  if(queue.requiresOperatorGo&&!queue.proofOnly)ctx.addIssue({code:'custom',path:['requiresOperatorGo'],message:'queue.requiresOperatorGo is only valid with queue.proofOnly'});
 };
 const refuseRetiredQueueFlags=<T extends {responsible?:boolean;manualVerification?:boolean;reviewVerdicts?:unknown;reviewPassGate?:unknown}>(queue:T,ctx:z.RefinementCtx)=>{
- if(queue.responsible===false)ctx.addIssue({code:'custom',path:['responsible'],message:'responsible: false is no longer supported; every task runs the responsible lifecycle'});
- if(queue.manualVerification===true)ctx.addIssue({code:'custom',path:['manualVerification'],message:'queue.manualVerification is no longer available; every task runs the responsible lifecycle'});
- if(queue.reviewVerdicts!==undefined)ctx.addIssue({code:'custom',path:['reviewVerdicts'],message:'queue.reviewVerdicts is no longer available; state the outcome and acceptance in prose in the brief body, and use queue.mergeHold for a needed hold'});
- if(queue.reviewPassGate!==undefined)ctx.addIssue({code:'custom',path:['reviewPassGate'],message:'queue.reviewPassGate is no longer available; state the acceptance conditions in prose in the brief body, and use queue.mergeHold for a needed hold'});
+ // The rule and its frontmatter wording are the retired-submission owner's.
+ for(const refusal of retiredSubmissionRefusals(queue,'frontmatter'))
+  ctx.addIssue({code:'custom',path:[refusal.field],message:refusal.message});
 };
 const queueFieldsObjectSchema=z.object({profileRequests:submissionSchema.shape.profileRequests,dependsOn:submissionSchema.shape.dependsOn.optional(),lane:laneSelectionSchema.optional(),lanes:laneKeyListSchema.optional(),laneDocuments:laneKeyListSchema.optional(),scope:scopeSchema.optional(),complexity:capabilityLevelSchema.nullable().optional(),preferredProfileId:z.string().optional(),planner:z.string().trim().min(1).max(300).optional(),requirePreferred:z.boolean().optional(),thinkingOptionId:z.string().optional(),skipPRReview:z.boolean().optional(),siblings:z.boolean().optional(),manualVerification:z.boolean().optional(),interactive:z.boolean().optional(),responsible:z.boolean().optional(),critical:z.boolean().optional(),reportOnly:z.boolean().optional(),reportLane:laneKeySchema.optional(),mergeHold:submissionSchema.shape.mergeHold,mergeHoldReason:submissionSchema.shape.mergeHoldReason,proofExecution:submissionSchema.shape.proofExecution,proofOnly:submissionSchema.shape.proofOnly,requiresOperatorGo:submissionSchema.shape.requiresOperatorGo,notifyOriginOnCloseout:z.boolean().optional(),reviewVerdicts:reviewVerdictsOptInSchema.optional(),reviewPassGate:reviewPassGateSchema.optional(),completionNotificationAgentIds:submissionSchema.shape.completionNotificationAgentIds.optional()}).strict();
 const queueFieldsSchema=z.preprocess(renameLegacyQueueScope,queueFieldsObjectSchema.superRefine((queue,ctx)=>{
@@ -56,7 +55,7 @@ const briefQueueFieldsSchema=z.preprocess(renameLegacyQueueScope,queueFieldsObje
 // Retired with the automatic-review-loop concept (2026-10-07): parsed inertly so
 // historical briefs that carry it keep loading and amending. No code reads it and
 // new briefs get no behaviour from it.
-reviewContinuationIds:z.array(z.string().trim().min(1).max(120)).min(1).max(MAX_REVIEW_VERDICTS).refine(ids=>new Set(ids).size===ids.length,'Review continuation ids must be unique').optional()}).transform((queue,ctx):Omit<typeof queue,'stages'>&{stages?:StageDefinition[]}=>{
+reviewContinuationIds:reviewContinuationIdsSchema.optional()}).transform((queue,ctx):Omit<typeof queue,'stages'>&{stages?:StageDefinition[]}=>{
  const {stages,...rest}=queue;
  if(stages===undefined)return rest;
  const declaration=stageDeclarationSchema.safeParse({stages,subjectSets:queue.subjectSets,goal:queue.goal});

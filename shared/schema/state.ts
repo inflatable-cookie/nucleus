@@ -3,15 +3,16 @@ import { holdKindSchema, laneKeyListSchema } from "../schema/task-primitives";
 import { taskSchema } from "./tasks";
 import { projectSchema } from "./projects";
 import { operationSummarySchema } from "../operations";
-import { DEFAULT_HOLD_ESCALATION_MINUTES, DEFAULT_HOLD_REMINDER_MINUTES, DEFAULT_HOST_OUTAGE_NOTICE_MINUTES, DEFAULT_LANE_DRAIN_ESCALATION_MINUTES, DEFAULT_LANE_DRAIN_MINUTES, DEFAULT_PAPERCUT_PROJECT_LIMIT, DEFAULT_PASEO_CALL_LIMIT, DEFAULT_STALL_THRESHOLD_MINUTES, MAX_HOLD_MINUTES, MAX_HOST_OUTAGE_NOTICE_MINUTES, MAX_PASEO_CALL_LIMIT, MAX_STALL_THRESHOLD_MINUTES, poolSchema, profileSchema, projectDispatchLimitOverridesSchema, routingGrantViewSchema, usageViewSchema } from "./settings";
+import { capacityStateFields, poolSchema, profileSchema, projectDispatchLimitOverridesSchema, routingGrantViewSchema, usageViewSchema } from "./settings";
 import { qaFenceViewSchema } from "./qa-fence";
 import { backupHealthSchema } from "./backup";
 import { taskSummarySchema } from "../schema/task-view";
 import { laneViewSchema } from "./lanes";
 import { boardQaRunSchema } from "./qa";
 
-export const eventSchema = z.object({ id: z.number(), taskId: z.string(), at: z.string(), kind: z.string(), detail: z.string() });
+export const eventSchema = z.object({ id: z.number(), taskId: z.string(), at: z.string(), kind: z.string(), detail: z.string() }).strict();
 
+/** A subscription group's availability. A set/reset payload keeps its historical tolerance: unknown keys are stripped (contract, see `availabilityMarkSchema`). */
 export const availabilitySchema = z.object({ group: z.string(), unavailable: z.boolean(), reason: z.string(), retryAt: z.string().nullable() });
 
 /** The compatibility snapshot carries live tasks only; history is addressed by ID. */
@@ -71,19 +72,12 @@ export const stateSchema = z.object({
   routingGrants: z.array(routingGrantViewSchema).default([]),
   qaFence: qaFenceViewSchema.default({ revision: 0, fence: null, expired: null }),
   demandOffsets: z.object({ worker: z.number().int(), reviewer: z.number().int(), coordinator: z.number().int() }).strict().default({ worker: 0, reviewer: 0, coordinator: -2 }),
-  papercutProjectLimit: z.number().int().min(1).max(32).default(DEFAULT_PAPERCUT_PROJECT_LIMIT),
+  // The dispatch and timing limits are zero-owner duplicates if this schema
+  // re-bounds them: the group comes from the limits catalogue in
+  // `shared/schema/settings/capacity.ts`, defaults included.
   projectLimitOverrides: projectDispatchLimitOverridesSchema.default({}),
   projectCapacities: z.array(z.object({ projectKey: z.string(), projectName: z.string(), occupiedSlots: z.number().int().nonnegative(), slotLimit: z.number().int().nonnegative(), inFlightTasks: z.number().int().nonnegative(), inFlightLimit: z.number().int().nonnegative() }).strict()).default([]),
-  paseoCallLimit: z.number().int().min(1).max(MAX_PASEO_CALL_LIMIT).default(DEFAULT_PASEO_CALL_LIMIT),
-  stallThresholdMinutes: z.number().int().min(1).max(MAX_STALL_THRESHOLD_MINUTES).default(DEFAULT_STALL_THRESHOLD_MINUTES),
-  // Spec 040: how often Queue re-prompts a merge hold's owner, and when it asks the operator.
-  holdReminderMinutes: z.number().int().min(1).max(MAX_HOLD_MINUTES).default(DEFAULT_HOLD_REMINDER_MINUTES),
-  holdEscalationMinutes: z.number().int().min(1).max(MAX_HOLD_MINUTES).default(DEFAULT_HOLD_ESCALATION_MINUTES),
-  // Spec 041: the lane close-out and next-aim drain timers.
-  laneDrainMinutes: z.number().int().min(1).max(MAX_HOLD_MINUTES).default(DEFAULT_LANE_DRAIN_MINUTES),
-  laneDrainEscalationMinutes: z.number().int().min(1).max(MAX_HOLD_MINUTES).default(DEFAULT_LANE_DRAIN_ESCALATION_MINUTES),
-  // Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): the long-outage notice bound.
-  hostOutageNoticeMinutes: z.number().int().min(1).max(MAX_HOST_OUTAGE_NOTICE_MINUTES).default(DEFAULT_HOST_OUTAGE_NOTICE_MINUTES),
+  ...capacityStateFields,
   operationLimit: z.number().int().positive().default(64),
   operationBacklog: z.number().int().nonnegative().default(0),
   operations: z.array(operationSummarySchema).default([]),
@@ -137,8 +131,6 @@ export type PlanningRevisions = z.infer<typeof planningRevisionsSchema>;
 export const uiBoardSchema = z.union([uiStateSchema.extend({ revision: z.number().int().nonnegative(), planning: planningRevisionsSchema.optional() }), boardAckSchema]);
 
 export type UiBoard = z.infer<typeof uiBoardSchema>;
-
-export const RETAINED_WORKER_PROFILE_REASON = "Retained worker profile is disabled or unavailable";
 
 export const missingResultSchema = z.object({
   role: z.enum(["worker", "revision", "reviewer"]),

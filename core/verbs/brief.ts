@@ -1,6 +1,6 @@
 import { REMOVED_TASK_REFUSAL } from './control-refusals';
 import { readyReviewAtHead } from '../recovery/task-reasons';
-import type { Task } from "../../shared/contracts";
+import { retiredSubmissionRefusals, type Task } from "../../shared/contracts";
 import { briefDigest, currentBrief, isBriefMode } from "../planning/brief";
 import { Decisions } from "../planning/decisions";
 import type { Engine } from "../engine";
@@ -96,8 +96,9 @@ export class BriefControls {
       const amendSchema=task.leadProvenance?'draft':'brief';
       const document=input.brief.startsWith('---')?parseNorthstarDocument(input.brief,amendSchema):null;
       const queue=document?.queue??null;
-      if (queue?.responsible === false) throw Error('queue.responsible: false is no longer supported; every task runs the responsible lifecycle');
-      if (queue?.manualVerification === true) throw Error('queue.manualVerification is no longer available; every task runs the responsible lifecycle');
+      // The retired-flag rule and its frontmatter wording are the schema owner's.
+      const retired = retiredSubmissionRefusals({ responsible: queue?.responsible, manualVerification: queue?.manualVerification }, 'frontmatter')[0];
+      if (retired) throw Error(retired.message);
       if(queue?.stages)throw Error(STEPS_RETIRED_REASON);
       const current=currentBrief(task)!;
       // The previous text is read to diff its routing and hold fields, so it is parsed

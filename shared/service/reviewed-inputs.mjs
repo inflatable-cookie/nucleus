@@ -8,7 +8,7 @@
  * reading recorded twice, so it is de-duplicated rather than refused.
  *
  * One rule for both surfaces: the report/completion schema
- * (`shared/schema/review.ts`) and the `nucleus_report` bridge
+ * (`shared/schema/review/evidence.ts`) and the `nucleus_report` bridge
  * (`bin/mcp-report.mjs`) call these functions, so the words a reviewer reads are
  * the words intake applies.
  */

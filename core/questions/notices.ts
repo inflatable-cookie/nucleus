@@ -1,5 +1,5 @@
 import type { Notice } from '../../shared/contracts';
-import { RETAINED_WORKER_PROFILE_REASON, TASK_OWNER_HOLD, episodeBindsCurrentWork, isDispositionActive, isDispositionComplete, taskOwner } from '../../shared/contracts';
+import { TASK_OWNER_HOLD, episodeBindsCurrentWork, isDispositionActive, isDispositionComplete, isRetainedProfileReason, taskOwner } from '../../shared/contracts';
 import { normalizeRepositoryOrigin } from '../../shared/lanes';
 import { isSshAuthExhausted } from '../../shared/ssh-auth';
 import { isWaitingTaskStop } from '../../shared/task-stop';
@@ -306,7 +306,7 @@ export class Notices {
         ? `${stop?.detail ?? task.reason}\nCoordinator could not apply its report: ${recovery.action.reason ?? recovery.summary}`
         : episodeOpen && recovery?.status === 'escalated' ? recovery.summary : stop?.detail ?? task.reason;
       const suggested = stop?.suggestedVerbs.length ? `\nSuggested verbs: ${stop.suggestedVerbs.join(', ')}` : '';
-      const remapHint = task.reason.startsWith(RETAINED_WORKER_PROFILE_REASON)
+      const remapHint = isRetainedProfileReason(task.reason)
         ? '\nOwner action: restart remaps the retained worker to an eligible profile, with an optional instruction as its continuation; route role=worker chooses the profile.' : '';
       const proofOwner = awaitingProof ? this.store.projectPlannerRecipient(this.store.projectFor(task.repoPath, normalizeRepositoryOrigin(task.repository ?? ''))) : null;
       this.store.putNotice({ id, taskId: task.id, agentId: proofOwner ?? originRecipient(this.store, task) ?? taskOwner(task),
