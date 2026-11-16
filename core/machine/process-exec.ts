@@ -4,9 +4,44 @@ import { DEFAULT_PROCESS_TERMINATION_GRACE_MS, PROCESS_TERMINATION_GRACE_MAX_MS,
 import { withSpawnSlot } from "../dispatch/spawn-gate";
 import { ESCAPED_DESCENDANT_SCAN_MS, EscapedDescendantCustody, escapedDescendantsOf } from "./escaped-descendants";
 import { processGroupEmpty, signalProcessGroup, waitForProcessGroupEmpty } from "./process-group";
-import { processStartIdentityEnvironment, processesForStartIdentity } from "./process-identity-search";
+import { processStartIdentityEnvironment, processStartIdentityLiveness, processesForStartIdentity } from "./process-identity-search";
 import { hostRunProcessStartIdentity } from "./start-identity";
 import { BoundedStreamRetention, FailureFirstStreamRetention } from "./output-retention";
+
+/**
+ * Spec 064 P2: one parent's own child exit observation. It is the parent's
+ * `exit` event for the child it spawned — never a census, an EOF or a PID poll —
+ * and it carries both start identities so a reused pid reads as a different
+ * process.
+ */
+export interface DirectChildWait {
+  parentPid: number;
+  parentStartIdentity: string;
+  childPid: number;
+  childStartIdentity: string | null;
+  state: "observed" | "unknown";
+  code: number | null;
+  signal: string | null;
+  observedAt: string;
+  /** The one evidence kind this observation can have. */
+  source: "child-exit-event";
+}
+
+/**
+ * Spec 064 P3: what a `qualification_direct` stop did. Every field is recorded
+ * so a reader sees that no group, escaped-descendant or KILL signal was sent.
+ */
+export interface QualificationStop {
+  mode: "qualification_direct";
+  cause: "timeout" | "cancel" | "overflow";
+  pid: number;
+  startIdentity: string;
+  signal: "SIGTERM" | null;
+  groupSignalled: false;
+  escapedDescendantSignalled: false;
+  killEscalated: false;
+  error: string | null;
+}
 
 export interface ExecutionOutcome {
   pid: number | null; code: number | null; signal: string | null; timedOut: boolean;
@@ -22,6 +57,10 @@ export interface ExecutionOutcome {
   processGroupId?: number | null; leaderStartIdentity?: string | null; startIdentity?: string | null;
   escapedDescendants?: HostRunEscapedDescendant[]; cancelled?: boolean;
   terminationSignal?: "SIGTERM" | "SIGKILL" | null; processGroupEmpty?: boolean | null; terminationError?: string | null;
+  /** Spec 064 P2: this step's own direct-command exit observation, when the caller asked for it. */
+  directChildWait?: DirectChildWait;
+  /** Spec 064 P3: what a `qualification_direct` stop did, when that mode was requested. */
+  qualificationStop?: QualificationStop;
 }
 
 const POST_KILL_PROCESS_GROUP_WAIT_MS = 5_000;
@@ -64,6 +103,20 @@ export interface ExecutionRequest {
   /** SIGTERM grace before group SIGKILL; defaults to the Queue process setting or 30 seconds. */
   terminationGraceMs?: number;
   /**
+   * Spec 064 P3: how a stop behaves. Absent or `group` is Contract 010's group
+   * stop, unchanged. `qualification_direct` signals only the still-held direct
+   * command with TERM: no group signal, no escaped-descendant signal, no KILL
+   * escalation, and the supervisor is never the target of a cleanup shortcut.
+   */
+  stopMode?: "group" | "qualification_direct";
+  /**
+   * Spec 064 P2: record this step's own direct-command exit observation (the
+   * parent's child `exit` event, with both start identities).
+   */
+  directChildWait?: boolean;
+  /** Spec 064 P2: the same observation as it is made, before any group settlement. */
+  onChildExit?: (wait: DirectChildWait) => void;
+  /**
    * Task 191: streaming observer for every output chunk as it arrives, before
    * any maxOutputBytes capping. Milestone QA feeds TAP chunks here so a
    * failure block stays visible even when the retained window evicts it.
@@ -85,6 +138,8 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
       stdoutExceeded: false, stderrExceeded: false, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), durationMs: 0,
       processGroupId, leaderStartIdentity, terminationSignal: null, processGroupEmpty: null, terminationError: null };
     const escapedCustody = request.settleOnEscapedDescendants ? new EscapedDescendantCustody(leaderStartIdentity) : null;
+    /** Spec 064 P3: the qualification stop owns every signal decision when it is selected. */
+    const cooperativeStop = request.stopMode === "qualification_direct";
     /** The last escaped-descendant scan, so a settlement tick never reads the host table every 20 ms. */
     let lastEscapedScanAt = 0;
     /** When the stop began, so escaped descendants get the same grace the group does. */
@@ -123,9 +178,49 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
       outcome.endedAt = new Date().toISOString();
       if (error) reject(error); else resolve(outcome);
     };
+    /**
+     * Spec 064 P3: the qualification stop. Every timeout, cancel, overflow,
+     * failure and exception sends TERM to the one still-held direct command and
+     * nothing else: no process group, no escaped descendant, no SIGKILL
+     * escalation, and never this supervisor. After an effect the command's own
+     * closure is retained as unknown rather than escalated.
+     */
+    const terminateDirect = (cause: "timeout" | "cancel" | "overflow"): Promise<void> => {
+      if (termination) return termination;
+      terminationAt = Date.now();
+      const pid = outcome.pid;
+      const identity = outcome.startIdentity ?? null;
+      const record: QualificationStop = {
+        mode: "qualification_direct", cause, pid: pid ?? 0, startIdentity: identity ?? "", signal: null,
+        groupSignalled: false, escapedDescendantSignalled: false, killEscalated: false, error: null,
+      };
+      outcome.qualificationStop = record;
+      termination = (async () => {
+        if (!pid || !identity) {
+          record.error = "The direct command's identity was never established; no signal was sent";
+          return;
+        }
+        // Only the process this step started, and only while its recorded start
+        // identity still matches, so a reused pid is never signalled.
+        if (processStartIdentityLiveness(pid, identity) !== "alive") {
+          record.error = "The direct command is no longer alive under its recorded start identity";
+          return;
+        }
+        try {
+          process.kill(pid, "SIGTERM");
+          record.signal = "SIGTERM";
+          outcome.terminationSignal = "SIGTERM";
+        } catch (error) {
+          record.error = `The direct command's cooperative stop failed: ${String(error)}`;
+        }
+      })();
+      return termination;
+    };
     const terminateGroup = (cause: "timeout" | "cancel" | "overflow") => {
       if (cause === "timeout" && !outcome.cancelled) outcome.timedOut = true;
       if (cause === "cancel") outcome.cancelled = true;
+      // The qualification stop is selected before any group, escapee or KILL path.
+      if (cooperativeStop) return terminateDirect(cause);
       if (termination) return termination;
       terminationAt = Date.now();
       termination = (async () => {
@@ -192,7 +287,8 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
       if (now - lastEscapedScanAt < ESCAPED_DESCENDANT_SCAN_MS) return false;
       lastEscapedScanAt = now;
       if (escapedCustody.absenceProven(pgid, now)) return true;
-      if (stopAt !== null) {
+      // Spec 064 P3: a qualification stop never signals an escaped descendant.
+      if (stopAt !== null && !cooperativeStop) {
         const escalated = outcome.terminationSignal === "SIGKILL" || now - stopAt >= graceMs;
         escapedCustody.signal(escalated ? "SIGKILL" : "SIGTERM");
       }
@@ -295,6 +391,18 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
     child.on("exit", (code, signal) => {
       outcome.code = code;
       outcome.signal = signal;
+      // Spec 064 P2: the parent's own child exit observation, recorded here —
+      // before any group settlement. Nothing below infers it from a census, an
+      // EOF or a PID poll; both start identities travel with it.
+      if (request.directChildWait || request.onChildExit) {
+        const wait: DirectChildWait = {
+          parentPid: process.pid, parentStartIdentity: hostRunProcessStartIdentity(process.pid),
+          childPid: child.pid ?? 0, childStartIdentity: outcome.startIdentity ?? null,
+          state: "observed", code, signal, observedAt: new Date().toISOString(), source: "child-exit-event",
+        };
+        outcome.directChildWait = wait;
+        try { request.onChildExit?.(wait); } catch { /* observation never breaks execution */ }
+      }
       leaderExited = true;
       void finishWhenGroupIsEmpty();
     });

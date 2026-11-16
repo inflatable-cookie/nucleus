@@ -1,5 +1,115 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { profileSchema } from "../settings";
+
+/** `sha256:<hex>`: the qualification binding's only identity form. */
+export const qualificationDigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/, "A qualification digest is sha256:<hex>");
+
+/**
+ * Canonical JSON for one qualification record: object keys sorted at every
+ * depth, no whitespace, arrays in their recorded order. Two readers that hold
+ * the same values always compute the same digest, and one that holds different
+ * values never does.
+ */
+export function qualificationCanonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(item => qualificationCanonicalJson(item)).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+    return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${qualificationCanonicalJson(entry)}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+/** The canonical digest of one qualification record. */
+export function qualificationDigest(value: unknown): string {
+  return `sha256:${createHash("sha256").update(qualificationCanonicalJson(value)).digest("hex")}`;
+}
+
+/**
+ * Spec 064 P1: the canonical digest of one run's **effective environment
+ * values**, not their names. A secret per-launch variable is recorded as a key
+ * only and never enters this digest.
+ */
+export function qualificationEnvironmentDigest(values: Record<string, string>): string {
+  const pairs = Object.keys(values).sort().map(key => [key, values[key]!] as const);
+  return qualificationDigest(pairs);
+}
+
+/** Who authorized one proof execution; the record and the subject share it. */
+export const proofAuthorizationSchema = z.object({
+  role: z.enum(['project_owner', 'operator', 'authorized_relay', 'delegated', 'queue_dispatch']),
+  caller: z.string().nullable().default(null), note: z.string().nullable().default(null),
+}).strict();
+
+/**
+ * Spec 064 P1: the immutable subject one qualification attempt binds. Every
+ * field is resolved from Nucleus's own records — the task, the executor run's
+ * recorded intent and the published source — never from a client-supplied claim.
+ */
+export const qualificationSubjectSchema = z.object({
+  /** The task whose source and brief this attempt proves. */
+  taskId: z.string().min(1),
+  /** The one executor run that owns the attempt end to end. */
+  participantRunId: z.string().min(1),
+  operationId: z.string().min(1).max(160).nullable().default(null),
+  briefVersion: z.number().int().positive().nullable().default(null),
+  briefDigest: z.string().nullable().default(null),
+  /** The exact published head and its tree. */
+  head: z.string().regex(/^[a-f0-9]{40}$/),
+  tree: z.string().regex(/^[a-f0-9]{40}$/),
+  /** The declared selector, with its pinned inputs in their declared order. */
+  selector: z.string().trim().min(1).max(2000),
+  inputs: z.array(z.string().regex(/^(?:sha256:)?[a-f0-9]{64}$/)).default([]),
+  authorizedBy: proofAuthorizationSchema,
+}).strict();
+
+export type QualificationSubject = z.infer<typeof qualificationSubjectSchema>;
+
+/**
+ * Spec 064 P1: the one host-run execution the subject is bound to. It is
+ * resolved at the submit seam before any effect, and again from the plan at
+ * launch, so neither a client-supplied caller nor a later process can name a
+ * different command, root or environment.
+ */
+export const qualificationExecutionSchema = z.object({
+  hostRunId: z.string().min(1).max(160),
+  hostEpoch: z.number().int().positive(),
+  /** The pinned executable and its content digest: no shell, no PATH lookup. */
+  executable: z.string().min(1),
+  executableDigest: qualificationDigestSchema,
+  /** The literal argv as submitted, and the checkout it runs from. */
+  argv: z.array(z.string().min(1)).min(1),
+  cwd: z.string().min(1),
+  environmentKeys: z.array(z.string()),
+  /** The canonical digest of those keys' effective values (see the environment digest owner). */
+  environmentDigest: qualificationDigestSchema,
+}).strict();
+
+export type QualificationExecution = z.infer<typeof qualificationExecutionSchema>;
+
+/**
+ * Spec 064 P1: the full qualification binding. The subject is immutable from
+ * dispatch; the execution half stays absent until a submit resolves it, because
+ * no command exists before the bound executor submits one.
+ */
+export const qualificationBindingSchema = z.object({
+  subject: qualificationSubjectSchema,
+  execution: qualificationExecutionSchema.nullable().default(null),
+}).strict();
+
+export type QualificationBinding = z.infer<typeof qualificationBindingSchema>;
+
+/** The subject's canonical digest: the attempt's identity against every re-read. */
+export function qualificationSubjectDigest(subject: QualificationSubject): string {
+  return qualificationDigest(subject);
+}
+
+/** The execution's canonical digest, or null while no command is bound. */
+export function qualificationExecutionDigest(execution: QualificationExecution | null | undefined): string | null {
+  return execution ? qualificationDigest(execution) : null;
+}
 
 /**
  * Task 405: the one author-side proof execution a brief may authorize. The
@@ -49,7 +159,7 @@ export const proofExecutionRecordSchema = z.object({
   repository: z.string().nullable().default(null), prNumber: z.number().int().positive().nullable().default(null),
   branch: z.string(), head: z.string().regex(/^[a-f0-9]{40}$/),
   briefVersion: z.number().int().positive().nullable().default(null), briefDigest: z.string().nullable().default(null),
-  authorizedBy: z.object({ role: z.enum(['project_owner', 'operator', 'authorized_relay', 'delegated', 'queue_dispatch']), caller: z.string().nullable().default(null), note: z.string().nullable().default(null) }).strict(),
+  authorizedBy: proofAuthorizationSchema,
   activatedAt: z.string(), settledAt: z.string().nullable().default(null),
   status: z.enum(['running', 'passed', 'failed', 'unknown', 'stale']),
   /** Historical field; without start evidence older values were inferred. */
@@ -60,6 +170,16 @@ export const proofExecutionRecordSchema = z.object({
   // timeline alone. It is history, never a pass: no closeout, review or merge
   // gate may credit it, whatever status it carries.
   historical: z.boolean().default(false),
+  /**
+   * Spec 064 P1: the private qualification reference this execution ran. The
+   * reference names the bound attempt (its task and executor run), and the two
+   * digests bind the subject and — once a submit resolved one — its execution.
+   */
+  qualification: z.object({
+    reference: z.string().min(1).max(400),
+    subjectDigest: qualificationDigestSchema,
+    executionDigest: qualificationDigestSchema.nullable().default(null),
+  }).strict().optional(),
   exitCode: z.number().int().nullable().optional(), evidence: z.string().max(4000).default(''),
 }).strict();
 

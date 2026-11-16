@@ -94,6 +94,35 @@ Exactly one of `exitCode` and `signal` is non-null. Because the record outlives
 both the supervisor and the scheduler, a restart settles finished runs by what
 actually happened.
 
+### Private qualification mode (Spec 064 P1–P3)
+
+The supervisor plan and the cancel request are queue-private records; contract
+010's client protocol and its frozen result/state records are not changed by
+this mode. An ordinary plan and an ordinary cancel record keep their exact
+bytes, so nothing here is a rollback break.
+
+- `stopMode: qualification_direct` (private, optional) selects a cooperative stop
+  that signals **only** the still-held direct command with SIGTERM. No process
+  group, no escaped descendant and no SIGKILL escalation is sent, including from
+  fallback paths, and the supervisor is never stopped as a cleanup shortcut. A
+  service-level stop route that knows the mode declines instead of signalling.
+  A cancel request persists the mode beside its reason.
+- `qualification` (private, optional) carries the subject/execution binding a
+  qualification submit resolved: task, participant run, authorization and
+  operation, brief version and digest, published head and tree, the ordered
+  input digests, the declared selector, and the bound host run/epoch, executable
+  digest, literal argv, cwd and the canonical digest of the effective
+  environment **values**. With the field absent every existing behaviour is
+  unchanged.
+- A plan carrying either field is refused by the supervisor before its first
+  write or spawn while Spec 064 P4–P7 are unimplemented: `qualification
+  foundation incomplete`. The endpoint's private `submitQualification` method
+  authenticates the executor run's own credential, resolves that subject from
+  Queue's records, rechecks `verifyProofSource`, and then refuses before any
+  submit write. A host-run token and a client-supplied caller grant nothing.
+- Contract 010's stop, capture, retention and result records are unchanged for
+  every ordinary run, including the group TERM/SIGKILL stages.
+
 ### Start identity
 
 A start identity is `<pid>@<basis>`, compared only as an exact string, never

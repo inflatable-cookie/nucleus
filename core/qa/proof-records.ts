@@ -7,6 +7,7 @@
  */
 import { now, type Store } from '../store/store';
 import type { ProofExecutionRecord, Run, Task } from '../../shared/contracts';
+import { qualificationExecutionDigest, qualificationSubjectDigest } from '../../shared/schema/review/proof';
 
 /** A brief's or run's proof declaration, without the bindings only a run carries. */
 export interface ProofDeclaration { selector: string; inputs: string[] }
@@ -80,6 +81,15 @@ export function proofExecutionRecord(run: Run, task: Task, authorizedBy: ProofEx
     briefVersion: run.proofExecution.briefVersion, briefDigest: run.proofExecution.briefDigest,
     authorizedBy, activatedAt: run.createdAt, settledAt: null, status: 'running', historical: false, evidence: '',
     refusedBeforeSelector: false, selectorStart: 'unknown',
+    // Spec 064 P1: the private qualification reference this execution ran, when it
+    // carries one; a run with no qualification binding records none.
+    ...(run.proofExecution.qualification ? {
+      qualification: {
+        reference: `${run.taskId}/${run.id}`,
+        subjectDigest: qualificationSubjectDigest(run.proofExecution.qualification.subject),
+        executionDigest: qualificationExecutionDigest(run.proofExecution.qualification.execution),
+      },
+    } : {}),
   };
 }
 

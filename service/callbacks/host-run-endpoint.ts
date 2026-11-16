@@ -22,6 +22,7 @@ import {
   defaultHostRunStateDir,
   ensureVerifiedDirectoryChain,
   hostRunSupervisorPaths,
+  readCheckedHostRunFile,
   writeVerifiedOwnedFile,
 } from "../../core/host-runs/host-run-files";
 import {
@@ -46,6 +47,7 @@ import {
   HOST_RUN_SUPERVISOR_PLAN_FORMAT,
   hostRunCancelBodySchema,
   hostRunLaunchEnvironment,
+  hostRunQualificationBodySchema,
   hostRunReportBodySchema,
   hostRunStatusBodySchema,
   hostRunSubmitBodySchema,
@@ -57,6 +59,12 @@ import {
   type HostRunFact,
   type HostRunSupervisorPlan,
 } from "../../core/host-runs/host-run-wire";
+import {
+  QUALIFICATION_FOUNDATION_INCOMPLETE,
+  type QualificationRefusalCode,
+  type QualificationSubjectResolve,
+} from "../../core/host-runs/qualification-subject";
+import { qualificationEnvironmentDigest, type QualificationBinding } from "../../shared/schema/review/proof";
 import {
   listSubmissionRunIds,
   readStoredSubmission,
@@ -123,6 +131,7 @@ import {
   type HostRunOutputFailureSummary,
 } from "../../core/host-runs/host-run-output-failures";
 import { spawnDetachedSupervisor } from "../../core/qa/supervisor-process";
+import type { RetainedDetachedSupervisor } from "../../core/qa/supervisor-process";
 import {
   hostRunSocketPath,
 } from "../../core/host-runs/host-run-paths";
@@ -134,14 +143,44 @@ import {
 
 export { HOST_RUN_CLIENT_PROTOCOL_VERSION, HOST_RUN_MAX_REQUEST_BYTES, HOST_RUN_OUTPUT_CHUNK_BYTES, HOST_RUN_OUTPUT_RETENTION_MS, HOST_RUN_RECONNECT_WINDOW_MS, HOST_RUN_UNLAUNCHED_GRACE_MS, HOST_RUN_CLIENT_LEFT_REASON, HOST_RUN_TERMINATION_GRACE_MS, HOST_RUN_TOKEN_GRACE_MS, HOST_RUN_ATTACH_POLL_MS, HOST_RUN_SUPERVISOR_POLL_MS, HOST_RUN_SUPERVISOR_STATE_GRACE_MS, HOST_RUN_FACT_CACHE_BYTES, HOST_RUN_RETAINED_OUTPUT_BYTES, HostRunRetainedStream, HostRunSupervisorSpawn, HostRunClientErrorCode } from "../../core/host-runs/host-run-endpoint-types";
 
-/** Spawn the detached supervisor that outlives a Queue service roll. */
-function defaultSupervisorSpawn(plan: HostRunSupervisorPlan): void {
-  spawnDetachedSupervisor({
+/**
+ * Spawn the detached supervisor that outlives a Queue service roll. Spec 064 P2:
+ * a qualification plan's supervisor is retained through this parent's actual
+ * child exit for the whole attempt, so the service→S wait is observed, not
+ * inferred. Every ordinary plan keeps today's pid-only spawn.
+ */
+export function defaultSupervisorSpawn(
+  plan: HostRunSupervisorPlan,
+  retain?: (retained: RetainedDetachedSupervisor) => void,
+): void {
+  const launch = {
     entry: fileURLToPath(new URL("../../bin/queue-host-run-supervisor.mjs", import.meta.url)),
     argv: [plan.stateDir, plan.runId],
     failureMessage: "Nucleus could not start the detached host-run supervisor",
-  });
+  };
+  if (plan.qualification) {
+    const retained = spawnDetachedSupervisor({ ...launch, retainChild: true });
+    retain?.(retained);
+    return;
+  }
+  spawnDetachedSupervisor(launch);
 }
+
+/** What one qualification submit resolved to, and why it stopped there. */
+export interface HostRunQualificationOutcome {
+  /** The full binding this submit resolved; null when a refusal stopped it earlier. */
+  binding: QualificationBinding | null;
+  code: HostRunClientErrorCode;
+  refusal: string;
+}
+
+/**
+ * The qualification refusal vocabulary reads in Contract 010's existing client
+ * codes, so an older client sees a code it knows; the message carries which
+ * subject rule refused and on what evidence.
+ */
+const qualificationClientCode = (code: QualificationRefusalCode): HostRunClientErrorCode =>
+  code === "unauthenticated" || code === "not_permitted" ? "not_permitted" : "invalid";
 
 // ---------------------------------------------------------------------------
 // The endpoint
@@ -166,6 +205,12 @@ export interface HostRunEndpointOptions {
   maintenanceIntervalMs?: number;
   /** Adopt the front a warm standby already started, or start a dedicated front. */
   front?: HostRunFront | "start";
+  /**
+   * Spec 064 P1: the qualification subject authority. It authenticates the
+   * executor-run credential and resolves the immutable subject before any submit
+   * write. Absent, a qualification submit refuses before any effect.
+   */
+  qualification?: QualificationSubjectResolve;
 }
 
 export class HostRunEndpoint {
@@ -192,6 +237,10 @@ export class HostRunEndpoint {
   private readonly supervisorSpawn: HostRunSupervisorSpawn;
   private readonly supervisorPollMs: number;
   private readonly maintenanceIntervalMs: number;
+  /** Spec 064 P1: the qualification subject authority, when this endpoint holds one. */
+  private readonly qualification: QualificationSubjectResolve | null;
+  /** Spec 064 P2: the service's retained wait for a qualification supervisor S, per run. */
+  private readonly retainedSupervisors = new Map<string, RetainedDetachedSupervisor>();
   private keys: HostRunTokenKeys | null = null;
   private authorityError: string | null = null;
   private readonly sockets = new Set<Socket>();
@@ -209,9 +258,12 @@ export class HostRunEndpoint {
     this.terminationGraceMs = options.terminationGraceMs ?? HOST_RUN_TERMINATION_GRACE_MS;
     this.tokenGraceMs = options.tokenGraceMs ?? HOST_RUN_TOKEN_GRACE_MS;
     this.maxRequestBytes = options.maxRequestBytes ?? HOST_RUN_MAX_REQUEST_BYTES;
-    this.supervisorSpawn = options.supervisorSpawn ?? defaultSupervisorSpawn;
+    this.supervisorSpawn = options.supervisorSpawn ?? (plan => defaultSupervisorSpawn(plan, retained => {
+      this.retainedSupervisors.set(plan.runId, retained);
+    }));
     this.supervisorPollMs = options.supervisorPollMs ?? HOST_RUN_SUPERVISOR_POLL_MS;
     this.maintenanceIntervalMs = options.maintenanceIntervalMs ?? 30_000;
+    this.qualification = options.qualification ?? null;
     const endpoint = this;
     this.servingOwner = new HostRunServing({
       get scheduler() { return endpoint.scheduler; },
@@ -437,6 +489,13 @@ export class HostRunEndpoint {
     try {
       switch (method) {
         case "submit": this.writeResponse(socket, this.onSubmit(id, request.body)); return;
+        case "submitQualification":
+          // The qualification submit resolves asynchronously (source recheck) and
+          // never touches the scheduler before it refuses.
+          void this.submitQualification(request.body)
+            .then(outcome => this.writeResponse(socket, this.failure(id, outcome.code, outcome.refusal)))
+            .catch(error => this.writeResponse(socket, this.failure(id, hostRunRefusal(error)?.code ?? "invalid", errorText(error))));
+          return;
         case "cancel": this.writeResponse(socket, this.onCancel(id, request.body)); return;
         case "status": this.writeResponse(socket, this.onStatus(id, request.body)); return;
         case "report": this.writeResponse(socket, this.onReport(id, request.body)); return;
@@ -490,6 +549,46 @@ export class HostRunEndpoint {
     const record = this.scheduler.submit(this.schedulerInput(stored), this.handlerFor(stored));
     this.watch.watchRun(runId);
     return this.success(id, { runId, state: record.state === "queued" ? "queued" : "admitted", ...(record.position != null ? { position: record.position } : {}) });
+  }
+
+  /**
+   * Spec 064 P1: resolve one qualification submit's immutable subject and command
+   * identity from the executor run's own credential, before any submit write.
+   *
+   * Brief amendment (2026-11-16): until Spec 064 P4–P7 land their named
+   * missing-input refusal, real qualification proof mode stays inaccessible. This
+   * method therefore refuses with `qualification foundation incomplete` in every
+   * case, and an authenticated, matched subject refuses *after* resolving its full
+   * binding so the refusal can name exactly what it would have recorded. Nothing
+   * is written, no run is submitted and no supervisor is spawned.
+   */
+  async submitQualification(body: unknown): Promise<HostRunQualificationOutcome> {
+    const parsed = hostRunQualificationBodySchema.safeParse(body);
+    if (!parsed.success)
+      return { binding: null, code: "invalid", refusal: parsed.error.issues.map(issue => `${issue.path.join(".")}: ${issue.message}`).join("; ") };
+    let epoch: number;
+    try { epoch = this.scheduler.authority().epoch; }
+    catch (error) { return { binding: null, code: "stale_epoch", refusal: errorText(error) }; }
+    const resolve = this.qualification;
+    if (!resolve)
+      return {
+        binding: null, code: "not_permitted",
+        refusal: `${QUALIFICATION_FOUNDATION_INCOMPLETE}: this endpoint holds no executor-run credential authority, so no qualification subject can be resolved and nothing was written`,
+      };
+    // The host run identity comes from the authenticated executor run, not from
+    // the client-supplied caller the body may carry.
+    const hostRunId = submissionRunId(parsed.data.credential.runId, parsed.data.submission.clientRequestId);
+    const resolved = await resolve({ ...parsed.data, hostRun: { id: hostRunId, epoch }, environment: this.env });
+    if (resolved.state === "refused") return { binding: null, code: qualificationClientCode(resolved.code), refusal: resolved.refusal };
+    return {
+      binding: resolved.binding, code: "not_permitted",
+      refusal: `${QUALIFICATION_FOUNDATION_INCOMPLETE}: the subject and command identity for ${hostRunId} resolved and nothing was written; real qualification proof mode is refused until Spec 064 P4–P7 land their named missing-input refusal`,
+    };
+  }
+
+  /** Spec 064 P2: the service's retained S wait for one qualification run, if this endpoint spawned it. */
+  retainedSupervisor(runId: string): RetainedDetachedSupervisor | null {
+    return this.retainedSupervisors.get(runId) ?? null;
   }
 
   /** Why a run's durable submission refusal is a client conflict, not a missing run. */
@@ -565,6 +664,18 @@ export class HostRunEndpoint {
     if (launched.state !== "running" || !launched.launchedAt) return;
     const token = this.tokenForRun(launched, stored);
     const launchEnv = hostRunLaunchEnvironment(listedEnv, { runId: launched.id, token, env: this.env });
+    const qualification = stored.body.qualification ?? null;
+    // Spec 064 P1: the effective environment values are re-read here, before any
+    // effect, and must be the values the submit resolved. A changed PATH/HOME (a
+    // rolled service with a different environment) is a different execution.
+    if (qualification?.execution) {
+      const values: Record<string, string> = {};
+      for (const key of qualification.execution.environmentKeys) values[key] = launchEnv[key] ?? "";
+      if (qualificationEnvironmentDigest(values) !== qualification.execution.environmentDigest) {
+        this.scheduler.rejectBeforeLaunch(launched.id, `The effective environment values no longer match the qualification binding's digest for ${launched.id}; the submit is refused before any effect`);
+        return;
+      }
+    }
     writeHostRunLaunchEnv(this.stateDir, launched.id, launchEnv);
     const plan: HostRunSupervisorPlan = {
       format: HOST_RUN_SUPERVISOR_PLAN_FORMAT, version: 1, stateDir: this.stateDir,
@@ -572,6 +683,10 @@ export class HostRunEndpoint {
       envKeys: Object.keys(launchEnv).sort(),
       runTimeoutMs: launched.runTimeoutMs, graceMs: this.terminationGraceMs,
       startedAt: launched.launchedAt,
+      // Spec 064 P1/P3: a qualification plan carries its binding and its stop
+      // mode, so the supervisor and a later cancel read the same stop the submit
+      // resolved. An ordinary plan keeps today's exact shape.
+      ...(qualification ? { stopMode: "qualification_direct" as const, qualification } : {}),
     };
     writeVerifiedOwnedFile(this.stateDir, ["runs", launched.id, "supervisor.plan.json"], JSON.stringify(hostRunSupervisorPlanSchema.parse(plan)), 0o600);
     this.supervisorSpawn(plan);
@@ -665,9 +780,11 @@ export class HostRunEndpoint {
     if (submitted || (run.processGroupId && run.startIdentity))
       this.scheduler.note(runId, "request", { method: "host.run.cancel", input: { runId, reason } });
     // A run this endpoint launched is stopped through its supervisor's durable
-    // cancel request, so a Queue roll cannot lose the stop.
+    // cancel request, so a Queue roll cannot lose the stop. Spec 064 P3: the
+    // request persists the plan's stop mode, so a qualification run's stop stays
+    // the direct-command-only stop after any roll.
     if (submitted) {
-      writeHostRunCancelRequest(this.stateDir, runId, reason, new Date(this.nowMs()).toISOString());
+      writeHostRunCancelRequest(this.stateDir, runId, reason, new Date(this.nowMs()).toISOString(), this.runStopMode(runId));
       this.watch.watchRun(runId);
       return run;
     }
@@ -675,6 +792,20 @@ export class HostRunEndpoint {
       return signalProcessGroupByLeader(run.processGroupId, run.pid, run.startIdentity, "SIGTERM") ? run : null;
     }
     return null;
+  }
+
+  /**
+   * The stop mode this run's private plan records, read from the plan itself so a
+   * rolled service persists the same stop the run was launched with. An absent or
+   * unreadable plan is Contract 010's group stop, unchanged.
+   */
+  private runStopMode(runId: string): "group" | "qualification_direct" {
+    const raw = readCheckedHostRunFile(this.stateDir, ["runs", runId, "supervisor.plan.json"]);
+    if (!raw) return "group";
+    try {
+      const plan = hostRunSupervisorPlanSchema.parse(JSON.parse(raw.toString("utf8")));
+      return plan.stopMode === "qualification_direct" ? "qualification_direct" : "group";
+    } catch { return "group"; }
   }
 
   // -- status ---------------------------------------------------------------

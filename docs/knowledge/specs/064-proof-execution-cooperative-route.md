@@ -1,7 +1,7 @@
 # 064 — Proof execution under cooperative qualification
 
-Status: conditional proposal
-Scope: one future route proposal; no implementation or proof activation
+Status: implemented in part — P1–P3 landed behind a staged refusal; P4–P7 proposed
+Scope: the route's seams; P1–P3 are code, the rest is still design and no proof activation
 
 ## Authority and changed premises
 
@@ -38,8 +38,42 @@ records that provenance and its limits
 inspection, a conditional design and a written refusal plan; it supplies no
 native measurements, qualification credit, new provider or execution authority.
 
-## One assessed route and its exact surface
+## Implementation status (tranche 1, 2026-11-16)
 
+Tom's board decision `32e856b8-8e7d-4224-b541-1774efcf2363` v2 implements this
+proposal in three tranches. The first tranche implements **P1, P2 and P3** at the
+seams named below. **P4–P7 remain unimplemented**, and no qualification proof
+runs: the mode is opt-in, and with it absent every host-run, QA and proof
+behaviour is unchanged.
+
+- **P1** — the qualification binding (subject and execution halves, plus a
+  canonical environment-value digest) lives in `shared/schema/review/proof.ts`,
+  is carried by `runSchema.proofExecution` from `runIntent`, is recordable in
+  `hostRunSupervisorPlanSchema`, and is resolved by the endpoint's private
+  `submitQualification` from the executor run's own credential — never from a
+  host-run token or a client-supplied caller. `verifyProofSource` is rechecked
+  before the submit and again before acceptance
+  (`core/intake/callback-intake.ts`).
+- **P2** — `spawnDetachedSupervisor` has an opt-in retained-child return, so the
+  service holds S's actual child exit for the whole attempt, and
+  `executeHookProgram` records its own direct-command exit observation
+  (`onChildExit`/`directChildWait`, both start identities) before any group
+  settlement. The supervisor retains that observation.
+- **P3** — `stopMode: qualification_direct` is on the private plan and on
+  `ExecutionRequest`: TERM to the still-held direct command only, with no group
+  signal, no escaped-descendant signal and no KILL escalation. `cancelRun`
+  persists the mode in the durable cancel request.
+
+Staged refusal (brief amendment, 2026-11-16): until P4–P7 land their named
+missing-input refusal, real qualification proof mode is inaccessible. Both mode
+entries — `submitQualification` and the supervisor's qualification plan — refuse
+before any effect with `qualification foundation incomplete`, and the resolved
+binding is never written. Authentication alone never starts a proof and never
+implies readiness. The first-effect clock, provider evidence, censuses, waits and
+closure are still absent, so nothing here is qualification credit, fit or a hold
+release.
+
+## One assessed route and its exact surface
 The smallest route assessed is to bind the existing proof executor's subject
 to one existing host-run submission, retain that run's output and settlement,
 then accept its evidence through the existing authenticated proof callback.
