@@ -3107,7 +3107,10 @@ movement invalidates source approval and preserves the normal readiness gates.
   process whose known parent is outside the tree is not the task's, whatever
   its own readability. Process facts carry the process state from the same
   read, and a zombie (`Z`) is never judged: it holds no tools, owns no working
-  directory, and only its parent can reap it.
+  directory, and only its parent can reap it. A process whose inspection proves
+  it exited between the listing and its inspection leaves the table instead of
+  blocking with an unreadable fact; only a genuinely unreadable read stays
+  unknown.
   Those runtimes take two facts from the listing, never a provider
   name list: the program is one the provider ships (inside an application bundle
   such as `Foo.app/Contents/…`, or beside the provider's own executable under

@@ -448,6 +448,8 @@ function isZombieProcess(process: { state?: string | null }): boolean {
 /** Live process facts that keep a finished-turn shell tool from being settled. */
 export function workspaceToolProcessIssue(processes: Array<{ pid: number; ppid?: number | null; state?: string | null; command: string; cwd: string | null }>, directory: string, runIds: readonly string[]): string | null {
   if (!runIds.length) return 'the participant has no recorded run identity for process proof';
+  // Exited processes never arrive: the readers drop a process whose inspection
+  // proves it is gone. What remains is filtered for zombies here.
   const live = processes.filter(process => !isZombieProcess(process));
   const malformedHelpers = new Set<number>();
   for (const process of live) {
