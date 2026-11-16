@@ -823,8 +823,9 @@ presentation is the group plus the title.
 
 ## Experimental API inventory
 
-Every surface below still carries an `experimental_` prefix. Each row names what breaks if it
-changes.
+Every surface below carries an `experimental_` prefix unless its row says otherwise — the
+`provider-usage.v1` contract and the provider catalog read are versioned by their owners, not prefixed.
+Each row names what breaks if it changes.
 
 | Experimental API | Why the design needs it | What breaks if it changes |
 | --- | --- | --- |
