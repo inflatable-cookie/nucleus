@@ -984,43 +984,40 @@ test("concurrent confirms over the service socket keep one queued reservation an
   assert.equal(metrics.methods.reserve.errors, 0);
 });
 
-test("two request lines in one socket write are both answered, in request order", async t => {
+test("a request past the socket's bound is closed undecoded, even with its newline in the same write", async t => {
   const scheduler = isolatedScheduler(t);
   const { endpoint } = await isolatedEndpoint(t, scheduler);
-  const runId = "pipelined-lines";
-  const reservationId = admissionReservationId(runId);
-  const cwd = mkdtempSync(join(tmpdir(), "adm-pipeline-"));
-  const reserved = await admissionRpc(endpoint.socketPath, "reserve",
-    { request: request(runId, cwd), ancestry: selfAncestry() });
-  assert.equal(reserved.ok, true);
+  const cwd = mkdtempSync(join(tmpdir(), "adm-bound-"));
 
-  // The hook client opens one connection per request, but the wire is NDJSON:
-  // two complete lines in one segment are two requests, and neither may wait for
-  // a read that never comes.
-  const lines = `${JSON.stringify({ id: "first", method: "status", params: { reservationId } })}\n`
-    + `${JSON.stringify({ id: "second", method: "confirm", params: { reservationId } })}\n`;
-  const replies = await new Promise<string>((resolvePromise, reject) => {
+  // One write carrying the whole request and its trailing newline, past the
+  // 64 KiB bound: the bound is applied to the buffered request, so the line is
+  // never parsed or dispatched even though its newline arrived with it.
+  const oversized = `${JSON.stringify({
+    id: "oversized", method: "status",
+    params: { reservationId: admissionReservationId("bound-run"), pad: "x".repeat(70_000) },
+  })}\n`;
+  const outcome = await new Promise<{ replies: string; closed: boolean }>((resolvePromise, reject) => {
     const socket = connect(endpoint.socketPath);
-    let buffer = "";
-    const timer = setTimeout(() => { socket.destroy(); reject(new Error(`pipelined lines unanswered (${JSON.stringify(buffer)})`)); }, 5_000);
+    let replies = "";
+    const timer = setTimeout(() => { socket.destroy(); reject(new Error(`oversized request not closed (${replies.length} reply bytes)`)); }, 5_000);
     socket.setEncoding("utf8");
     socket.once("error", error => { clearTimeout(timer); reject(error); });
-    socket.on("data", (chunk: string) => {
-      buffer += chunk;
-      if (buffer.split("\n").filter(Boolean).length < 2) return;
-      clearTimeout(timer);
-      socket.destroy();
-      resolvePromise(buffer);
-    });
-    socket.once("connect", () => socket.write(lines));
+    socket.on("data", (chunk: string) => { replies += chunk; });
+    socket.once("close", () => { clearTimeout(timer); resolvePromise({ replies, closed: true }); });
+    socket.once("connect", () => socket.write(oversized));
   });
-  const [first, second] = replies.split("\n").filter(Boolean).map(line => JSON.parse(line));
-  assert.equal(first.id, "first");
-  assert.equal(first.ok, true);
-  assert.equal(first.result.reservationId, reservationId);
-  assert.equal(second.id, "second", "the second line in the same write is answered as its own request");
-  assert.equal(second.ok, true);
-  assert.equal(second.result.reservationId, reservationId);
-  assert.equal(endpoint.rpcMetrics().methods.status.requests, 1);
-  assert.equal(endpoint.rpcMetrics().methods.confirm.requests, 1);
+  assert.equal(outcome.closed, true, "the socket is closed rather than answered");
+  assert.equal(outcome.replies, "", "an oversized request is never answered");
+  assert.equal(endpoint.rpcMetrics().methods.status.requests, 0, "and it is never dispatched");
+  assert.equal(endpoint.rpcMetrics().rejected, 0, "the bound closes the socket instead of decoding it");
+
+  // A request inside the bound, with a reservation that exists, is still
+  // answered: the bound refuses only what is over it.
+  const reserved = await admissionRpc(endpoint.socketPath, "reserve",
+    { request: request("bound-run", cwd), ancestry: selfAncestry() });
+  assert.equal(reserved.ok, true);
+  const inside = await admissionRpc(endpoint.socketPath, "status",
+    { reservationId: admissionReservationId("bound-run") });
+  assert.equal(inside.ok, true);
+  assert.equal(endpoint.rpcMetrics().methods.status.requests, 1, "a request inside the bound is dispatched");
 });

@@ -24,7 +24,7 @@ import { connect, createServer, type Server, type Socket } from "node:net";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { z } from "zod";
-import { HOST_RUN_SOCKET_LEAF, HOST_RUN_STAGED_SOCKET_LEAF, hostRunSocketPath, hostRunStagedSocketPath, isHostRunOwnedSocketLeaf } from "./host-run-paths";
+import { HOST_RUN_SOCKET_LEAF, HOST_RUN_STAGED_SOCKET_LEAF, hostRunSocketPath, hostRunStagedSocketPath, isHostRunInnerSocketLeaf } from "./host-run-paths";
 export const HOST_RUN_AUTHORITY_FORMAT = "host.run.authority";
 
 function homeDirectory(env: NodeJS.ProcessEnv): string {
@@ -644,7 +644,8 @@ export function readHostRunAuthority(stateDir = defaultHostRunStateDir()): HostR
 /** Verify the socket with the verified chain: `lstat` the chain, then re-`lstat` root and target. */
 export function hostRunSocketIsOwnerOnly(stateDir = defaultHostRunStateDir(), socketLeaf = HOST_RUN_SOCKET_LEAF): boolean {
   try {
-    if (!isHostRunOwnedSocketLeaf(socketLeaf)) return false;
+    if (socketLeaf !== HOST_RUN_SOCKET_LEAF && socketLeaf !== HOST_RUN_STAGED_SOCKET_LEAF
+      && !isHostRunInnerSocketLeaf(socketLeaf)) return false;
     const root = realpathSync(stateDir);
     const entries = statTraversalChain(root, ["run", socketLeaf], "socket");
     // A Unix socket cannot be opened; the post-open rule is a second `lstat` of

@@ -14,10 +14,12 @@ import {createHash} from 'node:crypto';
 import {startCallbacks} from '../service/callbacks/callback';
 import type {Adapter} from '../core/host';
 
-test('callback socket answers each refusal with its own status, and rejects an untyped call as a conflict',async()=>{
- // The socket is the boundary: a body it cannot decode is the caller's 400, a
- // credential it does not accept is a 401, and a well-formed call the engine
- // refuses is a 409. None of these is chosen by matching the error message.
+test('callback socket keeps every refusal status and picks it from the refusal itself',async()=>{
+ // The socket is the boundary and the statuses are the ones it already answered:
+ // an unlisted route is a 404, a body past its route's bound a 413, a credential
+ // this service does not accept a 401, and everything else (a body it cannot
+ // decode, a schema-invalid request, an engine refusal) a 409. None of them is
+ // chosen by matching an error message.
  const dir=realpathSync(mkdtempSync(join(tmpdir(),'ns-callback-status-'))),socketPath=join(dir,'s');
  const store=new Store(join(dir,'queue.sqlite'));
  const engine=new Engine(store,{observe:observeIdle('ws','worker')} as unknown as Adapter);
@@ -32,8 +34,10 @@ test('callback socket answers each refusal with its own status, and rejects an u
   const unknown=await call('/no-such-route','{}');
   assert.equal(unknown.status,404,'an unlisted route is not found, and the route table is the allowlist');
   const malformed=await call('/complete','not json');
-  assert.equal(malformed.status,400,'a body this socket cannot decode is the caller\'s to correct');
+  assert.equal(malformed.status,409,'a body this socket cannot decode keeps its existing refusal status');
   assert.match(malformed.body,/not json|Unexpected/i,'the refusal still says what the body was');
+  const invalidShape=await call('/complete',JSON.stringify({eventId:'a'.repeat(64)}));
+  assert.equal(invalidShape.status,409,'a schema-invalid request keeps its existing refusal status');
   const oversized=await call('/task-next',JSON.stringify({pad:'x'.repeat(70_000)}));
   assert.equal(oversized.status,413,'a body past its route\'s own bound keeps the socket\'s 413');
   const unauthorized=await call('/complete',JSON.stringify({eventId:'a'.repeat(64),taskId:'task',runId:'run',status:'blocked',summary:'Fixture'}));

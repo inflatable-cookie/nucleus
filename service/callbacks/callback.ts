@@ -124,24 +124,17 @@ class CallbackBodyTooLarge extends Error {
   constructor() { super("Callback too large"); }
 }
 
-/** A body that is not JSON at all: the caller's own malformed input, never a conflict. */
-class CallbackBodyMalformed extends Error {
-  constructor(error: unknown) {
-    super(error instanceof Error ? error.message : "Callback body is not JSON");
-  }
-}
-
 /**
- * The status one refused callback becomes. A body past its bound is the 413 the
- * socket has always answered, a body it cannot decode is a 400 the caller must
- * correct, a credential this service does not accept is a 401, and the engine's
- * refusal of a well-formed call (a conflict with the task's current state) is a
- * 409. The engine's internal faults still answer 409: giving them their own
- * class is a follow-up, not a rule this socket may invent.
+ * The status one refused callback becomes, and the one place it is chosen: the
+ * oversized body answers the 413 it always has, a credential this service does
+ * not accept is a 401 the store's own refusal class names, and every other
+ * refusal keeps the socket's existing 409 — a malformed body, a schema-invalid
+ * request, and the engine's refusal of a well-formed call alike. Nothing here
+ * matches an error message. Answering a malformed body with a 400 of its own is
+ * a behaviour change this structural task does not make (follow-up: see PR).
  */
 function callbackStatus(error: unknown): number {
   if (error instanceof CallbackBodyTooLarge) return 413;
-  if (error instanceof z.ZodError || error instanceof CallbackBodyMalformed) return 400;
   if (error instanceof UnauthorizedCallbackError) return 401;
   return 409;
 }
@@ -155,11 +148,6 @@ async function readCallbackBody(req: IncomingMessage, limit: number): Promise<st
     chunks.push(Buffer.from(chunk));
   }
   return Buffer.concat(chunks).toString();
-}
-
-function parseCallbackBody(body: string): unknown {
-  try { return JSON.parse(body); }
-  catch (error) { throw new CallbackBodyMalformed(error); }
 }
 
 export async function startCallbacks(socketPath: string, helperPath: string, engine: Engine) {
@@ -258,7 +246,7 @@ export async function startCallbacks(socketPath: string, helperPath: string, eng
     const auth = req.headers.authorization;
     if (!auth?.startsWith("Bearer ")) { res.writeHead(401).end('{"error":"Unauthorized callback"}'); return; }
     try {
-      const input = parseCallbackBody(await readCallbackBody(req, route.bodyBytes));
+      const input = JSON.parse(await readCallbackBody(req, route.bodyBytes));
       res.end(JSON.stringify(await route.handle(input, auth.slice(7))));
     } catch (error) {
       const message = error instanceof Error ? error.message : "Invalid callback";

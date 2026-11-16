@@ -168,7 +168,7 @@ function isolatedScheduler(t: { after: (fn: () => void) => void }, options: Host
 async function isolatedEndpoint(
   t: { after: (fn: () => void | Promise<void>) => void },
   scheduler: HostRunScheduler,
-  options: Partial<EffigyAdmissionEndpointOptions> = {},
+  options: EffigyAdmissionEndpointOptions = {},
 ): Promise<{ project: string; endpoint: EffigyAdmissionEndpoint }> {
   const root = mkdtempSync(join(tmpdir(), "qah-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
