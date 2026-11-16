@@ -90,7 +90,7 @@ export const projectQaRecovery = {
     let failedStep: ProjectQaStepName | null = state?.failedStep ?? run.failedStep;
     const interruptedStep = state?.inFlight ?? null;
     let detail = state?.detail ?? run.outputTail;
-    detail = `${detail}${detail ? "\n" : ""}Queue backend lost this QA run (${reason}).`;
+
     if (interruptedStep) detail = `${detail}${detail ? " " : ""}The ${interruptedStep} step was in flight when the supervisor died.`;
     let logWriteErrors = mergeLogWriteErrors(run.logWriteErrors, state?.logWriteErrors);
     let teardownFailed = false;
@@ -135,6 +135,7 @@ export const projectQaRecovery = {
         detail += `\nQA checkout cleanup failed: ${String(error)}`;
       }
     }
+    detail = `${detail}${detail ? "\n" : ""}Queue backend lost this QA run (${reason}).`;
     const durationMs = Math.max(0, Date.now() - Date.parse(run.startedAt));
     const current = this.store.qaRun(run.id);
     if (current?.state === "running") await this.settle(current, {

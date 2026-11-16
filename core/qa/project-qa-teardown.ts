@@ -1,3 +1,4 @@
+import { writeQaStepLogAsync } from "./project-qa-async-io";
 import { existsSync } from "node:fs";
 import {
   type ProjectQaRun,
@@ -8,7 +9,6 @@ import {
   QA_SUPERVISION_SCHEMA,
   QA_SUPERVISION_SCHEMA_VERSION,
   qaStepLogPaths,
-  writeQaStepLog,
   type QaSupervisionState,
 } from "./project-qa-supervision-files";
 import {
@@ -38,9 +38,9 @@ export async function runQaTeardownRetry(
     steps: [...retry.priorSteps], failedStep: null, logWriteErrors: [], detail: `Teardown retry: ${retry.reason}`,
     escapedDescendants: [], cancelReason: retry.priorCancelReason, result: null,
   };
-  let stop: (() => void) | undefined;
+  let stop: (() => void | Promise<void>) | undefined;
   try {
-    io.persist(state);
+    await io.persist(state);
     stop = io.begin?.(state);
     let teardownFailed = false;
     let teardownCompleted = Boolean(retry.cleanupOnly);
@@ -48,14 +48,17 @@ export async function runQaTeardownRetry(
       run.checkoutAdmission?.();
       if (existsSync(run.checkoutPath) && !retry.cleanupOnly) {
         const env = await io.environment?.(`project-qa:${run.runId}`, run.checkoutPath);
-        state.inFlight = "teardown"; state.pendingProcessIdentity = base.identityToken; io.persist(state);
+        state.inFlight = "teardown"; state.pendingProcessIdentity = base.identityToken; await io.persist(state);
+        let spawnPersistence: Promise<void> = Promise.resolve();
         const teardown = await io.hook(retry.command, run.checkoutPath, spawned => {
           state.activeProcess = { step: "teardown", pid: spawned.pid, processGroupId: spawned.processGroupId,
             startIdentity: spawned.startIdentity, leaderStartIdentity: spawned.leaderStartIdentity,
             startedAt: new Date(io.now()).toISOString() };
           state.pendingProcessIdentity = null;
-          io.persist(state);
+          spawnPersistence = Promise.resolve(io.persist(state));
+          void spawnPersistence.catch(() => {});
         }, false, env);
+        await spawnPersistence;
         state.inFlight = null;
         state.activeProcess = null;
         state.pendingProcessIdentity = null;
@@ -64,9 +67,9 @@ export async function runQaTeardownRetry(
         // attempt-numbered log so the original failed attempt's log is never overwritten.
         const attempt = state.steps.filter(step => step.name === "teardown").length + 1;
         const logs = qaStepLogPaths(run.runRoot, run.runId, `teardown-attempt-${attempt}`);
-        const writeLog = io.log ?? writeQaStepLog;
-        const stdoutLog = writeLog(logs.stdoutPath, teardown.stdout);
-        const stderrLog = writeLog(logs.stderrPath, teardown.stderr);
+        const writeLog = io.log ?? writeQaStepLogAsync;
+        const stdoutLog = await writeLog(logs.stdoutPath, teardown.stdout);
+        const stderrLog = await writeLog(logs.stderrPath, teardown.stderr);
         for (const [stream, log] of [["stdout", stdoutLog], ["stderr", stderrLog]] as const)
           if (log.error) {
             state.detail = `${state.detail}${state.detail ? "\n" : ""}Full-output log for teardown retry (${stream}) could not be written: ${log.error}`;
@@ -88,7 +91,7 @@ export async function runQaTeardownRetry(
     }
     // Task 191: a retried teardown can strand its own escapees too.
     await reapPipelineEscapees(state, run);
-    io.persist(state);
+    await io.persist(state);
     if (!teardownFailed) {
       try {
         await removeQaWorkspace({ registeredPath: run.registeredPath, checkoutPath: run.checkoutPath, admission: run.checkoutAdmission, expectedHead: run.base });
@@ -108,12 +111,12 @@ export async function runQaTeardownRetry(
     const checkoutCleanupPending = Boolean(run.checkoutAdmission && teardownCompleted && teardownFailed);
     state.result = { state: stateName, exitCode: retry.qaExitCode, durationMs, detail: state.detail, finishedAt, hostResult: null,
       checkoutCleanupPending };
-    io.persist(state);
+    await io.persist(state);
     return { state: stateName, exitCode: retry.qaExitCode, durationMs, detail: state.detail, steps: state.steps, failedStep: state.failedStep,
       logWriteErrors: state.logWriteErrors, finishedAt, hostResult: null, escapedDescendants: state.escapedDescendants, cancelReason: state.cancelReason,
       checkoutCleanupPending };
   } finally {
-    stop?.();
+    await stop?.();
   }
 }
 

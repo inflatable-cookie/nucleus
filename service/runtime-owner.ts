@@ -1,3 +1,4 @@
+import { recordQaServiceLifecycle } from "../core/qa/project-qa-diagnostics";
 import { initializeWorkRoot } from "../core/workspaces/work-root.mjs";
 import { registerServiceRollRequest } from "./install/roll-request";
 import { currentServiceBuildId } from "../shared/service/build";
@@ -412,6 +413,7 @@ export class QueueRuntime {
         if (pidAlive(previous.pid)) throw new Error("Another Nucleus backend still owns this database");
       }
       this.store.setMeta("processOwner", { pid: process.pid, owner: this.owner });
+      recordQaServiceLifecycle(this.store, "start");
     });
     this.hostRegistry = new HostRegistry({
       read: () => this.store.getMeta<KnownHost[]>("hostRegistry") ?? [],
@@ -1013,6 +1015,7 @@ export class QueueRuntime {
   }
 
   recordServiceRoll(input: unknown): { recorded: number } {
+    recordQaServiceLifecycle(this.store, "roll");
     const roll = input as { fromBuild?: unknown; toBuild?: unknown } | null;
     const from = String(roll?.fromBuild ?? "unknown").slice(0, 64), to = String(roll?.toBuild ?? "unknown").slice(0, 64);
     let recorded = 0;

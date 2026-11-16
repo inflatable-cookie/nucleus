@@ -51,6 +51,8 @@ import { HOOK_TEST_TIMEOUT_MS, waitFor } from './support/budgets';
 import { frozenHostRunSettlementSchema } from './support/contract-010-frozen';
 import { buildConfiguredClone, materializeSeed, type GitSeed } from './support/git-seed';
 import type { QaPipelineOutcome } from '../core/qa/project-qa-pipeline';
+import { recordQaServiceLifecycle } from "../core/qa/project-qa-diagnostics";
+import { writeQaJsonAsync } from "../core/qa/project-qa-async-io";
 import { confirmStaleSupervisorHeartbeat } from '../core/machine/supervisor-watchdog';
 
 /** Every case starts from the same published one-commit repository. */
@@ -1430,17 +1432,37 @@ test('a live supervisor with a stale heartbeat is terminated only after unchange
       try { process.kill(supervisor.pid, 'SIGKILL'); } catch { /* the supervisor is already gone */ }
     }
   });
+  // Let this observer own the stale-stop proof; the original watcher must not
+  // race it to the stop while the real supervisor is deliberately frozen.
+  runner.inspectSupervisor = async () => ({ kind: "running", state: null });
+  recordQaServiceLifecycle(f.store, "start", new Date(Date.now() - 300_000).toISOString());
+  recordQaServiceLifecycle(f.store, "roll");
+  recordQaServiceLifecycle(f.store, "start");
   process.kill(supervisor.pid, 'SIGSTOP'); // freeze its event loop while preserving live identity
   assert.equal(supervisorLiveness(supervisor.pid, supervisor.identityToken).state, 'live', 'the stopped process still proves the run identity');
-  writeQaSupervision(statePath, { ...supervisor, heartbeatAt: new Date(Date.now() - 240_000).toISOString() });
+  const lastHeartbeatAt = new Date(Date.now() - 240_000).toISOString();
+  writeQaSupervision(statePath, { ...supervisor, heartbeatAt: lastHeartbeatAt });
+  await writeQaJsonAsync(qaSupervisionPaths(runRoot, started.id).heartbeatPath, {
+    runId: started.id, pid: supervisor.pid, identityToken: supervisor.identityToken, heartbeatAt: lastHeartbeatAt,
+  }, false);
   assert.ok(Date.now() - Date.parse(readQaSupervision(statePath)!.heartbeatAt) > 180_000, 'the durable heartbeat exceeds the shared stale threshold');
   await observer.reconcile(started.key, started.id); // first stale observation is never enough to kill
   assert.equal(supervisorLiveness(supervisor.pid, supervisor.identityToken).state, 'live');
   await new Promise(resolve => setTimeout(resolve, 5_100));
   const staleInspection = await observer.inspectSupervisor(f.store.qaRun(started.id)!);
   assert.equal(staleInspection.kind, 'dead');
-  if (staleInspection.kind === 'dead') assert.equal(staleInspection.staleStop, true);
-  await observer.reconcile(started.key, started.id); // same stale heartbeat confirms a stuck supervisor
+  if (staleInspection.kind === 'dead') {
+    assert.equal(staleInspection.staleStop, true);
+    const diagnostic = JSON.parse(staleInspection.reason.split("Supervisor diagnostics: ")[1]);
+    assert.equal(diagnostic.lastHeartbeatAt, lastHeartbeatAt);
+    assert.equal(diagnostic.supervisor.liveness, "live", "liveness is recorded before the stop");
+    assert.equal(diagnostic.stepInFlight, "qa");
+    assert.equal(diagnostic.processGroup.id, active.processGroupId);
+    assert.equal(diagnostic.processGroup.state, "not_empty");
+    assert.equal(diagnostic.serviceWindow.roll, "observed");
+    assert.equal(diagnostic.serviceWindow.restart, "observed");
+    await observer.reconcileLostRun(f.store.qaRun(started.id)!, staleInspection.state, staleInspection.reason, staleInspection.escapedDescendants);
+  }
 
   await waitFor(() => !['queued', 'running'].includes(f.store.qaRun(started.id)?.state ?? ''), 40_000, 'the stale-heartbeat run to settle');
   assert.equal(processGroupEmpty(active.processGroupId), true, 'the recorded QA process group is stopped');
@@ -1449,6 +1471,9 @@ test('a live supervisor with a stale heartbeat is terminated only after unchange
   assert.equal(settled.state, 'lost');
   assert.equal(settled.hostSettlement?.outcome, 'lost');
   assert.match(settled.outputTail, /stale for .* unchanged across checks 5000ms apart/i);
+  assert.match(settled.outputTail, /Supervisor diagnostics:/, "the lost settlement retains the diagnostic fields");
+  assert.match(settled.outputTail, /"lastHeartbeatAt":/);
+  assert.match(settled.outputTail, /"serviceWindow":/);
   assert.equal(settled.interruptedStep, 'qa', 'the in-flight step is named, not lost with the run');
   assert.equal(settled.failedStep, null);
   assert.deepEqual(settled.steps.map(step => step.name), ['setup', 'teardown'], 'the prior step is kept and teardown is its own step');

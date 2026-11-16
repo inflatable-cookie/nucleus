@@ -1,6 +1,8 @@
 import { realpathSync } from "node:fs";
 import { redactTokenBuffer } from "../machine/token-redactor";
-import { writeOwnedJson } from "../machine/owned-file.mjs";
+import { writeQaJsonAsync } from "./project-qa-async-io";
+import { PROJECT_QA_DETAIL_BYTES, readHostRunResult } from "./project-qa-supervision-files";
+import { tailWithTruncationMarker } from "../machine/output-retention";
 import type { ExecutionOutcome } from "../machine/process-exec";
 import { executeHookProgram } from "../machine/process-exec";
 import { minimalHookEnvironment } from "../hooks/hook-result";
@@ -12,16 +14,13 @@ import { hostRunLaunchEnvironment } from "../host-runs/host-run-wire";
 import { issueHostRunToken } from "../host-runs/host-run-token";
 import {
   qaSupervisionPaths,
-  writeHostRunResult,
   readQaCancelRequest,
-  writeQaSupervisionPlan,
-  writeQaSupervision,
   type QaSupervisionPlan,
   type QaSupervisionState,
 } from "./project-qa-supervision-files";
 import type { QaPipelineIo, QaSpawnedProcess } from "./project-qa-pipeline";
 
-/** How often a live supervisor refreshes its heartbeat in the supervision file. */
+/** How often a live supervisor refreshes its independent heartbeat file. */
 export const SUPERVISOR_HEARTBEAT_MS = 2_000;
 
 /** The real executors and durable file recording used by the detached supervisor. */
@@ -35,12 +34,20 @@ export const SUPERVISOR_HEARTBEAT_MS = 2_000;
  */
 export function detachedSupervisorIo(plan: QaSupervisionPlan, statePath: string, tokenHolder?: { hostRunToken?: string }): QaPipelineIo {
   const supervisorEnv = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
-  const { resultPath, cancelPath, planPath, cpuCoveragePath } = qaSupervisionPaths(plan.runRoot, plan.runId, plan.attempt);
+  const { resultPath, cancelPath, planPath, cpuCoveragePath, heartbeatPath } = qaSupervisionPaths(plan.runRoot, plan.runId, plan.attempt);
   let current: QaSupervisionState | null = null;
   let timer: NodeJS.Timeout | null = null;
   let cpuSampler: ProcessTreeCpuSampler | null = null;
   let finalCpu: ProcessTreeCpu | null = null;
-  const persist = (state: QaSupervisionState) => writeQaSupervision(statePath, state);
+  let writes = Promise.resolve();
+  let heartbeatWrite = Promise.resolve();
+  let heartbeatWriting = false;
+  const persist = (state: QaSupervisionState) => {
+    const snapshot = structuredClone({ ...state, detail: tailWithTruncationMarker(state.detail, PROJECT_QA_DETAIL_BYTES) });
+    const write = writes.then(() => writeQaJsonAsync(statePath, snapshot));
+    writes = write.catch(() => {});
+    return write;
+  };
   const redactExecution = async (execution: Promise<ExecutionOutcome>): Promise<ExecutionOutcome> => {
     const outcome = await execution;
     if (!plan.hostRunToken) return outcome;
@@ -58,14 +65,14 @@ export function detachedSupervisorIo(plan: QaSupervisionPlan, statePath: string,
     },
   });
   return {
-    environment: (eventId, root) => {
+    environment: async (eventId, root) => {
       if (!plan.hostRunToken) {
         const launchedAt = Date.parse(plan.startedAt);
         plan.hostRunToken = issueHostRunToken(plan.hostRunStateDir ?? defaultHostRunStateDir(), {
           runId: plan.runId, epoch: plan.epoch, class: plan.runClass, root: realpathSync(root),
           exp: launchedAt + plan.timeoutMs + HOST_RUN_TOKEN_GRACE_MS,
         });
-        writeQaSupervisionPlan(planPath, plan);
+        await writeQaJsonAsync(planPath, plan);
       }
       if (tokenHolder && plan.hostRunToken) tokenHolder.hostRunToken = plan.hostRunToken;
       return hostRunLaunchEnvironment(withRunTemporaryDirectory(minimalHookEnvironment(eventId), plan.temporaryDirectory), {
@@ -91,8 +98,10 @@ export function detachedSupervisorIo(plan: QaSupervisionPlan, statePath: string,
       ...(onOutput ? { onOutput } : {}),
     })),
     cancellation: () => readQaCancelRequest(cancelPath, plan.runId),
-    writeHostResult: result => { writeHostRunResult(resultPath, result); },
-    writeCpuCoverage: sidecar => { writeOwnedJson(cpuCoveragePath, sidecar); },
+    writeHostResult: async result => {
+      if (!readHostRunResult(resultPath, result.runId)) await writeQaJsonAsync(resultPath, result);
+    },
+    writeCpuCoverage: sidecar => writeQaJsonAsync(cpuCoveragePath, sidecar),
     persist,
     cpu: () => cpuSampler?.read() ?? finalCpu,
     begin: state => {
@@ -100,15 +109,21 @@ export function detachedSupervisorIo(plan: QaSupervisionPlan, statePath: string,
       cpuSampler = new ProcessTreeCpuSampler(plan.identityToken);
       cpuSampler.start();
       timer = setInterval(() => {
-        if (!current) return;
+        if (!current || heartbeatWriting) return;
         current.heartbeatAt = new Date().toISOString();
-        try { persist(current); } catch { /* a heartbeat that cannot write is retried next tick */ }
+        heartbeatWriting = true;
+        heartbeatWrite = writeQaJsonAsync(heartbeatPath, {
+          runId: current.runId, pid: current.pid, identityToken: current.identityToken, heartbeatAt: current.heartbeatAt,
+        }, false).catch(() => { /* retry next tick; a failed write never invents freshness */ })
+          .finally(() => { heartbeatWriting = false; });
       }, SUPERVISOR_HEARTBEAT_MS);
       timer.unref?.();
-      return () => {
+      return async () => {
         if (timer) clearInterval(timer);
         timer = null;
         finalCpu = cpuSampler?.stop() ?? null;
+        await heartbeatWrite;
+        await writes;
       };
     },
     now: Date.now,

@@ -127,6 +127,14 @@ ownership proof and created once more after a bounded backoff; two failures
 settle the run as a plain failure, never as an uncertain checkout retained for
 reconciliation. `project-qa-tap-failures.ts` owns failure parsing, identities
 and truncation.
+The supervisor awaits asynchronous durable lifecycle, step-log and result writes;
+its separate atomic heartbeat has no fsync and does not wait behind those writes.
+The heartbeat still comes from the supervisor event loop, so a hung loop remains
+subject to the unchanged stale-heartbeat watchdog. Lost-run detail retains the
+last heartbeat, pre-stop supervisor liveness, in-flight step and process-group
+state, plus starts and rolls in the heartbeat gap; incomplete service history
+is reported as unknown.
+
 `supervisor-process.ts` owns the detached supervisor's own process lifecycle — the
 launch shape and the stale stop with its proof — for milestone QA, project
 validation and the host-run endpoint alike, so neither family keeps its own copy.
