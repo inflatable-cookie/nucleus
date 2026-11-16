@@ -8,6 +8,12 @@ import { type CheckHistory, type GateEvidence, type CheckRequirementTransport, r
 import { api, repo } from './github-client';
 import { requestServiceRollAfterRepositorySync } from './roll-request';
 import { gitNulEach } from '../git/git-command';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { stat } from 'node:fs/promises';
+import { join } from 'node:path';
+
+const execFileAsync = promisify(execFile);
 
 export function classifyGithubMerge(p: {mergeable: string; mergeStateStatus: string}, updateBranchRequired: boolean, options: {advisoryChecks?: boolean} = {}): {wait: string; needsRebase?: true} {
   if (p.mergeable === 'CONFLICTING' || p.mergeStateStatus === 'DIRTY') return {wait: MERGE_CONFLICT_REASON, needsRebase: true};
@@ -195,7 +201,25 @@ async function syncIntegrationCheckout(t: Task, allowed: () => boolean, unchange
   if (!allowed()) throw new Error('Paused before local main update');
   await git(t.repoPath, 'merge', '--ff-only', remote);
   if (await git(t.repoPath, 'rev-parse', 'HEAD') !== remote || await gitStatus(t.repoPath, 'status', '--porcelain')) throw new Error('Integration synchronization did not leave a clean expected head');
+  await refreshSharedNodeModules(t, remote);
   return remote;
+}
+
+/** Keep task worktrees that link to the registered checkout's node_modules on its new npm lockfile. */
+async function refreshSharedNodeModules(t: Task, integrationHead: string): Promise<void> {
+  const mergeCommit = t.resolution.mergedCommit;
+  if (!mergeCommit) return;
+  const lockChanges = await git(t.repoPath, 'diff', '--name-only', `${mergeCommit}^1`, integrationHead, '--', 'package-lock.json', 'npm-shrinkwrap.json');
+  if (!lockChanges) return;
+  try { if (!(await stat(join(t.repoPath, 'node_modules'))).isDirectory()) return; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
+  try {
+    await execFileAsync('npm', ['ci'], { cwd: t.repoPath, maxBuffer: 10 * 1024 * 1024, timeout: 10 * 60 * 1000 });
+  } catch (error) {
+    const result = error as NodeJS.ErrnoException & { stderr?: string; stdout?: string };
+    const detail = result.stderr?.trim() || result.stdout?.trim() || result.message;
+    throw new Error(`Shared node_modules refresh failed with npm ci after ${lockChanges}: ${detail}`);
+  }
 }
 // Closeout may publish canonical Markdown below the three docs subtrees plus the
 // exact root docs front door; no other root docs path is admitted.
