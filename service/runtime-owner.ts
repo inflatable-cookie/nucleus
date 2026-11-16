@@ -605,10 +605,6 @@ export class QueueRuntime {
         return runtime.adapter;
       },
     });
-    this.plannerTickets = new ParticipantTickets(this.engine, {
-      socketPath: this.paseo.socketPath,
-      helperPath: this.paseo.helperPath,
-    });
     this.plannerTickets = new ParticipantTickets(this.engine, { socketPath: this.paseo.socketPath, helperPath: this.paseo.helperPath });
     // Task 1109: a task planner's participant ticket is issued before the question
     // that names it, so `question.answer` works on a host without per-thread identity.

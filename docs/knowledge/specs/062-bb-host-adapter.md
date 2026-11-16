@@ -729,8 +729,8 @@ cleaning up after Nucleus.
 
 **Identity.** The plugin announces the BB server's data directory, version and SDK version. The
 service derives `hostId = bb:<hash of the real data directory>` and registers that identity only
-after a read-only probe through the channel succeeds (`status.get`, `system.version`, and one
-`threads.list`). Reconnecting must prove the same recorded data directory; a different one refuses
+after a read-only probe through the channel succeeds (`status.get`, `system.version`, one
+`threads.list` and `hosts.list`, whose answer supplies the host ids the probe reports). Reconnecting must prove the same recorded data directory; a different one refuses
 by its exact field and takes the host offline. Version strings are diagnostics, never an allowlist: a
 newer BB whose SDK still satisfies the operations connects, and a changed required field refuses by
 name. The host kind is `bb`, selected per repository
@@ -874,7 +874,8 @@ is reachable.
 **Implemented (2026-11-16).** What landed, and where:
 
 - the declaration now carries the identity proof: `service/transport/server.ts` asks a
-  just-declared executor for `identity.probe` *before* it answers the declaration, validates the
+  just-declared executor for `identity.probe` (`status.get`, `system.version`, one `threads.list`,
+  `hosts.list`; every one a read) *before* it answers the declaration, validates the
   projection through `shared/service/host-channel.ts`, and hands the proved identity to the runtime
   (`bbHostVerified`). A probe that refuses, omits a field or answers a refused shape answers the
   declaration with `refused` and the field it names, and records that reason for health;
@@ -883,8 +884,15 @@ is reachable.
   a dropped connection and the health projection. A declaration naming a different data directory
   than the recorded one refuses by `dataDir` and takes the host offline: one service serves one BB
   host identity, so a moved data directory is a refusal, not a second host;
-- `HostRegistry.primary()` names the Paseo entry, so a BB host that registers first never displaces
-  the legacy unqualified `hostId`, the retired-observation scope or the daemon-identity guard;
+- `HostRegistry.primary()` names the Paseo entry and never falls back to whichever host registered
+  first, so a BB host that registers before the daemon bootstrap never displaces the legacy
+  unqualified `hostId`, the retired-observation scope or the daemon-identity guard — and never makes
+  that guard refuse the Paseo connection that follows;
+- a connection that closes between the identity proof and the registration is not installed: its
+  link is released and the claim the runtime just recorded is retired, so nothing reads online for a
+  connection that no longer exists;
+- the work-host decision: a registered BB host counts as a live host for liveness, presence and
+  health, and never as an available work host;
 - `service.health` carries a `bb` block (the registered identity, the announced BB and plugin-SDK
   versions, the probe's host list, and while offline the field-prefixed reason) and lists the
   identity in `hosts` as online or offline with that reason;

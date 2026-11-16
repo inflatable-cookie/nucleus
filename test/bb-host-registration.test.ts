@@ -103,6 +103,7 @@ class FakeExecutor {
     identity: { socketPath: string; credential: string },
     declaration: HostExecutorDeclaration,
     probe?: () => ProbeAnswer,
+    options: { closeAfterProbe?: boolean } = {},
   ): Promise<FakeExecutor> {
     return new Promise((resolve, reject) => {
       const socket = connect(identity.socketPath);
@@ -172,6 +173,9 @@ class FakeExecutor {
                   : { result: answer.result }),
               }),
             );
+            // The identity is answered and the plugin then goes away: the service must
+            // not install a claim for a connection that no longer exists.
+            if (options.closeAfterProbe) setImmediate(() => socket.destroy());
             return;
           }
           void client!.answer(request.input.op, request.input.input).then(
@@ -721,5 +725,54 @@ test("the registered BB adapter declares its composition and refuses every task-
       assert.match((error as Error).message, /phase 1/);
       return true;
     });
+  }
+});
+
+test("a connection that closes while its identity is verified leaves no registered link and no online claim", async () => {
+  const dir = socketFixtureDirectory("queue-service.sock");
+  const service = new QueueService({
+    owner: { dataDir: dir, timers: false },
+    fixture: "fake",
+  });
+  await service.start();
+  const info = readServiceInfo(dir)!;
+  const bridge = new ServiceClient({
+    socketPath: info.socketPath,
+    credential: info.credential,
+  });
+  const dataDir = `${dir}/bb-vanishing`;
+  const hostId = hostIdFromDataDir(dataDir);
+  try {
+    await bridge.connect();
+    // The probe is answered and the socket is dropped before the declaration's own
+    // answer can be written: the identity proof and the registration now race.
+    const vanishing = await FakeExecutor.open(
+      info,
+      declarationFor(dataDir),
+      undefined,
+      { closeAfterProbe: true },
+    ).then(
+      () => null,
+      (error: Error) => error,
+    );
+    assert.ok(vanishing instanceof Error, "the connection ended before the declaration was answered");
+    assert.deepEqual(service.hostExecutorIds(), [], "a closed connection is never the registered executor");
+    const health = await waitForHealth(
+      bridge,
+      (value) => value.bb?.online === false && Boolean(value.bb?.offlineReason),
+      "the claim the runtime recorded is retired",
+    );
+    assert.equal(health.bb!.online, false);
+    assert.deepEqual(
+      health.bb!.hosts.filter((entry) => entry.online).map((entry) => entry.hostId),
+      [],
+      "no host reads online after the close",
+    );
+    const listed = health.hosts?.find((entry) => entry.id === hostId);
+    assert.equal(listed?.state, "offline");
+    assert.match(listed?.reason ?? "", /closed/);
+  } finally {
+    await bridge.close();
+    await service.stop();
   }
 });

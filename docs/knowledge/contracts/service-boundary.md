@@ -206,9 +206,9 @@ connection, and an unknown delivery is never resent.
 
 Since Spec 062 phase 1 the role also registers a host, and the order is the
 identity proof. The service answers a declaration only after a read-only
-`identity.probe` (`system.version`, `hosts.list`, one `threads.list`) succeeds on
-that connection, and the probe's own real data directory must derive the declared
-identity. The runtime then records that data directory durably (`bbHostIdentity`)
+`identity.probe` (`status.get`, `system.version`, one `threads.list` and
+`hosts.list`, every one a read) succeeds on that connection, and the probe's own
+real data directory must derive the declared identity. The runtime then records that data directory durably (`bbHostIdentity`)
 and gives the identity one registry claim, one admission and breaker state; a
 declaration naming a different data directory refuses by `dataDir`, takes the BB
 host offline and registers nothing, because this service serves one BB host
@@ -1295,10 +1295,14 @@ Paseo identity is recorded first; subsequent T3 reconnects are independent.
 
 A BB host registers from the reverse channel instead of a settings entry
 (Spec 062 phase 1), so its identity is proved by the plugin rather than
-configured here. The host kind is `bb`, chosen per repository
+configured here. It counts as a live host for presence, the idle clock and health
+— a live claim is a live host — and never as an available work host: `hostAvailable`
+reads it unavailable and its adapter refuses every task-workflow call before send. The host kind is `bb`, chosen per repository
 (`repository.set hostKind: "bb"`) beside `paseo` and `t3code`, and `hostKindOf`
-answers it from the `bb:` prefix. "The primary host" is the Paseo entry, not
-whichever host registered first: the legacy unqualified `hostId`, the retired
+answers it from the `bb:` prefix. "The primary host" is the Paseo entry and only
+the Paseo entry: there is no fallback to whichever host registered first, because a
+BB plugin can connect before the daemon bootstrap and the daemon-identity guard
+reads that entry: the legacy unqualified `hostId`, the retired
 observation scope and the daemon-identity guard all read it, so a BB or T3 host
 that connects earlier still never displaces the host those records belong to.
 

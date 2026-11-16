@@ -498,9 +498,10 @@ export class QueueService {
    * The identity is derived here, never taken from the plugin: the same real data
    * directory always answers the same `bb:` id. It is *registered* only after a
    * read-only probe through this channel succeeds (`identity.probe`: `status.get`,
-   * `system.version` and one `threads.list`, Spec 062 phase 1), and the runtime is
-   * the authority on whether that identity is the one it already recorded — a
-   * changed data directory refuses by its field and leaves the host offline.
+   * `system.version`, one `threads.list` and `hosts.list`, Spec 062 phase 1), and the
+   * runtime is the authority on whether that identity is the one it already
+   * recorded — a changed data directory refuses by its field and leaves the host
+   * offline.
    * A second declaration for the same identity replaces the older connection, which
    * is what a plugin reload looks like, and the older connection's in-flight
    * operations settle as unknown delivery rather than being replayed on the new one.
@@ -598,6 +599,16 @@ export class QueueService {
         true,
         request.method,
       );
+    }
+    if (connection.socket.destroyed || connection.closing) {
+      // The plugin went away while the runtime was recording the identity. The claim it
+      // just accepted belongs to a connection that no longer exists, so it is released
+      // here instead of being left registered and reading online.
+      const reason = "the connection closed while its identity was being verified";
+      connection.hostExecutor = null;
+      link.close(reason);
+      this.releaseHostExecutor(link, reason);
+      return;
     }
     const previous = this.hostExecutors.get(hostId);
     this.hostExecutors.set(hostId, link);
@@ -702,18 +713,17 @@ export class QueueService {
     const registered = this.hostExecutors.get(link.hostId) === link;
     link.close(reason);
     if (registered) this.hostExecutors.delete(link.hostId);
-    if (registered) {
-      // A registered identity goes offline with the connection that proved it. The
-      // runtime keeps the durable record and the reason, so health still names the
-      // host and why it left (Spec 062, phase 1).
-      void this.executor
-        .callHandler("bbHostReleased", {
-          hostId: link.hostId,
-          connectedAt: link.connectedAt,
-          reason,
-        })
-        .catch(() => {});
-    }
+    // The runtime hears about every release, registered or not: the claim it recorded
+    // belongs to this connection's `connectedAt`, so a close that lands between the
+    // identity proof and the registration still retires it (the runtime ignores a
+    // release whose `connectedAt` a newer connection already replaced).
+    void this.executor
+      .callHandler("bbHostReleased", {
+        hostId: link.hostId,
+        connectedAt: link.connectedAt,
+        reason,
+      })
+      .catch(() => {});
     for (const connection of this.connections) {
       if (connection.hostExecutor !== link) continue;
       connection.hostExecutor = null;

@@ -93,6 +93,14 @@ test('a bb repository hostKind selects the online BB host, never rehosts a live 
     assert.equal(health.bb?.hosts[0]?.bbVersion, '0.49.0');
     assert.deepEqual(health.hosts?.find(host => host.id === bbHostId), { id: bbHostId, state: 'online', reason: '' });
 
+    // Spec 062 phase 1's decision on work-host gates: a registered BB host counts as a
+    // live host (it keeps the idle clock from shutting the daemon down and health names
+    // it), and never as an available work host — dispatch reads it as unavailable, and
+    // its adapter refuses every task-workflow call anyway.
+    assert.equal(runtime.engine.hostAvailable(bbHostId), false, "a BB host is never an available work host");
+    assert.equal(runtime.hostRegistry.shouldShutdown(0), false, "a live BB claim keeps the daemon from idling down");
+    assert.equal(runtime.engine.hostAvailable('paseo-primary'), true, "the Paseo host stays the work host");
+
     // A repository that opted into BB selects it with durable provenance.
     runtime.store.putRepository({ origin: null, path: '/bb-repo' }, null, '', null, null, null, undefined, undefined, 'bb');
     assert.equal(runtime.engine.selectIngressHost(undefined, '/bb-repo'), bbHostId);
@@ -118,5 +126,32 @@ test('a bb repository hostKind selects the online BB host, never rehosts a live 
     assert.equal(offline.bb?.online, false);
     assert.match(offline.bb?.offlineReason ?? '', /closed/);
     assert.equal(offline.hosts?.find(host => host.id === bbHostId)?.state, 'offline');
+  } finally { await runtime.drain(); }
+});
+
+test('a BB host verified before the Paseo bootstrap never becomes the primary host', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'host-selection-bb-first-'));
+  const adapter = { client: { isConnected: true }, isConnected: () => true, hostId: 'paseo-primary', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'helper.mjs'), connect: async () => {}, close: async () => {}, catalog: async () => ({ providers: [] }) } as unknown as Adapter;
+  const runtime = new QueueRuntime({ dataDir: dir, adapterFactory: () => adapter, timers: false });
+  const bbDataDir = join(dir, 'bb-data-first');
+  const bbHostId = hostIdFromDataDir(bbDataDir);
+  try {
+    // The BB plugin can connect before the daemon's own bootstrap has registered
+    // Paseo. It is registered first on purpose, and it must stay a secondary host.
+    assert.deepEqual(runtime.bbHostVerified({ hostId: bbHostId, dataDir: bbDataDir, bbVersion: '0.49.0', sdkVersion: '0.6.132', hostIds: ['host_synthetic'], connectedAt: new Date().toISOString() }), { ok: true });
+    assert.deepEqual(runtime.hostRegistry.known().map((host) => host.id), [bbHostId], 'the BB host is recorded first');
+    assert.equal(runtime.hostRegistry.primary(), undefined, 'no Paseo host means no primary host yet');
+
+    await runtime.started;
+    await runtime.bootstrap;
+    // The daemon's identity guard reads the primary host, so registering BB first must
+    // not refuse the Paseo connection or rehost the legacy identity.
+    assert.equal(runtime.startError, '', `the Paseo bootstrap is not refused: ${runtime.startError}`);
+    assert.deepEqual(runtime.hostRegistry.known().map((host) => host.id), [bbHostId, 'paseo-primary']);
+    assert.equal(runtime.hostRegistry.primary()?.id, 'paseo-primary');
+    const health = runtime.health();
+    assert.equal(health.hostId, 'paseo-primary', 'the legacy hostId is still the Paseo daemon');
+    assert.equal(health.bb?.online, true);
+    assert.deepEqual(health.hosts?.find((host) => host.id === bbHostId)?.state, 'online');
   } finally { await runtime.drain(); }
 });

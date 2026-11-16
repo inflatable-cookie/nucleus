@@ -31,12 +31,16 @@ const silent = { info: () => {}, warn: () => {}, error: () => {} };
 const holderHealth = (client: ServiceClient) => client.request("service.health", {});
 
 /**
- * The real executor over the two SDK reads `identity.probe` uses (`system.version`
- * and `hosts.list`). Phase 1 sends no other operation, so a call beyond them would be
- * a bug and fails loudly instead of pretending.
+ * The real executor over the SDK reads `identity.probe` makes: the server's status,
+ * its version, one bounded thread list and the host list (`status.get`,
+ * `system.version`, `threads.list`, `hosts.list` — Spec 062, "Identity"). Phase 1 sends
+ * no other operation, so a call beyond them would be a bug and fails loudly instead of
+ * pretending.
  */
 const fakeSdk = {
   system: { version: async () => ({ currentVersion: "0.49.0" }) },
+  status: { get: async () => ({ childThreads: null, pendingTodos: null, project: null, thread: null }) },
+  threads: { list: async () => [] },
   hosts: { list: async () => [{ id: "host_synthetic", status: "connected" }] },
 };
 

@@ -176,8 +176,11 @@ export class HostRegistry<T> {
    * in, so an older record still answers for the host it was written for.
    */
   primary(): KnownHost | undefined {
-    const known = this.store.read();
-    return known.find((entry) => hostKindOf(entry.id) === "paseo") ?? known[0];
+    // Only the Paseo entry is primary. A secondary host that registered first (a BB
+    // plugin can connect before the daemon bootstrap) is never that entry: falling
+    // back to whichever host is first would let the daemon's own identity guard read a
+    // BB host as "the configured daemon" and refuse the Paseo connection that follows.
+    return this.store.read().find((entry) => hostKindOf(entry.id) === "paseo");
   }
   /** The last host close this registry knows about, or null before any host left. */
   disconnectedAt(): number | null { return this.lastDisconnect; }
