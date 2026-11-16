@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
+import { connect } from "node:net";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -981,4 +982,131 @@ test("concurrent confirms over the service socket keep one queued reservation an
   assert.equal(metrics.methods.confirm.requests + metrics.methods.status.requests, replies.length);
   assert.equal(metrics.methods.reserve.requests, 1);
   assert.equal(metrics.methods.reserve.errors, 0);
+});
+
+test("a request past the socket's bound is closed undecoded, even with its newline in the same write", async t => {
+  const scheduler = isolatedScheduler(t);
+  const { endpoint } = await isolatedEndpoint(t, scheduler);
+  const cwd = mkdtempSync(join(tmpdir(), "adm-bound-"));
+
+  // One write carrying the whole request and its trailing newline, past the
+  // 64 KiB bound: the bound is applied to the buffered request, so the line is
+  // never parsed or dispatched even though its newline arrived with it.
+  const oversized = `${JSON.stringify({
+    id: "oversized", method: "status",
+    params: { reservationId: admissionReservationId("bound-run"), pad: "x".repeat(70_000) },
+  })}\n`;
+  const outcome = await new Promise<{ replies: string; closed: boolean }>((resolvePromise, reject) => {
+    const socket = connect(endpoint.socketPath);
+    let replies = "";
+    const timer = setTimeout(() => { socket.destroy(); reject(new Error(`oversized request not closed (${replies.length} reply bytes)`)); }, 5_000);
+    socket.setEncoding("utf8");
+    socket.once("error", error => { clearTimeout(timer); reject(error); });
+    socket.on("data", (chunk: string) => { replies += chunk; });
+    socket.once("close", () => { clearTimeout(timer); resolvePromise({ replies, closed: true }); });
+    socket.once("connect", () => socket.write(oversized));
+  });
+  assert.equal(outcome.closed, true, "the socket is closed rather than answered");
+  assert.equal(outcome.replies, "", "an oversized request is never answered");
+  assert.equal(endpoint.rpcMetrics().methods.status.requests, 0, "and it is never dispatched");
+  assert.equal(endpoint.rpcMetrics().rejected, 0, "the bound closes the socket instead of decoding it");
+
+  // A request inside the bound, with a reservation that exists, is still
+  // answered: the bound refuses only what is over it.
+  const reserved = await admissionRpc(endpoint.socketPath, "reserve",
+    { request: request("bound-run", cwd), ancestry: selfAncestry() });
+  assert.equal(reserved.ok, true);
+  const inside = await admissionRpc(endpoint.socketPath, "status",
+    { reservationId: admissionReservationId("bound-run") });
+  assert.equal(inside.ok, true);
+  assert.equal(endpoint.rpcMetrics().methods.status.requests, 1, "a request inside the bound is dispatched");
+});
+
+test("a reconciliation fault whose journal note is refused is reported instead of lost", async t => {
+  const scheduler = isolatedScheduler(t);
+  const root = socketFixtureRoot("qadm-");
+  assertSocketPathFits(hostRunAdmissionSocketPath(join(root, "host-run")));
+  // The service's own error stream is the only place left when the row cannot
+  // carry the cause, so this test owns that stream for its duration.
+  const logged: string[] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+  t.after(() => { console.error = originalError; });
+  const endpoint = new EffigyAdmissionEndpoint(scheduler, {
+    stateDir: join(root, "host-run"), watchMs: 20, effigyVersion: SELF_EFFIGY,
+    // The tick's own liveness read fails, and the journal it would record the
+    // fault on refuses the write: the fault has nowhere durable to go.
+    hookAlive: () => { throw new Error("kernel liveness read refused"); },
+  });
+  await endpoint.start();
+  t.after(async () => { await endpoint.stop(); });
+  (scheduler as unknown as { note: () => never }).note = () => { throw new Error("journal is read-only"); };
+
+  const cwd = mkdtempSync(join(tmpdir(), "adm-fault-"));
+  const reserved = await endpoint.reserve(request("fault-run", cwd), selfAncestry());
+  assert.ok(reserved.reservationId, `reservation accepted (${JSON.stringify(reserved.observation)})`);
+  const reservationId = reserved.reservationId!;
+  endpoint.bindHook(reservationId, process.pid, hostRunProcessStartIdentity(process.pid));
+
+  await waitUntil(() => logged.some(line => line.includes("Admission reconciliation")), 6_000,
+    "the fault reaches the error stream");
+  const line = logged.find(entry => entry.includes("Admission reconciliation"))!;
+  assert.match(line, /kernel liveness read refused/, "the fault itself is named");
+  assert.match(line, /the row refused its fault note: journal is read-only/, "and the journal's own refusal is named");
+  // A fault is never a settlement and never releases the slot it observed.
+  const record = scheduler.get(reservationId)!;
+  assert.notEqual(record.state, "settled", "a fault never settles the reservation");
+  assert.equal(record.settlement, null);
+});
+
+test("a reconcile fault the journal refused once is recorded when the journal recovers", async t => {
+  const scheduler = isolatedScheduler(t);
+  const root = socketFixtureRoot("qadm-");
+  assertSocketPathFits(hostRunAdmissionSocketPath(join(root, "host-run")));
+  const logged: string[] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+  t.after(() => { console.error = originalError; });
+  const endpoint = new EffigyAdmissionEndpoint(scheduler, {
+    stateDir: join(root, "host-run"), watchMs: 20, effigyVersion: SELF_EFFIGY,
+    hookAlive: () => { throw new Error("kernel liveness read refused"); },
+  });
+  await endpoint.start();
+  t.after(async () => { await endpoint.stop(); });
+  // The journal refuses its first note and accepts every later one, which is what
+  // a store recovering from a transient refusal looks like to this endpoint.
+  const realNote = scheduler.note.bind(scheduler) as (...args: unknown[]) => void;
+  let refusals = 0;
+  (scheduler as unknown as { note: (...args: unknown[]) => void }).note = (...args) => {
+    if (refusals++ === 0) throw new Error("journal is read-only");
+    realNote(...args);
+  };
+  let reservationId = "";
+  const faultNotes = () => scheduler.store.hostRunJournal(reservationId)
+    .filter((row: { event: string; data: unknown }) => row.event === "effigy_observation_refused"
+      && (row.data as { kind?: string }).kind === "reconcile-fault");
+  const cwd = mkdtempSync(join(tmpdir(), "adm-fault-retry-"));
+  const reserved = await endpoint.reserve(request("fault-retry-run", cwd), selfAncestry());
+  assert.ok(reserved.reservationId, `reservation accepted (${JSON.stringify(reserved.observation)})`);
+  reservationId = reserved.reservationId!;
+  endpoint.bindHook(reservationId, process.pid, hostRunProcessStartIdentity(process.pid));
+
+  // The refusal is reported...
+  await waitUntil(() => logged.some(line => line.includes("the row refused its fault note")), 6_000,
+    "the first journal refusal is reported");
+  assert.equal(faultNotes().length, 0, "the refused write left nothing on the row");
+  // ...and the same cause is recorded as soon as the journal accepts it, because a
+  // refused write never consumes the dedupe key.
+  await waitUntil(() => faultNotes().length > 0, 6_000, "the recovered journal carries the fault");
+  assert.match(String((faultNotes()[0].data as { reason?: string }).reason), /kernel liveness read refused/,
+    "the recorded note names the fault it could not write before");
+  // Once on the row, the same cause stops repeating — and stops being reported,
+  // because it no longer has nowhere to go.
+  await new Promise<void>(resolve => setTimeout(resolve, 300));
+  assert.equal(faultNotes().length, 1, "a recorded cause is noted once, not once per recovered tick");
+  assert.equal(logged.filter(line => line.includes("the row refused its fault note")).length, 1,
+    "the refusal is reported once, and the recovered note is not reported as a refusal");
+  const record = scheduler.get(reservationId)!;
+  assert.notEqual(record.state, "settled", "a fault never settles the reservation");
+  assert.equal(record.settlement, null);
 });

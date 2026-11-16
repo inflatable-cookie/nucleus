@@ -105,8 +105,7 @@ export async function readHostRunStartIdentity(pid: number, options: StartIdenti
     if (read.kind !== "line") return read;
     // A line that does not parse as C-locale UTC whole seconds is malformed
     // data, not a disproven identity.
-    const identity = macStartIdentity(pid, read.line);
-    return identity.endsWith("@unknown") ? { kind: "unavailable" } : { kind: "identity", identity };
+    return readableIdentity(macStartIdentity(pid, read.line));
   }
   if (platform === "linux") {
     const readFileText = options.readFileText ?? defaultReadFileText;
@@ -127,8 +126,7 @@ export async function readHostRunStartIdentity(pid: number, options: StartIdenti
       // when that PID's own entry reads.
       bootId = null;
     }
-    const identity = linuxStartIdentity(pid, stat, bootId);
-    return identity.endsWith("@unknown") ? { kind: "unavailable" } : { kind: "identity", identity };
+    return readableIdentity(linuxStartIdentity(pid, stat, bootId));
   }
   return { kind: "identity", identity: hostRunProcessStartIdentity(pid, options) };
 }
@@ -275,7 +273,7 @@ export function hostRunOwnStartIdentity(options: StartIdentityOptions = {}): str
   const hasSeams = options.platform !== undefined || options.psStartLine !== undefined || options.readFileText !== undefined;
   if (!hasSeams && ownIdentity !== null) return ownIdentity;
   const computed = hostRunProcessStartIdentity(process.pid, options);
-  if (!hasSeams && !computed.endsWith("@unknown")) ownIdentity = computed;
+  if (!hasSeams && startIdentityProves(computed)) ownIdentity = computed;
   return computed;
 }
 
@@ -299,12 +297,29 @@ export function hostRunProcessStartIdentity(pid: number = process.pid, options: 
   return `${pid}@unknown`;
 }
 
+/**
+ * Whether an identity names a pid and carries a readable basis. This is the one
+ * reader of the `@unknown` sentinel: `@unknown` proves nothing, not even against
+ * itself, so a caller that holds a recorded or freshly read identity asks here
+ * instead of testing the suffix. A shape that names no pid is not an identity.
+ */
+export function startIdentityProves(identity: string): boolean {
+  const at = identity.indexOf("@");
+  if (at <= 0) return false;
+  const basis = identity.slice(at + 1);
+  return basis !== "" && basis !== "unknown";
+}
+
+/** The typed answer for a read identity: a readable identity, or an unreadable one that proves nothing. */
+function readableIdentity(identity: string): StartIdentityRead {
+  return startIdentityProves(identity) ? { kind: "identity", identity } : { kind: "unavailable" };
+}
+
 /** Normalize one identity for comparison; null means it can never prove identity. */
 function comparableStartIdentity(identity: string): string | null {
+  if (!startIdentityProves(identity)) return null;
   const at = identity.indexOf("@");
-  if (at <= 0) return null;
   const basis = identity.slice(at + 1);
-  if (basis === "unknown") return null;
   const legacy = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.000Z$/.exec(basis);
   return `${identity.slice(0, at)}@${legacy ? `${legacy[1]}Z` : basis}`;
 }
@@ -323,7 +338,7 @@ export function startIdentityMatches(recorded: string, observed: string): boolea
 function knownIdentityForPid(identity: string, pid: number): boolean {
   const separator = identity.indexOf("@");
   return separator === String(pid).length && identity.slice(0, separator) === String(pid)
-    && !identity.endsWith("@unknown");
+    && startIdentityProves(identity);
 }
 
 export interface SupervisorLiveness { state: "live" | "dead" | "unknown"; reason: string }

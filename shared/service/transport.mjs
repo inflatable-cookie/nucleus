@@ -9,7 +9,19 @@ function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Callback delivery phase, or null when the failure is a Queue answer or non-transport fault. */
+/**
+ * Which transport phase a callback failure happened in, or null when the
+ * failure is not the transport at all (a Queue answer, a Queue refusal, a
+ * timeout budget). Task 562: the phases carry different delivery truths, and a
+ * binding must never state one it cannot know.
+ *
+ * - `connect`: the request never reached Queue — a definite not-recorded retry.
+ * - `inflight`: the call was lost in flight after or while being delivered, so
+ *   Queue may already hold the question and only the call was lost.
+ * - `response`: Queue processed the ask (a 200 response had started) and only
+ *   the response was lost — the recorded receipt is collectable by an
+ *   identical re-ask.
+ */
 export function callbackTransportPhase(error) {
   if (error instanceof Error && typeof error.callbackStatus === 'number') return null;
   const code = errorCode(error);
