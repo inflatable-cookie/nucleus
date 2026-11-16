@@ -190,48 +190,52 @@ test('recovered without action and no live participant is refused; the stop is n
   } finally { await f.close(); }
 });
 
+/** nucleus#1217: released reviewer, empty currentRunId, raising recovery gone, timed wait due. */
+function load1217Wait(f: ReturnType<typeof fixture>) {
+  const recoveryId = 'recovery-1217';
+  const escalationId = 'c'.repeat(64);
+  const target = '2020-01-01T00:00:00.000Z';
+  const stopDetail = `Escalation ${escalationId}: waiting until ${target}`;
+  f.store.putRun({ ...f.store.run('review-run')!, released: true, active: false, status: 'finished', completion: null });
+  f.idle('review-agent');
+  f.store.putRun(runSchema.parse({
+    id: recoveryId, taskId: f.submitted.id, role: 'recovery', generation: 1, head, base,
+    agentId: 'coord-1217', workspaceId: 'workspace', profile: coordinator, status: 'finished',
+    createdAt: lastActivity, lastObservedAt: lastActivity, active: false, idleSince: lastActivity,
+    completion: { eventId: 'esc-report', taskId: f.submitted.id, runId: recoveryId, status: 'blocked', summary: 'no justified recovery verb' },
+    released: true,
+  }));
+  f.store.event(f.submitted.id, 'planner_escalation',
+    `${escalationId}: cause ${'d'.repeat(64)}; run ${recoveryId}; question ${'e'.repeat(64)} (80 chars); options Restart | Wait until a time`);
+  f.store.event(f.submitted.id, 'planner_escalation_payload',
+    `${escalationId}: ${JSON.stringify({ id: escalationId, runId: recoveryId, question: 'How should the task proceed?' })}`);
+  f.store.event(f.submitted.id, 'planner_escalation_answered',
+    `${escalationId}: answered by planner-1: Choice: Wait until a time\nReason: ${target}`);
+  f.store.event(f.submitted.id, 'planner_escalation_applied',
+    `${escalationId}: waiting until ${target}`);
+  f.store.event(f.submitted.id, 'planner_escalation_wait',
+    `${escalationId}: ${JSON.stringify({ kind: 'time', target, stopDetail, stopReason: 'lifecycle' })}`);
+  f.store.update(f.submitted.id, {
+    phase: 'blocked',
+    reason: stopDetail,
+    resolution: {
+      ...f.current().resolution,
+      currentRunId: null,
+      attention: true,
+      stop: { reason: 'lifecycle', detail: stopDetail, since: lastActivity, suggestedVerbs: [] },
+      recovery: {
+        id: 'episode-1217', key: 'blocked-live', generation: 1, runId: recoveryId, agentId: 'coord-1217',
+        status: 'escalated', summary: 'no justified recovery verb', idleSince: null, incidentId: null, progress: null,
+      },
+    },
+  });
+  return { recoveryId, escalationId };
+}
+
 test('a timed wait on a recovery escalation whose raising run has released wakes into the ordinary next step', async () => {
   const f = fixture();
   try {
-    const recoveryId = 'recovery-1217';
-    const escalationId = 'c'.repeat(64);
-    const target = '2020-01-01T00:00:00.000Z';
-    const stopDetail = `Escalation ${escalationId}: waiting until ${target}`;
-    // Real nucleus#1217 resolution: the reviewer that occupied the lane has
-    // released, currentRunId is empty, the raising recovery is gone.
-    f.store.putRun({ ...f.store.run('review-run')!, released: true, active: false, status: 'finished', completion: null });
-    f.idle('review-agent');
-    f.store.putRun(runSchema.parse({
-      id: recoveryId, taskId: f.submitted.id, role: 'recovery', generation: 1, head, base,
-      agentId: 'coord-1217', workspaceId: 'workspace', profile: coordinator, status: 'finished',
-      createdAt: lastActivity, lastObservedAt: lastActivity, active: false, idleSince: lastActivity,
-      completion: { eventId: 'esc-report', taskId: f.submitted.id, runId: recoveryId, status: 'blocked', summary: 'no justified recovery verb' },
-      released: true,
-    }));
-    f.store.event(f.submitted.id, 'planner_escalation',
-      `${escalationId}: cause ${'d'.repeat(64)}; run ${recoveryId}; question ${'e'.repeat(64)} (80 chars); options Restart | Wait until a time`);
-    f.store.event(f.submitted.id, 'planner_escalation_payload',
-      `${escalationId}: ${JSON.stringify({ id: escalationId, runId: recoveryId, question: 'How should the task proceed?' })}`);
-    f.store.event(f.submitted.id, 'planner_escalation_answered',
-      `${escalationId}: answered by planner-1: Choice: Wait until a time\nReason: ${target}`);
-    f.store.event(f.submitted.id, 'planner_escalation_applied',
-      `${escalationId}: waiting until ${target}`);
-    f.store.event(f.submitted.id, 'planner_escalation_wait',
-      `${escalationId}: ${JSON.stringify({ kind: 'time', target, stopDetail, stopReason: 'lifecycle' })}`);
-    f.store.update(f.submitted.id, {
-      phase: 'blocked',
-      reason: stopDetail,
-      resolution: {
-        ...f.current().resolution,
-        currentRunId: null,
-        attention: true,
-        stop: { reason: 'lifecycle', detail: stopDetail, since: lastActivity, suggestedVerbs: [] },
-        recovery: {
-          id: 'episode-1217', key: 'blocked-live', generation: 1, runId: recoveryId, agentId: 'coord-1217',
-          status: 'escalated', summary: 'no justified recovery verb', idleSince: null, incidentId: null, progress: null,
-        },
-      },
-    });
+    load1217Wait(f);
     const recoveriesBefore = f.coordinatorRuns().length;
     await f.engine.resolution.ladder.resumeEscalationWaits(f.current());
     assert.equal(f.events('planner_escalation_wake_refused').length, 0,
@@ -246,6 +250,38 @@ test('a timed wait on a recovery escalation whose raising run has released wakes
     await f.engine.wake();
     assert.equal(f.coordinatorRuns().length, recoveriesBefore,
       `wake must not start another recovery; runs=${f.coordinatorRuns().map(run => run.id).join(',')}`);
+  } finally { await f.close(); }
+});
+
+test('a timed wait whose retained reviewer is closed parks without replacing that reviewer', async () => {
+  const f = fixture();
+  try {
+    load1217Wait(f);
+    f.states.set('review-agent', {
+      id: 'review-agent', workspaceId: 'workspace', status: 'closed', active: false,
+      permissions: false, error: '', provider: 'test', model: reviewer.model,
+    });
+    const recoveriesBefore = f.coordinatorRuns().length;
+    const reviewerRunsBefore = f.store.runs(f.submitted.id).filter(run => run.role === 'reviewer').map(run => run.id);
+    await f.engine.resolution.ladder.resumeEscalationWaits(f.current());
+    assert.equal(f.events('planner_escalation_wake_refused').length, 0,
+      f.events('planner_escalation_wake_refused').map(event => event.detail).join('\n') || 'no refusal');
+    assert.equal(f.events('planner_escalation_woke').length, 1,
+      JSON.stringify(f.store.eventsAll(f.submitted.id).map(event => ({ kind: event.kind, detail: event.detail.slice(0, 160) }))));
+    const woke = f.events('planner_escalation_woke').at(-1)?.detail ?? '';
+    assert.doesNotMatch(woke, /ordinary restart/, woke);
+    assert.doesNotMatch(woke, /fresh/, woke);
+    assert.doesNotMatch(f.current().reason, /wake was refused/);
+    assert.notEqual(f.current().phase, 'awaiting_review',
+      `closed reviewer must not be replaced; phase=${f.current().phase} reason=${f.current().reason}`);
+    assert.equal(f.current().resolution.reviewerAgentId, 'review-agent');
+    assert.equal(f.current().resolution.stop?.reason, 'lifecycle');
+    await f.engine.wake();
+    assert.equal(f.coordinatorRuns().length, recoveriesBefore,
+      `wake must not start another recovery; runs=${f.coordinatorRuns().map(run => run.id).join(',')}`);
+    const reviewerRuns = f.store.runs(f.submitted.id).filter(run => run.role === 'reviewer').map(run => run.id);
+    assert.deepEqual(reviewerRuns, reviewerRunsBefore, 'wake must not start a fresh reviewer');
+    assert.equal(f.createdRuns.filter(run => run.role === 'reviewer').length, 0);
   } finally { await f.close(); }
 });
 

@@ -1815,7 +1815,11 @@ worker direction and stop. A proof-only task never offers a worker return; when 
 receipt has no verdict, the escalation offers the receipt review instead. It does not delegate force, discard or source acceptance. A refused
 choice is returned once to its asker; an unresolved action remains open. A wait must name a
 prerequisite task, a future time or an open operator decision. Its wake resumes through the
-ordinary controls; unknown wake delivery remains visible and is not replayed. The question,
+ordinary controls — a live wait, `next`'s first resume verb whose fill is only reason
+(never `fresh: true`), or retained `restart role=reviewer` when that is the parked
+reviewer step. A refused retained restart parks with a visible lifecycle stop naming
+the refusal; the wake never replaces the reviewer with a fresh agent. Unknown wake
+delivery remains visible and is not replayed. The question,
 answer and action are activity events. A coordinator refreshes its plan and retries an explicit
 stale-version refusal once, with the original report binding rechecked.
 
