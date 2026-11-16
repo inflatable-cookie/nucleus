@@ -128,6 +128,10 @@ test('BB stop observes idle and archive is preceded by cascade proof; foreign de
   const f = fixture(), agent = await f.native.createAgent(f.spec());
   f.rows.get(agent.id).status = 'active';
   await f.native.stopAgentTurn(agent.id); assert.equal((await f.native.observe(agent.id)).active, false);
+  f.rows.get(agent.id).status = 'pending';
+  await assert.rejects(f.native.archiveAgent(agent.id), /ended turn/);
+  assert.equal(f.calls.some(c => c.method === 'threads.archive'), false);
+  f.rows.get(agent.id).status = 'idle';
   f.cascades.set(agent.id, ['thr_foreign']);
   await assert.rejects(f.native.archiveAgent(agent.id), /dependent/);
   assert.equal(f.calls.some(c => c.method === 'threads.archive'), false);
@@ -188,6 +192,12 @@ test('an unknown BB stop settles by a fresh idle observation before a later turn
   const f = fixture(), agent = await f.native.createAgent(f.spec());
   f.rows.get(agent.id).status = 'active'; f.controls.loseStop = true;
   await assert.rejects(f.native.stopAgentTurn(agent.id));
+  f.rows.get(agent.id).status = 'pending';
+  await assert.rejects(f.native.stopAgentTurn(agent.id), HostUnknownDeliveryError);
+  f.rows.get(agent.id).status = 'active';
+  await assert.rejects(f.native.stopAgentTurn(agent.id), HostUnknownDeliveryError);
+  assert.equal(f.calls.filter(c => c.method === 'threads.stop').length, 1, 'pending cannot settle an uncertain stop or authorize its resend');
+  f.rows.get(agent.id).status = 'idle';
   assert.equal((await f.native.observe(agent.id)).active, false);
   f.controls.loseStop = false; f.rows.get(agent.id).status = 'active'; f.rows.get(agent.id).updatedAt += 1;
   await f.native.stopAgentTurn(agent.id);

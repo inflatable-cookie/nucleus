@@ -58,7 +58,8 @@ export class BbThreads {
     const pending = row.interactions.filter(i => i.status === 'pending' || i.status === 'resolving');
     if (row.hasPendingInteraction && !pending.length) throw new Error('BB pending interaction flag has no readable interaction');
     const active = ['starting', 'active', 'stopping'].includes(row.status) || ['provisioning', 'waiting-for-host'].includes(row.displayStatus) || row.queuedWork === 'waiting';
-    if (!active) {
+    const ended = !active && ['idle', 'error'].includes(row.status);
+    if (ended) {
       const state = this.ports.state(); let changed = false;
       for (const [key, intent] of Object.entries(state.writes)) if (key.startsWith(`stop:${row.threadId}:`) && intent.status === 'unknown') { intent.status = 'settled'; changed = true; }
       if (changed) this.ports.save(state);
@@ -69,7 +70,7 @@ export class BbThreads {
       active, permissions: pending.length > 0,
       // A terminal execution status proves no tracked turn. Busy/pending rows
       // keep its identity unknown; BB sends no positive turn id in a list row.
-      ...(!active && ['idle', 'error'].includes(row.status) ? { activeTurnId: null } : {}),
+      ...(ended ? { activeTurnId: null } : {}),
       error: row.status === 'error' ? 'BB thread failed' : row.queuedWork === 'failed' ? 'BB queued work failed' : '',
       provider: row.providerId,
       ...(row.execution ? { model: row.execution.model, modeId: row.execution.permissionMode, thinkingOptionId: row.execution.reasoningLevel } : {}),
@@ -187,7 +188,7 @@ export class BbThreads {
     if (!owned) throw new ProvenPreSendRefusalError('BB archive only accepts a Nucleus-created thread');
     const row = await this.read<BbRow>('thread.observe', { threadId: id });
     if (row.archivedAt !== null) return;
-    if (this.observation(row).active) throw new ProvenPreSendRefusalError('BB thread still has a live turn');
+    if (this.observation(row).activeTurnId !== null) throw new ProvenPreSendRefusalError('BB thread has not proved an ended turn');
     const key = `archive:${id}`;
     if (this.ports.state().writes[key]?.status === 'unknown') throw new HostUnknownDeliveryError({ command: 'bb.thread.archive' });
     const cascade = await this.read<{ cascadeThreadIds: string[] }>('thread.cascade', { threadId: id, action: 'archive' });
@@ -201,7 +202,7 @@ export class BbThreads {
     state.writes[key] = { status: 'unknown', ...(op === 'thread.title' ? { value: (input as { title: string }).title } : {}) }; this.ports.save(state);
     try {
       const result = await this.read<{ title?: string; status?: string }>(op, input);
-      if (op === 'thread.stop' && !['idle', 'error', 'pending'].includes(result.status ?? '')) throw new HostUnknownDeliveryError({ command: 'bb.thread.stop' });
+      if (op === 'thread.stop' && !['idle', 'error'].includes(result.status ?? '')) throw new HostUnknownDeliveryError({ command: 'bb.thread.stop' });
       if (op === 'thread.title' && result.title !== (input as { title: string }).title) throw new HostUnknownDeliveryError({ command: 'bb.thread.title' });
       const next = this.ports.state(); next.writes[key] = { ...next.writes[key], status: 'settled' }; this.ports.save(next);
     } catch (error) {
@@ -211,7 +212,9 @@ export class BbThreads {
   }
   async stopAgentTurn(id: string) {
     const row = await this.read<BbRow>('thread.observe', { threadId: id });
-    if (!this.observation(row).active) {
+    const observation = this.observation(row);
+    if (!observation.active) {
+      if (observation.activeTurnId !== null) throw new HostUnknownDeliveryError({ command: 'bb.thread.stop', guidance: 'The BB pending state does not prove an ended turn' });
       const state = this.ports.state();
       for (const [key, intent] of Object.entries(state.writes)) if (key.startsWith(`stop:${id}:`)) intent.status = 'settled';
       this.ports.save(state); return;
