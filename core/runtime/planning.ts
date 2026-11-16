@@ -12,6 +12,7 @@ import { now, operationInputHash } from "../store/store";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import type { Leads } from '../planning/leads';
 import type { HostFacade } from "../host/host-facade";
+import { leadRepository } from "../planning/lead-repository";
 
 /** Planning dependencies; lifecycle and operation scheduling remain runtime-owned. */
 export interface PlanningContext {
@@ -34,7 +35,7 @@ export class RuntimePlanning {
   async submitLead(input: z.infer<typeof leadSubmit.input>): Promise<z.infer<typeof leadSubmit.output>> {
     await this.context.started;
     const request = leadSubmit.input.parse(input);
-    const repository = this.context.store.resolveRepositoryIdentity(request.repository);
+    const repository = leadRepository(this.context.store, request.repository);
     // The service is the sole writer; lookup and creation run without yielding.
     const source = (() => {
       const existing = this.context.store.findLeadSubmission(request.title, repository);
@@ -117,7 +118,9 @@ export class RuntimePlanning {
         return this.context.store.lead(lead.id);
       }
     }
-    const repository = lead.repositories[0];
+    let repository: { origin: string; path: string };
+    try { repository = this.selectLeadRepository(lead, lead.repositories[0].origin); }
+    catch (error) { return this.recordLeadCheckNotQueued(lead, error instanceof Error ? error.message : String(error)); }
     const digest = briefDigest(lead.body);
     const payload = leadCheckOperationPayloadSchema.parse({ type:"lead_check", id:lead.id, version:lead.version, digest, repository:repository.origin, baseBranch:lead.baseBranch });
     const key = `lead-check:${operationInputHash([lead.id,lead.version,digest,repository.origin,lead.baseBranch])}`;
@@ -193,7 +196,7 @@ export class RuntimePlanning {
     const normalized=requested ? normalizeRepositoryOrigin(requested) ?? requested : lead.repositories[0].origin;
     const repository=lead.repositories.find(repo=>repo.origin===normalized||repo.path===normalized);
     if (!repository) throw new Error("Lead does not list that repository");
-    return repository;
+    return leadRepository(this.context.store, repository, true);
   }
   latestLeadAuthor(lead: ReturnType<Store["lead"]>) {
     return this.context.store.leadVersion(lead.id,lead.version).author;
