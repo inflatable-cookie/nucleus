@@ -1,14 +1,34 @@
 import { z } from 'zod';
 
-/** A project's chosen host kind. `paseo` is the default; `t3code` is trial opt-in. */
-export const hostKindSchema = z.enum(['paseo', 't3code']);
+/**
+ * A project's chosen host kind. `paseo` is the default; `t3code` and `bb` are
+ * trial opt-ins, selected per repository and never changed on a live task.
+ */
+export const hostKindSchema = z.enum(["paseo", "t3code", "bb"]);
 export type HostKind = z.infer<typeof hostKindSchema>;
 export const DEFAULT_HOST_KIND: HostKind = 'paseo';
 /** The host names an operator reads, by host kind. */
-export const HOST_KIND_LABELS: Record<HostKind, string> = { paseo: 'Paseo', t3code: 'T3Code' };
+export const HOST_KIND_LABELS: Record<HostKind, string> = {
+  paseo: "Paseo",
+  t3code: "T3Code",
+  bb: "BB",
+};
+
+/**
+ * The plugin reload command a host kind's operator runs to bring its plugin back
+ * (Spec 062, "Presence"). A host with no plugin of ours has no command.
+ */
+export const HOST_PLUGIN_RELOAD_COMMANDS: Partial<Record<HostKind, string>> = {
+  paseo: "paseo plugin reload nucleus",
+  bb: "bb plugin reload nucleus",
+};
 
 export function hostKindOf(hostId: string | null | undefined): HostKind {
-  return typeof hostId === 'string' && hostId.startsWith('t3code:') ? 't3code' : 'paseo';
+  if (typeof hostId !== "string") return "paseo";
+  if (hostId.startsWith("t3code:")) return "t3code";
+  // Spec 062: a BB host identity is `bb:<hash of the real data directory>`.
+  if (hostId.startsWith("bb:")) return "bb";
+  return "paseo";
 }
 
 /**

@@ -47,6 +47,7 @@ import { Admission, admitAdapter, type AdmissionOptions } from "../core/host/adm
 import { HostRegistry, HOST_IDLE_GRACE_MS, type KnownHost } from "../core/host/host-registry";
 import type { IdentitySource } from "../shared/host-kind";
 import { T3HostConnection, type T3ConnectionConfig } from "./t3code-host";
+import { BbHostConnection, type BbHostRejectedInput, type BbHostReleasedInput, type BbHostVerifiedInput } from "./bb-host";
 import {
   HostConnections,
   wireEngineHosts,
@@ -242,6 +243,12 @@ export class QueueRuntime {
   readonly hostRegistry: HostRegistry<{ adapter: Adapter; admission: Admission }>;
   private hostSession: { id: string; token: object } | null = null;
   private readonly t3Host: T3HostConnection | null;
+  /**
+   * The BB host's registration and identity (Spec 062, phase 1). The executor
+   * connection itself lives in the service process; this object is the durable
+   * identity, the registry claim, the admission and the health projection.
+   */
+  readonly bbHost: BbHostConnection;
   private readonly hosts: HostConnections;
   private readonly maintenance: StoreMaintenance;
   readonly engine: Engine;
@@ -415,7 +422,8 @@ export class QueueRuntime {
     }, options.hostNow ?? Date.now, options.hostIdleGraceMs ?? HOST_IDLE_GRACE_MS);
     const createAdmission = () => new Admission({ ...options.admission, totalLimit: () => this.store.configuredPaseoCallLimit(), workspaceBudget: () => this.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT });
     this.t3Host = this.settings.t3code ? new T3HostConnection(this.settings.t3code, this.dataDir, this.hostRegistry, createAdmission) : null;
-    const recordedHost = this.hostRegistry.known()[0]?.id;
+    this.bbHost = new BbHostConnection(this.store, this.hostRegistry, createAdmission);
+    const recordedHost = this.hostRegistry.primary()?.id;
     this.admission = recordedHost ? this.hostRegistry.resource(recordedHost, createAdmission) : createAdmission();
     if (options.adapterFactory) {
       const raw = options.adapterFactory({ dataDir: this.dataDir, settings: this.settings });
@@ -466,7 +474,7 @@ export class QueueRuntime {
     this.cachedTaskDetail = createTaskDetailCache(this.store, { slotAdmissionReason: task => this.engine.resolution.slotAdmissionReason(task, true), externalWait: task => this.engine.queuedExternalWait(task), profiles: task => this.engine.profilesFor(task.hostId) });
     this.cachedTelemetrySnapshot = createTelemetrySnapshotCache(this.store);
     this.cachedUiSnapshotFacts = createUiSnapshotFactsCache(this.store, (tasks, runs) => this.engine.resolution.slotAdmissionReader(tasks, runs, true), () => this.hostRuns.liveRuns(),
-      (nowMs) => this.store.qaBoardRuns(new Date(nowMs - QA_BOARD_PASS_FADE_MS).toISOString()), task => this.engine.queuedExternalWait(task), () => this.engine.queuedWaitSignature(), () => this.hostSession?.id || this.hostRegistry.known()[0]?.id || "unknown");
+      (nowMs) => this.store.qaBoardRuns(new Date(nowMs - QA_BOARD_PASS_FADE_MS).toISOString()), task => this.engine.queuedExternalWait(task), () => this.engine.queuedWaitSignature(), () => this.hostSession?.id || this.hostRegistry.primary()?.id || "unknown");
     this.questions = new RuntimeQuestions({
       store: this.store, engine: this.engine, decisions: this.decisions,
       markStoreAccess: () => this.markStoreAccess(),
@@ -477,7 +485,7 @@ export class QueueRuntime {
       connected: () => this.connected(),
       wakeAndSettlePostBootstrapTimeout: () => this.wakeAndSettlePostBootstrapTimeout(),
       get started() { return runtime.started; },
-      get hostId() { return runtime.hostSession?.id || runtime.hostRegistry.known()[0]?.id || "host"; },
+      get hostId() { return runtime.hostSession?.id || runtime.hostRegistry.primary()?.id || "host"; },
       get startError() { return runtime.startError; },
       get adapter() { return runtime.adapter; },
     });
@@ -516,7 +524,7 @@ export class QueueRuntime {
       get hostId() {
         return (
           runtime.hostSession?.id ||
-          runtime.hostRegistry.known()[0]?.id ||
+          runtime.hostRegistry.primary()?.id ||
           "unknown"
         );
       },
@@ -552,6 +560,7 @@ export class QueueRuntime {
       lifecycle: this.lifecycle,
       hostRegistry: this.hostRegistry,
       t3Host: this.t3Host,
+      bb: () => runtime.bbHost.status(),
       admission: this.admission,
       capacityChanges: this.capacityChanges,
       maintenance: this.maintenance,
@@ -678,6 +687,27 @@ export class QueueRuntime {
   cancelHostShutdown() { this.hosts.cancelHostShutdown(); }
   hostPresenceClosed() { this.hosts.hostPresenceClosed(); }
   hostPresenceOpened() { this.hosts.hostPresenceOpened(); }
+
+  /**
+   * A BB plugin proved its identity through the host-operation channel (Spec 062,
+   * phase 1). The runtime is the authority on the recorded data directory: the same
+   * one re-registers, a different one refuses by its field with nothing registered.
+   */
+  bbHostVerified(input: BbHostVerifiedInput) {
+    return this.bbHost.verified(input);
+  }
+  /** A declaration or probe left the identity unproven: the host is offline for the named reason. */
+  bbHostRejected(input: BbHostRejectedInput) {
+    this.bbHost.rejected(input);
+  }
+  /** The executor connection closed: this identity's claim retires unless a reload replaced it. */
+  bbHostReleased(input: BbHostReleasedInput) {
+    this.bbHost.released(input);
+  }
+  /** One liveness heartbeat from the registered executor's own connection. */
+  bbHostHeartbeat(input: { hostId: string; at: string }) {
+    this.bbHost.heartbeat(input.hostId, input.at);
+  }
   private clearPluginPresenceWatch() { this.hosts.clearPluginPresenceWatch(); }
   private pluginPresenceFaultMessage(): string { return this.hosts.pluginPresenceFaultMessage(); }
   private boardError(): string {

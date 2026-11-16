@@ -1,14 +1,25 @@
-import { parseAgentId } from '../shared/agent-identity';
-import { DEFAULT_HOST_KIND, type IdentitySource } from '../shared/host-kind';
-import { hostConnected } from '../core/host';
-import type { Adapter } from '../core/host/adapter';
-import { HostFacade } from '../core/host/host-facade';
-import { resolveIngressHost } from '../core/host/ingress-host';
-import { identitySourceHostEvidence, resolveOriginHost, type HostRegistry, type KnownHost } from '../core/host/host-registry';
-import type { Admission } from '../core/host/admission';
-import type { Engine } from '../core/engine';
-import type { Store } from '../core/store/store';
-import type { T3HostConnection } from './t3code-host';
+import { parseAgentId } from "../shared/agent-identity";
+import {
+  DEFAULT_HOST_KIND,
+  HOST_PLUGIN_RELOAD_COMMANDS,
+  hostKindOf,
+  type IdentitySource,
+} from "../shared/host-kind";
+import { hostConnected } from "../core/host";
+import type { Adapter } from "../core/host/adapter";
+import { HostFacade } from "../core/host/host-facade";
+import { resolveIngressHost } from "../core/host/ingress-host";
+import {
+  identitySourceHostEvidence,
+  resolveOriginHost,
+  type HostRegistry,
+  type KnownHost,
+} from "../core/host/host-registry";
+import type { Admission } from "../core/host/admission";
+import type { Engine } from "../core/engine";
+import type { Store } from "../core/store/store";
+import type { T3HostConnection } from "./t3code-host";
+import type { BbHostConnection } from "./bb-host";
 
 export type RegisteredHost = { adapter: Adapter; admission: Admission };
 export type HostSession = { id: string; token: object };
@@ -19,6 +30,8 @@ export interface HostConnectionOwner {
   hostSession: HostSession | null;
   hostRegistry: HostRegistry<RegisteredHost>;
   t3Host: T3HostConnection | null;
+  /** Spec 062: the BB host's claim, retired on the same passes as T3's. */
+  bbHost: BbHostConnection;
   bootstrapped: boolean;
   closing: boolean;
   idleShutdownLatched: boolean;
@@ -66,11 +79,18 @@ export function wireEngineHosts(engine: Engine, runtime: EngineHostWiring): void
       throw error;
     }
   };
-  engine.resolveHostAdapter = id => runtime.hostRegistry.get(id)?.adapter;
-  engine.hostIds = () => runtime.hostRegistry.known().map(host => host.id);
-  engine.inventoryHostMatches = id => runtime.hostSession?.id === id;
-  engine.retiredObservationKey = id => id === runtime.hostRegistry.known()[0]?.id ? 'retiredObservations' : `retiredObservations:${JSON.stringify(id)}`;
-  engine.canReuseUnqualifiedOriginWorkspace = () => runtime.hostRegistry.known().length === 1;
+  engine.resolveHostAdapter = (id) => runtime.hostRegistry.get(id)?.adapter;
+  engine.hostIds = () => runtime.hostRegistry.known().map((host) => host.id);
+  engine.inventoryHostMatches = (id) => runtime.hostSession?.id === id;
+  engine.retiredObservationKey = (id) =>
+    id === runtime.hostRegistry.primary()?.id
+      ? "retiredObservations"
+      : `retiredObservations:${JSON.stringify(id)}`;
+  // A host that can host no task yet (a registered BB host, Spec 062 phase 1) cannot
+  // make an unqualified origin workspace ambiguous, so it never changes Paseo's reuse.
+  engine.canReuseUnqualifiedOriginWorkspace = () =>
+    runtime.hostRegistry.known().filter((host) => hostKindOf(host.id) !== "bb")
+      .length === 1;
   engine.identifyOriginHost = (agentId, identitySource?: IdentitySource) => {
     const qualified = parseAgentId(agentId);
     if (qualified) return Promise.resolve(runtime.hostRegistry.get(qualified.hostId) ? qualified.hostId : undefined);
@@ -111,11 +131,13 @@ export class HostConnections {
   anyHostConnected(): boolean {
     this.connected();
     this.owner.t3Host?.retireDisconnected();
+    this.owner.bbHost.retireDisconnected();
     return this.owner.hostRegistry.onlineIds().length > 0;
   }
 
   hostShutdownDue(): boolean {
     this.owner.t3Host?.retireDisconnected();
+    this.owner.bbHost.retireDisconnected();
     if (this.owner.closing || this.owner.idleShutdownLatched || this.connected() || hostConnected(this.owner.adapter) || this.owner.bootstrapRunning || (this.owner.serveHostRunEndpoint && !this.owner.hostRunEndpoint?.serving())) return false;
     if (!this.owner.hostRegistry.shouldShutdown(this.owner.hostRuns.liveRuns().length)) return false;
     this.owner.idleShutdownLatched = true;
@@ -169,7 +191,24 @@ export class HostConnections {
     if (this.owner.closing) return;
     if (!this.anyHostConnected()) return;
     if (this.owner.store.getMeta('pluginPresenceFault')) return;
-    const message = 'The Nucleus plugin is not present while Paseo is still connected. The recovery thread cannot act while the plugin is down.';
+    // The hint names the reload command of the plugin that is missing. With BB beside
+    // Paseo either plugin can be the absent one, and Paseo's command cannot restore a
+    // BB plugin (Spec 062, "Presence"). Paseo's own wording is kept when it is the
+    // connected host, so nothing an operator reads today changes.
+    const kinds = [
+      ...new Set(
+        this.owner.hostRegistry.onlineIds().map((id) => hostKindOf(id)),
+      ),
+    ];
+    const bbOnly = kinds.length > 0 && kinds.every((kind) => kind === "bb");
+    const commands = bbOnly
+      ? [HOST_PLUGIN_RELOAD_COMMANDS.bb!]
+      : kinds
+          .map((kind) => HOST_PLUGIN_RELOAD_COMMANDS[kind])
+          .filter((command): command is string => Boolean(command));
+    const message = bbOnly
+      ? "The Nucleus plugin is not present while BB is still connected. The recovery thread cannot act while the plugin is down."
+      : "The Nucleus plugin is not present while Paseo is still connected. The recovery thread cannot act while the plugin is down.";
     const at = new Date().toISOString();
     this.owner.store.setMeta('pluginPresenceFault', { at, message });
     this.owner.store.advanceRevision();
@@ -178,8 +217,19 @@ export class HostConnections {
     try {
       const hostId = await this.owner.engine.identifyOriginHost(planner);
       if (!hostId) return;
-      await this.owner.engine.withHost(hostId, () => this.owner.engine.host.sendMessage(planner, {
-        messageId: `ns-plugin-presence-${at}`, text: `Nucleus: ${message}\nReload the plugin with: paseo plugin reload nucleus` }));
-    } catch { /* the board error is the operator-visible surface */ }
+      const reload = commands.length
+        ? commands
+            .map((command) => `Reload the plugin with: ${command}`)
+            .join("\n")
+        : `Reload the plugin with: ${HOST_PLUGIN_RELOAD_COMMANDS.paseo}`;
+      await this.owner.engine.withHost(hostId, () =>
+        this.owner.engine.host.sendMessage(planner, {
+          messageId: `ns-plugin-presence-${at}`,
+          text: `Nucleus: ${message}\n${reload}`,
+        }),
+      );
+    } catch {
+      /* the board error is the operator-visible surface */
+    }
   }
 }

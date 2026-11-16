@@ -33,6 +33,12 @@ function fakeSdk(seed: { projects?: ProjectRow[]; threads?: ThreadRow[]; attachE
   const sdk: FakeSdk = {
     calls,
     system: { version: async () => { calls.push("system.version"); return { currentVersion: "0.49.0" }; } },
+    status: {
+      get: async () => {
+        calls.push("status.get");
+        return { childThreads: null, pendingTodos: null, project: null, thread: null };
+      },
+    },
     hosts: { list: async () => { calls.push("hosts.list"); return [{ id: "host_fixture", status: "connected" }]; } },
     projects: {
       list: async () => { calls.push("projects.list"); return [...projects]; },
@@ -267,8 +273,10 @@ test("every answer carries the call counters, so a step can prove what it did no
   const probe = await operations.execute("identity.probe", {});
   assert.equal((probe.value as { sdkVersion: string }).sdkVersion, "0.6.132");
   assert.equal((probe.value as { bbVersion: string }).bbVersion, "0.49.0");
-  assert.deepEqual(probe.calls, { "system.version": 1, "hosts.list": 1 });
+  // Spec 062's identity probe reads the server's own status, its version and one
+  // bounded thread list (plus the host list the projection reports), and writes nothing.
+  assert.deepEqual(probe.calls, { "status.get": 1, "system.version": 1, "threads.list": 1, "hosts.list": 1 });
   const snapshot = await operations.execute("call.counters", {});
-  assert.deepEqual((snapshot.value as { counters: Record<string, number> }).counters, { "system.version": 1, "hosts.list": 1 });
+  assert.deepEqual((snapshot.value as { counters: Record<string, number> }).counters, { "status.get": 1, "system.version": 1, "threads.list": 1, "hosts.list": 1 });
   assert.equal((snapshot.value as { loadedAt: number }).loadedAt, 1_700_000_000_000);
 });

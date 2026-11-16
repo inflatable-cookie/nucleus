@@ -250,6 +250,13 @@ test('one repository: settings inline; Host, QA, Checks, Reviewer and Merge chec
     await settle(() => app.calls.length === 1, 'host');
     assert.deepEqual(app.calls[0], ['repository.set', { repository: 'acme/nucleus', hostKind: 't3code' }]);
 
+    // Spec 062 phase 1: BB is the third host kind the editor offers and writes.
+    app.calls.length = 0;
+    ui.press('Host for acme/nucleus, T3Code');
+    ui.press('Host for acme/nucleus: BB');
+    await settle(() => app.calls.length === 1, 'bb host');
+    assert.deepEqual(app.calls[0], ['repository.set', { repository: 'acme/nucleus', hostKind: 'bb' }]);
+
     app.calls.length = 0;
     ui.press('Checks for acme/nucleus, All');
     ui.press('Checks for acme/nucleus: Required');

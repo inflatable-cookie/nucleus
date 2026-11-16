@@ -9,7 +9,7 @@ import { Pair } from "./common";
 
 const CHECKS_HELP = "Required gates only the checks GitHub requires for the base branch; the rest are recorded as advisory. Needs GitHub's required-check settings to be readable for this repository.";
 const REVIEWER_HELP = "Account that posts formal reviews. Its token stays in the login keychain.";
-const HOST_HELP = "Paseo is the default host. T3Code is trial opt-in: new tasks on this repository dispatch there. Live tasks keep the host they started on.";
+const HOST_HELP = "Paseo is the default host. T3Code and BB are trial opt-ins: new tasks on this repository dispatch there. Live tasks keep the host they started on.";
 const MERGE_HELP = "Runs on every task's prospective merge.";
 const STAGED_HELP = "A staged QA is edited with `nucleus repository.set`.";
 const QA_TIMEOUT_MAX_MIN = PROJECT_QA_TIMEOUT_MAX_MS / 60_000;
@@ -85,7 +85,8 @@ export function RepositoryFields({ c, repo, label, settings, disabled, saves, se
     patch("checksPolicy", { checksPolicy: policyValue }, { revert: () => setChecks(server.current?.checksPolicy ?? "all") });
   };
   const changeHost = (value: string) => {
-    const next = value === "t3code" ? "t3code" : "paseo";
+    // The three host kinds the editor offers; anything else falls back to the default.
+    const next = value === "t3code" || value === "bb" ? value : "paseo";
     setHostKind(next);
     patch("hostKind", { hostKind: next }, { revert: () => setHostKind(server.current?.hostKind ?? "paseo") });
   };
@@ -124,7 +125,7 @@ export function RepositoryFields({ c, repo, label, settings, disabled, saves, se
     <Pair>
       <View style={{ gap: space.xxs }}>
         <FieldCaption c={c} text="Host" help={HOST_HELP} />
-        <DropdownSelect c={c} hideLabel label={`Host for ${label}`} value={hostKind} disabled={disabled} options={[{ value: "paseo", label: "Paseo" }, { value: "t3code", label: "T3Code" }]} onChange={changeHost} />
+        <DropdownSelect c={c} hideLabel label={`Host for ${label}`} value={hostKind} disabled={disabled} options={[{ value: "paseo", label: "Paseo" }, { value: "t3code", label: "T3Code" }, { value: "bb", label: "BB" }]} onChange={changeHost} />
       </View>
       <View style={{ gap: space.xxs }}>
         <FieldCaption c={c} text="Checks" help={CHECKS_HELP} />

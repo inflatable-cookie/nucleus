@@ -6,7 +6,15 @@ import { Pressable, Text, View } from "react-native";
 import { Icon } from "../shell";
 import { Button, Field, muted, row, type Colors } from "../controls";
 import { Popover } from "../popover";
-import { hostKindOf, taskNumberLabel, type BoardQaRun, type DecisionView, type LaneView, type TaskSummary } from "../../shared/contracts";
+import {
+  HOST_KIND_LABELS,
+  hostKindOf,
+  taskNumberLabel,
+  type BoardQaRun,
+  type DecisionView,
+  type LaneView,
+  type TaskSummary,
+} from "../../shared/contracts";
 import { phaseBadgeTone, recordBadgeTone } from "../../shared/badge-tones";
 import { waitStateLabels } from "../../shared/wait-state";
 import { recordedStopIsHeld, recordedStopIsWait } from "../../shared/task-stop";
@@ -81,10 +89,17 @@ export const TaskCard = React.memo(function TaskCard({task,selected,onPress,prSt
   const [statusTip,setStatusTip]=useState(false);
   const statusAnchor=useRef<View|null>(null);
   const hostId = task.hostId ?? defaultHostId;
-  const hostChip = hostKindOf(hostId) === "t3code" ? " · T3Code" : "";
-  const questions = useTaskQuestions(task.questionAgentIds ?? [], hostId ? task.questionAgentIds?.map(id => formatAgentId(hostId, id)) : []);
-  const archiveRetry=task.resolution.archiveRetry;
-  const holdKinds = presentHoldKinds(task).filter(kind => !(task.waitState?.state === "merge_hold" && kind === "merge"));
+  const hostKind = hostKindOf(hostId);
+  const hostChip =
+    hostKind === "paseo" ? "" : ` · ${HOST_KIND_LABELS[hostKind]}`;
+  const questions = useTaskQuestions(
+    task.questionAgentIds ?? [],
+    hostId ? task.questionAgentIds?.map((id) => formatAgentId(hostId, id)) : [],
+  );
+  const archiveRetry = task.resolution.archiveRetry;
+  const holdKinds = presentHoldKinds(task).filter(
+    (kind) => !(task.waitState?.state === "merge_hold" && kind === "merge"),
+  );
   const plainWait = taskWaitCardLabel(task.waitState, decisionTitle);
   const holdLabel = [task.waitState ? waitStateLabels[task.waitState.state] : null, ...holdKinds.map(holdKindLabel)].filter(Boolean).map(label => `, ${label}`).join("");
   const stopLabel = stopBadgeLabel(task.stop);

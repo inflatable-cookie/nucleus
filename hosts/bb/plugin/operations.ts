@@ -113,6 +113,8 @@ export interface ProjectRow {
 /** The slice of `bb.sdk` this executor uses. The plugin binds the real SDK to it once. */
 export interface BbHostSdk {
   system: { version(): Promise<{ currentVersion?: string | null }> };
+  /** The BB server's own status (Spec 062, "Identity": the probe reads it). */
+  status: { get(args?: { threadId?: string; projectId?: string }): Promise<unknown> };
   hosts: { list(): Promise<Array<{ id: string; status?: string }>> };
   projects: {
     list(): Promise<ProjectRow[]>;
@@ -136,7 +138,7 @@ export interface BbHostSdk {
     get(args: { threadId: string }): Promise<ThreadRow>;
     stop(args: { threadId: string }): Promise<unknown>;
     archive(args: { threadId: string }): Promise<unknown>;
-    list(args: { originPluginId?: string; projectId?: string; includeHidden?: boolean; archived?: boolean }): Promise<ThreadRow[]>;
+    list(args: { originPluginId?: string; projectId?: string; includeHidden?: boolean; archived?: boolean; limit?: number }): Promise<ThreadRow[]>;
     experimental_listCascade(args: { threadIds: string[]; action: "archive" }): Promise<{ threads?: Array<{ threadId: string; cascadeThreadIds?: string[] }> }>;
     experimental_listPluginMetadata(args: { pluginId: string; threadIds: string[] }): Promise<{ threads?: Array<{ threadId: string; metadata?: unknown }> }>;
   };
@@ -291,7 +293,14 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
     const input = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
     switch (op) {
       case "identity.probe": {
+        // The read-only identity probe: the three reads Spec 062 names — the server's
+        // own status, its version and one bounded thread list — plus the host list the
+        // projection reports. Every one of them is a read; none of them writes.
+        const status = await call("status.get", () => sdk.status.get({}));
+        if (typeof status !== "object" || status === null) throw new HostOperationError("unavailable", "status.get answered no status for this BB server");
         const version = await call("system.version", () => sdk.system.version());
+        const threads = await call("threads.list", () => sdk.threads.list({ limit: 1 }));
+        if (!Array.isArray(threads)) throw new HostOperationError("unavailable", "threads.list answered no rows for this BB server");
         const hosts = await call("hosts.list", () => sdk.hosts.list());
         return {
           dataDir: options.dataDir(),

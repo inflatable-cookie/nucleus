@@ -46,7 +46,13 @@ const fakeOwner = (
     engine: { refresh: async () => undefined },
     adapter: { connect: async () => undefined },
     admission: {},
-    hostRegistry: { known: () => known, get: () => undefined },
+    hostRegistry: {
+      known: () => known,
+      get: () => undefined,
+      // The primary is the Paseo entry, never whichever host registered first: the
+      // lifecycle's identity guard reads it (Spec 062 phase 1).
+      primary: () => known[0],
+    },
     plannerTickets: { ensure: async () => undefined },
     t3Host: null,
     daemonUrl: "ws://127.0.0.1:6767/ws",

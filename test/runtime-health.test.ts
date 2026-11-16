@@ -77,6 +77,7 @@ test("a host conflict comes from the typed fact, never from startError text", ()
   const facts = (overrides: Partial<HostStateFacts> = {}): HostStateFacts => ({
     known: [{ id: "host-a" }],
     online: () => false,
+    primaryId: "host-a",
     t3: undefined,
     identityConflict: null,
     startError: "",
@@ -149,6 +150,7 @@ test("a host conflict comes from the typed fact, never from startError text", ()
     projectHostStates({
       known: [],
       online: () => false,
+      primaryId: null,
       t3: undefined,
       identityConflict: null,
       startError: "",
@@ -163,6 +165,7 @@ test("an online host reports its own reason and a pending secondary thread shape
     projectHostStates({
       known: [{ id: "host-a" }, { id: "t3-host" }],
       online: (id) => id === "host-a",
+      primaryId: "host-a",
       t3: { id: "t3-host", error: "", threadShapePending: false },
       identityConflict: null,
       startError: "",
@@ -176,6 +179,8 @@ test("an online host reports its own reason and a pending secondary thread shape
     projectHostStates({
       known: [{ id: "t3-host" }],
       online: () => true,
+      // No Paseo entry is recorded, so nothing is primary in this projection.
+      primaryId: null,
       t3: { id: "t3-host", error: "", threadShapePending: true },
       identityConflict: null,
       startError: "",

@@ -13,6 +13,8 @@ import type { HostRunOutputFailureSummary } from "../core/host-runs/host-run-out
 import type { Admission } from "../core/host/admission";
 import type { HostRegistry } from "../core/host/host-registry";
 import type { Engine } from "../core/engine";
+import { hostKindOf } from "../shared/host-kind";
+import type { BbHostStatus } from "./bb-host";
 import type { CapacityChangeJournal } from "../core/dispatch/capacity-changes";
 import type { AdmissionRpcMetrics } from "../core/qa/effigy-admission-metrics";
 import type {
@@ -75,6 +77,11 @@ export interface RuntimeHealth {
    */
   hostIdentityConflict: HostIdentityConflict | null;
   t3code?: ReturnType<T3HostConnection["status"]>;
+  /**
+   * Spec 062 phase 1: the BB host's registered identity, the version diagnostics its
+   * executor announced, its heartbeat and — while it is offline — the field that refused it.
+   */
+  bb?: BbHostStatus;
   schema: number | null;
   lastStoreAccessAt: string | null;
   taskIdentities: number;
@@ -158,6 +165,8 @@ export interface RuntimeHealthContext {
   readonly lifecycle: RuntimeLifecycle;
   readonly hostRegistry: HostRegistry<RegisteredHost>;
   readonly t3Host: T3HostConnection | null;
+  /** The BB host's registration, identity and heartbeat (Spec 062, phase 1). */
+  bb(): BbHostStatus;
   readonly admission: Admission;
   readonly capacityChanges: CapacityChangeJournal;
   readonly maintenance: StoreMaintenance;
@@ -183,6 +192,14 @@ export interface RuntimeHealthContext {
 export interface HostStateFacts {
   known: ReadonlyArray<{ id: string }>;
   online(id: string): boolean;
+  /**
+   * The Paseo entry's id, the one host the legacy unqualified facts belong to. It is
+   * never "whichever host registered first": a secondary host (a BB plugin can connect
+   * before the daemon bootstrap) must not be presented as the primary.
+   */
+  primaryId: string | null;
+  /** Why the BB host is offline; health names the field that refused it. */
+  bbOfflineReason?: string;
   /** The secondary host's own status, when this runtime runs a T3 session. */
   t3:
     | { id: string | null; error: string; threadShapePending: boolean }
@@ -197,7 +214,7 @@ export interface HostStateFacts {
  * guessed onto a host, and `startError` is display text only.
  */
 export function projectHostStates(facts: HostStateFacts): HostHealth[] {
-  const { known, t3, identityConflict, startError } = facts;
+  const { known, t3, identityConflict, startError, primaryId } = facts;
   if (!known.length)
     return [
       {
@@ -206,7 +223,7 @@ export function projectHostStates(facts: HostStateFacts): HostHealth[] {
         reason: startError || "Host identity is unknown",
       },
     ];
-  return known.map((host, index) => {
+  return known.map((host) => {
     if (facts.online(host.id)) {
       return {
         id: host.id,
@@ -223,9 +240,11 @@ export function projectHostStates(facts: HostStateFacts): HostHealth[] {
       reason:
         host.id === t3?.id
           ? t3.error || "T3Code is offline"
-          : index === 0
+          : host.id === primaryId
             ? startError || "Host is offline"
-            : "Host is offline",
+            : hostKindOf(host.id) === "bb"
+              ? facts.bbOfflineReason || "BB plugin is not connected"
+              : "Host is offline",
     };
   });
 }
@@ -263,6 +282,7 @@ export class RuntimeHealthProjection {
   health(): RuntimeHealth {
     const { store, hostRegistry, lifecycle } = this.context;
     const t3 = this.context.t3Host?.status();
+    const bb = this.context.bb();
     const endpoint = this.context.hostRunEndpoint();
     return {
       phase: lifecycle.phase,
@@ -277,14 +297,17 @@ export class RuntimeHealthProjection {
       ...this.context.drainProjection(),
       hostId:
         this.context.hostSessionId() ||
-        hostRegistry.known()[0]?.id ||
+        hostRegistry.primary()?.id ||
         "unknown",
       connected: this.context.anyHostConnected(),
       hostIdentityConflict: lifecycle.identityConflict,
       ...(t3 ? { t3code: t3 } : {}),
+      ...(bb.hosts.length || bb.offlineReason || bb.lastRefusal ? { bb } : {}),
       hosts: projectHostStates({
         known: hostRegistry.known(),
         online: (id) => Boolean(hostRegistry.get(id)),
+        primaryId: hostRegistry.primary()?.id ?? null,
+        bbOfflineReason: bb.offlineReason,
         t3: t3
           ? {
               id: t3.id,

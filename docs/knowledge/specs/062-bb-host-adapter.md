@@ -1,7 +1,7 @@
 # BB host adapter
 
-Status: approved. Phase 0 (the transport spike) is implemented and proved; phases 1–6 are not
-implemented. This document is the design and the phased plan, and [phase 0
+Status: approved. Phase 0 (the transport spike) is implemented and proved, phase 1 (host
+registration, identity and health) is implemented; phases 2–6 are not implemented. This document is the design and the phased plan, and [phase 0
 evidence](#phase-0-evidence-2026-11-16) answers its eight assumptions. Amended 2026-11-16: decision 5
 now carries the forked sidebar, the two boards and BB usage left to BB's card plus the operator's Usage
 Pace plugin, and the experimental inventory and the plan from phase 5 on follow it; phases 0–4 are
@@ -729,8 +729,8 @@ cleaning up after Nucleus.
 
 **Identity.** The plugin announces the BB server's data directory, version and SDK version. The
 service derives `hostId = bb:<hash of the real data directory>` and registers that identity only
-after a read-only probe through the channel succeeds (`status.get`, `system.version`, and one
-`threads.list`). Reconnecting must prove the same recorded data directory; a different one refuses
+after a read-only probe through the channel succeeds (`status.get`, `system.version`, one
+`threads.list` and `hosts.list`, whose answer supplies the host ids the probe reports). Reconnecting must prove the same recorded data directory; a different one refuses
 by its exact field and takes the host offline. Version strings are diagnostics, never an allowlist: a
 newer BB whose SDK still satisfies the operations connects, and a changed required field refuses by
 name. The host kind is `bb`, selected per repository
@@ -870,6 +870,52 @@ is reachable.
 - `effigy check` and `effigy test:affected --run`.
 
 **Dependencies.** Phase 0.
+
+**Implemented (2026-11-16).** What landed, and where:
+
+- the declaration now carries the identity proof: `service/transport/server.ts` asks a
+  just-declared executor for `identity.probe` (`status.get`, `system.version`, one `threads.list`,
+  `hosts.list`; every one a read) *before* it answers the declaration, validates the
+  projection through `shared/service/host-channel.ts`, and hands the proved identity to the runtime
+  (`bbHostVerified`). A probe that refuses, omits a field or answers a refused shape answers the
+  declaration with `refused` and the field it names, and records that reason for health;
+- `service/bb-host.ts` owns the durable identity (`bbHostIdentity`: the real data directory and its
+  derived `bb:` id), the registry claim, the per-identity admission and breaker state, the release on
+  a dropped connection and the health projection. A declaration naming a different data directory
+  than the recorded one refuses by `dataDir` and takes the host offline: one service serves one BB
+  host identity, so a moved data directory is a refusal, not a second host;
+- `HostRegistry.primary()` names the Paseo entry and never falls back to whichever host registered
+  first, so a BB host that registers before the daemon bootstrap never displaces the legacy
+  unqualified `hostId` (health, the board and settings read it), the host states the health projection
+  presents, the retired-observation scope, the admission resource or the daemon-identity guard — and
+  never makes that guard refuse the Paseo connection that follows;
+- a connection that closes between the identity proof and the registration is not installed: its
+  link is released and the claim the runtime just recorded is retired, so nothing reads online for a
+  connection that no longer exists;
+- the work-host decision: a registered BB host counts as a live host for liveness, presence and
+  health, and never as an available work host;
+- `service.health` carries a `bb` block (the registered identity, the announced BB and plugin-SDK
+  versions, the probe's host list, and while offline the field-prefixed reason) and lists the
+  identity in `hosts` as online or offline with that reason;
+- the registered adapter (`createBbHostAdapter`) declares BB's composition
+  (`reportingViaMcp: false`, `lifecycleDispatch: false`, `supportsCoordinatorRecovery: true`,
+  `perThreadEnvironment: false`, `repositorySharedWorkspaces: false`) and refuses every
+  task-workflow call before send, so no dispatch reaches a task yet;
+- `shared/host-kind.ts` learns the `bb` kind and the `bb:` prefix, the project editor offers it, the
+  board card shows it, and `repository.set hostKind: "bb"` round-trips; a live task keeps the host it
+  started on;
+- the plugin requests the one `service.nucleus-bridge-presence` claim after its declaration and
+  retries a refused claim on its retained connection; the plugin-lost fault names
+  `bb plugin reload nucleus` when BB is the connected host;
+- liveness is a heartbeat: the retained connection reads `service.health` on its own cadence (15 s), the
+  service records `lastHeartbeatAt` for the identity it proved, and health reports
+  `heartbeatStale` after 45 s without one. A late or missing heartbeat never closes the
+  connection and never settles another operation — the T3 lessons this phase applies.
+
+Tests: `test/bb-host-registration.test.ts` (probe, registration, health, refusal by field,
+reconnect, drop), `test/bb-host-presence.test.ts` (the real plugin channel: declaration, presence
+claim and retry, reload re-proving identity), the `bb` cases in `test/host-selection-provenance.test.ts`
+and `test/repository-settings.test.ts`, and the updated `test/bb-host-channel.test.ts`.
 
 ### Phase 2 — workspace custody, without a thread
 

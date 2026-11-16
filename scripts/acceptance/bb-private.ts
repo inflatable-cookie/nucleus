@@ -314,6 +314,13 @@ async function main() {
     assert.equal(hostIdFromDataDir(identity.value.dataDir), hostId, "the service derives the same identity from the declared directory");
     note("identity-proved", true, { hostId, bbVersion: identity.value.bbVersion, sdkVersion: identity.value.sdkVersion, hostIds: identity.value.hostIds, machineId: machines.id });
 
+    // Spec 062 phase 1: the probe is these four reads, and the plugin's own counters are
+    // the evidence that this BB release answers each one. A changed shape would have
+    // thrown out of the read instead of answering.
+    const probeReads = ["status.get", "system.version", "threads.list", "hosts.list"];
+    for (const read of probeReads) assert.ok((identity.calls[read] ?? 0) > 0, `the identity probe read ${read} against the isolated BB`);
+    note("identity-probe-reads", true, Object.fromEntries(probeReads.map(read => [read, identity.calls[read]])));
+
     // 6. Step 1 of the lifecycle: register the project and mint the handle, no thread.
     interface Workspace { projectId: string; projectCreated: boolean; projectCount: number; handle: string; path: string; spawned: number }
     const workspace = await send<Workspace>("workspace.create", { repositoryRoot: repository, name: "Synthetic project" });

@@ -239,7 +239,7 @@ export class RuntimeLifecycle {
         if (this.closing) return;
         const observed = this.owner.paseoHostId;
         if (!this.owner.hostSession) {
-          const recorded = this.owner.hostRegistry.known()[0]?.id;
+          const recorded = this.owner.hostRegistry.primary()?.id;
           if (recorded && recorded !== observed)
             throw this.refusal(
               "Configured daemon identity changed; existing tasks belong to another host",
@@ -249,7 +249,7 @@ export class RuntimeLifecycle {
             this.owner.daemonUrl,
             { adapter: this.owner.adapter, admission: this.owner.admission },
             () => {
-              const previousHost = this.owner.hostRegistry.known()[0]?.id;
+              const previousHost = this.owner.hostRegistry.primary()?.id;
               if (previousHost && previousHost !== observed)
                 throw this.refusal(
                   "Configured daemon identity changed; existing tasks belong to another host",
@@ -525,7 +525,7 @@ export class RuntimeLifecycle {
   private recordHostConflict(error: HostIdentityConflictError): void {
     this.identityConflict = {
       kind: error.kind,
-      hostId: this.owner.hostRegistry.known()[0]?.id ?? null,
+      hostId: this.owner.hostRegistry.primary()?.id ?? null,
       message: error.message,
       at: new Date().toISOString(),
     };

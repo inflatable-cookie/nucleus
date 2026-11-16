@@ -56,6 +56,15 @@ test('project rows round-trip through set, get and list with outcome-style repos
     assert.equal(opted.hostKind, 't3code');
     const preserved = await runtime.setRepository({repository: 'acme/app', note: 'keeps hostKind'});
     assert.equal(preserved.hostKind, 't3code', 'an absent hostKind patch preserves the opt-in');
+    // Spec 062 phase 1: BB is a host kind a repository opts into, and the read back
+    // shows it exactly as stored.
+    const onBb = await runtime.setRepository({repository: 'acme/app', hostKind: 'bb'});
+    assert.equal(onBb.hostKind, 'bb');
+    assert.equal((await runtime.getRepository({repository: 'acme/app'}))?.hostKind, 'bb', 'the stored opt-in is shown on read');
+    assert.equal((await runtime.setRepository({repository: 'acme/app', note: 'keeps bb'})).hostKind, 'bb', 'an absent hostKind patch preserves bb');
+    const refused = await runtime.setRepository({repository: 'acme/app', hostKind: 'not-a-host' as never}).then(() => null, (error: Error) => error);
+    assert.ok(refused, 'an unknown host kind is refused');
+    assert.equal((await runtime.getRepository({repository: 'acme/app'}))?.hostKind, 'bb', 'a refused patch changes nothing');
     const restored = await runtime.setRepository({repository: 'acme/app', hostKind: 'paseo'});
     assert.equal(restored.hostKind, 'paseo');
 
