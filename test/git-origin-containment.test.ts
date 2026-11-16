@@ -19,6 +19,9 @@ async function fixture(t: import('node:test').TestContext) {
   await git(repo, 'commit', '-m', 'base');
   await git(repo, 'remote', 'add', 'origin', origin);
   await git(repo, 'push', 'origin', 'main');
+  // Some developer Git configs auto-create an upstream tracking ref on push;
+  // start the proof with no remote-tracking refs so its no-write guarantee is testable.
+  await git(repo, 'update-ref', '-d', 'refs/remotes/origin/main').catch(() => '');
   const head = await git(repo, 'rev-parse', 'HEAD');
   return { root, origin, repo, head };
 }
