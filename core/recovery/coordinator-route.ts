@@ -166,7 +166,9 @@ export class CoordinatorRoute {
   // A released wait leaves changes requested work for an explicit operator
   // revise/retry; a coordinator must not turn the source completion into one.
   if(t.phase==='changes_requested'&&t.prerequisiteWait?.releasedAt)return null;
-  if(this.store.notices(t.id).some(notice=>notice.kind==='prerequisite'&&['pending','intent'].includes(notice.status)))return null;
+  // A notice informs the owner about its retained wait. Once a continuation
+  // clears that wait, delivery stays tracked but no longer parks recovery.
+  if(t.prerequisiteWait&&this.store.notices(t.id).some(notice=>notice.kind==='prerequisite'&&['pending','intent'].includes(notice.status)))return null;
   // A short integration-checkout conflict is one repository episode, not one
   // recovery and notice per task waiting behind it. Only the elected leader
   // may enter normal recovery after the durable grace expires.

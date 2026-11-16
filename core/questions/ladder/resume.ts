@@ -231,7 +231,16 @@ export async function resumeEscalationWaits(ladder: Ladder, task: Task): Promise
       try { decision = new Decisions(ladder.store).get({ id: wait.target }); } catch { continue; }
       if (decision.status !== 'answered' || !decision.answer) continue;
     }
-    ladder.store.event(task.id, 'planner_escalation_wake_intent', `${id}: ${wait.kind} ${wait.target}`);
+    ladder.store.transaction(() => {
+      ladder.store.event(task.id, 'planner_escalation_wake_intent', `${id}: ${wait.kind} ${wait.target}`);
+      // The planner already chose to resume when this prerequisite finished.
+      // Retire that owned wait before any continuation or recovery admission.
+      if (wait.kind === 'task') {
+        ladder.store.update(task.id, { prerequisiteWait: null }, 'prerequisite_wait_resumed',
+          `Escalation ${id}: prerequisite wait ended`);
+      }
+    });
+    current = ladder.store.task(task.id);
     ladder.resolution.wakingEscalations.add(id);
     if (decision?.answer) {
       const refusal = await ladder.resolution.settlePlannerEscalation(current, id, decision.answer.text, decision.answer.answeredBy);

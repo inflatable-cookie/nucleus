@@ -423,6 +423,7 @@ test(`a ${kind} wait whose retained reviewer is closed resumes recovery without 
       `closed reviewer must not be replaced; phase=${f.current().phase} reason=${f.current().reason}`);
     assert.equal(f.current().resolution.reviewerAgentId, 'review-agent');
     await f.engine.quiesce();
+    assert.equal(f.current().prerequisiteWait, null, 'the fulfilled wait no longer fences recovery');
     assert.ok(f.coordinatorRuns().length > recoveriesBefore, 'a fresh recovery owns the remaining fault');
     await f.engine.wake();
     assert.equal(f.coordinatorRuns().length, recoveriesBefore + 1, 'one recovery resumes the ended wait');

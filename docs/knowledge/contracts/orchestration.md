@@ -2676,7 +2676,9 @@ movement invalidates source approval and preserves the normal readiness gates.
   missing. Wake follows the available continuation from `next`; when no retained
   turn can resume, the existing recovery path owns the remaining fault. It never
   leaves an expired wait at a refused wake or inert lifecycle stop, and never
-  silently replaces a retained reviewer.
+  silently replaces a retained reviewer. A fulfilled task wait clears with its
+  wake intent before continuation admission; its owner notice stays tracked but
+  no longer parks recovery once that wait has cleared.
 - A coordinator cannot grant acceptance or relay an operator replacement instruction.
 - A report binds to its episode, coordinator generation and the task's progress
   when the episode opened (phase, head, worker, completion and review, run,
