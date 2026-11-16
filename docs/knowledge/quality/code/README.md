@@ -1,25 +1,5 @@
 # Code-module quality tables
 
-- nucleus#1249 (floor 7, 2026-11-15; implementation commit `d86c549d7`): the two floor-7 verb rows were split
-  and hardened along the seams their rows named, and re-rated at the implementation commit. `core/verbs/moves.ts` is the folder `core/verbs/moves/`: the
-  controls surface and cancelled-turn re-plan (`controls.ts`, 9), the review move (`review.ts`, 8; its
-  retained-reviewer observation reads a failure as not closed, which the floor leaves as recorded debt),
-  the proof-only receipt review (`review-proof.ts`, 9, same debt), the reviewer displacement every
-  review-side move reads (`review-displacement.ts`, 10), the retained reader (`review-reader.ts`, 10), the
-  one review settlement both reviews commit (`review-settle.ts`, 9), the work move (`work.ts`, 9), the merge
-  move (`merge.ts`, 8; the proof-hold release still reads a reason prefix), the closeout (`closeout.ts`, 10),
-  the external-merge reconciliations (`external-merge.ts`, 8; two participant-quiet loops remain) and the
-  barrel and types (10). The reviewer model preflight is now `shared/authors.ts`' `requestedReviewerRefusal`,
-  one rule over `modelKey`. The proof-only path settles every stopped reviewer, as the task review does; it
-  settled only the first before. `core/verbs/removal.ts` (8) writes a run-bound hold the observation could not
-  reach onto its record instead of dropping it, and reads receipt positions through
-  `core/store/store-auth.ts`' `receiptPosition` and `firstReceiptSequence`, not raw SQL. The move-verb
-  refusals a turn cancel re-plans on still match message prose (`controls.ts:20`); a typed refusal would
-  change the pinned replan test, so it is a follow-up. Boundary coverage: a run-bound hold that cannot be
-  observed is recorded and settled on the next pass (`test/run-bound-dependencies.test.ts`). The moves
-  rows' churn is 0 because the folder's files are new at this PR; their lineage is `core/verbs/moves.ts`
-  (churn 1/1/0).
-
 - nucleus#1244 (floor 7, 2026-11-15): the four floor-7 core/review rows were split, consolidated or
   deleted along the seams their rows named, and re-rated at this PR's head. `core/review/review-continuation.ts`
   is now the folder `core/review/review-continuation/`: the composition and the one authorized reviewer
@@ -165,6 +145,34 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
 
 ## Re-rates
 
+- nucleus#1251 (floor 7, 2026-11-15): the two floor-7 `service/callbacks` rows were simplified and hardened
+  along the seams their rows named, and re-rated at this PR's head. `service/callbacks/callback.ts` (8: O2 T2
+  F1 P1 Pr2) keeps every route in one table that is both the allowlist and the dispatch, so the if/else chain
+  and its second route list are gone, and the status of a refusal comes from the refusal itself — the
+  authentication refusal is `core/store/store-auth.ts`' typed `UnauthorizedCallbackError` (401) instead of a
+  message the socket compared against, while the oversized body keeps its 413 and every other refusal keeps
+  the 409 it already answered. Malformed, schema-invalid and internal-fault inputs still share that 409:
+  separating them is a behaviour change this structural task records as a follow-up instead of building
+  (failure 1). The generated helper is the shared client's own bytes plus its report program:
+  `shared/service/callback-client.mjs` is self-contained again, its `callbackTransportPhase` re-export moved
+  to `shared/service/transport.mjs` where the phase contract is owned, and `bin/mcp-report.mjs` imports that
+  owner directly, so the helper's two text replacements are gone (proportion 1: the helper program still
+  shares the file with the socket). `service/callbacks/effigy-admission-endpoint.ts` (8: O2 T2 F1 P1 Pr2) uses
+  the host-run socket owner's one answer probe instead of its own copy, asks
+  `core/machine/start-identity.ts`' `startIdentityProves` whether a recorded identity can prove anything
+  instead of testing an `@unknown` suffix in three places, and records a reconciliation tick that throws as
+  `reconcile-fault` on the reservation it was observing (or on the service error stream when the row itself
+  cannot be read) instead of swallowing it every tick: the note's own answer says whether the cause reached
+  the row, a journal that refuses the write is reported on the service error stream with both the fault and
+  the refusal named, and because a write that never landed consumes no dedupe key the same cause is recorded
+  on the next tick once the journal accepts it, so a recovered journal still carries the fault. The framing keeps its existing one-line-per-read
+  behaviour and its 64 KiB bound, and the bind keeps its existing mkdir/chmod/removal rules: answering every
+  complete line in one read and adopting contract 010's owned-chain checks at bind and teardown are
+  behaviour changes, recorded as follow-ups rather than built here (failure 1 keeps the framing seam). Boundary
+  tests were added for the callback socket's statuses, for the request bound including an oversized request
+  whose newline arrives in the same write, for a refused reconcile-fault note reaching the error stream, and for
+  that same note landing once the journal recovers (`test/callback-client.test.ts`, `test/effigy-admission.test.ts`);
+  no existing test was weakened.
 - nucleus#1247 (floor 7, 2026-11-15): the two floor-7 `core/store` rows were consolidated and split along
   the seams their rows named, and re-rated at this PR's head. The Spec 041 drain pass left
   `core/store/store-lanes.ts` (9: O1 T2 F2 P2 Pr2) for `core/planning/lane-drains.ts` (9: O2 T1 F2 P2
