@@ -76,12 +76,13 @@ function reader(result: UsageReading): ProviderUsageReader {
 }
 
 test("a provider key maps to its reading kind, or to nothing", () => {
-  assert.equal(providerUsageKind("openai-codex"), "codex");
-  assert.equal(providerUsageKind("Codex"), "codex");
+  assert.equal(providerUsageKind("codex"), "codex");
   assert.equal(providerUsageKind("claude"), "claude");
-  assert.equal(providerUsageKind("claude-code"), "claude");
   assert.equal(providerUsageKind("grok"), "grok");
-  assert.equal(providerUsageKind("xai-grok-bot"), "grok");
+  assert.equal(providerUsageKind("openai-codex"), null);
+  assert.equal(providerUsageKind("Codex"), null);
+  assert.equal(providerUsageKind("claude-code"), null);
+  assert.equal(providerUsageKind("xai-grok-bot"), null);
   assert.equal(providerUsageKind("glm"), null);
   assert.equal(providerUsageKind("openai"), null);
 });
@@ -105,7 +106,7 @@ test("subscription groups map to readers per provider and never merge accounts o
   const { store } = fixture();
   try {
     store.setProfiles([
-      profile("p1", "openai-codex"),
+      profile("p1", "codex"),
       profile("p2", "claude"),
       profile("p3", "codex"),
       profile("p4", "glm"),
@@ -611,6 +612,26 @@ test("a reader that throws still records an unknown reading and its backoff", as
     assert.equal(state.subscriptions[0]!.reading.status, "unknown");
     assert.match(state.subscriptions[0]!.reading.reason!, /spawn failed/);
     assert.match(state.subscriptions[0]!.lastError!, /spawn failed/);
+  } finally {
+    store.close();
+  }
+});
+
+test("an unreadable saved read state is surfaced instead of resetting backoff", async () => {
+  const { store } = fixture();
+  try {
+    store.setProfiles([profile("p1", "codex")]);
+    store.setMeta("pool", [poolEntry("p1", "codex-pro")]);
+    store.db.prepare("INSERT INTO usage_read_state(group_key,data) VALUES(?,?)")
+      .run(JSON.stringify(["codex-pro", "codex"]), "not-json");
+    let reads = 0;
+    const service = new UsageService(store, {
+      env: {},
+      readers: { codex: { provider: "codex", read: async () => { reads++; return okReading(); } } },
+    });
+    assert.throws(() => service.state(), /Stored usage read state is unreadable/);
+    await assert.rejects(service.refresh(), /Stored usage read state is unreadable/);
+    assert.equal(reads, 0, "corrupt state cannot be treated as a never-read subscription");
   } finally {
     store.close();
   }
