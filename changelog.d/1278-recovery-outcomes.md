@@ -1,0 +1,1 @@
+Recovery stands down when a task is live or waiting for capacity or prerequisites, even if its coordinator reports blocked. Ended planner waits resume retained work or recovery after the raising run has gone. Restart keeps the task's slot through run settlement and passes it to the next participant.

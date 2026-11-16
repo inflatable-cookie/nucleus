@@ -10,7 +10,7 @@ import { threadRunningReason } from '../intake/thread-waits';
 import { creationFailureDetail } from './task-reasons';
 import { taskProgressDigest } from './coordinator-report';
 import { recoveryApplicationsInFlight } from './coordinator-settlement';
-import { isLiveRecoveryNoop, liveNoopSummary, liveWorkingParticipant } from './live-noop';
+import { liveNoopSummary, liveRecoveryWait, liveWorkingParticipant } from './live-noop';
 
 /**
  * One recovery episode's durable bookkeeping: the action a coordinator report
@@ -97,20 +97,21 @@ export class CoordinatorEpisode {
   if (resultApplied(this.store, t.id, run.id)) return;
   const current=this.store.task(t.id);
   const latest=this.store.run(run.id);
-  if(!latest)return;
+  if(!latest||latest.released||current.resolution.recovery?.runId!==latest.id)return;
   const others=this.store.runs(current.id).filter(item=>item.id!==latest.id);
   const live=liveWorkingParticipant(current,others);
   // A recovered-without-action report is a live no-op only while Nucleus
   // observes an occupant. Otherwise the caller keeps the old refusal.
-  if(!live)return;
+  const wait=liveRecoveryWait(current,{prerequisite:this.store.dependencyWait(current),slot:this.resolution.slotAdmissionReason(current)});
+  if(!live&&!wait)return;
   const completion=this.completionFromBinding(current,latest,action);
   this.store.putRun({...latest,completion,released:true,status:'finished'});
-  const summary=isLiveRecoveryNoop(action.summary)?action.summary:liveNoopSummary(live);
+  const summary=live?liveNoopSummary(live):`live: task is waiting; ${wait!.reason}`;
   const recovery=current.resolution.recovery;
   const incident=current.resolution.incident;
   const ownsIncident=Boolean(incident&&incident.status!=='resolved'&&(incident.role==='recovery'
    ||recovery?.incidentId===incident.id||(recovery?.runId!=null&&incident.runId===recovery.runId)));
-  const phase=['blocked','error','needs_attention'].includes(current.phase)
+  const phase=live&&['blocked','error','needs_attention'].includes(current.phase)
    ? live.role==='reviewer'?'reviewing':live.role==='revision'?'changes_requested':'working' : undefined;
   this.resolution.update(current,{
    recoveryActive:false,
@@ -118,8 +119,8 @@ export class CoordinatorEpisode {
    stop:null,
    ...(recovery?{recovery:{...recovery,status:'resolved' as const,summary,action:{...action,status:'applied' as const}}}:{}),
    ...(ownsIncident?{incident:{...incident!,status:'resolved' as const,detail:summary,updatedAt:now()}}:{}),
-  },{...(phase?{phase}:{})},'recovery_live_noop',summary);
-  this.resolution.waiting(this.store.task(t.id),threadRunningReason(live.role),'lifecycle');
+  },{...(phase?{phase}:{})},'recovery_live_noop',`recovery: task live, nothing to do; ${summary}`);
+  this.resolution.waiting(this.store.task(t.id),wait?.reason??threadRunningReason(live!.role),wait?.stop??'lifecycle');
   recordResultApplied(this.store,t.id,latest.id);
  }
  /**

@@ -1,7 +1,7 @@
 import { TaskChangedRefusal } from "../../shared/task-version";
 import { RETAINED_PREREQUISITE_REFUSAL } from './verb-refusal-text';
 import { groupIsUnavailable } from "../../shared/pool";
-import { OPERATOR_BOARD_CALLER, WORKER_REPLACEMENT_CEILING, runHoldsSlot, type Task, type TaskControlInput } from "../../shared/contracts";
+import { OPERATOR_BOARD_CALLER, WORKER_REPLACEMENT_CEILING, runHoldsSlot, type Run, type Task, type TaskControlInput } from "../../shared/contracts";
 import type { AgentObservation } from "../host/adapter";
 import { hostFailureRefusalDetail } from "../host/errors";
 import { DurableFenceRefusal } from "../intake/run-settlement";
@@ -397,7 +397,7 @@ export class WorkerRestarts {
           return continueWorker();
         }
         return this.store.transaction(() => {
-          this.preserveWorkerRestartSlot(task.id);
+          this.preserveWorkerRestartSlot(task.id, task, runsBefore);
           settle();
           return continueWorker();
         });
@@ -406,11 +406,10 @@ export class WorkerRestarts {
   }
 
   /** Keep the slot this worker already held until the continuation is admitted. */
-  private preserveWorkerRestartSlot(taskId: string): void {
+  private preserveWorkerRestartSlot(taskId: string, before: Task, runs: Run[]): void {
     const current = this.store.task(taskId);
     if (current.resolution.restartSlotHold) return;
-    const runs = this.store.runs(taskId);
-    if (!occupiesSlot(current, runs)) return;
+    if (!occupiesSlot(before, runs)) return;
     const from = runs.find(runHoldsSlot)?.id ?? current.resolution.currentRunId ?? current.runId;
     if (!from) return;
     this.resolution.update(current, { restartSlotHold: { role: 'worker', at: now(), fromRunId: from } }, {}, 'restart_worker_slot_hold');
