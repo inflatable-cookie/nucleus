@@ -2,8 +2,8 @@
 
 Status: approved, not implemented. This document is the design and the phased plan; phase 0 proves
 the transport before any phase depends on it. Amended 2026-11-16: decision 5 now carries the forked
-sidebar and the two boards, and the experimental inventory and the plan from phase 5 on follow it;
-phases 0–4 are unchanged.
+sidebar, the two boards and the forked usage card with Nucleus's pace and the Grok source, and the
+experimental inventory and the plan from phase 5 on follow it; phases 0–4 are unchanged.
 Owner: Nucleus runtime maintainers
 
 BB ([getbb.app](https://getbb.app)) is a third Nucleus host beside Paseo and T3Code (Tom,
@@ -70,6 +70,11 @@ Each fact is marked with the evidence that establishes it:
 | 24 | Plugin storage, RPC and realtime are scoped by plugin id (`realtime.publish` sends `{ pluginId, channel, payload }`), so a copy of the list neither reads nor publishes the bundled plugin's preferences | upstream |
 | 25 | A `navPanel` is a navigation destination through the bundled Navigation plugin's rail (`navigation/rail`, the default) or top list; `experimental_useBadge` draws a count, short text or a dot; its route is `/plugins/<pluginId>/<path>/*` and `subPath` is the route remainder, so a deep link works | guide, upstream, probe |
 | 26 | Tab contexts are exactly `{ kind: "thread" }`, receiving `{ threadId, environment: { id } }`, and `{ kind: "nav-panel", panelId }`, receiving `{ subPath }`; `useVisible` decides whether a fixed tab shows | upstream |
+| 27 | `plugins/provider-usage` is 2,936 lines of TypeScript and React in 13 source files plus five test files (1,415 lines), is on upstream's forkable list, declares `engines.bbPluginSdk: ">=0.4.90"`, and registers a sidebar-footer **disclosure** card (`experimental_sidebarFooter` with `ExperimentalSidebarFooterDisclosureProps`) plus a settings page (`UsageSettings`); it draws no navigation entry and owns no rail markup | upstream |
+| 28 | The card aggregates *source* plugins: its server discovers `provider-usage.v1.listResources` implementors through `bb.sdk.plugins.experimental_discoverRpc({ method })`, so a source must register its RPC with `experimental_discoverable: true`; it then lists each source's resources, fetches `provider-usage.v1.getResource` per resource three at a time, and serves one `getUsage` snapshot of `{ machines: [{ id, displayName, status, providers: [{ id: "<source>:<resource>", providerId, accountLabel, displayName, logoUrl, icon, strings, usage }] }] }`. Provider display metadata comes from `bb.sdk.providers.list({ capability: "usage" })`, ordering follows that catalog, and a provider it does not carry falls back to `{ id: providerId, displayName: providerId }` | upstream |
+| 29 | The card's window value after `normalizeUsageMeasurement` is `{ label, usedPercent, resetsAt, cost }`: the source contract's `kind` (`five-hour`/`daily`/`weekly`/`custom`) is used only to name the label and is dropped before the client. The window row renders `<n>% used` and a bar filled to `Math.max(2, min(100, usedPercent))` with `usageBarColorClass` (80 warning, 95 destructive) | upstream |
+| 30 | The source contract is owned by `plugins/provider-usage/usage-source-contract.ts` and copied into each source: `provider-usage.v1.listResources` (cheap inventory; `id`, `accountKey`, `providerId`, `label`, `scope: shared \| host`) and `provider-usage.v1.getResource` (one resource: `observedAt`, `usage.ok.windows[]` of `{ kind, id, label, usedPercent, resetsAt, model, cost }`, or `not_installed`/`unauthenticated`/`expired`/`error`). Its README states that other providers "must explicitly implement the contract to appear in these displays" | upstream |
+| 31 | Today's sources are provider-claude-code, provider-codex and provider-acp. ACP's covers only providers whose declaration sets `usage: true` (from `providerUsage` on the agent), which is `acp-opencode` alone: `acp-grok` ("Grok Build", `known-agents.ts`) sets no `providerUsage`, so it publishes no resource and earns no `capability: "usage"` catalog entry | upstream |
 
 ## Assumptions phase 0 must prove
 
@@ -276,11 +281,12 @@ thin patch set, and each Nucleus task group's header renders the task's state fr
 The shared board from `client/shell/` renders in a `navPanel` in BB's left rail with an attention
 badge, and it renders per project in a fixed thread tab plus a `navPanel` sub-path route. The rest of
 the surface is as first drafted: Settings in a `settingsSection`, decision and native-question
-composer pills, and a `pendingInteraction` for a Nucleus-raised blocking question.
+composer pills, and a `pendingInteraction` for a Nucleus-raised blocking question. Usage is BB's own
+card, forked once to carry Nucleus's pace, with Grok published as a source (5e).
 
 The parts below are decisions, not options: 5a and 5b are the sidebar work, 5c extends the board
-phase, 5d is the per-project board the operator asked for beside the global one, and 5e records what
-does not change.
+phase, 5d is the per-project board the operator asked for beside the global one, 5e is the usage fork
+and the Grok source, and 5f records what does not change.
 
 #### 5a. The sidebar is a fork of BB's own list
 
@@ -325,7 +331,7 @@ same routine and records its output.
    entry can register it beside the board.
 
 A vendored file that needs a fifth change is a signal that the seam is wrong: either the patch set
-grows deliberately, with its reason recorded, or the change belongs upstream (5e's exit path).
+grows deliberately, with its reason recorded, or the change belongs upstream (5f's exit path).
 
 **Rebase routine.** Bump the pin to a new release tag, run the copy, apply
 `sidebar/patches/*.patch`, resolve rejects by updating the patch (never by editing a vendored file in
@@ -531,18 +537,147 @@ and it makes the forked sidebar's project row the only path to it.
 trade: the project board is where a planner dispatches from, and it would keep needing a navigation
 away from the thread it was asked about.
 
-#### 5e. What does not change, and the deferred exit path
+#### 5e. Usage in BB is BB's own card, forked once for Spec 059's pace
 
-Decisions 1–4, 6 and 7 are unchanged and this amendment does not reopen them. The fork adds no host
-operation, no workspace fact, no reporting route and no thread presentation: it reads records the
-adapter already owns, and it draws a task's state one level up from the row decision 4 already
-titles. Decision 4's worker title keeps carrying the step; the group header repeats it where a
-collapsed group needs it, which is presentation of the same fact, not a second one.
+**Recommendation.** Drop the Nucleus mini gauges in BB entirely (Tom, 2026-11-16: BB's card "provides
+useful information and more than the mini gauges do"). BB's bundled `provider-usage` plugin already
+draws a sidebar-footer card and a settings page with each provider's windows, percents, reset times and
+plan labels (fact 27). The one thing it lacks is Nucleus's pace, so Nucleus forks that plugin the same
+way it forks the list, adds the pace, and publishes Grok usage as a source so the card can show the one
+subscription BB has no source for. Nucleus's full Usage screen stays on the board.
 
-The fork is a means, not a goal. **Option B — an upstream extension point** (a group-row metadata
-slot whose data is per environment, and a collapse hint a list can supply per group) — would replace
-the fork and delete the patch set. Tom takes that upstream himself, later; until it exists, the fork
-is how the requirement is met, and the patch set is kept small enough that an upstream slot can
+**The fork is its own BB plugin.** The card is a display plugin: it reads sources over
+`experimental_discoverRpc` (fact 28) and needs neither the adapter's socket nor the board, and the
+operator has to be able to install it and disable `bb--provider-usage` (fact 27). So it is a second
+plugin package beside the adapter's — `hosts/bb/usage-plugin/` — vendored with the same routine as the
+list fork: one pinned commit for both trees, one copy procedure, one `UPSTREAM.json` entry per tree,
+one drift test and selector covering both, one `PATCHES.md`, one MIT section. `plugins/provider-usage`
+is on upstream's forkable list, MIT, and 2,936 lines with five test files, so the copy is held to the
+same promise the list's copy is (facts 27, 18).
+
+**The patch set is five seams**, each a `.patch` under `hosts/bb/usage-plugin/patches/`:
+
+1. `server.ts` — compute the projection once per window and once per provider from
+   `shared/usage-projection.ts`, add the pace facts to the snapshot it serves, and fall back to the
+   source's own label for a provider BB's catalog does not carry (the Grok case below).
+2. `usage-schema.ts` — the snapshot's window and provider schemas gain those fields (window length,
+   elapsed fraction, pace percent, projected use at reset, pressure state, the short label and the
+   one-line verdict).
+3. `app.tsx` — the window row draws the pace marker on the bar at the window's elapsed fraction and
+   reads `<n>% used · pace <p>%`; the provider heading carries the one-line verdict.
+4. `settings.tsx` — the settings page shows the same marker, text and verdict, reusing the card's
+   pieces where it already does.
+5. `usage-source-contract.ts` — accept one additive optional field on a window, `startsAt`, for a
+   source that knows its window start. It is consumer-side only: sources keep publishing upstream's
+   shape, and one that omits it falls back to the length rules below.
+
+Everything else stays upstream's: the card's layout, the footer disclosure, the machine and account
+grouping, the catalog ordering, 80/95 colour thresholds, plan labels, shared-account hints, the
+refresh cadence, the safety refresh on focus and `thread.idle`/`thread.failed`, and the settings page's
+structure.
+
+**The projection is one, and it is removed from the board only once.** The pace comes from the same
+module the board and the Paseo row use: `projectUsage` over a window as
+`{ usedFraction: usedPercent/100, windowSeconds, windowStartsAt, resetsAt }`, then
+`projectedUseLabel` for `on track` / `+18% over` / `-30% spare` and `usageStateWord` for the state. Two
+pure label helpers currently live in `client/usage.tsx`; the phase moves them into `shared/` and
+re-exports them, so the service, the board and the fork's server produce identical strings rather than
+three approximations.
+
+**Window length.** BB's source contract gives `kind` (`five-hour`, `daily`, `weekly`, `custom`),
+`usedPercent` and `resetsAt`, and no start or length (fact 30). The fork derives length in this order:
+
+1. an optional `startsAt` from a source that sends one (seam 5), so `resetsAt - startsAt` is exact;
+2. the kind: `five-hour` is 5 hours, `daily` is 24 hours, `weekly` is 7 days;
+3. for `custom`, a recognised label: a label naming a month ("Monthly", "Month") is one calendar month
+   before `resetsAt` in UTC, and one naming a year ("Annual", "Yearly") is one calendar year before;
+4. otherwise the length is unknown, the window shows its percent and reset with no pace marker, and
+   the verdict says the pace cannot be projected rather than guessing.
+
+Tom's live window is the case that rules out a fixed table: OpenCode Go's monthly window arrives as
+`{ "kind": "custom", "label": "Monthly", "usedPercent": 72, "resetsAt": "2026-12-05T17:24:37Z" }`, so
+rule 3 makes its start `2026-11-05T17:24:37Z` and its pace `72 / elapsed`. A window whose reset has
+passed counts as unused and a window with no usage counts as unused, both of which `projectUsage`
+already does (Spec 059); below 5% elapsed it holds the neutral pace and projects no runout, which is
+the same rule the board shows.
+
+**Grok usage.** BB ships a Grok provider through its ACP plugin (`acp-grok`, "Grok Build") but no
+plugin publishes Grok usage: `provider-usage.v1` sources come from provider-claude-code,
+provider-codex and provider-acp, and ACP's covers only providers whose declaration sets
+`usage: true`, which is `acp-opencode` alone (fact 31). Nucleus already reads Grok usage (Spec 059), so
+the adapter plugin publishes it as a source of its own: `bb.rpc.register` of the copied
+`usage-source-contract` with `experimental_discoverable: true` (the flag a source needs to be found,
+fact 28), where
+
+- `listResources` returns one `scope: "shared"` resource per Grok subscription from `usage.state`,
+  with `providerId: "acp-grok"`, the pool group's id as the resource id, the reading's account identity
+  as `accountKey` when it has one, and `label` naming the pool;
+- `getResource` maps that subscription's windows to `usage.ok.windows[]`: `kind` from the Nucleus
+  window (five-hour, daily, weekly, else custom), `label` from its name, `usedPercent` from the used
+  fraction, `resetsAt` from the reading, and `model`/`cost` null. A reading that is unknown or
+  unavailable is `error` with its reason — never `ok` with zeros, so the card's own "never show missing
+  usage as zero" rule holds.
+
+The Nucleus BB plugin is thus a usage *source* as well as the adapter, which is what the contract is
+for: its README states that other providers "must explicitly implement the contract to appear in these
+displays" (fact 30). One caveat the patch covers: the card takes a provider's display metadata from
+BB's provider catalog filtered to `capability: "usage"`, and `acp-grok` does not declare that
+capability, so without seam 1's fallback the card would label the provider `acp-grok`. Seam 1 makes the
+card show the source's own label, and if BB later declares usage for `acp-grok` upstream the fallback
+simply stops applying.
+
+**The two copies never double-show.** Enabling both draws two footer items and two settings pages,
+because each plugin registers its own. So the install step is: enable the fork, disable
+`bb--provider-usage`. Nucleus never disables another plugin and cannot detect a disabled one (the
+plugin list a plugin can read names loaded plugins and their published methods, not every install);
+the plugin's settings copy states the step, and an operator who leaves both enabled can hide either
+item in the footer's own customize menu.
+
+**Evidence.** The card's aggregation path, its normalization to `{ label, usedPercent, resetsAt, cost }`
+(which is why the patch carries length through the server), its window row and colour thresholds, and
+the source contract's own text are facts 28–30. The catalog filter and `acp-grok`'s missing capability
+are fact 31. `shared/usage-projection.ts` is pure over `{ now, windows }` and already exports
+`projectUsage`, `projectUsageWindow`, `usageWindowElapsed` and `USAGE_DAMPING_ELAPSED`, and
+`client/usage.tsx` already calls the same fraction "the bar's on-pace marker", so the marker is a port,
+not a new idea. `plugins/provider-usage` is MIT and on the forkable list, like the list plugin
+(facts 18, 27).
+
+**Rejected alternative: add the pace upstream first.** Tom is not ready to contribute it without
+testing it, and the patch workflow is the way to test it in his own sidebar (his call, 2026-11-16). The
+patch set is small enough to upstream later, and 5f records that exit.
+
+**Rejected alternative: keep the Nucleus mini gauges in the rail beside the card.** Tom's ruling is
+that the card carries more than the gauges did, so two surfaces would duplicate one fact and the rail
+would lose space to a weaker version of the same information.
+
+**Rejected alternative: publish Grok usage by patching provider-acp.** That plugin belongs to BB: it
+declares Grok's capabilities, and a `providerUsage: true` there would be an upstream change, not ours.
+A Nucleus source needs no change to BB and appears in any display that aggregates sources.
+
+**Rejected alternative: a Nucleus-only card that mimics BB's.** The operator's comparison was with
+BB's own card: same shape, same grouping, plus one metric. A second, independently drawn card would
+drift from BB's provider catalog, machine grouping and refresh behaviour, and re-earn 2,900 lines of
+UI to add one number.
+
+**Rejected alternative: project the pace in the card's client.** The client's window schema drops
+`kind` in normalization (fact 29), so length inference would have to re-derive what the server already
+had, and the board and the card would each carry a copy of the rules. The server has the source window
+and the shared module, so the projection belongs there and the client only draws it.
+
+#### 5f. What does not change, and the deferred exit paths
+
+Decisions 1–4, 6 and 7 are unchanged and this amendment does not reopen them. The forks add no host
+operation, no workspace fact, no reporting route and no thread presentation: they read records the
+adapter and the board already own, and they draw a task's state one level up from the row decision 4
+already titles. Decision 4's worker title keeps carrying the step; the group header repeats it where a
+collapsed group needs it, which is presentation of the same fact, not a second one. The usage fork
+changes no Nucleus read either: it consumes the source contract and the shared projection.
+
+Both forks are a means, not a goal, and both have the same exit. **Option B — an upstream extension
+point** (a group-row metadata slot whose data is per environment, and a collapse hint a list can supply
+per group) — would replace the list fork and delete its patch set, and the pace marker is a candidate
+to upstream once Tom has tested it. Tom takes that upstream himself, later; until it exists, the forks
+are how the requirements are met, and each patch set stays small enough that an upstream slot can
 absorb it.
 
 ### 6. Usage and observation: chunked inventory, exact-identity adoption
@@ -698,7 +833,7 @@ changes.
 | `threads.experimental_listAncestors` | Proving a role thread's planner before reparenting or archiving | Reparenting reads the parent link per thread instead; a deeper planner chain is then unproven |
 | `threads.experimental_listCascade` | Proving an archive would touch only this task's own threads | Archive fails closed with no substitute: without the read there is no authoritative cascade proof, so the thread is left unarchived and closeout records the cleanup as incomplete. A sidebar child count or a list absence never stands in for it |
 | `composer.customize` `experimental_popups` | A pill's popover content | Pills fall back to host-rendered menus and the board opens the same action |
-| `slots.experimental_threadList` | **Used by the fork.** It is the only way to own the sidebar, and it is exclusive: the plugin registers one list and the host prefers it over the bundled one | The plugin cannot draw the sidebar: phase 5 is blocked, and the operator's fallback is pinning the bundled list (`sidebar.threadListProvider`) with the task state living only on the board. The exit is the upstream group-row slot in 5e |
+| `slots.experimental_threadList` | **Used by the fork.** It is the only way to own the sidebar, and it is exclusive: the plugin registers one list and the host prefers it over the bundled one | The plugin cannot draw the sidebar: phase 5 is blocked, and the operator's fallback is pinning the bundled list (`sidebar.threadListProvider`) with the task state living only on the board. The exit is the upstream group-row slot in 5f |
 | `slots.experimental_tab` with `context: { kind: "thread" }` and `useVisible` | The per-project board tab and the task-detail tab (5d) | Both in-thread boards are dropped and the per-project board stays reachable only from the rail; nothing else in the design depends on it |
 | `navPanel.experimental_useBadge` (and `experimental_usePageTitle`) | The rail badge for items needing the operator, and the panel title naming a project | The badge is dropped and the board's own attention count is the fallback; the title falls back to the panel's static title |
 | `experimental_useSidebarThreads` | The whole live row view the forked list draws: status, runtime status, queued work, pending interaction, activity, indicator and label, environment, project, plugin origin, pinned/archived/unread | No live row data. The fork falls back to the browser SDK's `threads.list` plus its own polling, which loses the host's resolved indicator, draft and queued-message state, and the environment fields the task-group join uses |
@@ -710,17 +845,10 @@ changes.
 | `experimental_useExperiment("threadRowMetadata")` | Upstream's gate on other plugins' metadata line, which the fork inherits by not patching that path | Other plugins' metadata line stops drawing until a rebase adapts it; the task group header is the fork's own render and needs no change |
 | `experimental_Icon`, `experimental_ProviderIcon`, `experimental_useProviders`, `experimental_usePluginId` | Row icons, provider glyphs, the provider catalog and the plugin's own id (the task-group join's origin test) | Icons fall back to a static set and provider glyphs to a name; the plugin id is available from the manifest, so the join survives |
 | `experimental_setThreadRowStatus` | Deferred; not used by this plan | Nothing here. The fork draws its own rows, so no host row-status write is needed. A replaced list is still expected to keep honouring `useSidebarThreadRowStatus` (fact 23), which the fork does by not touching that path; if option B lands, this is the slot's replacement for a group-level hint |
-| `slots.experimental_sidebarNavigation`, `slots.experimental_threadContextSegment`, `slots.experimental_threadInfoRow` | Deferred; not used by this design | Nothing. The rail is the bundled Navigation plugin's, and the fork's own rows carry the task state, so a navigation or info-row contribution is not needed |
-
-The adapter's own tests pin the SDK version as a diagnostic and decode the fields it consumes
-strictly, so an additive SDK change connects and a changed required field refuses by name.
-
-The fork's inventory is a second, vendored dependency surface, and it is tracked by commitment rather
-than by hope: `sidebar/UPSTREAM.json` records the pinned SDK floor (`engines.bbPluginSdk` 0.6.112)
-and the vendored-manifest test refuses a floor above the SDK the pinned release ships (0.6.132), so a
-rebase cannot quietly vendor a list that needs a newer SDK than the running BB provides. Every
-experimental symbol in the rows above is one the vendored source imports today; the drift selector
-re-reads that list at a new pin.
+| `experimental_sidebarFooter` (disclosure) | The forked card's own mount: BB's footer disclosure is how `provider-usage` draws its card, and the fork inherits it unchanged | The card has no mount. Nothing else in the design uses the footer, so the loss is the card alone; the board's Usage screen stays |
+| `bb.sdk.plugins.experimental_discoverRpc` and `bb.rpc.register`'s `experimental_discoverable` | The card finds its sources; the Nucleus BB plugin is itself a source for Grok | A source that cannot register discoverably is invisible to the card, so Grok's usage would have no surface (5e). The card's own rows keep working for the providers BB publishes |
+| `provider-usage.v1.listResources` / `provider-usage.v1.getResource` | **Used twice:** the fork's card consumes them, and the Nucleus BB plugin publishes them for Grok (5e) | The card's other sources keep working through their own copies of the contract, but Grok's usage disappears from BB until a later BB release publishes it (fact 31). The contract is owned by the card's plugin and copied into each source, so a change is a copy-and-patch step, not a negotiation |
+| `bb.sdk.providers.list({ capability: "usage" })` | The card's provider display metadata and ordering; `acp-grok` is absent from it, which is why the fork's fallback exists (5e) | A provider without a catalog entry shows its raw id; the fork's fallback covers Grok, and a missing capability elsewhere is a display-name loss, not a data loss |
 
 ## Phased plan
 
@@ -889,7 +1017,7 @@ records, and live tasks from phase 3 give the header something real to read.
 **Deferred exit path.** Option B — an upstream group-row metadata slot (per-environment data) plus a
 collapse hint a list can supply per group — would replace this phase's fork and delete the patch set,
 keeping the header read and the tenure of the requirement. It is not scheduled; it is the exit that
-makes the fork a bounded commitment (5e).
+makes the fork a bounded commitment (5f).
 
 ### Phase 6 — board, per-project board, settings, pills, usage and the planner terminal
 
@@ -924,7 +1052,47 @@ only if phase 0 proved it appears where an operator would look.
 
 **Dependencies.** Phases 0–5.
 
-### Phase 7 — trial and parity call
+### Phase 7 — usage in BB: the provider-usage fork, the pace and the Grok source
+
+**Outcome.** BB shows usage from BB's own card, forked at the pinned commit and patched with Nucleus's
+pace: a marker on each window bar, `<n>% used · pace <p>%`, and a one-line verdict per account on the
+card and on the settings page, from the shared `shared/usage-projection.ts` under Spec 059's rules. A
+custom window gets its length from `startsAt`, its kind or a recognised label, and otherwise reports no
+pace. Nucleus's BB plugin publishes Grok usage as a `provider-usage.v1` source (`providerId`
+`acp-grok`) so the card shows the one subscription BB has no source for, and the board's Usage screen
+stays the full view, reading the same projection. The second fork carries its own pin entry, patch set
+and MIT notice under the routine phase 5 built.
+
+**Acceptance.**
+
+- The pace marker sits on the window bar at the window's elapsed fraction and reads `<n>% used · pace
+  <p>%`; the account verdict reads `on track`, `+N% over` or `-N% spare` from `projectedUseLabel`, and
+  both appear on the card and the settings page.
+- A test pins the projection agreement: one synthetic source snapshot produces identical pace, state
+  and label text through the fork's server and through the board's Usage view, and a window below 5%
+  elapsed projects no runout.
+- The custom-window rule is tested for all four paths: an exact `startsAt`; `five-hour`, `daily` and
+  `weekly` from `kind`; `Monthly`/`Annual` labels as one calendar month or year before `resetsAt`; and
+  an unrecognised label reporting no pace with its percent and reset still shown. Tom's OpenCode Go
+  example (`{"kind":"custom","label":"Monthly","usedPercent":72,"resetsAt":"2026-12-05T17:24:37Z"}`)
+  is one of the fixtures.
+- A Grok resource appears in the card with the fork's pace, published by the Nucleus BB plugin with
+  `providerId: "acp-grok"` and `experimental_discoverable: true`; a reading that is unknown or
+  unavailable maps to `error` with its reason and never to `ok` with zeros; and the card labels it with
+  the source's own label rather than `acp-grok`.
+- A test proves enabling the fork and disabling `bb--provider-usage` leaves exactly one card, that the
+  fork's settings copy states the install step, and that the fork never disables another plugin.
+- `effigy bb:sidebar-drift` covers both vendored trees and reports no drift at the pin; the
+  vendored-manifest test fails if a file in either tree is neither byte-identical nor named as patched,
+  and if either tree's SDK floor exceeds the pinned release's.
+- The vendored card's own test files for the paths the patch set does not touch pass unchanged,
+  including the aggregation, the account grouping and the footer disclosure.
+- `effigy check`, `effigy qa:docs` and `effigy test:affected --run`.
+
+**Dependencies.** Phases 0–5: the plugin package, the fork routine and its drift test, and the
+service's `usage.state`. It runs beside phase 6.
+
+### Phase 8 — trial and parity call
 
 **Outcome.** One repository opts into BB and runs real tasks through it beside Paseo, through
 milestone QA's own runs; the open questions this spec leaves are answered from that evidence and
@@ -933,8 +1101,9 @@ written back into this document.
 **Acceptance.**
 
 - A written parity table against the Paseo plugin for the sidebar and its task groups, the global
-  board, the per-project board, settings, decision pills, native question pills, usage and lifecycle
-  hints, each marked met, met by a different mechanism, or missing with the reason.
+  board, the per-project board, settings, decision pills, native question pills, the usage card with
+  Nucleus's pace, Grok's usage and lifecycle hints, each marked met, met by a different mechanism, or
+  missing with the reason.
 - Evidence for plugin reload mid-task, BB restart mid-task, and a host outage during observation:
   each leaves the task uncertain and recovered by observation, never resent and never read as idle.
 - Evidence for one fork rebase against a newer BB release tag through the documented routine, with
@@ -942,7 +1111,7 @@ written back into this document.
 - The operator's call on whether BB becomes a supported host (Tom; this phase records it, it does
   not assume it).
 
-**Dependencies.** Phases 0–6.
+**Dependencies.** Phases 0–7.
 
 ## Verification
 
@@ -961,6 +1130,11 @@ text carries no local paths, no credentials and no private project names.
 The vendored sidebar is checked twice, and neither check reaches the network from `effigy check`: the
 vendored-manifest test is an ordinary unit test over committed files, and `effigy bb:sidebar-drift` is
 the opt-in fetch that compares the pin against upstream and opens a rebase.
+
+The usage fork is tested the same way, from a recorded source snapshot rather than a live provider:
+one fixture serves the card's aggregation, the projection and the pace rendering, so the pace a test
+sees is the pace the card draws. The agreement test runs the same snapshot through the board's Usage
+view, which is what keeps one projection rather than two.
 
 Proof selectors: `effigy proof:bb` for the private run, `effigy bb:sidebar-drift` at a planned rebase,
 the affected unit files for each phase, and `effigy check` plus `effigy qa:docs` for every phase. No
