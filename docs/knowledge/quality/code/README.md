@@ -137,8 +137,9 @@ Calibration, distribution, recurring defect classes and the target are in [SUMMA
 ## Re-rating
 
 A PR that splits, consolidates or deletes a rated module updates its rows here. It removes or replaces
-the old row, adds a row per new module with the charter's five parts and evidence at the PR head, and
-notes the commit. Scores are never edited without a re-rate. Code that has moved since `136cf0de` keeps
+the old row, adds a row per new module with the charter's five parts and evidence at the PR head. How each score
+was reached goes in the PR body and the row's `reason`, not in this README: don't add per-PR entries
+here (they collide between parallel PRs; planner, 2026-11-16). Scores are never edited without a re-rate. Code that has moved since `136cf0de` keeps
 its old row until its module is next changed. Re-rating changes the row count: the 588 rows above are
 the `136cf0de` sweep, and these tables carry every row added or replaced since.
 

@@ -24,6 +24,7 @@ import {StorePreSend} from "./store-pre-send";
 import {buildOutcomeRecord,StoreOutcomes,type TelemetryFactChunk,type VerbOutcome} from "./store-outcomes";
 import {StorePlanning} from "./store-planning";
 import {StoreProjectQa} from "./store-project-qa";
+import {StoreUsage,type UsageSample} from "./store-usage";
 import {StoreProjectRegistry} from "./store-project-registry";
 import {StoreRepositorySettings} from "./store-repository-settings";
 import {StoreProjectAgents} from "./store-project-agents";
@@ -333,6 +334,7 @@ export class Store {
   });
   private readonly hostRunStore = new StoreHostRuns(this.core);
   private readonly projectQaStore = new StoreProjectQa(this.core);
+  private readonly usageStore = new StoreUsage(this.core);
   private readonly planningStore = new StorePlanning(this.core, {
     requireLaneDocuments: (keys, repoPath, origin) => this.lanesStore.requireLaneDocuments(keys, repoPath, origin),
     laneDocumentPinsFor: task => this.lanesStore.laneDocumentPinsFor(task),
@@ -524,6 +526,9 @@ export class Store {
   /** One truncating WAL checkpoint; `busy` reports a reader that kept the WAL in place. */
   checkpointWal(): { busy: number; log: number; checkpointed: number } { return this.reclaimStore.checkpointWal(); }
   transaction<T>(fn: () => T): T { return this.core.transaction(fn); }
+  usageReadState(key: string): string | null { return this.usageStore.readState(key); }
+  recordUsageRead(key: string, data: string, samples: readonly UsageSample[]): void { return this.usageStore.recordRead(key, data, samples); }
+  pruneUsageSamples(before: string): void { return this.usageStore.pruneSamples(before); }
   private transactionHooks() {
     const undo = this.tasksStore.projectionUndo = { projection: this.tasksStore.taskProjection, clock: this.tasksStore.projectionClock, sequence: this.tasksStore.newestSequence,
       tasks: new Map(), runs: new Map(), counts: new Map() };

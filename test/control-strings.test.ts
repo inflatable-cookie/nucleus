@@ -676,7 +676,11 @@ const PARSED: ParsedText[] = [
   { site: 'held proof answer', reads: ["event.detail.includes('Leave held for the planner')", "result.reply.choice === 'Leave held for the planner'"], writers: ["label: 'Leave held for the planner'"] },
   { site: 'proof GO answer', reads: ['`${questionId}: GO — run the qualification`', "answer.startsWith('GO — run the qualification')"], writers: ["label: 'GO — run the qualification'"] },
   { site: 'absent catalog archive', reads: ["event.detail.includes('observed absent from the catalog and disk without a Queue archive intent')"] },
-  { site: 'absent creation', reads: ["event.detail.includes(` ${run.role} creation`)"] },
+  // The absent-creation budget is read from the record's own scope, so the
+  // legacy sentence it still recognises and the record writer are pinned;
+  // nucleus#1243 removed the reader that matched the replacement sentence.
+  { site: 'absent creation', re: /^Confirmed absent (\w+) creation/, sample: 'Confirmed absent reviewer creation; Nucleus issued one replacement',
+    writers: ['`${role}:${runId}: ${text}`'] },
   { site: 'route stop replay', reads: ["kind LIKE 'route_stop_%'"], writers: ['"route_stop_settled"', '"route_stop_intent"', '"route_stop_uncertain"', '"route_stop_sent"'] },
 ];
 

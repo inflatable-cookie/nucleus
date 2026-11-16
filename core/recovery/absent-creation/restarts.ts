@@ -1,18 +1,26 @@
 import { randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { type Run, type Task } from '../../shared/contracts';
-import { now } from '../store/store';
-import { ABSENT_WORKER_REASON, PRE_AGENT_LAUNCH_FAILURE_REASON, ABSENT_WORKER_REPLACEMENT_REASON, ABSENT_RESOLUTION_REASON, resolutionCreationRoles, coordinative } from './task-reasons';
-import { isDispositionActive, isDispositionComplete } from '../../shared/contracts';
-import { isPiSettingsLockFailure } from './exhaustion';
-import { runFenceRefusal, runSettlementFence, DurableFenceRefusal } from '../intake/run-settlement';
-import { ownerReviewContext } from '../review/owner-review-context';
-import { taskPrNumber } from '../forge/index';
-import type { Resolution } from '../resolution';
+import { type Run, type Task } from '../../../shared/contracts';
+import { now } from '../../store/store';
+import { ABSENT_WORKER_REASON, PRE_AGENT_LAUNCH_FAILURE_REASON, ABSENT_WORKER_REPLACEMENT_REASON, ABSENT_RESOLUTION_REASON, resolutionCreationRoles, coordinative } from '../task-reasons';
+import { isDispositionActive, isDispositionComplete } from '../../../shared/contracts';
+import { isPiSettingsLockFailure } from '../exhaustion';
+import { runFenceRefusal, runSettlementFence, DurableFenceRefusal } from '../../intake/run-settlement';
+import { ownerReviewContext } from '../../review/owner-review-context';
+import { taskPrNumber } from '../../forge/index';
+import type { Resolution } from '../../resolution';
+import { absentReplacementRecord, absentReplacementSpent } from './budget';
 
-/** Recreate proven-absent runs. */
+/** Recreate proven-absent runs and workers under their same identities. */
 export type AbsentRestartsContext = Pick<Resolution, 'adapter' | 'attention' | 'ensureIncident' | 'graceMs' | 'paused' | 'recordIncidentEvent' | 'resolveIncident' | 'resumeWorkerContinuation' | 'settleVerbFences' | 'store' | 'update'>;
 
+/**
+ * The resolution-side half of absence: admit and replay a proven-absent worker
+ * creation, recreate one proven-absent reviewer, closeout or executor run under
+ * the SAME run id, and issue exactly one same-role replacement. The engine-side
+ * half, which owns workspace creation and the worker-absence observations, is
+ * `CreationRecovery` in `creation.ts`; the budget both read is `budget.ts`.
+ */
 export class AbsentRestarts {
   constructor(readonly resolution: AbsentRestartsContext) {}
   get store() { return this.resolution.store; }
@@ -147,7 +155,7 @@ export class AbsentRestarts {
     if (Date.now() - Date.parse(incident.createdAt) < this.graceMs) return;
     const current = this.store.task(t.id);
     // The replacement budget is durable: one recorded same-role replacement means the next absence escalates.
-    if (this.store.events(t.id).some(event => event.kind === 'absent_creation_replaced' && event.detail.includes(` ${run.role} creation`))) {
+    if (absentReplacementSpent(this.store.events(t.id), run.role)) {
       this.resolution.attention(current, `A replacement ${run.role} creation also proved absent after an exact lookup; coordinator attention required`);
       return;
     }
@@ -187,10 +195,11 @@ export class AbsentRestarts {
       this.store.putRun({ ...run, status: 'superseded', released: true });
       const incident = current.resolution.incident!;
       const phase = run.role === 'reviewer' ? 'awaiting_review' : run.role === 'executor' ? (run.proofExecution?.returnPhase ?? 'awaiting_review') : 'closing';
+      const reason = `Confirmed absent ${run.role} creation; Nucleus issued one replacement`;
       this.resolution.update(current, {
         currentRunId: null, attention: false,
         incident: { ...incident, action: 'replacement', attempt: incident.attempt + 1, detail: `Proven-absent ${run.role} callback revoked; one replacement issued`, status: 'reconciling', updatedAt: now() },
-      }, { phase, reason: `Confirmed absent ${run.role} creation; Nucleus issued one replacement` }, 'absent_creation_replaced');
+      }, { phase, reason }, 'absent_creation_replaced', absentReplacementRecord(run.role, run.id, reason));
       this.resolution.recordIncidentEvent(current.id, { ...incident, action: 'replacement', attempt: incident.attempt + 1, status: 'reconciling', updatedAt: now() });
     });
   }

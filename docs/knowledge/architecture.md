@@ -167,9 +167,14 @@ owner to the rules it enforces.
   [daemon owners](contracts/orchestration.md#daemon-owners)
   ([Spec 038](specs/038-bounded-uncertain-merge-reconciliation.md),
   [Spec 007](specs/007-reviewed-head-pre-merge-hooks.md)).
-- `core/recovery/task-reasons.ts` holds the reason text, refusal errors and small
-  helpers the owners share. It's a leaf, so importing it never closes a cycle
-  through `core/resolution.ts`. `core/dispatch/retained-work.ts` reads the retained
+- `core/recovery/task-reasons/` holds the reason text, refusal errors and small
+  helpers the owners share, split by mechanism: the recorded reasons
+  (`reasons.ts`), review and merge verdicts (`verdicts.ts`), parked-task
+  predicates (`parks.ts`), run roles and thread waits (`participants.ts`), the
+  phase sets (`phase-sets.ts`), the refusal classes (`refusals.ts`) and the
+  bounded windows and repository QA argv (`policy.ts`). `index.ts` is the barrel
+  every caller imports. It's a leaf, so importing it never closes a cycle through
+  `core/resolution.ts`. `core/dispatch/retained-work.ts` reads the retained
   author's receipted results.
 - `core/machine/owned-tool.ts` proves no live tool holds a run and records the
   `owned_tool_*` events. It decides on the typed tool-issue facts in
@@ -246,10 +251,13 @@ owner to the rules it enforces.
   order (the continuation a replacement worker resumes, retry, worker resume, and
   the stopped-revision restart). `Resolution` keeps a same-name delegate for each
   public moved method, including `retry` so instance overrides still fire.
-- `core/recovery/absent-restarts.ts` recreates proven-absent runs: an absent worker in
-  the retained workspace, an absent resolution run, an uncertain-run restart
-  under the same run ID, and the one-replacement creation budget.
-  `Resolution` keeps a same-name delegate for each moved method.
+- `core/recovery/absent-creation/` owns proven-absent creation. `restarts.ts`
+  recreates proven-absent runs: an absent worker in the retained workspace, an
+  absent resolution run, an uncertain-run restart under the same run ID, and the
+  one-replacement creation budget, which is the typed record in `budget.ts`.
+  `creation.ts` recovers the engine-side creation intent, and `decisions.ts`
+  holds the pure step rules. `Resolution` keeps a same-name delegate for each
+  moved method.
 - `core/intake/result-application.ts` applies a released result: reviewer, revision,
   proof-executor, and the interrupted-review reapply path. Its pure `advanceOwner`
   names the owner one completed run advances through. Proof settlement and the
@@ -441,10 +449,13 @@ owner to the rules it enforces.
 - `core/verbs/proof.ts` reads those facts and activates the one author-side
   proof execution a task's brief names. The same-name `Engine` method delegates
   to it.
-- `core/recovery/worker-reconcile.ts` holds the initial worker's reconcile pass, in
-  steps: observe it and settle a live one, look for its branch PR, repair a split
-  reporting binding, take a blocked return, then accept its recorded result.
-  Same-name `Engine` methods delegate to its `WorkerReconcile`.
+- `core/recovery/worker-reconcile/` holds the initial worker's reconcile pass, in
+  steps: observe it and settle a live one (`observation-gates.ts`), look for its
+  branch PR (`branch-pr.ts`), repair a split reporting binding
+  (`reporting-binding.ts`), take a blocked return (`blocked-return.ts`), then
+  accept its recorded result (`result-acceptance.ts`). `index.ts` composes the
+  pass and `decisions.ts` holds its pure outcomes. Same-name `Engine` methods
+  delegate to its `WorkerReconcile`.
 - `core/intake/callback-intake.ts` authenticates, validates and records one worker
   report: `CallbackIntake` holds Engine's source gates and the checkpoint and
   review-progress receipts. `core/intake/run-callback-intake.ts` holds
@@ -486,9 +497,9 @@ owner to the rules it enforces.
 - `core/dispatch/worker-launcher.ts` creates a task's worker: one creation per task at
   a time on each engine, one run identity claimed in a transaction, then the
   agent and its launch failures. Same-name `Engine` methods delegate to it.
-- `core/recovery/creation-recovery.ts` recovers a proven-absent worker and an unowned
-  workspace creation. `workspaceReplayAllowed` and `absentWorkerStep` are the
-  pure rules. Same-name `Engine` methods delegate to it.
+- `core/recovery/absent-creation/creation.ts` recovers a proven-absent worker and an
+  unowned workspace creation. `workspaceReplayAllowed` and `absentWorkerStep`
+  (`decisions.ts`) are the pure rules. Same-name `Engine` methods delegate to it.
 - What stays outside the delivery lanes has one owner per mechanism:
   `core/workspaces/workspace-title-projection.ts` runs the workspace-title intent
   and its drain, `core/closeout/cleanup-lane.ts` the cleanup drain and its retry

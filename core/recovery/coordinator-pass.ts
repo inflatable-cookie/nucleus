@@ -4,7 +4,7 @@ import {isDispositionActive,isDispositionComplete} from '../../shared/contracts'
 import { isWaitingTaskStop } from '../../shared/task-stop';
 import { reviewFenceHoldsCoordinators } from '../review/review-continuation';
 import { dispatchBlocked } from '../dispatch/capacity';
-import {RECOVERY_ESCALATION_FAILURE_PREFIX} from './task-reasons';
+import {escalationSummary} from './task-reasons';
 import {ACCEPTED_RECOVERY_NOT_APPLIED_PREFIX, cause, needsAttention, type CoordinatorEpisode, type RecoveryContext} from './coordinator-episode';
 import {isLiveRecoveryNoop} from './live-noop';
 
@@ -224,8 +224,8 @@ export class CoordinatorPass {
     // Observation (or another live check) failed after an authenticated report:
     // keep the pending action and name it. A later pass can still apply it.
     if(binding?.status==='pending')
-     this.episode.escalate(t,`${RECOVERY_ESCALATION_FAILURE_PREFIX}${reason}. ${ACCEPTED_RECOVERY_NOT_APPLIED_PREFIX}${this.episode.acceptedActionIdentity(binding)} remains pending`);
-    else this.episode.escalate(t,`${RECOVERY_ESCALATION_FAILURE_PREFIX}${reason}`);
+     this.episode.escalate(t,escalationSummary(`${reason}. ${ACCEPTED_RECOVERY_NOT_APPLIED_PREFIX}${this.episode.acceptedActionIdentity(binding)} remains pending`));
+    else this.episode.escalate(t,escalationSummary(reason));
    }
   }
 }
