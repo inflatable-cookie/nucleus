@@ -17,9 +17,13 @@ export function resolveIngressHost(input: {
     return { hostId, selection: { hostId, basis: 'repository_host', reason: `Repository hostKind ${input.hostKind}` } };
   }
   if (matching.length === 0) {
-    throw new Error(input.hostKind === 't3code'
-      ? 'T3Code host is not online; opt the repository back to paseo or start T3'
-      : 'Paseo host is not online');
+    throw new Error(
+      input.hostKind === "t3code"
+        ? "T3Code host is not online; opt the repository back to paseo or start T3"
+        : input.hostKind === "bb"
+          ? "BB host is not online; opt the repository back to paseo or connect the BB plugin (bb plugin reload nucleus)"
+          : "Paseo host is not online",
+    );
   }
   throw new Error(`Multiple ${input.hostKind} hosts are online; name one explicitly`);
 }

@@ -168,6 +168,17 @@ export class HostRegistry<T> {
   get(id: string): T | undefined { return this.sessions.get(id)?.host; }
   onlineIds(): string[] { return [...this.sessions.keys()]; }
   known(): readonly KnownHost[] { return this.store.read(); }
+  /**
+   * The primary host: the Paseo daemon this service was built around, which the
+   * durable registry keys unqualified host facts to (the legacy `hostId`, the
+   * retired-observation scope and the daemon-identity guard). A secondary host —
+   * T3Code, or BB (Spec 062) — is never that primary, whatever order it registered
+   * in, so an older record still answers for the host it was written for.
+   */
+  primary(): KnownHost | undefined {
+    const known = this.store.read();
+    return known.find((entry) => hostKindOf(entry.id) === "paseo") ?? known[0];
+  }
   /** The last host close this registry knows about, or null before any host left. */
   disconnectedAt(): number | null { return this.lastDisconnect; }
   /** The instant the idle grace runs out, or null while a host is connected. */

@@ -36,10 +36,32 @@ import {
   ProtocolError, createFrameReader, encodeFrame, parseRequest,
   type ServiceErrorCode, type ServiceRequest, type ServiceResponse,
 } from "../../shared/service/protocol";
-import { currentLoginSession, newCredential, onLoginSessionFault, pidAlive, readServiceInfo, removeServiceInfo, serviceSocketPath, writeServiceExecutorFault, writeServiceInfo } from "./identity";
-import { HostExecutorLink, HostExecutorUnavailableError } from "../host-executor";
-import { HOST_EXECUTOR_METHOD, hostIdFromDataDir, type HostExecutorAcceptance, type HostOperationName, type HostOperationOutcome } from "../../shared/host-operation";
+import {
+  currentLoginSession,
+  newCredential,
+  onLoginSessionFault,
+  pidAlive,
+  readServiceInfo,
+  removeServiceInfo,
+  serviceSocketPath,
+  writeServiceExecutorFault,
+  writeServiceInfo,
+} from "./identity";
+import {
+  HostExecutorLink,
+  HostExecutorUnavailableError,
+  HostOperationRefusedError,
+  HostOperationUnknownDeliveryError,
+} from "../host-executor";
+import {
+  HOST_EXECUTOR_METHOD,
+  hostIdFromDataDir,
+  type HostExecutorAcceptance,
+  type HostOperationName,
+  type HostOperationOutcome,
+} from "../../shared/host-operation";
 import { parseHostExecutorDeclaration } from "../../shared/service/host-channel";
+import { probeDiagnostics } from "../bb-host";
 import { WebBoard, defaultWebBundleDir, uiLinkInputSchema, type WebBoardHost, type WebBoardOptions } from "../web/web-board";
 
 export { SERVICE_BUILD, currentServiceBuildId } from "../../shared/service/build";
@@ -51,6 +73,24 @@ const requestOutcomeInputSchema = z.object({ key: z.string().regex(/^[A-Za-z0-9]
 const SERVICE_RPC_CONTRACTS = rpcContractDigests();
 /** A bridge roll names the builds so the drain can record it on the tasks it may interrupt. */
 const drainInputSchema = z.object({ roll: z.object({ fromBuild: z.string().max(64), toBuild: z.string().max(64) }).strict().optional() }).passthrough();
+
+/**
+ * The bound on a just-declared executor's identity probe. The plugin answers from
+ * `bb.sdk` in milliseconds; a probe past this deadline leaves the identity
+ * unproven, so the declaration refuses instead of registering a host that might
+ * never answer.
+ */
+const BB_IDENTITY_PROBE_DEADLINE_MS = 15_000;
+
+/**
+ * The field a probe's own refusal text names, when it names one. A schema refusal
+ * renders as `field: expected ...` and the schema issue is the last such clause, so
+ * the last match is the field; an epoch or a sentence colon before it is not.
+ */
+function namedField(message: string, fallback: string): string {
+  const matches = [...message.matchAll(/([A-Za-z][A-Za-z0-9_.]*):\s/g)];
+  return matches.length ? matches[matches.length - 1]![1]! : fallback;
+}
 
 export interface ServiceOptions {
   owner?: RuntimeOwnerOptions;
@@ -446,39 +486,224 @@ export class QueueService {
    * A connection becomes this server's host executor for one BB host identity.
    *
    * The identity is derived here, never taken from the plugin: the same real data
-   * directory always answers the same `bb:` id. A second declaration for the same
-   * identity replaces the older connection, which is what a plugin reload looks
-   * like, and the older connection's in-flight operations settle as unknown
-   * delivery rather than being replayed on the new one. Nothing is registered as a
-   * host, so this cannot route a task.
+   * directory always answers the same `bb:` id. It is *registered* only after a
+   * read-only probe through this channel succeeds (`identity.probe`: `status.get`,
+   * `system.version` and one `threads.list`, Spec 062 phase 1), and the runtime is
+   * the authority on whether that identity is the one it already recorded — a
+   * changed data directory refuses by its field and leaves the host offline.
+   * A second declaration for the same identity replaces the older connection, which
+   * is what a plugin reload looks like, and the older connection's in-flight
+   * operations settle as unknown delivery rather than being replayed on the new one.
    */
-  private handleHostExecutor(connection: Connection, request: ServiceRequest) {
-    if (!connection.authed) return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: "unauthenticated", message: "Authenticate before declaring a host executor" } }, true, request.method);
+  private async handleHostExecutor(
+    connection: Connection,
+    request: ServiceRequest,
+  ) {
+    if (!connection.authed)
+      return this.respond(
+        connection,
+        {
+          v: PROTOCOL_VERSION,
+          id: request.id,
+          error: {
+            code: "unauthenticated",
+            message: "Authenticate before declaring a host executor",
+          },
+        },
+        true,
+        request.method,
+      );
     const parsed = parseHostExecutorDeclaration(request.input);
     if (!parsed.ok) return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: "invalid_input", message: parsed.failure.message } }, false, request.method);
     if (connection.hostExecutor) {
       return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: "refused", message: `This connection already executes host operations for ${connection.hostExecutor.hostId}` } }, false, request.method);
     }
     const hostId = hostIdFromDataDir(parsed.value.host.dataDir);
-    const previous = this.hostExecutors.get(hostId);
-    if (previous) this.releaseHostExecutor(previous, "a newer connection declared this host's executor role");
     const link = new HostExecutorLink({
       hostId,
       declaration: parsed.value,
       write: frame => { connection.socket.write(encodeFrame(frame)); },
+      deadlineMs: BB_IDENTITY_PROBE_DEADLINE_MS,
     });
+    // The probe's answer comes back on this same connection, so the link holds the
+    // role while it proves itself. It is registered (below) only if the identity
+    // proves; a refusal drops the role and closes the socket.
     connection.hostExecutor = link;
+    const probe = await this.probeHostIdentity(link);
+    if (!probe.ok) {
+      // The identity is unproven: nothing registers, nothing is kept, and the
+      // refusal names the field. The plugin's own loop reconnects and re-proves.
+      // Recorded and then answered: the refusal is bounded by the probe's own deadline,
+      // never by how long the runtime takes to write it down.
+      void this.recordHostRefusal({
+        hostId,
+        dataDir: parsed.value.host.dataDir,
+        field: probe.field,
+        reason: probe.reason,
+      });
+      connection.hostExecutor = null;
+      link.close(probe.reason);
+      this.releaseBbHostExecutors(probe.reason);
+      return this.respond(
+        connection,
+        {
+          v: PROTOCOL_VERSION,
+          id: request.id,
+          error: { code: "refused", message: probe.reason },
+        },
+        true,
+        request.method,
+      );
+    }
+    const verified = (await this.executor
+      .callHandler("bbHostVerified", {
+        hostId,
+        dataDir: probe.dataDir,
+        bbVersion: probe.bbVersion,
+        sdkVersion: probe.sdkVersion,
+        hostIds: probe.hostIds,
+        connectedAt: link.connectedAt,
+      })
+      .catch((error: unknown) => ({
+        ok: false,
+        field: "identity.probe",
+        reason: error instanceof Error ? error.message : String(error),
+      }))) as { ok?: boolean; field?: string; reason?: string };
+    if (verified?.ok === false) {
+      connection.hostExecutor = null;
+      link.close(verified.reason ?? "the host identity was refused");
+      this.releaseBbHostExecutors(
+        verified.reason ?? "the host identity was refused",
+      );
+      return this.respond(
+        connection,
+        {
+          v: PROTOCOL_VERSION,
+          id: request.id,
+          error: {
+            code: "refused",
+            message: `${verified.field ?? "identity"}: ${verified.reason ?? "the host identity was refused"}`,
+          },
+        },
+        true,
+        request.method,
+      );
+    }
+    const previous = this.hostExecutors.get(hostId);
     this.hostExecutors.set(hostId, link);
-    const result: HostExecutorAcceptance = { ok: true, hostId, dataDir: parsed.value.host.dataDir, acceptedAt: new Date().toISOString() };
-    this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result }, false, request.method);
+    if (previous && previous !== link)
+      this.releaseHostExecutor(
+        previous,
+        "a newer connection declared this host's executor role",
+      );
+    const result: HostExecutorAcceptance = {
+      ok: true,
+      hostId,
+      dataDir: probe.dataDir,
+      acceptedAt: new Date().toISOString(),
+    };
+    this.respond(
+      connection,
+      { v: PROTOCOL_VERSION, id: request.id, result },
+      false,
+      request.method,
+    );
+  }
+
+  /**
+   * Ask a just-declared executor to prove its identity through the channel. The
+   * probe is read-only and bounded; a refusal, a malformed answer, a missing field
+   * and a passed deadline all leave the identity unproven, and the reason names the
+   * field the schema refused so health can say which one.
+   */
+  private async probeHostIdentity(
+    link: HostExecutorLink,
+  ): Promise<
+    | {
+        ok: true;
+        dataDir: string;
+        bbVersion: string;
+        sdkVersion: string;
+        hostIds: string[];
+      }
+    | { ok: false; field: string; reason: string }
+  > {
+    try {
+      const outcome = await link.request("identity.probe", {});
+      const diagnostics = probeDiagnostics(outcome);
+      if (typeof diagnostics.dataDir !== "string" || !diagnostics.dataDir)
+        return {
+          ok: false,
+          field: "dataDir",
+          reason: "identity.probe answered no data directory",
+        };
+      return { ok: true, ...diagnostics };
+    } catch (error) {
+      if (error instanceof HostOperationRefusedError)
+        return {
+          ok: false,
+          field: namedField(error.failure.message, "identity.probe"),
+          reason: `identity.probe was refused (${error.failure.code}): ${error.failure.message}`,
+        };
+      if (error instanceof HostOperationUnknownDeliveryError)
+        return {
+          ok: false,
+          field: namedField(error.message, "identity.probe"),
+          reason: error.message,
+        };
+      return {
+        ok: false,
+        field: "identity.probe",
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /**
+   * A refused BB identity takes the BB host offline: the live executor connection for
+   * the recorded identity (if any) is released and its in-flight work settles unknown.
+   * This service serves one BB host identity, so a declaration that proved a different
+   * data directory is a change to the host it serves, not a second host.
+   */
+  private releaseBbHostExecutors(reason: string) {
+    for (const link of [...this.hostExecutors.values()]) {
+      if (link.hostId.startsWith("bb:")) this.releaseHostExecutor(link, reason);
+    }
+  }
+
+  /** Record one unproven identity with the runtime, so health names why the host is offline. */
+  private async recordHostRefusal(input: {
+    hostId: string;
+    dataDir: string;
+    field: string;
+    reason: string;
+  }): Promise<void> {
+    await this.executor
+      .callHandler("bbHostRejected", { ...input, at: new Date().toISOString() })
+      .catch(() => {
+        /* health then reports the recorded identity, never a guess */
+      });
   }
 
   /** Detach one executor link from the registry and settle its work as unknown delivery. */
   private releaseHostExecutor(connectionOrLink: Connection | HostExecutorLink, reason: string) {
     const link = connectionOrLink instanceof HostExecutorLink ? connectionOrLink : connectionOrLink.hostExecutor;
     if (!link) return;
+    const registered = this.hostExecutors.get(link.hostId) === link;
     link.close(reason);
-    if (this.hostExecutors.get(link.hostId) === link) this.hostExecutors.delete(link.hostId);
+    if (registered) this.hostExecutors.delete(link.hostId);
+    if (registered) {
+      // A registered identity goes offline with the connection that proved it. The
+      // runtime keeps the durable record and the reason, so health still names the
+      // host and why it left (Spec 062, phase 1).
+      void this.executor
+        .callHandler("bbHostReleased", {
+          hostId: link.hostId,
+          connectedAt: link.connectedAt,
+          reason,
+        })
+        .catch(() => {});
+    }
     for (const connection of this.connections) {
       if (connection.hostExecutor !== link) continue;
       connection.hostExecutor = null;

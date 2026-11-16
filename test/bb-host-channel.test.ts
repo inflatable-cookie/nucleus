@@ -22,11 +22,19 @@ import { socketFixtureDirectory } from "./support/socket-fixture";
 class ExecutorClient {
   private readonly pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   private sequence = 0;
-  /** What this fake executor answers. Defaults to refusing every operation. */
-  answer: (op: string, input: unknown) => Promise<unknown> = async () => { throw Object.assign(new Error("this executor answers nothing"), { name: "HostOperationError", code: "unavailable" }); };
+  /**
+   * What this fake executor answers. The declaration's identity probe is always
+   * answered from the declaration itself (that is what a real plugin does, and the
+   * service registers nothing without it); every other operation is refused until a
+   * test says otherwise.
+   */
+  answer: (op: string, input: unknown) => Promise<unknown> = async (op: string) => {
+    if (op === "identity.probe") return { operation: op, at: "2026-11-16T00:00:00.000Z", calls: { "system.version": 1, "threads.list": 1 }, value: { dataDir: this.declaration.host.dataDir, bbVersion: this.declaration.host.bbVersion, sdkVersion: this.declaration.host.sdkVersion, hostIds: ["host_1"] } };
+    throw Object.assign(new Error("this executor answers nothing"), { name: "HostOperationError", code: "unavailable" });
+  };
   received: Array<{ id: string; op: string; input: unknown }> = [];
 
-  private constructor(private readonly socket: Socket, readonly acceptance: Record<string, unknown>) {}
+  private constructor(private readonly socket: Socket, readonly declaration: HostExecutorDeclaration) {}
 
   get closed(): boolean { return this.socket.destroyed; }
 
@@ -49,8 +57,9 @@ class ExecutorClient {
           socket.write(encodeFrame({ v: PROTOCOL_VERSION, id: "decl-1", method: "service.host-executor", input: declaration }));
           return;
         }
-        if (!declared) return;
-        // A reverse request from the service.
+        // A reverse request from the service. The declaration's own identity probe is
+        // one of these and arrives before the declaration is answered, so a request is
+        // answered whether or not this client has seen its acceptance yet.
         const request = frame as { id: string; method: string; input: { op: string; input: unknown } };
         client!.received.push({ id: request.id, op: request.input.op, input: request.input.input });
         void client!.answer(request.input.op, request.input.input).then(
@@ -62,7 +71,7 @@ class ExecutorClient {
       socket.on("data", chunk => reader.feed(chunk));
       socket.on("error", error => reject(error));
       socket.on("connect", () => {
-        client = new ExecutorClient(socket, {});
+        client = new ExecutorClient(socket, declaration);
         socket.write(encodeFrame({ v: PROTOCOL_VERSION, id: "auth-1", method: "service.auth", input: { credential: identity.credential } }));
       });
     });
@@ -131,7 +140,7 @@ test("the host-executor role rides the owner-only socket without disturbing pres
     const observed = await service.sendHostOperation(hostId, "thread.observe", { threadId: "thr_1" });
     assert.equal((observed.value as { environmentId: string }).environmentId, "env_1");
     assert.deepEqual(observed.calls, { "threads.get": 1 });
-    assert.deepEqual(executor.received.map(entry => entry.op), ["thread.observe"]);
+    assert.deepEqual(executor.received.map(entry => entry.op), ["identity.probe", "thread.observe"]);
   } finally {
     executor?.close();
     await bridge.close();
@@ -163,8 +172,9 @@ test("a replacement executor connection is a reload: in-flight work is unknown, 
     const probed = await service.sendHostOperation(hostId, "identity.probe", {});
     assert.deepEqual((probed.value as { hostIds: string[] }).hostIds, ["host_1"]);
     // The uncertain operation was settled unknown, not replayed on the replacement.
-    assert.deepEqual(first.received.map(entry => entry.op), ["call.counters"]);
-    assert.deepEqual(second.received.map(entry => entry.op), ["identity.probe"]);
+    // Each connection proves the identity once before it answers anything else.
+    assert.deepEqual(first.received.map(entry => entry.op), ["identity.probe", "call.counters"]);
+    assert.deepEqual(second.received.map(entry => entry.op), ["identity.probe", "identity.probe"]);
   } finally {
     first?.close();
     second?.close();
@@ -213,7 +223,7 @@ test("a malformed executor answer settles that operation, and the connection kee
     executor.answer = async op => ({ operation: op, at: "2026-11-16T00:00:00.000Z", calls: {}, value: { counters: {}, loadedAt: 1 } });
     const counters = await service.sendHostOperation(hostId, "call.counters", {});
     assert.deepEqual(counters.value, { counters: {}, loadedAt: 1 });
-    assert.equal(executor.received.length, 2);
+    assert.equal(executor.received.length, 3);
   } finally {
     executor?.close();
     await service.stop();

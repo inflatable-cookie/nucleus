@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { QueueRuntime } from '../service/runtime-owner';
 import { submissionSchema, type Run } from '../shared/contracts';
 import type { Adapter } from '../core/host/adapter';
+import { hostIdFromDataDir } from '../shared/host-operation';
 
 test('the only online host can be selected while another known host is offline, with durable provenance', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'host-selection-'));
@@ -71,5 +72,51 @@ test('a repository hostKind selects the unique online host of that kind with dur
     const noSettings = await runtime.engine.startOperation({ key: 'no-settings', kind: 'review_entry', repoPath: '/unconfigured', payload: { type: 'review_entry', input: {} }, deferSchedule: true });
     if (!('accepted' in noSettings)) throw Error('backpressured');
     assert.deepEqual(noSettings.operation.hostSelection, { hostId: 'paseo-primary', basis: 'repository_host', reason: 'Repository hostKind paseo' });
+  } finally { await runtime.drain(); }
+});
+
+test('a bb repository hostKind selects the online BB host, never rehosts a live task, and leaves Paseo the default', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'host-selection-bb-'));
+  const adapter = { client: { isConnected: true }, isConnected: () => true, hostId: 'paseo-primary', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'helper.mjs'), connect: async () => {}, close: async () => {}, catalog: async () => ({ providers: [] }) } as unknown as Adapter;
+  const runtime = new QueueRuntime({ dataDir: dir, adapterFactory: () => adapter, timers: false });
+  try {
+    await runtime.started; await runtime.bootstrap;
+    // Spec 062 phase 1: the host is registered only from a verified identity probe,
+    // and this is the runtime side of that acceptance.
+    const bbDataDir = join(dir, 'bb-data');
+    const bbHostId = hostIdFromDataDir(bbDataDir);
+    const connectedAt = new Date().toISOString();
+    assert.deepEqual(runtime.bbHostVerified({ hostId: bbHostId, dataDir: bbDataDir, bbVersion: '0.49.0', sdkVersion: '0.6.132', hostIds: ['host_synthetic'], connectedAt }), { ok: true });
+    assert.deepEqual(runtime.hostRegistry.onlineIds().sort(), ['paseo-primary', bbHostId].sort(), 'both hosts hold a registry claim');
+    const health = runtime.health();
+    assert.equal(health.bb?.online, true);
+    assert.equal(health.bb?.hosts[0]?.bbVersion, '0.49.0');
+    assert.deepEqual(health.hosts?.find(host => host.id === bbHostId), { id: bbHostId, state: 'online', reason: '' });
+
+    // A repository that opted into BB selects it with durable provenance.
+    runtime.store.putRepository({ origin: null, path: '/bb-repo' }, null, '', null, null, null, undefined, undefined, 'bb');
+    assert.equal(runtime.engine.selectIngressHost(undefined, '/bb-repo'), bbHostId);
+    const accepted = await runtime.engine.startOperation({ key: 'bb-kind', kind: 'review_entry', repoPath: '/bb-repo', payload: { type: 'review_entry', input: {} }, deferSchedule: true });
+    if (!('accepted' in accepted)) throw Error('backpressured');
+    assert.deepEqual(accepted.operation.hostSelection, { hostId: bbHostId, basis: 'repository_host', reason: 'Repository hostKind bb' });
+
+    // Paseo stays the default for a repository with no setting.
+    const unconfigured = await runtime.engine.startOperation({ key: 'default-kind', kind: 'review_entry', repoPath: '/unconfigured', payload: { type: 'review_entry', input: {} }, deferSchedule: true });
+    if (!('accepted' in unconfigured)) throw Error('backpressured');
+    assert.deepEqual(unconfigured.operation.hostSelection, { hostId: 'paseo-primary', basis: 'repository_host', reason: 'Repository hostKind paseo' });
+
+    // A live task keeps the host it started on when the repository setting changes.
+    const submission = submissionSchema.parse({ submissionId: 'bb-switch', title: 'Task', repoPath: '/paseo-repo', planningCommit: 'a'.repeat(40), handoffPath: 'h', originAgentId: 'origin' });
+    const task = runtime.store.insert(submission, 'paseo-primary', 'h', 'a'.repeat(40));
+    assert.equal(runtime.store.task(task.id).hostId, 'paseo-primary');
+    runtime.store.putRepository({ origin: null, path: '/paseo-repo' }, null, '', null, null, null, undefined, undefined, 'bb');
+    assert.equal(runtime.store.task(task.id).hostId, 'paseo-primary', 'switching the setting never rehosts a live task');
+
+    // A dropped executor connection retires the claim and health names it offline.
+    runtime.bbHostReleased({ hostId: bbHostId, connectedAt, reason: 'the host executor connection closed' });
+    const offline = runtime.health();
+    assert.equal(offline.bb?.online, false);
+    assert.match(offline.bb?.offlineReason ?? '', /closed/);
+    assert.equal(offline.hosts?.find(host => host.id === bbHostId)?.state, 'offline');
   } finally { await runtime.drain(); }
 });

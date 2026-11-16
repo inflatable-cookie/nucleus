@@ -14,6 +14,11 @@
  * than assumed. An operation the old connection was carrying is settled by the
  * service as unknown delivery, never replayed here.
  *
+ * It also requests the same one bridge presence claim the Paseo bridge holds (Spec
+ * 062, "Presence"), so a running BB keeps the daemon's idle clock honest. The claim
+ * is service-wide: whichever host claims it first holds it, and a refused claim is
+ * retried on this retained connection rather than dropped.
+ *
  * This file owns no Nucleus state: no task, no run, no review, no database.
  */
 import { connect, type Socket } from "node:net";
@@ -45,6 +50,8 @@ export interface HostChannelOptions {
   signal: AbortSignal;
   /** Reconnect window; a plugin reload or a server restart is a reconnect, not a refusal. */
   backoff?: { minMs: number; maxMs: number };
+  /** How often a refused presence claim is retried on the retained connection. */
+  presenceRetryMs?: number;
 }
 
 interface ServiceIdentity {
@@ -54,6 +61,13 @@ interface ServiceIdentity {
 
 const BACKOFF_MIN_MS = 250;
 const BACKOFF_MAX_MS = 5_000;
+
+/**
+ * How often a refused bridge presence claim is retried on the retained connection
+ * (Spec 062, "Presence": the claim is service-wide and the other host retries under
+ * the existing rule). The Paseo bridge polls at the same cadence.
+ */
+const PRESENCE_RETRY_MS = 2_000;
 
 /** Read the service identity beside its socket; a missing or partial file is an ordinary "not up yet". */
 export function readServiceIdentity(serviceDataDir: string): ServiceIdentity | null {
@@ -107,12 +121,31 @@ function runOnce(options: HostChannelOptions, identity: ServiceIdentity, onDecla
     // plugin host reports "service did not stop" and the reload fails.
     const onAbort = () => finish("the plugin is stopping");
     options.signal.addEventListener("abort", onAbort, { once: true });
+    /** Responses to the few requests this plugin writes itself (the presence claim). */
+    const pending = new Map<
+      string,
+      (answer: {
+        result?: unknown;
+        error?: { code?: string; message?: string };
+      }) => void
+    >();
+    let presenceClaimed = false;
+    let presenceTimer: NodeJS.Timeout | null = null;
+    let presenceSequence = 0;
     let handshake: NodeJS.Timeout | null = setTimeout(() => finish(`the handshake did not finish within ${HANDSHAKE_TIMEOUT_MS} ms`), HANDSHAKE_TIMEOUT_MS);
     handshake.unref?.();
     const finish = (reason: string) => {
       if (settled) return;
       settled = true;
-      if (handshake) { clearTimeout(handshake); handshake = null; }
+      if (handshake) {
+        clearTimeout(handshake);
+        handshake = null;
+      }
+      if (presenceTimer) {
+        clearInterval(presenceTimer);
+        presenceTimer = null;
+      }
+      pending.clear();
       options.signal.removeEventListener("abort", onAbort);
       socket.destroy();
       resolve(reason);
@@ -133,6 +166,16 @@ function runOnce(options: HostChannelOptions, identity: ServiceIdentity, onDecla
       socket.on("data", chunk => reader.feed(chunk));
 
       function handleFrame(frame: unknown): void {
+        if (awaiting === "declare") {
+          // The service proves the identity *before* it answers a declaration: the
+          // probe is an ordinary `host.op` request that arrives on this connection
+          // first (Spec 062, "Identity"). Answer it here, then wait for the answer.
+          const probe = asServiceRequest(frame);
+          if (probe) {
+            void answer(probe.id, probe.method, probe.input);
+            return;
+          }
+        }
         if (awaiting !== null) {
           const answer = frame as { result?: unknown; error?: { message?: unknown } };
           if (answer.error) { finish(`${awaiting} refused: ${String(answer.error.message ?? "no reason given")}`); return; }
@@ -156,10 +199,33 @@ function runOnce(options: HostChannelOptions, identity: ServiceIdentity, onDecla
           if (handshake) { clearTimeout(handshake); handshake = null; }
           onDeclared();
           options.log.info(`Nucleus service accepted this plugin as host executor for ${hostId}`);
+          claimPresence();
+          // A refused claim is retried here, on the retained connection, until it is
+          // granted: the daemon's idle clock follows presence, not this plugin's liveness.
+          presenceTimer = setInterval(
+            () => claimPresence(),
+            options.presenceRetryMs ?? PRESENCE_RETRY_MS,
+          );
+          presenceTimer.unref?.();
           return;
         }
         const request = asServiceRequest(frame);
-        if (!request) { finish("the service wrote a frame this channel cannot read"); return; }
+        if (!request) {
+          const answer = frame as {
+            id?: unknown;
+            result?: unknown;
+            error?: { code?: string; message?: string };
+          };
+          const settle =
+            typeof answer.id === "string" ? pending.get(answer.id) : undefined;
+          if (!settle) {
+            finish("the service wrote a frame this channel cannot read");
+            return;
+          }
+          pending.delete(answer.id as string);
+          settle(answer);
+          return;
+        }
         if (!declared) { finish("the service wrote an operation before the role was declared"); return; }
         void answer(request.id, request.method, request.input);
       }
@@ -188,6 +254,36 @@ function runOnce(options: HostChannelOptions, identity: ServiceIdentity, onDecla
             },
           });
         }
+      }
+
+      /**
+       * Request the one bridge presence claim. `active: false` means another host holds
+       * it and `error` means the claim was refused; both are retried, neither is fatal.
+       */
+      function claimPresence(): void {
+        if (settled || !declared || presenceClaimed) return;
+        const id = `bb-plugin-presence-${++presenceSequence}`;
+        pending.set(id, (answer) => {
+          if (answer.error) return;
+          if (
+            (answer.result as { active?: unknown } | undefined)?.active !== true
+          )
+            return;
+          presenceClaimed = true;
+          if (presenceTimer) {
+            clearInterval(presenceTimer);
+            presenceTimer = null;
+          }
+          options.log.info(
+            `Nucleus service accepted this plugin's bridge presence claim for ${hostId}`,
+          );
+        });
+        send({
+          v: PROTOCOL_VERSION,
+          id,
+          method: "service.nucleus-bridge-presence",
+          input: {},
+        });
       }
 
       function respond(response: ServiceResponse): void { send(response); }

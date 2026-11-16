@@ -20,6 +20,7 @@ import { migrateProfileVocabulary } from '../core/store/profile-vocabulary-migra
 import { nucleusProfileInputSchema, nucleusProfileSchema, profileCompatibility, routingProfiles, type NucleusProfile } from '../shared/profiles';
 import { canonicalCatalog, isCanonicalProvider, isRuntimeMode, isThinkingLevel, mergeCanonicalCatalogs, type HostVocabulary, type LaunchValues } from '../shared/profile-vocabulary';
 import { poolSchema, submissionSchema, type PoolEntry, type Profile, type Task } from '../shared/contracts';
+import type { HostKind } from '../shared/host-kind';
 import type { HostAgentSpec, HostCatalog } from '../shared/host';
 import { t3Fake } from './support/t3code-fake';
 import { nightlyProviders, paseoCatalog, poolShapes } from './support/pool-shapes';
@@ -52,7 +53,7 @@ async function t3Fixture(t: TestContext) {
  * `bypassPermissions` and Grok's is `auto_accept`. A string is the expected
  * reason the shape can't run there.
  */
-const expected: Record<string, { paseo: LaunchValues | string; t3code: LaunchValues | string }> = {
+const expected: Record<string, Partial<Record<HostKind, LaunchValues | string>>> = {
   'Codex grind (full-access)': {
     paseo: { provider: 'codex', model: 'gpt-6-luna', modeId: 'full-access', thinkingOptionId: 'xhigh' },
     t3code: { provider: 'codex', model: 'gpt-6-luna', modeId: 'full-access', thinkingOptionId: 'xhigh' } },

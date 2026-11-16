@@ -47,11 +47,29 @@ import { HostFacade } from "../core/host/host-facade";
 import { Admission, admitAdapter, type AdmissionOptions } from "../core/host/admission";
 import { HostRegistry, HOST_IDLE_GRACE_MS, type KnownHost } from "../core/host/host-registry";
 import type { IdentitySource } from "../shared/host-kind";
-import { T3HostConnection, type T3ConnectionConfig } from './t3code-host';
-import { HostConnections, wireEngineHosts, type HostConnectionOwner } from './host-connections';
-import { StoreMaintenance, type StoreMaintenanceOwner } from './store-maintenance';
-import { answerHostPermission } from './host-permissions';
-import { lifecycleSignalSchema, type LifecycleSignal, type LifecycleSignalReceipt } from "../shared/lifecycle-signal";
+import { T3HostConnection, type T3ConnectionConfig } from "./t3code-host";
+import {
+  BbHostConnection,
+  type BbHostRejectedInput,
+  type BbHostReleasedInput,
+  type BbHostStatus,
+  type BbHostVerifiedInput,
+} from "./bb-host";
+import {
+  HostConnections,
+  wireEngineHosts,
+  type HostConnectionOwner,
+} from "./host-connections";
+import {
+  StoreMaintenance,
+  type StoreMaintenanceOwner,
+} from "./store-maintenance";
+import { answerHostPermission } from "./host-permissions";
+import {
+  lifecycleSignalSchema,
+  type LifecycleSignal,
+  type LifecycleSignalReceipt,
+} from "../shared/lifecycle-signal";
 import { RequestLedger } from "../core/runtime/request-ledger";
 import { Engine, controlHasExternalEffect } from "../core/engine";
 
@@ -231,6 +249,11 @@ export interface RuntimeHealth {
   connected: boolean;
   hosts?: Array<{ id: string; state: "online" | "offline" | "conflict" | "unknown"; reason: string }>;
   t3code?: ReturnType<T3HostConnection['status']>;
+  /**
+   * Spec 062 phase 1: the BB host's registered identity, the version diagnostics its
+   * executor announced, and — while it is offline — the exact field that refused it.
+   */
+  bb?: BbHostStatus;
   schema: number | null;
   lastStoreAccessAt: string | null;
   taskIdentities: number;
@@ -329,6 +352,12 @@ export class QueueRuntime {
   readonly hostRegistry: HostRegistry<{ adapter: Adapter; admission: Admission }>;
   private hostSession: { id: string; token: object } | null = null;
   private readonly t3Host: T3HostConnection | null;
+  /**
+   * The BB host's registration and identity (Spec 062, phase 1). The executor
+   * connection itself lives in the service process; this object is the durable
+   * identity, the registry claim, the admission and the health projection.
+   */
+  readonly bbHost: BbHostConnection;
   private readonly hosts: HostConnections;
   private readonly maintenance: StoreMaintenance;
   readonly engine: Engine;
@@ -472,16 +501,40 @@ export class QueueRuntime {
       }
       this.store.setMeta("processOwner", { pid: process.pid, owner: this.owner });
     });
-    this.hostRegistry = new HostRegistry({
-      read: () => this.store.getMeta<KnownHost[]>("hostRegistry") ?? [],
-      write: hosts => this.store.setMeta("hostRegistry", hosts),
-      transaction: fn => this.store.transaction(fn),
-      readDisconnectedAt: () => this.store.getMeta<number | null>("hostDisconnectedAt") ?? null,
-      writeDisconnectedAt: at => this.store.setMeta("hostDisconnectedAt", at),
-    }, options.hostNow ?? Date.now, options.hostIdleGraceMs ?? HOST_IDLE_GRACE_MS);
-    const createAdmission = () => new Admission({ ...options.admission, totalLimit: () => this.store.configuredPaseoCallLimit(), workspaceBudget: () => this.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT });
-    this.t3Host = this.settings.t3code ? new T3HostConnection(this.settings.t3code, this.dataDir, this.hostRegistry, createAdmission) : null;
-    const recordedHost = this.hostRegistry.known()[0]?.id;
+    this.hostRegistry = new HostRegistry(
+      {
+        read: () => this.store.getMeta<KnownHost[]>("hostRegistry") ?? [],
+        write: (hosts) => this.store.setMeta("hostRegistry", hosts),
+        transaction: (fn) => this.store.transaction(fn),
+        readDisconnectedAt: () =>
+          this.store.getMeta<number | null>("hostDisconnectedAt") ?? null,
+        writeDisconnectedAt: (at) =>
+          this.store.setMeta("hostDisconnectedAt", at),
+      },
+      options.hostNow ?? Date.now,
+      options.hostIdleGraceMs ?? HOST_IDLE_GRACE_MS,
+    );
+    const createAdmission = () =>
+      new Admission({
+        ...options.admission,
+        totalLimit: () => this.store.configuredPaseoCallLimit(),
+        workspaceBudget: () =>
+          this.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT,
+      });
+    this.t3Host = this.settings.t3code
+      ? new T3HostConnection(
+          this.settings.t3code,
+          this.dataDir,
+          this.hostRegistry,
+          createAdmission,
+        )
+      : null;
+    this.bbHost = new BbHostConnection(
+      this.store,
+      this.hostRegistry,
+      createAdmission,
+    );
+    const recordedHost = this.hostRegistry.primary()?.id;
     this.admission = recordedHost ? this.hostRegistry.resource(recordedHost, createAdmission) : createAdmission();
     if (options.adapterFactory) {
       const raw = options.adapterFactory({ dataDir: this.dataDir, settings: this.settings });
@@ -533,11 +586,28 @@ export class QueueRuntime {
       store: this.store, engine: this.engine, decisions: this.decisions, capacityChanges: this.capacityChanges,
       markStoreAccess: () => this.markStoreAccess(),
       connected: () => this.connected(),
-      wakeAndSettlePostBootstrapTimeout: () => this.wakeAndSettlePostBootstrapTimeout(),
-      get started() { return runtime.started; },
-      get hostId() { return runtime.hostSession?.id || runtime.hostRegistry.known()[0]?.id || "host"; },
-      get startError() { return runtime.startError; },
-      get adapter() { return runtime.adapter; },
+      wakeAndSettlePostBootstrapTimeout: () =>
+        this.wakeAndSettlePostBootstrapTimeout(),
+      get started() {
+        return runtime.started;
+      },
+      get hostId() {
+        return (
+          runtime.hostSession?.id ||
+          runtime.hostRegistry.primary()?.id ||
+          "host"
+        );
+      },
+      get startError() {
+        return runtime.startError;
+      },
+      get adapter() {
+        return runtime.adapter;
+      },
+    });
+    this.plannerTickets = new ParticipantTickets(this.engine, {
+      socketPath: this.paseo.socketPath,
+      helperPath: this.paseo.helperPath,
     });
     this.plannerTickets = new ParticipantTickets(this.engine, { socketPath: this.paseo.socketPath, helperPath: this.paseo.helperPath });
     // Task 1109: a task planner's participant ticket is issued before the question
@@ -568,8 +638,16 @@ export class QueueRuntime {
       anyHostConnected: () => this.anyHostConnected(),
       backupHealthProjection: () => this.backupHealthProjection(),
       boardError: () => this.boardError(),
-      get prStates() { return runtime.prStates; },
-      get hostId() { return runtime.hostSession?.id || runtime.hostRegistry.known()[0]?.id || "unknown"; },
+      get prStates() {
+        return runtime.prStates;
+      },
+      get hostId() {
+        return (
+          runtime.hostSession?.id ||
+          runtime.hostRegistry.primary()?.id ||
+          "unknown"
+        );
+      },
     });
     this.liveRunPresence = this.createLiveRunPresence();
     this.eventLoopDelay.start();
@@ -683,8 +761,29 @@ export class QueueRuntime {
   cancelHostShutdown() { this.hosts.cancelHostShutdown(); }
   hostPresenceClosed() { this.hosts.hostPresenceClosed(); }
   hostPresenceOpened() { this.hosts.hostPresenceOpened(); }
-  private clearPluginPresenceWatch() { this.hosts.clearPluginPresenceWatch(); }
-  private pluginPresenceFaultMessage(): string { return this.hosts.pluginPresenceFaultMessage(); }
+
+  /**
+   * A BB plugin proved its identity through the host-operation channel (Spec 062,
+   * phase 1). The runtime is the authority on the recorded data directory: the same
+   * one re-registers, a different one refuses by its field with nothing registered.
+   */
+  bbHostVerified(input: BbHostVerifiedInput) {
+    return this.bbHost.verified(input);
+  }
+  /** A declaration or probe left the identity unproven: the host is offline for the named reason. */
+  bbHostRejected(input: BbHostRejectedInput) {
+    this.bbHost.rejected(input);
+  }
+  /** The executor connection closed: this identity's claim retires unless a reload replaced it. */
+  bbHostReleased(input: BbHostReleasedInput) {
+    this.bbHost.released(input);
+  }
+  private clearPluginPresenceWatch() {
+    this.hosts.clearPluginPresenceWatch();
+  }
+  private pluginPresenceFaultMessage(): string {
+    return this.hosts.pluginPresenceFaultMessage();
+  }
   private boardError(): string {
     return this.startError || this.store.getMeta<string>("engineError") || this.store.getMeta<string>("retentionError") || this.store.getMeta<string>("laneIdleError") || this.store.getMeta<string>("laneDrainError") || this.pluginPresenceFaultMessage() || "";
   }
@@ -883,15 +982,31 @@ export class QueueRuntime {
         if (this.closing) return;
         const observed = this.paseo.hostId;
         if (!this.hostSession) {
-          const recorded = this.hostRegistry.known()[0]?.id;
-          if (recorded && recorded !== observed) throw new Error("Configured daemon identity changed; existing tasks belong to another host");
-          const token = this.hostRegistry.connect(observed, this.settings.daemonUrl, { adapter: this.adapter, admission: this.admission }, () => {
-            const previousHost = this.hostRegistry.known()[0]?.id;
-            if (previousHost && previousHost !== observed) throw new Error("Configured daemon identity changed; existing tasks belong to another host");
-            const admission = this.hostRegistry.resource(observed, () => this.admission);
-            if (admission !== this.admission) throw new Error("Host admission identity conflicts with the selected adapter");
-
-          });
+          const recorded = this.hostRegistry.primary()?.id;
+          if (recorded && recorded !== observed)
+            throw new Error(
+              "Configured daemon identity changed; existing tasks belong to another host",
+            );
+          const token = this.hostRegistry.connect(
+            observed,
+            this.settings.daemonUrl,
+            { adapter: this.adapter, admission: this.admission },
+            () => {
+              const previousHost = this.hostRegistry.primary()?.id;
+              if (previousHost && previousHost !== observed)
+                throw new Error(
+                  "Configured daemon identity changed; existing tasks belong to another host",
+                );
+              const admission = this.hostRegistry.resource(
+                observed,
+                () => this.admission,
+              );
+              if (admission !== this.admission)
+                throw new Error(
+                  "Host admission identity conflicts with the selected adapter",
+                );
+            },
+          );
           this.hostSession = { id: observed, token };
         } else if (this.hostSession.id !== observed) {
           throw new Error("Configured daemon identity changed; existing tasks belong to another host");
@@ -1045,6 +1160,8 @@ export class QueueRuntime {
 
   health(): RuntimeHealth {
     const t3 = this.t3Host?.status();
+    const bb = this.bbHost.status();
+    const primary = this.hostRegistry.primary()?.id;
     return {
       phase: this.phase, ready: this.phase === "ready" && !this.closing,
       startError: this.startError,
@@ -1054,15 +1171,42 @@ export class QueueRuntime {
       hookCleanup: this.store.getMeta<HookCleanupHealth>("hookCleanup") ?? null,
       paused: this.store.getMeta<boolean>("paused") ?? true,
       ...this.drainProjection(),
-      hostId: this.hostSession?.id || this.hostRegistry.known()[0]?.id || "unknown",
+      hostId: this.hostSession?.id || primary || "unknown",
       connected: this.anyHostConnected(),
       ...(t3 ? { t3code: t3 } : {}),
-      hosts: this.hostRegistry.known().length ? this.hostRegistry.known().map(host => ({
-        id: host.id,
-        state: this.hostRegistry.get(host.id) ? "online" : this.startError.includes("identity") && host.id === this.hostRegistry.known()[0]?.id ? "conflict" : "offline",
-        reason: this.hostRegistry.get(host.id) ? host.id === t3?.id && t3.threadShapePending ? 'thread shape pending first thread' : "" : host.id === t3?.id ? t3.error || 'T3Code is offline' : host.id === this.hostRegistry.known()[0]?.id ? this.startError || "Host is offline" : "Host is offline",
-      })) : [{ id: "unknown", state: "unknown", reason: this.startError || "Host identity is unknown" }],
-      bootstrap: { pending: Boolean(this.bootstrapRunning), startedAt: this.bootstrapStartedAt },
+      /** Spec 062 phase 1: the BB host's identity, its version diagnostics and why it is offline. */
+      ...(bb.hosts.length || bb.offlineReason || bb.lastRefusal ? { bb } : {}),
+      hosts: this.hostRegistry.known().length
+        ? this.hostRegistry.known().map((host) => ({
+            id: host.id,
+            state: this.hostRegistry.get(host.id)
+              ? "online"
+              : this.startError.includes("identity") && host.id === primary
+                ? "conflict"
+                : "offline",
+            reason: this.hostRegistry.get(host.id)
+              ? host.id === t3?.id && t3.threadShapePending
+                ? "thread shape pending first thread"
+                : ""
+              : host.id === t3?.id
+                ? t3.error || "T3Code is offline"
+                : hostKindOf(host.id) === "bb"
+                  ? bb.offlineReason || "BB plugin is not connected"
+                  : host.id === primary
+                    ? this.startError || "Host is offline"
+                    : "Host is offline",
+          }))
+        : [
+            {
+              id: "unknown",
+              state: "unknown",
+              reason: this.startError || "Host identity is unknown",
+            },
+          ],
+      bootstrap: {
+        pending: Boolean(this.bootstrapRunning),
+        startedAt: this.bootstrapStartedAt,
+      },
       hostRunEndpoint: this.serveHostRunEndpoint
         ? {
           serving: this.hostRunEndpoint?.serving() ?? false,

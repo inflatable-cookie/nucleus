@@ -202,8 +202,24 @@ direction, not an authority: the connection could call the catalogue before it
 declared the role and the role changes no answer, the one presence claim, roll
 recovery and the idle clock ignore it except that an executor connection is never
 swept as idle, one operation's fault settles that operation instead of the
-connection, and an unknown delivery is never resent. In phase 0 the service
-registers no host from it and no dispatch path reaches it.
+connection, and an unknown delivery is never resent.
+
+Since Spec 062 phase 1 the role also registers a host, and the order is the
+identity proof. The service answers a declaration only after a read-only
+`identity.probe` (`system.version`, `hosts.list`, one `threads.list`) succeeds on
+that connection, and the probe's own real data directory must derive the declared
+identity. The runtime then records that data directory durably (`bbHostIdentity`)
+and gives the identity one registry claim, one admission and breaker state; a
+declaration naming a different data directory refuses by `dataDir`, takes the BB
+host offline and registers nothing, because this service serves one BB host
+identity. A reconnect — a plugin reload or a BB restart — proves the identity
+again through a new probe, and a dropped connection retires the claim and settles
+every in-flight operation as unknown delivery, never replayed. `service.health`
+reports the registered identity with the versions its executor announced and,
+while it is offline, the field that refused it. The registered adapter refuses
+every task-workflow call by name, so no dispatch path reaches a task yet. The
+plugin also requests the one `service.nucleus-bridge-presence` claim, retrying a
+refused claim on its retained connection like the Paseo bridge.
 
 The CLI and helpers resolve the calling thread from a Nucleus-issued run or
 participant ticket first, then a host-supplied identity; caller records are
@@ -1274,6 +1290,15 @@ native host with separate admission state. The bearer is issued locally with
 `t3 auth session issue`, never returned by health or public settings. Initial
 Paseo identity is recorded first; subsequent T3 reconnects are independent.
 
+A BB host registers from the reverse channel instead of a settings entry
+(Spec 062 phase 1), so its identity is proved by the plugin rather than
+configured here. The host kind is `bb`, chosen per repository
+(`repository.set hostKind: "bb"`) beside `paseo` and `t3code`, and `hostKindOf`
+answers it from the `bb:` prefix. "The primary host" is the Paseo entry, not
+whichever host registered first: the legacy unqualified `hostId`, the retired
+observation scope and the daemon-identity guard all read it, so a BB or T3 host
+that connects earlier still never displaces the host those records belong to.
+
 The [T3Code adapter contract](../specs/t3code-host-adapter.md) defines the second
 host's connection and operation boundary. Before registration or
 mutation, authenticate the environment, check the protocol and strictly decode
@@ -1339,12 +1364,14 @@ open.
   refuses a later launch. The drain is the ordinary durable safe point: it
   releases the socket, the service identity and the store lease, and a later
   host starts a fresh daemon through the bridge.
-- **A lost plugin while Paseo is still connected is a visible fault.** Closing
+- **A lost plugin while a host is still connected is a visible fault.** Closing
   the last granted `service.nucleus-bridge-presence` claim while a host remains
   in the registry arms a 45 s grace. If presence does not return, the board
-  error names that the Nucleus plugin is not present while Paseo is still
+  error names that the Nucleus plugin is not present while its host is still
   connected and that the recovery thread cannot act while the plugin is down,
-  and the Nucleus planner is messaged once with `paseo plugin reload nucleus`.
+  and the Nucleus planner is messaged once with the reload command of the
+  connected host's own plugin: `paseo plugin reload nucleus`, or
+  `bb plugin reload nucleus` when only BB is connected (Spec 062).
   Granting the claim again (the same single-claim path) clears the fault; a
   presence that returns inside the grace is silent. The web board is the
   operator-visible surface (the plugin board is gone with the plugin). A
