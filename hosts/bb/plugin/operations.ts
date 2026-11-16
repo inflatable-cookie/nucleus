@@ -482,10 +482,8 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
           for (const row of rows) {
             if (++visited > 2000 || row.threadId !== threadId) throw new HostOperationError("unavailable", "threads.timeline exceeded its row bound or named another thread");
             if (row.kind === "turn") {
-              if (row.children !== null) {
-                if (!Array.isArray(row.children)) throw new HostOperationError("unavailable", "threads.timeline turn children are unreadable");
-                visit(row.children, depth + 1);
-              }
+              if (!Array.isArray(row.children)) throw new HostOperationError("unavailable", "threads.timeline turn children are unreadable");
+              visit(row.children, depth + 1);
             } else if (row.kind === "work") {
               if (typeof row.id !== "string" || !Number.isSafeInteger(row.sourceSeqStart) || (row.sourceSeqStart as number) < 0 ||
                   (row.sourceSeqStart as number) > page.maxSeq || typeof row.startedAt !== "number" || typeof row.workKind !== "string" ||
