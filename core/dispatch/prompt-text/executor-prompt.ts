@@ -4,7 +4,7 @@
  * dispatching. A GO-gated qualification binds release GO evidence; the
  * author-side run binds its exact published head and pull request.
  */
-import { PROOF_EXECUTOR_FILES_RULE, proofExecutionBlock, proofOnlyGoEvidenceBlock } from './proof-rules';
+import { PROOF_EXECUTOR_FILES_RULE, REQUIRED_PROOF_AUTHOR_NOTE, proofExecutionBlock, proofOnlyGoEvidenceBlock } from './proof-rules';
 import type { RunPromptContext } from './prompt-context';
 
 /** Everything one proof executor run is told, for a merged commit or a published head. */
@@ -12,7 +12,7 @@ export function executorRunPrompt(prompt: RunPromptContext): string {
   const { task, run, scope, callback } = prompt;
     const binding = run.proofExecution;
     if (!binding) return `${scope}This proof-only run has no bound selector; report blocked with that fact.\n${callback}`;
-    if (task.proofOnly) return `${scope}${proofExecutionBlock(task)}You are Nucleus's source-immutable qualification executor for already-merged commit ${task.proofOnly.commit}. Run exactly ONE brief-named selector, from the repository root, at this detached commit:
+    if (task.proofOnly) return `${scope}${proofExecutionBlock(task)}${REQUIRED_PROOF_AUTHOR_NOTE}\nYou are Nucleus's source-immutable qualification executor for already-merged commit ${task.proofOnly.commit}. Run exactly ONE brief-named selector, from the repository root, at this detached commit:
 Selector: ${binding.selector}
 Exact commit: ${run.head}
 Checkout: detached HEAD; there is no task branch or pull request

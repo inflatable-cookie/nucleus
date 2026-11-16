@@ -1,0 +1,1 @@
+Answered decisions can now gain task, lead and papercut traceability links without changing their ruling. Workspace guidance distinguishes agent-owned deletions from a required tool's leased cache eviction. Required file evidence must be delivered through retained proof files; size refusals name both limits and the allowed delivery routes.

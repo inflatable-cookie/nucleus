@@ -217,8 +217,8 @@ export class Decisions {
   }
 
   /**
-   * Adds task, lead and papercut links to an open decision in place, so a link is
-   * recorded without superseding the decision and churning its id (task #231).
+   * Adds task, lead and papercut links to an open or answered decision in place,
+   * so traceability can be added after a ruling without changing it.
    * Each named list is merged into the current links; an omitted list is unchanged
    * and an already-linked entry is not repeated. A call that adds nothing is a
    * no-op: it writes no version and no history entry. Snapshots whose links were
@@ -227,7 +227,10 @@ export class Decisions {
    */
   link(input: { id: string; version: number; tasks?: string[]; leads?: string[]; papercuts?: string[]; by?: string }): DecisionView {
     return this.store.transaction(() => {
-      const current = this.requireOpen(input.id, input.version);
+      const current = this.store.decision(input.id);
+      if (current.version !== input.version) throw new Error(`Decision changed to version ${current.version}; reload before saving`);
+      if (current.status !== "open" && current.status !== "answered")
+        throw new Error(`Decision is ${current.status}; only an open or answered decision can be linked`);
       const links = decisionLinksSchema.parse({
         tasks: mergeLinks(current.links.tasks, input.tasks),
         leads: mergeLinks(current.links.leads, input.leads),

@@ -205,6 +205,7 @@ test("an executor proof delivers retained evidence beside its run scratch for th
     assert.ok(prompt.includes(record.sha256));
     assert.ok(prompt.includes(`${record.bytes} bytes`));
     assert.match(prompt, /Selector passed at the published source/);
+    assert.match(executorPrompt, /TMPDIR is removed at release[\s\S]*through proofFiles[\s\S]*8 MiB per file; 32 MiB total/);
   } finally { await f.close(); }
 });
 
@@ -240,7 +241,7 @@ test("executor proof files outside its own scratch or over a file limit are refu
     await assert.rejects(f.complete("proof_executed", {
       head: sourceHead, proofResult: { status: "passed", selector: "effigy test unit -- test/proof.test.ts", exitCode: 0, evidence: "Ran" },
       proofFiles: [{ label: "Oversized", path: oversizedPath }],
-    }), /each proof file must be at most/);
+    }), /8 MiB per file; 32 MiB total[\s\S]*subset the brief allows[\s\S]*reviewResponsibility: environment[\s\S]*8388609 bytes/);
     assert.equal(f.task().proofFiles.length, 0);
     assert.equal(existsSync(join(f.scratchRoot, "evidence")), false);
   } finally { await f.close(); }

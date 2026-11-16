@@ -76,11 +76,13 @@ the record's links would fabricate history for an imported decision.
   the approver, with `relayed: true`, as `lead.approve` does.
 - `decision.withdraw` — the asker (or the operator) withdraws an open decision
   with a reason.
-- `decision.link` — adds task, lead and papercut links to an **open** decision in
-  place. `tasks`, `leads` and `papercuts` are merged into the current links
-  (omitted lists and already-linked entries are unchanged); a call that adds
-  nothing writes no version. Linking therefore never supersedes a decision and
-  never changes its id.
+- `decision.link` — adds task, lead and papercut links to an **open or answered**
+  decision in place. `tasks`, `leads` and `papercuts` are merged into the current
+  links (omitted lists and already-linked entries are unchanged); a call that
+  adds nothing writes no version. Linking changes only traceability: on an
+  answered decision its question, answer, answerer and status stay unchanged.
+  Withdrawn and superseded decisions cannot be linked. Linking never supersedes
+  a decision or changes its id.
 - `decision.backfill` — retargets project-less decisions at the asker's
   project (`{dryRun}` previews the counts without writing). The project is
   not versioned content, so the write is in place with no new version; an
