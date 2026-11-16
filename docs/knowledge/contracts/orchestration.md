@@ -2674,7 +2674,9 @@ movement invalidates source approval and preserves the normal readiness gates.
 - A planner-selected time or task wait resumes ordinary work when its condition
   settles, even if the recovery run that raised the escalation has ended or is
   missing. Wake follows the available continuation from `next`; when no retained
-  turn can resume, the existing recovery path owns the remaining fault. It never
+  turn can resume, the existing recovery path owns the remaining fault. A refused
+  parked restart re-reads that same path even while the raising run is unreleased;
+  observation and delivery fences still apply. It never
   leaves an expired wait at a refused wake or inert lifecycle stop, and never
   silently replaces a retained reviewer. A fulfilled task wait clears with its
   wake intent before continuation admission; its owner notice stays tracked but

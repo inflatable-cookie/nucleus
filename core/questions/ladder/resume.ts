@@ -261,18 +261,13 @@ export async function resumeEscalationWaits(ladder: Ladder, task: Task): Promise
           action: 'restart', reason: `Escalation ${id}: ${wait.kind} ${wait.target} settled` }));
         ladder.store.event(task.id, 'planner_escalation_woke', `${id}: ${wait.kind} ${wait.target} settled; restarted the parked step`);
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (raisingRunReleased(ladder, current, id)) {
-        await recoverAfterEscalationWait(ladder, current, id, wait, message);
-      } else if (message.includes(NO_RESOLUTION_RUN_REFUSAL)) {
-        try { await wakeIntoOrdinaryNext(ladder, current, id, wait); }
-        catch (inner) {
-          await recoverAfterEscalationWait(ladder, current, id, wait, inner instanceof Error ? inner.message : String(inner));
-        }
-      } else {
-        ladder.store.event(task.id, 'planner_escalation_wake_refused', `${id}: ${message}`.slice(0, 4000));
-        ladder.resolution.waiting(ladder.store.task(task.id), `Escalation ${id} wake was refused: ${message}`, 'escalated');
+    } catch {
+      // A refused restart is not a settled wake. Re-read next for every
+      // refusal, including a raising run whose release is still pending;
+      // ordinary continuation/recovery keeps its own delivery gates.
+      try { await wakeIntoOrdinaryNext(ladder, current, id, wait); }
+      catch (inner) {
+        await recoverAfterEscalationWait(ladder, current, id, wait, inner instanceof Error ? inner.message : String(inner));
       }
     } finally { ladder.resolution.wakingEscalations.delete(id); }
   }

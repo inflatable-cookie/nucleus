@@ -435,6 +435,68 @@ test(`a ${kind} wait whose retained reviewer is closed resumes recovery without 
 
 }
 
+for (const kind of ['time', 'task'] as const) {
+  test(`an ended ${kind} wait with an unreleased raising run resumes after a non-matching restart refusal`, async () => {
+    const f = fixture();
+    try {
+      const { recoveryId } = load1217Wait(f, kind);
+      f.store.update(f.submitted.id, { coordinatorAgentId: 'coord-1217' });
+      f.store.putRun({ ...f.store.run(recoveryId)!, status: 'running', released: false });
+      f.states.set('coord-1217', { id: 'coord-1217', workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '' });
+      const apply = f.engine.resolution.applyOperatorControl!;
+      const refusal = 'The parked restart no longer applies; re-read next';
+      let refused = false;
+      f.engine.resolution.applyOperatorControl = async input => {
+        if (!refused) { refused = true; throw Error(refusal); }
+        return apply(input);
+      };
+      await f.engine.resolution.ladder.resumeEscalationWaits(f.current());
+      await f.engine.quiesce();
+      assert.equal(refused, true, 'the initial parked restart was refused');
+      assert.doesNotMatch(refusal, new RegExp(NO_RESOLUTION_RUN_REFUSAL));
+      assert.equal(f.events('planner_escalation_wake_refused').length, 0);
+      assert.equal(f.events('planner_escalation_woke').length, 1);
+      assert.doesNotMatch(f.current().reason, /wake was refused/);
+      assert.equal(f.current().phase, 'reviewing', f.current().reason);
+      assert.equal(f.store.run(recoveryId)?.released, true, 'continuation settles the raising run through its existing gate');
+      await f.engine.wake();
+      assert.equal(f.current().phase, 'reviewing', f.current().reason);
+      assert.equal(f.createdRuns.filter(run => run.role === 'reviewer').length, 1, 'ordinary review resumes exactly once');
+    } finally { await f.close(); }
+  });
+}
+
+for (const kind of ['time', 'task'] as const) {
+  test(`an ended ${kind} wait preserves an unsettled raising run's delivery fence`, async () => {
+    const f = fixture();
+    try {
+      const { recoveryId } = load1217Wait(f, kind);
+      f.store.update(f.submitted.id, { coordinatorAgentId: 'coord-1217' });
+      f.store.putRun({ ...f.store.run(recoveryId)!, status: 'uncertain', completion: null, active: null, released: false });
+      f.store.setCredential(recoveryId, 'raising-token');
+      const observe = f.adapter.observe;
+      f.adapter.observe = async id => {
+        if (id === 'coord-1217') throw Error('Synthetic raising thread observation unavailable');
+        return observe(id);
+      };
+      const apply = f.engine.resolution.applyOperatorControl!;
+      let refused = false;
+      f.engine.resolution.applyOperatorControl = async input => {
+        if (!refused) { refused = true; throw Error('The parked restart no longer applies; re-read next'); }
+        return apply(input);
+      };
+      await f.engine.resolution.ladder.resumeEscalationWaits(f.current());
+      await f.engine.quiesce();
+      assert.equal(f.events('planner_escalation_wake_refused').length, 0);
+      assert.equal(f.events('planner_escalation_woke').length, 1);
+      assert.doesNotMatch(f.current().reason, /wake was refused/);
+      assert.equal(f.store.run(recoveryId)?.released, false, 'uncertain delivery keeps the raising run bound');
+      assert.equal(f.createdRuns.length, 0, 'no participant is prompted through an unproven delivery fence');
+      assert.equal(f.coordinatorRuns().length, 1, 'no second recovery runs beside the unobservable one');
+    } finally { await f.close(); }
+  });
+}
+
 for (const occupant of ['reviewer', 'recovery'] as const) {
 test(`reviewer restart keeps the task slot held by ${occupant} and returns to reviewing ahead of queued work`, async () => {
   const f = fixture();
