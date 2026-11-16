@@ -1,6 +1,5 @@
-import { retiredSubmissionRefusal } from "../../shared/schema/review/retired-submission";
 import { assertSubmissionRouting } from "./submission-routing";
-import type { Task, Submission } from "../../shared/contracts";
+import { retiredSubmissionRefusal, type Task, type Submission } from "../../shared/contracts";
 import type { QueueOperation, OperationResult } from "../../shared/operations";
 import type { IdentitySource } from "../../shared/host-kind";
 import { isTransportFailure } from "../../shared/transport";
