@@ -2,7 +2,10 @@
 
 Status: approved. Phase 0 (the transport spike) is implemented and proved; phases 1–6 are not
 implemented. This document is the design and the phased plan, and [phase 0
-evidence](#phase-0-evidence-2026-11-16) answers its eight assumptions.
+evidence](#phase-0-evidence-2026-11-16) answers its eight assumptions. Amended 2026-11-16: decision 5
+now carries the forked sidebar, the two boards and BB usage left to BB's card plus the operator's Usage
+Pace plugin, and the experimental inventory and the plan from phase 5 on follow it; phases 0–4 are
+unchanged.
 Owner: Nucleus runtime maintainers
 
 BB ([getbb.app](https://getbb.app)) is a third Nucleus host beside Paseo and T3Code (Tom,
@@ -37,6 +40,12 @@ Each fact is marked with the evidence that establishes it:
   `plugin-sdk-version.ts` in the installed bundle), read from its bundled declarations.
 - **guide** — `bb guide` chapters on the installed 0.49.0.
 - **probe** — a read-only check made while writing this spec.
+- **upstream** — BB's own source at the pinned commit `7b26cae7`, tag `desktop-v0.49.0`, SDK
+  0.6.132, read in a sparse clone on 2026-11-16. These are the facts the amendment re-verified
+  itself rather than carrying from the thread.
+- **community** — a third-party plugin read at its own commit: `chug2k/bb-plugin-usage-pace`
+  `8e3e06da`, cloned 2026-11-16, plus its open issue and BB's contract beside it. A community
+  plugin is not a dependency, and its facts carry a date for that reason.
 
 | # | Fact | Evidence |
 | --- | --- | --- |
@@ -56,6 +65,23 @@ Each fact is marked with the evidence that establishes it:
 | 14 | A BB server's data directory is the one holding `config.json`, `bb.db` and `plugins/<id>/`; a plugin reads it through `bb.server.experimental_dataDir` | sdk, probe |
 | 15 | There is no standalone environment create: the environments area offers list, get, paths, commit, update, delete, archive and cleanup, and an environment comes into being when a thread attaches to a path | sdk, spike |
 | 16 | A thread's origin and plugin origin are fixed at creation — `threads.update` can change only title, parent, notifications, visibility, section, model, reasoning and session options — while its parent, section and visibility can change at any time, and archived rows need their own list filter | sdk |
+| 17 | `plugins/thread-list` is 15,766 lines of TypeScript and React in 72 source files plus 37 test files, and imports only `@get-bb/plugin-sdk/app`, React, `jotai`, `@dnd-kit/*`, `sonner`, `zod`, `@radix-ui/*`, and 33 modules through the component registry's `@/components/ui/*` and `@/lib/*` aliases (3,925 lines; `@/components/ui/icon` resolves to the registry's host-backed icon flavor) | upstream |
+| 18 | `plugins/thread-list` is on upstream's forkable list (`scripts/forkable-plugins.json`), so `docs/forkable-plugins.md` and CI's "Plugin Fork Check" (`scripts/lib/plugin-fork.mjs`) guarantee a copy of the directory installs, typechecks, tests and `bb plugin build`s outside the monorepo with published packages only — rewriting `@/*` onto the copy's own root and writing the registry items it imports into it. Upstream BB is MIT (root `LICENSE`, copyright 2026 Michael Yong); the plugin directory carries no separate license | upstream |
+| 19 | The worktree group header is `EnvironmentThreadGroupHeader` (`app/list/ProjectRow.tsx`): environment-provider icon, inline-renamable name, child toggle chevron, the roll-up status glyph only while collapsed and only when a hidden thread has an indicator, a new-thread button, and an overflow menu holding Rename and Archive | upstream |
+| 20 | A sidebar thread row carries `environment.id` (with name, branch, path, `isWorktree` and provider id), `projectId`, `originPluginId`, `status`, `runtimeStatus`, `queuedWork`, `hasPendingInteraction`, `activity`, `indicator` with its accessible label, unread, pinned and archived state, and `href`, so a list can find a task's group and draw the host's own status without another read | upstream |
+| 21 | Collapse is per client and per plugin: `collapsedEnvironments` is a synced preference whose default is the empty list (`app/preferences/atoms.ts`, `shared/preferences.ts`), so every group starts expanded | upstream |
+| 22 | The metadata line (`experimental_ThreadRowMetadata`) renders under a *thread* row's title (`app/rows/ThreadRow.tsx`); the group header has no metadata hook, so a collapsed group has no metadata line at all | upstream |
+| 23 | `app.slots.experimental_threadList` is exclusive and replaceable: the registration id is `thread-list`, automatic selection prefers a non-bundled list, `sidebar.threadListProvider` pins one, a crash falls back with a toast and a placeholder, and the plugin gets the scrolling list only — the New-thread button, navigation rail and footer stay host-rendered. A replaced list is expected to keep honouring `useSidebarThreadRowStatus` so another plugin's row status does not vanish with the list | upstream, guide |
+| 24 | Plugin storage, RPC and realtime are scoped by plugin id (`realtime.publish` sends `{ pluginId, channel, payload }`), so a copy of the list neither reads nor publishes the bundled plugin's preferences | upstream |
+| 25 | A `navPanel` is a navigation destination through the bundled Navigation plugin's rail (`navigation/rail`, the default) or top list; `experimental_useBadge` draws a count, short text or a dot; its route is `/plugins/<pluginId>/<path>/*` and `subPath` is the route remainder, so a deep link works | guide, upstream, probe |
+| 26 | Tab contexts are exactly `{ kind: "thread" }`, receiving `{ threadId, environment: { id } }`, and `{ kind: "nav-panel", panelId }`, receiving `{ subPath }`; `useVisible` decides whether a fixed tab shows | upstream |
+| 27 | `plugins/provider-usage` is 2,936 lines of TypeScript and React in 13 source files plus five test files (1,415 lines), is on upstream's forkable list, declares `engines.bbPluginSdk: ">=0.4.90"`, and registers a sidebar-footer **disclosure** card (`experimental_sidebarFooter` with `ExperimentalSidebarFooterDisclosureProps`) plus a settings page (`UsageSettings`); it draws no navigation entry and owns no rail markup | upstream |
+| 28 | The card aggregates *source* plugins: its server discovers `provider-usage.v1.listResources` implementors through `bb.sdk.plugins.experimental_discoverRpc({ method })`, so a source must register its RPC with `experimental_discoverable: true`; it then lists each source's resources, fetches `provider-usage.v1.getResource` per resource three at a time, and serves one `getUsage` snapshot of `{ machines: [{ id, displayName, status, providers: [{ id: "<source>:<resource>", providerId, accountLabel, displayName, logoUrl, icon, strings, usage }] }] }`. Provider display metadata comes from `bb.sdk.providers.list({ capability: "usage" })`, ordering follows that catalog, and a provider it does not carry falls back to `{ id: providerId, displayName: providerId }` | upstream |
+| 29 | The card's window value after `normalizeUsageMeasurement` is `{ label, usedPercent, resetsAt, cost }`: the source contract's `kind` (`five-hour`/`daily`/`weekly`/`custom`) is used only to name the label and is dropped before the client. The window row renders `<n>% used` and a bar filled to `Math.max(2, min(100, usedPercent))` with `usageBarColorClass` (80 warning, 95 destructive) | upstream |
+| 30 | The source contract is owned by `plugins/provider-usage/usage-source-contract.ts` and copied into each source: `provider-usage.v1.listResources` (cheap inventory; `id`, `accountKey`, `providerId`, `label`, `scope: shared \| host`) and `provider-usage.v1.getResource` (one resource: `observedAt`, `usage.ok.windows[]` of `{ kind, id, label, usedPercent, resetsAt, model, cost }`, or `not_installed`/`unauthenticated`/`expired`/`error`). Its README states that other providers "must explicitly implement the contract to appear in these displays" | upstream |
+| 31 | None of the bundled sources publishes Grok: they are provider-claude-code, provider-codex and provider-acp, and ACP's covers only providers whose declaration sets `usage: true` (from `providerUsage` on the agent), which is `acp-opencode` alone. `acp-grok` ("Grok Build", `known-agents.ts`) sets no `providerUsage`, so it publishes no resource and earns no `capability: "usage"` catalog entry | upstream |
+| 32 | `chug2k/bb-plugin-usage-pace` is MIT, 0.2.4, `engines.bbPluginSdk: ">=0.5.9"`, about 7,100 lines including tests, and decorates BB's card rather than replacing it: an even-pace tick and a red difference band on each window bar, hover lines with the delta and the time without quota, no projection below `MIN_ELAPSED_FRACTION = 0.05`, a custom "Monthly" window read as one calendar month before its reset in UTC, an optional footer strip and a dialog, and a `provider-usage.v1.listResources` source for Grok Build. It is itself a fork of Usage Bar (Dmitrii Kapustin, MIT), and its Grok usage comes from MacHatter1's Grok Build Usage (MIT); its README states that a change to the card's markup stops the tick and delta and breaks nothing else | community |
+| 33 | Usage Pace 0.2.4's card integration posts `{ force: false, machineIds: null, providerId: null, maxAgeMs }` to `bb--provider-usage`'s `getUsage`, while BB 0.49's contract is the strict object `{ force, machineIds, providerIds: string[], maxAgeMs }` (`provider-usage` server, `usage-source`), so BB rejects the call and the tick, red bands and hover lines do not appear on 0.49 while the Grok tab and the CLI still work; the report is `chug2k/bb-plugin-usage-pace#2`, and a locally patched copy is the operator's workaround | community, upstream |
 
 ## Assumptions phase 0 must prove
 
@@ -80,7 +106,7 @@ verdicts and evidence, in [phase 0 evidence](#phase-0-evidence-2026-11-16).
 7. An isolated BB server (its own data directory and port) can be driven on this machine for proof,
    without touching the operator's live BB.
 8. A `host_path` terminal appears where an operator would look for it, so the task-directory
-   convenience is worth shipping; if it does not, phase 5 drops it and the planner tab stays native.
+   convenience is worth shipping; if it does not, phase 6 drops it and the planner tab stays native.
 
 ## Decisions
 
@@ -250,38 +276,382 @@ exists to collapse a flat list into one row (Spec: T3Code host adapter, "One row
 list already nests the roles under their planner and their worktree, which is stronger; adding a
 hiding tag would remove exactly the rows the operator asked to see.
 
-### 5. Board UI: a `navPanel` board, a settings section, composer pills and the pending-interaction slot
+### 5. Operator surfaces: the forked sidebar, the task group header, the global board and the per-project board
+
+**Recommendation.** Nucleus owns BB's sidebar by forking BB's own list, and it carries the two boards
+the operator asked for (Tom, 2026-11-16: "the sidebar is where most of the workflow exists in these
+apps, so getting it right is crucial"). The built-in group row draws a provider icon, a name, a
+collapse toggle, a roll-up glyph while collapsed, and new-thread plus an overflow menu with Rename
+and Archive (fact 19). That row cannot say what a task is doing, which PR it is on, or where its
+validation stands, and its collapse preference starts every group expanded for every task (fact 21).
+So the BB plugin vendor-copies `plugins/thread-list` — the operator's option A — and keeps it as a
+thin patch set, and each Nucleus task group's header renders the task's state from one batched read.
+The shared board from `client/shell/` renders in a `navPanel` in BB's left rail with an attention
+badge, and it renders per project in a fixed thread tab plus a `navPanel` sub-path route. The rest of
+the surface is as first drafted: Settings in a `settingsSection`, decision and native-question
+composer pills, and a `pendingInteraction` for a Nucleus-raised blocking question. Nucleus adds no
+usage UI to BB at all: glanceable usage is BB's own card plus the operator-installed Usage Pace plugin,
+and the full usage screen stays on the board (5e).
+
+The parts below are decisions, not options: 5a and 5b are the sidebar work, 5c extends the board
+phase, 5d is the per-project board the operator asked for beside the global one, 5e is usage (BB's card,
+not ours), and 5f records what does not change.
+
+#### 5a. The sidebar is a fork of BB's own list
+
+**Recommendation.** Vendor `plugins/thread-list` from BB at a pinned upstream commit into the BB
+plugin package that phase 0 lands (`hosts/bb/plugin/`), and keep it a thin patch. The pin is the
+commit a BB *release* tag points at, not the branch head: the vendored list must be the one written
+against the SDK the running BB ships. Today that is tag `desktop-v0.49.0`,
+`7b26cae79ec978fafd0a5db0e8517e94f12eb8f4`, SDK 0.6.132, whose list declares
+`engines.bbPluginSdk: ">=0.6.112"` (facts 18, 23).
+
+Layout, chosen so the copy stays mechanical:
+
+- `hosts/bb/plugin/sidebar/` holds the vendored plugin source: upstream's `app.tsx`, `app/`, `shared/`
+  and `server.ts`, unchanged except by the patch set, plus upstream's `LICENSE` and
+  `PLUGIN_OVERVIEW.md`.
+- The 33 component-registry modules the list imports through `@/components/ui/*` and `@/lib/*`
+  (fact 17) are written into the plugin package root at the paths upstream's own copy routine writes
+  them (`components/ui/`, `lib/`), with the `@/` alias mapped onto the package root in the plugin's
+  tsconfig. Copying them by hand into `sidebar/` would defeat that routine.
+- The plugin's own `app.tsx` calls `definePluginApp` once and registers the forked list's `ThreadList`
+  component alongside the board, Settings, pills and the pending-interaction slot. The plugin's own
+  `server.ts` composes the fork's vendored server entry (`threadListPlugin(bb)`) with the adapter's
+  RPC catalogue and the presence socket. Both are composition, not forks of upstream behaviour.
+
+Whoever copies keeps upstream's documented fork path rather than a hand copy: `plugins/thread-list`
+is on upstream's forkable list, so upstream CI's "Plugin Fork Check" already guarantees a copy of the
+directory installs, typechecks, tests and `bb plugin build`s outside the monorepo with published
+packages only, and `scripts/lib/plugin-fork.mjs` performs the copy (facts 18, 23). Nucleus runs the
+same routine and records its output.
+
+**The patch set is four seams, and nothing else.** Each is a `.patch` file under
+`hosts/bb/plugin/sidebar/patches/`, listed with its reason in `sidebar/PATCHES.md`:
+
+1. `app/list/ProjectRow.tsx` — the task group header: for a group whose threads carry this plugin's
+   origin and whose environment is a Nucleus task handle, render the state line (5b); every other
+   group takes upstream's path.
+2. `app/preferences/atoms.ts` and `shared/preferences.ts` — one preference key, `expandedTaskGroups`
+   (environment ids), which owns the collapse state of Nucleus task groups and nothing else.
+3. `app/list/nucleusTaskGroups.ts` — a new file in the fork: the batched read, its join, and the
+   collapsed/expanded decision derived from (1) and (2).
+4. `app.tsx` — export the `ThreadList` component instead of defining the plugin, so the plugin's own
+   entry can register it beside the board.
+
+A vendored file that needs a fifth change is a signal that the seam is wrong: either the patch set
+grows deliberately, with its reason recorded, or the change belongs upstream (5f's exit path).
+
+**Rebase routine.** Bump the pin to a new release tag, run the copy, apply
+`sidebar/patches/*.patch`, resolve rejects by updating the patch (never by editing a vendored file in
+place), then run the vendored-manifest test, the fork's own test files, and the phase acceptance. The
+routine is one documented sequence in `sidebar/PATCHES.md` so any worker can do it.
+
+**Drift check.** `sidebar/UPSTREAM.json` records the repository, tag, commit, the plugin path, a
+SHA-256 per vendored file, the registry items written in, the patched file list and the pinned SDK
+floor. Two checks read it:
+
+- an ordinary unit test (`test/bb-sidebar-vendored.test.ts`, in the affected set for any change under
+  the plugin package) proves every file under `sidebar/` and every vendored registry path is either
+  byte-identical to its recorded hash or named as patched, that every patched file is named, that the
+  SDK floor stays at or below the SDK the pinned release ships, and that `plugins/thread-list` is
+  still on upstream's forkable list at the pin;
+- an opt-in selector, `effigy bb:sidebar-drift [ref]`, fetches the pinned commit, re-derives the
+  hashes and reports files that changed upstream since the pin plus any loss of forkability. It needs
+  the network, so it never runs inside `effigy check`; it is the first step of a planned rebase.
+
+**MIT notice.** Upstream BB is MIT, root `LICENSE`, and `plugins/thread-list` carries no separate
+license of its own (fact 18). MIT requires the copyright and permission notice in copies of
+substantial portions, so `sidebar/LICENSE` keeps upstream's notice verbatim and the root
+`THIRD_PARTY_NOTICES.md` gains a section naming the upstream
+repository, the pinned commit, the two vendored trees (`sidebar/` and the registry modules), that the
+files are unmodified except where `PATCHES.md` says otherwise, and that Nucleus's modifications to
+them are under Nucleus's own terms. A rebase updates the section's commit and file list.
+
+**Evidence.** The list is 15,766 source lines in 72 files with 37 test files (fact 17), and it is on
+upstream's forkable list with a CI job that proves a copy builds (fact 18). Its collapse preference
+defaults to the empty list, so groups start expanded (fact 21), and the group header is one function
+in one file (fact 19). `experimental_threadList` is exclusive, replaceable, and automatically prefers
+a non-bundled list, so installing the plugin replaces the sidebar and pinning
+`sidebar.threadListProvider` puts the built-in one back (fact 23). Plugin storage, RPC and realtime
+are plugin-scoped, so the fork neither reads nor publishes the bundled plugin's preferences
+(fact 24).
+
+**Rejected alternative: build a sidebar from scratch.** The list is a full sidebar already: pinned and
+custom sections, three organization modes, sorting, drag to reorder and nest, windowed rows, inline
+rename, keyboard jump shortcuts, split indicators, archive and thread action menus, provider icons,
+draft presence, and 37 files of tests over that behaviour. Rebuilding it would re-earn all of it
+before the first task row drew a state line, and the operator's answer was to fork (option A).
+
+**Rejected alternative: keep the built-in list and decorate it.** `experimental_setThreadRowStatus`
+sets status on a *thread* row, and the metadata line renders only under a thread's title (facts 20,
+22). Neither reaches the group row that stands for the task, and a collapsed group shows no thread
+rows at all, so the task's state would be invisible in exactly the state the operator wants as the
+default. Collapse-by-default per task is also not something the host offers: the preference is one
+global list (fact 21), and flipping its default would collapse every group, including non-Nucleus
+ones.
+
+**Rejected alternative: a second BB plugin for the sidebar.** A separate plugin package would need
+its own server entry and therefore its own socket connection, presence claim and RPC surface to read
+Nucleus state. One plugin, one connection, one catalogue (decision 1) is the cheaper shape, and the
+exclusive slot does not care which plugin owns it.
+
+#### 5b. A Nucleus task group's header carries the task's state
+
+**Recommendation.** A worktree group whose threads carry this plugin's `originPluginId` and whose
+`environment.id` is a Nucleus task handle renders one state block on the header row:
+
+- **line one:** `#<task-number> <task title>`, truncated, with the number as the link target for the
+  task (the board's task detail, 5d);
+- **line two:** the task's state from the shared title helper — phase label, then whichever of hold,
+  wait, stop or attention applies (`shared/task-state.ts` via `phaseStateLabel`/`taskStateLabel`,
+  which the Paseo client already reads, so the two hosts name a state the same way);
+- **line three, when the task has them:** the PR number from the card's `prUrl`/`completionPrNumber`
+  with its state — `OPEN`, `CLOSED` or `MERGED` from the board's own `prStates` record, which the
+  service refreshes for every task that has a PR and no merged commit (`core/forge/pr-status.ts`) —
+  and the recorded wait that says what the task is waiting for (`Waiting for QA capacity (position
+  N)`, `Merge hold`, `Needs operator input`);
+- the rolled-up agent-status glyph upstream draws while the group is collapsed stays, from
+  `experimental_resolveThreadStatus` over the group's hidden threads;
+- upstream's controls stay: the toggle chevron, inline rename, the new-thread button and the overflow
+  menu.
+
+A Nucleus task group is **collapsed by default** and an operator's explicit expand persists in the
+plugin's own preference (`expandedTaskGroups`), so a group is expanded exactly when its environment
+id is in that list. Upstream's `collapsedEnvironments` keeps governing every other group, and the two
+never disagree because each group class reads exactly one of them.
+
+Non-Nucleus groups are byte-identical upstream behaviour: the same header, the same actions, the same
+collapse preference, no extra line and no extra read. A group whose environment is not in the read —
+unknown, archived, or a read that has not landed — renders exactly upstream. Failing to upstream's
+row is the right degradation: a task's state line is an addition, never a precondition for the
+sidebar drawing.
+
+**The data comes from one batched keyed read, not one call per group.** A new method on the plugin's
+existing RPC catalogue, `bb.sidebar-groups`, returns one bounded projection:
+
+- `groups[]` — for every live task whose workspace handle records a BB environment id: the
+  environment id, the task id, number, reference, title, phase, held/blocking hold, wait state, stop
+  kind, `prUrl`, `completionPrNumber`, its `prStates` entry, the recorded resolution/attention flags,
+  and the label strings the sidebar draws;
+- `threads[]` — the thread ids Nucleus knows per Nucleus project: its planner thread, its named-agent
+  threads, and each task's role threads with their environment id, for 5d's tab visibility.
+
+It is a projection of records the adapter already owns (the workspace handles) and the board
+projection the service already serves, so it reads no forge, no Git and no thread timeline. The
+sidebar joins it to `experimental_useSidebarThreads`' rows by `environment.id`, which every row
+already carries (facts 20, 24), so no per-thread metadata read happens and an unknown group costs
+nothing. Live updates ride the board signal the plugin already forwards: the sidebar refetches this
+one read when it arrives, so a task that starts, needs input or merges updates its header without a
+poll, and the read stays bounded by the live task count.
+
+**Evidence.** A sidebar row already carries the environment id, project id, plugin origin, host
+status, runtime status, queued work, pending interaction, activity and the resolved indicator with its
+accessible label (fact 20), so the group join needs no new read and the roll-up glyph needs no new
+data. The roll-up in upstream shows only while collapsed and only when a hidden thread has an
+indicator (fact 19), which is exactly the collapsed-by-default case. The labels come from the shared
+helper the Paseo client and the board already use, so the sidebar and the board cannot drift
+(`shared/task-state.ts`).
+
+**Where the state comes from, and where it stops.** The header draws exactly the facts the service
+publishes in the snapshot it already reads: the task's phase, holds, waits and stop, and its PR number
+with its PR state by task id (`prStates`, `shared/schema/state.ts`). It draws no QA row: the QA runs
+the board carries are keyed per repository and selector rather than per task
+(`shared/schema/qa.ts`), so the task's validation and merge stage is its phase and its recorded
+wait.
+
+**One stated departure from the brief's list: CI check conclusions.** The brief asks the header to
+carry checks; the service publishes no per-task check conclusion — the merge gate reads check state
+live from the forge at merge time, and the only check facts a task records are merge-time exceptions
+(`resolution.forcedChecks`). The header therefore names the stage and the wait the task is in
+(`Reviewing`, `Verifying`, `Merging`, `Waiting for QA capacity (position N)`, `Merge hold`) instead of
+inventing a check list, and the sidebar never calls GitHub or the forge. Adding a live check read from
+the sidebar would put a second, unbounded forge client in the UI and let it disagree with the merge
+gate, so it is not done here. When the service publishes check state per task, the header adds one
+field from the same read and nothing else changes.
+
+**Rejected alternative: read the task's identity from the threads' plugin metadata.** It is the same
+durable key adoption uses (decision 6), but it costs a metadata read per candidate group and it is
+not live: a task's phase changes far more often than its metadata. The environment handle is already
+the join, and the board signal already carries the state.
+
+**Rejected alternative: draw the state line under each role thread's title.** That is where the
+metadata line lives (fact 22), and it is invisible while the group is collapsed, which is the default.
+
+#### 5c. The global board is a `navPanel` in the left rail, with an attention badge
 
 **Recommendation.** The shared board in `client/shell/` renders inside a BB `navPanel` (id
-`nucleus-board`), calling the service through the plugin's `bb.rpc` handlers, which forward the
-existing RPC catalogue over the socket exactly as the Paseo bridge does. Nucleus's Settings render in
-a `settingsSection` (and from the board). BB's lifecycle events (`thread.*`, `interaction.pending`)
-forward as the existing bounded lifecycle hints, so a task's board state follows a thread that
-starts, stalls or needs input without a poll. Decision and native-question pills are composer
-customizations: an `actions` pill per asking agent while it has an open decision, and a pill that
-opens the task's native question. A Nucleus-raised question that must block a thread is a plugin
-interaction rendered by the `pendingInteraction` slot.
+`nucleus-board`, path `board`), calling the service through the plugin's `bb.rpc` handlers, which
+forward the existing RPC catalogue over the socket exactly as the Paseo bridge does. The panel is a
+navigation destination in BB's left rail, because the bundled Navigation plugin's rail is the default
+layout and every registered panel is an entry in it (fact 25). Its `experimental_useBadge` returns the
+count of items that need the operator — tasks in `needs_attention`, `blocked`, `error`, an escalated
+hold, or a pending question — with the `warning`/`critical` tone BB expects and a `label` naming what
+the count is. The route takes sub-paths (`/plugins/nucleus/board/<sub-path>`, fact 25), so a deep link
+into a project's board works.
 
-The built-in sidebar is enough. BB's own list already draws planner → worktree group → roles, which
-is the structure the operator asked for, so `experimental_threadList` is not used. A later phase may
-replace the list only if the trial shows the built-in one cannot carry the task's state, and any
-replacement must reproduce the planner grouping first.
+Nucleus's Settings render in a `settingsSection` (and from the board). BB's lifecycle events
+(`thread.*`, `interaction.pending`) forward as the existing bounded lifecycle hints, so a task's board
+state follows a thread that starts, stalls or needs input without a poll. Decision and native-question
+pills are composer customizations: an `actions` pill per asking agent while it has an open decision,
+and a pill that opens the task's native question. A Nucleus-raised question that must block a thread
+is a plugin interaction rendered by the `pendingInteraction` slot.
 
-**Evidence.** `navPanel` is a titled, routable screen with its own sidebar, `settingsSection` hosts a
-settings component, `composer.customize` takes `actions`, `banners`, plus/send menus and popups, and
-`pendingInteraction` renders a plugin interaction with `submit`/`cancel` (fact 9). The board and its
-Settings are already host-neutral behind `client/shell/` (`BoardShell`, `BoardHost`), and the Paseo
-plugin forwards the RPC catalogue over the same socket (Spec 013).
+**Evidence.** `navPanel` is a titled, routable screen with its own sidebar and an optional badge hook,
+`settingsSection` hosts a settings component, `composer.customize` takes `actions`, `banners`,
+plus/send menus and popups, and `pendingInteraction` renders a plugin interaction with
+`submit`/`cancel` (fact 9, 25). The board and its Settings are already host-neutral behind
+`client/shell/` (`BoardShell`, `BoardHost`), and the Paseo plugin forwards the RPC catalogue over the
+same socket (Spec 013).
 
 **Rejected alternative: a board-only surface with no in-thread pills.** It would drop parity with the
 Paseo plugin, which is an operator requirement, and it would put a blocked question where the agent
 is not.
 
+**Rejected alternative: the board as a right-panel action tab only.** A rail destination is always
+visible, carries the badge, and survives a thread being closed; an action tab exists only where it is
+opened from.
+
+#### 5d. The per-project board is a fixed thread tab plus a sub-path route
+
+**Recommendation.** Two surfaces over the same filtered board:
+
+- **a fixed thread-context tab** (`experimental_tab`, `context: { kind: "thread" }`,
+  `availability: "fixed"`) on a Nucleus project's planner thread and named-agent threads, with
+  `useVisible` true only for those threads, rendering the board filtered to that project;
+- **a `navPanel` sub-path route** on the global board's panel, so a project's board deep-links and the
+  forked sidebar's project and planner rows can reach it.
+
+Both resolve the project through the same `bb.sidebar-groups` read 5b already needs: it names each
+project's planner and named-agent thread ids, and the tab's own props carry the thread id and its
+environment (fact 26). A tab is one registration and one `useVisible`; the board component is the
+same one the rail renders, with a project filter.
+
+**The route key is the Nucleus project id, not a BB project id.** A Nucleus project spans one or more
+repositories (Spec 027), and the adapter registers one BB project per repository root (decision 2), so
+a BB project id would show one repository of a multi-repository project and call it the project. The
+sidebar's BB project rows and planner rows resolve a BB project or a planner thread to its Nucleus
+project and link to `/plugins/nucleus/board/project/<nucleus-project-id>`.
+
+**Task-role threads get a tab too.** A Nucleus task's worker and support threads get a fixed
+`Task` tab showing the board's task detail (`client/task/`), visible when the thread's environment is
+a live task handle. The operator spends the day inside role threads, and the group header is in the
+sidebar, not in the pane; the task detail is already written and host-neutral, so the marginal cost
+is one registration and the same join. This is the answer to whether role threads get a task detail
+surface, and it is yes.
+
+**Evidence.** A tab's context is exactly a thread or a nav panel (fact 26); a nav panel's route takes
+sub-paths and its `subPath` is the route remainder, so `project/<id>` deep-links (fact 25). The
+sidebar's live rows already carry each thread's environment and project, so both visibility hooks
+resolve from one read (facts 20, 24). The board is already filterable by project in the shared shell.
+
+**Rejected alternative: one tab on every thread in the workspace, filtered by the thread's project.**
+A project board on a random task thread says nothing about the task in front of the operator, and it
+would appear on threads Nucleus does not own.
+
+**Rejected alternative: reach the per-project board only from the rail.** The operator asked for the
+planner's board where the planner works; a rail-only board loses the in-thread place it is looked for,
+and it makes the forked sidebar's project row the only path to it.
+
+**Rejected alternative: a task tab on every role thread but no project tab.** The reverse of the
+trade: the project board is where a planner dispatches from, and it would keep needing a navigation
+away from the thread it was asked about.
+
+#### 5e. Usage in BB: BB's card plus the operator's Usage Pace plugin
+
+**Recommendation.** Nucleus contributes **no usage UI** to BB — no rail block, no forked card, no usage
+source of its own (Tom, 2026-11-16: "usage pace is enough I think"). Glanceable usage in BB is BB's
+bundled `provider-usage` card (fact 27) plus the community plugin **Usage Pace**
+(`chug2k/bb-plugin-usage-pace`, MIT), which the operator installs beside it. Nucleus's full usage
+screen (Spec 059, dial and verdict) stays on the board, and the two surfaces answer different questions:
+the card answers "am I about to run out", the board answers "what is the whole picture".
+
+**What BB's card already shows.** A sidebar-footer disclosure with each provider account's plan, and per
+usage window a bar, the used percent, the reset time and a cost when the source reports one, from
+whichever source plugins implement `provider-usage.v1` (facts 27–30). It has no pace.
+
+**What the operator's plugin adds.** Usage Pace decorates that card rather than replacing it: a tick at
+even pace on each window bar, the difference coloured red when usage is ahead of pace, and hover lines
+naming the delta and the time without quota ("17% ahead of pace (1d 4h)", "runs out Sun 00:03 · 2d 15h
+without quota"). It projects no pace in the first 5% of a window (`MIN_ELAPSED_FRACTION = 0.05`), treats
+a custom "Monthly" window as one calendar month before its reset with UTC month arithmetic, publishes
+Grok Build usage so the card gains that row, and adds an optional footer strip and a dialog. The thread
+records that its numbers match the board's pace to within a point or two, and it is a fork of Usage Bar
+by Dmitrii Kapustin with the Grok usage from MacHatter1's Grok Build Usage plugin, both MIT (fact 32).
+
+**It is a recommendation, not a dependency.** Nucleus works on BB with or without it: the card is BB's,
+Usage Pace only adds nodes to it, and nothing in Nucleus reads either. A new BB install gets the card and
+no pace until the operator installs the plugin; a repository that opts into BB needs nothing from it.
+
+**Known risk, recorded with its evidence.** Upstream 0.2.4 does not show its pace on BB 0.49: BB changed
+`bb--provider-usage`'s `getUsage` input to require `providerIds: string[]` in place of `providerId`, and
+the plugin still posts `providerId: null` to a strict input object, so BB rejects the call
+(facts 29, 33). The failure is narrow and stated by the plugin itself and by its issue: the card keeps
+working, the tick and the delta stop showing, and the Grok tab and the CLI still work. The fix is
+reported as `chug2k/bb-plugin-usage-pace#2`; until it lands, the operator runs a locally patched copy.
+Nucleus neither vendors nor patches that plugin: a plugin we do not own is not a fork obligation, and
+its degradation is BB's card minus one metric.
+
+**One projection, and it is the board's.** The pace Nucleus states is `shared/usage-projection.ts` behind
+`usage.state`, which the board's Usage screen and the Paseo row draw (Spec 059). Usage Pace has its own
+implementation of the same idea, which the thread records as agreeing within a point or two; the
+difference that matters is that Nucleus's keeps Spec 059's rules (every pool profile keeps its gauge, a
+reset window counts as unused, no projection early in a window) while the card's shows BB's providers.
+Because Nucleus adds no BB surface, there is no second copy of the projection to keep in sync — and if
+exact agreement is ever wanted, it belongs to the community plugin as an upstream proposal, not to a
+Nucleus fork.
+
+**Evidence.** The card's registration, aggregation, normalization and thresholds are facts 27–30,
+re-verified at the pinned commit; BB's Grok provider publishes no usage and none of the bundled sources
+covers it (fact 31); the community plugin's licence, structure, pace rules and Grok source are fact 32,
+re-verified at its own commit; and the 0.49 breakage is fact 33, verified from BB's side and from the
+plugin's open issue. The change itself is Tom's ruling, quoted above, not a technical claim of this
+spec's: the evidence below it is what makes the ruling implementable.
+
+**Rejected alternative: fork `plugins/provider-usage` to add the pace.** It was the previous draft and it
+is withdrawn: the community plugin already draws the pace on that card, so a fork would maintain a second
+copy of one metric, pin a second upstream tree with its own patch set and drift check, and own a
+projection that is not Nucleus's. "Usage pace is enough" — and Usage Pace supplies it.
+
+**Rejected alternative: publish a Nucleus `provider-usage.v1` source for Grok.** Also withdrawn. The
+contract is designed for it (fact 30) and BB's bundled sources do not cover Grok (fact 31), but Usage
+Pace already publishes that row from MacHatter1's plugin, and a second source for one account is exactly
+the duplicate the card's account-key deduplication exists to prevent. A Nucleus source would also mean
+Nucleus contributing the usage UI this decision rules out.
+
+**Rejected alternative: keep the Nucleus mini gauges in the rail.** Dropped: the card shows more, and two
+surfaces for one fact put a weaker copy where the operator reads the sidebar.
+
+**Rejected alternative: vendor Usage Pace and ship it with Nucleus.** Adopting someone else's plugin
+means owning its rebase against BB's card markup, its Grok source and its two upstream forks. The
+operator installs it instead, and Nucleus keeps one fork instead of three.
+
+#### 5f. What does not change, and the deferred exit path
+
+Decisions 1–4 and 7 are unchanged and this amendment does not reopen them. Decision 6 keeps its
+observation and adoption rules and loses only the `system.usageLimits` clause that served a BB Usage
+page 5e no longer has. The fork adds no host
+operation, no workspace fact, no reporting route and no thread presentation: it reads records the
+adapter already owns, and it draws a task's state one level up from the row decision 4 already titles.
+Decision 4's worker title keeps carrying the step; the group header repeats it where a collapsed group
+needs it, which is presentation of the same fact, not a second one. The usage decision adds no surface at
+all, so it changes nothing in the adapter.
+
+The thread-list fork is the only fork, and it is a means, not a goal. **Option B — an upstream extension
+point** (a group-row metadata slot whose data is per environment, and a collapse hint a list can supply
+per group) — would replace the fork and delete the patch set. Tom takes that upstream himself, later;
+until it exists, the fork is how the requirement is met, and the patch set is kept small enough that an
+upstream slot can absorb it. Usage needs no such exit: there is nothing of ours to retire.
+
 ### 6. Usage and observation: chunked inventory, exact-identity adoption
 
 **Recommendation.** Per-run usage comes from `threads.context`'s `usage` (tokens, context window,
 optional cost) read on the run's finish path, with `thread/tokenUsage/updated` as the timeline
-fallback; provider subscription windows come from `system.usageLimits` for the Usage page.
+fallback; provider subscription windows come from `system.usageLimits`. The first draft fed a BB Usage
+page with that read, and 5e removed that page along with every other Nucleus usage surface in BB, so
+the adapter reads no subscription windows of its own and the board's Usage page keeps `usage.state`
+(Spec 059). That clause is the one change this amendment makes to decision 6, and it is here because
+the usage decision forces it.
 
 `observationInventory(agentIds)` takes an arbitrary list, so it chunks the ids into runs of at most
 200 — the SDK's cap per `threads.list({ threadIds })` call — and reads the chunks one after another.
@@ -339,7 +709,7 @@ exactly one of `thread`, `environment` or `host_path`, and a thread target carri
 terminal cannot both belong to a planner and start in a task's directory. The task-directory
 convenience is therefore a `host_path` terminal (`{ kind: "host_path", hostId, cwd: <task
 worktree> }`), which appears in the right panel but belongs to no thread. It is an assumption to
-prove in phase 0 before phase 5 includes it; if it does not appear where an operator expects, it is
+prove in phase 0 before phase 6 includes it; if it does not appear where an operator expects, it is
 dropped, and requirement 3 is still met by ⌘J and the thread-scoped command.
 
 Nucleus never lists, reads, resizes, writes to or closes a terminal it did not create, and never
@@ -430,12 +800,19 @@ changes.
 | `threads.experimental_listAncestors` | Proving a role thread's planner before reparenting or archiving | Reparenting reads the parent link per thread instead; a deeper planner chain is then unproven |
 | `threads.experimental_listCascade` | Proving an archive would touch only this task's own threads | Archive fails closed with no substitute: without the read there is no authoritative cascade proof, so the thread is left unarchived and closeout records the cleanup as incomplete. A sidebar child count or a list absence never stands in for it |
 | `composer.customize` `experimental_popups` | A pill's popover content | Pills fall back to host-rendered menus and the board opens the same action |
-| `slots.experimental_threadList` | Deferred; not used by this design | Nothing, because the built-in sidebar is the plan |
-| `experimental_setThreadRowStatus` | Deferred row decoration; not used by this plan | Nothing; the worker title carries the step |
-| `slots.experimental_sidebarNavigation`, `slots.experimental_threadContextSegment`, `slots.experimental_threadInfoRow` | Deferred; not used by this design | Nothing |
+| `slots.experimental_threadList` | **Used by the fork.** It is the only way to own the sidebar, and it is exclusive: the plugin registers one list and the host prefers it over the bundled one | The plugin cannot draw the sidebar: phase 5 is blocked, and the operator's fallback is pinning the bundled list (`sidebar.threadListProvider`) with the task state living only on the board. The exit is the upstream group-row slot in 5f |
+| `slots.experimental_tab` with `context: { kind: "thread" }` and `useVisible` | The per-project board tab and the task-detail tab (5d) | Both in-thread boards are dropped and the per-project board stays reachable only from the rail; nothing else in the design depends on it |
+| `navPanel.experimental_useBadge` (and `experimental_usePageTitle`) | The rail badge for items needing the operator, and the panel title naming a project | The badge is dropped and the board's own attention count is the fallback; the title falls back to the panel's static title |
+| `experimental_useSidebarThreads` | The whole live row view the forked list draws: status, runtime status, queued work, pending interaction, activity, indicator and label, environment, project, plugin origin, pinned/archived/unread | No live row data. The fork falls back to the browser SDK's `threads.list` plus its own polling, which loses the host's resolved indicator, draft and queued-message state, and the environment fields the task-group join uses |
+| `experimental_resolveThreadStatus`, `experimental_ThreadStatusGlyph` | The roll-up glyph and the host's own precedence rules (attention before work) | The header draws Nucleus's own state word instead and the rolled-up agent glyph the requirement keeps is missing until a patch reproduces it |
+| `experimental_useSidebarThreadSplit` (`useSidebarSplitLayout`) | The split mini-map on a row, and the split indicator on the group | The split affordance on rows is dropped; split drag itself still works from the panes, so the loss is presentation |
+| `experimental_ThreadActionsContextMenu`, `experimental_ThreadActionsMenu`, `experimental_useThreadActions`, `experimental_useThreadActionRegistrations`, `experimental_THREAD_ACTION_GROUPS` | Row context menus and the thread action registry | Rows lose the host and other plugins' thread actions; the fork would render a host-independent menu, and Nucleus's own verbs stay reachable from the board |
+| `experimental_ThreadRowMetadata` | Other plugins' metadata line under a thread title (PR status and similar) | Thread rows lose other plugins' metadata; the task group header is the fork's own render and is unaffected |
+| `experimental_useArchiveEnvironmentThreads` | The group header's archive action | The archive item leaves the group menu. Nucleus archives role threads itself (decision 4) and never archives a group it did not create, so no Nucleus behaviour depends on it |
+| `experimental_useExperiment("threadRowMetadata")` | Upstream's gate on other plugins' metadata line, which the fork inherits by not patching that path | Other plugins' metadata line stops drawing until a rebase adapts it; the task group header is the fork's own render and needs no change |
+| `experimental_Icon`, `experimental_ProviderIcon`, `experimental_useProviders`, `experimental_usePluginId` | Row icons, provider glyphs, the provider catalog and the plugin's own id (the task-group join's origin test) | Icons fall back to a static set and provider glyphs to a name; the plugin id is available from the manifest, so the join survives |
+| `experimental_setThreadRowStatus` | Deferred; not used by this plan | Nothing here. The fork draws its own rows, so no host row-status write is needed. A replaced list is still expected to keep honouring `useSidebarThreadRowStatus` (fact 23), which the fork does by not touching that path; if option B lands, this is the slot's replacement for a group-level hint |
 
-The adapter's own tests pin the SDK version as a diagnostic and decode the fields it consumes
-strictly, so an additive SDK change connects and a changed required field refuses by name.
 
 ## Phased plan
 
@@ -562,12 +939,61 @@ durable archive effect.
 
 **Dependencies.** Phases 0–3.
 
-### Phase 5 — board, settings, pills, usage and the planner terminal
+### Phase 5 — the forked sidebar and the task group header
 
-**Outcome.** Operator parity in BB: the shared board in a `navPanel`, Settings in a
+**Outcome.** The plugin owns BB's sidebar. `plugins/thread-list` is vendored at the pinned release
+commit inside the plugin package under its recorded patch set, with the MIT notice in place; the
+plugin registers the list through `experimental_threadList`; a Nucleus task group renders collapsed
+by default with its header state line, an explicit expand persists, and every other group behaves
+exactly as upstream. The vendored-manifest test and the drift selector exist so the next rebase is
+mechanical and a stray edit to a vendored file fails a test instead of surviving review.
+
+**Acceptance.**
+
+- The vendored-manifest test proves every file under the plugin's vendored tree and every vendored
+  registry module is byte-identical to its recorded SHA-256 or named in `PATCHES.md`, that the
+  recorded SDK floor is at or below the pinned release's SDK, and that `plugins/thread-list` is still
+  on upstream's forkable list at the pin.
+- `effigy bb:sidebar-drift` reports no drift at the pin, and the selector is absent from
+  `effigy check` (it needs the network).
+- The fork's own test files for the paths the patch set does not touch pass unchanged, including the
+  group disclosure, the section and thread drag-and-drop, keyboard shortcuts, **split drag** (the pane
+  drag from a row, and the group's split indicator and mini-map), inline rename and the row action menu
+  (`ProjectThreadTree.disclosure.test.tsx`, `useSectionThreadDnd.test.ts`, `ThreadRow.test.tsx`,
+  `SidebarInlineRename.test.tsx`, `ThreadRowActionsCustomize.test.tsx`).
+- A test proves the header patch leaves the row's drag bindings and split props untouched, so a task
+  group is still draggable and still opens in a split from the same gestures as an upstream group.
+- A test proves a Nucleus task group renders collapsed with the number and title, the state label from
+  `shared/task-state.ts`, the PR number and its `OPEN`/`CLOSED`/`MERGED` state when the task has one,
+  and the collapsed roll-up glyph; that an explicit expand is written to `expandedTaskGroups` and read
+  back on a fresh mount; and that `collapsedEnvironments` is never written for a task group.
+- A test proves a non-Nucleus group renders upstream's header with no state line and no call to the
+  header read, and that an unknown, failed or not-yet-landed read renders upstream's header rather
+  than blocking or blanking the sidebar.
+- A test proves the header read is one call for many groups (no per-group request), that it is
+  refetched on the board signal, and that no forge, Git or timeline read leaves the adapter.
+- `bb plugin build` succeeds and the built plugin installs into the isolated BB server from phase 0;
+  the list is selected automatically, pinning `sidebar.threadListProvider` restores the bundled list,
+  the New-thread button, rail and footer stay host-rendered, and the row-status path another plugin
+  writes still draws (fact 23).
+- `effigy check`, `effigy qa:docs` and `effigy test:affected --run`.
+
+**Dependencies.** Phases 0–4: the plugin package and its transport, the workspace handles phase 2
+records, and live tasks from phase 3 give the header something real to read.
+
+**Deferred exit path.** Option B — an upstream group-row metadata slot (per-environment data) plus a
+collapse hint a list can supply per group — would replace this phase's fork and delete the patch set,
+keeping the header read and the tenure of the requirement. It is not scheduled; it is the exit that
+makes the fork a bounded commitment (5f).
+
+### Phase 6 — board, per-project board, settings, pills, usage and the planner terminal
+
+**Outcome.** Operator parity in BB: the shared board in a `navPanel` with its attention badge in the
+left rail, the same board per project in a fixed thread tab and a sub-path route reachable from the
+forked sidebar's project and planner rows, a task-detail tab on a task's role threads, Settings in a
 `settingsSection`, decision and native-question composer pills, the pending-interaction slot for a
-Nucleus-raised blocking question, usage on the board and its nav badge from `system.usageLimits`, and
-lifecycle hints forwarded from BB's events into the existing signal path. `bb nucleus terminal` ships
+Nucleus-raised blocking question, the board's own Usage view over `usage.state`, and lifecycle hints
+forwarded from BB's events into the existing signal path. `bb nucleus terminal` ships
 with the plugin CLI as the thread-scoped planner tab; the task-directory `host_path` terminal ships
 only if phase 0 proved it appears where an operator would look.
 
@@ -577,15 +1003,23 @@ only if phase 0 proved it appears where an operator would look.
   reach the service, Settings opens, a decision pill appears and resolves, a native question pill
   shows and answers, the pending-interaction slot submits and cancels, and usage renders from a
   synthetic snapshot.
+- The rail badge counts the tasks that need the operator from a synthetic snapshot, carries its tone
+  and label, and drains as they settle.
+- The per-project tab is visible on a Nucleus project's planner and named-agent threads and nowhere
+  else, and filters the board to that project — including a multi-repository project, which shows
+  every repository, not one.
+- The sub-path route deep-links to a project's board and the forked sidebar's project and planner rows
+  link to it; the route key is the Nucleus project id.
+- The task-detail tab appears on a task's worker and support threads and nowhere else.
 - The terminal command creates one thread-scoped terminal in the calling thread and nothing else; a
   test proves the task-directory variant is absent when phase 0 did not prove it.
 - A test proves no settings write, no lifecycle-owner write and no terminal read ever leaves the
   adapter.
 - `effigy check`, `effigy qa:docs` and `effigy test:affected --run`.
 
-**Dependencies.** Phases 0–4.
+**Dependencies.** Phases 0–5.
 
-### Phase 6 — trial and parity call
+### Phase 7 — trial and parity call
 
 **Outcome.** One repository opts into BB and runs real tasks through it beside Paseo, through
 milestone QA's own runs; the open questions this spec leaves are answered from that evidence and
@@ -593,15 +1027,19 @@ written back into this document.
 
 **Acceptance.**
 
-- A written parity table against the Paseo plugin for board, settings, decision pills, native
-  question pills, usage and lifecycle hints, each marked met, met by a different mechanism, or
-  missing with the reason.
+- A written parity table against the Paseo plugin for the sidebar and its task groups, the global
+  board, the per-project board, settings, decision pills, native question pills, usage and lifecycle
+  hints, each marked met, met by a different mechanism, or missing with the reason. Usage is recorded
+  as met by BB's own card plus the operator's Usage Pace plugin — a host surface Nucleus does not own —
+  with the board's Usage screen as Nucleus's full view.
 - Evidence for plugin reload mid-task, BB restart mid-task, and a host outage during observation:
   each leaves the task uncertain and recovered by observation, never resent and never read as idle.
+- Evidence for one fork rebase against a newer BB release tag through the documented routine, with
+  the drift report and the vendored-manifest test at the new pin.
 - The operator's call on whether BB becomes a supported host (Tom; this phase records it, it does
   not assume it).
 
-**Dependencies.** Phases 0–5.
+**Dependencies.** Phases 0–6.
 
 
 ## Phase 0 evidence (2026-11-16)
@@ -682,7 +1120,7 @@ the presence claim, roll recovery and the catalogue path are unchanged.
    the refusal and exits 2 before starting anything. `test/bb-proof-isolation.test.ts` pins that matrix.
 8. **A `host_path` terminal at a task worktree appears where an operator would look. — Refuted for the
    task-directory convenience.** It appears in the host's own terminal list and in no thread's terminal
-   list, so a planner looking at their thread does not see it. Phase 5 drops the task-directory
+   list, so a planner looking at their thread does not see it. Phase 6 drops the task-directory
    `host_path` terminal and keeps the planner's native ⌘J tab plus the thread-scoped command, which
    phase 0 did prove: a thread-scoped terminal appeared in its own thread's list, with the thread's
    environment path as its initial working directory, and in no host list.
@@ -694,7 +1132,7 @@ panel: it is created against the thread, requires that thread's environment, and
 that thread. A `host_path` terminal at a task worktree belongs to the host, not to any thread: it is
 listed only under the host. An environment-scoped list showed neither. So the planner tab is the
 planner's own thread-scoped terminal (⌘J needs no adapter work), and the task-directory convenience is
-dropped from phase 5 unless a later BB release puts host-path terminals in a thread's panel.
+dropped from phase 6 unless a later BB release puts host-path terminals in a thread's panel.
 
 ### Corrections to the verified facts
 
@@ -702,7 +1140,7 @@ Fact 4 said a thread-scoped terminal records `thread-archived` as its close reas
 BB 0.49.0 server, archiving a thread left its terminal `running` with `closeReason: null`, and only an
 explicit close recorded `user`. Phase 0 therefore closes the terminals it creates itself and reads no
 terminal state as a lifecycle fact; decision 7's "a planner terminal is retired with the planner" claim
-is not relied on, and phase 5 must re-check it before it does.
+is not relied on, and phase 6 must re-check it before it does.
 
 ### Fault rules as implemented
 
@@ -739,6 +1177,10 @@ its reconnect, the identity probe, the unmanaged environment, a spawn with its p
 an observation, an archive and its cascade read, a reload mid-run and a restart mid-run. Public PR
 text carries no local paths, no credentials and no private project names.
 
-Proof selectors: `effigy proof:bb` for the private run, the affected unit files for each phase, and
-`effigy check` plus `effigy qa:docs` for every phase. No phase runs the full suite; milestone QA
-does that on `main`.
+The vendored sidebar is checked twice, and neither check reaches the network from `effigy check`: the
+vendored-manifest test is an ordinary unit test over committed files, and `effigy bb:sidebar-drift` is
+the opt-in fetch that compares the pin against upstream and opens a rebase.
+
+Proof selectors: `effigy proof:bb` for the private run, `effigy bb:sidebar-drift` at a planned rebase,
+the affected unit files for each phase, and `effigy check` plus `effigy qa:docs` for every phase. No
+phase runs the full suite; milestone QA does that on `main`.
