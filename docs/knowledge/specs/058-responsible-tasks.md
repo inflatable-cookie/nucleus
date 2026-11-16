@@ -207,13 +207,16 @@ launch, wait or escalation followed). A legitimate capacity, dispatch, route or 
 clears the pending episode instead, so it is not escalated by this bound. A planner-selected task,
 time or operator-decision wait is also an owned wait: while its typed stop is active, the no-run bound
 stands down. The wait's wake path resumes the task when its condition settles; recovery can act again
-only if the resumed task still has an unresolved fault.
+only if the resumed task still has an unresolved fault. An ended time or task wait follows the
+current continuation even after its raising recovery run has ended; if no retained turn can resume,
+ordinary recovery takes over rather than leaving an inert wake stop.
 
 ### Capacity counts live agents (Tom, 2026-11-03)
 
 A task occupies a global or project slot only while one of its agents is actually running: a worker,
 revision, reviewer, executor, recovery or closeout coordinator turn (an unreleased run with a live or
-starting agent, or dispatch creating its workspace ahead of the launch). A task with no running agent
+starting agent, or dispatch creating its workspace ahead of the launch), or while a restart keeps that task's
+existing slot through settlement and admission of its next participant. A task with no running agent
 that is only waiting on hosted checks, the repository's one-at-a-time integration (merge) turn,
 mechanical verification, a thread release or settlement holds no slot. It keeps its place in the merge
 order, and when it next needs an agent — review after CI, a revision after a refusal, closeout — it

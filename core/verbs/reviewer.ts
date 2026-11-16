@@ -202,6 +202,9 @@ export class ReviewerControls {
           reason: 'Reviewer replacement archive is not confirmed; waiting for observation',
           resolution: { ...this.store.task(taskId).resolution, pendingReviewReason: instruction },
         }, 'restart_review_archive_wait');
+        // Capture ownership before displacement and settlement release old runs.
+        const occupying = occupiesSlot(before, runsBefore);
+        const holdFrom = runsBefore.find(run => run.role === 'reviewer' && !run.released)?.id ?? before.resolution.currentRunId;
         let launchFence: string | null = null;
         const settled = this.store.transaction(() => {
           this.engine.assertUnchangedBeforeCancel(taskId, before.version, runsBefore);
@@ -215,8 +218,6 @@ export class ReviewerControls {
           const terminal = threadArchived || Boolean(run?.retainedAgentClosedAt) || Boolean(live?.retainedAgentClosedAt);
           // Capture occupancy before releasing the occupying run: the continuation
           // intent does not exist yet, so a restart-specific hold keeps the slot.
-          const occupying = occupiesSlot(current, this.store.runs(taskId));
-          const holdFrom = (run && !run.released ? run.id : null) ?? live?.id ?? current.resolution.currentRunId;
           if (run && run.role === "reviewer" && !run.completion && !run.released) {
             this.store.putRun({ ...run, status: "superseded", released: fresh || observedClosed || terminal || run.retainedAgentClosedAt !== undefined,
               active: false, replacedAt: now(), ...(terminal && !run.retainedAgentClosedAt ? { retainedAgentClosedAt: now() } : {}) });

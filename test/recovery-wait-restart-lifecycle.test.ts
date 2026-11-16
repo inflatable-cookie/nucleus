@@ -16,7 +16,7 @@ import {
 import type { Adapter, AgentObservation } from '../core/host';
 
 /**
- * nucleus#1258: recovery stands down on a live task, a planner wait on a
+ * nucleus#1278: recovery stands down on a live task, a planner wait on a
  * recovery escalation resumes ordinary next when it ends, and owner restart
  * keeps the task's slot. Fixtures copy the stored escalation / run / event
  * shapes from a721bbcc, baaa2daa and fedca2e8 with synthetic IDs.
@@ -155,6 +155,139 @@ test('recovery observes a live reviewer and reports the no-op; no escalation and
   } finally { await f.close(); }
 });
 
+for (const scenario of [
+  "active turn",
+  "advancing activity",
+  "initial worker",
+  "slot wait",
+  "prerequisite wait",
+] as const) {
+  test(`a blocked recovery report on ${scenario} settles without an escalation or phase change`, async () => {
+    const f = fixture();
+    try {
+      f.idle("review-agent");
+      f.store.update(f.submitted.id, {
+        reason: "Stalled turn recorded",
+        resolution: { ...f.current().resolution, attention: true },
+      });
+      await f.engine.resolution.recovery.route(f.current());
+      await f.engine.quiesce();
+      const recovery = f.coordinatorRuns().at(-1)!;
+      assert.ok(recovery);
+      f.idle(recovery.agentId!);
+      f.states.set("review-agent", {
+        ...f.states.get("review-agent")!,
+        active: true,
+        status: "running",
+        activeTurnId: "turn-1",
+      });
+      if (scenario === "advancing activity") {
+        f.store.putRun({ ...f.store.run("review-run")!, active: false });
+        f.states.set("review-agent", {
+          ...f.states.get("review-agent")!,
+          active: false,
+          activeTurnId: null,
+          updatedAt: new Date().toISOString(),
+        });
+      } else if (scenario !== "active turn") {
+        f.store.putRun({
+          ...f.store.run("review-run")!,
+          released: true,
+          active: false,
+        });
+        f.idle("review-agent");
+        if (scenario === "initial worker") {
+          f.store.update(f.submitted.id, {
+            phase: "working",
+            completion: null,
+            agentActive: false,
+            resolution: { ...f.current().resolution, currentRunId: null },
+          });
+          f.states.set("worker", {
+            ...f.states.get("worker")!,
+            active: true,
+            status: "running",
+            activeTurnId: "worker-turn",
+          });
+        } else {
+          f.store.update(f.submitted.id, {
+            phase: "awaiting_review",
+            resolution: { ...f.current().resolution, currentRunId: null },
+          });
+          const other = f.store.insert(
+            submissionSchema.parse({
+              submissionId: randomUUID(),
+              title: "Synthetic prerequisite or occupant",
+              repoPath: "/repo",
+              planningCommit: base,
+              brief: { text: "Synthetic" },
+              originAgentId: "origin",
+            }),
+            "host",
+            "brief",
+            base,
+          );
+          if (scenario === "slot wait")
+            f.store.update(other.id, {
+              phase: "working",
+              agentActive: true,
+              agentId: "other-worker",
+            });
+          else
+            f.store.update(f.submitted.id, {
+              prerequisiteWait: {
+                id: randomUUID(),
+                waitsFor: [other.id],
+                reason: "Waiting for synthetic prerequisite",
+                releasedAt: null,
+              },
+            });
+        }
+      }
+      const phase = f.current().phase;
+      f.engine.resolution.complete(
+        {
+          eventId: randomUUID(),
+          taskId: f.submitted.id,
+          runId: recovery.id,
+          status: "blocked",
+          summary: "No justified recovery verb",
+          coordinatorAction: {
+            verb: "cannot",
+            reason: "No justified recovery verb",
+          },
+          coordinatorGeneration: recovery.generation,
+        },
+        f.tokens.get(recovery.id)!,
+      );
+      await f.engine.resolution.recovery.pass(f.submitted.id);
+      assert.equal(f.events("planner_escalation").length, 0);
+      assert.equal(f.current().resolution.recovery?.status, "resolved");
+      assert.equal(f.current().phase, phase);
+      assert.match(
+        f.events("recovery_live_noop").at(-1)?.detail ?? "",
+        /recovery: task live, nothing to do/,
+      );
+      assert.equal(f.current().resolution.attention, false);
+      if (scenario === "slot wait" || scenario === "prerequisite wait")
+        assert.equal(
+          f.current().resolution.stop?.reason,
+          scenario === "slot wait" ? "capacity" : "prerequisite",
+        );
+      const count = f.coordinatorRuns().length;
+      await f.engine.resolution.recovery.route(f.current());
+      await f.engine.quiesce();
+      assert.equal(
+        f.coordinatorRuns().length,
+        count,
+        "healthy work does not start another recovery",
+      );
+    } finally {
+      await f.close();
+    }
+  });
+}
+
 test('recovered without action and no live participant is refused; the stop is not cleared', async () => {
   const f = fixture();
   try {
@@ -197,11 +330,17 @@ test('recovered without action and no live participant is refused; the stop is n
 });
 
 /** nucleus#1217: released reviewer, empty currentRunId, raising recovery gone, timed wait due. */
-function load1217Wait(f: ReturnType<typeof fixture>) {
+function load1217Wait(f: ReturnType<typeof fixture>, kind: 'time' | 'task' = 'time') {
   const recoveryId = 'recovery-1217';
   const escalationId = 'c'.repeat(64);
   const target = '2020-01-01T00:00:00.000Z';
   const stopDetail = `Escalation ${escalationId}: waiting until ${target}`;
+  const waitId = randomUUID();
+  let prerequisite: Task | null = null;
+  if (kind === 'task') {
+    prerequisite = f.store.insert(submissionSchema.parse({ submissionId: randomUUID(), title: 'Synthetic wait target', repoPath: '/upstream', planningCommit: base, brief: { text: 'Synthetic' }, originAgentId: 'origin' }), 'host', 'brief', base);
+    f.store.update(prerequisite.id, { phase: 'done' });
+  }
   f.store.putRun({ ...f.store.run('review-run')!, released: true, active: false, status: 'finished', completion: null });
   f.idle('review-agent');
   f.store.putRun(runSchema.parse({
@@ -220,9 +359,10 @@ function load1217Wait(f: ReturnType<typeof fixture>) {
   f.store.event(f.submitted.id, 'planner_escalation_applied',
     `${escalationId}: waiting until ${target}`);
   f.store.event(f.submitted.id, 'planner_escalation_wait',
-    `${escalationId}: ${JSON.stringify({ kind: 'time', target, stopDetail, stopReason: 'lifecycle' })}`);
+    `${escalationId}: ${JSON.stringify({ kind, target: prerequisite?.id ?? target, ...(prerequisite ? { waitId } : {}), stopDetail, stopReason: 'lifecycle' })}`);
   f.store.update(f.submitted.id, {
     phase: 'blocked',
+    ...(prerequisite ? { prerequisiteWait: { id: waitId, waitsFor: [prerequisite.id], reason: 'Waiting for synthetic target', releasedAt: null } } : {}),
     reason: stopDetail,
     resolution: {
       ...f.current().resolution,
@@ -238,10 +378,11 @@ function load1217Wait(f: ReturnType<typeof fixture>) {
   return { recoveryId, escalationId };
 }
 
-test('a timed wait on a recovery escalation whose raising run has released wakes into the ordinary next step', async () => {
+for (const kind of ['time', 'task'] as const) {
+test(`a ${kind} wait on a recovery escalation whose raising run has released wakes into the ordinary next step`, async () => {
   const f = fixture();
   try {
-    load1217Wait(f);
+    load1217Wait(f, kind);
     const recoveriesBefore = f.coordinatorRuns().length;
     await f.engine.resolution.ladder.resumeEscalationWaits(f.current());
     assert.equal(f.events('planner_escalation_wake_refused').length, 0,
@@ -259,10 +400,10 @@ test('a timed wait on a recovery escalation whose raising run has released wakes
   } finally { await f.close(); }
 });
 
-test('a timed wait whose retained reviewer is closed parks without replacing that reviewer', async () => {
+test(`a ${kind} wait whose retained reviewer is closed resumes recovery without replacing that reviewer`, async () => {
   const f = fixture();
   try {
-    load1217Wait(f);
+    load1217Wait(f, kind);
     f.states.set('review-agent', {
       id: 'review-agent', workspaceId: 'workspace', status: 'closed', active: false,
       permissions: false, error: '', provider: 'test', model: reviewer.model,
@@ -276,26 +417,99 @@ test('a timed wait whose retained reviewer is closed parks without replacing tha
       JSON.stringify(f.store.eventsAll(f.submitted.id).map(event => ({ kind: event.kind, detail: event.detail.slice(0, 160) }))));
     const woke = f.events('planner_escalation_woke').at(-1)?.detail ?? '';
     assert.doesNotMatch(woke, /ordinary restart/, woke);
-    assert.doesNotMatch(woke, /fresh/, woke);
+    assert.match(woke, /ordinary recovery/, woke);
     assert.doesNotMatch(f.current().reason, /wake was refused/);
     assert.notEqual(f.current().phase, 'awaiting_review',
       `closed reviewer must not be replaced; phase=${f.current().phase} reason=${f.current().reason}`);
     assert.equal(f.current().resolution.reviewerAgentId, 'review-agent');
-    assert.equal(f.current().resolution.stop?.reason, 'lifecycle');
+    await f.engine.quiesce();
+    assert.equal(f.current().prerequisiteWait, null, 'the fulfilled wait no longer fences recovery');
+    assert.ok(f.coordinatorRuns().length > recoveriesBefore, 'a fresh recovery owns the remaining fault');
     await f.engine.wake();
-    assert.equal(f.coordinatorRuns().length, recoveriesBefore,
-      `wake must not start another recovery; runs=${f.coordinatorRuns().map(run => run.id).join(',')}`);
+    assert.equal(f.coordinatorRuns().length, recoveriesBefore + 1, 'one recovery resumes the ended wait');
     const reviewerRuns = f.store.runs(f.submitted.id).filter(run => run.role === 'reviewer').map(run => run.id);
     assert.deepEqual(reviewerRuns, reviewerRunsBefore, 'wake must not start a fresh reviewer');
     assert.equal(f.createdRuns.filter(run => run.role === 'reviewer').length, 0);
   } finally { await f.close(); }
 });
 
-test('restarting a slot-holding task\'s reviewer keeps that task\'s slot while another task is queued', async () => {
+}
+
+for (const kind of ['time', 'task'] as const) {
+  test(`an ended ${kind} wait with an unreleased raising run resumes after a non-matching restart refusal`, async () => {
+    const f = fixture();
+    try {
+      const { recoveryId } = load1217Wait(f, kind);
+      f.store.update(f.submitted.id, { coordinatorAgentId: 'coord-1217' });
+      f.store.putRun({ ...f.store.run(recoveryId)!, status: 'running', released: false });
+      f.states.set('coord-1217', { id: 'coord-1217', workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '' });
+      const apply = f.engine.resolution.applyOperatorControl!;
+      const refusal = 'The parked restart no longer applies; re-read next';
+      let refused = false;
+      f.engine.resolution.applyOperatorControl = async input => {
+        if (!refused) { refused = true; throw Error(refusal); }
+        return apply(input);
+      };
+      await f.engine.resolution.ladder.resumeEscalationWaits(f.current());
+      await f.engine.quiesce();
+      assert.equal(refused, true, 'the initial parked restart was refused');
+      assert.doesNotMatch(refusal, new RegExp(NO_RESOLUTION_RUN_REFUSAL));
+      assert.equal(f.events('planner_escalation_wake_refused').length, 0);
+      assert.equal(f.events('planner_escalation_woke').length, 1);
+      assert.doesNotMatch(f.current().reason, /wake was refused/);
+      assert.equal(f.current().phase, 'reviewing', f.current().reason);
+      assert.equal(f.store.run(recoveryId)?.released, true, 'continuation settles the raising run through its existing gate');
+      await f.engine.wake();
+      assert.equal(f.current().phase, 'reviewing', f.current().reason);
+      assert.equal(f.createdRuns.filter(run => run.role === 'reviewer').length, 1, 'ordinary review resumes exactly once');
+    } finally { await f.close(); }
+  });
+}
+
+for (const kind of ['time', 'task'] as const) {
+  test(`an ended ${kind} wait preserves an unsettled raising run's delivery fence`, async () => {
+    const f = fixture();
+    try {
+      const { recoveryId } = load1217Wait(f, kind);
+      f.store.update(f.submitted.id, { coordinatorAgentId: 'coord-1217' });
+      f.store.putRun({ ...f.store.run(recoveryId)!, status: 'uncertain', completion: null, active: null, released: false });
+      f.store.setCredential(recoveryId, 'raising-token');
+      const observe = f.adapter.observe;
+      f.adapter.observe = async id => {
+        if (id === 'coord-1217') throw Error('Synthetic raising thread observation unavailable');
+        return observe(id);
+      };
+      const apply = f.engine.resolution.applyOperatorControl!;
+      let refused = false;
+      f.engine.resolution.applyOperatorControl = async input => {
+        if (!refused) { refused = true; throw Error('The parked restart no longer applies; re-read next'); }
+        return apply(input);
+      };
+      await f.engine.resolution.ladder.resumeEscalationWaits(f.current());
+      await f.engine.quiesce();
+      assert.equal(f.events('planner_escalation_wake_refused').length, 0);
+      assert.equal(f.events('planner_escalation_woke').length, 1);
+      assert.doesNotMatch(f.current().reason, /wake was refused/);
+      assert.equal(f.store.run(recoveryId)?.released, false, 'uncertain delivery keeps the raising run bound');
+      assert.equal(f.createdRuns.length, 0, 'no participant is prompted through an unproven delivery fence');
+      assert.equal(f.coordinatorRuns().length, 1, 'no second recovery runs beside the unobservable one');
+    } finally { await f.close(); }
+  });
+}
+
+for (const occupant of ['reviewer', 'recovery'] as const) {
+test(`reviewer restart keeps the task slot held by ${occupant} and returns to reviewing ahead of queued work`, async () => {
   const f = fixture();
   try {
     f.store.putRun({ ...f.store.run('review-run')!, active: null });
     f.states.set('review-agent', { id: 'review-agent', workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '', provider: 'test', model: reviewer.model });
+    if (occupant === 'recovery') {
+      f.store.putRun({ ...f.store.run('review-run')!, active: false });
+      f.store.update(f.submitted.id, { reason: 'Reviewer provider failure', resolution: { ...f.current().resolution, attention: true } });
+      await f.engine.resolution.recovery.route(f.current());
+      await f.engine.quiesce();
+      assert.ok(f.coordinatorRuns().at(-1));
+    }
     const holding = f.current();
     assert.equal(occupiesSlot(holding, f.store.runs(holding.id)), true, 'the reviewer run holds the only slot');
     const queued = f.store.insert(submissionSchema.parse({
@@ -316,8 +530,12 @@ test('restarting a slot-holding task\'s reviewer keeps that task\'s slot while a
     await f.engine.wake();
     assert.equal(occupiesSlot(f.store.task(holding.id), f.store.runs(holding.id)), true);
     assert.equal(f.store.task(queued.id).phase, 'queued');
+    assert.equal(f.current().phase, 'reviewing', f.current().reason);
+    assert.equal(f.current().resolution.restartSlotHold, null);
   } finally { await f.close(); }
 });
+
+}
 
 test('a fenced restart hold does not keep the slot', async () => {
   const f = fixture();
@@ -347,7 +565,8 @@ test('a fenced restart hold does not keep the slot', async () => {
   } finally { await f.close(); }
 });
 
-test('restarting a slot-holding task\'s idle worker keeps that task\'s slot while another task is queued', async () => {
+for (const occupant of ['worker', 'recovery'] as const) {
+test(`worker restart keeps the task slot held by ${occupant} while another task is queued`, async () => {
   const f = fixture();
   try {
     f.store.putRun({ ...f.store.run('review-run')!, released: true, active: false, status: 'finished' });
@@ -365,6 +584,13 @@ test('restarting a slot-holding task\'s idle worker keeps that task\'s slot whil
       lastAgentStatus: 'idle',
       resolution: { ...f.current().resolution, currentRunId: 'revision-run', reviewerAgentId: null, reviewerProfile: null },
     });
+    if (occupant === 'recovery') {
+      f.store.putRun({ ...f.store.run('revision-run')!, active: false });
+      f.store.update(f.submitted.id, { reason: 'Worker provider failure', resolution: { ...f.current().resolution, attention: true } });
+      await f.engine.resolution.recovery.route(f.current());
+      await f.engine.quiesce();
+      assert.ok(f.coordinatorRuns().at(-1));
+    }
     const holding = f.current();
     assert.equal(occupiesSlot(holding, f.store.runs(holding.id)), true, 'the idle revision run holds the only slot');
     const queued = f.store.insert(submissionSchema.parse({
@@ -383,4 +609,40 @@ test('restarting a slot-holding task\'s idle worker keeps that task\'s slot whil
     assert.match(f.engine.resolution.slotAdmissionReason(f.store.task(queued.id)), /1\/1 occupied/,
       'the queued task does not take the restarted worker\'s slot');
   } finally { await f.close(); }
+});
+}
+test("a blocked recovery report on an idle fault still escalates", async () => {
+  const f = fixture();
+  try {
+    f.idle("review-agent");
+    f.store.update(f.submitted.id, {
+      reason: "Unresolved environment fault",
+      resolution: { ...f.current().resolution, attention: true },
+    });
+    await f.engine.resolution.recovery.route(f.current());
+    await f.engine.quiesce();
+    const recovery = f.coordinatorRuns().at(-1)!;
+    assert.ok(recovery);
+    f.idle(recovery.agentId!);
+    f.engine.resolution.complete(
+      {
+        eventId: randomUUID(),
+        taskId: f.submitted.id,
+        runId: recovery.id,
+        status: "blocked",
+        summary: "Required tool is missing",
+        coordinatorAction: {
+          verb: "cannot",
+          reason: "Required tool is missing",
+        },
+        coordinatorGeneration: recovery.generation,
+      },
+      f.tokens.get(recovery.id)!,
+    );
+    await f.engine.resolution.recovery.pass(f.submitted.id);
+    assert.equal(f.events("recovery_live_noop").length, 0);
+    assert.equal(f.events("planner_escalation").length, 1);
+  } finally {
+    await f.close();
+  }
 });

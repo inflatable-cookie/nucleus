@@ -166,7 +166,9 @@ export class CoordinatorRoute {
   // A released wait leaves changes requested work for an explicit operator
   // revise/retry; a coordinator must not turn the source completion into one.
   if(t.phase==='changes_requested'&&t.prerequisiteWait?.releasedAt)return null;
-  if(this.store.notices(t.id).some(notice=>notice.kind==='prerequisite'&&['pending','intent'].includes(notice.status)))return null;
+  // A notice informs the owner about its retained wait. Once a continuation
+  // clears that wait, delivery stays tracked but no longer parks recovery.
+  if(t.prerequisiteWait&&this.store.notices(t.id).some(notice=>notice.kind==='prerequisite'&&['pending','intent'].includes(notice.status)))return null;
   // A short integration-checkout conflict is one repository episode, not one
   // recovery and notice per task waiting behind it. Only the elected leader
   // may enter normal recovery after the durable grace expires.
@@ -352,7 +354,7 @@ export class CoordinatorRoute {
     const workerGroup=current.profileGroup ?? this.store.pool().find(entry=>entry.profileId===current.profile?.id)?.group;
     const availability=workerGroup ? this.store.availability().find(entry=>entry.group===workerGroup)??null : null;
     const outage=!this.resolution.hostAvailable(current) || this.resolution.workerProviderUnavailable(current) || Boolean(availability && groupIsUnavailable(availability));
-    this.store.setCredential(run.id,token);this.store.putRun(run);this.store.event(t.id,'telemetry_recovery',JSON.stringify({runId:run.id,targetRole:target,cause:cause(t,this.store.runs(t.id)),work:taskWorkIdentity(current,this.store),outage}));this.episode.save(t,{runId:run.id,agentId,status:'running',...(current.resolution.recovery?.action ? {action:null} : {})});this.resolution.update(t,{recoveryActive:true,recoveryAttempts:current.resolution.recoveryAttempts+(outage?0:1)});
+    this.store.setCredential(run.id,token);this.store.putRun(run);this.store.event(t.id,'telemetry_recovery',JSON.stringify({runId:run.id,targetRole:target,cause:cause(t,this.store.runs(t.id)),work:taskWorkIdentity(current,this.store),outage}));this.episode.save(t,{runId:run.id,agentId,status:'running',...(current.resolution.recovery?.action ? {action:null} : {})});this.resolution.update(t,{recoveryActive:true,restartSlotHold:null,recoveryAttempts:current.resolution.recoveryAttempts+(outage?0:1)});
     if(group)this.store.chargeAssignment(group,profile!.id);
    });
    if(superseded){this.store.event(t.id,'recovery_superseded','An operator control replaced this recovery before its coordinator run was recorded');return null;}
