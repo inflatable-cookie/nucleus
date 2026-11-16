@@ -9,9 +9,13 @@ const KEYS = ["NUCLEUS_TICKET", "NUCLEUS_CONTINUATION_TICKET", "TMPDIR", "TMP", 
 export type RunProcessEnvironment = Partial<Record<typeof KEYS[number], string>>;
 
 /** Read only run ownership fields; never retain or log a process's full environment. Null is unknown. */
-export async function runProcessEnvironments(pids: readonly number[]): Promise<Map<number, RunProcessEnvironment | null>> {
+export async function runProcessEnvironments(pids: readonly number[], options: {
+  platform?: NodeJS.Platform;
+  darwinRead?: (pids: readonly number[]) => Promise<string>;
+} = {}): Promise<Map<number, RunProcessEnvironment | null>> {
   const result = new Map<number, RunProcessEnvironment | null>();
-  if (process.platform === "linux") {
+  const platform = options.platform ?? process.platform;
+  if (platform === "linux") {
     for (const pid of pids) {
       try {
         const entries = readFileSync(`/proc/${pid}/environ`, "utf8").split("\0");
@@ -22,13 +26,13 @@ export async function runProcessEnvironments(pids: readonly number[]): Promise<M
         })));
       } catch { result.set(pid, null); }
     }
-  } else if (process.platform === "darwin") {
+  } else if (platform === "darwin") {
     for (let offset = 0; offset < pids.length; offset += 64) {
       const chunk = pids.slice(offset, offset + 64);
       for (const pid of chunk) result.set(pid, null);
       try {
-        const { stdout } = await execFileAsync("ps", ["-E", "-ww", "-p", chunk.join(","), "-o", "pid=,command="],
-          { encoding: "utf8", timeout: 5_000, maxBuffer: 4 * 1024 * 1024 });
+        const stdout = options.darwinRead ? await options.darwinRead(chunk) : await execFileAsync("ps", ["-E", "-ww", "-p", chunk.join(","), "-o", "pid=,command="],
+          { encoding: "utf8", timeout: 5_000, maxBuffer: 4 * 1024 * 1024 }).then(result => result.stdout);
         for (const line of stdout.split("\n")) {
           const match = /^\s*(\d+)\s+(.*)$/.exec(line);
           if (!match) continue;

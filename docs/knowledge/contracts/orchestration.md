@@ -1462,9 +1462,14 @@ request identities and submitted handoffs are not rewritten.
   inherited scratch path or command naming that run's scratch proves ownership;
   a shared checkout or process group alone never does. Agent hosts, their standing
   runtimes, reporting helpers and processes carrying a live run's identity are
-  protected. Only reparented roots with no live non-init ancestor are stopped;
-  an environment-only root also needs the helper proof to exclude the agent host.
-  Reused threads' live runs defer earlier-run cleanup, and a protected runtime
+  protected. Host observation retains helper-proven provider and standing-runtime
+  PID/start identities, so attached tools and orphans remain distinguishable after
+  the helper exits; saved protection never follows a recycled PID. Without an
+  observed host identity, an indistinguishable environment-only holder is left
+  alone with a visible uncertainty record. Any unreadable process environment,
+  including a partial failed host read, retains the cleanup intent and scratch
+  until a later observation can rule out ownership. Reused threads' live runs
+  defer earlier-run cleanup, and a protected runtime
   keeps its launch scratch until it releases it. Each proven member is stopped individually so a shared group cannot
   take another run or the operator's processes with it. Survivors retain their
   scratch and appear on the task timeline with PID and start identity.

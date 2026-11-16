@@ -3,11 +3,11 @@ import type { Store } from "../store/store";
 import type { HostProcessFact } from "../host/types";
 import { readHostUidProcesses } from "./host-process-listing";
 import { runProcessEnvironments, runProcessLiveness, type RunProcessEnvironment } from "./run-process-identity";
-import { runInfrastructurePids } from "./owned-tool-process-proof";
+import { hasRunProcessHost, protectedRunInfrastructure, rememberRunProcessHosts } from "./run-process-hosts";
 import { protectedHostPids } from "./host-process-select";
 import { terminateHostProcessTargets } from "./host-process-reap";
 
-interface CleanupRun { id: string; taskId: string; hostId?: string; agentId?: string | null; temporaryDirectory?: string; pending?: boolean }
+interface CleanupRun { id: string; taskId: string; hostId?: string; agentId?: string | null; temporaryDirectory?: string; pending?: boolean; uncertainty?: string }
 const key = (id: string) => `runProcessCleanup:${id}`;
 const terminal = (phase: string) => ["done", "cancelled"].includes(phase);
 
@@ -24,7 +24,7 @@ export function processBelongsToRun(fact: HostProcessFact, environment: RunProce
 }
 
 /** Settled runs, including pre-upgrade history. Pending intents retain displaced initial workers. */
-function cleanupRuns(store: Store, hostId: string, taskId?: string): { settled: CleanupRun[]; live: CleanupRun[] } {
+function cleanupRuns(store: Store, hostId: string, taskId?: string): { settled: CleanupRun[]; live: CleanupRun[]; known: CleanupRun[] } {
   const settled = new Map<string, CleanupRun>();
   const live = new Map<string, CleanupRun>();
   const tasks = store.db.prepare("SELECT data FROM tasks WHERE json_extract(data,'$.hostId')=?").all(hostId);
@@ -48,7 +48,7 @@ function cleanupRuns(store: Store, hostId: string, taskId?: string): { settled: 
     if (run.hostId === hostId && !live.has(run.id)) settled.set(run.id, { ...run, ...settled.get(run.id) });
   }
   for (const id of live.keys()) settled.delete(id);
-  return { settled: [...settled.values()].filter(run => !taskId || run.taskId === taskId), live: [...live.values()] };
+  return { settled: [...settled.values()].filter(run => !taskId || run.taskId === taskId), live: [...live.values()], known: [...settled.values(), ...live.values()] };
 }
 
 // A task lane and the periodic maintenance lane can reach the same run. Coalesce them per store.
@@ -72,11 +72,13 @@ async function sweep(store: Store, hostId: string, options: Parameters<typeof sw
     const intent = store.getMeta<CleanupRun>(key(run.id));
     return !options?.pendingOnly || Boolean(intent && intent.pending !== false);
   });
-  if (!runs.length) return;
+  if (!runs.length && !candidates.live.length) return;
   const facts = options?.readProcesses ? await options.readProcesses() : await readHostUidProcesses().then(read => read.state === "listed" ? read.processes : null);
   if (!facts) return; // Intents and scratch survive an unavailable observation.
+  rememberRunProcessHosts(store, candidates.known, facts);
+  if (!runs.length) return;
   const environments = await (options?.readEnvironments ?? runProcessEnvironments)(facts.map(fact => fact.pid));
-  const protectedPids = protectedHostPids(runInfrastructurePids(facts));
+  const protectedPids = protectedHostPids(protectedRunInfrastructure(store, candidates.known, facts));
   const dataHome = dirname(store.path);
   let stopped = false;
   for (const run of runs) {
@@ -97,23 +99,27 @@ async function sweep(store: Store, hostId: string, options: Parameters<typeof sw
     const ownedFacts = facts.filter(fact => !protectedPids.has(fact.pid) && !fact.state?.startsWith("Z")
       && !fact.startIdentity.endsWith("@unknown") && processBelongsToRun(fact, environments.get(fact.pid), run, dataHome)
       && !candidates.live.some(live => processBelongsToRun(fact, environments.get(fact.pid), live, dataHome)));
-    const anchoredHost = facts.some(fact => protectedPids.has(fact.pid)
-      && (processBelongsToRun(fact, environments.get(fact.pid), run, dataHome)
-        || fact.command.includes(`/tickets/mcp-${run.id}.json`)));
-    // A live non-init parent can be a reused host running a later turn with an
-    // old environment. Environment-only orphan roots also need a known host
-    // anchor, otherwise that root could be the host itself with a missing helper.
-    const owned = ownedFacts.filter(fact => fact.ppid === 1
-      && (anchoredHost || processBelongsToRun(fact, null, run, dataHome)));
+    // Saved host identities remain a positive exclusion after the helper exits.
+    // With no observed host, an environment-only holder can still be that host.
+    const owned = ownedFacts.filter(fact => fact.command.trim() && (hasRunProcessHost(store, run) || processBelongsToRun(fact, null, run, dataHome)));
     const result = await (options?.terminate ?? terminateHostProcessTargets)(owned.map(fact => ({ ...fact, cwd: fact.cwd ?? "", startTime: fact.startIdentity, via: "cwd" as const })),
       { graceMs: options?.graceMs, identityLiveness: (pid, identity) => stillSettled() ? runProcessLiveness(pid, identity) : "unknown" });
     if (result.terminated.length || result.failed.length) store.event(run.taskId, "run_process_cleanup", JSON.stringify({ runId: run.id,
       stopped: result.terminated.map(fact => ({ pid: fact.pid, startIdentity: fact.startIdentity })),
       survivors: result.failed.map(fact => ({ pid: fact.pid, startIdentity: fact.startIdentity, reason: fact.reason })) }));
     stopped ||= result.terminated.length > 0;
-    // A positively identified survivor keeps its scratch and timeline evidence.
-    // Unrelated unreadable processes are not evidence about this run.
-    if (result.terminated.length || result.failed.length || ownedFacts.some(fact => !result.terminated.some(target => target.pid === fact.pid))) continue;
+    // A failed per-process read (including a failed ps chunk) is not a negative
+    // ownership proof. Stop known tools, but never remove scratch on this gap.
+    const unknown = facts.filter(fact => !fact.state?.startsWith("Z")
+      && environments.get(fact.pid) == null && runProcessLiveness(fact.pid, fact.startIdentity) !== "dead");
+    const ambiguous = ownedFacts.filter(fact => !owned.some(target => target.pid === fact.pid));
+    if (unknown.length || ambiguous.length || result.failed.length) {
+      const reason = unknown.length ? "process environment ownership is unreadable"
+        : ambiguous.length ? "process command or agent host identity has not been observed" : "owned processes could not be stopped";
+      deferCleanup(store, run, reason, unknown.length ? unknown : ambiguous.length ? ambiguous : result.failed);
+      continue;
+    }
+    if (result.terminated.length) continue;
     if (!stillSettled()) continue;
     // A protected standing runtime can still use the launch leaf. Retire that
     // leaf only after the host releases it, rather than breaking its next turn.
@@ -125,7 +131,14 @@ async function sweep(store: Store, hostId: string, options: Parameters<typeof sw
     if (store.getMeta<CleanupRun>(key(run.id))?.pending !== false)
       store.setMeta(key(run.id), { id: run.id, taskId: run.taskId, hostId, agentId: run.agentId, temporaryDirectory: run.temporaryDirectory, pending: false });
   }
-  // Stopping a reparented root can orphan its children. Re-read before deleting
-  // their scratch; a bounded pass retains anything still attached for retry.
+  // A tool can start another child while stopping. Re-read before deleting
+  // scratch; a bounded pass retains anything still live for retry.
   if (stopped && round < 8) await sweep(store, hostId, options, round + 1);
+}
+
+function deferCleanup(store: Store, run: CleanupRun, reason: string, facts: Array<{ pid: number; startIdentity: string }>): void {
+  const uncertainty = JSON.stringify({ reason, processes: facts.map(fact => ({ pid: fact.pid, startIdentity: fact.startIdentity })) });
+  if (store.getMeta<CleanupRun>(key(run.id))?.uncertainty === uncertainty) return;
+  store.event(run.taskId, "run_process_cleanup_deferred", JSON.stringify({ runId: run.id, ...JSON.parse(uncertainty) }));
+  store.setMeta(key(run.id), { id: run.id, taskId: run.taskId, hostId: run.hostId, agentId: run.agentId, temporaryDirectory: run.temporaryDirectory, pending: true, uncertainty });
 }

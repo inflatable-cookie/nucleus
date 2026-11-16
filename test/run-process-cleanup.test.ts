@@ -10,6 +10,8 @@ import { sweepSettledRunProcesses, processBelongsToRun } from "../core/machine/r
 import { processParentPid } from "../core/machine/process-identity";
 import { pidAlive } from "../core/machine/pid";
 import { readHostUidProcesses } from "../core/machine/host-process-listing";
+import { runProcessEnvironments } from "../core/machine/run-process-identity";
+import { protectedRunInfrastructure } from "../core/machine/run-process-hosts";
 import { runInfrastructurePids } from "../core/machine/owned-tool-process-proof";
 import { checkoutRunScratchPlacement, removeRecordedRunScratchDirectory, runTemporaryEnvironment } from "../core/workspaces/run-scratch";
 import { submissionSchema, type Run } from "../shared/contracts";
@@ -39,6 +41,24 @@ function fixture() {
     const child = spawn(process.execPath, [helper, join(root, "tickets", `mcp-${record.id}.json`)], { stdio: "ignore" });
     assert.ok(child.pid); pids.push(child.pid);
   }
+  async function hostTool(record: Run, ignoreTerm = false) {
+    const helper = join(root, "mcp-report.mjs"), script = join(root, "host-tool.cjs"), hostScript = join(root, "host.cjs");
+    const infoFile = join(root, "host-processes.json"), ready = join(root, "host-tool.ready"), term = join(root, "host-tool.term");
+    writeFileSync(helper, "setInterval(() => {}, 1000);");
+    writeFileSync(script, `const fs = require('node:fs'); process.on('SIGTERM', () => { fs.writeFileSync(${JSON.stringify(term)}, String(fs.existsSync(${JSON.stringify(record.temporaryDirectory)}))); ${ignoreTerm ? "" : "process.exit(0);"} }); fs.writeFileSync(${JSON.stringify(ready)}, 'ready'); setInterval(() => {}, 1000);`);
+    writeFileSync(hostScript, `const fs = require('node:fs'); const spawn = require('node:child_process').spawn;
+      const helper = spawn(process.execPath, [${JSON.stringify(helper)}, ${JSON.stringify(join(root, "tickets", `mcp-${record.id}.json`))}], {stdio:'ignore'});
+      const tool = spawn(process.execPath, [${JSON.stringify(script)}], {stdio:'ignore'});
+      fs.writeFileSync(${JSON.stringify(infoFile)}, JSON.stringify({helper:helper.pid, tool:tool.pid})); setInterval(() => {}, 1000);`);
+    const host = spawn(process.execPath, [hostScript], { detached: true, stdio: "ignore", cwd: root,
+      env: { ...process.env, NUCLEUS_TICKET: join(root, "tickets", `${record.id}.json`), NUCLEUS_CONTINUATION_TICKET: "", TMPDIR: root, TMP: root, TEMP: root } });
+    assert.ok(host.pid); pids.push(host.pid);
+    await wait(() => existsSync(infoFile));
+    const info = JSON.parse(readFileSync(infoFile, "utf8")) as { helper: number; tool: number };
+    pids.push(info.helper, info.tool);
+    await wait(() => existsSync(ready));
+    return { host: host.pid, ...info, ready, term };
+  }
   function orphan(record: Run, identity: "ticket" | "scratch" | "command" | "none", ignoreTerm = false) {
     const script = join(identity === "command" ? record.temporaryDirectory! : root, `${randomUUID()}.cjs`);
     const ready = join(root, `${randomUUID()}.ready`), term = join(root, `${randomUUID()}.term`);
@@ -59,7 +79,7 @@ function fixture() {
     await wait(() => pids.every(pid => !runningPid(pid)));
     store.close(); rmSync(root, { recursive: true, force: true });
   }
-  return { root, store, task, run, anchor, orphan, release, cleanup, close, track: (pid: number) => pids.push(pid) };
+  return { root, store, task, run, anchor, hostTool, orphan, release, cleanup, close, track: (pid: number) => pids.push(pid) };
 }
 function runningPid(pid: number): boolean {
   if (!pidAlive(pid)) return false;
@@ -77,19 +97,25 @@ async function wait(predicate: () => boolean) {
   assert.ok(predicate(), "fixture process reached the expected state");
 }
 
-test("release stops an inherited-ticket orphan (PPID 1), escalates to KILL, then removes scratch", async () => {
+test("release stops an inherited-ticket orphan after its observed host and helper exit, then removes scratch", async () => {
   const f = fixture();
   try {
-    const run = f.run("recovery"); f.anchor(run);
-    const child = f.orphan(run, "ticket", true);
-    await wait(() => existsSync(child.ready) && processParentPid(child.pid) === 1);
+    const run = f.run("recovery"), child = await f.hostTool(run, true);
+    await f.cleanup();
+    assert.ok(f.store.getMeta(`runProcessHost:${run.id}`), "live observation retained the host's OS identity");
+    process.kill(child.helper, "SIGKILL"); process.kill(child.host, "SIGKILL");
+    await wait(() => !runningPid(child.host) && !runningPid(child.helper) && processParentPid(child.tool) === 1);
     f.release(run);
     assert.ok(existsSync(run.temporaryDirectory!), "settlement commits before any destructive cleanup");
-    await f.cleanup();
-    await wait(() => !runningPid(child.pid));
+    // A new store owner has only the durable host proof; neither host nor helper remains.
+    const reopened = new Store(f.store.path);
+    (reopened as unknown as { runScratchRemover: unknown }).runScratchRemover = (f.store as unknown as { runScratchRemover: unknown }).runScratchRemover;
+    try { await sweepSettledRunProcesses(reopened, "fixture-host", { graceMs: 100 }); }
+    finally { reopened.close(); }
+    await wait(() => !runningPid(child.tool));
     assert.equal(readFileSync(child.term, "utf8"), "true", "TERM handler still has its scratch");
     assert.equal(existsSync(run.temporaryDirectory!), false);
-    assert.match(f.store.events(f.task.id).find(event => event.kind === "run_process_cleanup")!.detail, new RegExp(`"pid":${child.pid}`));
+    assert.match(f.store.events(f.task.id).find(event => event.kind === "run_process_cleanup")!.detail, new RegExp(`"pid":${child.tool}`));
   } finally { await f.close(); }
 });
 
@@ -148,9 +174,9 @@ test("unavailable scans retain intent and scratch; a surviving identity is recor
     const read = await readHostUidProcesses(); assert.equal(read.state, "listed");
     if (read.state !== "listed") return;
     const fact = { ...read.processes.find(item => item.pid === process.pid)!, pid: 999999, ppid: 1, command: `node ${run.temporaryDirectory}/tool.cjs` };
-    await sweepSettledRunProcesses(f.store, "fixture-host", { readProcesses: async () => [fact], readEnvironments: async () => new Map(),
+    await sweepSettledRunProcesses(f.store, "fixture-host", { readProcesses: async () => [fact], readEnvironments: async () => new Map([[fact.pid, {}]]),
       terminate: async targets => ({ terminated: [], failed: targets.map(target => ({ ...target, reason: "still running after SIGKILL" })), skippedPaseo: [] }) });
-    assert.match(f.store.events(f.task.id)[0].detail, /still running after SIGKILL/);
+    assert.match(f.store.events(f.task.id).find(event => event.kind === "run_process_cleanup")!.detail, /still running after SIGKILL/);
     assert.ok(existsSync(run.temporaryDirectory!));
     await f.cleanup(); assert.equal(existsSync(run.temporaryDirectory!), false);
   } finally { await f.close(); }
@@ -187,7 +213,7 @@ test("a reused retained thread and its attached tool keep the old environment wi
   } finally { await f.close(); }
 });
 
-test("a missing helper cannot turn an environment-only orphan into a proven tool target", async () => {
+test("an unobserved ambiguous host identity retains scratch and records visible uncertainty", async () => {
   const f = fixture();
   try {
     const run = f.run(), possibleHost = f.orphan(run, "ticket");
@@ -195,6 +221,8 @@ test("a missing helper cannot turn an environment-only orphan into a proven tool
     f.release(run); await f.cleanup();
     assert.ok(runningPid(possibleHost.pid));
     assert.ok(existsSync(run.temporaryDirectory!));
+    assert.equal(f.store.getMeta<{pending:boolean}>(`runProcessCleanup:${run.id}`)?.pending, true);
+    assert.match(f.store.events(f.task.id).find(event => event.kind === "run_process_cleanup_deferred")!.detail, /host identity has not been observed/);
   } finally { await f.close(); }
 });
 
@@ -221,5 +249,62 @@ test("rollback preserves scratch and does not publish a cleanup intent", async (
     assert.equal(f.store.getMeta(`runProcessCleanup:${run.id}`), undefined);
     await f.cleanup();
     assert.ok(existsSync(run.temporaryDirectory!));
+  } finally { await f.close(); }
+});
+
+test("settled attached tools stop after helper exit while their observed provider stays alive", async () => {
+  const f = fixture();
+  try {
+    const run = f.run(), child = await f.hostTool(run);
+    await f.cleanup();
+    assert.equal(processParentPid(child.tool), child.host, "the tool has a live non-init parent");
+    process.kill(child.helper, "SIGKILL");
+    await wait(() => !runningPid(child.helper));
+    f.release(run); await f.cleanup();
+    await wait(() => !runningPid(child.tool));
+    assert.ok(runningPid(child.host)); assert.equal(runningPid(child.helper), false);
+    assert.equal(existsSync(run.temporaryDirectory!), false);
+  } finally { await f.close(); }
+});
+
+for (const failure of ["one process", "Darwin chunk"] as const) test(`an unreadable ${failure} retains scratch and intent until ownership can be read`, async () => {
+  const f = fixture();
+  try {
+    const run = f.run(), child = await f.hostTool(run), foreign = f.orphan(run, "none");
+    await wait(() => existsSync(foreign.ready));
+    await f.cleanup();
+    f.release(run);
+    const read = await readHostUidProcesses(); assert.equal(read.state, "listed");
+    if (read.state !== "listed") return;
+    const facts = read.processes.filter(fact => [child.tool, foreign.pid].includes(fact.pid));
+    assert.equal(facts.length, 2);
+    await sweepSettledRunProcesses(f.store, "fixture-host", { graceMs: 100, readProcesses: async () => facts,
+      readEnvironments: async pids => {
+        if (failure === "Darwin chunk") return runProcessEnvironments(pids, { platform: "darwin", darwinRead: async () => { throw Error("fixture ps chunk failed"); } });
+        const environments = await runProcessEnvironments(pids);
+        environments.set(child.tool, null);
+        return environments;
+      } });
+    assert.ok(runningPid(child.tool)); assert.ok(runningPid(foreign.pid));
+    assert.ok(existsSync(run.temporaryDirectory!));
+    assert.equal(f.store.getMeta<{pending:boolean}>(`runProcessCleanup:${run.id}`)?.pending, true);
+    assert.match(f.store.events(f.task.id).find(event => event.kind === "run_process_cleanup_deferred")!.detail, /environment ownership is unreadable/);
+    await f.cleanup();
+    await wait(() => !runningPid(child.tool));
+    assert.ok(runningPid(foreign.pid)); assert.equal(existsSync(run.temporaryDirectory!), false);
+  } finally { await f.close(); }
+});
+
+test("saved infrastructure protection compares start identities rather than recycled PIDs", async () => {
+  const f = fixture();
+  try {
+    const run = f.run(), child = await f.hostTool(run);
+    await f.cleanup();
+    const read = await readHostUidProcesses(); assert.equal(read.state, "listed");
+    if (read.state !== "listed") return;
+    const provider = read.processes.find(fact => fact.pid === child.host)!;
+    assert.ok(provider);
+    assert.ok(protectedRunInfrastructure(f.store, [run], [provider]).has(child.host));
+    assert.equal(protectedRunInfrastructure(f.store, [run], [{ ...provider, startIdentity: `${provider.pid}@different-start` }]).has(child.host), false);
   } finally { await f.close(); }
 });

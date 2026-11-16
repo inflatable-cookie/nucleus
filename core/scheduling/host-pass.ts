@@ -135,10 +135,11 @@ export class HostPass {
 
   async run(host: string): Promise<HostPassResult> {
     const result: HostPassResult = { inventory: null, finishedCatchUp: new Map() };
-    if (this.adapter.hostProcessListing && Date.now() - (this.lastRunProcessSweep.get(host) ?? 0) >= 3_600_000) {
-      this.lastRunProcessSweep.set(host, Date.now());
+    if (this.adapter.hostProcessListing) {
+      const historical = Date.now() - (this.lastRunProcessSweep.get(host) ?? 0) >= 3_600_000;
+      if (historical) this.lastRunProcessSweep.set(host, Date.now());
       await this.step(host, 'settledRunProcesses', () => sweepSettledRunProcesses(this.store, host,
-        { readProcesses: () => this.adapter.hostProcessListing!() }));
+        { pendingOnly: !historical, readProcesses: () => this.adapter.hostProcessListing!() }));
     }
     await this.step(host, 'reconcileReportedSettlements', () => this.adapter.reconcileReportedSettlements?.());
     await this.step(host, 'settleFinishedT3Threads', () => this.settleFinishedT3Threads(host));
