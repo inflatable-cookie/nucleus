@@ -1,4 +1,4 @@
-import { RETAINED_WORKER_PROFILE_REASON, holdsOf, isDispositionActive, type Run, type Task } from '../../../shared/contracts';
+import { holdsOf, isDispositionActive, isRetainedProfileReason, type Run, type Task } from '../../../shared/contracts';
 import { DISPATCH_HELD_REASON } from '../../dispatch/capacity';
 import {
   MERGE_HELD_REASON, OPERATOR_RETAINED_WORKER_REPLACEMENT_REASON, OPERATOR_ROLE_REASSIGNMENT_REASON, OPERATOR_STOPPED_REVISION_REMAP_REASON,
@@ -33,10 +33,10 @@ export const operatorReplacementPending = (t: Task): boolean =>
  * `next` and the handler both send restart there (review #539).
  */
 export function retainedProfileRemapPark(t: Task, events: Array<{ id: number; kind: string; detail: string }>): boolean {
-  if (t.reason.startsWith(RETAINED_WORKER_PROFILE_REASON)) return true;
+  if (isRetainedProfileReason(t.reason)) return true;
   if (!['blocked', 'error'].includes(t.phase) || t.resolution.recovery?.status !== 'escalated') return false;
   const latest = (match: (event: { kind: string; detail: string }) => boolean) => events.reduce((max, event) => match(event) ? Math.max(max, event.id) : max, -1);
-  const park = latest(event => event.kind === 'needs_attention' && event.detail.startsWith(RETAINED_WORKER_PROFILE_REASON));
+  const park = latest(event => event.kind === 'needs_attention' && isRetainedProfileReason(event.detail));
   return park >= 0 && park > latest(event => ['worker_resume_requested', 'revision_requested'].includes(event.kind));
 }
 

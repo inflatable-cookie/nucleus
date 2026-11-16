@@ -1,3 +1,4 @@
+import { retiredSubmissionRefusal } from "../../shared/schema/review/retired-submission";
 import { assertSubmissionRouting } from "./submission-routing";
 import type { Task, Submission } from "../../shared/contracts";
 import type { QueueOperation, OperationResult } from "../../shared/operations";
@@ -13,9 +14,8 @@ import { stageDeclarationFromBrief } from "../stages";
 
 /** Reject retired submission controls before accepting or executing intake. */
 export function assertSupportedSubmission(submission: Submission): void {
-    if (submission.responsible === false) throw new Error("responsible: false is no longer supported; every task runs the responsible lifecycle");
-    if (submission.manualVerification === true) throw new Error("manualVerification is no longer available; every task runs the responsible lifecycle");
-    if (submission.reviewVerdicts !== undefined || submission.reviewPassGate !== undefined) throw new Error("reviewVerdicts and reviewPassGate are no longer available; state the outcome and acceptance in prose in the brief, and use mergeHold for a needed hold");
+    const refusal = retiredSubmissionRefusal(submission);
+    if (refusal) throw new Error(refusal);
 }
 
 /** Validates and commits one accepted submission or source promotion. */

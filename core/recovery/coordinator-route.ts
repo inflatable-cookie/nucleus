@@ -4,7 +4,7 @@ import { isSshAuthExhausted } from '../../shared/ssh-auth';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { digest, now } from '../store/store';
 import type { Completion, Run, Task } from '../../shared/contracts';
-import { RETAINED_WORKER_PROFILE_REASON, incidentBindsCurrentWork } from '../../shared/contracts';
+import { incidentBindsCurrentWork, isRetainedProfileReason } from '../../shared/contracts';
 import { isDispositionActive, isDispositionComplete } from '../../shared/contracts';
 import { dispatchBlocked, DISPATCH_HELD_REASON } from '../dispatch/capacity';
 import { isCloseoutHookHold } from '../hooks/hooks';
@@ -270,7 +270,7 @@ export class CoordinatorRoute {
     ...(refusedAction ? {action:refusedAction} : {})};
    t=this.resolution.update(t,{recovery:incident},{},'recovery_pending');
   }
-  if(t.reason.startsWith(RETAINED_WORKER_PROFILE_REASON))return this.episode.escalate(t,t.reason);
+  if(isRetainedProfileReason(t.reason))return this.episode.escalate(t,t.reason);
   // Project-a #1980: a pseudo-checkpoint error already resumed once pre-PR
   // escalates to the planner instead of launching another recovery loop.
   if(isPseudoCheckpointError(t)&&postBudgetPrePrResumes(this.store.eventsAll(t.id))>=1)

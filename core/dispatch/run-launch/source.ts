@@ -9,7 +9,7 @@ import { retainedProgressRun } from '../retained-work';
 import { assertCanonicalPrSource, evidenceOnlyPr, taskPrNumber } from '../../forge/index';
 import { verifyProofSource } from '../../qa/proof-source';
 import { groupIsUnavailable, supersedingRouteProfile } from '../../../shared/pool';
-import { RETAINED_WORKER_PROFILE_REASON, workerProfileIsExcluded, type Profile, type Run, type Task } from '../../../shared/contracts';
+import { retainedProfileReason, workerProfileIsExcluded, type Profile, type Run, type Task } from '../../../shared/contracts';
 import type { ProofActivation } from '../../resolution';
 
 /** Keep the retained worker, wait for a first independent one, or honour a superseding route. */
@@ -65,7 +65,7 @@ export class RunLaunchSource {
       if(revisionRunPlan({ firstReviewEntryWorker: true, firstWorkerSelected: Boolean(firstWorkerSelection), revision: true, retainedProfileIssue: false, superseding: false, hasAgent: Boolean(t.agentId), failoverArmed: Boolean(t.failoverReason), replacementMatches: false }) === 'wait'){this.resolution.waiting(t,`No eligible first revision worker independent of the retained reviewer${this.resolution.usageCeilingNote(t,'worker',[],new Set(),()=>chooseProfile({...t,preferredProfileId:'',requirePreferred:false,thinkingOptionId:''},profiles,this.store.pool(),this.store.counts(),unavailable,'worker',this.store.recentCounts(),'maximum',this.store.demandRoleOffsets(), true))}`, 'route_unavailable');return;}
     }else if(role==='revision'){
       const issue=this.resolution.retainedWorkerProfileIssue(t);
-      if(issue && revisionRunPlan({ firstReviewEntryWorker: false, firstWorkerSelected: false, revision: true, retainedProfileIssue: true, superseding: false, hasAgent: Boolean(t.agentId), failoverArmed: Boolean(t.failoverReason), replacementMatches: false }) === 'attention'){this.resolution.update(t,{currentRunId:null,attention:true,integrationTurn:null},{phase:'needs_attention',reason:`${RETAINED_WORKER_PROFILE_REASON}: ${issue}; remap with restart (an optional instruction becomes the replacement's continuation), choose the replacement with route role=worker, or change profile availability`},'needs_attention');return;}
+      if(issue && revisionRunPlan({ firstReviewEntryWorker: false, firstWorkerSelected: false, revision: true, retainedProfileIssue: true, superseding: false, hasAgent: Boolean(t.agentId), failoverArmed: Boolean(t.failoverReason), replacementMatches: false }) === 'attention'){this.resolution.update(t,{currentRunId:null,attention:true,integrationTurn:null},{phase:'needs_attention',reason:`${retainedProfileReason(issue)}; remap with restart (an optional instruction becomes the replacement's continuation), choose the replacement with route role=worker, or change profile availability`},'needs_attention');return;}
       // Task 515: a recorded dispatch selection that predates the latest
       // required route for the worker yields to it. The retained agent cannot
       // change profile, so the approved route is armed for the existing

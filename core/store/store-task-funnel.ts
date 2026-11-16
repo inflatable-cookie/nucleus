@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { completionMembership,holdsOf,isOperatorOrigin,resolutionSchema,syncHoldProjection,TASK_OWNER_HOLD,taskOwner,taskStopClassification,type Completion,type Lane,type Notice,type Outcome,type Papercut,type Project,type Run,type RuntimeRetirement,type Submission,type Task,type TaskHolds } from "../../shared/contracts";
+import { completionMembership,holdsOf,isOperatorOrigin,resolutionSchema,retiredSubmissionRefusal,syncHoldProjection,TASK_OWNER_HOLD,taskOwner,taskStopClassification,type Completion,type Lane,type Notice,type Outcome,type Papercut,type Project,type Run,type RuntimeRetirement,type Submission,type Task,type TaskHolds } from "../../shared/contracts";
 import { hookStateIsTerminal,type HookRecord } from "../../shared/hooks";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { operationIsSettled,type QueueOperation } from "../../shared/operations";
@@ -91,13 +91,13 @@ export class StoreTaskFunnel {
       // Spec 058: a responsible task merges on reviewer approval plus Queue's
       // mechanical gates. The manual evidence-only oracle is a verification
       // coordinator, so it cannot select a different lifecycle.
-      if (input.manualVerification === true)
-        throw new Error('queue.manualVerification is no longer available; every task runs the responsible lifecycle');
       // Spec 058 cutover 2: a brief states its outcome and acceptance in prose;
-      // the structured verdict opt-in and pass gate are retired. The optional
+      // the structured verdict opt-in, pass gate and manual verification are
+      // retired. Their shapes and this refusal are one owner's
+      // (`shared/schema/review/retired-submission.ts`), and the optional
       // persisted fields stay readable for stored rows.
-      if (input.reviewVerdicts !== undefined || input.reviewPassGate !== undefined)
-        throw new Error('reviewVerdicts and reviewPassGate are no longer available; state the outcome and acceptance in prose in the brief, and use mergeHold for a needed hold');
+      const retiredRefusal = retiredSubmissionRefusal({ manualVerification: input.manualVerification, reviewVerdicts: input.reviewVerdicts, reviewPassGate: input.reviewPassGate });
+      if (retiredRefusal) throw new Error(retiredRefusal);
       // Every new task runs the responsible lifecycle.
       const responsible = input.responsible ?? true;
       // Task 1109: a task's planner is a thread that answers its planning questions;

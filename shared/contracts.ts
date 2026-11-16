@@ -2,6 +2,7 @@
 export * from "./schema/task-primitives";
 export * from "./schema/task-view";
 export * from "./holds";
+export * from "./retained-profile";
 export * from "./disposition";
 export * from "./task-view";
 export {

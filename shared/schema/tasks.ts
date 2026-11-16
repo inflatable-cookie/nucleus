@@ -3,7 +3,7 @@ import { z } from "zod";
 import { holdKindSchema, taskPhaseSchema } from "../schema/task-primitives";
 import { checkpointStateSchema, completionSchema, proofExecutionRecordSchema, proofFileRecordSchema, proofOnlyResultSchema, proofReceiptAcceptanceSchema, reportAcceptanceSchema, reviewEntryRecordSchema, submissionSchema } from "./review";
 import { capabilityLevelSchema, completionCohortMemberSchema, completionRecipientSchema, completionSubscriptionSchema, profileSchema } from "./settings";
-import { holdBlockingSchema, holdUntilSchema, retainedPrerequisiteWaitSchema, stashEntrySchema, taskHoldsSchema, workerExclusionSchema } from "./task-holds";
+import { legacyHoldProjectionFields, retainedPrerequisiteWaitSchema, stashEntrySchema, taskHoldsSchema, workerExclusionSchema } from "./task-holds";
 import { checkoutSiblingFindingSchema, pausedStopSchema, siblingFindingSchema, siblingPinSchema, worktreeLinksSchema } from "./workspace";
 import { transientProviderRetrySchema } from "./runs";
 import { resolutionSchema } from "./resolution";
@@ -41,16 +41,13 @@ export const taskSchema = submissionSchema.extend({
   // when that run releases, before the next dispatch.
   prerequisiteWait: retainedPrerequisiteWaitSchema.nullable().default(null),
   phase: taskPhaseSchema,
+  /** Free text by contract: the retained-profile fact among it is read by `shared/retained-profile.ts`, never matched here. */
   reason: z.string(), held: z.boolean(),
   /** Spec 058: responsible task budget starts when an old task is converted. */
   budgetSince: z.string().datetime({ offset: true }).nullable().default(null),
-  // Spec 040: every hold has an owner (an agent ID, or "operator"), a reason and a start time.
-  holdOwner: z.string().nullable().default(null), holdReason: z.string().nullable().default(null), holdAt: z.string().nullable().default(null),
-  holdGeneration: z.number().int().nonnegative().default(0),
-  holdBlocking: holdBlockingSchema.nullable().default(null),
-  // Spec 046: a self-lifting hold names what ends it. Null is an ordinary hold, and
-  // older task rows read null without a migration.
-  holdUntil: holdUntilSchema.nullable().default(null),
+  // Spec 040: the primary hold's own projection; `shared/schema/task-holds.ts`
+  // owns its shape and `syncHoldProjection` its one writer.
+  ...legacyHoldProjectionFields,
   // Independent dispatch and merge fences. Legacy held/mergeHold/holdOwner fields
   // stay in sync with these; an empty object means no fence.
   holds: taskHoldsSchema.default(() => ({})),
@@ -130,6 +127,10 @@ export const taskSchema = submissionSchema.extend({
   // The shared stash list when the current worker or revision run was created,
   // compared at readiness to name a stash that crossed worktrees.
   stashBaseline: z.object({ runId: z.string(), entries: z.array(stashEntrySchema) }).strict().nullable().default(null),
+  // Tolerance kept deliberately: every task row is written by the store, which
+  // strips the fields Nucleus retired (schema 54), and an unknown key must not
+  // stop the board from reading a row. Refusing one would be a behaviour change
+  // for stored rows and is recorded as a follow-up, not built here.
 }).strip();
 
 export type Task = z.infer<typeof taskSchema>;

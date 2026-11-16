@@ -1,4 +1,4 @@
-import { RETAINED_WORKER_PROFILE_REASON, type Run, type Task } from '../../shared/contracts';
+import { isRetainedProfileReason, type Run, type Task } from '../../shared/contracts';
 import { digest } from '../store/store';
 import { PR_HEAD_CHANGED_REASON, readyReviewAtHead, revisionPhases } from './task-reasons';
 import { NO_RESOLUTION_RUN_REFUSAL } from '../verbs/verb-refusal-text';
@@ -25,7 +25,7 @@ export function retryAdmission(t: Task, f: { stage: 'instruction' | 'reviewer-de
     const acceptedPrReconciliation = t.phase === 'needs_attention' && t.completion?.status === 'ready_for_review' &&
       Boolean(t.workspaceId && t.directory && t.agentId && t.runId && t.profile) &&
       !t.resolution.currentRunId && !t.resolution.mergeIntent && !t.resolution.mergedCommit &&
-      t.reason !== PR_HEAD_CHANGED_REASON && !t.reason.startsWith(RETAINED_WORKER_PROFILE_REASON) && !f.remap &&
+      t.reason !== PR_HEAD_CHANGED_REASON && !isRetainedProfileReason(t.reason) && !f.remap &&
       !readyReviewAtHead(t);
     const deliverable = ['blocked', 'error'].includes(t.phase) ? !f.remap : acceptedPrReconciliation;
     if (!deliverable) return 'A reviewer instruction requires a retry that returns the task to a fresh review; this retry has no fresh reviewer to receive it';
@@ -45,7 +45,7 @@ export function retrySpecialRoute(t: Task, stage: 'merge' | 'revision' | 'hook' 
     run?.role === 'revision' && run.released && Boolean(run.completion && ['blocked', 'error'].includes(run.completion.status));
   if (hookHeld && operator && !revise && ['changes_requested', 'needs_attention'].includes(t.phase) &&
       readyReviewAtHead(t) && !t.resolution.mergeIntent && !t.resolution.mergedCommit) return 'hook';
-  if (stage === 'profile' && t.phase === 'needs_attention' && t.reason.startsWith(RETAINED_WORKER_PROFILE_REASON))
+  if (stage === 'profile' && t.phase === 'needs_attention' && isRetainedProfileReason(t.reason))
     return operator ? 'profile' : { refuse: 'Retained worker profile eligibility requires explicit operator retry' };
   return 'pass';
 }

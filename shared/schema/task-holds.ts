@@ -43,6 +43,22 @@ export const taskHoldsSchema = z.object({
 export type TaskHolds = z.infer<typeof taskHoldsSchema>;
 
 /**
+ * Spec 040's single-hold projection: the owner, reason, age and blocking state of
+ * the primary fence, kept on the task row for readers and rows that predate
+ * `holds`. `syncHoldProjection` in `shared/holds.ts` is its only writer, and
+ * `holds` is the durable pair; declaring the shape here, beside the fences it
+ * mirrors, keeps one owner for the duplicate fact.
+ */
+export const legacyHoldProjectionFields = {
+  holdOwner: z.string().nullable().default(null), holdReason: z.string().nullable().default(null), holdAt: z.string().nullable().default(null),
+  holdGeneration: z.number().int().nonnegative().default(0),
+  holdBlocking: holdBlockingSchema.nullable().default(null),
+  // Spec 046: a self-lifting hold names what ends it. Null is an ordinary hold, and
+  // older task rows read null without a migration.
+  holdUntil: holdUntilSchema.nullable().default(null),
+};
+
+/**
  * Spec 046: read the `hold` control's `until` string, which is either a task ID or
  * an offset timestamp. Anything else returns null so the control schema refuses it.
  */
