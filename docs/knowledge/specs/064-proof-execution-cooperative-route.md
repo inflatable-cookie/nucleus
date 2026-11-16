@@ -464,6 +464,24 @@ the positive oracle, nor weakens the gate. Without an owner ruling, the backing
 predicate cannot be met as written. Code cannot supply the missing policy;
 backing evidence stays unknown and execution readiness stays false.
 
+### Owner ruling on the image policy (2026-11-16)
+
+Tom answered Oxide decision `5639bd34-635f-49b4-8261-92903d1013b4` v2 on the board (20:22:06Z):
+**"Retain and count image evidence."** The ruling changes the *future* gate. The entire-backing
+object no longer has to be absent. Instead, for each exact owned image, require positive ordinary
+provider evidence that **every mount and every attached entity or device is absent**. The image
+files and evidence stay retained and charged, and residual or unknown physical costs are disclosed.
+No physical-reclamation claim is made. A detach exit or an absent mount alone is still insufficient.
+Every other predicate stays conjunctive: creator waits, the qualified joined DECIDING census and the
+separate FINAL census, the full raw acknowledgement, admission, the clock and the accounting. Oxide
+records the amended gate in its owning contract.
+
+This settles the policy conflict above, which stays recorded as it stood at the proposal's review.
+It does not supply provider evidence, implement P6 `backing`, or grant #309 fit, native qualification
+or a hold release. P6's `backing` field now targets "all mounts and attached devices of each owned
+image absent" under that ruling. The evidence itself stays unknown until a qualified provider route
+supplies it.
+
 ### Conditions and acceptance-to-source map
 
 The proposal relies on, and does not supply: Effigy's prepare custody, real
@@ -523,6 +541,7 @@ independent review, whose full verdict belongs in its exact-head report.
 
 **Disposition: conditional proposal; implementation readiness false.** No
 additional predicate has been shown impossible under bounded changes in these
-existing components. The backing policy conflict prevents satisfying its gate
-as written until the owners rule; that is not a provider no-fit. Every other
+existing components. The backing policy conflict prevented satisfying its gate
+as written until the owners ruled; that is not a provider no-fit. The owners ruled on
+2026-11-16 (see above); the amended gate's provider evidence stays unknown. Every other
 missing dependency remains explicit rather than being credited as implemented.
