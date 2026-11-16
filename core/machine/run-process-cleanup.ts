@@ -113,11 +113,15 @@ async function sweep(store: Store, hostId: string, options: Parameters<typeof sw
     // earlier ticket must never give custody over that next turn's tools.
     if (run.agentId && candidates.live.some(live => live.agentId === run.agentId)) continue;
     const ownedFacts = facts.filter(fact => !protectedPids.has(fact.pid) && !fact.state?.startsWith("Z")
-      && !fact.startIdentity.endsWith("@unknown") && processBelongsToRun(fact, environments.get(fact.pid), run, dataHome)
+      && processBelongsToRun(fact, environments.get(fact.pid), run, dataHome)
       && !candidates.live.some(live => processBelongsToRun(fact, environments.get(fact.pid), live, dataHome)));
     // Saved host identities remain a positive exclusion after the helper exits.
     // With no observed host, an environment-only holder can still be that host.
-    const owned = ownedFacts.filter(fact => fact.command.trim() && (hasRunProcessHost(store, run) || orphanExecutesRunScratch(fact, run.temporaryDirectory)));
+    // A scratch command cannot rule out a different live run's inherited
+    // identity when its environment is unreadable. Unknown start identities
+    // also remain owned evidence, but cannot authorize a signal.
+    const owned = ownedFacts.filter(fact => environments.get(fact.pid) != null && !fact.startIdentity.endsWith("@unknown")
+      && fact.command.trim() && (hasRunProcessHost(store, run) || orphanExecutesRunScratch(fact, run.temporaryDirectory)));
     const result = await (options?.terminate ?? terminateHostProcessTargets)(owned.map(fact => ({ ...fact, cwd: fact.cwd ?? "", startTime: fact.startIdentity, via: "cwd" as const })),
       { graceMs: options?.graceMs, identityLiveness: (pid, identity) => stillSettled() ? runProcessLiveness(pid, identity) : "unknown" });
     if (result.terminated.length || result.failed.length) store.event(run.taskId, "run_process_cleanup", JSON.stringify({ runId: run.id,
@@ -125,12 +129,13 @@ async function sweep(store: Store, hostId: string, options: Parameters<typeof sw
       survivors: result.failed.map(fact => ({ pid: fact.pid, startIdentity: fact.startIdentity, reason: fact.reason })) }));
     stopped ||= result.terminated.length > 0;
     // A failed per-process read (including a failed ps chunk) is not a negative
-    // ownership proof. Stop known tools, but never remove scratch on this gap.
+    // ownership proof. Only tools with complete identity can be stopped.
     const unknown = facts.filter(fact => !fact.state?.startsWith("Z")
-      && environments.get(fact.pid) == null && runProcessLiveness(fact.pid, fact.startIdentity) !== "dead");
+      && environments.get(fact.pid) == null && (fact.startIdentity.endsWith("@unknown") || runProcessLiveness(fact.pid, fact.startIdentity) !== "dead"));
     const ambiguous = ownedFacts.filter(fact => !owned.some(target => target.pid === fact.pid));
     if (unknown.length || ambiguous.length || result.failed.length) {
       const reason = unknown.length ? "process environment ownership is unreadable"
+        : ambiguous.some(fact => fact.startIdentity.endsWith("@unknown")) ? "owned process start identity is unreadable"
         : ambiguous.length ? "process command or agent host identity has not been observed" : "owned processes could not be stopped";
       deferCleanup(store, run, reason, unknown.length ? unknown : ambiguous.length ? ambiguous : result.failed);
       continue;

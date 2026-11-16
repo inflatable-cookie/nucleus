@@ -1470,8 +1470,11 @@ request identities and submitted handoffs are not rewritten.
   inside the recorded scratch supplies a non-host proof; a path mentioned in
   flags, configuration or a prompt does not. An indistinguishable holder is left
   alone with a visible uncertainty record. Any unreadable process environment,
-  including a partial failed host read, retains the cleanup intent and scratch
-  until a later observation can rule out ownership. Reused threads' live runs
+  including a partial failed host read, prevents signaling that process because
+  its live-run ownership is unknown. It retains the cleanup intent and scratch
+  until a later observation can rule out ownership. A positively owned process
+  with an unreadable OS start identity is also left alive with a visible retry
+  record and its scratch retained. Reused threads' live runs
   defer earlier-run cleanup, and a protected runtime
   keeps its launch scratch until it releases it. Each proven member is stopped individually so a shared group cannot
   take another run or the operator's processes with it. Survivors retain their
