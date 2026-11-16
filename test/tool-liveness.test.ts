@@ -121,8 +121,50 @@ test('a finished-turn shell settles only after a complete no-process proof', () 
     'a truncated helper ticket in the workspace remains unknown');
   assert.equal(workspaceToolProcessIssue([report(15, 1, '/fixture/tickets/mcp-123e4567-e89b-42d3.json', '/other')], workspace, [ownRun]), null,
     'a truncated helper outside the task workspace is scoped out');
-  assert.match(workspaceToolProcessIssue([{ pid: 16, ppid: 1, command: 'worker', cwd: null }], workspace, [ownRun])!, /unreadable working directory/);
+  assert.match(workspaceToolProcessIssue([{ pid: 16, ppid: 7, state: 'S', command: 'worker', cwd: null }, { pid: 7, ppid: 1, state: 'S', command: 'bash', cwd: workspace }], workspace, [ownRun])!, /unreadable working directory/,
+    'an unreadable cwd whose parent is in the task tree is unknown');
+  assert.equal(workspaceToolProcessIssue([{ pid: 16, ppid: 1, state: 'S', command: 'worker', cwd: null }], workspace, [ownRun]), null,
+    'an unreadable cwd whose known parent is unrelated is ignored');
   assert.match(workspaceToolProcessIssue([{ pid: 17, command: 'worker', cwd: '/other' }], workspace, [ownRun])!, /unreadable parent identity/);
+});
+
+// Nucleus #1259: PID 203 in the swallowtail report is a `<defunct>` zombie
+// child of the Paseo daemon, unrelated to either task. Zombies hold no tools
+// and are never judged, whatever else about them is unreadable.
+test('a zombie child of an unrelated parent never blocks the owned-tool proof', () => {
+  const workspace = '/work/task';
+  const ownRun = '123e4567-e89b-42d3-a456-426614174000';
+  assert.equal(workspaceToolProcessIssue(
+    [{ pid: 203, ppid: 16365, state: 'Z', command: '<defunct>', cwd: null }], workspace, [ownRun]), null,
+    'the swallowtail zombie shape clears');
+  // A zombie inside the task tree still holds nothing: the live tree process keeps its own refusal.
+  assert.match(workspaceToolProcessIssue([
+    { pid: 7, ppid: 1, state: 'S', command: 'bash', cwd: workspace },
+    { pid: 204, ppid: 7, state: 'Z', command: '<defunct>', cwd: null },
+  ], workspace, [ownRun])!, /process 7 remains in the task workspace process tree/);
+});
+
+test('only an unreadable process that could reach the task tree reads as unknown', () => {
+  const workspace = '/work/task';
+  const ownRun = '123e4567-e89b-42d3-a456-426614174000';
+  const parent = { pid: 7, ppid: 1, state: 'S', command: 'bash', cwd: workspace };
+  assert.match(workspaceToolProcessIssue([
+    { pid: 8, ppid: 7, state: 'S', command: 'worker', cwd: null }, parent,
+  ], workspace, [ownRun])!, /unreadable working directory/,
+    'a live process with an unreadable cwd whose parent is in the task tree is unknown');
+  assert.match(workspaceToolProcessIssue([
+    { pid: 8, ppid: 7, state: 'R', command: '', cwd: null }, parent,
+  ], workspace, [ownRun])!, /unreadable command identity/,
+    'a tree process with an unreadable command is unknown');
+  assert.equal(workspaceToolProcessIssue([
+    { pid: 8, ppid: 1, state: 'S', command: 'worker', cwd: null },
+    { pid: 9, ppid: 1, state: 'S', command: 'other', cwd: '/other' },
+  ], workspace, [ownRun]), null,
+    'a live process whose known parent is unrelated is ignored, whatever its cwd readability');
+  assert.equal(workspaceToolProcessIssue([
+    { pid: 8, ppid: 1, state: 'R', command: '', cwd: '/other' },
+  ], workspace, [ownRun]), null,
+    'an unreadable command with a known unrelated parent and cwd is ignored');
 });
 
 test('turn settlement never covers partial, status-less or ambiguous evidence', () => {

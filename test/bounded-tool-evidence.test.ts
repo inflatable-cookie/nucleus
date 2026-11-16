@@ -82,8 +82,10 @@ test('any unknown bounded signal is inconclusive', async t => {
   f.setState({ ...f.state(), activeTurnId: null });
   f.setProcesses(null);
   assert.match((await f.proof())!, /unreadable/);
-  f.setProcesses([{ ...f.processAt('/synthetic/unrelated'), cwd: null }]);
+  f.setProcesses([{ ...f.processAt(f.task.directory), pid: 7 }, { ...f.processAt('/synthetic/unrelated'), pid: 8, ppid: 7, cwd: null }]);
   assert.match((await f.proof())!, /unreadable working directory/);
+  f.setProcesses([{ ...f.processAt('/synthetic/unrelated'), pid: 8, cwd: null }]);
+  assert.equal(await f.proof(), null, 'an unreadable process with a known unrelated parent is ignored');
   f.setProcesses([]);
   const saved = f.page();
   f.setPage(toolTimelinePage([{ timestamp: '2026-01-01T00:00:00.000Z', item: {
