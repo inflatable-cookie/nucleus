@@ -49,11 +49,13 @@ export class BbThreads {
   }
   private observation(row: BbRow): AgentObservation {
     const agent = this.ports.state().agents[row.threadId];
+    const workspace = agent && this.ports.workspace(agent.workspaceId);
+    const workspaceId = workspace?.environmentId === row.environmentId && workspace.directory === row.environmentPath ? agent.workspaceId : null;
     const pending = row.interactions.filter(i => i.status === 'pending' || i.status === 'resolving');
     if (row.hasPendingInteraction && !pending.length) throw new Error('BB pending interaction flag has no readable interaction');
     const active = ['starting', 'active', 'stopping'].includes(row.status) || ['provisioning', 'waiting-for-host'].includes(row.displayStatus) || row.queuedWork === 'waiting';
     return {
-      id: row.threadId, workspaceId: agent?.workspaceId ?? null,
+      id: row.threadId, workspaceId,
       status: row.archivedAt !== null ? 'closed' : row.status,
       active, permissions: pending.length > 0,
       error: row.status === 'error' ? 'BB thread failed' : row.queuedWork === 'failed' ? 'BB queued work failed' : '',

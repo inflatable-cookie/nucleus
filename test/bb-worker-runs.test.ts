@@ -142,3 +142,9 @@ test('BB catalogue reads recorded provider/model DTOs and projects their offered
   assert.ok(catalog.providers[0].models[0].thinkingOptions.some(option => option.id === 'high'));
   assert.deepEqual(catalog.providers[0].models[0].modes.map(mode => mode.id), ['accept-edits', 'auto', 'full']);
 });
+
+test('BB observation never carries an old workspace binding after the native environment changes', async () => {
+  const f = fixture(), agent = await f.native.createAgent(f.spec());
+  f.rows.get(agent.id).environmentId = 'env_foreign';
+  assert.equal((await f.native.observe(agent.id)).workspaceId, null);
+});
