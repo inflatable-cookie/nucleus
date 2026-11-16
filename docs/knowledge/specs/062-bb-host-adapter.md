@@ -1,7 +1,9 @@
 # BB host adapter
 
 Status: approved. Phase 0 (the transport spike) is implemented and proved, phase 1 (host
-registration, identity and health) phase 2 (workspace custody) and phase 3 (worker runs, observation and presentation) are implemented; phases 4–6 are not implemented. This document is the design and the phased plan, and [phase 0
+registration, identity and health) phase 2 (workspace custody) phase 3 (worker runs, observation
+and presentation) and phase 4 (delivery, questions and the support roles) are implemented; phases 5–6
+are not implemented. This document is the design and the phased plan, and [phase 0
 evidence](#phase-0-evidence-2026-11-16) answers its eight assumptions. Amended 2026-11-16: decision 5
 now carries the forked sidebar, the two boards and BB usage left to BB's card plus the operator's Usage
 Pace plugin, and the experimental inventory and the plan from phase 5 on follow it; phases 0–4 are
@@ -1004,7 +1006,7 @@ Worker titles carry the shared task title and the active role's step or need for
 stop and archive writes retain durable intents; uncertain writes are read before another write
 and never blindly replayed. Archive requires a fresh leaf cascade proof. The minimal queued
 send needed by the ordinary revision/review lifecycle is included; steering, native question
-responses, reparenting and multi-role cascade ordering remain phase 4.
+responses, reparenting and multi-role cascade ordering landed in phase 4.
 
 Tests: `test/bb-worker-runs.test.ts` names the phase acceptance cases;
 `test/bb-lifecycle.test.ts` exercises dispatch, helper reporting, independent review, retained
@@ -1034,6 +1036,57 @@ durable archive effect.
 - `effigy check` and `effigy test:affected --run`.
 
 **Dependencies.** Phases 0–3.
+
+**Implemented (2026-11-16).** Delivery, questions and the support roles on the same reverse channel and
+the same durable intents phase 3 established:
+
+- `thread.send` carries a `mode`: `queue` waits behind the live turn and `steer` joins it. The plugin
+  takes one read immediately before a steer and refuses with `refused` (proven non-delivery, nothing
+  written) when the thread has no live turn; any failure after the write is `unavailable` and therefore
+  unknown delivery. `steerOrNotify` answers a proven not-sent steer with exactly one queued send under
+  its own durable identity, and never resends an unknown steer, not even as that fallback.
+- Interactions are read as the pinned SDK declares them: `thread.interactions` projects each row's kind,
+  status, title, `user_question` questions (`id`, `header`, `question`, option labels) and an approval's
+  available decisions, and fails closed on a payload missing a required field. `pendingQuestions`
+  surfaces only native `user_question` rows; a plugin interaction is never read as one.
+- `thread.interaction.respond` and `thread.interaction.cancel` read the exact interaction first, so the
+  thread and request are bound before anything is written, and `<thread>/<interaction>` refusals happen
+  before the write. Answers map the host contract's decisions onto BB's three (`accept` → `allow_once`,
+  `acceptForSession` → `allow_for_session`, `decline`/`cancel` → `deny`); `acceptAlways` has no BB
+  counterpart and is refused, never widened. A free-text answer is carried as `freeText`, never as a fake
+  option. Dismissal cancels a pending question only, never a permission.
+- The planner ask and the reviewer consult are one queued send to a thread Nucleus did not create; the
+  answer arrives through the relayed reply, never the recipient's chat output. `runDecider` and
+  `createConsultReviewer` spawn one idle support thread in the task's recorded worktree under its
+  planner, with the same parent-notifications-off and role metadata as every other role thread, and
+  `askPlanner` then delivers its question.
+- `thread.reparent` writes `parentThreadId` and reads it back. A reparented task moves each of its own
+  recorded threads under the new planner on the ordinary sweep, observation first, one durable intent
+  per thread, and never touches the planner itself. An unknown reparent write is settled by a later read
+  and never re-sent.
+- `archiveAgent` gains the phase-4 cascade rule: the cascade read is the only proof, every id it names
+  must be this task's own recorded thread, and a recorded child is archived before its parent so the
+  parent's fresh read names only already-archived rows. A foreign id — including a foreign lifecycle
+  dependent on a thread with no sidebar children — refuses the archive with nothing written; an
+  unreadable read is unknown delivery. The adapter maps both proven pre-send refusals and local
+  not-sent reads to `ArchiveNotDeliveredError`, so core's durable effect stays `ready` and the cleanup
+  is recorded as incomplete instead of reading as an uncertain write. Reviewer replacement uses the
+  existing `archiveReplacedReviewer`/`observeReviewerReplacement` lane unchanged: it archives the
+  displaced thread only, then releases the displaced run and clears the binding.
+- `capabilities()` now states `nativeDecisions: false`: a Nucleus-raised decision rides the board, and
+  native provider questions and permissions are read and answered where the host raises them.
+
+Tests: `test/bb-phase4.test.ts` names every phase-4 acceptance case at the operation executor and
+through core's durable lanes (steer/queue, interaction binding, permission mapping and dismissal,
+reparent, support-role spawns, children-first closeout, cascade refusals and incomplete cleanup,
+reviewer replacement). `test/bb-worker-runs.test.ts` retains the phase-3 archive proof with the phase-4
+cascade rule.
+
+Evidence note: the interaction *transport* rows are the recorded BB 0.49 plugin interaction; the
+provider `user_question`/`approval` payload shapes come from the pinned SDK 0.6.132 declaration
+(`providerPendingInteractionSchema`) because eliciting a provider interaction in the isolated server
+needs a live model turn. No field outside that declaration is used, and the plugin refuses a payload
+missing one.
 
 ### Phase 5 — the forked sidebar and the task group header
 

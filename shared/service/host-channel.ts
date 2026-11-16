@@ -16,6 +16,8 @@ import { formatSchemaRefusal } from "../schema-refusal";
 import {
   HOST_EXECUTOR_ROLE,
   HOST_OPERATIONS,
+  HOST_PERMISSION_DECISIONS,
+  HOST_SEND_MODES,
   type HostExecutorDeclaration,
   type HostOperationFailure,
   type HostOperationName,
@@ -73,7 +75,8 @@ export const hostOperationInputSchemas = {
     sessionOptions: z.record(z.string(), z.union([z.string(), z.boolean()])).optional(),
     parentThreadId: boundedText(128).optional(),
     parentNotifications: z.enum(["auto", "stuck", "off"]).optional(),
-    prompt: boundedText(500_000),
+    /** Absent for a support thread that is created idle and receives its prompt by a send. */
+    prompt: boundedText(500_000).optional(),
     providerId: boundedText(64).optional(),
     model: boundedText(200).optional(),
     pluginMetadata: pluginMetadataSchema.optional(),
@@ -104,7 +107,24 @@ export const hostOperationInputSchemas = {
   "thread.metadata": z.object({ threadIds: z.array(boundedText(128)).min(1).max(200) }).strict(),
   "thread.title": z.object({ threadId: boundedText(128), title: boundedText(200) }).strict(),
   "thread.timeline": z.object({ threadId: boundedText(128) }).strict(),
-  "thread.send": z.object({ threadId: boundedText(128), text: boundedText(500_000), messageId: boundedText(200) }).strict(),
+  "thread.send": z.object({
+    threadId: boundedText(128),
+    text: boundedText(500_000),
+    messageId: boundedText(200),
+    /** `queue` (the default) waits behind the live turn; `steer` joins it. */
+    mode: z.enum(HOST_SEND_MODES).optional(),
+  }).strict(),
+  "thread.reparent": z.object({ threadId: boundedText(128), parentThreadId: boundedText(128) }).strict(),
+  "thread.interactions": z.object({ threadId: boundedText(128) }).strict(),
+  "thread.interaction.respond": z.object({
+    threadId: boundedText(128),
+    interactionId: boundedText(128),
+    answer: z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("question"), answers: z.record(z.string(), boundedText(2_000)) }).strict(),
+      z.object({ kind: z.literal("permission"), decision: z.enum(HOST_PERMISSION_DECISIONS) }).strict(),
+    ]),
+  }).strict(),
+  "thread.interaction.cancel": z.object({ threadId: boundedText(128), interactionId: boundedText(128) }).strict(),
   "provider.catalog": z.object({}).strict(),
   "environment.list": z.object({}).strict(),
   "terminal.create": z.object({
@@ -178,7 +198,35 @@ export const hostOperationValueSchemas = {
     entries: z.array(z.object({ id: boundedText(200), seq: timestamp, at: timestamp, turnId: nullableText(128),
       status: z.enum(["pending", "completed", "error", "interrupted"]), name: boundedText(128) }).strict()).max(2000),
   }).strict(),
-  "thread.send": z.object({ threadId: boundedText(128), delivery: z.enum(["sent", "queued"]) }).strict(),
+  "thread.send": z.object({ threadId: boundedText(128), delivery: z.enum(["sent", "queued"]), mode: z.enum(HOST_SEND_MODES) }).strict(),
+  "thread.reparent": z.object({ threadId: boundedText(128), parentThreadId: nullableText(128) }).strict(),
+  "thread.interactions": z.object({
+    threadId: boundedText(128),
+    interactions: z.array(z.object({
+      interactionId: boundedText(128),
+      kind: boundedText(64),
+      status: z.enum(["pending", "resolving", "resolved", "interrupted"]),
+      title: nullableText(400),
+      questions: z.array(z.object({
+        id: boundedText(128),
+        header: boundedText(200),
+        question: boundedText(2_000),
+        options: z.array(boundedText(400)).max(20),
+      }).strict()).max(32).optional(),
+      decisions: z.array(z.enum(["allow_once", "allow_for_session", "deny"])).max(8).optional(),
+    }).strict()).max(200),
+  }).strict(),
+  "thread.interaction.respond": z.object({
+    threadId: boundedText(128),
+    interactionId: boundedText(128),
+    status: z.enum(["resolving", "resolved", "interrupted"]),
+    resolutionKind: boundedText(64),
+  }).strict(),
+  "thread.interaction.cancel": z.object({
+    threadId: boundedText(128),
+    interactionId: boundedText(128),
+    status: z.enum(["resolving", "resolved", "interrupted"]),
+  }).strict(),
   "provider.catalog": z.object({ providers: z.array(z.object({
     id: boundedText(128), modes: z.array(boundedText(32)).max(16), models: z.array(z.object({ id: boundedText(200), reasoningLevels: z.array(boundedText(32)).max(32) }).strict()).max(1000),
   }).strict()).max(100) }).strict(),

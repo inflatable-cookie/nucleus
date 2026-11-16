@@ -34,6 +34,10 @@ export const HOST_OPERATIONS = [
   "thread.metadata",
   "thread.title",
   "thread.send",
+  "thread.reparent",
+  "thread.interactions",
+  "thread.interaction.respond",
+  "thread.interaction.cancel",
   "thread.timeline",
   "provider.catalog",
   "environment.list",
@@ -45,8 +49,16 @@ export const HOST_OPERATIONS = [
 
 export type HostOperationName = (typeof HOST_OPERATIONS)[number];
 
+/** The two send modes the adapter chooses between (Spec 062, phase 4). */
+export const HOST_SEND_MODES = ["queue", "steer"] as const;
+export type HostSendMode = (typeof HOST_SEND_MODES)[number];
+
+/** The decisions BB's approval interactions carry. */
+export const BB_PERMISSION_DECISIONS = ["allow_once", "allow_for_session", "deny"] as const;
+export type BbPermissionDecision = (typeof BB_PERMISSION_DECISIONS)[number];
+
 /**
- * Every code this executor may answer with. Kept identical to the service's list by
+ * The only codes this executor may answer with. Kept identical to the service's list by
  * `test/bb-plugin-protocol.test.ts`.
  */
 export const HOST_OPERATION_ERROR_CODES = ["invalid_input", "refused", "unavailable", "internal"] as const;
@@ -96,6 +108,28 @@ export interface ThreadRow {
   updatedAt?: number;
   activity?: Record<string, number>;
   createdAt?: number;
+}
+
+export interface InteractionRow {
+  id: string;
+  threadId: string;
+  status: string;
+  payload?: {
+    kind?: string;
+    title?: string;
+    availableDecisions?: string[];
+    reason?: string | null;
+    subject?: { kind?: string; presentation?: { title?: string } };
+    questions?: Array<{
+      id?: string;
+      prompt?: string;
+      shortLabel?: string;
+      options?: Array<{ label?: string; value?: string; description?: string }>;
+      multiSelect?: boolean;
+      allowFreeText?: boolean;
+    }>;
+  };
+  resolution?: Record<string, unknown> | null;
 }
 
 export interface TerminalSessionRow {
@@ -150,9 +184,14 @@ export interface BbHostSdk {
       originPluginId?: string;
       pluginMetadata?: Record<string, unknown>;
     }): Promise<ThreadRow>;
-    send?(args: { threadId: string; input: Array<{ type: "text"; text: string }>; mode: "queue-if-active"; pluginSubmission: { pluginId: string; data: { messageId: string } } }): Promise<{ ok: true; delivery: "sent" | "queued" }>;
-    update?(args: { threadId: string; title: string }): Promise<unknown>;
-    interactions?: { list(args: { threadId: string }): Promise<Array<{ id: string; threadId: string; status: string; payload: { kind: string; title?: string } }>> };
+    send?(args: { threadId: string; input: Array<{ type: "text"; text: string }>; mode: "queue-if-active" | "steer"; pluginSubmission: { pluginId: string; data: { messageId: string } } }): Promise<{ ok: true; delivery: "sent" | "queued" }>;
+    update?(args: { threadId: string; title?: string; parentThreadId?: string | null }): Promise<unknown>;
+    interactions: {
+      list(args: { threadId: string }): Promise<InteractionRow[]>;
+      get(args: { threadId: string; interactionId: string }): Promise<InteractionRow>;
+      resolve(args: { threadId: string; interactionId: string; resolution: Record<string, unknown> }): Promise<InteractionRow>;
+      cancel(args: { threadId: string; interactionId: string }): Promise<InteractionRow>;
+    };
     timeline?(args: { threadId: string; segmentLimit: string; includeNestedRows: "true"; deferContent: "true" }): Promise<{
       rows: Array<Record<string, unknown>>; maxSeq: number;
       timelinePage: { historySnapshot: string; olderCursor: unknown | null };
@@ -320,12 +359,102 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
     for (const row of rows) {
       const projection = threadProjection(row);
       const interactions = row.hasPendingInteraction
-        ? await call("threads.interactions.list", () => sdk.threads.interactions!.list({ threadId: row.id })) : [];
+        ? await call("threads.interactions.list", () => sdk.threads.interactions.list({ threadId: row.id })) : [];
       if (!Array.isArray(interactions) || interactions.length > 200 || interactions.some(i => i.threadId !== row.id))
         throw new HostOperationError("unavailable", "interactions.list did not answer a bounded thread-scoped list");
-      answer.push({ ...projection, interactions: interactions.map(i => ({ id: i.id, kind: i.payload.kind, status: i.status, title: Object.hasOwn(i.payload, "title") ? i.payload.title ?? null : null })) });
+      answer.push({ ...projection, interactions: interactions.map(i => ({ id: i.id, kind: i.payload?.kind ?? "unknown", status: i.status, title: Object.hasOwn(i.payload ?? {}, "title") ? i.payload?.title ?? null : null })) });
     }
     return answer;
+  }
+
+  /**
+   * One interaction as the pinned SDK declares it. A known kind missing a field the
+   * SDK requires is `unavailable` (unknown, never a partial row); an unrecognised
+   * extension kind is projected by what the SDK does promise: its kind and title.
+   */
+  function interactionProjection(row: InteractionRow, threadId: string) {
+    if (row.threadId !== threadId) throw new HostOperationError("unavailable", `interactions.list named thread ${row.threadId} for ${threadId}`);
+    const status = row.status;
+    if (!["pending", "resolving", "resolved", "interrupted"].includes(status))
+      throw new HostOperationError("unavailable", `interaction ${row.id} carries an unrecognised status`);
+    const payload = row.payload;
+    if (typeof payload !== "object" || payload === null || typeof payload.kind !== "string")
+      throw new HostOperationError("unavailable", `interaction ${row.id} carries no payload kind`);
+    const base = { interactionId: row.id, kind: payload.kind, status } as { interactionId: string; kind: string; status: string; title: string | null; questions?: Array<{ id: string; header: string; question: string; options: string[] }>; decisions?: BbPermissionDecision[] };
+    if (payload.kind === "approval") {
+      const decisions = payload.availableDecisions;
+      if (!Array.isArray(decisions) || !decisions.length || decisions.some(decision => !(BB_PERMISSION_DECISIONS as readonly string[]).includes(decision)))
+        throw new HostOperationError("unavailable", `approval ${row.id} carries no recognised decision set`);
+      const title = payload.subject?.presentation?.title;
+      return { ...base, title: typeof title === "string" ? title : typeof payload.subject?.kind === "string" ? payload.subject.kind : null, decisions: decisions as BbPermissionDecision[] };
+    }
+    if (payload.kind === "user_question") {
+      const questions = payload.questions;
+      if (!Array.isArray(questions) || !questions.length || questions.length > 32)
+        throw new HostOperationError("unavailable", `question ${row.id} carries no bounded question list`);
+      return { ...base, title: null, questions: questions.map(question => {
+        if (typeof question.id !== "string" || !question.id || typeof question.prompt !== "string" || !question.prompt)
+          throw new HostOperationError("unavailable", `question ${row.id} is missing its id or prompt`);
+        if (question.options !== undefined && !Array.isArray(question.options))
+          throw new HostOperationError("unavailable", `question ${row.id} carries unreadable options`);
+        const options = (question.options ?? []).map(option => {
+          if (typeof option?.label !== "string" || !option.label) throw new HostOperationError("unavailable", `question ${row.id} carries an option without a label`);
+          return option.label;
+        });
+        return { id: question.id, header: typeof question.shortLabel === "string" && question.shortLabel ? question.shortLabel : question.id, question: question.prompt, options };
+      }) };
+    }
+    return { ...base, title: typeof payload.title === "string" ? payload.title : null };
+  }
+
+  /** One interaction read that proves the thread and the request before any answer. */
+  async function interactionFor(threadId: string, interactionId: string) {
+    const row = await call("threads.interactions.get", () => sdk.threads.interactions.get({ threadId, interactionId }));
+    if (typeof row !== "object" || row === null) throw new HostOperationError("unavailable", `interaction ${interactionId} could not be read`);
+    if (row.id !== interactionId) throw new HostOperationError("unavailable", `interaction read answered ${row.id} for ${interactionId}`);
+    return row;
+  }
+
+  /** The SDK's resolution union, built from the host contract's own answer shape. */
+  function resolutionFor(row: InteractionRow, answer: { kind: "question"; answers: Record<string, string> } | { kind: "permission"; decision: string }, projection: { questions?: Array<{ id: string; header: string; options: string[] }>; decisions?: BbPermissionDecision[] }) {
+    if (answer.kind === "question") {
+      if (!projection.questions) throw new HostOperationError("refused", `interaction ${row.id} is not a native question`);
+      const answers: Record<string, { selected: string[]; freeText?: string }> = {};
+      for (const [key, value] of Object.entries(answer.answers)) {
+        const matches = projection.questions.filter(question => question.id === key || question.header === key);
+        if (matches.length !== 1) throw new HostOperationError("refused", `answer key ${key} names no single question on interaction ${row.id}`);
+        const question = matches[0];
+        if (answers[question.id]) throw new HostOperationError("refused", `answer key ${key} repeats question ${question.id}`);
+        if (!value.trim()) throw new HostOperationError("refused", `answer for ${question.id} is empty`);
+        answers[question.id] = question.options.includes(value) ? { selected: [value] } : { selected: [], freeText: value };
+      }
+      if (!Object.keys(answers).length) throw new HostOperationError("refused", "a native question answer names no question");
+      return { kind: "user_answer" as const, answers };
+    }
+    if (!projection.decisions) throw new HostOperationError("refused", `interaction ${row.id} is not a permission request`);
+    // The host contract has five decisions and BB three; a decision BB cannot express
+    // is refused before the write rather than widened into another permission.
+    const decision: BbPermissionDecision | undefined = answer.decision === "accept" ? "allow_once"
+      : answer.decision === "acceptForSession" ? "allow_for_session"
+      : answer.decision === "decline" || answer.decision === "cancel" ? "deny" : undefined;
+    if (!decision) throw new HostOperationError("refused", `BB has no ${answer.decision} permission decision`);
+    if (!projection.decisions.includes(decision)) throw new HostOperationError("refused", `interaction ${row.id} does not offer ${decision}`);
+    return decision === "deny" ? { decision } : { decision, grantedPermissions: null };
+  }
+
+  async function resolveInteraction(threadId: string, interactionId: string, answer: { kind: "question"; answers: Record<string, string> } | { kind: "permission"; decision: string }) {
+    // Bind the exact thread and request before anything is written.
+    const row = await interactionFor(threadId, interactionId);
+    const projection = interactionProjection(row, threadId);
+    if (projection.status !== "pending" && projection.status !== "resolving")
+      throw new HostOperationError("refused", `interaction ${interactionId} is no longer pending`);
+    const resolution = resolutionFor(row, answer, projection);
+    const resolved = await call("threads.interactions.resolve", () => sdk.threads.interactions.resolve({ threadId, interactionId, resolution }));
+    if (typeof resolved !== "object" || resolved === null || resolved.id !== interactionId || resolved.threadId !== threadId)
+      throw new HostOperationError("unavailable", `interaction ${interactionId} did not answer for its own thread`);
+    if (resolved.status !== "resolved" && resolved.status !== "resolving")
+      throw new HostOperationError("unavailable", `interaction ${interactionId} answered status ${resolved.status} after the answer`);
+    return { threadId, interactionId, status: resolved.status, resolutionKind: resolution.kind ?? ("decision" in resolution ? "decision" : "unknown") };
   }
 
   async function execute(op: HostOperationName, raw: unknown): Promise<unknown> {
@@ -385,7 +514,7 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
         const projectId = text(input.projectId, "projectId", 128);
         const title = text(input.title, "title", 200);
         const environmentPath = text(input.environmentPath, "environmentPath", 4_096);
-        const prompt = text(input.prompt, "prompt", 500_000);
+        const prompt = input.prompt === undefined ? undefined : text(input.prompt, "prompt", 500_000);
         const parentThreadId = optionalText(input.parentThreadId, "parentThreadId", 128);
         const parentNotifications = oneOf(input.parentNotifications, ["auto", "stuck", "off"] as const, "parentNotifications") ?? "off";
         const providerId = optionalText(input.providerId, "providerId", 64);
@@ -401,7 +530,7 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
           ...(input.reasoningLevel ? { reasoningLevel: text(input.reasoningLevel, "reasoningLevel", 32) } : {}),
           ...(input.permissionMode ? { permissionMode: text(input.permissionMode, "permissionMode", 32) } : {}),
           ...(input.sessionOptions ? { sessionOptions: projectMetadata(input.sessionOptions) } : {}),
-          input: [{ type: "text", text: prompt }],
+          ...(prompt === undefined ? {} : { input: [{ type: "text" as const, text: prompt }] }),
           environment: { type: "host", hostId, workspace: { type: "unmanaged", path: environmentPath } },
           ...(parentThreadId ? { parentThreadId } : {}),
           parentNotifications,
@@ -512,9 +641,62 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
       case "thread.send": {
         const threadId = text(input.threadId, "threadId", 128), messageId = text(input.messageId, "messageId", 200);
         const message = text(input.text, "text", 500_000);
-        const sent = await call("threads.send", () => sdk.threads.send!({ threadId, input: [{ type: "text", text: message }], mode: "queue-if-active", pluginSubmission: { pluginId, data: { messageId } } }));
+        const mode = oneOf(input.mode, HOST_SEND_MODES, "mode") ?? "queue";
+        if (mode === "steer") {
+          // The one proven-not-sent steer refusal: a read taken before the write
+          // proves there is no live turn to steer, so nothing was delivered and the
+          // adapter may answer with one queued send.
+          const rows = await call("threads.list", () => sdk.threads.list({ threadIds: [threadId], includeHidden: true, limit: 200 }));
+          if (!Array.isArray(rows) || rows.length !== 1 || rows[0].id !== threadId)
+            throw new HostOperationError("unavailable", "threads.list omitted the thread a steer names");
+          const row = threadProjection(rows[0]);
+          const live = ["starting", "active", "stopping"].includes(String(row.status ?? ""));
+          if (!live) throw new HostOperationError("refused", `BB thread ${threadId} has no live turn to steer`);
+        }
+        const sent = await call("threads.send", () => sdk.threads.send!({ threadId, mode: mode === "steer" ? "steer" : "queue-if-active", input: [{ type: "text", text: message }], pluginSubmission: { pluginId, data: { messageId } } }));
         if (sent.ok !== true) throw new HostOperationError("unavailable", "threads.send did not acknowledge the message");
-        return { threadId, delivery: sent.delivery };
+        return { threadId, delivery: sent.delivery, mode };
+      }
+      case "thread.reparent": {
+        const threadId = text(input.threadId, "threadId", 128), parentThreadId = text(input.parentThreadId, "parentThreadId", 128);
+        await call("threads.update", () => sdk.threads.update!({ threadId, parentThreadId }));
+        const row = await call("threads.get", () => sdk.threads.get({ threadId }));
+        // The write's postcondition is the parent link itself, read back.
+        return { threadId, parentThreadId: row.parentThreadId ?? null };
+      }
+      case "thread.interactions": {
+        const threadId = text(input.threadId, "threadId", 128);
+        const rows = await call("threads.interactions.list", () => sdk.threads.interactions.list({ threadId }));
+        if (!Array.isArray(rows) || rows.length > 200) throw new HostOperationError("unavailable", "interactions.list did not answer a bounded list");
+        return { threadId, interactions: rows.map(row => interactionProjection(row, threadId)) };
+      }
+      case "thread.interaction.respond": {
+        const threadId = text(input.threadId, "threadId", 128), interactionId = text(input.interactionId, "interactionId", 128);
+        const answer = (typeof input.answer === "object" && input.answer !== null ? input.answer : {}) as { kind?: unknown; answers?: unknown; decision?: unknown };
+        if (answer.kind === "question") {
+          if (typeof answer.answers !== "object" || answer.answers === null || Array.isArray(answer.answers))
+            throw new HostOperationError("invalid_input", "answer.answers must be an object");
+          const answers: Record<string, string> = {};
+          for (const [key, value] of Object.entries(answer.answers as Record<string, unknown>)) answers[key] = text(value, `answer.answers.${key}`, 2_000);
+          return await resolveInteraction(threadId, interactionId, { kind: "question", answers });
+        }
+        if (answer.kind === "permission") return await resolveInteraction(threadId, interactionId, { kind: "permission", decision: text(answer.decision, "answer.decision", 32) });
+        throw new HostOperationError("invalid_input", "answer.kind must be question or permission");
+      }
+      case "thread.interaction.cancel": {
+        const threadId = text(input.threadId, "threadId", 128), interactionId = text(input.interactionId, "interactionId", 128);
+        // Bind the exact thread and request, and dismiss only a native question.
+        const row = await interactionFor(threadId, interactionId);
+        const projection = interactionProjection(row, threadId);
+        if (projection.kind !== "user_question") throw new HostOperationError("refused", `interaction ${interactionId} is not a native question`);
+        if (projection.status !== "pending" && projection.status !== "resolving")
+          throw new HostOperationError("refused", `interaction ${interactionId} is no longer pending`);
+        const cancelled = await call("threads.interactions.cancel", () => sdk.threads.interactions.cancel({ threadId, interactionId }));
+        if (typeof cancelled !== "object" || cancelled === null || cancelled.id !== interactionId || cancelled.threadId !== threadId)
+          throw new HostOperationError("unavailable", `interaction ${interactionId} did not cancel for its own thread`);
+        if (cancelled.status !== "interrupted" && cancelled.status !== "resolved" && cancelled.status !== "resolving")
+          throw new HostOperationError("unavailable", `interaction ${interactionId} answered status ${cancelled.status} after dismissal`);
+        return { threadId, interactionId, status: cancelled.status };
       }
       case "thread.title": {
         const threadId = text(input.threadId, "threadId", 128), title = text(input.title, "title", 200);
