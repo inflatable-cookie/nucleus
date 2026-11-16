@@ -2581,7 +2581,9 @@ movement invalidates source approval and preserves the normal readiness gates.
   caller's reporting binding (run ID, helper, ticket path, and the MCP binding
   path when the host uses one) because that thread was not launched by Nucleus.
   A row registered before the ownership field existed is proved external from
-  its stored `registered` event on every store open.
+  its stored `registered` event on every store open. Worktree identity proofs bind
+  an external workspace to its recorded branch; Queue allocations still require
+  the canonical `ns-<task-id>` branch. Both must be on their recorded branch.
 - The old `set_responsible` control, native conversion question and
   `queue.responsible-convert` RPC were removed in cutover 1 (Spec 058); historical
   rows and frozen submission identities remain readable.
