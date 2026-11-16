@@ -7,7 +7,10 @@ export function purgeReportingFiles(helperPath:string,taskId:string,runIds:strin
       if(!/^[a-zA-Z0-9_-]+$/.test(id))continue;
       for(const name of [`${id}.json`,`mcp-${id}.json`]){
         const path=join(dirname(helperPath),'tickets',name);
-        if(existsSync(path)&&JSON.parse(readFileSync(path,'utf8')).taskId===taskId)unlinkSync(path);
+        if(existsSync(path)){
+          const binding=JSON.parse(readFileSync(path,'utf8'));
+          if(binding.taskId===taskId&&(name!==`mcp-${id}.json`||runIds.includes(binding.runId)))unlinkSync(path);
+        }
       }
     }
 }
@@ -17,7 +20,10 @@ export function purgeReleasedRunTicket(dataDir:string,taskId:string,runId:string
     if(!/^[a-zA-Z0-9_-]+$/.test(runId))return;
     for(const name of [`${runId}.json`,`mcp-${runId}.json`]){
       const path=join(dataDir,'tickets',name);
-      if(existsSync(path)&&JSON.parse(readFileSync(path,'utf8')).taskId===taskId)unlinkSync(path);
+      if(existsSync(path)){
+        const binding=JSON.parse(readFileSync(path,'utf8'));
+        if(binding.taskId===taskId&&(name!==`mcp-${runId}.json`||binding.runId===runId))unlinkSync(path);
+      }
     }
 }
 
