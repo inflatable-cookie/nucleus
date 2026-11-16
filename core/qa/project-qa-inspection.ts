@@ -136,6 +136,8 @@ export class ProjectQaInspection {
         const liveness = await this.supervisorLiveness.read(state.pid, state.identityToken, state.supervisorStartIdentity);
         observedLiveness = liveness.state;
         observedGroupEmpty = state.activeProcess ? processGroupEmpty(state.activeProcess.processGroupId) : null;
+        // The OS liveness read yielded: a heartbeat may have advanced meanwhile.
+        state.heartbeatAt = readQaHeartbeat(heartbeatPath, state);
         const staleAgeMs = confirmStaleSupervisorHeartbeat(this.staleSupervisorObservations, run.id, state.heartbeatAt);
         const sameSupervisorAlive = staleAgeMs !== null && state.supervisorStartIdentity
           && processStartIdentityLiveness(state.pid, state.supervisorStartIdentity) === "alive";
