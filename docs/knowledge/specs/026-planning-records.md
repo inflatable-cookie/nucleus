@@ -54,6 +54,13 @@ a repository as the origin string `papercut.list` uses or as `{origin, path}`;
 importer reads one file, or a `docs/triage/` directory where each file becomes
 one lead, titled by its first heading. It is idempotent on a content key and reports imported, duplicate and unparsed files.
 
+Lead creation records the registered checkout for its repository origin when one
+exists, including when filed from a task worktree. Checks and task promotion
+resolve that checkout again by origin, so archived worktree hints in existing
+leads do not change their identity, versions, digests or history. Without a
+registered checkout, the stored path is used if available; otherwise the
+refusal names the origin and missing registration.
+
 ## Revision: a mistaken drop is reversible (lead.reopen, 2026-10-14)
 
 Requested through the queue by the Consumer-b web/audit planner (2026-10-14): a
