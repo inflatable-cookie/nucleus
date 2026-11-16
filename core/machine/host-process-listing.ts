@@ -83,7 +83,7 @@ async function linuxProcesses(uid: number): Promise<HostProcessListRead> {
       const command = linuxProcCommandLine(pid);
       const cwd = linuxCwd(pid);
       listed.push({
-        pid, ppid: Number(fields[1]), pgid: Number(fields[2]), uid,
+        pid, ppid: Number(fields[1]), state: fields[0] || null, pgid: Number(fields[2]), uid,
         startIdentity: linuxStartIdentity(pid, stat, bootId),
         command: command.state === "read" ? truncateCommand(command.line) : "",
         cwd: cwd.state === "read" ? cwd.path : null,
@@ -94,19 +94,19 @@ async function linuxProcesses(uid: number): Promise<HostProcessListRead> {
 }
 
 async function darwinProcesses(uid: number): Promise<HostProcessListRead> {
-  const listing = await processListing("ps", ["-axo", "uid=,pid=,ppid=,pgid=,lstart=,command="],
+  const listing = await processListing("ps", ["-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="],
     { ...process.env, LC_ALL: "C", TZ: "UTC" });
   if (listing.status !== 0 || !listing.stdout)
     return { state: "unknown", reason: `the host process listing failed: ${listing.error ? String(listing.error) : `ps exited with code ${listing.status}`}` };
   const facts: HostProcessFact[] = [];
   for (const line of listing.stdout.split("\n")) {
-    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+[A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.*)$/.exec(line);
+    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+[A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.*)$/.exec(line);
     if (!match || Number(match[1]) !== uid) continue;
     const pid = Number(match[2]);
     facts.push({
-      pid, ppid: Number(match[3]), pgid: Number(match[4]), uid,
-      startIdentity: macStartIdentity(pid, match[5]),
-      command: truncateCommand(match[6]),
+      pid, ppid: Number(match[3]), state: match[5] || null, pgid: Number(match[4]), uid,
+      startIdentity: macStartIdentity(pid, match[6]),
+      command: truncateCommand(match[7]),
       cwd: null,
     });
   }

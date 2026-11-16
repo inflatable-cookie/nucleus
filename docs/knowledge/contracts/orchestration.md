@@ -3099,6 +3099,15 @@ movement invalidates source approval and preserves the normal readiness gates.
   A malformed or truncated helper ticket is unknown only when that helper is
   inside the workspace or its process tree; outside it, the helper does not
   globally block another participant (Nucleus #1256).
+  The same scoping governs every unreadable process fact (Nucleus #1259): the
+  proof first builds the task's tree — processes whose readable cwd is in the
+  workspace or run scratch, plus their descendants — and an unreadable cwd,
+  command or parent reads as unknown only when it could reach that tree (its
+  parent is in the tree, or its parent identity is itself unreadable). A
+  process whose known parent is outside the tree is not the task's, whatever
+  its own readability. Process facts carry the process state from the same
+  read, and a zombie (`Z`) is never judged: it holds no tools, owns no working
+  directory, and only its parent can reap it.
   Those runtimes take two facts from the listing, never a provider
   name list: the program is one the provider ships (inside an application bundle
   such as `Foo.app/Contents/…`, or beside the provider's own executable under
