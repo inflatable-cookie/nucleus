@@ -168,3 +168,22 @@ test('missing-binding classification never reads another path or classifies a li
     assert.equal(missingReportBindingCompletion(undefined, identity, f.state), null);
   } finally { await f.close(); }
 });
+
+for (const status of ['intent', 'uncertain'] as const) {
+  test(`a missing binding never settles a reviewer dispatch whose status is ${status}`, async () => {
+    const f = fixture();
+    try {
+      const current = { ...f.run('current-run', 'reviewer'), status }; f.activate(current);
+      f.engine.profiles = [current.profile!];
+      f.store.setMeta('pool', [{ profileId: current.profile!.id, enabled: true, group: 'synthetic', roles: ['reviewer'], weight: 1, scopes: ['general'] }]);
+      f.store.setMeta('paused', false);
+      await f.engine.resolution.observe();
+      const held = f.store.run(current.id)!;
+      assert.equal(held.completion, null);
+      assert.equal(held.released, false);
+      assert.equal(held.status, status);
+      assert.match(f.store.task(f.task.id).reason, /Prompt delivery is uncertain/);
+      assert.equal(f.store.eventsAll(f.task.id).some(event => event.kind === 'report_failed'), false);
+    } finally { await f.close(); }
+  });
+}

@@ -162,7 +162,7 @@ export class CoordinatorPass {
     t=this.store.task(t.id);incident=t.resolution.recovery;
     if(!incident)continue;
     run=this.store.run(run.id)!;
-    if(!run.completion && !incident.action && Date.now()-Date.parse(run.idleSince!)>=this.resolution.graceMs){
+    if(run.status==='running' && !run.completion && !incident.action && Date.now()-Date.parse(run.idleSince!)>=this.resolution.graceMs){
      const failure=missingReportBindingCompletion(this.resolution.adapter.helperPath,
       {taskId:t.id,runId:run.id,head:run.head,coordinatorGeneration:run.generation},state);
      if(failure){

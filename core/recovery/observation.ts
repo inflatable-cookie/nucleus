@@ -203,7 +203,7 @@ export class Observation {
           if (current.resolution.currentRunId === run.id) this.resolution.update(current, { currentRunId: null, attention: false });
           continue;
         }
-        if (!run.completion && !run.pausedStop && Date.now() - Date.parse(run.idleSince!) >= this.graceMs) {
+        if (run.status === 'running' && !run.completion && !run.pausedStop && Date.now() - Date.parse(run.idleSince!) >= this.graceMs) {
           const failure = missingReportBindingCompletion(this.adapter.helperPath,
             { taskId: task.id, runId: run.id, head: run.head, coordinatorGeneration: run.generation }, state);
           if (failure) this.store.transaction(() => {
