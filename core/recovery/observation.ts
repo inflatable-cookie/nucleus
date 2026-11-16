@@ -1,3 +1,4 @@
+import { missingReportBindingCompletion } from '../intake/reporting-failure';
 import { observeReviewerReplacement, releaseUnreachableRun } from '../workspaces/thread-archive-replacement';
 /**
  * One sweep of unreleased runs: observe each pending run's agent, then settle,
@@ -201,6 +202,14 @@ export class Observation {
           this.store.putRun({ ...run, status: 'superseded', released: true });
           if (current.resolution.currentRunId === run.id) this.resolution.update(current, { currentRunId: null, attention: false });
           continue;
+        }
+        if (!run.completion && !run.pausedStop && Date.now() - Date.parse(run.idleSince!) >= this.graceMs) {
+          const failure = missingReportBindingCompletion(this.adapter.helperPath,
+            { taskId: task.id, runId: run.id, head: run.head, coordinatorGeneration: run.generation }, state);
+          if (failure) this.store.transaction(() => {
+            run = { ...this.store.run(run.id)!, completion: failure }; this.store.putRun(run);
+            this.store.event(task.id, 'report_failed', failure.summary);
+          });
         }
         // A delivered continuation whose reviewer turn has stopped is not
         // "continuing": record the current stop from these facts so the task names

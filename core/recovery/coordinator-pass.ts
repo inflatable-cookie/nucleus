@@ -1,3 +1,4 @@
+import { missingReportBindingCompletion } from '../intake/reporting-failure';
 import { digest, now } from '../store/store';
 import type {Run, Task} from '../../shared/contracts';
 import {isDispositionActive,isDispositionComplete} from '../../shared/contracts';
@@ -161,6 +162,16 @@ export class CoordinatorPass {
     t=this.store.task(t.id);incident=t.resolution.recovery;
     if(!incident)continue;
     run=this.store.run(run.id)!;
+    if(!run.completion && !incident.action && Date.now()-Date.parse(run.idleSince!)>=this.resolution.graceMs){
+     const failure=missingReportBindingCompletion(this.resolution.adapter.helperPath,
+      {taskId:t.id,runId:run.id,head:run.head,coordinatorGeneration:run.generation},state);
+     if(failure){
+      this.store.transaction(()=>{
+       run={...this.store.run(run!.id)!,completion:failure};this.store.putRun(run);
+       this.store.event(t.id,'report_failed',failure.summary);
+      });
+     }
+    }
     const pending=incident.action?.status==='pending'?incident.action:null;
     if(incident.action?.status==='applied'||incident.action?.status==='refused'){
      if(!run.released)this.store.putRun({...run,released:true,status:'finished'});

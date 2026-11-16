@@ -1,3 +1,4 @@
+import { missingReportBindingCompletion } from '../../intake/reporting-failure';
 import type { Task } from '../../../shared/contracts';
 import { pausedStopWaitReason } from '../../../shared/contracts';
 import { dispatchBlocked } from '../../dispatch/capacity';
@@ -50,6 +51,15 @@ export class WorkerReconcile {
     const { state } = observed;
     if (!STOPPED_WORKER_STATUSES.includes(state.status)) throw new Error("Worker status is unknown; not releasing its workspace");
     const grace = this.beginIdleGrace(observed.current, state);
+    if (grace.current.runId && state.id === grace.current.agentId && !grace.current.completion && !grace.current.pausedStop && grace.graceElapsed) {
+      const failure = missingReportBindingCompletion(this.engine.adapter.helperPath,
+        { taskId: task.id, runId: grace.current.runId }, state);
+      if (failure) {
+        const failed = this.engine.store.update(task.id, { completion: failure }, 'report_failed', failure.summary);
+        await this.acceptWorkerResult(task, failed);
+        return;
+      }
+    }
     const current = await this.preBranchGates(task, state, grace.graceElapsed);
     if (!current) return;
     if (this.reconcileBlockedReturn(task, current, state)) return;
