@@ -1,0 +1,1 @@
+BB host tasks now register a repository project and keep a durable Nucleus-owned handle for each task worktree. Offline and missing-service pre-send failures release reservations for retry, archived handles can be reopened, and archive markers operate without creating or retiring BB threads, projects, or sibling task workspaces.

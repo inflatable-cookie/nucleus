@@ -23,6 +23,7 @@ import { realpathSync } from "node:fs";
 export const HOST_OPERATIONS = [
   "identity.probe",
   "workspace.create",
+  "workspace.inspect",
   "run.attach",
   "thread.observe",
   "thread.stop",
@@ -311,6 +312,7 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
       }
       case "workspace.create": {
         const repositoryRoot = text(input.repositoryRoot, "repositoryRoot", 4_096);
+        const workspacePath = input.workspacePath === undefined ? repositoryRoot : text(input.workspacePath, "workspacePath", 4_096);
         const name = text(input.name, "name", 120);
         const spawnsBefore = spawnCalls;
         const hostId = await primaryHostId();
@@ -328,11 +330,18 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
           projectId,
           projectCreated,
           projectCount: projectCreated ? projects.length + 1 : projects.length,
-          handle: workspaceHandleForPath(repositoryRoot),
-          path: repositoryRoot,
+          handle: workspaceHandleForPath(workspacePath),
+          path: workspacePath,
           // The whole point of the step: no thread exists before a run does.
           spawned: spawnCalls - spawnsBefore,
         };
+      }
+      case "workspace.inspect": {
+        const repositoryRoot = text(input.repositoryRoot, "repositoryRoot", 4_096);
+        const requestedProjectId = optionalText(input.projectId, "projectId", 128);
+        const projects = await call("projects.list", () => sdk.projects.list());
+        const project = projects.find(candidate => (!requestedProjectId || candidate.id === requestedProjectId) && (candidate.sources ?? []).some(source => source.type === "local_path" && typeof source.path === "string" && samePath(source.path, repositoryRoot)));
+        return { projectId: project?.id ?? null, projectFound: Boolean(project), path: project ? repositoryRoot : null };
       }
       case "run.attach": {
         const projectId = text(input.projectId, "projectId", 128);

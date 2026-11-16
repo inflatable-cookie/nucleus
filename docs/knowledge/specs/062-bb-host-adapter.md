@@ -1,7 +1,7 @@
 # BB host adapter
 
 Status: approved. Phase 0 (the transport spike) is implemented and proved, phase 1 (host
-registration, identity and health) is implemented; phases 2–6 are not implemented. This document is the design and the phased plan, and [phase 0
+registration, identity and health) and phase 2 (workspace custody) are implemented; phases 3–6 are not implemented. This document is the design and the phased plan, and [phase 0
 evidence](#phase-0-evidence-2026-11-16) answers its eight assumptions. Amended 2026-11-16: decision 5
 now carries the forked sidebar, the two boards and BB usage left to BB's card plus the operator's Usage
 Pace plugin, and the experimental inventory and the plan from phase 5 on follow it; phases 0–4 are
@@ -935,6 +935,26 @@ directory reuses the handle; a missing directory or unregistered project reads h
 - `effigy check` and `effigy test:affected --run`.
 
 **Dependencies.** Phases 0–1.
+
+**Implemented (2026-11-16).** The BB adapter registers or reuses the BB project for the canonical
+repository root, then records a Nucleus-owned `bb-worktree-<40 hex>` handle for the canonical task
+worktree in the durable Nucleus store. The handle reservation precedes project registration. If its
+reply is unknown, a later create adopts only after a fresh exact-root project read; an empty or unreadable
+read never authorizes a resend. Project inspection is a bounded read through the plugin SDK; workspace
+creation calls no thread operation and stores no agent identity. Availability reads both the local
+worktree and the exact registered project, and an unreadable project read propagates as unknown.
+Archive writes only the handle's durable marker, so the unmanaged environment, shared project and
+other task handles remain untouched. The socket service exposes the existing reverse operation channel
+to the adapter through the authenticated owner socket; operation faults remain per request.
+
+Tests: `test/bb-workspace-custody.test.ts` covers creation, handle identity, lookup, archive isolation,
+archived-handle reuse, missing directories, unregistered projects and unreadable reads;
+`test/bb-plugin-operations.test.ts` covers project registration/reuse, read-only project inspection
+and zero `threads.spawn` calls; `test/bb-host-channel.test.ts` covers the adapter's production
+service-to-executor route, offline and missing-service-identity pre-send cleanup, typed refusal
+classification and reservation recovery; the shared
+operation schemas and `test/bb-host-executor.test.ts` retain the bounded reply and unknown delivery
+rules.
 
 ### Phase 3 — worker runs, observation and presentation
 

@@ -631,7 +631,7 @@ test("a reconnect proves the identity again, and a dropped connection settles in
   }
 });
 
-test("the registered BB adapter declares its composition and refuses every task-workflow call before send", async () => {
+test("the registered BB adapter declares its composition and still refuses run workflow before phase 3", async () => {
   const { createBbHostAdapter } = await import("../service/bb-host");
   const { ProvenPreSendRefusalError } = await import("../core/host/errors");
   const adapter = createBbHostAdapter(
@@ -646,8 +646,7 @@ test("the registered BB adapter declares its composition and refuses every task-
     perThreadEnvironment: false,
     repositorySharedWorkspaces: false,
   });
-  // Phase 1 registers the host and nothing else: each task-workflow call is a proven
-  // pre-send refusal, never an empty success and never a task workflow.
+  // Phase 2 adds workspace custody only. Run and thread workflows remain refused.
   const refusals: Array<[string, () => Promise<unknown>]> = [
     [
       "observe",
@@ -668,16 +667,6 @@ test("the registered BB adapter declares its composition and refuses every task-
     [
       "validate",
       () => (adapter.validate as (...args: never[]) => Promise<unknown>)(),
-    ],
-    [
-      "createWorkspace",
-      () =>
-        (adapter.createWorkspace as (...args: never[]) => Promise<unknown>)(),
-    ],
-    [
-      "findWorkspaces",
-      () =>
-        (adapter.findWorkspaces as (...args: never[]) => Promise<unknown>)(),
     ],
     [
       "verifyResume",

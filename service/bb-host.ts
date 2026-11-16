@@ -1,5 +1,5 @@
 /**
- * The BB host's registration, identity and health (Spec 062, phase 1).
+ * The BB host's registration, identity, health and workspace custody (Spec 062, phases 1–2).
  *
  * Phase 0 landed the reverse host-operation channel: the BB plugin connects out to
  * the service, declares `service.host-executor` and answers `host.op` requests from
@@ -8,10 +8,11 @@
  * records that identity durably, registers one `bb:` host in the host registry with
  * its own admission and breaker state, and reports it in `service.health`.
  *
- * Nothing here reaches a task workflow. The registered adapter refuses every task
- * call by name because phase 1 adds registration and identity only: no run, no
- * workspace custody, no observation. A refusal is the honest answer, and it is a
- * `ProvenPreSendRefusalError` — nothing was sent to the host.
+ * The registered adapter owns each task worktree through a durable local handle and
+ * the host's shared project. It still refuses run and thread workflow calls by name:
+ * phase 2 adds workspace custody only, not worker execution or observation. A
+ * refusal is the honest answer, and it is a `ProvenPreSendRefusalError` — nothing
+ * was sent to the host.
  *
  * Spec 062: "The service derives `hostId = bb:<hash of the real data directory>`
  * and registers that identity only after a read-only probe through the channel
@@ -27,11 +28,19 @@ import type { Adapter } from "../core/host/adapter";
 import type { HostRegistry } from "../core/host/host-registry";
 import type { Store } from "../core/store/store";
 import { hostKindOf } from "../shared/host-kind";
+import { existsSync, realpathSync } from "node:fs";
+import { basename } from "node:path";
+import { readServiceInfo } from "../shared/service/discovery";
+import { ServiceClient, ServiceRequestError } from "../shared/service/client";
 import {
   hostIdFromDataDir,
   isBbHostId,
+  workspaceHandleForPath,
   type HostOperationOutcome,
+  type HostOperationName,
 } from "../shared/host-operation";
+import type { Task } from "../shared/contracts";
+import type { HostWorkspaceRef } from "../shared/host";
 
 /**
  * A live host that has not sent its heartbeat inside this bound is reported stale:
@@ -104,6 +113,8 @@ export interface BbHostStatus {
 type RegisteredHost = { adapter: Adapter; admission: Admission };
 
 const META_KEY = "bbHostIdentity";
+const WORKSPACES_KEY = "bbWorkspaces";
+interface BbWorkspaceRecord { id: string; directory: string; repositoryRoot: string; projectId: string; title: string; archivedAt?: string }
 
 /** The durable identity one BB server keeps across service restarts. */
 interface RecordedIdentity {
@@ -117,6 +128,13 @@ const refusal = (capability: string): never => {
   );
 };
 
+class BbHostOperationNotSentError extends Error {
+  constructor(reason: string) {
+    super(`BB host operation was not sent: ${reason}`);
+    this.name = "BbHostOperationNotSentError";
+  }
+}
+
 /**
  * The adapter a registered BB host answers with in phase 1. Its identity is real
  * (the health surface, the routing snapshot and the host kind all read it), and
@@ -125,7 +143,44 @@ const refusal = (capability: string): never => {
 export function createBbHostAdapter(
   hostId: string,
   connected: () => boolean,
+  dataDir = "",
+  store?: Store,
+  requestOperation?: (op: HostOperationName, input: unknown) => Promise<HostOperationOutcome>,
 ): Adapter {
+  async function operation(op: HostOperationName, input: unknown): Promise<HostOperationOutcome> {
+    let online: boolean;
+    try { online = connected(); }
+    catch (error) { throw new BbHostOperationNotSentError(error instanceof Error ? error.message : String(error)); }
+    if (!online) throw new BbHostOperationNotSentError("BB host executor is offline");
+    if (requestOperation) return requestOperation(op, input);
+    let client: ServiceClient;
+    try {
+      const info = readServiceInfo(dataDir);
+      if (!info) throw new Error("Nucleus service identity is unavailable");
+      client = new ServiceClient({ socketPath: info.socketPath, credential: info.credential });
+      await client.connect();
+    } catch (error) {
+      throw new BbHostOperationNotSentError(error instanceof Error ? error.message : String(error));
+    }
+    try {
+      return await client.request("service.bb-host-operation", { hostId, op, input }, 25_000) as HostOperationOutcome;
+    } finally { client.close(); }
+  }
+  const workspaces = (): Record<string, BbWorkspaceRecord> => store?.getMeta<Record<string, BbWorkspaceRecord>>(WORKSPACES_KEY) ?? {};
+  const getWorkspace = (id: string) => workspaces()[id];
+  const putWorkspace = (record: BbWorkspaceRecord) => { if (!store) throw new Error("BB workspace store is unavailable"); store.setMeta(WORKSPACES_KEY, { ...workspaces(), [record.id]: record }); };
+  const removeWorkspace = (id: string) => { if (!store) throw new Error("BB workspace store is unavailable"); const next = workspaces(); delete next[id]; store.setMeta(WORKSPACES_KEY, next); };
+  async function workspaceAvailable(id: string): Promise<boolean> {
+    let record = getWorkspace(id);
+    if (!record || record.archivedAt || !existsSync(record.directory)) return false;
+    const result = await operation("workspace.inspect", { repositoryRoot: record.repositoryRoot, ...(record.projectId ? { projectId: record.projectId } : {}) });
+    const inspected = result.value as { projectId: string | null; projectFound: boolean };
+    if (inspected.projectFound && inspected.projectId && !record.projectId) {
+      record = { ...record, projectId: inspected.projectId };
+      putWorkspace(record);
+    }
+    return inspected.projectFound;
+  }
   return {
     hostId,
     isConnected: connected,
@@ -141,8 +196,68 @@ export function createBbHostAdapter(
     findAgents: async () => refusal("thread lookup"),
     archiveAgent: async () => refusal("thread archive"),
     validate: async () => refusal("workspace validation"),
-    createWorkspace: async () => refusal("workspace creation"),
-    findWorkspaces: async () => refusal("workspace lookup"),
+    workspaceIdAccepted: (id: unknown) => typeof id === "string" && /^bb-worktree-[a-f0-9]{40}$/.test(id),
+    async repositoryProject(root: string) {
+      const repositoryRoot = realpathSync(root);
+      const result = await operation("workspace.inspect", { repositoryRoot });
+      const value = result.value as { projectId: string | null; projectFound: boolean };
+      return { ...(value.projectFound && value.projectId ? { projectId: value.projectId } : {}), workspaceRoot: repositoryRoot };
+    },
+    async createWorkspace(task: Task) {
+      if (!task.directory) throw new ProvenPreSendRefusalError("BB workspace creation requires the task's recorded worktree directory");
+      const directory = realpathSync(task.directory);
+      const repositoryRoot = realpathSync(task.repoPath);
+      const id = workspaceHandleForPath(directory);
+      const old = getWorkspace(id);
+      if (old) {
+        if (old.directory !== directory || old.repositoryRoot !== repositoryRoot) throw new Error("BB workspace identity conflict");
+        const { archivedAt, ...active } = old;
+        if (archivedAt) putWorkspace(active);
+        if (active.projectId) return { id, directory };
+        const inspected = await operation("workspace.inspect", { repositoryRoot });
+        const project = inspected.value as { projectId: string | null; projectFound: boolean };
+        if (!project.projectFound || !project.projectId) throw new Error("BB workspace creation remains unknown; project inspection found no matching project, so it was not resent");
+        putWorkspace({ ...active, projectId: project.projectId });
+        return { id, directory };
+      }
+      // Record custody before the SDK write. If its reply is lost, a later create
+      // adopts the project by a fresh exact-root read and never repeats the write.
+      putWorkspace({ id, directory, repositoryRoot, projectId: "", title: task.title });
+      let result: HostOperationOutcome;
+      try { result = await operation("workspace.create", { repositoryRoot, workspacePath: directory, name: basename(repositoryRoot) || task.title }); }
+      catch (error) {
+        // A local failure before the service request, or a typed refusal before the
+        // SDK write, proves the project create could not have landed. Unknown
+        // outcomes keep the reservation so a later call must observe, never resend.
+        if (error instanceof BbHostOperationNotSentError || (error instanceof ServiceRequestError && (error.code === "invalid_input" || error.code === "refused"))) removeWorkspace(id);
+        throw error;
+      }
+      const value = result.value as { projectId: string; handle: string; path: string; spawned: number };
+      if (value.handle !== id || value.path !== directory || value.spawned !== 0) throw new Error("BB workspace.create returned a mismatched handle or spawned a thread");
+      putWorkspace({ id, directory, repositoryRoot, projectId: value.projectId, title: task.title });
+      return { id, directory };
+    },
+    async findWorkspaces(task: Task) {
+      if (!task.directory) return [];
+      const directory = realpathSync(task.directory);
+      return Object.values(workspaces()).filter(item => item.directory === directory && item.projectId && !item.archivedAt).map(item => ({ id: item.id, directory: item.directory }));
+    },
+    workspaceAvailable,
+    workspaceRef(id: string): HostWorkspaceRef {
+      let available = false;
+      return {
+        get directory() { return getWorkspace(id)?.directory ?? null; },
+        async refresh() { available = await workspaceAvailable(id); return available; },
+        current() { const record = getWorkspace(id); return available && record ? { projectRootPath: record.directory, workspaceDirectory: record.directory, projectId: record.projectId, workspaceKind: "external" } : null; },
+        async archive() {
+          const record = getWorkspace(id);
+          const archivedAt = record?.archivedAt ?? new Date().toISOString();
+          if (record && !record.archivedAt) putWorkspace({ ...record, archivedAt });
+          return { archivedAt, error: null };
+        },
+      };
+    },
+    async taskWorkspaceArchived(id: string) { const record = getWorkspace(id); return !record || Boolean(record.archivedAt); },
     verifyResume: async () => refusal("resume verification"),
     verifyCheckpoint: async () => refusal("checkpoint verification"),
     verifyReplacementSource: async () =>
@@ -173,6 +288,7 @@ export class BbHostConnection {
     private readonly store: Store,
     private readonly registry: HostRegistry<RegisteredHost>,
     private readonly makeAdmission: () => Admission,
+    private readonly dataDir: string,
     now: () => number = Date.now,
   ) {
     this.now = now;
@@ -278,6 +394,8 @@ export class BbHostConnection {
       createBbHostAdapter(
         input.hostId,
         () => this.session?.id === input.hostId,
+        this.dataDir,
+        this.store,
       ),
       admission,
     );

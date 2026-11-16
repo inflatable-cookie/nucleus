@@ -60,8 +60,10 @@ export const hostOperationInputSchemas = {
   "identity.probe": z.object({}).strict(),
   "workspace.create": z.object({
     repositoryRoot: boundedText(4_096),
+    workspacePath: boundedText(4_096).optional(),
     name: boundedText(120),
   }).strict(),
+  "workspace.inspect": z.object({ repositoryRoot: boundedText(4_096), projectId: boundedText(128).optional() }).strict(),
   "run.attach": z.object({
     projectId: boundedText(128),
     title: boundedText(200),
@@ -126,6 +128,7 @@ export const hostOperationValueSchemas = {
     /** `threads.spawn` calls this operation made: a workspace step proves zero. */
     spawned: z.number().int().nonnegative(),
   }).strict(),
+  "workspace.inspect": z.object({ projectId: nullableText(128), projectFound: z.boolean(), path: nullableText(4_096) }).strict(),
   "run.attach": z.object({
     threadId: boundedText(128),
     environmentId: boundedText(128),

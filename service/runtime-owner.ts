@@ -422,7 +422,7 @@ export class QueueRuntime {
     }, options.hostNow ?? Date.now, options.hostIdleGraceMs ?? HOST_IDLE_GRACE_MS);
     const createAdmission = () => new Admission({ ...options.admission, totalLimit: () => this.store.configuredPaseoCallLimit(), workspaceBudget: () => this.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT });
     this.t3Host = this.settings.t3code ? new T3HostConnection(this.settings.t3code, this.dataDir, this.hostRegistry, createAdmission) : null;
-    this.bbHost = new BbHostConnection(this.store, this.hostRegistry, createAdmission);
+    this.bbHost = new BbHostConnection(this.store, this.hostRegistry, createAdmission, this.dataDir);
     const recordedHost = this.hostRegistry.primary()?.id;
     this.admission = recordedHost ? this.hostRegistry.resource(recordedHost, createAdmission) : createAdmission();
     if (options.adapterFactory) {
