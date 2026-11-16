@@ -139,14 +139,16 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
   instead of testing an `@unknown` suffix in three places, and records a reconciliation tick that throws as
   `reconcile-fault` on the reservation it was observing (or on the service error stream when the row itself
   cannot be read) instead of swallowing it every tick: the note's own answer says whether the cause reached
-  the row, and a journal that refuses the write is reported on the service error stream with both the fault
-  and the refusal named, so the fault cannot be lost twice. The framing keeps its existing one-line-per-read
+  the row, a journal that refuses the write is reported on the service error stream with both the fault and
+  the refusal named, and because a write that never landed consumes no dedupe key the same cause is recorded
+  on the next tick once the journal accepts it, so a recovered journal still carries the fault. The framing keeps its existing one-line-per-read
   behaviour and its 64 KiB bound, and the bind keeps its existing mkdir/chmod/removal rules: answering every
   complete line in one read and adopting contract 010's owned-chain checks at bind and teardown are
   behaviour changes, recorded as follow-ups rather than built here (failure 1 keeps the framing seam). Boundary
   tests were added for the callback socket's statuses, for the request bound including an oversized request
-  whose newline arrives in the same write, and for a refused reconcile-fault note reaching the error stream
-  (`test/callback-client.test.ts`, `test/effigy-admission.test.ts`); no existing test was weakened.
+  whose newline arrives in the same write, for a refused reconcile-fault note reaching the error stream, and for
+  that same note landing once the journal recovers (`test/callback-client.test.ts`, `test/effigy-admission.test.ts`);
+  no existing test was weakened.
 - nucleus#1247 (floor 7, 2026-11-15): the two floor-7 `core/store` rows were consolidated and split along
   the seams their rows named, and re-rated at this PR's head. The Spec 041 drain pass left
   `core/store/store-lanes.ts` (9: O1 T2 F2 P2 Pr2) for `core/planning/lane-drains.ts` (9: O2 T1 F2 P2

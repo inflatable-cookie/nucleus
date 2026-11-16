@@ -589,13 +589,15 @@ export class EffigyAdmissionEndpoint {
    * The answer says whether the cause is on the row now: `recorded` is false only
    * when the journal refused the write, and `refusal` names why, so the caller
    * whose whole job is making a failure visible can say so instead of losing it.
+   * A refused write consumes no dedupe key — a note that was never written was
+   * never noted — so the same cause is recorded on the next tick once the journal
+   * accepts again, and only then does it stop repeating.
    */
   private noteOnce(record: HostRunInternalRecord, event: string, key: string, data: Record<string, unknown>): { recorded: boolean; refusal?: string } {
     const dedupeKey = `${event}\u0000${key}`;
     let noted = this.notedReasons.get(record.id);
     if (!noted) { noted = new Set(); this.notedReasons.set(record.id, noted); }
     if (noted.has(dedupeKey)) return { recorded: true };
-    noted.add(dedupeKey);
     try {
       this.scheduler.note(record.id, event, {
         ...data,
@@ -604,6 +606,7 @@ export class EffigyAdmissionEndpoint {
         runtimeSha256: record.effigyRuntime?.sha256 ?? null,
         bindingRefusal: record.effigyRuntimeRefusal ?? null,
       });
+      noted.add(dedupeKey);
       return { recorded: true };
     } catch (error) {
       return { recorded: false, refusal: error instanceof Error ? error.message : String(error) };

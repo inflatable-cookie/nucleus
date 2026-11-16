@@ -1058,3 +1058,55 @@ test("a reconciliation fault whose journal note is refused is reported instead o
   assert.notEqual(record.state, "settled", "a fault never settles the reservation");
   assert.equal(record.settlement, null);
 });
+
+test("a reconcile fault the journal refused once is recorded when the journal recovers", async t => {
+  const scheduler = isolatedScheduler(t);
+  const root = socketFixtureRoot("qadm-");
+  assertSocketPathFits(hostRunAdmissionSocketPath(join(root, "host-run")));
+  const logged: string[] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+  t.after(() => { console.error = originalError; });
+  const endpoint = new EffigyAdmissionEndpoint(scheduler, {
+    stateDir: join(root, "host-run"), watchMs: 20, effigyVersion: SELF_EFFIGY,
+    hookAlive: () => { throw new Error("kernel liveness read refused"); },
+  });
+  await endpoint.start();
+  t.after(async () => { await endpoint.stop(); });
+  // The journal refuses its first note and accepts every later one, which is what
+  // a store recovering from a transient refusal looks like to this endpoint.
+  const realNote = scheduler.note.bind(scheduler) as (...args: unknown[]) => void;
+  let refusals = 0;
+  (scheduler as unknown as { note: (...args: unknown[]) => void }).note = (...args) => {
+    if (refusals++ === 0) throw new Error("journal is read-only");
+    realNote(...args);
+  };
+  let reservationId = "";
+  const faultNotes = () => scheduler.store.hostRunJournal(reservationId)
+    .filter((row: { event: string; data: unknown }) => row.event === "effigy_observation_refused"
+      && (row.data as { kind?: string }).kind === "reconcile-fault");
+  const cwd = mkdtempSync(join(tmpdir(), "adm-fault-retry-"));
+  const reserved = await endpoint.reserve(request("fault-retry-run", cwd), selfAncestry());
+  assert.ok(reserved.reservationId, `reservation accepted (${JSON.stringify(reserved.observation)})`);
+  reservationId = reserved.reservationId!;
+  endpoint.bindHook(reservationId, process.pid, hostRunProcessStartIdentity(process.pid));
+
+  // The refusal is reported...
+  await waitUntil(() => logged.some(line => line.includes("the row refused its fault note")), 6_000,
+    "the first journal refusal is reported");
+  assert.equal(faultNotes().length, 0, "the refused write left nothing on the row");
+  // ...and the same cause is recorded as soon as the journal accepts it, because a
+  // refused write never consumes the dedupe key.
+  await waitUntil(() => faultNotes().length > 0, 6_000, "the recovered journal carries the fault");
+  assert.match(String((faultNotes()[0].data as { reason?: string }).reason), /kernel liveness read refused/,
+    "the recorded note names the fault it could not write before");
+  // Once on the row, the same cause stops repeating — and stops being reported,
+  // because it no longer has nowhere to go.
+  await new Promise<void>(resolve => setTimeout(resolve, 300));
+  assert.equal(faultNotes().length, 1, "a recorded cause is noted once, not once per recovered tick");
+  assert.equal(logged.filter(line => line.includes("the row refused its fault note")).length, 1,
+    "the refusal is reported once, and the recovered note is not reported as a refusal");
+  const record = scheduler.get(reservationId)!;
+  assert.notEqual(record.state, "settled", "a fault never settles the reservation");
+  assert.equal(record.settlement, null);
+});

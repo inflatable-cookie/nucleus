@@ -14,6 +14,7 @@ identity can prove anything at all instead of testing an `@unknown` suffix, and
 records a reconciliation tick that throws on the reservation it was observing,
 once per distinct reason, instead of swallowing it every tick — and when the
 journal refuses that record, both the fault and the refusal are reported on the
-service's error stream rather than lost. The request bound,
+service's error stream, and the record is made on the next tick once the journal
+accepts it, rather than lost. The request bound,
 the framing, the bind and the teardown keep the behaviour they had. No admission
 rule, protocol shape or capacity decision changes.
