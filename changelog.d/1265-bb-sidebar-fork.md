@@ -7,13 +7,11 @@ from one batched read; other groups behave exactly as upstream. The global board
 BB's left rail with an attention badge, and a per-project board renders in a fixed thread
 tab plus a deep-linkable route from the sidebar's project rows.
 
-Usage in BB is BB's own card: a second fork of `provider-usage`, at the same pin and with
-the same patch workflow, adds Spec 059's pace — a marker on each window bar, "N% used ·
-pace P%" and a one-line verdict per account — from the shared projection the board uses, so
-the numbers agree. Custom windows take their length from `startsAt`, their kind or a
-recognised label. Nucleus's BB plugin publishes Grok usage as a `provider-usage.v1` source,
-so the card shows the one subscription BB has no source for. The Nucleus mini gauges are
-gone from BB's rail.
+Nucleus adds no usage UI to BB: glanceable usage is BB's own provider-usage card plus the
+community Usage Pace plugin, which the operator installs as a recommendation rather than a
+dependency (recorded with its BB 0.49 breakage and the reported fix). The full usage
+screen, with the pace and verdict, stays on the board. The thread-list fork is the only
+fork.
 
-The plan gains a sidebar phase (5), the board phase (6) now covers both boards, usage is
-phase 7, and the trial moves to phase 8. Phases 0–4 are unchanged.
+The plan gains a sidebar phase (5), the board phase (6) now covers both boards, and the
+trial moves to phase 7. Phases 0–4 are unchanged.

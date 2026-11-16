@@ -67,10 +67,10 @@ host opt-in.
 
 The [BB host adapter](062-bb-host-adapter.md) is the third host: one BB workspace
 per task nested under its planner thread, per-repository opt-in, a forked copy of
-BB's own thread list whose task group rows carry each task's state, a global board
-in the left rail and a per-project board in the thread, a forked provider-usage card
-carrying Nucleus's pace with Grok published as a usage source, and a phased plan
-whose first phase proves the plugin-backed transport.
+BB's own thread list whose task group rows carry each task's state, a global board in
+the left rail and a per-project board in the thread, BB usage left to BB's own card
+plus the operator-installed Usage Pace plugin, and a phased plan whose first phase
+proves the plugin-backed transport.
 
 ## Retired specs
 
