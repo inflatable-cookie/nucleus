@@ -70,6 +70,8 @@ class FakeExecutor {
   /** The declaration's answer: the acceptance, or the refusal the service wrote instead. */
   acceptance: Record<string, unknown> | null = null;
   refusal: { code: string; message: string } | null = null;
+  private readonly heartbeatAnswers = new Map<string, () => void>();
+  private heartbeats = 0;
 
   private constructor(
     private readonly socket: Socket,
@@ -138,7 +140,17 @@ class FakeExecutor {
             }
             return;
           }
-          if (typeof value.method !== "string") return;
+          if (typeof value.method !== "string") {
+            const settle =
+              typeof value.id === "string"
+                ? client?.heartbeatAnswers.get(value.id)
+                : undefined;
+            if (settle) {
+              client!.heartbeatAnswers.delete(value.id as string);
+              settle();
+            }
+            return;
+          }
           // A reverse request from the service: the identity probe, or an operation.
           const request = frame as {
             id: string;
@@ -216,6 +228,21 @@ class FakeExecutor {
       .filter((op) => op !== "identity.probe");
   }
 
+  /** One liveness heartbeat on this connection: the plugin reads `service.health`. */
+  heartbeat(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const id = `heartbeat-${++this.heartbeats}`;
+      this.heartbeatAnswers.set(id, () => resolve());
+      this.socket.write(
+        encodeFrame({ v: PROTOCOL_VERSION, id, method: "service.health", input: {} }),
+      );
+      setTimeout(() => {
+        if (this.heartbeatAnswers.delete(id))
+          reject(new Error("the service did not answer the heartbeat"));
+      }, 5_000).unref?.();
+    });
+  }
+
   close(): void {
     this.socket.destroy();
   }
@@ -233,6 +260,8 @@ interface Health {
       connectedAt: string;
       hostIds: string[];
       online: boolean;
+      lastHeartbeatAt: string | null;
+      heartbeatStale: boolean;
     }>;
     offlineReason: string;
     lastRefusal: { field: string; reason: string } | null;
@@ -315,6 +344,19 @@ test("a matching identity probe registers the host, and health reports its ident
       { state: listed?.state, reason: listed?.reason },
       { state: "online", reason: "" },
     );
+
+    // Spec 062: liveness comes from a heartbeat on the retained connection, and health
+    // reports when the last one arrived.
+    assert.equal(record.lastHeartbeatAt, null, "a fresh acceptance has heard no heartbeat yet");
+    assert.equal(record.heartbeatStale, false, "a fresh acceptance is not stale");
+    await executor.heartbeat();
+    const beat = await waitForHealth(
+      bridge,
+      (value) => Boolean(value.bb?.hosts[0]?.lastHeartbeatAt),
+      "the heartbeat is recorded",
+    );
+    assert.equal(beat.bb!.hosts[0]!.heartbeatStale, false);
+    assert.ok(Date.parse(beat.bb!.hosts[0]!.lastHeartbeatAt!) > 0);
   } finally {
     executor?.close();
     await bridge.close();

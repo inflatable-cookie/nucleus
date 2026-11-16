@@ -778,6 +778,10 @@ export class QueueRuntime {
   bbHostReleased(input: BbHostReleasedInput) {
     this.bbHost.released(input);
   }
+  /** One liveness heartbeat from the registered executor's own connection. */
+  bbHostHeartbeat(input: { hostId: string; at: string }) {
+    this.bbHost.heartbeat(input.hostId, input.at);
+  }
   private clearPluginPresenceWatch() {
     this.hosts.clearPluginPresenceWatch();
   }

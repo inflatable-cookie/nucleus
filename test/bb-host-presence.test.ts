@@ -27,6 +27,9 @@ import { socketFixtureDirectory } from "./support/socket-fixture";
 
 const silent = { info: () => {}, warn: () => {}, error: () => {} };
 
+/** The service's health, read over the same socket the test already holds a client for. */
+const holderHealth = (client: ServiceClient) => client.request("service.health", {});
+
 /**
  * The real executor over the two SDK reads `identity.probe` uses (`system.version`
  * and `hosts.list`). Phase 1 sends no other operation, so a call beyond them would be
@@ -90,6 +93,8 @@ test("the BB plugin declares the executor role, claims the one bridge presence, 
       signal,
       backoff: { minMs: 20, maxMs: 100 },
       presenceRetryMs: 100,
+      // The heartbeat cadence is injected so the run proves the rule, not the clock.
+      heartbeatMs: 100,
     });
   const running = channel(controller.signal);
   try {
@@ -128,6 +133,18 @@ test("the BB plugin declares the executor role, claims the one bridge presence, 
       true,
       "the plugin holds the claim after the retry, so another host is refused",
     );
+
+    // The retained connection carries the plugin's own liveness heartbeat: health
+    // records when the last one arrived and reports it fresh (Spec 062, "Identity,
+    // connection and faults").
+    const beat = await waitUntil(async () => {
+      const health = (await holderHealth(contender)) as {
+        bb?: { hosts?: Array<{ lastHeartbeatAt: string | null; heartbeatStale: boolean }> };
+      };
+      const record = health.bb?.hosts?.[0];
+      return record?.lastHeartbeatAt ? record : undefined;
+    }, "the plugin's heartbeat reaches the service");
+    assert.equal(beat.heartbeatStale, false, "a heartbeat that arrived is not stale");
 
     // The declaration's acceptance is the connection's own identity proof.
     const first = service.hostExecutorStatus(hostId);

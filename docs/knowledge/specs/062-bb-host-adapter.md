@@ -897,7 +897,11 @@ is reachable.
   started on;
 - the plugin requests the one `service.nucleus-bridge-presence` claim after its declaration and
   retries a refused claim on its retained connection; the plugin-lost fault names
-  `bb plugin reload nucleus` when BB is the connected host.
+  `bb plugin reload nucleus` when BB is the connected host;
+- liveness is a heartbeat: the retained connection reads `service.health` on its own cadence (15 s), the
+  service records `lastHeartbeatAt` for the identity it proved, and health reports
+  `heartbeatStale` after 45 s without one. A late or missing heartbeat never closes the
+  connection and never settles another operation — the T3 lessons this phase applies.
 
 Tests: `test/bb-host-registration.test.ts` (probe, registration, health, refusal by field,
 reconnect, drop), `test/bb-host-presence.test.ts` (the real plugin channel: declaration, presence

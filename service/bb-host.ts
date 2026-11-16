@@ -33,6 +33,13 @@ import {
   type HostOperationOutcome,
 } from "../shared/host-operation";
 
+/**
+ * A live host that has not sent its heartbeat inside this bound is reported stale:
+ * Spec 062 takes liveness from a heartbeat, not from whether a request answered, so
+ * a wedged plugin is visible instead of reading as a healthy idle host.
+ */
+export const BB_HEARTBEAT_STALE_MS = 45_000;
+
 /** One registered host's identity and the diagnostics its executor announced. */
 export interface BbHostRecord {
   hostId: string;
@@ -44,6 +51,10 @@ export interface BbHostRecord {
   /** The probe's own host list, kept as a diagnostic (`identity.probe`'s answer). */
   hostIds: string[];
   online: boolean;
+  /** The last liveness heartbeat this identity's connection sent, or null before one. */
+  lastHeartbeatAt: string | null;
+  /** True while online with no heartbeat inside the staleness bound. */
+  heartbeatStale: boolean;
 }
 
 /** Why a declaration or a probe left the host unregistered. */
@@ -156,11 +167,15 @@ export class BbHostConnection {
   private offlineReason = "";
   private lastRefusal: BbHostRefusal | null = null;
 
+  private readonly now: () => number;
+
   constructor(
     private readonly store: Store,
     private readonly registry: HostRegistry<RegisteredHost>,
     private readonly makeAdmission: () => Admission,
+    now: () => number = Date.now,
   ) {
+    this.now = now;
     const recorded = this.recorded();
     if (recorded) {
       // A restart proves nothing about the host until its executor re-probes, so a
@@ -173,6 +188,8 @@ export class BbHostConnection {
         connectedAt: "",
         hostIds: [],
         online: false,
+        lastHeartbeatAt: null,
+        heartbeatStale: false,
       });
       this.offlineReason =
         "BB plugin is not connected; the identity re-proves on its next probe";
@@ -187,6 +204,7 @@ export class BbHostConnection {
       hosts: [...this.records.values()].map((record) => ({
         ...record,
         online: this.session?.id === record.hostId,
+        heartbeatStale: this.session?.id === record.hostId && this.stale(record.lastHeartbeatAt),
       })),
       offlineReason: this.session ? "" : this.offlineReason,
       lastRefusal: this.lastRefusal,
@@ -292,11 +310,32 @@ export class BbHostConnection {
       connectedAt: input.connectedAt,
       hostIds: [...input.hostIds],
       online: true,
+      // A fresh acceptance is itself proof of liveness until the first heartbeat.
+      lastHeartbeatAt: null,
+      heartbeatStale: false,
     });
     this.offlineReason = "";
     this.lastRefusal = null;
     this.store.advanceRevision();
     return { ok: true };
+  }
+
+  /**
+   * One liveness heartbeat from the executor connection that holds this identity's
+   * claim. A heartbeat for an identity that is not the connected one proves nothing
+   * and is ignored.
+   */
+  heartbeat(hostId: string, at: string): void {
+    if (!this.session || this.session.id !== hostId) return;
+    const record = this.records.get(hostId);
+    if (!record) return;
+    this.records.set(hostId, { ...record, lastHeartbeatAt: at, heartbeatStale: false });
+    this.store.advanceRevision();
+  }
+
+  private stale(lastHeartbeatAt: string | null): boolean {
+    if (!lastHeartbeatAt) return this.now() - Date.parse(this.session?.connectedAt ?? "") > BB_HEARTBEAT_STALE_MS;
+    return this.now() - Date.parse(lastHeartbeatAt) > BB_HEARTBEAT_STALE_MS;
   }
 
   /**

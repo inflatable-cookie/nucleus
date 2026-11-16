@@ -215,8 +215,11 @@ host offline and registers nothing, because this service serves one BB host
 identity. A reconnect — a plugin reload or a BB restart — proves the identity
 again through a new probe, and a dropped connection retires the claim and settles
 every in-flight operation as unknown delivery, never replayed. `service.health`
-reports the registered identity with the versions its executor announced and,
-while it is offline, the field that refused it. The registered adapter refuses
+reports the registered identity with the versions its executor announced, when
+its last heartbeat arrived, and — while it is offline — the field that refused it.
+Liveness is that heartbeat (the plugin reads `service.health` on its retained
+connection); a late heartbeat is reported as stale and never closes the connection
+or settles another operation. The registered adapter refuses
 every task-workflow call by name, so no dispatch path reaches a task yet. The
 plugin also requests the one `service.nucleus-bridge-presence` claim, retrying a
 refused claim on its retained connection like the Paseo bridge.

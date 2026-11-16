@@ -52,6 +52,8 @@ export interface HostChannelOptions {
   backoff?: { minMs: number; maxMs: number };
   /** How often a refused presence claim is retried on the retained connection. */
   presenceRetryMs?: number;
+  /** How often the retained connection sends its liveness heartbeat. */
+  heartbeatMs?: number;
 }
 
 interface ServiceIdentity {
@@ -68,6 +70,14 @@ const BACKOFF_MAX_MS = 5_000;
  * the existing rule). The Paseo bridge polls at the same cadence.
  */
 const PRESENCE_RETRY_MS = 2_000;
+
+/**
+ * How often this retained connection proves it is still being serviced (Spec 062,
+ * "Identity, connection and faults": liveness comes from a heartbeat, never from
+ * whether some request happened to answer). `service.health` is the cheapest method
+ * the service already answers, so the heartbeat adds no protocol surface.
+ */
+const HEARTBEAT_MS = 15_000;
 
 /** Read the service identity beside its socket; a missing or partial file is an ordinary "not up yet". */
 export function readServiceIdentity(serviceDataDir: string): ServiceIdentity | null {
@@ -131,7 +141,8 @@ function runOnce(options: HostChannelOptions, identity: ServiceIdentity, onDecla
     >();
     let presenceClaimed = false;
     let presenceTimer: NodeJS.Timeout | null = null;
-    let presenceSequence = 0;
+    let heartbeatTimer: NodeJS.Timeout | null = null;
+    let sequence = 0;
     let handshake: NodeJS.Timeout | null = setTimeout(() => finish(`the handshake did not finish within ${HANDSHAKE_TIMEOUT_MS} ms`), HANDSHAKE_TIMEOUT_MS);
     handshake.unref?.();
     const finish = (reason: string) => {
@@ -144,6 +155,10 @@ function runOnce(options: HostChannelOptions, identity: ServiceIdentity, onDecla
       if (presenceTimer) {
         clearInterval(presenceTimer);
         presenceTimer = null;
+      }
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
       }
       pending.clear();
       options.signal.removeEventListener("abort", onAbort);
@@ -207,6 +222,14 @@ function runOnce(options: HostChannelOptions, identity: ServiceIdentity, onDecla
             options.presenceRetryMs ?? PRESENCE_RETRY_MS,
           );
           presenceTimer.unref?.();
+          // This connection's own liveness: the service records when it last heard from
+          // the plugin, so a wedged plugin stops reading as a healthy idle host.
+          heartbeatTimer = setInterval(
+            () => heartbeat(),
+            options.heartbeatMs ?? HEARTBEAT_MS,
+          );
+          heartbeatTimer.unref?.();
+          heartbeat();
           return;
         }
         const request = asServiceRequest(frame);
@@ -262,7 +285,7 @@ function runOnce(options: HostChannelOptions, identity: ServiceIdentity, onDecla
        */
       function claimPresence(): void {
         if (settled || !declared || presenceClaimed) return;
-        const id = `bb-plugin-presence-${++presenceSequence}`;
+        const id = `bb-plugin-presence-${++sequence}`;
         pending.set(id, (answer) => {
           if (answer.error) return;
           if (
@@ -284,6 +307,18 @@ function runOnce(options: HostChannelOptions, identity: ServiceIdentity, onDecla
           method: "service.nucleus-bridge-presence",
           input: {},
         });
+      }
+
+      /**
+       * One liveness heartbeat. The answer carries nothing this plugin needs: what it
+       * proves is that the service is still reading this connection, so a host whose
+       * plugin wedged stops looking alive instead of looking busy.
+       */
+      function heartbeat(): void {
+        if (settled || !declared) return;
+        const id = `bb-plugin-heartbeat-${++sequence}`;
+        pending.set(id, () => { /* the acknowledgement is the evidence; nothing to do */ });
+        send({ v: PROTOCOL_VERSION, id, method: "service.health", input: {} });
       }
 
       function respond(response: ServiceResponse): void { send(response); }

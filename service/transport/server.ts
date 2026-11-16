@@ -451,7 +451,17 @@ export class QueueService {
           } else connection.hostPresence = true;
           return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result: { active: true } }, false, request.method);
         }
-        case "service.health": return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result: this.health() }, false, request.method);
+        case "service.health": {
+          // The registered executor's own health read is its liveness heartbeat (Spec
+          // 062: liveness comes from a heartbeat, never from whether a request
+          // answered). It changes no answer and no connection: a heartbeat that never
+          // arrives, or arrives late, is reported in health and never closes the link.
+          const executor = connection.hostExecutor;
+          if (executor && this.hostExecutors.get(executor.hostId) === executor) {
+            void this.executor.callHandler("bbHostHeartbeat", { hostId: executor.hostId, at: new Date().toISOString() }).catch(() => {});
+          }
+          return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result: this.health() }, false, request.method);
+        }
         // The reverse host-operation role (Spec 062, decision 1). Additive: a client
         // that never declares it sees the service exactly as before, and the one
         // presence claim, roll recovery and the catalogue path never read it.
