@@ -120,8 +120,13 @@ The detached supervisor is three owners: `project-qa-pipeline.ts` runs the order
 stages and records every step, `project-qa-teardown.ts` reruns a settled run's
 recorded teardown, and `project-qa-detached-io.ts` holds the real executors and
 durable writes. `project-qa-worktree.ts` owns the run's linked checkout, its
-sibling links, the `paseo.json` worktree hooks and the checkout's removal.
-`project-qa-tap-failures.ts` owns failure parsing, identities and truncation.
+sibling links, the `paseo.json` worktree hooks and the checkout's removal. A
+checkout that dies mid-creation (its clone or worktree add exits non-zero, or
+is killed under load, before the run starts) is removed under the same
+ownership proof and created once more after a bounded backoff; two failures
+settle the run as a plain failure, never as an uncertain checkout retained for
+reconciliation. `project-qa-tap-failures.ts` owns failure parsing, identities
+and truncation.
 `supervisor-process.ts` owns the detached supervisor's own process lifecycle — the
 launch shape and the stale stop with its proof — for milestone QA, project
 validation and the host-run endpoint alike, so neither family keeps its own copy.
