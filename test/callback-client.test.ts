@@ -1,7 +1,7 @@
 import { observeIdle } from './support/fakes';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {createServer} from 'node:http';
+import {createServer,request as httpRequest} from 'node:http';
 import {mkdtempSync,writeFileSync,readFileSync,rmSync,realpathSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -13,6 +13,42 @@ import {completionSchema, submissionSchema} from '../shared/contracts';
 import {createHash} from 'node:crypto';
 import {startCallbacks} from '../service/callbacks/callback';
 import type {Adapter} from '../core/host';
+
+test('callback socket keeps every refusal status and picks it from the refusal itself',async()=>{
+ // The socket is the boundary and the statuses are the ones it already answered:
+ // an unlisted route is a 404, a body past its route's bound a 413, a credential
+ // this service does not accept a 401, and everything else (a body it cannot
+ // decode, a schema-invalid request, an engine refusal) a 409. None of them is
+ // chosen by matching an error message.
+ const dir=realpathSync(mkdtempSync(join(tmpdir(),'ns-callback-status-'))),socketPath=join(dir,'s');
+ const store=new Store(join(dir,'queue.sqlite'));
+ const engine=new Engine(store,{observe:observeIdle('ws','worker')} as unknown as Adapter);
+ const stop=await startCallbacks(socketPath,join(dir,'helper.mjs'),engine);
+ const call=(path:string,body:string,token='fixture-secret')=>new Promise<{status:number;body:string}>((resolve,reject)=>{
+  const pending=httpRequest({socketPath,path,method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json','content-length':Buffer.byteLength(body)}},response=>{
+   let text='';response.on('data',(chunk:Buffer)=>{text+=chunk;});response.on('end',()=>resolve({status:response.statusCode??0,body:text}));
+  });
+  pending.on('error',reject);pending.end(body);
+ });
+ try{
+  const unknown=await call('/no-such-route','{}');
+  assert.equal(unknown.status,404,'an unlisted route is not found, and the route table is the allowlist');
+  const malformed=await call('/complete','not json');
+  assert.equal(malformed.status,409,'a body this socket cannot decode keeps its existing refusal status');
+  assert.match(malformed.body,/not json|Unexpected/i,'the refusal still says what the body was');
+  const invalidShape=await call('/complete',JSON.stringify({eventId:'a'.repeat(64)}));
+  assert.equal(invalidShape.status,409,'a schema-invalid request keeps its existing refusal status');
+  const oversized=await call('/task-next',JSON.stringify({pad:'x'.repeat(70_000)}));
+  assert.equal(oversized.status,413,'a body past its route\'s own bound keeps the socket\'s 413');
+  const unauthorized=await call('/complete',JSON.stringify({eventId:'a'.repeat(64),taskId:'task',runId:'run',status:'blocked',summary:'Fixture'}));
+  assert.equal(unauthorized.status,401,'an unknown credential is a 401, not text matched from the engine');
+  assert.deepEqual(JSON.parse(unauthorized.body),{error:'Unauthorized callback'});
+  store.setCredential('run-unknown-caller','fixture-secret');
+  const refused=await call('/task-dependencies',JSON.stringify({callerTaskId:'no-such-task',callerRunId:'run-unknown-caller',taskId:'other'}),'fixture-secret');
+  assert.equal(refused.status,409,'a well-formed call the engine refuses keeps its conflict status');
+  assert.match(JSON.parse(refused.body).error,/Task not found|Stale Nucleus assignment/,'the engine\'s own refusal is answered as it stands');
+ }finally{await engine.stop();await stop();store.close();rmSync(dir,{recursive:true,force:true});}
+});
 
 test('shared callback transport rejects malformed responses and timeouts without replay',async()=>{
  const {callbackRequest}=await import(new URL('../shared/service/callback-client.mjs',import.meta.url).href);

@@ -3,6 +3,15 @@ import { availabilitySchema } from "../../shared/contracts";
 import type { Completion } from "../../shared/contracts";
 import { StoreCore, digest } from "./store-core";
 
+/**
+ * A callback that presented no credential, a revoked one, or another run's
+ * token. It carries the refusal as a type so a caller (the callback socket's
+ * status choice) decides from the class, never by matching this message.
+ */
+export class UnauthorizedCallbackError extends Error {
+  constructor() { super("Unauthorized callback"); this.name = "UnauthorizedCallbackError"; }
+}
+
 export class StoreAuth {
   constructor(private readonly core: StoreCore) {}
   private get db() { return this.core.db; }
@@ -25,6 +34,20 @@ export class StoreAuth {
     const row = this.db.prepare("SELECT hash FROM receipts WHERE id=? AND task=? AND run=?").get(id, task, run) as { hash?: string } | undefined;
     return row?.hash ?? null;
   }
+  /**
+   * The arrival position and stored hash of one receipt bound to this task and
+   * run, or null when it is absent or bound elsewhere. Position is the row order
+   * the receipts keep, so a later receipt compares greater.
+   */
+  receiptPosition(id: string, task: string, run: string): { sequence: number; hash: string } | null {
+    const row = this.db.prepare("SELECT rowid AS sequence, hash FROM receipts WHERE id=? AND task=? AND run=?").get(id, task, run) as { sequence: number; hash: string } | undefined;
+    return row ?? null;
+  }
+  /** The arrival position of the first receipt a run recorded on its task, or null when it recorded none. */
+  firstReceiptSequence(task: string, run: string): number | null {
+    const row = this.db.prepare("SELECT rowid AS sequence FROM receipts WHERE task=? AND run=? ORDER BY rowid LIMIT 1").get(task, run) as { sequence: number } | undefined;
+    return row?.sequence ?? null;
+  }
   /** Completion writes preserve any report intent/response already attached to the same receipt. */
   setCompletionReceipt(id: string, task: string, run: string, hash: string, response: string): void {
     this.db.prepare("INSERT INTO receipts(id,task,run,hash,response) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET task=excluded.task,run=excluded.run,hash=excluded.hash,response=excluded.response").run(id,task,run,hash,response);
@@ -37,7 +60,7 @@ export class StoreAuth {
   }
   authenticate(run: string, token: string) {
     const credential = this.db.prepare("SELECT hash, revoked FROM credentials WHERE run=?").get(run);
-    if (!credential || credential.revoked || credential.hash !== digest(token)) throw new Error("Unauthorized callback");
+    if (!credential || credential.revoked || credential.hash !== digest(token)) throw new UnauthorizedCallbackError();
     const binding = this.db.prepare(`SELECT json_extract(r.data,'$.hostId') AS runHost,
         json_extract(t.data,'$.hostId') AS taskHost FROM runs r LEFT JOIN tasks t ON t.id=r.taskId WHERE r.id=?`).get(run);
     if (binding && (!binding.taskHost || binding.runHost !== binding.taskHost)) throw new Error('Waiting for a proven run host');

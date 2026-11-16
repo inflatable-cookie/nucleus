@@ -329,7 +329,7 @@ move. Enforces the force rules in [Verbs](#verbs). Pures:
 `forceMergeSourceRefusal`, `forceMergeAcceptance`, `forceMergeAdmission`,
 `forceMovePatch`. Delegates remain on Engine.
 
-**MoveControls** (`core/verbs/moves.ts`). The owner `move` verb: to work,
+**MoveControls** (`core/verbs/moves/`). The owner `move` verb: to work,
 review, merge and closeout, and closeout's external-merge reconciliation.
 `restart role=worker` passes its arm into `moveToWork` inside that transaction.
 Enforces [Retained and replaced readers](#retained-and-replaced-readers),

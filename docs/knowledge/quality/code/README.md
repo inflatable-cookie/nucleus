@@ -1,39 +1,5 @@
 # Code-module quality tables
 
-- nucleus#1250 (floor 7, 2026-11-15): the three floor-7 core/workspaces rows were simplified and split along
-  the seams their rows named. `core/workspaces/external-workspace-archive.ts` reaches 8 (O2 T1 F2 P1 Pr2): it is
-  one pass in four named steps — the task's own debt (`owesCatalogArchive`), the complete same-path inventory
-  (`readCatalogRegistrations`), one registration's turn (`archiveOneRegistration`) and the one record of its
-  outcome (`settleNativeOutcome`) — and a breaker deferral that never reached Paseo is the record's new typed
-  `deferredByAdmission` fact (`shared/schema/workspace.ts`), not a phrase in `detail`. The pre-fix detail-prefix
-  branch is gone with `test/archive-backpressure-retry.test.ts`'s one test that proved it, and observing an unknown
-  answer answers `absent`, `present` or an unreadable cause instead of the error text as a value. Typed facts
-  stays 1 on the one read that remains: whether the shared `cleanupReason` still carries this effect's cause is a
-  `startsWith` over another owner's free-text field (`ownsCleanupReason`), and a settlement followed by a sibling
-  archive clears it (`test/external-archive-cleanup-owner.test.ts`). A durable typed owner for that field would
-  remove the read, but it is a protocol change across its writers, so it is not built here.
-  `core/workspaces/workspace-lifecycle.ts` reaches 8 (O2 T2 F1 P1 Pr2): it has one private `placementRoots` list,
-  takes the live data home from `checkout-volume`'s `liveCheckoutDataDir`, matches a registration by the exact
-  allocated path or the task's own slug and id instead of a folder's basename, answers the same-path registration
-  check as reuse/create/unreadable, and reads ancestry through the shared `gitAncestry`, so an unreadable read
-  refuses on its own cause instead of reading as two diverged lines. Failure stays 1 because both callers of that
-  check still collapse `unreadable` to create — an unknown inventory is treated as absent, against Spec 017's
-  never-add-a-second-registration rule — and its `skipped` progress line is a trace the engine's hook never reads;
-  making the check refuse is a named follow-up.
-  `core/workspaces/workspace-continuation.ts` is the folder
-  `core/workspaces/workspace-continuation/`: the retained and closeout host policy (`host.ts`, 9), the parked
-  accepted PR's reconciliation (`accepted-pr.ts`, 9) and the barrel that keeps every import path (`index.ts`, 10).
-  The reconciliation is one shared parked state with the operator's request and the retained delivery as two named
-  conditions that the may-apply check and the reconciliation both read; a host that cannot look a registration up
-  is attention instead of reading as none-found and recovering a second registration for one folder. Boundary
-  tests were added for the two typed facts the rows named (the deferral flag, the ancestry refusal), the
-  registration decision and the accepted-PR decision. Follow-ups are named in the PR rather than built here: the
-  same-path registration check still proceeds on an unreadable inventory; the parked reconciliation reason is
-  still read as text (a durable typed flag would silently stop reconciling tasks parked before it existed); the
-  continuation preflight ignores the answer to `workspace.refresh()` where the process proof treats it as
-  unreadable; and `liveCheckoutDataDir` should fail closed where it now falls back to a string compare. `shared/schema/workspace.ts` keeps its 7 with its `loc` and
-  evidence moved to the new lines.
-
 - nucleus#1244 (floor 7, 2026-11-15): the four floor-7 core/review rows were split, consolidated or
   deleted along the seams their rows named, and re-rated at this PR's head. `core/review/review-continuation.ts`
   is now the folder `core/review/review-continuation/`: the composition and the one authorized reviewer
@@ -179,6 +145,34 @@ the `136cf0de` sweep, and these tables carry every row added or replaced since.
 
 ## Re-rates
 
+- nucleus#1251 (floor 7, 2026-11-15): the two floor-7 `service/callbacks` rows were simplified and hardened
+  along the seams their rows named, and re-rated at this PR's head. `service/callbacks/callback.ts` (8: O2 T2
+  F1 P1 Pr2) keeps every route in one table that is both the allowlist and the dispatch, so the if/else chain
+  and its second route list are gone, and the status of a refusal comes from the refusal itself — the
+  authentication refusal is `core/store/store-auth.ts`' typed `UnauthorizedCallbackError` (401) instead of a
+  message the socket compared against, while the oversized body keeps its 413 and every other refusal keeps
+  the 409 it already answered. Malformed, schema-invalid and internal-fault inputs still share that 409:
+  separating them is a behaviour change this structural task records as a follow-up instead of building
+  (failure 1). The generated helper is the shared client's own bytes plus its report program:
+  `shared/service/callback-client.mjs` is self-contained again, its `callbackTransportPhase` re-export moved
+  to `shared/service/transport.mjs` where the phase contract is owned, and `bin/mcp-report.mjs` imports that
+  owner directly, so the helper's two text replacements are gone (proportion 1: the helper program still
+  shares the file with the socket). `service/callbacks/effigy-admission-endpoint.ts` (8: O2 T2 F1 P1 Pr2) uses
+  the host-run socket owner's one answer probe instead of its own copy, asks
+  `core/machine/start-identity.ts`' `startIdentityProves` whether a recorded identity can prove anything
+  instead of testing an `@unknown` suffix in three places, and records a reconciliation tick that throws as
+  `reconcile-fault` on the reservation it was observing (or on the service error stream when the row itself
+  cannot be read) instead of swallowing it every tick: the note's own answer says whether the cause reached
+  the row, a journal that refuses the write is reported on the service error stream with both the fault and
+  the refusal named, and because a write that never landed consumes no dedupe key the same cause is recorded
+  on the next tick once the journal accepts it, so a recovered journal still carries the fault. The framing keeps its existing one-line-per-read
+  behaviour and its 64 KiB bound, and the bind keeps its existing mkdir/chmod/removal rules: answering every
+  complete line in one read and adopting contract 010's owned-chain checks at bind and teardown are
+  behaviour changes, recorded as follow-ups rather than built here (failure 1 keeps the framing seam). Boundary
+  tests were added for the callback socket's statuses, for the request bound including an oversized request
+  whose newline arrives in the same write, for a refused reconcile-fault note reaching the error stream, and for
+  that same note landing once the journal recovers (`test/callback-client.test.ts`, `test/effigy-admission.test.ts`);
+  no existing test was weakened.
 - nucleus#1247 (floor 7, 2026-11-15): the two floor-7 `core/store` rows were consolidated and split along
   the seams their rows named, and re-rated at this PR's head. The Spec 041 drain pass left
   `core/store/store-lanes.ts` (9: O1 T2 F2 P2 Pr2) for `core/planning/lane-drains.ts` (9: O2 T1 F2 P2

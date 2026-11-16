@@ -6,4 +6,5 @@ export function callbackRequest<T = unknown>(
   options?: { timeoutMs?: number; timeoutMessage?: string },
 ): Promise<T>;
 
-export function callbackTransportPhase(error: unknown): "connect" | "inflight" | "response" | null;
+/** This launch's callback environment value, or undefined. */
+export function callbackEnvValue(name: string, env?: Record<string, string | undefined>): string | undefined;
