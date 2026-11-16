@@ -24,7 +24,11 @@ import { settlementHeld, startsNoRuns } from "../closeout/queue-drain";
 function recordWakeFailure(store: Store, stopped: boolean, taskId: string, wake: string, error: unknown): void {
   if (stopped) return;
   const detail = error instanceof Error ? error.message : String(error);
-  store.event(taskId, 'wake_failed', `${wake} failed: ${detail}`.slice(0, 2000));
+  // The record is best-effort by contract, like the engine's own diagnostics: a
+  // store that is closing refuses the write, and a lost wake is never resent
+  // because its record could not be written either.
+  try { store.event(taskId, 'wake_failed', `${wake} failed: ${detail}`.slice(0, 2000)); }
+  catch { /* the store refused the record; the wake itself is still lost */ }
 }
 
 /**
@@ -348,17 +352,13 @@ export class TaskWakes {
   /**
    * Drive only one repository's queued lanes. A submission, promotion or
    * released capacity schedules the affected repository; it never authorizes a
-   * fleet-wide pass. Every caller is fire-and-forget, so a pass-level failure is
-   * recorded as the engine's repository-wake diagnostic for the next reader.
+   * fleet-wide pass. A pass-level failure loses no state: the queue is durable
+   * and each task the dispatch pass visits records its own fault, so the next
+   * repository wake is the retry and this stays a fire-and-forget call.
    */
   wakeRepository(repoPath: string | null | undefined): Promise<void> {
     if (this.engine.stopped || !repoPath) return Promise.resolve();
-    return this.engine.dispatchQueued(repoPath).then(() => {
-      if (this.store.getMeta('repositoryWakeError') !== undefined) this.store.deleteMeta('repositoryWakeError');
-    }, error => {
-      if (this.engine.stopped) return;
-      this.store.setMeta('repositoryWakeError', `${repoPath}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 2000));
-    });
+    return this.engine.dispatchQueued(repoPath).catch(() => { /* the durable queue keeps every task the pass did not reach */ });
   }
 
   /** Clears every pending timer. `Engine.stop` calls this before the projections stop. */

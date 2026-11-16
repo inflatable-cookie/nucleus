@@ -73,3 +73,16 @@ test('a wake that fails with the engine running is recorded on the task', async 
   assert.equal(recorded.length, 1, 'the lost wake is on the task timeline');
   assert.match(recorded[0]!.detail, /Task quantum wake failed: audit lane discarded/);
 });
+
+test('recording a failed wake never becomes the failure itself', async t => {
+  const f = fixture(t);
+  const task = f.add();
+  (f.engine as unknown as Loose).scheduleTaskQuantum = async () => { throw new Error('audit lane discarded'); };
+  // A store that is closing refuses the write; the wake is lost either way, so the
+  // record cannot be allowed to surface as its own unhandled failure.
+  f.store.event = (() => { throw new Error('database is not open'); }) as unknown as typeof f.store.event;
+
+  await f.engine.wakeTask(task.id);
+
+  assert.ok(true, 'the wake promise settled instead of rejecting through the record');
+});
