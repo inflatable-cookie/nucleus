@@ -124,7 +124,7 @@ export class Delegation {
         ? 'NUCLEUS_TICKET= nucleus question.answer -'
         : 'nucleus question.answer -';
     const helper = route?.kind === 'ticket' && this.adapter.reportingViaMcp === false
-      ? `\nOn a host without per-thread MCP, the packaged nucleus helper with this run's ticket is the same command:\nnode ${this.quote(route.helperPath)} ${this.quote(route.ticketPath)} answer <<'JSON'\n${json}\nJSON`
+      ? `\nOn a host without per-thread MCP, the packaged nucleus helper with this run's ticket is the same command:\nNUCLEUS_TICKET=${this.quote(route.ticketPath)} NUCLEUS_CONTINUATION_TICKET= nucleus helper report answer <<'JSON'\n${json}\nJSON`
       : '';
     return `Task: ${task.reference ?? task.id} — ${task.title}\nQuestion id: ${id}\n${prompt}\nAnswer with this command; write nothing else in this thread. For operator-only matters set "decision":"operator" instead of answer.\n${command} <<'JSON'\n${json}\nJSON${helper}`;
   }

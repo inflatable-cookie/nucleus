@@ -45,7 +45,7 @@ const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 const boundAnswerCommand = (commands: Array<{ type?: string; threadId?: string; commandId?: string; text?: string }>, threadId: string, helperPath: string, runId: string, commandId?: string) => {
   const ticketPath = join(dirname(helperPath), 'tickets', `${runId}.json`);
   const cli = `NUCLEUS_TICKET=${quote(ticketPath)} nucleus question.answer -`;
-  const helper = `node ${quote(helperPath)} ${quote(ticketPath)} answer`;
+  const helper = `NUCLEUS_TICKET=${quote(ticketPath)} NUCLEUS_CONTINUATION_TICKET= nucleus helper report answer`;
   return commands.find(command => command.type === 'message.dispatch' && command.threadId === threadId
     && (commandId === undefined || command.commandId === commandId)
     && typeof command.text === 'string'
@@ -486,13 +486,20 @@ test('T3 adapter asks a retained reviewer and binds uncertain run creation', asy
     const askId = store.eventsAll(task.id).find(event => event.kind === 'agent_ask')!.detail.split(':')[0]!;
     const consult = boundAnswerCommand(server.commands, reviewer.id, helperPath, 'run-review-later', `ns-agent-ask-reviewer-${askId}`)!;
     assert.match(consult.text!, /nucleus question.answer -/);
+    assert.doesNotMatch(consult.text!, /node .*worker-report/);
     assert.equal(consult.text!.includes('PASEO_AGENT_ID='), false);
     assert.equal(consult.text!.includes(`tickets/run-review.json`), false);
     const reviewerTicket = join(directory, 'tickets', 'run-review-later.json');
     await waitUntil(() => existsSync(reviewerTicket), 'reissued reviewer ticket');
-    const helperAnswer = await spawnHelper(helperPath, reviewerTicket, {
-      questionId: `ns-agent-ask-reviewer-${askId}`, answer: 'Keep the current T3 approach.', reason: 'Within the approved outcome.',
-    }, ['answer']);
+    const helperAnswer = await new Promise<{ code: number | null; out: string; err: string }>((resolve, reject) => {
+      const child = spawn(process.execPath, [new URL('../bin/nucleus.mjs', import.meta.url).pathname, 'helper', 'report', 'answer'], {
+        stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, NUCLEUS_HELPER: helperPath, NUCLEUS_TICKET: reviewerTicket, NUCLEUS_CONTINUATION_TICKET: '', NUCLEUS_CONTINUATION_RUN_ID: '' },
+      });
+      let out = '', err = '';
+      child.stdout.on('data', chunk => { out += chunk; }); child.stderr.on('data', chunk => { err += chunk; });
+      child.on('error', reject); child.on('close', code => resolve({ code, out, err }));
+      child.stdin.end(JSON.stringify({ questionId: `ns-agent-ask-reviewer-${askId}`, answer: 'Keep the current T3 approach.', reason: 'Within the approved outcome.' }));
+    });
     assert.equal(helperAnswer.code, 0, helperAnswer.err);
     const answered = await pending;
     assert.equal(answered.code, 0, answered.err);
