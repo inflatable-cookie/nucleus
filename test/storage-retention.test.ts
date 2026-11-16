@@ -201,7 +201,7 @@ test('B8: an identical cleanup observation writes no event, and a changed one st
     const task = f.add('cleanup', { workspaceId: 'ws-1' });
     const hooks = buildOutputCleanupHooks(f.store, task.id, 'ws-1', directory, () => true);
     const events = () => f.store.eventsAll(task.id).filter(event => event.kind.startsWith('build_output_cleanup_'));
-    const result = { detail: 'Removed task-local Cargo target output at /checkout/target', removed: true, safe: true };
+    const result = { detail: 'Removed task-local Cargo target output at /checkout/target', removed: true, safe: true, observations: ['removed' as const] };
     hooks.observed(result);
     assert.equal(events().length, 1);
     const version = f.store.task(task.id).version;

@@ -22,12 +22,26 @@ export const runtimeRetirementSchema = z.object({
 
 export type RuntimeRetirement = z.infer<typeof runtimeRetirementSchema>;
 
+/**
+ * What one recorded cleanup observed about the root it settled (nucleus#1252).
+ * The cleanup that observed it writes the fact, so no reader recovers it from
+ * the record's prose: `removed` a build output root, `retained` dependencies kept
+ * for the next continuation, `link` a symlink left in place with its target
+ * untouched, `empty` no build output root present at all.
+ */
+export const buildOutputObservationSchema = z.enum(["removed", "retained", "link", "empty"]);
+export type BuildOutputObservation = z.infer<typeof buildOutputObservationSchema>;
+
 export const buildOutputCleanupSchema = z.object({
   workspaceId: z.string().min(1).max(240), directory: z.string().min(1).max(1024),
   state: z.enum(["intent", "complete", "skipped", "uncertain"]), detail: z.string().default(""), at: z.string(),
   // Queue #342: a run-bound record names the finished run whose regenerable output it settles.
   // Terminal workspace records have no run and keep one record per workspace.
   runId: z.string().min(1).max(240).optional(), agentId: z.string().min(1).max(240).optional(),
+  // What the cleanup observed. Absent on a record written before this field
+  // existed, and an empty list means it claims no observation: neither ever
+  // means "output present".
+  observations: z.array(buildOutputObservationSchema).optional(),
 }).strict();
 
 export type BuildOutputCleanup = z.infer<typeof buildOutputCleanupSchema>;

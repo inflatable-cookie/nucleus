@@ -1,16 +1,17 @@
-import type { BuildOutputCleanup } from "./contracts";
+import type { BuildOutputCleanup, BuildOutputObservation } from "./contracts";
 
 /**
  * Nucleus #395 (papercut: a continuation reused artifacts a run-bound cleanup had
- * already settled). Existing `next`, task detail and continuation prompts now
- * quote the task's recorded run-bound build output cleanup before any artifact
- * is reused, so a later proof gate cannot mistake an earlier build, cache,
- * binary or test result for present output.
+ * already settled). `next`, task detail and continuation prompts quote the task's
+ * recorded run-bound build output cleanup before any artifact is reused, so a
+ * later proof gate cannot mistake an earlier build, cache, binary or test result
+ * for present output.
  *
  * The record is provenance, not a claim about right now: `complete` names
  * Nucleus's own cleanup obligation for that root, so it neither proves the target
- * was deleted nor that anything remains. This module only formats stored
- * records; it adds no probe, record, policy or authority.
+ * was deleted nor that anything remains. What the cleanup observed is the
+ * record's own `observations` field; this module only formats stored records and
+ * adds no probe, record, policy or authority.
  */
 
 /** How much of one recorded detail the disclosure quotes. */
@@ -19,9 +20,6 @@ export const BUILD_OUTPUT_DETAIL_LIMIT = 400;
 export const BUILD_OUTPUT_RECORD_LIMIT = 4;
 /** How long the one-sentence owner-verb note may be. */
 export const BUILD_OUTPUT_NOTE_LIMIT = 480;
-
-/** What a record's own detail says Nucleus observed, if anything. */
-export type BuildOutputObservation = "removed" | "retained" | "link" | "empty";
 
 const observationLabels: Record<BuildOutputObservation, string> = {
   removed: "a recorded removal",
@@ -36,7 +34,7 @@ export interface BuildOutputDisclosureEntry {
   workspaceId: string;
   at: string;
   state: BuildOutputCleanup["state"];
-  /** What the recorded detail says was observed; empty when it claims no observation. */
+  /** What the record's own cleanup observed; empty when it records none. */
   observations: BuildOutputObservation[];
   /** The recorded detail, whitespace-collapsed and bounded. */
   detail: string;
@@ -73,8 +71,15 @@ export const boundedBuildOutputDetail = (detail: string, limit = BUILD_OUTPUT_DE
   return text.length <= limit ? text : `${text.slice(0, limit - 1).trimEnd()}…`;
 };
 
-/** Read the recorded detail, never the state alone, for what Nucleus observed. */
-export function buildOutputObservations(detail: string): BuildOutputObservation[] {
+/**
+ * What a stored record's detail sentence says its cleanup observed, for a record
+ * written before the typed field existed. The record's own `observations` decide
+ * whenever they are present; only an older row is read this way, so the labels a
+ * continuation already saw never disappear when the field is introduced. The
+ * whole recorded detail is read, because the bounded quote can cut the sentence
+ * that names an observation.
+ */
+function recordedBuildOutputObservations(detail: string | null | undefined): BuildOutputObservation[] {
   const text = detail ?? "";
   const found: BuildOutputObservation[] = [];
   if (/Removed (?:task-local )?(?:Cargo target output|node_modules) at /.test(text)) found.push("removed");
@@ -83,6 +88,13 @@ export function buildOutputObservations(detail: string): BuildOutputObservation[
   if (!found.length && /No build output roots were present/.test(text)) found.push("empty");
   return found;
 }
+
+/**
+ * What a cleanup record observed: its own typed field when the record has one,
+ * the recorded sentence only for a row written before that field existed.
+ */
+export const buildOutputObservations = (record: Pick<BuildOutputCleanup, "detail" | "observations">): BuildOutputObservation[] =>
+  record.observations ?? recordedBuildOutputObservations(record.detail);
 
 const stateLabel = (state: BuildOutputCleanup["state"]) => state === "intent"
   ? "recorded, awaiting settlement"
@@ -113,7 +125,7 @@ export function buildOutputDisclosure(
   const quoted = ordered.slice(0, BUILD_OUTPUT_RECORD_LIMIT);
   const entries = quoted.map((record): BuildOutputDisclosureEntry => ({
     runId: record.runId ?? null, workspaceId: record.workspaceId, at: record.at, state: record.state,
-    observations: buildOutputObservations(record.detail),
+    observations: buildOutputObservations(record),
     detail: boundedBuildOutputDetail(record.detail),
     sameWorkspace: workspaceId !== null && record.workspaceId === workspaceId,
     subjectRun: Boolean(runId) && record.runId === runId,

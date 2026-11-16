@@ -3,11 +3,11 @@ import type { Task, Run, Project, RepositorySettings, TaskDetail, TaskSummary, C
 import type { Incident } from "./incident";
 import { isDispositionComplete } from "./disposition";
 import { holdsOf, syncHoldProjection, taskHoldKind, holdOwnerOf, taskOwner, holdFencesView, holdEscalated, isOperatorOrigin } from "./holds";
-import { deriveWaitState, type WaitStateContext } from "./wait-state";
+import { deriveWaitState, prerequisiteReasonEntries, type WaitStateContext } from "./wait-state";
 import { taskBudget, taskBudgetBoardView, type BudgetEvent, type TaskBudgetView } from "./task-budget";
 import { reportHeadline, TASK_PROGRESSING_REASON } from "./task-detail-summary";
 import { taskSummarySchema } from "./schema/task-view";
-import { DISPATCH_WAIT_REASON, isWaitingTaskStop, type TaskStopRecord, type TaskStopKind } from "./task-stop";
+import { DISPATCH_WAIT_REASON, isWaitingTaskStop, legacyStopHolderAgentId, type TaskStopRecord, type TaskStopKind } from "./task-stop";
 export * from "./task-stop";
 
 /**
@@ -239,13 +239,16 @@ export function taskStopKind(task: Task, runs: Run[] = [], budget?: TaskBudgetVi
 }
 
 /**
- * Add the bounded, derived hold and wait fields at the task detail boundary.
- * Spec 043 (a): the wait state is a read, never a scheduling decision.
+ * The bounded facts every read of one task shares: the holds it carries, the one
+ * budget figure the gates read, the reason that figure supports, its hold kind and
+ * its declared wait. The detail view and the board summary both derive them here,
+ * so neither disagrees with the other or with a gate (nucleus#1187, nucleus#1252).
  */
-export function taskDetailView(task: Task, context: WaitStateContext = {}, runs: Run[] = [], events: BudgetEvent[] = [], repository?: Pick<RepositorySettings, "affectedTests"> | null, now = Date.now()): TaskDetail {
+function taskDisplayFacts(
+  task: Task, context: WaitStateContext, runs: Run[], events: BudgetEvent[],
+  repository: Pick<RepositorySettings, "affectedTests"> | null | undefined, now: number,
+) {
   const holds = holdsOf(task);
-  // One measurement: the budget this view shows is the one the gates read, and the
-  // stop and reason it reports follow that same figure (nucleus#1187).
   const budget = !['done', 'cancelled'].includes(task.phase) ? taskBudget(task, runs, now, events, repository) : null;
   const reason = taskVisibleReason(task, budget);
   const holdKind = taskHoldKind(task);
@@ -253,6 +256,15 @@ export function taskDetailView(task: Task, context: WaitStateContext = {}, runs:
     phase: task.phase, reason, holdKind, holdOwner: holdOwnerOf(task, holds.merge?.owner ?? task.holdOwner),
     originAgentId: taskOwner(task), mergeHeld: Boolean(holds.merge),
   }, context);
+  return { holds, budget, reason, holdKind, waitState };
+}
+
+/**
+ * Add the bounded, derived hold and wait fields at the task detail boundary.
+ * Spec 043 (a): the wait state is a read, never a scheduling decision.
+ */
+export function taskDetailView(task: Task, context: WaitStateContext = {}, runs: Run[] = [], events: BudgetEvent[] = [], repository?: Pick<RepositorySettings, "affectedTests"> | null, now = Date.now()): TaskDetail {
+  const { holds, budget, reason, holdKind, waitState } = taskDisplayFacts(task, context, runs, events, repository, now);
   const stop = currentTaskStop(task, budget);
   return { ...task, reason, resolution: stop === task.resolution.stop ? task.resolution : { ...task.resolution, stop }, holds: syncHoldProjection(holds).holds, ...(holdKind ? { holdKind } : {}), ...(waitState ? { waitState } : {}), ...(budget ? { budget } : {}) };
 }
@@ -295,16 +307,10 @@ export const taskNumberLabel = (task: Pick<Task, "number" | "reference">, reposi
   task.number ? repositoryNeeded ? task.reference ?? `#${formatTaskNumber(task.number)}` : `#${formatTaskNumber(task.number)}` : "";
 
 export function summarizeTask(task: Task, includeRepository = false, hasUnreleasedResolutionRun = false, waitContext: WaitStateContext = {}, taskRuns: Run[] = [], waitingOn?: string, defaultHostId?: string, events: BudgetEvent[] = [], repository?: Pick<RepositorySettings, "affectedTests"> | null, now = Date.now()): TaskSummary {
-  const holds = holdsOf(task);
-  // The board reads the same budget figure the gates do, and its stop and reason
-  // follow that figure (nucleus#1187).
-  const budget = !["done", "cancelled"].includes(task.phase) ? taskBudget(task, taskRuns, now, events, repository) : null;
-  const reason = taskVisibleReason(task, budget);
+  // The board reads the same derived facts, budget figure and wait the detail and
+  // the gates read (nucleus#1187).
+  const { budget, reason, holdKind, waitState } = taskDisplayFacts(task, waitContext, taskRuns, events, repository, now);
   const stop = taskStopKind(task, taskRuns, budget), stopRecord = currentTaskStop(task, budget);
-  const waitState = deriveWaitState({
-    phase: task.phase, reason, holdKind: taskHoldKind(task), holdOwner: holdOwnerOf(task, holds.merge?.owner ?? task.holdOwner),
-    originAgentId: taskOwner(task), mergeHeld: Boolean(holds.merge),
-  }, waitContext);
   // Keep a short board reason plus the wait label and actor class. Full stop,
   // hold and wait detail, prerequisite occupant lists and long instructions
   // remain available from task detail.
@@ -325,7 +331,7 @@ export function summarizeTask(task: Task, includeRepository = false, hasUnreleas
     ...((() => { const ids = [...new Set([task.agentId, ...taskRuns.filter(run => !run.released && run.role === "reviewer" && (!run.hostId || run.hostId === task.hostId)).map(run => run.agentId)].filter((id): id is string => Boolean(id)))]; return ids.length ? { questionAgentIds: ids } : {}; })()),
     ...(task.interactive ? { interactive: true as const } : {}),
     phase: task.phase, reason: reason.slice(0, 160), held: task.held,
-    ...(taskHoldKind(task) ? { holdKind: taskHoldKind(task)! } : {}),
+    ...(holdKind ? { holdKind } : {}),
     ...(fences ? { holds: fences } : {}),
     ...(task.held ? { hold: { owner: holdOwnerOf(task, task.holdOwner).slice(0, 80), reason: (task.holdReason ?? "not recorded").slice(0, 160), since: task.holdAt, ...(task.holdBlocking ? { blockingSince: task.holdBlocking.since } : {}) } } : {}),
     ...(holdEscalated(task) ? { holdEscalated: true } : {}),
@@ -389,7 +395,9 @@ export function visibleTaskSummaries(
     const reasonText = task.holdReason ?? task.reason;
     const reasonRef = reasonText.includes("#") ? reasonText.match(/(?:[\w.-]{1,40}#\d{1,9}|#\d{1,9})/)?.[0] : undefined;
     const waitContext = waitContextByTask.get(task.id);
-    const firstWaitingId = waitContext?.dependencyWait ? reasonText.match(/\(([0-9a-f-]{36})\):/i)?.[1] : undefined;
+    // The prerequisite a hold reason names is the generated entry's own typed id,
+    // decoded by the reason's owner; the declared dependencies are the fallback.
+    const firstWaitingId = waitContext?.dependencyWait ? prerequisiteReasonEntries(reasonText).find(entry => entry.id)?.id : undefined;
     const dependency = firstWaitingId ? references.get(firstWaitingId) : waitContext?.dependencyWait ? task.dependsOn.map(id => references.get(id)).find(Boolean) : undefined;
     const summary = summarizeTask(task, !pathIdentifiesMember || (identities.get(task.repoPath)?.size ?? 0) > 1, hasUnreleasedRun,
       { ...waitContext, decisionId: decisionByTask.get(task.id) ?? null }, taskRuns, until || reasonRef || dependency || undefined, defaultHostId, eventsByTask.get(task.id) ?? [], repositorySettingsByTask.get(task.id));
@@ -399,7 +407,10 @@ export function visibleTaskSummaries(
     const project = projectForTask(task);
     const displayOwner = owner ? isOperatorOrigin(owner) ? "you"
       : project?.planner?.agentId === owner ? `${project.name} planner` : "a planner thread" : undefined;
-    const escalationHolder = summary.stopRecord?.detail.match(/Waiting with the planner or task owner\s+([0-9a-f-]{36})\s*:/i)?.[1];
+    // The typed holder the stop's own writer recorded. A stop written before that
+    // field existed reads through the record owner's legacy decode, so an existing
+    // escalation keeps naming the planner or owner it waits with.
+    const escalationHolder = summary.stopRecord?.holderAgentId ?? legacyStopHolderAgentId(summary.stopRecord?.detail);
     const stopDisplayOwner = escalationHolder
       ? project?.planner?.agentId === escalationHolder ? `${project.name} planner`
         : taskOwner(task) === escalationHolder ? isOperatorOrigin(escalationHolder) ? "you" : "the task owner"

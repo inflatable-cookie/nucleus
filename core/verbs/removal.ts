@@ -1,6 +1,6 @@
 import { REMOVED_TASK_REFUSAL } from './control-refusals';
 import { isDeepStrictEqual } from "node:util";
-import type { Run, Task } from "../../shared/contracts";
+import type { BuildOutputObservation, Run, Task } from "../../shared/contracts";
 import { TaskChangedRefusal } from '../../shared/task-version';
 import { isDispositionActive } from "../../shared/contracts";
 import { cleanupReasonFor, recordRunBuildOutput } from "../hooks/build-output-records";
@@ -192,23 +192,23 @@ export class TaskRemoval {
       // A failed observation keeps the record's state, so the next pass observes
       // again, and the failure is written on the record rather than dropped.
       catch (error) {
-        this.engine.recordRunBuildOutputState(taskId, record, record.state, `Build output hold could not be observed: ${error instanceof Error ? error.message : String(error)}`);
+        this.recordRunBuildOutputState(taskId, record, record.state, `Build output hold could not be observed: ${error instanceof Error ? error.message : String(error)}`);
         continue;
       }
-      if (hold) { this.engine.recordRunBuildOutputState(taskId, record, record.state, hold); continue; }
+      if (hold) { this.recordRunBuildOutputState(taskId, record, record.state, hold); continue; }
       if (this.engine.stopped || this.store.getMeta('paused')) return;
       // The hold's observations await; a host run admitted meanwhile still owns the
       // checkout, so recheck synchronously at the removal boundary (review #564).
       const lateHostRun = this.store.hostRunHoldingWorkspace(record.directory);
-      if (lateHostRun) { this.engine.recordRunBuildOutputState(taskId, record, record.state, hostRunHoldReason(lateHostRun)); continue; }
+      if (lateHostRun) { this.recordRunBuildOutputState(taskId, record, record.state, hostRunHoldReason(lateHostRun)); continue; }
       let result: BuildOutputCleanupResult;
       // Queue #342 (node_modules superseded, 2026-10-20): run-bound settlement never removes installed dependencies; terminal cleanup does.
       try { result = await removeBuildOutput(record.directory, { keepDependencies: true }); }
       catch (error) {
-        this.engine.recordRunBuildOutputState(taskId, record, "uncertain", `Build output cleanup is uncertain: ${error instanceof Error ? error.message : String(error)}`);
+        this.recordRunBuildOutputState(taskId, record, "uncertain", `Build output cleanup is uncertain: ${error instanceof Error ? error.message : String(error)}`);
         continue;
       }
-      this.engine.recordRunBuildOutputState(taskId, record, result.safe ? "complete" : "skipped", result.detail);
+      this.recordRunBuildOutputState(taskId, record, result.safe ? "complete" : "skipped", result.detail, result.observations);
     }
   }
   /** Task-lane entry for a terminal task whose run-bound records still owe a settlement; one pending pass per task. */
@@ -312,11 +312,11 @@ export class TaskRemoval {
     if (busy) throw Error(busy);
     return new Set(participants.keys());
   }
-  recordRunBuildOutputState(taskId: string, record: Task["resolution"]["buildOutputCleanups"][number], state: "intent" | "complete" | "skipped" | "uncertain", detail: string) {
+  recordRunBuildOutputState(taskId: string, record: Task["resolution"]["buildOutputCleanups"][number], state: "intent" | "complete" | "skipped" | "uncertain", detail: string, observations: BuildOutputObservation[] = []) {
     const task = this.store.task(taskId);
     const current = task.resolution.buildOutputCleanups.find(item => item.runId === record.runId && item.workspaceId === record.workspaceId);
     if (current?.state === state && current.detail === detail) return;
-    const cleanups = recordRunBuildOutput(task.resolution.buildOutputCleanups, record.runId!, record.workspaceId, state, detail, now());
+    const cleanups = recordRunBuildOutput(task.resolution.buildOutputCleanups, record.runId!, record.workspaceId, state, detail, now(), observations);
     this.store.update(taskId, { resolution: { ...task.resolution, buildOutputCleanups: cleanups, cleanupReason: cleanupReasonFor(task.resolution.cleanupReason, cleanups) } }, `run_build_output_${state}`, `Run ${record.runId}: ${detail}`);
   }
 }

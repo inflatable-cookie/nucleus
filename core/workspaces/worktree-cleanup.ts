@@ -1,4 +1,5 @@
 import type { BuildOutputCleanupResult, BuildOutputCleanupHooks } from '../host/types';
+import type { BuildOutputObservation } from "../../shared/contracts";
 export type { BuildOutputCleanupResult, BuildOutputCleanupHooks } from '../host/types';
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -188,7 +189,7 @@ export interface BuildOutputCleanupOptions {
 /** Remove each task-local Cargo target and node_modules root; leave an untracked canonical root symlink for checkout removal; retain and report roots whose ownership cannot be proved. */
 export async function removeBuildOutput(directory: string, options: BuildOutputCleanupOptions = {}): Promise<BuildOutputCleanupResult> {
   // An absent directory has nothing to remove, and its contents cannot be read: the record settles as complete.
-  if (!existsSync(directory)) return { detail: "directory absent; nothing to clean up", removed: false, safe: true };
+  if (!existsSync(directory)) return { detail: "directory absent; nothing to clean up", removed: false, safe: true, observations: [] };
   const checkout = resolve(directory);
   if (await realpath(checkout) !== checkout) throw new Error("Task worktree directory identity changed before build output cleanup");
   const discovery = await discoverBuildRoots(checkout);
@@ -287,7 +288,13 @@ export async function removeBuildOutput(directory: string, options: BuildOutputC
   if (!removed.length && !retained.length && !linked.length) details.push("No build output roots were present");
   if (skipped.length) details.push(`Skipped build output roots: ${boundedList(skipped.map(root => `${root.path}: ${root.reason}`), "; ")}`);
   if (discovery.notes.length) details.push(`Unresolved Cargo manifests (conventional target/ only): ${boundedList(discovery.notes.map(root => `${root.path}: ${root.reason}`), "; ")}`);
-  return { removed: removed.length > 0, detail: details.join(". "), safe: skipped.length === 0 };
+  // The observation is recorded here, where it is made, so no reader decodes it from `detail`.
+  const observations: BuildOutputObservation[] = [];
+  if (removed.length) observations.push("removed");
+  if (retained.length) observations.push("retained");
+  if (linked.length) observations.push("link");
+  if (!observations.length) observations.push("empty");
+  return { removed: removed.length > 0, detail: details.join(". "), safe: skipped.length === 0, observations };
 }
 
 /**
@@ -316,7 +323,7 @@ export function buildOutputCleanupHooks(store: Store, taskId: string, workspaceI
   observed(result: BuildOutputCleanupResult): void;
   uncertain(reason: string): void;
 }): BuildOutputCleanupHooks {
-  const record = (state: "intent" | "complete" | "skipped" | "uncertain", detail: string) => {
+  const record = (state: "intent" | "complete" | "skipped" | "uncertain", detail: string, observations: BuildOutputObservation[] = []) => {
     const task = store.task(taskId);
     const at = new Date().toISOString();
     const others = task.resolution.buildOutputCleanups.filter(item => item.workspaceId !== workspaceId || item.runId);
@@ -328,7 +335,7 @@ export function buildOutputCleanupHooks(store: Store, taskId: string, workspaceI
     // and every state change are always written.
     if (prior && prior.state === state && prior.detail === detail
       && !store.runs(taskId).some(run => run.workspaceId === workspaceId && Date.parse(run.createdAt) > Date.parse(prior.at))) return;
-    const withEntry = [...others, { workspaceId, directory, state, detail, at }];
+    const withEntry = [...others, { workspaceId, directory, state, detail, at, observations }];
     const cleanups = state === "complete" ? coverRunBuildOutput(withEntry, workspaceId, directory, at) : withEntry;
     store.update(taskId, { resolution: { ...task.resolution, buildOutputCleanups: cleanups, cleanupReason: cleanupReasonFor(task.resolution.cleanupReason, cleanups) } }, `build_output_cleanup_${state}`, `Workspace ${workspaceId}: ${detail}`);
   };
@@ -340,7 +347,7 @@ export function buildOutputCleanupHooks(store: Store, taskId: string, workspaceI
       // created after it may have regenerated output, so that run must be cleaned too.
       const newerRun = prior !== undefined && store.runs(taskId).some(run => run.workspaceId === workspaceId && Date.parse(run.createdAt) > Date.parse(prior.at));
       if (prior?.state === "complete" && !newerRun) {
-        effects?.observed({ detail: prior.detail, removed: false, safe: true });
+        effects?.observed({ detail: prior.detail, removed: false, safe: true, observations: prior.observations ?? [] });
         return "complete";
       }
       if (!allowed()) return false;
@@ -351,7 +358,7 @@ export function buildOutputCleanupHooks(store: Store, taskId: string, workspaceI
       return "run";
     },
     observed(result) {
-      record(result.safe ? "complete" : "skipped", result.detail);
+      record(result.safe ? "complete" : "skipped", result.detail, result.observations);
       effects?.observed(result);
     },
     uncertain(reason) {

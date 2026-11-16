@@ -9,7 +9,7 @@ import { Popover } from "../popover";
 import { hostKindOf, taskNumberLabel, type BoardQaRun, type DecisionView, type LaneView, type TaskSummary } from "../../shared/contracts";
 import { phaseBadgeTone, recordBadgeTone } from "../../shared/badge-tones";
 import { waitStateLabels } from "../../shared/wait-state";
-import { isWaitingTaskStop, taskStopClassification } from "../../shared/task-stop";
+import { recordedStopIsHeld, recordedStopIsWait } from "../../shared/task-stop";
 import { hostDisplayLabel } from "../../shared/host-outage";
 import { decisionAge, phaseNeedsAttention } from "../../shared/pipeline-board";
 import { UNKNOWN_ASKER_LABEL, decisionProjectLabel, isGeneralDecision } from "../../shared/decision-project";
@@ -92,9 +92,9 @@ export const TaskCard = React.memo(function TaskCard({task,selected,onPress,prSt
   const interactiveLabel = interactiveBadgeLabel(task);
   // The live dispatch hold is the wait; the stored reason may still name a cleared cause.
   const dispatchWait = dispatchWaitFence(task);
-  const classifiedStop = stopRecord ? taskStopClassification(stopRecord.detail) : null;
-  const stopWait = stopRecord ? isWaitingTaskStop(classifiedStop!.reason) || isWaitingTaskStop(stopRecord.reason) : false;
-  const stopHeld = Boolean(stopRecord && (classifiedStop?.reason === "held" || stopRecord.reason === "held"));
+  // Whether a recorded stop is a wait or a hold is the stop owner's answer, not the card's.
+  const stopWait = stopRecord ? recordedStopIsWait(stopRecord) : false;
+  const stopHeld = stopRecord ? recordedStopIsHeld(stopRecord) : false;
   const attentionOwner = stopRecord?.reason === "operator_needed" || stopRecord?.reason === "run_stalled"
     ? "you" : task.stopDisplayOwner ?? "the task owner";
   const attentionNext = stopRecord?.reason === "operator_needed" ? "Your decision is next"

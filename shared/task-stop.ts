@@ -94,52 +94,92 @@ export const taskStopRecordSchema = z.object({
   detail: z.string().trim().min(1).max(4000),
   since: z.string().datetime({ offset: true }),
   suggestedVerbs: z.array(taskStopVerbSchema).max(taskStopVerbs.length),
+  /**
+   * The agent a wait is with, when the wait's own writer names one (the ladder's
+   * escalation holder). The stop detail repeats it in its sentence for a human;
+   * no reader takes the holder from that sentence.
+   */
+  holderAgentId: z.string().min(1).max(240).optional(),
 }).strict();
 export type TaskStopRecord = z.infer<typeof taskStopRecordSchema>;
 
-/** Stable classification for the transient waits the task quantum can observe. */
-export function taskStopClassification(detail: string): Pick<TaskStopRecord, "reason" | "suggestedVerbs"> {
+/**
+ * One family of recorded stop detail: the typed reason its own sentence names,
+ * and the verbs that advance it. Declared as data, in precedence order, so a new
+ * kind of wait is one entry instead of another branch in a chain.
+ */
+interface StopFamily {
+  reason: TaskStopReason;
+  suggestedVerbs: readonly TaskStopVerb[];
+  matches(detail: string): boolean;
+}
+
+const stopFamilies: readonly StopFamily[] = [
   // A hold is its owner's gate: release (or keep_hold) clears it, never a coordinator.
-  if (/^(?:Merge|Dispatch) held\b/.test(detail))
-    return { reason: "held", suggestedVerbs: [] };
-  // Nucleus#1159: the blocked review's one supported exit is the owner's
-  // observation-first retry, so it is attention with that verb suggested.
-  if (detail.startsWith(BLOCKED_EFFECT_ATTENTION_PREFIX))
-    return { reason: "operator_needed", suggestedVerbs: ["retry_effect"] };
-  if (isTransientExternalFailure(detail))
-    return { reason: "external_unavailable", suggestedVerbs: [] };
-  if (/Origin author thread .+ (active|uncertain) turn|origin author.*busy/i.test(detail))
-    return { reason: "origin_busy", suggestedVerbs: [] };
-  if (/project slot|task slot|capacity|host pressure|waiting behind .*in-flight|admission budget|waiting for dispatch/i.test(detail))
-    return { reason: "capacity", suggestedVerbs: [] };
-  if (/provider (?:group )?(?:unavailable|exhausted)|subscription group .+ unavailable|quota or balance exhaustion/i.test(detail))
-    return { reason: "provider_unavailable", suggestedVerbs: [] };
-  if (/coordinator.{0,60}(?:busy|running|active|unavailable)|(?:busy|running|active).{0,60}coordinator|no eligible |no .*profile(?: is)? (?:available|enabled)|profile .* unavailable|configure .*profile/i.test(detail))
-    return { reason: "route_unavailable", suggestedVerbs: [] };
-  if (/prerequisite/i.test(detail))
-    return { reason: "prerequisite", suggestedVerbs: [] };
-  if (/workspace (?:is )?(?:unavailable|missing)|workspace creation is uncertain|workspace identity/i.test(detail))
-    return { reason: "workspace_unavailable", suggestedVerbs: [] };
-  if (/pr (?:head|branch).*(?:lag|behind|not yet)|head lag|waiting for .*pr head/i.test(detail))
-    return { reason: "pr_head_lag", suggestedVerbs: [] };
+  { reason: "held", suggestedVerbs: [], matches: detail => /^(?:Merge|Dispatch) held\b/.test(detail) },
+  // Nucleus#1159: the blocked review's one supported exit is the owner's observation-first retry.
+  { reason: "operator_needed", suggestedVerbs: ["retry_effect"], matches: detail => detail.startsWith(BLOCKED_EFFECT_ATTENTION_PREFIX) },
+  { reason: "external_unavailable", suggestedVerbs: [], matches: isTransientExternalFailure },
+  { reason: "origin_busy", suggestedVerbs: [], matches: detail => /Origin author thread .+ (active|uncertain) turn|origin author.*busy/i.test(detail) },
+  { reason: "capacity", suggestedVerbs: [], matches: detail => /project slot|task slot|capacity|host pressure|waiting behind .*in-flight|admission budget|waiting for dispatch/i.test(detail) },
+  { reason: "provider_unavailable", suggestedVerbs: [], matches: detail => /provider (?:group )?(?:unavailable|exhausted)|subscription group .+ unavailable|quota or balance exhaustion/i.test(detail) },
+  { reason: "route_unavailable", suggestedVerbs: [], matches: detail => /coordinator.{0,60}(?:busy|running|active|unavailable)|(?:busy|running|active).{0,60}coordinator|no eligible |no .*profile(?: is)? (?:available|enabled)|profile .* unavailable|configure .*profile/i.test(detail) },
+  { reason: "prerequisite", suggestedVerbs: [], matches: detail => /prerequisite/i.test(detail) },
+  { reason: "workspace_unavailable", suggestedVerbs: [], matches: detail => /workspace (?:is )?(?:unavailable|missing)|workspace creation is uncertain|workspace identity/i.test(detail) },
+  { reason: "pr_head_lag", suggestedVerbs: [], matches: detail => /pr (?:head|branch).*(?:lag|behind|not yet)|head lag|waiting for .*pr head/i.test(detail) },
   // A live or unverified worktree QA/validation process is the task's own work
   // still finishing, not absence and not a fault: it waits with no owner verb
   // until the scan observes it settled.
-  if (/validation (?:is )?still running in the worktree|worktree validation scan is (?:unverified|incomplete)|validation scan is unverified/i.test(detail))
-    return { reason: "validation", suggestedVerbs: [] };
+  { reason: "validation", suggestedVerbs: [], matches: detail => /validation (?:is )?still running in the worktree|worktree validation scan is (?:unverified|incomplete)|validation scan is unverified/i.test(detail) },
   // Queue's own next step is in progress: its integration turn, required checks
   // settling, a merge outcome probe, or a run it just launched.
-  if (/integration turn|required checks? (?:pending|settl|running)|waiting for required checks|merge outcome is uncertain|daemon transport unavailable|host login session is gone|continuing from checkpoint/i.test(detail))
-    return { reason: "lifecycle", suggestedVerbs: [] };
+  { reason: "lifecycle", suggestedVerbs: [], matches: detail => /integration turn|required checks? (?:pending|settl|running)|waiting for required checks|merge outcome is uncertain|daemon transport unavailable|host login session is gone|continuing from checkpoint/i.test(detail) },
   // Spec 058 slice 17: the blocker ladder's own waits. The consult or the
   // delegated answer settles them; a coordinator cannot, so they clear on their own.
-  if (/waiting with the (?:retained reviewer|planner|operator)/i.test(detail))
-    return { reason: "escalated", suggestedVerbs: [] };
+  { reason: "escalated", suggestedVerbs: [], matches: detail => /waiting with the (?:retained reviewer|planner|operator)/i.test(detail) },
   // The one host wait (`shared/host-outage.ts`). Older text paths that restore a
   // reason never invent a different owner for a host that is away.
-  if (/^Waiting on .{1,120} host .{1,120} since \d{4}-\d{2}-\d{2}T/.test(detail))
-    return { reason: "host_unavailable", suggestedVerbs: [] };
-  return { reason: "operator_needed", suggestedVerbs: ["restart", "route", "move"] };
+  { reason: "host_unavailable", suggestedVerbs: [], matches: detail => /^Waiting on .{1,120} host .{1,120} since \d{4}-\d{2}-\d{2}T/.test(detail) },
+];
+
+/**
+ * The tail: detail no family names is attention with the ordinary owner verbs,
+ * never a quiet wait, so an unrecognised fault stays visible instead of clearing
+ * on its own. It is named once here rather than implied by the end of a chain.
+ */
+export const unclassifiedTaskStop = (): Pick<TaskStopRecord, "reason" | "suggestedVerbs"> =>
+  ({ reason: "operator_needed", suggestedVerbs: taskStopVerbsFor("operator_needed") });
+
+/** Stable classification for the transient waits the task quantum can observe. */
+export function taskStopClassification(detail: string): Pick<TaskStopRecord, "reason" | "suggestedVerbs"> {
+  const family = stopFamilies.find(candidate => candidate.matches(detail));
+  return family
+    ? { reason: family.reason, suggestedVerbs: [...family.suggestedVerbs] }
+    : unclassifiedTaskStop();
+}
+
+/**
+ * Whether a recorded stop is a wait. Its own typed reason decides; its detail is
+ * classified too, for a row whose reason and sentence were written by an older
+ * path. One owner answers this so no surface re-reads the sentence itself.
+ */
+export function recordedStopIsWait(record: Pick<TaskStopRecord, "reason" | "detail">): boolean {
+  return isWaitingTaskStop(record.reason) || isWaitingTaskStop(taskStopClassification(record.detail).reason);
+}
+
+/**
+ * The agent a recorded stop's detail names as the one the task waits with, for a
+ * row written before `holderAgentId` existed. A record that carries the field is
+ * never read this way: its own writer recorded the holder, and the sentence stays
+ * display text.
+ */
+export function legacyStopHolderAgentId(detail: string | null | undefined): string | undefined {
+  return detail?.match(/Waiting with the planner or task owner\s+([0-9a-f-]{36})\s*:/i)?.[1] ?? undefined;
+}
+
+/** Whether a recorded stop is a hold; read exactly like `recordedStopIsWait`. */
+export function recordedStopIsHeld(record: Pick<TaskStopRecord, "reason" | "detail">): boolean {
+  return record.reason === "held" || taskStopClassification(record.detail).reason === "held";
 }
 
 /**
@@ -152,7 +192,7 @@ export const routeUnavailableStop = (task: { resolution: { stop: { reason: strin
 /** A stop's suggested verbs follow its typed reason unless the caller names them; never its detail text. */
 export function taskStopRecord(
   reason: TaskStopReason, detail: string, prior?: TaskStopRecord | null,
-  at = new Date().toISOString(), suggestedVerbs = taskStopVerbsFor(reason),
+  at = new Date().toISOString(), suggestedVerbs = taskStopVerbsFor(reason), holderAgentId?: string | null,
 ): TaskStopRecord {
   const normalized = detail.trim().slice(0, 4000) || reason;
   return taskStopRecordSchema.parse({
@@ -160,6 +200,7 @@ export function taskStopRecord(
     detail: normalized,
     since: prior?.reason === reason ? prior.since : at,
     suggestedVerbs,
+    ...(holderAgentId ? { holderAgentId } : {}),
   });
 }
 
