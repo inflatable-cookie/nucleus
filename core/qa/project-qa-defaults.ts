@@ -13,9 +13,15 @@ export const DEFAULT_PROJECT_QA_MAX_OUTPUT_BYTES = PROJECT_QA_DEFAULT_MAX_OUTPUT
  * #121: the host-run envelope for one milestone run. Setup and teardown each get
  * the hook timeout bound, so the envelope covers both around every stage's own
  * window; no step can consume another's launch-relative timeout budget.
+ * #1286: the run timeout is at least the stage total plus the setup and
+ * teardown allowance, and never below the default, so a staged setting can
+ * never be killed by the run timeout before its last stage's own limit.
  */
 export const projectQaEnvelopeMs = (stages: ReadonlyArray<{ timeoutMs: number }>): number =>
-  stages.reduce((sum, stage) => sum + stage.timeoutMs, 0) + 2 * DEFAULT_PROJECT_QA_TIMEOUT_MS;
+  Math.max(
+    stages.reduce((sum, stage) => sum + stage.timeoutMs, 0) + 2 * DEFAULT_PROJECT_QA_TIMEOUT_MS,
+    DEFAULT_PROJECT_QA_TIMEOUT_MS,
+  );
 /** Bounded tail kept on the run record. */
 export const PROJECT_QA_TAIL_BYTES = 2000;
 /** Every interrupted-preparation settlement starts with this; the scheduler reads its typed code. */

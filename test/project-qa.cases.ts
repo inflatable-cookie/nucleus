@@ -44,7 +44,7 @@ import { checkoutRunScratchPlacement, runScratchRoot, runTemporaryDirectory, typ
 import type { CheckoutVolumeInfo } from '../core/workspaces/checkout-volume';
 import { readHostRunTokenKeys } from '../service/callbacks/host-run-endpoint';
 import { verifyRunToken } from "./host-run-token-fixture";
-import { hostRunResultSchema, hostRunSettlementSchema, projectQaCancelInputSchema, projectQaGet, projectQaRunSchema, DEFAULT_PROCESS_TERMINATION_GRACE_MS, PROJECT_QA_TIMEOUT_MAX_MS, projectQaSchema, type ProjectQaRun, projectQaRetryTeardownInputSchema } from '../shared/contracts';
+import { hostRunResultSchema, hostRunSettlementSchema, projectQaCancelInputSchema, projectQaGet, projectQaRunSchema, DEFAULT_PROCESS_TERMINATION_GRACE_MS, PROJECT_QA_TIMEOUT_MAX_MS, projectQaSchema, repositorySetInputSchema, type ProjectQaRun, projectQaRetryTeardownInputSchema } from '../shared/contracts';
 import { processGroupEmpty, processGroupHasStartIdentity } from '../core/machine/process-group';
 import { PROCESS_START_IDENTITY_ENV, processesForStartIdentity } from '../core/machine/process-identity-search';
 import { HOOK_TEST_TIMEOUT_MS, waitFor } from './support/budgets';
@@ -1714,6 +1714,17 @@ test('a staged QA setting validates its names, count and total timeout; a single
   assert.equal(single.terminationGraceMs, DEFAULT_PROCESS_TERMINATION_GRACE_MS);
 });
 
+/** #1286: `repository.set` admits QA stages totalling 180 minutes and refuses a total above 6 hours. */
+test('repository.set admits QA stages totalling 180 minutes and refuses a total above 6 hours', () => {
+  const stage = (name: string, timeoutMs: number) => ({ name, argv: ['effigy', name], timeoutMs });
+  const admitted = repositorySetInputSchema.parse({ repository: 'owner/repo',
+    qa: { stages: [stage('root-qa', 9_000_000), stage('second', 1_800_000)] } });
+  assert.equal(admitted.qa?.stages?.reduce((sum, item) => sum + item.timeoutMs, 0), 10_800_000,
+    'a 150-minute root stage plus a 30-minute stage is within the 6-hour total');
+  assert.throws(() => repositorySetInputSchema.parse({ repository: 'owner/repo',
+    qa: { stages: [stage('root-qa', 9_000_000), stage('second', 12_600_001)] } }), /above/);
+});
+
 /**
  * #121 — a staged milestone QA setting runs ordered stages as separate recorded
  * steps, one scheduler admission, with each step's full output in a log beside
@@ -1778,6 +1789,24 @@ test('a failing first stage stops the run, teardown still runs, and failedStep n
   assert.deepEqual(calls, ['compile', 'teardown'], 'the second stage never runs and teardown still does');
   assert.deepEqual(settled.steps.map(step => step.name), ['compile', 'teardown']);
   assert.match(settled.outputTail, /clippy: error at column 42/);
+});
+
+/** #1286: an admitted run's runTimeoutMs covers a 180-minute stage total plus the setup and teardown allowance. */
+test('an admitted long staged run covers its 180-minute stage total plus setup and teardown', async t => {
+  const f = await fixture(t);
+  await setStages(f, [
+    { name: 'root-qa', argv: [process.execPath, '-e', 'process.stdout.write("root\\n")'], timeoutMs: 9_000_000 },
+    { name: 'second', argv: [process.execPath, '-e', 'process.stdout.write("second\\n")'], timeoutMs: 1_800_000 },
+  ]);
+  const runner = new ProjectQaRunner(f.store, {
+    dataDir: f.dataDir, supervisionPollMs: 25,
+    run: async () => result(0, 'ok\n'),
+  });
+  const started = await runner.run({ repository: f.repo });
+  assert.equal(started.runTimeoutMs, 10_800_000 + 2 * DEFAULT_PROJECT_QA_TIMEOUT_MS,
+    'the run timeout is at least the 180-minute stage total plus the setup and teardown allowance');
+  await waitFor(() => !['queued', 'running'].includes(f.store.qaRun(started.id)?.state ?? ''), 30_000, 'the long staged run to settle');
+  assert.equal(f.store.qaRun(started.id)!.state, 'passed');
 });
 
 test('a stage timeout terminates that stage group, records the step and stops the run', async t => {
