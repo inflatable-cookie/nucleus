@@ -59,6 +59,7 @@ implemented; the contracts summarise the durable rules and link here.
 | [061 — Worker proof files reach the retained reviewer](061-worker-proof-files.md) | implemented |
 | [062 — BB host adapter](062-bb-host-adapter.md) | approved; phase 0 (the transport spike) implemented and proved, phases 1–6 not implemented |
 | [063 — Proof execution through host runs](063-proof-execution-host-runs.md) | fits:false; design only |
+| [064 — Proof execution under cooperative qualification](064-proof-execution-cooperative-route.md) | no-fit; route assessment only |
 
 ## Host adapters
 
