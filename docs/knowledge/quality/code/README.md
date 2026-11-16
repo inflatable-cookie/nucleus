@@ -1,21 +1,25 @@
 # Code-module quality tables
 
 - nucleus#1250 (floor 7, 2026-11-15): the three floor-7 core/workspaces rows were simplified and split along
-  the seams their rows named. `core/workspaces/external-workspace-archive.ts` is one pass in four named steps —
-  the task's own debt (`owesCatalogArchive`), the complete same-path inventory (`readCatalogRegistrations`), one
-  registration's turn (`archiveOneRegistration`) and the one record of its outcome (`settleNativeOutcome`) — and a
-  breaker deferral that never reached Paseo is the record's new typed `deferredByAdmission` fact
-  (`shared/schema/workspace.ts`), not a phrase in `detail`. The pre-fix detail-prefix branch is gone with
-  `test/archive-backpressure-retry.test.ts`'s one test that proved it; a cleanup cause is cleared only while the
-  field holds a line under the opening this effect writes; and observing an unknown answer answers `absent`, `present` or
-  an unreadable cause instead of the error text as a value. `core/workspaces/workspace-lifecycle.ts` reaches 8
-  (O2 T2 F1 P1 Pr2): it has one private `placementRoots` list, takes the live data home from `checkout-volume`'s
-  `liveCheckoutDataDir`, matches a registration by the exact allocated path or the task's own slug and id instead
-  of a folder's basename, answers the same-path registration check as reuse/create/unreadable, and reads ancestry
-  through the shared `gitAncestry`, so an unreadable read refuses on its own cause instead of reading as two
-  diverged lines. Failure stays 1 because both callers of that check still collapse `unreadable` to create — an
-  unknown inventory is treated as absent, against Spec 017's never-add-a-second-registration rule — and its
-  `skipped` progress line is a trace the engine's hook never reads; making the check refuse is a named follow-up.
+  the seams their rows named. `core/workspaces/external-workspace-archive.ts` reaches 8 (O2 T1 F2 P1 Pr2): it is
+  one pass in four named steps — the task's own debt (`owesCatalogArchive`), the complete same-path inventory
+  (`readCatalogRegistrations`), one registration's turn (`archiveOneRegistration`) and the one record of its
+  outcome (`settleNativeOutcome`) — and a breaker deferral that never reached Paseo is the record's new typed
+  `deferredByAdmission` fact (`shared/schema/workspace.ts`), not a phrase in `detail`. The pre-fix detail-prefix
+  branch is gone with `test/archive-backpressure-retry.test.ts`'s one test that proved it, and observing an unknown
+  answer answers `absent`, `present` or an unreadable cause instead of the error text as a value. Typed facts
+  stays 1 on the one read that remains: whether the shared `cleanupReason` still carries this effect's cause is a
+  `startsWith` over another owner's free-text field (`ownsCleanupReason`), and a settlement followed by a sibling
+  archive clears it (`test/external-archive-cleanup-owner.test.ts`). A durable typed owner for that field would
+  remove the read, but it is a protocol change across its writers, so it is not built here.
+  `core/workspaces/workspace-lifecycle.ts` reaches 8 (O2 T2 F1 P1 Pr2): it has one private `placementRoots` list,
+  takes the live data home from `checkout-volume`'s `liveCheckoutDataDir`, matches a registration by the exact
+  allocated path or the task's own slug and id instead of a folder's basename, answers the same-path registration
+  check as reuse/create/unreadable, and reads ancestry through the shared `gitAncestry`, so an unreadable read
+  refuses on its own cause instead of reading as two diverged lines. Failure stays 1 because both callers of that
+  check still collapse `unreadable` to create — an unknown inventory is treated as absent, against Spec 017's
+  never-add-a-second-registration rule — and its `skipped` progress line is a trace the engine's hook never reads;
+  making the check refuse is a named follow-up.
   `core/workspaces/workspace-continuation.ts` is the folder
   `core/workspaces/workspace-continuation/`: the retained and closeout host policy (`host.ts`, 9), the parked
   accepted PR's reconciliation (`accepted-pr.ts`, 9) and the barrel that keeps every import path (`index.ts`, 10).
