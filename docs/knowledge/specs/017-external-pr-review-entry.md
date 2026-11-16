@@ -806,7 +806,8 @@ round, and the round's own history does not need it.
 - **Catalog hiding** is Paseo's own workspace archive record: the sidebar entry
   goes and the folder may stay (`core/workspaces/external-workspace-archive.ts`, above).
   It is proved by placement, thread membership and, for a worktree, clean
-  published source.
+  published source. Whether a recorded entry reached no native request at all is
+  the record's typed `deferredByAdmission` fact, not a phrase in its detail line.
 - **Physical checkout removal** is Git and Effigy: Paseo's `worktree.teardown`
   removes a Paseo-owned worktree, and Nucleus proves the Effigy runtime scope was
   retired afterwards. Nucleus itself removes only its own canonical checkout.

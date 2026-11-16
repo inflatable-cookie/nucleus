@@ -17,7 +17,7 @@ import type { HostWorktreeWorkspaceSpec } from "../../../core/host";
  * read `findWorkspaces` matches against: the matching itself reads the Queue-owned
  * path facts, so it stays with them. Step 4 row 2 of that split (task 903) moved
  * the retained and closeout workspace policy to
- * `core/workspaces/workspace-continuation.ts`: the continuation preflight, the process
+ * `core/workspaces/workspace-continuation/host.ts`: the continuation preflight, the process
  * proof and the closeout workspace's identity and source proof keep their
  * refreshes, reads and refusals there, and this host supplies the registration
  * handle, the complete inventory and the worktree registration.

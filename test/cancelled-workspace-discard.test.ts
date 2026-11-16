@@ -287,6 +287,25 @@ test('a paused cancelled-workspace discard applies the same durable decision onc
   } finally { await f.close(); }
 });
 
+test('a registered external worktree is never offered or archived by the cancelled-workspace retirement', { timeout: HOOK_TEST_TIMEOUT_MS }, async t => {
+  const f = await fixture(t);
+  try {
+    // The brief's external class: the cancelled task's directory is the
+    // registering thread's own checkout, not a Queue allocation.
+    f.store.update(f.task.id, { workspaceOwnership: 'external' });
+    await assert.rejects(f.retry(), /No recorded side effect workspace_archive\./);
+    assert.equal(f.archive.count, 0, 'the owner retry never reaches the archive adapter');
+    assert.equal(existsSync(f.directory), true);
+    assert.deepEqual(f.current().resolution.archivedWorkspaceIds, []);
+    assert.notEqual(f.current().resolution.workspaceRetirement?.state, 'archived');
+    // An explicit discard cannot turn the external folder into archive authority either.
+    await assert.rejects(f.discard(), /No recorded side effect workspace_archive\./);
+    assert.equal(f.archive.count, 0);
+    assert.equal(f.record(), null, 'no content discard is recorded for an external workspace');
+    assert.equal(existsSync(f.directory), true);
+  } finally { await f.close(); }
+});
+
 test('an ordinary cancelled retirement still proves clean published source', { timeout: HOOK_TEST_TIMEOUT_MS }, async t => {
   const f = await fixture(t);
   try {

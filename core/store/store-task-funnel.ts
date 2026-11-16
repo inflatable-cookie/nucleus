@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { completionMembership,holdsOf,isOperatorOrigin,resolutionSchema,syncHoldProjection,TASK_OWNER_HOLD,taskOwner,taskStopClassification,type Completion,type Lane,type Notice,type Outcome,type Papercut,type Project,type Run,type RuntimeRetirement,type Submission,type Task,type TaskHolds } from "../../shared/contracts";
 import { hookStateIsTerminal,type HookRecord } from "../../shared/hooks";
+import { externalWorkspace } from "../../shared/workspace-ownership";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { operationIsSettled,type QueueOperation } from "../../shared/operations";
 import { telemetryStageForTask } from "../../shared/telemetry";
@@ -122,7 +123,7 @@ export class StoreTaskFunnel {
         removedAt: null, finishedAt: null, queuePriority:0, prerequisiteWait: null, phase: "queued", reason: DISPATCH_WAIT_REASON,
         held: false, mergeHold: false, budgetSince: null, holdOwner: null, holdReason: null, holdAt: null, holdGeneration: 0, holdBlocking: null, holdUntil: null, holds: {},
         lastSubstantiveVersion: 1, handoffText, planningBase, proofExecutions: [], proofFiles: [], proofExecutionRetired: false, proofOnlyResult: null, proofReceiptAcceptance: null,
-        workspaceId: null, directory: null, branch: input.proofOnly ? "" : `ns-${id}`, agentId: null, runId: null,
+        workspaceId: null, directory: null, branch: input.proofOnly ? "" : `ns-${id}`, workspaceOwnership: "queue", agentId: null, runId: null,
         profile: null, profileGroup: null, failoverReason: "", replacementProfile:null, workerExclusions: [], resumePrNumber: null, retiredWorkers: [], workspaceIntent: false, agentIntent: false, lastAgentStatus: null,
         idleSince: null, completion: null, agentActive: null, lastObservedAt: null, prUrl: null, prHead: null, coordinatorGeneration: 1, resolution: resolutionSchema.parse({}), checkpoints: { records: [], intent: null }, workerModel: null, workerModels: [], briefVersions, briefRuns: [], siblingPins: [], siblingFindings: [], siblingIntent: false, checkoutSiblingFindings: [], stashBaseline: null,
         ...laneSnapshot(attached), ...initial, hostId,
@@ -519,7 +520,7 @@ export class StoreTaskFunnel {
       const settled = task.resolution.pendingWorkerInstruction || stalledTurnStop !== task.resolution.stalledTurnStop
         ? { ...task.resolution, pendingWorkerInstruction: null, stalledTurnStop } : task.resolution;
       // Queue #342: the author's accepted result makes its own build output a settlement candidate.
-      const queueOwnedWorkspace = task.reviewEntry?.preserveWorkspace !== true;
+      const queueOwnedWorkspace = !externalWorkspace(task);
       const buildOutputCleanups = task.workspaceId && task.directory && queueOwnedWorkspace
         ? runBuildOutputIntent(settled.buildOutputCleanups, { id: input.runId, workspaceId: task.workspaceId, agentId: task.agentId }, task.directory, new Date().toISOString())
         : settled.buildOutputCleanups;

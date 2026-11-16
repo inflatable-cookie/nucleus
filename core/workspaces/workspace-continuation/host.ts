@@ -1,16 +1,14 @@
-import type { Resolution } from '../resolution';
-import { ACCEPTED_PR_RECONCILIATION_REASON, readyReviewAtHead } from '../recovery/task-reasons';
-import { now } from '../store/store';
-import type { HostWorktreeWorkspaceSpec } from '../host/types';
-export type { HostWorktreeWorkspaceSpec } from '../host/types';
+import type { HostProcessFact, HostWorktreeWorkspaceSpec } from "../../host/types";
+import type { Task } from "../../../shared/contracts";
+import { externalWorkspace } from "../../../shared/workspace-ownership";
+import type { HostWorkspaceRef } from "../../../shared/host";
 import { existsSync } from "node:fs";
-import type { HostProcessFact } from "../host/types";
-import type { Task } from "../../shared/contracts";
-import type { HostWorkspaceRef } from "../../shared/host";
-import { git, queueCheckoutStatus } from "../git/index";
-import { workspaceToolProcessIssue } from "../recovery/stall";
-import { capPaseoTitle } from "./workspace-title";
-import type { WorkspaceInventoryEntry, WorkspacePlacement } from "./workspace-lifecycle";
+import { git, queueCheckoutStatus } from "../../git/index";
+import { workspaceToolProcessIssue } from "../../recovery/stall";
+import { capPaseoTitle } from "../workspace-title";
+import type { WorkspaceInventoryEntry, WorkspacePlacement } from "../workspace-lifecycle";
+
+export type { HostWorktreeWorkspaceSpec } from "../../host/types";
 
 /**
  * The retained and closeout workspace policy of one task — whether a worker's
@@ -39,6 +37,10 @@ import type { WorkspaceInventoryEntry, WorkspacePlacement } from "./workspace-li
  * Nothing here awaits differently from the code it replaces, and the moved
  * bodies are token-identical modulo that receiver rewrite and the one native
  * registration call the move relocates into the host: see `evidence/903/`.
+ *
+ * The folder's other owner is `accepted-pr.ts`: the reconciliation of a parked
+ * accepted PR's workspace is a task-level decision over the store, not a host
+ * workspace policy, so the two never share a file.
  */
 export class WorkspaceContinuation {
   constructor(private readonly host: WorkspaceContinuationHost) {}
@@ -58,7 +60,11 @@ export class WorkspaceContinuation {
     const unavailable = (reason: string) => ({ available: false as const, reason });
     if (!task.workspaceId || !task.directory) return unavailable('Retained worker workspace identity is incomplete; no continuation was sent');
     const placement = this.host.placement();
-    if (placement) {
+    // An external workspace lives where its registering thread put it; only a
+    // Queue allocation owes the owned-path proof and the volume admission, and
+    // the retained workspace's own record and folder are proved below either
+    // way (nucleus#1261).
+    if (placement && !externalWorkspace(task)) {
       try { if (task.directory === await this.host.ownedPathFor(task)) placement.admit(task.directory); }
       catch (error) { return unavailable(error instanceof Error ? error.message : String(error)); }
     }
@@ -114,58 +120,4 @@ export interface WorkspaceContinuationHostCalls {
   workspaceInventory(): Promise<WorkspaceInventoryEntry[]>;
   /** The host's own worktree registration; a registration without a directory is the host's answer. */
   createCloseoutWorkspace(spec: HostWorktreeWorkspaceSpec): Promise<{ id: string; directory: string | null }>;
-}
-
-
-export type AcceptedPrWorkspaceContext = Pick<Resolution, 'adapter' | 'attention' | 'startsNoRuns' | 'store'>;
-
-export class AcceptedPrWorkspace {
-  constructor(readonly context: AcceptedPrWorkspaceContext) {}
-  acceptedPrWorkspaceMayApply(t: Task): boolean {
-    return Boolean((t.phase === 'needs_attention' && t.reason === ACCEPTED_PR_RECONCILIATION_REASON && t.completion?.status === 'ready_for_review' && !t.resolution.currentRunId && t.workspaceId && this.context.adapter.workspaceAvailable) || (t.phase === 'needs_attention' && t.completion?.status === 'ready_for_review' && !t.resolution.currentRunId && t.workspaceId && t.directory && t.agentId && t.runId && t.profile && this.context.adapter.workspaceAvailable));
-  }
-  async reconcileAcceptedPrWorkspace(t: Task): Promise<Task | null> {
-    if (t.phase === 'needs_attention' && t.reason === ACCEPTED_PR_RECONCILIATION_REASON &&
-      t.completion?.status === 'ready_for_review' && !t.resolution.currentRunId && t.workspaceId &&
-      this.context.adapter.workspaceAvailable && await this.context.adapter.workspaceAvailable(t.workspaceId)) {
-      const reviewed = readyReviewAtHead(t);
-      t = this.context.store.update(t.id, {
-        phase: reviewed ? 'verifying' : 'awaiting_review',
-        reason: reviewed
-          ? 'Retained task workspace confirmed; re-evaluating pre-merge gates at the accepted reviewed head'
-          : 'Retained task workspace confirmed; awaiting independent review',
-        resolution: {
-          ...t.resolution,
-          attention: false,
-          recoveryActive: false,
-          recovery: t.resolution.recovery ? { ...t.resolution.recovery, status: 'resolved', summary: 'Retained task workspace confirmed available' } : null,
-          incident: t.resolution.incident ? { ...t.resolution.incident, status: 'resolved', detail: 'Retained task workspace confirmed available', updatedAt: now() } : null,
-          integrationTurn: null,
-        },
-      }, 'task_workspace_confirmed', t.workspaceId);
-    }
-    if (t.phase === 'needs_attention' && t.completion?.status === 'ready_for_review' && !t.resolution.currentRunId &&
-      t.workspaceId && t.directory && t.agentId && t.runId && t.profile && this.context.adapter.workspaceAvailable &&
-      !await this.context.adapter.workspaceAvailable(t.workspaceId)) {
-      if (!this.context.adapter.recoverTaskWorkspace) { this.context.attention(t, 'Accepted PR is preserved but the task workspace is unavailable; workspace recovery is unsupported'); return null; }
-      if (!t.prHead || !t.prUrl) {
-        if (!this.context.adapter.verifyPrIdentity) { this.context.attention(t, 'Accepted PR identity recovery is unavailable'); return null; }
-        const pr = await this.context.adapter.verifyPrIdentity(t, t.completion.prNumber!);
-        t = this.context.store.update(t.id, { prHead: pr.head, prUrl: pr.url }, 'accepted_pr_reconciled', `PR #${t.completion.prNumber} at ${pr.head}`);
-      }
-      const found = await this.context.adapter.findWorkspaces?.(t) ?? [];
-      if (found.length > 1) { this.context.attention(t, 'Task workspace recovery is ambiguous; no resource was selected'); return null; }
-      if (!found[0] && this.context.startsNoRuns()) return t;
-      const workspace = found[0] ?? await this.context.adapter.recoverTaskWorkspace(t);
-      const oldWorker = { agentId: t.agentId!, runId: t.runId!, profile: t.profile!, reason: 'Accepted delivery preserved after the original task workspace was removed' };
-      t = this.context.store.update(t.id, {
-        workspaceId: workspace.id, directory: workspace.directory, agentId: null, runId: null, agentIntent: false,
-        retiredWorkers: [...t.retiredWorkers, oldWorker], phase: 'awaiting_review', reason: 'Recovered the accepted PR branch in a replacement task workspace; awaiting independent review',
-        resolution: { ...t.resolution, attention: false, recoveryActive: false,
-          recovery: t.resolution.recovery ? { ...t.resolution.recovery, status: 'resolved', summary: 'Accepted PR workspace recovered without repeating worker delivery' } : null,
-          incident: t.resolution.incident ? { ...t.resolution.incident, status: 'resolved', detail: 'Accepted PR workspace recovered', updatedAt: now() } : null },
-      }, 'task_workspace_recovered', `${t.workspaceId} → ${workspace.id} at ${t.prHead}`);
-    }
-    return t;
-  }
 }

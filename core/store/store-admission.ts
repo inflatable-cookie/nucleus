@@ -225,6 +225,9 @@ export class StoreAdmission {
       // The retired per-repository validation policy and the By request pool fields are
       // stripped on every open, so rows written by an older build parse the current schema.
       this.hooks.migration.stripRetiredRepositoryPolicy();
+      // nucleus#1261: rows registered before the external ownership field existed
+      // are proved external from their own registration event on every open.
+      this.hooks.migration.markRegisteredExternalWorkspaces();
       this.hooks.migration.stripRetiredPoolFields();
       // Task 1158: stored profiles move to the canonical vocabulary once; a
       // profile with a value the migration doesn't know stays as stored and is

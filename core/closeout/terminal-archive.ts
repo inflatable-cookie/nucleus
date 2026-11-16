@@ -4,6 +4,7 @@ import { doublingDelay } from '../../shared/backoff';
 import { isBackpressureDeferral } from '../host/admission';
 import { buildOutputCleanupReasonPrefix } from '../hooks/build-output-records';
 import { runtimeRetirementFailure } from '../../shared/contracts';
+import { externalWorkspace } from '../../shared/workspace-ownership';
 
 export const WORKSPACE_ARCHIVE_RETRY_BASE_MS = 60_000;
 export const WORKSPACE_ARCHIVE_RETRY_MAX_MS = 60 * 60_000;
@@ -52,7 +53,7 @@ export function terminalArchiveWorkspaces(task: Task, runs: Run[]): TerminalWork
   return [
     // A report-only workspace starts at its planning base; the archive derives
     // any preserved donor source beyond it from current Git evidence.
-    { id: task.reviewEntry?.preserveWorkspace ? null : task.workspaceId, directory: task.directory,
+    { id: externalWorkspace(task) ? null : task.workspaceId, directory: task.directory,
       head: reportOnly ? task.planningBase : proofOnlyDone ? task.proofOnly!.commit : task.prHead, reportSource: reportOnly },
     { id: task.resolution.closeoutWorkspaceId, directory: task.resolution.closeoutDirectory, head: task.resolution.closeoutWorkspaceHead },
     ...runs.filter(run => run.reviewSourceView?.directory).map(run => ({ id: run.workspaceId, directory: run.reviewSourceView!.directory, head: run.head })),

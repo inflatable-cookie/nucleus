@@ -357,6 +357,22 @@ test('a second registration of the same workspace, agent or branch resumes the e
 });
 
 
+test('a registered external worktree records no build-output cleanup intent', async () => {
+  const f = await fixture();
+  try {
+    const { task } = await f.register();
+    assert.equal(task.workspaceOwnership, 'external');
+    f.idle(f.caller);
+    // The worker's own result would normally make its shared checkout a build
+    // output settlement candidate. A registered worktree is the caller's own,
+    // so nothing Queue removes may be recorded against it (nucleus#1261).
+    assert.equal((await f.engine.complete({ taskId: task.id, runId: task.runId!, eventId: randomUUID(),
+      status: 'ready_for_review', summary: 'PR opened', prNumber: 1, head: f.head }, f.token())).accepted, true);
+    assert.deepEqual(f.store.task(task.id).resolution.buildOutputCleanups, [],
+      'an external worktree never gets a Queue build-output cleanup');
+  } finally { await f.close(); }
+});
+
 test('qualified registration callers keep the worker native and the origin qualified', async () => {
  const f=await fixture();try {
   const hostId=f.adapter.hostId;

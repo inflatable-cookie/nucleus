@@ -94,6 +94,12 @@ export const externalWorkspaceArchiveSchema = z.object({
   folderRemovedBy: z.string().min(1).max(240).nullable().default(null),
   /** The complete catalog registrations Queue observed at this exact folder. */
   samePathRegistrations: z.array(z.string().min(1).max(240)).default([]),
+  /**
+   * True only when admission deferred this entry's request: nothing reached
+   * Paseo, so the record owes no backoff and no native intent exists. It is the
+   * typed fact that replaces reading the deferral's words out of `detail`.
+   */
+  deferredByAdmission: z.boolean().default(false),
   intentAt: z.string().nullable().default(null), settledAt: z.string().nullable().default(null),
   nextAttemptAt: z.string().nullable().default(null),
 }).strict();

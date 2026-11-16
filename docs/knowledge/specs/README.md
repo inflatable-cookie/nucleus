@@ -57,12 +57,17 @@ implemented; the contracts summarise the durable rules and link here.
 | [059 — Subscription usage pressure gauge](059-usage-gauge.md) | implemented: readers, samples, projection and `usage.state`, plus the Usage page and Paseo sidebar rail |
 | [060 — Named project agents](060-named-project-agents.md) | implemented |
 | [061 — Worker proof files reach the retained reviewer](061-worker-proof-files.md) | implemented |
+| [062 — BB host adapter](062-bb-host-adapter.md) | approved, not implemented; the phased plan starts with a transport spike |
 
 ## Host adapters
 
 The [T3Code host adapter](t3code-host-adapter.md) provides native thread operations
 for the nightly trial, with CLI-helper reporting, board questions and per-project
 host opt-in.
+
+The [BB host adapter](062-bb-host-adapter.md) is the third host: one BB workspace
+per task nested under its planner thread, per-repository opt-in, and a phased plan
+whose first phase proves the plugin-backed transport.
 
 ## Retired specs
 
