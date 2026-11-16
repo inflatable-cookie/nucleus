@@ -631,7 +631,7 @@ test("a reconnect proves the identity again, and a dropped connection settles in
   }
 });
 
-test("the registered BB adapter declares its composition and still refuses run workflow before phase 3", async () => {
+test("the store-less BB surface declares its composition and still refuses run workflow", async () => {
   const { createBbHostAdapter } = await import("../service/bb-host");
   const { ProvenPreSendRefusalError } = await import("../core/host/errors");
   const adapter = createBbHostAdapter(
@@ -642,11 +642,13 @@ test("the registered BB adapter declares its composition and still refuses run w
   assert.deepEqual(adapter.capabilities?.(), {
     reportingViaMcp: false,
     supportsCoordinatorRecovery: true,
+    nativeDecisions: false,
     lifecycleDispatch: false,
     perThreadEnvironment: false,
     repositorySharedWorkspaces: false,
   });
-  // Phase 2 adds workspace custody only. Run and thread workflows remain refused.
+  // Without a durable store this surface is workspace custody only: run and thread
+  // workflows refuse until the composed adapter (phase 3) has something to record in.
   const refusals: Array<[string, () => Promise<unknown>]> = [
     [
       "observe",
