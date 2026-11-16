@@ -94,5 +94,8 @@ test('reporting cleanup is synchronous and reads the current helper directory', 
   assert.equal(purgeReportingFiles(join(root, 'helper'), 'task', ['run']), undefined);
   assert.equal(existsSync(ticket), false);
   assert.equal(existsSync(other), true);
-  assert.match(reportingFallback(join(root, 'helper'), { id: 'run', head: 'head', generation: 2 } as import('../shared/contracts').Run), /head head and coordinatorGeneration 2/);
+  const fallback = reportingFallback(join(root, 'helper'), { id: 'run', head: 'head', generation: 2 } as import('../shared/contracts').Run);
+  assert.ok(fallback.includes(`NUCLEUS_TICKET='${ticket}' NUCLEUS_CONTINUATION_TICKET= nucleus helper report`));
+  assert.match(fallback, /head head and coordinatorGeneration 2/);
+  assert.doesNotMatch(fallback, /node .*helper/);
 });

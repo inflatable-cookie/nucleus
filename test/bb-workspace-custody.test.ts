@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../core/store/store";
-import { createBbHostAdapter } from "../service/bb-host";
+import { createBbWorkspaceAdapter } from "../service/bb-host";
 import { workspaceHandleForPath, type HostOperationName, type HostOperationOutcome } from "../shared/host-operation";
 import type { Task } from "../shared/contracts";
 
@@ -23,7 +23,7 @@ test("BB workspace creation records a canonical handle without creating a thread
     if (op === "workspace.inspect") return outcome(op, { projectId: "proj_synthetic", projectFound: true, path: repositoryRoot });
     return outcome(op, { projectId: "proj_synthetic", projectCreated: true, projectCount: 1, handle: workspaceHandleForPath(directory), path: directory, spawned: 0 });
   };
-  let adapter = createBbHostAdapter(hostId, () => true, "", store, request);
+  let adapter = createBbWorkspaceAdapter(hostId, () => true, "", store, request);
   try {
     const created = await adapter.createWorkspace!(task("Synthetic task", repositoryRoot, directory));
     assert.deepEqual(created, { id: workspaceHandleForPath(directory), directory });
@@ -34,7 +34,7 @@ test("BB workspace creation records a canonical handle without creating a thread
     assert.deepEqual(await adapter.findWorkspaces!({ directory } as never), [{ id: created.id, directory }]);
     store.close();
     store = new Store(join(root, "queue.sqlite"));
-    adapter = createBbHostAdapter(hostId, () => true, "", store, request);
+    adapter = createBbWorkspaceAdapter(hostId, () => true, "", store, request);
     assert.deepEqual(await adapter.findWorkspaces!({ directory } as never), [{ id: created.id, directory }], "the handle survives a service/store restart");
     assert.equal(await adapter.workspaceAvailable!(created.id), true);
     assert.deepEqual(await adapter.createWorkspace!(task("Synthetic task", repositoryRoot, directory)), created);
@@ -49,7 +49,7 @@ test("an offline BB host releases the reservation so a later create can retry", 
   const store = new Store(":memory:");
   let online = false;
   let writes = 0;
-  const adapter = createBbHostAdapter(hostId, () => online, "", store, async (op, input) => {
+  const adapter = createBbWorkspaceAdapter(hostId, () => online, "", store, async (op, input) => {
     writes++;
     const path = (input as { workspacePath: string }).workspacePath;
     return outcome(op, { projectId: "proj_synthetic", projectCreated: true, projectCount: 1, handle: workspaceHandleForPath(path), path, spawned: 0 });
@@ -71,7 +71,7 @@ test("a missing service identity releases the reservation before any host operat
   const repositoryRoot = join(root, "repository"), directory = join(root, "task-worktree"), dataDir = join(root, "service");
   mkdirSync(repositoryRoot); mkdirSync(directory); mkdirSync(dataDir);
   const store = new Store(":memory:");
-  const adapter = createBbHostAdapter(hostId, () => true, dataDir, store);
+  const adapter = createBbWorkspaceAdapter(hostId, () => true, dataDir, store);
   try {
     await assert.rejects(adapter.createWorkspace!(task("Synthetic task", repositoryRoot, directory)), /operation was not sent: Nucleus service identity is unavailable/);
     assert.deepEqual(store.getMeta("bbWorkspaces"), {}, "a missing service identity cannot leave a reserved handle");
@@ -84,7 +84,7 @@ test("BB archive marks one task handle and leaves the shared project and sibling
   mkdirSync(repositoryRoot); mkdirSync(first); mkdirSync(second);
   const store = new Store(":memory:");
   let projectFound = true;
-  const adapter = createBbHostAdapter(hostId, () => true, "", store, async (op, input) => {
+  const adapter = createBbWorkspaceAdapter(hostId, () => true, "", store, async (op, input) => {
     if (op === "workspace.create") {
       const path = (input as { workspacePath: string }).workspacePath;
       return outcome(op, { projectId: "proj_shared", projectCreated: false, projectCount: 1, handle: workspaceHandleForPath(path), path, spawned: 0 });
@@ -119,7 +119,7 @@ test("a lost project-create reply is adopted by exact-root inspection and never 
   const store = new Store(":memory:");
   const calls: HostOperationName[] = [];
   let projectExists = false;
-  const adapter = createBbHostAdapter(hostId, () => true, "", store, async op => {
+  const adapter = createBbWorkspaceAdapter(hostId, () => true, "", store, async op => {
     calls.push(op);
     if (op === "workspace.create") {
       projectExists = true;
@@ -144,7 +144,7 @@ test("BB workspace unreadable project inspection stays an error, and a missing d
   const repositoryRoot = join(root, "repository"), directory = join(root, "missing");
   mkdirSync(repositoryRoot);
   const store = new Store(":memory:");
-  const adapter = createBbHostAdapter(hostId, () => true, "", store, async () => { throw new Error("recorded projects.list read failed"); });
+  const adapter = createBbWorkspaceAdapter(hostId, () => true, "", store, async () => { throw new Error("recorded projects.list read failed"); });
   try {
     await assert.rejects(adapter.createWorkspace!(task("missing", repositoryRoot, directory)), /ENOENT/);
     const repositoryProject = (adapter as unknown as { repositoryProject(root: string): Promise<unknown> }).repositoryProject;

@@ -1,3 +1,4 @@
+// Internal implementation; agents use the installed `nucleus` command.
 // The Nucleus CLI front door: one method call, one payload, one answer.
 //
 // Reading the argv and the payload, loading the runtime from a source snapshot
@@ -156,6 +157,7 @@ async function main() {
       const target = method === 'lead.submit' ? 'lead.list by repository and title, then lead.get promotedTaskId' : method === 'lead.promote-task' ? 'lead.get promotedTaskId' : 'papercut.get taskId';
       console.error(`outcome unknown — check ${target} (or operation <id> with queue.operation-status); do not repeat blindly. ${message}`);
     }
+    else if (error?.name === 'LocalServiceContractMismatch') console.error('This CLI differs from the running service; use the installed `nucleus` command.');
     else console.error(message);
     process.exitCode = 1;
   } finally {

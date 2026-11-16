@@ -91,7 +91,7 @@ export class RunReservationAdmission {
             : `Dispatching ${role}`;
       if (role === 'reviewer' && !agentId && profile && !options.profile) t = this.resolution.recordCriticalReviewFallback(this.store.task(t.id), profile);
       this.resolution.update(t, { currentRunId: run.id, stalledTurnStop: null,
-        ...(consumeRestartSlotHold(latest, role) ? { restartSlotHold: null } : {}),
+        ...(consumeRestartSlotHold(latest) ? { restartSlotHold: null } : {}),
         ...(role === 'reviewer' && run.reviewReason ? { pendingReviewReason: null } : {}),
         ...(role === 'reviewer' && run.proofRetry ? { proofRetry: null } : {}),
         ...(role === 'revision' ? {

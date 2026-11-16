@@ -100,10 +100,8 @@ Decisions still go through `ask` and the planner ladder. `nucleus_ask` and `nucl
 as aliases for retained sessions.
 
 **Payloads:** pass JSON on stdin with `-`, for example
-`node bin/queue-cli.mjs METHOD - <<'JSON'`, then the JSON, then a closing `JSON`
-line. A file path still works, and no argument means `{}`. Work from the plugin
-root (walk up from this file's directory to the ancestor holding
-`bin/nucleus-submit.mjs`).
+`nucleus METHOD - <<'JSON'`, then the JSON, then a closing `JSON`
+line. A file path still works, and no argument means `{}`. Run `nucleus` from any directory.
 
 ## Approve by default
 
@@ -181,7 +179,7 @@ implementation`, `dispatch_authority: orchestrator`, `status: ready-to-launch`,
 `queue_approval` naming the authorization, with no template placeholders.
 
 ```sh
-node bin/nucleus-submit.mjs /absolute/repository/docs/handoffs/worker.md
+nucleus helper submit /absolute/repository/docs/handoffs/worker.md
 ```
 
 When the repository's `.paseo/queue.json` is v5 or absent (or the brief is
@@ -189,7 +187,7 @@ Nucleus-held), submit brief mode instead; its frontmatter needs only `title`,
 `queue_approval` and optional `queue:` routing, and the file is never committed:
 
 ```sh
-node bin/nucleus-submit.mjs --brief --repo /absolute/repository /absolute/brief.md
+nucleus helper submit --brief --repo /absolute/repository /absolute/brief.md
 ```
 
 Add `--dry-run` to validate and print the derived submission. `--coordinator`
@@ -198,7 +196,7 @@ defaults to `main`; `--commit` fences the expected integration head. The helper
 returns a durable operation receipt; remote validation runs afterward:
 
 ```sh
-node bin/queue-cli.mjs operation-status - <<'JSON'
+nucleus operation-status - <<'JSON'
 {"operationId":"returned-operation-id"}
 JSON
 ```
@@ -213,7 +211,7 @@ has an execution-authored `preSendReceipt` may the owner explicitly ask Nucleus 
 reconcile the same occurrence, passing the operation's recorded input hash:
 
 ```sh
-node bin/queue-cli.mjs operation-status - <<'JSON'
+nucleus operation-status - <<'JSON'
 {"operationId":"returned-operation-id","reconcilePreSendInputHash":"recorded-input-hash"}
 JSON
 ```
@@ -479,7 +477,7 @@ level.
 Change it only on the operator's word (Spec 052):
 
 ```sh
-node bin/queue-cli.mjs queue.usage - <<'JSON'
+nucleus queue.usage - <<'JSON'
 {"level":"maximum","until":"2026-10-21T09:00:00Z"}
 JSON
 ```
@@ -682,7 +680,7 @@ Any thread can put itself on the board and own the work it is about to do (Spec 
 separate clean worktree on its own branch, never the registered checkout or the integration branch:
 
 ```sh
-node <queue-plugin>/bin/queue-cli.mjs task.register - <<'JSON'
+nucleus task.register - <<'JSON'
 {"title":"What this task delivers","description":"Outcome, constraints and acceptance","complexity":"medium","caller":"self"}
 JSON
 ```
@@ -731,7 +729,7 @@ hide the budget question because it blocks merging, not runs. A dispatch hold st
 suppresses it because no run can start until that hold is released.
 
 ```sh
-node bin/queue-cli.mjs next - <<'JSON'
+nucleus next - <<'JSON'
 {"reference":"owner/name#12"}
 JSON
 ```
@@ -1103,7 +1101,7 @@ worker. A wait must name a task reference, a future ISO time with timezone, or a
 operator decision ID in its reason. Nucleus applies the choice and resumes a named wait;
 a refusal comes back once. You can also apply an ordinary verb directly: when the stop is
 gone, it closes the open question. `withdraw_cancel` reverses a cancellation still in `intent` or
-`draining`. Bulk dispositions use `nucleus-bulk-dispose.mjs start|status|retry`.
+`draining`. Bulk dispositions use `nucleus helper bulk-dispose start|status|retry`.
 To change a brief before merge, use `amend_brief` with the complete new text and a
 reason (refused after merge intent). On a committed handoff, `amend_brief` with
 only a `reason` re-pins the instruction to the artifact at the integration base.
@@ -1134,8 +1132,8 @@ notices reach it. When a thread is replaced or a task changes hands, change the
 owner in one step (Spec 040); never unarchive the old thread or edit the live store:
 
 ```sh
-node bin/nucleus-reparent.mjs NEW_OWNER_AGENT_ID --task TASK_ID [--task TASK_ID ...] --reason TEXT
-node bin/nucleus-reparent.mjs NEW_OWNER_AGENT_ID --project PROJECT --from OLD_OWNER_AGENT_ID --reason TEXT
+nucleus helper reparent NEW_OWNER_AGENT_ID --task TASK_ID [--task TASK_ID ...] --reason TEXT
+nucleus helper reparent NEW_OWNER_AGENT_ID --project PROJECT --from OLD_OWNER_AGENT_ID --reason TEXT
 ```
 
 The calling thread (its Nucleus ticket or host identity) must be the tasks' current owner, the task's own planner,
@@ -1159,7 +1157,7 @@ questions when the asking task's own planner cannot, receives the project-level
 notices that once went to the retired owner, and is the thread `to: {project}`
 resolves to; it grants no verb, hold or acceptance authority. A task's planner is
 recorded on the task itself — its submitting owner, or the thread its brief named
-— and `helper reparent` moves it. `project.agents` lists the project's named,
+— and `nucleus helper reparent` moves it. `project.agents` lists the project's named,
 non-task threads, and `agent.register`/`agent.unregister` maintain them (Spec 060).
 
 ## Review entry for external PRs
@@ -1197,7 +1195,7 @@ A papercut needs `repository` (an origin string or `{origin, path}`), `title`,
 its generated brief has none.
 
 ```sh
-node bin/queue-cli.mjs papercut.add - <<'JSON'
+nucleus papercut.add - <<'JSON'
 {"repository": {"origin": "owner/name", "path": "/abs/checkout"},
  "title": "...", "happened": "...", "impact": "..."}
 JSON
@@ -1218,7 +1216,7 @@ task and do not create a new admission.
 Link decisions to related tasks, leads or papercuts. Withdraw an overtaken question, or supersede one that changes shape. Record a ruling given in chat with `decision.answer`, quoting the operator and naming them in the note; also land it in the owning knowledge file or close the question. Decisions record rulings only and grant no execution authority.
 
 ```sh
-node bin/queue-cli.mjs decision.add - <<'JSON'
+nucleus decision.add - <<'JSON'
 {"question": "...", "options": ["A", "B"],
  "recommendation": "A, because ...", "context": "..."}
 JSON
@@ -1290,6 +1288,6 @@ Use `nucleus worktree prepare [SOURCE[=LINK] ...]` before repository setup,
 `nucleus worktree link` after it, and `nucleus worktree unlink` on teardown.
 The command replays the primary checkout’s Effigy dependency links. Sources are
 resolved relative to the primary checkout. A primary checkout is left alone.
-When Nucleus is not installed, a checkout can run `node /path/to/nucleus/bin/nucleus.mjs worktree <action>`; this needs no dependencies from the target worktree.
+Install Nucleus to use `nucleus worktree <action>`.
 
 Create and edit routing profiles in Settings → Profiles.

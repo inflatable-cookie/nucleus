@@ -29,5 +29,5 @@ export function purgeReleasedRunTicket(dataDir:string,taskId:string,runId:string
 
 export function reportingFallback(helperPath:string,run:Run) {
     const quote=(s:string)=>"'"+s.replaceAll("'", "'\\''")+"'";
-    return `If nucleus_report is absent, feed actual result JSON to node ${quote(helperPath)} ${quote(join(dirname(helperPath),'tickets',`${run.id}.json`))}. Include status, summary, head ${run.head} and coordinatorGeneration ${run.generation}. The ticket supplies authentication; never print it. Require an accepted response. Do not bypass rejected callbacks. Never send test or probe reports; report only an actual result.`;
+    return `If nucleus_report is absent, feed actual result JSON to NUCLEUS_TICKET=${quote(join(dirname(helperPath),'tickets',`${run.id}.json`))} NUCLEUS_CONTINUATION_TICKET= nucleus helper report. Include status, summary, head ${run.head} and coordinatorGeneration ${run.generation}. The ticket supplies authentication; never print it. Require an accepted response. Do not bypass rejected callbacks. Never send test or probe reports; report only an actual result.`;
 }

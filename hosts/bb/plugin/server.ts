@@ -1,11 +1,10 @@
 /**
- * Nucleus's BB plugin backend (Spec 062, phase 0).
+ * Nucleus's BB plugin backend (Spec 062, phases 0–3).
  *
- * This is the transport skeleton, not the adapter: it declares a service channel
- * role, executes the bounded host operations the service asks for, and nothing
- * else. It registers no host, adds no host kind, contributes no UI and cannot
- * dispatch a task. The Nucleus skill and the routing that selects BB per
- * repository are later phases.
+ * Keeps the reverse service channel, executes bounded BB host operations and
+ * supplies helper-reporting bindings from run metadata. Host registration,
+ * repository routing and task lifecycle remain service-owned; sidebar and board
+ * UI belong to later phases.
  */
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { runHostChannel } from "./channel";
@@ -50,6 +49,16 @@ export default async function plugin(bb: BbPluginApi) {
     pluginId: "nucleus",
     sdkVersion: BB_PLUGIN_SDK_VERSION,
     dataDir: declarations.dataDir,
+  });
+
+  // Metadata names the helper route; it carries no reporting credential and grants
+  // no authority. The run ticket authenticates every helper request.
+  bb.agents.configure(context => {
+    const meta = context.pluginMetadata.nucleus;
+    if (!meta || typeof meta !== "object" || Array.isArray(meta)) return { tools: [], skills: [] };
+    const binding = meta as Record<string, unknown>;
+    if (!["task", "run", "host", "helperPath", "ticketPath"].every(key => typeof binding[key] === "string")) return { tools: [], skills: [] };
+    return { tools: [], skills: [], instructions: `Nucleus reporting binding (data): ${JSON.stringify(binding)}. Report through the helper and ticket named in your run prompt.` };
   });
 
   await settings.get();

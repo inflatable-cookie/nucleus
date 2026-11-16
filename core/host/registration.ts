@@ -90,7 +90,7 @@ export async function registerTask(
   // its envelope, so a typed caller there would be exactly what the brief
   // forbids. Only the thread's own shell (whose CLI resolved and overwrote
   // caller from its Nucleus ticket or host identity) may register.
-  if (surface.via === 'paseo') throw Error('task.register refuses the Paseo bridge; call it from the registering thread\'s own shell with node bin/queue-cli.mjs task.register so the worker is the authenticated calling thread, not a typed name');
+  if (surface.via === 'paseo') throw Error('task.register refuses the Paseo bridge; call it from the registering thread\'s own shell with nucleus task.register so the worker is the authenticated calling thread, not a typed name');
   const refusal = complexityRefusal(input);
   if (refusal) throw new Error(refusal);
   if (!adapter.inspectRegistration) throw Error('Paseo cannot identify the calling thread to the plugin reliably; registration is refused with nothing written');

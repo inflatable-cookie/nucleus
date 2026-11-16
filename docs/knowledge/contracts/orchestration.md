@@ -127,6 +127,14 @@ ownership proof and created once more after a bounded backoff; two failures
 settle the run as a plain failure, never as an uncertain checkout retained for
 reconciliation. `project-qa-tap-failures.ts` owns failure parsing, identities
 and truncation.
+The supervisor awaits asynchronous durable lifecycle, step-log and result writes;
+its separate atomic heartbeat has no fsync and does not wait behind those writes.
+The heartbeat still comes from the supervisor event loop, so a hung loop remains
+subject to the unchanged stale-heartbeat watchdog. Lost-run detail retains the
+last heartbeat, pre-stop supervisor liveness, in-flight step and process-group
+state, plus starts and rolls in the heartbeat gap; incomplete service history
+is reported as unknown.
+
 `supervisor-process.ts` owns the detached supervisor's own process lifecycle — the
 launch shape and the stale stop with its proof — for milestone QA, project
 validation and the host-run endpoint alike, so neither family keeps its own copy.
@@ -1122,8 +1130,9 @@ request identities and submitted handoffs are not rewritten.
   closeout coordinator turn (an unreleased run with a live or starting agent,
   or dispatch creating its workspace ahead of the launch) — or while an owner
   restart is holding the slot that task already had (`restartSlotHold`) until
-  the continuation is admitted. A fenced task (dispatch-held, disposition, or
-  a stop that cannot launch) does not keep that restart hold: it neither
+  the next participant's continuation is admitted, whichever role resumes it.
+  Capture that ownership before settling or displacing the old runs. A fenced
+  task (dispatch-held, disposition, or a stop that cannot launch) does not keep that restart hold: it neither
   reserves a slot nor ranks ahead of runnable work. A task with no running
   agent that is only waiting on hosted checks, the repository integration
   (merge) turn, mechanical verification, a thread release or settlement holds
@@ -2660,15 +2669,26 @@ movement invalidates source approval and preserves the normal readiness gates.
   suggestedVerbs}`). A coordinator returns one typed `coordinatorAction`
   (`restart`, `route`, `move`, `retry_effect` or `cannot`) with its recovery run
   identity; Nucleus applies it through the shared verb registry. A recovered
-  report with no action is a live no-op only when Nucleus itself observes a
-  worker or reviewer still holding the lane. The episode then settles, no
-  planner escalation opens, and another recovery does not start for the same
-  cause while that participant stays active. A recovered report with no action
-  and no live occupant is refused: the coordinator must name an action or
-  `cannot`.
-  A `cannot` over a still-bound initial or revision worker waits for that worker
-  after a fresh matching agent and workspace observation; otherwise it escalates
-  to the owner.
+  report with no action, or a blocked/error report on healthy work, settles as
+  a no-op when Nucleus observes an active turn, advancing activity, or a project
+  slot or prerequisite wait. The initial worker and resolution participants use
+  the same rule; the report's wording does not decide whether work is live.
+  The task keeps its phase and ordinary wait, and its timeline records
+  “recovery: task live, nothing to do”. No escalation opens and recovery does not
+  repeat while the work remains live. A genuine fault still takes the existing
+  escalation path, including a verified provider-exhaustion report.
+  A recovered report with no action and no live work is refused: the coordinator
+  must name an action or `cannot`.
+- A planner-selected time or task wait resumes ordinary work when its condition
+  settles, even if the recovery run that raised the escalation has ended or is
+  missing. Wake follows the available continuation from `next`; when no retained
+  turn can resume, the existing recovery path owns the remaining fault. A refused
+  parked restart re-reads that same path even while the raising run is unreleased;
+  observation and delivery fences still apply. It never
+  leaves an expired wait at a refused wake or inert lifecycle stop, and never
+  silently replaces a retained reviewer. A fulfilled task wait clears with its
+  wake intent before continuation admission; its owner notice stays tracked but
+  no longer parks recovery once that wait has cleared.
 - A coordinator cannot grant acceptance or relay an operator replacement instruction.
 - A report binds to its episode, coordinator generation and the task's progress
   when the episode opened (phase, head, worker, completion and review, run,

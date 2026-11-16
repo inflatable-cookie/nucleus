@@ -4,7 +4,6 @@
  * tell and message routes. Each rule is one named text; a run's report route
  * (MCP tool or packaged helper) selects its own variant.
  */
-import { quote } from './workspace-text';
 
 /**
  * The one blocked rule. Blocked and error are for a concrete external impediment
@@ -40,9 +39,8 @@ export const RESPONSIBLE_OWNERSHIP_RULE = "You own this task end to end. Make th
 
 export const RESPONSIBLE_BLOCKER_LADDER_RULE = "Blocker ladder (Spec 058): a blocker you cannot resolve climbs — you own it first (decide within the approved outcome, work around gates with safe alternatives, keep going). If you cannot settle a blocker within the approved outcome and need a second opinion, call ask with to: \"reviewer\"; do not consult merely to satisfy a process rule. If you are still blocked after that advice, or the cause is genuinely outside the task (environment, shared gate, another task, a needed ruling), report blocked plainly with the concrete cause and what you tried — Nucleus then escalates it to the project planner automatically: one reviewer consult, one planner escalation per cause, a repeated blocker on the same cause joining the open escalation instead of starting another turn. Only release or outward actions, product or scope changes, frontier or above-ceiling profiles, or a planner that explicitly says it cannot decide reach Tom. Budget extensions, including past 2x, stay delegated under approve by default, Tom 2026-11-03. Never report blocked for a decision you could make.";
 
-export function helperInvocation(helper?: string, ticket?: string, subcommand?: string): string {
-  const extra = subcommand ? ` ${subcommand}` : '';
-  return helper && ticket ? `node ${quote(helper)} ${quote(ticket)}${extra}` : `node "$NUCLEUS_HELPER"${extra}`;
+export function helperInvocation(_helper?: string, _ticket?: string, subcommand?: string): string {
+  return `nucleus helper report${subcommand ? ` ${subcommand}` : ''}`;
 }
 
 /**

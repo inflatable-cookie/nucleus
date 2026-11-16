@@ -72,8 +72,8 @@ convention.
 
 ## Lead, approve, promote
 
-From the Queue plugin root, with the payload on stdin
-(`node bin/queue-cli.mjs METHOD - <<'JSON'`, the JSON, then a closing `JSON`
+From any directory, with the payload on stdin
+(`nucleus METHOD - <<'JSON'`, the JSON, then a closing `JSON`
 line; see [SKILL.md](../SKILL.md)):
 
 1. **Write:** `lead.add` with `repositories` (a list of `{origin, path}`),

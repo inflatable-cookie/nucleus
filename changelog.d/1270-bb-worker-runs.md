@@ -1,0 +1,1 @@
+BB repositories can dispatch workers with helper reporting, recover uncertain spawns by exact run metadata, and observe threads in bounded batches. Worker titles show the current step and need for input; stop and archive retain observation-first safety.

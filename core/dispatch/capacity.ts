@@ -94,14 +94,9 @@ export const occupiesSlot = (task: CapacityTask, runs: Run[] = []) =>
   (workerHoldsSlot(task) || runs.some(runHoldsSlot) || task.hasLiveRun === true
     || Boolean(task.resolution.restartSlotHold) && !slotRequestFenced(task));
 
-/** True when this launch is the continuation the restart hold was keeping a slot for. */
-export function consumeRestartSlotHold(task: Task, role: Run['role']): boolean {
-  const hold = task.resolution.restartSlotHold;
-  if (!hold) return false;
-  if (hold.role === 'reviewer') return role === 'reviewer';
-  if (hold.role === 'worker') return role === 'revision';
-  if (hold.role === 'executor') return role === 'executor';
-  return false;
+/** The next participant takes this task's held slot, whichever role resumes it. */
+export function consumeRestartSlotHold(task: Task): boolean {
+  return Boolean(task.resolution.restartSlotHold);
 }
 
 /** Never-dispatched `queued` work. Every other slot request is in-flight. */

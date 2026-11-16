@@ -57,6 +57,39 @@ async function promotedTask(runtime:QueueRuntime,result:Awaited<ReturnType<Queue
   return {taskId:operation.result.taskId,reference:operation.result.reference};
 }
 
+weighted(3)('leads filed from an archived worktree check and promote in the registered checkout',async t=>{
+  const f=await fixture(t), origin='acme/fixture', worktree=join(f.root,'worker');
+  f.runtime.store.putRepository({origin,path:f.repo},'queue','Registered checkout');
+  await git(f.repo,'worktree','add','-b','worker',worktree);
+  const lead=await f.runtime.addLead({repositories:[{origin,path:worktree}],title:'Worker lead',body:text,lanes:[],author:'planner'});
+  assert.equal(lead.repositories[0].path,f.repo);
+  await git(f.repo,'worktree','remove',worktree);
+  const edited=await f.runtime.editLead({id:lead.id,version:lead.version,title:'Edited worker lead',author:'planner'});
+  assert.equal(edited.check?.ok,true,edited.check?.message);
+  const checked=await f.runtime.checkLead({id:lead.id});
+  assert.equal(checked.check?.ok,true,checked.check?.message);
+  f.runtime.approveLead({id:lead.id,version:checked.version,digest:checked.digest!,approver:'operator (board)',note:'',relayed:false});
+  const promoted=await promotedTask(f.runtime,await f.runtime.promoteLeadToTask({id:lead.id,note:'',board:true}));
+  assert.equal(f.runtime.store.task(promoted.taskId).repoPath,f.repo);
+
+  // A historical row keeps its original bytes and identity while its path is resolved at use time.
+  const stamp=new Date().toISOString();
+  const historical=f.runtime.store.addLead({id:randomUUID(),title:'Historical lead',body:text,digest:briefDigest(text),repositories:[{origin,path:worktree}],lanes:[],author:'planner',
+    state:'open',version:1,dropReason:null,targets:[],source:null,createdAt:stamp,updatedAt:stamp,closedAt:null},'planner');
+  const before=f.runtime.store.lead(historical.id);
+  const historicalCheck=await f.runtime.checkLead({id:historical.id});
+  assert.equal(historicalCheck.check?.ok,true,historicalCheck.check?.message);
+  assert.deepEqual([historicalCheck.id,historicalCheck.version,historicalCheck.digest,historicalCheck.repositories],
+    [before.id,before.version,before.digest,before.repositories]);
+});
+
+weighted(1)('a missing unregistered lead checkout names its origin',async t=>{
+  const f=await fixture(t), origin='acme/missing';
+  const lead=await f.runtime.addLead({repositories:[{origin,path:join(f.root,'gone')}],title:'Missing checkout',body:text,lanes:[],author:'planner'});
+  assert.match(lead.check?.message??'',/acme\/missing.*no usable checkout is registered/);
+  await assert.rejects(f.runtime.checkLead({id:lead.id}),/acme\/missing.*no usable checkout is registered/);
+});
+
 weighted(3)('a promoted report-only lead gets the report-only prompt and can report_ready',async t=>{
   const f=await fixture(t);
   f.runtime.store.upsertLane({key:'web-health',title:'Web health',aim:'Report web health',repositories:[{origin:'acme/fixture',path:f.repo}]});

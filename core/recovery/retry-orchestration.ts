@@ -271,10 +271,10 @@ export class RetryRoutes {
     return this.store.transaction(() => {
       // Spec 050 (#3569): the restart settles its armed fences atomically with
       // the restart; a refusal inside rolls both back.
-      if (settleFences) this.resolution.settleVerbFences(t.id, settleFences);
       const before = this.store.task(t.id);
       const occupying = occupiesSlot(before, this.store.runs(t.id));
       const holdFrom = this.store.runs(t.id).find(runHoldsSlot)?.id ?? before.resolution.currentRunId ?? before.runId;
+      if (settleFences) this.resolution.settleVerbFences(t.id, settleFences);
       const stopped = this.admitStoppedRevision(this.store.task(t.id), instruction, prePr);
       const resumeIntent = Boolean(stopped.identityConfirmation);
       this.adapter.purgeReportingFiles?.(t.id, [stopped.id]);

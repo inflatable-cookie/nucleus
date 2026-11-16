@@ -1,3 +1,4 @@
+// Internal implementation; agents use the installed `nucleus` command.
 // Review-entry intake helper: preview or start an external PR review entry.
 
 import { compiledIdentity } from '../shared/runtime.mjs';
@@ -9,7 +10,7 @@ import {queueClient} from './queue-client.mjs';
 
 const {values,positionals}=parseArgs({allowPositionals:true,options:{preview:{type:'boolean',default:false},key:{type:'string'},lead:{type:'string'},pr:{type:'string'},workspace:{type:'string'},repository:{type:'string'},authority:{type:'string'},models:{type:'string'},'github-author':{type:'string'},'authoring-system':{type:'string'},'attested-by':{type:'string'},provenance:{type:'string'},'workspace-ownership':{type:'string'},'via-paseo':{type:'boolean',default:false},help:{type:'boolean'}}});
 if(values.help){
-  console.log('node bin/nucleus-review-entry.mjs [--preview | --key STABLE_KEY] [--via-paseo] input.json\nnode bin/nucleus-review-entry.mjs --lead ID --pr N [--workspace ID --workspace-ownership intake|external] --authority TEXT --models PROVIDER/MODEL --github-author LOGIN --authoring-system NAME --attested-by NAME --provenance TEXT [--repository ORIGIN] [--preview | --key STABLE_KEY]\nThe lead route derives the submission from the approved Nucleus lead, reads PR branch/head from GitHub, prepares an intake-owned checkout-pr workspace when needed, then previews and submits review entry. When supplying a workspace, state whether it was created for this intake (intake) or predates it (external).');
+  console.log('nucleus helper review-entry [--preview | --key STABLE_KEY] [--via-paseo] input.json\nnucleus helper review-entry --lead ID --pr N [--workspace ID --workspace-ownership intake|external] --authority TEXT --models PROVIDER/MODEL --github-author LOGIN --authoring-system NAME --attested-by NAME --provenance TEXT [--repository ORIGIN] [--preview | --key STABLE_KEY]\nThe lead route derives the submission from the approved Nucleus lead, reads PR branch/head from GitHub, prepares an intake-owned checkout-pr workspace when needed, then previews and submits review entry. When supplying a workspace, state whether it was created for this intake (intake) or predates it (external).');
   process.exit(0);
 }
 let input;

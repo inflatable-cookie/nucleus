@@ -5,6 +5,7 @@ import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { LEAD_BODY_MAX, MAX_TITLE_LENGTH, type Lead, type LeadDetail, type LeadVersion, type LeadListInput, type LeadPage } from "../../shared/contracts";
 import { leadActions } from "./lead-actions";
 import type { Store } from "../store/store";
+import { leadRepository } from "./lead-repository";
 
 type Repository = { origin: string; path: string };
 type Location = { file: string; line: number };
@@ -41,7 +42,7 @@ function files(path: string): string[] {
 
 export class Leads {
   constructor(private store: Store) {}
-  private repositoryOf(repo: Repository): Repository { return this.store.resolveRepositoryIdentity(repo); }
+  private repositoryOf(repo: Repository): Repository { return leadRepository(this.store, repo); }
   add(input: { repositories: Repository[]; title: string; body: string; baseBranch?: string; lanes: string[]; tags?: string[]; author: string }): Lead {
     return this.store.transaction(() => {
       if (input.title.trim().length > MAX_TITLE_LENGTH) throw new Error("Lead title must be 200 characters or fewer");

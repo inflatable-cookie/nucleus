@@ -10,7 +10,6 @@ import { COORDINATOR_NO_ESCALATE_FOR_UNRUN_TESTS } from './review-rules';
 import { RESPONSIBLE_FORCE_RULE } from './report-rules';
 import { externalMergeCloseoutBlock, workerExclusionBlock } from './revision-text';
 import type { RunPromptContext } from './prompt-context';
-import { quote } from './workspace-text';
 
 /**
  * The recovery coordinator's launch prompt: the task-scoped plan snapshot, the
@@ -51,7 +50,7 @@ Before editing, verify local ${task.baseBranch} is clean at ${run.head} and matc
  * facts, so a verb the snapshot offered is refused once the task has moved on.
  */
 export function recoveryContextBlock(snapshot: RecoveryDispatchSnapshot | null, helper: string, ticket: string) {
-  const refresh = `node ${quote(helper)} ${quote(ticket)} next`;
+  const refresh = `nucleus helper report next`;
   if (!snapshot) return `Nucleus context: the launch snapshot is unavailable. Read the current plan with \`${refresh}\` before you choose an action.\n`;
   return `Nucleus context at launch: a snapshot of the task-scoped plan \`next\` derives. It is observation, not authority, and fresh state may differ. Its \`outcome\` names the accepted review with its exact source, any reviewer report Nucleus has not applied, the live reader and the decision still outstanding. Refresh it with \`${refresh}\`, which prints the current plan; Nucleus re-derives current facts when your report arrives.\n${JSON.stringify(snapshot)}\n`;
 }

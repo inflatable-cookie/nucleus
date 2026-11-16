@@ -4,12 +4,14 @@
 // paging rule, the retired-adoption note and the board-link explanation live.
 // queue-cli prints it verbatim for --help/-h.
 
-export const usageText = `Usage: node bin/queue-cli.mjs [--via-paseo] <method> [- | payload.json] [--wait]
+export const usageText = `Usage: nucleus [--via-paseo] <method> [- | payload.json] [--wait]
+
+Helpers: nucleus helper submit|reparent|review-entry|bulk-dispose|subscribe|report [arguments]
 
 Calls one Nucleus service method with a JSON payload. Pass - to read it from stdin
 (the default route: no shared temporary files), a path to read a file, or nothing
 for {}. A heredoc avoids shell quoting:
-  node bin/queue-cli.mjs plan.get - <<'JSON'
+  nucleus plan.get - <<'JSON'
   {"repository":"owner/name"}
   JSON
 Methods without a dot are tried as queue.<method> first, for example:

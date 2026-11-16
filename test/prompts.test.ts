@@ -1217,7 +1217,7 @@ test('recovery coordinator prompt carries the launch snapshot and the one refres
   const prompt = runPrompt(task, run, '/helper', '/ticket', false, snapshot as never);
   assert.match(prompt, /Nucleus context at launch: a snapshot of the task-scoped plan `next` derives/);
   assert.match(prompt, /It is observation, not authority/);
-  assert.match(prompt, /node '\/helper' '\/ticket' next/);
+  assert.match(prompt, /nucleus helper report next/);
   assert.match(prompt, /"checkpoint":\{"runId":"review-run","ordinal":1/);
   assert.match(prompt, /"verb":"restart","available":true,"args":\{"role":"reviewer"\}/);
   assert.match(prompt, /Report exactly one coordinatorAction/);
@@ -1237,7 +1237,7 @@ test('recovery coordinator prompt carries the launch snapshot and the one refres
   // Without a snapshot the prompt says so and still names the refresh path.
   const unavailable = runPrompt(task, run, '/helper', '/ticket', false);
   assert.match(unavailable, /launch snapshot is unavailable/);
-  assert.match(unavailable, /node '\/helper' '\/ticket' next/);
+  assert.match(unavailable, /nucleus helper report next/);
   assert.doesNotMatch(unavailable, /"verbs"/);
 });
 

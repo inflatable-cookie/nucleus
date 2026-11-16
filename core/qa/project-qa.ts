@@ -376,7 +376,7 @@ export class ProjectQaRunner {
   /** Same sweep under its historical name, for a caller that wants it on demand. */
   pruneSettledCheckouts(): Promise<void> { return this.retention.sweep(); }
 
-  private readonly inspection = new ProjectQaInspection({ get: id => this.hostRuns.get(id) }, key => this.qaRepositoryRootPath(key));
+  private readonly inspection = new ProjectQaInspection({ get: id => this.hostRuns.get(id) }, key => this.qaRepositoryRootPath(key), this.store);
 }
 
 const QA_REQUEST_OWNER_INSTANCE = randomUUID();
