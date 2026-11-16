@@ -472,7 +472,17 @@ export class QueueService {
           if (!envelope.success) return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: serviceError("invalid_input", envelope.error) }, false, request.method);
           const parsed = parseHostOperationRequest({ op: envelope.data.op, input: envelope.data.input });
           if (!parsed.ok) return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: parsed.failure.code, message: parsed.failure.message } }, false, request.method);
-          const result = await this.sendHostOperation(envelope.data.hostId, parsed.value.op, parsed.value.input);
+          let result: HostOperationOutcome;
+          try {
+            result = await this.sendHostOperation(envelope.data.hostId, parsed.value.op, parsed.value.input);
+          } catch (error) {
+            const mapped = error instanceof HostOperationRefusedError
+              ? { code: error.failure.code, message: error.failure.message }
+              : error instanceof HostExecutorUnavailableError
+                ? { code: "refused" as const, message: error.message }
+                : serviceError("internal", error);
+            return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: mapped }, false, request.method);
+          }
           return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result }, false, request.method);
         }
         case "service.request-outcome": {

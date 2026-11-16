@@ -67,6 +67,10 @@ test("BB archive marks one task handle and leaves the shared project and sibling
     assert.equal(await adapter.workspaceAvailable!(firstWorkspace.id), false);
     assert.equal(await adapter.workspaceAvailable!(secondWorkspace.id), true);
     assert.deepEqual(await adapter.findWorkspaces!({ directory: second } as never), [{ id: secondWorkspace.id, directory: second }]);
+    const reopened = await create(first, "first again");
+    assert.deepEqual(reopened, firstWorkspace, "re-creating an archived directory reuses its handle");
+    assert.equal(await adapter.taskWorkspaceArchived!(firstWorkspace.id), false);
+    assert.equal(await adapter.workspaceAvailable!(firstWorkspace.id), true);
     projectFound = false;
     assert.equal(await adapter.workspaceAvailable!(secondWorkspace.id), false, "an unregistered project is unavailable");
   } finally { store.close(); rmSync(root, { recursive: true, force: true }); }

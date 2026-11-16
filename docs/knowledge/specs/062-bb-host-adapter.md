@@ -948,10 +948,12 @@ other task handles remain untouched. The socket service exposes the existing rev
 to the adapter through the authenticated owner socket; operation faults remain per request.
 
 Tests: `test/bb-workspace-custody.test.ts` covers creation, handle identity, lookup, archive isolation,
-missing directories, unregistered projects and unreadable reads; `test/bb-plugin-operations.test.ts`
-covers project registration/reuse, read-only project inspection and zero `threads.spawn` calls; the
-shared operation schemas and `test/bb-host-executor.test.ts` retain the bounded reply and unknown
-delivery rules.
+archived-handle reuse, missing directories, unregistered projects and unreadable reads;
+`test/bb-plugin-operations.test.ts` covers project registration/reuse, read-only project inspection
+and zero `threads.spawn` calls; `test/bb-host-channel.test.ts` covers the adapter's production
+service-to-executor route, pre-send refusal classification and reservation cleanup; the shared
+operation schemas and `test/bb-host-executor.test.ts` retain the bounded reply and unknown delivery
+rules.
 
 ### Phase 3 — worker runs, observation and presentation
 

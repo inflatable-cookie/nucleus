@@ -1,5 +1,5 @@
 /**
- * The BB host's registration, identity and health (Spec 062, phase 1).
+ * The BB host's registration, identity, health and workspace custody (Spec 062, phases 1–2).
  *
  * Phase 0 landed the reverse host-operation channel: the BB plugin connects out to
  * the service, declares `service.host-executor` and answers `host.op` requests from
@@ -8,10 +8,11 @@
  * records that identity durably, registers one `bb:` host in the host registry with
  * its own admission and breaker state, and reports it in `service.health`.
  *
- * Nothing here reaches a task workflow. The registered adapter refuses every task
- * call by name because phase 1 adds registration and identity only: no run, no
- * workspace custody, no observation. A refusal is the honest answer, and it is a
- * `ProvenPreSendRefusalError` — nothing was sent to the host.
+ * The registered adapter owns each task worktree through a durable local handle and
+ * the host's shared project. It still refuses run and thread workflow calls by name:
+ * phase 2 adds workspace custody only, not worker execution or observation. A
+ * refusal is the honest answer, and it is a `ProvenPreSendRefusalError` — nothing
+ * was sent to the host.
  *
  * Spec 062: "The service derives `hostId = bb:<hash of the real data directory>`
  * and registers that identity only after a read-only probe through the channel
@@ -195,11 +196,13 @@ export function createBbHostAdapter(
       const old = getWorkspace(id);
       if (old) {
         if (old.directory !== directory || old.repositoryRoot !== repositoryRoot) throw new Error("BB workspace identity conflict");
-        if (old.projectId) return { id, directory };
+        const { archivedAt, ...active } = old;
+        if (archivedAt) putWorkspace(active);
+        if (active.projectId) return { id, directory };
         const inspected = await operation("workspace.inspect", { repositoryRoot });
         const project = inspected.value as { projectId: string | null; projectFound: boolean };
         if (!project.projectFound || !project.projectId) throw new Error("BB workspace creation remains unknown; project inspection found no matching project, so it was not resent");
-        putWorkspace({ ...old, projectId: project.projectId });
+        putWorkspace({ ...active, projectId: project.projectId });
         return { id, directory };
       }
       // Record custody before the SDK write. If its reply is lost, a later create

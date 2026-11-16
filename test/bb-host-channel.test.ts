@@ -1,12 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { connect, type Socket } from "node:net";
+import { mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { QueueService } from "../service/transport/server";
+import { createBbHostAdapter } from "../service/bb-host";
+import { Store } from "../core/store/store";
 import { readServiceInfo } from "../service/transport/identity";
-import { ServiceClient } from "../shared/service/client";
+import { ServiceClient, ServiceRequestError } from "../shared/service/client";
 import { createFrameReader, encodeFrame, PROTOCOL_VERSION } from "../shared/service/protocol";
 import { HostOperationRefusedError, HostOperationUnknownDeliveryError } from "../service/host-executor";
-import { hostIdFromDataDir, type HostExecutorDeclaration } from "../shared/host-operation";
+import { hostIdFromDataDir, workspaceHandleForPath, type HostExecutorDeclaration } from "../shared/host-operation";
+import type { Task } from "../shared/contracts";
 import { socketFixtureDirectory } from "./support/socket-fixture";
 
 /**
@@ -101,6 +106,92 @@ class ExecutorClient {
 const declarationFor = (dataDir: string): HostExecutorDeclaration => ({
   role: "host-executor",
   host: { dataDir, bbVersion: "0.49.0", sdkVersion: "0.6.132" },
+});
+
+test("the BB adapter route preserves proven pre-send refusals and releases workspace reservations", async () => {
+  const dir = socketFixtureDirectory("queue-service.sock");
+  const service = new QueueService({ owner: { dataDir: dir, timers: false }, fixture: "fake" });
+  const store = new Store(":memory:");
+  const bbDataDir = join(dir, "bb-data");
+  const repositoryRoot = join(dir, "repository");
+  const noExecutorDirectory = join(dir, "no-executor-worktree");
+  const refusedDirectory = join(dir, "refused-worktree");
+  const unknownDirectory = join(dir, "unknown-worktree");
+  for (const path of [bbDataDir, repositoryRoot, noExecutorDirectory, refusedDirectory, unknownDirectory]) mkdirSync(path);
+  const hostId = hostIdFromDataDir(bbDataDir);
+  const adapter = createBbHostAdapter(hostId, () => true, dir, store);
+  const taskAt = (directory: string) => ({ id: "task_synthetic", title: "Synthetic task", repoPath: repositoryRoot, directory }) as unknown as Task;
+  let executor: ExecutorClient | null = null;
+  try {
+    await service.start();
+    await assert.rejects(
+      adapter.createWorkspace!(taskAt(noExecutorDirectory)),
+      (error: unknown) => error instanceof ServiceRequestError && error.code === "refused",
+    );
+    assert.deepEqual(await adapter.findWorkspaces!(taskAt(noExecutorDirectory)), [], "a no-executor refusal releases the reservation");
+
+    const info = readServiceInfo(dir)!;
+    executor = await ExecutorClient.connect(info, declarationFor(bbDataDir));
+    let refuseNextCreate = true;
+    let unknownCreatePending = true;
+    let projectExists = false;
+    executor.answer = async (op, input) => {
+      if (op === "workspace.inspect") {
+        return {
+          operation: op,
+          at: "2026-11-16T00:00:00.000Z",
+          calls: { "projects.list": 1 },
+          value: { projectId: projectExists ? "proj_synthetic" : null, projectFound: projectExists, path: projectExists ? repositoryRoot : null },
+        };
+      }
+      if (op !== "workspace.create") throw new Error(`Unexpected operation ${op}`);
+      const { workspacePath } = input as { workspacePath: string };
+      if (workspacePath === refusedDirectory && refuseNextCreate) {
+        refuseNextCreate = false;
+        throw Object.assign(new Error("project registration was refused before write"), { code: "refused" });
+      }
+      if (workspacePath === unknownDirectory && unknownCreatePending) {
+        unknownCreatePending = false;
+        projectExists = true;
+        throw Object.assign(new Error("project registration reply was lost"), { code: "unavailable" });
+      }
+      const projectCreated = !projectExists;
+      projectExists = true;
+      return {
+        operation: op as "workspace.create",
+        at: "2026-11-16T00:00:00.000Z",
+        calls: { "projects.create": 1, "threads.spawn": 0 },
+        value: {
+          projectId: "proj_synthetic",
+          projectCreated,
+          projectCount: 1,
+          handle: workspaceHandleForPath(workspacePath),
+          path: workspacePath,
+          spawned: 0,
+        },
+      };
+    };
+    await assert.rejects(
+      adapter.createWorkspace!(taskAt(refusedDirectory)),
+      (error: unknown) => error instanceof ServiceRequestError && error.code === "refused",
+    );
+    assert.deepEqual(await adapter.findWorkspaces!(taskAt(refusedDirectory)), [], "a plugin refusal releases the reservation");
+    const created = await adapter.createWorkspace!(taskAt(refusedDirectory));
+    assert.equal(created.id, workspaceHandleForPath(refusedDirectory));
+    await assert.rejects(
+      adapter.createWorkspace!(taskAt(unknownDirectory)),
+      (error: unknown) => error instanceof ServiceRequestError && error.code === "internal",
+    );
+    const recovered = await adapter.createWorkspace!(taskAt(unknownDirectory));
+    assert.equal(recovered.id, workspaceHandleForPath(unknownDirectory));
+    assert.deepEqual(executor.received.map(entry => entry.op), ["identity.probe", "workspace.create", "workspace.create", "workspace.create", "workspace.inspect"]);
+    assert.equal(executor.closed, false, "a refused reply does not close the shared executor connection");
+  } finally {
+    executor?.close();
+    store.close();
+    await service.stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("the host-executor role rides the owner-only socket without disturbing presence or the request path", async () => {
