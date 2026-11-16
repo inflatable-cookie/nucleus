@@ -1,23 +1,20 @@
 import type { Resolution } from '../resolution';
-import { dirname } from "node:path";
 import type { Engine } from "../engine";
 import { STOPPED_BEFORE_DRAIN } from "../engine";
+import { enginePorts } from "../port-context";
 import type { Task } from "../../shared/contracts";
 import { isDispositionActive } from "../../shared/contracts";
 import type { ReconciliationSweep } from "../../shared/telemetry";
 import type { AgentObservation } from "../host/adapter";
-import { catchUpFinishedTaskThreads, finishedThreadCleanupCatchUp } from '../workspaces/thread-archive';
-import { removesThreads } from '../workspaces/thread-archive-effect';
-import { sanitizeHostFailureDetail, sanitizeHostFailureReason } from "../host";
-import { reapHookCheckouts } from "../hooks/hook-cleanup";
-import { removeTaskProofFiles } from "../intake/proof-files";
-import { pruneLiveDataHomeBackupCopies } from "../store/data-home-retention";
+import { catchUpFinishedTaskThreads } from '../workspaces/thread-archive';
 import { resumeDispositions } from "../verbs/disposition";
 import { completionReportsPr } from "../recovery/worker-reconcile";
 import { LANE_PRIORITY_AUDIT, LANE_PRIORITY_TASK } from "./lane-priorities";
 import { TASK_QUANTUM_BOUND_MS, boundQuantum } from "./quantum-bound";
 import { startsNoRuns } from "../closeout/queue-drain";
-import { now, RECLAIM_DRAIN_BUDGET_MS, RECLAIM_DRAIN_FREE_PAGES, RECLAIM_DRAIN_MAX_PAGES } from "../store/store";
+import { now } from "../store/store";
+import { HostPass } from "./host-pass";
+import { SweepMaintenance } from "./sweep-maintenance";
 
 /**
  * Tasks reconciled per bounded safety-sweep window (Spec 013). The minute sweep
@@ -25,106 +22,29 @@ import { now, RECLAIM_DRAIN_BUDGET_MS, RECLAIM_DRAIN_FREE_PAGES, RECLAIM_DRAIN_M
  * explicit reconciliation drains pages until the durable cursor wraps once.
  */
 const SWEEP_WINDOW = 25;
-/** Minute sweeps between rotations of the capacity-blocked queue. */
-const DEFERRED_SWEEP_EVERY = 5;
 /** Upper bound on pages drained by one explicit reconciliation request. */
 const MAX_SWEEP_WINDOWS = 400;
 type DrainWaiter = { resolve: () => void; reject: (error: Error) => void };
 
-function threadSettlementFailureReason(error: unknown): string {
-  if (!(error instanceof Error)) return 'unknown error';
-  const record = error as Error & { reason?: unknown; diagnostic?: { reason?: unknown }; field?: unknown };
-  const reason = sanitizeHostFailureReason(record.reason ?? record.diagnostic?.reason);
-  // A compatibility failure's field names the exact structural mismatch (a
-  // snapshot name, a dotted decode path, a connection state); the name alone
-  // never did. Every field is an adapter-authored constant, never remote text.
-  const detail = sanitizeHostFailureDetail(record.field);
-  return `${error.name}${reason ? `: ${reason}` : ''}${detail ? ` (${detail})` : ''}`;
-}
-
-export type SweepContext = Pick<Engine, 'adapter' | 'applyDeferredOwnerVerbs' | 'deliverPendingBriefAmendments' | 'archivePlannerGrants' | 'archiveRetiredErroredAgents' | 'auditPass' | 'clearRetiredInvalidations' | 'continueAwaitingReviewers' | 'dispatchQueued' | 'dispositionDeps' | 'drainProjections' | 'drainWaiters' | 'enqueueTitle' | 'ensureSweep' | 'flushPrerequisiteReleases' | 'host' | 'hostAvailable' | 'hostIds' | 'hostOutages' | 'hostWait' | 'inventoryHostMatches' | 'lastHookCleanupAt' | 'lifecycle' | 'maxSweepWindows' | 'migrateProjectOwnersToPlanners' | 'noteStepFailure' | 'observeRetiredWorkers' | 'quiesce' | 'reconcile' | 'recoverExhaustedWorkers' | 'removeSiblings' | 'resumePausedStops' | 'retiredObservationKey' | 'retiredObservationPlan' | 'scheduleLane' | 'scheduleLifecycleFollowUp' | 'scheduleTaskQuantum' | 'settleQuiesce' | 'startSweepChain' | 'stopped' | 'store' | 'sweepChain' | 'sweepCursor' | 'sweepDeferred' | 'sweepDeferredCursor' | 'sweepMode' | 'sweepOrder' | 'sweepPending' | 'sweepStats' | 'sweepTicks' | 'taskHostAvailable' | 'wakeCapacityWaiter' | 'wakePreludes' | 'withHost'> & { readonly resolution: Pick<Resolution, 'checkpoints' | 'delegateNativeQuestions' | 'deliverDecisionNotices' | 'deliverDrainNotices' | 'deliverHoldNotices' | 'deliverHostOutageNotices' | 'deliverNotices' | 'deliverQueuedMessages' | 'observationTargets' | 'observe' | 'origins' | 'raiseOperatorQuestions' | 'recovery' | 'resumeAskQuestions' | 'resumeResponsibleAnsweredQuestions' | 'settleBudgetClock'> };
+export type SweepContext = Pick<Engine, 'adapter' | 'applyDeferredOwnerVerbs' | 'deliverPendingBriefAmendments' | 'archivePlannerGrants' | 'archiveRetiredErroredAgents' | 'auditPass' | 'clearRetiredInvalidations' | 'continueAwaitingReviewers' | 'dispatchQueued' | 'dispositionDeps' | 'drainProjections' | 'drainWaiters' | 'enqueueTitle' | 'ensureSweep' | 'flushPrerequisiteReleases' | 'host' | 'hostAvailable' | 'hostIds' | 'hostOutages' | 'hostWait' | 'inventoryHostMatches' | 'lifecycle' | 'maxSweepWindows' | 'migrateProjectOwnersToPlanners' | 'noteStepFailure' | 'observeRetiredWorkers' | 'quiesce' | 'reconcile' | 'recoverExhaustedWorkers' | 'removeSiblings' | 'resumePausedStops' | 'retiredObservationKey' | 'retiredObservationPlan' | 'scheduleLane' | 'scheduleLifecycleFollowUp' | 'scheduleTaskQuantum' | 'settleQuiesce' | 'startSweepChain' | 'stopped' | 'store' | 'sweepChain' | 'sweepCursor' | 'sweepMode' | 'sweepOrder' | 'sweepPending' | 'sweepStats' | 'taskHostAvailable' | 'wakeCapacityWaiter' | 'wakePreludes' | 'withHost'> & { readonly resolution: Pick<Resolution, 'checkpoints' | 'delegateNativeQuestions' | 'deliverDecisionNotices' | 'deliverDrainNotices' | 'deliverHoldNotices' | 'deliverHostOutageNotices' | 'deliverNotices' | 'deliverQueuedMessages' | 'observationTargets' | 'observe' | 'origins' | 'raiseOperatorQuestions' | 'recovery' | 'resumeAskQuestions' | 'resumeResponsibleAnsweredQuestions' | 'settleBudgetClock'> };
 
 export class Sweep {
-  /**
-   * Thread settlement is a sweep invariant, not a callback side effect. Reports
-   * are only one way a run finishes; recorded-completion release and other
-   * owner paths must settle the same retained T3 thread too.
-   */
-  private async settleFinishedT3Threads(hostId: string): Promise<void> {
-    const adapter = this.engine.adapter;
-    const settleSupport = adapter.settleReportedThread;
-    const settleWorker = adapter.settleWorkerThread;
-    if (!settleSupport && !settleWorker) return;
-    const reviewPhases = new Set(['awaiting_review', 'report_ready', 'reviewing', 'changes_requested', 'verifying', 'merging', 'syncing', 'closing', 'done']);
-    const supportRoles = new Set(['reviewer', 'recovery', 'coordinator', 'decider', 'executor']);
-    for (const task of this.engine.store.tasks()) {
-      if (task.hostId !== hostId || task.removedAt != null) continue;
-      // While attention is active the worker thread stays surfaced: settling
-      // it here would only make the attention pass unsettle it again, one
-      // settle/unsettle pair per sweep. The ordinary settle resumes when
-      // attention clears (nucleus#1181 review).
-      const attentionActive = task.resolution.attention || ['blocked', 'error', 'needs_attention'].includes(task.phase);
-      const runs = this.engine.store.runs(task.id);
-      // One row per task (Tom, 2026-11-15): while any of the task's agents is
-      // still working, the worker row is the task's one visible row and it stays
-      // unsettled. It settles only when the task waits on nothing Nucleus runs.
-      const liveWork = runs.some(run => !run.released && !run.completion);
-      for (const run of runs) {
-        if (run.hostId !== hostId || !run.agentId || (!run.released && !run.completion)) continue;
-        // The terminal lane's confirmed effect covers this thread, even when
-        // settling it previously needed no native receipt. An unresolved effect
-        // still needs observation and settlement on the next pass.
-        if (this.engine.store.threadArchiveEffect(run.agentId, hostId)?.status === 'archived') continue;
-        const settle = run.role === 'revision' && reviewPhases.has(task.phase) && !attentionActive && !liveWork
-          ? settleWorker : supportRoles.has(run.role) ? settleSupport : undefined;
-        if (!settle) continue;
-        try { await settle.call(adapter, run.agentId, run.id); }
-        catch (error) {
-          this.engine.store.event(task.id, 'thread_settlement_warning',
-            `${run.role} thread ${run.agentId} settle for run ${run.id} failed: ${threadSettlementFailureReason(error)}`.slice(0, 4000));
-        }
-      }
-      // The initial worker run predates the role run ledger on legacy tasks.
-      // The task only reaches these phases after its handover was accepted.
-      if (settleWorker && !attentionActive && !liveWork && reviewPhases.has(task.phase) && task.agentId && task.runId && !runs.some(run => run.id === task.runId)
-        && this.engine.store.threadArchiveEffect(task.agentId, hostId)?.status !== 'archived') {
-        try { await settleWorker.call(adapter, task.agentId, task.runId); }
-        catch (error) {
-          this.engine.store.event(task.id, 'thread_settlement_warning',
-            `worker thread ${task.agentId} settle for run ${task.runId} failed: ${threadSettlementFailureReason(error)}`.slice(0, 4000));
-        }
-      }
-    }
+  private hostPassOwner: HostPass | null = null;
+  private maintenanceOwner: SweepMaintenance | null = null;
+  /** The one owner of one host's audit steps: settlement, presentation and observation reads. */
+  get hostPass(): HostPass {
+    return this.hostPassOwner ??= new HostPass(enginePorts(this.engine,
+      ['adapter', 'host', 'inventoryHostMatches', 'observeRetiredWorkers', 'retiredObservationKey', 'retiredObservationPlan', 'store'],
+      ['observationTargets']));
   }
-
-  /**
-   * The worker row surfaces (nucleus#1181, one row per task Tom 2026-11-15): while
-   * a T3-bound task is blocked, errored, needs attention or carries an attention
-   * flag (planner or operator escalation), or while any of its agents is still
-   * working, its worker thread is unsettled so it stays in T3's main list instead
-   * of the settled list. Only the worker thread surfaces, never support threads.
-   * When the task waits on nothing Nucleus is running the ordinary settlement
-   * sweep puts the thread back; this pass sends nothing more. A host without the
-   * presentation method (Paseo) keeps its behaviour.
-   */
-  private async surfaceWorkerRows(hostId: string): Promise<void> {
-    const adapter = this.engine.adapter;
-    const unsettle = adapter.unsettleWorkerThread;
-    if (!unsettle) return;
-    for (const task of this.engine.store.tasks()) {
-      if (task.hostId !== hostId || task.removedAt != null) continue;
-      if (!task.agentId || ['done', 'cancelled'].includes(task.phase)) continue;
-      const liveWork = this.engine.store.runs(task.id).some(run => !run.released && !run.completion);
-      if (!liveWork && !['blocked', 'error', 'needs_attention'].includes(task.phase) && !task.resolution.attention) continue;
-      // The terminal lane owns archived threads; support threads never surface.
-      if (this.engine.store.threadArchiveEffect(task.agentId, hostId)?.status === 'archived') continue;
-      try { await unsettle.call(adapter, task.agentId, task.id); }
-      catch (error) {
-        this.engine.store.event(task.id, 'thread_attention_warning',
-          `worker thread ${task.agentId} attention surfacing failed: ${threadSettlementFailureReason(error)}`.slice(0, 4000));
-      }
-    }
+  /** The periodic store and engine chores, on their own cadence. */
+  get maintenance(): SweepMaintenance {
+    return this.maintenanceOwner ??= new SweepMaintenance(enginePorts(this.engine,
+      ['adapter', 'migrateProjectOwnersToPlanners', 'removeSiblings', 'store'], []));
   }
+  /** The hourly hook and data-home retention pass belongs to `maintenance`, not the sweep. */
+  get lastHookCleanupAt(): number { return this.maintenance.lastHookCleanupAt; }
+  set lastHookCleanupAt(value: number) { this.maintenance.lastHookCleanupAt = value; }
 
   /**
    * A task quantum that outlived its bound is that task's observation outage: the
@@ -134,13 +54,8 @@ export class Sweep {
   recordQuantumOutage(taskId: string): void {
     this.engine.store.event(taskId, 'observation_outage', `Task quantum did not return within ${TASK_QUANTUM_BOUND_MS / 1000} s; the sweep moved on and this task's lane stays held until it returns`);
   }
-  lastHookCleanupAt = 0;
   /** Durable cursor for the bounded safety sweep: the last task identity reconciled. */
   sweepCursor: string | null = null;
-  /** Capacity-blocked and held tasks, swept on a slower rotation than active work. */
-  sweepDeferred: Task[] = [];
-  sweepDeferredCursor: string | null = null;
-  sweepTicks = 0;
   sweepChain: Promise<void> | null = null;
   sweepMode: "window" | "drain" | null = null;
   sweepPending: "window" | "drain" | null = null;
@@ -239,7 +154,7 @@ export class Sweep {
     });
   }
 
-  sweepOrder(_includeDeferred: boolean): Task[] {
+  sweepOrder(): Task[] {
     // Never-started queued work is driven by dispatch and dependency wakes. A
     // queued task with a retained workspace, agent, or intent still has lifecycle
     // work and remains in the safety sweep.
@@ -247,51 +162,19 @@ export class Sweep {
     for (const task of this.engine.store.dueHoldTasks()) byId.set(task.id, task);
     const order = [...byId.values()].reverse();
     this.engine.sweepStats.tasks = order.length;
-    this.engine.sweepDeferred = [];
     return order;
   }
 
   async auditPass(drain: boolean, visited: Set<string> = new Set()): Promise<{ fault: Error | null; covered: boolean; visited: Set<string> }> {
     try {
       this.engine.store.setMeta("engineError", "");
+      // One diagnostic slot per pass for the per-host steps a fleet sweep must
+      // not stall on: `HostPass` records a step that throws there.
+      this.engine.store.setMeta('hostPassError', '');
       let covered = false;
-      if (Date.now() - this.engine.lastHookCleanupAt >= 3600000) {
-        this.engine.lastHookCleanupAt = Date.now();
-        await reapHookCheckouts(this.engine.store);
-        try {
-          const removed = pruneLiveDataHomeBackupCopies(dirname(this.engine.store.path));
-          if (removed.length) this.engine.store.setMeta("dataHomeRetention", { checkedAt: new Date().toISOString(), removed });
-        } catch (error) { this.engine.store.setMeta("dataHomeRetentionError", String(error)); }
-      }
-      if(!this.engine.store.getMeta('paused') && Date.now()-(this.engine.store.getMeta<number>('lastRetentionAt')??0)>=86400000){try{
-        // Audit B5: a hook record is the only proof of an isolated checkout's ownership,
-        // so the task's owned checkouts are reaped before its hook rows go. A task that
-        // still owns an existing checkout keeps its whole history for the next pass.
-        const candidates=this.engine.store.retentionCandidates(Date.now());
-        if(candidates.length)await reapHookCheckouts(this.engine.store,{taskIds:new Set(candidates.map(task=>task.id))});
-        this.engine.store.purgeOldTasks(Date.now(),(taskId,runIds)=>{this.engine.adapter.purgeReportingFiles?.(taskId,runIds);void this.engine.removeSiblings(taskId);try{removeTaskProofFiles(this.engine.store.task(taskId));}catch{/* Evidence whose recorded paths cannot be proved is left in place. */}});
-        // Lean store 2 (task 987): the same windows the schema-52 migration applied, so rows that
-        // outlive their task or run are pruned as they age out, not only once.
-        this.engine.store.transaction(()=>this.engine.store.pruneRetainedRows(Date.now()));
-        this.engine.store.setMeta('retentionError','');}catch(error){this.engine.store.setMeta('retentionError',String(error));this.engine.store.setMeta('lastRetentionAt',Date.now());}}
-      // Lean store 4 (task 989): freed pages are released on every maintenance tick, not only
-      // after a prune, while free pages exceed the drain threshold — one bounded pass per tick
-      // at the drain bounds, so a freelist the size of a prune's backlog clears in minutes
-      // instead of the days the hourly-only passes took (about 6 pages a minute after task 987
-      // rolled). At or below the threshold this tick releases nothing: the passes after the
-      // hourly and daily prunes are the only releases, so a steady store is not touched every
-      // sweep. One chunk is one short write transaction, so the writer is never held for the
-      // whole budget at once.
-      if(!this.engine.store.getMeta('paused') && this.engine.store.storeFacts().freePages>RECLAIM_DRAIN_FREE_PAGES){try{
-        this.engine.store.reclaimFreedPages({maxPages:RECLAIM_DRAIN_MAX_PAGES,budgetMs:RECLAIM_DRAIN_BUDGET_MS});}
-        catch{ /* the pass records its own fault on the store */ }}
-      // Spec 019: idle lanes close themselves; an hourly, bounded store pass that touches no task.
-      if(!this.engine.store.getMeta('paused') && Date.now()-(this.engine.store.getMeta<number>('lastLaneIdleAt')??0)>=3600000){this.engine.store.setMeta('lastLaneIdleAt',Date.now());try{this.engine.store.closeIdleLanes();this.engine.store.setMeta('laneIdleError','');}catch(error){this.engine.store.setMeta('laneIdleError',String(error));}}
-      // Spec 058 cutover 5: the one-time owner→planner migration runs before the drain
-      // pass below, so notice routing never reads the retired owner machinery.
-      if(!this.engine.store.getMeta('paused')){try{await this.engine.migrateProjectOwnersToPlanners();this.engine.store.setMeta('projectOwnerError','');}catch(error){this.engine.store.setMeta('projectOwnerError',String(error));}}
-      // Spec 041: drained lanes and boards prompt their plan owner and escalate; hourly, bounded, no task touched.
-      if(!this.engine.store.getMeta('paused') && Date.now()-(this.engine.store.getMeta<number>('lastLaneDrainAt')??0)>=3600000){this.engine.store.setMeta('lastLaneDrainAt',Date.now());try{this.engine.store.evaluateLaneDrains();this.engine.store.setMeta('laneDrainError','');}catch(error){this.engine.store.setMeta('laneDrainError',String(error));}}
+      // The hourly and daily store chores and the periodic owner/lane passes
+      // keep their own cadence; the sweep runs one maintenance pass.
+      await this.maintenance.run();
       // Audit A6: one bounded labelled inventory answers every identity this
       // pass observes, and retired workers are re-read on their own slow cadence.
       // A list that cannot be walked to its end answers nothing, so every
@@ -299,35 +182,19 @@ export class Sweep {
       let inventory: ReadonlyMap<string, AgentObservation> | null = null;
       const finishedCatchUp = new Map<string, Task>();
       const hosts = new Set([...this.engine.hostIds(), ...this.engine.store.tasks().flatMap(task => task.hostId ? [task.hostId] : [])]);
-      for (const host of hosts) await this.engine.withHost(host, async () => {
-        // Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): one durable
-        // record of when this host went away, kept whether or not it has tasks.
-        this.engine.hostOutages.observe(host, this.engine.hostAvailable(host));
-        if (!this.engine.hostAvailable(host)) return;
-        try { await this.engine.adapter.reconcileReportedSettlements?.(); } catch { /* durable host intents remain for the next sweep */ }
-        try { await this.settleFinishedT3Threads(host); } catch { /* one host's settlement pass never stalls the fleet sweep */ }
-        try { await this.surfaceWorkerRows(host); } catch { /* one host's row pass never stalls the fleet sweep */ }
-        try { await this.engine.adapter.reconcileThreadTitles?.(this.engine.store.tasks().filter(task => task.hostId === host)); } catch { /* title intents remain for the next sweep */ }
-        const retiredPlan = this.engine.retiredObservationPlan();
-        const inventoryIds = [...new Set([...retiredPlan.due, ...this.engine.resolution.observationTargets()])];
-        let observed: ReadonlyMap<string, AgentObservation> | null = null;
-        if (inventoryIds.length && this.engine.adapter.observationInventory) {
-          try { observed = await this.engine.host.observationInventory(inventoryIds); }
-          catch { observed = null; }
-        }
-        const retired = await this.engine.observeRetiredWorkers(retiredPlan, observed);
-        if (retired.changed) this.engine.store.setMeta(this.engine.retiredObservationKey(host), retired.observations);
-        // A handover settle recorded for a thread whose turn was still ending is
-        // retried on this host's pass. Presentation only: it never changes a task.
-        try { await this.engine.adapter.reconcileSettledThreads?.(); }
-        catch { /* the record keeps for the next pass */ }
-        // Select directly from finished history, but never await cleanup in the
-        // shared host pass. These tasks join the rotating, bounded task window.
-        if (!this.engine.store.getMeta('paused') && removesThreads(this.engine.adapter))
-          for (const task of finishedThreadCleanupCatchUp(this.engine.store, host, true))
-            finishedCatchUp.set(task.id, task);
-        if (this.engine.inventoryHostMatches(host)) inventory = observed;
-      });
+      for (const host of hosts) {
+        const passed = await this.engine.withHost(host, async () => {
+          // Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): one durable
+          // record of when this host went away, kept whether or not it has tasks.
+          this.engine.hostOutages.observe(host, this.engine.hostAvailable(host));
+          if (!this.engine.hostAvailable(host)) return null;
+          return this.hostPass.run(host);
+        });
+        // Nothing is read from a host that is away: the wait itself is the stop.
+        if (!passed) continue;
+        if (passed.inventory) inventory = passed.inventory;
+        for (const [id, task] of passed.finishedCatchUp) finishedCatchUp.set(id, task);
+      }
       this.engine.clearRetiredInvalidations();
       // Engine restart scans incomplete dispositions before normal task
       // resolution. The fence persists across restarts; retry reconciles the
@@ -381,7 +248,7 @@ export class Sweep {
       // concurrently. The audit yields to the event loop between bounded
       // chunks so acceptance and reads stay responsive.
       const reconciled = new Set<string>();
-      const order = [...new Map([...this.engine.sweepOrder(drain), ...finishedCatchUp.values()]
+      const order = [...new Map([...this.engine.sweepOrder(), ...finishedCatchUp.values()]
         .map(task => [task.id, task])).values()];
       this.engine.sweepStats.tasks = order.length;
       const cursorAt = this.engine.sweepCursor ? order.findIndex(task => task.id === this.engine.sweepCursor) : -1;
@@ -450,26 +317,6 @@ export class Sweep {
       // Coverage is judged against this pass's fleet: every task in it visited.
       covered = !drain || order.every(task => visited.has(task.id));
       if (drain && covered) this.engine.sweepCursor = null;
-      // The capacity-blocked queue is advanced by dispatch wakes when a slot frees,
-      // so a minute sweep rotates one window of it on a slower cadence instead of
-      // letting it set the lap time for active work. A drain has already covered it.
-      if (!drain && this.engine.sweepDeferred.length && this.engine.sweepTicks++ % DEFERRED_SWEEP_EVERY === 0) {
-        const deferred = this.engine.sweepDeferred;
-        const at = this.engine.sweepDeferredCursor ? deferred.findIndex(task => task.id === this.engine.sweepDeferredCursor) : -1;
-        const start = at + 1 >= deferred.length ? 0 : at + 1;
-        const window = deferred.slice(start, start + SWEEP_WINDOW);
-        for (const candidate of window) {
-          if (this.engine.stopped) return { fault: null, covered: false, visited };
-          const task = this.engine.store.task(candidate.id);
-          if (["done", "cancelled"].includes(task.phase)) continue;
-          const hostWait = this.engine.hostWait(task);
-          this.engine.resolution.settleBudgetClock(task);
-          reconciled.add(task.id);
-          if (hostWait) continue;
-          if (!releasedTasks.has(task.id)) await boundQuantum(this.engine.scheduleTaskQuantum(task.id), () => this.recordQuantumOutage(task.id));
-        }
-        this.engine.sweepDeferredCursor = start + window.length >= deferred.length ? null : window.at(-1)?.id ?? null;
-      }
       await this.engine.resolution.deliverNotices();
       await this.engine.resolution.deliverQueuedMessages();
       await this.engine.resolution.resumeAskQuestions();

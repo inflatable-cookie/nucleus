@@ -319,7 +319,7 @@ owner to the rules it enforces.
 - `core/qa/proof-autorun.ts` starts a brief-named proof at an approved head without a question: wait for re-declared inputs, skip a docs-only head, or run the existing `proof` route once per head. `Resolution.startRunnableProof` delegates to it.
 - `core/recovery/observation.ts` runs one sweep of unreleased runs: it reads each pending run's agent and settles, recovers, reminds or leaves it. `Resolution.observe` and `Resolution.observationTargets` delegate to it.
 - `core/scheduling/lifecycle.ts` runs the task's advance steps in order through
-  `Resolution.advance`'s compatibility delegate. An await that only some passes reach sits behind a synchronous gate, so a pass with nothing to do reaches its next synchronous step without yielding. A failed pass settles by `advanceFailureDisposition`, a pure function over the error and the task's merge state: superseded by a newer attempt, a paced git transient, a wait, an environment fault, an uncertain merge response, or attention.
+  `Resolution.advance`'s compatibility delegate. An await that only some passes reach sits behind a synchronous gate, so a pass with nothing to do reaches its next synchronous step without yielding. Its two text-shaped gates are typed facts with one owner each: `task-reasons` owns the callback-reminder stop sentences the reminder writes and this pass asks it whether the reason is one, and `recovery-effects` owns the recorded review-effect wait and decodes the blocking set it names. A failed pass settles by `advanceFailureDisposition`, a pure function over the error and the task's merge state: superseded by a newer attempt, a paced git transient, a wait, an environment fault, an uncertain merge response, or attention.
 - `core/recovery/stall.ts` detects a stalled turn and reconciles an operator-authorized
   stop of one against a fresh observation. `stalledStopDecision` is the pure
   rule that reconciles one stop. `Resolution.reconcileStalledTurnStop`
@@ -377,9 +377,11 @@ owner to the rules it enforces.
   lifecycle, completion and terminal archive follow-ups, their bounded retry
   timers, the git-transient backoff and the scheduled task quantum.
   `quantumFollowUps`, `gitTransientPlan` and `stepFailureRoute` are pure
-  functions over store facts. Same-name `Engine` methods delegate to its
+  functions over store facts; the plan alone decides the uncertain-delivery skip,
+  so no caller re-derives it, and a wake that throws is recorded on the task
+  (`wake_failed`) instead of dropped. Same-name `Engine` methods delegate to its
   `TaskWakes`; `Engine.stop` calls its `stop()`.
-- `core/scheduling/sweep.ts` coalesces reconciliation windows and drains and runs the audit pass. `Engine` keeps same-name delegates and test-facing state accessors.
+- `core/scheduling/sweep.ts` coalesces reconciliation windows and drains and runs the audit pass. `Engine` keeps same-name delegates and test-facing state accessors. The periodic chores live in `core/scheduling/sweep-maintenance.ts` (the hourly and daily store chores, the owner migration and the lane passes, each on its own cadence) and one host's steps in `core/scheduling/host-pass.ts` (settlement, row surfacing, the observation inventory, retired workers, titles and the finished-thread catch-up selection); a host step that throws is recorded as `hostPassError`, never dropped.
 - `core/verbs/control-context.ts` holds the hidden parameters of every verb, the
   three async-context values per engine, and `isOwnerCall`. `Engine` keeps
   same-name accessors and a delegate.

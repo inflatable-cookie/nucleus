@@ -251,7 +251,7 @@ export class Engine {
     return detail;
   }
   private sweepOwner?: Sweep;
-  private get sweep(): Sweep { return this.sweepOwner ??= new Sweep(enginePorts(this, ['adapter', 'applyDeferredOwnerVerbs', 'deliverPendingBriefAmendments', 'archivePlannerGrants', 'archiveRetiredErroredAgents', 'auditPass', 'clearRetiredInvalidations', 'continueAwaitingReviewers', 'dispatchQueued', 'dispositionDeps', 'drainProjections', 'drainWaiters', 'enqueueTitle', 'ensureSweep', 'flushPrerequisiteReleases', 'host', 'hostAvailable', 'hostIds', 'hostOutages', 'hostWait', 'inventoryHostMatches', 'lastHookCleanupAt', 'lifecycle', 'maxSweepWindows', 'migrateProjectOwnersToPlanners', 'noteStepFailure', 'observeRetiredWorkers', 'quiesce', 'reconcile', 'recoverExhaustedWorkers', 'removeSiblings', 'resumePausedStops', 'retiredObservationKey', 'retiredObservationPlan', 'scheduleLane', 'scheduleLifecycleFollowUp', 'scheduleTaskQuantum', 'settleQuiesce', 'startSweepChain', 'stopped', 'store', 'sweepChain', 'sweepCursor', 'sweepDeferred', 'sweepDeferredCursor', 'sweepMode', 'sweepOrder', 'sweepPending', 'sweepStats', 'sweepTicks', 'taskHostAvailable', 'wakeCapacityWaiter', 'wakePreludes', 'withHost'], ['checkpoints', 'delegateNativeQuestions', 'deliverDecisionNotices', 'deliverDrainNotices', 'deliverHoldNotices', 'deliverHostOutageNotices', 'deliverNotices', 'deliverQueuedMessages', 'observationTargets', 'observe', 'origins', 'raiseOperatorQuestions', 'recovery', 'resumeAskQuestions', 'resumeResponsibleAnsweredQuestions', 'settleBudgetClock'])); }
+  private get sweep(): Sweep { return this.sweepOwner ??= new Sweep(enginePorts(this, ['adapter', 'applyDeferredOwnerVerbs', 'deliverPendingBriefAmendments', 'archivePlannerGrants', 'archiveRetiredErroredAgents', 'auditPass', 'clearRetiredInvalidations', 'continueAwaitingReviewers', 'dispatchQueued', 'dispositionDeps', 'drainProjections', 'drainWaiters', 'enqueueTitle', 'ensureSweep', 'flushPrerequisiteReleases', 'host', 'hostAvailable', 'hostIds', 'hostOutages', 'hostWait', 'inventoryHostMatches', 'lifecycle', 'maxSweepWindows', 'migrateProjectOwnersToPlanners', 'noteStepFailure', 'observeRetiredWorkers', 'quiesce', 'reconcile', 'recoverExhaustedWorkers', 'removeSiblings', 'resumePausedStops', 'retiredObservationKey', 'retiredObservationPlan', 'scheduleLane', 'scheduleLifecycleFollowUp', 'scheduleTaskQuantum', 'settleQuiesce', 'startSweepChain', 'stopped', 'store', 'sweepChain', 'sweepCursor', 'sweepMode', 'sweepOrder', 'sweepPending', 'sweepStats', 'taskHostAvailable', 'wakeCapacityWaiter', 'wakePreludes', 'withHost'], ['checkpoints', 'delegateNativeQuestions', 'deliverDecisionNotices', 'deliverDrainNotices', 'deliverHoldNotices', 'deliverHostOutageNotices', 'deliverNotices', 'deliverQueuedMessages', 'observationTargets', 'observe', 'origins', 'raiseOperatorQuestions', 'recovery', 'resumeAskQuestions', 'resumeResponsibleAnsweredQuestions', 'settleBudgetClock'])); }
   readonly dispatchOwner = new Dispatch(this);
   private readonly dispatchAdmission = new DispatchAdmission({
     store: () => this.store,
@@ -280,12 +280,6 @@ export class Engine {
   set lastHookCleanupAt(value: number) { this.sweep.lastHookCleanupAt = value; }
   get sweepCursor() { return this.sweep.sweepCursor; }
   set sweepCursor(value: string | null) { this.sweep.sweepCursor = value; }
-  get sweepDeferred() { return this.sweep.sweepDeferred; }
-  set sweepDeferred(value: Task[]) { this.sweep.sweepDeferred = value; }
-  get sweepDeferredCursor() { return this.sweep.sweepDeferredCursor; }
-  set sweepDeferredCursor(value: string | null) { this.sweep.sweepDeferredCursor = value; }
-  get sweepTicks() { return this.sweep.sweepTicks; }
-  set sweepTicks(value: number) { this.sweep.sweepTicks = value; }
   get sweepChain() { return this.sweep.sweepChain; }
   set sweepChain(value: Promise<void> | null) { this.sweep.sweepChain = value; }
   get sweepMode() { return this.sweep.sweepMode; }
@@ -627,7 +621,7 @@ export class Engine {
    * kept in memory; each task's live state is re-read by its own quantum, so a
    * multi-page drain never re-parses the whole fleet for every page.
    */
-  sweepOrder(includeDeferred: boolean): Task[] { return this.sweep.sweepOrder(includeDeferred); }
+  sweepOrder(): Task[] { return this.sweep.sweepOrder(); }
   control<T>(operation: () => Promise<T> | T, key: string): Promise<T> {
     const hostId = this.laneHost(key);
     return this.laneScheduler.control(hostId ? () => this.withHost(hostId, operation) : operation, key);
