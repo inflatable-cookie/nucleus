@@ -76,6 +76,23 @@ test('submission resumes an open lead with the same brief and refuses a differen
   assert.equal(result.reference, runtime.store.task(result.taskId).reference);
 });
 
+test('concurrent identical submissions share promotion for new and open leads', async t => {
+  const { runtime, input } = await fixture(t);
+  const fresh = await Promise.all([runtime.submitLead(input), runtime.submitLead(input)]);
+  assert.ok('taskId' in fresh[0]);
+  assert.deepEqual(fresh[1], fresh[0]);
+  const request = { ...input, title: 'Open fixture', body: body.replace(title, 'Open fixture') };
+  const start = runtime.engine.startOperation.bind(runtime.engine);
+  runtime.engine.startOperation = async () => { throw new Error('temporary check failure'); };
+  const open = await runtime.submitLead(request);
+  assert.ok('lead' in open);
+  runtime.engine.startOperation = start;
+  const resumed = await Promise.all([runtime.submitLead(request), runtime.submitLead(request)]);
+  assert.ok('taskId' in resumed[0]);
+  assert.deepEqual(resumed[1], resumed[0]);
+  assert.equal(runtime.store.tasks().length, 2);
+});
+
 test('submission waits past compatibility responses for both check and promotion', async t => {
   const { runtime, input } = await fixture(t);
   const planning = (runtime as any).planning as RuntimePlanning;

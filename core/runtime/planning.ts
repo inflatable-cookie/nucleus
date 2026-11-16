@@ -31,10 +31,22 @@ export interface PlanningContext {
 export class RuntimePlanning {
   constructor(private readonly context: PlanningContext) {}
 
+  private readonly pendingLeadSubmissions = new Map<string, Promise<z.infer<typeof leadSubmit.output>>>();
+
   async submitLead(input: z.infer<typeof leadSubmit.input>): Promise<z.infer<typeof leadSubmit.output>> {
     await this.context.started;
     const request = leadSubmit.input.parse(input);
     const repository = this.context.store.resolveRepositoryIdentity(request.repository);
+    const key = JSON.stringify({ ...request, repository });
+    const pending = this.pendingLeadSubmissions.get(key);
+    if (pending) return pending;
+    const submission = this.submitLeadOnce(request, repository);
+    this.pendingLeadSubmissions.set(key, submission);
+    try { return await submission; }
+    finally { this.pendingLeadSubmissions.delete(key); }
+  }
+
+  private async submitLeadOnce(request: z.infer<typeof leadSubmit.input>, repository: ReturnType<Store["resolveRepositoryIdentity"]>): Promise<z.infer<typeof leadSubmit.output>> {
     // The service is the sole writer; lookup and creation run without yielding.
     const source = (() => {
       const existing = this.context.store.findLeadSubmission(request.title, repository);
