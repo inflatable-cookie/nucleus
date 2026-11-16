@@ -99,7 +99,7 @@ export function detachedSupervisorIo(plan: QaSupervisionPlan, statePath: string,
     })),
     cancellation: () => readQaCancelRequest(cancelPath, plan.runId),
     writeHostResult: async result => {
-      if (!readHostRunResult(resultPath, result.runId)) await writeQaJsonAsync(resultPath, result);
+      if (!readHostRunResult(resultPath, result.runId)) await writeQaJsonAsync(resultPath, result, { requireDirectorySync: true });
     },
     writeCpuCoverage: sidecar => writeQaJsonAsync(cpuCoveragePath, sidecar),
     persist,
@@ -114,7 +114,7 @@ export function detachedSupervisorIo(plan: QaSupervisionPlan, statePath: string,
         heartbeatWriting = true;
         heartbeatWrite = writeQaJsonAsync(heartbeatPath, {
           runId: current.runId, pid: current.pid, identityToken: current.identityToken, heartbeatAt: current.heartbeatAt,
-        }, false).catch(() => { /* retry next tick; a failed write never invents freshness */ })
+        }, { durable: false }).catch(() => { /* retry next tick; a failed write never invents freshness */ })
           .finally(() => { heartbeatWriting = false; });
       }, SUPERVISOR_HEARTBEAT_MS);
       timer.unref?.();

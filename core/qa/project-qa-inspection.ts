@@ -214,7 +214,8 @@ export class ProjectQaInspection {
         || JSON.stringify(observedState) !== JSON.stringify(stateRead)
         || JSON.stringify(this.supervisionPlans.read(planPath)) !== JSON.stringify(planRead)
         || JSON.stringify(readHostRunResult(resultPath, run.id)) !== JSON.stringify(hostResult))
-      return { kind: "running", state: observedState.kind === "present" ? observedState.value : null };
+      return { kind: "running", state: observedState.kind === "present"
+        ? { ...observedState.value, heartbeatAt: readQaHeartbeat(heartbeatPath, observedState.value) } : null };
     return inspection;
   }
 

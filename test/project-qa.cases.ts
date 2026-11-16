@@ -1444,7 +1444,7 @@ test('a live supervisor with a stale heartbeat is terminated only after unchange
   writeQaSupervision(statePath, { ...supervisor, heartbeatAt: lastHeartbeatAt });
   await writeQaJsonAsync(qaSupervisionPaths(runRoot, started.id).heartbeatPath, {
     runId: started.id, pid: supervisor.pid, identityToken: supervisor.identityToken, heartbeatAt: lastHeartbeatAt,
-  }, false);
+  }, { durable: false });
   assert.ok(Date.now() - Date.parse(readQaSupervision(statePath)!.heartbeatAt) > 180_000, 'the durable heartbeat exceeds the shared stale threshold');
   await observer.reconcile(started.key, started.id); // first stale observation is never enough to kill
   assert.equal(supervisorLiveness(supervisor.pid, supervisor.identityToken).state, 'live');

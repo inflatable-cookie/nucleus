@@ -73,9 +73,9 @@ test("a real blocked step-log pipe cannot stop the supervisor heartbeat or regre
     const observed = await inspection.inspectSupervisor({ id: runId, key: run.key, startedAt: run.startedAt } as any);
     assert.ok(Date.parse(observed.state!.heartbeatAt) >= Date.parse(first), "inspection reads the independent heartbeat even with a cached lifecycle file");
   } finally {
-    reader = readFile(pipe);
+    if (entered && !completed) reader = readFile(pipe);
     await pipeline;
-    assert.equal((await reader).toString(), "pipe-proof");
+    if (reader) assert.equal((await reader).toString(), "pipe-proof");
   }
   assert.equal(completed, true);
   assert.equal(readQaSupervision(paths.statePath)!.result!.state, "passed");
@@ -108,9 +108,9 @@ test("heartbeat freshness is accepted only from the same run, pid and private id
   const state = { runId: "run", pid: process.pid, identityToken: randomUUID(), heartbeatAt: "2026-11-16T00:00:00.000Z" } as any;
   const fresh = "2026-11-16T01:00:00.000Z";
   for (const mismatch of [{ runId: "other" }, { pid: process.pid + 1 }, { identityToken: randomUUID() }]) {
-    await writeQaJsonAsync(path, { ...state, heartbeatAt: fresh, ...mismatch }, false);
+    await writeQaJsonAsync(path, { ...state, heartbeatAt: fresh, ...mismatch }, { durable: false });
     assert.equal(readQaHeartbeat(path, state), state.heartbeatAt);
   }
-  await writeQaJsonAsync(path, { ...state, heartbeatAt: fresh }, false);
+  await writeQaJsonAsync(path, { ...state, heartbeatAt: fresh }, { durable: false });
   assert.equal(readQaHeartbeat(path, state), fresh);
 });

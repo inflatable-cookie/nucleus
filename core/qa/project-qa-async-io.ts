@@ -6,19 +6,21 @@ import { LIVE_OUTPUT_BYTES, type LiveOutputLog, type LiveOutputSecret } from "..
 import { tokenRedactor } from "../machine/token-redactor";
 
 /** Durable publication without blocking the supervisor's heartbeat event loop. */
-export async function writeQaJsonAsync(path: string, value: unknown, durable = true): Promise<void> {
+export async function writeQaJsonAsync(path: string, value: unknown, options: { durable?: boolean; requireDirectorySync?: boolean } = {}): Promise<void> {
   const temporary = `${path}.${process.pid}.${randomBytes(12).toString("hex")}.tmp`;
   let file;
   try {
     file = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600);
     await file.chmod(0o600);
     await file.writeFile(JSON.stringify(value));
-    if (durable) await file.sync();
+    if (options.durable !== false) await file.sync();
     await file.close(); file = undefined;
     await rename(temporary, path);
-    if (durable) {
-      const directory = await open(dirname(path), constants.O_RDONLY | (constants.O_DIRECTORY ?? 0));
-      try { await directory.sync(); } finally { await directory.close(); }
+    if (options.durable !== false) {
+      try {
+        const directory = await open(dirname(path), constants.O_RDONLY | (constants.O_DIRECTORY ?? 0));
+        try { await directory.sync(); } finally { await directory.close(); }
+      } catch (error) { if (options.requireDirectorySync) throw error; }
     }
   } finally {
     await file?.close();
@@ -60,6 +62,7 @@ export async function openQaLiveOutput(path: string, secret?: LiveOutputSecret):
     }
   };
   const redactor = tokenRedactor(secret, bytes => {
+    if (!bytes.length) return;
     if (pending.length + bytes.length > LIVE_OUTPUT_BYTES) dropped = true;
     pending = Buffer.from(Buffer.concat([pending, bytes]).subarray(-LIVE_OUTPUT_BYTES));
     if (!writing) writing = drain().finally(() => { writing = null; });
@@ -72,6 +75,7 @@ export async function openQaLiveOutput(path: string, secret?: LiveOutputSecret):
       closed = true;
       redactor.flush();
       await writing;
+      await drain();
       await file.close().catch(() => {});
     },
   };
