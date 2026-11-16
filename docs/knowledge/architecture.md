@@ -298,7 +298,16 @@ owner to the rules it enforces.
 - `core/questions/agent-asks.ts` records, routes, waits on and resumes `ask` (alias `nucleus_ask`). Its
   `AgentAsks` class holds the in-flight routing set and the in-turn wait and poll
   cadence; `Resolution` keeps a same-name delegate for each moved method.
-- `core/questions/questions.ts` handles raised and delegated decisions, and `core/questions/native-questions.ts` handles native task-thread questions. `Resolution` retains delegates; `Questions` holds the shared in-flight state. `operatorQuestionStep` and `answeredQuestionOutcome` are the pure raise and answered-native decisions; `applyBinaryApproval` in `question-delegation.ts` is the named final reply for a binary approval.
+- `core/questions/questions.ts` holds the question service's one shared in-flight state, and the
+  raised and delegated decisions are split by mechanism: `question-raises.ts` decides a question is
+  due and records its intent, `question-raise-routes.ts` owns where one raise goes (native prompt,
+  MCP ask, board decision or planner ladder) and the deferred each route resolves, `question-answers.ts`
+  owns what an answer does, and `question-recovery.ts` runs the resume sweep.
+  `core/questions/question-events.ts` decodes every operator-question record once, including the
+  exact question an intent names. `core/questions/native-questions.ts` handles native task-thread
+  questions. `Resolution` retains delegates. `operatorQuestionStep` and `answeredQuestionOutcome` are
+  the pure raise and answered-native decisions; `applyBinaryApproval` in `question-delegation.ts` is
+  the named final reply for a binary approval.
 - `core/qa/proof-autorun.ts` starts a brief-named proof at an approved head without a question: wait for re-declared inputs, skip a docs-only head, or run the existing `proof` route once per head. `Resolution.startRunnableProof` delegates to it.
 - `core/recovery/observation.ts` runs one sweep of unreleased runs: it reads each pending run's agent and settles, recovers, reminds or leaves it. `Resolution.observe` and `Resolution.observationTargets` delegate to it.
 - `core/scheduling/lifecycle.ts` runs the task's advance steps in order through
@@ -597,16 +606,17 @@ owner to the rules it enforces.
   answering a decision on the task thread, including the native decision wire
   (`raiseNativeDecision`). `hosts/paseo/adapter/paseo.ts` keeps same-name delegates; the identity
   checks and the permission reads and answers are the host's. Core keeps delegation,
-  intents and the event sequence in `core/questions/native-questions.ts` and `core/questions/questions.ts`,
-  and the provider list `supportsNativeQuestions` in `core/questions/native-decision.ts`, which
+  intents and the event sequence in `core/questions/native-questions.ts`, `core/questions/question-raises.ts`
+  and `core/questions/question-raise-routes.ts`, and the provider list `supportsNativeQuestions` in
+  `core/questions/native-decision.ts`, which
   routing reads synchronously. The host reads the adapter's daemon surface and timeline
   read per call.
 - `hosts/paseo/adapter/host-asks.ts` owns the Paseo host's native ask, consult and decider calls: the
   planner and reviewer asks' idle send and the native agents a consult reviewer and a
   decider start in the task workspace. `hosts/paseo/adapter/paseo.ts` keeps same-name delegates and
   the idle delivery path (`sendWhenIdle`), which the host reads per call. The routers
-  stay in core: `core/questions/delegation.ts`, `core/questions/agent-asks.ts`, `core/questions/ladder/` and
-  `core/questions/questions.ts` choose the recipient and profile, build the stable request and
+  stay in core: `core/questions/delegation.ts`, `core/questions/agent-asks.ts`, `core/questions/ladder/`,
+  `core/questions/question-raises.ts` and `core/questions/question-raise-routes.ts` choose the recipient and profile, build the stable request and
   label identities, own delegated authority and follow-up, and take the answer from the
   command receipt, never from the recipient's chat output.
 - `core/dispatch/agent-creation.ts` builds a launch's callback facts: the run ticket,

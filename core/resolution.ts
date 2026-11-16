@@ -23,6 +23,10 @@ import { ReviewerConsult } from './questions/reviewer-consult';
 import { EscalationSettlement } from './questions/escalation-settlement';
 import { QuestionSupersession } from './questions/question-supersession';
 import { Questions } from './questions/questions';
+import { QuestionRaises } from './questions/question-raises';
+import { QuestionRaiseRoutes } from './questions/question-raise-routes';
+import { QuestionAnswers } from './questions/question-answers';
+import { QuestionRecovery } from './questions/question-recovery';
 import { NativeQuestions } from './questions/native-questions';
 
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -241,6 +245,10 @@ export class Resolution {
   readonly escalationSettlement = new EscalationSettlement(this);
   readonly questionSupersession = new QuestionSupersession(this);
   readonly questions = new Questions(this);
+  readonly questionRaises = new QuestionRaises(this);
+  readonly questionRaiseRoutes = new QuestionRaiseRoutes(this);
+  readonly questionAnswers = new QuestionAnswers(this);
+  readonly questionRecovery = new QuestionRecovery(this);
   readonly operatorDelegation = new OperatorDelegation(this);
   readonly jointReviewQuestion = new JointReviewQuestion(this);
   readonly proofAutorun = new ProofAutorun(this);
@@ -682,7 +690,7 @@ export class Resolution {
    * task's own threads settle raises nothing, and tasks that did not opt in
    * keep today's notices exactly.
    */
-  raiseOperatorQuestions(scopedTaskId?: string): Promise<void> { return this.questions.raiseOperatorQuestions(scopedTaskId); }
+  raiseOperatorQuestions(scopedTaskId?: string): Promise<void> { return this.questionRaises.raiseOperatorQuestions(scopedTaskId); }
   /**
    * Spec 058 (task 542): a responsible task never stalls after the operator
    * answers its worker's own native question. If the task is stopped because
@@ -701,7 +709,7 @@ export class Resolution {
     request: { requestId: string; questions: Array<{ header: string; question: string; options: string[] }> }, signal: AbortSignal): Promise<void> { return this.nativeQuestions.answerNativeQuestions(taskId, agentId, workspaceId, id, request, signal); }
   resumeResponsibleAnsweredQuestions(): Promise<void> { return this.nativeQuestions.resumeResponsibleAnsweredQuestions(); }
   /** Retry an answered proof-only GO after a busy refusal once all Queue runs settle. */
-  resumeBusyProofGoAnswers(): Promise<void> { return this.questions.resumeBusyProofGoAnswers(); }
+  resumeBusyProofGoAnswers(): Promise<void> { return this.questionRecovery.resumeBusyProofGoAnswers(); }
   /**
    * Spec 058 budgets: an authorized extension adds one default increment while
    * either limit is exhausted. A budget pause is cleared; other lifecycle stops
@@ -717,22 +725,22 @@ export class Resolution {
   supersedeOpenOwnerQuestions(taskId: string, reason: string): void { return this.questionSupersession.supersedeOpenOwnerQuestions(taskId, reason); }
   answerOpenAgentAsks(taskId: string, answer: string, reason: string): string[] { return this.questionSupersession.answerOpenAgentAsks(taskId, answer, reason); }
   /** Record the answer, then apply the owner verb it names with the operator's authority. */
-  settleOperatorQuestion(taskId: string, question: OperatorQuestion, answer: string, recordAnswer = true): Promise<void> { return this.questions.settleOperatorQuestion(taskId, question, answer, recordAnswer); }
+  settleOperatorQuestion(taskId: string, question: OperatorQuestion, answer: string, recordAnswer = true): Promise<void> { return this.questionAnswers.settleOperatorQuestion(taskId, question, answer, recordAnswer); }
   /**
    * The exact owner control an answer names. The operator's authority is the
    * question and its answer, relayed by the task's own thread: that is what the
    * acceptance and proof activation record, never a caller identity Queue guessed.
    */
-  operatorAnswerControl(task: Task, question: OperatorQuestion, choice: OperatorQuestionChoice, answer: string, delegation: DelegatedAnswer | null = null): TaskControlInput { return this.questions.operatorAnswerControl(task, question, choice, answer, delegation); }
+  operatorAnswerControl(task: Task, question: OperatorQuestion, choice: OperatorQuestionChoice, answer: string, delegation: DelegatedAnswer | null = null): TaskControlInput { return this.questionAnswers.operatorAnswerControl(task, question, choice, answer, delegation); }
   /** Budget asks can outlive the stop they describe while a planner response is pending. */
-  queueBudgetQuestionCurrent(taskId: string, decision: { id: string; kind: OperatorQuestionKind }): boolean { return this.questions.queueBudgetQuestionCurrent(taskId, decision); }
+  queueBudgetQuestionCurrent(taskId: string, decision: { id: string; kind: OperatorQuestionKind }): boolean { return this.questionAnswers.queueBudgetQuestionCurrent(taskId, decision); }
   /**
    * Spec 058 (task 540): raise one native question on the task's own thread. The project's planner,
    * or a decider, answers once the thread presents the question. Proof-only release GO, the one
    * operator-only kind Nucleus raises, goes straight to the board and never comes here.
    */
   raiseDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }, signal: AbortSignal,
-    options: { boardOnly?: boolean; why?: string } = {}): Promise<string> { return this.questions.raiseDecision(task, decision, signal, options); }
+    options: { boardOnly?: boolean; why?: string } = {}): Promise<string> { return this.questionRaiseRoutes.raiseDecision(task, decision, signal, options); }
   /**
    * Spec 058 (task 550): raise one Queue question on a thread with no native
    * question surface. It goes to the planner, then a decider, and a routing miss
@@ -745,16 +753,16 @@ export class Resolution {
    * caller's settlement path (the recorded answer and the question's controls)
    * runs unchanged.
    */
-  raiseAskDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }, signal: AbortSignal): Promise<string> { return this.questions.raiseAskDecision(task, decision, signal); }
+  raiseAskDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }, signal: AbortSignal): Promise<string> { return this.questionRaiseRoutes.raiseAskDecision(task, decision, signal); }
   /**
    * The durable join key plus one best-effort prompt, so the task's own thread can
    * collect the answer in turn by calling `nucleus_ask` with the exact content.
    */
-  deliverQueueAsk(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }): Promise<void> { return this.questions.deliverQueueAsk(task, decision); }
+  deliverQueueAsk(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }): Promise<void> { return this.questionRaiseRoutes.deliverQueueAsk(task, decision); }
   /** The Spec 032 decision a Queue-raised ask-mode question answers through; created once, linked durably. */
-  ensureQueueRaiseDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }, why: string): void { return this.questions.ensureQueueRaiseDecision(task, decision, why); }
+  ensureQueueRaiseDecision(task: Task, decision: { id: string; kind: OperatorQuestionKind; question: string; options: string[]; details?: string | null; fullQuestion?: string | null }, why: string): void { return this.questionRaises.ensureQueueRaiseDecision(task, decision, why); }
   /** Settle an ask-mode Queue raise with the answer; the caller's own settlement path records and applies it. */
-  resolveQueueRaise(questionId: string, answer: string, answeredBy?: string): void { return this.questions.resolveQueueRaise(questionId, answer, answeredBy); }
+  resolveQueueRaise(questionId: string, answer: string, answeredBy?: string): void { return this.questionRaiseRoutes.resolveQueueRaise(questionId, answer, answeredBy); }
   /**
    * Spec 058 (task 550): the operator answered a decision on the board or the
    * composer pill. Durable event links say which agent ask or Queue-raised
@@ -763,10 +771,10 @@ export class Resolution {
    * outcome and settles the raise deferred, whose own path records the answer and
    * applies the question's controls.
    */
-  operatorDecisionAnswered(view: DecisionView): void { return this.questions.operatorDecisionAnswered(view); }
+  operatorDecisionAnswered(view: DecisionView): void { return this.questionAnswers.operatorDecisionAnswered(view); }
   /** A named escalation wait wakes once; a lost or refused effect is never replayed blindly. */
   /** Recover durable ask intents and answered board decisions on each maintenance wake. */
-  resumeAskQuestions(): Promise<void> { return this.questions.resumeAskQuestions(); }
+  resumeAskQuestions(): Promise<void> { return this.questionRecovery.resumeAskQuestions(); }
   agentAsk(input: AgentAskRequest, token: string): Promise<AgentAskReceipt> { return this.agentAsks.agentAsk(input, token); }
   askBinding(task: Task, runId: string): Pick<Run, 'id' | 'role' | 'agentId'> { return this.agentAsks.askBinding(task, runId); }
   askStale(task: Task, suppliedRunId: string): Error { return this.agentAsks.askStale(task, suppliedRunId); }
@@ -830,7 +838,7 @@ export class Resolution {
   decisionContext(task: Task): string[] { return this.delegation.decisionContext(task); }
   startRunnableProof(task: Task): Promise<boolean> { return this.proofAutorun.startRunnableProof(task); }
   /** Stop observing native decisions this process owns; their outcome stays unknown and is never resent. */
-  abortResponsibleQuestions() { return this.questions.abortResponsibleQuestions(); }
+  abortResponsibleQuestions() { return this.questionRecovery.abortResponsibleQuestions(); }
   /**
    * Project-d #117 (Tom, 2026-10-23): verify a PR the task knows only from a
    * reported completion exactly as the revision continuation verifies it (PR

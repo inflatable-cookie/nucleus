@@ -395,7 +395,7 @@ test('qualified planners receive missing-planner, board-question and escalation 
   assert.equal((await f.engine.resolution.projectPlannerFor(f.current())).planner,caller);
   const missing=f.prompts.find(message=>message.messageId.startsWith('ns-project-planner-missing-'));
   assert.equal(missing?.agentId,'queue-planner');
-  boardAnswer=f.engine.resolution.questions.raiseBoardDecision(f.current(),
+  boardAnswer=f.engine.resolution.questionRaiseRoutes.raiseBoardDecision(f.current(),
    {id:'qualified-board-question',kind:'process',question:'Continue?',options:['Continue']},controller.signal).catch(()=> 'aborted');
   await until(()=>f.prompts.some(message=>message.messageId==='ns-queue-question-qualified-board-question'));
   assert.equal(f.prompts.find(message=>message.messageId==='ns-queue-question-qualified-board-question')?.agentId,'queue-planner');
