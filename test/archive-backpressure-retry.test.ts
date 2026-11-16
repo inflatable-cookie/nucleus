@@ -129,7 +129,7 @@ function catalogRecord(taskId: string, directory: string, extra: Partial<Externa
     workspaceId, directory, requestId: `ns-catalog-archive-${taskId}-${workspaceId}`,
     state: 'held', observed: null, participants: [], native: null, folderPresent: true, detail: deferral,
     attempts: 3, source: null, folderRemovalAuthorized: false, folderRemovedBy: null,
-    samePathRegistrations: [workspaceId], intentAt: null, settledAt: new Date().toISOString(),
+    samePathRegistrations: [workspaceId], deferredByAdmission: false, intentAt: null, settledAt: new Date().toISOString(),
     nextAttemptAt: new Date(Date.now() + 3_600_000).toISOString(), ...extra,
   };
 }
@@ -156,7 +156,7 @@ async function externalFixture(t: TestContext, degraded: boolean) {
   store.update(inserted.id, {
     workspaceId, directory, prHead: head, prUrl: 'https://github.com/example/repo/pull/41', branch: 'feature/external',
     phase: 'done', resolution: { ...inserted.resolution, mergedCommit: head, syncedCommit: head,
-      externalWorkspaceArchives: [catalogRecord(inserted.id, directory)],
+      externalWorkspaceArchives: [catalogRecord(inserted.id, directory, { deferredByAdmission: true })],
       cleanupReason: `External workspace catalog entry held for ${workspaceId}: ${deferral}` },
   });
   const calls = { entered: 0, sent: 0 };
@@ -215,19 +215,26 @@ test('a preserved-external breaker deferral is due on the first admitted pass, n
   assert.equal(existsSync(f.directory), true);
 });
 
-test('a pre-fix uncertain preserved-external deferral with no intent is due on the first admitted pass', async t => {
+test('a recorded breaker deferral is the only record that is due without its backoff', async t => {
   const f = await externalFixture(t, false);
+  // The typed flag is what makes an entry due at once: a deferred record with a
+  // far-future backoff is owed now, and the same record without the flag keeps
+  // its backoff. Reading the deferral's words from `detail` is gone.
+  const deferred = { nextAttemptAt: new Date(Date.now() + 3_600_000).toISOString(), deferredByAdmission: true };
   f.store.update(f.task().id, { resolution: { ...f.task().resolution, externalWorkspaceArchives: [
-    catalogRecord(f.task().id, f.directory, {
-      state: 'uncertain', detail: `Catalog archive could not be requested: ${deferral}`,
-      attempts: 5, nextAttemptAt: new Date(Date.now() + 3_600_000).toISOString(), intentAt: null,
-    }),
+    catalogRecord(f.task().id, f.directory, deferred),
   ] } });
   await f.pass();
   assert.equal(f.record()!.state, 'archived');
-  assert.equal(f.calls.entered, 1);
   assert.equal(f.calls.sent, 1);
-  assert.equal(existsSync(f.directory), true);
+
+  const flagged = await externalFixture(t, false);
+  flagged.store.update(flagged.task().id, { resolution: { ...flagged.task().resolution, externalWorkspaceArchives: [
+    catalogRecord(flagged.task().id, flagged.directory, { ...deferred, deferredByAdmission: false }),
+  ] } });
+  await flagged.pass();
+  assert.equal(flagged.calls.entered, 0, 'a held record that reached no decision keeps its recorded backoff');
+  assert.equal(flagged.record()!.state, 'held');
 });
 
 test('a preserved-external deferral raised mid-attempt neither counts nor delays the retry', async t => {

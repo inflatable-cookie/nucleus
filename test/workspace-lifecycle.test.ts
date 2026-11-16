@@ -437,3 +437,83 @@ test("a surviving local branch that is the newer line is kept, and two diverged 
     /no fast-forward between them; inspect before recovering the worktree/);
   assert.equal(f.run("rev-parse", "refs/heads/ns-lifecycle"), sibling, "the refused recovery changed nothing");
 });
+
+test("an unreadable registration inventory skips the duplicate check and still creates", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "ns-workspace-lifecycle-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repo = join(root, "repo"), data = join(root, "data");
+  mkdirSync(repo, { recursive: true });
+  gitRepo(repo);
+
+  const order: string[] = [];
+  const owned = ownedWorkspacePath(data, await repoCommonDir(repo), "lifecycle");
+  const host = hostStub({
+    testPlacement: { dataDir: data, admit: () => {} },
+    workspaceCreationProgress: (_taskId, step, status) => order.push(`${status}:${step}`),
+    externalWorkspaceCatalog: async directory => { order.push(`catalog:${directory}`); return { ok: false, reason: "daemon read failed" }; },
+    inspectWorkspaceCreation: async () => ({ kind: "found_done", directory: owned }),
+  });
+
+  assert.deepEqual(await policy(host).createWorkspace(task({ repoPath: repo })), { id: "w-created", directory: owned },
+    "an unreadable inventory is not proof of a duplicate, so creation proceeds exactly as before");
+  assert.deepEqual(order.filter(entry => entry.includes("path_registration_check")),
+    ["started:path_registration_check", "skipped:path_registration_check", "finished:path_registration_check"],
+    "the skipped check is visible on the step trail instead of reading as a check that found nothing");
+
+  // A readable inventory with a foreign registration still refuses before any create.
+  host.externalWorkspaceCatalog = async () => ({ ok: true, entries: [{ workspaceId: "someone-else", directory: owned, placement: null }] });
+  await assert.rejects(policy(host).createWorkspace(task({ repoPath: repo })), /never adds a second registration for one folder/);
+});
+
+test("identity is the allocated path or the task's own slug and id, never a folder's basename", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "ns-workspace-lifecycle-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repo = join(root, "repo"), data = join(root, "data");
+  mkdirSync(repo, { recursive: true });
+  gitRepo(repo);
+  const owned = ownedWorkspacePath(data, await repoCommonDir(repo), "lifecycle");
+
+  const admitted: string[] = [];
+  const host = hostStub({ testPlacement: { dataDir: data, admit: path => admitted.push(path) } });
+  host.workspaceHost.workspaceInventory = async () => [
+    // Another repository's folder that happens to carry this task's slug.
+    { id: "decoy", projectRootPath: "/elsewhere/ns-lifecycle", workspaceDirectory: "/elsewhere/ns-lifecycle" },
+    // This task's own registration at the allocated path.
+    { id: "own", projectRootPath: owned, workspaceDirectory: owned },
+    // A registration identified by the task's own slug inside its repository.
+    { id: "slug", projectRootPath: repo, worktreeSlug: "ns-lifecycle" },
+    // Another task's registration at the same repository.
+    { id: "other", projectRootPath: repo, worktreeSlug: "ns-other" },
+  ];
+
+  assert.deepEqual(await policy(host).findWorkspaces(task({ repoPath: repo })), [
+    { id: "own", directory: owned },
+    { id: "slug", directory: "" },
+  ], "a decoy basename proves nothing; the allocated path and the task's own identity do");
+  assert.deepEqual(admitted, [owned], "only the matched allocation is admitted");
+});
+
+test("an ancestry read that failed refuses on its cause, not as two diverged lines", async (t) => {
+  const f = originFixture(t, "ancestry");
+  // A second clone advances the queue branch on origin; this repository never
+  // fetches it, so `merge-base` cannot read the advertised head at all.
+  const other = join(f.root, "other");
+  execFileSync("git", ["clone", "-q", f.origin, other]);
+  const at = (cwd: string) => (...args: string[]) =>
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, encoding: "utf8" }).trim();
+  const otherGit = at(other);
+  otherGit("checkout", "-q", "-b", "ns-lifecycle");
+  writeFileSync(join(other, "published.txt"), "published elsewhere\n");
+  otherGit("add", "-A"); otherGit("commit", "-q", "-m", "published elsewhere");
+  otherGit("push", "-q", "origin", "ns-lifecycle");
+
+  f.run("checkout", "-q", "-b", "ns-lifecycle", "main");
+  writeFileSync(join(f.repo, "local.txt"), "local work\n");
+  f.run("add", "-A"); f.run("commit", "-q", "-m", "local work");
+  f.run("checkout", "-q", "main");
+
+  const host = hostStub({ testPlacement: { dataDir: f.data, admit: () => {} } });
+  await assert.rejects(policy(host).recoverTaskWorkspace(task({ repoPath: f.repo, branch: "ns-lifecycle" }), { target: "branch" }),
+    /ancestry at [0-9a-f]{40} and origin [0-9a-f]{40} is unreadable; inspect before recovering the worktree/,
+    "an unreadable ancestry is its own refusal, never a divergence Queue did not observe");
+});
