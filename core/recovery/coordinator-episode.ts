@@ -6,9 +6,11 @@ import type { Resolution } from '../resolution';
 import { missingOriginHasPlanner } from '../questions/origin';
 import { taskOwner } from '../../shared/contracts';
 import { randomUUID } from 'node:crypto';
+import { threadRunningReason } from '../intake/thread-waits';
 import { creationFailureDetail } from './task-reasons';
 import { taskProgressDigest } from './coordinator-report';
 import { recoveryApplicationsInFlight } from './coordinator-settlement';
+import { isLiveRecoveryNoop, liveNoopSummary, liveWorkingParticipant } from './live-noop';
 
 /**
  * One recovery episode's durable bookkeeping: the action a coordinator report
@@ -84,6 +86,41 @@ export class CoordinatorEpisode {
    this.resolution.update(settled,{recovery:{...recovery!,status:'resolved',summary,action:refused},incident:resolvedIncident});
   }
   recordResultApplied(this.store,t.id,run.id);
+ }
+ /**
+  * A recovered report with no owner verb: the coordinator found the task live.
+  * Settle the episode as a no-op, restore the ordinary live wait, and do not
+  * climb the planner ladder. Papercut a721bbcc.
+  */
+ settleLiveNoOp(t:Task,run:Run,action:RecoveryActionBinding):void{
+  if (!this.store.db.isTransaction) return this.store.transaction(() => this.settleLiveNoOp(t, run, action));
+  if (resultApplied(this.store, t.id, run.id)) return;
+  const current=this.store.task(t.id);
+  const latest=this.store.run(run.id);
+  if(!latest)return;
+  const others=this.store.runs(current.id).filter(item=>item.id!==latest.id);
+  const live=liveWorkingParticipant(current,others);
+  // A recovered-without-action report is a live no-op only while Nucleus
+  // observes an occupant. Otherwise the caller keeps the old refusal.
+  if(!live)return;
+  const completion=this.completionFromBinding(current,latest,action);
+  this.store.putRun({...latest,completion,released:true,status:'finished'});
+  const summary=isLiveRecoveryNoop(action.summary)?action.summary:liveNoopSummary(live);
+  const recovery=current.resolution.recovery;
+  const incident=current.resolution.incident;
+  const ownsIncident=Boolean(incident&&incident.status!=='resolved'&&(incident.role==='recovery'
+   ||recovery?.incidentId===incident.id||(recovery?.runId!=null&&incident.runId===recovery.runId)));
+  const phase=['blocked','error','needs_attention'].includes(current.phase)
+   ? live.role==='reviewer'?'reviewing':live.role==='revision'?'changes_requested':'working' : undefined;
+  this.resolution.update(current,{
+   recoveryActive:false,
+   attention:false,
+   stop:null,
+   ...(recovery?{recovery:{...recovery,status:'resolved' as const,summary,action:{...action,status:'applied' as const}}}:{}),
+   ...(ownsIncident?{incident:{...incident!,status:'resolved' as const,detail:summary,updatedAt:now()}}:{}),
+  },{...(phase?{phase}:{})},'recovery_live_noop',summary);
+  this.resolution.waiting(this.store.task(t.id),threadRunningReason(live.role),'lifecycle');
+  recordResultApplied(this.store,t.id,latest.id);
  }
  /**
   * Resolution changes that close a recovery episode whose run no longer holds it:

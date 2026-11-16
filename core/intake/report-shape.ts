@@ -1,6 +1,5 @@
 import type { Completion, Run, Task } from '../../shared/contracts';
 import { QUEUE_BRANCH_PATTERN } from '../git/index';
-import { coordinatorActionShapeRefusal } from '../recovery/task-reasons';
 import { proofResultRefusal } from './proof-settlement';
 
 /**
@@ -24,7 +23,6 @@ export function completionRefusal(input: Completion, run: Run, task: Task, revis
   if (input.providerUnavailable && !['blocked','error'].includes(input.status)) return 'Provider unavailability requires blocked/error status';
   if (!allowed.includes(input.status)) return 'Result is not valid for this run role';
   if (role === 'recovery' && (input.recoveryAction || input.replacementAgentId)) return 'recoveryAction is retired; report coordinatorAction {verb: restart|route|move|retry_effect|cannot, reason} instead';
-  if (role === 'recovery' && input.status === 'recovered' && !input.coordinatorAction) return `Recovery requires a coordinatorAction. ${coordinatorActionShapeRefusal('the report carries none')}`;
   if (role !== 'recovery' && (input.recoveryAction || input.coordinatorAction || input.replacementAgentId)) return 'Recovery action requires coordinator recovery run';
   const proofRefusal = proofResultRefusal(input, run);
   if (proofRefusal) return proofRefusal;

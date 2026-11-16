@@ -1105,23 +1105,28 @@ request identities and submitted handoffs are not rewritten.
   (`queue.stop-threads`) stays separate. Who may set pause is the existing
   `queue.control` authority.
 - Slots count live agents (Tom, 2026-11-03): default 32 globally (max 64)
-  and 5 per project (1–32). A task holds a slot only while one of its agents
-  is live or starting — a worker, revision, reviewer, executor, recovery or
+  and 5 per project (1–32). A task holds a slot while one of its agents is
+  live or starting — a worker, revision, reviewer, executor, recovery or
   closeout coordinator turn (an unreleased run with a live or starting agent,
-  or dispatch creating its workspace ahead of the launch). A task with no
-  running agent that is only waiting on hosted checks, the repository
-  integration (merge) turn, mechanical verification, a thread release or
-  settlement holds no slot; it keeps its merge order, and when it next needs
-  an agent it requests a slot through the ordinary fair-share order. `done`
-  and `cancelled` tasks never occupy one, even while a run lease remains
+  or dispatch creating its workspace ahead of the launch) — or while an owner
+  restart is holding the slot that task already had (`restartSlotHold`) until
+  the continuation is admitted. A fenced task (dispatch-held, disposition, or
+  a stop that cannot launch) does not keep that restart hold: it neither
+  reserves a slot nor ranks ahead of runnable work. A task with no running
+  agent that is only waiting on hosted checks, the repository integration
+  (merge) turn, mechanical verification, a thread release or settlement holds
+  no slot; it keeps its merge order, and when it next needs an agent it
+  requests a slot through the ordinary fair-share order. `done` and
+  `cancelled` tasks never occupy one, even while a run lease remains
   unreleased. A terminal task's unreleased run intent with no agent is
   abandoned on sweep with a recorded reason; launched runs keep the normal
   settlement rules. The merge order lives in the integration turn and its
   lease, not in slots; workspace creation pacing and the Paseo-call bound keep
   their own gates.
 - A dispatch hold prevents new task-work launches, but does not itself occupy a
-  slot. A parked dispatch-held task with no live agent is not an occupant;
-  a live or starting agent keeps its slot while dispatch is held.
+  slot. A parked dispatch-held task with no live agent is not an occupant,
+  including one whose only occupancy would have been a restart hold. A live or
+  starting agent keeps its slot while dispatch is held.
 - Capacity waits and the board's slot counts report agents in use: the occupied
   count names the live-agent occupants, and the wait names in-flight tasks
   that hold no slot (checks, merge turn, thread release) separately, so the
@@ -1815,7 +1820,11 @@ worker direction and stop. A proof-only task never offers a worker return; when 
 receipt has no verdict, the escalation offers the receipt review instead. It does not delegate force, discard or source acceptance. A refused
 choice is returned once to its asker; an unresolved action remains open. A wait must name a
 prerequisite task, a future time or an open operator decision. Its wake resumes through the
-ordinary controls; unknown wake delivery remains visible and is not replayed. The question,
+ordinary controls — a live wait, `next`'s first resume verb whose fill is only reason
+(never `fresh: true`), or retained `restart role=reviewer` when that is the parked
+reviewer step. A refused retained restart parks with a visible lifecycle stop naming
+the refusal; the wake never replaces the reviewer with a fresh agent. Unknown wake
+delivery remains visible and is not replayed. The question,
 answer and action are activity events. A coordinator refreshes its plan and retries an explicit
 stale-version refusal once, with the original report binding rechecked.
 
@@ -2624,10 +2633,16 @@ movement invalidates source approval and preserves the normal readiness gates.
 - Nucleus records one current stop per task (`{reason, detail, since,
   suggestedVerbs}`). A coordinator returns one typed `coordinatorAction`
   (`restart`, `route`, `move`, `retry_effect` or `cannot`) with its recovery run
-  identity; Nucleus applies it through the shared verb registry. A report without
-  the structured action is refused at intake with its shape. A `cannot` over a
-  still-bound initial or revision worker waits for that worker after a fresh
-  matching agent and workspace observation; otherwise it escalates to the owner.
+  identity; Nucleus applies it through the shared verb registry. A recovered
+  report with no action is a live no-op only when Nucleus itself observes a
+  worker or reviewer still holding the lane. The episode then settles, no
+  planner escalation opens, and another recovery does not start for the same
+  cause while that participant stays active. A recovered report with no action
+  and no live occupant is refused: the coordinator must name an action or
+  `cannot`.
+  A `cannot` over a still-bound initial or revision worker waits for that worker
+  after a fresh matching agent and workspace observation; otherwise it escalates
+  to the owner.
 - A coordinator cannot grant acceptance or relay an operator replacement instruction.
 - A report binds to its episode, coordinator generation and the task's progress
   when the episode opened (phase, head, worker, completion and review, run,

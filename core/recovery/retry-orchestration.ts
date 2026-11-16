@@ -1,6 +1,7 @@
 import type { Resolution } from '../resolution';
 import { now } from '../store/store';
-import type { Completion, Run, Task } from '../../shared/contracts';
+import { runHoldsSlot, type Completion, type Run, type Task } from '../../shared/contracts';
+import { occupiesSlot } from '../dispatch/capacity';
 import { CLOSEOUT_BASE_REFRESH_REASON, RetainedRunRefusal, ACCEPTED_PR_RECONCILIATION_REASON, NO_RESOLUTION_ACTION, OPERATOR_WORKER_REMAP_REASON, readyReviewAtHead } from './task-reasons';
 import { reviewAuthorizationRequired, REVIEW_AUTHORIZATION_REQUIRED } from '../review/review-continuation';
 import { RETAINED_PREREQUISITE_REFUSAL } from '../verbs/verb-refusal-text';
@@ -271,6 +272,9 @@ export class RetryRoutes {
       // Spec 050 (#3569): the restart settles its armed fences atomically with
       // the restart; a refusal inside rolls both back.
       if (settleFences) this.resolution.settleVerbFences(t.id, settleFences);
+      const before = this.store.task(t.id);
+      const occupying = occupiesSlot(before, this.store.runs(t.id));
+      const holdFrom = this.store.runs(t.id).find(runHoldsSlot)?.id ?? before.resolution.currentRunId ?? before.runId;
       const stopped = this.admitStoppedRevision(this.store.task(t.id), instruction, prePr);
       const resumeIntent = Boolean(stopped.identityConfirmation);
       this.adapter.purgeReportingFiles?.(t.id, [stopped.id]);
@@ -278,7 +282,9 @@ export class RetryRoutes {
       this.store.putRun({ ...stopped, status: 'superseded', released: true, active: false });
       const current = this.store.task(t.id);
       this.resolution.update(current, { currentRunId: null, attention: false, recoveryActive: false, recovery: null,
-        stalledTurnStop: null }, {}, 'stopped_revision_restarted');
+        stalledTurnStop: null,
+        ...(occupying && holdFrom && !before.resolution.restartSlotHold
+          ? { restartSlotHold: { role: 'worker' as const, at: now(), fromRunId: holdFrom } } : {}) }, {}, 'stopped_revision_restarted');
       return this.resolution.retry(this.store.task(t.id), true, instruction, true, resumeIntent, prePr);
     });
   }
