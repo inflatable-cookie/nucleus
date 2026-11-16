@@ -6,7 +6,7 @@ export type { HostWorktreeWorkspaceSpec } from '../host/types';
 import { existsSync } from "node:fs";
 import type { HostProcessFact } from "../host/types";
 import type { Task } from "../../shared/contracts";
-import { externalWorkspace } from "../../shared/contracts";
+import { externalWorkspace } from "../../shared/workspace-ownership";
 import type { HostWorkspaceRef } from "../../shared/host";
 import { git, queueCheckoutStatus } from "../git/index";
 import { workspaceToolProcessIssue } from "../recovery/stall";

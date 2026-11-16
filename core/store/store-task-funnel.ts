@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { completionMembership,externalWorkspace,holdsOf,isOperatorOrigin,resolutionSchema,syncHoldProjection,TASK_OWNER_HOLD,taskOwner,taskStopClassification,type Completion,type Lane,type Notice,type Outcome,type Papercut,type Project,type Run,type RuntimeRetirement,type Submission,type Task,type TaskHolds } from "../../shared/contracts";
+import { completionMembership,holdsOf,isOperatorOrigin,resolutionSchema,syncHoldProjection,TASK_OWNER_HOLD,taskOwner,taskStopClassification,type Completion,type Lane,type Notice,type Outcome,type Papercut,type Project,type Run,type RuntimeRetirement,type Submission,type Task,type TaskHolds } from "../../shared/contracts";
 import { hookStateIsTerminal,type HookRecord } from "../../shared/hooks";
+import { externalWorkspace } from "../../shared/workspace-ownership";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { operationIsSettled,type QueueOperation } from "../../shared/operations";
 import { telemetryStageForTask } from "../../shared/telemetry";

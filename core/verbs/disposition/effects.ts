@@ -1,5 +1,6 @@
 import type { Disposition, Task } from "../../../shared/contracts";
-import { dispositionWorkPolicy, externalWorkspace, isDispositionActive } from "../../../shared/contracts";
+import { dispositionWorkPolicy, isDispositionActive } from "../../../shared/contracts";
+import { externalWorkspace } from "../../../shared/workspace-ownership";
 import { now, type Store } from "../../store/store";
 import { ForeignRecordedPr } from "../../forge/index";
 import { hostProcessSweepIntent, sweepTaskHostProcesses } from "../../machine/host-process-reap";

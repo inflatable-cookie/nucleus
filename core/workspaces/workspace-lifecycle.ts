@@ -12,7 +12,8 @@ import {
 import { capPaseoTitle, taskWorkspaceTitle } from "./workspace-title";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { externalWorkspace, type Task } from "../../shared/contracts";
+import type { Task } from "../../shared/contracts";
+import { externalWorkspace } from "../../shared/workspace-ownership";
 import type { HostProjectRef, HostWorkspaceSpec } from "../../shared/host";
 
 /**

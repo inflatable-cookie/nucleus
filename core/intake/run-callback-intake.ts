@@ -1,5 +1,6 @@
 import type { Completion, Run, Task } from '../../shared/contracts';
-import { externalWorkspace, isDispositionActive, isDispositionComplete } from '../../shared/contracts';
+import { isDispositionActive, isDispositionComplete } from '../../shared/contracts';
+import { externalWorkspace } from '../../shared/workspace-ownership';
 import { reviewPublicationBody } from '../forge/index';
 import { recordLateCallbackEvidence } from '../verbs/disposition';
 import { proofExecutions, proofExecutionRecord, recordProofExecution } from '../qa/proof-records';

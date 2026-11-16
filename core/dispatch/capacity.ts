@@ -1,4 +1,5 @@
-import { DEFAULT_PROJECT_LIMIT, DEFAULT_PAPERCUT_PROJECT_LIMIT, externalWorkspace } from "../../shared/contracts";
+import { DEFAULT_PROJECT_LIMIT, DEFAULT_PAPERCUT_PROJECT_LIMIT } from "../../shared/contracts";
+import { externalWorkspace } from "../../shared/workspace-ownership";
 import { currentTaskStop, holdsOf, isDispositionActive, mergeHeld, runHoldsSlot, type Run, type Task } from "../../shared/contracts";
 import { DEFAULT_GLOBAL_LIMIT, formatTaskNumber, isParkedTask } from "../../shared/contracts";
 import { routeUnavailableStop } from "../../shared/task-stop";

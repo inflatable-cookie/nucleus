@@ -1,7 +1,8 @@
 import { existsSync } from 'node:fs';
 import type { Engine } from '../engine';
 import type { Resolution } from '../resolution';
-import { externalWorkspace, holdsOf, runtimeRetirementFailure, type Run, type Task } from '../../shared/contracts';
+import { holdsOf, runtimeRetirementFailure, type Run, type Task } from '../../shared/contracts';
+import { externalWorkspace } from '../../shared/workspace-ownership';
 import { hookHoldReason } from '../hooks/hooks';
 import { buildOutputCleanupHooks, type BuildOutputCleanupHooks } from '../workspaces/worktree-cleanup';
 import { workspaceDiscardKey, type WorkspaceDiscard } from '../workspaces/orphan-worktree';

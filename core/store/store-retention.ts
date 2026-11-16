@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import type { SQLInputValue } from "node:sqlite";
-import { externalWorkspace, taskReferenceSchema, type Notice, type Run, type Task } from "../../shared/contracts";
+import { taskReferenceSchema, type Notice, type Run, type Task } from "../../shared/contracts";
+import { externalWorkspace } from "../../shared/workspace-ownership";
 import type { HookRecord } from "../../shared/hooks";
 import { hookRetentionBlocksPurge } from "../hooks/hook-retention";
 import { HOST_RUN_SELECTOR, qualifiedThreadArchiveEffectKey, StoreCore } from "./store-core";

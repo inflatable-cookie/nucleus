@@ -3,7 +3,8 @@ import type { Resolution } from '../resolution';
 import { doublingDelay } from '../../shared/backoff';
 import { isBackpressureDeferral } from '../host/admission';
 import { buildOutputCleanupReasonPrefix } from '../hooks/build-output-records';
-import { externalWorkspace, runtimeRetirementFailure } from '../../shared/contracts';
+import { runtimeRetirementFailure } from '../../shared/contracts';
+import { externalWorkspace } from '../../shared/workspace-ownership';
 
 export const WORKSPACE_ARCHIVE_RETRY_BASE_MS = 60_000;
 export const WORKSPACE_ARCHIVE_RETRY_MAX_MS = 60 * 60_000;
