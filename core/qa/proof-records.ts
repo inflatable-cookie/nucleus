@@ -7,7 +7,7 @@
  */
 import { now, type Store } from '../store/store';
 import type { ProofExecutionRecord, Run, Task } from '../../shared/contracts';
-import { qualificationExecutionDigest, qualificationSubjectDigest } from '../../shared/schema/review/proof';
+import { qualificationExecutionDigest, qualificationSubjectDigest } from '../host-runs/qualification-binding';
 
 /** A brief's or run's proof declaration, without the bindings only a run carries. */
 export interface ProofDeclaration { selector: string; inputs: string[] }

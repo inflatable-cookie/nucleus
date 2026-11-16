@@ -64,7 +64,8 @@ import {
   type QualificationRefusalCode,
   type QualificationSubjectResolve,
 } from "../../core/host-runs/qualification-subject";
-import { qualificationEnvironmentDigest, type QualificationBinding } from "../../shared/schema/review/proof";
+import type { QualificationBinding } from "../../shared/schema/review/proof";
+import { qualificationEnvironmentDigest } from "../../core/host-runs/qualification-binding";
 import {
   listSubmissionRunIds,
   readStoredSubmission,

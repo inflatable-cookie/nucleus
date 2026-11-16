@@ -23,7 +23,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { runSchema, type Run } from "../shared/schema/runs";
 import { submissionSchema } from "../shared/contracts";
-import { qualificationEnvironmentDigest, qualificationSubjectDigest } from "../shared/schema/review/proof";
+import { qualificationEnvironmentDigest, qualificationSubjectDigest } from "../core/host-runs/qualification-binding";
 import { Store } from "../core/store/store";
 import { HostRunScheduler } from "../core/host-runs/host-run-scheduler";
 import { qualificationSubjectResolver, QUALIFICATION_FOUNDATION_INCOMPLETE } from "../core/host-runs/qualification-subject";

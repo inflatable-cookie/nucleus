@@ -14,12 +14,8 @@ import type { HostRunSubmitBody } from "./host-run-wire";
 import type { Store } from "../store/store";
 import { verifyProofSource } from "../qa/proof-source";
 import { ProofExecutionRefusal } from "../qa/proof-refusal";
-import {
-  qualificationEnvironmentDigest,
-  qualificationSubjectDigest,
-  type QualificationBinding,
-  type QualificationSubject,
-} from "../../shared/schema/review/proof";
+import type { QualificationBinding, QualificationSubject } from "../../shared/schema/review/proof";
+import { qualificationEnvironmentDigest, qualificationSubjectDigest } from "./qualification-binding";
 
 /**
  * The refusal every mode entry shares until Spec 064 P4–P7 land their named
