@@ -6,7 +6,7 @@ import { reviewFenceHoldsCoordinators } from '../review/review-continuation';
 import { dispatchBlocked } from '../dispatch/capacity';
 import {escalationSummary} from './task-reasons';
 import {ACCEPTED_RECOVERY_NOT_APPLIED_PREFIX, cause, needsAttention, type CoordinatorEpisode, type RecoveryContext} from './coordinator-episode';
-import {isLiveRecoveryNoop} from './live-noop';
+import {isLiveRecoveryNoop,liveWorkingParticipant} from './live-noop';
 
 /**
  * How long a recovery episode may sit pending with no run before it escalates.
@@ -176,13 +176,16 @@ export class CoordinatorPass {
     const finishedRun=run;
     const accepted=this.episode.bindingFrom(run,incident);
     const reported=accepted?this.episode.completionFromBinding(t,finishedRun,accepted):null;
+    // Nucleus's own observation, not the coordinator's claim: a live no-op
+    // settles only while an unreleased non-recovery run still holds the lane.
+    const live=liveWorkingParticipant(this.store.task(t.id),this.store.runs(t.id).filter(item=>item.id!==finishedRun.id));
     // A live no-op starts no work: do not wait for the working participant's
     // lease. That participant staying active is the reason the report exists.
-    if(accepted?.status==='pending'&&accepted.reportStatus==='recovered'&&!accepted.coordinatorAction){
+    if(live&&accepted?.status==='pending'&&accepted.reportStatus==='recovered'&&!accepted.coordinatorAction){
      this.store.transaction(()=>this.episode.settleLiveNoOp(this.store.task(t.id),finishedRun,accepted));
      continue;
     }
-    if(t.responsible&&accepted&&reported&&['blocked','error'].includes(accepted.reportStatus)&&reported.providerUnavailable!==true
+    if(live&&t.responsible&&accepted&&reported&&['blocked','error'].includes(accepted.reportStatus)&&reported.providerUnavailable!==true
       &&isLiveRecoveryNoop(accepted.summary)){
      this.store.transaction(()=>this.episode.settleLiveNoOp(this.store.task(t.id),finishedRun,accepted));
      continue;

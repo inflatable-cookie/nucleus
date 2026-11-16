@@ -78,16 +78,20 @@ const workerHoldsSlot = (task: Task): boolean => {
   return false;
 };
 
-// Slots count live agents: a task holds a slot only while one of its agents is
-// live or starting. A task with no running agent that is only waiting on hosted
-// checks, the repository integration (merge) turn, mechanical verification, a
-// thread release or settlement holds no slot; it keeps its merge order, and when
-// it next needs an agent it requests a slot through the ordinary fair-share
-// order. Terminal tasks never hold slots.
+// Slots count live agents: a task holds a slot while one of its agents is live
+// or starting, or while an owner restart is holding the slot the task already
+// had until that continuation is admitted. A fenced task (dispatch-held,
+// disposition, or a stop that cannot launch) does not keep a restart hold: it
+// neither reserves a slot nor ranks ahead of runnable work. A task with no
+// running agent that is only waiting on hosted checks, the repository
+// integration (merge) turn, mechanical verification, a thread release or
+// settlement holds no slot; it keeps its merge order, and when it next needs an
+// agent it requests a slot through the ordinary fair-share order. Terminal
+// tasks never hold slots.
 export const occupiesSlot = (task: CapacityTask, runs: Run[] = []) =>
   !["done", "cancelled"].includes(task.phase) &&
   (workerHoldsSlot(task) || runs.some(runHoldsSlot) || task.hasLiveRun === true
-    || Boolean(task.resolution.restartSlotHold));
+    || Boolean(task.resolution.restartSlotHold) && !slotRequestFenced(task));
 
 /** True when this launch is the continuation the restart hold was keeping a slot for. */
 export function consumeRestartSlotHold(task: Task, role: Run['role']): boolean {

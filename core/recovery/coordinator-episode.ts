@@ -98,16 +98,19 @@ export class CoordinatorEpisode {
   const current=this.store.task(t.id);
   const latest=this.store.run(run.id);
   if(!latest)return;
-  const completion=this.completionFromBinding(current,latest,action);
-  this.store.putRun({...latest,completion,released:true,status:'finished'});
   const others=this.store.runs(current.id).filter(item=>item.id!==latest.id);
   const live=liveWorkingParticipant(current,others);
-  const summary=isLiveRecoveryNoop(action.summary)?action.summary:(live?liveNoopSummary(live):action.summary);
+  // A recovered-without-action report is a live no-op only while Nucleus
+  // observes an occupant. Otherwise the caller keeps the old refusal.
+  if(!live)return;
+  const completion=this.completionFromBinding(current,latest,action);
+  this.store.putRun({...latest,completion,released:true,status:'finished'});
+  const summary=isLiveRecoveryNoop(action.summary)?action.summary:liveNoopSummary(live);
   const recovery=current.resolution.recovery;
   const incident=current.resolution.incident;
   const ownsIncident=Boolean(incident&&incident.status!=='resolved'&&(incident.role==='recovery'
    ||recovery?.incidentId===incident.id||(recovery?.runId!=null&&incident.runId===recovery.runId)));
-  const phase=live&&['blocked','error','needs_attention'].includes(current.phase)
+  const phase=['blocked','error','needs_attention'].includes(current.phase)
    ? live.role==='reviewer'?'reviewing':live.role==='revision'?'changes_requested':'working' : undefined;
   this.resolution.update(current,{
    recoveryActive:false,
@@ -116,7 +119,7 @@ export class CoordinatorEpisode {
    ...(recovery?{recovery:{...recovery,status:'resolved' as const,summary,action:{...action,status:'applied' as const}}}:{}),
    ...(ownsIncident?{incident:{...incident!,status:'resolved' as const,detail:summary,updatedAt:now()}}:{}),
   },{...(phase?{phase}:{})},'recovery_live_noop',summary);
-  if(live) this.resolution.waiting(this.store.task(t.id),threadRunningReason(live.role),'lifecycle');
+  this.resolution.waiting(this.store.task(t.id),threadRunningReason(live.role),'lifecycle');
   recordResultApplied(this.store,t.id,latest.id);
  }
  /**
