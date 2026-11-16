@@ -262,12 +262,13 @@ export async function runProjectQaPipeline(base: QaPipelineIdentity, run: QaPipe
   let stop: (() => void | Promise<void>) | undefined;
   // The operator's live view of this run: every stage's output as it arrives.
   // Best effort by construction; the step logs and the result stay the record.
-  const liveOutput = await openQaLiveOutput(qaRunLiveOutputPath(run.runRoot, run.runId), () => run.hostRunToken);
+  let liveOutput: Awaited<ReturnType<typeof openQaLiveOutput>> = null;
   try {
     // Publish the run's identity before anything can take time, so a service
     // restart in this window finds a live supervisor rather than an orphan.
     await io.persist(state);
     stop = io.begin?.(state);
+    liveOutput = await openQaLiveOutput(qaRunLiveOutputPath(run.runRoot, run.runId), () => run.hostRunToken);
     let stateName: ProjectQaRun["state"] = "hold";
     let exitCode: number | null = null;
     let setupFailed = false;
