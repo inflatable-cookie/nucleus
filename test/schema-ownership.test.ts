@@ -101,9 +101,11 @@ test('the retained-profile fact is one text with one reader', () => {
   assert.equal(isRetainedProfileReason(undefined), false);
 });
 
-test('the board event and availability records refuse a field the contract does not declare', () => {
+test('the board event record refuses a field the contract does not declare, and availability keeps its set-payload tolerance', () => {
   assert.deepEqual(eventSchema.parse({ id: 1, taskId: 'task', at: 'now', kind: 'note', detail: 'text' }),
     { id: 1, taskId: 'task', at: 'now', kind: 'note', detail: 'text' });
   assert.throws(() => eventSchema.parse({ id: 1, taskId: 'task', at: 'now', kind: 'note', detail: 'text', extra: true }));
-  assert.throws(() => availabilitySchema.parse({ group: 'g', unavailable: false, reason: '', retryAt: null, extra: true }));
+  // Availability's own contract is the opposite: an older caller's extra key is ignored.
+  assert.deepEqual(availabilitySchema.parse({ group: 'g', unavailable: false, reason: '', retryAt: null, extra: true }),
+    { group: 'g', unavailable: false, reason: '', retryAt: null });
 });

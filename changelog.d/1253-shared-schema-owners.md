@@ -9,5 +9,6 @@ control with the same owner's words.
 A pool entry's cost scale is derived from the capability scale, a settings limit
 is bounded and defaulted once for the settings write and the board state, and the
 retained-worker profile park is one shared fact read by `isRetainedProfileReason`
-instead of five text matches. Profile, board-event and availability records now
-refuse a field their contract does not declare rather than dropping it.
+instead of five text matches. Profile and board-event records now refuse a field
+their contract does not declare rather than dropping it; a settings availability
+set payload keeps its documented tolerance for an older caller's extra key.

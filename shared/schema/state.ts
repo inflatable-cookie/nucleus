@@ -12,7 +12,8 @@ import { boardQaRunSchema } from "./qa";
 
 export const eventSchema = z.object({ id: z.number(), taskId: z.string(), at: z.string(), kind: z.string(), detail: z.string() }).strict();
 
-export const availabilitySchema = z.object({ group: z.string(), unavailable: z.boolean(), reason: z.string(), retryAt: z.string().nullable() }).strict();
+/** A subscription group's availability. A set/reset payload keeps its historical tolerance: unknown keys are stripped (contract, see `availabilityMarkSchema`). */
+export const availabilitySchema = z.object({ group: z.string(), unavailable: z.boolean(), reason: z.string(), retryAt: z.string().nullable() });
 
 /** The compatibility snapshot carries live tasks only; history is addressed by ID. */
 export const liveTaskSchema = taskSchema.omit({ handoffText: true, brief: true, briefVersions: true, laneContext: true, laneDocumentPins: true })
