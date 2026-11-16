@@ -886,8 +886,9 @@ is reachable.
   host identity, so a moved data directory is a refusal, not a second host;
 - `HostRegistry.primary()` names the Paseo entry and never falls back to whichever host registered
   first, so a BB host that registers before the daemon bootstrap never displaces the legacy
-  unqualified `hostId`, the retired-observation scope or the daemon-identity guard — and never makes
-  that guard refuse the Paseo connection that follows;
+  unqualified `hostId` (health, the board and settings read it), the host states the health projection
+  presents, the retired-observation scope, the admission resource or the daemon-identity guard — and
+  never makes that guard refuse the Paseo connection that follows;
 - a connection that closes between the identity proof and the registration is not installed: its
   link is released and the claim the runtime just recorded is retired, so nothing reads online for a
   connection that no longer exists;

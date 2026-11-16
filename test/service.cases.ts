@@ -976,8 +976,8 @@ test('a post-bootstrap reconciliation that keeps finishing quanta is not timed o
     const engine = owner.engine as unknown as { wake: () => Promise<void>; progressMark: () => number };
     engine.wake = () => work;
     engine.progressMark = () => mark;
-    const internals = owner as unknown as { boundedBootstrapStep<T>(step: string, work: Promise<T>, timeoutMs?: number, settlement?: object): Promise<T> };
-    const bounded = internals.boundedBootstrapStep.bind(owner);
+    const internals = (owner as unknown as { lifecycle: unknown }).lifecycle as { boundedBootstrapStep<T>(step: string, work: Promise<T>, timeoutMs?: number, settlement?: object): Promise<T> };
+    const bounded = internals.boundedBootstrapStep.bind(internals);
     internals.boundedBootstrapStep = (step, promise, timeoutMs, settlement) =>
       bounded(step, promise, step === 'Post-bootstrap reconciliation' ? 40 : timeoutMs, settlement);
     const ticker = setInterval(() => { mark++; }, 10);
@@ -1008,7 +1008,7 @@ test('the post-bootstrap progress bound never runs past its cap, even when a lat
     globalThis.setTimeout = ((run: () => void, ms: number) => { due.push({ at: clock + ms, run }); return { unref() {} } as unknown as NodeJS.Timeout; }) as typeof setTimeout;
     let mark = 0;
     let error = null as Error | null;
-    const internals = owner as unknown as { boundedBootstrapStep<T>(step: string, work: Promise<T>, timeoutMs?: number, settlement?: object): Promise<T> };
+    const internals = (owner as unknown as { lifecycle: unknown }).lifecycle as { boundedBootstrapStep<T>(step: string, work: Promise<T>, timeoutMs?: number, settlement?: object): Promise<T> };
     const step = internals.boundedBootstrapStep('Post-bootstrap reconciliation', new Promise<void>(() => {}), 60_000, {
       progress: () => mark, onTimeout: (failure: Error) => { error = failure; },
     }).catch(() => {});
@@ -1040,14 +1040,14 @@ test('a timed-out post-bootstrap reconciliation settles only its own diagnostic'
     let rejectWork!: (error: Error) => void;
     const work = new Promise<void>((resolve, reject) => { resolveWork = resolve; rejectWork = reject; });
     (owner.engine as unknown as { wake: () => Promise<void> }).wake = () => work;
-    const internals = owner as unknown as {
+    const internals = (owner as unknown as { lifecycle: unknown }).lifecycle as {
       boundedBootstrapStep<T>(step: string, work: Promise<T>, timeoutMs?: number, settlement?: {
         onTimeout?(error: Error): void;
         onLateSuccess?(): void;
         onLateFailure?(error: Error): void;
       }): Promise<T>;
     };
-    const boundedBootstrapStep = internals.boundedBootstrapStep.bind(owner);
+    const boundedBootstrapStep = internals.boundedBootstrapStep.bind(internals);
     internals.boundedBootstrapStep = (step, promise, timeoutMs, settlement) =>
       boundedBootstrapStep(step, promise, step === 'Post-bootstrap reconciliation' ? 25 : timeoutMs, settlement);
     await owner.ensureBootstrap();
