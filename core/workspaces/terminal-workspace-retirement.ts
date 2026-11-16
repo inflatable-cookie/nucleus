@@ -2,6 +2,7 @@ import { archiveFailureIsTeardown } from './archive-failure';
 import { existsSync } from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
 import { holdsOf, type Task } from '../../shared/contracts';
+import { externalWorkspace } from '../../shared/workspace-ownership';
 import { now, type Store } from '../store/store';
 import type { Adapter } from '../host/adapter';
 import type { RuntimeRetirementService } from '../runtime/runtime-retirement';
@@ -14,7 +15,9 @@ type Retirement = NonNullable<Task['resolution']['workspaceRetirement']>;
 
 export function canRetireCancelledWorkspace(task: Task): boolean {
   return !task.removedAt && task.phase === 'cancelled' && task.disposition?.status === 'complete'
-    && !task.reviewEntry && Boolean(task.workspaceId && task.directory)
+    // An external registered worktree and a review entry's checkout are never
+    // retired, however the task ended (nucleus#1261).
+    && !task.reviewEntry && !externalWorkspace(task) && Boolean(task.workspaceId && task.directory)
     && !task.disposition.workspaceArchived && !task.resolution.archivedWorkspaceIds.includes(task.workspaceId!)
     && task.resolution.workspaceRetirement?.state !== 'archived';
 }

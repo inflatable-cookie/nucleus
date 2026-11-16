@@ -2563,8 +2563,9 @@ movement invalidates source approval and preserves the normal readiness gates.
   allocation. Registration refuses a directory a live task still writes in (a
   superseded or cancelled task whose disposition preserved the folder kept the
   files, not the claim) and records `workspaceOwnership: external`; preflight,
-  continuation, build-output cleanup and closeout then leave the directory,
-  files and branch in place, and the `task.register` response carries the
+  continuation, build-output cleanup, cancellation retirement, operator removal
+  and closeout then leave the directory, files and branch in place, and the
+  `task.register` response carries the
   caller's reporting binding (run ID, helper, ticket path, and the MCP binding
   path when the host uses one) because that thread was not launched by Nucleus.
   A row registered before the ownership field existed is proved external from

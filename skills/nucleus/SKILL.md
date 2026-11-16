@@ -697,8 +697,9 @@ The response carries `binding`: the run ID, the helper and the ticket path this 
 through (plus the MCP binding path on a host that reports that way). A registered thread was not
 launched by Nucleus, so it holds no ticket until then; put the ticket in `NUCLEUS_TICKET` or hand it
 to the helper, and never print it. The worktree is recorded as an **external workspace**: Nucleus
-never archives or deletes it, never cleans its build output, and closeout leaves the folder, its
-files and the branch in place for its owner.
+never archives or deletes it, never cleans its build output, and no archive path (closeout,
+cancellation retirement or operator removal) touches it: the folder, its files and the branch stay
+in place for its owner.
 
 Planned briefs run the responsible lifecycle. Explicit `queue.responsible: false` is refused; absence means true. `manualVerification` is retired (Spec 058 cutover 2): the verification coordinator is deleted, so no submission can select an old lifecycle; stored rows keep the field readable.
 
