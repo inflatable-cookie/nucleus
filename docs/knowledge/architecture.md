@@ -411,8 +411,13 @@ owner to the rules it enforces.
 - `core/intake/checkpoint.ts` delivers each persisted worker checkpoint continuation
   to the same retained worker at most twice. `Resolution` constructs
   `Checkpoints`.
-- `core/verbs/moves.ts` holds the owner `move` verb: to work, review, merge and
-  closeout, and closeout's external-merge reconciliation. `restart role=worker`
+- `core/verbs/moves/` holds the owner `move` verb, one module per route:
+  `controls.ts` is the `MoveControls` surface and the re-plan on a cancelled
+  turn, `review.ts` and `review-proof.ts` the two moves to review,
+  `review-displacement.ts`, `review-reader.ts` and `review-settle.ts` the
+  reviewer displacement, the retained reader and the one review settlement,
+  `work.ts`, `merge.ts` and `closeout.ts` the other routes, and
+  `external-merge.ts` closeout's external-merge reconciliation. `restart role=worker`
   passes its arm into `moveToWork`, inside that transaction. Same-name `Engine`
   methods delegate to it.
 - `core/verbs/dispatcher.ts` is where every task control enters: the audit
