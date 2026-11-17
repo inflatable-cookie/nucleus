@@ -57,8 +57,12 @@ export interface ServiceRequest {
    * Settings-only capacity rule, never an authorization claim from the body, and
    * a same-uid process that speaks this frame deliberately is indistinguishable
    * from the bridge — accepted as accident prevention, not authentication.
+   *
+   * `bb` is the BB plugin's forwarded board call (Spec 062, phase 6). The server
+   * accepts it only on a connection that holds the BB host-executor role, so it
+   * names the operator's BB plugin the way `paseo` names the Paseo bridge.
    */
-  via?: "paseo";
+  via?: "paseo" | "bb";
 }
 
 export interface ServiceError {
@@ -153,8 +157,8 @@ export function parseRequest(frame: unknown): { ok: true; request: ServiceReques
   // One optional bounded field; any other surface value fails closed rather than
   // being guessed at.
   const via = candidate.via;
-  if (via !== undefined && via !== "paseo") return { ok: false, error: new ProtocolError("invalid_input", "Request surface `via` is not a known surface") };
+  if (via !== undefined && via !== "paseo" && via !== "bb") return { ok: false, error: new ProtocolError("invalid_input", "Request surface `via` is not a known surface") };
   const key = candidate.key;
   if (key !== undefined && (typeof key !== "string" || !REQUEST_KEY_PATTERN.test(key))) return { ok: false, error: new ProtocolError("invalid_input", "Request key is missing or out of bounds") };
-  return { ok: true, request: { v: PROTOCOL_VERSION, id: candidate.id, method: candidate.method, input: candidate.input ?? null, ...(via ? { via } : {}), ...(typeof key === "string" ? { key } : {}) } };
+  return { ok: true, request: { v: PROTOCOL_VERSION, id: candidate.id, method: candidate.method, input: candidate.input ?? null, ...(via === "paseo" || via === "bb" ? { via } : {}), ...(typeof key === "string" ? { key } : {}) } };
 }

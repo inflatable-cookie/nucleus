@@ -46,6 +46,14 @@ export const sidebarGroupSchema = z.object({
   stop: z.string().min(1).max(60).nullable(),
 }).strict();
 
+/** One Nucleus project: the per-project tab's threads and the sidebar rows that link to its board. */
+export const sidebarProjectSchema = z.object({
+  key: z.string().min(1).max(200),
+  name: z.string().min(1).max(200),
+  threadIds: z.array(z.string().min(1).max(300)).max(101),
+  bbProjectIds: z.array(z.string().min(1).max(240)).max(100),
+}).strict();
+
 export const sidebarGroupsOutputSchema = z.object({
   groups: z.array(sidebarGroupSchema),
   threads: z.array(z.object({
@@ -54,9 +62,19 @@ export const sidebarGroupsOutputSchema = z.object({
     role: z.string().min(1).max(80),
     environmentId: z.string().min(1).max(240),
   }).strict()),
+  projects: z.array(sidebarProjectSchema),
 }).strict();
 
 export type SidebarGroup = z.infer<typeof sidebarGroupSchema>;
+export type SidebarProject = z.infer<typeof sidebarProjectSchema>;
+
+/** The route segment the board's panel takes for one project's board (decision 5d). */
+export const PROJECT_BOARD_SUBPATH = "project";
+
+/** The app route of one Nucleus project's board: `/plugins/nucleus/board/project/<key>`. */
+export function projectBoardHref(projectKey: string, pluginId = "nucleus"): string {
+  return `/plugins/${pluginId}/board/${PROJECT_BOARD_SUBPATH}/${encodeURIComponent(projectKey)}`;
+}
 export type SidebarGroups = z.infer<typeof sidebarGroupsOutputSchema>;
 
 /** The plugin's own RPC method names, registered in `server.ts` and read by the fork. */

@@ -818,6 +818,13 @@ export class QueueService {
   }
 
   private async handleCatalogueMethod(connection: Connection, request: ServiceRequest) {
+    // `via: "bb"` is transport provenance only the BB plugin's own retained
+    // host-executor connection may carry (Spec 062, phase 6); on any other
+    // connection it is refused before the method runs, never downgraded.
+    if (request.via === "bb" && !connection.hostExecutor) {
+      this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: "invalid_input", message: "Request surface `bb` is served only on the BB plugin's host-executor connection" } }, false, request.method);
+      return;
+    }
     const entry = this.catalogue.get(request.method);
     if (!entry) {
       this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: "method_unknown", message: `Unknown method ${request.method}` } }, false, request.method);

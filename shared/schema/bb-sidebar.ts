@@ -51,9 +51,28 @@ export const bbSidebarThreadSchema = z.object({
 
 export type BbSidebarThread = z.infer<typeof bbSidebarThreadSchema>;
 
+/**
+ * Spec 062 decision 5d: one Nucleus project as the BB surfaces resolve it. The
+ * route key is the Nucleus project key, never a BB project id: a project spans
+ * every repository it lists, and BB holds one project per repository root.
+ *
+ * `threadIds` are the project's planner and named-agent threads (the threads the
+ * per-project tab shows on); `bbProjectIds` are the BB projects Nucleus recorded
+ * for the project's repositories (the sidebar's project rows that link to it).
+ */
+export const bbSidebarProjectSchema = z.object({
+  key: z.string().min(1).max(200),
+  name: z.string().min(1).max(200),
+  threadIds: z.array(z.string().min(1).max(300)).max(101),
+  bbProjectIds: z.array(z.string().min(1).max(240)).max(100),
+}).strict();
+
+export type BbSidebarProject = z.infer<typeof bbSidebarProjectSchema>;
+
 export const bbSidebarGroupsOutputSchema = z.object({
   groups: z.array(bbSidebarGroupSchema),
   threads: z.array(bbSidebarThreadSchema),
+  projects: z.array(bbSidebarProjectSchema),
 }).strict();
 
 export type BbSidebarGroups = z.infer<typeof bbSidebarGroupsOutputSchema>;

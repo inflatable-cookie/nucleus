@@ -24,6 +24,12 @@
  *    this server, which is the read the list hydrates through before it leaves its
  *    loading skeleton.
  *
+ * 7. phase 6: the board bundle is built first (`scripts/bb/build-board.mjs`), the
+ *    served app bundle carries the board's registrations (the rail panel, the
+ *    project and task tabs, the pending-question renderer and the composer pills),
+ *    the board's forwarding RPC is registered and fails closed without a Nucleus
+ *    service, and `bb nucleus terminal --help` answers from the same CLI.
+ *
  * It deliberately does not claim a visual proof: the New-thread button, the
  * navigation rail and the footer are host-rendered chrome that this plugin never
  * registers, which the plugin's slot registration and the fork's own unchanged
@@ -37,6 +43,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { assertIsolatedDataDir, findBb, freePort, portOpen, startProcess, stopProcess, waitFor, type Child } from "./bb-private";
+import { buildBoard } from "../bb/build-board.mjs";
 
 const run = promisify(execFile);
 const checkout = fileURLToPath(new URL("../..", import.meta.url));
@@ -97,7 +104,9 @@ async function main() {
     }, 120_000);
     note("isolated-machine", true, "one enrolled machine");
 
-    // 1. The build: the acceptance names `bb plugin build` itself.
+    // 1. The build: the board bundle first (phase 6), then `bb plugin build` itself.
+    const board = await buildBoard();
+    note("board-bundle", true, { bytes: board.bytes });
     const pluginDir = join(checkout, "hosts", "bb", "plugin");
     const buildOut = await cli(["plugin", "build", pluginDir]);
     const artifacts = ["server.js", "server.meta.json", "app.js", "app.css", "app.meta.json"].map(name => join(pluginDir, "dist", name));
@@ -191,6 +200,22 @@ async function main() {
       expandedTaskGroups: preferences.expandedTaskGroups,
       cliRan: !cliOutput.startsWith("the isolated CLI did not run"),
     });
+
+    // 7. Phase 6: the board's registrations ride the same app bundle, its forwarding
+    // RPC is registered (and fails closed with no Nucleus service), and the terminal
+    // command joins the list's CLI.
+    for (const id of ["nucleus-board", "nucleus-project-board", "nucleus-task", "nucleus-question", "nucleus-pills", "nucleus-settings"])
+      assert.ok(bundle!.includes(id), `the app bundle registers ${id}`);
+    const boardAnswer = await fetch(`${serverUrl}/api/v1/plugins/nucleus/rpc/boardCall`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ method: "queue.ui-snapshot", input: {} }),
+    });
+    const boardBody = (await boardAnswer.json().catch(() => null)) as { ok?: boolean; error?: { message?: string } } | null;
+    assert.notEqual(boardBody?.ok, true, "without a Nucleus service the board call fails closed rather than inventing a board");
+    let terminalHelp = "";
+    try { terminalHelp = (await cli(["nucleus", "terminal", "--help"])).trim(); } catch (error) { terminalHelp = `the isolated CLI did not run the command: ${error instanceof Error ? error.message : String(error)}`; }
+    note("board-surfaces", true, { boardCallStatus: boardAnswer.status, boardCallError: boardBody?.error?.message?.slice(0, 200) ?? null, terminalHelp: terminalHelp.slice(0, 200) });
 
     // 6. The row-status path another plugin writes keeps drawing through the fork.
     assert.ok(bundle!.includes("useSidebarThreadRowStatus"), "the fork's rows still honour the host row-status path");

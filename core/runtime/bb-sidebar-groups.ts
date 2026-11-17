@@ -1,9 +1,10 @@
 import { phaseNeedsAttention } from "../../shared/pipeline-board";
 import { isTerminalPhase, phaseStateLabel, taskStateLabel } from "../../shared/task-state";
 import { QA_CAPACITY_WAIT_PREFIX, waitStateLabels } from "../../shared/wait-state";
-import type { Task, TaskSummary } from "../../shared/contracts";
+import type { Project, Task, TaskSummary } from "../../shared/contracts";
+import { projectHasRepository } from "../../shared/project-scope";
 import type { PrState } from "../forge/pr-status";
-import type { BbSidebarGroups, BbSidebarThread } from "../../shared/schema/bb-sidebar";
+import type { BbSidebarGroups, BbSidebarProject, BbSidebarThread } from "../../shared/schema/bb-sidebar";
 
 /**
  * Spec 062 decision 5b: the batched read behind a Nucleus task group's header.
@@ -23,6 +24,10 @@ import type { BbSidebarGroups, BbSidebarThread } from "../../shared/schema/bb-si
 export interface BbSidebarWorkspace {
   environmentId?: string;
   archivedAt?: string;
+  /** The BB project the handle was attached under, once BB named it. */
+  projectId?: string;
+  /** The repository root the handle's BB project stands for. */
+  repositoryRoot?: string;
 }
 
 /** The recorded BB role-thread fact, as this read needs it. */
@@ -43,6 +48,8 @@ export interface BbSidebarSource {
   threads(): { agents?: Record<string, BbSidebarThreadRecord> };
   /** The board's own PR states, keyed by task id (`core/forge/pr-status.ts`). */
   prStates: Record<string, PrState>;
+  /** The registered Nucleus projects (Spec 027), for the per-project surfaces (decision 5d). */
+  projects(): Project[];
 }
 
 /** One bounded answer: more live tasks than this is a board problem, not a sidebar one. */
@@ -130,5 +137,31 @@ export function readBbSidebarGroups(source: BbSidebarSource): BbSidebarGroups {
     if (!environmentId) continue;
     threads.push({ threadId: agent.id, taskId: agent.task, role: agent.role, environmentId });
   }
-  return { groups, threads };
+  return { groups, threads, projects: sidebarProjects(source.projects(), workspaces, source.liveTasks()) };
+}
+
+/**
+ * Spec 062 decision 5d: each project's planner and named-agent threads, and the BB
+ * projects recorded for its repositories. A BB project resolves through the
+ * workspace handles Nucleus wrote: the handle's repository root, or the repository
+ * of a task that records the handle. A BB project no handle names is unknown here,
+ * so its sidebar row carries no board link rather than a guessed one.
+ */
+function sidebarProjects(projects: Project[], workspaces: Record<string, BbSidebarWorkspace>, tasks: Task[]): BbSidebarProject[] {
+  const taskByWorkspace = new Map<string, Task>();
+  for (const task of tasks) if (task.workspaceId) taskByWorkspace.set(task.workspaceId, task);
+  return projects.map(project => {
+    const threadIds = new Set<string>();
+    if (project.planner?.agentId) threadIds.add(project.planner.agentId);
+    for (const agent of project.agents ?? []) threadIds.add(agent.agentId);
+    const bbProjectIds = new Set<string>();
+    for (const [handle, workspace] of Object.entries(workspaces)) {
+      if (!workspace.projectId || workspace.archivedAt) continue;
+      const task = taskByWorkspace.get(handle);
+      const owned = (workspace.repositoryRoot && projectHasRepository(project, workspace.repositoryRoot))
+        || (task && projectHasRepository(project, task.repoPath, task.repository));
+      if (owned) bbProjectIds.add(workspace.projectId);
+    }
+    return { key: project.key, name: project.name, threadIds: [...threadIds].slice(0, 101), bbProjectIds: [...bbProjectIds].slice(0, 100) };
+  });
 }
