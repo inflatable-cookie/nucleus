@@ -26,6 +26,7 @@ import { type VerifiedEnclosingOperation } from './planning/enclosing-operation'
 
 import { z } from "zod";
 import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
+import type { AcpSessionSurface } from "../shared/acp/surface";
 import type { Task, Profile, Completion, CheckpointResult, Run, RecoveryActionBinding, BulkDisposition, BulkDispositionRequest, ReparentInput, WorkspaceArchiveRetry } from "../shared/contracts";
 import { isTransportFailure } from "../shared/transport";
 
@@ -153,6 +154,12 @@ export const STOPPED_BEFORE_DRAIN = () => new Error("Nucleus engine stopped befo
 export class Engine {
   /** Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): the durable host-outage record. */
   readonly hostOutages: HostOutages;
+  /**
+   * Spec 065: the ACP session surface. The runtime attaches it once the callback
+   * socket exists (an ACP binding points the agent at that socket); a process
+   * without one refuses `acp.bind` rather than minting a binding nothing answers.
+   */
+  acp: AcpSessionSurface | null = null;
   readonly taskControlLifecycle = new TaskControlLifecycle(portsContext(this, ['store', 'resolveTaskControl', 'hostAvailable', 'withHost', 'taskControlDispatcher', 'resolution', 'forceCallerAuthorized', 'selfForceRole']));
 
   readonly engineStop = new EngineStop(portsContext(this, ['resolution', 'store']));

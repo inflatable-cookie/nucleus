@@ -6,6 +6,8 @@ import {Reports,reportSchema} from "../../core/intake/report";
 import {UnauthorizedCallbackError} from "../../core/store/store-auth";
 import {agentAskSchema, AGENT_ASK_WAIT_MS} from "../../core/questions/agent-ask";
 import {agentMessageSchema} from "../../core/questions/agent-messages";
+import { AGENT_MESSAGE_MAX_CHARS } from "../../core/questions/agent-messages";
+import { ACP_TURN_WAIT_MAX_MS } from "../../core/acp/sessions";
 import type { Engine } from "../../core/engine";
 import { z } from "zod";
 
@@ -43,6 +45,25 @@ const helperAnswerSchema = z.object({
   overtakes: z.array(z.string().trim().min(1).max(160)).max(100).optional(),
   decision: z.literal("operator").optional(),
 }).strict().refine(value => Number(Boolean(value.answer)) + Number(Boolean(value.choice)) + Number(Boolean(value.decision)) === 1, { message: "Provide exactly one of answer, choice or decision" });
+
+// Spec 065: an ACP session names the task and session its minted binding carries.
+// Nothing here is a claimed identity: both are checked against the session record.
+const acpCallerSchema = z.object({ taskId: z.string().min(1).max(160), sessionId: z.string().min(1).max(160) }).strict();
+const acpTurnSchema = acpCallerSchema.extend({
+  waitMs: z.number().int().min(0).max(ACP_TURN_WAIT_MAX_MS).optional(),
+  /** An attach always answers with the current lifecycle line; a held poll only sends changes. */
+  attach: z.boolean().optional(),
+}).strict();
+const acpMessageSchema = acpCallerSchema.extend({
+  eventId: z.string().regex(/^[a-f0-9]{64}$/),
+  text: z.string().trim().min(1).max(AGENT_MESSAGE_MAX_CHARS),
+}).strict();
+
+/** The ACP surface this process attached, or the refusal that it serves none. */
+function acpSessions(engine: Engine) {
+  if (!engine.acp) throw new Error("This process does not serve ACP sessions");
+  return engine.acp;
+}
 
 // The compiled build rewrites the literal module-URL expression in source text, so the helper spells it
 // in two parts: rewritten, it never matches the helper's own path and the helper exits 0 without reporting.
@@ -231,6 +252,10 @@ export async function startCallbacks(socketPath: string, helperPath: string, eng
         const request = bulkDispositionDetailSchema.parse(input);
         return engine.retryBulkDispositionFromAgent(asCaller(request, token), request.operationId);
       } },
+    "/acp-turn": { bodyBytes: SMALL_CALLBACK_BODY_BYTES,
+      handle: (input, token) => acpSessions(engine).turn(acpTurnSchema.parse(input), token) },
+    "/acp-message": { bodyBytes: SMALL_CALLBACK_BODY_BYTES,
+      handle: (input, token) => acpSessions(engine).message(acpMessageSchema.parse(input), token) },
     "/promote-task": { bodyBytes: SMALL_CALLBACK_BODY_BYTES,
       handle: (input, token) => {
         const request = taskPromotionSchema.parse(input);

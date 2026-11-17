@@ -11,8 +11,12 @@ export const agentMessageRecordSchema = z.object({
   id: z.string(),
   /** Content identity for the duplicate rule: sender, recipient, role and text digest. */
   contentKey: z.string(),
-  /** A task id, or `project:<key>` for a planner or named agent sender (its label is fromReference). */
-  fromTaskId: z.string(), fromRole: z.enum(["worker", "reviewer", "planner", "agent", "executor"]),
+  /**
+   * A task id, or `project:<key>` for a planner or named agent sender (its label is
+   * fromReference). `operator` is a person speaking in the task's own ACP thread
+   * (Spec 065); it is the one sender with no agent behind it.
+   */
+  fromTaskId: z.string(), fromRole: z.enum(["worker", "reviewer", "planner", "agent", "executor", "operator"]),
   fromAgentId: z.string().nullable().default(null), fromReference: z.string().nullable().default(null), fromProject: z.string().nullable().default(null),
   fromHostId: z.string().min(1).nullable().optional(),
   /** A task id, or `project:<key>` for a planner or named agent recipient (its project is toProjectKey). */
