@@ -44,6 +44,6 @@ export function taskWorkspaceTitle(task:WorkspaceTitleTask, references:TitleRefe
     : undefined;
   const owner=currentFence?.owner??task.holdOwner;
   const titleState=taskTitleStateLabel({...task,waitingOn,hold:owner?{owner}:undefined});
-  const numberToken=referenceLabel&&referenceLabel.trim()?referenceLabel.trim():task.number?`#${task.number}`:null;
+  const numberToken=referenceLabel&&referenceLabel.trim()?referenceLabel.trim():task.number?formatTaskNumber(task.number):null;
   return `${titleState}: ${numberToken ? `${numberToken} ` : ''}${task.title.replace(/\s+worker$/i,'')}`;
 }

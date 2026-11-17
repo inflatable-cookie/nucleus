@@ -157,11 +157,11 @@ export class SettingsControls {
    * neither is refused before anything is written.
    */
   detachPresentation(task: Task, input: TaskControlInput): Task {
+    // Any authenticated local caller may detach, as with every other owner control
+    // (Spec 050): the record is presentation only, it names no planner, changes no
+    // owner and no question route, and a reparent restores the nesting. The caller
+    // is recorded on the control's audit line and on the record itself.
     const caller = input.caller ?? OPERATOR_BOARD_CALLER;
-    if (caller !== OPERATOR_BOARD_CALLER
-      && !sameCallerIdentity(caller, taskOwner(task), task.originHostId)
-      && !sameCallerIdentity(caller, taskPlanner(task), task.originHostId))
-      throw Error(`Detaching a task's presentation needs the operator at the board, its owner ${taskOwner(task)} or its planner ${taskPlanner(task)}; ${caller} is none of them`);
     // An explicit detach a task already recorded is the same record: it is not a
     // second write and it never advances the version a caller holds.
     if (task.presentationDetached) return task;
