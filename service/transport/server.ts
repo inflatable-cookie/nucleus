@@ -63,8 +63,9 @@ import {
 import { parseHostExecutorDeclaration, parseHostOperationRequest } from "../../shared/service/host-channel";
 import { bbPluginBuildPin } from "../../shared/bb-plugin-build";
 import { compiledIdentity } from "../../shared/runtime.mjs";
+import { getWorkRoot } from "../../core/workspaces/work-root.mjs";
 import { probeDiagnostics } from "../bb-host";
-import { WebBoard, defaultWebBundleDir, uiLinkInputSchema, type WebBoardHost, type WebBoardOptions } from "../web/web-board";
+import { WEB_BOARD_DEFAULT_PORT, WebBoard, defaultWebBundleDir, uiLinkInputSchema, type WebBoardHost, type WebBoardOptions } from "../web/web-board";
 
 export { SERVICE_BUILD, currentServiceBuildId } from "../../shared/service/build";
 import { currentServiceBuildId } from "../../shared/service/build";
@@ -74,6 +75,13 @@ const authInputSchema = z.object({ credential: z.string().regex(/^[a-f0-9]{64}$/
 const requestOutcomeInputSchema = z.object({ key: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,120}$/) }).strict();
 const bbHostOperationEnvelope = z.object({ hostId: z.string().regex(/^bb:[a-f0-9]{32}$/), op: z.string(), input: z.unknown() }).strict();
 const SERVICE_RPC_CONTRACTS = rpcContractDigests();
+function configuredWebPort(): number {
+  const configured = process.env.NUCLEUS_WEB_PORT;
+  if (configured === undefined || configured.trim() === "") return WEB_BOARD_DEFAULT_PORT;
+  const port = Number(configured);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("NUCLEUS_WEB_PORT must be an integer from 1 to 65535");
+  return port;
+}
 /** A bridge roll names the builds so the drain can record it on the tasks it may interrupt. */
 const drainInputSchema = z.object({ roll: z.object({ fromBuild: z.string().max(64), toBuild: z.string().max(64) }).strict().optional() }).passthrough();
 
@@ -122,7 +130,7 @@ export interface ServiceOptions {
   /** Warm standby: wait for this old service pid to exit before opening the store writable. */
   standbyFor?: number;
   /** Local web board overrides: a fixture clock for token expiry, or a bundle directory (null for none). */
-  webBoard?: Pick<WebBoardOptions, "now" | "bundleDir">;
+  webBoard?: Pick<WebBoardOptions, "now" | "bundleDir" | "port">;
 }
 
 export interface ServiceHealthStatus extends RuntimeHealth {
@@ -309,9 +317,11 @@ export class QueueService {
 
   /** Start the local web board; a bind failure is logged and leaves the socket serving without it. */
   private async openWebBoard(): Promise<WebBoard | null> {
-    const web = new WebBoard({ host: this.webHost(), bundleDir: defaultWebBundleDir(), ...this.options.webBoard });
+    const configuredPort = this.options.webBoard?.port ?? configuredWebPort();
+    const web = new WebBoard({ host: this.webHost(), bundleDir: defaultWebBundleDir(), ...this.options.webBoard, port: configuredPort, sessionFile: join(getWorkRoot(this.dataDir), "nucleus-web-sessions.json") });
     try {
       await web.listen();
+      if (web.usedFallbackPort) console.error(`Nucleus board preferred port ${configuredPort} was occupied; using ${web.address?.port}.`);
       return web;
     } catch (error) {
       console.error(`Nucleus board HTTP server did not start; the socket still serves: ${error instanceof Error ? error.message : String(error)}`);
@@ -332,6 +342,7 @@ export class QueueService {
       board: () => this.executor.current().board,
       unavailable: () => this.executor.unavailableReason(),
       subscribe: listener => this.executor.onSnapshot(listener),
+      isMutating: method => this.catalogue.get(method)?.mutating ?? false,
     };
   }
 
@@ -833,7 +844,7 @@ export class QueueService {
   }
 
   /** `nucleus ui`: mint one board link, or revoke every outstanding token. */
-  private handleUiLink(connection: Connection, request: ServiceRequest) {
+  private async handleUiLink(connection: Connection, request: ServiceRequest) {
     const parsed = uiLinkInputSchema.safeParse(request.input ?? {});
     if (!parsed.success) {
       this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: "invalid_input", message: formatSchemaRefusal(parsed.error) } }, false, request.method);
@@ -844,7 +855,9 @@ export class QueueService {
       this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: "unavailable", message: "The local board server is not listening; the service log says why it did not start. The queue still serves over the socket." } }, false, request.method);
       return;
     }
-    const result = parsed.data.action === "revoke" ? { revoked: web.revokeAll() } : web.issueLink(parsed.data.ttlMinutes);
+    const result = parsed.data.action === "revoke"
+      ? { revoked: await web.revokeAll() }
+      : { ...web.issueLink(parsed.data.ttlMinutes), portFallback: web.usedFallbackPort, port: web.address?.port };
     this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result }, false, request.method);
   }
 

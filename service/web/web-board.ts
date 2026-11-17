@@ -2,18 +2,17 @@
  * Local web board server (service-boundary contract, "Local web board").
  *
  * The standalone service serves the board to a browser on this machine. It binds
- * 127.0.0.1 on a random free port, refuses any Host or Origin that does not name
- * that loopback address, and answers the API only with a bearer token it issued.
+ * 127.0.0.1 on a configured port (or an ephemeral fallback), refuses any Host or
+ * Origin that does not name that loopback address, and pairs a one-time bearer
+ * with an owner-only cookie session.
  * The RPC route runs the shared catalogue with `via: "web"`, so it passes through
  * the same validation and dispatch as the socket. The live channel is a
  * server-sent event stream that pushes each board revision as the executor
  * publishes it, with the same unchanged-counter acknowledgement the plugin reads.
  *
- * Tokens are minted by the owner socket (`service.ui-link`, `nucleus ui`). They
- * live only in memory, as SHA-256 digests, expire and can be revoked. A request
- * carries its token in an Authorization header. The link carries it in its
- * fragment, which the browser never sends to this server and which the page reads
- * once, on first load. No cookie, query string or log holds the token.
+ * Link tokens are minted by the owner socket (`service.ui-link`, `nucleus ui`)
+ * and live only in memory as SHA-256 digests. Pairing consumes one token and
+ * persists only the cookie digest and rolling expiry under the work root.
  *
  * This stops other websites and DNS-rebinding pages. It does not stop a process
  * running as the same user that reads a link the owner issued.
@@ -25,8 +24,7 @@ import {
   type Server,
   type ServerResponse,
 } from "node:http";
-import { statSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { extname, join, resolve, sep } from "node:path";
 import { z, ZodError } from "zod";
 import { isUnchangedBoard, type UiBoard } from "../../shared/contracts";
@@ -49,11 +47,14 @@ const LOOPBACK = "127.0.0.1";
 export const WEB_BUNDLE_DIR = join("web", "dist");
 export const WEB_TOKEN_DEFAULT_MINUTES = 8 * 60;
 export const WEB_TOKEN_MAX_MINUTES = 24 * 60;
+export const WEB_BOARD_DEFAULT_PORT = 4318;
+export const WEB_SESSION_IDLE_MS = 30 * 24 * 60 * 60 * 1000;
+const SESSION_COOKIE = "nucleus_session";
 /** Outstanding tokens are bounded; the oldest is evicted first. */
 const MAX_OUTSTANDING_TOKENS = 16;
 const MAX_STREAMS = 8;
 const STREAM_KEEPALIVE_MS = 15_000;
-/** How often open streams re-check that their token is still live. */
+/** How often open streams refresh and re-check their paired session. */
 const STREAM_TOKEN_CHECK_MS = 30_000;
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 /** The fields an unchanged-board acknowledgement carries, so the live channel matches the plugin's poll. */
@@ -99,7 +100,7 @@ function digest(token: string): string {
 
 /** In-memory token table: digests only, bounded, expiring, revocable. */
 export class WebTokens {
-  private readonly live = new Map<string, { expiresAt: number; ttlMs: number }>();
+  private readonly live = new Map<string, { expiresAt: number }>();
 
   constructor(private readonly now: () => number = Date.now) {}
 
@@ -113,21 +114,8 @@ export class WebTokens {
     }
     const token = randomBytes(32).toString("base64url");
     const expiresAt = this.now() + ttlMs;
-    this.live.set(digest(token), { expiresAt, ttlMs });
+    this.live.set(digest(token), { expiresAt });
     return { token, expiresAt };
-  }
-
-  /** Swap a live token for a new one with the same lifetime. The cap is unchanged. */
-  renew(token: string | undefined): { token: string; expiresAt: number; key: string } | null {
-    const oldKey = this.admit(token);
-    if (!oldKey) return null;
-    const old = this.live.get(oldKey)!;
-    this.live.delete(oldKey);
-    const next = randomBytes(32).toString("base64url");
-    const key = digest(next);
-    const expiresAt = this.now() + old.ttlMs;
-    this.live.set(key, { expiresAt, ttlMs: old.ttlMs });
-    return { token: next, expiresAt, key };
   }
 
   /** The digest of a presented token that is live, or null for a missing, malformed, unknown, expired or revoked one. */
@@ -135,6 +123,13 @@ export class WebTokens {
     if (!token || !TOKEN_PATTERN.test(token)) return null;
     const key = digest(token);
     return this.isLive(key) ? key : null;
+  }
+
+  /** Consume a valid one-time link token during browser pairing. */
+  consume(token: string | undefined): string | null {
+    const key = this.admit(token);
+    if (key) this.live.delete(key);
+    return key;
   }
 
   isLive(key: string): boolean {
@@ -165,6 +160,8 @@ export interface WebBoardHost {
   unavailable(): string | null;
   /** Subscribe to executor publications; returns the unsubscribe. */
   subscribe(listener: () => void): () => void;
+  /** Whether a catalogue call changes Queue state; cookie writes require exact Origin. */
+  isMutating?(method: string): boolean;
 }
 
 export interface WebBoardOptions {
@@ -173,11 +170,15 @@ export interface WebBoardOptions {
   bundleDir?: string | null;
   /** Fixture clock for token expiry; production reads the wall clock. */
   now?: () => number;
+  /** Preferred loopback port. A busy configured port falls back to an ephemeral port. */
+  port?: number;
+  /** Owner-only file under the configured work root that holds session digests. */
+  sessionFile?: string;
 }
 
 interface Stream {
   response: ServerResponse;
-  /** Digest of the token that opened the stream; the stream closes when it stops being live. */
+  /** Digest of the session that opened the stream; the stream closes when it stops being live. */
   key: string;
   sentRevision: number;
   sentCounters: string;
@@ -194,9 +195,14 @@ export class WebBoard {
   private readonly streams = new Set<Stream>();
   private unsubscribe: (() => void) | null = null;
   private tokenTimer: NodeJS.Timeout | null = null;
+  private readonly sessions = new Map<string, number>();
+  private readonly now: () => number;
+  private portFallback = false;
+  private sessionWrites: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: WebBoardOptions) {
     this.tokens = new WebTokens(options.now);
+    this.now = options.now ?? Date.now;
   }
 
   /** The loopback address the server listens on, or null when it is not listening. */
@@ -204,19 +210,19 @@ export class WebBoard {
     return this.server ? { host: LOOPBACK, port: this.boundPort } : null;
   }
 
-  /** Bind 127.0.0.1 on a random free port and start publishing board revisions. */
+  /** Bind the configured loopback port, falling back to a random free port if occupied. */
   async listen(): Promise<number> {
+    await this.loadSessions();
     const server = createServer((request, response) =>
       this.handle(request, response),
     );
-    await new Promise<void>((resolveListen, rejectListen) => {
-      const onError = (error: Error) => rejectListen(error);
-      server.once("error", onError);
-      server.listen({ host: LOOPBACK, port: 0, exclusive: true }, () => {
-        server.off("error", onError);
-        resolveListen();
-      });
-    });
+    try {
+      await bind(server, this.options.port ?? WEB_BOARD_DEFAULT_PORT);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE") throw error;
+      this.portFallback = true;
+      await bind(server, 0);
+    }
     const address = server.address();
     if (
       typeof address !== "object" ||
@@ -232,12 +238,15 @@ export class WebBoard {
     this.boundPort = address.port;
     this.unsubscribe = this.options.host.subscribe(() => this.publish());
     this.tokenTimer = setInterval(
-      () => this.dropRevokedStreams(),
+      () => { this.touchOpenStreams(); this.dropRevokedStreams(); },
       STREAM_TOKEN_CHECK_MS,
     );
     this.tokenTimer.unref?.();
     return this.boundPort;
   }
+
+  /** Whether the preferred port was occupied and the board selected an ephemeral one. */
+  get usedFallbackPort(): boolean { return this.portFallback; }
 
   /** Mint a link: the board URL with a fresh token in its fragment. */
   issueLink(ttlMinutes: number): {
@@ -253,10 +262,13 @@ export class WebBoard {
     };
   }
 
-  /** Revoke every outstanding token and close the streams they opened. */
-  revokeAll(): number {
-    const revoked = this.tokens.revokeAll();
+  /** Revoke every link token and paired session, persist the empty set and close streams. */
+  async revokeAll(): Promise<number> {
+    this.pruneSessions();
+    const revoked = this.sessions.size + this.tokens.revokeAll();
+    this.sessions.clear();
     this.dropRevokedStreams();
+    await this.saveSessions();
     return revoked;
   }
 
@@ -322,9 +334,10 @@ export class WebBoard {
       );
       return;
     }
+    if (url.pathname === "/api/pair") return this.pair(request, response);
+    if (url.pathname === "/api/session") return this.session(request, response);
     if (url.pathname === "/api/rpc") return this.rpc(request, response);
     if (url.pathname === "/api/events") return this.events(request, response);
-    if (url.pathname === "/api/renew") return this.renew(request, response);
     if (url.pathname.startsWith("/api/")) {
       sendJson(response, 404, refusal("not_found", "No such board route."));
       return;
@@ -395,25 +408,89 @@ export class WebBoard {
     );
   }
 
-  private authorize(request: IncomingMessage): string | null {
-    const header = request.headers.authorization;
-    const match =
-      typeof header === "string" ? /^Bearer (\S+)$/.exec(header) : null;
-    return this.tokens.admit(match?.[1]);
-  }
-
-  private renew(request: IncomingMessage, response: ServerResponse): void {
+  private async pair(request: IncomingMessage, response: ServerResponse): Promise<void> {
     if (request.method !== "POST") {
-      sendJson(response, 405, refusal("method", "POST to renew the board token."));
+      sendJson(response, 405, refusal("method", "POST to pair this browser."));
       return;
     }
-    const header = request.headers.authorization;
-    const match = typeof header === "string" ? /^Bearer (\S+)$/.exec(header) : null;
-    const swapped = this.tokens.renew(match?.[1]);
-    if (!swapped) return this.refuseUnauthorized(response);
-    for (const stream of this.streams)
-      if (stream.key === digest(match![1]!)) stream.key = swapped.key;
-    sendJson(response, 200, { token: swapped.token, expiresAt: swapped.expiresAt });
+    const token = bearerToken(request);
+    const key = this.tokens.consume(token);
+    if (!key) return;
+    const cookie = randomBytes(32).toString("base64url");
+    const sessionKey = digest(cookie);
+    this.pruneSessions();
+    while (this.sessions.size >= MAX_OUTSTANDING_TOKENS) this.sessions.delete(this.sessions.keys().next().value!);
+    this.sessions.set(sessionKey, this.now() + WEB_SESSION_IDLE_MS);
+    await this.saveSessions();
+    sendJson(response, 200, { paired: true }, {
+      "set-cookie": `${SESSION_COOKIE}=${cookie}; HttpOnly; SameSite=Strict; Path=/`,
+    });
+  }
+
+  private async session(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    if (request.method !== "GET") {
+      sendJson(response, 405, refusal("method", "GET to check the paired board session."));
+      return;
+    }
+    if (!await this.authorize(request, response)) return;
+    sendJson(response, 200, { paired: true });
+  }
+
+  private async authorize(request: IncomingMessage, response: ServerResponse, write = false): Promise<string | null> {
+    const key = this.cookieSession(request);
+    if (!key) { this.refuseUnauthorized(response); return null; }
+    if (write && !this.originAllowed(request.headers.origin)) {
+      sendJson(response, 403, refusal("origin", "Cookie-authenticated writes require this board's exact Origin."));
+      return null;
+    }
+    this.sessions.set(key, this.now() + WEB_SESSION_IDLE_MS);
+    await this.saveSessions();
+    return key;
+  }
+
+  private cookieSession(request: IncomingMessage): string | null {
+    const cookie = request.headers.cookie?.split(";").map(part => part.trim()).find(part => part.startsWith(`${SESSION_COOKIE}=`));
+    const value = cookie?.slice(SESSION_COOKIE.length + 1);
+    if (!value || !TOKEN_PATTERN.test(value)) return null;
+    const key = digest(value);
+    const expiry = this.sessions.get(key);
+    if (expiry === undefined || expiry <= this.now()) { this.sessions.delete(key); return null; }
+    return key;
+  }
+
+  private pruneSessions(): void {
+    for (const [key, expiry] of this.sessions) if (expiry <= this.now()) this.sessions.delete(key);
+  }
+
+  private async loadSessions(): Promise<void> {
+    if (!this.options.sessionFile) return;
+    let parsed: unknown;
+    try { parsed = JSON.parse(await readFile(this.options.sessionFile, "utf8")); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
+    if (!parsed || typeof parsed !== "object" || (parsed as { version?: unknown }).version !== 1 || !Array.isArray((parsed as { sessions?: unknown }).sessions))
+      throw new Error("The web session file is invalid");
+    for (const entry of (parsed as { sessions: unknown[] }).sessions) {
+      if (!entry || typeof entry !== "object") continue;
+      const { digest: key, expiresAt } = entry as { digest?: unknown; expiresAt?: unknown };
+      if (typeof key === "string" && /^[a-f0-9]{64}$/.test(key) && typeof expiresAt === "number" && Number.isFinite(expiresAt) && expiresAt > this.now())
+        this.sessions.set(key, expiresAt);
+    }
+  }
+
+  private saveSessions(): Promise<void> {
+    if (!this.options.sessionFile) return Promise.resolve();
+    const file = this.options.sessionFile;
+    const rows = [...this.sessions].map(([digest, expiresAt]) => ({ digest, expiresAt }));
+    const save = async () => {
+      await mkdir(join(file, ".."), { recursive: true, mode: 0o700 });
+      const temporary = `${file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+      await writeFile(temporary, JSON.stringify({ version: 1, sessions: rows }), { mode: 0o600 });
+      await chmod(temporary, 0o600);
+      await rename(temporary, file);
+      await chmod(file, 0o600);
+    };
+    this.sessionWrites = this.sessionWrites.then(save);
+    return this.sessionWrites;
   }
 
   private refuseUnauthorized(response: ServerResponse): void {
@@ -422,7 +499,7 @@ export class WebBoard {
       401,
       refusal(
         "unauthenticated",
-        "A valid board token is required. Open a fresh link from `nucleus ui`; missing, unknown, expired and revoked tokens are refused alike.",
+        "A valid paired board session is required. Open a fresh link from `nucleus ui`; missing, unknown, expired and revoked sessions are refused alike.",
       ),
       { "www-authenticate": 'Bearer realm="nucleus-board"' },
     );
@@ -440,40 +517,24 @@ export class WebBoard {
       );
       return;
     }
-    if (!this.authorize(request)) return this.refuseUnauthorized(response);
     let body: unknown;
     try {
       body = JSON.parse(await readBody(request, MAX_FRAME_BYTES));
     } catch (error) {
       if (error instanceof BodyTooLarge)
-        sendJson(
-          response,
-          413,
-          refusal(
-            "oversize",
-            `The request body is over the ${MAX_FRAME_BYTES}-byte bound.`,
-          ),
-          { connection: "close" },
-        );
-      else
-        sendJson(
-          response,
-          400,
-          refusal("invalid_input", "The request body is not JSON."),
-        );
+        sendJson(response, 413, refusal("oversize", `The request body is over the ${MAX_FRAME_BYTES}-byte bound.`), { connection: "close" });
+      else sendJson(response, 400, refusal("invalid_input", "The request body is not JSON."));
       return;
     }
     const call = rpcBodySchema.safeParse(body);
     if (!call.success) {
-      sendJson(
-        response,
-        400,
-        refusal("invalid_input", formatSchemaRefusal(call.error)),
-      );
+      if (!response.headersSent) sendJson(response, 400, refusal("invalid_input", formatSchemaRefusal(call.error)));
       return;
     }
-    // A Settings write needs the Settings screen's marker on top of the token; the
-    // token alone answers like every other refusal here (no mutation, no retry).
+    const catalogue = this.options.host.isMutating?.(call.data.method) ?? false;
+    if (!await this.authorize(request, response, catalogue)) return;
+    // A Settings write needs the Settings screen's marker on top of the session;
+    // the session alone answers like every other refusal here (no mutation, no retry).
     const settingsRefusal = webSettingsRefusal(
       call.data.method,
       request.headers[SETTINGS_SURFACE_HEADER],
@@ -494,7 +555,7 @@ export class WebBoard {
     }
   }
 
-  private events(request: IncomingMessage, response: ServerResponse): void {
+  private async events(request: IncomingMessage, response: ServerResponse): Promise<void> {
     if (request.method !== "GET") {
       sendJson(
         response,
@@ -503,7 +564,7 @@ export class WebBoard {
       );
       return;
     }
-    const key = this.authorize(request);
+    const key = await this.authorize(request, response);
     if (!key) return this.refuseUnauthorized(response);
     if (this.streams.size >= MAX_STREAMS) {
       sendJson(
@@ -581,7 +642,7 @@ export class WebBoard {
 
   private dropRevokedStreams(): void {
     for (const stream of [...this.streams]) {
-      if (!this.tokens.isLive(stream.key)) stream.response.end();
+      if (!this.sessions.has(stream.key) || this.sessions.get(stream.key)! <= this.now()) stream.response.end();
     }
   }
 
@@ -592,12 +653,37 @@ export class WebBoard {
     );
   }
 
-  private originAllowed(origin: string): boolean {
+  private originAllowed(origin: string | undefined): boolean {
     return (
       origin === `http://${LOOPBACK}:${this.boundPort}` ||
       origin === `http://localhost:${this.boundPort}`
     );
   }
+
+  private touchOpenStreams(): void {
+    let changed = false;
+    for (const stream of this.streams) {
+      if (!this.sessions.has(stream.key)) continue;
+      this.sessions.set(stream.key, this.now() + WEB_SESSION_IDLE_MS);
+      changed = true;
+    }
+    if (changed) void this.saveSessions();
+  }
+}
+
+function bearerToken(request: IncomingMessage): string | undefined {
+  const header = request.headers.authorization;
+  return typeof header === "string" ? /^Bearer (\S+)$/.exec(header)?.[1] : undefined;
+}
+
+async function bind(server: Server, port: number): Promise<void> {
+  await new Promise<void>((resolveListen, rejectListen) => {
+    const onError = (error: Error) => { server.off("listening", onListening); rejectListen(error); };
+    const onListening = () => { server.off("error", onError); resolveListen(); };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen({ host: LOOPBACK, port, exclusive: true });
+  });
 }
 
 function countersOf(
@@ -822,5 +908,5 @@ const FALLBACK_PAGE = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Nucleus board</title>
 <h1>Nucleus board</h1>
-<p>The web board isn't built yet. The service is running. Its board API is at <code>/api/rpc</code> and its live channel at <code>/api/events</code>, both behind a token from <code>nucleus ui</code>.</p>
+<p>The web board isn't built yet. The service is running. Its board API is at <code>/api/rpc</code> and its live channel at <code>/api/events</code>, both available after pairing a link from <code>nucleus ui</code>.</p>
 `;
