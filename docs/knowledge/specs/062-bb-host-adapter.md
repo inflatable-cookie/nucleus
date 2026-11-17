@@ -2,8 +2,9 @@
 
 Status: approved. Phase 0 (the transport spike) is implemented and proved, phase 1 (host
 registration, identity and health) phase 2 (workspace custody) phase 3 (worker runs, observation
-presentation), phase 4 (delivery, questions and the support roles) and phase 5 (the forked sidebar
-and the task group header) are implemented; phase 6 is not implemented. This document is the design and the phased plan, and [phase 0
+presentation), phase 4 (delivery, questions and the support roles), phase 5 (the forked sidebar
+and the task group header) and phase 6 (the boards, settings, pills, usage view and the planner
+terminal) are implemented; phase 7 (trial and parity call) has not started. This document is the design and the phased plan, and [phase 0
 evidence](#phase-0-evidence-2026-11-16) answers its eight assumptions. Amended 2026-11-16: decision 5
 now carries the forked sidebar, the two boards and BB usage left to BB's card plus the operator's Usage
 Pace plugin, and the experimental inventory and the plan from phase 5 on follow it; phases 0–4 are
@@ -802,6 +803,8 @@ changes.
 | `threads.experimental_listAncestors` | Proving a role thread's planner before reparenting or archiving | Reparenting reads the parent link per thread instead; a deeper planner chain is then unproven |
 | `threads.experimental_listCascade` | Proving an archive would touch only this task's own threads | Archive fails closed with no substitute: without the read there is no authoritative cascade proof, so the thread is left unarchived and closeout records the cleanup as incomplete. A sidebar child count or a list absence never stands in for it |
 | `composer.customize` `experimental_popups` | A pill's popover content | Pills fall back to host-rendered menus and the board opens the same action |
+| `slots.experimental_appOverlay` | One per-window mount for the board host the shared decision and native-question pill modules run against (phase 6) | The pills stop registering; decisions and native questions stay answerable on the board and in the `Task` tab |
+| `slots.experimental_threadAction` | The planner and named-agent rows' "Project board" link (phase 6) | Planner rows lose the link; the project row's menu item, the rail panel and the per-project tab still reach the board |
 | `slots.experimental_threadList` | **Used by the fork.** It is the only way to own the sidebar, and it is exclusive: the plugin registers one list and the host prefers it over the bundled one | The plugin cannot draw the sidebar: phase 5 is blocked, and the operator's fallback is pinning the bundled list (`sidebar.threadListProvider`) with the task state living only on the board. The exit is the upstream group-row slot in 5f |
 | `slots.experimental_tab` with `context: { kind: "thread" }` and `useVisible` | The per-project board tab and the task-detail tab (5d) | Both in-thread boards are dropped and the per-project board stays reachable only from the rail; nothing else in the design depends on it |
 | `navPanel.experimental_useBadge` (and `experimental_usePageTitle`) | The rail badge for items needing the operator, and the panel title naming a project | The badge is dropped and the board's own attention count is the fallback; the title falls back to the panel's static title |
@@ -1242,6 +1245,86 @@ only if phase 0 proved it appears where an operator would look.
 - `effigy check`, `effigy qa:docs` and `effigy test:affected --run`.
 
 **Dependencies.** Phases 0–5.
+
+**Implemented (2026-11-17).** The board, its Settings and its pills run in BB on the same retained
+connection, sidebar read and board signal phases 0–5 landed:
+
+- **One forwarding call.** The plugin backend registers `boardCall`
+  (`hosts/bb/plugin/board-bridge.ts`): the BB board shell's `useRpc` sends the exact catalogue
+  method and input, the backend forwards it over the retained host-executor connection with
+  `via: "bb"`, and the service validates both ends against the shared contracts. It refuses
+  `service.*`, `host.*` and `task.register`, and fails closed with no channel. `via: "bb"` is the
+  BB Settings surface for the Settings-only capacity rule: the server accepts it only on a
+  connection that holds the host-executor role ([service boundary](../contracts/service-boundary.md#settings-only-capacity-writes-tom-2026-10-25)),
+  and a capacity change records `surface: "bb"`.
+- **The board bundle.** BB builds a plugin from its own directory with an esbuild that has no
+  react-native alias, so `scripts/bb/build-board.mjs` (`effigy bb:board-build`) bundles
+  `hosts/bb/board/` with the shared `client/` into `hosts/bb/plugin/board/nucleus-board.js`
+  (generated, ignored): react-native resolves to react-native-web as on the local web board, and
+  React, react-dom and the JSX runtime stay external so BB's runtime slots supply them. The plugin's
+  `app.tsx` passes BB's SDK module to `registerNucleusBoard`; `effigy proof:bb:sidebar` builds the
+  bundle before `bb plugin build`. The fork's own runner resolves the bundle to a no-op stub.
+- **5c, the global board.** A `navPanel` (`nucleus-board`, path `board`) renders the shared
+  `MainSurface` with BB's theme tokens (CSS variables, so it follows BB's light and dark themes).
+  `experimental_useBadge` counts open tasks that need the operator — the board's own attention test
+  (an attention phase, a resolution marked for attention, an origin fault), an escalated hold or
+  stop, or a native question — `critical` while any is failing or waiting on the operator,
+  `warning` for escalations alone, labelled "N tasks need you", and `null` once they settle. The
+  `settings` sub-path renders the board's Settings, which the board header's Settings button opens.
+- **5d, the per-project board.** The route is `project/<nucleus-project-key>`. `bb.sidebar-groups`
+  now names each Nucleus project with its planner and named-agent thread ids and the BB project ids
+  its recorded workspace handles name (`projects`), so a fixed `Board` tab shows on exactly those
+  threads and renders `MainSurface` preset to the project — every repository the project lists. A
+  fixed `Task` tab shows on a task's recorded role threads only and renders the board's task detail
+  in place (`client/task/task-panel.tsx`, `TaskDialog` with `inline`). The forked sidebar's project
+  rows carry one "Board" menu item linking to the route when the read names their BB project (patch
+  0001 plus the fork's own `NucleusProjectBoardMenuItem`), and planner and named-agent rows carry a
+  "Project board" thread action.
+- **Settings** render in a `settingsSection` (`nucleus-settings`) as the board's own Settings screen.
+- **Pills.** One static composer customization draws the pills the shared modules register
+  (`registerDecisionPills`, `registerNativeQuestionPills`, unchanged) for the composer's thread, and
+  each opens its popover in the plugin's composer popup. An app overlay mounts the board host they
+  run against: catalogue calls through `boardCall`, and an agent inventory of the BB threads Nucleus
+  records (role threads and project threads) whose pending native questions are read through
+  `question.native-list` and answered through `question.native-answer`, so the plugin never writes a
+  BB interaction itself.
+- **Pending interaction.** `pendingInteraction` registers `nucleus-question`, the renderer a backend
+  reaches with `bb.ui.requestInput({ rendererId: "nucleus-question" })`: a question, up to ten
+  options and an optional typed answer, submitting `{ answer }` or cancelling; a payload outside that
+  shape says so and offers Cancel. No core path raises a blocking Nucleus question on any host yet
+  (`capabilities().nativeDecisions` stays `false`; decisions ride the pills and the board), so the
+  renderer is the slot, not a new producer.
+- **5e, usage.** The board's own Usage view over `usage.state`, reached from the board's navigation.
+  Nucleus registers no usage surface of its own in BB: no sidebar footer, no homepage section.
+- **Lifecycle hints.** `thread.created`, `thread.active`, `thread.idle`, `thread.failed`,
+  `interaction.pending` and `thread.archived` forward as the existing `service.lifecycle-signal`
+  kinds with the thread id alone; no hint carries a turn, interaction or environment payload.
+- **Decision 7, the terminal.** `bb nucleus terminal [task]` joins the list's CLI registration (BB
+  takes one per plugin): it creates one shell terminal scoped to the calling thread, titled with the
+  task when one is given, and reads nothing back. The task-directory `host_path` variant does not
+  exist, because phase 0 refuted it, and the command refuses any option. Nothing relies on a
+  terminal retiring with its planner thread (phase 0's correction).
+
+Tests: `test/bb-board-surfaces.test.ts` runs the board through the existing harness with the BB
+shell bound and the real `boardCall` handler — the board renders and every call reaches the service
+as `via: "bb"`, Settings opens (route, header button, section), a decision pill appears and
+resolves, a native question pill shows and answers, the pending-interaction renderer submits and
+cancels, Usage renders from a synthetic `usage.state`, the per-project tab and route show a
+multi-repository project's every repository and nothing else, and the `Task` tab shows the task
+detail. `test/bb-board-model.test.ts` covers the badge (count, tone, label, drain), the routes, the
+tab visibility through each tab's own `useVisible`, the planner-row action, and BB's own
+registration collector accepting every surface with no warning. `test/bb-board-bridge.test.ts`
+covers the forwarding call, the hints, the terminal command and, over the production backend with
+a recording SDK, that no settings write, lifecycle-owner write or terminal read, list or close
+leaves the adapter. `test/bb-host-channel.test.ts` proves `via: "bb"` only on the executor
+connection and the recorded surface; `test/bb-sidebar-groups.test.ts` the `projects` projection
+over real stored projects; the fork's `nucleusTaskGroups.test.tsx` the project row's link.
+
+Evidence: `effigy proof:bb:sidebar` builds the board bundle and the plugin, installs it into the
+isolated BB server, and records that the plugin runs with a compatible app bundle carrying every
+phase-6 registration, that `boardCall` fails closed with no Nucleus service, and that
+`bb nucleus terminal --help` answers from the plugin's CLI. The rendered UI is checked in the
+installed bundle by the planner after the roll.
 
 ### Phase 7 — trial and parity call
 

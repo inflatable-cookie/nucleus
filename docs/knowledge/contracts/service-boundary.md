@@ -282,7 +282,7 @@ change, not an identity check.
 
 ### Settings-only capacity writes (Tom, 2026-10-25)
 
-Dispatch limits change only from the Settings screen, on the plugin or on the
+Dispatch limits change only from the Settings screen, on the plugin (Paseo or BB) or on the
 [local web board](#local-web-board) with a live token and the Settings marker. The CLI and agent routes
 refuse with a clear message, every applied change is recorded, and nothing needs
 a privileged install.
@@ -294,8 +294,11 @@ a privileged install.
 - **Provenance comes from the transport.** The bridge sets
   `ServiceRequest.via: "paseo"` on the frame it forwards
   (`shared/service/protocol.ts`); the web board's HTTP server sets `via: "web"`
-  only after a valid token. `callCatalogueMethod` allows `queue.capacity` only
-  with one of those two values. Every other caller (CLI, direct socket client,
+  only after a valid token; the BB plugin sets `via: "bb"` on the board calls it
+  forwards over its retained host-executor connection (Spec 062, phase 6), and the
+  server refuses `via: "bb"` as `invalid_input` on any connection that does not
+  hold that role. `callCatalogueMethod` allows `queue.capacity` only with one of
+  those three values. Every other caller (CLI, direct socket client,
   task shell, tokenless web request) is refused before any handler with one typed `refused`:
   "only the operator changes Nucleus's dispatch limits, in Settings. Nothing
   changed; do not retry." Repeats refuse the same way. A body naming
@@ -416,8 +419,8 @@ The runtime build packages both bundles together.
   Settings screen sends. A Settings write with a token but without the marker is
   refused with a typed `refused` and changes nothing. A recorded capacity change
   names its surface `web`. Every route without a token, and the socket, still
-  refuses `queue.capacity`. The socket accepts only `via: "paseo"` on a frame, so
-  a socket client cannot claim `web`. `task.register` is refused over the web with
+  refuses `queue.capacity`. The socket accepts only `via: "paseo"` on a frame, or
+  `via: "bb"` on the BB plugin's host-executor connection, so a socket client cannot claim `web`. `task.register` is refused over the web with
   a typed `refused`: a worker registers from its own thread's shell.
 - **Native questions.** The board reads pending questions for each task-owned worker or retained reviewer. Before an answer reaches the host, the service rechecks task and thread identity and the pending request.
 - **The limit.** The token stops other sites and DNS-rebinding pages, and it makes

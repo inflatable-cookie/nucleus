@@ -153,3 +153,22 @@ test('the per-project tab shows on the project planner and named-agent threads o
   assert.equal(action.item({ thread: { id: 'thr_random' }, data, navigate }), null, 'a thread Nucleus does not own has none');
   runtime.sidebar.reset();
 });
+
+test("BB's own registration collector accepts every phase-6 surface, with no warning", async () => {
+  const { definePluginApp } = await import('@get-bb/plugin-sdk/app');
+  const { collectPluginAppRegistrations } = await import('@get-bb/plugin-sdk/internal/plugin-app-collector');
+  const surfaces = await import('../hosts/bb/board/surfaces');
+  const sdk = { useRpc: () => ({ call: async () => null }), useRealtime() {}, useBbNavigate: () => ({ toPluginPanel() {}, toThread() {} }), useComposer: () => ({ scope: { kind: 'new-thread', projectId: null }, experimental_openPopup: () => false, experimental_closePopup: () => false }), experimental_Icon: () => null };
+  const warnings: string[] = [];
+  const collected = collectPluginAppRegistrations(definePluginApp(app => { surfaces.registerNucleusBoard(app as never, sdk as never); }), message => warnings.push(message));
+  assert.deepEqual(warnings, []);
+  assert.deepEqual(collected.navPanels.map(panel => [panel.id, panel.path, typeof panel.experimental_useBadge]), [['nucleus-board', 'board', 'function']]);
+  assert.deepEqual(collected.tabs.map(tab => [tab.id, tab.context.kind, tab.availability]), [['nucleus-project-board', 'thread', 'fixed'], ['nucleus-task', 'thread', 'fixed']]);
+  assert.deepEqual(collected.settingsSections.map(section => section.id), ['nucleus-settings']);
+  assert.deepEqual(collected.pendingInteractions.map(entry => entry.id), ['nucleus-question']);
+  assert.deepEqual(collected.appOverlays.map(entry => entry.id), ['nucleus-runtime']);
+  assert.deepEqual(collected.threadActions.map(entry => entry.id), ['nucleus-project-board']);
+  assert.deepEqual(collected.composerCustomizations.map(entry => [entry.id, entry.actions?.map(action => action.id), entry.experimental_popups?.map(popup => popup.id)]), [['nucleus-pills', ['nucleus-pills'], ['nucleus-pill']]]);
+  // Decision 5e: no usage surface of Nucleus's own in BB.
+  assert.deepEqual([collected.sidebarFooterActions.length, collected.experimentalSidebarFooterItems.length, collected.homepageSections.length], [0, 0, 0]);
+});
