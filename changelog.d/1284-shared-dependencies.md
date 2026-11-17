@@ -1,1 +1,1 @@
-Task worktrees that share the registered checkout's npm install now refresh it after dispatch or merge synchronization advances the checkout. A durable lock fingerprint detects stale installs even when a later merge does not change the lockfile, and failed `npm ci` attempts remain visible and retryable.
+Task worktrees that inherit a shared npm install now get a private install from their own lockfile before an agent starts. This keeps new and non-main-base task worktrees aligned with their lockfile, and failed `npm ci` attempts remain visible and retryable.

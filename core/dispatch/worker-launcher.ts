@@ -12,6 +12,8 @@ import { runTicketPath } from "./agent-creation";
 import { ABSENT_WORKER_REASON, PRE_AGENT_LAUNCH_FAILURE_REASON, PROFILE_CATALOG_PENDING_REASON, ProvenPreSendRefusalError } from "../recovery/task-reasons";
 import { startsNoRuns } from "../closeout/queue-drain";
 import { agentSettled } from "../machine/agent-settled";
+import { dirname } from "node:path";
+import { ensureTaskNodeModules } from "../workspaces/task-node-modules";
 
 /**
  * Creates a task's worker once: one creation per task at a time, one run identity
@@ -48,6 +50,7 @@ export class WorkerLauncher {
     // The task's own host's catalog decides, not only the primary's (nucleus#1139).
     if (!this.engine.profileCatalogKnownFor(task.hostId)) { this.resolution.waiting(task, PROFILE_CATALOG_PENDING_REASON, 'lifecycle'); return; }
     if (!task.directory || !task.workspaceId || !task.profile) throw new Error("Missing workspace or route");
+    await ensureTaskNodeModules(task.directory, task.repoPath, dirname(task.directory));
     task = await this.engine.ensureSiblings(task);
     task = await this.engine.refreshCheckoutSiblings(task, "worker_creation");
     let worktreeLinkRecordFailure: string | null;

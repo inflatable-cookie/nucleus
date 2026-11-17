@@ -8,8 +8,6 @@ import { type CheckHistory, type GateEvidence, type CheckRequirementTransport, r
 import { api, repo } from './github-client';
 import { requestServiceRollAfterRepositorySync } from './roll-request';
 import { gitNulEach } from '../git/git-command';
-import { dirname } from 'node:path';
-import { ensureSharedNodeModules } from '../workspaces/shared-node-modules';
 
 export function classifyGithubMerge(p: {mergeable: string; mergeStateStatus: string}, updateBranchRequired: boolean, options: {advisoryChecks?: boolean} = {}): {wait: string; needsRebase?: true} {
   if (p.mergeable === 'CONFLICTING' || p.mergeStateStatus === 'DIRTY') return {wait: MERGE_CONFLICT_REASON, needsRebase: true};
@@ -175,7 +173,6 @@ export async function exactIntendedMerge(t: Pick<Task,'repoPath'|'baseBranch'|'r
 export async function syncMain(t: Task, allowed: () => boolean = () => true) {
   const commit = await withIntegrationCheckout(t, (checkout, unchanged) => syncIntegrationCheckout({...t, repoPath: checkout}, allowed, unchanged));
   if (await git(t.repoPath, 'branch', '--show-current') === t.baseBranch) {
-    if (t.directory) await ensureSharedNodeModules(t.repoPath, dirname(t.directory));
     requestServiceRollAfterRepositorySync(t.repoPath);
   }
   return commit;

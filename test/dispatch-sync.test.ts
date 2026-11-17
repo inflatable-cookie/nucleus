@@ -1,8 +1,10 @@
-import { observeIdle } from './support/fakes';
+import { fakeAdapter, observeIdle } from './support/fakes';
+import { paseoCatalog } from './support/pool-shapes';
 import { configuredClone, materializeSeed } from './support/git-seed';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, realpath, rm, mkdir, writeFile, symlink } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, mkdir, writeFile, symlink, chmod, readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtempSync } from 'node:fs';
@@ -16,6 +18,7 @@ import type { Task } from '../shared/contracts';
 import { syncMain, integrationBaseGate, verifyCloseoutPublication } from '../core/forge/index';
 import { briefDigest } from '../core/planning/brief';
 import { RepositoryHooks } from '../core/hooks/hooks';
+import { ensureTaskNodeModules } from '../core/workspaces/task-node-modules';
 
 /**
  * The integration checkout is the queue's own, and a branch that is merely behind is a
@@ -48,7 +51,7 @@ const dispatchTask = (repo: string, planningCommit: string) => ({
   handoffPath: 'docs/handoff.md', handoffText: handoff,
 }) as unknown as Task;
 
-test('dispatch refreshes the shared install after fast-forwarding a lockfile change', async t => {
+test('a new task gets a private install from the lockfile advanced by dispatch', async t => {
   const { root, repo } = await makeRepo(t);
   const writeDependency = async (directory: string, version: string) => {
     const dependency = join(directory, 'vendor', 'fixture-dep');
@@ -67,10 +70,8 @@ test('dispatch refreshes the shared install after fast-forwarding a lockfile cha
 
   const workspaceRoot = join(root, 'shared-workspaces');
   await mkdir(workspaceRoot);
-  const taskDirectory = join(workspaceRoot, 'next-task');
-  await git(repo, 'worktree', 'add', '-b', 'ns-next-task', taskDirectory, 'main');
   await symlink(join(repo, 'node_modules'), join(workspaceRoot, 'node_modules'), 'dir');
-  assert.equal(await command('node', ['-p', "require('fixture-dep').version"], taskDirectory), '1.0.0');
+  assert.equal(await command('node', ['-p', "require('fixture-dep').version"], repo), '1.0.0');
 
   const peer = join(root, 'peer');
   await command('git', ['clone', join(root, 'origin.git'), peer], root);
@@ -81,10 +82,117 @@ test('dispatch refreshes the shared install after fast-forwarding a lockfile cha
   await git(peer, 'commit', '-m', 'land dependency update');
   await git(peer, 'push', 'origin', 'main');
 
-  const task = { ...dispatchTask(repo, planning), directory: taskDirectory } as unknown as Task;
-  assert.equal(await validateDispatch(task), await git(peer, 'rev-parse', 'HEAD'));
-  await git(taskDirectory, 'fetch', 'origin', 'main');
-  await git(taskDirectory, 'merge', '--ff-only', 'FETCH_HEAD');
+  const taskDirectory = join(workspaceRoot, 'next-task');
+  const store = new Store(join(root, 'queue.sqlite'));
+  store.setMeta('paused', false);
+  store.setMeta('pool', [{ profileId: 'worker', enabled: true, group: 'test', weight: 1, scopes: ['general'] }]);
+  const profile: Profile = { id: 'worker', name: 'Worker', provider: 'test', model: 'test', notes: '', available: true, problem: '', supportedThinking: [] };
+  store.setProfiles([{ id: profile.id, name: profile.name, provider: profile.provider, model: profile.model, notes: profile.notes }]);
+  let launches = 0;
+  const adapter = fakeAdapter({
+    catalog: async () => paseoCatalog(),
+    validate: validateDispatch,
+    createWorkspace: async task => {
+      assert.equal(task.planningBase, await git(peer, 'rev-parse', 'HEAD'));
+      await git(repo, 'worktree', 'add', '-b', task.branch, taskDirectory, task.planningBase!);
+      return { id: 'ws-next-task', directory: taskDirectory };
+    },
+    verifyWorkspace: async task => task.branch,
+    createAgent: async task => { launches++; return { id: `agent-${task.id}`, workspaceId: task.workspaceId }; },
+    observe: observeIdle('ws-next-task'),
+  });
+  const engine = new Engine(store, adapter, 0);
+  engine.profiles = [profile];
+  const queued = store.insert(submissionSchema.parse({
+    submissionId: randomUUID(), title: 'New task after lockfile merge', repoPath: repo,
+    planningCommit: planning, handoffPath: 'docs/handoff.md', originAgentId: 'origin',
+  }), 'host', handoff, planning, { branch: 'ns-next-task', baseBranch: 'main' });
+  try {
+    await engine.dispatchTask(queued.id, false);
+    assert.equal(launches, 1, 'the worker starts after task-local dependency setup succeeds');
+    assert.equal(await command('node', ['-p', "require('fixture-dep').version"], taskDirectory), '2.0.0');
+    assert.equal(await command('node', ['-p', "require('fixture-dep').version"], repo), '1.0.0', 'the task install does not rewrite the shared install for other worktrees');
+  } finally {
+    await engine.stop();
+    store.close();
+  }
+});
+
+test('a task on a non-main integration base installs from that base lockfile', async t => {
+  const { root, repo } = await makeRepo(t);
+  const writeDependency = async (directory: string, version: string) => {
+    const dependency = join(directory, 'vendor', 'fixture-dep');
+    await mkdir(dependency, { recursive: true });
+    await writeFile(join(dependency, 'package.json'), JSON.stringify({ name: 'fixture-dep', version, main: 'index.js' }));
+    await writeFile(join(dependency, 'index.js'), `module.exports = { version: '${version}' };\n`);
+    await writeFile(join(directory, '.gitignore'), 'node_modules/\n');
+    await writeFile(join(directory, 'package.json'), JSON.stringify({ name: 'dispatch-lockfile-fixture', version: '1.0.0', dependencies: { 'fixture-dep': 'file:vendor/fixture-dep' } }));
+    await command('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'], directory);
+  };
+  await writeDependency(repo, '1.0.0');
+  const main = await commit(repo, 'main lockfile', { 'docs/handoff.md': handoff, '.gitignore': 'node_modules/\n' });
+  await git(repo, 'push', 'origin', 'main');
+  await command('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], repo);
+  const workspaceRoot = join(root, 'shared-workspaces');
+  await mkdir(workspaceRoot);
+  await symlink(join(repo, 'node_modules'), join(workspaceRoot, 'node_modules'), 'dir');
+  await git(repo, 'checkout', '-b', 'release/v0.5');
+  await writeDependency(repo, '2.0.0');
+  await git(repo, 'add', '.gitignore', 'package.json', 'package-lock.json', 'vendor');
+  await git(repo, 'commit', '-m', 'release dependency update');
+  const release = await git(repo, 'rev-parse', 'HEAD');
+  const taskDirectory = join(workspaceRoot, 'release-task');
+  await git(repo, 'worktree', 'add', '-b', 'ns-release-task', taskDirectory, release);
+  await ensureTaskNodeModules(taskDirectory, repo, workspaceRoot);
+  assert.equal(await command('node', ['-p', "require('fixture-dep').version"], taskDirectory), '2.0.0');
+  assert.equal(await command('node', ['-p', "require('fixture-dep').version"], repo), '1.0.0');
+  assert.notEqual(main, release);
+});
+
+test('failed task install keeps its error after npm ci deletes node_modules and retries', async t => {
+  const { root, repo } = await makeRepo(t);
+  const writeDependency = async (directory: string, version: string) => {
+    const dependency = join(directory, 'vendor', 'fixture-dep');
+    await mkdir(dependency, { recursive: true });
+    await writeFile(join(dependency, 'package.json'), JSON.stringify({ name: 'fixture-dep', version, main: 'index.js' }));
+    await writeFile(join(dependency, 'index.js'), `module.exports = { version: '${version}' };\n`);
+    await writeFile(join(directory, '.gitignore'), 'node_modules/\n');
+    await writeFile(join(directory, 'package.json'), JSON.stringify({ name: 'dispatch-lockfile-fixture', version: '1.0.0', dependencies: { 'fixture-dep': 'file:vendor/fixture-dep' } }));
+    await command('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'], directory);
+  };
+  await writeDependency(repo, '1.0.0');
+  await commit(repo, 'main lockfile', { 'docs/handoff.md': handoff, '.gitignore': 'node_modules/\n' });
+  await git(repo, 'push', 'origin', 'main');
+  await command('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], repo);
+  const workspaceRoot = join(root, 'shared-workspaces');
+  await mkdir(workspaceRoot);
+  await symlink(join(repo, 'node_modules'), join(workspaceRoot, 'node_modules'), 'dir');
+  await git(repo, 'checkout', '-b', 'ns-task');
+  await writeDependency(repo, '2.0.0');
+  await git(repo, 'add', '.gitignore', 'package.json', 'package-lock.json', 'vendor');
+  await git(repo, 'commit', '-m', 'task lockfile update');
+  await git(repo, 'checkout', 'main');
+  const taskDirectory = join(workspaceRoot, 'task');
+  await git(repo, 'worktree', 'add', taskDirectory, 'ns-task');
+
+  const previousPath = process.env.PATH;
+  const fakeBin = join(root, 'fake-bin');
+  await mkdir(fakeBin);
+  await writeFile(join(fakeBin, 'npm'), '#!/bin/sh\nrm -rf node_modules\nprintf "fixture task npm ci failure" >&2\nexit 23\n');
+  await chmod(join(fakeBin, 'npm'), 0o755);
+  process.env.PATH = `${fakeBin}:${previousPath ?? ''}`;
+  try {
+    await assert.rejects(ensureTaskNodeModules(taskDirectory, repo, workspaceRoot), /Task node_modules setup failed with npm ci: fixture task npm ci failure/);
+  } finally {
+    process.env.PATH = previousPath;
+  }
+  assert.equal(existsSync(join(taskDirectory, 'node_modules')), false);
+  assert.equal(await command('node', ['-p', "require('fixture-dep').version"], repo), '1.0.0', 'the failed task refresh leaves the shared install untouched');
+  const gitDir = await git(taskDirectory, 'rev-parse', '--path-format=absolute', '--git-dir');
+  const state = JSON.parse(await readFile(join(gitDir, 'nucleus', 'task-node-modules.json'), 'utf8'));
+  assert.equal(state.status, 'failed');
+  assert.match(state.error, /fixture task npm ci failure/);
+  await ensureTaskNodeModules(taskDirectory, repo, workspaceRoot);
   assert.equal(await command('node', ['-p', "require('fixture-dep').version"], taskDirectory), '2.0.0');
 });
 

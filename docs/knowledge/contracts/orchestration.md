@@ -1428,17 +1428,23 @@ request identities and submitted handoffs are not rewritten.
 - The per-repository task-workspace root's `node_modules` symlink is part of
   shared workspace provisioning outside this repository and points at the
   registered checkout; no Nucleus helper here creates that general root link.
-  `retainNodeModules` in
-  `core/workspaces/workspace-allocation.ts` creates a separate checkout-local
-  link only for proof-only task retention. At dispatch, after the registered
-  checkout is fast-forwarded, and after merge synchronization advances it,
-  Nucleus compares the shared install's recorded lock fingerprint with the
-  checkout's current `package.json` and npm lockfile. A mismatch runs `npm ci`
-  before dispatch or sync succeeds. The durable state lives beside Git's common
-  metadata, not in `node_modules`, so a failed `npm ci` remains pending/failed
-  even if npm removed the install. The failure and npm's error output reach the
-  existing lifecycle failure path and are recorded on the task for attention;
-  the next dispatch or sync retries until a successful install is recorded.
+  `retainNodeModules` in `core/workspaces/workspace-allocation.ts` creates a
+  separate checkout-local link only for proof-only task retention. Nucleus
+  advances the registered checkout during `validateDispatchCheckout`
+  (`core/git/git-dispatch.ts`) and advances the merge base in
+  `syncIntegrationCheckout` (`core/forge/merge.ts`). Before each worker or
+  proof-only launch, `WorkerLauncher` or `ProofOnlyLaunch` checks whether the
+  task worktree inherits the shared root link or has a checkout-local link to
+  the registered install, and runs `npm ci` in that worktree when its
+  per-worktree install state does not match its own `package.json` and npm
+  lockfile. The task-local `node_modules` shadows the shared parent link, so
+  this also follows non-main integration bases and retained workspaces whose
+  lockfile changed. Its durable
+  pending/failed/installed state lives in the worktree's Git metadata, not in
+  `node_modules`, so a failed `npm ci` remains retryable even if npm removed the
+  install. The error reaches the existing launch failure path and is recorded
+  on the task for attention; the next launch retries until a successful
+  task-local install is recorded.
 
 ### Parked dispatch and workspace repair
 

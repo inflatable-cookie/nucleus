@@ -8,7 +8,7 @@
  */
 import { realpath, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import type { Task } from "../../shared/contracts";
 import { taskCheckoutTarget } from "../workspaces/checkout-target";
 import { git, gitAncestry, gitBulk, gitRaw, messageOf, requireGitAncestry } from "./git-command";
@@ -16,7 +16,6 @@ import { gitStatus, queueCheckoutStatus, currentWorkerBranch } from "./git-check
 import { assertPinnedBrief, validateSubmission, verifyBriefWorkerIdentity } from "./git-submission";
 import { dirtyWorktreeError } from "./git-stash";
 import { verifyRecordedOrigin } from "./git-proof";
-import { ensureSharedNodeModules } from "../workspaces/shared-node-modules";
 
 /**
  * A refused private-root cleanup after the integration operation had already
@@ -92,7 +91,6 @@ export async function cleanupIntegrationCheckout(repoPath: string, root: string,
 }
 export async function validateDispatch(task: Task) {
   const base = await withIntegrationCheckout(task, (checkout, unchanged) => validateDispatchCheckout({...task, repoPath: checkout}, unchanged));
-  if (task.directory) await ensureSharedNodeModules(task.repoPath, dirname(task.directory));
   return base;
 }
 async function validateDispatchCheckout(task: Task, unchanged: () => Promise<void> = async () => {}) {

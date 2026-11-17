@@ -1,14 +1,12 @@
 import {test} from 'node:test';
 import { isRepositoryContention } from '../core/scheduling/repository-contention';
 import assert from 'node:assert/strict';
-import {mkdtempSync,writeFileSync,rmSync,mkdirSync,chmodSync,symlinkSync,existsSync,readFileSync} from 'node:fs';
-import {execFileSync} from 'node:child_process';
+import {mkdtempSync,writeFileSync,rmSync,mkdirSync,chmodSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {git,githubRepositoryFromRemote,verifyWorkspace,verifyResume} from '../core/git/index';
 import {assertPullRequestIdentity,branchRequiresUpToDate,classifyGithubMerge,classifyUncertainMergeProof,exactIntendedMerge,findAnyOpenBranchPr,integrationBaseGate,reportedOrExactMergeCommit,syncMain,uniqueMarkedReviewComment,validateReviewComment,verifyContinuedProgress,verifyInspectedRevisionHead} from '../core/forge/index';
-import {ensureSharedNodeModules} from '../core/workspaces/shared-node-modules';
 import {Store} from '../core/store/store';
 import {submissionSchema} from '../shared/contracts';
 
@@ -81,67 +79,6 @@ test('release-base merge verification and sync follow the task baseBranch',async
   assert.equal(await git(root,'rev-parse','HEAD'),merged);
   assert.equal(await git(root,'status','--porcelain'),'');
  }finally{rmSync(dir,{recursive:true,force:true})}
-});
-
-test('integration refresh compares installed lock state and retries a failed npm ci',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'ns-shared-lockfile-'));
- const originalPath=process.env.PATH;
- try{
-  const remote=join(dir,'origin.git');await git(dir,'init','--bare','--initial-branch=main',remote);
-  const root=join(dir,'integration');await git(dir,'clone',remote,root);
-  await git(root,'config','user.name','Queue test');await git(root,'config','user.email','queue@example.invalid');
-  const writePackage=(directory:string,version:string,dependency:string)=>{
-   const packageRoot=join(directory,'vendor',dependency);mkdirSync(packageRoot,{recursive:true});
-   writeFileSync(join(directory,'.gitignore'),'node_modules/\n');
-   writeFileSync(join(packageRoot,'package.json'),JSON.stringify({name:'fixture-dep',version,main:'index.js'}));
-   writeFileSync(join(packageRoot,'index.js'),`module.exports = { version: '${version}' };\n`);
-   writeFileSync(join(directory,'package.json'),JSON.stringify({name:'shared-lockfile-fixture',version:'1.0.0',dependencies:{'fixture-dep':`file:vendor/${dependency}`}}));
-   execFileSync('npm',['install','--package-lock-only','--ignore-scripts','--no-audit','--no-fund'],{cwd:directory,stdio:'pipe'});
-  };
-  writePackage(root,'1.0.0','dep-one');
-  await git(root,'add','.gitignore','package.json','package-lock.json','vendor');await git(root,'commit','-m','initial lockfile');await git(root,'push','-u','origin','main');
-  execFileSync('npm',['ci','--ignore-scripts','--no-audit','--no-fund'],{cwd:root,stdio:'pipe'});
-  const workspaceRoot=join(dir,'shared-workspaces');mkdirSync(workspaceRoot);
-  const taskWorkspace=join(workspaceRoot,'next-task');await git(root,'worktree','add','-b','ns-next-task',taskWorkspace,'main');
-  symlinkSync(join(root,'node_modules'),join(workspaceRoot,'node_modules'),'dir');
-  await ensureSharedNodeModules(root,workspaceRoot);
-
-  const writer=join(dir,'writer');await git(dir,'clone',remote,writer);
-  await git(writer,'config','user.name','Queue test');await git(writer,'config','user.email','queue@example.invalid');
-  await git(writer,'checkout','-b','ns-merge-one');writePackage(writer,'2.0.0','dep-two');
-  await git(writer,'add','package.json','package-lock.json','vendor');await git(writer,'commit','-m','change lockfile');await git(writer,'push','-u','origin','ns-merge-one');
-  await git(writer,'checkout','main');await git(writer,'merge','--no-ff','--no-edit','ns-merge-one');await git(writer,'push','origin','main');
-  await git(writer,'checkout','-b','ns-merge-source-only');
-  writeFileSync(join(writer,'source.txt'),'source-only change');await git(writer,'add','source.txt');await git(writer,'commit','-m','source-only task');
-  await git(writer,'push','-u','origin','ns-merge-source-only');
-  await git(writer,'checkout','main');await git(writer,'merge','--no-ff','--no-edit','ns-merge-source-only');await git(writer,'push','origin','main');
-  const merged=await git(writer,'rev-parse','HEAD');
-  const task={repoPath:root,baseBranch:'main',directory:taskWorkspace,resolution:{mergedCommit:merged}} as any;
-  assert.equal(await syncMain(task),merged);
-  await git(taskWorkspace,'fetch','origin','main');await git(taskWorkspace,'merge','--ff-only','FETCH_HEAD');
-  assert.equal(execFileSync(process.execPath,['-p',"require('fixture-dep').version"],{cwd:taskWorkspace,encoding:'utf8'}).trim(),'2.0.0');
-  assert.equal((await git(taskWorkspace,'show','HEAD:package-lock.json')).includes('2.0.0'),true,'the next task head contains the lockfile that the shared install resolved');
-
-  await git(writer,'checkout','-b','ns-merge-two');
-  writePackage(writer,'3.0.0','dep-three');
-  await git(writer,'add','package.json','package-lock.json','vendor');await git(writer,'commit','-m','change dependency after a refresh failure');await git(writer,'push','-u','origin','ns-merge-two');
-  await git(writer,'checkout','main');await git(writer,'merge','--no-ff','--no-edit','ns-merge-two');await git(writer,'push','origin','main');
-  const failedMerge=await git(writer,'rev-parse','HEAD');
-  const fakeBin=join(dir,'bin');mkdirSync(fakeBin);
-  const npm=join(fakeBin,'npm');writeFileSync(npm,'#!/bin/sh\nrm -rf node_modules\nprintf "fixture npm ci failure" >&2\nexit 23\n');chmodSync(npm,0o755);
-  process.env.PATH=`${fakeBin}:${originalPath??''}`;
-  await assert.rejects(syncMain({...task,resolution:{mergedCommit:failedMerge}}),(error:Error)=>/Shared node_modules refresh failed with npm ci/.test(error.message)&&/fixture npm ci failure/.test(error.message));
-  assert.equal(await git(root,'rev-parse','HEAD'),failedMerge,'the failing install does not turn sync into success');
-  assert.equal(existsSync(join(root,'node_modules')),false,'the failing npm ci removed the old install');
-  const commonDir=await git(root,'rev-parse','--path-format=absolute','--git-common-dir');
-  const state=JSON.parse(readFileSync(join(commonDir,'nucleus','shared-node-modules.json'),'utf8'));
-  assert.equal(state.status,'failed');assert.match(state.error,/fixture npm ci failure/);
-
-  process.env.PATH=originalPath;
-  assert.equal(await syncMain({...task,resolution:{mergedCommit:failedMerge}}),failedMerge,'retry rebuilds the install after npm ci removed it');
-  await git(taskWorkspace,'fetch','origin','main');await git(taskWorkspace,'merge','--ff-only','FETCH_HEAD');
-  assert.equal(execFileSync(process.execPath,['-p',"require('fixture-dep').version"],{cwd:taskWorkspace,encoding:'utf8'}).trim(),'3.0.0');
- }finally{process.env.PATH=originalPath;rmSync(dir,{recursive:true,force:true})}
 });
 
 test('worker workspace preflight requires the queue-owned branch',async()=>{

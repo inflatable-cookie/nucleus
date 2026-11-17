@@ -1887,10 +1887,10 @@ test('failure to establish the configured proof window within 30 minutes escalat
 });
 test('sync failure preserves merged identity and never merges again',async()=>{
  const f=fixture();try{
-  f.adapter.syncMain=async()=>{throw new Error('Shared node_modules refresh failed with npm ci: fixture npm ci failure')};
+  f.adapter.syncMain=async()=>{throw new Error('Task node_modules setup failed with npm ci: fixture task setup failure')};
   await f.engine.wake();await f.report('ready_to_merge');await f.engine.wake();await f.engine.wake();await f.engine.wake();await f.engine.wake();
   assert.equal(f.current().phase,'syncing');assert.equal(f.current().resolution.mergedCommit,merged);assert.equal(f.current().resolution.attention,true);assert.equal(f.counts().merges,1);
-  assert.match(f.current().reason,/fixture npm ci failure/,'the task board records the refresh error for the retained owner');
+  assert.match(f.current().reason,/fixture task setup failure/,'the task board records the setup error for the retained owner');
  }finally{await f.close()}
 });
 test('closeout recovery waits for normal merge synchronization before reading the merged tree',async()=>{

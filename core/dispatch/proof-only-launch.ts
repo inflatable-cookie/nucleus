@@ -2,6 +2,8 @@ import type { Engine } from '../engine';
 import type { Profile, Task } from '../../shared/contracts';
 import type { Resolution } from '../resolution';
 import { proofSingleFlightRefusal, ProofSingleFlightError } from '../qa/proof-admission';
+import { dirname } from 'node:path';
+import { ensureTaskNodeModules } from '../workspaces/task-node-modules';
 
 /** The launch and store facts a proof-only dispatch needs. */
 export type ProofOnlyLaunchContext = Pick<Engine, 'note' | 'store'> & {
@@ -35,6 +37,7 @@ export class ProofOnlyLaunch {
       return;
     }
     try {
+      if (task.directory) await ensureTaskNodeModules(task.directory, task.repoPath, dirname(task.directory));
       if (task.requiresOperatorGo) await this.resolution.launch(task, 'reviewer', { profile: selection.profile });
       else await this.resolution.proofExecution(task, {
         authorizedBy: { role: 'queue_dispatch', caller: null, note: 'Proof-only task promoted with a brief-named qualification' }, operationId: null,
