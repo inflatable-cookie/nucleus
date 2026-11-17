@@ -83,6 +83,17 @@ timingTest("scratch main build, standby activation, failure notice and rollback"
   bridge.close();
   await configureChannel("main", source);
   const rolling = trackedBridge({ sourcePath: current, paseoHome: process.env.PASEO_HOME, rollSettleMs: 60_000, rollCheckMs: 0 });
+  const cssPath = join(initial, "bb-plugin", "dist", "app.css");
+  const originalCss = await readFile(cssPath);
+  await writeFile(cssPath, Buffer.concat([originalCss, Buffer.from("\n/* changed */\n")]));
+  const integrityFailure = await rolling.checkSource();
+  assert.equal(integrityFailure?.status, "failed");
+  assert.match(integrityFailure!.detail, /integrity verification.*app\.css/i);
+  assert.match(integrityFailure!.detail, /reinstalling this version or rolling to a fresh build/);
+  const afterIntegrityFailure = await rolling.serviceState();
+  assert.equal(afterIntegrityFailure.state, "running", "the bridge still serves after refusing a corrupt version");
+  assert.match(serviceNotices(afterIntegrityFailure)[0]?.text ?? "", /integrity verification/);
+  await writeFile(cssPath, originalCss);
   await writeFile(join(source, "shared/main-marker.mjs"), "export const marker = 2;\n");
   await run("git", ["add", "."]);
   await run("git", ["commit", "-m", "merged change"]);

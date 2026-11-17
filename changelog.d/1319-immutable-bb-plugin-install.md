@@ -1,0 +1,1 @@
+`nucleus bb install` now gives BB a read-only managed copy of the packaged plugin, keeping Nucleus version files intact. A failed installed-version integrity check now refuses the roll, keeps Paseo serving, and reports repair options.

@@ -115,18 +115,22 @@ export class RollScheduler {
    * names the pending build, so the new bridge proves and activates it.
    */
   async resumeInstalled(sourcePath: string): Promise<void> {
-    const channel = this.mainChannel = await this.core.processActions.openMainChannel(sourcePath);
-    const pending = await channel?.pending();
-    if (!channel || !pending) return;
-    const staged = await this.core.processActions.verifyVersion(pending.root);
-    await channel.proveStartup(staged);
-    this.session.sourcePath = staged.root;
-    this.session.expected = staged.buildId;
-    this.session.sourceDigest = pending.target.key;
-    this.activateInstalled = async () => {
-      await this.core.processActions.activateVersion(staged.root);
-      await channel.activated(pending.target);
-    };
+    try {
+      const channel = this.mainChannel = await this.core.processActions.openMainChannel(sourcePath);
+      const pending = await channel?.pending();
+      if (!channel || !pending) return;
+      const staged = await this.core.processActions.verifyVersion(pending.root);
+      await channel.proveStartup(staged);
+      this.session.sourcePath = staged.root;
+      this.session.expected = staged.buildId;
+      this.session.sourceDigest = pending.target.key;
+      this.activateInstalled = async () => {
+        await this.core.processActions.activateVersion(staged.root);
+        await channel.activated(pending.target);
+      };
+    } catch (error) {
+      if (!this.recordIntegrityFailure(error)) throw error;
+    }
   }
 
   /** Write the durable roll record; the record is advisory, so a failed write never fails the roll. */
@@ -135,6 +139,22 @@ export class RollScheduler {
       mkdirSync(this.core.dataDir, { recursive: true, mode: 0o700 });
       this.core.processActions.writeServiceRoll(this.core.dataDir, roll);
     } catch { /* the record is advisory: the typed state still reports the service */ }
+  }
+
+  /** Record integrity failures in the same durable health/board channel as roll failures. */
+  private recordIntegrityFailure(error: unknown): boolean {
+    const cause = error instanceof Error ? error.message : String(error);
+    if (!cause.includes("Installed version changed:")) return false;
+    this.writeRoll({
+      status: "failed",
+      fromBuild: typeof this.session.expected === "string" ? this.session.expected : "",
+      toBuild: null,
+      digest: this.session.sourceDigest ?? "",
+      at: new Date().toISOString(),
+      detail: `the current installed version failed integrity verification (${cause}); the running Paseo bridge was kept available. Repair by reinstalling this version or rolling to a fresh build`.slice(-4000),
+      deferrals: [...this.deferrals],
+    });
+    return true;
   }
 
   private rememberDeferral(reason: ServiceRollDeferral["reason"], until: string): void {
@@ -200,7 +220,26 @@ export class RollScheduler {
   private async rollOnce(force = false): Promise<ServiceRoll | null> {
     if (typeof this.session.expected !== "string") return null;
     const root = this.session.sourcePath ?? sourcePathFromModule();
-    if (this.mainChannel === undefined) this.mainChannel = await this.core.processActions.openMainChannel(root);
+    if (this.mainChannel === undefined) {
+      try {
+        this.mainChannel = await this.core.processActions.openMainChannel(root);
+      } catch (error) {
+        const cause = error instanceof Error ? error.message : String(error);
+        if (this.recordIntegrityFailure(error)) return readServiceRoll(this.core.dataDir);
+        const detail = `main roll check could not open the installed version: ${cause}`;
+        const roll: ServiceRoll = {
+          status: "failed",
+          fromBuild: this.session.expected,
+          toBuild: null,
+          digest: this.session.sourceDigest ?? "",
+          at: new Date().toISOString(),
+          detail: detail.slice(-4000),
+          deferrals: [...this.deferrals],
+        };
+        this.writeRoll(roll);
+        return roll;
+      }
+    }
     const channel = this.mainChannel;
     if (!channel) return null;
     let target: Awaited<ReturnType<BridgeMainChannel["target"]>> = null;
@@ -212,6 +251,7 @@ export class RollScheduler {
       digest = target.key;
     } catch (error) {
       const roll: ServiceRoll = { status: "failed", fromBuild: this.session.expected, toBuild: null, digest: this.session.sourceDigest ?? "", at: new Date().toISOString(), detail: `main build source unavailable: ${error instanceof Error ? error.message : String(error)}`, deferrals: [] };
+      if (this.recordIntegrityFailure(error)) return readServiceRoll(this.core.dataDir);
       this.writeRoll(roll);
       return roll;
     }

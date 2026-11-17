@@ -1516,9 +1516,12 @@ plugin would be wrong. Preparing a release therefore needs an installed `bb` com
 (decision: the build uses BB's own build command, per this phase's outcome, and refuses by naming the
 paths it looked in when there is none).
 
-**The commands.** `nucleus bb install` wraps BB's CLI: `bb plugin install path:<packaged plugin>`, then
+**The commands.** `nucleus bb install` copies the packaged plugin under this Nucleus data home at
+`bb-plugin-install/nucleus`, then wraps BB's CLI: `bb plugin install path:<managed copy>`, then
 `bb plugin config nucleus set serviceDataDir <this Nucleus data home>` and `bb plugin reload nucleus`. The
-setting is not optional: without it the plugin loads and waits, installed and never connected, which reads
+copy is required because BB's install/build can rewrite `dist/`; after BB finishes, Nucleus makes the
+copy read-only. Upgrades replace that managed copy, and uninstall removes it after BB removes the plugin.
+The setting is not optional: without it the plugin loads and waits, installed and never connected, which reads
 exactly like a healthy plugin with nothing to do — so the route writes it through BB's own `plugin config`,
 reads it back, and fails if BB did not keep it. `nucleus bb status` reports the installed plugin's version
 and build against the running service's build (`match`, `behind`, `unpinned`, `not-installed`,
@@ -1528,6 +1531,11 @@ command names only the plugin with ID `nucleus`: a locally patched plugin loaded
 operator's Usage Pace) and every other plugin are never read by id, never written and never removed.
 `--plugin-dir` installs a built plugin from an explicit directory instead of the packaged copy (the
 isolated proof uses it), and that directory must itself be a built Nucleus backend.
+
+**Installed version integrity.** A main-channel roll catches a failed verification while opening the
+current installed version, records a failed service roll with the changed file, and keeps the active Paseo
+bridge serving. Service health and the board surface that failure; its notice recommends reinstalling the
+current version or rolling to a fresh build.
 
 **Refusals.** "Ours" is not the plugin ID and not the package name: a plugin with ID `nucleus` is a package
 named `bb-plugin-nucleus`, so a namesake shares both. Ours means the directory carries the Nucleus build
