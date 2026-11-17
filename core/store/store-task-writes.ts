@@ -14,7 +14,7 @@ export interface StoredTaskParts {
 }
 
 /** The observation-only fields: an observation pass may move them without changing a board fact. */
-export const STORED_OBSERVATION_FIELDS = ["lastObservedAt", "agentActive", "lastAgentStatus", "idleSince"] as const;
+export const STORED_OBSERVATION_FIELDS = ["lastObservedAt", "lastActivityAt", "agentActive", "lastAgentStatus", "idleSince"] as const;
 
 /** One detached part's stored entries, keyed as its table keys them. */
 export type DetachedEntries = ReadonlyArray<readonly [number, unknown]>;
@@ -153,7 +153,7 @@ export class StoreTaskWrites {
 
   /** The observation-only fields and the write time that moved them, as one small row. */
   syncTaskObservation(taskId: string, task: Task) {
-    const data = JSON.stringify({ updatedAt: task.updatedAt, lastObservedAt: task.lastObservedAt,
+    const data = JSON.stringify({ updatedAt: task.updatedAt, lastObservedAt: task.lastObservedAt, lastActivityAt: task.lastActivityAt,
       agentActive: task.agentActive, lastAgentStatus: task.lastAgentStatus, idleSince: task.idleSince });
     if (this.storedObservationRow(taskId) === data) return;
     this.db.prepare("INSERT INTO task_observations(taskId,data) VALUES(?,?) ON CONFLICT(taskId) DO UPDATE SET data=excluded.data").run(taskId, data);
@@ -241,7 +241,7 @@ export class StoreTaskWrites {
     const versionTexts = new Set(task.briefVersions.map(version => version.text));
     this.syncTaskObservation(task.id, task);
     const { briefVersions: _briefVersions, resolution: { review: _review, reviews: _reviews, ...resolution }, handoffText: _handoffText,
-      lastObservedAt: _observedAt, agentActive: _active, lastAgentStatus: _agentStatus, idleSince: _idleSince, ...row } = task;
+      lastObservedAt: _observedAt, lastActivityAt: _activityAt, agentActive: _active, lastAgentStatus: _agentStatus, idleSince: _idleSince, ...row } = task;
     if (row.completionNotificationAgentIds.length === 0) delete (row as Partial<Task>).completionNotificationAgentIds;
     // The schema default restores a Queue allocation on read; only an external
     // workspace has to travel in the row (nucleus#1261).
@@ -276,7 +276,7 @@ export class StoreTaskWrites {
     const stored = JSON.parse(String(row.data)) as Record<string, unknown>;
     const next = run as unknown as Record<string, unknown>;
     for (const key of new Set([...Object.keys(stored), ...Object.keys(next)])) {
-      if (key === "lastObservedAt") continue;
+      if (key === "lastObservedAt" || key === "lastActivityAt") continue;
       const before = stored[key], after = next[key];
       if (before === after) continue;
       if (before && after && typeof before === "object" && typeof after === "object" && JSON.stringify(before) === JSON.stringify(after)) continue;

@@ -231,7 +231,7 @@ function initialWorkerBinding(facts: OwnerVerbFacts): TaskNext["activeRun"] {
   return taskNextRunSchema.parse({
     runId: task.runId, role: "worker", agentId: task.agentId,
     profileId: task.profile?.id ?? null, profileName: task.profile?.name ?? null,
-    status: observedStopped ? "stopped" : "running", released: false, lastActivity: task.lastObservedAt ?? null, summary: null,
+    status: observedStopped ? "stopped" : "running", released: false, lastActivity: task.lastActivityAt ?? null, summary: null,
   });
 }
 
@@ -257,7 +257,7 @@ export function ownerActiveRun(facts: OwnerVerbFacts): TaskNext["activeRun"] {
   return taskNextRunSchema.parse({
     runId: run.id, role: run.role, agentId: run.agentId,
     profileId: run.profile?.id ?? null, profileName: run.profile?.name ?? null,
-    status: observedStopped ? "stopped" : run.status, released: run.released, lastActivity: run.lastObservedAt,
+    status: observedStopped ? "stopped" : run.status, released: run.released, lastActivity: run.lastActivityAt ?? null,
     summary: run.completion?.summary ?? null,
   });
 }

@@ -161,7 +161,7 @@ export const runSchema = z.object({
   /** Queue #650: this run's active turn was stopped while Queue was paused (unresolved until it resumes). */
   pausedStop: pausedStopSchema.optional(),
   profile: profileSchema.nullable(), status: z.enum(["intent", "running", "stopped", "finished", "superseded", "uncertain"]),
-  createdAt: z.string(), lastObservedAt: z.string().nullable(), active: z.boolean().nullable(), idleSince: z.string().nullable(),
+  createdAt: z.string(), lastObservedAt: z.string().nullable(), lastActivityAt: z.string().nullable().optional(), active: z.boolean().nullable(), idleSince: z.string().nullable(),
   completion: completionSchema.nullable(), released: z.boolean(),
   /** Spec 058 slice 1: usage observed on this run's agent; absent until Queue observes a turn. */
   usage: runUsageSchema.optional(),

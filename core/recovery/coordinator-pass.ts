@@ -7,6 +7,7 @@ import { reviewFenceHoldsCoordinators } from '../review/review-continuation';
 import { dispatchBlocked } from '../dispatch/capacity';
 import {escalationSummary} from './task-reasons';
 import {ACCEPTED_RECOVERY_NOT_APPLIED_PREFIX, cause, needsAttention, type CoordinatorEpisode, type RecoveryContext} from './coordinator-episode';
+import { plannerEscalations, type LadderEvent } from '../questions/ladder';
 import {liveRecoveryWait,liveWorkingParticipant,observeRecoveryParticipants} from './live-noop';
 
 /**
@@ -76,6 +77,37 @@ export class CoordinatorPass {
      }
     }
     continue;
+   }
+   // Before anyone acts on a stall episode, re-observe the exact participant.
+   // A resumed turn or owned tool settles the obsolete episode and its question.
+   const fault = t.resolution.incident;
+   if (incident && !incident.runId && !incident.action && fault?.cause === 'stalled_turn'
+       && fault.runId && incident.incidentId === fault.id && !t.resolution.stalledTurnStop) {
+    const run = fault.role === 'worker' ? null : this.store.run(fault.runId);
+    const agentId = run?.agentId ?? (fault.role === 'worker' && t.runId === fault.runId ? t.agentId : null);
+    const workspaceId = run?.workspaceId ?? t.workspaceId;
+    const assigned = run ? !run.released && !run.completion && t.resolution.currentRunId === run.id : fault.role === 'worker' && !t.completion && t.runId === fault.runId;
+    if (agentId && assigned) {
+     try {
+      const state = await this.resolution.onTaskHost(run ?? t, () => this.resolution.host.observe(agentId));
+      if (state.id === agentId && state.workspaceId === workspaceId && await this.resolution.stalls.hasActivity(t, run, state)) {
+       const current = this.store.task(t.id), recovery = current.resolution.recovery;
+       const causeId = digest(`recovery-pending:${t.id}:${incident.id}`);
+       const escalations = plannerEscalations(this.store.eventsAll(t.id) as LadderEvent[]).filter(e => e.cause === causeId);
+       if (!escalations.some(e => e.answered) && recovery?.id === incident.id && !recovery.runId && !recovery.action && current.resolution.incident?.id === fault.id
+           && !current.resolution.stalledTurnStop && (run ? current.resolution.currentRunId === run.id && !this.store.run(run.id)?.completion : current.runId === fault.runId && !current.completion)) {
+        this.store.transaction(() => {
+         for (const escalation of escalations) this.store.event(t.id, 'planner_escalation_resolved', `${escalation.id}: stall ended before action`);
+         this.resolution.update(current, { attention: false, recoveryActive: false, stop: null,
+          recovery: { ...recovery, status: 'resolved', summary: 'Stall ended before recovery acted' },
+          incident: { ...current.resolution.incident!, status: 'resolved', detail: 'Stall ended before recovery acted', updatedAt: now() } },
+          { phase: run?.role === 'reviewer' ? 'reviewing' : 'working', reason: 'Run active again' }, 'stall_ended', fault.runId!);
+        });
+        continue;
+       }
+      }
+     } catch { /* An unavailable observation cannot settle the episode. */ }
+    }
    }
    if(!incident?.runId){
      // Papercut 0489ea25: a pending episode with no run is invisible unless it

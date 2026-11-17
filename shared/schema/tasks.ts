@@ -71,7 +71,7 @@ export const taskSchema = submissionSchema.extend({
   pausedStop: pausedStopSchema.optional(),
   workspaceIntent: z.boolean(), agentIntent: z.boolean(), lastAgentStatus: z.string().nullable(),
   idleSince: z.string().nullable(), completion: completionSchema.nullable(),
-  agentActive: z.boolean().nullable(), lastObservedAt: z.string().nullable(),
+  agentActive: z.boolean().nullable(), lastObservedAt: z.string().nullable(), lastActivityAt: z.string().nullable().optional(),
   profileGroup: z.string().nullable().default(null),
   failoverReason: z.string().default(""), resumePrNumber: z.number().nullable().default(null),
   transientProviderRetry: transientProviderRetrySchema.optional(),

@@ -31,6 +31,7 @@ export function runningShellCommand(entries: TimelineEntry[] | null): { startedA
   let found: { startedAt: string; command: string } | null = null;
   for (const entry of entries) {
     if (entry?.item?.type !== 'tool_call' || entry.item.status !== 'running' || entry.item.detail?.type !== 'shell') continue;
+    if (entry.item.callId && entries.some(other => other !== entry && other.item.type === 'tool_call' && other.item.callId === entry.item.callId && Date.parse(other.timestamp) >= Date.parse(entry.timestamp))) continue;
     const command = String(entry.item.detail.command ?? '').trim().slice(0, 120);
     if (!command) continue;
     const startedAt = String(entry.timestamp ?? '');
@@ -146,6 +147,16 @@ export class Stalls {
     return toolNotice;
   }
 
+  /** Positive evidence that an earlier stall verdict no longer holds. */
+  async hasActivity(t: Task, run: Run | null, state: AgentObservation): Promise<boolean> {
+    if (!state.active || state.permissions) return false;
+    if (state.updatedAt && Number.isFinite(Date.parse(state.updatedAt)) && Date.now() - Date.parse(state.updatedAt) < this.thresholdMs()) return true;
+    const runId = run?.id ?? t.runId;
+    if (!runId) return false;
+    const role = run?.role === 'reviewer' ? 'Reviewer' : 'Worker';
+    return Boolean(await this.runningToolNotice(t, role, state.id) || await this.ownedProcessNotice(t, run, role, runId));
+  }
+
   /** A live process in this run's workspace or scratch is owned-tool activity. */
   private async ownedProcessNotice(t: Task, run: Run | null, role: string, runId: string): Promise<string | null> {
     if (!this.resolution.adapter.hostProcessListing) return null;
@@ -157,7 +168,7 @@ export class Stalls {
     if (verdict.state !== 'live') return null;
     // Scope the run-owned tree to this task, rather than accepting a process
     // merely because some unrelated process happens to use the workspace.
-    const tree = new Set([verdict.pid]);
+    const tree = new Set([verdict.providerPid]);
     let changed = true;
     while (changed) {
       changed = false;
@@ -165,9 +176,17 @@ export class Stalls {
         tree.add(process.pid); changed = true;
       }
     }
-    const roots = [t.directory, run?.temporaryDirectory].filter((root): root is string => Boolean(root));
+    const helperTree = new Set([verdict.helperPid]);
+    let more = true;
+    while (more) {
+      more = false;
+      for (const process of processes) if (process.ppid != null && helperTree.has(process.ppid) && !helperTree.has(process.pid)) {
+        helperTree.add(process.pid); more = true;
+      }
+    }
+    const roots = [t.directory, run?.temporaryDirectory, run ? undefined : t.temporaryDirectory].filter((root): root is string => Boolean(root));
     for (const root of roots) {
-      const issue = workspaceToolProcessIssue(processes.filter(process => tree.has(process.pid)), root, [runId]);
+      const issue = workspaceToolProcessIssue(processes.filter(process => tree.has(process.pid) && process.pid !== verdict.providerPid && !helperTree.has(process.pid)), root, [runId]);
       if (issue && issue.includes('remains in the task workspace process tree'))
         return `${role} is running a long command (${issue})`;
     }
@@ -178,7 +197,7 @@ export class Stalls {
   private async runningToolNotice(t: Task, role: string, agentId: string): Promise<string | null> {
     try {
       const entries = await this.resolution.onTaskHost(t, () => this.resolution.host.agentTimeline(agentId));
-      const tool = entries && (runningOwnedTool(entries) ?? runningShellCommand(entries));
+      const tool = entries && (runningOwnedTool(entries) ?? runningShellCommand(entries.filter(entry => !entry.item.callId)));
       return tool ? `${role} is waiting on a running tool` : null;
     } catch { return null; }
   }

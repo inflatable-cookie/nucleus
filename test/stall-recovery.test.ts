@@ -15,6 +15,9 @@ import { mkdtemp, mkdir, writeFile, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { readHostUidProcesses } from '../core/machine/host-process-listing';
 import { command, git } from '../core/git/index';
 import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
@@ -159,19 +162,26 @@ test('a running agent with a stale activity timestamp goes to coordinator attent
   assert.equal(f.store.run(recovered.resolution.recovery!.runId!)?.role, 'recovery');
 });
 
-test('a live process in the task workspace prevents a stale turn from being flagged as a stall', async t => {
+test('a real run-owned child in the task workspace prevents a stale turn from stalling', async t => {
   const f = await fixture(t);
   t.after(() => f.store.close());
+  await writeFile(join(f.root, 'mcp-report.mjs'), 'setInterval(() => {}, 1000);\n');
+  await writeFile(join(f.root, 'provider.mjs'), `import { spawn } from 'node:child_process';
+const helper = spawn(process.execPath, [process.argv[2], process.argv[3]], { cwd: process.cwd() });
+const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { cwd: process.cwd() });
+process.on('SIGTERM', () => { helper.kill(); child.kill(); process.exit(); });
+console.log('ready'); setInterval(() => {}, 1000);`);
+  const provider = spawn(process.execPath, [join(f.root, 'provider.mjs'), join(f.root, 'mcp-report.mjs'), join(f.root, 'mcp-initial.json')], { cwd: f.directory, stdio: ['ignore', 'pipe', 'pipe'] });
+  t.after(async () => { if (provider.exitCode === null) { provider.kill(); await once(provider, 'exit'); } });
+  await once(provider.stdout!, 'data');
+  f.adapter.hostProcessListing = async () => { const listing = await readHostUidProcesses(); return listing.state === 'listed' ? listing.processes : null; };
   f.setObservation(running({ updatedAt: minutesAgo(35), turnStartedAt: minutesAgo(36) }));
-  const fact = (pid: number, ppid: number, command: string) => ({ pid, ppid, pgid: 900, uid: 1, startIdentity: 'test-process', command, cwd: f.directory });
-  f.adapter.hostProcessListing = async () => [fact(900, 1, 'provider'),
-    fact(901, 900, 'node /plugin/mcp-report.mjs /tickets/mcp-initial.json'),
-    fact(902, 900, 'node --test test/example.test.ts')];
   await f.engine.wake();
   const current = f.store.task(f.task.id);
   assert.equal(current.resolution.incident, null);
-  assert.equal(current.resolution.attention, false);
-  assert.match(current.reason, /running a long command.*task workspace process tree/);
+  assert.equal(current.resolution.recovery, null);
+  assert.equal(current.resolution.stop?.reason === 'run_stalled', false);
+  assert.equal(f.store.events(f.task.id).some(event => event.kind === 'planner_escalation'), false);
 });
 
 test('a recorded running tool prevents a stale turn from being flagged', async t => {
@@ -210,6 +220,35 @@ test('a live queued or running validation process does not mask a stale worker t
   const current = f.store.task(f.task.id);
   assert.equal(current.resolution.attention, true);
   assert.equal(current.resolution.incident?.cause, 'stalled_turn');
+});
+
+test('a stall escalation closes when the original run resumes before recovery acts', async t => {
+  const f = await fixture(t);
+  t.after(() => f.store.close());
+  f.setObservation(running({ updatedAt: minutesAgo(35), turnStartedAt: minutesAgo(36) }));
+  await f.engine.wake();
+  (f.engine.resolution.recovery as unknown as { pendingBoundMs: number }).pendingBoundMs = 0;
+  await f.engine.resolution.recovery.pass(f.task.id);
+  assert.equal(f.store.task(f.task.id).resolution.recovery?.status, 'escalated');
+  f.setObservation(running());
+  await f.engine.resolution.recovery.pass(f.task.id);
+  const current = f.store.task(f.task.id);
+  assert.equal(current.resolution.recovery?.status, 'resolved');
+  assert.equal(current.resolution.incident?.status, 'resolved');
+  assert.equal(current.resolution.attention, false);
+  assert.ok(f.store.events(f.task.id).some(event => event.kind === 'planner_escalation_resolved'));
+});
+
+test('each run retains its own activity stamp during stall checks', async t => {
+  const first = await fixture(t), second = await fixture(t);
+  t.after(() => { first.store.close(); second.store.close(); });
+  const firstStamp = minutesAgo(2), secondStamp = minutesAgo(3);
+  first.setObservation(running({ updatedAt: firstStamp }));
+  second.setObservation(running({ updatedAt: secondStamp }));
+  await first.engine.wake();
+  await second.engine.wake();
+  assert.equal(first.store.task(first.task.id).lastActivityAt, firstStamp);
+  assert.equal(second.store.task(second.task.id).lastActivityAt, secondStamp);
 });
 
 test('an agent with fresh activity is never flagged', async t => {
