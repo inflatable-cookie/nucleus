@@ -122,7 +122,7 @@ export const projectQaSettlement = {
    * the drain, a typed unknown delivery stays uncertain and is never resent, and
    * nothing about sending changes the run's state.
    */
-  async notifySettled(this: QaSettleContext, saved: ProjectQaRun): Promise<ProjectQaRun> {
+  async notifySettled(this: Pick<QaSettleContext, "store" | "options">, saved: ProjectQaRun): Promise<ProjectQaRun> {
     if (!saved.finishedAt || !this.options.notify) return saved;
     const faults: string[] = [];
     let planner: string | null = null;
