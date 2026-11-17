@@ -10,7 +10,7 @@ import { DurableFenceRefusal } from "../intake/run-settlement";
 import { digest, now } from "../store/store";
 import type { Engine } from "../engine";
 import { resendExecutorReport } from "./executor-report";
-import { requestReviewerReport, unreportedReviewer } from './reviewer-report';
+import { requestReviewerReport, requireReviewerReplacement, unreportedReviewer } from './reviewer-report';
 import { verifyEnclosingOperation } from '../planning/enclosing-operation';
 import type { RestartRequest } from "./owner-shared";
 
@@ -136,19 +136,9 @@ export class RestartControls {
     // Round 4: a restart applies while paused; what it would start waits (deferOwnerVerb).
     const role = (input.role as RestartRole | undefined) ?? deriveRestartRole(task, this.store.runs(task.id));
     const unreported = role === 'reviewer' ? unreportedReviewer(task, this.store.runs(task.id)) : null;
-    if (unreported) {
-      if (fresh) throw Error('The retained reviewer owns the missing report; request it from the same reviewer');
-      return requestReviewerReport(this.engine, task, unreported, input.version, reason);
-    }
-    if (role === 'reviewer' && fresh && task.resolution.reviewerAgentId
-      && !this.resolution.authorAgentIds(task).has(task.resolution.reviewerAgentId)) {
-      const observed = await this.engine.onTaskHost(task, () => this.engine.host.observe(task.resolution.reviewerAgentId!));
-      this.engine.requireOwnerControlCurrent(this.store.task(task.id), input.version, 'Task changed during reviewer observation; refresh before retrying');
-      if (observed.id !== task.resolution.reviewerAgentId || observed.status !== 'closed' || observed.active || observed.activeTurnId || observed.permissions)
-        throw Error('The retained reviewer is still available or its absence is unproven; continue that reviewer instead');
-    }
+    if (role === 'reviewer' && fresh) await requireReviewerReplacement(this.engine, task, input.version);
     if (["done", "cancelled"].includes(task.phase) || task.resolution.mergedCommit) {
-      if (task.resolution.mergedCommit && !['done', 'cancelled'].includes(task.phase))
+      if (task.resolution.mergedCommit && !['done', 'cancelled', 'syncing', 'closing', 'closeout'].includes(task.phase))
         return this.engine.moveToCloseout({ taskId: task.id, version: task.version, reason, caller: input.caller,
           enclosing: () => verifyEnclosingOperation(this.store, input, operationId) });
       // A finished or merged task restarts no run; a merged one still re-runs its
@@ -197,6 +187,7 @@ export class RestartControls {
       if (["owner_stopped_worker", "stopped_revision"].includes(shape ?? ""))
         return this.engine.deferOwnerVerb(task, input, "held", { runId: targetRunId });
     }
+    if (unreported && !fresh) return requestReviewerReport(this.engine, task, unreported, input.version, reason);
     // The ceiling remains the automatic loop breaker. Only a deliberate
     // operator-relayed fresh worker restart can pass it.
     const workerReplacementShape = shape !== null && ["blocked_worker", "retained_worker", "blocked_with_pr", "stopped_revision"].includes(shape);

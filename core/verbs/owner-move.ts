@@ -159,6 +159,8 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
       return { available: true, args: {}, note: `This preserves the valid reader on run ${reader.id} (agent ${reader.agentId}) at ${task.prHead} and sends no new review turn; restart role=reviewer fresh or route role=reviewer with now replaces it deliberately.` };
     }
     if(identity.kind==='valid'){
+      const reviewGate = liveGate('review', true);
+      if (!reviewGate.available) return reviewGate;
       return {available:true,args:{},note:`Nucleus observes the retained reviewer: a live turn is preserved, and an idle reviewer is asked to resend its report on the same run.`};
     }
     // Spec 057 (task 553): on a responsible task the move keeps the retained

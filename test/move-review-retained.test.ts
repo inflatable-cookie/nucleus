@@ -121,9 +121,11 @@ function fixture() {
     },
     sendRun: async (_t: Task, r: Run, token: string, _context: unknown, _owner: unknown,
       guard?: { allowed: () => Promise<boolean>; stillAllowed: () => boolean }) => {
-      assert.ok(guard, 'a retained reviewer round carries a final send guard');
-      assert.equal(await guard.allowed(), true, 'the retained round send guard allows the delivery');
-      assert.equal(guard.stillAllowed(), true, 'the retained round final gate still allows the delivery');
+      if (r.ordinaryDetached || _t.reviewEntry) {
+        assert.ok(guard, 'a retained reviewer round carries a final send guard');
+        assert.equal(await guard.allowed(), true, 'the retained round send guard allows the delivery');
+        assert.equal(guard.stillAllowed(), true, 'the retained round final gate still allows the delivery');
+      }
       sentRuns.push(r); tokens.set(r.id, token);
       observations.set(r.agentId!, { id: r.agentId!, workspaceId: r.workspaceId, status: 'running', active: true,
         permissions: false, error: '', provider: 'test', model: r.profile!.model });
@@ -220,7 +222,7 @@ test('move to=review refuses a fresh reviewer while the retained one is availabl
   try {
     responsibleShape(f);
     priorReviewerRound(f);
-    await assert.rejects(moveReview(f, { fresh: true }), /retained reviewer is still available/);
+    await assert.rejects(moveReview(f, { fresh: true }), /retained reviewer is still live or its absence is unproven/);
     assert.equal(f.current().resolution.reviewerAgentId, 'review-agent');
     assert.equal(f.createdRuns.length, 0);
   } finally { await f.close(); }
@@ -230,6 +232,8 @@ test('move to review asks the same idle reviewer to resend its missing report', 
   const f = fixture();
   try {
     responsibleShape(f);
+    git(f.worktree, 'reset', '--hard', f.heads.oldHead);
+    git(f.worktree, 'push', '--force', 'origin', 'feature/retained');
     f.prs.set(PR, { url: PR_URL, head: f.heads.oldHead });
     priorReviewerRound(f, { status: 'running', completion: null, released: false, active: false });
     f.store.update(f.taskId, { phase: 'reviewing' });
@@ -339,6 +343,6 @@ test('a null prHead with an authenticated pushed head in the report is resolved 
     const run = f.store.runs(f.taskId).find(item => item.role === 'reviewer' && !item.released);
     assert.ok(run, 'a reviewer run dispatched');
     assert.equal(run!.head, f.heads.newHead, 'the reviewer has the bound head to review');
-    assert.equal(f.createdRuns.some(created => created.id === run!.id), true, 'the reviewer run created its agent');
+    assert.equal(f.sentRuns.some(sent => sent.id === run!.id), true, 'the reviewer run continued its retained agent');
   } finally { await f.close(); }
 });

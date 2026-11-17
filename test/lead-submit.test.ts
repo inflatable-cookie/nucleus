@@ -64,14 +64,13 @@ test('failed brief checks return their findings and never approve or promote', a
 });
 
 test('resubmitting a lead rechecks a completed transient brief-check failure', async t => {
-  const { runtime, input, repo } = await fixture(t);
-  await writeFile(join(repo, 'change.txt'), 'new planning head');
-  await git(repo, 'add', 'change.txt');
-  await git(repo, 'commit', '-m', 'advance planning');
+  const { runtime, input } = await fixture(t);
+  const preview = runtime.engine.hooks.previewPreDispatch.bind(runtime.engine.hooks);
+  runtime.engine.hooks.previewPreDispatch = async () => { throw new Error('temporary hook failure'); };
   const first = await runtime.submitLead(input);
   assert.ok('lead' in first);
   assert.equal(first.lead.check?.ok, false);
-  await git(repo, 'push', 'origin', 'main');
+  runtime.engine.hooks.previewPreDispatch = preview;
   const second = await runtime.submitLead(input);
   assert.ok('taskId' in second);
   assert.equal(runtime.store.tasks().length, 1);

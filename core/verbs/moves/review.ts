@@ -16,7 +16,7 @@ import { moveRetainedReader } from "./review-reader";
 import { commitReviewMove, nameLaunchFence, settleStoppedReviewers } from "./review-settle";
 import { moveProofOnlyReceiptToReview } from "./review-proof";
 import type { ReviewMoveInput } from "./types";
-import { requestReviewerReport } from '../reviewer-report';
+import { requestReviewerReport, requireReviewerReplacement } from '../reviewer-report';
 
 /**
  * Spec 050 `move to=review`: a fresh independent review at the current PR
@@ -48,12 +48,7 @@ export async function moveToReview(engine: Engine, input: ReviewMoveInput, opera
     ? `Move to review must use PR #${prNumber}, which the current ready result names`
     : `Move to review must use the retained task PR #${prNumber}`);
   const pr = await adapter.verifyPr(task, prNumber);
-  if (input.fresh && task.resolution.reviewerAgentId && !engine.resolution.authorAgentIds(task).has(task.resolution.reviewerAgentId)) {
-    const state = await engine.host.observe(task.resolution.reviewerAgentId);
-    if (state.id !== task.resolution.reviewerAgentId || state.status !== 'closed' || state.active || state.activeTurnId || state.permissions)
-      throw Error('The retained reviewer is still available or its absence is unproven; continue that reviewer instead');
-    engine.requireOwnerControlCurrent(store.task(task.id), task.version, 'Task changed during reviewer observation; refresh before retrying');
-  }
+  if (input.fresh) await requireReviewerReplacement(engine, task, input.version);
   if (evidence && pr.head !== evidence.head)
     throw Error(`PR #${prNumber} is at ${pr.head}, not the head ${evidence.head} its current ready result reports; nothing was bound`);
   // Reapply only a verdict pending at the verified current head. A newer PR

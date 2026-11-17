@@ -224,7 +224,7 @@ for (const fault of ['different PR', 'active worker', 'unobservable worker', 'ac
       unreleasedRecoveryRun(f, { ...recoveredCompletion, taskId: f.taskId });
       const observation = f.observations.get('worker-agent')!;
       if (fault === 'active worker') f.observations.set('worker-agent', { ...observation, active: true });
-      if (fault === 'unobservable worker') f.observations.delete('worker-agent');
+      if (fault === 'unobservable worker') f.observations.set('worker-agent', { ...observation, status: 'unknown' });
       if (fault === 'active turn') f.observations.set('worker-agent', { ...observation, activeTurnId: 'turn' });
       if (fault === 'permission') f.observations.set('worker-agent', { ...observation, permissions: true });
       if (fault === 'source') f.adapter.verifyInspectedRevisionHead = async () => { throw Error('Source head is unpublished or differs from PR'); };
@@ -279,7 +279,7 @@ test('move review settles a finished recovery run whose agent is idle (#3569)', 
   } finally { await f.close(); }
 });
 
-test('move review supersedes a stopped reviewer with a stale active flag and settles a stale external-merge record (#3569)', async () => {
+test('move review asks the retained reviewer for its missing report despite a stale active flag (#3569)', async () => {
   const f = fixture(); try {
     dispatched(f);
     // The stored `active` flag is stale: the agent is observed idle with no turn.
@@ -289,17 +289,12 @@ test('move review supersedes a stopped reviewer with a stale active flag and set
       externalMergePreAttention: { phase: 'reviewing', reason: 'Stale external-merge check snapshot' } } });
 
     const moved = await moveControl(f, 'A fresh review at the current head');
-    assert.equal(moved.phase, 'awaiting_review');
+    assert.equal(moved.phase, 'reviewing');
     const settled = f.store.run(run.id)!;
-    // Replaced is not released (planner ruling, 2026-11-09): the move marks the
-    // stopped reviewer replaced with its claim held, and still settles the stale
-    // external-merge record.
-    assert.equal(settled.released, false, 'the stopped reviewer is replaced, not released');
-    assert.equal(settled.status, 'superseded');
-    assert.notEqual(settled.replacedAt, undefined);
-    assert.equal(moved.resolution.externalMergePreAttention, null, 'the stale pre-attention record is settled');
-    assert.equal(moved.resolution.attention, false);
-    assert.equal(f.events('owner_control').length, 1);
+    assert.equal(settled.released, false);
+    assert.equal(settled.status, 'running');
+    assert.equal(moved.resolution.currentRunId, run.id);
+    assert.equal(f.events('reviewer_report_request_sent').length, 1);
   } finally { await f.close(); }
 });
 
@@ -704,7 +699,7 @@ test('move to work treats a recorded PR URL or head as a PR, never as a pre-PR r
     // refusal applies (it names restart), and nothing changes.
     const before = f.task();
     await assert.rejects(f.engine.performTaskControl(taskControlInputSchema.parse({ ...work.args, reason: 'Continue on the PR', instruction: 'Address the feedback on PR #7', caller: CALLER })),
-      /requires an unmerged task PR; use restart/);
+      /Task has no PR|requires an unmerged task PR; use restart/);
     assert.equal(f.task().version, before.version, 'a refused move changes nothing');
     assert.equal(f.task().resolution.prePrResumeInstruction ?? null, null);
   } finally { await f.close(); }
@@ -1420,22 +1415,19 @@ test('a move whose task changed during its checks cancels nothing (review #533)'
   } finally { await f.close(); }
 });
 
-test('a stopped reviewer replaced by the move is replaced, not released (review #533; planner ruling 2026-11-09)', async () => {
+test('a stopped reviewer without a report is asked to redeliver on its existing run', async () => {
   const f = fixture(); try {
     dispatched(f);
     const run = reviewerRun(f);
-    // Idle with no saved coverage: the move is the explicit fresh review and the
-    // old lease is marked replaced. Under the 2026-11-09 ruling the replaced run
-    // keeps its credential until the review settles, so a late verdict whose
-    // first-verdict claim holds is readopted rather than refused.
+    // The current run keeps its credential so the same reviewer can redeliver.
     f.observations.set('review-agent', { id: 'review-agent', workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '' });
     const moved = await moveControl(f, 'Fresh review');
     assert.deepEqual(f.stops, []);
     assert.equal(f.store.run(run.id)!.released, false);
-    assert.equal(f.store.run(run.id)!.status, 'superseded');
-    assert.notEqual(f.store.run(run.id)!.replacedAt, undefined);
-    assert.equal(moved.resolution.currentRunId, null);
-    assert.equal(f.events('owner_control').length, 1);
+    assert.equal(f.store.run(run.id)!.status, 'running');
+    assert.equal(f.store.run(run.id)!.replacedAt, undefined);
+    assert.equal(moved.resolution.currentRunId, run.id);
+    assert.equal(f.events('reviewer_report_request_sent').length, 1);
   } finally { await f.close(); }
 });
 

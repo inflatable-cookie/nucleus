@@ -830,46 +830,23 @@ test('a removed coordinator thread and a routed coordinator profile each open a 
   } finally { await f.close(); }
 });
 
-test('a displaced reviewer stays settled until closeout and its late callback is refused (#1155)', async t => {
+test('a finished reviewer receives a report request on its existing thread', async t => {
   const f = await fixture(t);
   try {
     const { taskId, head, reviewerThreadId, reviewerRun } = await taskWithReviewer(f);
-    // The reviewer's turn ended before the owner deliberately replaces the reader.
+    // The turn ended but the review report did not arrive.
     f.server.threads.get(reviewerThreadId)!.runs = [{ id: `nightly-${reviewerRun.id}`, status: 'completed', startedAt: STAMP }];
     const current = f.runtime.store.task(taskId);
-    await f.runtime.taskControl({ action: 'restart', taskId, version: current.version, role: 'reviewer', fresh: true,
-      reason: 'Replace the reader', caller: f.planner });
-
-    // A fresh reviewer reads the same head on its own thread.
-    await driveUntil(f, () => {
-      const next = f.runtime.store.task(taskId).resolution.reviewerAgentId;
-      return Boolean(next && next !== reviewerThreadId);
-    }, 'a fresh reviewer launched', taskId);
-    const replacement = f.runtime.store.task(taskId).resolution.reviewerAgentId!;
-    assert.equal(launchesFor(f, replacement), 1);
-    assert.equal(f.runtime.store.run(reviewerRun.id)?.released, true, 'the displaced run is released');
-
-    // Nothing is archived or removed while the task is open (brief v3): the
-    // displaced thread stays settled and visible.
+    await f.runtime.taskControl({ action: 'restart', taskId, version: current.version, role: 'reviewer',
+      reason: 'Recover the review report', caller: f.planner });
+    assert.equal(f.runtime.store.task(taskId).resolution.reviewerAgentId, reviewerThreadId);
+    assert.equal(f.runtime.store.run(reviewerRun.id)?.released, false);
+    assert.equal(f.runtime.store.eventsAll(taskId).filter(event => event.kind === 'reviewer_report_request_sent').length, 1);
     assert.equal(f.server.commands.some(command => command.type === 'thread.archive' && command.threadId === reviewerThreadId), false);
     assert.equal(f.server.commands.some(command => command.type === 'thread.delete' && command.threadId === reviewerThreadId), false);
-    assert.equal(f.server.threads.get(reviewerThreadId)!.thread.settledOverride, 'settled',
-      'the displaced thread is settled, not removed');
-
-    // A late callback from the displaced reader is refused, never applied.
-    assert.throws(() => f.runtime.engine.complete({ eventId: randomUUID(), taskId, runId: reviewerRun.id,
-      status: 'ready_to_merge', summary: 'Late verdict', reviewText: 'The displaced reader approves.', prNumber: 7, head },
-      ticketToken(f, reviewerRun)));
-
-    // It is removed at closeout like the rest of the support set, exactly once.
-    const latest = f.runtime.store.task(taskId);
-    f.runtime.store.update(taskId, { phase: 'done', resolution: { ...latest.resolution, mergedCommit: 'd'.repeat(40) } });
-    await archiveFinishedThreads(f.runtime.store, f.t3, taskId);
-    assert.equal(f.server.commands.filter(command => command.type === 'thread.delete' && command.threadId === reviewerThreadId).length, 1,
-      'the displaced thread is removed at closeout');
-    await archiveFinishedThreads(f.runtime.store, f.t3, taskId);
-    assert.equal(f.server.commands.filter(command => command.type === 'thread.delete' && command.threadId === reviewerThreadId).length, 1,
-      'and never twice');
+    assert.equal((await f.runtime.engine.complete({ eventId: randomUUID(), taskId, runId: reviewerRun.id,
+      status: 'ready_to_merge', summary: 'Recovered verdict', reviewText: 'The retained reader approves.', prNumber: 7, head },
+      ticketToken(f, reviewerRun))).accepted, true);
   } finally { await f.close(); }
 });
 

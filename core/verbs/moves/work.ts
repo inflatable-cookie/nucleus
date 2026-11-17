@@ -71,8 +71,6 @@ export async function moveToWork(engine: Engine, input: WorkMoveInput): Promise<
     if (observed.id !== task.agentId || observed.workspaceId !== task.workspaceId || observed.active || observed.activeTurnId
       || observed.permissions || !['idle', 'error'].includes(observed.status))
       throw Error('The retained worker is not positively idle in its workspace; no continuation was sent');
-    const issue = await engine.resolution.participantToolIssue(task.id, task.agentId, task.workspaceId!);
-    if (issue) throw Error(`The retained worker has live or unknown tool work: ${issue}; no continuation was sent`);
     if (taskHasPr(task) && !evidenceOnlyPr(task)) {
       const pr = engine.adapter.verifyPrIdentity
         ? await engine.adapter.verifyPrIdentity(task, taskPrNumber(task), { allowDraft: true })

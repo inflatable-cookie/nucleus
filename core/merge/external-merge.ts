@@ -278,9 +278,11 @@ export class ExternalMerge {
         const current = this.store.task(t.id);
         if (current.version !== t.version || JSON.stringify(this.store.runs(t.id)) !== runs) return false;
         const latest = this.resolution.assignIntegrationTurn(current);
+        const waiting = this.resolution.hasEarlierIntegrationTurn(latest);
+        if (waiting && latest.phase === 'merging') return false;
         const episode = this.resolution.recovery.settledEpisodeChanges(latest, 'Recorded merge re-observed at the forge');
         this.resolution.update(latest, { currentRunId: null, attention: false, stop: null, ...(episode ?? {}) },
-          { phase: 'syncing', reason: 'Recorded merge re-observed; synchronizing main before closeout' },
+          { phase: waiting ? 'merging' : 'syncing', reason: waiting ? 'Recorded merge re-observed; waiting for the integration turn' : 'Recorded merge re-observed; synchronizing main before closeout' },
           'recorded_merge_phase_reconciled', JSON.stringify({ head: proven.head, commit: proven.commit }));
         return true;
       });

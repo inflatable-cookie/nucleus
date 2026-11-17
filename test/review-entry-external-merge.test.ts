@@ -252,7 +252,7 @@ test('an explicit owner closeout reconciles a never-dispatched review-entry task
     assert.deepEqual(store.runs(before.id),[]);
     assert.equal(f.creates.length,0);
     // A fresh closeout at the new version has nothing left to reconcile.
-    await assert.rejects(runtime.taskControl(closeout(service,{qualification:ACCEPTANCE})),/outside that boundary|Only an unmerged dispatched task/);
+    await assert.rejects(runtime.taskControl(closeout(service,{qualification:ACCEPTANCE})),/outside that boundary|Only an unmerged dispatched task|recorded merge already has its source disposition/);
     assert.equal(store.task(before.id).resolution.ownerAcceptances!.length,1);
   }finally{await closeService(service);}
 });
@@ -561,9 +561,9 @@ test('the preserved recorded source head survives the automatic external-merge r
     assert.ok(probes>0,'the recovery probe ran for the waiting closeout');
 
     const after=store.task(task.id);
-    // The recovery re-records the merge but never re-decides the recorded head.
-    assert.ok(events(service,before.id,'external_merge_observed').length>recordedAtAccept,
-      'the probe re-recorded the observed merge for the waiting FIFO turn');
+    // A waiting turn keeps its evidence without repeatedly recording the same merge.
+    assert.equal(events(service,before.id,'external_merge_observed').length,recordedAtAccept);
+    assert.equal(after.phase,'merging');
     assert.equal(after.prHead,before.prHead,'the recorded source head is preserved, not replaced by mergeHead');
     assert.equal(after.resolution.mergeHead,merged!.head);
     assert.equal(after.resolution.mergedCommit,merged!.mergeCommit);

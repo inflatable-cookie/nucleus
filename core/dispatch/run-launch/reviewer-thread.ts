@@ -85,6 +85,7 @@ export async function retainReviewerThread(ctx: LaunchThreadContext, t: Task, ro
     let context = true;
     let gone = false;
     let identity = false;
+    let notIndependent = false;
     const swapDetail: Partial<Record<ReviewerSwapCondition, string>> = {};
     if (!round) swapDetail.round = `its prior reviewer round at ${prior?.head ?? 'no head'} is not settled for another round at ${t.prHead ?? 'no head'}`;
     try {
@@ -98,6 +99,7 @@ export async function retainReviewerThread(ctx: LaunchThreadContext, t: Task, ro
         round = true;
         const authors = taskAuthorModelKeys(t, ctx.store.runs(t.id).filter(run => run.role === 'revision'));
         const independent = reviewerIndependence({ site: 'consult', authors, reviewerModel: authorModelKey(profile.model) }) === 'independent';
+        notIndependent = !independent;
         const inactive = state.workspaceId === t.workspaceId && state.status === 'idle' && !state.active && !state.permissions;
         participant = independent && inactive;
         if (!independent) swapDetail.participant = 'its model is not independent of the task authors';
@@ -114,11 +116,15 @@ export async function retainReviewerThread(ctx: LaunchThreadContext, t: Task, ro
     } catch (error) {
       participant = false;
       delete swapDetail.participant;
-      swapDetail.error = message(error);
-      ctx.store.event(t.id, 'reviewer_retention_refused', message(error));
+      const detail = message(error);
+      if (detail === 'Original reviewer model is not independent of actual task authors') {
+        notIndependent = true;
+        swapDetail.participant = detail;
+      } else swapDetail.error = detail;
+      ctx.store.event(t.id, 'reviewer_retention_refused', detail);
     }
     const eligible = round && participant && runtime && context && !swapDetail.error;
-    if (!eligible && !gone && (!identity || runtime && context)) {
+    if (!eligible && !gone && !notIndependent && (!identity || runtime && context)) {
       ctx.waiting(t, `Retained reviewer ${agentId} cannot continue yet: ${swapDetail.round ?? swapDetail.participant ?? swapDetail.error ?? 'its identity or activity is not settled'}`, 'operator_needed');
       return { kind: 'handled' };
     }

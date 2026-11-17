@@ -2,6 +2,31 @@ import type { Run, Task } from '../../shared/contracts';
 import type { Engine } from '../engine';
 import { hostFailureRefusalDetail } from '../host/errors';
 
+/** A fresh reader may replace only a proven gone or non-independent binding. */
+export async function requireReviewerReplacement(engine: Engine, task: Task, version: number): Promise<void> {
+  const agentId = task.resolution.reviewerAgentId;
+  if (!agentId || engine.resolution.authorAgentIds(task).has(agentId)) return;
+  const prior = engine.store.runs(task.id).findLast(run => run.role === 'reviewer' && run.agentId === agentId);
+  if (prior) {
+    try { engine.resolution.assertReviewProfileIndependent(task, prior); }
+    catch (error) {
+      if (error instanceof Error && error.message === 'Original reviewer model is not independent of actual task authors') return;
+      // Missing or unreadable identity is not proof of a model collision.
+    }
+  }
+  const state = await engine.onTaskHost(task, () => engine.host.observe(agentId));
+  let archived = state.status === 'closed';
+  if (!archived && !state.active && !state.activeTurnId && !state.permissions) {
+    try {
+      const origin = await engine.onTaskHost(task, () => engine.host.originAgent(agentId));
+      archived = !origin || origin.archived === true;
+    } catch { /* An unreadable archive is not proof of absence. */ }
+  }
+  engine.requireOwnerControlCurrent(engine.store.task(task.id), version, 'Task changed during reviewer observation; refresh before retrying');
+  if (state.id !== agentId || !archived || state.active || state.activeTurnId || state.permissions)
+    throw Error('The retained reviewer is still live or its absence is unproven; continue that reviewer instead');
+}
+
 /** A current, bound reviewer whose report has not reached Nucleus. */
 export function unreportedReviewer(task: Task, runs: Run[]): Run | null {
   const run = runs.find(item => item.id === task.resolution.currentRunId);

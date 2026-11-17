@@ -367,7 +367,7 @@ export const restart: OwnerVerb = {
       return { available: false, refusal: restartTerminalRefusal(task, "refusal" in parked ? parked.refusal : undefined) };
     }
     const role = deriveRestartRole(task, runs);
-    const reviewer = unreportedReviewer(task, runs);
+    const reviewer = role === 'reviewer' ? unreportedReviewer(task, runs) : null;
     if (reviewer) {
       const requested = facts.events.some(event => ['reviewer_report_request_sent', 'reviewer_report_request_intent'].includes(event.kind)
         && event.detail.startsWith(`${reviewer.id}:`));
