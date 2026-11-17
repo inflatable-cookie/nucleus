@@ -133,13 +133,15 @@ test('continuation reattaches a clean detached queue head only when local and re
  }finally{rmSync(dir,{recursive:true,force:true})}
 });
 
-test('real Git sync fast-forwards only, preserves dirty main, and honors pause before writing',async()=>{
+test('real Git sync quietly fast-forwards a large deletion, preserves dirty main, and honors pause before writing',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'ns-sync-'));let store:Store|undefined;
  try{
   await git(dir,'init','--bare','remote.git');await git(dir,'clone',join(dir,'remote.git'),'main');const root=join(dir,'main');
-  await git(root,'checkout','-b','main');writeFileSync(join(root,'handoff.md'),'fixture');await git(root,'add','handoff.md');await git(root,'commit','-m','planning');await git(root,'push','-u','origin','main');
+  await git(root,'checkout','-b','main');writeFileSync(join(root,'handoff.md'),'fixture');mkdirSync(join(root,'large-deletion'));
+  for(let index=0;index<4000;index++)writeFileSync(join(root,'large-deletion','file-'+index+'.txt'),'fixture');
+  await git(root,'add','handoff.md','large-deletion');await git(root,'commit','-m','planning');await git(root,'push','-u','origin','main');
   const planning=await git(root,'rev-parse','HEAD');await git(dir,'clone','--branch','main',join(dir,'remote.git'),'writer');const writer=join(dir,'writer');
-  writeFileSync(join(writer,'result.txt'),'merged');await git(writer,'add','result.txt');await git(writer,'commit','-m','merged work');await git(writer,'push');const merged=await git(writer,'rev-parse','HEAD');
+  await git(writer,'rm','-qr','large-deletion');writeFileSync(join(writer,'result.txt'),'merged');await git(writer,'add','result.txt');await git(writer,'commit','-m','merged work');await git(writer,'push');const merged=await git(writer,'rev-parse','HEAD');
   store=new Store(join(dir,'queue.sqlite'));const t=store.insert(submissionSchema.parse({submissionId:'sync',title:'Sync fixture',repoPath:root,planningCommit:planning,handoffPath:'handoff.md',originAgentId:'origin'}),'host','fixture',planning);
   const task=store.update(t.id,{resolution:{...t.resolution,mergedCommit:merged}});
   writeFileSync(join(root,'unrelated.txt'),'keep');await assert.rejects(syncMain(task),/dirty/);assert.equal(await git(root,'rev-parse','HEAD'),planning);rmSync(join(root,'unrelated.txt'));

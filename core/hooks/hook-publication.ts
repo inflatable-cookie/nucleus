@@ -7,7 +7,7 @@ import {
 import type { Task } from "../../shared/contracts";
 import { type Store, now } from "../store/store";
 import { gitText, snapshotGit, statusEntries, ignoredPathCollides, inspectChangedPaths, isolatedRepositoryIsCleanAt, type GitSnapshot } from "../git/git-snapshot";
-import { gitRun, } from "../git/git-command";
+import { gitFastForward, gitRun, } from "../git/git-command";
 import { gitNulEach } from "../git/git-command";
 import { blobDigest } from "./hook-manifest";
 import { executablePath, hookProgramExecutable, type HookEmissionResult } from "./hook-context";
@@ -62,7 +62,7 @@ export class HookPublication {
       const origin = await gitText(task.repoPath, "remote", "get-url", "origin");
       await gitText(task.repoPath, "clone", "--shared", "--no-checkout", "--", task.repoPath, path);
       await gitText(path, "remote", "set-url", "origin", origin);
-      await gitText(path, "checkout", "-B", current.baseBranch, current.baseCommit);
+      await gitText(path, "checkout", "--quiet", "-B", current.baseBranch, current.baseCommit);
       if (!await isolatedRepositoryIsCleanAt(path, current.baseCommit, current.baseBranch)) throw new Error("Isolated checkout did not settle clean on the declared branch at the event base");
       if (await gitText(path, "remote", "get-url", "origin") !== origin) throw new Error("Isolated checkout origin differs from the canonical origin");
       await this.verifyExecutableBlob(path, current);
@@ -175,7 +175,7 @@ export class HookPublication {
         if ((await gitRun(root, ["merge-base", "--is-ancestor", head, target])).code !== 0) return "canonical HEAD diverged from the published history";
         const collisions = await this.ignoredCollisions(root, head, target);
         if (collisions.length) return `ignored operator content would be overwritten: ${collisions.join(", ")}`;
-        await gitText(root, "merge", "--ff-only", target);
+        await gitFastForward(root, target);
       }
       await gitText(root, "fetch", "origin", baseBranch);
       const remote = await gitText(root, "rev-parse", `refs/remotes/origin/${baseBranch}`);

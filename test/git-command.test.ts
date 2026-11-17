@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, delimiter } from "node:path";
-import { gitAncestry, gitRun, requireGitAncestry } from "../core/git/git-command";
+import { gitAncestry, gitFastForward, gitRun, requireGitAncestry } from "../core/git/git-command";
 import { githubRepositoryFromRemote } from "../core/git/git-remote";
 import { command } from "../core/git/index";
 
@@ -48,6 +49,39 @@ test("a child output limit names the Git command", async () => {
     assert.equal(((error as Error).message.match(/git overflow/g) ?? []).length, 1);
     return true;
   });
+});
+
+test("a fast-forward settles by clean HEAD even when Git reports an error after advancing", async t => {
+  const directory = mkdtempSync(join(tmpdir(), "git-fast-forward-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const repo = join(directory, "repo");
+  execFileSync("git", ["init", "-q", "-b", "main", repo]);
+  const git = (...args: string[]) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8" }).trim();
+  git("config", "user.name", "Fixture"); git("config", "user.email", "fixture@example.invalid");
+  writeFileSync(join(repo, "tracked"), "base"); git("add", "tracked"); git("commit", "-q", "-m", "base");
+  const base = git("rev-parse", "HEAD");
+  writeFileSync(join(repo, "tracked"), "target"); git("commit", "-qam", "target");
+  const target = git("rev-parse", "HEAD");
+  git("reset", "-q", "--hard", base);
+  const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+  const shim = join(directory, "git");
+  const shimSource = ["#!" + process.execPath,
+    "const {execFileSync}=require('node:child_process');const args=process.argv.slice(2);try{execFileSync(" + JSON.stringify(realGit) + ",args,{cwd:process.cwd(),stdio:'inherit'})}catch(e){process.exit(e.status??1)}",
+    "if(args[0]==='merge'&&args.includes('--ff-only'))process.exit(23);"].join("\n") + "\n";
+  writeFileSync(shim, shimSource, { mode: 0o700 });
+  const previousPath = process.env.PATH;
+  process.env.PATH = directory + delimiter + (previousPath ?? "");
+  try {
+    await gitFastForward(repo, target);
+    assert.equal(git("rev-parse", "HEAD"), target);
+    assert.equal(git("status", "--porcelain"), "");
+    const before = git("rev-parse", "HEAD");
+    await assert.rejects(gitFastForward(repo, base));
+    assert.equal(git("rev-parse", "HEAD"), before, "a real ff-only failure leaves HEAD unchanged");
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+  }
 });
 
 test("ancestry is tri-state: only a proven exit 1 is divergence", async () => {

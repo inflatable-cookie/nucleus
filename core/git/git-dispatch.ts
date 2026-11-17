@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { Task } from "../../shared/contracts";
 import { taskCheckoutTarget } from "../workspaces/checkout-target";
-import { git, gitAncestry, gitBulk, gitRaw, messageOf, requireGitAncestry } from "./git-command";
+import { git, gitAncestry, gitBulk, gitFastForward, gitRaw, messageOf, requireGitAncestry } from "./git-command";
 import { gitStatus, queueCheckoutStatus, currentWorkerBranch } from "./git-checkout";
 import { assertPinnedBrief, validateSubmission, verifyBriefWorkerIdentity } from "./git-submission";
 import { dirtyWorktreeError } from "./git-stash";
@@ -112,7 +112,7 @@ async function validateDispatchCheckout(task: Task, unchanged: () => Promise<voi
       if (relation === 'unknown') throw new Error("Local integration branch's relation to origin cannot be read; resolve the checkout before dispatch");
       if (relation !== 'ancestor') throw new Error("Local integration branch diverged from origin; resolve it before dispatch");
       await unchanged();
-      await git(task.repoPath, "merge", "--ff-only", remote);
+      await gitFastForward(task.repoPath, remote);
       local = await git(task.repoPath, "rev-parse", `refs/heads/${task.baseBranch}`);
       if (local !== remote) throw new Error("Local integration branch could not be fast-forwarded to origin");
     }
@@ -167,7 +167,7 @@ export async function verifyWorkspace(task: Task, directory: string) {
     const target = taskCheckoutTarget(task);
     const head = await git(directory, "rev-parse", "HEAD");
     if (head !== target) {
-      await git(directory, "checkout", "--detach", target);
+      await git(directory, "checkout", "--quiet", "--detach", target);
       if (await git(directory, "rev-parse", "HEAD") !== target)
         throw new Error(`Proof-only checkout remained at ${head} after detaching ${target}`);
     }
@@ -195,7 +195,7 @@ export async function verifyWorkspace(task: Task, directory: string) {
       const behind = await gitAncestry(directory, head, task.planningBase);
       if (behind === 'unknown') throw new Error("Worker worktree ancestry cannot be read; inspect the checkout before dispatch");
       if (behind !== 'ancestor') throw new Error("Worker worktree does not match the recorded dispatch base");
-      await git(directory, "merge", "--ff-only", task.planningBase);
+      await gitFastForward(directory, task.planningBase);
       head = await git(directory, "rev-parse", "HEAD");
       if (head !== task.planningBase) throw new Error("Worker worktree could not be fast-forwarded to the recorded dispatch base");
     }

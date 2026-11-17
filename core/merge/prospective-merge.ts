@@ -143,8 +143,8 @@ export class ProspectiveMerge {
           catch (error) { return { kind: "fallback", detail: error instanceof Error ? error.message : String(error) }; }
           try {
             await gitText(path, "fetch", "--no-tags", "--", task.repoPath, base, head, commit);
-            await gitText(path, "reset", "--hard", base);
-            await gitText(path, "checkout", "--detach", commit);
+            await gitText(path, "reset", "--quiet", "--hard", base);
+            await gitText(path, "checkout", "--quiet", "--detach", commit);
             // The pre-merge hook runs inside this checkout, so it leaves build
             // output, caches and ignored files behind. Cleaning is part of the
             // resync: without it every later pass proved the checkout dirty and
@@ -162,8 +162,8 @@ export class ProspectiveMerge {
           try {
             await gitText(task.repoPath, "clone", "--shared", "--no-checkout", "--", task.repoPath, path);
             if (origin) await gitText(path, "remote", "set-url", "origin", origin);
-            await gitText(path, "checkout", "--detach", base);
-            await gitText(path, "checkout", "--detach", commit);
+            await gitText(path, "checkout", "--quiet", "--detach", base);
+            await gitText(path, "checkout", "--quiet", "--detach", commit);
             await gitText(path, "config", "--local", "queue.warmOwner", common);
           } catch (error) { return { kind: "fallback", detail: error instanceof Error ? error.message : String(error) }; }
         }
@@ -173,7 +173,7 @@ export class ProspectiveMerge {
         await this.removeIsolatedCheckout(task, path, true);
         await gitText(task.repoPath, "clone", "--shared", "--no-checkout", "--", task.repoPath, path);
         if (origin) await gitText(path, "remote", "set-url", "origin", origin);
-        await gitText(path, "checkout", "--detach", commit);
+        await gitText(path, "checkout", "--quiet", "--detach", commit);
       }
       await verifyMergeCandidate(path, candidate);
       if (warm) {

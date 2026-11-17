@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import type { Task } from "../../shared/contracts";
 import type { Store } from "../store/store";
 import { gitText, statusEntries } from "../git/git-snapshot";
-import { gitRun, formatGitError } from "../git/git-command";
+import { gitFastForward, gitRun, formatGitError } from "../git/git-command";
 import { withIntegrationCheckout } from "../git/index";
 import { requestServiceRollAfterRepositorySync } from "../forge/roll-request";
 import { removeTree } from "../workspaces/tree-removal";
@@ -113,7 +113,7 @@ export class HookCheckouts {
       catch { throw new Error("Integration base cannot fast-forward: local integration commits are not on origin"); }
       await unchanged();
       if (!allowed()) throw new Error("Paused before local main update");
-      await gitText(checkout, "merge", "--ff-only", remote);
+      await gitFastForward(checkout, remote);
       if (await gitText(checkout, "rev-parse", "HEAD") !== remote || (await statusEntries(checkout, false)).length)
         throw new Error("Integration synchronization did not leave a clean expected head");
       // A direct update of the registered checkout is the same main change the post-merge sync announces.

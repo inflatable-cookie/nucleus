@@ -48,7 +48,7 @@ export class RunLaunchDeliver {
         await this.machine.verifyPr(t, taskPrNumber(t));
         await this.resolution.ordinaryRoundCustody(t, run);
         await ordinaryReviewSource(t, run.head, false);
-        await git(t.directory!, 'checkout', '--detach', run.head);
+        await git(t.directory!, 'checkout', '--quiet', '--detach', run.head);
         await ordinaryReviewSource(t, run.head, true);
       }
       // Ordinary review takes custody of a detached exact-head checkout only

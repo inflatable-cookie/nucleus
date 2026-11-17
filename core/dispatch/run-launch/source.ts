@@ -54,7 +54,7 @@ export class RunLaunchSource {
       if (!previous?.released || !['finished', 'superseded'].includes(previous.status)) throw Error('Detached ordinary review is still owned');
       await this.resolution.ordinaryRoundCustody(t, previous, true);
       await ordinaryReviewSource(t, previous.head, true);
-      await git(t.directory, 'checkout', t.branch);
+      await git(t.directory, 'checkout', '--quiet', t.branch);
       await ordinaryReviewSource(t, previous.head, false);
     }
 

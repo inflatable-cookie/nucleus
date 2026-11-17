@@ -7,7 +7,7 @@ import { readyReviewAtHead } from '../recovery/task-reasons';
 import { type CheckHistory, type GateEvidence, type CheckRequirementTransport, requiredCheckRequirements, branchUpdateRequired, observeCheckClassification, type CheckClassification, requiredChecks } from './checks';
 import { api, repo } from './github-client';
 import { requestServiceRollAfterRepositorySync } from './roll-request';
-import { gitNulEach } from '../git/git-command';
+import { gitFastForward, gitNulEach } from '../git/git-command';
 
 export function classifyGithubMerge(p: {mergeable: string; mergeStateStatus: string}, updateBranchRequired: boolean, options: {advisoryChecks?: boolean} = {}): {wait: string; needsRebase?: true} {
   if (p.mergeable === 'CONFLICTING' || p.mergeStateStatus === 'DIRTY') return {wait: MERGE_CONFLICT_REASON, needsRebase: true};
@@ -195,7 +195,7 @@ async function syncIntegrationCheckout(t: Task, allowed: () => boolean, unchange
   if (await git(t.repoPath, 'branch', '--show-current') !== t.baseBranch || await gitStatus(t.repoPath, 'status', '--porcelain')) throw new Error('Integration checkout changed while fetching');
   await unchanged();
   if (!allowed()) throw new Error('Paused before local main update');
-  await git(t.repoPath, 'merge', '--ff-only', remote);
+  await gitFastForward(t.repoPath, remote);
   if (await git(t.repoPath, 'rev-parse', 'HEAD') !== remote || await gitStatus(t.repoPath, 'status', '--porcelain')) throw new Error('Integration synchronization did not leave a clean expected head');
   return remote;
 }

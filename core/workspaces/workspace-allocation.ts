@@ -290,7 +290,7 @@ export async function populateOwnedWorktree(input: {
   if (state.kind === "proof_head_mismatch") {
     input.admit?.();
     const target = taskCheckoutTarget(input.task);
-    await git(state.directory, "checkout", "--detach", target);
+    await git(state.directory, "checkout", "--quiet", "--detach", target);
     const head = await git(state.directory, "rev-parse", "HEAD");
     if (head !== target)
       throw new Error(`Proof-only checkout remained at ${head} after detaching ${target}`);
