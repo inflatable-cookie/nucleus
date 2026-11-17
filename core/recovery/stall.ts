@@ -11,6 +11,7 @@ import { now } from '../store/store';
 import { OPERATOR_WORKER_REMAP_REASON } from './task-reasons';
 import { decideWorkerReplacement, isWorkerRouteApproved } from './worker-replacement';
 import { resolve, sep } from 'node:path';
+import { ownedToolProcessTreeVerdict } from '../machine/owned-tool-process-proof';
 
 /**
  * Mid-turn stall detection (Queue reliability lane). Paseo keeps reporting a
@@ -128,7 +129,7 @@ export class Stalls {
       return shellNotice ?? await this.ownedProcessNotice(current, run, role, runId);
     const quietMs = Date.now() - Date.parse(state.updatedAt);
     if (quietMs < this.thresholdMs()) return shellNotice;
-    const toolNotice = shellNotice ?? await this.ownedProcessNotice(current, run, role, runId);
+    const toolNotice = shellNotice ?? await this.runningToolNotice(current, role, state.id) ?? await this.ownedProcessNotice(current, run, role, runId);
     if (toolNotice) return toolNotice;
     const turn = state.activeTurnId ? `, active turn ${state.activeTurnId}` : '';
     const pending = state.pendingRequest;
@@ -152,14 +153,34 @@ export class Stalls {
     try { processes = await this.resolution.adapter.hostProcessListing(); }
     catch { return null; }
     if (!processes) return null;
-    const runIds = [runId];
+    const verdict = ownedToolProcessTreeVerdict(runId, processes.filter(process => !isZombieProcess(process)));
+    if (verdict.state !== 'live') return null;
+    // Scope the run-owned tree to this task, rather than accepting a process
+    // merely because some unrelated process happens to use the workspace.
+    const tree = new Set([verdict.pid]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const process of processes) if (process.ppid != null && tree.has(process.ppid) && !tree.has(process.pid)) {
+        tree.add(process.pid); changed = true;
+      }
+    }
     const roots = [t.directory, run?.temporaryDirectory].filter((root): root is string => Boolean(root));
     for (const root of roots) {
-      const issue = workspaceToolProcessIssue(processes, root, runIds);
+      const issue = workspaceToolProcessIssue(processes.filter(process => tree.has(process.pid)), root, [runId]);
       if (issue && issue.includes('remains in the task workspace process tree'))
         return `${role} is running a long command (${issue})`;
     }
     return null;
+  }
+
+  /** A recorded running tool is positive evidence even before the notice age. */
+  private async runningToolNotice(t: Task, role: string, agentId: string): Promise<string | null> {
+    try {
+      const entries = await this.resolution.onTaskHost(t, () => this.resolution.host.agentTimeline(agentId));
+      const tool = entries && (runningOwnedTool(entries) ?? runningShellCommand(entries));
+      return tool ? `${role} is waiting on a running tool` : null;
+    } catch { return null; }
   }
 
   /**

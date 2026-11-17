@@ -163,13 +163,28 @@ test('a live process in the task workspace prevents a stale turn from being flag
   const f = await fixture(t);
   t.after(() => f.store.close());
   f.setObservation(running({ updatedAt: minutesAgo(35), turnStartedAt: minutesAgo(36) }));
-  f.adapter.hostProcessListing = async () => [{ pid: 901, ppid: 900, pgid: 900, uid: 1, startIdentity: 'test-process',
-    command: 'node --test test/example.test.ts', cwd: f.directory }];
+  const fact = (pid: number, ppid: number, command: string) => ({ pid, ppid, pgid: 900, uid: 1, startIdentity: 'test-process', command, cwd: f.directory });
+  f.adapter.hostProcessListing = async () => [fact(900, 1, 'provider'),
+    fact(901, 900, 'node /plugin/mcp-report.mjs /tickets/mcp-initial.json'),
+    fact(902, 900, 'node --test test/example.test.ts')];
   await f.engine.wake();
   const current = f.store.task(f.task.id);
   assert.equal(current.resolution.incident, null);
   assert.equal(current.resolution.attention, false);
   assert.match(current.reason, /running a long command.*task workspace process tree/);
+});
+
+test('a recorded running tool prevents a stale turn from being flagged', async t => {
+  const f = await fixture(t);
+  t.after(() => f.store.close());
+  f.setObservation(running({ updatedAt: minutesAgo(35), turnStartedAt: minutesAgo(36) }));
+  const entry: TimelineEntry = { timestamp: minutesAgo(2), item: { type: 'tool_call', callId: 'call-1', status: 'running', name: 'Bash', detail: { type: 'shell', command: 'long test' } } };
+  f.setTimelines([[entry], [entry]]);
+  await f.engine.wake();
+  const current = f.store.task(f.task.id);
+  assert.equal(current.resolution.incident, null);
+  assert.equal(current.resolution.recovery, null);
+  assert.equal(current.resolution.stop?.reason === 'run_stalled', false);
 });
 
 test('a live queued or running validation process does not mask a stale worker turn', async t => {
