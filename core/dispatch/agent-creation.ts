@@ -55,6 +55,11 @@ function launchEnvironment(owner: CreationOwner, task: Task, runId: string, temp
   return mergeAdmissionLaunchEnv({ ...sharedCargoEnvironment(), ...runTemporaryEnvironment(runId, owner.scratchPlacement(task), temporaryDirectory), ...callbackEnvironment(owner, task, runId), NUCLEUS_TICKET: ticket }, owner.admissionLaunchEnv);
 }
 
+/** Prepare the recorded leaf for hosts that cannot pass a per-thread TMPDIR to their agent. */
+function prepareRunScratch(owner: CreationOwner, task: Task, runId: string, temporaryDirectory: string | undefined): void {
+  if (owner.prepareRunScratch) runTemporaryEnvironment(runId, owner.scratchPlacement(task), temporaryDirectory);
+}
+
 /**
  * A worker's agent: the caller's prompts, the run's stable identities and the
  * binding it reports through. `attempt` is read by the host at each create, so
@@ -68,11 +73,11 @@ export function workerAgentSpec(owner: () => CreationOwner, task: Task, token: s
     workspaceId: task.workspaceId!, profile: task.profile!, title: task.title, taskNumber: task.number, mcpBindingPath,
     attempt: (mcp, retry): HostAgentAttempt => {
       const current = owner();
-      // A host that takes no per-thread environment (T3) gets an empty one and
-      // manages its own scratch (task 1105): the launch environment, with its
-      // recorded-directory validation and creation, is computed only when the
-      // host will use it (the task 1126 hoist computed it either way).
+      // Hosts that cannot inject a per-thread environment get an empty one. T3
+      // manages its own scratch; BB opts into preparing Nucleus's recorded leaf
+      // below before lane documents or the thread attach are created.
       const environment = current.perThreadEnvironment === false ? {} : launchEnvironment(current, task, runId, task.temporaryDirectory, ticket);
+      if (current.perThreadEnvironment === false) prepareRunScratch(current, task, runId, task.temporaryDirectory);
       materializeLaneDocuments(task.temporaryDirectory, task.laneDocumentPins);
       return {
         requestId: retry ? `ns-agent-${runId}-socket` : `ns-agent-${runId}`,
@@ -97,10 +102,10 @@ export function runAgentSpec(owner: () => CreationOwner, task: Task, run: Run, t
     workspaceId: run.workspaceId, profile, title: `${run.role}: ${task.title}`, taskNumber: task.number, mcpBindingPath, guard,
     attempt: (mcp, retry): HostAgentAttempt => {
       const current = owner();
-      // Same task 1105 shape as the worker spec: no per-thread environment, no
-      // launch-environment computation; lane docs materialize at the recorded
-      // run directory the host manages.
+      // Same no-environment policy as the worker spec. BB prepares its recorded
+      // scratch below; lane documents materialize only after that leaf exists.
       const environment = current.perThreadEnvironment === false ? {} : launchEnvironment(current, task, run.id, run.temporaryDirectory, ticket);
+      if (current.perThreadEnvironment === false) prepareRunScratch(current, task, run.id, run.temporaryDirectory);
       const effectiveRun = { ...run, temporaryDirectory: current.perThreadEnvironment === false ? run.temporaryDirectory : environment.TMPDIR };
       materializeLaneDocuments(effectiveRun.temporaryDirectory, task.laneDocumentPins);
       return {

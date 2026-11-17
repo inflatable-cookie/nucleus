@@ -22,6 +22,7 @@
  */
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { serviceStateSchema } from "../../../shared/schema/service";
 
 /** One catalogue name, as Contract 007 bounds it (`queue.ui-snapshot`, `bb.sidebar-groups`). */
 const CATALOGUE_METHOD = /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/;
@@ -41,7 +42,7 @@ const METHOD_ALIASES: Readonly<Record<string, string>> = { plans: "queue.plans" 
 export const BOARD_CALL_TIMEOUT_MS = 60_000;
 
 export const boardCallInputSchema = z.object({
-  method: z.string().min(1).max(120).regex(CATALOGUE_METHOD),
+  method: z.string().min(1).max(120).refine(method => CATALOGUE_METHOD.test(METHOD_ALIASES[method] ?? method)),
   input: z.unknown(),
 }).strict();
 
@@ -62,6 +63,36 @@ export function boardCallRefusal(method: string): string | null {
 /** One bounded service request on the retained connection. */
 export interface BoardBridgeSource {
   request(method: string, input: unknown, timeoutMs?: number, via?: "bb"): Promise<unknown>;
+  /** `queue.service-state` is a bridge catalogue read, answered from the same health endpoint as Paseo. */
+  serviceState?(): Promise<unknown>;
+}
+
+/** Adapt the service health control read into the board's bridge-owned typed state contract. */
+export async function readBoardServiceState(source: BoardBridgeSource, pluginBuildId: string | null): Promise<unknown> {
+  let health: Record<string, unknown> | null = null;
+  let state: "running" | "unhealthy" = "running";
+  let detail = "";
+  try {
+    const response = await source.request("service.health", {}, BOARD_CALL_TIMEOUT_MS, "bb");
+    if (!response || typeof response !== "object" || Array.isArray(response)) throw new Error("The Nucleus service returned an invalid health response");
+    health = response as Record<string, unknown>;
+  } catch (error) {
+    state = "unhealthy";
+    detail = error instanceof Error ? error.message : String(error);
+  }
+  const bootstrap = health?.bootstrap && typeof health.bootstrap === "object" ? health.bootstrap as Record<string, unknown> : {};
+  return serviceStateSchema.parse({
+    state, detail,
+    buildId: typeof health?.buildId === "string" ? health.buildId : null,
+    pid: typeof health?.pid === "number" ? health.pid : null,
+    startedAt: typeof health?.startedAt === "string" ? health.startedAt : null,
+    ready: typeof health?.ready === "boolean" ? health.ready : null,
+    paused: typeof health?.paused === "boolean" ? health.paused : null,
+    hostId: typeof health?.hostId === "string" ? health.hostId : null,
+    error: state === "running" ? typeof health?.startError === "string" ? health.startError : "" : detail,
+    bootstrap: { pending: bootstrap.pending === true, startedAt: typeof bootstrap.startedAt === "string" ? bootstrap.startedAt : null },
+    pluginBuildId, roll: null,
+  });
 }
 
 /**
@@ -77,6 +108,10 @@ export function createBoardBridge(source: () => BoardBridgeSource | null) {
       const method = METHOD_ALIASES[parsed.method] ?? parsed.method;
       const client = source();
       if (!client) throw new Error("The Nucleus service channel is not connected");
+      if (method === "queue.service-state") {
+        if (!client.serviceState) throw new Error("The Nucleus service state is unavailable through the BB bridge");
+        return await client.serviceState();
+      }
       return await client.request(method, parsed.input ?? null, BOARD_CALL_TIMEOUT_MS, "bb");
     },
   };

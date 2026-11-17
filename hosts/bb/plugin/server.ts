@@ -24,8 +24,10 @@ import {
   boardContract,
   createBoardBridge,
   forwardLifecycleHint,
+  readBoardServiceState,
   withTerminalCommand,
   type BbLifecycleEvent,
+  type BoardBridgeSource,
   type CliRegistration,
   type TerminalCreateSdk,
 } from "./board-bridge";
@@ -170,7 +172,15 @@ export default async function plugin(bb: BbPluginApi) {
   });
   // Phase 6: the board, its Settings and its pills reach the service catalogue
   // through this one forwarding method, on the same retained connection.
-  bb.rpc.register(boardContract, createBoardBridge(() => channelClient), {
+  const boardSource = (): BoardBridgeSource | null => {
+    const client = channelClient;
+    if (!client) return null;
+    return {
+      request: (method, input, timeoutMs, via) => client.request(method, input, timeoutMs, via),
+      serviceState: () => readBoardServiceState(client, nucleusBuild),
+    };
+  };
+  bb.rpc.register(boardContract, createBoardBridge(boardSource), {
     experimental_description:
       "The Nucleus board's catalogue call: forwards one service catalogue method over the plugin's retained connection.",
   });

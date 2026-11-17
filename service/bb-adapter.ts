@@ -59,9 +59,10 @@ export function composeBbAdapter(input: {
     readonly supportsCoordinatorRecovery = true;
     readonly admissionLaunchEnv = {};
     readonly testPlacement = undefined;
+    scratchNamespaceFor = (task: Task) => store.scratchNamespaceFor(task);
     isConnected() { return input.connected(); }
     capabilities() { return { reportingViaMcp: false, supportsCoordinatorRecovery: true, nativeDecisions: false, lifecycleDispatch: true, perThreadEnvironment: false, repositorySharedWorkspaces: false }; }
-    creationOwner() { return { ...super.creationOwner(), perThreadEnvironment: false as const }; }
+    creationOwner() { return { ...super.creationOwner(), perThreadEnvironment: false as const, prepareRunScratch: true }; }
     nativeAgentCreate(spec: HostAgentSpec, mcp: boolean) {
       if (!input.dataDir || mcp) throw new ProvenPreSendRefusalError('BB dispatch requires helper reporting');
       return threads.createAgent(spec);

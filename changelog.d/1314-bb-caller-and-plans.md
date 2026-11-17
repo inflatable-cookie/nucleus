@@ -1,1 +1,1 @@
-The BB board now loads Plans through the dotted `queue.plans` RPC, and BB threads can use their verified `BB_THREAD_ID` as the CLI caller for planning commands and submission ingress.
+The BB board now loads Plans through the dotted `queue.plans` RPC, and BB threads can use their verified `BB_THREAD_ID` as the CLI caller for planning commands and submission ingress. The board's bridge also serves the typed service-state read. BB run launches create the recorded owner-only scratch directory first and use the repository's configured scratch namespace.

@@ -22,6 +22,7 @@ import {
   boardCallRefusal,
   createBoardBridge,
   forwardLifecycleHint,
+  readBoardServiceState,
   runTerminalCommand,
 } from '../hosts/bb/plugin/board-bridge';
 import { lifecycleSignalSchema, lifecycleSignalKinds } from '../shared/lifecycle-signal';
@@ -102,11 +103,15 @@ function backend(): Backend {
 
 test('the board call forwards one catalogue method with the BB surface, and refuses what is not a board call', async () => {
   const sent: Array<{ method: string; input: unknown; timeoutMs?: number; via?: string }> = [];
+  let stateReads = 0;
   const bridge = createBoardBridge(() => ({
     request: async (method, input, timeoutMs, via) => { sent.push({ method, input, timeoutMs, via }); return { answered: method }; },
+    serviceState: async () => { stateReads++; return { state: 'running', ready: true }; },
   }));
   assert.deepEqual(await bridge.boardCall({ method: 'queue.ui-snapshot', input: { revision: 3 } }), { answered: 'queue.ui-snapshot' });
   assert.deepEqual(await bridge.boardCall({ method: 'plans', input: {} }), { answered: 'queue.plans' }, 'the shared board alias resolves to the dotted catalogue method');
+  assert.deepEqual(await bridge.boardCall({ method: 'queue.service-state', input: {} }), { state: 'running', ready: true }, 'the bridge-owned service-state method is answered locally over BB');
+  assert.equal(stateReads, 1);
   assert.deepEqual(sent, [
     { method: 'queue.ui-snapshot', input: { revision: 3 }, timeoutMs: BOARD_CALL_TIMEOUT_MS, via: 'bb' },
     { method: 'queue.plans', input: {}, timeoutMs: BOARD_CALL_TIMEOUT_MS, via: 'bb' },
@@ -119,6 +124,27 @@ test('the board call forwards one catalogue method with the BB surface, and refu
   assert.equal(sent.length, 2, 'a refused call never reaches the service');
   const offline = createBoardBridge(() => null);
   await assert.rejects(offline.boardCall({ method: 'queue.ui-snapshot', input: {} }), /not connected/u);
+});
+
+test('the BB bridge adapts service health to the bridge-owned service-state contract', async () => {
+  const state = await readBoardServiceState({ request: async (method, input, timeoutMs, via) => {
+    assert.equal(method, 'service.health');
+    assert.deepEqual(input, {});
+    assert.equal(timeoutMs, BOARD_CALL_TIMEOUT_MS);
+    assert.equal(via, 'bb');
+    return { buildId: 'service-build', pid: 12, startedAt: '2026-11-17T12:00:00.000Z', ready: false, paused: false, hostId: 'bb-host',
+      startError: 'warming up', bootstrap: { pending: true, startedAt: '2026-11-17T12:01:00.000Z' } };
+  } }, 'plugin-build');
+  assert.deepEqual(state, { state: 'running', detail: '', buildId: 'service-build', pid: 12, startedAt: '2026-11-17T12:00:00.000Z', ready: false,
+    paused: false, hostId: 'bb-host', error: 'warming up', bootstrap: { pending: true, startedAt: '2026-11-17T12:01:00.000Z' }, pluginBuildId: 'plugin-build', roll: null });
+});
+
+test('the BB bridge reports an unavailable health request as unhealthy service state', async () => {
+  const state = await readBoardServiceState({ request: async () => { throw new Error('service channel closed'); } }, 'plugin-build') as Record<string, unknown>;
+  assert.equal(state.state, 'unhealthy');
+  assert.equal(state.detail, 'service channel closed');
+  assert.equal(state.error, 'service channel closed');
+  assert.equal(state.pluginBuildId, 'plugin-build');
 });
 
 test("BB's thread events become the existing bounded lifecycle hints, and nothing else", async () => {

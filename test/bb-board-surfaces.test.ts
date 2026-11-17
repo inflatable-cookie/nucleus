@@ -27,7 +27,7 @@ import { Store } from '../core/store/store';
 import { taskWaitStateContext } from '../core/recovery/wait-context';
 import { visibleTaskSummaries } from '../shared/task-view';
 import { submissionSchema, uiBoardSchema, decisionViewSchema, type DecisionView, type TaskSummary } from '../shared/contracts';
-import { RPC_CATALOGUE } from '../shared/rpc-catalogue';
+import { ALL_METHOD_NAMES, RPC_CATALOGUE } from '../shared/rpc-catalogue';
 import { formatAgentId } from '../shared/agent-identity';
 import { createBoardBridge } from '../hosts/bb/plugin/board-bridge';
 import { createTaskDetailCache } from '../core/telemetry/task-detail';
@@ -129,7 +129,11 @@ function service(script: { tasks?: () => TaskSummary[]; decisions?: () => Decisi
       }
     },
   };
-  const bridge = createBoardBridge(() => channel);
+  const bridge = createBoardBridge(() => ({ ...channel, serviceState: async () => {
+    calls.push({ method: 'queue.service-state', input: {}, via: 'bb' });
+    return { state: 'running', detail: '', buildId: 'synthetic-build', pid: 1, startedAt: AT, ready: true, paused: false, hostId,
+      error: '', bootstrap: { pending: false, startedAt: null }, pluginBuildId: null, roll: null };
+  } }));
   return { calls, bridge };
 }
 
@@ -192,7 +196,7 @@ test('the board renders in its rail panel and every call reaches the service as 
   assert.ok(tree.text().includes('Elsewhere project task'));
   assert.ok(calls.some(call => call.method === 'queue.ui-snapshot'), 'the board read reached the service');
   assert.ok(calls.some(call => call.method === 'queue.plans'), 'the Planning view plan read reached the service through the dotted catalogue method');
-  assert.ok(calls.every(call => RPC_CATALOGUE.some(entry => entry.name === call.method)), 'every board method is a catalogue method');
+  assert.ok(calls.every(call => ALL_METHOD_NAMES.includes(call.method)), `every board method is in the service or bridge catalogue: ${calls.map(call => call.method).filter(method => !ALL_METHOD_NAMES.includes(method)).join(', ')}`);
   assert.ok(calls.length > 0 && calls.every(call => call.via === 'bb'), 'every forwarded call carries the BB surface');
 });
 

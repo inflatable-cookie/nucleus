@@ -248,6 +248,8 @@ export interface CreationOwner {
    * attempt carries an empty environment and the prompt names the helper and ticket.
    */
   readonly perThreadEnvironment?: boolean;
+  /** Some hosts cannot inject TMPDIR but still require Nucleus to create the recorded run scratch before launch. */
+  readonly prepareRunScratch?: boolean;
   scratchPlacement(task: Task): RunScratchPlacement;
 }
 

@@ -174,6 +174,12 @@ The first role run attaches the worktree. `createRun(task, run, ticket)` spawns 
 on the handle before the run counts as created. Later attaches by the same path or by the recorded
 environment ID resolve to the same environment, so every role of one task shares one environment.
 
+Before any BB run attaches, Nucleus creates that run's recorded temporary directory with owner-only
+permissions on the configured scratch volume. This includes workers, reviewers, coordinators and
+recovery runs. BB cannot inject a per-thread environment, so the directory is prepared without
+passing `TMPDIR` to the thread. Its namespace comes from `store.scratchNamespaceFor(task)`, the same
+repository setting used by Paseo, instead of falling back to the global `nucleus` namespace.
+
 `workspaceAvailable` and `inspectWorkspaceCreation` read the handle and the project, never a spawn:
 before the first attach the handle is available because the recorded directory and project are, and
 after it the recorded environment must also be listed and not destroyed. `archiveTaskWorkspace` marks
@@ -1208,7 +1214,9 @@ The shared board's historical `plans` method name is translated by the BB bridge
 `queue.plans` catalogue method. BB threads may also call the CLI through `BB_THREAD_ID`; the service
 verifies that exact thread on one online BB host before recording its host-qualified identity. An
 online BB host is valid for authenticated submission ingress, while work-host availability remains
-a separate dispatch gate.
+a separate dispatch gate. The bridge forwards service-catalogue methods over the retained BB
+connection and answers the bridge-catalogue `queue.service-state` read from `service.health`, matching
+the typed state shape used by Paseo.
 
 **Outcome.** Operator parity in BB: the shared board in a `navPanel` with its attention badge in the
 left rail, the same board per project in a fixed thread tab and a sub-path route reachable from the
@@ -1222,8 +1230,9 @@ only if phase 0 proved it appears where an operator would look.
 **Acceptance.**
 
 - UI tests through the existing board harness with the BB shell bound: the board renders, its calls
-  reach the service, Settings opens, a decision pill appears and resolves, a native question pill
-  shows and answers, the pending-interaction slot submits and cancels.
+  reach the service or the bridge-owned service-state reader, Settings opens, a decision pill appears
+  and resolves, a native question pill shows and answers, the pending-interaction slot submits and
+  cancels.
 - The rail badge counts the tasks that need the operator from a synthetic snapshot, carries its tone
   and label, and drains as they settle.
 - The per-project tab is visible on a Nucleus project's planner and named-agent threads and nowhere
@@ -1247,7 +1256,9 @@ connection, sidebar read and board signal phases 0–5 landed:
   (`hosts/bb/plugin/board-bridge.ts`): the BB board shell's `useRpc` sends the exact catalogue
   method and input, the backend forwards it over the retained host-executor connection with
   `via: "bb"`, and the service validates both ends against the shared contracts. It refuses
-  `service.*`, `host.*` and `task.register`, and fails closed with no channel. `via: "bb"` is the
+  `service.*`, `host.*` and `task.register`, and fails closed with no channel. Its bridge-catalogue
+  `queue.service-state` method reads `service.health` over the same authenticated connection and
+  projects the typed state response. `via: "bb"` is the
   BB Settings surface for the Settings-only capacity rule: the server accepts it only on a
   connection that holds the host-executor role ([service boundary](../contracts/service-boundary.md#settings-only-capacity-writes-tom-2026-10-25)),
   and a capacity change records `surface: "bb"`.
@@ -1303,8 +1314,9 @@ connection, sidebar read and board signal phases 0–5 landed:
   terminal retiring with its planner thread (phase 0's correction).
 
 Tests: `test/bb-board-surfaces.test.ts` runs the board through the existing harness with the BB
-shell bound and the real `boardCall` handler — the board renders and every call reaches the service
-as `via: "bb"`, Settings opens (route, header button, section), a decision pill appears and
+shell bound and the real `boardCall` handler — the board renders and every service-catalogue call
+reaches the service as `via: "bb"`, while `queue.service-state` reaches the bridge reader; Settings
+opens (route, header button, section), a decision pill appears and
 resolves, a native question pill shows and answers, the pending-interaction renderer submits and
 cancels, the per-project tab and route show a
 multi-repository project's every repository and nothing else, and the `Task` tab shows the real
