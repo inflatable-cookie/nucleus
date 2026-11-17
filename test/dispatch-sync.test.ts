@@ -143,7 +143,7 @@ test('a failed reviewer dependency refresh records its error and starts no agent
     await f.engine.resolution.advance(f.store.task(f.task.id));
     const task = f.store.task(f.task.id);
     assert.match(task.reason, /Task node_modules setup failed with npm ci/);
-    assert.equal(task.phase, 'needs_attention');
+    assert.equal(task.phase, 'awaiting_review');
     assert.equal(f.reviewerStarts(), 0, 'the reviewer must not start while its install is stale');
     assert.equal(f.store.runs(task.id).filter(run => run.role === 'reviewer').length, 0, 'dependency setup fails before run reservation');
     const gitDir = await git(f.taskDirectory, 'rev-parse', '--path-format=absolute', '--git-dir');

@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
+import { lstatSync } from "node:fs";
 import { lstat, mkdir, readFile, readlink, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -97,6 +98,9 @@ async function ensureLocked(taskDirectory: string, registeredCheckout: string, w
 }
 
 async function lockFingerprint(taskDirectory: string): Promise<string | null> {
+  // Most repositories have no npm lockfile. Avoid yielding through several
+  // asynchronous reads on their launch path when there is no npm install to do.
+  if (!hasNpmLockfile(taskDirectory)) return null;
   const packageJson = await optionalRead(join(taskDirectory, "package.json"));
   const packageLock = await optionalRead(join(taskDirectory, "package-lock.json"));
   const shrinkwrap = await optionalRead(join(taskDirectory, "npm-shrinkwrap.json"));
@@ -109,6 +113,14 @@ async function lockFingerprint(taskDirectory: string): Promise<string | null> {
     hash.update("\0");
   }
   return hash.digest("hex");
+}
+
+function hasNpmLockfile(taskDirectory: string): boolean {
+  for (const name of ["package-lock.json", "npm-shrinkwrap.json"]) {
+    try { lstatSync(join(taskDirectory, name)); return true; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  }
+  return false;
 }
 
 async function optionalRead(path: string): Promise<Buffer | null> {
