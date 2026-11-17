@@ -317,11 +317,12 @@ export async function runHostRunSupervisorMain(argv: string[] = process.argv.sli
       directChildWait: true,
       ...(plan.stopMode ? { stopMode: plan.stopMode } : {}),
       // Spec 064 P4 (amended): the strict capture owns this step's result, and its
-      // EOF wait is bounded by the first-effect target instead of lasting until a
-      // pipe held open outside the group closes.
+      // EOF wait is bounded by the attempt's own first-effect deadline — measured
+      // from the origin, so only the remaining target is available — instead of
+      // lasting until a pipe held open outside the group closes.
       ...(qualification ? {
         qualificationCapture: true,
-        eofWaitBoundMs: Math.max(1, plan.firstEffectClock!.targetMs),
+        eofWaitDeadlineMs: plan.firstEffectClock!.originTick + plan.firstEffectClock!.targetMs,
         onStreamEof: (stream: "stdout" | "stderr") => output.markEof(stream),
         onStreamDrained: (stream: "stdout" | "stderr") => output.markDrained(stream),
       } : {}),

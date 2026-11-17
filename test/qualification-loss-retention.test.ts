@@ -238,12 +238,30 @@ test("a roll during a proof spends it unknown/SPENT/retained, and a later result
   assert.match(String(proofResultRefusal(completion, run, lateReference)), /spent/);
 
   // Retention keeps the raw bytes and the sidecars while anything is unresolved.
+  // The store's failure-row calls are watched: an unresolved attempt keeps its row.
+  const storeCalls: string[] = [];
+  Object.assign(f.scheduler.store, {
+    deleteHostRunOutputFailure: () => { storeCalls.push("delete"); },
+    putHostRunOutputFailure: () => { storeCalls.push("put"); },
+  });
   const retention = new HostRunRetention({ scheduler: f.scheduler as never, nowMs: now, outputRetentionMs: 1, stateDir });
   f.run.settledAt = new Date(now() - 10_000).toISOString();
   const retained = retention.settleRetainedOutput(f.run);
   assert.equal(retained.outcome, "retained_unresolved");
   assert.match((retained as { reason: string }).reason, /is kept/);
   assert.equal(retention.attemptRetention(f.run, null, now()), "", "retaining unresolved evidence is not a retention failure");
+  // A run that already carries a recorded failure row keeps it: nothing about this
+  // attempt is resolved, so the row stays exactly as visible as it was.
+  const recorded = {
+    runId, epoch: 9, firstSeen: new Date(now() - 20_000).toISOString(), lastSeen: new Date(now() - 5_000).toISOString(),
+    attempts: 2, nextRetryAt: new Date(now() - 1_000).toISOString(),
+    reason: "Retained output is partial; expiring one stream would lose the other's offset",
+  };
+  assert.equal(retention.attemptRetention(f.run, recorded, now()), "",
+    "an unresolved attempt resolves nothing, so the pass reports no error");
+  assert.deepEqual(storeCalls, [], "the recorded failure row was neither deleted nor rewritten");
+  assert.equal(existsSync(join(stateDir, "runs", runId, QUALIFICATION_RAW_LEAF)), true,
+    "the artifact is still there after the sweep looked at it");
   const paths = hostRunSupervisorPaths(stateDir, runId);
   assert.equal(existsSync(join(stateDir, "runs", runId, QUALIFICATION_RAW_LEAF)), true, "the raw artifact survives the expiry window");
   assert.equal(existsSync(paths.qualificationRawPath), true);

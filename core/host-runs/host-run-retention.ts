@@ -225,11 +225,11 @@ export class HostRunRetention {
     try { settlement = this.settleRetainedOutput(run); }
     catch (error) { settlement = { outcome: "unavailable", reason: `Retained output unavailable: ${errorText(error)}` }; }
     if (settlement.outcome === "retained_unresolved") {
-      // Spec 064 P7: a resolved record clears the run's own entry; an unresolved one
-      // keeps it visible and the evidence in place.
-      if (!recorded) return "";
-      try { this.context.scheduler.store.deleteHostRunOutputFailure(run.id); }
-      catch (error) { return `the retained qualification evidence for ${run.id} could not be recorded as resolved: ${errorText(error)}`; }
+      // Spec 064 P7: an unresolved qualification attempt keeps its raw bytes, its
+      // sidecars and its charged residuals, and it keeps its own recorded failure
+      // row too. Nothing here is resolved, so nothing is deleted and no row is
+      // rewritten: the entry stays exactly as visible as it was, and only the
+      // attempt's own later resolution may clear it.
       return "";
     }
     if (settlement.outcome === "expired" || settlement.outcome === "nothing_retained") {

@@ -16,8 +16,8 @@
  * never claims an all-physical peak, so the physical peak stays literally
  * unknown and is disclosed rather than guaranteed.
  */
-import { lstatSync, readdirSync, statfsSync } from "node:fs";
-import { join } from "node:path";
+import { lstatSync, readdirSync, realpathSync, statfsSync } from "node:fs";
+import { join, sep } from "node:path";
 import type {
   HostRunQualificationLedger,
   HostRunQualificationLedgerEntry,
@@ -35,6 +35,9 @@ export type QualificationLedgerScope = HostRunQualificationLedgerEntry["scope"];
 /**
  * One footprint to charge. `attributionProven: false` charges the whole shared
  * footprint (the DB/WAL/journal case) instead of guessing a per-run share.
+ * `excludedRoots` are subtrees that another entry in the same ledger charges on
+ * their own, so a shared parent and its named child are each charged exactly
+ * once instead of being double-counted twice.
  */
 export interface QualificationFootprint {
   scope: QualificationLedgerScope;
@@ -42,6 +45,7 @@ export interface QualificationFootprint {
   root: string;
   attributionProven: boolean;
   missingCoverage?: readonly string[];
+  excludedRoots?: readonly string[];
 }
 
 /** One P3 stop request: the direct command, never a group, escapee or KILL. */
@@ -66,8 +70,16 @@ const tick = (nowMs: number) => Math.floor(nowMs);
  * and is never silently read as zero for one that should exist; a refused read is
  * unknown.
  */
-export function logicalTreeBytes(root: string): { state: "measured"; bytes: number } | { state: "absent" } | { state: "unknown"; reason: string } {
+export function logicalTreeBytes(
+  root: string,
+  excludedRoots: readonly string[] = [],
+): { state: "measured"; bytes: number } | { state: "absent" } | { state: "unknown"; reason: string } {
+  // A path is excluded when it is one of the named roots or lives under one: the
+  // excluded subtree is charged by the entry that names it, and nowhere else.
+  const excluded = excludedRoots.map(exclude => (exclude.length > 1 && exclude.endsWith(sep) ? exclude.slice(0, -1) : exclude));
+  const isExcluded = (path: string): boolean => excluded.some(exclude => path === exclude || path.startsWith(`${exclude}${sep}`));
   const total = (path: string): number => {
+    if (isExcluded(path)) return 0;
     const info = lstatSync(path);
     if (info.isSymbolicLink()) return 0;
     if (info.isFile()) return info.size;
@@ -95,9 +107,11 @@ export function qualificationLedgerEntry(
     reserve: { observedFreeBytes: number | null } },
   previous: HostRunQualificationLedgerEntry | null = null,
 ): HostRunQualificationLedgerEntry {
-  const measured = logicalTreeBytes(footprint.root);
+  const measured = logicalTreeBytes(footprint.root, footprint.excludedRoots ?? []);
   const chargedBytes = measured.state === "measured" ? measured.bytes : measured.state === "absent" ? 0 : null;
   const missingCoverage = [...(footprint.missingCoverage ?? [])];
+  if (footprint.excludedRoots?.length)
+    missingCoverage.push(`the subtrees charged by their own entries are excluded here: ${footprint.excludedRoots.join(", ")}`);
   if (measured.state === "unknown") missingCoverage.push(`the ${footprint.label} footprint could not be read (${measured.reason})`);
   if (measured.state === "absent" && footprint.scope !== "retained_failure")
     missingCoverage.push(`the ${footprint.label} footprint is absent at ${footprint.root}; its absence is observed, not proven never-created`);
@@ -226,22 +240,32 @@ export function qualificationRunReserve(root: string): { observedFreeBytes: numb
   } catch { return { observedFreeBytes: null }; }
 }
 
+/** One canonical absolute path, so two spellings of a root are one root. */
+const canonicalRoot = (path: string): string => {
+  try { return realpathSync(path); } catch { return path; }
+};
+
 /**
  * The footprints S can charge itself: the one combined artifact it writes, and
- * the shared state root it publishes into. The Nucleus database, WAL and journal
- * are not visible to S and are charged by the service's own ledger, which S
- * discloses as missing coverage rather than counting them as zero.
+ * the shared state root it publishes into. The two are disjoint — the state root
+ * excludes this run's own directory, which the artifact entry charges — so the
+ * combined total never counts one byte twice. The Nucleus database, WAL and
+ * journal are not visible to S and are charged by the service's own ledger, which
+ * S discloses as missing coverage rather than counting them as zero.
  */
 export function qualificationRunFootprints(stateDir: string, runId: string): QualificationFootprint[] {
+  const root = canonicalRoot(stateDir);
+  const runRoot = join(root, "runs", runId);
   return [
     {
-      scope: "raw_capture", label: "combined raw artifact", root: join(stateDir, "runs", runId),
+      scope: "raw_capture", label: "combined raw artifact", root: runRoot,
       attributionProven: true,
       missingCoverage: ["the upstream pipe buffers are observed by the process owner, not counted here"],
     },
     {
-      scope: "publication", label: "host-run state publications", root: stateDir,
+      scope: "publication", label: "host-run state publications", root,
       attributionProven: false,
+      excludedRoots: [runRoot],
       missingCoverage: ["the Nucleus database, WAL and ordered journal are charged by the service's ledger"],
     },
   ];
@@ -255,15 +279,24 @@ export function qualificationRunFootprints(stateDir: string, runId: string): Qua
  * stay charged under the state root too.
  */
 export function qualificationServiceFootprints(input: { stateDir: string; databasePath: string | null; runId: string }): QualificationFootprint[] {
-  const database = input.databasePath ?? join(input.stateDir, "queue.sqlite");
+  const database = canonicalRoot(input.databasePath ?? join(input.stateDir, "queue.sqlite"));
+  const stateRoot = canonicalRoot(input.stateDir);
+  const runsRoot = join(stateRoot, "runs");
+  const runRoot = join(runsRoot, input.runId);
   const shared = ["attribution of one run's share is not proven, so the whole shared footprint is charged"];
+  // Every root here is disjoint from every other, so the combined sum counts each
+  // byte once: the three database files, the state root outside `runs/`, the other
+  // runs' directories, and this run's own directory with its one artifact.
   return [
     { scope: "database", label: "Nucleus database", root: database, attributionProven: false, missingCoverage: shared },
     { scope: "wal", label: "Nucleus WAL", root: `${database}-wal`, attributionProven: false, missingCoverage: shared },
     { scope: "journal", label: "ordered journal and scheduler records", root: `${database}-journal`, attributionProven: false, missingCoverage: shared },
-    { scope: "publication", label: "host-run publications", root: input.stateDir, attributionProven: false, missingCoverage: shared },
-    { scope: "copy", label: "evidence copies and retained failures", root: input.stateDir, attributionProven: false, missingCoverage: shared },
-    { scope: "raw_capture", label: "combined raw artifact", root: join(input.stateDir, "runs", input.runId), attributionProven: true, missingCoverage: [] },
+    // The state root excludes everything another entry charges: the runs subtree,
+    // the artifact's own run directory, and the database files when they live here.
+    { scope: "publication", label: "host-run publications", root: stateRoot, attributionProven: false,
+      excludedRoots: [runsRoot, database, `${database}-wal`, `${database}-journal`], missingCoverage: shared },
+    { scope: "copy", label: "evidence copies and retained failures", root: runsRoot, attributionProven: false, excludedRoots: [runRoot], missingCoverage: shared },
+    { scope: "raw_capture", label: "combined raw artifact", root: runRoot, attributionProven: true, missingCoverage: [] },
   ];
 }
 

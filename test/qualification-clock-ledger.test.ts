@@ -25,7 +25,8 @@ import {
 } from "../core/host-runs/qualification-clock";
 import {
   QUALIFICATION_STORAGE_TARGET_BYTES, QUALIFICATION_RESERVE_THRESHOLD_BYTES, QualificationLedgerMonitor,
-  logicalTreeBytes, qualificationLedger, qualificationLedgerEntry, type QualificationFootprint,
+  logicalTreeBytes, qualificationLedger, qualificationLedgerEntry, qualificationRunFootprints,
+  qualificationServiceFootprints, type QualificationFootprint,
 } from "../core/host-runs/qualification-ledger";
 import {
   missingQualificationReadiness, qualificationReadiness, qualificationReadinessRefusal,
@@ -335,6 +336,83 @@ test("an unknown required charge is never fit, and the reserve threshold is neve
   assert.equal(ledger.combined.chargedBytes, null, "an unknown required charge makes the combined total unknown");
   assert.equal(ledger.combined.breach, null, "an unknown total is never read as inside the target");
   assert.equal(qualificationLedger([{ ...unreadable, reserveSafety: { ...unreadable.reserveSafety, state: "below_threshold" } }], now()).reserve.state, "below_threshold");
+});
+
+test("the service and supervisor footprints are disjoint, so no byte is counted twice", t => {
+  const stateDir = scratch(t);
+  const runId = "run-overlap";
+  // A real state root: the run's own directory and artifact, another run's
+  // retained output, a launch-env publication, and the database beside it.
+  mkdirSync(join(stateDir, "runs", runId), { recursive: true });
+  mkdirSync(join(stateDir, "runs", "other-run"), { recursive: true });
+  mkdirSync(join(stateDir, "launch-env"), { recursive: true });
+  writeFileSync(join(stateDir, "runs", runId, "qualification.raw"), Buffer.alloc(512, 3));
+  writeFileSync(join(stateDir, "runs", runId, "qualification.observation.json"), Buffer.alloc(64, 4));
+  writeFileSync(join(stateDir, "runs", "other-run", "stdout"), Buffer.alloc(256, 5));
+  writeFileSync(join(stateDir, "launch-env", "one.json"), Buffer.alloc(32, 6));
+  writeFileSync(join(stateDir, "token.key"), Buffer.alloc(16, 7));
+  const database = join(stateDir, "queue.sqlite");
+  writeFileSync(database, Buffer.alloc(128, 8));
+  writeFileSync(`${database}-wal`, Buffer.alloc(48, 9));
+
+  const whole = logicalTreeBytes(stateDir);
+  assert.equal(whole.state, "measured");
+  const wholeBytes = whole.state === "measured" ? whole.bytes : 0;
+  // 512 + 64 + 256 + 32 + 16 + 128 + 48
+  assert.equal(wholeBytes, 1_056);
+
+  const serviceFootprints = qualificationServiceFootprints({ stateDir, databasePath: database, runId });
+  // A footprint may sit inside another only when the outer entry excludes it, so
+  // the same bytes are never walked by two entries. This is the rule that makes
+  // the combined sum honest.
+  const coveredBy = (outer: QualificationFootprint, path: string): boolean =>
+    (outer.excludedRoots ?? []).some(exclude => path === exclude || path.startsWith(`${exclude}/`));
+  for (const outer of serviceFootprints) for (const inner of serviceFootprints) {
+    if (outer === inner) continue;
+    const inside = inner.root === outer.root || inner.root.startsWith(`${outer.root}/`);
+    if (inside) assert.equal(coveredBy(outer, inner.root), true,
+      `${outer.label} must exclude ${inner.label} (${inner.root}) rather than charge it too`);
+  }
+  for (const footprint of serviceFootprints)
+    assert.equal(coveredBy(footprint, footprint.root), false, `${footprint.label} never excludes its own root`);
+  const service = new QualificationLedgerMonitor();
+  for (const footprint of serviceFootprints) {
+    service.record(qualificationLedgerEntry(footprint, {
+      nowMs: now(), provider: { kind: "root", id: stateDir }, owner: "nucleus service",
+      writers: "unknown", reserve: { observedFreeBytes: QUALIFICATION_RESERVE_THRESHOLD_BYTES * 2 },
+    }));
+  }
+  const serviceTotal = service.reading().ledger.combined.chargedBytes;
+  // The state root is charged exactly once (publication outside runs/, the other
+  // runs' copies, and this run's artifact), and the database file and its WAL are
+  // charged once each beside it: the total is the state root plus those files.
+  assert.equal(serviceTotal, wholeBytes, "the combined charge counts every byte exactly once");
+  assert.equal(service.reading().ledger.entries.find(entry => entry.scope === "publication")!.chargedBytes, 48,
+    "the publication entry excludes the runs subtree another entry charges");
+  assert.equal(service.reading().ledger.entries.find(entry => entry.scope === "copy")!.chargedBytes, 256,
+    "the copies entry excludes this run's own directory");
+  assert.equal(service.reading().ledger.entries.find(entry => entry.scope === "raw_capture")!.chargedBytes, 576,
+    "this run's own directory, artifact and sidecars included, is charged once");
+
+  // The supervisor's own two entries cover the same root without overlapping.
+  const supervised = qualificationRunFootprints(stateDir, runId);
+  const supervisor = new QualificationLedgerMonitor();
+  for (const footprint of supervised) {
+    supervisor.record(qualificationLedgerEntry(footprint, {
+      nowMs: now(), provider: { kind: "root", id: stateDir }, owner: "host-run supervisor",
+      writers: ["host-run supervisor"], reserve: { observedFreeBytes: QUALIFICATION_RESERVE_THRESHOLD_BYTES * 2 },
+    }));
+  }
+  assert.equal(supervisor.reading().ledger.combined.chargedBytes, wholeBytes,
+    "S's artifact entry and its state-root entry are disjoint too");
+  assert.equal(supervised[1]!.excludedRoots?.[0], join(stateDir, "runs", runId),
+    "the state-root entry names the subtree the artifact entry charges");
+
+  // An excluded subtree is really skipped, and excluding an absent path is harmless.
+  const excluded = logicalTreeBytes(stateDir, [join(stateDir, "runs", runId)]);
+  assert.equal(excluded.state, "measured");
+  assert.equal(excluded.state === "measured" ? excluded.bytes : -1, wholeBytes - 576);
+  assert.equal(logicalTreeBytes(stateDir, [join(stateDir, "no-such-subtree")]).state, "measured");
 });
 
 test("the missing-input refusal names every required external input and never synthesizes one", () => {

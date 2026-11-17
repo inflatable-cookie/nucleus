@@ -9,14 +9,16 @@ needs.
   origin. A retry continues the earliest recorded origin instead of restarting the
   600 s target, an effect ordered before the origin refuses, and hitting the target
   is permanent.
-- **The storage ledger.** Entries charge the spec's inventory — database, WAL and
-  journal (the whole shared footprint where one run's share is unproven),
+- **The storage ledger.** Entries charge the spec's inventory — the database file
+  with its WAL and journal (each whole where one run's share is unproven),
   publications, the combined log including framing, every permitted copy and
   retained failure — with provider, owner, writers, method, sample tick, missing
-  coverage and reserve safety. The 512 MiB target and the 22 GiB reserve safety are
-  monitored; a breach latches the first fault and requests the direct-command stop,
-  and an unknown charge is never read as fit. The ledger is logical sampling and
-  claims no all-physical peak.
+  coverage and reserve safety. The entries are disjoint by construction: a shared
+  parent excludes the subtrees another entry charges, so the combined sum counts
+  every byte once. The 512 MiB target and the 22 GiB reserve safety are monitored;
+  a breach latches the first fault and requests the direct-command stop, and an
+  unknown charge is never read as fit. The ledger is logical sampling and claims
+  no all-physical peak.
 - **Typed evidence, one writer each.** The supervisor alone writes the
   observation (subject, clock, its own direct-child wait, the parent waits it
   holds, real per-stream terminals, the artifact's exact evidence, the ledger, and
@@ -31,8 +33,15 @@ needs.
 - **Spent retention and loss.** Losing the service→S parent, or a roll during a
   proof, spends the attempt as unknown/SPENT/retained even if the supervisor later
   writes a result; restart only reconciles. Retention keeps the raw bytes, the
-  sidecars and the charged residuals while anything is unresolved, and the ordinary
-  expiry marker is no deletion authority.
+  sidecars and the charged residuals while anything is unresolved — and an attempt
+  that already carries a recorded retention failure keeps that row too, because
+  nothing about it is resolved. The ordinary expiry marker is no deletion
+  authority for any of it.
+- **A bounded EOF wait.** The strict capture's wait for a pipe's real EOF is
+  bounded by the attempt's own first-effect deadline, so it can only spend what is
+  left of the target; when it expires the stream stays `unknown` and the step
+  settles, with no manufactured EOF, no group or escapee signal and no extra
+  cleanup time.
 - **Refuse before effects.** Real qualification proof mode refuses before any
   effect until Effigy's prepare custody and genuine admission, a common elapsed
   clock, every creator's own wait, the joined DECIDING census and the separate

@@ -153,12 +153,15 @@ export interface ExecutionRequest {
    */
   qualificationCapture?: boolean;
   /**
-   * Spec 064 P4 (amended): how long the strict capture may wait for a stream's
-   * real EOF once the command and its group are done. A pipe held open outside the
-   * group cannot keep the wait unbounded: when the bound expires the streams stay
-   * `unknown` and the step settles. Gated with `qualificationCapture`.
+   * Spec 064 P4 (amended): the absolute tick by which the strict capture's EOF
+   * wait must end. A pipe held open outside the group cannot keep the wait
+   * unbounded, and the wait never buys extra time: it is the attempt's own
+   * first-effect deadline (`originTick + targetMs`), measured from the origin, so
+   * the remaining target at the moment the wait begins is all that is left. When
+   * it expires the streams stay `unknown` and the step settles. Gated with
+   * `qualificationCapture`.
    */
-  eofWaitBoundMs?: number;
+  eofWaitDeadlineMs?: number;
   /**
    * Spec 064 P4: each stream's real pipe EOF, on that stream's own `end` event.
    * These are the strict capture's events: with `qualificationCapture` absent the
@@ -210,18 +213,24 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
     const streamEnded = { stdout: false, stderr: false };
     const streamsTerminal = (): boolean => streamEnded.stdout && streamEnded.stderr;
     let captureFault: Error | null = null;
-    /** Spec 064 P4 (amended): the bounded EOF wait for the strict capture. */
-    const eofWaitBoundMs = strictCapture && Number.isFinite(request.eofWaitBoundMs) ? Math.max(1, request.eofWaitBoundMs!) : null;
+    /**
+     * Spec 064 P4 (amended): the bounded EOF wait for the strict capture. The
+     * bound is the attempt's own first-effect deadline, so the wait can only spend
+     * what is left of the target — never a fresh span from when the wait starts. A
+     * deadline already past settles at once.
+     */
+    const eofWaitDeadlineMs = strictCapture && Number.isFinite(request.eofWaitDeadlineMs) ? request.eofWaitDeadlineMs! : null;
     let eofWaitTimer: NodeJS.Timeout | null = null;
     let eofWaitExpired = false;
     const boundEofWait = (): boolean => {
       if (eofWaitExpired) return true;
-      if (eofWaitBoundMs === null || eofWaitTimer) return false;
+      if (eofWaitDeadlineMs === null || eofWaitTimer) return false;
+      const remainingMs = Math.max(1, eofWaitDeadlineMs - Date.now());
       eofWaitTimer = setTimeout(() => {
         eofWaitExpired = true;
         outcome.eofWaitTimedOut = true;
         void finishWhenGroupIsEmpty();
-      }, eofWaitBoundMs);
+      }, remainingMs);
       eofWaitTimer.unref?.();
       return false;
     };

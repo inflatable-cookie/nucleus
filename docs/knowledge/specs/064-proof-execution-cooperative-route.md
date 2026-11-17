@@ -148,7 +148,8 @@ ladder, the image and VM resources and the Oxide holds stay untouched.
   attribution is unproven), publications, the combined log including framing,
   every permitted copy and every retained failure — each with its provider,
   root/device, owner and writers, method and units, sample tick, charge, missing
-  coverage and reserve safety. The combined 512 MiB target (384 + 128 planning,
+  coverage and reserve safety. The entries are disjoint by construction, so the
+  combined total counts every byte once. The combined 512 MiB target (384 + 128 planning,
   no free outside part) and the 22 GiB (20 + 2) reserve safety are monitored; a
   breach latches the first fault and requests P3's direct-command stop, and an
   unknown required charge is never read as fit. Logical sampling makes no
@@ -182,9 +183,11 @@ ladder, the image and VM resources and the Oxide holds stay untouched.
   actual accounting, fit and readiness. Today no supplier exists, so the mode
   refuses and says what is missing; authentication alone starts nothing.
 - **P4 amendments from the #1288 review.** Strict capture's EOF wait is bounded by
-  the first-effect target and settles unknown/SPENT/retained when real EOF or
-  DRAIN is not observed — never by manufacturing EOF, adding a group or escapee
-  signal or granting extra cleanup time. Qualification wiring has no
+  the attempt's own first-effect deadline (`originTick + targetMs`), so it spends
+  only the remaining target and never opens a fresh span from when the wait
+  starts; it settles unknown/SPENT/retained when real EOF or DRAIN is not observed,
+  never by manufacturing EOF, adding a group or escapee signal or granting extra
+  cleanup time. Qualification wiring has no
   `maxOutputBytes` cap and no overflow-triggered stop, and every capture buffer and
   artifact byte is charged in the ledger. The unbuffered `writeSync` writer
   records its flush as `not_applicable: unbuffered`. A partial frame makes the

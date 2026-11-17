@@ -152,14 +152,16 @@ bytes, so nothing here is a rollback break.
   Queue's records, rechecks `verifyProofSource`, and refuses before any submit
   write. A host-run token and a client-supplied caller grant nothing.
 - A qualification attempt's storage ledger charges its full inventory under a
-  provider, owner, writer, method and sample tick: the database, WAL and journal
-  (the whole shared footprint where one run's attribution is not proven),
+  provider, owner, writer, method and sample tick: the database file with its WAL
+  and rollback journal (each whole where one run's share is not attributable),
   publications, the combined log including framing, every permitted copy and
-  every retained failure. The monitored 512 MiB target and the 22 GiB reserve
-  safety are checked; a breach latches the first fault and requests the
-  direct-command stop, and an unknown required charge is never read as fit. The
-  ledger is logical sampling and claims no all-physical peak, which stays
-  literally unknown and is disclosed.
+  every retained failure. The entries are disjoint by construction — a shared
+  parent names the subtrees another entry charges, so no byte is counted twice —
+  and the combined sum is therefore a real total, not a double count. The
+  monitored 512 MiB target and the 22 GiB reserve safety are checked; a breach
+  latches the first fault and requests the direct-command stop, and an unknown
+  required charge is never read as fit. The ledger is logical sampling and claims
+  no all-physical peak, which stays literally unknown and is disclosed.
 - Three private evidence sidecars appear beside a qualification run, one writer
   each. The supervisor alone writes `qualification.observation.json` — subject,
   clock, its own direct-child wait, the parent waits it holds, each stream's real
@@ -180,9 +182,15 @@ bytes, so nothing here is a rollback break.
   even if S survives and writes a result; restart only reconciles that evidence.
   Retention keeps the raw bytes, the sidecars and the charged residuals while
   anything is unresolved, and the ordinary expiry marker is no deletion authority
-  for them. An executor's qualification-mode result is accepted only against the
-  exact recorded settlement digest, so a late or spent attempt can never report a
-  pass.
+  for them; an attempt that already carries a recorded retention failure keeps
+  that row too, because nothing about it is resolved. An executor's
+  qualification-mode result is accepted only against the exact recorded settlement
+  digest, so a late or spent attempt can never report a pass.
+- The strict capture's EOF wait is bounded by the attempt's own first-effect
+  deadline (`originTick + targetMs`), so the wait can only spend what is left of
+  the target and never opens a fresh span of its own; when it expires the streams
+  stay `unknown` and the step settles. Nothing manufactures EOF, signals a group
+  or an escapee, or grants extra cleanup time.
 - Contract 010's stop, retention and result records are unchanged for every
   ordinary run, including the group TERM/SIGKILL stages. Its capture is unchanged
   too: an ordinary run appends `stdout` and `stderr` with the token redacted and
