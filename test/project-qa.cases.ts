@@ -1476,9 +1476,16 @@ test('a live supervisor with a stale heartbeat is terminated only after unchange
   const firstStaleInspection = await observer.inspectSupervisor(f.store.qaRun(started.id)!);
   assert.equal(firstStaleInspection.kind, 'running', 'the first stale observation only records a candidate');
   assert.equal(supervisorLiveness(supervisor.pid, supervisor.identityToken).state, 'live');
-  await new Promise(resolve => setTimeout(resolve, 5_100));
-  const staleInspection = await observer.inspectSupervisor(f.store.qaRun(started.id)!);
-  assert.equal(staleInspection.kind, 'dead');
+  // Match the production watcher: after confirmation, keep inspecting until
+  // every identity-owned process group is proved stopped. A stop attempt may
+  // still return running while that proof settles.
+  let staleInspection: Awaited<ReturnType<typeof observer.inspectSupervisor>> = firstStaleInspection;
+  const stopDeadline = Date.now() + 20_000;
+  while (staleInspection.kind !== 'dead' && Date.now() < stopDeadline) {
+    await new Promise(resolve => setTimeout(resolve, 250));
+    staleInspection = await observer.inspectSupervisor(f.store.qaRun(started.id)!);
+  }
+  assert.equal(staleInspection.kind, 'dead', `the confirmed stale supervisor must settle after stop proof: ${JSON.stringify(staleInspection)}`);
   if (staleInspection.kind === 'dead') {
     assert.equal(staleInspection.staleStop, true);
     const diagnostic = JSON.parse(staleInspection.reason.split("Supervisor diagnostics: ")[1]);
