@@ -102,13 +102,14 @@ export class TransientResume {
     // The exhausted subscription group is out, not the whole provider: a
     // different eligible group on the same provider still qualifies, with a
     // different provider preferred so one provider's burst spreads.
+    const requested = requestedTier(task.complexity);
     const eligible = this.profiles().filter(candidate =>
       (!old || candidate.id !== old.id)
       && !workerProfileIsExcluded(task, candidate.id)
       && pool.some(entry => entry.profileId === candidate.id
         && (oldEntry?.capability ? entry.capability === oldEntry.capability : true)
         && entry.cost !== 'very_high'
-        && !requestOnly(entry, this.store.usageLevel(), requestedTier(routeTask.complexity))
+        && !requestOnly(entry, this.store.usageLevel(), requested)
         && (oldGroup ? entry.group !== oldGroup : true)));
     const routeTask = { ...task, preferredProfileId: '', requirePreferred: false, thinkingOptionId: '',
       profileRequests: { ...task.profileRequests, worker: undefined } };

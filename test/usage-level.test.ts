@@ -221,7 +221,7 @@ test('052: on Low, submitting a high or very-high complexity task opens a decisi
     assert.equal(usageGateBlocked(approved, 'low'), false, 'the approved task dispatches');
     // It runs one tier below its very-high complexity, and a revision after review changes climbs back to very_high.
     assert.equal(chooseProfile(approved, profiles, entries, {}, new Set(), 'worker', {}, 'low', undefined, true)?.profile.id, 'a-high');
-    assert.equal(chooseProfile(approved, profiles, entries, {}, new Set(), 'worker', {}, 'low', undefined, false)?.profile.id, 'z-very-high');
+    assert.equal(chooseProfile({ ...approved, phase: 'changes_requested' }, profiles, entries, {}, new Set(), 'worker', {}, 'low', undefined, false)?.profile.id, 'z-very-high');
     assert.ok(!chooseProfile(approved, profiles, entries, {}, new Set(), 'worker', {}, 'low', undefined, true)?.profile.id.includes('frontier'),
       'a frontier run above the requested tier still needs its own request');
   } finally { store.close(); }

@@ -122,7 +122,7 @@ export class StoreTaskFunnel {
         presentationDetached:null,presentationParent:null,
         creatorCompletionRecipients:[],completionSubscriptionOverrides:[],completionNotificationCohort:null,
         removedAt: null, finishedAt: null, queuePriority:0, prerequisiteWait: null, phase: "queued", reason: DISPATCH_WAIT_REASON,
-        held: false, mergeHold: false, budgetSince: null, holdOwner: null, holdReason: null, holdAt: null, holdGeneration: 0, holdBlocking: null, holdUntil: null, holds: {}, usageGate: null,
+        held: false, mergeHold: false, budgetSince: null, holdOwner: null, holdReason: null, holdAt: null, holdGeneration: 0, holdBlocking: null, holdUntil: null, holds: {},
         lastSubstantiveVersion: 1, handoffText, planningBase, proofExecutions: [], proofFiles: [], proofExecutionRetired: false, proofOnlyResult: null, proofReceiptAcceptance: null,
         workspaceId: null, directory: null, branch: input.proofOnly ? "" : `ns-${id}`, workspaceOwnership: "queue", agentId: null, runId: null,
         profile: null, profileGroup: null, failoverReason: "", replacementProfile:null, workerExclusions: [], resumePrNumber: null, retiredWorkers: [], workspaceIntent: false, agentIntent: false, lastAgentStatus: null,

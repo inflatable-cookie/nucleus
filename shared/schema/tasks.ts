@@ -135,7 +135,7 @@ export const taskSchema = submissionSchema.extend({
     holdAt: z.string().nullable().default(null),
     at: z.string(),
     note: z.string().max(400).default(""),
-  }).strict().nullable().default(null),
+  }).strict().nullable().optional(),
   // Brief-mode tasks only: every pinned version, oldest first, and the version each worker run was given.
   briefVersions: z.array(briefVersionSchema).default([]),
   briefRuns: z.array(z.object({ runId: z.string(), version: z.number().int().positive() }).strict()).default([]),
