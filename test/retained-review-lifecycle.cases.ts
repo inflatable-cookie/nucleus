@@ -106,7 +106,10 @@ function fixture(options: { toolTimeline?: boolean; workerless?: boolean; review
     verifyPrIdentity: async () => ({ url: 'https://github.com/example/repo/pull/7', head: store.task(submitted.id).prHead ?? head }),
     coveringEvidence: async (t: Task) => ({ head: t.prHead!, base: t.resolution.mergeBase ?? t.planningBase, wait: '' }),
     verifyCleanQueueWorktree: async () => {}, verifyReview: async () => {},
-    createRun: async (_t: Task, r: Run, token: string) => { createdRuns.push(r); store.setCredential(r.id, token);
+    createRun: async (_t: Task, r: Run, token: string, _context?: unknown, _ownerContext?: unknown,
+      guard?: { allowed(): Promise<boolean>; stillAllowed(): boolean }) => { createdRuns.push(r);
+      if (guard && !await guard.allowed()) throw new Error('review launch guard refused');
+      store.setCredential(r.id, token);
       const id = `agent-${r.id}`; states.set(id, { id, workspaceId: r.workspaceId, status: 'running', active: true, permissions: false, error: '' });
       return { id, workspaceId: r.workspaceId }; },
     sendRun: async (_t: Task, r: Run) => { createdRuns.push(r); },
@@ -188,7 +191,7 @@ const restartReviewer = (f: ReturnType<typeof fixture>, reason = 'Continue the r
 
 // ── move to=review preserves the reader ─────────────────────────────────────
 
-test('fresh review refuses an unproven reader binding without cancelling or replacing it', async () => {
+test('ordinary move refuses an unproven reader binding, while fresh move takes the selection path', async () => {
   for (const binding of ['agent', 'workspace'] as const) for (const busy of [false, true]) {
     const f = fixture(); try {
       await f.checkpoint('Reading the diff');
@@ -203,15 +206,17 @@ test('fresh review refuses an unproven reader binding without cancelling or repl
       const identity = reviewerIdentityAtHead(before, f.store, head);
       assert.equal(identity.kind, 'refused');
       assert.ok(!f.next().verbs.some(verb => verb.available && verb.args?.to === 'review'), 'next offers no replacement for a refused identity');
-      for (const fresh of [false, true]) {
-        await assert.rejects(f.control({ action: 'move', to: 'review', fresh, reason: 'Replace the stale review' }),
-          /cannot be proven|cannot prove/);
-        assert.deepEqual(f.current(), before);
-        assert.deepEqual(f.run(), run);
-        assert.deepEqual(f.stops, [], 'no live turn is cancelled');
-        assert.deepEqual(f.createdRuns, []);
-        assert.deepEqual(f.reviewerDeliveries, []);
-      }
+      await assert.rejects(f.control({ action: 'move', to: 'review', reason: 'Preserve the stale review' }),
+        /cannot be proven|cannot prove/);
+      assert.deepEqual(f.current(), before);
+      assert.deepEqual(f.run(), run);
+      assert.deepEqual(f.stops, [], 'ordinary move does not cancel an unproven reader');
+
+      const moved = await f.control({ action: 'move', to: 'review', fresh: true, reason: 'Replace the stale review' });
+      assert.equal(moved.phase, 'awaiting_review', 'fresh move does not inspect the continuation identity');
+      assert.equal(moved.resolution.reviewerAgentId, null);
+      assert.ok(f.run().released, 'the explicit fresh move settles the displaced reader');
+      assert.equal(f.stops.length, busy ? 1 : 0, 'only a live reader turn needs stopping');
     } finally { await f.close(); }
   }
 });
@@ -290,6 +295,32 @@ test('move to=review refuses an unsettled delivery and a reader that cannot cont
 });
 
 // ── a workerless review entry keeps its recorded external authors ───────────
+
+weighted(2)('an unassigned review-entry task starts a routed first reviewer and records its assignment', async () => {
+  const f = fixture({ workerless: true }); try {
+    const initial = f.run();
+    f.store.putRun({ ...initial, status: 'superseded', released: true, active: false });
+    const parked = f.store.update(f.submitted.id, { phase: 'awaiting_review', resolution: {
+      ...f.current().resolution, currentRunId: null, reviewerAgentId: null, reviewerProfile: null, review: null,
+    } });
+    assert.ok(parked.reviewEntry);
+    assert.equal(parked.resolution.reviewerAgentId, null);
+    assert.equal(parked.resolution.reviewerProfile, null);
+
+    await f.control({ action: 'route', role: 'reviewer', profileId: reviewer.id, reason: 'Use the owner-routed reviewer' });
+    await f.engine.wake();
+    await f.engine.quiesce();
+
+    const run = f.createdRuns.find(item => item.role === 'reviewer');
+    assert.ok(run, `${f.current().phase}: ${f.current().reason}`);
+    assert.equal(run.profile?.id, reviewer.id, 'first selection honours the owner route');
+    assert.equal(f.current().resolution.reviewerAgentId, `agent-${run.id}`, 'the newly created reviewer is recorded');
+    assert.equal(f.current().resolution.reviewerProfile?.id, reviewer.id);
+    assert.equal(f.current().resolution.currentRunId, run.id);
+    assert.equal(f.current().phase, 'reviewing');
+    assert.equal(f.reviewerDeliveries.length, 0, 'review entry creates the reviewer run directly');
+  } finally { await f.close(); }
+});
 
 /**
  * The imported shape: an externally authored PR whose Queue task never had an
