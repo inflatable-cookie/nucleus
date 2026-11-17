@@ -171,6 +171,8 @@ export async function t3Fake(t: TestContext, directory: string) {
   const snapshots: Value[] = [];
   /** The rows of every shell snapshot served, so a test can prove which shape it exercised. */
   const shells: Array<{ threads: string[]; archivedThreads: string[] }> = [];
+  /** Requests refused for a bearer other than this fake's own, as the server answers them. */
+  const unauthorized: Array<{ path: string }> = [];
   const projectRows: Value[] = [{ id: 'synthetic-project', title: 'Synthetic project', workspaceRoot: directory }];
   const archivedProjects = new Set<string>();
   const threads = new Map<string, Value>([['synthetic-probe', threadProjection('synthetic-probe', directory)]]);
@@ -288,7 +290,16 @@ export async function t3Fake(t: TestContext, directory: string) {
     socket.write(Buffer.concat([header, bytes]));
   };
   const server = createServer((request, response) => {
-    assert.equal(request.headers.authorization, 'Bearer synthetic-bearer');
+    // A stranger's request gets the nightly's own answer — 401 — instead of throwing:
+    // the installed server refuses an unknown bearer, and a fixture that threw from an
+    // HTTP handler could be crashed by any other client on the host, which fails the
+    // whole file with an uncaught exception that is not the test's (nucleus#1305 run).
+    if (request.headers.authorization !== 'Bearer synthetic-bearer') {
+      unauthorized.push({ path: request.url ?? '' });
+      response.writeHead(401, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ error: 'Unauthorized' }));
+      return;
+    }
     response.writeHead(200, { 'content-type': 'application/json' });
     const url = new URL(request.url!, 'http://localhost');
     if (url.pathname === '/api/auth/websocket-ticket/rpc') {
@@ -679,5 +690,5 @@ export async function t3Fake(t: TestContext, directory: string) {
   const injectRaw = (text: string) => { for (const write of injectors) write(text); };
   const fullSnapshotBytes = (threadId: string) => Buffer.byteLength(JSON.stringify({ _tag: 'Chunk', requestId: 'synthetic-request',
     values: [{ kind: 'snapshot', snapshotSequence: controls.snapshotSequence, projection: wireProjection(threads.get(threadId)!) }] }));
-  return { endpoint: `http://127.0.0.1:${address.port}`, controls, threads, commands, requests, snapshots, shells, controlFrames, frameBytes, fullSnapshotBytes, get upgrades() { return upgrades; }, get closes() { return closes; }, projects: projectRows, dropSockets, inject, injectRaw };
+  return { endpoint: `http://127.0.0.1:${address.port}`, controls, threads, commands, requests, snapshots, shells, unauthorized, controlFrames, frameBytes, fullSnapshotBytes, get upgrades() { return upgrades; }, get closes() { return closes; }, projects: projectRows, dropSockets, inject, injectRaw };
 }
