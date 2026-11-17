@@ -1446,9 +1446,13 @@ request identities and submitted handoffs are not rewritten.
   whose lockfile changed. Its durable
   pending/failed/installed state lives in the worktree's Git metadata, not in
   `node_modules`, so a failed `npm ci` remains retryable even if npm removed the
-  install. The error reaches the existing launch failure path and is recorded
-  on the task for attention; the next launch retries until a successful
-  task-local install is recorded.
+  install. Before setup, staged or unstaged tracked edits are recorded as a
+  failed setup and refused so npm lifecycle scripts cannot overwrite retained
+  worker work. Source signatures include the full staged and unstaged patches,
+  including binary content, so edits to an already-dirty file are detectable.
+  The error reaches the existing launch failure path and is recorded on the task
+  for attention; setup can retry after retained edits are restored and proceeds
+  only when a successful task-local install is recorded.
 
 ### Parked dispatch and workspace repair
 

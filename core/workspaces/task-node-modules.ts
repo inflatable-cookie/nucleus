@@ -15,6 +15,7 @@ type TaskInstallState = {
   updatedAt: string;
   sourceHead?: string;
   sourceSignature?: string;
+  failureKind?: "dirty_source";
   error?: string;
 };
 
@@ -77,6 +78,7 @@ async function ensureLocked(taskDirectory: string, registeredCheckout: string, w
   // process stopped. Don't reinterpret that mutation as intentional task work
   // on a retry at the same commit; require a source restore or new commit.
   if (previous && (previous.status === "pending" || previous.status === "failed") &&
+      previous.failureKind !== "dirty_source" &&
       previous.fingerprint === fingerprint && previous.sourceHead === sourceBefore.head &&
       previous.sourceSignature && previous.sourceSignature !== sourceBefore.signature) {
     const detail = "Tracked source changed during a previous npm ci attempt; restore it or advance the task head before retrying";
@@ -87,6 +89,24 @@ async function ensureLocked(taskDirectory: string, registeredCheckout: string, w
       error: detail,
     });
     throw new Error(`Task node_modules setup failed with npm ci: ${detail}`);
+  }
+
+  // npm lifecycle scripts can overwrite already-dirty tracked files before a
+  // post-install comparison gets a chance to refuse. Keep retained worker work
+  // intact by refusing setup whenever the index or worktree is already dirty.
+  if (sourceBefore.dirty) {
+    const detail = "Tracked task source is dirty before npm ci; refusing setup to preserve retained work";
+    await writeState(statePath, {
+      schema: "nucleus.task-node-modules.v1",
+      status: "failed",
+      failureKind: "dirty_source",
+      fingerprint,
+      updatedAt: new Date().toISOString(),
+      sourceHead: sourceBefore.head,
+      sourceSignature: sourceBefore.signature,
+      error: detail,
+    });
+    throw new Error(`Task node_modules setup refused before npm ci: ${detail}`);
   }
 
   await writeState(statePath, {
@@ -138,15 +158,15 @@ async function ensureLocked(taskDirectory: string, registeredCheckout: string, w
   });
 }
 
-type TrackedSourceState = { head: string; signature: string };
+type TrackedSourceState = { head: string; signature: string; dirty: boolean };
 
 async function trackedSourceState(taskDirectory: string): Promise<TrackedSourceState> {
   const [head, staged, unstaged] = await Promise.all([
     git(taskDirectory, "rev-parse", "HEAD"),
-    git(taskDirectory, "diff", "--cached", "--raw", "--full-index", "HEAD"),
-    git(taskDirectory, "diff", "--raw", "--full-index"),
+    git(taskDirectory, "diff", "--cached", "--binary", "--full-index", "--no-ext-diff", "--no-renames", "HEAD"),
+    git(taskDirectory, "diff", "--binary", "--full-index", "--no-ext-diff", "--no-renames"),
   ]);
-  return { head, signature: createHash("sha256").update(head).update("\0").update(staged).update("\0").update(unstaged).digest("hex") };
+  return { head, signature: createHash("sha256").update(head).update("\0").update(staged).update("\0").update(unstaged).digest("hex"), dirty: Boolean(staged || unstaged) };
 }
 
 async function lockFingerprint(taskDirectory: string): Promise<string | null> {

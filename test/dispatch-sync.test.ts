@@ -209,6 +209,31 @@ test('reviewer dependency setup refuses staged source changes made by npm script
   }
 });
 
+test('reviewer dependency setup preserves retained edits in an already-dirty tracked file', async t => {
+  const f = await reviewLockfileFixture(t, { mutateTrackedSourceOnInstall: 'worktree' });
+  const retainedWork = 'retained worker edits before review setup';
+  try {
+    await writeFile(join(f.taskDirectory, 'tracked-source.txt'), retainedWork);
+    await f.engine.resolution.advance(f.store.task(f.task.id));
+    const task = f.store.task(f.task.id);
+    assert.match(task.reason, /Task node_modules setup refused before npm ci: Tracked task source is dirty/);
+    assert.equal(task.phase, 'awaiting_review');
+    assert.equal(f.reviewerStarts(), 0, 'the reviewer must not start while retained tracked edits are present');
+    assert.equal(f.store.runs(task.id).filter(run => run.role === 'reviewer').length, 0, 'dirty source refuses before reservation');
+    assert.equal(await readFile(join(f.taskDirectory, 'tracked-source.txt'), 'utf8'), retainedWork, 'setup must not overwrite the retained edits');
+
+    const gitDir = await git(f.taskDirectory, 'rev-parse', '--path-format=absolute', '--git-dir');
+    const state = JSON.parse(await readFile(join(gitDir, 'nucleus', 'task-node-modules.json'), 'utf8'));
+    assert.equal(state.status, 'failed');
+    assert.equal(state.failureKind, 'dirty_source');
+    assert.match(state.error, /preserve retained work/);
+
+  } finally {
+    await f.engine.stop();
+    f.store.close();
+  }
+});
+
 test('a new task gets a private install from the lockfile advanced by dispatch', async t => {
   const { root, repo } = await makeRepo(t);
   const writeDependency = async (directory: string, version: string) => {
