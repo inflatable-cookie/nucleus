@@ -146,11 +146,16 @@ export interface ExecutionRequest {
    * event. Absent, observation stays the diagnostic it has always been.
    */
   qualificationCapture?: boolean;
-  /** Spec 064 P4: each stream's real pipe EOF, on that stream's own `end` event. */
+  /**
+   * Spec 064 P4: each stream's real pipe EOF, on that stream's own `end` event.
+   * These are the strict capture's events: with `qualificationCapture` absent the
+   * listener is not registered and the callback never fires.
+   */
   onStreamEof?: (stream: "stdout" | "stderr") => void;
   /**
    * Spec 064 P4: every observed payload write for that stream completed after
-   * its EOF, so the capture can close that stream's terminal obligation.
+   * its EOF, so the capture can close that stream's terminal obligation. Gated
+   * with `qualificationCapture` like `onStreamEof`.
    */
   onStreamDrained?: (stream: "stdout" | "stderr") => void;
   /**
@@ -466,42 +471,47 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
     };
     child.stdout.on("data", (chunk: Buffer) => observe("stdout", chunk));
     child.stderr.on("data", (chunk: Buffer) => observe("stderr", chunk));
-    /**
-     * Spec 064 P4: the real per-stream terminal sequence. `end` is that pipe's own
-     * EOF; the drain follows once this step's synchronous payload observation for
-     * the stream is complete. A stream that errors or closes without `end` keeps
-     * `unknown` EOF, so settlement can still happen and the gap stays visible.
-     */
-    const observeStreamEof = (stream: "stdout" | "stderr") => {
-      if (streamEnded[stream]) return;
-      streamEnded[stream] = true;
-      if (captureFault) return;
-      streamTerminals[stream].eof = "observed";
-      streamTerminals[stream].eofAt = new Date().toISOString();
-      try { request.onStreamEof?.(stream); }
-      catch (error) {
-        if (!strictCapture) return;
-        streamTerminals[stream].eof = "unknown";
-        streamTerminals[stream].eofAt = null;
-        latchCaptureFault(error);
-        return;
+    // Spec 064 P4: the strict capture's whole terminal machinery — its pipe
+    // listeners included — is registered only when that mode is selected. An
+    // ordinary step keeps exactly the listeners it always had, and its own
+    // settlement still follows the child's `close`, not a stream event.
+    if (strictCapture) {
+      /**
+       * Spec 064 P4: the real per-stream terminal sequence. `end` is that pipe's
+       * own EOF; the drain follows once this step's synchronous payload
+       * observation for the stream is complete. A stream that errors or closes
+       * without `end` keeps `unknown` EOF, so settlement can still happen and the
+       * gap stays visible.
+       */
+      const observeStreamEof = (stream: "stdout" | "stderr") => {
+        if (streamEnded[stream]) return;
+        streamEnded[stream] = true;
+        if (captureFault) return;
+        streamTerminals[stream].eof = "observed";
+        streamTerminals[stream].eofAt = new Date().toISOString();
+        try { request.onStreamEof?.(stream); }
+        catch (error) {
+          streamTerminals[stream].eof = "unknown";
+          streamTerminals[stream].eofAt = null;
+          latchCaptureFault(error);
+          return;
+        }
+        if (captureFault) return;
+        streamTerminals[stream].drained = "observed";
+        streamTerminals[stream].drainedAt = new Date().toISOString();
+        try { request.onStreamDrained?.(stream); }
+        catch (error) {
+          streamTerminals[stream].drained = "unknown";
+          streamTerminals[stream].drainedAt = null;
+          latchCaptureFault(error);
+        }
+      };
+      for (const stream of ["stdout", "stderr"] as const) {
+        const pipe = stream === "stdout" ? child.stdout : child.stderr;
+        pipe.on("end", () => { observeStreamEof(stream); void finishWhenGroupIsEmpty(); });
+        pipe.on("close", () => { streamEnded[stream] = true; void finishWhenGroupIsEmpty(); });
+        pipe.on("error", () => { streamEnded[stream] = true; void finishWhenGroupIsEmpty(); });
       }
-      if (captureFault) return;
-      streamTerminals[stream].drained = "observed";
-      streamTerminals[stream].drainedAt = new Date().toISOString();
-      try { request.onStreamDrained?.(stream); }
-      catch (error) {
-        if (!strictCapture) return;
-        streamTerminals[stream].drained = "unknown";
-        streamTerminals[stream].drainedAt = null;
-        latchCaptureFault(error);
-      }
-    };
-    for (const stream of ["stdout", "stderr"] as const) {
-      const pipe = stream === "stdout" ? child.stdout : child.stderr;
-      pipe.on("end", () => { observeStreamEof(stream); void finishWhenGroupIsEmpty(); });
-      pipe.on("close", () => { streamEnded[stream] = true; void finishWhenGroupIsEmpty(); });
-      pipe.on("error", () => { streamEnded[stream] = true; void finishWhenGroupIsEmpty(); });
     }
     child.on("exit", (code, signal) => {
       outcome.code = code;

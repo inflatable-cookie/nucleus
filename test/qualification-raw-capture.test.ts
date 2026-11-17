@@ -357,3 +357,49 @@ test("with qualification mode absent the two-file capture, its redaction and the
   assert.match(retained, new RegExp(`cap=${HOST_RUN_RETAINED_OUTPUT_BYTES}`));
   assert.equal(existsSync(cappedPaths.qualificationRawPath), false, "a capped ordinary run still writes no qualification artifact");
 });
+
+// ---------------------------------------------------------------------------
+// Mode absent: the ordinary process path is the one it always was
+// ---------------------------------------------------------------------------
+
+test("an ordinary step keeps its diagnostic observation, records no terminal evidence and registers no strict pipe listeners", async t => {
+  const f = fixture(t);
+  const scriptPath = join(f.root, `ordinary-${randomUUID()}.mjs`);
+  writeFileSync(scriptPath, `process.stdout.write("ordinary-out\\n");\nprocess.stderr.write("ordinary-err\\n");\n`);
+  const observed: string[] = [];
+  const eofEvents: string[] = [];
+  const drainEvents: string[] = [];
+  const outcome = await executeHookProgram({
+    root: f.root, executable: process.execPath, argv: [scriptPath], stdin: Buffer.alloc(0),
+    timeoutMs: 30_000, maxOutputBytes: 64 * 1024, env: { PATH: process.env.PATH ?? "" },
+    overflow: "tail",
+    // The ordinary contract: an observation fault is never fatal, and it is not
+    // reclassified as a capture fault.
+    onOutput: (stream, chunk) => { observed.push(`${stream}:${chunk.toString()}`); throw new Error("observer fault"); },
+    onStreamEof: stream => { eofEvents.push(stream); },
+    onStreamDrained: stream => { drainEvents.push(stream); },
+  });
+  assert.equal(outcome.captureFault, undefined, "an ordinary step reports no capture fault");
+  assert.equal(outcome.streamTerminals, undefined, "an ordinary step records no strict terminal evidence");
+  assert.deepEqual(eofEvents, [], "the strict per-stream EOF event is gated to qualification capture");
+  assert.deepEqual(drainEvents, [], "the strict per-stream drain event is gated to qualification capture");
+  assert.equal(outcome.code, 0);
+  assert.ok(observed.length > 0, "the observer still received the chunks");
+  assert.equal(outcome.stdout.toString(), "ordinary-out\n", "ordinary stdout retention is unchanged");
+  assert.equal(outcome.stderr.toString(), "ordinary-err\n");
+
+  // The supervisor's own shape: group and escaped-descendant settlement still
+  // finish, and the strict machinery stays out of it.
+  const settledPath = join(f.root, `ordinary-settled-${randomUUID()}.mjs`);
+  writeFileSync(settledPath, `process.stdout.write("settled\\n");\n`);
+  const settled = await executeHookProgram({
+    root: f.root, executable: process.execPath, argv: [settledPath], stdin: Buffer.alloc(0),
+    timeoutMs: 30_000, maxOutputBytes: 64 * 1024, env: { PATH: process.env.PATH ?? "" },
+    overflow: "tail", settleOnProcessGroup: true, settleOnEscapedDescendants: true, directChildWait: true,
+  });
+  assert.equal(settled.code, 0);
+  assert.equal(settled.processGroupEmpty, true, "ordinary group settlement still completes");
+  assert.equal(settled.directChildWait?.state, "observed");
+  assert.equal(settled.streamTerminals, undefined);
+  assert.equal(settled.captureFault, undefined);
+});
