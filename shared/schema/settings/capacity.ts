@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { hostKindSchema, DEFAULT_HOST_KIND } from "../../host-kind";
 
 /**
  * The dispatch and timing limits: one bound and one default per field, read here
@@ -89,6 +90,7 @@ export const capacitySchema = z.object({
   laneDrainMinutes: capacityValue("laneDrainMinutes").optional(),
   laneDrainEscalationMinutes: capacityValue("laneDrainEscalationMinutes").optional(),
   hostOutageNoticeMinutes: capacityValue("hostOutageNoticeMinutes").optional(),
+  operatorDefaultHostKind: hostKindSchema.nullable().optional(),
 }).strict();
 
 /**
@@ -106,6 +108,7 @@ export const capacityAuthorityValuesSchema = capacitySchema.extend({
   laneDrainMinutes: capacityValue("laneDrainMinutes"),
   laneDrainEscalationMinutes: capacityValue("laneDrainEscalationMinutes"),
   hostOutageNoticeMinutes: capacityValue("hostOutageNoticeMinutes"),
+  operatorDefaultHostKind: hostKindSchema.nullable(),
 });
 
 export type CapacityAuthorityValues = z.infer<typeof capacityAuthorityValuesSchema>;
@@ -124,6 +127,7 @@ export const capacityStateFields = {
   laneDrainMinutes: capacityValue("laneDrainMinutes").default(capacityBounds.laneDrainMinutes.fallback),
   laneDrainEscalationMinutes: capacityValue("laneDrainEscalationMinutes").default(capacityBounds.laneDrainEscalationMinutes.fallback),
   hostOutageNoticeMinutes: capacityValue("hostOutageNoticeMinutes").default(capacityBounds.hostOutageNoticeMinutes.fallback),
+  operatorDefaultHostKind: hostKindSchema.nullable().default(DEFAULT_HOST_KIND),
 };
 
 /** How many applied changes stay in the durable record; older ones drop off the front. */

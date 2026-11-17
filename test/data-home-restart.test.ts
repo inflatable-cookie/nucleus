@@ -40,7 +40,7 @@ const base = 'b'.repeat(40);
 const CAPACITY = {
   globalLimit: 7, projectLimit: 3, papercutProjectLimit: 2, paseoCallLimit: 9,
   stallThresholdMinutes: 5, holdReminderMinutes: 90, holdEscalationMinutes: 150,
-  laneDrainMinutes: 45, laneDrainEscalationMinutes: 75, hostOutageNoticeMinutes: 120,
+  laneDrainMinutes: 45, laneDrainEscalationMinutes: 75, hostOutageNoticeMinutes: 120, operatorDefaultHostKind: "paseo",
 } as const;
 
 const PROFILES = [

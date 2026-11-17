@@ -9,7 +9,7 @@ import { Pair } from "./common";
 
 const CHECKS_HELP = "Required gates only the checks GitHub requires for the base branch; the rest are recorded as advisory. Needs GitHub's required-check settings to be readable for this repository.";
 const REVIEWER_HELP = "Account that posts formal reviews. Its token stays in the login keychain.";
-const HOST_HELP = "Paseo is the default host. T3Code and BB are trial opt-ins: new tasks on this repository dispatch there. Live tasks keep the host they started on.";
+const HOST_HELP = "Choose a host override for new tasks in this repository, or Inherit to use the operator default. Live tasks keep their host.";
 const MERGE_HELP = "Runs on every task's prospective merge.";
 const STAGED_HELP = "A staged QA is edited with `nucleus repository.set`.";
 const QA_TIMEOUT_MAX_MIN = PROJECT_QA_TIMEOUT_MAX_MS / 60_000;
@@ -34,7 +34,7 @@ export function RepositoryFields({ c, repo, label, settings, disabled, saves, se
   const [scheduled, setScheduled] = useState(Boolean(qa?.schedule));
   const [afterMerges, setAfterMerges] = useState(qa?.schedule?.afterMerges ?? AFTER_MERGES_DEFAULT);
   const [checks, setChecks] = useState(settings?.checksPolicy ?? "all");
-  const [hostKind, setHostKind] = useState(settings?.hostKind ?? "paseo");
+  const [hostKind, setHostKind] = useState(settings?.hostKind ?? "inherit");
   const [reviewer, setReviewer] = useState(settings?.reviewer?.login ?? "");
   const [mergeCommand, setMergeCommand] = useState(validation ? joinCommand(validation.argv) : "");
   const [mergeTimeout, setMergeTimeout] = useState(minutes(validation?.timeoutMs, MERGE_TIMEOUT_DEFAULT_MIN, MERGE_TIMEOUT_MAX_MIN));
@@ -46,7 +46,7 @@ export function RepositoryFields({ c, repo, label, settings, disabled, saves, se
     setQaTimeout(minutes(qa?.timeoutMs, QA_TIMEOUT_DEFAULT_MIN, QA_TIMEOUT_MAX_MIN));
     setScheduled(Boolean(qa?.schedule)); setAfterMerges(qa?.schedule?.afterMerges ?? AFTER_MERGES_DEFAULT);
     setChecks(settings?.checksPolicy ?? "all");
-    setHostKind(settings?.hostKind ?? "paseo");
+    setHostKind(settings?.hostKind ?? "inherit");
     setReviewer(settings?.reviewer?.login ?? "");
     setMergeCommand(validation ? joinCommand(validation.argv) : "");
     setMergeTimeout(minutes(validation?.timeoutMs, MERGE_TIMEOUT_DEFAULT_MIN, MERGE_TIMEOUT_MAX_MIN));
@@ -85,10 +85,10 @@ export function RepositoryFields({ c, repo, label, settings, disabled, saves, se
     patch("checksPolicy", { checksPolicy: policyValue }, { revert: () => setChecks(server.current?.checksPolicy ?? "all") });
   };
   const changeHost = (value: string) => {
-    // The three host kinds the editor offers; anything else falls back to the default.
-    const next = value === "t3code" || value === "bb" ? value : "paseo";
-    setHostKind(next);
-    patch("hostKind", { hostKind: next }, { revert: () => setHostKind(server.current?.hostKind ?? "paseo") });
+    // Inherit clears the repository override; named kinds pin new tasks to that host kind.
+    const next = value === "t3code" || value === "bb" || value === "paseo" ? value : null;
+    setHostKind(value);
+    patch("hostKind", { hostKind: next }, { revert: () => setHostKind(server.current?.hostKind ?? "inherit") });
   };
   const hasCommand = Boolean(command.trim());
   const hasMerge = Boolean(mergeCommand.trim());
@@ -125,7 +125,7 @@ export function RepositoryFields({ c, repo, label, settings, disabled, saves, se
     <Pair>
       <View style={{ gap: space.xxs }}>
         <FieldCaption c={c} text="Host" help={HOST_HELP} />
-        <DropdownSelect c={c} hideLabel label={`Host for ${label}`} value={hostKind} disabled={disabled} options={[{ value: "paseo", label: "Paseo" }, { value: "t3code", label: "T3Code" }, { value: "bb", label: "BB" }]} onChange={changeHost} />
+        <DropdownSelect c={c} hideLabel label={`Host for ${label}`} value={hostKind ?? "inherit"} disabled={disabled} options={[{ value: "inherit", label: "Inherit" }, { value: "paseo", label: "Paseo" }, { value: "t3code", label: "T3Code" }, { value: "bb", label: "BB" }]} onChange={changeHost} />
       </View>
       <View style={{ gap: space.xxs }}>
         <FieldCaption c={c} text="Checks" help={CHECKS_HELP} />

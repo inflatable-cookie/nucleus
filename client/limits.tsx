@@ -32,6 +32,7 @@ export type DispatchLimitsProps = {
   saveUsage: (level: UsageLevel, until: string | null) => Promise<void>;
   saveDemandOffsets: (value: UiQueueState["demandOffsets"]) => Promise<void>;
   saveCapacity: (values: api.CapacityAuthorityValues) => Promise<void>;
+  saveDefaultHost: (host: api.CapacityAuthorityValues["operatorDefaultHostKind"]) => Promise<void>;
   saveProjectLimit: (value: ProjectLimitPatch & { projectKey: string }) => Promise<void>;
 };
 
@@ -174,9 +175,9 @@ const CAPACITY_FIELD_LABELS: Record<keyof api.CapacityAuthorityValues, string> =
   paseoCallLimit: "Paseo calls", stallThresholdMinutes: "Stall threshold",
   holdReminderMinutes: "Hold reminder", holdEscalationMinutes: "Hold escalation",
   laneDrainMinutes: "Lane drain", laneDrainEscalationMinutes: "Lane drain escalation",
-  hostOutageNoticeMinutes: "Host outage notice",
+  hostOutageNoticeMinutes: "Host outage notice", operatorDefaultHostKind: "Default host",
 };
-type CapacityKey = keyof api.CapacityAuthorityValues;
+type CapacityKey = Exclude<keyof api.CapacityAuthorityValues, "operatorDefaultHostKind">;
 type LimitSpec = { key: CapacityKey; min: number; max: number; unit: "slots" | "calls" | "minutes"; advanced?: true };
 const CAPACITY_FIELDS: LimitSpec[] = [
   { key: "globalLimit", min: 1, max: 64, unit: "slots" },
@@ -228,7 +229,7 @@ function TaskSlots({ c, values, authorityError, retry, save }: {
     const next = { ...drafts, [key]: value };
     setDrafts(next);
     if (!values) return;
-    auto.enqueue(Object.fromEntries(CAPACITY_FIELDS.map(field => [field.key, next[field.key] ?? values[field.key]])) as api.CapacityAuthorityValues, 600);
+    auto.enqueue(Object.fromEntries(CAPACITY_FIELDS.map(field => [field.key, next[field.key] ?? values[field.key]])) as unknown as api.CapacityAuthorityValues, 600);
   };
   // A labelled card per limit. The line under it names the value in force only when the
   // entered value differs, so an unsaved draft never reads as applied.
@@ -324,6 +325,22 @@ function ProjectLimitRow({ c, projectName, value, canSave, save }: { c: Colors; 
   </View>;
 }
 
+
+function HostDefault({ c, values, save }: { c: Colors; values: api.CapacityAuthorityValues | null; save: (host: api.CapacityAuthorityValues["operatorDefaultHostKind"]) => Promise<void> }) {
+  const [host, setHost] = useState<api.CapacityAuthorityValues["operatorDefaultHostKind"]>(values ? values.operatorDefaultHostKind : "paseo");
+  const auto = useSectionAutoSave(save);
+  useEffect(() => { if (values && !auto.saver.busy && !auto.failed) setHost(values.operatorDefaultHostKind); }, [values?.operatorDefaultHostKind, auto.failed]);
+  return <Section c={c} title="Default host" status={auto.status} description="New tasks use this host when their repository has no override. If it is offline, Nucleus uses the planner's host. Existing tasks keep their host.">
+    <DropdownSelect c={c} label="Default host" value={host ?? "inherit"} disabled={!values} options={[
+      { value: "paseo", label: "Paseo" }, { value: "t3code", label: "T3Code" }, { value: "bb", label: "BB" }, { value: "inherit", label: "Planner's host" },
+    ]} onChange={value => {
+      const next = value === "paseo" || value === "t3code" || value === "bb" ? value : null;
+      setHost(next);
+      if (values) auto.enqueue(next);
+    }} />
+  </Section>;
+}
+
 /**
  * Settings → Dispatch limits, in the order the operator reads it: usage level, task
  * slots, project overrides, role demand, then frontier grants.
@@ -333,6 +350,7 @@ export function DispatchLimits(props: DispatchLimitsProps) {
   const values = authority?.effective ?? null;
   return <View>
     <UsageSlider c={c} usage={state.usage} save={props.saveUsage} />
+    <HostDefault c={c} values={values} save={props.saveDefaultHost} />
     <TaskSlots c={c} values={values} authorityError={props.authorityError} retry={props.retryAuthority} save={props.saveCapacity} />
     <ProjectOverrides c={c} state={state} busy={props.busy} saveProjectLimit={props.saveProjectLimit} />
     <DemandOffsets c={c} offsets={state.demandOffsets} save={props.saveDemandOffsets} />

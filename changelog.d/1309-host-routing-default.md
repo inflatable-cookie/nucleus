@@ -1,0 +1,1 @@
+New tasks now route by explicit task host, repository override, operator default host, then the submitting planner host. Settings can change the operator default for future tasks; task host identities remain fixed after dispatch.

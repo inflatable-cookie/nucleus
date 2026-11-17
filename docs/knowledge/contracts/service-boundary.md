@@ -1330,6 +1330,8 @@ reads that entry: the legacy unqualified `hostId`, the retired
 observation scope and the daemon-identity guard all read it, so a BB or T3 host
 that connects earlier still never displaces the host those records belong to.
 
+New task host routing is fixed when the task is accepted: explicit task host, an explicit repository `hostKind` override, the operator default host kind (seeded as `paseo`), then the proven submitting planner host. The operator default lives with Settings → Dispatch limits and is writable only through `queue.capacity`, so the CLI and other non-Settings routes refuse it just like other capacity fields. An offline operator default falls through to the planner host and records that reason; a task with no available host stays pinned to the host it wanted and waits visibly. A schema migration converts stored repository `paseo` defaults to inherit while preserving explicit T3Code and BB overrides. Existing task host identity never changes when either setting changes.
+
 The [T3Code adapter contract](../specs/t3code-host-adapter.md) defines the second
 host's connection and operation boundary. Before registration or
 mutation, authenticate the environment, check the protocol and strictly decode
