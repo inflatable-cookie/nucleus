@@ -1388,6 +1388,20 @@ export class QueueRuntime {
         throw new Error(`T3Code thread ${input.nativeAgentId} ${reason}; online T3 hosts: ${online}`);
       }
       hostId = owners[0]!;
+    } else if (input.hostKind === 'bb') {
+      const owners: string[] = [];
+      for (const candidate of hosts) {
+        try {
+          const observation = await this.engine.withHost(candidate, () => this.engine.host.observe(input.nativeAgentId));
+          if (observation?.id === input.nativeAgentId && observation.status !== 'gone') owners.push(candidate);
+        } catch { /* A host that cannot verify this thread is not an owner. */ }
+      }
+      if (owners.length !== 1) {
+        const online = hosts.length ? hosts.join(', ') : '(none)';
+        const reason = owners.length > 1 ? 'is ambiguous' : 'is not owned by any online host';
+        throw new Error(`BB thread ${input.nativeAgentId} ${reason}; online BB hosts: ${online}`);
+      }
+      hostId = owners[0]!;
     } else {
       if (hosts.length !== 1) throw new Error(`Calling host identity is unavailable or ambiguous for ${input.hostKind}`);
       hostId = hosts[0]!;

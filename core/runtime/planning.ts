@@ -17,7 +17,7 @@ import { leadRepository } from "../planning/lead-repository";
 /** Planning dependencies; lifecycle and operation scheduling remain runtime-owned. */
 export interface PlanningContext {
   store: Store;
-  engine: Pick<Engine, "awaitOperation" | "startOperation" | "scheduleAcceptedOperation" | "submitPlanningSource" | "briefStageProfileRefusal" | "independentReviewRoutingRefusal" | "selectIngressHost" | "hostAvailable" | "startSubmission"> & {
+  engine: Pick<Engine, "awaitOperation" | "startOperation" | "scheduleAcceptedOperation" | "submitPlanningSource" | "briefStageProfileRefusal" | "independentReviewRoutingRefusal" | "selectIngressHost" | "hostAvailable" | "hostIngressAvailable" | "startSubmission"> & {
     hooks: Pick<Engine["hooks"], "previewPreDispatch">;
     identifyOriginHost(agentId: string, identitySource?: import("../../shared/host-kind").IdentitySource): Promise<string | undefined>;
     withHost<T>(hostId: string, work: () => T): T;

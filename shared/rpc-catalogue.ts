@@ -79,7 +79,7 @@ export const RPC_CATALOGUE: RpcCatalogueEntry[] = [
   { name: "lane.document.get", contract: contracts.laneDocumentGet, method: "getLaneDocument", mutating: false },
   { name: "lane.document.edit", contract: contracts.laneDocumentEdit, method: "editLaneDocument", mutating: true },
   { name: "plan.get", contract: contracts.planGet, method: "getPlan", mutating: false },
-  { name: "plans", contract: contracts.plans, method: "listPlans", mutating: false },
+  { name: "queue.plans", contract: contracts.plans, method: "listPlans", mutating: false },
   { name: "plan.set", contract: contracts.planSet, method: "setPlan", mutating: true },
   { name: "lane.upsert", contract: contracts.laneUpsert, method: "upsertLane", mutating: true },
   { name: "lane.status", contract: contracts.laneStatus, method: "setLaneStatus", mutating: true },

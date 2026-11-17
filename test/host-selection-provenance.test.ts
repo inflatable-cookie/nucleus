@@ -98,6 +98,7 @@ test('a bb repository hostKind selects the online BB host, never rehosts a live 
     // it), and never as an available work host — dispatch reads it as unavailable, and
     // its adapter refuses every task-workflow call anyway.
     assert.equal(runtime.engine.hostAvailable(bbHostId), false, "a BB host is never an available work host");
+    assert.equal(runtime.engine.hostIngressAvailable(bbHostId), true, "an online BB host can receive authenticated submission ingress");
     assert.equal(runtime.hostRegistry.shouldShutdown(0), false, "a live BB claim keeps the daemon from idling down");
     assert.equal(runtime.engine.hostAvailable('paseo-primary'), true, "the Paseo host stays the work host");
 
@@ -128,6 +129,7 @@ test('a bb repository hostKind selects the online BB host, never rehosts a live 
     assert.equal(offline.bb?.online, false);
     assert.match(offline.bb?.offlineReason ?? '', /closed/);
     assert.equal(offline.hosts?.find(host => host.id === bbHostId)?.state, 'offline');
+    assert.equal(runtime.engine.hostIngressAvailable(bbHostId), false, "a disconnected BB host cannot accept ingress");
   } finally { await runtime.drain(); }
 });
 

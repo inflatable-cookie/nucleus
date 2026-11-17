@@ -56,7 +56,7 @@ test('Spec 040 row 7: an escalated hold appears in Pipeline; Release and Keep ac
     if (method === 'project.qa.list' || method === 'host.run.list') return [];
     if (method === 'host.run.board') return { runs: [], accounting: { readAt: '2026-10-02T08:00:00.000Z', entries: [], complete: true } };
     if (method === 'lead.board') return { cards: [], links: [] };
-    if (method === 'plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list') return [];
+    if (method === 'queue.plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list') return [];
     return {};
   };
   const surfaceProps = { theme: { colors: c }, host: { id: 'host', label: 'Host' }, layout: { compact: false, platform: 'ios' as const } };
@@ -89,7 +89,7 @@ test('Spec 040: Release from Pipeline sends the release action', async () => {
     if (method === 'project.qa.list' || method === 'host.run.list') return [];
     if (method === 'host.run.board') return { runs: [], accounting: { readAt: '2026-10-02T08:00:00.000Z', entries: [], complete: true } };
     if (method === 'lead.board') return { cards: [], links: [] };
-    if (method === 'plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list') return [];
+    if (method === 'queue.plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list') return [];
     return {};
   };
   const surfaceProps = { theme: { colors: c }, host: { id: 'host', label: 'Host' }, layout: { compact: false, platform: 'ios' as const } };

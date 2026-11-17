@@ -13,7 +13,7 @@ import { QueueRuntime } from '../service/runtime-owner';
 const READ_ONLY_METHODS = new Set(['caller.resolve', 'host.run.list', 'host.run.accounting.status', 'host.run.accounting.list', 'host.run.board',
   'queue.snapshot', 'backup.list', 'queue.ui-snapshot', 'queue.queued-page', 'lane.task-page', 'queue.detail',
   'queue.outcome', 'queue.outcome-search', 'papercut.list', 'papercut.get', 'lead.get', 'lead.version', 'lead.list', 'lead.board',
-  'question.native-list', 'decision.get', 'decision.list', 'decision.agent-projects', 'lane.document.get', 'plan.get', 'plans', 'lanes', 'repository.get',
+  'question.native-list', 'decision.get', 'decision.list', 'decision.agent-projects', 'lane.document.get', 'plan.get', 'queue.plans', 'lanes', 'repository.get',
   'repositories', 'repository.rekey-preview', 'repository.rekey-receipt', 'project.get', 'projects', 'project.removal-blockers', 'project.merge-check', 'project.owner-candidates', 'project.settings', 'project.agents', 'project.qa.get', 'project.qa.list', 'queue.telemetry',
   'queue.review-entry-preview', 'queue.bulk-disposition-detail', 'queue.capacity-state',
   'task.next',

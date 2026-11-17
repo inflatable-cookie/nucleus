@@ -79,7 +79,7 @@ test('Spec 041 rows 7 and 8 rendered: an escalated drained lane is answered on t
     if (method === 'lane.keep') { calls.push({ method, input }); escalated.lane = false; return plainLaneRecord('alpha', false); }
     if (method === 'lane.status') { calls.push({ method, input }); escalated.lane = false; return plainLaneRecord('alpha', false); }
     if (method === 'lead.board') return { cards: [], links: [] };
-    if (method === 'plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list') return [];
+    if (method === 'queue.plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list') return [];
     if (method === 'project.qa.list' || method === 'host.run.list' || method === 'host.run.board') return [];
     return {};
   };
@@ -112,7 +112,7 @@ test('Spec 041 rendered: Close from the Decisions column finishes the drained la
     if (method === 'queue.service-state') return { state: 'running', detail: '', error: '', ready: true, paused: false, hostId: 'host' };
     if (method === 'lane.status') { calls.push({ method, input }); escalated = false; return plainLaneRecord('alpha', false); }
     if (method === 'lead.board') return { cards: [], links: [] };
-    if (method === 'plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list') return [];
+    if (method === 'queue.plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list') return [];
     if (method === 'project.qa.list' || method === 'host.run.list' || method === 'host.run.board') return [];
     return {};
   };

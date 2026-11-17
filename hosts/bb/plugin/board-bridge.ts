@@ -34,6 +34,9 @@ const CATALOGUE_METHOD = /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/;
 const REFUSED_PREFIXES = ["service.", "host."] as const;
 const REFUSED_METHODS = new Set(["task.register"]);
 
+/** Historical board clients can send this alias; the service catalogue uses a dotted wire name. */
+const METHOD_ALIASES: Readonly<Record<string, string>> = { plans: "queue.plans" };
+
 /** The forwarded window: wide enough for the catalogue's slowest compatibility waits. */
 export const BOARD_CALL_TIMEOUT_MS = 60_000;
 
@@ -49,8 +52,9 @@ export const boardContract = defineRpcContract({
 
 /** The refusal for a method the board does not forward, or null when it is forwarded. */
 export function boardCallRefusal(method: string): string | null {
-  if (!CATALOGUE_METHOD.test(method)) return `${method} is not a catalogue method`;
-  if (REFUSED_PREFIXES.some(prefix => method.startsWith(prefix)) || REFUSED_METHODS.has(method))
+  const canonical = METHOD_ALIASES[method] ?? method;
+  if (!CATALOGUE_METHOD.test(canonical)) return `${method} is not a catalogue method`;
+  if (REFUSED_PREFIXES.some(prefix => canonical.startsWith(prefix)) || REFUSED_METHODS.has(canonical))
     return `${method} is not served to the BB board. Nothing changed; do not retry from BB.`;
   return null;
 }
@@ -70,9 +74,10 @@ export function createBoardBridge(source: () => BoardBridgeSource | null) {
       const parsed = boardCallInputSchema.parse(input);
       const refusal = boardCallRefusal(parsed.method);
       if (refusal) throw new Error(refusal);
+      const method = METHOD_ALIASES[parsed.method] ?? parsed.method;
       const client = source();
       if (!client) throw new Error("The Nucleus service channel is not connected");
-      return await client.request(parsed.method, parsed.input ?? null, BOARD_CALL_TIMEOUT_MS, "bb");
+      return await client.request(method, parsed.input ?? null, BOARD_CALL_TIMEOUT_MS, "bb");
     },
   };
 }

@@ -3,6 +3,7 @@ import { now, operationIdForKey } from "../store/store";
 import type { Submission } from "../../shared/contracts";
 import { complexityRefusal } from "../../shared/demand";
 import { validateCompletionRecipients } from "../scheduling/cohort";
+import { ProtocolError } from "../../shared/service/protocol";
 import { repositoryOrigin } from "../planning/lanes";
 import { prepareDraftContent, proofOnlyPreferenceWarning, reportOnlyDeliveryRefusal } from "../planning/handoff";
 import { validateSubmission } from "../git/index";
@@ -58,7 +59,8 @@ export class PlanningSubmission {
     if (input.dryRun) {
       const origin = await repositoryOrigin(prepared.submission.repoPath).catch(() => null);
       const hostId = this.context.engine.selectIngressHost(input.hostId, prepared.submission.repoPath, origin, prepared.submission.originIdentity?.hostId);
-      if (!hostId || !this.context.engine.hostAvailable(hostId)) throw new Error("Selected submission host is unavailable");
+      if (!hostId || !this.context.engine.hostIngressAvailable(hostId))
+        throw new ProtocolError("invalid_input", `Selected submission host ${hostId ?? '(none)'} is offline or unavailable for ingress`);
       const { verifyPublishedPlanning } = await import("../git/index");
       await verifyPublishedPlanning(prepared.submission);
       const validated = await validateSubmission(prepared.submission);

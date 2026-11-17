@@ -146,7 +146,7 @@ const invoke = async (method: string, input: unknown): Promise<unknown> => {
       const detail = { ...lead, versions: [{ version: 1, title: lead.title, body: lead.body, author: lead.author, createdAt: lead.createdAt, check: lead.check }] };
       return { ...detail, actions: leadActions(detail as unknown as LeadStatusFacts) };
     }
-  if (method === 'plans') return [plan];
+  if (method === 'queue.plans') return [plan];
   if (method === 'plan.get') return plan;
   return {};
 };

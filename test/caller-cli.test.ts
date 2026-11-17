@@ -110,6 +110,20 @@ test('decision.add records the exact T3 thread on the verified host despite a di
   } finally { await f.close(); }
 });
 
+test('a BB thread environment resolves through caller.resolve and stamps decision.add with its BB host identity', async () => {
+  const f = await callerCliFixture();
+  try {
+    const result = await f.invoke('none', 'queue-cli.mjs', ['decision.add', '-'],
+      { question: 'Which planning lane?', options: ['A', 'B'], recommendation: 'A' },
+      { BB_THREAD_ID: 'thr_9ri7tsq68p', BB_ENVIRONMENT_ID: 'env_personal', BB_PROJECT_ID: 'proj_personal' });
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /Synthetic caller payload received/);
+    const bbHost = `bb:${'c'.repeat(64)}`;
+    assert.deepEqual(f.hostResolutions, [{ hostKind: 'bb', nativeAgentId: 'thr_9ri7tsq68p' }]);
+    assert.equal(f.calls.at(-1)?.input.askedBy, formatAgentId(bbHost, 'thr_9ri7tsq68p'));
+  } finally { await f.close(); }
+});
+
 test('CLI helpers prefer the current continuation ticket and refuse a mismatched run', async () => {
   const { writeFileSync } = await import('node:fs');
   const { join } = await import('node:path');

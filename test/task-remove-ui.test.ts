@@ -64,7 +64,7 @@ test('a backpressured queue.remove surfaces its reason and retry delay and keeps
       if (method === 'queue.remove') return removeResponse;
       if (method === 'project.qa.list' || method === 'host.run.list' || method === 'host.run.board') return [];
       if (method === 'lead.board') return { cards: [], links: [] };
-      if (method === 'plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list') return [];
+      if (method === 'queue.plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list') return [];
       void input;
       return {};
     };
@@ -120,7 +120,7 @@ test('task detail offers withdrawal while a cancel has only a pending thread-sto
       if (method === 'queue.task') { withdrawal = input; return store.update(draining.id, { disposition: null }); }
       if (method === 'project.qa.list' || method === 'host.run.list' || method === 'host.run.board') return [];
       if (method === 'lead.board') return { cards: [], links: [] };
-      if (method === 'plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list') return [];
+      if (method === 'queue.plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list') return [];
       return {};
     };
     const surfaceProps = { theme: { colors: c }, host: { id: 'host', label: 'Host' }, layout: { compact: false, platform: 'ios' as const } };
@@ -165,7 +165,7 @@ test('cancelling detail names the interrupted turn and refs pushed after disposi
       if (method === 'queue.detail') return read(draining.id);
       if (method === 'project.qa.list' || method === 'host.run.list' || method === 'host.run.board') return [];
       if (method === 'lead.board') return { cards: [], links: [] };
-      if (method === 'plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list') return [];
+      if (method === 'queue.plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list') return [];
       void input;
       return {};
     };

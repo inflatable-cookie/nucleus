@@ -213,6 +213,8 @@ export class Engine {
   selectIngressHost: (explicit?: string, repoPath?: string, origin?: string | null, plannerHostId?: string) => string | undefined = explicit => explicit ?? this.store.getMeta<string>("hostId") ?? undefined;
   selectIngressSelection: (explicit?: string, repoPath?: string, origin?: string | null, plannerHostId?: string) => import('../shared/host-selection').HostSelection | undefined = () => undefined;
   hostAvailable: (id: string) => boolean = () => true;
+  /** Registered, online host suitable for authenticated ingress; may not be a work host. */
+  hostIngressAvailable: (id: string) => boolean = () => true;
   taskHostAvailable(task: Task): boolean {
     return Boolean(task.hostId && (!this.activeHostId || this.activeHostId === task.hostId) && this.hostAvailable(task.hostId)
       && this.store.runs(task.id).every(run => run.hostId === task.hostId));

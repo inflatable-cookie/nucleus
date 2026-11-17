@@ -101,7 +101,7 @@ function setup(readNext: (taskId: string) => Promise<unknown>) {
     if (method === 'project.qa.list' || method === 'host.run.list') return [];
     if (method === 'host.run.board') return { runs: [], accounting: { readAt: at, entries: [], complete: true } };
     if (method === 'lead.board') return { cards: [], links: [] };
-    if (method === 'plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list' || method === 'project.owner-candidates') return [];
+    if (method === 'queue.plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list' || method === 'project.owner-candidates') return [];
     void input;
     return {};
   };

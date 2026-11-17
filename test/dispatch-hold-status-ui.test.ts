@@ -99,7 +99,7 @@ test('the card and detail show the live dispatch hold, and next names the same f
       if (method === 'project.qa.list' || method === 'host.run.list') return [];
       if (method === 'host.run.board') return { runs: [], accounting: { readAt: at, entries: [], complete: true } };
       if (method === 'lead.board') return { cards: [], links: [] };
-      if (method === 'plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list' || method === 'project.owner-candidates') return [];
+      if (method === 'queue.plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list' || method === 'project.owner-candidates') return [];
       return {};
     };
     const tree = mountBoard(invoke); mounted = tree;

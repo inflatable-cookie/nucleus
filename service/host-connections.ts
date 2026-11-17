@@ -102,6 +102,9 @@ export function wireEngineHosts(engine: Engine, runtime: EngineHostWiring): void
     const selected = runtime.hostRegistry.get(id);
     return Boolean(selected && (engine.activeHostId ? engine.activeHostId === id : selected.adapter === runtime.adapter && runtime.connected()));
   };
+  // Intake may arrive over a secondary BB/T3 host. This only proves that the
+  // selected ingress is online; work-host eligibility remains the stricter gate above.
+  engine.hostIngressAvailable = id => runtime.hostRegistry.onlineIds().includes(id);
 }
 
 /**

@@ -237,7 +237,7 @@ test("plans returns every project's current plan in one call, so clients never f
     assert.deepEqual(all.find(plan => plan.project === "alpha")?.savedEntries, [{ lane: "alpha-now", note: "Saved step", horizon: "now" }]);
     // One batched read carries current lane projections and immutable saved membership
     // used by Planning rows; clients do not need one plan.get request per project.
-    assert.equal(RPC_CATALOGUE.find(entry => entry.name === "plans")?.method, "listPlans");
+    assert.equal(RPC_CATALOGUE.find(entry => entry.name === "queue.plans")?.method, "listPlans");
   } finally { await runtime.stop?.(); rmSync(dir, { recursive: true, force: true }); }
 });
 

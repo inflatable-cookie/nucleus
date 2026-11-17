@@ -72,7 +72,7 @@ test('task detail shows a pending native question and answers it in place', asyn
       if (method === 'project.qa.list' || method === 'host.run.list') return [];
       if (method === 'host.run.board') return { runs: [], accounting: { readAt: new Date().toISOString(), entries: [], complete: true } };
       if (method === 'lead.board') return { cards: [], links: [] };
-      if (method === 'plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list' || method === 'project.owner-candidates') return [];
+      if (method === 'queue.plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list' || method === 'project.owner-candidates') return [];
       return {};
     };
     const client = new QueryClient();

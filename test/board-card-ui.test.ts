@@ -107,7 +107,7 @@ function invokeWith(snapshot: unknown, queuedPage: () => Promise<unknown>, leads
     if (method === 'host.run.board') return { runs: [], accounting: { readAt: at, entries: [], complete: true } };
     if (method === 'lead.board') return { cards: leads, links: [] };
     if (method === 'decision.list') return decisions;
-    if (method === 'plans' || method === 'papercut.list' || method === 'draft.list' || method === 'project.owner-candidates') return [];
+    if (method === 'queue.plans' || method === 'papercut.list' || method === 'draft.list' || method === 'project.owner-candidates') return [];
     void input;
     return {};
   };

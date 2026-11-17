@@ -61,7 +61,7 @@ const invoke = async (method: string, input: unknown) => {
   }
   if (method === 'queue.service-state') return { state: 'running', detail: '', error: '', ready: true, paused: false, hostId: 'host' };
   if (method === 'lead.board') return { cards: leadRows, links: [] };
-  if (method === 'plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list') return [];
+  if (method === 'queue.plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list') return [];
   return {};
 };
 
@@ -173,7 +173,7 @@ function domainBoard() {
     if (method === 'lead.board') return { cards: rows, links: [] };
     return invoke(method, input);
   };
-  const reads = () => ['lead.board', 'decision.list', 'plans'].map(method => counts.get(method) ?? 0);
+  const reads = () => ['lead.board', 'decision.list', 'queue.plans'].map(method => counts.get(method) ?? 0);
   /** A run event or telemetry write: the board revision moves, no planning domain does. */
   const unrelatedWrite = () => { revision++; };
   const leadWrite = () => { revision++; planning.leads++; };

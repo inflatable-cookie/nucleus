@@ -97,7 +97,7 @@ test('task detail renders the Next section and submits a derived verb with the o
       }
       if (method === 'project.qa.list' || method === 'host.run.list' || method === 'host.run.board') return [];
       if (method === 'lead.board') return { cards: [], links: [] };
-      if (method === 'plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list' || method === 'project.owner-candidates') return [];
+      if (method === 'queue.plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list' || method === 'project.owner-candidates') return [];
       void input;
       return {};
     };
@@ -202,7 +202,7 @@ test('a verb with fill fields requires them before submit and reports refusals i
       }
       if (method === 'project.qa.list' || method === 'host.run.list' || method === 'host.run.board') return [];
       if (method === 'lead.board') return { cards: [], links: [] };
-      if (method === 'plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list' || method === 'project.owner-candidates') return [];
+      if (method === 'queue.plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list' || method === 'project.owner-candidates') return [];
       void input;
       return {};
     };
@@ -256,7 +256,7 @@ test('a dispatched descendant closeout takes its qualifying pair all or none thr
       }
       if (method === 'project.qa.list' || method === 'host.run.list' || method === 'host.run.board') return [];
       if (method === 'lead.board') return { cards: [], links: [] };
-      if (method === 'plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list' || method === 'project.owner-candidates') return [];
+      if (method === 'queue.plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list' || method === 'project.owner-candidates') return [];
       void input;
       return {};
     };
@@ -347,7 +347,7 @@ test('Spec 052: bundled dark task detail explains each named profile\'s usage po
         if (method === 'task.next') return ownerTaskNext(collectOwnerVerbFacts(store, store.task(task.id)));
         if (method === 'project.qa.list' || method === 'host.run.list' || method === 'host.run.board') return [];
         if (method === 'lead.board') return { cards: [], links: [] };
-        if (method === 'plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list' || method === 'project.owner-candidates') return [];
+        if (method === 'queue.plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list' || method === 'project.owner-candidates') return [];
         if (method !== 'queue.backup-list') writes.push(method);
         return {};
       };
@@ -424,7 +424,7 @@ test('Spec 052: bundled dark choosers name an unavailable subscription group ins
         if (method === 'task.next') return ownerTaskNext(collectOwnerVerbFacts(store, store.task(task.id)));
         if (method === 'project.qa.list' || method === 'host.run.list' || method === 'host.run.board') return [];
         if (method === 'lead.board') return { cards: [], links: [] };
-        if (method === 'plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list' || method === 'project.owner-candidates') return [];
+        if (method === 'queue.plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list' || method === 'project.owner-candidates') return [];
         if (method !== 'queue.backup-list') writes.push(method);
         return {};
       };
@@ -489,7 +489,7 @@ test('task detail shows the recorded run-bound build output cleanup beside the c
       if (method === 'task.next') return ownerTaskNext(collectOwnerVerbFacts(store, store.task(task.id)));
       if (method === 'project.qa.list' || method === 'host.run.list' || method === 'host.run.board') return [];
       if (method === 'lead.board') return { cards: [], links: [] };
-      if (method === 'plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list' || method === 'project.owner-candidates') return [];
+      if (method === 'queue.plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list' || method === 'project.owner-candidates') return [];
       void input;
       return {};
     };
@@ -536,7 +536,7 @@ const evidenceInvoke = (store: Store, taskId: string, overlay: (detail: Record<s
     if (method === 'task.next') return ownerTaskNext(collectOwnerVerbFacts(store, store.task(taskId)));
     if (method === 'project.qa.list' || method === 'host.run.list' || method === 'host.run.board') return [];
     if (method === 'lead.board') return { cards: [], links: [] };
-    if (method === 'plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list' || method === 'project.owner-candidates') return [];
+    if (method === 'queue.plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list' || method === 'project.owner-candidates') return [];
     void input;
     return {};
   };

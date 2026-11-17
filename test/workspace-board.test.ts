@@ -41,7 +41,7 @@ const invoke = (project: unknown) => async (method: string, input: unknown) => {
   }
   if (method === 'queue.ui-snapshot') return project === undefined ? {} as never : board;
   if (method === 'queue.service-state') return { state: 'running', detail: '', error: '', ready: true, paused: false, hostId: 'host' };
-  if (method === 'plans' || method === 'papercut.list' || method === 'lead.board' || method === 'draft.list' || method === 'decision.list') return [];
+  if (method === 'queue.plans' || method === 'papercut.list' || method === 'lead.board' || method === 'draft.list' || method === 'decision.list') return [];
   return {};
 };
 

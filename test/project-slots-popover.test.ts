@@ -54,7 +54,7 @@ const invokeFor = (board: ReturnType<typeof boardOf>) => async (method: string, 
   }
   if (method === 'queue.service-state') return { state: 'running', detail: '', error: '', ready: true, paused: false, hostId: 'host' };
   if (method === 'lead.board') return { cards: [], links: [] };
-  if (method === 'plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list') return [];
+  if (method === 'queue.plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list') return [];
   return {};
 };
 

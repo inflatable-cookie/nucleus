@@ -36,10 +36,15 @@ or participant ticket; use the path delivered to this thread. An invalid or revo
 ticket refuses. Without a ticket, T3Code uses `T3CODE_THREAD_ID` together with
 `T3CODE_DESKTOP_HOST_SCOPE`; Nucleus matches that scope to its registered online
 T3 host and verifies the thread through that host's adapter. Paseo uses
-`PASEO_AGENT_ID`. If both host identities are present, T3Code takes precedence;
-an incomplete T3 identity refuses instead of falling through to Paseo. If no source
+`PASEO_AGENT_ID`. BB uses `BB_THREAD_ID`; Nucleus verifies the exact thread through
+one registered online BB host before recording the host-qualified caller. A BB
+environment or project context without its thread id refuses. If multiple host
+identities are present, T3Code takes precedence over BB, and BB over Paseo; an
+incomplete T3 or BB identity refuses instead of falling through. If no source
 exists, the refusal names the sources tried. These identities identify the caller
-only; they do not grant authority beyond a Nucleus ticket's existing scope.
+only; they do not grant authority beyond a Nucleus ticket's existing scope. Online
+BB hosts can carry submission ingress, while dispatch still follows repository host
+settings or the operator default.
 Explicit operator and relayed-note paths keep their existing meaning.
 
 Assigning a planner issues an owner-only participant ticket and hands its path over

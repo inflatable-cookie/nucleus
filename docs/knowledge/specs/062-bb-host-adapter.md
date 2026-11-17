@@ -1204,6 +1204,12 @@ makes the fork a bounded commitment (5f).
 
 ### Phase 6 — board, per-project board, settings, pills and the planner terminal
 
+The shared board's historical `plans` method name is translated by the BB bridge to the canonical
+`queue.plans` catalogue method. BB threads may also call the CLI through `BB_THREAD_ID`; the service
+verifies that exact thread on one online BB host before recording its host-qualified identity. An
+online BB host is valid for authenticated submission ingress, while work-host availability remains
+a separate dispatch gate.
+
 **Outcome.** Operator parity in BB: the shared board in a `navPanel` with its attention badge in the
 left rail, the same board per project in a fixed thread tab and a sub-path route reachable from the
 forked sidebar's project and planner rows, a task-detail tab on a task's role threads, Settings in a

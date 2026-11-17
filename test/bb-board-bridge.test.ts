@@ -106,13 +106,17 @@ test('the board call forwards one catalogue method with the BB surface, and refu
     request: async (method, input, timeoutMs, via) => { sent.push({ method, input, timeoutMs, via }); return { answered: method }; },
   }));
   assert.deepEqual(await bridge.boardCall({ method: 'queue.ui-snapshot', input: { revision: 3 } }), { answered: 'queue.ui-snapshot' });
-  assert.deepEqual(sent, [{ method: 'queue.ui-snapshot', input: { revision: 3 }, timeoutMs: BOARD_CALL_TIMEOUT_MS, via: 'bb' }]);
+  assert.deepEqual(await bridge.boardCall({ method: 'plans', input: {} }), { answered: 'queue.plans' }, 'the shared board alias resolves to the dotted catalogue method');
+  assert.deepEqual(sent, [
+    { method: 'queue.ui-snapshot', input: { revision: 3 }, timeoutMs: BOARD_CALL_TIMEOUT_MS, via: 'bb' },
+    { method: 'queue.plans', input: {}, timeoutMs: BOARD_CALL_TIMEOUT_MS, via: 'bb' },
+  ]);
   for (const method of ['service.drain', 'service.lifecycle-signal', 'host.op', 'task.register']) {
     assert.match(String(boardCallRefusal(method)), /not served to the BB board/u, `${method} is refused`);
     await assert.rejects(bridge.boardCall({ method, input: {} }), /not served to the BB board/u);
   }
   await assert.rejects(bridge.boardCall({ method: 'Not A Method', input: {} }));
-  assert.equal(sent.length, 1, 'a refused call never reaches the service');
+  assert.equal(sent.length, 2, 'a refused call never reaches the service');
   const offline = createBoardBridge(() => null);
   await assert.rejects(offline.boardCall({ method: 'queue.ui-snapshot', input: {} }), /not connected/u);
 });

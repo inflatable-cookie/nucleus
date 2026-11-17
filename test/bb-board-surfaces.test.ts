@@ -191,6 +191,8 @@ test('the board renders in its rail panel and every call reaches the service as 
   // The global board shows every project's work.
   assert.ok(tree.text().includes('Elsewhere project task'));
   assert.ok(calls.some(call => call.method === 'queue.ui-snapshot'), 'the board read reached the service');
+  assert.ok(calls.some(call => call.method === 'queue.plans'), 'the Planning view plan read reached the service through the dotted catalogue method');
+  assert.ok(calls.every(call => RPC_CATALOGUE.some(entry => entry.name === call.method)), 'every board method is a catalogue method');
   assert.ok(calls.length > 0 && calls.every(call => call.via === 'bb'), 'every forwarded call carries the BB surface');
 });
 

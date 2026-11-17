@@ -88,6 +88,34 @@ test('offline handoff accepts once and survives a restart with its committed ins
   await restarted.drain();
 });
 
+test('an online BB planner can dry-run and submit through ingress while dispatch keeps the configured work host', { timeout: 15000 }, async t => {
+  const f = await fixture(t);
+  const bbDataDir = join(f.dir, 'bb-data');
+  const bbHostId = (await import('../shared/host-operation')).hostIdFromDataDir(bbDataDir);
+  assert.deepEqual(f.runtime.bbHostVerified({ hostId: bbHostId, dataDir: bbDataDir, bbVersion: '0.49.0', sdkVersion: '0.6.132', hostIds: ['synthetic-bb-host'], connectedAt: new Date().toISOString() }), { ok: true });
+  const caller = formatAgentId(bbHostId, 'thr_submitter');
+  const input = { ...f.input, hostId: undefined, originAgentId: caller, originIdentity: { agent: caller, hostId: bbHostId } };
+  const preview = await f.runtime.submitHandoff({ ...input, dryRun: true });
+  assert.ok('task' in preview);
+  assert.equal(preview.task, null);
+  const receipt = await f.runtime.submitHandoff(input);
+  assert.ok('operation' in receipt && receipt.operation);
+  const settled = await f.runtime.engine.awaitOperation(receipt.operation.id, 5000);
+  assert.equal(settled.state, 'succeeded', settled.diagnostic);
+  const task = f.runtime.store.task(settled.result!.taskId!);
+  assert.equal(task.originAgentId, caller);
+  assert.equal(task.hostId, 'fixture-host', 'the BB caller is intake identity; dispatch selection stays on the configured default work host');
+});
+
+test('dry-run reports a named invalid_input refusal when the selected submission host is offline', async t => {
+  const f = await fixture(t, true);
+  await assert.rejects(f.runtime.submitHandoff({ ...f.input, dryRun: true }), error => {
+    assert.equal((error as { code?: string }).code, 'invalid_input');
+    assert.match(String(error), /Selected submission host fixture-host is offline or unavailable for ingress/);
+    return true;
+  });
+});
+
 test('an accepted submission shows a submitting card on the board until its task exists', { timeout: 15000 }, async t => {
   const f = await fixture(t, true);
   const receipt = await f.runtime.submitHandoff(f.input);
