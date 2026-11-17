@@ -108,6 +108,9 @@ test('the read answers every Nucleus task group in one bounded projection', () =
     assert.equal(group.environmentId, 'env_bb_task');
     assert.equal(group.taskId, task.id);
     assert.equal(group.title, 'BB host phase 5');
+    // nucleus#1313: the group carries the repository its threads work on, so a
+    // container nested under another project's planner still says what it is on.
+    assert.equal(group.repository, 'repo');
     assert.equal(group.phase, 'awaiting_review');
     // The labels are the shared helpers' own output, so the two hosts name a state
     // the same way; the test compares against the helpers, never a copied string.

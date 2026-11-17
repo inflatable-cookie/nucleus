@@ -327,20 +327,21 @@ test('BB unknown worker spawn stays uncreated in attention after empty sweeps an
 });
 
 /**
- * Spec 062 phase 7, Tom's 2026-11-17 amendment: "T3 dispatches, BB executes".
+ * Spec 062 phase 7, Tom's 2026-11-17 amendment: "T3 dispatches, BB executes", and
+ * nucleus#1313: "If a task is dispatched from a planner in BB then the task is
+ * nested under the planner thread, otherwise it should be standalone in the
+ * sidebar".
  *
- * A T3 planner thread submits the brief through Nucleus; the task's own planner
- * thread is a BB thread, so the task dispatches to BB and runs its whole lifecycle
- * there — worker report, independent review, merge, closeout, archive — while the
- * origin stays on T3 and the closeout notice returns to that thread. The first
- * dispatch attempt records the finding the amendment asks for: BB parents every role
- * thread to a BB planner thread, so a task with only a T3 planner is refused before
- * any spawn, and the parity table names that step missing. The same table names the
- * other gap this test asserts: a worker's question goes to the task's planner thread,
- * never to the T3 origin. Everything here runs over recorded BB 0.49.0 rows with
- * fixture hosts: the dispatch, review and closeout rules, not isolated execution.
+ * A T3 planner thread submits the brief through Nucleus. Its planner is on T3, so
+ * the task dispatches to BB as a standalone top-level task group — no BB parent at
+ * all — and runs its whole lifecycle there: worker report, independent review,
+ * merge, closeout, archive. The origin stays on T3, the worker's question goes to
+ * the task's real planner ladder on T3 (never to a BB thread just because the task
+ * runs on BB), and the closeout notice returns to that thread. Everything here runs
+ * over recorded BB 0.49.0 rows with fixture hosts: the dispatch, review and
+ * closeout rules, not isolated execution.
  */
-test('BB trial: a T3 planner submits, BB refuses the dispatch without a BB planner thread, then executes end to end and the notice returns to T3', async t => {
+test('BB trial: a T3 planner submits, the standalone task executes end to end on BB, and the question and notice reach T3', async t => {
  const f = await fixture(t);
  try {
   // The operator sets the T3 planner thread as this project's planner.
@@ -361,25 +362,20 @@ test('BB trial: a T3 planner submits, BB refuses the dispatch without a BB plann
   assert.equal(f.runtime.store.leads().find(candidate => candidate.title === 'T3 dispatches BB')?.check?.ok, true, 'the T3 author lead passed its check');
   assert.equal(f.runtime.store.projectPlannerRecipient(f.runtime.store.projectFor(f.repo, f.repo)), f.t3Planner, 'the project planner is the T3 thread');
 
-  // The finding: BB parents every role thread to a BB planner thread, so a T3-only
-  // plan is refused before anything is spawned.
-  await f.runtime.engine.dispatchTask(taskId, false);
-  await driveUntil(f, () => f.runtime.store.task(taskId).phase === 'needs_attention' || Boolean(f.runtime.store.task(taskId).agentId), 'the T3-only dispatch answered', taskId, 120);
-  const refused = f.runtime.store.task(taskId);
-  assert.equal(refused.agentId, null, 'nothing was spawned on BB for a T3-only plan');
-  assert.equal(spawnCount(f), 0, 'no BB spawn was attempted');
-  assert.match(refused.reason, /planner thread on this BB host/, 'the refusal names the missing BB planner thread');
-
-  // With the task's planner thread recorded on BB, the same brief executes there.
-  const cleared = f.runtime.store.task(taskId);
-  f.runtime.store.update(taskId, { plannerAgentId: formatAgentId(bbHost, 'thr_planner'), phase: 'queued', reason: '',
-    resolution: { ...cleared.resolution, stop: null, attention: false } }, 'planner_selected', 'BB planner thread recorded; the dispatch refusal cleared');
+  // A T3 planner is no BB planner thread, so the task dispatches standalone: no
+  // parent link at all, a top-level task group in the sidebar.
   await f.runtime.engine.dispatchTask(taskId, false);
   await driveUntil(f, () => Boolean(f.runtime.store.task(taskId).agentId), 'worker dispatched on BB', taskId);
+  const dispatched = f.runtime.store.task(taskId);
+  assert.notEqual(dispatched.agentId, null, 'the task dispatched to BB with its T3-only planner');
+  assert.equal(dispatched.plannerAgentId, null, 'no BB planner thread was recorded');
   assert.equal(spawnCount(f), 1, 'the worker thread is a BB spawn');
+  const workerSpawn = f.fake.calls.filter(call => call.method === 'threads.spawn').at(-1)!.args as Record<string, unknown>;
+  assert.equal(Object.hasOwn(workerSpawn, 'parentThreadId'), false, 'a T3 planner names no BB parent, so the group is standalone');
+  assert.equal(f.fake.rows.get(dispatched.agentId!)!.parentThreadId, null, 'the committed worker row has no parent');
   assert.deepEqual(f.t3.origins.filter(id => id !== 'planner'), [], 'the T3 adapter created nothing for the task');
 
-  // The worker's question routes to the task's planner thread on BB, as a queued send.
+  // The worker's question climbs the task's real planner ladder: its planner is on T3.
   const runId = f.runtime.store.task(taskId).runId!;
   const pendingAsk = new Promise<{ code: number | null; out: string; err: string }>((resolve, reject) => {
    const child = spawn(process.execPath, [f.helperPath, runTicketPath(f, { id: runId }), 'ask'], { stdio: ['pipe', 'pipe', 'pipe'] });
@@ -390,15 +386,14 @@ test('BB trial: a T3 planner submits, BB refuses the dispatch without a BB plann
    child.on('close', code => resolve({ code, out, err }));
    child.stdin.end(JSON.stringify({ question: 'May the worker extend this task by one budget step?', kind: 'budget', headline: 'Budget extension', choices: ['Extend', 'Finish now'] }));
   });
-  await driveUntil(f, () => f.fake.calls.some(call => call.method === 'threads.send' && call.args.threadId === 'thr_planner'), 'the worker ask reached the BB planner thread', taskId, 200);
-  // The parity table's other missing step: a worker question is delivered to the
-  // task's planner thread, which on a BB-executed task is the BB thread, so nothing
-  // reaches the T3 origin thread. The test asserts that gap rather than hiding it.
-  assert.equal(f.t3.asks.length, 0, 'a worker question never reaches the T3 origin; it goes to the task planner thread on BB');
+  await driveUntil(f, () => f.t3.asks.length > 0, 'the worker ask reached the T3 planner thread', taskId, 200);
+  assert.equal(f.t3.asks[0]!.recipient, 'planner', 'the ask went to the T3 planner thread itself');
+  assert.equal(f.fake.calls.filter(call => call.method === 'threads.send' && call.args.threadId === 'thr_planner').length, 0,
+    'the ask never goes to a BB thread just because the task runs on BB');
   const askEvent = f.runtime.store.eventsAll(taskId).find(event => event.kind === 'agent_ask');
   assert.ok(askEvent, 'the ask is recorded');
   const askId = askEvent!.detail.split(':')[0]!;
-  await f.runtime.answerDelegatedQuestion({ questionId: `ns-agent-ask-${askId}`, answer: 'Extend', reason: 'Within the approved outcome', caller: formatAgentId(bbHost, 'thr_planner') });
+  await f.runtime.answerDelegatedQuestion({ questionId: `ns-agent-ask-${askId}`, answer: 'Extend', reason: 'Within the approved outcome', caller: f.t3Planner });
   const receipt = JSON.parse(await pendingAsk.then(answer => { assert.equal(answer.code, 0, answer.err); return answer.out; })) as { status: string; answer?: string };
   assert.match(receipt.answer ?? '', /Extend/, 'the planner answer reached the waiting helper');
 

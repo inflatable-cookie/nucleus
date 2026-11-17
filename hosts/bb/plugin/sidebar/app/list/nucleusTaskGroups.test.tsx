@@ -60,6 +60,7 @@ const GROUP: SidebarGroups["groups"][number] = {
   taskId: "task_1296",
   number: 1296,
   reference: "nucleus#1296",
+  repository: "nucleus",
   title: "BB host phase 5",
   phase: "awaiting_review",
   phaseLabel: "Review",
@@ -199,6 +200,13 @@ interface RenderOptions {
   failRead?: boolean;
   projects?: ReadonlyArray<SidebarGroups["projects"][number]>;
   onSetPreference?: (key: string, value: unknown) => void;
+  onDetach?: (input: { taskId: string }) => void;
+  /** The project row under test. */
+  project?: ReturnType<typeof makeSidebarProject>;
+  /** What that row's own tree is given (the resolved project's threads). */
+  threadListState?: { status: "ready"; threads: SidebarThread[] };
+  /** Every thread the live sidebar data carries, across projects. */
+  allThreads?: SidebarThread[];
 }
 
 function renderTaskGroups(options: RenderOptions = {}): {
@@ -223,6 +231,14 @@ function renderTaskGroups(options: RenderOptions = {}): {
       projects: options.projects ?? [],
     });
   }
+  // The task container's own action (nucleus#1313): the plugin forwards it to the
+  // service's `detach` owner control and answers with the recorded detach.
+  (rpc as unknown as Record<string, unknown>).detachTask = async (input: unknown) => {
+    options.onDetach?.(input as { taskId: string });
+    return { taskId: (input as { taskId: string }).taskId, detachedAt: new Date(0).toISOString(), detachedBy: "operator (board)" };
+  };
+  const project = options.project ?? makeSidebarProject({ id: "proj_test" });
+  const allThreads = options.allThreads ?? THREADS;
   const slot = renderSlot(
     { component: Harness },
     {
@@ -230,8 +246,8 @@ function renderTaskGroups(options: RenderOptions = {}): {
       children: (
         <NucleusSidebarGroupsProvider>
           <ProjectRow
-            project={makeSidebarProject({ id: "proj_test" })}
-            threadListState={{ status: "ready", threads: THREADS }}
+            project={project}
+            threadListState={options.threadListState ?? { status: "ready", threads: THREADS }}
             isActive={false}
             isCollapsed={false}
             compareThreads={() => 0}
@@ -248,8 +264,17 @@ function renderTaskGroups(options: RenderOptions = {}): {
       rpc: rpc as never,
       pluginId: "nucleus",
       sidebarThreads: {
-        threads: THREADS,
-        projects: [makeSidebarProject({ id: "proj_test" })],
+        threads: allThreads,
+        // Every project a thread names is in the live view; the row under test is
+        // the one this harness parameterises.
+        projects: [...new Map(
+          [makeSidebarProject({ id: "proj_test" }), project,
+            ...allThreads.map((thread) => makeSidebarProject({
+              id: thread.projectId,
+              name: thread.projectId === "proj_personal" ? "Personal" : thread.projectId,
+              isPersonal: thread.projectId === "proj_personal",
+            }))].map((entry) => [entry.id, entry]),
+        ).values()],
       },
     },
   );
@@ -303,9 +328,10 @@ describe("a Nucleus task group's header", () => {
     expect(
       header.querySelector("[data-nucleus-task-group-wait]")?.textContent,
     ).toBe("Waiting for QA capacity (position 2)");
+    // The PR chip is the state icon plus `#191`; the state rides the label.
     const pullRequest = header.querySelector("[data-nucleus-task-group-pr]");
-    expect(pullRequest?.textContent).toBe("#191OPEN");
-    expect(within(pullRequest as HTMLElement).getByText("OPEN")).not.toBeNull();
+    expect(pullRequest?.textContent).toBe("#191");
+    expect(pullRequest?.getAttribute("aria-label")).toBe("Pull request #191, open");
     // Collapsed by default, with no `collapsedEnvironments` entry: the fork's own
     // preference decides, so the two group classes cannot disagree.
     expect(header.getAttribute("data-nucleus-task-group-collapsed")).toBe("true");
@@ -450,5 +476,186 @@ describe("a project row's board link (phase 6, decision 5d)", () => {
     fireEvent.pointerDown(screen.getByRole("button", { name: "Test project actions" }), { button: 0 });
     await screen.findByRole("menuitem", { name: "Project settings" });
     expect(screen.queryByRole("menuitem", { name: "Board" })).toBeNull();
+  });
+});
+
+/**
+ * nucleus#1313 (Tom, 2026-11-17, poodle-lab#029): a task whose planner lives in
+ * another project resolves to that project's section (`resolveSidebarProjectId`
+ * walks the parent chain), so its own project showed upstream's "No threads" over
+ * a live task. The rows below are the live trial's shape: a worker in the task's
+ * project, nested under a planner thread in Tom's Personal project.
+ */
+describe("a project whose task nests under a planner in another project", () => {
+  const TASK_PROJECT = makeSidebarProject({ id: "proj_poodle_lab", name: "poodle-lab" });
+  const TASK_ENVIRONMENT = "env_poodle_task";
+  const SECOND_TASK_ENVIRONMENT = "env_poodle_task_2";
+  const planner = makeSidebarThread({
+    id: "thr_personal_planner",
+    projectId: "proj_personal",
+    title: "Tom's Personal planner",
+    titleFallback: "Planner",
+    latestAttentionAt: 5,
+  });
+  const taskThread = (id: string, title: string, environmentId: string) =>
+    makeSidebarThread({
+      id,
+      projectId: "proj_poodle_lab",
+      title,
+      titleFallback: title,
+      parentThreadId: "thr_personal_planner",
+      originPluginId: "nucleus",
+      environment: makeSidebarEnvironment({ id: environmentId, name: environmentId, isWorktree: true }),
+      latestAttentionAt: 6,
+    });
+  const worker = taskThread("thr_poodle_worker", "#1313 BB presentation", TASK_ENVIRONMENT);
+  const reviewer = taskThread("thr_poodle_reviewer", "1313 reviewer", TASK_ENVIRONMENT);
+  const secondWorker = taskThread("thr_poodle_second", "#1314 Second task", SECOND_TASK_ENVIRONMENT);
+
+  /** The batched read names both task environments, as the service does for live tasks. */
+  const TASK_GROUPS = [GROUP, SECOND_GROUP].map((group, index) => ({
+    ...group,
+    environmentId: index === 0 ? TASK_ENVIRONMENT : SECOND_TASK_ENVIRONMENT,
+  }));
+
+  it("shows a compact pointer to the planner instead of upstream's 'No threads'", async () => {
+    renderTaskGroups({ project: TASK_PROJECT, allThreads: [planner, worker], threadListState: { status: "ready", threads: [] }, groups: TASK_GROUPS });
+    const pointer = await screen.findByText("1 task under Tom's Personal planner");
+    expect(screen.queryByText("No threads")).toBeNull();
+    // The pointer is the planner's own app route, so the host routes the click.
+    const anchor = pointer.closest("a");
+    expect(anchor?.getAttribute("href")).toBe(
+      "/projects/proj_personal/threads/thr_personal_planner",
+    );
+    expect(document.querySelectorAll("[data-nucleus-nested-task-pointer]")).toHaveLength(1);
+  });
+
+  it("counts one task once however many of its role threads nest under the planner", async () => {
+    renderTaskGroups({ project: TASK_PROJECT, allThreads: [planner, worker, reviewer], threadListState: { status: "ready", threads: [] }, groups: TASK_GROUPS });
+    expect(await screen.findByText("1 task under Tom's Personal planner")).not.toBeNull();
+  });
+
+  it("counts two tasks under the same planner as two", async () => {
+    renderTaskGroups({ project: TASK_PROJECT, allThreads: [planner, worker, secondWorker], threadListState: { status: "ready", threads: [] }, groups: TASK_GROUPS });
+    expect(await screen.findByText("2 tasks under Tom's Personal planner")).not.toBeNull();
+    expect(screen.queryByText("No threads")).toBeNull();
+  });
+
+  it("keeps upstream's empty state for a project with no threads anywhere", async () => {
+    renderTaskGroups({ project: TASK_PROJECT, allThreads: [planner], threadListState: { status: "ready", threads: [] }, groups: [] });
+    expect(await screen.findByText("No threads")).not.toBeNull();
+    expect(document.querySelector("[data-nucleus-nested-task-pointer]")).toBeNull();
+  });
+
+  it("draws a project's own root thread as a row, never as a pointer", async () => {
+    const root = makeSidebarThread({
+      id: "thr_poodle_root",
+      projectId: "proj_poodle_lab",
+      title: "poodle-lab chat",
+      latestAttentionAt: 9,
+    });
+    renderTaskGroups({ project: TASK_PROJECT, allThreads: [planner, worker, root], threadListState: { status: "ready", threads: [root] }, groups: TASK_GROUPS });
+    expect(await screen.findByText("poodle-lab chat")).not.toBeNull();
+    expect(document.querySelector("[data-nucleus-nested-task-pointer]")).toBeNull();
+    expect(screen.queryByText("No threads")).toBeNull();
+  });
+});
+
+/**
+ * nucleus#1313 (Tom, 2026-11-17, live trial poodle-lab#029): the container says what
+ * repository the task works on, its PR is the standard icon plus `#39` in the state
+ * colour, and a Nucleus container offers the task's own actions instead of upstream's
+ * environment actions.
+ */
+describe("a task container's repository, PR chip and actions", () => {
+  function openTaskMenu(): void {
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Task actions" }), { button: 0 });
+  }
+
+  it("leads the state line with the folder icon and the repository", async () => {
+    renderTaskGroups({ groups: [{ ...GROUP, repository: "poodle-lab" }] });
+    const repository = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>("[data-nucleus-task-group-repository]");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(repository.textContent).toBe("poodle-lab");
+    expect(repository.querySelector('[data-icon="Folder"]')).not.toBeNull();
+    // The chip keeps the PR state in the label, not in visible text.
+    const chip = document.querySelector<HTMLElement>("[data-nucleus-task-group-pr]")!;
+    expect(chip.textContent).toBe("#191");
+  });
+
+  it("draws the PR as the state icon and #39 with the state in the label, never as text", async () => {
+    renderTaskGroups({ groups: [GROUP] });
+    const chip = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>("[data-nucleus-task-group-pr]");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(chip.textContent).toBe("#191");
+    expect(chip.textContent).not.toContain("OPEN");
+    expect(chip.querySelector('[data-icon="GitPullRequest"]')).not.toBeNull();
+    expect(chip.getAttribute("data-nucleus-task-group-pr-tone")).toBe("success");
+    expect(chip.getAttribute("aria-label")).toBe("Pull request #191, open");
+  });
+
+  it("uses the merged glyph and the merged tone, and the closed one for closed", async () => {
+    renderTaskGroups({ groups: [{ ...GROUP, prState: "MERGED" }] });
+    const merged = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>("[data-nucleus-task-group-pr]");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(merged.querySelector('[data-icon="GitMerge"]')).not.toBeNull();
+    expect(merged.getAttribute("data-nucleus-task-group-pr-tone")).toBe("accent");
+
+    cleanup();
+    renderTaskGroups({ groups: [{ ...GROUP, prState: "CLOSED" }] });
+    const closed = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>("[data-nucleus-task-group-pr]");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(closed.querySelector('[data-icon="GitPullRequestClosed"]')).not.toBeNull();
+    expect(closed.getAttribute("data-nucleus-task-group-pr-tone")).toBe("danger");
+  });
+
+  it("offers only the task's own actions on a Nucleus container, and calls detach once", async () => {
+    const { slot } = renderTaskGroups({ groups: [GROUP] });
+    await waitFor(() => {
+      expect(taskGroupHeader(NUCLEUS_ENVIRONMENT)).not.toBeNull();
+    });
+    // Upstream's environment actions are gone from a task container.
+    const container = taskGroupRow(NUCLEUS_ENVIRONMENT);
+    expect(within(container).queryByRole("button", { name: "New thread in environment" })).toBeNull();
+    expect(within(container).queryByRole("button", { name: "Environment actions" })).toBeNull();
+    openTaskMenu();
+    expect(await screen.findByRole("menuitem", { name: "Open task" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "Open pull request" }).getAttribute("href")).toBe(GROUP.prUrl);
+    // Upstream's rename/archive are gone; the task's own detach replaces them.
+    expect(screen.queryByRole("menuitem", { name: "Rename" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Archive" })).toBeNull();
+    const detach = await screen.findByRole("menuitem", { name: "Detach from planner" });
+    fireEvent.click(detach);
+    await waitFor(() => {
+      expect(slot.rpcCalls.filter((call) => call.method === "detachTask")).toHaveLength(1);
+    });
+    expect(slot.rpcCalls.find((call) => call.method === "detachTask")!.input).toMatchObject({ taskId: "task_1296" });
+  });
+
+  it("leaves an ordinary worktree group with upstream's actions", async () => {
+    renderTaskGroups({ groups: [] });
+    await waitFor(() => {
+      expect(upstreamHeaderByEnvironment(UPSTREAM_ENVIRONMENT)).not.toBeNull();
+    });
+    // Upstream's new-thread control is present on the ordinary group, and its own
+    // environment menu keeps Rename and Archive.
+    const ordinary = upstreamHeaderByEnvironment(UPSTREAM_ENVIRONMENT);
+    expect(within(ordinary).getByRole("button", { name: "New thread in environment" })).not.toBeNull();
+    fireEvent.pointerDown(within(ordinary).getByRole("button", { name: "Environment actions" }), { button: 0 });
+    expect(await screen.findByRole("menuitem", { name: "Rename" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "Archive" })).not.toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Detach from planner" })).toBeNull();
   });
 });

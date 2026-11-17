@@ -9,9 +9,9 @@ export interface BbWorkspaceRecord {
   id: string; directory: string; repositoryRoot: string; projectId: string; title: string;
   environmentId?: string; archivedAt?: string;
 }
-interface BbAgent { id: string; task: string; run: string; role: string; workspaceId: string; parentThreadId: string; labels: Record<string, string> }
+interface BbAgent { id: string; task: string; run: string; role: string; workspaceId: string; parentThreadId: string | null; labels: Record<string, string> }
 interface SpawnIntent { task: string; run: string; workspaceId: string; attemptedAt: number; agentId?: string }
-interface WriteIntent { status: 'unknown' | 'refused' | 'settled'; value?: string }
+interface WriteIntent { status: 'unknown' | 'refused' | 'settled'; value?: string | null }
 export interface BbThreadState { agents: Record<string, BbAgent>; spawns: Record<string, SpawnIntent>; writes: Record<string, WriteIntent> }
 export const emptyBbThreadState = (): BbThreadState => ({ agents: {}, spawns: {}, writes: {} });
 export interface BbThreadPorts {
@@ -21,7 +21,10 @@ export interface BbThreadPorts {
   save(state: BbThreadState): void;
   workspace(id: string): BbWorkspaceRecord | undefined;
   putWorkspace(workspace: BbWorkspaceRecord): void;
-  parent(taskId: string): string;
+  /** The presentation parent on this host: a BB planner's native id, or null for a standalone group (nucleus#1313). */
+  parent(taskId: string): string | null;
+  /** The task reference every BB title names (`poodle-lab#29`, nucleus#1313). */
+  reference(taskId: string): string;
   helperPath: string;
   ticketPath(runId: string): string;
   /** Only local pre-send errors and the channel's two proven refusal codes. */
@@ -89,6 +92,12 @@ export class BbThreads {
     if (row.threadId !== id) throw new Error('BB observation answered another thread');
     return this.observation(row);
   }
+  /** A thread's observation beside the environment it runs in, for a thread Nucleus did not create. */
+  async origin(id: string): Promise<{ observation: AgentObservation; environmentId: string | null }> {
+    const row = await this.read<BbRow>('thread.observe', { threadId: id });
+    if (row.threadId !== id) throw new Error('BB observation answered another thread');
+    return { observation: this.observation(row), environmentId: row.environmentId };
+  }
   async observationInventory(ids: readonly string[]): Promise<ReadonlyMap<string, AgentObservation> | null> {
     const answer = new Map<string, AgentObservation>();
     try {
@@ -100,7 +109,7 @@ export class BbThreads {
       return answer;
     } catch { return null; }
   }
-  private bind(threadId: string, environmentId: string | null, task: string, run: string, workspaceId: string, role: string, parentThreadId: string) {
+  private bind(threadId: string, environmentId: string | null, task: string, run: string, workspaceId: string, role: string, parentThreadId: string | null) {
     const workspace = this.ports.workspace(workspaceId);
     if (!workspace || !environmentId || (workspace.environmentId && workspace.environmentId !== environmentId)) throw unknown('The spawn has no matching workspace environment; nothing was bound');
     // Environment custody must be durable before core sees a created run.
@@ -128,8 +137,11 @@ export class BbThreads {
     const mode = spec.profile.modeId;
     if (mode && !['default', 'full', 'auto', 'accept-edits'].includes(mode)) throw new ProvenPreSendRefusalError(`BB permission mode ${mode} is unavailable`);
     const input = {
-      projectId: workspace.projectId, title: `${spec.taskNumber ? `#${spec.taskNumber} ` : ''}${spec.title}`.slice(0, 200),
-      environmentPath: workspace.directory, parentThreadId, parentNotifications: 'off',
+      projectId: workspace.projectId, title: `${this.ports.reference(task)} ${spec.title}`.slice(0, 200),
+      environmentPath: workspace.directory,
+      // A detached task, an off-host planner or no planner at all has no parent to
+      // nest under: the group is standalone at the top level (nucleus#1313).
+      ...(parentThreadId ? { parentThreadId } : {}), parentNotifications: 'off',
       prompt: attempt.prompt, providerId: spec.profile.provider, model: spec.profile.model,
       permissionMode: mode && mode !== 'default' ? mode : 'full',
       ...(spec.profile.thinkingOptionId ? { reasoningLevel: spec.profile.thinkingOptionId } : {}),
@@ -186,7 +198,7 @@ export class BbThreads {
     const { row, role } = matches[0];
     const workspace = this.ports.workspace(intent.workspaceId);
     if (row.environmentPath !== workspace?.directory) throw unknown('The matching thread is attached to another directory');
-    return [this.bind(row.threadId, row.environmentId, task, run, intent.workspaceId, role, row.parentThreadId ?? '')];
+    return [this.bind(row.threadId, row.environmentId, task, run, intent.workspaceId, role, row.parentThreadId)];
   }
   async archiveAgent(id: string, depth = 0): Promise<void> {
     const owned = this.ports.state().agents[id];
@@ -216,12 +228,12 @@ export class BbThreads {
   private async write(key: string, op: HostOperationName, input: unknown) {
     const state = this.ports.state();
     if (state.writes[key]?.status === 'settled') return;
-    state.writes[key] = { status: 'unknown', ...(op === 'thread.title' ? { value: (input as { title: string }).title } : op === 'thread.reparent' ? { value: (input as { parentThreadId: string }).parentThreadId } : {}) }; this.ports.save(state);
+    state.writes[key] = { status: 'unknown', ...(op === 'thread.title' ? { value: (input as { title: string }).title } : op === 'thread.reparent' ? { value: (input as { parentThreadId: string | null }).parentThreadId } : {}) }; this.ports.save(state);
     try {
       const result = await this.read<{ title?: string; status?: string; parentThreadId?: string | null; archivedAt?: number }>(op, input);
       if (op === 'thread.stop' && !['idle', 'error'].includes(result.status ?? '')) throw new HostUnknownDeliveryError({ command: 'bb.thread.stop' });
       if (op === 'thread.title' && result.title !== (input as { title: string }).title) throw new HostUnknownDeliveryError({ command: 'bb.thread.title' });
-      if (op === 'thread.reparent' && result.parentThreadId !== (input as { parentThreadId: string }).parentThreadId) throw new HostUnknownDeliveryError({ command: 'bb.thread.reparent' });
+      if (op === 'thread.reparent' && result.parentThreadId !== (input as { parentThreadId: string | null }).parentThreadId) throw new HostUnknownDeliveryError({ command: 'bb.thread.reparent' });
       if (op === 'thread.archive' && typeof result.archivedAt !== 'number') throw new HostUnknownDeliveryError({ command: 'bb.thread.archive' });
       if ((op === 'thread.interaction.respond' || op === 'thread.interaction.cancel') && !['resolved', 'resolving', 'interrupted'].includes(result.status ?? '')) throw new HostUnknownDeliveryError({ command: `bb.${op}` });
       const next = this.ports.state(); next.writes[key] = { ...next.writes[key], status: 'settled' }; this.ports.save(next);
@@ -334,7 +346,7 @@ export class BbThreads {
     await this.write(key, op, input);
   }
   /** Reparent one recorded thread, observation first and once per requested parent. */
-  async reparentThread(id: string, parentThreadId: string) {
+  async reparentThread(id: string, parentThreadId: string | null) {
     if (!this.ports.state().agents[id]) throw new ProvenPreSendRefusalError('BB reparent only accepts a Nucleus-created thread');
     const row = await this.read<BbRow>('thread.observe', { threadId: id });
     if (row.parentThreadId === parentThreadId) {
@@ -360,7 +372,7 @@ export class BbThreads {
    * never moved, so each pass reads each thread and writes only the ones that differ.
    * The planner itself is never touched.
    */
-  async reparentTaskThreads(taskId: string, parentThreadId: string) {
+  async reparentTaskThreads(taskId: string, parentThreadId: string | null) {
     for (const agent of Object.values(this.ports.state().agents).filter(agent => agent.task === taskId)) await this.reparentThread(agent.id, parentThreadId);
   }
   /** The recorded thread for one id, so a caller can prove the workspace it answers in. */
@@ -401,7 +413,7 @@ export class BbThreads {
     try {
       value = await this.read('run.attach', {
         projectId: workspace.projectId, title: input.title.slice(0, 200), environmentPath: workspace.directory,
-        parentThreadId, parentNotifications: 'off', providerId: input.profile.provider, model: input.profile.model,
+        ...(parentThreadId ? { parentThreadId } : {}), parentNotifications: 'off', providerId: input.profile.provider, model: input.profile.model,
         ...(input.profile.thinkingOptionId ? { reasoningLevel: input.profile.thinkingOptionId } : {}),
         permissionMode: input.profile.modeId && input.profile.modeId !== 'default' ? input.profile.modeId : 'full',
         ...(input.profile.featureValues && Object.keys(input.profile.featureValues).length ? { sessionOptions: input.profile.featureValues } : {}),

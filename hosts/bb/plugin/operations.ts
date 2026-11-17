@@ -672,11 +672,16 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
         return { threadId, delivery: sent.delivery, mode };
       }
       case "thread.reparent": {
-        const threadId = text(input.threadId, "threadId", 128), parentThreadId = text(input.parentThreadId, "parentThreadId", 128);
+        const threadId = text(input.threadId, "threadId", 128);
+        // nucleus#1313: null clears the parent link, which is how a group becomes
+        // standalone; a named parent re-nests it. Either way the write's
+        // postcondition is the parent link itself, read back.
+        const parentThreadId = input.parentThreadId === null ? null : text(input.parentThreadId, "parentThreadId", 128);
         await call("threads.update", () => sdk.threads.update!({ threadId, parentThreadId }));
         const row = await call("threads.get", () => sdk.threads.get({ threadId }));
-        // The write's postcondition is the parent link itself, read back.
-        return { threadId, parentThreadId: row.parentThreadId ?? null };
+        if ((row.parentThreadId ?? null) !== parentThreadId)
+          throw new HostOperationError("unavailable", "threads.update did not move the thread's parent link");
+        return { threadId, parentThreadId };
       }
       case "thread.interactions": {
         const threadId = text(input.threadId, "threadId", 128);

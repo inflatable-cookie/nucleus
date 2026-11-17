@@ -18,7 +18,14 @@ export const taskReferenceLabel = (task: Pick<Task, 'phase' | 'number' | 'refere
 /** Reference labels by task id, or the one-task reader a caller builds so only named ids are read. */
 export type TitleReferenceLookup = ReadonlyMap<string, string> | ((taskId: string) => string | undefined);
 
-export function taskWorkspaceTitle(task:WorkspaceTitleTask, references:TitleReferenceLookup=new Map()){
+/**
+ * How a title names the task's number. Paseo and T3 keep the padded `029`; BB thread
+ * titles name the full Nucleus task reference instead (`poodle-lab#29`), because a task
+ * can run against a repository its planner's project does not name (nucleus#1313, Tom
+ * 2026-11-17: "Use one task-number style everywhere ... in thread titles and container
+ * rows"). One style everywhere: `#29`, never `029`.
+ */
+export function taskWorkspaceTitle(task:WorkspaceTitleTask, references:TitleReferenceLookup=new Map(), referenceLabel?:string){
   const reference = typeof references === 'function' ? references : (taskId: string) => references.get(taskId);
   const until=task.holdUntil?.kind==='task'?reference(task.holdUntil.taskId):undefined;
   const fences=[task.holds?.dispatch,task.holds?.merge].filter((fence):fence is NonNullable<typeof fence>=>Boolean(fence));
@@ -37,5 +44,6 @@ export function taskWorkspaceTitle(task:WorkspaceTitleTask, references:TitleRefe
     : undefined;
   const owner=currentFence?.owner??task.holdOwner;
   const titleState=taskTitleStateLabel({...task,waitingOn,hold:owner?{owner}:undefined});
-  return `${titleState}: ${task.number ? `${formatTaskNumber(task.number)} ` : ''}${task.title.replace(/\s+worker$/i,'')}`;
+  const numberToken=referenceLabel&&referenceLabel.trim()?referenceLabel.trim():task.number?`#${task.number}`:null;
+  return `${titleState}: ${numberToken ? `${numberToken} ` : ''}${task.title.replace(/\s+worker$/i,'')}`;
 }

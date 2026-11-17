@@ -10,7 +10,10 @@ plan, and [phase 0 evidence](#phase-0-evidence-2026-11-16) answers its eight ass
 2026-11-16: decision 5 now carries the forked sidebar, the two boards and BB usage left to BB's card
 plus the operator's Usage Pace plugin, and the experimental inventory and the plan from phase 5 on
 follow it; phases 0–4 are unchanged. Amended 2026-11-17 (nucleus#1302): subscription usage leaves
-Nucleus, so BB's card and the operator's plugins are the whole usage surface on either host.
+Nucleus, so BB's card and the operator's plugins are the whole usage surface on either host. Amended
+2026-11-17 (nucleus#1313): the parent link is conditional on the planner living on this BB host, it
+follows a planner change, an explicit detach makes a task group standalone, and a project whose task
+nests under another project's planner points at it instead of reading "No threads".
 Owner: Nucleus runtime maintainers
 
 BB ([getbb.app](https://getbb.app)) is a third Nucleus host beside Paseo and T3Code (Tom,
@@ -32,9 +35,12 @@ and no change to their specs. The two additive allowances it does use are the ho
 There is no BB code to reuse: an earlier BB plugin for a previous Nucleus codebase has been removed,
 so this design starts from the current host contract and the current BB surface.
 
-Every Nucleus-created BB thread is parented to the task's planner thread. Nucleus never sets
-`lifecycleOwnerThreadId` on any thread, never archives or deletes a thread it did not create, and
-never deletes a BB project.
+A Nucleus-created BB thread is parented to the task's planner thread **only when that planner lives on
+this BB host** (decision 4, amended 2026-11-17 by nucleus#1313): a task whose planner is on T3, Paseo or
+nowhere dispatches as a standalone top-level group, and questions still climb the task's real planner
+ladder on its own host. Nucleus never sets `lifecycleOwnerThreadId` on any thread, so archiving a
+planner never cascades into the task threads; it never archives or deletes a thread it did not create,
+and never deletes a BB project.
 
 ## Verified facts
 
@@ -230,10 +236,20 @@ helper reporting proves unreliable for some provider; it would still carry the s
 ### 4. Thread presentation: a planner-owned group, no settle state
 
 **Recommendation.** For one task, Nucleus creates one thread per role — worker, reviewer, recovery,
-coordinator and executor — in the task's worktree, each with `parentThreadId` set to the task's
-planner thread and `parentNotifications: "off"`. All are visible. The worker thread's title is the
-shared `taskWorkspaceTitle` projection plus ` · ` and the step its role threads report, as T3Code's
-row does; a support thread's title is `#<task-number> <role>: <title>`. Nucleus never sets
+coordinator and executor — in the task's worktree, each with `parentNotifications: "off"`. All are
+visible. `parentThreadId` is set **only when the task's planner thread lives on this BB host** (Tom,
+2026-11-17: "If a task is dispatched from a planner in BB then the task is nested under the planner
+thread, otherwise it should be standalone in the sidebar"): the planner is the first rung the task's
+questions climb — the planner the brief named, else its owner, else the project's planner — and a task
+whose planner is on T3 or Paseo, or that has none, is created with no parent at all, a standalone
+top-level group. The parent link is presentation only, so an off-host planner never changes a question
+route: asks climb the task's real ladder on the planner's own host (amended 2026-11-17, nucleus#1313). Every thread title names the task's full reference — the repository it works on plus its unpadded
+number, `poodle-lab#29`, never a bare or padded number (Tom, 2026-11-17). While the worker is the
+task's only thread its title is the shared `taskWorkspaceTitle` projection
+(`Working: poodle-lab#29 <title>`) plus ` · ` and the step its role threads report, as T3Code's
+row does; once the container holds a second participant the worker is named by role like the
+others (`poodle-lab#29 worker: <title>`) and the phase lives on the container's state line alone.
+A support thread's title is `<reference> <role>: <title>`. Nucleus never sets
 `lifecycleOwnerThreadId`.
 
 BB has no settled state, so Nucleus implements neither `settleWorkerThread`, `settleReportedThread`
@@ -243,12 +259,18 @@ indicator and unread state, and by the board. Replaced attempts follow the exist
 superseded worker thread is archived as soon as its run is released and no live BB turn remains, and
 other displaced threads stay visible until closeout. Reparenting a live task to another planner
 thread writes `parentThreadId` on each of the task's threads under one durable intent per thread,
-observation-first, never on the planner itself. At closeout Nucleus archives the task's role threads
+observation-first, never on the planner itself; a planner change to a thread on another host writes
+`null` instead, the same write that clears the link. The `detach` owner verb (board, task row and
+`nucleus helper detach`) records `presentationDetached` on the task — "no planner thread for
+presentation" — and each host renders that as standalone, so a planner thread can be archived or
+replaced without taking its tasks' threads with it; a reparent that names a planner clears the record
+and re-nests the group (Tom, 2026-11-17: "We will also need the ability to detach a worker thread from
+a planner in case the planner needs replacing"). At closeout Nucleus archives the task's role threads
 and leaves them archived; it does not delete threads, so the planner's history stays readable.
 
-**Evidence.** The parent link already draws the group, and `parentNotifications: "off"` keeps BB's
-own wake-ups out of a planner that Nucleus already notifies through its own durable notices (facts 2,
-3). `off` is the only value that does not duplicate the owner-owns-blockers rule: `auto` reports
+**Evidence.** The parent link already draws the group (fact 2), `threads.update` sets or clears it on
+a live thread, and `parentNotifications: "off"` keeps BB's own wake-ups out of a planner that Nucleus
+already notifies through its own durable notices (facts 2, 3). `off` is the only value that does not duplicate the owner-owns-blockers rule: `auto` reports
 every finished, failed or interrupted turn, and `stuck` still reports failures, interruptions and
 blockers. Titles and reparenting are ordinary `threads.update` writes (fact 7). Archive is BB's
 non-destructive retirement, but it is not a leaf-local operation: `threads.archive` cascades, and
@@ -335,16 +357,33 @@ same routine and records its output.
 
 1. `app/list/ProjectRow.tsx` — the task group header: for a group whose threads carry this plugin's
    origin and whose environment is a Nucleus task handle, render the state line (5b); every other
-   group takes upstream's path.
+   group takes upstream's path. Nucleus#1313 adds the project row's cross-project pointer where that
+   row would otherwise render upstream's empty state (5a, item 5 below).
 2. `app/preferences/atoms.ts` and `shared/preferences.ts` — one preference key, `expandedTaskGroups`
    (environment ids), which owns the collapse state of Nucleus task groups and nothing else.
-3. `app/list/nucleusTaskGroups.ts` — a new file in the fork: the batched read, its join, and the
-   collapsed/expanded decision derived from (1) and (2).
+3. `app/list/nucleusTaskGroups.ts` — a new file in the fork: the batched read, its join, the
+   collapsed/expanded decision derived from (1) and (2), and (nucleus#1313) the nested-elsewhere
+   pointer, computed from the same live thread rows the host already gives the list.
 4. `app.tsx` — export the `ThreadList` component instead of defining the plugin, so the plugin's own
    entry can register it beside the board.
 
 A vendored file that needs a fifth change is a signal that the seam is wrong: either the patch set
-grows deliberately, with its reason recorded, or the change belongs upstream (5f's exit path).
+grows deliberately, with its reason recorded here and in `PATCHES.md`, or the change belongs upstream
+(5f's exit path). Nucleus#1313 settled that question in the opposite direction from a fifth patch: a
+Nucleus task is a task group from its first thread only when grouping adapts, which Tom ruled
+"representative of the state of the task" (2026-11-17), so a lone worker stays a plain row and the
+container appears through upstream's own grouping when a second participant joins. The patch set
+stays four.
+
+**The cross-project pointer (nucleus#1313).** The list attributes a nested thread to its root
+ancestor's project, so a task whose planner thread lives in another project (Tom's Personal project, in
+his live trial) leaves its own project row reading upstream's "No threads" over a live task. That row
+renders one compact pointer per planner instead — "1 task under <planner title>", counting a task's
+role threads once by their shared environment — on the planner's own app route, so the host routes the
+click and the pointer opens the nested group. A project whose threads are all its own keeps upstream's
+empty state, and a task's own root thread draws as an ordinary row. The logic lives in the fork's own
+file and the pointer replaces only the empty state in `ProjectRow.tsx`; no vendored grouping code
+changes.
 
 **Rebase routine.** Bump the pin to a new release tag, run the copy, apply
 `sidebar/patches/*.patch`, resolve rejects by updating the patch (never by editing a vendored file in
@@ -407,18 +446,30 @@ exclusive slot does not care which plugin owns it.
 
 - **line one:** `#<task-number> <task title>`, truncated, with the number as the link target for the
   task (the board's task detail, 5d);
-- **line two:** the task's state from the shared title helper — phase label, then whichever of hold,
-  wait, stop or attention applies (`shared/task-state.ts` via `phaseStateLabel`/`taskStateLabel`,
-  which the Paseo client already reads, so the two hosts name a state the same way);
-- **line three, when the task has them:** the PR number from the card's `prUrl`/`completionPrNumber`
-  with its state — `OPEN`, `CLOSED` or `MERGED` from the board's own `prStates` record, which the
-  service refreshes for every task that has a PR and no merged commit (`core/forge/pr-status.ts`) —
-  and the recorded wait that says what the task is waiting for (`Waiting for QA capacity (position
-  N)`, `Merge hold`, `Needs operator input`);
+- **line two:** the repository the task works on, then the task's state from the shared title helper —
+  phase label, then whichever of hold, wait, stop or attention applies (`shared/task-state.ts` via
+  `phaseStateLabel`/`taskStateLabel`, which the Paseo client already reads, so the two hosts name a
+  state the same way). The repository leads (`<folder> poodle-lab · Reviewing · <PR>#39`) because a
+  task can nest under a planner from another BB project, one Nucleus project can span several
+  repositories, and a standalone group has no planner context at all; its label is the board's own
+  rule (`shared/repository-label.ts`: the short name, `owner/name` when a short name is ambiguous);
+- **the PR chip, when the task has one:** the standard state icon (`GitPullRequest`, `GitMerge`,
+  `GitPullRequestClosed`) plus `#<number>` in the state colour — success for open, accent for merged,
+  danger for closed, warning when an open PR's task needs attention, muted otherwise — with no visible
+  state word and the state in the `aria-label`. The mapping is one module
+  (`shared/pull-request-badge.ts`) shared with the board's `PullRequestBadge`, so the two cannot
+  drift. The number and state come from the card's `prUrl`/`resumePrNumber` and the board's own
+  `prStates` record, which the service refreshes for every task that has a PR and no merged commit
+  (`core/forge/pr-status.ts`); the recorded wait that says what the task waits for (`Waiting for QA
+  capacity (position N)`, `Merge hold`, `Needs operator input`) stays on the same line;
 - the rolled-up agent-status glyph upstream draws while the group is collapsed stays, from
   `experimental_resolveThreadStatus` over the group's hidden threads;
-- upstream's controls stay: the toggle chevron, inline rename, the new-thread button and the overflow
-  menu.
+- the toggle chevron and inline rename stay, and the actions are the **task's own** (nucleus#1313,
+  Tom 2026-11-17: "Can we get rid of it?"): open the task, open the pull request when there is one,
+  and detach from the planner. Upstream's "New thread in environment", Edit and Archive are removed
+  from a task container — a new thread would add a participant Nucleus does not know about, Edit
+  renames an environment the header no longer shows, and Archive would archive live role threads
+  behind Nucleus's back. Every ordinary worktree group keeps upstream's actions exactly.
 
 A Nucleus task group is **collapsed by default** and an operator's explicit expand persists in the
 plugin's own preference (`expandedTaskGroups`), so a group is expanded exactly when its environment
@@ -435,9 +486,9 @@ sidebar drawing.
 existing RPC catalogue, `bb.sidebar-groups`, returns one bounded projection:
 
 - `groups[]` — for every live task whose workspace handle records a BB environment id: the
-  environment id, the task id, number, reference, title, phase, held/blocking hold, wait state, stop
-  kind, `prUrl`, `completionPrNumber`, its `prStates` entry, the recorded resolution/attention flags,
-  and the label strings the sidebar draws;
+  environment id, the task id, number, reference, the repository label, title, phase, held/blocking
+  hold, wait state, stop kind, `prUrl`, `completionPrNumber`, its `prStates` entry, the recorded
+  resolution/attention flags, and the label strings the sidebar draws;
 - `threads[]` — the thread ids Nucleus knows per Nucleus project: its planner thread, its named-agent
   threads, and each task's role threads with their environment id, for 5d's tab visibility.
 
@@ -1057,9 +1108,14 @@ the same durable intents phase 3 established:
   `createConsultReviewer` spawn one idle support thread in the task's recorded worktree under its
   planner, with the same parent-notifications-off and role metadata as every other role thread, and
   `askPlanner` then delivers its question.
-- `thread.reparent` writes `parentThreadId` and reads it back. A reparented task moves each of its own
-  recorded threads under the new planner on the ordinary sweep, one durable intent per thread, and never
-  touches the planner itself. There is no task-wide destination cache: the fresh per-thread read is the
+- `thread.reparent` writes `parentThreadId` and reads it back, or clears it when the destination is
+  `null` (nucleus#1313). A reparented task moves each of its own recorded threads under the new planner
+  on the ordinary sweep, one durable intent per thread, and never touches the planner itself. The
+  destination is the task's first planner rung when that thread lives on this BB host and `null`
+  otherwise — an off-host planner or an explicit `detach` — so the same sweep re-nests, stands the
+  group alone, and never names a BB thread the task's questions would not ask. A BB planner thread is a
+  valid reparent target: it resolves its own environment as its workspace (`bb-environment:<id>`), the
+  same shape T3 uses for a project scope. There is no task-wide destination cache: the fresh per-thread read is the
   only settlement, so an older role is never skipped because a newer one already names the new planner,
   and a move back writes again when the read proves the thread left. An unknown reparent write is settled
   by a later read and never re-sent.
@@ -1173,13 +1229,29 @@ handles and task records phases 0–4 landed:
   governing every other group, so each group class reads exactly one list and the two cannot
   disagree. A group the read does not name — unknown, unattached, or a read that has not landed or
   failed — renders upstream's header: the state line is an addition, never a precondition.
+- Cross-project nesting (nucleus#1313): the project row whose threads all resolve to another project's
+  planner renders a compact pointer instead of upstream's empty state, counts one task once however
+  many role threads it has under that planner, links to the planner's own route, and leaves upstream's
+  empty state in place for a project with no threads anywhere.
+- The container says what it works on and what its PR is (nucleus#1313): the state line leads with
+  the folder icon and the repository label, and the PR is the state icon plus `#<number>` in the
+  state colour with the state in its accessible label.
+- The container's actions are the task's own (nucleus#1313): open the task, open the PR, detach from
+  the planner — never upstream's new-thread, Edit or Archive, which every ordinary group keeps.
 
 Tests: `hosts/bb/plugin/sidebar/app/list/nucleusTaskGroups.test.tsx` names this phase's UI acceptance
 in the fork's own runner (`effigy bb:sidebar-tests`): the collapsed default with number, title, shared
 state label, recorded wait and PR state; upstream's header and one read for every other group; one
 call for many groups plus the refetch on the board signal; an explicit expand written to
 `expandedTaskGroups` with `collapsedEnvironments` never written for a task group; the stored
-preference read back on a fresh mount; and upstream's header when the read fails.
+preference read back on a fresh mount; upstream's header when the read fails; the cross-project
+pointer over the live trial's row shape (a worker in its own project nested under a planner in
+Personal): pointer instead of "No threads", one task counted once across its role threads, two tasks
+counted separately, a project with no threads keeping upstream's empty state, and its own root thread
+drawn as a row; the repository-led state line and the icon-plus-`#39` PR chip (open, merged and closed
+tones, the state in the label); and the container's own actions beside an ordinary group's unchanged
+upstream actions. `test/pull-request-badge.test.ts` proves the one shared PR mapping and the board
+badge that reads it, plus the shared repository label and its ambiguity rule.
 `test/bb-sidebar-vendored.test.ts` proves the vendored manifest (byte-identical or named as patched,
 the SDK floor at or below the release's, the forkable record, and that no patch hunk touches a drag
 binding or split prop); `test/bb-sidebar-groups.test.ts` proves the projection over real stored task
@@ -1359,7 +1431,7 @@ Paseo stays Tom's call.
 | Native question pills | The host's own question surface | The pills read `question.native-list` and answer through `question.native-answer`; the plugin never writes a BB interaction | **met, by a different mechanism** — BB's interactions are written by its own agent runtime, so the plugin reads and answers through the catalogue | `test/bb-board-surfaces.test.ts`, `test/bb-board-bridge.test.ts` |
 | Usage | None since nucleus#1302 | BB's own provider-usage card, plus the operator's Usage Pace plugin if he installs it | **met by the host** — Nucleus contributes no usage UI on either host; a missing host display belongs in a host plugin, not here | decision 5e; nucleus#1302 |
 | Lifecycle hints | The Paseo bridge forwards its lifecycle hints | `thread.created`, `thread.active`, `thread.idle`, `thread.failed`, `interaction.pending` and `thread.archived` forward as the existing `service.lifecycle-signal` kinds, thread id only | **met** | `test/bb-board-bridge.test.ts`, `test/bb-plugin-backend.test.ts` |
-| **End to end: T3 dispatches, BB executes** | — | A T3 planner thread submits, BB executes, the notice returns to T3 | **two steps missing**, named below, on deterministic runtime coverage only | `test/bb-lifecycle.test.ts` ("a T3 planner submits…") over recorded BB 0.49.0 rows — fake-host unit coverage, not isolated end-to-end execution |
+| **End to end: T3 dispatches, BB executes** | — | A T3 planner thread submits, BB executes as a standalone task group, the question and the notice return to T3 | **met at the runtime layer** (nucleus#1313 closed the two missing steps), on deterministic runtime coverage only | `test/bb-lifecycle.test.ts` ("a T3 planner submits…") over recorded BB 0.49.0 rows — fake-host unit coverage, not isolated end-to-end execution |
 
 The end-to-end row, step by step, because Tom asked for each step. Every line is
 `test/bb-lifecycle.test.ts`, a deterministic runtime test with the fake T3, Paseo and BB
@@ -1371,11 +1443,11 @@ that evidence is recorded as missing rather than implied.
 | Step | Mark | Evidence and reason |
 | --- | --- | --- |
 | A planner thread on the T3 host submits the brief through Nucleus | **met** | The task's `originHostId` is the T3 host, the lead check runs against it, and the repository selects the BB host. `test/bb-lifecycle.test.ts` |
-| The task dispatches to BB | **missing** for a T3-only plan; **met** once the task has a planner thread on BB | BB parents every thread Nucleus creates to the task's planner thread (decision 4), so the BB adapter refuses a T3-only plan before any spawn: "BB dispatch needs a planner thread on this BB host". Recording a BB planner thread for the task then dispatches and spawns exactly once. Finding for the planner: choose whether a T3-submitted task gets a BB project/planner thread, or whether the parent link becomes optional |
+| The task dispatches to BB | **met** | The parent link is conditional on the planner living on this BB host (decision 4, amended by nucleus#1313): a T3-only plan dispatches with no parent at all, as a standalone top-level task group, and spawns exactly once. A BB planner thread re-nests it later without a respawn. `test/bb-lifecycle.test.ts`; `test/bb-planner-presentation.test.ts` |
 | The worker runs and reports | **met** | A BB worker thread on the task's unmanaged environment; the packaged helper reports against its run ticket. `test/bb-lifecycle.test.ts` |
 | The independent reviewer reviews | **met** | A separate retained BB reviewer thread in the same environment; its verdict drives the same lifecycle. `test/bb-lifecycle.test.ts` |
 | Merge, closeout and archive | **met** | The BB adapter's merge gate and workspace archive, the task's role threads archived after their cascade reads, the planner thread and the workspace's published-source proof untouched. `test/bb-lifecycle.test.ts` |
-| The planner's questions route back to the T3 thread | **missing** | A worker's question goes to the task's *planner* thread, and on a BB-executed task that is the BB thread: the test asserts the queued send to the BB planner and zero asks reaching the T3 adapter. A T3 origin gets no worker question. Finding for the planner alongside the dispatch step | 
+| The planner's questions route back to the T3 thread | **met** | A worker's question climbs the task's real planner ladder, which is the T3 thread itself when the task names it as planner or owner; the test asserts the ask reaching the T3 adapter and no send into any BB planner thread. `test/bb-lifecycle.test.ts` |
 | The planner's notices route back to the T3 thread | **met** | The closeout notice reaches the T3 origin thread through its own host adapter (`notify` on the T3 adapter). `test/bb-lifecycle.test.ts` |
 
 #### The trial repository
@@ -1475,19 +1547,16 @@ What was proved instead, through the routine in [PATCHES.md](../../../hosts/bb/p
 Tom has not decided whether BB becomes a supported host (planner, 2026-11-17). This document records
 the call as **pending** and assumes nothing: BB stays an opt-in host per repository beside Paseo and
 T3Code, Paseo stays the primary host (vision.md), and the task's merge hold stands until Tom decides.
-The evidence above is what the decision reads: operator parity is in place on every surface except the
-end-to-end row's two missing steps (dispatch from a T3-only plan, and a worker question reaching the T3
-thread), those causes are written down, the end-to-end lifecycle is proven at the runtime layer and not
-on the isolated server, and the trial in Tom's own BB is his install to run.
+The evidence above is what the decision reads: operator parity is in place on every surface, the
+end-to-end row's two former gaps (dispatch from a T3-only plan, and a worker question reaching the T3
+thread) are closed by nucleus#1313 at the runtime layer, the end-to-end lifecycle is proven at that
+layer and not on the isolated server, and the trial in Tom's own BB is his install to run.
 
 **Findings for the planner (not fixed here).**
 
-- A T3-only planner cannot dispatch a task to BB, because BB parents every role thread to a BB planner
-  thread. One of the parity table's missing steps; the ruling is whether a T3-submitted task gets a BB
-  planner thread or the parent link becomes optional.
-- A worker's question goes to the task's planner thread, so on a BB-executed task it never reaches the
-  T3 origin. The parity table's other missing step; it is the same ruling's other half (what the T3
-  thread is for once BB holds the planner group), or a decision route for asks.
+- **Closed by nucleus#1313.** A T3-only planner now dispatches to BB as a standalone task group, and a
+  worker's question climbs the task's real planner ladder to the T3 thread. The two parity-table steps
+  that were missing are met at the runtime layer; the rulings are recorded in decision 4.
 - **The end-to-end lifecycle is not executed on the isolated server.** It is proven as runtime rules
   over recorded BB rows; an isolated selector runs host operations, not a task with a worker turn, a
   review, a merge gate and a closeout. Proving it for real needs an agent turn that reports, which

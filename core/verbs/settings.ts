@@ -1,7 +1,7 @@
 import { parseAgentId, sameCallerIdentity } from '../../shared/agent-identity';
 import { REMOVED_TASK_REFUSAL } from './control-refusals';
 import type { ReparentInput, Task, TaskControlInput } from "../../shared/contracts";
-import { OPERATOR_BOARD_CALLER, defaultHoldKind, holdOwnerOf, holdsOf, parseHoldUntil } from "../../shared/contracts";
+import { OPERATOR_BOARD_CALLER, defaultHoldKind, holdOwnerOf, holdsOf, parseHoldUntil, taskOwner, taskPlanner } from "../../shared/contracts";
 import { groupIsUnavailable } from "../../shared/pool";
 import type { Engine } from "../engine";
 import { repositoryOrigin } from "../planning/lanes";
@@ -132,6 +132,7 @@ export class SettingsControls {
         this.store.event(task.id, "coordination_note", input.message!);
         return task;
       }
+      if (input.action === "detach") return this.detachPresentation(task, input);
       if (
         input.action === "keep_hold" ||
         input.action === "hold" ||
@@ -145,6 +146,27 @@ export class SettingsControls {
       void this.engine.cleanContext(() => this.engine.wakeRepository(result.repoPath));
     }
     return operated(result);
+  }
+  /**
+   * nucleus#1313 `detach`: record that this task's presentation has no planner
+   * thread. The record is host-general and each host renders it as a standalone
+   * group; it changes no planner, no question route and no lifecycle, so a
+   * planner thread may be replaced or archived without its tasks' threads. A
+   * reparent that names a new planner clears it (`OriginRouting.writeOwner`).
+   * Only the operator or the task's own planner detaches; a caller naming
+   * neither is refused before anything is written.
+   */
+  detachPresentation(task: Task, input: TaskControlInput): Task {
+    const caller = input.caller ?? OPERATOR_BOARD_CALLER;
+    if (caller !== OPERATOR_BOARD_CALLER
+      && !sameCallerIdentity(caller, taskOwner(task), task.originHostId)
+      && !sameCallerIdentity(caller, taskPlanner(task), task.originHostId))
+      throw Error(`Detaching a task's presentation needs the operator at the board, its owner ${taskOwner(task)} or its planner ${taskPlanner(task)}; ${caller} is none of them`);
+    // An explicit detach a task already recorded is the same record: it is not a
+    // second write and it never advances the version a caller holds.
+    if (task.presentationDetached) return task;
+    return this.store.update(task.id, { presentationDetached: { at: now(), by: caller } }, "presentation_detached",
+      `${caller} detached the task group from its planner thread${input.reason ? `: ${input.reason}` : ""}`.slice(0, 2000));
   }
   applyTaskControlHold(input: TaskControlInput, task: Task): Task {
     // Independent dispatch and merge fences. Default kind is dispatch while

@@ -1157,6 +1157,13 @@ own completion nomination follow the new owner without further steps; third-part
 holds, settled notices and finished tasks stay as recorded. Repeating the request
 changes nothing.
 
+A task's presentation can be detached from its planner without changing the planner or the owner:
+`nucleus helper detach --task TASK_ID [--task TASK_ID ...] [--reason TEXT]` records that the task's group
+has no planner thread for presentation, so each host renders it standalone — used when a planner thread
+must be replaced or archived. It is host-general and changes nothing about planning questions; naming a
+new planner with `nucleus helper reparent` (or any route that changes the task's planner) clears the
+record and nests the group again. The operator at the board or the task's owner or planner applies it.
+
 A project may name a fallback planner with `project.set-planner` (`key`, `agentId`
 or null; the calling thread is recorded as `setBy`, and an unregistered thread is
 registered under the default name `planner`). It answers a project's delegated

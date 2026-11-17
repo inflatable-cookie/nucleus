@@ -33,6 +33,7 @@ export const sidebarGroupSchema = z.object({
   taskId: z.string().min(1).max(240),
   number: z.number().int().positive().nullable(),
   reference: z.string().nullable(),
+  repository: z.string().min(1).max(240),
   title: z.string().min(1),
   phase: z.string().min(1).max(60),
   phaseLabel: z.string().min(1).max(240),
@@ -86,6 +87,55 @@ export const sidebarGroupsContract = defineRpcContract({
 /** One bounded service request, as the retained channel offers it. */
 export interface SidebarGroupsSource {
   request(method: string, input: unknown): Promise<unknown>;
+}
+
+/**
+ * The task-group action the sidebar's menu calls (nucleus#1313, Tom 2026-11-17).
+ * `detachTask` records "no planner thread for presentation" for one task through the
+ * service's own `detach` owner control: the plugin holds no task state, reads the
+ * task's current version through `queue.next`, and names no planner. A caller from
+ * the operator's BB is the operator at the board, which the control accepts.
+ */
+export const sidebarTaskActionContract = defineRpcContract({
+  detachTask: {
+    input: z.object({
+      taskId: z.string().min(1).max(240),
+      reason: z.string().trim().min(1).max(4000).optional(),
+    }).strict(),
+    output: z.object({
+      taskId: z.string().min(1).max(240),
+      detachedAt: z.string().min(1).max(64),
+      detachedBy: z.string().min(1).max(300),
+    }).strict(),
+  },
+});
+
+export type SidebarTaskAction = ReturnType<typeof createSidebarTaskActionService>;
+
+/**
+ * The action's one route: read the task's current version, then apply the control.
+ * A refusal is the service's own refusal text, so the menu shows why nothing changed.
+ */
+export function createSidebarTaskActionService(source: () => SidebarGroupsSource | null) {
+  const client = (): SidebarGroupsSource => {
+    const connected = source();
+    if (!connected) throw new Error("The Nucleus service channel is not connected");
+    return connected;
+  };
+  return {
+    async detachTask(input: { taskId: string; reason?: string }) {
+      const next = await client().request("queue.next", { taskId: input.taskId }) as { version?: unknown };
+      if (typeof next?.version !== "number") throw new Error("The task's current version could not be read; nothing changed");
+      const task = await client().request("queue.task", {
+        action: "detach", taskId: input.taskId, version: next.version,
+        ...(input.reason === undefined ? {} : { reason: input.reason }),
+      }) as { presentationDetached?: { at?: unknown; by?: unknown } | null };
+      const record = task?.presentationDetached;
+      if (!record || typeof record.at !== "string" || typeof record.by !== "string")
+        throw new Error("The service answered without the detach record; re-read the task before acting again");
+      return { taskId: input.taskId, detachedAt: record.at, detachedBy: record.by };
+    },
+  };
 }
 
 /** One BB project as `bb.sdk.projects.list()` returns it: its id and its sources. */
