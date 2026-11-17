@@ -256,7 +256,7 @@ export class TaskWakes {
       if (settlementHeld(this.store, this.engine.stopped)) return;
       this.engine.completionFollowUps.finishQuantum(taskId, before, beforeRuns, transientBefore, heldIntegration, threadWorkBefore, occupied);
       });
-    });
+    }, { coalesce: "task-quantum" });
   }
 
   /**

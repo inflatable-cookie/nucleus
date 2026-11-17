@@ -1,4 +1,5 @@
-import { sweepSettledRunProcesses } from "../machine/run-process-cleanup";
+import { hostOwesRunProcessCleanup, sweepSettledRunProcesses } from "../machine/run-process-cleanup";
+import { LANE_PRIORITY_AUDIT } from "./lane-priorities";
 import { onCheckoutVolume } from "../workspaces/checkout-volume";
 import { reconcileRoutingSignoffs } from "../dispatch/routing-signoff";
 import { archiveFinishedThreads } from '../workspaces/thread-archive';
@@ -16,7 +17,7 @@ import { proofExecutionRunning } from "../qa/proof-admission";
 import { hookHoldReason } from "../hooks/hooks";
 import type { Engine } from '../engine';
 
-export type TaskQuantumContext = Pick<Engine, 'adapter' | 'cleanContext' | 'enqueueTitle' | 'hooks' | 'launchAgent' | 'launchProofOnly' | 'note' | 'noteStepFailure' | 'prerequisiteWaitYieldsToLiveWork' | 'profileCatalogKnown' | 'profiles' | 'quantumFinish' | 'quantumSteps' | 'reconcile' | 'reconcileBlockedEffects' | 'reconcileClosedRetainedReviewer' | 'recover' | 'routeTask' | 'settleFinishedRuns' | 'settleHistoricalProofExecutions' | 'settleRunBuildOutputs' | 'settleSupersededIdleRuns' | 'signoffDecisions' | 'stopped' | 'store' | 'wakeRepository'> & { readonly resolution: Pick<Resolution, 'advance' | 'beginValidationScanPass' | 'holdProofOnlyGoWait' | 'ownedToolHold' | 'owns' | 'raiseOperatorQuestions' | 'reconcileHoldUntil' | 'recordStop' | 'recoverExternalMerge' | 'recovery' | 'resumeClearedAttention' | 'settleBudgetClock'> };
+export type TaskQuantumContext = Pick<Engine, 'adapter' | 'cleanContext' | 'enqueueTitle' | 'hooks' | 'launchAgent' | 'launchProofOnly' | 'note' | 'noteStepFailure' | 'prerequisiteWaitYieldsToLiveWork' | 'profileCatalogKnown' | 'profiles' | 'quantumFinish' | 'quantumSteps' | 'reconcile' | 'reconcileBlockedEffects' | 'reconcileClosedRetainedReviewer' | 'recover' | 'routeTask' | 'scheduleLane' | 'settleFinishedRuns' | 'settleHistoricalProofExecutions' | 'settleRunBuildOutputs' | 'settleSupersededIdleRuns' | 'signoffDecisions' | 'stopped' | 'store' | 'wakeRepository'> & { readonly resolution: Pick<Resolution, 'advance' | 'beginValidationScanPass' | 'holdProofOnlyGoWait' | 'ownedToolHold' | 'owns' | 'raiseOperatorQuestions' | 'reconcileHoldUntil' | 'recordStop' | 'recoverExternalMerge' | 'recovery' | 'resumeClearedAttention' | 'settleBudgetClock'> };
 
 export class TaskQuantum {
   constructor(readonly context: TaskQuantumContext) {}
@@ -48,6 +49,30 @@ export class TaskQuantum {
     const current = task.resolution.currentRunId ? this.context.store.run(task.resolution.currentRunId) : null;
     if (current?.completion) return true;
     return taskHasUnreleasedRun(task, false);
+  }
+
+  /**
+   * Settled-run process cleanup is durable work, not this task's work. It runs on
+   * its own host lane, one queued sweep per host, so a slow, hung or unavailable
+   * process table can never hold the task's exclusive lane and starve an owner
+   * control behind it (nucleus#1306). The intent on the store is the proof of
+   * completion; the waiting quantum is not.
+   *
+   * The queued sweep is host-scoped, not task-scoped: a burst of tasks on one host
+   * coalesces onto the one sweep already waiting, and that sweep owes every run of
+   * the host. Task-scoping it while coalescing across tasks would settle only the
+   * first task's runs and silently leave the rest (review 5943860105). Nothing is
+   * queued while the host owes no cleanup, so the sweep never reads a process
+   * table a task quantum does not need.
+   */
+  scheduleRunProcessCleanup(taskId: string): void {
+    if (this.context.stopped) return;
+    const hostId = this.context.store.task(taskId).hostId;
+    const store = this.context.store, adapter = this.context.adapter;
+    if (!hostOwesRunProcessCleanup(store, hostId)) return;
+    void this.context.cleanContext(() => this.context.scheduleLane(`cleanup:${hostId}`, LANE_PRIORITY_AUDIT,
+      () => sweepSettledRunProcesses(store, hostId, { pendingOnly: true, readProcesses: () => adapter.hostProcessListing!() }),
+      { coalesce: "settled-run-process-cleanup" })).catch(() => { /* the durable intent waits for the next pass */ });
   }
 
   async taskQuantum(taskId: string): Promise<void> {
@@ -90,7 +115,7 @@ export class TaskQuantum {
       // is never left holding a lane. Pause defers this path so a recovery escalate stays
       // stored. A reported unreleased thread reaches release in Observation (nucleus#937).
       this.context.settleFinishedRuns(task);
-      if (task.hostId && this.context.adapter.hostProcessListing) await sweepSettledRunProcesses(this.context.store, task.hostId, { taskId, pendingOnly: true, readProcesses: () => this.context.adapter.hostProcessListing!() });
+      this.scheduleRunProcessCleanup(taskId);
       if (isDispositionActive(this.context.store.task(task.id))) return;
       // Queue #342: settle finished runs' regenerable output before any launch below, in the task's serial lane.
       await this.context.settleRunBuildOutputs(task.id);
@@ -204,8 +229,7 @@ export class TaskQuantum {
           await this.context.resolution.recovery.route(current);
       } catch (error) { this.context.noteStepFailure(taskId, error); }
     }
-    const cleanupHost = this.context.store.task(taskId).hostId;
-    if (cleanupHost && this.context.adapter.hostProcessListing) await sweepSettledRunProcesses(this.context.store, cleanupHost, { taskId, pendingOnly: true, readProcesses: () => this.context.adapter.hostProcessListing!() });
+    this.scheduleRunProcessCleanup(taskId);
     await archiveFinishedThreads(this.context.store, this.context.adapter, taskId, async (agentId, workspaceId) => {
       const task = this.context.store.task(taskId), runs = this.context.store.runs(taskId);
       const runIds = participantToolRunIds(task, runs, agentId, workspaceId);

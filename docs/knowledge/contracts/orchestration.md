@@ -202,8 +202,14 @@ helper re-exports.
 quanta, `quiesce`, and the shutdown discard of queued quanta. Enforces
 [Durable effects](#durable-effects-and-unknown-delivery): only same-lane
 re-entry runs inline; a call inside a lane excludes its own lane; delayed
-timers do not hold quiesce open. Engine `wake` and `stop` wait through this
-`quiesce`. Delegates remain on Engine.
+timers do not hold quiesce open. Within one key a smaller lane priority runs
+first and equal priorities keep their arrival order, so an accepted owner control
+(`LANE_PRIORITY_OPERATION`) starts as soon as the task's lane resumes instead of
+waiting behind observation quanta a wedge piled up (nucleus#1306). Work a queued
+item already covers is coalesced onto that item's promise (a second task quantum,
+a second cleanup sweep, a duplicate operation), so one overrun cannot make the
+queue behind it grow. Engine `wake` and `stop` wait through this `quiesce`.
+Delegates remain on Engine.
 
 **TaskWakes** (`core/scheduling/task-wakes.ts`). Owns what a task's quantum owes after it
 runs: lifecycle, completion and terminal-archive follow-ups, their bounded
@@ -1519,6 +1525,25 @@ request identities and submitted handoffs are not rewritten.
   Scratch removal follows the stop attempt and the existing volume proof. The
   hourly host sweep applies the same ownership proof to settled historical runs,
   including runs settled before this rule, and retries missed cleanup.
+  A live non-init ancestor is an absolute protection: nothing below a live
+  process — an agent host, its MCP or report helper, a retained thread's tools —
+  is ever signalled, whatever run identity it carries, and its scratch is kept
+  until that owner exits (nucleus#1306). Only a process whose whole ancestry has
+  exited is an orphan cleanup may stop; an ancestor this uid's table does not
+  list counts as live until the OS proves it exited. A process stopped for a run
+  and seen again under the same run inside a ten-minute window is recorded once
+  (`run_process_cleanup_left_alone`) and left alone, so a host that respawns a
+  helper is never chased; a process the same sweep did not see when it started is
+  the same evidence and is treated the same way. One sweep takes one process-table
+  snapshot and one ownership-environment read for every run it settles, bounded so
+  a read that never answers cannot hold it, and a run whose cleanup proved itself
+  complete is never scanned again — hourly or per pass. Cleanup runs on its own
+  host lane (`cleanup:<host>`), one queued sweep per host, so it never holds a
+  task's exclusive lane and never starves an owner control behind it. That queued
+  sweep is host-scoped, never task-scoped: a burst of tasks on one host coalesces
+  onto the sweep already waiting and it owes every run of the host, so no task's
+  cleanup is dropped because another task asked first. Nothing is queued while the
+  host owes no cleanup, so a task quantum never reads a process table for nothing.
   Prompts name the current run's directory, direct agents to prefix commands
   with that directory in `TMPDIR`, `TMP` and `TEMP` (including retained agents
   whose launch environment is older), direct agents to put fixtures in a child
