@@ -63,7 +63,7 @@ export async function moveToCloseout(engine: Engine, input: CloseoutMoveInput): 
 /** Re-observe an already recorded merge, then re-enter the normal sync gate. */
 async function resumeRecordedMerge(engine: Engine, task: Task, input: CloseoutMoveInput): Promise<Task> {
   if (input.head || input.qualification) throw Error('The recorded merge already has its source disposition; omit head and qualification');
-  if (!engine.adapter.externalMerge) throw Error('External merge verification is unavailable');
+  if (!engine.resolution.adapter.externalMerge) throw Error('External merge verification is unavailable');
   const store = engine.store, runs = store.runs(task.id), runIdentity = JSON.stringify(runs);
   const finished = await engine.collectVerbFinishedRuns(task.id, () => false, { displace: true, settlesEpisode: true });
   if (finished.fenced.length) throw Error(engine.displaceRefusal(finished.fenced[0]!));
@@ -71,7 +71,7 @@ async function resumeRecordedMerge(engine: Engine, task: Task, input: CloseoutMo
   const enclosing = input.enclosing?.();
   const quiet = () => engine.resolution.executionLease(task, enclosing, false, true);
   if (!await quiet()) throw Error('Task participants or effects are not settled; no closeout was started');
-  const observed = await engine.adapter.externalMerge(task, true);
+  const observed = await engine.resolution.adapter.externalMerge(task, true);
   const head = task.resolution.mergeHead;
   if (!observed || !head || observed.head !== head || observed.commit !== task.resolution.mergedCommit)
     throw Error('The forge merge does not match the recorded head and commit');

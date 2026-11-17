@@ -21,6 +21,8 @@ test('forced settlement names its effect and force is limited to the two owner v
 
 test('a recovery report can carry an offered forced effect retry', () => {
   const action = coordinatorActionSchema.parse({ verb: 'retry_effect', effect: 'owned_tool.run', force: true, reason: 'The tool is idle' });
+  assert.equal(action.verb, 'retry_effect');
+  if (action.verb !== 'retry_effect') throw Error('Expected a retry action');
   assert.equal(action.force, true);
   assert.equal(coordinatorActionSchema.safeParse({ verb: 'restart', force: true, reason: 'not offered' }).success, false);
 });
