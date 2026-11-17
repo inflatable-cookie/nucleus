@@ -96,7 +96,7 @@ exhaustion from a refused run, after the fact.
   unavailable right now." with an empty dial, never 0 or green; their reason stays in `usage.state`. The page refreshes on a slow minute interval — the readers pace themselves, so
   the page adds no fast polling. Provider headings omit a group that only repeats the provider;
   the shared ProviderLogo uses bundled official marks for Codex, Claude and Grok, with the
-  existing generic icon retained for unknown providers. See [third-party notices](../../../THIRD_PARTY_NOTICES.md)
+  existing generic icon retained for unknown providers. See [third-party notices](../../../../THIRD_PARTY_NOTICES.md)
   for mark sources and terms.
 
 - **The Paseo sidebar row** is a compact plugin-only contribution (nucleus#1123): one row
