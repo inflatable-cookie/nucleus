@@ -1,6 +1,8 @@
 # 059 — Subscription usage pressure gauge
 
-Status: implemented (steps 1 and 2, including the Usage page and the Paseo sidebar row)
+Retired 2026-11-17 (task 1302). Tom: “I want to strip out the usage functionality from Nucleus - each host app now has at least _some_ usage functionality and anything missing should be added via host-specific plugins separately from Nucleus”. Subscription usage readers, samples, RPC and views are removed; host apps and their plugins own this functionality. Spec 052's dispatch usage level remains active and is not subscription monitoring.
+
+Status: retired 2026-11-17 (task 1302)
 Owner: Nucleus runtime maintainers
 Created: 2026-11-11
 Decision owner: operator (Tom, 2026-11-11, lane document `nucleus-usage-gauge`: track each

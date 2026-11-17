@@ -75,6 +75,20 @@ test('Spec 052 diagnostics: the explanation matches what chooseProfile does, for
   } finally { store.close(); }
 });
 
+test('dispatch usage level drives routing with subscription gauge storage removed', () => {
+  const store = new Store(':memory:');
+  try {
+    assert.equal(store.db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name='usage_samples'").get(), undefined);
+    const task = store.insert(submissionSchema.parse({ submissionId: 'level-without-gauge', title: 'Level without gauge', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'h.md', originAgentId: 'origin' }), 'host', 'handoff', 'a'.repeat(40));
+    const entry = policyEntry('frontier', 'very_high', 'frontier');
+    store.setMeta('pool', [entry]);
+    store.setMeta('usageLevel', { level: 'maximum', until: null, setAt: '2026-11-17T00:00:00.000Z' });
+    assert.equal(store.routingPolicy(task).profiles.find(profile => profile.profileId === 'frontier')?.automatic, 'allowed');
+    store.setMeta('usageLevel', { level: 'normal', until: null, setAt: '2026-11-17T00:00:00.000Z' });
+    assert.equal(store.routingPolicy(task).profiles.find(profile => profile.profileId === 'frontier')?.automatic, 'request_ceiling');
+  } finally { store.close(); }
+});
+
 test('Spec 052 diagnostics: next and a cached detail read explain the policy fresh, through expiry, beside other gates', () => {
   const store = new Store(':memory:');
   try {

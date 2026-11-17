@@ -18,7 +18,7 @@ import { SettingsTelemetry } from "./settings-telemetry";
 import { BackupsPanel } from "./backups-panel";
 import { DispatchLimits } from "./limits";
 import { ProjectsSection } from "./projects-settings";
-/** A board from a service that predates Spec 052 carries no usage view. */
+/** A board from a service that predates Spec 052 carries no dispatch routing policy. */
 
 /**
  * Queue's native Paseo settings screen (Spec 026 / nucleus#934): Dispatch limits,

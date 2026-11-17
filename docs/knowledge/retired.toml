@@ -1163,3 +1163,13 @@ terms = ["providerMap", "ProviderMap", "providerMapSuggestions", "profile.provid
 paths = ["client/profile-hosts.tsx"]
 config_keys = []
 allow = ["docs/knowledge/retired.toml", "docs/knowledge/specs/", "changelog.d/", "CHANGELOG.md", "test/"]
+
+[[retired]]
+id = "nucleus-subscription-usage-gauge"
+retired = "2026-11-17"
+replacement = "Tom, 2026-11-17: \"I want to strip out the usage functionality from Nucleus - each host app now has at least _some_ usage functionality and anything missing should be added via host-specific plugins separately from Nucleus\". Subscription usage readers, samples, `usage.state` and every Nucleus view are removed. Host apps and their plugins own subscription usage; Spec 052's dispatch usage level remains active."
+owner = "docs/knowledge/specs/retired/059-usage-gauge.md"
+terms = ["usage.state", "usage_samples", "usage_read_state", "UsagePage", "UsageRings", "UsageRailRing"]
+paths = ["core/usage/", "core/store/store-usage.ts", "shared/rpc/usage.ts", "shared/schema/usage.ts", "shared/usage-projection.ts", "client/usage.tsx", "hosts/paseo/client/usage.tsx"]
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "docs/knowledge/specs/retired/", "docs/knowledge/specs/README.md", "changelog.d/", "CHANGELOG.md"]

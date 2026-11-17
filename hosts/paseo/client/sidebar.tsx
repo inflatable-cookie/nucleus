@@ -4,18 +4,15 @@ import type { ComponentType } from "react";
 import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { radius, space, type as typeScale, type Colors } from "../../../client/design";
 import { useFocusVisible } from "../../../client/focus-modality";
-import { MainSurface, requestBoardTab } from "../../../client/queue";
+import { MainSurface } from "../../../client/queue";
 import type { BoardNavigation } from "../../../client/shell/types";
 import { paseoShell } from "./shell";
-import { UsageRings, useUsageSubscriptions } from "./usage";
 
 /*
- * Nucleus in the Paseo sidebar (nucleus#1123). On hosts that carry the newer
- * registration APIs the board is one of the host's screens and the sidebar's one
- * Nucleus row carries both the board button (left) and the usage rings (right,
- * opening the board's Usage tab); the native sidebar item is then not registered,
- * so nothing appears twice. Hosts without those APIs keep the native item and get
- * no rings. The row is built from the host theme and the board's own design scale,
+ * Nucleus in the Paseo sidebar. On hosts that carry the newer registration APIs
+ * the board is one of the host's screens and the sidebar has one Nucleus row; the
+ * native sidebar item is then not registered, so nothing appears twice. Hosts
+ * without those APIs keep the native item. The row is built from the host theme and the board's own design scale,
  * matching Paseo's native item (a 36pt row, 44pt on compact layouts, the icon at
  * 20pt, the label at body size, a raised-surface highlight for hover and the open
  * screen, the muted text colour until then).
@@ -23,7 +20,7 @@ import { UsageRings, useUsageSubscriptions } from "./usage";
 
 /** The board as a host screen, so the sidebar row can open it. */
 export const BOARD_SCREEN_ID = "nucleus";
-/** The one sidebar row: the board button and the usage rings. */
+/** The one sidebar row: the board button. */
 export const BOARD_ROW_ID = "nucleus";
 
 /** The row's props: the host's `PluginSidebarItemProps` shape, read leniently. */
@@ -83,25 +80,19 @@ function noOutline(): ViewStyle {
 }
 
 /**
- * The Nucleus row: a button (board icon and title) on the left and the usage
- * rings on the right. The button opens the board and shows Paseo's highlight
- * while the board is the open screen; each ring opens the board on its Usage tab.
+ * The Nucleus row: a button with the board icon and title. It opens the board
+ * and shows Paseo's highlight while the board is the open screen.
  */
-export function createNucleusSidebarRow(client: PluginClientContext) {
+export function createNucleusSidebarRow() {
   return function NucleusSidebarRow(props: NucleusSidebarRowProps) {
     const c = props.theme.colors;
     const compact = props.layout?.compact ?? false;
-    const subscriptions = useUsageSubscriptions(client);
     const [hover, setHover] = useState(false);
     const [pressed, setPressed] = useState(false);
     const focus = useFocusVisible();
     const active = props.currentScreen?.screenId === BOARD_SCREEN_ID;
     const highlighted = hover || active;
     const openBoard = () => props.openScreen?.({ screenId: BOARD_SCREEN_ID });
-    const openUsage = () => {
-      requestBoardTab("usage");
-      openBoard();
-    };
     return (
       <View
         accessibilityLabel="Nucleus sidebar row"
@@ -173,16 +164,6 @@ export function createNucleusSidebarRow(client: PluginClientContext) {
             Nucleus
           </Text>
         </Pressable>
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            gap: space.xxs,
-            paddingRight: space.xs,
-          }}
-        >
-          <UsageRings c={c} subscriptions={subscriptions} onPress={openUsage} />
-        </View>
       </View>
     );
   };
@@ -191,7 +172,7 @@ export function createNucleusSidebarRow(client: PluginClientContext) {
 /**
  * Register the board screen and the one Nucleus row on hosts that carry both
  * newer APIs. `combined` is false on older hosts, which keep Paseo's native
- * sidebar item and render no rings.
+ * sidebar item.
  */
 export function registerNucleusSidebar(client: PluginClientContext): {
   combined: boolean;
@@ -214,7 +195,7 @@ export function registerNucleusSidebar(client: PluginClientContext): {
   const removeRow = host.addSidebarHeaderItem({
     id: BOARD_ROW_ID,
     title: "Nucleus",
-    Component: createNucleusSidebarRow(client),
+    Component: createNucleusSidebarRow(),
   });
   if (removeRow) removers.push(removeRow);
   return {

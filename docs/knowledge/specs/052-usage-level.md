@@ -1,5 +1,9 @@
 # 052 — Usage level
 
+This is a dispatch policy setting, not subscription usage monitoring. Provider
+subscription displays belong to host apps and their plugins (Spec 059 is
+retired).
+
 Status: implemented
 Owner: Nucleus runtime maintainers
 Created: 2026-10-18
@@ -193,7 +197,7 @@ a brief Saved or the reason it was not saved (Tom, 2026-10-22; Saving… stays q
   a stored flag as absolute and rerouted a correct automatic Maximum pick.
   Reads show the policy in force, derived from the selector's own
   `requestOnly`; no gate or setting changes.
-  - `task.next` and `queue.detail` carry `routingPolicy`: the usage view, and
+  - `task.next` and `queue.detail` carry `routingPolicy`: the dispatch-level policy, and
     one row per profile the task names (worker request, worker preference,
     recorded worker or reviewer run, reviewer and coordinator requests). Each
     row has `cost`, `capability`, `automatic` (`allowed`, `request_ceiling`

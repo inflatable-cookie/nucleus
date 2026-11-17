@@ -43,6 +43,28 @@ test('fresh store works and old or future stores refuse before application chang
   }
 });
 
+test('schema 59 drops subscription usage samples from an existing store and stays idempotent', t => {
+  const { path } = fixture(t);
+  const original = new Store(path);
+  original.db.exec(`CREATE TABLE usage_samples(id INTEGER PRIMARY KEY, sampled_at TEXT);
+    CREATE TABLE usage_read_state(group_key TEXT PRIMARY KEY, data TEXT NOT NULL);
+    INSERT INTO usage_samples VALUES(1,'2026-11-16T00:00:00.000Z');
+    INSERT INTO usage_read_state VALUES('codex','{}');`);
+  original.setMeta('usageLevel', { level: 'maximum', until: null, setAt: '2026-11-17T00:00:00.000Z' });
+  original.setMeta('schema', 58);
+  original.close();
+
+  for (let open = 0; open < 2; open++) {
+    const migrated = new Store(path);
+    try {
+      assert.equal(migrated.getMeta('schema'), CURRENT_SCHEMA);
+      for (const name of ['usage_samples', 'usage_read_state'])
+        assert.equal(migrated.db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name=?").get(name), undefined);
+      assert.deepEqual(migrated.usageSetting(), { level: 'maximum', until: null, setAt: '2026-11-17T00:00:00.000Z' }, 'dispatch usage level is preserved');
+    } finally { migrated.close(); }
+  }
+});
+
 test('nonempty unversioned and corrupt stores and orphan sidecars refuse', t => {
   const { path } = fixture(t);
   const db = new DatabaseSync(path); db.exec('CREATE TABLE retained(value TEXT); INSERT INTO retained VALUES(\'original\')'); db.close();

@@ -1,12 +1,8 @@
-/**
- * The board's destinations (nucleus#866 folded Lanes into Planning; nucleus#1113
- * added Usage): Tasks, Planning, QA runs and the subscription usage page.
- */
+/** The board's destinations: Tasks, Planning and QA runs. */
 export const navigationViews = [
   { id: "queue", label: "Tasks" },
   { id: "planning", label: "Planning" },
   { id: "qa", label: "QA runs" },
-  { id: "usage", label: "Usage" },
 ] as const;
 
 /** The workspace panel uses the same primary tabs as the main surface. */
