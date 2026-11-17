@@ -31,6 +31,8 @@ export const MAX_PROOF_FILE_PATH = 1024;
 /** Per file and per report, so one report cannot fill the scratch volume. */
 export const MAX_PROOF_FILE_BYTES = 8 * 1024 * 1024;
 export const MAX_PROOF_FILES_TOTAL_BYTES = 32 * 1024 * 1024;
+/** An over-limit report names both custody limits and the two valid author routes. */
+export const PROOF_FILES_SIZE_REFUSAL = "Required proofFiles evidence exceeds the limits (8 MiB per file; 32 MiB total). Deliver the subset the brief allows, or report blocked with reviewResponsibility: environment and name the required evidence size.";
 
 const isObject = value => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 

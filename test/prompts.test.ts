@@ -741,7 +741,7 @@ test('worktree-facing prompts confine fixtures to a fresh temp directory',()=>{
   assert.match(WORKSPACE_RULE,/Use this run's TMPDIR, TMP and TEMP/);
   assert.match(WORKSPACE_RULE,/must not remove this run's recorded temporary root, its parent, or any directory created outside this run by another task, planner or Nucleus/);
   assert.match(WORKSPACE_RULE,/A test, fixture or selector may remove temporary directories it created during this run inside this run's \$TMPDIR/);
-  assert.match(WORKSPACE_RULE,/A tool that would delete outside \$TMPDIR or a root it did not create is a finding to report, not a reason to skip the selector/);
+  assert.match(WORKSPACE_RULE,/An agent, test, fixture or selector deleting outside \$TMPDIR or a root it did not create is a finding to report, not a reason to skip the selector/);
 });
 
 test('run prompt names the current TMPDIR and tells retained agents to prefix commands',()=>{
@@ -780,7 +780,9 @@ test('worker, reviewer and proof executor prompts distinguish run scratch from s
   for(const [role,prompt] of Object.entries({worker,reviewer,executor})){
     assert.match(prompt,/Nucleus owns this run's recorded temporary root/,`${role} keeps the recorded root under Nucleus ownership`);
     assert.match(prompt,/may remove temporary directories it created during this run inside this run's \$TMPDIR/,`${role} allows selector-owned teardown`);
-    assert.match(prompt,/delete outside \$TMPDIR or a root it did not create is a finding to report, not a reason to skip the selector/,`${role} reports unsafe deletion without skipping selectors`);
+    assert.match(prompt,/agent, test, fixture or selector deleting outside \$TMPDIR or a root it did not create is a finding to report, not a reason to skip the selector/,`${role} reports unsafe agent deletion without skipping selectors`);
+    assert.match(prompt,/A required tool may evict or drain its own managed cache or pool under its own lease and ownership checks; that lifecycle is not a finding/,`${role} permits required managed-tool cache eviction`);
+    assert.match(prompt,/Report a finding if the tool deletes an active lease, bypasses lease or ownership checks, or loses source/,`${role} still flags unsafe managed-tool deletion`);
   }
   for(const [role,prompt] of Object.entries({reviewer,executor})){
     assert.match(prompt,/Source-immutable roles \(reviewer and proof executor\) must run the check-only form of any formatter that writes tracked files/,`${role} uses check-only formatting`);
@@ -1162,6 +1164,8 @@ test('the required-proof instruction is fixed prompt text, rendered outside the 
   assert.match(REQUIRED_PROOF_REVIEWER_NOTE,/Report `changes_required` with `reviewResponsibility: author` when the author can still produce it/);
   assert.match(REQUIRED_PROOF_REVIEWER_NOTE,/`blocked` with `reviewResponsibility: environment` when it is owner-gated or unavailable/);
   assert.match(REQUIRED_PROOF_REVIEWER_NOTE,/If the repository's AGENTS\.md Validate section and the brief disagree about a missing proof, say so in the report and report blocked/);
+  assert.match(REQUIRED_PROOF_REVIEWER_NOTE,/required artifact named only by a run-scratch path[\s\S]*report `changes_required` with `reviewResponsibility: author`/);
+  assert.match(REQUIRED_PROOF_AUTHOR_NOTE,/TMPDIR is removed at release[\s\S]*through proofFiles[\s\S]*8 MiB per file; 32 MiB total[\s\S]*subset the brief allows[\s\S]*reviewResponsibility: environment/);
 });
 
 test('handoff-mode prompts and reviewer continuations carry the required-proof instruction', () => {

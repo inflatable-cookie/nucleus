@@ -4,7 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import type { ProofFileEntry, ProofFileRecord, Run, Task } from "../../shared/contracts";
 import {
   MAX_PROOF_FILE_BYTES, MAX_PROOF_FILE_LABEL, MAX_PROOF_FILES, MAX_PROOF_FILES_TOTAL_BYTES,
-  proofFileEntryRefusal,
+  proofFileEntryRefusal, PROOF_FILES_SIZE_REFUSAL,
 } from "../../shared/service/proof-files.mjs";
 import { now } from "../store/store";
 
@@ -20,9 +20,9 @@ import { now } from "../store/store";
  * session. Nothing is uploaded to the forge and no local path enters a PR body
  * or comment.
  *
- * Evidence lives beside the run scratch the launch already created, so it is
- * pruned with the task's other scratch by the ordinary retention pass. A refused
- * report copies nothing: every entry is proved before the first file is written.
+ * Evidence lives beside, not inside, each run-specific scratch leaf. Releasing
+ * a run removes its leaf but leaves the task's recorded per-head copies. A
+ * refused report copies nothing: every entry is proved before the first file is written.
  */
 
 /** A report's proofs are evidence about one exact head; without it they cannot be listed for a reviewer. */
@@ -113,13 +113,13 @@ export function recordProofFiles(input: {
     if (realpathSync(source) !== source)
       throw Error(`proofFiles[${index}].path must name its own real file, not a redirected path`);
     if (stat.size > MAX_PROOF_FILE_BYTES)
-      throw Error(`proofFiles[${index}] is ${stat.size} bytes; each proof file must be at most ${MAX_PROOF_FILE_BYTES} bytes`);
+      throw Error(`${PROOF_FILES_SIZE_REFUSAL} proofFiles[${index}] is ${stat.size} bytes.`);
     const proven = bases.some(base => inside(realpathSync(base), source));
     if (!proven)
       throw Error(`proofFiles[${index}].path is outside this task's own scratch and worktree; only files this task produced can be delivered as proof`);
     total += stat.size;
     if (total > MAX_PROOF_FILES_TOTAL_BYTES)
-      throw Error(`proofFiles total more than ${MAX_PROOF_FILES_TOTAL_BYTES} bytes; name a smaller set of proof files`);
+      throw Error(`${PROOF_FILES_SIZE_REFUSAL} Current set size: ${total} bytes.`);
     const bytes = readFileSync(source);
     const sha256 = createHash("sha256").update(bytes).digest("hex");
     planned.push({ entry, bytes, sha256 });

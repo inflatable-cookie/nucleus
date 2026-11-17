@@ -56,11 +56,16 @@ corresponding `proofExecutions` receipt. Copies live outside the run-specific
 scratch leaf under the task's retained scratch namespace, so retiring the
 executor thread does not remove them.
 
-An absent or mismatched head is refused before any copy. Only after the full
+An absent or mismatched head is refused before any copy. Run scratch is removed
+at release and is never a custody location for required evidence: required file
+artifacts must be delivered through this `proofFiles` route, and a prompt or
+report must never claim a scratch path persists. The per-head copies are outside
+the run-specific scratch leaf and survive release. Only after the full
 head and file list are validated does Nucleus copy each file into
 `<task scratch root>/evidence/<task id>/<head>/<ordinal>-<sha8>-<name>` with mode
 0600, and record `{head, label, name, path, sourcePath, sha256, bytes, runId,
-eventId, at}` on the task. A refused entry copies nothing. The task's local
+eventId, at}` on the task. These copies live under the persistent task scratch
+namespace, outside the disposable run-specific scratch leaf. A refused entry copies nothing. The task's local
 source paths never enter the stored completion; the original locator is retained
 only as provenance on the proof-file record, beside the Nucleus copy locator.
 
@@ -86,6 +91,10 @@ Nothing about this evidence is uploaded to the forge, and no local path enters a
 PR body or comment. A PR may state that evidence was delivered to the retained
 reviewer and give the hashes. The ordinary reviewer publication body carries
 only reviewer findings, the verdict table and the authenticated marker.
+
+If a required artifact exceeds the proof-file limits (8 MiB per file or 32 MiB
+total), the author may deliver the subset allowed by the brief or report blocked
+with `reviewResponsibility: environment`, naming the required evidence size.
 
 ## Acceptance
 

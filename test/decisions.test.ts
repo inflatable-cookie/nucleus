@@ -195,7 +195,7 @@ test("032-5 supersede replaces an open decision with a new one in one step", () 
   } finally { f.close(); }
 });
 
-test("032-10 link adds links to an open decision in place, without superseding it or changing its id", () => {
+test("032-10 link adds links to open and answered decisions in place, without changing the ruling or id", () => {
   const f = setup(); try {
     const decision = add(f, { question: "Link me", tasks: ["task-a"], leads: ["lead-a"] });
     const linked = f.decisions.link({ id: decision.id, version: 1, tasks: ["task-b"], papercuts: ["cut-a"], by: "agent-linker" });
@@ -217,8 +217,17 @@ test("032-10 link adds links to an open decision in place, without superseding i
     assert.equal(parsed.by, "operator"); assert.deepEqual(parsed.tasks, ["t"]);
 
     const closed = add(f, { question: "Answered" });
-    f.decisions.answer({ id: closed.id, version: 1, answer: "Done", answeredBy: "operator (board)", relayed: false, note: "" });
-    assert.throws(() => f.decisions.link({ id: closed.id, version: 2, tasks: ["task-z"] }), /only an open decision/);
+    const answered = f.decisions.answer({ id: closed.id, version: 1, answer: "Done", answeredBy: "operator (board)", relayed: false, note: "" });
+    const linkedAnswer = f.decisions.link({ id: closed.id, version: answered.version, tasks: ["task-z"], leads: ["lead-z"] });
+    assert.equal(linkedAnswer.id, answered.id);
+    assert.equal(linkedAnswer.status, "answered");
+    assert.equal(linkedAnswer.question, answered.question);
+    assert.deepEqual(linkedAnswer.answer, answered.answer);
+    assert.deepEqual(linkedAnswer.links, { tasks: ["task-z"], leads: ["lead-z"], papercuts: [] });
+    assert.equal(linkedAnswer.versions.at(-1)?.status, "answered");
+
+    const withdrawn = f.decisions.withdraw({ id: decision.id, version: linked.version, reason: "No longer needed", withdrawnBy: "operator" });
+    assert.throws(() => f.decisions.link({ id: withdrawn.id, version: withdrawn.version, tasks: ["task-withdrawn"] }), /only an open or answered decision/);
   } finally { f.close(); }
 });
 
