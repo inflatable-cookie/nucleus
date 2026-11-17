@@ -9,9 +9,9 @@ function runtimeFixture(observe: (id: string) => Promise<{ id: string; status: s
   const observed: string[] = [];
   const adapter = { observe: async (id: string) => { observed.push(id); return observe(id); } };
   const runtime = {
+    engine: { withHost: (_hostId: string, fn: () => unknown) => fn(), adapter },
     hostRegistry: {
       onlineIds: () => ['t3code:synthetic-environment'],
-      get: (id: string) => id === 't3code:synthetic-environment' ? { adapter } : undefined,
     },
     plannerTickets: { forCaller: async () => undefined },
   };

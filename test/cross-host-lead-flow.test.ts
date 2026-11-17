@@ -278,9 +278,9 @@ test('a proven caller keeps its ticket: caller.resolve repeats return the same p
     assert.equal(record!.delivery, 'delivered');
     assert.equal(f.t3.notifications.length, 1, 'one message delivered the ticket');
     assert.match(f.t3.notifications[0]!.messageId ?? '', /^nucleus-planner-ticket-/, 'the ticket message reached the task planner thread');
-    const resolved = await f.runtime.resolveHostCaller({ hostKind: 't3code', nativeAgentId: 'task-planner' });
+    const resolved = await f.runtime.resolveHostCaller({ hostKind: 't3code', nativeAgentId: 'task-planner', hostScope: t3Host });
     assert.equal(resolved.participantTicket, record!.path, 'the task planner resolution returns the issued ticket');
-    const resolvedAgain = await f.runtime.resolveHostCaller({ hostKind: 't3code', nativeAgentId: 'task-planner' });
+    const resolvedAgain = await f.runtime.resolveHostCaller({ hostKind: 't3code', nativeAgentId: 'task-planner', hostScope: t3Host });
     assert.equal(resolvedAgain.participantTicket, record!.path, 'the same ticket path comes back on every resolution');
   } finally { await f.close(); }
 });

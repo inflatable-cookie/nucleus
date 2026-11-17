@@ -1365,9 +1365,8 @@ export class QueueRuntime {
       const registeredScope = input.hostScope.startsWith('t3code:') ? input.hostScope : `t3code:${input.hostScope}`;
       if (!hosts.includes(registeredScope)) throw new Error(`T3Code host scope ${input.hostScope} is not registered and online`);
       hostId = registeredScope;
-      const host = this.hostRegistry.get(hostId);
       let observation;
-      try { observation = await host?.adapter.observe(input.nativeAgentId); }
+      try { observation = await this.engine.withHost(hostId, () => this.engine.host.observe(input.nativeAgentId)); }
       catch { throw new Error(`T3Code thread ${input.nativeAgentId} could not be verified on registered host ${hostId}`); }
       if (!observation || observation.id !== input.nativeAgentId || observation.status === 'gone')
         throw new Error(`T3Code thread ${input.nativeAgentId} could not be verified on registered host ${hostId}`);
