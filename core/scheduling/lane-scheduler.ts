@@ -50,6 +50,11 @@ export class LaneScheduler {
     }
     let settle!: () => void, fail!: (error: unknown) => void;
     const promise = new Promise<void>((resolve, reject) => { settle = resolve; fail = reject; });
+    // A fire-and-forget caller (`void engine.scheduleTaskQuantum(...)`) keeps its
+    // durable record, not a promise: a shutdown discard of a quantum that never
+    // ran must not surface as an unhandled rejection. Callers that await still
+    // see the rejection; this only marks the promise as observed once.
+    void promise.catch(() => {});
     const item: LaneItem = {
       priority, coalesce: options.coalesce,
       run: async () => { await work(); }, settle, fail, promise,
@@ -162,6 +167,7 @@ export class LaneScheduler {
    */
   discardQueuedLanes(): void {
     if (!this.lanes.size) return;
+    console.error('DEBUG discard lanes', JSON.stringify([...this.lanes.entries()].map(([key, items]) => [key, items.map(i => ({ priority: i.priority, coalesce: i.coalesce }))])));
     const queued: LaneItem[] = [];
     for (const queue of this.lanes.values()) queued.push(...queue);
     this.lanes.clear();
