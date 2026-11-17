@@ -1,8 +1,10 @@
-import { observeIdle } from './support/fakes';
+import { fakeAdapter, observeIdle } from './support/fakes';
+import { paseoCatalog } from './support/pool-shapes';
 import { configuredClone, materializeSeed } from './support/git-seed';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, realpath, rm, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, mkdir, writeFile, symlink, chmod, readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtempSync } from 'node:fs';
@@ -11,11 +13,12 @@ import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
 import { submissionSchema, type Profile } from '../shared/contracts';
 import { PaseoAdapter, type Adapter } from '../service/paseo-composition';
-import { command, git, withIntegrationCheckout, cleanupIntegrationCheckout, validateDispatch, verifyWorkspace, proveRebindableDispatchBase } from '../core/git/index';
+import { command, git, withIntegrationCheckout, cleanupIntegrationCheckout, validateDispatch, verifyWorkspace, verifyResume, proveRebindableDispatchBase } from '../core/git/index';
 import type { Task } from '../shared/contracts';
 import { syncMain, integrationBaseGate, verifyCloseoutPublication } from '../core/forge/index';
 import { briefDigest } from '../core/planning/brief';
 import { RepositoryHooks } from '../core/hooks/hooks';
+import { ensureTaskNodeModules } from '../core/workspaces/task-node-modules';
 
 /**
  * The integration checkout is the queue's own, and a branch that is merely behind is a
@@ -47,6 +50,392 @@ const dispatchTask = (repo: string, planningCommit: string) => ({
   repoPath: repo, baseBranch: 'main', branch: 'ns-task', planningCommit,
   handoffPath: 'docs/handoff.md', handoffText: handoff,
 }) as unknown as Task;
+
+async function reviewLockfileFixture(t: any, options: { mutateTrackedSourceOnInstall?: 'worktree' | 'index' } = {}) {
+  const { root, repo } = await makeRepo(t);
+  const writeDependency = async (directory: string, version: string) => {
+    const dependency = join(directory, 'vendor', 'fixture-dep');
+    await mkdir(dependency, { recursive: true });
+    await writeFile(join(dependency, 'package.json'), JSON.stringify({ name: 'fixture-dep', version, main: 'index.js' }));
+    await writeFile(join(dependency, 'index.js'), `module.exports = { version: '${version}' };\n`);
+    await writeFile(join(directory, '.gitignore'), 'node_modules/\n');
+    await writeFile(join(directory, '.npmrc'), 'install-links=true\n');
+    const packageJson: Record<string, unknown> = { name: 'review-lockfile-fixture', version: '1.0.0', dependencies: { 'fixture-dep': 'file:vendor/fixture-dep' } };
+    if (options.mutateTrackedSourceOnInstall && version === '2.0.0') {
+      const mutation = options.mutateTrackedSourceOnInstall === 'index'
+        ? `const fs=require('node:fs'); fs.writeFileSync('tracked-source.txt','mutated'); require('node:child_process').execFileSync('git',['add','tracked-source.txt']); fs.writeFileSync('tracked-source.txt','original')`
+        : `require('node:fs').writeFileSync('tracked-source.txt', 'mutated')`;
+      packageJson.scripts = { postinstall: `node -e "${mutation}"` };
+    }
+    await writeFile(join(directory, 'package.json'), JSON.stringify(packageJson));
+    await command('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'], directory);
+  };
+  if (options.mutateTrackedSourceOnInstall) await writeFile(join(repo, 'tracked-source.txt'), 'original');
+  await writeDependency(repo, '1.0.0');
+  const planning = await commit(repo, 'initial dependency lockfile', { 'docs/handoff.md': handoff, '.gitignore': 'node_modules/\n' });
+  await git(repo, 'push', 'origin', 'main');
+  await command('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], repo);
+  const workspaceRoot = join(root, 'review-workspaces');
+  await mkdir(workspaceRoot);
+  await symlink(join(repo, 'node_modules'), join(workspaceRoot, 'node_modules'), 'dir');
+  const taskDirectory = join(workspaceRoot, 'review-task');
+  await git(repo, 'worktree', 'add', '-b', 'ns-review-task', taskDirectory, planning);
+  // This is the worker's initial install. The PR then changes its lockfile.
+  await ensureTaskNodeModules(taskDirectory, repo, workspaceRoot);
+  await writeDependency(taskDirectory, '2.0.0');
+  let head = await commit(taskDirectory, 'update dependency lockfile in PR', {
+    '.gitignore': 'node_modules/\n', '.npmrc': 'install-links=true\n',
+    'package.json': await readFile(join(taskDirectory, 'package.json'), 'utf8'),
+    'package-lock.json': await readFile(join(taskDirectory, 'package-lock.json'), 'utf8'),
+    'vendor/fixture-dep/package.json': await readFile(join(taskDirectory, 'vendor/fixture-dep/package.json'), 'utf8'),
+    'vendor/fixture-dep/index.js': await readFile(join(taskDirectory, 'vendor/fixture-dep/index.js'), 'utf8'),
+  });
+
+  const store = new Store(join(root, 'review.sqlite'));
+  store.setMeta('paused', false);
+  const worker: Profile = { id: 'worker', name: 'Worker', provider: 'test', model: 'test-worker', notes: '', available: true, problem: '', supportedThinking: [] };
+  const reviewer: Profile = { id: 'reviewer', name: 'Reviewer', provider: 'test', model: 'test-reviewer', notes: '', available: true, problem: '', supportedThinking: [] };
+  store.setMeta('pool', [
+    { profileId: worker.id, enabled: true, group: 'workers', roles: ['worker'], weight: 1, scopes: ['general'] },
+    { profileId: reviewer.id, enabled: true, group: 'reviewers', roles: ['reviewer'], weight: 1, scopes: ['general'] },
+  ]);
+  store.setProfiles([worker, reviewer].map(profile => ({ id: profile.id, name: profile.name, provider: profile.provider, model: profile.model, notes: profile.notes })));
+  const submitted = store.insert(submissionSchema.parse({ submissionId: randomUUID(), title: 'Review changed dependencies', repoPath: repo,
+    planningCommit: planning, handoffPath: 'docs/handoff.md', originAgentId: 'origin' }), 'host', handoff, planning,
+  { branch: 'ns-review-task', baseBranch: 'main' });
+  const task = store.update(submitted.id, {
+    phase: 'awaiting_review', workspaceId: 'ws-review-task', directory: taskDirectory, workspaceIntent: true,
+    agentIntent: true, agentId: 'worker-agent', runId: 'worker-run', profile: worker, workerModel: worker.model, workerModels: [worker.model],
+    prHead: head, prUrl: 'https://github.com/example/repo/pull/41', resumePrNumber: 41,
+    completion: { taskId: submitted.id, runId: 'worker-run', eventId: 'worker-ready', status: 'ready_for_review', summary: 'Ready', prNumber: 41, head },
+  });
+  let reviewerStarts = 0;
+  let beforeReviewerStart: () => Promise<void> = async () => {};
+  const adapter = fakeAdapter({
+    catalog: async () => paseoCatalog(),
+    verifyPr: async current => ({ url: current.prUrl!, head }),
+    createRun: async current => {
+      reviewerStarts++;
+      await beforeReviewerStart();
+      return { id: 'reviewer-agent', workspaceId: current.workspaceId! };
+    },
+    observe: observeIdle('ws-review-task'),
+  });
+  const engine = new Engine(store, adapter, 0);
+  engine.profiles = [worker, reviewer];
+  return { root, repo, workspaceRoot, taskDirectory, store, engine, task, head, reviewerStarts: () => reviewerStarts,
+    beforeReviewerStart: (fn: () => Promise<void>) => { beforeReviewerStart = fn; },
+    commitSubmittedLockfile: async (contents: string) => {
+      await writeFile(join(taskDirectory, 'package-lock.json'), contents);
+      await git(taskDirectory, 'add', 'package-lock.json');
+      await git(taskDirectory, 'commit', '-m', 'change submitted dependency lockfile');
+      head = await git(taskDirectory, 'rev-parse', 'HEAD');
+      store.update(task.id, { prHead: head });
+    } };
+}
+
+test('ordinary reviewer setup follows a lockfile changed after the worker install', async t => {
+  const f = await reviewLockfileFixture(t);
+  f.beforeReviewerStart(async () => {
+    assert.equal(await command('node', ['-p', "require('fixture-dep').version"], f.taskDirectory), '2.0.0');
+  });
+  try {
+    await f.engine.resolution.advance(f.store.task(f.task.id));
+    assert.equal(f.reviewerStarts(), 1, f.store.task(f.task.id).reason);
+    assert.equal(f.store.run(f.store.task(f.task.id).resolution.currentRunId!)?.role, 'reviewer');
+  } finally {
+    await f.engine.stop();
+    f.store.close();
+  }
+});
+
+test('a failed reviewer dependency refresh records its error and starts no agent', async t => {
+  const f = await reviewLockfileFixture(t);
+  // The worker installed from the original lockfile. Corrupt the submitted PR's
+  // changed lockfile so the real npm ci lifecycle fails during review setup. It
+  // is committed to model the exact clean PR head reviewers actually inspect.
+  await f.commitSubmittedLockfile('{ invalid lockfile');
+  try {
+    await f.engine.resolution.advance(f.store.task(f.task.id));
+    const task = f.store.task(f.task.id);
+    assert.match(task.reason, /Task node_modules setup failed with npm ci/);
+    assert.equal(task.phase, 'awaiting_review');
+    assert.equal(f.reviewerStarts(), 0, 'the reviewer must not start while its install is stale');
+    assert.equal(f.store.runs(task.id).filter(run => run.role === 'reviewer').length, 0, 'dependency setup fails before run reservation');
+    const gitDir = await git(f.taskDirectory, 'rev-parse', '--path-format=absolute', '--git-dir');
+    const state = JSON.parse(await readFile(join(gitDir, 'nucleus', 'task-node-modules.json'), 'utf8'));
+    assert.equal(state.status, 'failed');
+    assert.ok(state.error.trim().length > 0, 'the failed npm ci error must be retained');
+  } finally {
+    await f.engine.stop();
+    f.store.close();
+  }
+});
+
+test('reviewer dependency setup refuses tracked-source changes made by npm scripts', async t => {
+  const f = await reviewLockfileFixture(t, { mutateTrackedSourceOnInstall: 'worktree' });
+  try {
+    await f.engine.resolution.advance(f.store.task(f.task.id));
+    const task = f.store.task(f.task.id);
+    assert.match(task.reason, /Task node_modules setup failed with npm ci: npm ci changed tracked task source/);
+    assert.equal(task.phase, 'awaiting_review');
+    assert.equal(f.reviewerStarts(), 0, 'the reviewer must not start from source mutated by dependency setup');
+    assert.equal(f.store.runs(task.id).filter(run => run.role === 'reviewer').length, 0, 'source verification fails before run reservation');
+    assert.equal(await readFile(join(f.taskDirectory, 'tracked-source.txt'), 'utf8'), 'mutated');
+
+    const gitDir = await git(f.taskDirectory, 'rev-parse', '--path-format=absolute', '--git-dir');
+    const state = JSON.parse(await readFile(join(gitDir, 'nucleus', 'task-node-modules.json'), 'utf8'));
+    assert.equal(state.status, 'failed');
+    assert.match(state.error, /npm ci changed tracked task source/);
+    await assert.rejects(ensureTaskNodeModules(f.taskDirectory, f.repo, f.workspaceRoot), /Tracked source changed during a previous npm ci attempt/);
+  } finally {
+    await f.engine.stop();
+    f.store.close();
+  }
+});
+
+test('reviewer dependency setup refuses staged source changes made by npm scripts', async t => {
+  const f = await reviewLockfileFixture(t, { mutateTrackedSourceOnInstall: 'index' });
+  try {
+    await f.engine.resolution.advance(f.store.task(f.task.id));
+    const task = f.store.task(f.task.id);
+    assert.match(task.reason, /Task node_modules setup failed with npm ci: npm ci changed tracked task source/);
+    assert.equal(task.phase, 'awaiting_review');
+    assert.equal(f.reviewerStarts(), 0, 'the reviewer must not start from source staged by dependency setup');
+    assert.equal(f.store.runs(task.id).filter(run => run.role === 'reviewer').length, 0, 'source verification fails before run reservation');
+    assert.equal(await readFile(join(f.taskDirectory, 'tracked-source.txt'), 'utf8'), 'original', 'the worktree remains clean');
+    assert.equal(await git(f.taskDirectory, 'show', ':tracked-source.txt'), 'mutated', 'the index-only change is still detected');
+
+    const gitDir = await git(f.taskDirectory, 'rev-parse', '--path-format=absolute', '--git-dir');
+    const state = JSON.parse(await readFile(join(gitDir, 'nucleus', 'task-node-modules.json'), 'utf8'));
+    assert.equal(state.status, 'failed');
+    assert.match(state.error, /npm ci changed tracked task source/);
+    await assert.rejects(ensureTaskNodeModules(f.taskDirectory, f.repo, f.workspaceRoot), /Tracked source changed during a previous npm ci attempt/);
+  } finally {
+    await f.engine.stop();
+    f.store.close();
+  }
+});
+
+test('reviewer dependency setup preserves retained edits in an already-dirty tracked file', async t => {
+  const f = await reviewLockfileFixture(t, { mutateTrackedSourceOnInstall: 'worktree' });
+  const retainedWork = 'retained worker edits before review setup';
+  try {
+    await writeFile(join(f.taskDirectory, 'tracked-source.txt'), retainedWork);
+    await f.engine.resolution.advance(f.store.task(f.task.id));
+    const task = f.store.task(f.task.id);
+    assert.match(task.reason, /Task node_modules setup refused before npm ci: Tracked task source is dirty/);
+    assert.equal(task.phase, 'awaiting_review');
+    assert.equal(f.reviewerStarts(), 0, 'the reviewer must not start while retained tracked edits are present');
+    assert.equal(f.store.runs(task.id).filter(run => run.role === 'reviewer').length, 0, 'dirty source refuses before reservation');
+    assert.equal(await readFile(join(f.taskDirectory, 'tracked-source.txt'), 'utf8'), retainedWork, 'setup must not overwrite the retained edits');
+
+    const gitDir = await git(f.taskDirectory, 'rev-parse', '--path-format=absolute', '--git-dir');
+    const state = JSON.parse(await readFile(join(gitDir, 'nucleus', 'task-node-modules.json'), 'utf8'));
+    assert.equal(state.status, 'failed');
+    assert.equal(state.failureKind, 'dirty_source');
+    assert.match(state.error, /preserve retained work/);
+
+  } finally {
+    await f.engine.stop();
+    f.store.close();
+  }
+});
+
+test('retained-worker continuation refuses dependency setup before npm can overwrite dirty source', async t => {
+  const f = await reviewLockfileFixture(t, { mutateTrackedSourceOnInstall: 'worktree' });
+  const retainedWork = 'unfinished retained worker edit';
+  const npmBin = join(f.root, 'npm-bin');
+  const npmCalls = join(f.root, 'npm-calls.txt');
+  const previousPath = process.env.PATH;
+  let verifyResumeCalls = 0, workerStarts = 0;
+  try {
+    await writeFile(join(f.taskDirectory, 'tracked-source.txt'), retainedWork);
+    await mkdir(npmBin);
+    const realNpm = (await command('which', ['npm'], f.root)).trim();
+    await writeFile(join(npmBin, 'npm'), `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(npmCalls)}\nexec ${JSON.stringify(realNpm)} "$@"\n`);
+    await chmod(join(npmBin, 'npm'), 0o755);
+    process.env.PATH = `${npmBin}:${previousPath ?? ''}`;
+
+    f.engine.adapter.verifyResume = async task => { verifyResumeCalls++; return verifyResume(task); };
+    f.engine.adapter.observe = async agentId => ({ id: agentId, workspaceId: f.task.workspaceId!, status: 'idle', active: false, permissions: false, error: '' });
+    f.engine.adapter.createAgent = async task => { workerStarts++; return { id: 'continued-worker', workspaceId: task.workspaceId! }; };
+    f.store.update(f.task.id, {
+      phase: 'dispatching', completion: null, agentIntent: false, agentId: null, runId: null, prHead: null,
+      retiredWorkers: [{ agentId: 'worker-agent', runId: 'worker-run', profile: f.task.profile!, reason: 'Continue retained worker work' }],
+    });
+
+    await assert.rejects(f.engine.launchAgent(f.store.task(f.task.id)), /Task node_modules setup refused before npm ci: Tracked task source is dirty/);
+    assert.equal(verifyResumeCalls, 1, 'the retained worktree is verified through the dirty-work-tolerant continuation path');
+    assert.equal(existsSync(npmCalls), false, 'npm ci never starts');
+    assert.equal(workerStarts, 0, 'no continuation worker starts while dependency setup is stale');
+    assert.equal(await readFile(join(f.taskDirectory, 'tracked-source.txt'), 'utf8'), retainedWork, 'the uncommitted edit remains intact');
+    const gitDir = await git(f.taskDirectory, 'rev-parse', '--path-format=absolute', '--git-dir');
+    const state = JSON.parse(await readFile(join(gitDir, 'nucleus', 'task-node-modules.json'), 'utf8'));
+    assert.equal(state.failureKind, 'dirty_source');
+    assert.match(state.error, /refusing setup to preserve retained work/);
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    await f.engine.stop();
+    f.store.close();
+  }
+});
+
+test('a new task gets a private install from the lockfile advanced by dispatch', async t => {
+  const { root, repo } = await makeRepo(t);
+  const writeDependency = async (directory: string, version: string) => {
+    const dependency = join(directory, 'vendor', 'fixture-dep');
+    await mkdir(dependency, { recursive: true });
+    await writeFile(join(dependency, 'package.json'), JSON.stringify({ name: 'fixture-dep', version, main: 'index.js' }));
+    await writeFile(join(dependency, 'index.js'), `module.exports = { version: '${version}' };\n`);
+    await writeFile(join(directory, '.gitignore'), 'node_modules/\n');
+    await writeFile(join(directory, '.npmrc'), 'install-links=true\n');
+    await writeFile(join(directory, 'package.json'), JSON.stringify({ name: 'dispatch-lockfile-fixture', version: '1.0.0', dependencies: { 'fixture-dep': 'file:vendor/fixture-dep' } }));
+    await command('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'], directory);
+  };
+
+  await writeDependency(repo, '1.0.0');
+  const planning = await commit(repo, 'planning with lockfile', { 'docs/handoff.md': handoff, '.gitignore': 'node_modules/\n' });
+  await git(repo, 'push', 'origin', 'main');
+  await command('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], repo);
+
+  const workspaceRoot = join(root, 'shared-workspaces');
+  await mkdir(workspaceRoot);
+  await symlink(join(repo, 'node_modules'), join(workspaceRoot, 'node_modules'), 'dir');
+  assert.equal(await command('node', ['-p', "require('fixture-dep').version"], repo), '1.0.0');
+
+  const peer = join(root, 'peer');
+  await command('git', ['clone', join(root, 'origin.git'), peer], root);
+  await git(peer, 'config', 'user.name', 'Queue test');
+  await git(peer, 'config', 'user.email', 'queue@example.invalid');
+  await git(peer, 'checkout', '-b', 'dependency-update');
+  await writeDependency(peer, '2.0.0');
+  await git(peer, 'add', '.gitignore', '.npmrc', 'package.json', 'package-lock.json', 'vendor');
+  await git(peer, 'commit', '-m', 'prepare dependency update');
+  await git(peer, 'checkout', 'main');
+  await git(peer, 'merge', '--no-ff', 'dependency-update', '-m', 'merge dependency update');
+  await git(peer, 'push', 'origin', 'main');
+
+  const taskDirectory = join(workspaceRoot, 'next-task');
+  const store = new Store(join(root, 'queue.sqlite'));
+  store.setMeta('paused', false);
+  store.setMeta('pool', [{ profileId: 'worker', enabled: true, group: 'test', weight: 1, scopes: ['general'] }]);
+  const profile: Profile = { id: 'worker', name: 'Worker', provider: 'test', model: 'test', notes: '', available: true, problem: '', supportedThinking: [] };
+  store.setProfiles([{ id: profile.id, name: profile.name, provider: profile.provider, model: profile.model, notes: profile.notes }]);
+  let launches = 0;
+  const adapter = fakeAdapter({
+    catalog: async () => paseoCatalog(),
+    validate: validateDispatch,
+    createWorkspace: async task => {
+      assert.equal(task.planningBase, await git(peer, 'rev-parse', 'HEAD'));
+      // Deliberately provision at the submitted base. verifyWorkspace must
+      // fast-forward it to the lockfile-changing planning base before install.
+      await git(repo, 'worktree', 'add', '-b', task.branch, taskDirectory, planning);
+      assert.equal(await git(taskDirectory, 'rev-parse', 'HEAD'), planning);
+      return { id: 'ws-next-task', directory: taskDirectory };
+    },
+    verifyWorkspace,
+    createAgent: async task => { launches++; return { id: `agent-${task.id}`, workspaceId: task.workspaceId }; },
+    observe: observeIdle('ws-next-task'),
+  });
+  const engine = new Engine(store, adapter, 0);
+  engine.profiles = [profile];
+  const queued = store.insert(submissionSchema.parse({
+    submissionId: randomUUID(), title: 'New task after lockfile merge', repoPath: repo,
+    planningCommit: planning, handoffPath: 'docs/handoff.md', originAgentId: 'origin',
+  }), 'host', handoff, planning, { branch: 'ns-next-task', baseBranch: 'main' });
+  try {
+    await engine.dispatchTask(queued.id, false);
+    assert.equal(launches, 1, 'the worker starts after task-local dependency setup succeeds');
+    assert.equal(await git(taskDirectory, 'rev-parse', 'HEAD'), await git(peer, 'rev-parse', 'HEAD'), 'workspace verification fast-forwarded to the merged lockfile');
+    assert.equal(await command('node', ['-p', "require('fixture-dep').version"], taskDirectory), '2.0.0');
+    assert.equal(await command('node', ['-p', "require('fixture-dep').version"], repo), '1.0.0', 'the task install does not rewrite the shared install for other worktrees');
+  } finally {
+    await engine.stop();
+    store.close();
+  }
+});
+
+test('a task on a non-main integration base installs from that base lockfile', async t => {
+  const { root, repo } = await makeRepo(t);
+  const writeDependency = async (directory: string, version: string) => {
+    const dependency = join(directory, 'vendor', 'fixture-dep');
+    await mkdir(dependency, { recursive: true });
+    await writeFile(join(dependency, 'package.json'), JSON.stringify({ name: 'fixture-dep', version, main: 'index.js' }));
+    await writeFile(join(dependency, 'index.js'), `module.exports = { version: '${version}' };\n`);
+    await writeFile(join(directory, '.gitignore'), 'node_modules/\n');
+    await writeFile(join(directory, '.npmrc'), 'install-links=true\n');
+    await writeFile(join(directory, 'package.json'), JSON.stringify({ name: 'dispatch-lockfile-fixture', version: '1.0.0', dependencies: { 'fixture-dep': 'file:vendor/fixture-dep' } }));
+    await command('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'], directory);
+  };
+  await writeDependency(repo, '1.0.0');
+  const main = await commit(repo, 'main lockfile', { 'docs/handoff.md': handoff, '.gitignore': 'node_modules/\n' });
+  await git(repo, 'push', 'origin', 'main');
+  await command('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], repo);
+  const workspaceRoot = join(root, 'shared-workspaces');
+  await mkdir(workspaceRoot);
+  await symlink(join(repo, 'node_modules'), join(workspaceRoot, 'node_modules'), 'dir');
+  await git(repo, 'checkout', '-b', 'release/v0.5');
+  await writeDependency(repo, '2.0.0');
+  await git(repo, 'add', '.gitignore', '.npmrc', 'package.json', 'package-lock.json', 'vendor');
+  await git(repo, 'commit', '-m', 'release dependency update');
+  const release = await git(repo, 'rev-parse', 'HEAD');
+  const taskDirectory = join(workspaceRoot, 'release-task');
+  await git(repo, 'worktree', 'add', '-b', 'ns-release-task', taskDirectory, release);
+  await ensureTaskNodeModules(taskDirectory, repo, workspaceRoot);
+  assert.equal(await command('node', ['-p', "require('fixture-dep').version"], taskDirectory), '2.0.0');
+  assert.equal(await command('node', ['-p', "require('fixture-dep').version"], repo), '1.0.0');
+  assert.notEqual(main, release);
+});
+
+test('failed task install keeps its error after npm ci deletes node_modules and retries', async t => {
+  const { root, repo } = await makeRepo(t);
+  const writeDependency = async (directory: string, version: string) => {
+    const dependency = join(directory, 'vendor', 'fixture-dep');
+    await mkdir(dependency, { recursive: true });
+    await writeFile(join(dependency, 'package.json'), JSON.stringify({ name: 'fixture-dep', version, main: 'index.js' }));
+    await writeFile(join(dependency, 'index.js'), `module.exports = { version: '${version}' };\n`);
+    await writeFile(join(directory, '.gitignore'), 'node_modules/\n');
+    await writeFile(join(directory, '.npmrc'), 'install-links=true\n');
+    await writeFile(join(directory, 'package.json'), JSON.stringify({ name: 'dispatch-lockfile-fixture', version: '1.0.0', dependencies: { 'fixture-dep': 'file:vendor/fixture-dep' } }));
+    await command('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'], directory);
+  };
+  await writeDependency(repo, '1.0.0');
+  await commit(repo, 'main lockfile', { 'docs/handoff.md': handoff, '.gitignore': 'node_modules/\n' });
+  await git(repo, 'push', 'origin', 'main');
+  await command('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], repo);
+  const workspaceRoot = join(root, 'shared-workspaces');
+  await mkdir(workspaceRoot);
+  await symlink(join(repo, 'node_modules'), join(workspaceRoot, 'node_modules'), 'dir');
+  await git(repo, 'checkout', '-b', 'ns-task');
+  await writeDependency(repo, '2.0.0');
+  await git(repo, 'add', '.gitignore', '.npmrc', 'package.json', 'package-lock.json', 'vendor');
+  await git(repo, 'commit', '-m', 'task lockfile update');
+  await git(repo, 'checkout', 'main');
+  const taskDirectory = join(workspaceRoot, 'task');
+  await git(repo, 'worktree', 'add', taskDirectory, 'ns-task');
+
+  const previousPath = process.env.PATH;
+  const fakeBin = join(root, 'fake-bin');
+  await mkdir(fakeBin);
+  await writeFile(join(fakeBin, 'npm'), '#!/bin/sh\nrm -rf node_modules\nprintf "fixture task npm ci failure" >&2\nexit 23\n');
+  await chmod(join(fakeBin, 'npm'), 0o755);
+  process.env.PATH = `${fakeBin}:${previousPath ?? ''}`;
+  try {
+    await assert.rejects(ensureTaskNodeModules(taskDirectory, repo, workspaceRoot), /Task node_modules setup failed with npm ci: fixture task npm ci failure/);
+  } finally {
+    process.env.PATH = previousPath;
+  }
+  assert.equal(existsSync(join(taskDirectory, 'node_modules')), false);
+  assert.equal(await command('node', ['-p', "require('fixture-dep').version"], repo), '1.0.0', 'the failed task refresh leaves the shared install untouched');
+  const gitDir = await git(taskDirectory, 'rev-parse', '--path-format=absolute', '--git-dir');
+  const state = JSON.parse(await readFile(join(gitDir, 'nucleus', 'task-node-modules.json'), 'utf8'));
+  assert.equal(state.status, 'failed');
+  assert.match(state.error, /fixture task npm ci failure/);
+  await ensureTaskNodeModules(taskDirectory, repo, workspaceRoot);
+  assert.equal(await command('node', ['-p', "require('fixture-dep').version"], taskDirectory), '2.0.0');
+});
 
 test('a behind-only integration branch is fast-forwarded at dispatch', async t => {
   const { root, repo } = await makeRepo(t);

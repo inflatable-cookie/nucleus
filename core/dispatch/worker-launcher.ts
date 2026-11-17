@@ -12,6 +12,8 @@ import { runTicketPath } from "./agent-creation";
 import { ABSENT_WORKER_REASON, PRE_AGENT_LAUNCH_FAILURE_REASON, PROFILE_CATALOG_PENDING_REASON, ProvenPreSendRefusalError } from "../recovery/task-reasons";
 import { startsNoRuns } from "../closeout/queue-drain";
 import { agentSettled } from "../machine/agent-settled";
+import { dirname } from "node:path";
+import { ensureTaskNodeModules } from "../workspaces/task-node-modules";
 
 /**
  * Creates a task's worker once: one creation per task at a time, one run identity
@@ -69,6 +71,10 @@ export class WorkerLauncher {
       if (!this.adapter.verifyResume) throw new Error("Adapter cannot verify continuation worktrees");
       await this.adapter.verifyResume(task); branch = task.branch;
     } else branch = await this.adapter.verifyWorkspace(task, task.directory);
+    // verifyWorkspace may fast-forward a behind worktree to planningBase. Install
+    // only after that source transition, so the worker never starts from the
+    // previous head's lockfile.
+    await ensureTaskNodeModules(task.directory, task.repoPath, dirname(task.directory));
     const stash = await this.engine.readStash(task.directory);
     if (startsNoRuns(this.store, this.engine.stopped)) return;
     const token = randomBytes(32).toString("hex");

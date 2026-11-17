@@ -10,6 +10,8 @@ import { assertCanonicalPrSource, evidenceOnlyPr, taskPrNumber } from '../../for
 import { verifyProofSource } from '../../qa/proof-source';
 import { groupIsUnavailable, supersedingRouteProfile } from '../../../shared/pool';
 import { retainedProfileReason, workerProfileIsExcluded, type Profile, type Run, type Task } from '../../../shared/contracts';
+import { dirname } from 'node:path';
+import { ensureTaskNodeModules } from '../../workspaces/task-node-modules';
 import type { ProofActivation } from '../../resolution';
 
 /** Keep the retained worker, wait for a first independent one, or honour a superseding route. */
@@ -155,9 +157,24 @@ export class RunLaunchSource {
     // Task 405: the proof executor observes the exact published head after the
     // forge observation, before any thread is selected. The reservation re-checks
     // the same facts before it dispatches anything.
+    let proofHead: string | null = null;
     if (proofExecutor(role)) {
       if (!pr && !t.proofOnly) throw new Error('An author-side proof execution needs the exact published pull request');
-      const source = await verifyProofSource(t, t.proofOnly?.commit ?? pr!.head);
+      proofHead = t.proofOnly?.commit ?? pr!.head;
+      const source = await verifyProofSource(t, proofHead);
+      if (!options.proof) throw new Error('Proof execution activation identity is missing');
+      options = { ...options, proof: { ...options.proof, tree: source.tree } };
+    }
+    // Refresh after the PR/resume/proof checks establish the exact source and
+    // before thread selection can reserve or start any reviewer, revision, or
+    // other task-worktree agent. This also covers later review rounds, whose
+    // worktree may have received a newer lockfile since the worker's install.
+    if (role !== 'closeout' && t.directory)
+      await ensureTaskNodeModules(t.directory, t.repoPath, dirname(t.directory));
+    // Dependency setup is a command in the task checkout. Re-prove the local
+    // exact tree after it and before thread selection can reserve a proof run.
+    if (proofHead) {
+      const source = await verifyProofSource(t, proofHead, { remote: false });
       if (!options.proof) throw new Error('Proof execution activation identity is missing');
       options = { ...options, proof: { ...options.proof, tree: source.tree } };
     }

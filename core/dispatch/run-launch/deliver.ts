@@ -8,6 +8,7 @@ import { assertOrdinaryReviewIdentity, ordinaryReviewSource } from '../../review
 import { ownerReviewContext } from '../../review/owner-review-context';
 import type { Adapter } from '../../host/adapter';
 import { proofExecutionRecord, recordProofExecution } from '../../qa/proof-records';
+import { verifyProofSource } from '../../qa/proof-source';
 import { isPromptTooLargeError, redactDiagnostic } from '../../recovery/provider-refusal';
 import { BlockingRecoveryEffectsError, blockingRecoveryEffects, blockingRecoveryEffectsRefusal, recoveryEffectsRefusal } from '../../recovery/recovery-effects';
 import { settleObservedHostEffectOperations } from '../../recovery/effect-gates';
@@ -16,6 +17,8 @@ import { ABSENT_RESOLUTION_REASON, ProvenPreSendRefusalError, coordinative, mess
 import { isDispositionActive, type Profile, type Run, type Task } from '../../../shared/contracts';
 import { threadRunningReason } from '../../intake/thread-waits';
 import { declaredLaneDocumentKeys } from '../../planning/brief-lane-documents';
+import { dirname } from 'node:path';
+import { ensureTaskNodeModules } from '../../workspaces/task-node-modules';
 
 /**
  * Deliver the run a launch reserved: the ordinary review custody and checkout
@@ -23,7 +26,8 @@ import { declaredLaneDocumentKeys } from '../../planning/brief-lane-documents';
  * uncertain or refused settlement when a step throws.
  */
 export class RunLaunchDeliver {
-  constructor(readonly resolution: LaunchDeliverContext) {}
+  constructor(readonly resolution: LaunchDeliverContext,
+    private readonly ensureTaskDependencies: typeof ensureTaskNodeModules = ensureTaskNodeModules) {}
   get store() { return this.resolution.store; }
   get adapter() { return this.resolution.adapter; }
   get machine(): LaunchMachinePorts { return this.adapter; }
@@ -46,6 +50,19 @@ export class RunLaunchDeliver {
         await ordinaryReviewSource(t, run.head, false);
         await git(t.directory!, 'checkout', '--detach', run.head);
         await ordinaryReviewSource(t, run.head, true);
+      }
+      // Ordinary review takes custody of a detached exact-head checkout only
+      // after reservation. Recheck its dependencies after that final source
+      // transition and before the retained reviewer reads the worktree.
+      if (role !== 'closeout' && t.directory)
+        await this.ensureTaskDependencies(t.directory, t.repoPath, dirname(t.directory));
+      // Proof launch preparation checked the exact source before reservation,
+      // but this delivery path may refresh dependencies again. Recheck after
+      // that setup and before any executor send or creation.
+      if (proofExecutor(role)) {
+        const source = await verifyProofSource(t, run.head, { remote: false });
+        if (source.tree !== run.proofExecution?.tree)
+          throw new Error('Proof source tree changed after run reservation; refusing to start an agent');
       }
       if (agentId) {
         let fresh = this.store.task(t.id);

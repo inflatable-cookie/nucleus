@@ -253,6 +253,23 @@ weighted(9)('a held workerless review-entry activates one Queue-created executor
   } finally { await f.close(); }
 });
 
+weighted(1)('proof delivery rechecks the exact source after dependency setup and starts no executor on mutation', async () => {
+  const f = fixture();
+  try {
+    await f.releaseDispatch();
+    const delivery = f.engine.resolution.dispatchLaunch.deliver as unknown as {
+      ensureTaskDependencies: (directory: string, registeredCheckout: string, workspaceRoot: string) => Promise<void>;
+    };
+    delivery.ensureTaskDependencies = async directory => {
+      writeFileSync(join(directory, 'feature.txt'), 'changed during delivery setup\n');
+    };
+
+    await assert.rejects(f.engine.performTaskControl(f.activation()), /proof executor requires source identical to the published head/);
+    assert.equal(f.createCount(), 0, 'delivery must refuse before creating an executor');
+    assert.equal(f.store.runs(f.task().id).length, 1, 'the refused reservation remains visible for recovery');
+  } finally { await f.close(); }
+});
+
 weighted(1)('proof admission accepts the latest legacy revision at the reviewed published head only', async () => {
   const f = fixture();
   try {

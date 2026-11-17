@@ -172,7 +172,9 @@ export async function exactIntendedMerge(t: Pick<Task,'repoPath'|'baseBranch'|'r
 }
 export async function syncMain(t: Task, allowed: () => boolean = () => true) {
   const commit = await withIntegrationCheckout(t, (checkout, unchanged) => syncIntegrationCheckout({...t, repoPath: checkout}, allowed, unchanged));
-  if (await git(t.repoPath, 'branch', '--show-current') === t.baseBranch) requestServiceRollAfterRepositorySync(t.repoPath);
+  if (await git(t.repoPath, 'branch', '--show-current') === t.baseBranch) {
+    requestServiceRollAfterRepositorySync(t.repoPath);
+  }
   return commit;
 }
 async function syncIntegrationCheckout(t: Task, allowed: () => boolean, unchanged: () => Promise<void>) {

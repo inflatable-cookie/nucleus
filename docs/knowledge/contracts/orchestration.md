@@ -1425,6 +1425,34 @@ request identities and submitted handoffs are not rewritten.
   detached checkouts beside the task worktree to origin's default branch and
   records dirty, branched or diverged ones as findings; failure never blocks
   dispatch ([Spec 028](../specs/028-fresh-sibling-checkouts.md)).
+- The per-repository task-workspace root's `node_modules` symlink is part of
+  shared workspace provisioning outside this repository and points at the
+  registered checkout; no Nucleus helper here creates that general root link.
+  `retainNodeModules` in `core/workspaces/workspace-allocation.ts` creates a
+  separate checkout-local link only for proof-only task retention. Nucleus
+  advances the registered checkout during `validateDispatchCheckout`
+  (`core/git/git-dispatch.ts`) and advances the merge base in
+  `syncIntegrationCheckout` (`core/forge/merge.ts`). `WorkerLauncher` checks
+  after `verifyWorkspace`, which can fast-forward the task worktree. The shared
+  `RunLaunchSource` and `RunLaunchDeliver` paths check again after the exact
+  source is established and before a task-worktree agent is delivered, including
+  after an ordinary review switches to its detached head. They detect whether
+  the task worktree inherits the shared root link or has a checkout-local link
+  to the registered install, and run `npm ci` in that worktree when its
+  per-worktree install state does not match its own `package.json` and npm
+  lockfile. Proof delivery also verifies the exact local source again after
+  delivery-time setup. The task-local `node_modules` shadows the shared parent
+  link, so this also follows non-main integration bases and retained workspaces
+  whose lockfile changed. Its durable
+  pending/failed/installed state lives in the worktree's Git metadata, not in
+  `node_modules`, so a failed `npm ci` remains retryable even if npm removed the
+  install. Before setup, staged or unstaged tracked edits are recorded as a
+  failed setup and refused so npm lifecycle scripts cannot overwrite retained
+  worker work. Source signatures include the full staged and unstaged patches,
+  including binary content, so edits to an already-dirty file are detectable.
+  The error reaches the existing launch failure path and is recorded on the task
+  for attention; setup can retry after retained edits are restored and proceeds
+  only when a successful task-local install is recorded.
 
 ### Parked dispatch and workspace repair
 

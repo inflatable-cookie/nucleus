@@ -90,7 +90,8 @@ export async function cleanupIntegrationCheckout(repoPath: string, root: string,
   await rm(root, { recursive: true, force: true });
 }
 export async function validateDispatch(task: Task) {
-  return withIntegrationCheckout(task, (checkout, unchanged) => validateDispatchCheckout({...task, repoPath: checkout}, unchanged));
+  const base = await withIntegrationCheckout(task, (checkout, unchanged) => validateDispatchCheckout({...task, repoPath: checkout}, unchanged));
+  return base;
 }
 async function validateDispatchCheckout(task: Task, unchanged: () => Promise<void> = async () => {}) {
   const { handoffText } = await validateSubmission(task);

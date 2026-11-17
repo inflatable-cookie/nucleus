@@ -1,0 +1,1 @@
+Task worktrees that inherit a shared npm install now get a private install from their own lockfile before an agent starts. This keeps new and non-main-base task worktrees aligned with their lockfile, and failed `npm ci` attempts remain visible and retryable.

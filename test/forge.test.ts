@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import { isRepositoryContention } from '../core/scheduling/repository-contention';
 import assert from 'node:assert/strict';
 import {mkdtempSync,writeFileSync,rmSync,mkdirSync,chmodSync} from 'node:fs';
+import {createRequire} from 'node:module';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {git,githubRepositoryFromRemote,verifyWorkspace,verifyResume} from '../core/git/index';
