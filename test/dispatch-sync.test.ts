@@ -83,7 +83,7 @@ async function reviewLockfileFixture(t: any, options: { mutateTrackedSourceOnIns
   // This is the worker's initial install. The PR then changes its lockfile.
   await ensureTaskNodeModules(taskDirectory, repo, workspaceRoot);
   await writeDependency(taskDirectory, '2.0.0');
-  const head = await commit(taskDirectory, 'update dependency lockfile in PR', {
+  let head = await commit(taskDirectory, 'update dependency lockfile in PR', {
     '.gitignore': 'node_modules/\n', '.npmrc': 'install-links=true\n',
     'package.json': await readFile(join(taskDirectory, 'package.json'), 'utf8'),
     'package-lock.json': await readFile(join(taskDirectory, 'package-lock.json'), 'utf8'),
@@ -124,7 +124,14 @@ async function reviewLockfileFixture(t: any, options: { mutateTrackedSourceOnIns
   const engine = new Engine(store, adapter, 0);
   engine.profiles = [worker, reviewer];
   return { root, repo, workspaceRoot, taskDirectory, store, engine, task, head, reviewerStarts: () => reviewerStarts,
-    beforeReviewerStart: (fn: () => Promise<void>) => { beforeReviewerStart = fn; } };
+    beforeReviewerStart: (fn: () => Promise<void>) => { beforeReviewerStart = fn; },
+    commitSubmittedLockfile: async (contents: string) => {
+      await writeFile(join(taskDirectory, 'package-lock.json'), contents);
+      await git(taskDirectory, 'add', 'package-lock.json');
+      await git(taskDirectory, 'commit', '-m', 'change submitted dependency lockfile');
+      head = await git(taskDirectory, 'rev-parse', 'HEAD');
+      store.update(task.id, { prHead: head });
+    } };
 }
 
 test('ordinary reviewer setup follows a lockfile changed after the worker install', async t => {
@@ -145,8 +152,9 @@ test('ordinary reviewer setup follows a lockfile changed after the worker instal
 test('a failed reviewer dependency refresh records its error and starts no agent', async t => {
   const f = await reviewLockfileFixture(t);
   // The worker installed from the original lockfile. Corrupt the submitted PR's
-  // changed lockfile so the real npm ci lifecycle fails during review setup.
-  await writeFile(join(f.taskDirectory, 'package-lock.json'), '{ invalid lockfile');
+  // changed lockfile so the real npm ci lifecycle fails during review setup. It
+  // is committed to model the exact clean PR head reviewers actually inspect.
+  await f.commitSubmittedLockfile('{ invalid lockfile');
   try {
     await f.engine.resolution.advance(f.store.task(f.task.id));
     const task = f.store.task(f.task.id);
