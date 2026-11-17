@@ -58,8 +58,6 @@ implemented; the contracts summarise the durable rules and link here.
 | [060 — Named project agents](060-named-project-agents.md) | implemented |
 | [061 — Worker proof files reach the retained reviewer](061-worker-proof-files.md) | implemented |
 | [062 — BB host adapter](062-bb-host-adapter.md) | approved; phases 0–6 implemented, phase 0 proved against isolated BB; phase 7 (trial and parity call) not started |
-| [063 — Proof execution through host runs](063-proof-execution-host-runs.md) | fits:false; design only |
-| [064 — Proof execution under cooperative qualification](064-proof-execution-cooperative-route.md) | conditional proposal; no implementation or proof activation |
 
 ## Host adapters
 
@@ -90,3 +88,5 @@ proves the plugin-backed transport.
 | [049 — Evidence-based reconcile-and-continue recovery](retired/049-reconcile-and-continue.md) | retired 2026-10-14; the one reconciler and the owner verbs replaced it |
 | [029 — Portable records](retired/029-portable-records.md) | retired 2026-10-31 (R3); export/import removed, old exports stay inert history |
 | [034 — Shadow-run stream producer](retired/034-shadow-run-stream.md) | retired 2026-10-31 (R3); producer removed, written files and rows stay inert history |
+| [063 — Proof execution through host runs](retired/063-proof-execution-host-runs.md) | retired 2026-11-17 (decision 1b60743c); Nucleus run mechanics have no effect on consumer proof |
+| [064 — Proof execution under cooperative qualification](retired/064-proof-execution-cooperative-route.md) | retired 2026-11-17 (decision 1b60743c); Nucleus run mechanics have no effect on consumer proof |

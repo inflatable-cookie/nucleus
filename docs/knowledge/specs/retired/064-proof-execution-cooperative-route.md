@@ -1,3 +1,5 @@
+> Retired 2026-11-17 (decision 1b60743c): Nucleus run mechanics have no effect on consumer proof.
+
 # 064 — Proof execution under cooperative qualification
 
 Status: implemented in part — P1–P7 landed behind a named missing-input refusal; no proof activation

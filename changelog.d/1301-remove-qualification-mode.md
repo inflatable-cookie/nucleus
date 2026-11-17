@@ -1,0 +1,1 @@
+Removed the dormant qualification foundation added by #1287–#1289, including its submission route, stop mode, raw capture, clock, evidence sidecars and refusal paths. Specs 063 and 064 are retired under decision 1b60743c. Ordinary host runs, project QA, proof execution and proof-only release qualification remain in place.

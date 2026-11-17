@@ -27,6 +27,36 @@ config_keys = []
 allow = ["docs/knowledge/retired.toml", "CHANGELOG.md"]
 
 [[retired]]
+id = "qualification-mode"
+retired = "2026-11-17"
+replacement = "Specs 063 and 064 are retired by decision 1b60743c: Nucleus run mechanics have no effect on consumer proof."
+owner = "docs/knowledge/specs/README.md"
+terms = ["qualification mode"]
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "docs/knowledge/specs/retired/", "changelog.d/", "CHANGELOG.md"]
+
+[[retired]]
+id = "nqraw001-capture"
+retired = "2026-11-17"
+replacement = "The combined raw capture was removed with the qualification foundation under decision 1b60743c."
+owner = "docs/knowledge/specs/README.md"
+terms = ["NQRAW001"]
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "docs/knowledge/specs/retired/", "changelog.d/", "CHANGELOG.md"]
+
+[[retired]]
+id = "first-effect-clock"
+retired = "2026-11-17"
+replacement = "The qualification-only clock was removed with the foundation under decision 1b60743c."
+owner = "docs/knowledge/specs/README.md"
+terms = ["firstEffectClock"]
+paths = []
+config_keys = []
+allow = ["docs/knowledge/retired.toml", "docs/knowledge/specs/retired/", "changelog.d/", "CHANGELOG.md"]
+
+[[retired]]
 id = "engine-monolith-dispatch"
 retired = "2026-11-07"
 replacement = "Engine is a shell: it constructs owners, stops them, holds the profile catalogue, records engine-side stops, and conducts a thin taskQuantum. Dispatch, observation, slots, replacement, lanes and the move verb live on their owners. See the daemon owners section of the orchestration contract."

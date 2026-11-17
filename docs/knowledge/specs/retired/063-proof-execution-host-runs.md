@@ -1,3 +1,5 @@
+> Retired 2026-11-17 (decision 1b60743c): Nucleus run mechanics have no effect on consumer proof.
+
 # 063 — Proof execution through host runs
 
 Status: fits:false
