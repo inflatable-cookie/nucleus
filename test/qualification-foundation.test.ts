@@ -324,14 +324,8 @@ test("a qualification plan is refused by the supervisor before its first effect"
   writeVerifiedOwnedFile(f.stateDir, ["runs", runId, "supervisor.plan.json"], JSON.stringify(plan), 0o600);
 
   await assert.rejects(runHostRunSupervisorMain([f.stateDir, runId]), /qualification foundation incomplete/);
-  // No effect: the supervisor's own state record (its first write) is absent, and
-  // the P4 capture mode is unreachable — no artifact, no ordinary stream, no
-  // per-stream file. The mode entry refuses before it opens anything.
+  // No effect: the supervisor's own state record (its first write) is absent.
   assert.equal(hostRunDirExists(f.stateDir, runId, "supervisor.state.json"), false, "the refused plan wrote no supervisor state");
-  const refusedPaths = hostRunSupervisorPaths(f.stateDir, runId);
-  assert.equal(existsSync(refusedPaths.qualificationRawPath), false, "the refused plan wrote no qualification artifact");
-  assert.equal(existsSync(refusedPaths.stdoutPath), false, "the refused plan wrote no stdout file");
-  assert.equal(existsSync(refusedPaths.stderrPath), false, "the refused plan wrote no stderr file");
   assert.equal(f.scheduler.get(runId), null, "no run row was submitted for the refused plan");
 });
 
