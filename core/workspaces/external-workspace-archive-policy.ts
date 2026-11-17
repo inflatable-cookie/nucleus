@@ -1,4 +1,4 @@
-import { historicalWireLabel } from "../../shared/wire-labels";
+import { ownedByTask } from "./thread-ownership";
 import { existsSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -117,7 +117,7 @@ export class ExternalWorkspaceArchive {
       // A thread Queue created for this task carries its task label; an attached
       // role is a recorded identity on the task. Anything else is foreign, and a
       // foreign thread in any registration at this exact folder protects it.
-      const owned = historicalWireLabel(agent.labels, 'task') === input.taskId || input.ownedAgentIds.has(agent.id);
+      const owned = ownedByTask(agent.labels, input.taskId) || input.ownedAgentIds.has(agent.id);
       if (!owned) return refuse(`Workspace ${agent.workspaceId} holds thread ${agent.id}, which is not this task's`, { observed });
       if (agent.activeTurn || agent.pendingPermissionKinds.length || !['idle', 'error', 'closed'].includes(agent.status))
         return refuse(`Waiting for workspace thread ${agent.id} in ${agent.workspaceId} to become idle`, { observed });

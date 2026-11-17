@@ -1,4 +1,4 @@
-import { historicalWireLabel } from "../../shared/wire-labels";
+import { ownedByTask } from "./thread-ownership";
 
 /**
  * The one owner of a workspace's thread inventory during an archive.
@@ -66,7 +66,7 @@ export function workspaceThreadFacts(
   const foreignAgentIds: string[] = [];
   for (const entry of entries) {
     const agent = entry.agent;
-    if (historicalWireLabel(agent.labels, 'task') !== taskId && !attachedAgentIds.has(agent.id)) {
+    if (!ownedByTask(agent.labels, taskId) && !attachedAgentIds.has(agent.id)) {
       if (!allowIdleForeignThreads) throw Error('Preserving workspace containing an unrelated thread');
       if (agent.id) foreignAgentIds.push(agent.id);
     }

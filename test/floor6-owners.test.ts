@@ -61,9 +61,13 @@ test('the hook refusal decoder keeps the closed stale-base class and nothing els
 test('the thread inventory decides ownership and idleness as typed facts', () => {
   const thread = (id: string, over: Record<string, unknown> = {}) => ({ agent: { id, workspaceId: 'ws', labels: { 'nucleus.task': 'task-1' }, status: 'idle', ...over } });
   assert.deepEqual(workspaceThreadFacts([thread('a')], 'task-1', new Set(), false), { foreignAgentIds: [] });
+  assert.deepEqual(workspaceThreadFacts([thread('decider', { labels: { 'nucleus.decider': 'task-1' }, status: 'closed' })], 'task-1', new Set(), false), { foreignAgentIds: [] },
+    'a closed Paseo decider thread carrying nucleus.decider=<taskId> belongs to the task');
   assert.deepEqual(workspaceThreadFacts([thread('a', { labels: { 'nucleus.task': 'other' } })], 'task-1', new Set(), true), { foreignAgentIds: ['a'] },
     'a foreign thread is named only when the caller allows one');
   assert.throws(() => workspaceThreadFacts([thread('a', { labels: { 'nucleus.task': 'other' } })], 'task-1', new Set(), false), /unrelated thread/);
+  assert.throws(() => workspaceThreadFacts([thread('foreign-decider', { labels: { 'nucleus.decider': 'other' } })], 'task-1', new Set(), false), /unrelated thread/);
+  assert.throws(() => workspaceThreadFacts([thread('unlabelled', { labels: {} })], 'task-1', new Set(), false), /unrelated thread/);
   assert.deepEqual(workspaceThreadFacts([thread('a', { labels: { 'nucleus.task': 'other' } })], 'task-1', new Set(['a']), false), { foreignAgentIds: [] },
     'an attached participant is not foreign');
   for (const live of [{ activeTurn: 'turn-1' }, { pendingPermissions: [{}] }, { status: 'running' }]) {
