@@ -16,6 +16,8 @@ import { ABSENT_RESOLUTION_REASON, ProvenPreSendRefusalError, coordinative, mess
 import { isDispositionActive, type Profile, type Run, type Task } from '../../../shared/contracts';
 import { threadRunningReason } from '../../intake/thread-waits';
 import { declaredLaneDocumentKeys } from '../../planning/brief-lane-documents';
+import { dirname } from 'node:path';
+import { ensureTaskNodeModules } from '../../workspaces/task-node-modules';
 
 /**
  * Deliver the run a launch reserved: the ordinary review custody and checkout
@@ -47,6 +49,11 @@ export class RunLaunchDeliver {
         await git(t.directory!, 'checkout', '--detach', run.head);
         await ordinaryReviewSource(t, run.head, true);
       }
+      // Ordinary review takes custody of a detached exact-head checkout only
+      // after reservation. Recheck its dependencies after that final source
+      // transition and before the retained reviewer reads the worktree.
+      if (role !== 'closeout' && t.directory)
+        await ensureTaskNodeModules(t.directory, t.repoPath, dirname(t.directory));
       if (agentId) {
         let fresh = this.store.task(t.id);
         // Spec 026: the task's own typed lane-document declaration is the whole

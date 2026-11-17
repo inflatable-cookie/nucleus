@@ -50,7 +50,6 @@ export class WorkerLauncher {
     // The task's own host's catalog decides, not only the primary's (nucleus#1139).
     if (!this.engine.profileCatalogKnownFor(task.hostId)) { this.resolution.waiting(task, PROFILE_CATALOG_PENDING_REASON, 'lifecycle'); return; }
     if (!task.directory || !task.workspaceId || !task.profile) throw new Error("Missing workspace or route");
-    await ensureTaskNodeModules(task.directory, task.repoPath, dirname(task.directory));
     task = await this.engine.ensureSiblings(task);
     task = await this.engine.refreshCheckoutSiblings(task, "worker_creation");
     let worktreeLinkRecordFailure: string | null;
@@ -72,6 +71,10 @@ export class WorkerLauncher {
       if (!this.adapter.verifyResume) throw new Error("Adapter cannot verify continuation worktrees");
       await this.adapter.verifyResume(task); branch = task.branch;
     } else branch = await this.adapter.verifyWorkspace(task, task.directory);
+    // verifyWorkspace may fast-forward a behind worktree to planningBase. Install
+    // only after that source transition, so the worker never starts from the
+    // previous head's lockfile.
+    await ensureTaskNodeModules(task.directory, task.repoPath, dirname(task.directory));
     const stash = await this.engine.readStash(task.directory);
     if (startsNoRuns(this.store, this.engine.stopped)) return;
     const token = randomBytes(32).toString("hex");

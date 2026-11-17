@@ -10,6 +10,8 @@ import { assertCanonicalPrSource, evidenceOnlyPr, taskPrNumber } from '../../for
 import { verifyProofSource } from '../../qa/proof-source';
 import { groupIsUnavailable, supersedingRouteProfile } from '../../../shared/pool';
 import { retainedProfileReason, workerProfileIsExcluded, type Profile, type Run, type Task } from '../../../shared/contracts';
+import { dirname } from 'node:path';
+import { ensureTaskNodeModules } from '../../workspaces/task-node-modules';
 import type { ProofActivation } from '../../resolution';
 
 /** Keep the retained worker, wait for a first independent one, or honour a superseding route. */
@@ -161,6 +163,12 @@ export class RunLaunchSource {
       if (!options.proof) throw new Error('Proof execution activation identity is missing');
       options = { ...options, proof: { ...options.proof, tree: source.tree } };
     }
+    // Refresh after the PR/resume/proof checks establish the exact source and
+    // before thread selection can reserve or start any reviewer, revision, or
+    // other task-worktree agent. This also covers later review rounds, whose
+    // worktree may have received a newer lockfile since the worker's install.
+    if (role !== 'closeout' && t.directory)
+      await ensureTaskNodeModules(t.directory, t.repoPath, dirname(t.directory));
     return await this.resolution.selectLaunchThread(t, role, options, {firstReviewEntryWorker, firstWorkerSelection, prePrWorkerResume, retainedPrePrHead, resumingUnpublished, continuedPr});
   }
   /**
