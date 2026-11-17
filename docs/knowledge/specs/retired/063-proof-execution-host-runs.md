@@ -37,10 +37,10 @@ attributed to that report, not presented as a fresh Effigy source audit.
 The report's result is `fits:false`, with no physical/time/custody qualification
 credit. Neither that result nor this document grants execution authority.
 
-[Spec 055](055-source-immutable-proof-executor.md) owns proof declaration and
-source immutability; [Spec 058](058-responsible-tasks.md) owns responsible-task
-routing; [Spec 035](035-host-run-scheduler.md) and
-[Contract 010](../contracts/host-run-scheduling-010.md) own host runs. Contract
+[Spec 055](../055-source-immutable-proof-executor.md) owns proof declaration and
+source immutability; [Spec 058](../058-responsible-tasks.md) owns responsible-task
+routing; [Spec 035](../035-host-run-scheduler.md) and
+[Contract 010](../../contracts/host-run-scheduling-010.md) own host runs. Contract
 010's execution machinery remains present, but the recorded end state is
 Nucleus admission with Effigy workload custody; this design does not reverse
 that cutover decision ([docs/knowledge/specs/035-host-run-scheduler.md:2834–2838](https://github.com/inflatable-cookie/nucleus/blob/5f443890784e7c289647ccf1ab9e1ea7fb42228e/docs/knowledge/specs/035-host-run-scheduler.md#L2834-L2838)).
