@@ -252,7 +252,7 @@ query the live store, and do not frame that check as awaiting proof.
 Before review, each worker and revision also runs the affected test files its
 committed change can reach: `effigy test:affected --run` at the exact head
 (nucleus#1164, Tom 2026-11-12). If an affected file fails, rerun it alone on
-`origin/main`. When it fails there too, it was already broken: list the file and
+`origin/main` using the repository baseline route (in Nucleus, `effigy test:baseline <file>`). Read the printed `$TMPDIR/queue-test-failures-<pid>-<ts>.txt` failure summary rather than rerunning to recover failure names. When it fails there too, it was already broken: list the file and
 failing test in the report and PR rather than fixing it. Only failures unique
 to the branch block review, and the reviewer applies the same rule. The reviewer
 judges the author's reported command and file count at that head and reruns it

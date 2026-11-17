@@ -63,16 +63,34 @@ test('failed brief checks return their findings and never approve or promote', a
   assert.equal(runtime.store.tasks().length, 0);
 });
 
-test('an existing same-title lead is returned unchanged; concurrent submissions create only one', async t => {
+test('submission resumes an open lead with the same brief and refuses a different brief', async t => {
   const { runtime, input } = await fixture(t);
-  const lead = await runtime.addLead({ repositories: [input.repository], title, body: 'An earlier observation', lanes: [], author: 'earlier' });
+  const start = runtime.engine.startOperation.bind(runtime.engine);
+  runtime.engine.startOperation = async () => { throw new Error('temporary check failure'); };
+  const first = await runtime.submitLead(input);
+  assert.ok('lead' in first);
+  runtime.engine.startOperation = start;
+  await assert.rejects(runtime.submitLead({ ...input, body: body + 'Different' }), new RegExp(`Lead ${first.lead.id}.*lead.edit`));
   const result = await runtime.submitLead(input);
-  assert.deepEqual(result, { lead });
-  assert.equal(runtime.store.tasks().length, 0);
-  const request = { ...input, title: 'Another fixture', body: body.replace(title, 'Another fixture') };
-  const results = await Promise.all([runtime.submitLead(request), runtime.submitLead(request)]);
-  assert.equal([...runtime.listLeads({ state: 'open' }), ...runtime.listLeads({ state: 'promoted' })].filter(item => item.title === request.title).length, 1);
-  assert.equal(results.filter(item => 'taskId' in item).length, 1);
+  assert.ok('taskId' in result);
+  assert.equal(result.reference, runtime.store.task(result.taskId).reference);
+});
+
+test('concurrent identical submissions share promotion for new and open leads', async t => {
+  const { runtime, input } = await fixture(t);
+  const fresh = await Promise.all([runtime.submitLead(input), runtime.submitLead(input)]);
+  assert.ok('taskId' in fresh[0]);
+  assert.deepEqual(fresh[1], fresh[0]);
+  const request = { ...input, title: 'Open fixture', body: body.replace(title, 'Open fixture') };
+  const start = runtime.engine.startOperation.bind(runtime.engine);
+  runtime.engine.startOperation = async () => { throw new Error('temporary check failure'); };
+  const open = await runtime.submitLead(request);
+  assert.ok('lead' in open);
+  runtime.engine.startOperation = start;
+  const resumed = await Promise.all([runtime.submitLead(request), runtime.submitLead(request)]);
+  assert.ok('taskId' in resumed[0]);
+  assert.deepEqual(resumed[1], resumed[0]);
+  assert.equal(runtime.store.tasks().length, 2);
 });
 
 test('submission waits past compatibility responses for both check and promotion', async t => {

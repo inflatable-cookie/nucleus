@@ -120,7 +120,7 @@ the unit runner moves them ahead of the files. No full suites,
 no `effigy qa`, no Cargo builds (Tom, 2026-10-04). Those run in milestone QA on
 `main` via `project.qa.run`. A missing or failing affected-test run is a review
 finding; anything wider than the affected set never is.
-Rerun a failing test file alone before believing it; UI changes are checked in
+Read the printed `$TMPDIR/queue-test-failures-<pid>-<ts>.txt` failure summary rather than rerunning to recover failure names. Rerun a failing test file alone before believing it; use `effigy test:baseline <file>` for the `origin/main` baseline; UI changes are checked in
 the installed bundle in dark theme by the planner after the roll. The installed plugin
 runs from `main`, so a worker can't check its own PR's UI, and that check never blocks
 a worker or a review.
