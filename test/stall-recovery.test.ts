@@ -237,18 +237,44 @@ test('a stall escalation closes when the original run resumes before recovery ac
   assert.equal(current.resolution.incident?.status, 'resolved');
   assert.equal(current.resolution.attention, false);
   assert.ok(f.store.events(f.task.id).some(event => event.kind === 'planner_escalation_resolved'));
+  const version = current.version;
+  await f.engine.resolution.recovery.pass(f.task.id);
+  await f.engine.resolution.recovery.pass(f.task.id);
+  assert.equal(f.store.task(f.task.id).version, version);
+  assert.equal(f.store.events(f.task.id).filter(event => event.kind === 'stall_ended').length, 1);
 });
 
-test('each run retains its own activity stamp during stall checks', async t => {
-  const first = await fixture(t), second = await fixture(t);
-  t.after(() => { first.store.close(); second.store.close(); });
+test('a pending stall that ends is settled only once before escalation', async t => {
+  const f = await fixture(t);
+  t.after(() => f.store.close());
+  f.setObservation(running({ updatedAt: minutesAgo(35), turnStartedAt: minutesAgo(36) }));
+  await f.engine.wake();
+  assert.equal(f.store.task(f.task.id).resolution.recovery?.status, 'pending');
+  f.setObservation(running());
+  await f.engine.resolution.recovery.pass(f.task.id);
+  const settled = f.store.task(f.task.id);
+  assert.equal(settled.resolution.recovery?.status, 'resolved');
+  await f.engine.resolution.recovery.pass(f.task.id);
+  await f.engine.resolution.recovery.pass(f.task.id);
+  assert.equal(f.store.task(f.task.id).version, settled.version);
+  assert.equal(f.store.events(f.task.id).filter(event => event.kind === 'stall_ended').length, 1);
+});
+
+test('two runs in one store retain their own activity stamps during the same observation', async t => {
+  const f = await fixture(t);
+  t.after(() => f.store.close());
   const firstStamp = minutesAgo(2), secondStamp = minutesAgo(3);
-  first.setObservation(running({ updatedAt: firstStamp }));
-  second.setObservation(running({ updatedAt: secondStamp }));
-  await first.engine.wake();
-  await second.engine.wake();
-  assert.equal(first.store.task(first.task.id).lastActivityAt, firstStamp);
-  assert.equal(second.store.task(second.task.id).lastActivityAt, secondStamp);
+  for (const [id, agentId, stamp] of [['revision-one', 'agent-one', firstStamp], ['revision-two', 'agent-two', secondStamp]]) {
+    f.store.putRun({ id, taskId: f.task.id, role: 'revision', generation: 1, head: f.head, base: f.base,
+      agentId, workspaceId: 'task-ws', profile: profile('worker'), status: 'running', createdAt: minutesAgo(30),
+      lastObservedAt: null, active: true, idleSince: null, completion: null, released: false });
+    f.setAgentObservation(agentId, running({ id: agentId, updatedAt: stamp }));
+  }
+  f.store.update(f.task.id, { phase: 'changes_requested', resolution: { ...f.store.task(f.task.id).resolution, currentRunId: 'revision-two' } });
+  await f.engine.resolution.observe();
+  assert.equal(f.store.run('revision-one')?.lastActivityAt, firstStamp);
+  assert.equal(f.store.run('revision-two')?.lastActivityAt, secondStamp);
+  assert.notEqual(f.store.run('revision-one')?.lastActivityAt, f.store.run('revision-two')?.lastActivityAt);
 });
 
 test('an agent with fresh activity is never flagged', async t => {
@@ -353,6 +379,33 @@ test('a stalled revision run enters coordinator attention through the run observ
   assert.equal(current.resolution.incident?.role, 'worker', 'revision work is worker work');
   assert.equal(current.resolution.incident?.runId, runId, 'the stall incident deduplicates per run');
   assert.equal(current.resolution.attention, true, 'the stalled revision is routed to coordinator recovery');
+});
+
+test('a revision stall escalation closes when that revision resumes', async t => {
+  const f = await fixture(t);
+  t.after(() => f.store.close());
+  const runId = 'revision-1';
+  f.store.update(f.task.id, { phase: 'changes_requested', completion: null, prHead: null, prUrl: null,
+    resolution: { ...f.store.task(f.task.id).resolution, currentRunId: runId } });
+  f.store.putRun({ id: runId, taskId: f.task.id, role: 'revision', generation: 1, head: f.head, base: f.base,
+    agentId: 'revision-worker', workspaceId: 'task-ws', profile: profile('worker'), status: 'running',
+    createdAt: minutesAgo(40), lastObservedAt: null, active: true, idleSince: null, completion: null, released: false });
+  f.setAgentObservation('revision-worker', running({ id: 'revision-worker', updatedAt: minutesAgo(35), turnStartedAt: minutesAgo(40) }));
+  await f.engine.resolution.observe();
+  assert.equal(f.store.task(f.task.id).resolution.incident?.runId, runId);
+  await f.engine.resolution.recovery.route(f.store.task(f.task.id));
+  (f.engine.resolution.recovery as unknown as { pendingBoundMs: number }).pendingBoundMs = 0;
+  await f.engine.resolution.recovery.pass(f.task.id);
+  assert.equal(f.store.task(f.task.id).resolution.recovery?.status, 'escalated');
+  f.setAgentObservation('revision-worker', running({ id: 'revision-worker' }));
+  await f.engine.resolution.recovery.pass(f.task.id);
+  const current = f.store.task(f.task.id);
+  assert.equal(current.phase, 'changes_requested');
+  assert.equal(current.resolution.currentRunId, runId);
+  assert.equal(current.resolution.attention, false);
+  assert.equal(current.resolution.incident?.status, 'resolved');
+  assert.equal(current.resolution.recovery?.status, 'resolved');
+  assert.ok(f.store.events(f.task.id).some(event => event.kind === 'planner_escalation_resolved'));
 });
 
 const revisionRunFixture = async (f: Fixture, runId: string) => {
