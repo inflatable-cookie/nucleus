@@ -127,12 +127,7 @@ export async function terminateHostProcessTargets(
       failed.push({ ...target, reason: "recorded process group identity not proven" });
       continue;
     }
-    const observed = liveness(target.pid, target.startIdentity);
-    // A target whose own identity is proved dead has already exited: that is the
-    // sweep's whole purpose, so it is not a survivor to retry. Only an unreadable
-    // or changed identity holds a warning.
-    if (observed === "dead") continue;
-    if (observed !== "alive") {
+    if (liveness(target.pid, target.startIdentity) !== "alive") {
       failed.push({ ...target, reason: "start identity changed before signal" });
       continue;
     }

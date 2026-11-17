@@ -234,9 +234,13 @@ async function sweep(store: Store, hostId: string, options: Parameters<typeof sw
     const owned = respawned.length ? eligible.filter(fact => !respawned.some(item => item.pid === fact.pid)) : eligible;
     const result = await (options?.terminate ?? terminateHostProcessTargets)(owned.map(fact => ({ ...fact, cwd: fact.cwd ?? "", startTime: fact.startIdentity, via: "cwd" as const })),
       { graceMs: options?.graceMs, identityLiveness: (pid, identity) => stillSettled() ? runProcessLiveness(pid, identity) : "unknown" });
-    if (result.terminated.length || result.failed.length) store.event(run.taskId, "run_process_cleanup", JSON.stringify({ runId: run.id,
+    // A target whose identity is proved dead has already exited: a re-read that
+    // still lists it is not a survivor to retry, or a sweep would keep the
+    // scratch of a process it just stopped.
+    const failed = result.failed.filter(fact => runProcessLiveness(fact.pid, fact.startIdentity) !== "dead");
+    if (result.terminated.length || failed.length) store.event(run.taskId, "run_process_cleanup", JSON.stringify({ runId: run.id,
       stopped: result.terminated.map(fact => ({ pid: fact.pid, startIdentity: fact.startIdentity })),
-      survivors: result.failed.map(fact => ({ pid: fact.pid, startIdentity: fact.startIdentity, reason: fact.reason })) }));
+      survivors: failed.map(fact => ({ pid: fact.pid, startIdentity: fact.startIdentity, reason: fact.reason })) }));
     stopped ||= result.terminated.length > 0;
     if (result.terminated.length) recordStop(store, run, hostId, startedAt);
     // A failed per-process read (including a failed ps chunk) is not a negative
@@ -244,11 +248,11 @@ async function sweep(store: Store, hostId: string, options: Parameters<typeof sw
     const unknown = facts.filter(fact => !fact.state?.startsWith("Z")
       && environments.get(fact.pid) == null && (fact.startIdentity.endsWith("@unknown") || runProcessLiveness(fact.pid, fact.startIdentity) !== "dead"));
     const ambiguous = ownedFacts.filter(fact => !eligible.some(target => target.pid === fact.pid));
-    if (unknown.length || ambiguous.length || result.failed.length) {
+    if (unknown.length || ambiguous.length || failed.length) {
       const reason = unknown.length ? "process environment ownership is unreadable"
         : ambiguous.some(fact => fact.startIdentity.endsWith("@unknown")) ? "owned process start identity is unreadable"
         : ambiguous.length ? "process command or agent host identity has not been observed" : "owned processes could not be stopped";
-      deferCleanup(store, run, reason, unknown.length ? unknown : ambiguous.length ? ambiguous : result.failed);
+      deferCleanup(store, run, reason, unknown.length ? unknown : ambiguous.length ? ambiguous : failed);
       continue;
     }
     if (result.terminated.length || respawned.length) continue;
