@@ -30,6 +30,7 @@ import { RPC_CATALOGUE } from '../shared/rpc-catalogue';
 import { workspaceHandleForPath } from '../shared/host-operation';
 import {
   SIDEBAR_GROUPS_METHOD,
+  withBbProjects,
   sidebarGroupsOutputSchema,
   createSidebarGroupsService,
 } from '../hosts/bb/plugin/sidebar-groups';
@@ -205,7 +206,16 @@ test('the read names each project by its Nucleus key, with every repository and 
     assert.deepEqual([...synthetic!.threadIds].sort(), ['thr_lead', 'thr_planner']);
     assert.deepEqual([...synthetic!.bbProjectIds].sort(), ['proj_other', 'proj_synthetic'], 'both repositories\' BB projects link to the one project board');
     const elsewhere = parsed.projects.find(project => project.key === 'elsewhere');
-    assert.deepEqual(elsewhere, { key: 'elsewhere', name: 'Elsewhere', threadIds: [], bbProjectIds: [] });
+    assert.deepEqual(elsewhere, { key: 'elsewhere', name: 'Elsewhere', repositoryPaths: ['/synthetic/elsewhere'], threadIds: [], bbProjectIds: [] });
+    assert.deepEqual(synthetic!.repositoryPaths, ['/synthetic/repo', '/synthetic/other']);
+
+    // Task cleanup archives the workspace but leaves the BB project: the row keeps its link.
+    const recorded = store.getMeta<Record<string, Record<string, unknown>>>('bbWorkspaces') ?? {};
+    store.setMeta('bbWorkspaces', Object.fromEntries(Object.entries(recorded).map(([id, record]) => [id, { ...record, archivedAt: '2026-11-17T00:00:00.000Z' }])));
+    const settled = bbSidebarGroupsOutputSchema.parse(readBbSidebarGroups({
+      liveTasks: () => [], summaries: () => [], workspaces: () => store.getMeta('bbWorkspaces') ?? {}, threads: () => ({}), prStates: {}, projects: () => store.projects(),
+    }));
+    assert.deepEqual([...settled.projects.find(project => project.key === 'synthetic')!.bbProjectIds].sort(), ['proj_other', 'proj_synthetic'], 'archived handles still name their BB projects');
   });
 });
 
@@ -270,4 +280,28 @@ test('the catalogue serves the read as one read-only method', () => {
   assert.equal(entry!.mutating, false);
   assert.equal(entry!.method, 'bbSidebarGroups');
   assert.equal(RPC_CATALOGUE.filter(candidate => candidate.name === 'bb.sidebar-groups').length, 1);
+});
+
+test('the plugin resolves a BB project Nucleus never recorded by its local-path source, so the row links with no task workspace', async () => {
+  const served = {
+    groups: [], threads: [],
+    projects: [
+      { key: 'synthetic', name: 'Synthetic', repositoryPaths: ['/synthetic/repo', '/synthetic/other'], threadIds: [], bbProjectIds: ['proj_recorded'] },
+      { key: 'elsewhere', name: 'Elsewhere', repositoryPaths: ['/synthetic/elsewhere'], threadIds: [], bbProjectIds: [] },
+    ],
+  };
+  const listed = [
+    { id: 'proj_recorded', sources: [{ type: 'local_path', path: '/synthetic/repo' }] },
+    { id: 'proj_fresh', sources: [{ type: 'local_path', path: '/synthetic/other/' }] },
+    { id: 'proj_stranger', sources: [{ type: 'local_path', path: '/synthetic/unrelated' }] },
+    { id: 'proj_remote', sources: [{ type: 'git_url', path: '/synthetic/elsewhere' }] },
+  ];
+  const samePath = (left: string, right: string) => left.replace(/\/+$/u, '') === right.replace(/\/+$/u, '');
+  const merged = withBbProjects(sidebarGroupsOutputSchema.parse(served), listed, samePath);
+  assert.deepEqual(merged.projects.map(project => [project.key, project.bbProjectIds]), [['synthetic', ['proj_recorded', 'proj_fresh']], ['elsewhere', []]]);
+  const service = createSidebarGroupsService(() => ({ request: async () => served }), { list: async () => listed, samePath });
+  assert.deepEqual((await service.sidebarGroups()).projects[0]!.bbProjectIds, ['proj_recorded', 'proj_fresh']);
+  // A failed BB project list keeps the service's own answer.
+  const failing = createSidebarGroupsService(() => ({ request: async () => served }), { list: async () => { throw new Error('BB is away'); }, samePath });
+  assert.deepEqual((await failing.sidebarGroups()).projects[0]!.bbProjectIds, ['proj_recorded']);
 });

@@ -33,12 +33,13 @@ import { formatAgentId } from '../shared/agent-identity';
 import { usageStateOutputSchema } from '../shared/schema/usage';
 import { projectUsage } from '../shared/usage-projection';
 import { createBoardBridge } from '../hosts/bb/plugin/board-bridge';
+import { createTaskDetailCache } from '../core/telemetry/task-detail';
 
 useNativeStubs();
 
-type Surfaces = typeof import('../hosts/bb/board/surfaces');
+type Surfaces = typeof import('../hosts/bb/client/surfaces');
 let surfaces: Surfaces;
-const load = async () => { surfaces ??= await import('../hosts/bb/board/surfaces'); return surfaces; };
+const load = async () => { surfaces ??= await import('../hosts/bb/client/surfaces'); return surfaces; };
 
 const h = React.createElement;
 const hostId = 'bb:' + 'b'.repeat(64);
@@ -62,6 +63,10 @@ function seed(title: string, repoPath: string, phase: Parameters<Store['update']
 const primaryTask = seed('Primary repository task', '/synthetic/repo', 'working');
 const otherTask = seed('Second repository task', '/synthetic/other', 'awaiting_review');
 const foreignTask = seed('Elsewhere project task', '/synthetic/elsewhere', 'working');
+// The worker's task waits on the second repository's task, so its detail names a prerequisite.
+store.update(primaryTask.id, { dependsOn: [otherTask.id] });
+/** `queue.detail` exactly as the service projects it from the store. */
+const taskDetail = createTaskDetailCache(store);
 
 function summaries(overrides: Partial<Record<string, Partial<TaskSummary>>> = {}): TaskSummary[] {
   const tasks = [primaryTask, otherTask, foreignTask].map(task => store.task(task.id));
@@ -117,8 +122,8 @@ function service(script: { tasks?: () => TaskSummary[]; decisions?: () => Decisi
     groups: [],
     threads: [{ threadId: 'thr_worker', taskId: primaryTask.id, role: 'worker', environmentId: 'env_primary' }],
     projects: [
-      { key: 'synthetic', name: 'Synthetic', threadIds: ['thr_planner', 'thr_lead'], bbProjectIds: ['proj_synthetic'] },
-      { key: 'elsewhere', name: 'Elsewhere', threadIds: [], bbProjectIds: [] },
+      { key: 'synthetic', name: 'Synthetic', repositoryPaths: ['/synthetic/repo', '/synthetic/other'], threadIds: ['thr_planner', 'thr_lead'], bbProjectIds: ['proj_synthetic'] },
+      { key: 'elsewhere', name: 'Elsewhere', repositoryPaths: ['/synthetic/elsewhere'], threadIds: [], bbProjectIds: [] },
     ],
   };
   const channel = {
@@ -133,6 +138,7 @@ function service(script: { tasks?: () => TaskSummary[]; decisions?: () => Decisi
         case 'question.native-list': return script.questions?.() ?? [];
         case 'question.native-answer': script.onAnswer?.(method, input); return { ok: true };
         case 'usage.state': return usageState();
+        case 'queue.detail': return taskDetail((input as { taskId: string }).taskId);
         default: return emptyAnswer(method);
       }
     },
@@ -310,7 +316,14 @@ test('the task tab shows the board task detail for a role thread', async () => {
   await load();
   const { runtime } = runtimeFor();
   const tab = mount(h(runtime.TaskTab, { threadId: 'thr_worker' }));
-  await settle(() => tab.query('Task detail') !== undefined, 'the task detail');
+  await settle(() => tab.text().includes('Primary repository task') && tab.query('Runs & agents') !== undefined, 'the task detail');
+  // A prerequisite link opens that task in the tab, as on the board, and Back returns.
+  tab.press('Runs & agents');
+  await settle(() => tab.all(/^Second repository task · /u).length === 1, 'the prerequisite link');
+  tab.all(/^Second repository task · /u)[0]!.props.onPress();
+  await settle(() => tab.query("Back to this thread's task") !== undefined && !tab.text().includes('Primary repository task'), 'the prerequisite detail');
+  tab.press("Back to this thread's task");
+  await settle(() => tab.text().includes('Primary repository task') && tab.query("Back to this thread's task") === undefined, 'the return to the thread task');
   const other = mount(h(runtime.TaskTab, { threadId: 'thr_planner' }));
   await settle(() => other.text().includes("This thread is not a Nucleus task's thread."), 'a non-role thread');
 });

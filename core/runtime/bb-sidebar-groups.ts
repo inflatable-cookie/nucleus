@@ -144,8 +144,10 @@ export function readBbSidebarGroups(source: BbSidebarSource): BbSidebarGroups {
  * Spec 062 decision 5d: each project's planner and named-agent threads, and the BB
  * projects recorded for its repositories. A BB project resolves through the
  * workspace handles Nucleus wrote: the handle's repository root, or the repository
- * of a task that records the handle. A BB project no handle names is unknown here,
- * so its sidebar row carries no board link rather than a guessed one.
+ * of a task that records the handle. An archived handle still names its BB project:
+ * archiving a task's workspace leaves the BB project in place, so its row keeps its
+ * link. The project's repository paths ride along, so the plugin resolves a BB
+ * project no handle names by its own local-path source.
  */
 function sidebarProjects(projects: Project[], workspaces: Record<string, BbSidebarWorkspace>, tasks: Task[]): BbSidebarProject[] {
   const taskByWorkspace = new Map<string, Task>();
@@ -156,12 +158,13 @@ function sidebarProjects(projects: Project[], workspaces: Record<string, BbSideb
     for (const agent of project.agents ?? []) threadIds.add(agent.agentId);
     const bbProjectIds = new Set<string>();
     for (const [handle, workspace] of Object.entries(workspaces)) {
-      if (!workspace.projectId || workspace.archivedAt) continue;
+      if (!workspace.projectId) continue;
       const task = taskByWorkspace.get(handle);
       const owned = (workspace.repositoryRoot && projectHasRepository(project, workspace.repositoryRoot))
         || (task && projectHasRepository(project, task.repoPath, task.repository));
       if (owned) bbProjectIds.add(workspace.projectId);
     }
-    return { key: project.key, name: project.name, threadIds: [...threadIds].slice(0, 101), bbProjectIds: [...bbProjectIds].slice(0, 100) };
+    const repositoryPaths = [...new Set(project.repositories.flatMap(repo => repo.path ? [repo.path] : []))].slice(0, 100);
+    return { key: project.key, name: project.name, repositoryPaths, threadIds: [...threadIds].slice(0, 101), bbProjectIds: [...bbProjectIds].slice(0, 100) };
   });
 }

@@ -1259,7 +1259,7 @@ connection, sidebar read and board signal phases 0–5 landed:
   and a capacity change records `surface: "bb"`.
 - **The board bundle.** BB builds a plugin from its own directory with an esbuild that has no
   react-native alias, so `scripts/bb/build-board.mjs` (`effigy bb:board-build`) bundles
-  `hosts/bb/board/` with the shared `client/` into `hosts/bb/plugin/board/nucleus-board.js`
+  `hosts/bb/client/` (the host-client area, the one host folder allowed to import `client/`) with the shared `client/` into `hosts/bb/plugin/board/nucleus-board.js`
   (generated, ignored): react-native resolves to react-native-web as on the local web board, and
   React, react-dom and the JSX runtime stay external so BB's runtime slots supply them. The plugin's
   `app.tsx` passes BB's SDK module to `registerNucleusBoard`; `effigy proof:bb:sidebar` builds the
@@ -1272,11 +1272,15 @@ connection, sidebar read and board signal phases 0–5 landed:
   `warning` for escalations alone, labelled "N tasks need you", and `null` once they settle. The
   `settings` sub-path renders the board's Settings, which the board header's Settings button opens.
 - **5d, the per-project board.** The route is `project/<nucleus-project-key>`. `bb.sidebar-groups`
-  now names each Nucleus project with its planner and named-agent thread ids and the BB project ids
-  its recorded workspace handles name (`projects`), so a fixed `Board` tab shows on exactly those
+  now names each Nucleus project with its planner and named-agent thread ids, its repository paths
+  and the BB project ids its recorded workspace handles name, archived handles included (`projects`);
+  the plugin backend adds the BB projects whose local-path source is one of those repositories from
+  BB's own project list, so a project row keeps its link after task cleanup and has it before any task
+  ran there. A fixed `Board` tab shows on exactly those
   threads and renders `MainSurface` preset to the project — every repository the project lists. A
   fixed `Task` tab shows on a task's recorded role threads only and renders the board's task detail
-  in place (`client/task/task-panel.tsx`, `TaskDialog` with `inline`). The forked sidebar's project
+  in place (`client/task/task-panel.tsx`, `TaskDialog` with `inline`); a prerequisite link opens that
+  task in the tab and Back returns to the thread's own task. The forked sidebar's project
   rows carry one "Board" menu item linking to the route when the read names their BB project (patch
   0001 plus the fork's own `NucleusProjectBoardMenuItem`), and planner and named-agent rows carry a
   "Project board" thread action.
@@ -1310,15 +1314,15 @@ shell bound and the real `boardCall` handler — the board renders and every cal
 as `via: "bb"`, Settings opens (route, header button, section), a decision pill appears and
 resolves, a native question pill shows and answers, the pending-interaction renderer submits and
 cancels, Usage renders from a synthetic `usage.state`, the per-project tab and route show a
-multi-repository project's every repository and nothing else, and the `Task` tab shows the task
-detail. `test/bb-board-model.test.ts` covers the badge (count, tone, label, drain), the routes, the
+multi-repository project's every repository and nothing else, and the `Task` tab shows the real
+`queue.detail` projection and follows a prerequisite link and back. `test/bb-board-model.test.ts` covers the badge (count, tone, label, drain), the routes, the
 tab visibility through each tab's own `useVisible`, the planner-row action, and BB's own
 registration collector accepting every surface with no warning. `test/bb-board-bridge.test.ts`
 covers the forwarding call, the hints, the terminal command and, over the production backend with
 a recording SDK, that no settings write, lifecycle-owner write or terminal read, list or close
 leaves the adapter. `test/bb-host-channel.test.ts` proves `via: "bb"` only on the executor
 connection and the recorded surface; `test/bb-sidebar-groups.test.ts` the `projects` projection
-over real stored projects; the fork's `nucleusTaskGroups.test.tsx` the project row's link.
+over real stored projects, archived handles included, and the BB project-list resolution; the fork's `nucleusTaskGroups.test.tsx` the project row's link.
 
 Evidence: `effigy proof:bb:sidebar` builds the board bundle and the plugin, installs it into the
 isolated BB server, and records that the plugin runs with a compatible app bundle carrying every

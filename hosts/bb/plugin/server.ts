@@ -9,6 +9,7 @@
  * and `bb nucleus terminal` (`board-bridge.ts`).
  */
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { realpathSync } from "node:fs";
 import { runHostChannel, type HostChannelClient } from "./channel";
 import { createHostOperations, type BbHostSdk } from "./operations";
 import threadListPlugin from "./sidebar/server.js";
@@ -144,7 +145,16 @@ export default async function plugin(bb: BbPluginApi) {
   // backend and forwarded over the retained connection, so the UI holds no service
   // credential and reads nothing the service does not publish.
   let channelClient: HostChannelClient | null = null;
-  bb.rpc.register(sidebarGroupsContract, createSidebarGroupsService(() => channelClient), {
+  // Project rows resolve through BB's own project list too (decision 5d), so a row
+  // keeps its board link with no live task workspace: one read per sidebar read.
+  const samePath = (left: string, right: string) => {
+    const canonical = (value: string) => { try { return realpathSync(value); } catch { return value.replace(/\/+$/, ""); } };
+    return canonical(left) === canonical(right);
+  };
+  bb.rpc.register(sidebarGroupsContract, createSidebarGroupsService(() => channelClient, {
+    list: () => (bb.sdk as unknown as { projects: { list(): Promise<unknown> } }).projects.list(),
+    samePath,
+  }), {
     experimental_description:
       "The forked sidebar's batched Nucleus task-group read: one answer for every group's state line.",
   });

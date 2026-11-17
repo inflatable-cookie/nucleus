@@ -431,7 +431,7 @@ describe("a Nucleus task group's header", () => {
 
 describe("a project row's board link (phase 6, decision 5d)", () => {
   it("adds one Board item linking to the Nucleus project's board when the read names this BB project", async () => {
-    renderTaskGroups({ projects: [{ key: "synthetic", name: "Synthetic", threadIds: ["thr_planner"], bbProjectIds: ["proj_other", "proj_test"] }] });
+    renderTaskGroups({ projects: [{ key: "synthetic", name: "Synthetic", repositoryPaths: ["/synthetic/repo"], threadIds: ["thr_planner"], bbProjectIds: ["proj_other", "proj_test"] }] });
     await waitFor(() => {
       expect(taskGroupHeader(NUCLEUS_ENVIRONMENT)).not.toBeNull();
     });
@@ -443,7 +443,7 @@ describe("a project row's board link (phase 6, decision 5d)", () => {
   });
 
   it("leaves a project row the read does not name with upstream's menu", async () => {
-    renderTaskGroups({ projects: [{ key: "elsewhere", name: "Elsewhere", threadIds: [], bbProjectIds: ["proj_other"] }] });
+    renderTaskGroups({ projects: [{ key: "elsewhere", name: "Elsewhere", repositoryPaths: ["/synthetic/elsewhere"], threadIds: [], bbProjectIds: ["proj_other"] }] });
     await waitFor(() => {
       expect(taskGroupHeader(NUCLEUS_ENVIRONMENT)).not.toBeNull();
     });

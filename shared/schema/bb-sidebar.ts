@@ -58,11 +58,15 @@ export type BbSidebarThread = z.infer<typeof bbSidebarThreadSchema>;
  *
  * `threadIds` are the project's planner and named-agent threads (the threads the
  * per-project tab shows on); `bbProjectIds` are the BB projects Nucleus recorded
- * for the project's repositories (the sidebar's project rows that link to it).
+ * for the project's repositories, archived handles included (the sidebar's project
+ * rows that link to it); `repositoryPaths` are the project's repository paths, so
+ * the plugin can also resolve a BB project Nucleus never recorded by its own
+ * local-path source.
  */
 export const bbSidebarProjectSchema = z.object({
   key: z.string().min(1).max(200),
   name: z.string().min(1).max(200),
+  repositoryPaths: z.array(z.string().min(1).max(4096)).max(100),
   threadIds: z.array(z.string().min(1).max(300)).max(101),
   bbProjectIds: z.array(z.string().min(1).max(240)).max(100),
 }).strict();

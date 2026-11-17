@@ -9,7 +9,7 @@
  *
  * Phase 6 registers the board's surfaces from the generated board bundle
  * (`board/nucleus-board.js`, built by `scripts/bb/build-board.mjs` from
- * `hosts/bb/board/`): the rail board with its badge, the per-project and task
+ * `hosts/bb/client/`): the rail board with its badge, the per-project and task
  * tabs, Settings, the composer pills, the pending-question renderer and the
  * planner rows' "Project board" action. The SDK module is handed to it, so the
  * bundle carries no copy of BB's runtime.

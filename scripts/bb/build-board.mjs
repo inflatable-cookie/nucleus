@@ -5,7 +5,7 @@
  * BB builds a plugin from its own directory with its own esbuild, which has no
  * react-native alias, so the shared board (written against react-native) cannot be
  * imported from the plugin's `app.tsx` directly. This script bundles
- * `hosts/bb/board/index.ts` and everything it imports from `client/` and `shared/`
+ * `hosts/bb/client/index.ts` and everything it imports from `client/` and `shared/`
  * into one ES module inside the plugin package:
  *
  * - `react-native` resolves to `react-native-web`, as the local web board does;
@@ -29,7 +29,7 @@ export const BOARD_BUNDLE = join(root, 'hosts', 'bb', 'plugin', 'board', 'nucleu
 export async function buildBoard(outfile = BOARD_BUNDLE) {
   const result = await build({
     absWorkingDir: root,
-    entryPoints: ['hosts/bb/board/index.ts'],
+    entryPoints: ['hosts/bb/client/index.ts'],
     outfile,
     bundle: true,
     platform: 'browser',

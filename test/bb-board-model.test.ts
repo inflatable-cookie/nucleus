@@ -21,7 +21,7 @@ import { visibleTaskSummaries } from '../shared/task-view';
 import { submissionSchema, type TaskSummary } from '../shared/contracts';
 import { readBbSidebarGroups } from '../core/runtime/bb-sidebar-groups';
 import { bbSidebarGroupsOutputSchema } from '../shared/schema/bb-sidebar';
-import { parseBoardSubPath, projectSubPath, railBadge, sidebarIndex, taskNeedsOperator } from '../hosts/bb/board/model';
+import { parseBoardSubPath, projectSubPath, railBadge, sidebarIndex, taskNeedsOperator } from '../hosts/bb/client/model';
 import { projectBoardHref } from '../hosts/bb/plugin/sidebar-groups';
 
 useNativeStubs();
@@ -104,7 +104,7 @@ test('the per-project tab shows on the project planner and named-agent threads o
   assert.equal(index.projectForBbProject('proj_unknown'), null);
 
   // The same decisions through the registrations BB calls.
-  const surfaces = await import('../hosts/bb/board/surfaces');
+  const surfaces = await import('../hosts/bb/client/surfaces');
   const registered: Record<string, any> = {};
   const app = {
     slots: {
@@ -157,7 +157,7 @@ test('the per-project tab shows on the project planner and named-agent threads o
 test("BB's own registration collector accepts every phase-6 surface, with no warning", async () => {
   const { definePluginApp } = await import('@get-bb/plugin-sdk/app');
   const { collectPluginAppRegistrations } = await import('@get-bb/plugin-sdk/internal/plugin-app-collector');
-  const surfaces = await import('../hosts/bb/board/surfaces');
+  const surfaces = await import('../hosts/bb/client/surfaces');
   const sdk = { useRpc: () => ({ call: async () => null }), useRealtime() {}, useBbNavigate: () => ({ toPluginPanel() {}, toThread() {} }), useComposer: () => ({ scope: { kind: 'new-thread', projectId: null }, experimental_openPopup: () => false, experimental_closePopup: () => false }), experimental_Icon: () => null };
   const warnings: string[] = [];
   const collected = collectPluginAppRegistrations(definePluginApp(app => { surfaces.registerNucleusBoard(app as never, sdk as never); }), message => warnings.push(message));
