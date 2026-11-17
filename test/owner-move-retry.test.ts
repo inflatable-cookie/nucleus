@@ -64,7 +64,7 @@ function fixture(retirement?: RuntimeRetirementService) {
   };
   const adapter = {
     profiles: async () => [workerProfile, reviewerProfile],
-    observe: async (id: string) => observations.get(id) ?? { id, workspaceId: null, status: 'idle', active: false, permissions: false, error: '' },
+    observe: async (id: string) => observations.get(id) ?? { id, workspaceId: id === 'worker-agent' ? 'workspace' : null, status: 'idle', active: false, permissions: false, error: '' },
     agentTimelinePage: async () => toolTimelinePage(timelineEntries),
     originAgent: async (id: string) => ({ id, workspaceId: 'workspace', archived: true }),
     archiveAgent: async () => {}, notify: async () => {},
@@ -767,6 +767,74 @@ test('move closeout records the observed external merge and never mints a review
     assert.equal(f.events('owner_control').length, 1);
     const audit = JSON.parse(f.events('owner_control')[0].detail);
     assert.deepEqual(audit.identities.move, { to: 'closeout' });
+  } finally { await f.close(); }
+});
+
+test('move closeout re-observes a recorded merge after integration sync failed', async () => {
+  const f = fixture(); try {
+    const commit = 'd'.repeat(40);
+    dispatched(f, { phase: 'blocked', resolution: { ...f.task().resolution, mergeIntent: true, mergeHead: head,
+      mergedCommit: commit, syncedCommit: null, review: { taskId: f.taskId, runId: 'review-run', eventId: 'review-1',
+        status: 'ready_to_merge', summary: 'Approved', head, reviewId: 12 } } });
+    f.observations.set('worker-agent', { id: 'worker-agent', workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '' });
+    f.remote.merged = { head, commit };
+    const moved = await f.engine.performTaskControl(taskControlInputSchema.parse({ action: 'move', to: 'closeout', taskId: f.taskId,
+      version: f.task().version, reason: 'Retry integration sync', caller: CALLER }));
+    assert.equal(moved.phase, 'syncing');
+    assert.equal(moved.resolution.mergedCommit, commit);
+    assert.equal(moved.resolution.syncedCommit, null);
+    assert.equal(f.events('owner_closeout_merge_observed').length, 1);
+  } finally { await f.close(); }
+});
+
+test('move closeout refuses a recorded merge whose forge identity or review does not match', async () => {
+  for (const mismatch of ['head', 'commit', 'review'] as const) {
+    const f = fixture(); try {
+      const commit = 'd'.repeat(40);
+      dispatched(f, { phase: 'blocked', resolution: { ...f.task().resolution, mergeIntent: true, mergeHead: head, mergedCommit: commit,
+        review: { taskId: f.taskId, runId: 'review-run', eventId: 'review-1', status: 'ready_to_merge', summary: 'Approved',
+          head: mismatch === 'review' ? 'e'.repeat(40) : head, reviewId: 12 } } });
+      f.observations.set('worker-agent', { id: 'worker-agent', workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '' });
+      f.remote.merged = { head: mismatch === 'head' ? 'e'.repeat(40) : head, commit: mismatch === 'commit' ? 'e'.repeat(40) : commit };
+      const before = f.task();
+      await assert.rejects(f.engine.performTaskControl(taskControlInputSchema.parse({ action: 'move', to: 'closeout', taskId: f.taskId,
+        version: before.version, reason: 'Retry integration sync', caller: CALLER })), /does not match|no recorded exact-head/);
+      assert.equal(f.task().version, before.version);
+    } finally { await f.close(); }
+  }
+});
+
+test('the merge reconciliation advances only an unambiguous recorded merge', async () => {
+  for (const matching of [true, false]) {
+    const f = fixture(); try {
+      const commit = 'd'.repeat(40);
+      dispatched(f, { phase: 'blocked', resolution: { ...f.task().resolution, mergeIntent: true, mergeHead: head,
+        mergedCommit: commit, syncedCommit: null, review: { taskId: f.taskId, runId: 'review-run', eventId: 'review-1',
+          status: 'ready_to_merge', summary: 'Approved', head, reviewId: 12 } } });
+      f.observations.set('worker-agent', { id: 'worker-agent', workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '' });
+      f.remote.merged = { head: matching ? head : 'e'.repeat(40), commit };
+      assert.equal(await f.engine.resolution.recoverExternalMerge(f.task()), matching);
+      assert.equal(f.task().phase, matching ? 'syncing' : 'blocked');
+      assert.equal(f.events('recorded_merge_phase_reconciled').length, matching ? 1 : 0);
+    } finally { await f.close(); }
+  }
+});
+
+test('retry_effect settles an uncertain terminal cleanup after the workspace is gone', async () => {
+  const f = fixture(); try {
+    const directory = join(f.dir, 'archived-intake');
+    const declaration = authorDeclarationSchema.parse({ models: ['fixture/author'], githubAuthor: 'author', authoringSystem: 'fixture', attestedBy: 'operator', provenance: 'synthetic' });
+    const reviewEntry = reviewEntryRecordSchema.parse({ operationId: 'c'.repeat(64), prNumber: 7, repository: 'example/repo', branch: 'feature',
+      workspaceId: 'workspace', directory, verifiedHead: head, verifiedBase: base, planningCommit: base,
+      authority: 'operator', authorDeclaration: declaration, checkedAt: new Date().toISOString(), preserveWorkspace: false, workspaceMode: 'isolated' });
+    dispatched(f, { phase: 'done', directory, entrypoint: 'review', reviewEntry, resolution: { ...f.task().resolution, mergedCommit: head, syncedCommit: head, archivedWorkspaceIds: ['workspace'],
+      buildOutputCleanups: [{ workspaceId: 'workspace', directory, state: 'uncertain', detail: 'Storage admission refused', at: new Date().toISOString() }] } });
+    f.adapter.preflightWorkspaceStorage = async () => {};
+    f.adapter.taskWorkspaceArchived = async () => true;
+    const settled = await f.engine.performTaskControl(taskControlInputSchema.parse({ action: 'retry_effect', taskId: f.taskId,
+      version: f.task().version, effect: 'build_output_cleanup.workspace', reason: 'Observe the archived workspace', caller: CALLER }));
+    assert.equal(settled.resolution.buildOutputCleanups[0]?.state, 'complete');
+    assert.equal(settled.resolution.buildOutputCleanups[0]?.detail, 'directory absent; nothing to clean up');
   } finally { await f.close(); }
 });
 

@@ -48,6 +48,16 @@ export function reconcileRoutingSignoffs(store: Store, decisions: Decisions, tas
   reconcileGrantDecisions(store, decisions);
   try { task = store.task(taskId); } catch { return approvedRoutes; }
   const finished = task.phase === "done" || task.phase === "cancelled";
+  // A required legacy preference is also a worker routing request. Materialize
+  // it only when it needs board sign-off, so the same decision lifecycle can
+  // surface and settle it instead of leaving an invisible required wait.
+  const preference = poolEntryForRequiredPreference(task, store);
+  if (!finished && preference) {
+    task = store.update(task.id, { profileRequests: { ...task.profileRequests, worker: {
+      profileId: preference, required: true, reason: 'Required worker preference in the submitted task',
+      ...(task.thinkingOptionId ? { thinkingOptionId: task.thinkingOptionId } : {}),
+    } } }, 'routing_preference_requested', `Required worker preference ${preference} requires board sign-off`);
+  }
   closeOrphanedQuestions(store, decisions, task);
   const usage = store.usageLevel();
   const pool = store.pool();
@@ -131,6 +141,12 @@ export function reconcileRoutingSignoffs(store: Store, decisions: Decisions, tas
       JSON.stringify({ role, profileId: request.profileId, decisionId: decision.id }));
   }
   return approvedRoutes;
+}
+
+function poolEntryForRequiredPreference(task: Task, store: Store): string | null {
+  if (!task.requirePreferred || !task.preferredProfileId || task.profileRequests?.worker || task.agentIntent || task.agentId) return null;
+  const entry = store.pool().find(item => item.profileId === task.preferredProfileId);
+  return entry && requestOnly(entry, store.usageLevel()) ? entry.profileId : null;
 }
 
 /** The route an approval asks for, and whether the live run must be replaced to take it now. */

@@ -38,7 +38,10 @@ test("a released run's cleanup settles when its checkout is already absent", { t
   const f = await setup(t);
   authorResult(f, "author-absent", "blocked");
   await rm(f.directory, { recursive: true, force: true });
-  const engine = new Engine(f.store, settlingAdapter(f, { active: false }), 0);
+  const adapter = settlingAdapter(f, { active: false });
+  adapter.preflightWorkspaceStorage = async () => {};
+  adapter.taskWorkspaceArchived = async () => true;
+  const engine = new Engine(f.store, adapter, 0);
   try {
     await engine.settleRunBuildOutputs(f.task.id);
     assert.equal(runRecord(f)?.state, "complete");

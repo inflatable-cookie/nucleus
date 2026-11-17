@@ -4,6 +4,7 @@ import { Decisions } from '../planning/decisions';
 import type { Resolution } from '../resolution';
 import { collectOwnerVerbFacts, ownerVerbViews } from '../verbs/owner-verbs';
 import { decodeEscalationChoice, escalationAnswerControl, escalationContinuationInstruction, escalationVerbChoices, extractDecisionIdCandidates, extractFirstIsoTimestamp, extractTaskReferenceCandidates, plannerEscalations, type EscalationVerbChoice, type LadderEvent } from './ladder';
+import { closeEscalationFollowups } from './ladder/continuation';
 
 type Answerer = { role: 'planner' | 'decider'; agentId: string } | { role: 'operator' };
 
@@ -22,7 +23,11 @@ export class EscalationSettlement {
     const key = `${t.id}:${id}`;
     const existing = this.escalationSettlements.get(key);
     if (existing) return existing;
-    const settlement = this.settlePlannerEscalationOnce(t, id, answer, who, offered, questionId, answerer);
+    const settlement = this.settlePlannerEscalationOnce(t, id, answer, who, offered, questionId, answerer).then(result => {
+      if (!result && plannerEscalations(this.store.eventsAll(t.id)).some(item => item.id === id && item.answered))
+        closeEscalationFollowups(this.store, t.id, id);
+      return result;
+    });
     this.escalationSettlements.set(key, settlement);
     void settlement.finally(() => { if (this.escalationSettlements.get(key) === settlement) this.escalationSettlements.delete(key); });
     return settlement;
@@ -61,6 +66,44 @@ export class EscalationSettlement {
       : { caller: current.agentId ?? undefined, relayed: true, note: `The operator answered escalation ${id}: ${answer}`.slice(0, 4000) };
     try {
       if (!this.resolution.applyOperatorControl) throw Error('No control applier is bound');
+      const escalation = plannerEscalations(this.store.eventsAll(t.id)).find(item => item.id === id);
+      const namedSource = escalation?.runId ? this.store.run(escalation.runId) : null;
+      const reviewerIncident = current.resolution.incident;
+      const source = namedSource?.role === 'reviewer' ? namedSource
+        : (!namedSource || namedSource.role === 'recovery') && reviewerIncident?.role === 'reviewer' && reviewerIncident.status !== 'resolved' && reviewerIncident.runId
+          ? this.store.run(reviewerIncident.runId) : null;
+      const workerChoice = selected.kind === 'owner' && (selected.choice.verb === 'move' && selected.choice.args.to === 'work'
+        || (selected.choice.verb === 'restart' || selected.choice.verb === 'route') && selected.choice.args.role === 'worker');
+      if (source?.role === 'reviewer' && (workerChoice || selected.kind === 'other' && control.action === 'work')) {
+        if (source.released || source.completion) {
+          const reviewerInput = taskControlInputSchema.parse({ taskId: current.id, version: current.version, action: 'move', to: 'review', reason, ...grant });
+          this.store.event(t.id, 'planner_escalation_answer_pending', `${id}: ${JSON.stringify({ questionId, who, answer, control: reviewerInput })}`);
+          await this.resolution.applyOperatorControl(reviewerInput);
+          this.store.event(t.id, 'planner_escalation_answered', `${id}: answered by ${who}: ${answer.slice(0, 4000)}`);
+          this.store.event(t.id, 'planner_escalation_applied', `${id}: returned to the retained reviewer`);
+          return null;
+        }
+        if (!source.agentId || !source.workspaceId)
+          throw Error('The reviewer binding cannot be observed; read next and choose a reviewer continuation');
+        const observed = await this.resolution.onTaskHost(current, () => this.resolution.host.observe(source.agentId!));
+        if (observed.id !== source.agentId || observed.workspaceId !== source.workspaceId)
+          throw Error('The reviewer identity cannot be observed; no instruction was sent');
+        if (this.store.task(current.id).version !== current.version || JSON.stringify(this.store.run(source.id)) !== JSON.stringify(source))
+          throw Error('Task or reviewer changed during escalation answer; read next again');
+        if (observed.active || observed.activeTurnId || observed.permissions) {
+          this.store.event(t.id, 'planner_escalation_answer_pending', `${id}: ${JSON.stringify({ questionId, who, answer, control: null })}`);
+          this.store.event(t.id, 'planner_escalation_answered', `${id}: answered by ${who}: ${answer.slice(0, 4000)}`);
+          this.store.event(t.id, 'planner_escalation_applied', `${id}: retained reviewer is active; its turn continues`);
+          return null;
+        }
+        const reviewerInput = taskControlInputSchema.parse({ taskId: current.id, version: current.version, action: 'restart', role: 'reviewer',
+          instruction: answer.slice(0, 12000), reason, ...grant });
+        this.store.event(t.id, 'planner_escalation_answer_pending', `${id}: ${JSON.stringify({ questionId, who, answer, control: reviewerInput })}`);
+        await this.resolution.applyOperatorControl(reviewerInput);
+        this.store.event(t.id, 'planner_escalation_answered', `${id}: answered by ${who}: ${answer.slice(0, 4000)}`);
+        this.store.event(t.id, 'planner_escalation_applied', `${id}: reviewer continuation requested`);
+        return null;
+      }
       if (selected.kind === 'owner') {
         const choice = selected.choice;
         // Re-read `next` and match the offered identity, never accepting new fields,

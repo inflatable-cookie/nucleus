@@ -8,6 +8,7 @@ import { DurableFenceRefusal } from '../intake/run-settlement';
 import { now } from '../store/store';
 import type { Engine } from '../engine';
 import { collectOwnerVerbFacts, ownerEffectIdentity, ownerPendingEffects } from './owner-verbs';
+import { buildOutputCleanupHooks, buildOutputDirectoryAbsent } from '../workspaces/worktree-cleanup';
 
 /**
  * The owner's `retry_effect` verb: one named failed or uncertain side effect is
@@ -38,6 +39,8 @@ export class RetryEffectControls {
     this.engine.requireOwnerControlCurrent(task, input.version, 'Task changed; refresh before retrying');
     const beforeSettlement = this.engine.retryEffectBeforeSettlement(task, input);
     if (beforeSettlement) return beforeSettlement;
+    const absentCleanup = await this.settleAbsentCleanup(task, input);
+    if (absentCleanup) return absentCleanup;
     // An uncertain host-effect control the task has since answered settles by
     // observation, without force: the owner asked for the effect to be observed,
     // and the task's own later record is that observation (nucleus#1159).
@@ -71,6 +74,29 @@ export class RetryEffectControls {
     const expected = this.store.task(task.id).version;
     const current = this.store.task(task.id);
     return this.engine.retryOrdinaryEffect(task, input, found, current, expected);
+  }
+
+  /** Settle an already-gone terminal target without replaying a cleanup effect. */
+  private async settleAbsentCleanup(task: Task, input: TaskControlInput): Promise<Task | null> {
+    const id = input.effect ? ownerEffectIdentity(input.effect, 'build_output_cleanup') : null;
+    if (!id || !['done', 'cancelled'].includes(task.phase) || task.workspaceId !== id || !task.directory) return null;
+    const record = task.resolution.buildOutputCleanups.find(item => item.workspaceId === id && !item.runId);
+    if (!record || !['uncertain', 'skipped'].includes(record.state) || record.directory !== task.directory) return null;
+    if (!await buildOutputDirectoryAbsent(record.directory)) return null;
+    const adapter = this.engine.adapter;
+    if (!adapter.preflightWorkspaceStorage || !adapter.taskWorkspaceArchived)
+      throw Error('Workspace storage or archive observation is unavailable; cleanup remains uncertain');
+    await adapter.preflightWorkspaceStorage(task);
+    if (!await adapter.taskWorkspaceArchived(id)) throw Error('Workspace is still present in the host catalog; cleanup remains uncertain');
+    if (!await buildOutputDirectoryAbsent(record.directory)) throw Error('Workspace directory reappeared during cleanup observation');
+    return this.store.transaction(() => {
+      const current = this.store.task(task.id);
+      this.engine.requireOwnerControlCurrent(current, task.version, 'Task changed during cleanup observation; refresh before retrying');
+      buildOutputCleanupHooks(this.store, task.id, id, record.directory, () => true).observed({
+        detail: 'directory absent; nothing to clean up', removed: false, safe: true, observations: [],
+      });
+      return this.store.task(task.id);
+    });
   }
 
   /**

@@ -69,6 +69,7 @@ for the payloads and supported amendment fields.
   transaction, and reports what it did.
 - A verb is refused only by a hard invariant:
   - merge needs an accepted review at the exact current PR head;
+  - uncommitted work is preserved and one branch has at most one writer;
   - a callback must be authenticated to its run and generation;
   - an uncertain external effect is observed before any retry;
   - runs, events, verdicts and outcomes are never rewritten;
@@ -77,6 +78,16 @@ for the payloads and supported amendment fields.
     rule is the service boundary's implemented operator-only write
     ([service-boundary](../contracts/service-boundary.md#settings-only-capacity-writes-tom-2026-10-25)):
     a task's owner cannot reach it, relayed or otherwise.
+- Tom's 2026-11-17 ruling supersedes older fresh-reviewer escape hatches below:
+  retain one reviewer per task. A missing report is recovered on that reader;
+  use a fresh reviewer only when it is gone or ruled out by its model or
+  independence. A stale phase or missing internal record is not evidence that
+  a reviewer is gone.
+- Owner actions and reconciliation read the forge, checkout, integration and
+  host observations before moving work. A recorded merge at the observed head
+  and commit re-enters synchronization; ambiguous or conflicting facts remain
+  held. An already-absent cleanup target settles only after storage and host
+  archive observations, without claiming a deletion.
 - Reviewer independence is a selection preference, not a gate. An owner may
   route any reviewer, with a reason.
 - Every verb writes one `owner_control` event: verb, caller agent, reason,

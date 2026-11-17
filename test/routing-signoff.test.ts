@@ -78,6 +78,22 @@ test('Queue asks once, and a board approval signs the request off', () => {
   } finally { f.close(); }
 });
 
+test('a required request-only preference opens a board decision and uses its answer', () => {
+  const f = fixture(); try {
+    const task = f.submit({ profileRequests: {}, preferredProfileId: 'opus', requirePreferred: true });
+    f.reconcile(task.id);
+    const request = f.store.task(task.id).profileRequests!.worker!;
+    assert.equal(request.profileId, 'opus');
+    assert.equal(request.signoff?.status, 'pending');
+    const decision = f.decisions.get({ id: request.signoff!.decisionId! });
+    f.reconcile(task.id);
+    assert.equal(f.decisions.list({ task: task.id }).length, 1);
+    f.answer(decision.id, signoffApprove('opus'));
+    f.reconcile(task.id);
+    assert.equal(chooseProfile(f.store.task(task.id), profiles, pool, {}, new Set(), 'worker')?.profile.id, 'opus');
+  } finally { f.close(); }
+});
+
 test('the operator can pick another profile, decline, or answer by relay (which declines)', () => {
   const f = fixture(); try {
     const chosen = f.submit(); f.reconcile(chosen.id);

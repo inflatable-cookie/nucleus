@@ -16,6 +16,7 @@ import { moveRetainedReader } from "./review-reader";
 import { commitReviewMove, nameLaunchFence, settleStoppedReviewers } from "./review-settle";
 import { moveProofOnlyReceiptToReview } from "./review-proof";
 import type { ReviewMoveInput } from "./types";
+import { requestReviewerReport } from '../reviewer-report';
 
 /**
  * Spec 050 `move to=review`: a fresh independent review at the current PR
@@ -47,6 +48,12 @@ export async function moveToReview(engine: Engine, input: ReviewMoveInput, opera
     ? `Move to review must use PR #${prNumber}, which the current ready result names`
     : `Move to review must use the retained task PR #${prNumber}`);
   const pr = await adapter.verifyPr(task, prNumber);
+  if (input.fresh && task.resolution.reviewerAgentId && !engine.resolution.authorAgentIds(task).has(task.resolution.reviewerAgentId)) {
+    const state = await engine.host.observe(task.resolution.reviewerAgentId);
+    if (state.id !== task.resolution.reviewerAgentId || state.status !== 'closed' || state.active || state.activeTurnId || state.permissions)
+      throw Error('The retained reviewer is still available or its absence is unproven; continue that reviewer instead');
+    engine.requireOwnerControlCurrent(store.task(task.id), task.version, 'Task changed during reviewer observation; refresh before retrying');
+  }
   if (evidence && pr.head !== evidence.head)
     throw Error(`PR #${prNumber} is at ${pr.head}, not the head ${evidence.head} its current ready result reports; nothing was bound`);
   // Reapply only a verdict pending at the verified current head. A newer PR
@@ -55,6 +62,28 @@ export async function moveToReview(engine: Engine, input: ReviewMoveInput, opera
     const pendingReview = await engine.resolution.reapplyPendingReview(task);
     if (pendingReview === 'applied') return store.task(task.id);
     if (pendingReview === 'blocked') throw Error('A released accepted review is still pending; move to review was refused until its lifecycle result is settled');
+  }
+  // A previous move may have detached the same still-credentialed reviewer
+  // without its report. Rebind that exact run before asking it to redeliver;
+  // never start another reader to stand in for missing evidence.
+  const detached = input.fresh !== true && !task.resolution.currentRunId && task.resolution.reviewerAgentId
+    ? runsBefore.findLast(run => run.role === 'reviewer' && !run.released && !run.completion && run.replacedAt
+      && run.agentId === task.resolution.reviewerAgentId && run.head === pr.head) : null;
+  if (detached) {
+    if (runsBefore.some(run => !run.released && run.id !== detached.id))
+      throw Error('Another run still owns the task; settle it before requesting the reviewer report');
+    const state = await engine.host.observe(detached.agentId!);
+    if (state.id !== detached.agentId || state.workspaceId !== detached.workspaceId || state.active || state.activeTurnId || state.permissions || !['idle', 'error'].includes(state.status))
+      throw Error('The retained reviewer is not positively idle in its workspace; no report was requested');
+    const rebound = store.transaction(() => {
+      const current = store.task(task.id);
+      engine.requireOwnerControlCurrent(current, task.version, 'Task changed during reviewer observation; refresh before retrying');
+      if (!runsUnchangedSince(runsBefore, store.runs(task.id))) throw Error('Reviewer changed during observation; refresh before retrying');
+      store.putRun({ ...detached, status: 'running', replacedAt: undefined });
+      return engine.resolution.update(current, { currentRunId: detached.id }, { phase: 'reviewing', reason: 'Recovering the retained reviewer report' },
+        'reviewer_report_rebound', `${detached.id}: ${input.reason}`);
+    });
+    return requestReviewerReport(engine, rebound, store.run(detached.id)!, rebound.version, input.reason);
   }
   const retained = !task.prUrl && (Boolean(task.resumePrNumber) || Boolean(evidence));
   const observeRetainedWorkers = async () => {

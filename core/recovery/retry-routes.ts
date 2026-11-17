@@ -76,7 +76,7 @@ export function revisionRoute(t: Task, runs: Run[], options: {
   const retryHint = blockedRetryAvailable ? 'use restart to resume the blocked or errored task with its retained PR after resolving the blocker' : null;
   const missingPr = retryHint ? `Returning to the worker requires an unmerged task PR; ${retryHint}` : 'Returning to the worker requires an unmerged task PR';
   if (!t.agentId || t.resolution.mergeIntent || t.resolution.mergedCommit) return { kind: 'refuse', message: missingPr };
-  if (!revisionPhases.includes(t.phase)) return { kind: 'refuse', message: `Returning to the worker is not valid from phase ${t.phase}` };
+  if (!operator && !revisionPhases.includes(t.phase)) return { kind: 'refuse', message: `Returning to the worker is not valid from phase ${t.phase}` };
   if (!t.completion?.prNumber && !t.resumePrNumber) {
     if (!prePr) return { kind: 'refuse', message: missingPr };
     if (t.prUrl || t.prHead || !t.workspaceId || !t.profile) return { kind: 'refuse', message: 'Pre-PR worker continuation requires the retained worker and no task PR' };

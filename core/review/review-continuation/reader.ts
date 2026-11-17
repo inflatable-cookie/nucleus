@@ -146,7 +146,7 @@ export function reviewerIdentityAtHead(task: Task, store: Pick<Store, 'run'>, he
   // A reader that is not at this head belongs to another source state: moving to
   // review at this head is the deliberate fresh review of a changed source.
   if (!task.prHead || task.prHead !== head || run.head !== head) return { kind: 'absent' };
-  if (!run.agentId || task.resolution.reviewerAgentId !== run.agentId)
+  if (!run.agentId || task.resolution.reviewerAgentId && task.resolution.reviewerAgentId !== run.agentId)
     return { kind: 'refused', run, refusal: `the task records reviewer agent ${task.resolution.reviewerAgentId ?? 'none'}, not the current reviewer run ${run.id} (agent ${run.agentId ?? 'unknown'}), so the participant identity cannot be proven and Nucleus cannot tell which reviewer is reading; it does not replace that reader — restart role=reviewer fresh or route role=reviewer with now replaces it deliberately` };
   if (task.workspaceId !== run.workspaceId)
     return { kind: 'refused', run, refusal: `the retained reviewer ${run.id} is bound to workspace ${run.workspaceId}, which its recorded source no longer names; Nucleus does not replace a retained reader it cannot prove — restart role=reviewer fresh or route role=reviewer with now replaces it deliberately` };

@@ -111,6 +111,8 @@ authorization note, plus optional base branch, lanes, tags, host and hold. It
 creates the lead, waits for its durable check, records exact-version approval,
 and waits for the existing promotion operation to return the task reference.
 Failed checks return the lead's findings without approval or promotion.
+Resubmitting the same open lead after a failed check starts a new durable check;
+concurrent identical submissions join one pending occurrence.
 
 Same-title matching is case-insensitive and trims outer whitespace, scoped to
 the resolved repository. An open lead with the same brief digest is checked, approved and promoted; a different brief is refused with the lead ID and `lead.edit` route. Numbered tasks,

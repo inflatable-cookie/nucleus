@@ -58,6 +58,10 @@ export async function retainReviewerThread(ctx: LaunchThreadContext, t: Task, ro
       const issue = ctx.retainedProfileIssue(profile) ?? ctx.signoffIssue(t, profile, 'reviewer')
         ?? (supersedingReviewer ? `a required reviewer route names ${supersedingReviewer}, superseding the retained reviewer` : null);
       if (issue) {
+        if (!supersedingReviewer) {
+          ctx.waiting(t, `Retained reviewer ${agentId} cannot continue yet (${issue}); its binding is preserved`, 'route_unavailable');
+          return { kind: 'handled' };
+        }
         if (reviewerThreadDecision({ stage: 'issue', issue: true, atLimit: t.resolution.roleReplacements >= 8, selected: false }) === 'attention') {
           ctx.attention(t, 'Role replacement limit reached; operator attention required');
           return { kind: 'handled' };
@@ -79,12 +83,16 @@ export async function retainReviewerThread(ctx: LaunchThreadContext, t: Task, ro
     let participant = true;
     let runtime = true;
     let context = true;
+    let gone = false;
+    let identity = false;
     const swapDetail: Partial<Record<ReviewerSwapCondition, string>> = {};
     if (!round) swapDetail.round = `its prior reviewer round at ${prior?.head ?? 'no head'} is not settled for another round at ${t.prHead ?? 'no head'}`;
     try {
       const consultBound = !prior && ctx.store.eventsAll(t.id).some(event => event.kind === 'reviewer_consult_reviewer' && event.detail.endsWith(`: ${agentId}`));
       const state = await ctx.host.observe(agentId);
-      if (consultBound && profile) {
+      identity = state.id === agentId && state.workspaceId === (prior?.workspaceId ?? t.workspaceId);
+      gone = identity && state.status === 'closed' && !state.active && !state.activeTurnId && !state.permissions;
+      if ((!prior || consultBound) && profile) {
         // A consult-bound reviewer is judged by independence and its inactive
         // participant state, not by a prior review round it never ran.
         round = true;
@@ -110,6 +118,10 @@ export async function retainReviewerThread(ctx: LaunchThreadContext, t: Task, ro
       ctx.store.event(t.id, 'reviewer_retention_refused', message(error));
     }
     const eligible = round && participant && runtime && context && !swapDetail.error;
+    if (!eligible && !gone && (!identity || runtime && context)) {
+      ctx.waiting(t, `Retained reviewer ${agentId} cannot continue yet: ${swapDetail.round ?? swapDetail.participant ?? swapDetail.error ?? 'its identity or activity is not settled'}`, 'operator_needed');
+      return { kind: 'handled' };
+    }
     if (reviewerThreadDecision({ stage: 'round', eligible }) === 'fresh') {
       const swap = !round && swapDetail.round ? { condition: 'round' as const, detail: swapDetail.round }
         : swapDetail.participant ? { condition: 'participant' as const, detail: swapDetail.participant }

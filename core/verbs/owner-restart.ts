@@ -14,6 +14,7 @@ import type { OwnerVerbFacts } from './owner-facts';
 import { verbInput, restartRoles } from './owner-shared';
 import type { RestartRole, OwnerVerb, RestartShapeName } from './owner-shared';
 import { unreportedExecutorRun } from '../qa/proof-admission';
+import { unreportedReviewer } from './reviewer-report';
 
 /**
  * Round 4 (Tom, 2026-10-19): what `restart` does when no run of the role needs
@@ -366,6 +367,15 @@ export const restart: OwnerVerb = {
       return { available: false, refusal: restartTerminalRefusal(task, "refusal" in parked ? parked.refusal : undefined) };
     }
     const role = deriveRestartRole(task, runs);
+    const reviewer = unreportedReviewer(task, runs);
+    if (reviewer) {
+      const requested = facts.events.some(event => ['reviewer_report_request_sent', 'reviewer_report_request_intent'].includes(event.kind)
+        && event.detail.startsWith(`${reviewer.id}:`));
+      return requested
+        ? { available: false, refusal: `Reviewer ${reviewer.id} already has a report request or unknown delivery; inspect its thread` }
+        : { available: true, fill: ['reason'], args: { taskId: task.id, version: task.version, role: 'reviewer' },
+          note: `Asks retained reviewer ${reviewer.agentId} to resend the report on run ${reviewer.id} after observing it idle; no new review starts.` };
+    }
     const shape = restartShape(task, runs, role, facts.events);
     // nucleus#1195: one bounded continuation asks a live proof executor whose
     // result never arrived to resend that report on its existing run and

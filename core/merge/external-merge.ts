@@ -261,7 +261,31 @@ export class ExternalMerge {
     return head;
   }
   async recoverExternalMerge(t: Task) {
-    if (this.resolution.paused() || !this.adapter.externalMerge || t.resolution.mergeIntent || !t.workspaceId || (!t.agentId&&!t.reviewEntry) || !(t.reviewEntry?.prNumber||t.completion?.prNumber || t.resumePrNumber) || ['done','cancelled','queued'].includes(t.phase)) return false;
+    if (this.resolution.paused() || !this.adapter.externalMerge || !t.workspaceId || (!t.agentId&&!t.reviewEntry) || !(t.reviewEntry?.prNumber||t.completion?.prNumber || t.resumePrNumber) || ['done','cancelled','queued'].includes(t.phase)) return false;
+    if (t.resolution.mergedCommit && !['syncing', 'closing'].includes(t.phase)) {
+      if (!this.externalMergeProbeDue(t) || this.store.runs(t.id).some(run => !run.released)) return false;
+      if (!await this.resolution.executionLease(t, undefined, false, true)) return false;
+      const runs = JSON.stringify(this.store.runs(t.id));
+      let observed: Awaited<ReturnType<NonNullable<typeof this.adapter.externalMerge>>>;
+      try { observed = await this.adapter.externalMerge(t, true); }
+      catch { this.noteExternalMergeProbe(t); return false; }
+      this.noteExternalMergeProbe(t);
+      if (!observed || observed.head !== t.resolution.mergeHead || observed.commit !== t.resolution.mergedCommit
+        || this.resolution.reviewRequired(t) && !mergeReviewEvidenceAt(t, observed.head)) return false;
+      const proven = observed;
+      if (!await this.resolution.executionLease(t, undefined, false, true) || this.resolution.paused()) return false;
+      return this.store.transaction(() => {
+        const current = this.store.task(t.id);
+        if (current.version !== t.version || JSON.stringify(this.store.runs(t.id)) !== runs) return false;
+        const latest = this.resolution.assignIntegrationTurn(current);
+        const episode = this.resolution.recovery.settledEpisodeChanges(latest, 'Recorded merge re-observed at the forge');
+        this.resolution.update(latest, { currentRunId: null, attention: false, stop: null, ...(episode ?? {}) },
+          { phase: 'syncing', reason: 'Recorded merge re-observed; synchronizing main before closeout' },
+          'recorded_merge_phase_reconciled', JSON.stringify({ head: proven.head, commit: proven.commit }));
+        return true;
+      });
+    }
+    if (t.resolution.mergeIntent) return false;
     if (t.resolution.mergedCommit && (!t.resolution.externalMerge || t.resolution.syncedCommit)) return false;
     if (this.store.runs(t.id).some(r=>!r.released&&!r.agentId)) return false;
     /**

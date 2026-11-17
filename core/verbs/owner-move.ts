@@ -7,14 +7,14 @@ import { groupIsUnavailable } from "../../shared/pool";
 import { proofOnlyReceiptAwaitingReview } from "../qa/proof-records";
 import { z } from "zod";
 import { isDispositionActive, taskControlInputSchema, taskNextVerbSchema, type Run, type Task, type TaskControlInput, type TaskNextVerb } from "../../shared/contracts";
-import { operatorReplacementPending, revisionPhases } from "../recovery/task-reasons";
+import { operatorReplacementPending } from "../recovery/task-reasons";
 import { blockingRecoveryEffectsRefusal } from "../recovery/recovery-effects";
 import { reviewInProgress, reviewerIdentityAtHead, reviewContinuationState, retainedReaderStateDecision, retainedReaderStoredRefusal, retainedReaderUnavailableRefusal, reviewContinuationWait, keepRetainedReviewer } from "../review/review-continuation";
 import { durableRunFence, currentReadyPrEvidence, prIdentity } from './owner-facts';
 import type { OwnerVerbFacts } from './owner-facts';
 import { verbInput } from './owner-shared';
 import type { OwnerVerbApplicability, OwnerVerb } from './owner-shared';
-import { retainedContinuationPlan, plainHandoverFreshRestart } from './owner-restart';
+import { retainedContinuationPlan } from './owner-restart';
 
 export const moveTargets = ["work", "review", "merge", "closeout"] as const;
 
@@ -105,13 +105,11 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
       return { available: false, refusal: MOVE_WORK_REPLACEMENT_REFUSAL };
     if (task.prerequisiteWait && !task.prerequisiteWait.releasedAt)
       return { available: false, refusal: RETAINED_PREREQUISITE_REFUSAL };
-    // The retained author takes the revision path, which needs a revision phase.
-    if (task.agentId) return revisionPhases.includes(task.phase) ? running : { available: false, refusal: `Returning to the worker is not valid from phase ${task.phase}` };
+    if (task.agentId) return running;
     if (task.agentIntent) return { available: false, refusal: "The worker creation is still uncertain; restart re-creates it under the same run" };
     if (task.profile && task.workspaceId) return running;
     return { available: false, refusal: MOVE_WORK_AUTHOR_REFUSAL };
   })();
-  const freshReview: OwnerVerbApplicability[] = [];
   const review = ((): OwnerVerbApplicability => {
     const shared = gate("review"); if (shared) return shared;
     if (proofOnlyReceiptAwaitingReview(task)) {
@@ -139,11 +137,6 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
     // 5673604194).
     const identity = reviewerIdentityAtHead(task, facts.store, task.prHead ?? "");
     if (identity.kind === 'refused') return { available: false, refusal: identity.refusal };
-    if (runs.some(run => run.role === 'reviewer' && !run.released && !run.completion && run.reviewCheckpoints?.length)) {
-      const freshGate = liveGate("review", true);
-      if (freshGate.available) freshReview.push({ available: true, args: { fresh: true },
-        note: "Start a fresh reviewer at the current PR head; the displaced round and its checkpoints remain history. Nucleus observes participants and settles their runs before moving." });
-    }
     const reader = identity.kind === 'valid' && reviewInProgress(identity.run) ? identity.run : null;
     if (reader) {
       const state = reviewContinuationState(task, facts.store);
@@ -166,8 +159,7 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
       return { available: true, args: {}, note: `This preserves the valid reader on run ${reader.id} (agent ${reader.agentId}) at ${task.prHead} and sends no new review turn; restart role=reviewer fresh or route role=reviewer with now replaces it deliberately.` };
     }
     if(identity.kind==='valid'){
-      const freshOnly=plainHandoverFreshRestart(task,runs);
-      if(freshOnly)return {available:true,args:{},note:`Nucleus observes the retained reader: a live turn is preserved; an idle reader cannot be silently replaced. ${freshOnly}`};
+      return {available:true,args:{},note:`Nucleus observes the retained reviewer: a live turn is preserved, and an idle reviewer is asked to resend its report on the same run.`};
     }
     // Spec 057 (task 553): on a responsible task the move keeps the retained
     // reviewer for the delta review at the new head unless fresh is asked for
@@ -178,7 +170,7 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
     if (task.resolution.reviewerAgentId) {
       const retainedId = task.resolution.reviewerAgentId;
       const lastReviewer = [...runs].reverse().find(run => run.role === 'reviewer' && run.agentId === retainedId);
-      const closed = Boolean(lastReviewer?.retainedAgentClosedAt || lastReviewer?.reviewBudgetExhaustedAt);
+      const closed = Boolean(lastReviewer?.retainedAgentClosedAt);
       const profile = task.resolution.reviewerProfile;
       const entry = profile ? facts.store.pool().find(item => item.profileId === profile.id) : null;
       let unavailable: string | null = null;
@@ -195,12 +187,12 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
           ...runs.filter(run => run.role === 'revision' && run.agentId).map(run => run.agentId!)].filter((id): id is string => Boolean(id)));
         if (authors.has(retainedId)) unavailable = 'it authored task work since';
       }
-      const keep = keepRetainedReviewer(false, closed, Boolean(unavailable));
+      const keep = keepRetainedReviewer(false, closed, Boolean(unavailable && unavailable === 'it authored task work since'));
       const reviewerNote = closed
-        ? `Move to review starts a fresh reviewer: the retained reviewer ${retainedId} cannot continue (its agent was observed closed or its checkpoint budget is spent).`
+        ? `Move to review starts a fresh reviewer: the retained reviewer ${retainedId} was observed closed.`
         : !keep
           ? `Move to review starts a fresh reviewer: the retained reviewer ${retainedId} is unavailable (${unavailable}).`
-          : `Move to review continues the retained reviewer ${retainedId} at the new head; add fresh: true to start a fresh reviewer instead.`;
+          : `Move to review continues the retained reviewer ${retainedId} at the current head${unavailable ? ` when ${unavailable} is resolved` : ''}.`;
       return { available: true, args: {}, note: [reviewerNote, reviewGate.note].filter(Boolean).join(' ') };
     }
     return reviewGate;
@@ -240,7 +232,6 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
   return [
     view("work", work, ["reason", "instruction"]),
     view("review", review, ["reason"]),
-    ...(!review.available && freshReview.length ? [view("review", freshReview[0]!, ["reason"])] : []),
     view("merge", merge, mergeFill),
     // A never-dispatched review-entry closeout always needs its acceptance; a
     // dispatched one offers the descendant pair, and the ordinary reason-only

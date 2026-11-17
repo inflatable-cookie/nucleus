@@ -76,6 +76,8 @@ export const runSchema = z.object({
   reviewSourceView: reviewSourceViewSchema.optional(),
   ordinaryDetached: z.literal(true).optional(),
   priorRunId: z.string().optional(),
+  /** A retained reviewer's earlier same-head run whose report did not arrive. */
+  reviewReportRecovery: z.string().optional(),
   priorHead: z.string().regex(/^[a-f0-9]{40}$/).optional(),
   retainedRounds: z.number().int().min(0).max(3).optional(),
   reviewDelta: z.string().optional(),

@@ -713,7 +713,7 @@ async function authorRevision(f: ReturnType<typeof fixture>, number: number) {
   return f.current();
 }
 
-test('the fourth consecutive retained round uses a fresh independent reviewer without resetting the author budget', async () => {
+test('later rounds keep the retained reviewer without resetting the author budget', async () => {
   const f = fixture();
   try {
     await f.engine.wake(); let reviewer = f.current(); const original = reviewer.agentId;
@@ -722,8 +722,7 @@ test('the fourth consecutive retained round uses a fresh independent reviewer wi
       reviewer = await authorRevision(f, n);
       assert.ok(reviewer, f.store.task(f.task.id).reason);
       assert.equal(reviewer.role, 'reviewer');
-      if (n < 4) { assert.equal(reviewer.agentId, original); assert.equal(reviewer.retainedRounds, n); }
-      else { assert.notEqual(reviewer.agentId, original); assert.equal(reviewer.retainedRounds, 0); }
+      assert.equal(reviewer.agentId, original); assert.equal(reviewer.retainedRounds, n);
     }
     assert.equal(f.store.task(f.task.id).resolution.revisionRuns, 4);
   } finally { f.close(); }
@@ -741,18 +740,14 @@ test('a closed reviewer falls back through the ordinary fresh factory and preser
   } finally { f.close(); }
 });
 
-test('an errored reviewer with no live turn falls back through the ordinary fresh factory and preserves the source history', async () => {
+test('an errored reviewer is held until its availability is known', async () => {
   const f = fixture();
   try {
     await f.engine.wake(); const first = f.current(); await f.report(first, 'changes_required');
-    // Queue #601: the provider wave left the finished reviewer's agent errored
-    // with no active turn and no pending permission. It cannot write, so the
-    // retained reviewer's next round must not wait on it — custody admits it
-    // like a closed participant and the round goes fresh.
     f.states.set(first.agentId!, { ...f.states.get(first.agentId!)!, status: 'error', error: 'Connection error' });
-    const review = await authorRevision(f, 1);
-    assert.ok(review, f.store.task(f.task.id).reason);
-    assert.notEqual(review.agentId, first.agentId); assert.equal(review.head, f.workspaceHead());
+    await authorRevision(f, 1);
+    assert.equal(f.store.task(f.task.id).resolution.reviewerAgentId, first.agentId);
+    assert.match(f.store.task(f.task.id).reason, /Retained reviewer/);
     assert.equal(f.store.run(first.id)!.head, f.oldHead);
   } finally { f.close(); }
 });

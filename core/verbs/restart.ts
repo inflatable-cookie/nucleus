@@ -10,6 +10,8 @@ import { DurableFenceRefusal } from "../intake/run-settlement";
 import { digest, now } from "../store/store";
 import type { Engine } from "../engine";
 import { resendExecutorReport } from "./executor-report";
+import { requestReviewerReport, unreportedReviewer } from './reviewer-report';
+import { verifyEnclosingOperation } from '../planning/enclosing-operation';
 import type { RestartRequest } from "./owner-shared";
 
 /** Raised after read-only verification or the parked transaction has refused. */
@@ -133,7 +135,22 @@ export class RestartControls {
     if (isDispositionActive(task)) throw Error(DISPOSITION_CONTROL_REFUSAL);
     // Round 4: a restart applies while paused; what it would start waits (deferOwnerVerb).
     const role = (input.role as RestartRole | undefined) ?? deriveRestartRole(task, this.store.runs(task.id));
+    const unreported = role === 'reviewer' ? unreportedReviewer(task, this.store.runs(task.id)) : null;
+    if (unreported) {
+      if (fresh) throw Error('The retained reviewer owns the missing report; request it from the same reviewer');
+      return requestReviewerReport(this.engine, task, unreported, input.version, reason);
+    }
+    if (role === 'reviewer' && fresh && task.resolution.reviewerAgentId
+      && !this.resolution.authorAgentIds(task).has(task.resolution.reviewerAgentId)) {
+      const observed = await this.engine.onTaskHost(task, () => this.engine.host.observe(task.resolution.reviewerAgentId!));
+      this.engine.requireOwnerControlCurrent(this.store.task(task.id), input.version, 'Task changed during reviewer observation; refresh before retrying');
+      if (observed.id !== task.resolution.reviewerAgentId || observed.status !== 'closed' || observed.active || observed.activeTurnId || observed.permissions)
+        throw Error('The retained reviewer is still available or its absence is unproven; continue that reviewer instead');
+    }
     if (["done", "cancelled"].includes(task.phase) || task.resolution.mergedCommit) {
+      if (task.resolution.mergedCommit && !['done', 'cancelled'].includes(task.phase))
+        return this.engine.moveToCloseout({ taskId: task.id, version: task.version, reason, caller: input.caller,
+          enclosing: () => verifyEnclosingOperation(this.store, input, operationId) });
       // A finished or merged task restarts no run; a merged one still re-runs its
       // parked step (a closeout resynchronization), and either answers an escalation.
       const parked = parkedRestart(collectOwnerVerbFacts(this.store, task, operationId, this.engine.coordinatorActionRunId.getStore()));

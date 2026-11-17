@@ -915,6 +915,40 @@ test("a refusal follow-up applies only the refreshed owner verb recorded for tha
   } finally { await f.close(); }
 });
 
+test("a later answer closes the pending refusal follow-up", async () => {
+  const f = fixture({ responsible: true });
+  try {
+    const task = f.current(), id = 'settled-followup', questionId = `ns-escalation-refusal-${id}`;
+    f.store.event(task.id, 'planner_escalation', `${id}: cause ${'c'.repeat(64)}; run worker; question pending`);
+    f.store.event(task.id, 'planner_escalation_followup_offered', `${id}: ${JSON.stringify({ questionId, choices: [], ownerChoices: [] })}`);
+    f.engine.resolution.openDelegatedQuestion(task, questionId, 'planner-1', 'Choose again', 30_000, 'planner', undefined, 'task');
+    f.engine.resolution.applyOperatorControl = async () => f.current();
+    const refusal = await f.engine.resolution.ladder.applyDelegatedEscalationAnswer(task.id, id, `ns-escalation-${id}`, 'Stop and keep the work', 'planner planner-1');
+    assert.equal(refusal, null);
+    assert.ok(f.store.eventsAll(`delegation:${questionId}`).some(event => event.kind === 'delegated_closed'));
+  } finally { await f.close(); }
+});
+
+test("reviewer-side free text and worker-labelled choices preserve the live reviewer", async () => {
+  for (const answer of ['Let the reviewer finish', 'Return to the worker with a new approach — Let the review finish']) {
+    const f = fixture({ responsible: true });
+    try {
+      await f.engine.wake();
+      const run = f.run(), task = f.current(), id = `review-stall-${answer.length}`;
+      assert.equal(run.role, 'reviewer');
+      f.store.event(task.id, 'planner_escalation', `${id}: cause ${'c'.repeat(64)}; run ${run.id}; question pending`);
+      f.store.event(task.id, 'planner_escalation_payload', `${id}: ${JSON.stringify({ runId: run.id, source: 'reviewer' })}`);
+      const controls: TaskControlInput[] = [];
+      f.engine.resolution.applyOperatorControl = async input => { controls.push(input); return f.current(); };
+      const refusal = await f.engine.resolution.ladder.applyDelegatedEscalationAnswer(task.id, id, `ns-escalation-${id}`, answer, 'planner planner-1');
+      assert.equal(refusal, null);
+      assert.deepEqual(controls, []);
+      assert.equal(f.store.run(run.id)?.released, false);
+      assert.equal(f.current().resolution.currentRunId, run.id);
+    } finally { await f.close(); }
+  }
+});
+
 test("a refusal follow-up answer is recovered across a service roll without resending its delivery", async () => {
   const f = fixture({ responsible: true });
   try {

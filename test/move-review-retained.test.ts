@@ -215,25 +215,56 @@ test('move to=review on a responsible task keeps the retained reviewer at the ne
   } finally { await f.close(); }
 });
 
-test('move to=review with fresh: true starts a new reviewer', async () => {
+test('move to=review refuses a fresh reviewer while the retained one is available', async () => {
   const f = fixture();
   try {
     responsibleShape(f);
     priorReviewerRound(f);
-    const moved = await moveReview(f, { fresh: true }) as Task;
-    assert.equal(moved.phase, 'awaiting_review');
-    assert.equal(moved.prHead, f.heads.newHead);
-    assert.equal(moved.resolution.reviewerAgentId, null, 'fresh review clears the retained reviewer');
-    assert.equal(moved.resolution.reviewerProfile, null);
+    await assert.rejects(moveReview(f, { fresh: true }), /retained reviewer is still available/);
+    assert.equal(f.current().resolution.reviewerAgentId, 'review-agent');
+    assert.equal(f.createdRuns.length, 0);
+  } finally { await f.close(); }
+});
+
+test('move to review asks the same idle reviewer to resend its missing report', async () => {
+  const f = fixture();
+  try {
+    responsibleShape(f);
+    f.prs.set(PR, { url: PR_URL, head: f.heads.oldHead });
+    priorReviewerRound(f, { status: 'running', completion: null, released: false, active: false });
+    f.store.update(f.taskId, { phase: 'reviewing' });
+    f.setResolution({ currentRunId: 'prior-review-run' });
+    f.store.setCredential('prior-review-run', 'review-token');
+    const messages: string[] = [];
+    f.engine.adapter.notify = async (id, _messageId, text) => { messages.push(`${id}: ${text}`); };
+    await moveReview(f);
+    assert.equal(f.current().resolution.currentRunId, 'prior-review-run');
+    assert.equal(f.store.run('prior-review-run')?.released, false);
+    assert.equal(messages.length, 1);
+    assert.match(messages[0]!, /review-agent: .*Resend your existing authenticated report/);
+    assert.equal(f.createdRuns.length, 0);
+    await assert.rejects(moveReview(f), /already asked/);
+    assert.equal(messages.length, 1);
+    const report = { eventId: 'recovered-report', taskId: f.taskId, runId: 'prior-review-run', status: 'ready_to_merge' as const,
+      summary: 'Review complete', reviewText: 'The retained reviewer checked the changes.', head: f.heads.oldHead };
+    assert.equal(f.engine.resolution.complete(report, 'review-token').accepted, true);
+  } finally { await f.close(); }
+});
+
+test('an already released reportless round returns to the same reviewer with a recovery request', async () => {
+  const f = fixture();
+  try {
+    responsibleShape(f);
+    f.prs.set(PR, { url: PR_URL, head: f.heads.oldHead });
+    priorReviewerRound(f, { status: 'finished', completion: null, released: true });
+    await moveReview(f);
     await f.engine.wake();
     const run = f.dispatched();
-    assert.ok(run, `a reviewer run was dispatched: ${f.current().reason}`);
-    assert.equal(run!.role, 'reviewer');
-    assert.notEqual(run!.agentId, 'review-agent', 'fresh starts a new reviewer agent, not the retained one');
-    assert.equal(f.createdRuns.some(created => created.id === run!.id), true, 'the run created a new agent');
-    assert.equal(f.sentRuns.length, 0, 'the retained thread was not reused');
-    assert.equal(run!.head, f.heads.newHead);
-    assert.equal(f.current().resolution.reviewerAgentId, run!.agentId, 'the new agent is the recorded reviewer');
+    assert.ok(run, f.current().reason);
+    assert.equal(run.agentId, 'review-agent');
+    assert.equal(run.reviewReportRecovery, 'prior-review-run');
+    assert.equal(f.sentRuns.some(sent => sent.id === run.id), true);
+    assert.equal(f.createdRuns.length, 0);
   } finally { await f.close(); }
 });
 
@@ -261,7 +292,7 @@ test('next names the retained reviewer the move will use', async () => {
     const review = f.next().verbs.find(view => view.verb === 'move' && (view.args as Record<string, unknown> | undefined)?.to === 'review');
     assert.equal(review?.available, true, `move to review is offered: ${JSON.stringify(review)}`);
     assert.match(review?.note ?? '', /review-agent/, 'the note names the retained reviewer');
-    assert.match(review?.note ?? '', /fresh: true/, 'the note names the fresh escape hatch');
+    assert.match(review?.note ?? '', /continues the retained reviewer/, 'the note names the retained continuation');
   } finally { await f.close(); }
 });
 

@@ -847,12 +847,25 @@ reviewer checkpoint continuation, or re-creating an uncertain run) is recorded
 and delivered after unpause, or after the dispatch hold is released. If it no
 longer applies by then, it is refused once and never retried.
 
+Tom's 2026-11-17 ruling keeps one retained reviewer per task. If its report is
+missing, use `move to=review` or `restart role=reviewer` to ask the same idle
+reviewer to redeliver; an active reviewer keeps its turn. A released reportless
+round returns to the same reviewer with a recovery request. A fresh reviewer is
+for one proved gone or ruled out by model or independence, not a missing report.
+Unknown delivery remains held until observed.
+
+Owner verbs use current forge, checkout, integration and participant facts.
+Exact-head review or operator source acceptance, preservation of uncommitted
+work, one writer per branch and routing sign-off remain required. A recorded
+merge that matches the forge returns through integration synchronization before
+closeout. A stale phase or missing bookkeeping alone is not a reason to stop.
+
 **`move`** sends the task to another step: `action: "move"`, `to` (`work`,
 `review`, `merge` or `closeout`), a required `reason`, and an optional
 `instruction` for `work`. `work` returns the task to its author for a revision (a
 gone author is replaced on the worker route; a stopped or checkpointed reviewer
-lease is superseded first). `review` supersedes accepted credit and answered
-episodes and starts a fresh reviewer at the verified current head. `merge` needs a
+lease is superseded first). `review` preserves the retained reviewer at the
+verified current head and recovers a missing report from that reader. `merge` needs a
 `ready_to_merge` review at the exact current head, re-verified at the forge, and
 enters the ordinary verification turn — a clean integration-base advance is not
 drift. `closeout` needs the PR observed merged and never mints a review. For a

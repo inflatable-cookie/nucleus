@@ -51,10 +51,10 @@ export function reviewerThreadDecision(facts: ReviewerThreadFacts): LaunchThread
   }
 }
 
-/** A settled verdict or an explicitly stopped reader on the same head may continue. */
+/** A released round does not require a replacement reviewer, even without a report. */
 export function reviewerRoundEligible(prior: { released?: boolean; status?: string; completion?: unknown; retainedRounds?: number | null; head?: string } | null | undefined, prHead: string | null | undefined): boolean {
-  return Boolean(prior?.released && ((prior.status === 'finished' && prior.completion && (prior.retainedRounds ?? 0) < 3)
-    || (prior.status === 'superseded' && !prior.completion && prior.head === prHead)));
+  void prHead;
+  return !prior || Boolean(prior.released && ['finished', 'superseded'].includes(prior.status ?? ''));
 }
 
 /** The one condition that made a retained reviewer ineligible for another round. */

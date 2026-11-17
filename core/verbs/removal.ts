@@ -202,6 +202,20 @@ export class TaskRemoval {
       const lateHostRun = this.store.hostRunHoldingWorkspace(record.directory);
       if (lateHostRun) { this.recordRunBuildOutputState(taskId, record, record.state, hostRunHoldReason(lateHostRun)); continue; }
       if (await buildOutputDirectoryAbsent(record.directory)) {
+        if (!this.engine.adapter.preflightWorkspaceStorage || !this.engine.adapter.taskWorkspaceArchived) {
+          this.recordRunBuildOutputState(taskId, record, record.state, 'Workspace storage or archive availability cannot be proven');
+          continue;
+        }
+        try {
+          await this.engine.adapter.preflightWorkspaceStorage(task);
+          if (!await this.engine.adapter.taskWorkspaceArchived(record.workspaceId)) {
+            this.recordRunBuildOutputState(taskId, record, record.state, 'Workspace is still present in the host catalog');
+            continue;
+          }
+          await this.engine.adapter.preflightWorkspaceStorage(task);
+        }
+        catch (error) { this.recordRunBuildOutputState(taskId, record, record.state, `Workspace storage availability cannot be proven: ${String(error)}`); continue; }
+        if (!await buildOutputDirectoryAbsent(record.directory)) continue;
         this.recordRunBuildOutputState(taskId, record, "complete", "directory absent; nothing to clean up");
         continue;
       }
@@ -262,6 +276,15 @@ export class TaskRemoval {
         && authorSequence !== null && receipt && receipt.sequence > authorSequence && completion?.status === 'ready_for_review'
         && isDeepStrictEqual(revision.completion, completion) && receipt?.hash === digest(JSON.stringify(completion));
       if (!applied && !superseded && !laterApplied) return `author result ${runId} is not applied yet`;
+    }
+    // A released run whose workspace is gone owes no destructive cleanup. The
+    // host catalog and storage preflight distinguish absence from an unmounted
+    // volume or an inaccessible workspace; no live thread is treated as gone.
+    if (await buildOutputDirectoryAbsent(record.directory)) {
+      if (!this.engine.adapter.preflightWorkspaceStorage || !this.engine.adapter.taskWorkspaceArchived)
+        return 'Workspace storage or archive availability cannot be proven';
+      await this.engine.adapter.preflightWorkspaceStorage(task);
+      if (await this.engine.adapter.taskWorkspaceArchived(record.workspaceId) && await buildOutputDirectoryAbsent(record.directory)) return null;
     }
     const busy = this.engine.unreleasedRunIn(record.workspaceId);
     if (busy) return busy;

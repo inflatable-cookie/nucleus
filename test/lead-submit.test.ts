@@ -63,6 +63,20 @@ test('failed brief checks return their findings and never approve or promote', a
   assert.equal(runtime.store.tasks().length, 0);
 });
 
+test('resubmitting a lead rechecks a completed transient brief-check failure', async t => {
+  const { runtime, input, repo } = await fixture(t);
+  await writeFile(join(repo, 'change.txt'), 'new planning head');
+  await git(repo, 'add', 'change.txt');
+  await git(repo, 'commit', '-m', 'advance planning');
+  const first = await runtime.submitLead(input);
+  assert.ok('lead' in first);
+  assert.equal(first.lead.check?.ok, false);
+  await git(repo, 'push', 'origin', 'main');
+  const second = await runtime.submitLead(input);
+  assert.ok('taskId' in second);
+  assert.equal(runtime.store.tasks().length, 1);
+});
+
 test('submission resumes an open lead with the same brief and refuses a different brief', async t => {
   const { runtime, input } = await fixture(t);
   const start = runtime.engine.startOperation.bind(runtime.engine);

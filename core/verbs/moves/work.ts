@@ -2,7 +2,7 @@ import type { Run, Task } from "../../../shared/contracts";
 import { TaskChangedRefusal } from "../../../shared/task-version";
 import type { Engine } from "../../engine";
 import { DurableFenceRefusal } from "../../intake/run-settlement";
-import { evidenceOnlyPr, ForeignPrIdentity, taskHasPr } from "../../forge/index";
+import { evidenceOnlyPr, ForeignPrIdentity, taskHasPr, taskPrNumber } from "../../forge/index";
 import { runsUnchangedSince } from "../../recovery/observation-advance";
 import { blockingRecoveryEffectsRefusal } from "../../recovery/recovery-effects";
 import { OPERATOR_WORKER_REMAP_REASON, operatorReplacementPending } from "../../recovery/task-reasons";
@@ -67,6 +67,22 @@ export async function moveToWork(engine: Engine, input: WorkMoveInput): Promise<
   let continuedPr: ContinuedPrBinding | null = null;
   let foreignCompletion: string | null = null;
   if (task.agentId) {
+    const observed = await engine.onTaskHost(task, () => engine.host.observe(task.agentId!));
+    if (observed.id !== task.agentId || observed.workspaceId !== task.workspaceId || observed.active || observed.activeTurnId
+      || observed.permissions || !['idle', 'error'].includes(observed.status))
+      throw Error('The retained worker is not positively idle in its workspace; no continuation was sent');
+    const issue = await engine.resolution.participantToolIssue(task.id, task.agentId, task.workspaceId!);
+    if (issue) throw Error(`The retained worker has live or unknown tool work: ${issue}; no continuation was sent`);
+    if (taskHasPr(task) && !evidenceOnlyPr(task)) {
+      const pr = engine.adapter.verifyPrIdentity
+        ? await engine.adapter.verifyPrIdentity(task, taskPrNumber(task), { allowDraft: true })
+        : await engine.adapter.verifyPr(task, taskPrNumber(task));
+      if (engine.adapter.verifyResume) await engine.adapter.verifyResume(task);
+      if (task.prHead && pr.head !== task.prHead) {
+        const clean = await engine.adapter.verifyPr(task, taskPrNumber(task));
+        if (clean.head !== pr.head) throw Error('The PR head changed during worker continuation proof; no continuation was sent');
+      }
+    }
     try { continuedPr = await engine.resolution.verifyContinuedPr(task); }
     catch (error) {
       if (error instanceof ForeignPrIdentity && task.completion && evidenceOnlyPr(task)) foreignCompletion = task.completion.eventId;

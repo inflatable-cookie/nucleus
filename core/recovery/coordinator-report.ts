@@ -69,18 +69,23 @@ export function coordinatorActionPlan(input: {
   // A view that derived no role (a blocked or errored task with a PR) leaves
   // the role to the caller's explicit choice, which its own note documents;
   // only a role the view did derive is a binding.
-  const requested = input.views.find(view => view.verb === action.verb && view.available && view.args
-    && (action.verb !== "route" || view.args.role === action.role)
-    && (action.verb !== "move" || view.args.to === action.to)
-    && (action.verb !== "retry_effect" || !action.effect || view.args.effect === action.effect));
-  if (!requested?.args) {
+  const force = (action.verb === 'move' || action.verb === 'retry_effect') && action.force === true;
+  const requested = input.views.find(view => {
+    const args = force ? view.forceArgs : view.available ? view.args : undefined;
+    return view.verb === action.verb && args
+      && (action.verb !== 'route' || args.role === action.role)
+      && (action.verb !== 'move' || args.to === action.to)
+      && (action.verb !== 'retry_effect' || !action.effect || args.effect === action.effect);
+  });
+  const offeredArgs = force ? requested?.forceArgs : requested?.args;
+  if (!offeredArgs) {
     // Name why, from the same views `next` shows, so the owner or the next
     // coordinator can choose without another diagnostic read.
     const refusals = [...new Set(input.views.filter(view => view.verb === action.verb && !view.available && view.refusal).map(view => view.refusal!))];
     return { ok: false, refusal: `The reported ${action.verb} does not apply to the task now${input.stopReason ? ` (stop ${input.stopReason})` : ""}${refusals.length ? `: ${refusals.join("; ")}` : ""}`.slice(0, 4000) };
   }
-  if (action.verb === "restart" && action.role && requested.args.role !== undefined && requested.args.role !== action.role)
-    return { ok: false, refusal: `restart ${action.role} does not match the stopped role ${String(requested.args.role)}` };
+  if (action.verb === "restart" && action.role && offeredArgs.role !== undefined && offeredArgs.role !== action.role)
+    return { ok: false, refusal: `restart ${action.role} does not match the stopped role ${String(offeredArgs.role)}` };
   // A coordinator stays within the operator's usage level (Spec 052). At
   // `normal` that keeps the 2026-10-01/15 rule: a very_high-cost (Sol-class)
   // route is the owner's last resort, since an availability or environment
@@ -90,7 +95,7 @@ export function coordinatorActionPlan(input: {
   if (action.verb === "route" && !frontierAllowed(input.usage, input.routeCapability))
     return { ok: false, refusal: `A coordinator cannot route to ${action.profileId}: it is rated frontier, which is request-only below Maximum. Use a profile within the ${input.usage} usage level, and report an environment block (a missing tool or stack) as cannot` };
   if (!input.verbRegistered) return { ok: false, refusal: `The ${action.verb} owner verb is not registered` };
-  const args: Record<string, unknown> = { ...requested.args, reason: action.reason };
+  const args: Record<string, unknown> = { ...offeredArgs, reason: action.reason };
   if (action.verb === "restart") Object.assign(args, {
     ...(action.role ? { role: action.role } : {}), ...(action.instruction ? { instruction: action.instruction } : {}),
     ...(action.fresh !== undefined ? { fresh: action.fresh } : {}),

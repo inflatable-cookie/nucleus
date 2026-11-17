@@ -5,6 +5,7 @@ import { hostFailureRefusalDetail } from "../../host/errors";
 import { REVIEW_FRESH_REPLACEMENT_EXIT, reviewContinuationState, reviewContinuationWait, reviewInProgress, retainedReaderStateDecision, retainedReaderStoredRefusal, retainedReaderUnavailableRefusal } from "../../review/review-continuation";
 import { plainHandoverFreshRestart, RestartRefusal } from "../owner-verbs";
 import type { FinishedRuns, ReviewMoveInput, VerifiedPr } from "./types";
+import { requestReviewerReport, unreportedReviewer } from '../reviewer-report';
 
 /** Decide how an observed retained reader is treated, without sending a turn. */
 export function retainedReaderDecision(input: {
@@ -56,6 +57,8 @@ export async function moveRetainedReader(engine: Engine, input: ReviewMoveInput,
   if (observed.id !== reading.agentId || observed.workspaceId !== reading.workspaceId)
     throw Error('Move to review cannot prove the retained reviewer in its workspace; no review turn was sent');
   const busy = observed.active || Boolean(observed.activeTurnId) || observed.permissions;
+  if (!reader && !busy && unreportedReviewer(latestTask, store.runs(task.id))?.id === reading.id)
+    return requestReviewerReport(engine, latestTask, reading, input.version, input.reason);
   const decision = retainedReaderDecision({ reader: Boolean(reader), state, busy: Boolean(busy), status: observed.status,
     waitReason: wait.reason, agentId: reading.agentId, runId: reading.id });
   if (decision.kind === 'refuse') throw Error(decision.message);
