@@ -1338,8 +1338,10 @@ installed bundle by the planner after the roll.
 **Outcome.** One repository opts into BB and runs real tasks through it beside Paseo, through
 milestone QA's own runs; the open questions this spec leaves are answered from that evidence and
 written back into this document. Tom's 2026-11-17 target — "T3 dispatches, BB executes" — is part of
-that evidence: the whole workflow, from a planner thread submitting the brief to the closeout notice
-returning to it, is proven on the isolated setup before any switch from Paseo.
+that evidence: the workflow's rules, from a T3 planner thread submitting the brief to the closeout
+notice returning to it, are proven on the runtime layer over recorded BB rows, its two gaps are named,
+and its execution on the isolated server is recorded as missing rather than implied. A switch from
+Paseo stays Tom's call.
 
 **Acceptance.** Each bullet is named here with its evidence.
 
@@ -1349,8 +1351,10 @@ returning to it, is proven on the isolated setup before any switch from Paseo.
    mechanism, or missing with the reason. Subscription usage is met by the host: BB's own
    provider-usage card plus the operator-installed Usage Pace plugin, with no Nucleus usage screen to
    compare on any host (nucleus#1302).
-2. **Reload, restart and outage mid-task**: `test/bb-lifecycle.test.ts` drives the real runtime
-   through each fault and `effigy proof:bb:trial` does the same against an isolated BB 0.49.0 server.
+2. **Reload, restart and outage mid-task**, each starting from a live worker turn: `test/bb-lifecycle.test.ts`
+   drives the real runtime through each fault over recorded BB rows, and `effigy proof:bb:trial` does
+   the host half against an isolated BB 0.49.0 server, polling BB's own status to prove the turn is
+   `starting` or `active` when each fault lands.
 3. **The fork rebase** through the documented routine, with the drift report and the
    vendored-manifest test at the pin; no newer release tag exists yet, so the evidence is the routine
    re-run at the pin plus the drift report against a newer upstream ref.
@@ -1371,9 +1375,14 @@ returning to it, is proven on the isolated setup before any switch from Paseo.
 | Native question pills | The host's own question surface | The pills read `question.native-list` and answer through `question.native-answer`; the plugin never writes a BB interaction | **met, by a different mechanism** — BB's interactions are written by its own agent runtime, so the plugin reads and answers through the catalogue | `test/bb-board-surfaces.test.ts`, `test/bb-board-bridge.test.ts` |
 | Usage | None since nucleus#1302 | BB's own provider-usage card, plus the operator's Usage Pace plugin if he installs it | **met by the host** — Nucleus contributes no usage UI on either host; a missing host display belongs in a host plugin, not here | decision 5e; nucleus#1302 |
 | Lifecycle hints | The Paseo bridge forwards its lifecycle hints | `thread.created`, `thread.active`, `thread.idle`, `thread.failed`, `interaction.pending` and `thread.archived` forward as the existing `service.lifecycle-signal` kinds, thread id only | **met** | `test/bb-board-bridge.test.ts`, `test/bb-plugin-backend.test.ts` |
-| **End to end: T3 dispatches, BB executes** | — | A T3 planner thread submits, BB executes, the notice returns to T3 | **one step missing**, named below | `test/bb-lifecycle.test.ts` ("a T3 planner submits…") |
+| **End to end: T3 dispatches, BB executes** | — | A T3 planner thread submits, BB executes, the notice returns to T3 | **two steps missing**, named below, on deterministic runtime coverage only | `test/bb-lifecycle.test.ts` ("a T3 planner submits…") over recorded BB 0.49.0 rows — fake-host unit coverage, not isolated end-to-end execution |
 
-The end-to-end row, step by step, because Tom asked for each step:
+The end-to-end row, step by step, because Tom asked for each step. Every line is
+`test/bb-lifecycle.test.ts`, a deterministic runtime test with the fake T3, Paseo and BB
+adapters over BB rows captured from the isolated server: it proves the dispatch, review and
+closeout *rules*, not a real task executed on a real BB server. No selector runs that
+lifecycle end to end on the isolated server, and the merge gate would need a real forge, so
+that evidence is recorded as missing rather than implied.
 
 | Step | Mark | Evidence and reason |
 | --- | --- | --- |
@@ -1382,7 +1391,8 @@ The end-to-end row, step by step, because Tom asked for each step:
 | The worker runs and reports | **met** | A BB worker thread on the task's unmanaged environment; the packaged helper reports against its run ticket. `test/bb-lifecycle.test.ts` |
 | The independent reviewer reviews | **met** | A separate retained BB reviewer thread in the same environment; its verdict drives the same lifecycle. `test/bb-lifecycle.test.ts` |
 | Merge, closeout and archive | **met** | The BB adapter's merge gate and workspace archive, the task's role threads archived after their cascade reads, the planner thread and the workspace's published-source proof untouched. `test/bb-lifecycle.test.ts` |
-| The planner's questions and notices route back to the T3 thread | **met for notices; met differently for questions** | The closeout notice reaches the T3 origin thread through its own host adapter. A worker's question goes to the task's *planner* thread, which on a BB-executed task is the BB thread, not the T3 origin — recorded here so the planner's ruling covers both. `test/bb-lifecycle.test.ts` |
+| The planner's questions route back to the T3 thread | **missing** | A worker's question goes to the task's *planner* thread, and on a BB-executed task that is the BB thread: the test asserts the queued send to the BB planner and zero asks reaching the T3 adapter. A T3 origin gets no worker question. Finding for the planner alongside the dispatch step | 
+| The planner's notices route back to the T3 thread | **met** | The closeout notice reaches the T3 origin thread through its own host adapter (`notify` on the T3 adapter). `test/bb-lifecycle.test.ts` |
 
 #### The trial repository
 
@@ -1395,37 +1405,58 @@ operator's BB.
 
 #### Reload, restart and outage
 
-**`test/bb-lifecycle.test.ts`** drives the real `QueueRuntime` and the real BB adapter over recorded
-BB 0.49.0 rows, and each fault names the same three claims — uncertain, recovered by observation, never
+Two layers of evidence, and they are kept apart on purpose:
+
+- **the runtime layer** is `test/bb-lifecycle.test.ts`: the real `QueueRuntime` and the real BB adapter
+  over BB rows recorded from the isolated server. It proves the lifecycle *rules* under each fault; the
+  hosts on the other side of the adapter are fixtures.
+- **the host layer** is `effigy proof:bb:trial`: the real plugin against an isolated BB 0.49.0 server,
+  proving identity, adoption and no-resend on the host that would be there. It drives host operations
+  and does not execute a Nucleus lifecycle — no task, review or merge runs in it.
+
+**The runtime layer** starts every fault from live work: one queued message plus a bounded poll makes
+BB report the worker's turn as live, one observation pass records it on the task, and only then is the
+host taken away. Each fault then names the same claims — uncertain, recovered by observation, never
 resent, never read as idle:
 
-- **plugin reload mid-task**: the host claim is released before the re-declaration. Four observation
-  passes touch no host read or write at all; the task's phase, agent, `idleSince`, `lastObservedAt` and
-  completion are unchanged. After the re-declaration one pass observes the same run, the recorded
-  `threads.spawn` count stays at one, and the worker's ordinary report still launches the reviewer.
-- **BB restart mid-task**: the worker's turn is live when the server goes away; the outage pass reads
-  nothing and records no observation. A fresh adapter over the same recorded state and rows (the
+- **plugin reload mid-task**: with the worker's turn recorded active, the host claim is released before
+  the re-declaration. Four observation passes touch no host read or write at all; the task's phase,
+  agent, `idleSince`, `lastObservedAt` and completion are unchanged. After the re-declaration one pass
+  observes the same live turn, still active and with no idle stamp, the worker's `threads.spawn` count
+  stays at one, and ending the turn and reporting is accepted on the same run and ticket.
+- **BB restart mid-task**: the same live turn is recorded before the server goes away; the outage pass
+  reads nothing and records no observation. A fresh adapter over the same recorded state and rows (the
   restarted plugin has no memory of its own) resolves the same run workspace, reads the live turn as
   active rather than idle, records the observation, never respawns, and the same run ticket still
   accepts the worker's report.
-- **host outage during observation**: three observation passes and wakes during the outage touch
-  nothing; the lane, its reason, agent, completion, `idleSince` and `lastObservedAt` all stay put. When
-  the host returns the observation is recorded again and the ordinary lifecycle continues.
+- **host outage during observation**: the live turn is recorded first; three observation passes and
+  wakes during the outage touch nothing and the lane, its reason, agent, completion, `idleSince` and
+  `lastObservedAt` all stay put. When the host returns the live turn is read as active again, the
+  observation is recorded, and ending the turn and reporting is accepted.
 
-**`effigy proof:bb:trial`** is the host-level half, against an isolated BB 0.49.0 server with its own
-data directory and port (never the operator's live BB). It mints a task workspace, attaches a planner
-and a live worker thread, and records:
+In all three, the engine then holds the review behind the worker's workspace release (its 60 s grace
+after a live turn ends) — the recorded finding below — so the runtime layer asserts the accepted
+completion and that hold rather than the reviewer launch; the reviewer launch is the ordinary
+lifecycle test's ground.
 
-- `bb plugin reload nucleus` mid-task: a new acceptance for the same identity one second later, the
-  plugin's own counters restarted at zero, the same environment id read back by one observation, zero
-  `threads.spawn` calls on the new connection, and exactly one thread naming the task's worker in the
-  origin walk;
-- a BB server restart mid-task on the same data directory: the same identity and environment, the
-  unmanaged environment still listed at the same path, zero spawns after the restart;
-- `bb plugin disable nucleus` as the outage: the service has no executor for the identity, so an
-  observation is refused as *not sent* (`No host executor is connected for …`), which is never an idle
-  reading; enabling the plugin again reconnects and one observation reads the same thread and
-  environment, with zero spawns.
+**The host layer** mints a task workspace on the isolated server, attaches a planner and a worker
+thread, and before each fault sends one queued message and polls until BB reports the turn as live
+(`starting` or `active`), recording that status in the evidence. It then records:
+
+- `bb plugin reload nucleus` mid-task: the turn is `starting` when the reload lands; a new acceptance
+  for the same identity arrives, the plugin's own counters restart at zero, one observation reads the
+  same environment id back, zero `threads.spawn` calls are made on the new connection, and exactly one
+  thread names the task's worker in the origin walk;
+- a BB server restart mid-task on the same data directory: the turn is `starting` when the server goes
+  away; the same identity and environment come back, the unmanaged environment is still listed at the
+  same path, and zero spawns happen after the restart;
+- `bb plugin disable nucleus` as the outage: the turn is `active` when the executor is unloaded, the
+  service has no executor for the identity, so an observation is refused as *not sent*
+  (`No host executor is connected for …`), which is never an idle reading; enabling the plugin again
+  reconnects and one observation reads the same thread and environment, with zero spawns.
+
+The exact statuses each run recorded are in the proof's step output, because they are BB's answers from
+a live provider turn, not values this document can pin.
 
 #### The fork rebase
 
@@ -1459,20 +1490,27 @@ Tom has not decided whether BB becomes a supported host (planner, 2026-11-17). T
 the call as **pending** and assumes nothing: BB stays an opt-in host per repository beside Paseo and
 T3Code, Paseo stays the primary host (vision.md), and the task's merge hold stands until Tom decides.
 The evidence above is what the decision reads: operator parity is in place on every surface except the
-one end-to-end step the table names, that step's cause is written down, and the trial in Tom's own BB
-is his install to run.
+end-to-end row's two missing steps (dispatch from a T3-only plan, and a worker question reaching the T3
+thread), those causes are written down, the end-to-end lifecycle is proven at the runtime layer and not
+on the isolated server, and the trial in Tom's own BB is his install to run.
 
 **Findings for the planner (not fixed here).**
 
 - A T3-only planner cannot dispatch a task to BB, because BB parents every role thread to a BB planner
-  thread. The parity table's missing step; the ruling is whether a T3-submitted task gets a BB planner
-  thread or the parent link becomes optional.
-- In the fixture, a BB worker observed mid-turn across a restart, whose turn then ends and reports,
-  holds at `needs_attention` with "Completion received; waiting for the worker to release the
-  workspace" beyond the bounded pass budget: the lease-release pass is inside the engine's 60 s grace
-  window and the fixture stops there rather than asserting the reviewer launch. The restart evidence
-  itself is complete; whether a live trial shows the same hold deserves one bounded diagnostic during
-  Tom's trial.
+  thread. One of the parity table's missing steps; the ruling is whether a T3-submitted task gets a BB
+  planner thread or the parent link becomes optional.
+- A worker's question goes to the task's planner thread, so on a BB-executed task it never reaches the
+  T3 origin. The parity table's other missing step; it is the same ruling's other half (what the T3
+  thread is for once BB holds the planner group), or a decision route for asks.
+- **The end-to-end lifecycle is not executed on the isolated server.** It is proven as runtime rules
+  over recorded BB rows; an isolated selector runs host operations, not a task with a worker turn, a
+  review, a merge gate and a closeout. Proving it for real needs an agent turn that reports, which
+  means a provider and a forge, and a merge gate that would create an outward GitHub resource — an
+  operator-authorised run, not a worker's proof. The planner's trial is the route.
+- A worker observed mid-turn whose turn then ends and reports holds at the engine's worker-release grace
+  ("Completion received; waiting for the worker to release the workspace") before the reviewer starts.
+  All three fault tests assert that hold rather than the reviewer launch. Whether a live trial shows it
+  as a visible pause deserves one bounded diagnostic during Tom's trial.
 
 ### The operator install route (landed 2026-11-17)
 

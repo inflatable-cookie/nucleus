@@ -335,7 +335,10 @@ test('BB unknown worker spawn stays uncreated in attention after empty sweeps an
  * origin stays on T3 and the closeout notice returns to that thread. The first
  * dispatch attempt records the finding the amendment asks for: BB parents every role
  * thread to a BB planner thread, so a task with only a T3 planner is refused before
- * any spawn, and the parity table names that step missing.
+ * any spawn, and the parity table names that step missing. The same table names the
+ * other gap this test asserts: a worker's question goes to the task's planner thread,
+ * never to the T3 origin. Everything here runs over recorded BB 0.49.0 rows with
+ * fixture hosts: the dispatch, review and closeout rules, not isolated execution.
  */
 test('BB trial: a T3 planner submits, BB refuses the dispatch without a BB planner thread, then executes end to end and the notice returns to T3', async t => {
  const f = await fixture(t);
@@ -388,7 +391,10 @@ test('BB trial: a T3 planner submits, BB refuses the dispatch without a BB plann
    child.stdin.end(JSON.stringify({ question: 'May the worker extend this task by one budget step?', kind: 'budget', headline: 'Budget extension', choices: ['Extend', 'Finish now'] }));
   });
   await driveUntil(f, () => f.fake.calls.some(call => call.method === 'threads.send' && call.args.threadId === 'thr_planner'), 'the worker ask reached the BB planner thread', taskId, 200);
-  assert.equal(f.t3.asks.length, 0, 'the question goes to the task planner thread, not to the T3 origin');
+  // The parity table's other missing step: a worker question is delivered to the
+  // task's planner thread, which on a BB-executed task is the BB thread, so nothing
+  // reaches the T3 origin thread. The test asserts that gap rather than hiding it.
+  assert.equal(f.t3.asks.length, 0, 'a worker question never reaches the T3 origin; it goes to the task planner thread on BB');
   const askEvent = f.runtime.store.eventsAll(taskId).find(event => event.kind === 'agent_ask');
   assert.ok(askEvent, 'the ask is recorded');
   const askId = askEvent!.detail.split(':')[0]!;
@@ -449,30 +455,71 @@ async function recoverByObservation(f: Fixture, taskId: string): Promise<void> {
  await f.runtime.engine.resolution.observe();
 }
 
-/** The worker's ordinary helper report, then the reviewer that follows it. */
-async function reportWorkerAndReachReview(f: Fixture, taskId: string): Promise<void> {
+/**
+ * The worker's ordinary report after the fault, and the lane's answer to it. The
+ * engine holds the review behind the worker's workspace release (its 60 s grace
+ * after a live turn ends), so this asserts the accepted completion and the lane's
+ * place, never the reviewer launch: the reviewer path is the ordinary lifecycle
+ * tests' work and the recorded finding's.
+ */
+async function reportWorkerAfterFault(f: Fixture, taskId: string): Promise<void> {
  const task = f.runtime.store.task(taskId);
  assert.ok(task.runId, 'the worker run still carries its ticket');
  const head = (await git(task.directory!, 'rev-parse', 'HEAD')).trim();
  const report = await helperReport(f, runTicketPath(f, { id: task.runId }), { status: 'ready_for_review', summary: 'Ready after the fault', prNumber: 7, head });
  assert.equal(report.code, 0, report.err);
- await driveUntil(f, () => Boolean(f.runtime.store.task(taskId).resolution.reviewerAgentId), 'independent reviewer launched after the fault', taskId);
+ for (let i = 0; i < 6; i++) await f.runtime.engine.resolution.observe();
+ const reported = f.runtime.store.task(taskId);
+ assert.ok(reported.completion, 'the faulted host accepted the worker report');
+ assert.equal(reported.agentId, task.agentId, 'the accepted report names the same worker thread');
+ assert.match(reported.reason, /waiting for the worker to release the workspace/, 'the review is held behind the worker release, not behind uncertainty about the host');
 }
 
 const spawnCount = (f: Fixture) => f.fake.calls.filter(c => c.method === 'threads.spawn').length;
+/** Spawns by the role their plugin metadata names: a worker resend and a reviewer launch look different. */
+const roleSpawns = (f: Fixture, role: string) => f.fake.calls.filter(c => c.method === 'threads.spawn'
+  && (c.args.pluginMetadata?.nucleus as { role?: string } | undefined)?.role === role).length;
+/** A live turn keeps its activity stamp current; a frozen row reads as stalled to the engine. */
+const touchWorker = (f: Fixture, workerId: string) => { f.fake.rows.get(workerId).updatedAt = Date.now(); };
+
+/**
+ * The fault must land on live work, not on an idle thread: the fake row is active and
+ * one observation pass records that turn, so the task, the run and the adapter all
+ * agree a worker is mid-task when the next line takes the host away.
+ */
+async function startActiveTurn(f: Fixture, taskId: string, workerId: string): Promise<void> {
+ const row = f.fake.rows.get(workerId);
+ row.status = 'active';
+ row.runtime.displayStatus = 'active';
+ touchWorker(f, workerId);
+ await f.runtime.engine.wakeTask(taskId).catch(() => {});
+ await f.runtime.engine.resolution.observe();
+ const task = f.runtime.store.task(taskId);
+ assert.equal(task.agentActive, true, 'the worker turn is recorded as active before the fault');
+ assert.equal(task.idleSince, null, 'a live turn has no idle stamp before the fault');
+}
+
+/** The worker's turn ends, observed: the ordinary reporting path from here on. */
+async function endActiveTurn(f: Fixture, taskId: string, workerId: string): Promise<void> {
+ const row = f.fake.rows.get(workerId);
+ row.status = 'idle';
+ row.runtime.displayStatus = 'idle';
+ for (let i = 0; i < 2; i++) await f.runtime.engine.wakeTask(taskId).catch(() => {});
+}
 
 test('BB trial: a plugin reload mid-task defers observation and recovers the same run without resending the spawn', async t => {
  const f = await fixture(t);
  try {
   const { taskId, workerId } = await dispatchToWorker(f, 'Reload mid-task');
-  const before = structuredClone(f.runtime.store.task(taskId));
   assert.equal(spawnCount(f), 1, 'one worker thread exists before the reload');
+  await startActiveTurn(f, taskId, workerId);
+  const before = structuredClone(f.runtime.store.task(taskId));
   // A reload releases the old executor connection before the new declaration
   // arrives: the host is offline, by its own record, for that window.
   f.disconnectHost();
   await pause(50);
   const whileOffline = f.fake.calls.length;
-  for (let i = 0; i < 4; i++) { await f.runtime.engine.wakeTask(taskId).catch(() => {}); await f.runtime.engine.resolution.observe(); }
+  for (let i = 0; i < 4; i++) { touchWorker(f, workerId); await f.runtime.engine.wakeTask(taskId).catch(() => {}); await f.runtime.engine.resolution.observe(); }
   assert.equal(f.fake.calls.length, whileOffline, 'no host read or write is attempted while no executor holds the claim');
   const deferred = f.runtime.store.task(taskId);
   assert.equal(deferred.phase, 'working');
@@ -486,10 +533,14 @@ test('BB trial: a plugin reload mid-task defers observation and recovers the sam
   await recoverByObservation(f, taskId);
   assert.equal(spawnCount(f), 1, 'the spawn was not resent after the reload');
   assert.ok(f.fake.calls.slice(whileOffline).some(c => c.method === 'threads.list' || c.method === 'threads.get'), 'the run was recovered by a fresh observation');
-  assert.notEqual(f.runtime.store.task(taskId).lastObservedAt, before.lastObservedAt, 'the recovered observation is recorded');
-  assert.equal(f.runtime.store.task(taskId).completion, null, 'the reload does not invent a completion');
-  await reportWorkerAndReachReview(f, taskId);
-  assert.equal(spawnCount(f), 2, 'exactly one worker thread and one reviewer thread');
+  const recovered = f.runtime.store.task(taskId);
+  assert.notEqual(recovered.lastObservedAt, before.lastObservedAt, 'the recovered observation is recorded');
+  assert.equal(recovered.completion, null, 'the reload does not invent a completion');
+  assert.equal(recovered.agentActive, true, 'the same live turn is read as active after the reload');
+  assert.equal(recovered.idleSince, null, 'the reload never stamps the live turn idle');
+  await endActiveTurn(f, taskId, workerId);
+  await reportWorkerAfterFault(f, taskId);
+  assert.equal(roleSpawns(f, 'worker'), 1, 'the reload never spawned a second worker');
  } finally { await f.close(); }
 });
 
@@ -503,8 +554,7 @@ test('BB trial: a BB restart mid-task keeps the recorded environment and recover
   assert.ok(environmentId, 'the workspace handle recorded its environment before the restart');
   assert.equal(f.fake.rows.get(workerId).environmentId, environmentId);
   // Mid-task: the thread is running its turn when the server goes away.
-  f.fake.rows.get(workerId).status = 'active';
-  f.fake.rows.get(workerId).runtime.displayStatus = 'active';
+  await startActiveTurn(f, taskId, workerId);
   const before = structuredClone(f.runtime.store.task(taskId));
   f.disconnectHost();
   await pause(50);
@@ -527,18 +577,17 @@ test('BB trial: a BB restart mid-task keeps the recorded environment and recover
   assert.notEqual(recovered.lastObservedAt, before.lastObservedAt, 'the recovered observation is recorded');
   // The worker's ordinary report still lands on the same run and ticket, so the
   // restarted host never forced a second spawn or a new ticket.
-  f.fake.rows.get(workerId).status = 'idle';
-  f.fake.rows.get(workerId).runtime.displayStatus = 'idle';
+  await endActiveTurn(f, taskId, workerId);
   const head = (await git(task.directory!, 'rev-parse', 'HEAD')).trim();
   const report = await helperReport(f, runTicketPath(f, { id: task.runId! }), { status: 'ready_for_review', summary: 'Ready after a restart', prNumber: 7, head });
   assert.equal(report.code, 0, report.err);
   assert.equal(f.runtime.store.task(taskId).runId, task.runId, 'the restarted task kept its run ticket');
-  assert.equal(spawnCount(f), 1, 'the accepted report never resends the worker spawn');
+  assert.equal(roleSpawns(f, 'worker'), 1, 'the accepted report never resends the worker spawn');
   // The completion is recorded and the review waits for the worker's lease; the
   // lifecycle from here is the ordinary one the first test drives end to end.
   assert.ok(f.runtime.store.task(taskId).completion, 'the restarted host accepted the worker report');
-  for (let i = 0; i < 3; i++) await f.runtime.engine.resolution.observe(null, taskId);
-  assert.equal(f.runtime.store.task(taskId).phase, 'needs_attention', 'the lane waits for the worker to release, and reads nothing as idle');
+  for (let i = 0; i < 6; i++) await f.runtime.engine.resolution.observe();
+  assert.match(f.runtime.store.task(taskId).reason, /waiting for the worker to release the workspace/, 'the lane holds on the worker release, not on host uncertainty');
  } finally { await f.close(); }
 });
 
@@ -546,12 +595,13 @@ test('BB trial: a host outage during observation leaves the task untouched and o
  const f = await fixture(t);
  try {
   const { taskId, workerId } = await dispatchToWorker(f, 'Outage during observation');
+  await startActiveTurn(f, taskId, workerId);
   const before = structuredClone(f.runtime.store.task(taskId));
   // The outage: the host is gone while the worker is mid-turn.
   f.disconnectHost();
   await pause(50);
   const callsAtOutage = f.fake.calls.length;
-  for (let i = 0; i < 3; i++) { await f.runtime.engine.wakeTask(taskId).catch(() => {}); await f.runtime.engine.resolution.observe(); }
+  for (let i = 0; i < 3; i++) { touchWorker(f, workerId); await f.runtime.engine.wakeTask(taskId).catch(() => {}); await f.runtime.engine.resolution.observe(); }
   assert.equal(f.fake.calls.length, callsAtOutage, 'an observation during the outage reads nothing from the host');
   const during = f.runtime.store.task(taskId);
   assert.equal(during.phase, before.phase, 'the lane stays where it is');
@@ -565,9 +615,13 @@ test('BB trial: a host outage during observation leaves the task untouched and o
   f.reconnectHost();
   await recoverByObservation(f, taskId);
   assert.equal(spawnCount(f), 1, 'the outage never resends the spawn');
-  assert.notEqual(f.runtime.store.task(taskId).lastObservedAt, before.lastObservedAt, 'the host is observed again once it is back');
-  await reportWorkerAndReachReview(f, taskId);
-  assert.equal(spawnCount(f), 2, 'exactly one worker thread and one reviewer thread');
+  const recovered = f.runtime.store.task(taskId);
+  assert.notEqual(recovered.lastObservedAt, before.lastObservedAt, 'the host is observed again once it is back');
+  assert.equal(recovered.agentActive, true, 'the live turn survived the outage and is read as active');
+  assert.equal(recovered.idleSince, null, 'the outage never stamps the live turn idle');
+  await endActiveTurn(f, taskId, workerId);
+  await reportWorkerAfterFault(f, taskId);
+  assert.equal(roleSpawns(f, 'worker'), 1, 'the outage never spawned a second worker');
   assert.equal(f.fake.rows.get(workerId).archivedAt, null, 'the worker thread stays visible for the review');
  } finally { await f.close(); }
 });

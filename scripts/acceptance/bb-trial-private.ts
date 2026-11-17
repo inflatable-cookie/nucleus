@@ -35,6 +35,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { setTimeout as delay } from "node:timers/promises";
 import { QueueService } from "../../service/transport/server";
 import { HostExecutorUnavailableError } from "../../service/host-executor";
 import { readServiceInfo } from "../../service/transport/identity";
@@ -162,10 +163,43 @@ async function main() {
       pluginMetadata: { nucleus: { task: "trial", run: "phase-7", role: "worker" } },
     });
     assert.ok(worker.value.environmentId, "the worker attach recorded its environment");
-    note("mid-task", true, { workerThread: worker.value.threadId, environmentId: worker.value.environmentId, planner: planner.value.threadId });
+    interface Projection { threadId: string; status: string; displayStatus: string; queuedWork: string; environmentId: string | null; updatedAt: number }
+    /** A turn BB reports as live right now: its own status fields, not a queued marker. */
+    const liveTurn = (row: Projection) =>
+      ["starting", "active", "stopping"].includes(row.status)
+      || ["provisioning", "waiting-for-host"].includes(row.displayStatus);
+    /** The adapter's broader "work outstanding" reading, kept for the identity checks. */
+    const activeTurn = (row: Projection) => liveTurn(row) || row.queuedWork === "waiting";
+    /**
+     * Each fault must land on live work. One queued message starts a turn and a
+     * bounded poll waits for BB to report it as starting or active, so the fault is
+     * thrown while the worker is mid-task rather than on an idle thread. A provider
+     * that fails a turn immediately gets another message, up to four attempts.
+     */
+    const midTask = async (label: string): Promise<Projection> => {
+      for (let attempt = 1; attempt <= 4; attempt++) {
+        await send("thread.send", {
+          threadId: worker.value.threadId, messageId: `trial-fault-${label}-${attempt}`,
+          text: "Hold this turn open for the fault proof. Do not run any tools.", mode: "queue",
+        });
+        const deadline = Date.now() + 45_000;
+        while (Date.now() < deadline) {
+          const current = await send<Projection>("thread.observe", { threadId: worker.value.threadId });
+          if (liveTurn(current.value)) return current.value;
+          await delay(300);
+        }
+      }
+      throw new Error(`the worker turn was never live before the ${label} fault`);
+    };
+    const activeBeforeReload = await midTask("reload");
+    note("mid-task", true, {
+      workerThread: worker.value.threadId, environmentId: worker.value.environmentId, planner: planner.value.threadId,
+      activeTurnBeforeReload: { status: activeBeforeReload.status, displayStatus: activeBeforeReload.displayStatus, queuedWork: activeBeforeReload.queuedWork },
+    });
 
     // 5. Fault 1, plugin reload mid-task: a new connection, no resend, same thread.
-    const beforeReload = await send<{ threadId: string; status: string; environmentId: string | null }>("thread.observe", { threadId: worker.value.threadId });
+    const beforeReload = await send<Projection>("thread.observe", { threadId: worker.value.threadId });
+    assert.equal(liveTurn(beforeReload.value), true, "the worker turn is live when the plugin reloads");
     await cli(["plugin", "reload", "nucleus"]);
     const reloaded = await waitFor("the re-declared host-executor connection", async () => {
       const status = service.hostExecutorStatus(hostId);
@@ -173,7 +207,7 @@ async function main() {
     }, 180_000);
     // The reloaded plugin is a new process: its counters start at zero, so a spawn
     // counter of zero after the observation is the proof nothing was resent.
-    const afterReload = await send<{ threadId: string; status: string; environmentId: string | null }>("thread.observe", { threadId: worker.value.threadId });
+    const afterReload = await send<Projection>("thread.observe", { threadId: worker.value.threadId });
     assert.equal(afterReload.value.environmentId, worker.value.environmentId, "the reload kept the same environment");
     assert.equal(afterReload.value.threadId, worker.value.threadId);
     assert.equal(afterReload.calls["threads.spawn"] ?? 0, 0, "the reloaded plugin spawned nothing");
@@ -183,9 +217,12 @@ async function main() {
       previousConnectedAt: first.connectedAt, reconnectedAt: reloaded.connectedAt,
       environmentBefore: beforeReload.value.environmentId, environmentAfter: afterReload.value.environmentId,
       spawnsOnTheNewConnection: afterReload.calls["threads.spawn"] ?? 0, workerThreads: 1, status: afterReload.value.status,
+      activeWorkerBeforeFault: { status: beforeReload.value.status, displayStatus: beforeReload.value.displayStatus, queuedWork: beforeReload.value.queuedWork },
     });
 
     // 6. Fault 2, BB restart mid-task: same data directory, environment and thread.
+    const activeBeforeRestart = await midTask("restart");
+    assert.equal(liveTurn(activeBeforeRestart), true, "the worker turn is live when the server restarts");
     await stopProcess(server);
     server = null;
     await waitFor("the isolated server to go away", async () => (await portOpen(serverPort)) ? null : true, 60_000);
@@ -197,7 +234,7 @@ async function main() {
       const status = service.hostExecutorStatus(hostId);
       return status && status.connectedAt !== reloaded.connectedAt ? status : null;
     }, 240_000);
-    const afterRestart = await send<{ threadId: string; status: string; environmentId: string | null }>("thread.observe", { threadId: worker.value.threadId });
+    const afterRestart = await send<Projection>("thread.observe", { threadId: worker.value.threadId });
     assert.equal(afterRestart.value.environmentId, worker.value.environmentId, "the restart kept the same environment");
     assert.equal(afterRestart.calls["threads.spawn"] ?? 0, 0, "the restarted plugin spawned nothing");
     const environments = await send<{ environments: Array<{ environmentId: string; path: string; managed: boolean }> }>("environment.list", {});
@@ -207,10 +244,13 @@ async function main() {
     note("bb-restart-mid-task", true, {
       reconnectedAt: restarted.connectedAt, environmentId: afterRestart.value.environmentId,
       spawnsAfterRestart: afterRestart.calls["threads.spawn"] ?? 0, environmentStillListed: true, status: afterRestart.value.status,
+      activeWorkerBeforeFault: { status: activeBeforeRestart.status, displayStatus: activeBeforeRestart.displayStatus, queuedWork: activeBeforeRestart.queuedWork },
     });
 
     // 7. Fault 3, a host outage during observation. BB stays up; its executor is
     //    unloaded, which is the outage an observation must not read as idle.
+    const activeBeforeOutage = await midTask("outage");
+    assert.equal(liveTurn(activeBeforeOutage), true, "the worker turn is live when the executor goes away");
     await cli(["plugin", "disable", "nucleus"]);
     await waitFor("the executor connection to go away", async () => service.hostExecutorStatus(hostId) ? null : true, 180_000);
     let outageRefusal = "";
@@ -220,13 +260,16 @@ async function main() {
       outageRefusal = error instanceof HostExecutorUnavailableError ? `${error.name}: ${error.message}` : `${(error as Error).name}: ${(error as Error).message}`;
     }
     assert.match(outageRefusal, /No host executor is connected/, "an observation during the outage is refused as not sent, never answered as idle");
-    note("host-outage-during-observation", true, { refusedAs: outageRefusal, bbServerStayedUp: true, observationSent: false });
+    note("host-outage-during-observation", true, {
+      refusedAs: outageRefusal, bbServerStayedUp: true, observationSent: false,
+      activeWorkerBeforeFault: { status: activeBeforeOutage.status, displayStatus: activeBeforeOutage.displayStatus, queuedWork: activeBeforeOutage.queuedWork },
+    });
     await cli(["plugin", "enable", "nucleus"]);
     const back = await waitFor("the re-enabled plugin's host-executor connection", async () => {
       const status = service.hostExecutorStatus(hostId);
       return status && status.connectedAt !== restarted.connectedAt ? status : null;
     }, 240_000);
-    const afterOutage = await send<{ threadId: string; status: string; environmentId: string | null }>("thread.observe", { threadId: worker.value.threadId });
+    const afterOutage = await send<Projection>("thread.observe", { threadId: worker.value.threadId });
     assert.equal(afterOutage.value.environmentId, worker.value.environmentId, "the outage left the same environment to observe");
     assert.equal(afterOutage.calls["threads.spawn"] ?? 0, 0, "recovery by observation spawned nothing");
     note("outage-recovered-by-observation", true, { reconnectedAt: back.connectedAt, environmentId: afterOutage.value.environmentId, spawnsOnRecovery: afterOutage.calls["threads.spawn"] ?? 0 });
