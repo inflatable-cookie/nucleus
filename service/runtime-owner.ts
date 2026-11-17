@@ -1367,18 +1367,19 @@ export class QueueRuntime {
     const hosts = this.hostRegistry.onlineIds().filter(id => hostKindOf(id) === input.hostKind);
     let hostId: string;
     if (input.hostKind === 't3code') {
-      if (!input.hostScope) throw new Error('T3Code caller identity has no registered host scope');
-      // T3 exposes its environment scope; Nucleus registers that environment as
-      // t3code:<scope>. Accept the already-qualified spelling for callers whose
-      // host context supplies the full registered ID.
-      const registeredScope = input.hostScope.startsWith('t3code:') ? input.hostScope : `t3code:${input.hostScope}`;
-      if (!hosts.includes(registeredScope)) throw new Error(`T3Code host scope ${input.hostScope} is not registered and online`);
-      hostId = registeredScope;
-      let observation;
-      try { observation = await this.engine.withHost(hostId, () => this.engine.host.observe(input.nativeAgentId)); }
-      catch { throw new Error(`T3Code thread ${input.nativeAgentId} could not be verified on registered host ${hostId}`); }
-      if (!observation || observation.id !== input.nativeAgentId || observation.status === 'gone')
-        throw new Error(`T3Code thread ${input.nativeAgentId} could not be verified on registered host ${hostId}`);
+      const owners: string[] = [];
+      for (const candidate of hosts) {
+        try {
+          const observation = await this.engine.withHost(candidate, () => this.engine.host.observe(input.nativeAgentId));
+          if (observation?.id === input.nativeAgentId && observation.status !== 'gone') owners.push(candidate);
+        } catch { /* A host that cannot verify this thread is not an owner. */ }
+      }
+      if (owners.length !== 1) {
+        const online = hosts.length ? hosts.join(', ') : '(none)';
+        const reason = owners.length > 1 ? 'is ambiguous' : 'is not owned by any online host';
+        throw new Error(`T3Code thread ${input.nativeAgentId} ${reason}; online T3 hosts: ${online}`);
+      }
+      hostId = owners[0]!;
     } else {
       if (hosts.length !== 1) throw new Error(`Calling host identity is unavailable or ambiguous for ${input.hostKind}`);
       hostId = hosts[0]!;
