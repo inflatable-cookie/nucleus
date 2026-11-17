@@ -334,11 +334,18 @@ test('a deletedAt tombstone in the inventory counts as deleted for a child and f
   server.threads.get(child.id)!.thread.deletedAt = STAMP;
   await host.reconcileThreadTitles([{ id: 'synthetic-task', phase: 'working' } as Task]);
   assert.deepEqual(acp.released.map(entry => entry.sessionId), [parent.sessionId], 'a tombstone child does not hold the turn');
+  // The shape proves itself: the shell the adapter just read listed the removed child
+  // as a row, not by omission, so this case exercises the tombstone path and cannot
+  // pass through absence (nucleus#1305 review).
+  assert.ok(server.shells.some(snapshot => snapshot.threads.includes(child.id) || snapshot.archivedThreads.includes(child.id)),
+    'the fake served the removed child as a tombstone row');
 
   // The parent itself as a tombstone: the next role falls back instead of sending to it.
   server.threads.get(parent.threadId)!.thread.deletedAt = STAMP;
   const sentBefore = server.commands.length;
   const reviewer = await host.createAgent(spec('review-run', 'Review it', 'reviewer'));
+  assert.ok(server.shells.some(snapshot => snapshot.threads.includes(parent.threadId)),
+    'the fake served the removed parent as a tombstone row');
   assert.equal(commandsOf(server, 'orchestration.launchThread').at(-1)!.threadId, reviewer.id);
   assert.equal(server.commands.slice(sentBefore).some(command => command.threadId === parent.threadId), false,
     'nothing is sent to a tombstoned parent');

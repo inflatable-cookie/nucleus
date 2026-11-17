@@ -169,6 +169,8 @@ export async function t3Fake(t: TestContext, directory: string) {
   const commands: Value[] = [];
   /** Every thread snapshot this fake served: what the client asked for and what it got. */
   const snapshots: Value[] = [];
+  /** The rows of every shell snapshot served, so a test can prove which shape it exercised. */
+  const shells: Array<{ threads: string[]; archivedThreads: string[] }> = [];
   const projectRows: Value[] = [{ id: 'synthetic-project', title: 'Synthetic project', workspaceRoot: directory }];
   const archivedProjects = new Set<string>();
   const threads = new Map<string, Value>([['synthetic-probe', threadProjection('synthetic-probe', directory)]]);
@@ -390,16 +392,21 @@ export async function t3Fake(t: TestContext, directory: string) {
           });
         }
         case 'orchestration.subscribeShell': {
-          const active = [...threads.values()].filter(p => !p.thread.archivedAt && !p.thread.deletedAt).map(shell);
-          // A removed thread is in no list: the nightly's own shell reads filter
-          // `deleted_at IS NULL`, so absence is the positive answer there.
-          const archived = [...threads.values()].filter(p => p.thread.archivedAt && !p.thread.deletedAt).map(shell);
+          // A removed thread is normally in no list: the nightly's own shell reads
+          // filter `deleted_at IS NULL`, so absence is the positive answer there. A
+          // nightly that keeps the tombstone is modelled by `controls.shellTombstones`.
+          const listed = (p: Value, archived: boolean) =>
+            (archived ? Boolean(p.thread.archivedAt) : !p.thread.archivedAt) && (!p.thread.deletedAt || controls.shellTombstones);
+          const active = [...threads.values()].filter(p => listed(p, false)).map(shell);
+          const archived = [...threads.values()].filter(p => listed(p, true)).map(shell);
+          shells.push({ threads: active.map(row => row.id), archivedThreads: archived.map(row => row.id) });
           return stream([{ kind: 'snapshot', snapshot: { schemaVersion: 1, snapshotSequence: controls.snapshotSequence, projects: projects(), threads: active, archivedThreads: archived } },
             ...(controls.enrichment ? [{ kind: 'snapshot', resolvedRepositoryIdentityRoots: [directory], snapshot: { threads: [], archivedThreads: [] } }] : []), ...marker()]);
         }
         case 'orchestration.getArchivedShellSnapshot':
           controls.beforeArchiveRead();
-          return success({ schemaVersion: 1, snapshotSequence: controls.snapshotSequence, projects: projects(), threads: [...threads.values()].filter(p => p.thread.archivedAt && !p.thread.deletedAt).map(shell) });
+          return success({ schemaVersion: 1, snapshotSequence: controls.snapshotSequence, projects: projects(),
+            threads: [...threads.values()].filter(p => p.thread.archivedAt && (!p.thread.deletedAt || controls.shellTombstones)).map(shell) });
         case 'orchestration.subscribeThread': {
           for (const field of Object.keys(payload))
             assert.ok(contract.subscribeThread.input.includes(field), `subscribeThread.${field} is not a recorded input field`);
@@ -672,5 +679,5 @@ export async function t3Fake(t: TestContext, directory: string) {
   const injectRaw = (text: string) => { for (const write of injectors) write(text); };
   const fullSnapshotBytes = (threadId: string) => Buffer.byteLength(JSON.stringify({ _tag: 'Chunk', requestId: 'synthetic-request',
     values: [{ kind: 'snapshot', snapshotSequence: controls.snapshotSequence, projection: wireProjection(threads.get(threadId)!) }] }));
-  return { endpoint: `http://127.0.0.1:${address.port}`, controls, threads, commands, requests, snapshots, controlFrames, frameBytes, fullSnapshotBytes, get upgrades() { return upgrades; }, get closes() { return closes; }, projects: projectRows, dropSockets, inject, injectRaw };
+  return { endpoint: `http://127.0.0.1:${address.port}`, controls, threads, commands, requests, snapshots, shells, controlFrames, frameBytes, fullSnapshotBytes, get upgrades() { return upgrades; }, get closes() { return closes; }, projects: projectRows, dropSockets, inject, injectRaw };
 }
