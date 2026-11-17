@@ -111,6 +111,17 @@ function syntheticPlugin(directory: string, id: string, display: string): void {
   );
 }
 
+/** The Nucleus refusal a failed CLI call printed, for the evidence line. */
+function lastLine(message: string | null): string | null {
+  if (!message) return null;
+  const lines = message
+    .trim()
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines[lines.length - 1]?.slice(0, 300) ?? null;
+}
+
 /** Every regular file in a plugin directory, with its SHA-256: the byte-identity proof. */
 function directoryDigest(directory: string): Record<string, string> {
   const files: Record<string, string> = {};
@@ -623,8 +634,8 @@ async function main() {
     const afterNamesake = (await nucleus(["status"])) as { state: string };
     assert.equal(afterNamesake.state, "not-installed");
     note("namesake-refused", true, {
-      install: refusedInstall?.slice(0, 160),
-      uninstall: refusedUninstall?.slice(0, 160),
+      install: lastLine(refusedInstall),
+      uninstall: lastLine(refusedUninstall),
     });
 
     // 8. an unrelated plugin directory is never handed to BB's install, whether it is
@@ -643,15 +654,15 @@ async function main() {
       plugins: Array<{ id: string }>;
     };
     assert.ok(
-      stillThere.plugins.some((row) => row.id === PLUGIN_ID),
-      "no Nucleus plugin was installed by the refusal",
+      !stillThere.plugins.some((row) => row.id === PLUGIN_ID),
+      "the refused install left no plugin with ID nucleus installed",
     );
     assert.deepEqual(
       await otherPlugins(),
       baseline,
       "the refused installs changed no other plugin",
     );
-    note("unrelated-refused", true, { detail: unrelated.slice(0, 160) });
+    note("unrelated-refused", true, { detail: lastLine(unrelated) });
 
     writeFileSync(
       join(proofRoot, "evidence.json"),
