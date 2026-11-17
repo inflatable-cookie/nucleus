@@ -21,6 +21,7 @@ import { HOST_RUN_RETAINED_OUTPUT_BYTES } from "../../core/host-runs/host-run-en
 import { HOST_RUN_CPU_COVERAGE_FILE, hostRunCpuCoverageSidecar } from "../../core/host-runs/host-run-cpu-coverage";
 import { openHostRunRetainedOutput } from "../../core/host-runs/host-run-retained-output";
 import { executeHookProgram, type DirectChildWait, type ExecutionOutcome } from "../../core/machine/process-exec";
+import { qualificationProcessIdentity } from "../../core/host-runs/qualification-binding";
 import { ProcessTreeCpuSampler } from "../../core/machine/process-tree-cpu";
 /**
  * Detached supervisor for contract 010 client-protocol runs (Spec 035 part 3).
@@ -100,6 +101,16 @@ class SupervisorState {
  * before its first write or spawn (brief amendment, 2026-11-16): the mode is
  * inaccessible, and authentication alone never starts a real proof.
  */
+/**
+ * Spec 064 P1/P2: the process-start identity this plan's direct command inherits.
+ * A qualification plan derives it from the immutable subject, so the marker the
+ * binding's environment digest covers is exactly the one the command receives; an
+ * ordinary plan keeps a fresh random identity.
+ */
+export function supervisorSpawnIdentity(plan: Pick<HostRunSupervisorPlan, "qualification">): string {
+  return plan.qualification ? qualificationProcessIdentity(plan.qualification.subject) : randomUUID();
+}
+
 export interface HostRunSupervisorHooks {
   /** Spec 064 P2: the supervisor's own direct-command exit observation, as it is made. */
   onDirectChildWait?: (wait: DirectChildWait) => void;
@@ -117,8 +128,9 @@ export async function runHostRunSupervisorMain(argv: string[] = process.argv.sli
   const state = new SupervisorState(plan, new Date().toISOString());
   const output = openHostRunRetainedOutput(plan.stateDir, plan.runId, HOST_RUN_RETAINED_OUTPUT_BYTES, launchEnv.HOST_RUN_TOKEN);
   // A private identity marker inherited by the command and every descendant, so
-  // the process owner can inventory an escaped `setsid` descendant.
-  const identity = randomUUID();
+  // the process owner can inventory an escaped `setsid` descendant. A
+  // qualification plan's marker is the subject-derived one its binding digested.
+  const identity = supervisorSpawnIdentity(plan);
   const cpu = new ProcessTreeCpuSampler(identity, HOST_RUN_CPU_SAMPLE_MS);
   const recordedFaults = new Set<string>();
   let cancelRecorded = false;

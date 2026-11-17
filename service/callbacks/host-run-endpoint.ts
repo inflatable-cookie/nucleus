@@ -65,7 +65,7 @@ import {
   type QualificationSubjectResolve,
 } from "../../core/host-runs/qualification-subject";
 import type { QualificationBinding } from "../../shared/schema/review/proof";
-import { qualificationEnvironmentDigest } from "../../core/host-runs/qualification-binding";
+import { qualificationLaunchRefusal } from "../../core/host-runs/qualification-binding";
 import {
   listSubmissionRunIds,
   readStoredSubmission,
@@ -581,16 +581,20 @@ export class HostRunEndpoint {
     const hostRunId = submissionRunId(parsed.data.credential.runId, parsed.data.submission.clientRequestId);
     // Spec 064 P1: the per-launch secret enters the environment digest, but it is
     // minted only when the resolver has authenticated the executor run and every
-    // subject rule holds — an unauthenticated or mismatched submit performs no key
-    // work and writes nothing. Its expiry covers the reservation-plus-run window,
-    // and the launch re-mints the same value from the recorded expiry.
+    // subject rule holds, and it is signed with a key this endpoint already holds.
+    // The qualification path never synchronizes or writes a token key — a refused
+    // mode must have no effect at all — so an endpoint with no key for this epoch
+    // refuses the resolution instead of creating one. Its expiry covers the
+    // reservation-plus-run window, and the launch re-mints the same value from the
+    // recorded expiry.
     const mintToken = () => {
-      this.syncTokenKeys();
+      const held = this.keys && this.keys.current.epoch === epoch ? this.keys : readHostRunTokenKeys(this.stateDir);
+      if (!held || held.current.epoch !== epoch) return null;
       const expiresAt = this.nowMs() + parsed.data.submission.capacityDeadlineMs + parsed.data.submission.runTimeoutMs + this.tokenGraceMs;
       const value = signRunToken({
         runId: hostRunId, epoch, class: parsed.data.submission.class,
         root: realpathSync(parsed.data.submission.cwd), exp: expiresAt,
-      }, this.keys!.current.keyB64);
+      }, held.current.keyB64);
       return { value, expiresAt };
     };
     const resolved = await resolve({
@@ -682,14 +686,15 @@ export class HostRunEndpoint {
     const qualification = stored.body.qualification ?? null;
     const token = this.tokenForRun(launched, stored);
     const launchEnv = hostRunLaunchEnvironment(listedEnv, { runId: launched.id, token, env: this.env });
-    // Spec 064 P1: the complete effective environment values are re-read here,
-    // before any effect, and must be exactly the values the submit resolved. A
-    // changed PATH/HOME, a different host run id or a different secret (a rolled
-    // service with another key) is a different execution and refuses the launch.
-    if (qualification?.execution) {
-      if (qualificationEnvironmentDigest(launchEnv) !== qualification.execution.environmentDigest
-        || Object.keys(launchEnv).sort().join("\u0000") !== qualification.execution.environmentKeys.join("\u0000")) {
-        this.scheduler.rejectBeforeLaunch(launched.id, `The effective environment values no longer match the qualification binding's digest for ${launched.id}; the launch is refused before any effect`);
+    // Spec 064 P1: the complete effective environment values — including the
+    // subject-derived process marker this launch will hand to the spawn — are
+    // re-read here, before any effect, through the binding's one owner. A changed
+    // PATH/HOME, a different host run id, a different secret or a missing marker is
+    // a different execution and refuses the launch.
+    if (qualification) {
+      const refusal = qualificationLaunchRefusal(launchEnv, qualification);
+      if (refusal) {
+        this.scheduler.rejectBeforeLaunch(launched.id, `${refusal} for ${launched.id}; the launch is refused before any effect`);
         return;
       }
     }

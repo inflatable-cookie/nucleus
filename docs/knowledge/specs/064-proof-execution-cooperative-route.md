@@ -53,7 +53,10 @@ behaviour is unchanged.
   records none of it. It is carried by `runSchema.proofExecution` from
   `runIntent`, is recordable in `hostRunSupervisorPlanSchema`, and is resolved by
   the endpoint's private `submitQualification` from the executor run's own
-  credential — never from a host-run token or a client-supplied caller.
+  credential — never from a host-run token or a client-supplied caller. The
+  launch re-checks the binding's complete effective environment, marker included,
+  before it writes the plan, and the supervisor inherits the subject-derived
+  marker; no qualification path writes a token key.
   `verifyProofSource` is rechecked before the submit and again before acceptance
   (`core/intake/callback-intake.ts`).
 - **P2** — `spawnDetachedSupervisor` has an opt-in retained-child return, so the

@@ -16,6 +16,7 @@ import { verifyProofSource } from "../qa/proof-source";
 import { ProofExecutionRefusal } from "../qa/proof-refusal";
 import type { QualificationBinding, QualificationSubject } from "../../shared/schema/review/proof";
 import {
+  QUALIFICATION_FOUNDATION_INCOMPLETE,
   qualificationEnvironmentDigest, qualificationProcessIdentityEnvironment, qualificationSubjectDigest,
 } from "./qualification-binding";
 
@@ -43,7 +44,7 @@ export interface QualificationSubmitInput {
    * binding covers every effective value the command receives; only the expiry is
    * recorded, never the value.
    */
-  mintToken: () => { value: string; expiresAt: number };
+  mintToken: () => { value: string; expiresAt: number } | null;
 }
 
 export interface QualificationSubjectPorts {
@@ -156,6 +157,9 @@ export function qualificationSubjectResolver(ports: QualificationSubjectPorts) {
     // is recorded; its value lives inside the digest. The secret is minted here,
     // after authentication, so a refused submit never touches the token keys.
     const token = mintToken();
+    if (!token)
+      return refused("not_permitted",
+        `${QUALIFICATION_FOUNDATION_INCOMPLETE}: this endpoint holds no host-run token key for epoch ${hostRun.epoch}, so the execution identity cannot be bound; nothing was written and no key was created`);
     const effective = {
       ...hostRunLaunchEnvironment(submission.env, { runId: hostRun.id, token: token.value, env: environment }),
       ...qualificationProcessIdentityEnvironment(subject),

@@ -24,7 +24,8 @@ import { randomUUID } from "node:crypto";
 import { runSchema, type Run } from "../shared/schema/runs";
 import { submissionSchema } from "../shared/contracts";
 import {
-  qualificationEnvironmentDigest, qualificationProcessIdentity, qualificationSubjectDigest,
+  qualificationEnvironmentDigest, qualificationLaunchRefusal, qualificationProcessIdentity,
+  qualificationSubjectDigest,
 } from "../core/host-runs/qualification-binding";
 import { PROCESS_START_IDENTITY_ENV } from "../core/machine/process-identity-search";
 import { Store } from "../core/store/store";
@@ -45,7 +46,7 @@ import {
 } from "../service/callbacks/host-run-endpoint";
 import { proofExecutionRecord } from "../core/qa/proof-records";
 import { proofExecutionRequestSchema } from "../shared/schema/review/proof";
-import { runHostRunSupervisorMain } from "../service/executor/host-run-supervisor";
+import { runHostRunSupervisorMain, supervisorSpawnIdentity } from "../service/executor/host-run-supervisor";
 import { executeHookProgram } from "../core/machine/process-exec";
 import { hostRunProcessStartIdentity } from "../core/machine/start-identity";
 
@@ -255,6 +256,25 @@ test("an authenticated, matched submit resolves the full binding including the e
     "the spawn marker is derived from the immutable subject, not chosen at spawn");
   assert.equal(execution.environmentDigest, qualificationEnvironmentDigest(effective),
     "the environment-value digest covers the full effective environment, including the per-launch secret and the start marker");
+  // The launch owner re-checks the same environment, marker included, and refuses
+  // any drift before the plan or the spawn exists.
+  assert.equal(qualificationLaunchRefusal(
+    hostRunLaunchEnvironment(body.env, { runId: execution.hostRunId, token: launchToken, env: process.env }), binding),
+  null, "the launch accepts the resolved environment with the subject-derived marker");
+  assert.match(String(qualificationLaunchRefusal(
+    { ...hostRunLaunchEnvironment(body.env, { runId: execution.hostRunId, token: launchToken, env: process.env }), PATH: "/elsewhere" }, binding)),
+  /values no longer match/);
+  // The launch's own environment alone is not the bound execution: only the
+  // subject-derived marker the spawn inherits completes it, so the wiring from
+  // binding to spawn is what makes the digest true.
+  assert.notEqual(
+    qualificationEnvironmentDigest(hostRunLaunchEnvironment(body.env, { runId: execution.hostRunId, token: launchToken, env: process.env })),
+    execution.environmentDigest,
+    "the launch environment without the subject-derived marker is not the bound execution");
+  // The spawn identity is the bound marker, not fresh entropy.
+  const planIdentity = supervisorSpawnIdentity({ qualification: binding });
+  assert.equal(planIdentity, qualificationProcessIdentity(binding.subject));
+  assert.notEqual(supervisorSpawnIdentity({}), planIdentity, "an ordinary plan keeps a fresh random identity");
   assert.ok(execution.tokenExpiresAt > Date.now(), "the secret's expiry is recorded, never its value");
   assert.equal(execution.hostEpoch, f.scheduler.authority().epoch);
 
@@ -272,6 +292,12 @@ test("an authenticated, matched submit resolves the full binding including the e
   // before any write or spawn.
   assert.equal(outcome.code, "not_permitted");
   assert.ok(outcome.refusal.startsWith(QUALIFICATION_FOUNDATION_INCOMPLETE), outcome.refusal);
+  const keyBefore = readFileSync(join(f.stateDir, "token.key"), "utf8");
+  const again = await f.endpoint.submitQualification({
+    credential: { taskId: f.task.id, runId: f.executor.id, token: f.token }, submission: body,
+  });
+  assert.ok(again.binding?.execution);
+  assert.equal(readFileSync(join(f.stateDir, "token.key"), "utf8"), keyBefore, "a qualification resolve never rewrites the token key");
   assert.equal(f.scheduler.get(execution.hostRunId), null, "no run row was submitted");
   assert.equal(hostRunDirExists(f.stateDir, execution.hostRunId), false, "no submission or plan was written");
   assert.equal(f.spawnCount(), 0, "no supervisor was spawned");
@@ -448,13 +474,17 @@ test("a refused qualification submit performs no token-key work before authentic
   assert.equal(mismatched.binding, null);
   assert.equal(existsSync(keyPath), false, "a mismatched subject wrote no token key");
 
-  // Only the authenticated, matched resolve mints: the key appears exactly then.
+  // An authenticated, matched submit still writes nothing: without a key it holds,
+  // the endpoint refuses the execution identity instead of creating one. The mode
+  // refusal must have no effect at all.
   const resolved = await fresh.submitQualification({
     credential: { taskId: f.task.id, runId: f.executor.id, token: f.token },
     submission: submitBody(f.executor.id, { cwd: f.checkout }),
   });
-  assert.ok(resolved.binding?.execution);
-  assert.equal(existsSync(keyPath), true, "the authenticated resolve minted the per-launch secret's key");
+  assert.equal(resolved.binding, null);
+  assert.match(resolved.refusal, /^qualification foundation incomplete:/);
+  assert.match(resolved.refusal, /no host-run token key/);
+  assert.equal(existsSync(keyPath), false, "an authenticated foundation refusal wrote no token key");
   assert.equal(f.spawnCount(), 0);
 });
 

@@ -27,6 +27,7 @@ Qualification mode stays opt-in and inaccessible: until the later tranches land
 their named missing-input refusal, every mode entry refuses before any effect with
 `qualification foundation incomplete` — a declared opt-in is refused at proof
 activation and at the dispatch funnel before an executor run exists, a submit
-performs no token-key work before it authenticates, and the supervisor refuses a
-qualification plan before its first write — and no qualification proof runs.
+performs no token-key work at all (it signs only with a key the endpoint already
+holds), and the supervisor refuses a qualification plan before its first write —
+and no qualification proof runs.
 Ordinary host runs, QA and proof executions keep their existing behaviour.

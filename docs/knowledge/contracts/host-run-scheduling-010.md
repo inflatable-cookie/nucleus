@@ -118,12 +118,17 @@ bytes, so nothing here is a rollback break.
   environment values** — every value the command receives, built by the same
   environment owner the launcher uses, so the one per-launch secret is inside the
   digest while only its expiry is recorded, and the process-start marker is
-  derived from the immutable subject rather than chosen at spawn. With the field
-  absent every existing behaviour is unchanged: qualification mode is opt-in at
-  the proof declaration (`queue.proofExecution.qualification: true`), an ordinary
-  proof execution records no qualification binding at all, and a declared opt-in
-  is refused by the proof-activation table and the dispatch funnel before any
-  executor run exists.
+  derived from the immutable subject rather than chosen at spawn. The launch
+  re-checks that complete effective environment — marker included, supplied by
+  the same owner — before it writes the plan or spawns, and the supervisor
+  inherits the subject-derived marker instead of a fresh random one. No
+  qualification path writes a token key: the resolution signs with a key the
+  endpoint already holds, and an endpoint with no key for the epoch refuses the
+  resolution instead of creating one. With the field absent every existing
+  behaviour is unchanged: qualification mode is opt-in at the proof declaration
+  (`queue.proofExecution.qualification: true`), an ordinary proof execution
+  records no qualification binding at all, and a declared opt-in is refused by the
+  proof-activation table and the dispatch funnel before any executor run exists.
 - A plan carrying either field is refused by the supervisor before its first
   write or spawn while Spec 064 P4–P7 are unimplemented: `qualification
   foundation incomplete`. The endpoint's private `submitQualification` method

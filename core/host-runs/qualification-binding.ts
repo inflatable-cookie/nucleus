@@ -9,7 +9,7 @@
  */
 import { createHash } from "node:crypto";
 import { PROCESS_START_IDENTITY_ENV } from "../machine/process-identity-search";
-import type { QualificationExecution, QualificationSubject } from "../../shared/schema/review/proof";
+import type { QualificationBinding, QualificationExecution, QualificationSubject } from "../../shared/schema/review/proof";
 
 /**
  * The refusal every qualification mode entry shares until the later tranches
@@ -65,6 +65,23 @@ export function qualificationSubjectDigest(subject: QualificationSubject): strin
 /** The execution's canonical digest, or null while no command is bound. */
 export function qualificationExecutionDigest(execution: QualificationExecution | null | undefined): string | null {
   return execution ? qualificationDigest(execution) : null;
+}
+
+/**
+ * Spec 064 P1: whether a launch's environment is still the execution the
+ * qualification binding resolved. The launch owner builds the map with the same
+ * environment owner the resolver used and adds the subject-derived start marker
+ * beside it, so a missing marker, a changed value or a different key set is
+ * refused before the plan is written or the supervisor is spawned.
+ */
+export function qualificationLaunchRefusal(launchEnv: Record<string, string>, binding: QualificationBinding): string | null {
+  if (!binding.execution) return "The qualification binding names no execution; the launch is refused";
+  const effective = { ...launchEnv, ...qualificationProcessIdentityEnvironment(binding.subject) };
+  if (Object.keys(effective).sort().join("\u0000") !== binding.execution.environmentKeys.join("\u0000"))
+    return "The effective environment keys no longer match the qualification binding";
+  if (qualificationEnvironmentDigest(effective) !== binding.execution.environmentDigest)
+    return "The effective environment values no longer match the qualification binding's digest";
+  return null;
 }
 
 /**
