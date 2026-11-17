@@ -121,10 +121,10 @@ function parseArgs(argv: string[]): Args {
   return args;
 }
 
-interface BbInstall { cli: string; serverLauncher: string; daemonLauncher: string }
+export interface BbInstall { cli: string; serverLauncher: string; daemonLauncher: string }
 
 /** Find the installed BB from its own command shim; report every path tried when it is absent. */
-function findBb(override: string | null): { install: BbInstall } | { install: null; tried: string[] } {
+export function findBb(override: string | null): { install: BbInstall } | { install: null; tried: string[] } {
   const tried: string[] = [];
   const home = homedir();
   const shim = override ?? [
@@ -154,7 +154,7 @@ function findBb(override: string | null): { install: BbInstall } | { install: nu
   return { install: { cli: shim, serverLauncher, daemonLauncher } };
 }
 
-async function freePort(): Promise<number> {
+export async function freePort(): Promise<number> {
   return await new Promise((resolvePort, reject) => {
     const server = createServer();
     server.on("error", reject);
@@ -165,7 +165,7 @@ async function freePort(): Promise<number> {
   });
 }
 
-async function portOpen(port: number): Promise<boolean> {
+export async function portOpen(port: number): Promise<boolean> {
   return await new Promise(resolveOpen => {
     const socket = connect({ host: "127.0.0.1", port });
     socket.setTimeout(500, () => { socket.destroy(); resolveOpen(false); });
@@ -174,7 +174,7 @@ async function portOpen(port: number): Promise<boolean> {
   });
 }
 
-async function waitFor<T>(what: string, probe: () => Promise<T | null>, timeoutMs: number): Promise<T> {
+export async function waitFor<T>(what: string, probe: () => Promise<T | null>, timeoutMs: number): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown = null;
   while (Date.now() < deadline) {
@@ -187,9 +187,9 @@ async function waitFor<T>(what: string, probe: () => Promise<T | null>, timeoutM
   throw new Error(`${what} did not happen within ${timeoutMs} ms${lastError ? `: ${lastError instanceof Error ? lastError.message : String(lastError)}` : ""}`);
 }
 
-interface Child { child: ChildProcess; label: string }
+export interface Child { child: ChildProcess; label: string }
 
-function startProcess(label: string, command: string, argv: string[], env: NodeJS.ProcessEnv, logPath: string): Child {
+export function startProcess(label: string, command: string, argv: string[], env: NodeJS.ProcessEnv, logPath: string): Child {
   const log = openSync(logPath, "a");
   // Detached so this file owns the process group it created: teardown signals that
   // group and nothing else, never a pattern.
@@ -199,7 +199,7 @@ function startProcess(label: string, command: string, argv: string[], env: NodeJ
 }
 
 /** Stop a process this file started, and its own process group. */
-async function stopProcess(entry: Child | null): Promise<void> {
+export async function stopProcess(entry: Child | null): Promise<void> {
   if (!entry) return;
   const pid = entry.child.pid;
   if (pid === undefined) return;

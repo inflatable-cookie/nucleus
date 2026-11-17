@@ -22,3 +22,26 @@ asserted for them.
 The marks are bundled locally as white PNGs rasterised from those SVGs and
 cropped to the mark; the client tints them to the theme text colour and makes
 no runtime requests for them.
+
+## Vendored BB sidebar (MIT)
+
+Nucleus's BB plugin vendors BB's sidebar thread list (`plugins/thread-list`) to
+own the sidebar (Spec 062, decision 5a). BB is MIT; its notice is kept verbatim as
+`hosts/bb/plugin/sidebar/LICENSE`.
+
+- **Source** — <https://github.com/get-bb/bb>, commit
+  `7b26cae79ec978fafd0a5db0e8517e94f12eb8f4` (tag `desktop-v0.49.0`).
+- **Vendored trees** — `hosts/bb/plugin/sidebar/` (the plugin's `app.tsx`, `app/`,
+  `shared/`, `server.ts`, its app-level tests and `PLUGIN_OVERVIEW.md`) and the
+  component-registry modules written into `hosts/bb/plugin/components/ui/`,
+  `hosts/bb/plugin/lib/` and `hosts/bb/plugin/hooks/` by upstream's own fork
+  routine.
+- **Modifications** — the files are unmodified except where
+  `hosts/bb/plugin/sidebar/PATCHES.md` says otherwise. That file names every
+  patched and added file and its reason; those modifications are under Nucleus's
+  own terms.
+- **Record** — `hosts/bb/plugin/sidebar/UPSTREAM.json` holds a SHA-256 per file as
+  the pin ships it. A rebase updates this section's commit and tree list.
+
+Copyright 2026 Michael Yong, and the BB contributors, under the MIT licence in
+`hosts/bb/plugin/sidebar/LICENSE`.

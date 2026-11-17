@@ -10,6 +10,8 @@ import { holdsQueueWorkspace } from "../dispatch/capacity";
 import { boundDrainProjection } from "../closeout/queue-drain";
 import { summarizeOperation } from "../../shared/operations";
 import { activeRoutingGrants, reconcileRoutingGrants } from "../dispatch/routing-signoff";
+import { readBbSidebarGroups, type BbSidebarThreadRecord, type BbSidebarWorkspace } from "./bb-sidebar-groups";
+import type { BbSidebarGroups } from "../../shared/schema/bb-sidebar";
 import { collectOwnerVerbFacts, ownerTaskNext } from "../verbs/owner-verbs";
 import type { createTaskDetailCache } from "../telemetry/task-detail";
 import type { createUiSnapshotFactsCache, UiSnapshotFacts } from "../telemetry/ui-snapshot";
@@ -194,6 +196,23 @@ export class RuntimeBoard {
       availability: this.context.store.db.prepare("SELECT data FROM availability").all().map(row => availabilitySchema.parse(JSON.parse(String(row.data)))),
       revision, planning: this.context.store.planningRevisions(),
     };
+  }
+
+  /**
+   * Spec 062 decision 5b: one batched read for the forked sidebar's Nucleus task
+   * groups. It joins the board summaries it already computed to the recorded BB
+   * workspace handles through the task's own workspace id, so no group costs a
+   * call and no forge, Git or timeline read leaves this method.
+   */
+  sidebarGroups(): BbSidebarGroups {
+    this.context.markStoreAccess();
+    return readBbSidebarGroups({
+      liveTasks: () => this.context.store.liveTasks(),
+      summaries: () => this.context.cachedUiSnapshotFacts().summaries,
+      workspaces: () => this.context.store.getMeta<Record<string, BbSidebarWorkspace>>("bbWorkspaces") ?? {},
+      threads: () => this.context.store.getMeta<{ agents?: Record<string, BbSidebarThreadRecord> }>("bbThreads") ?? {},
+      prStates: this.context.prStates,
+    });
   }
 
   queuedPage(input: { repoPath: string; offset: number; limit: number }) {

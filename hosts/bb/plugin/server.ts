@@ -7,11 +7,58 @@
  * UI belong to later phases.
  */
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { runHostChannel } from "./channel";
+import { runHostChannel, type HostChannelClient } from "./channel";
 import { createHostOperations, type BbHostSdk } from "./operations";
+import {
+  BOARD_SIGNAL_CHANNEL,
+  createSidebarGroupsService,
+  sidebarGroupsContract,
+} from "./sidebar-groups";
 
 /** The plugin SDK this build was written against. A diagnostic, never an allowlist. */
 export const BB_PLUGIN_SDK_VERSION = "0.6.132";
+
+/**
+ * How often the backend reads the service's board revision to publish a change
+ * (Spec 062, decision 5b). One bounded read on the retained connection; the
+ * sidebar refetches its own read only when the revision moves.
+ */
+const BOARD_SIGNAL_POLL_MS = 2_000;
+
+/**
+ * Watch the service's board revision and publish it as one realtime signal.
+ *
+ * The first read only records the current revision: a sidebar that has just
+ * mounted already fetched, so an immediate signal would refetch it for nothing.
+ * Afterwards every move is published, and a failed read is retried on the next
+ * tick — a missing signal delays a header, it never blocks the sidebar.
+ */
+export function watchBoardSignal(bb: BbPluginApi, client: HostChannelClient): () => void {
+  let revision: number | null = null;
+  let stopped = false;
+  const poll = async (): Promise<void> => {
+    if (stopped) return;
+    let answer: unknown;
+    try {
+      answer = await client.request("queue.ui-snapshot", revision === null ? {} : { revision });
+    } catch {
+      return;
+    }
+    if (stopped) return;
+    const next = (answer as { revision?: unknown } | null)?.revision;
+    if (typeof next !== "number" || next === revision) return;
+    const first = revision === null;
+    revision = next;
+    if (!first) bb.realtime.publish(BOARD_SIGNAL_CHANNEL, { revision: next });
+  };
+  void poll();
+  const timer = setInterval(() => { void poll(); }, BOARD_SIGNAL_POLL_MS);
+  timer.unref?.();
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+  };
+}
 
 export default async function plugin(bb: BbPluginApi) {
   bb.log.info(`nucleus host executor loaded (plugin SDK ${BB_PLUGIN_SDK_VERSION})`);
@@ -53,6 +100,15 @@ export default async function plugin(bb: BbPluginApi) {
 
   // Metadata names the helper route; it carries no reporting credential and grants
   // no authority. The run ticket authenticates every helper request.
+  // The forked sidebar's one read (Spec 062, decision 5b). It is served by this
+  // backend and forwarded over the retained connection, so the UI holds no service
+  // credential and reads nothing the service does not publish.
+  let channelClient: HostChannelClient | null = null;
+  bb.rpc.register(sidebarGroupsContract, createSidebarGroupsService(() => channelClient), {
+    experimental_description:
+      "The forked sidebar's batched Nucleus task-group read: one answer for every group's state line.",
+  });
+
   bb.agents.configure(context => {
     const meta = context.pluginMetadata.nucleus;
     if (!meta || typeof meta !== "object" || Array.isArray(meta)) return { tools: [], skills: [] };
@@ -80,6 +136,14 @@ export default async function plugin(bb: BbPluginApi) {
       await runHostChannel({
         serviceDataDir,
         operations,
+        onDeclared: client => {
+          channelClient = client;
+          const stopSignal = watchBoardSignal(bb, client);
+          return () => {
+            channelClient = null;
+            stopSignal();
+          };
+        },
         log: { info: message => bb.log.info(message), warn: message => bb.log.warn(message), error: message => bb.log.error(message) },
         signal,
         declaration: () => ({ dataDir: declarations.dataDir(), bbVersion: declarations.version ?? "unknown", sdkVersion: BB_PLUGIN_SDK_VERSION }),

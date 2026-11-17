@@ -54,6 +54,19 @@ export interface HostChannelOptions {
   presenceRetryMs?: number;
   /** How often the retained connection sends its liveness heartbeat. */
   heartbeatMs?: number;
+  /**
+   * Called once per accepted connection, with the one way this plugin asks the
+   * service something itself (Spec 062, decision 5b: the sidebar's batched read and
+   * its board revision). The returned cleanup runs when the connection ends, so a
+   * watcher never outlives the link it reads through.
+   */
+  onDeclared?: (client: HostChannelClient) => void | (() => void);
+}
+
+/** What a declared connection can ask the service, on the same authenticated socket. */
+export interface HostChannelClient {
+  /** One bounded request; rejects when the service refused it, the link dropped, or it timed out. */
+  request(method: string, input: unknown, timeoutMs?: number): Promise<unknown>;
 }
 
 interface ServiceIdentity {
@@ -78,6 +91,9 @@ const PRESENCE_RETRY_MS = 2_000;
  * the service already answers, so the heartbeat adds no protocol surface.
  */
 const HEARTBEAT_MS = 15_000;
+
+/** How long one plugin-written request may take before it reads as not answered. */
+const REQUEST_TIMEOUT_MS = 10_000;
 
 /** Read the service identity beside its socket; a missing or partial file is an ordinary "not up yet". */
 export function readServiceIdentity(serviceDataDir: string): ServiceIdentity | null {
@@ -139,6 +155,7 @@ function runOnce(options: HostChannelOptions, identity: ServiceIdentity, onDecla
         error?: { code?: string; message?: string };
       }) => void
     >();
+    let connectionCleanup: (() => void) | null = null;
     let presenceClaimed = false;
     let presenceTimer: NodeJS.Timeout | null = null;
     let heartbeatTimer: NodeJS.Timeout | null = null;
@@ -161,6 +178,10 @@ function runOnce(options: HostChannelOptions, identity: ServiceIdentity, onDecla
         heartbeatTimer = null;
       }
       pending.clear();
+      if (connectionCleanup) {
+        try { connectionCleanup(); } catch { /* a watcher teardown never holds up the link */ }
+        connectionCleanup = null;
+      }
       options.signal.removeEventListener("abort", onAbort);
       socket.destroy();
       resolve(reason);
@@ -214,6 +235,9 @@ function runOnce(options: HostChannelOptions, identity: ServiceIdentity, onDecla
           if (handshake) { clearTimeout(handshake); handshake = null; }
           onDeclared();
           options.log.info(`Nucleus service accepted this plugin as host executor for ${hostId}`);
+          connectionCleanup = options.onDeclared?.({
+            request: (method, input, timeoutMs = REQUEST_TIMEOUT_MS) => ask(method, input, timeoutMs),
+          }) ?? null;
           claimPresence();
           // A refused claim is retried here, on the retained connection, until it is
           // granted: the daemon's idle clock follows presence, not this plugin's liveness.
@@ -279,6 +303,33 @@ function runOnce(options: HostChannelOptions, identity: ServiceIdentity, onDecla
             },
           });
         }
+      }
+
+      /**
+       * One request this plugin writes itself (Spec 062, decision 5b): the sidebar's
+       * batched read and the board revision it watches. The service answers on this
+       * same authenticated connection; a refusal or a lost link rejects, and the
+       * caller renders its fallback rather than a guess.
+       */
+      function ask(method: string, input: unknown, timeoutMs: number): Promise<unknown> {
+        return new Promise<unknown>((resolveRequest, rejectRequest) => {
+          if (settled) { rejectRequest(new Error("The service connection is closed")); return; }
+          const id = `bb-plugin-request-${++sequence}`;
+          const timer = setTimeout(() => {
+            pending.delete(id);
+            rejectRequest(new Error(`The service did not answer ${method} within ${timeoutMs} ms`));
+          }, timeoutMs);
+          timer.unref?.();
+          pending.set(id, answer => {
+            clearTimeout(timer);
+            if (answer.error) {
+              rejectRequest(new Error(String(answer.error.message ?? `The service refused ${method}`)));
+              return;
+            }
+            resolveRequest(answer.result);
+          });
+          send({ v: PROTOCOL_VERSION, id, method, input });
+        });
       }
 
       /**

@@ -10,12 +10,20 @@ import { taskDetailSchema, taskReferenceSchema } from "../schema/tasks";
 import { noticeSchema, runSchema } from "../schema/runs";
 import { agentMessageRecordSchema } from "../schema/messages";
 import { routingPolicySchema } from "../schema/settings";
+import { bbSidebarGroupsOutputSchema } from "../schema/bb-sidebar";
 
 export const snapshot = defineRpc({ name: "queue.snapshot", input: snapshotInputSchema, output: snapshotStateSchema });
 
 export const queuePage = defineRpc({ name: "queue.queued-page", input: z.object({ repoPath: z.string().min(1), offset: z.number().int().nonnegative().default(0), limit: z.number().int().min(1).max(100).default(25) }).strict(), output: z.object({ tasks: z.array(taskSummarySchema), nextOffset: z.number().int().nonnegative().nullable() }) });
 
 export const laneTaskPage = defineRpc({ name: "lane.task-page", input: z.object({ lane: laneKeySchema, offset: z.number().int().nonnegative().default(0), limit: z.number().int().min(1).max(100).default(25) }).strict(), output: z.object({ tasks: z.array(taskSummarySchema), total: z.number().int().nonnegative(), nextOffset: z.number().int().nonnegative().nullable() }) });
+
+/**
+ * Spec 062 decision 5b: one batched read for the forked sidebar's Nucleus task
+ * groups. Read-only, bounded, and free of forge, Git and timeline reads; the
+ * optional argument keeps a caller that sends no input valid.
+ */
+export const bbSidebarGroups = defineRpc({ name: "bb.sidebar-groups", input: z.union([z.null(), z.object({}).strict()]), output: bbSidebarGroupsOutputSchema });
 
 export const uiSnapshot = defineRpc({ name: "queue.ui-snapshot", input: z.object({ revision: z.number().int().nonnegative().optional() }).strict(), output: uiBoardSchema });
 
