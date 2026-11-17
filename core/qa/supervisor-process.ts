@@ -14,12 +14,14 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { runtimeNodeArgs } from "../../shared/runtime.mjs";
-import { processGroupEmpty, signalProcessGroup, signalProcessGroupByLeader } from "../machine/process-group";
+import { processGroupEmpty, signalProcessGroup, signalProcessGroupByLeader, waitForProcessGroupEmpty } from "../machine/process-group";
 import { processesForStartIdentity, processStartIdentityLiveness } from "../machine/process-identity-search";
 import { supervisorLiveness, supervisorLivenessAsync } from "../machine/start-identity";
 
 /** The grace a stale supervisor and its groups get between SIGTERM and SIGKILL. */
 export const SUPERVISOR_STOP_GRACE_MS = 250;
+/** Bounded proof window for process-group reaping after SIGKILL. */
+const SUPERVISOR_STOP_PROOF_WAIT_MS = 5_000;
 
 export interface DetachedSupervisorLaunch {
   /** The supervisor entry shipped beside the service. */
@@ -100,9 +102,18 @@ export async function stopDetachedSupervisor(target: DetachedSupervisorStopTarge
   await new Promise(resolve => setTimeout(resolve, SUPERVISOR_STOP_GRACE_MS));
   if (activeProcess && !processGroupEmpty(activeProcess.processGroupId)) signalActiveGroup("SIGKILL");
   if (!processGroupEmpty(supervisorPid)) signalSupervisor("SIGKILL");
+  // SIGKILL is asynchronous: the kernel may still be reaping a supervisor or
+  // step group when the signal returns. Wait for the recorded groups to empty
+  // before sampling liveness and deciding whether the stop is proved.
+  const [supervisorGroupEmpty, activeGroupEmpty] = await Promise.all([
+    waitForProcessGroupEmpty(supervisorPid, SUPERVISOR_STOP_PROOF_WAIT_MS),
+    activeProcess ? waitForProcessGroupEmpty(activeProcess.processGroupId, SUPERVISOR_STOP_PROOF_WAIT_MS) : Promise.resolve(true),
+  ]);
   const supervisor = await supervisorLivenessAsync(supervisorPid, identityToken);
   const identity = supervisorStartIdentity ? processStartIdentityLiveness(supervisorPid, supervisorStartIdentity) : "unknown";
   return (supervisor.state === "dead" || identity === "dead")
+    && supervisorGroupEmpty
+    && activeGroupEmpty
     && processGroupEmpty(supervisorPid)
     && (!activeProcess || processGroupEmpty(activeProcess.processGroupId))
     && processesForStartIdentity(identityToken).state === "absent";
