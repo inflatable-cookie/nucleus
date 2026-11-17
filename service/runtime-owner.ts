@@ -1176,7 +1176,7 @@ export class QueueRuntime {
     return Object.fromEntries(Object.entries(input).map(([key, value]) => {
       if (["taskId", "replacementTaskId", "until"].includes(key) && typeof value === "string" && value.includes('#'))
         return [key, this.store.resolveTaskId(value)];
-      if (["dependsOn", "waitsFor"].includes(key) && Array.isArray(value))
+      if (["dependsOn", "waitsFor", "taskIds"].includes(key) && Array.isArray(value))
         return [key, value.map(id => typeof id === "string" ? this.store.resolveTaskId(id) : id)];
       return [key, this.resolveTaskReferences(value)];
     }));
@@ -1230,6 +1230,21 @@ export class QueueRuntime {
   async reparent(input: ReparentInput) {
     await this.started;
     if (!this.anyHostConnected()) throw new Error(this.startError || "All hosts are disconnected");
+    const parsed = parseAgentId(input.toAgentId);
+    const t3Hosts = this.hostRegistry.onlineIds().filter(id => hostKindOf(id) === 't3code');
+    const candidates = parsed?.hostId && hostKindOf(parsed.hostId) === 't3code' ? [parsed.hostId] : !parsed ? t3Hosts : [];
+    if (candidates.length) {
+      const nativeAgentId = parsed?.nativeAgentId ?? input.toAgentId;
+      const owners: string[] = [];
+      for (const hostId of candidates) {
+        try {
+          const observation = await this.engine.withHost(hostId, () => this.engine.host.observe(nativeAgentId));
+          if (observation?.id === nativeAgentId && observation.status !== 'gone') owners.push(hostId);
+        } catch { /* An unverified host cannot own the requested thread. */ }
+      }
+      if (owners.length > 1) throw new Error(`T3Code thread ${nativeAgentId} is ambiguous; online T3 hosts: ${t3Hosts.join(', ') || '(none)'}`);
+      if (owners.length === 1) input = { ...input, toAgentId: formatAgentId(owners[0]!, nativeAgentId) };
+    }
     return this.engine.reparent(input);
   }
   availabilityControl(input: z.infer<typeof import("../shared/contracts").availabilityControl.input>) { return this.settingsOperations.availabilityControl(input); }

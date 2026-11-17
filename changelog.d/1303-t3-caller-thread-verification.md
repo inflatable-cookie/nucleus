@@ -1,1 +1,1 @@
-T3 caller resolution now verifies the thread on online T3 hosts instead of treating the desktop host scope as an environment ID. Ambiguous and unowned threads are refused with the online host list.
+T3 caller and reparent resolution now verify threads on online T3 hosts instead of treating the desktop host scope as an environment ID. T3 project threads can be reparented using their project scope, and helper task references resolve correctly.

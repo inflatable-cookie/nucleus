@@ -43,6 +43,13 @@ environment values coexist, T3 wins; a partial T3 identity refuses rather than
 using Paseo. Replies to `ask` and `tell` use the existing host-qualified T3
 delivery path.
 
+For reparenting, Nucleus verifies the candidate T3 thread through that host's
+observation and records its qualified ID. A T3 project thread can have no
+Nucleus-managed workspace registration; its origin location is represented by
+the stable `t3-project:<projectId>` scope from the T3 thread record. Task
+references such as `barge#064` are resolved at the service boundary before the
+reparent owner lookup.
+
 ## Protocol and connection
 
 The implementation lives behind `hosts/t3code/index.ts`. Its small RPC client
