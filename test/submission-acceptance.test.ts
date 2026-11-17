@@ -116,6 +116,25 @@ test('dry-run reports a named invalid_input refusal when the selected submission
   });
 });
 
+test('an offline BB host refuses both BB-caller dry-run and real submissions before acceptance', async t => {
+  const f = await fixture(t);
+  const bbDataDir = join(f.dir, 'offline-bb-data');
+  const bbHostId = (await import('../shared/host-operation')).hostIdFromDataDir(bbDataDir);
+  const connectedAt = new Date().toISOString();
+  assert.deepEqual(f.runtime.bbHostVerified({ hostId: bbHostId, dataDir: bbDataDir, bbVersion: '0.49.0', sdkVersion: '0.6.132', hostIds: ['synthetic-bb-host'], connectedAt }), { ok: true });
+  f.runtime.bbHostReleased({ hostId: bbHostId, connectedAt, reason: 'synthetic disconnect' });
+  const caller = formatAgentId(bbHostId, 'thr_offline_submitter');
+  const input = { ...f.input, hostId: bbHostId, originAgentId: caller, originIdentity: { agent: caller, hostId: bbHostId } };
+  for (const dryRun of [true, false]) await assert.rejects(f.runtime.submitHandoff({ ...input, dryRun }), error => {
+    assert.equal((error as { code?: string }).code, 'invalid_input');
+    assert.match(String(error), new RegExp(`Selected submission host ${bbHostId} is offline or unavailable for ingress`));
+    return true;
+  });
+  assert.equal(f.runtime.store.tasks().length, 0, 'an offline BB host cannot accept a task');
+  assert.equal(f.runtime.store.operations({ states: ['pending', 'running', 'succeeded'] }).filter(operation => operation.kind === 'submit').length, 0,
+    'neither refusal records a submission operation');
+});
+
 test('an accepted submission shows a submitting card on the board until its task exists', { timeout: 15000 }, async t => {
   const f = await fixture(t, true);
   const receipt = await f.runtime.submitHandoff(f.input);

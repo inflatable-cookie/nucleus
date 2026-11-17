@@ -1213,8 +1213,9 @@ makes the fork a bounded commitment (5f).
 The shared board's historical `plans` method name is translated by the BB bridge to the canonical
 `queue.plans` catalogue method. BB threads may also call the CLI through `BB_THREAD_ID`; the service
 verifies that exact thread on one online BB host before recording its host-qualified identity. An
-online BB host is valid for authenticated submission ingress, while work-host availability remains
-a separate dispatch gate. The bridge forwards service-catalogue methods over the retained BB
+online BB host is valid for authenticated submission ingress; an offline selected BB ingress host
+refuses with typed `invalid_input` before operation acceptance. Work-host availability remains a
+separate dispatch gate. The bridge forwards service-catalogue methods over the retained BB
 connection and answers the bridge-catalogue `queue.service-state` read from `service.health`, matching
 the typed state shape used by Paseo.
 

@@ -14,7 +14,8 @@ import type { Task } from "../../shared/contracts";
 import { leadCheckOperationPayloadSchema, reviewEntryInputSchema, sourcePromotionOperationPayloadSchema, submissionRecordFromLegacy, submissionSchema, taskControlInputSchema, type Submission } from "../../shared/contracts";
 import { OPERATION_COMPATIBILITY_WAIT_MS, operationIsSettled, type OperationAcceptance, type OperationResult, type QueueOperation } from "../../shared/operations";
 import { repositoryRekeyInputSchema, type RepositoryRekeyInput } from "../../shared/repository-rekey";
-import type { IdentitySource } from "../../shared/host-kind";
+import { hostKindOf, type IdentitySource } from "../../shared/host-kind";
+import { ProtocolError } from "../../shared/service/protocol";
 import type { Engine } from "../engine";
 import { SubmissionUnavailableError } from "../git/index";
 import { LANE_PRIORITY_OPERATION } from "../scheduling/lane-priorities";
@@ -123,6 +124,9 @@ export class Operations {
     const hostSelection = previous ? previous.hostSelection : taskId ? this.store.task(taskId).hostSelection : selected;
     if (!previous && !hostId && ["submit", "review_entry", "source_promote"].includes(input.kind))
       throw new Error("Host identity is unknown or ambiguous; select a registered host");
+    if (!previous && hostId && hostKindOf(hostId) === "bb" && !this.engine.hostIngressAvailable(hostId)
+      && ["submit", "review_entry", "source_promote"].includes(input.kind))
+      throw new ProtocolError("invalid_input", `Selected submission host ${hostId} is offline or unavailable for ingress`);
     const acceptance = this.store.acceptOperation({
       key: input.key, kind: input.kind, inputHash: operationInputHash(input.payload),
       hostId, hostSelection,
