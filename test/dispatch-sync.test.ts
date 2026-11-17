@@ -63,7 +63,7 @@ async function reviewLockfileFixture(t: any, options: { mutateTrackedSourceOnIns
     const packageJson: Record<string, unknown> = { name: 'review-lockfile-fixture', version: '1.0.0', dependencies: { 'fixture-dep': 'file:vendor/fixture-dep' } };
     if (options.mutateTrackedSourceOnInstall && version === '2.0.0') {
       const mutation = options.mutateTrackedSourceOnInstall === 'index'
-        ? `const fs=require('node:fs'); require('node:child_process').execFileSync('git',['add','tracked-source.txt']); fs.writeFileSync('tracked-source.txt','original')`
+        ? `const fs=require('node:fs'); fs.writeFileSync('tracked-source.txt','mutated'); require('node:child_process').execFileSync('git',['add','tracked-source.txt']); fs.writeFileSync('tracked-source.txt','original')`
         : `require('node:fs').writeFileSync('tracked-source.txt', 'mutated')`;
       packageJson.scripts = { postinstall: `node -e "${mutation}"` };
     }
