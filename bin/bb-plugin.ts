@@ -40,6 +40,7 @@ import { dataHome } from "../shared/data-home.mjs";
 import { findBbCli } from "../shared/bb-cli.mjs";
 import { readServiceInfo } from "../shared/service/discovery";
 import {
+  BB_PLUGIN_BUILD_FILE,
   BB_PLUGIN_ID,
   BB_PLUGIN_INSTALL_COMMAND,
   bbPluginPackagePaths,
@@ -143,7 +144,7 @@ export function resolveBbPluginDirectory(input: {
     // tells our plugin from a namesake that shares both the ID and the package name.
     if (candidate.packaged && buildId === null) {
       throw new Error(
-        `${candidate.directory} carries no ${"nucleus-build.json"} naming the Nucleus build it came from; it is not a plugin this package built, so ${BB_PLUGIN_INSTALL_COMMAND} will not install it`,
+        `${candidate.directory} carries no ${BB_PLUGIN_BUILD_FILE} naming the Nucleus build it came from; it is not a plugin this package built, so ${BB_PLUGIN_INSTALL_COMMAND} will not install it`,
       );
     }
     return { ...candidate, buildId };
