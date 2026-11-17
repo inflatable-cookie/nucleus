@@ -34,9 +34,11 @@ nothing else:
   (T3 fails every turn without it), `agentInfo` naming `nucleus`, and no auth
   method — a session is authorized by its binding, not by an ACP auth flow;
 - `session/new` and `session/load` resolve the thread's working directory to a
-  bound session and attach to the service; `session/load` replays nothing
-  because Nucleus holds the task's history, and shows only the current
-  lifecycle line;
+  bound session and attach to the service. The attach always answers with the
+  task's current lifecycle line, even when this service already showed that line
+  to an earlier agent process for the same session: a relaunched agent has
+  nothing else to display. `session/load` replays nothing because Nucleus holds
+  the task's history;
 - `session/prompt` holds the turn while the service says to, shows the
   lifecycle lines the service sends as `session/update` agent messages, and
   forwards anything a person typed;
@@ -49,7 +51,10 @@ display name: the agent has no model, so the choice has no effect.
 
 The thread's opening prompt is not forwarded. It establishes the thread itself
 (an ACP client prefixes its own instructions), and the operator's later prompts
-are the messages. Anything the agent must *not* answer arrives as configuration,
+are the messages. Exactly one prompt holds that slot per session, and any first
+prompt takes it — including one the agent does not answer. A host's waking
+notification that arrives before the operator's first message therefore cannot
+turn that message into an opening prompt and swallow it. Anything the agent must *not* answer arrives as configuration,
 never as parsing: the binding may carry an `ignorePattern` the host adapter
 supplies, and `NUCLEUS_ACP_IGNORE_PATTERN` overrides it for a host that cannot
 mint one. A prompt matching it ends the turn silently — nothing is shown and
@@ -90,13 +95,16 @@ instead of minting a pointer nothing answers.
 `core/acp/sessions.ts` serves two callback routes on the existing callback
 socket, authenticated by the minted token:
 
-- `POST /acp-turn` `{taskId, sessionId, waitMs}` answers
-  `{state: "hold" | "release", reason, messages, task}`. `waitMs` is 0 for the
-  opening attach and up to 25 s for a held turn. The answer is derived from the
-  task row, never cached as a decision:
+- `POST /acp-turn` `{taskId, sessionId, waitMs, attach?}` answers
+  `{state: "hold" | "release", reason, messages, task}`. `waitMs` is 0 for an
+  attach and up to 25 s for a held turn. The answer is derived from the task
+  row, never cached as a decision:
   - `hold` while the task is unfinished; `messages` carries the lifecycle line
     the first time and whenever the task's state changes, and nothing when it
     has not;
+  - an attach (`attach: true`) always carries the current lifecycle line,
+    whatever this service already showed for that session. The stored signature
+    suppresses only the repetitions a held turn would otherwise make;
   - `release` when the task is terminal, or when a host adapter called
     `release(sessionId, reason)`. A release directive is consumed by the turn
     that acts on it and the next turn holds again, which is what "release the
@@ -141,10 +149,12 @@ ends the turn with the reason rather than resending.
 
 `test/acp-agent.test.ts` drives the agent over stdio with recorded ACP traffic:
 initialize, new, load (and a mismatched load), a held prompt with the lifecycle
-line and its release, an operator prompt forwarded, an ignored wake prompt,
-cancel and the following steer, a prompt refused while in flight, a service that
-never answers, a service unreachable at session/new, the refusal codes, and the
-launched entry point's missing-binding answer.
+line and its release, an operator prompt forwarded, an ignored wake prompt (also
+when it is the session's first prompt, so the operator's next message is still
+forwarded), an empty first prompt, cancel and the following steer, a prompt
+refused while in flight, a service that never answers, a service unreachable at
+session/new, the refusal codes, a closed stdin, and the launched entry point's
+missing-binding answer.
 
 `shared/acp/transport.ts` is the agent's socket client and `shared/acp/entry.ts`
 reads the environment and launches it; `bin/nucleus-acp.mjs` is the installed
@@ -154,9 +164,11 @@ command path an ACP client registers.
 `test/acp-service.test.ts` covers the service side against a real store, engine
 and callback socket, including a spawned `bin/nucleus-acp.mjs` speaking ACP to
 the real service: minting and revocation, the catalogue method, the bind
-refusals, hold and lifecycle text, the long poll, the release directive, the
-operator message and its duplicate rule, the 401/409 refusals, a process with no
-ACP surface, the lifecycle line's signature, and verification across a restart.
+refusals, hold and lifecycle text, an attach after this service already showed
+the session's line, the long poll, the release directive, the operator message
+and its duplicate rule, the 401/409 refusals, a process with no ACP surface, the
+lifecycle line's signature, verification across a restart, and a relaunched
+launcher whose `session/load` shows the line the dead process had already shown.
 
 Affected unit files cover the rest; `effigy check` and `effigy qa:docs` gate the
 docs.

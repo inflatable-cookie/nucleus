@@ -81,7 +81,9 @@ async function acpFixture() {
     dir, store, engine, acp, taskId: task.id, worktree, notified, minted, binding,
     token: binding.token,
     get turns(): number { return turns; },
-    turn: (input: { waitMs?: number } = {}) => acp.turn({ taskId: task.id, sessionId: minted.sessionId, waitMs: input.waitMs ?? 0 }, binding.token),
+    turn: (input: { waitMs?: number; attach?: boolean } = {}) => acp.turn({
+      taskId: task.id, sessionId: minted.sessionId, waitMs: input.waitMs ?? 0, attach: input.attach,
+    }, binding.token),
     sessionId: minted.sessionId,
     message: (text: string, eventId = "a".repeat(64)) => callbackRequest(binding, "/acp-message", { taskId: task.id, sessionId: minted.sessionId, eventId, text }),
     async close() { await engine.stop(); await stop(); store.close(); },
@@ -147,7 +149,7 @@ test("a held turn answers with the lifecycle line once, stays quiet, then releas
     assert.match(first.messages[0]!, /Working/);
     assert.match(String(first.task.reference), /#/, "the line is named by the task's durable reference");
     const quiet = await fixture.turn();
-    assert.deepEqual(quiet.messages, [], "an unchanged task says nothing");
+    assert.deepEqual(quiet.messages, [], "a held poll on an unchanged task says nothing");
     fixture.store.update(fixture.taskId, { phase: "awaiting_review" });
     const changed = await fixture.turn();
     assert.equal(changed.messages.length, 1);
@@ -157,6 +159,28 @@ test("a held turn answers with the lifecycle line once, stays quiet, then releas
     assert.equal(finished.state, "release");
     assert.match(finished.messages[0]!, /finished/);
     assert.match(finished.reason, /done/);
+  } finally { await fixture.close(); }
+});
+
+test("an attach shows the current lifecycle line even though this service already showed it", async () => {
+  // The T3 restart path: the agent process dies while the service keeps running, so the
+  // service still holds this session's shown signature. `session/load` attaches again and
+  // must show where the task stands.
+  const fixture = await acpFixture();
+  try {
+    assert.equal((await fixture.turn()).messages.length, 1, "session/new attaches with the line");
+    assert.deepEqual((await fixture.turn()).messages, [], "a held poll after that adds nothing");
+    const reattached = await fixture.turn({ attach: true });
+    assert.equal(reattached.messages.length, 1, "the relaunched agent's attach still gets the line");
+    assert.equal(reattached.messages[0], acpLifecycleLine(fixture.store.task(fixture.taskId)));
+    fixture.store.update(fixture.taskId, { phase: "awaiting_review" });
+    const changed = await fixture.turn({ attach: true });
+    assert.equal(changed.messages.length, 1);
+    assert.match(changed.messages[0]!, /Review/);
+    fixture.store.update(fixture.taskId, { phase: "done", finishedAt: new Date().toISOString() });
+    const finished = await fixture.turn({ attach: true });
+    assert.equal(finished.state, "release");
+    assert.match(finished.messages[0]!, /finished/);
   } finally { await fixture.close(); }
 });
 
@@ -294,8 +318,11 @@ function childLines(stream: NodeJS.ReadableStream, diagnostics: () => string = (
   };
 }
 
-test("the launcher speaks ACP on stdio to the real service: bind, hold, release, operator text", async () => {
-  const fixture = await acpFixture();
+/**
+ * Launch the packaged agent entry exactly as an ACP client does: the task's checkout as its
+ * working directory, the data home in the environment, ACP on stdio.
+ */
+function launchAgent(fixture: { worktree: string; dir: string }) {
   // `--import tsx` resolves from the child's own working directory, which is the task's
   // checkout: name the loader by its absolute path so the launcher runs from there.
   const tsx = createRequire(import.meta.url).resolve("tsx");
@@ -306,11 +333,28 @@ test("the launcher speaks ACP on stdio to the real service: bind, hold, release,
   });
   let stderr = "";
   child.stderr.on("data", chunk => { stderr += String(chunk); });
+  child.on("error", error => { stderr += `\n[agent failed to start] ${String(error)}`; });
+  child.on("exit", (code, signal) => { if (code !== 0) stderr += `\n[agent exited ${code ?? signal}]`; });
   const lines = childLines(child.stdout, () => stderr);
   const write = (message: unknown) => child.stdin.write(`${JSON.stringify(message)}\n`);
+  return {
+    child, lines, write,
+    stderr: () => stderr,
+    /** Close the client's stdio and report the agent process's own exit code. */
+    async close(): Promise<number | null> {
+      child.stdin.end();
+      return new Promise<number | null>(resolve => child.on("exit", code => resolve(code)));
+    },
+  };
+}
+
+test("the launcher speaks ACP on stdio to the real service: bind, hold, release, operator text", async () => {
+  const fixture = await acpFixture();
+  const agent = launchAgent(fixture);
+  const { child, lines, write } = agent;
   const settle = async (id: number) => {
     const answer = await lines.untilId(id);
-    assert.equal((answer.answer.result as Record<string, unknown>).stopReason, "end_turn", `request ${id}: ${stderr}`);
+    assert.equal((answer.answer.result as Record<string, unknown>).stopReason, "end_turn", `request ${id}: ${agent.stderr()}`);
   };
   try {
     write({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1, clientCapabilities: {} } });
@@ -335,11 +379,37 @@ test("the launcher speaks ACP on stdio to the real service: bind, hold, release,
     fixture.acp.release(fixture.sessionId, "the operator turn is done");
     await settle(4);
 
-    child.stdin.end();
-    const exit = await new Promise<number | null>(resolve => child.on("exit", code => resolve(code)));
-    assert.equal(exit, 0, `the agent exits cleanly when its client closes stdio: ${stderr}`);
+    const exit = await agent.close();
+    assert.equal(exit, 0, `the agent exits cleanly when its client closes stdio: ${agent.stderr()}`);
   } finally {
     child.kill();
+    await fixture.close();
+  }
+});
+
+test("a relaunched launcher's session/load shows the line the previous process already showed", async () => {
+  // The T3 restart path end to end: the first agent attaches and dies, the service keeps
+  // running with that session's shown signature, and the second agent loads the thread.
+  const fixture = await acpFixture();
+  const first = launchAgent(fixture);
+  try {
+    first.write({ jsonrpc: "2.0", id: 1, method: "session/new", params: { cwd: fixture.worktree, mcpServers: [] } });
+    const opened = await first.lines.untilId(1);
+    assert.equal((opened.answer.result as Record<string, unknown>).sessionId, fixture.sessionId);
+    assert.equal(await first.close(), 0, `the first agent exits cleanly: ${first.stderr()}`);
+
+    const second = launchAgent(fixture);
+    try {
+      second.write({ jsonrpc: "2.0", id: 1, method: "session/load", params: { sessionId: fixture.sessionId, cwd: fixture.worktree, mcpServers: [] } });
+      const loaded = await second.lines.untilId(1);
+      assert.equal((loaded.answer.result as Record<string, unknown>).sessionId, fixture.sessionId);
+      const update = await second.lines.next();
+      assert.equal(update.method, "session/update");
+      assert.match(JSON.stringify(update), /Working/, "the reloaded thread shows where the task stands");
+      assert.equal(await second.close(), 0, `the second agent exits cleanly: ${second.stderr()}`);
+    } finally { second.child.kill(); }
+  } finally {
+    first.child.kill();
     await fixture.close();
   }
 });

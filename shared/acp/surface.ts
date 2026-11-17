@@ -10,7 +10,18 @@
 /** Where an agent finds its session: the id, the task, and the owner-only file. */
 export interface AcpSessionBinding { sessionId: string; taskId: string; bindingPath: string }
 
-export interface AcpTurnInput { taskId: string; sessionId: string; waitMs?: number }
+export interface AcpTurnInput {
+  taskId: string;
+  sessionId: string;
+  waitMs?: number;
+  /**
+   * `true` when the client is attaching (`session/new`/`session/load`) rather than
+   * polling a turn it already holds. An attach always answers with the task's current
+   * lifecycle line, because that line is what a reloaded thread shows; a held poll
+   * answers only when something changed.
+   */
+  attach?: boolean;
+}
 
 export interface AcpTurnReply {
   /** `hold` keeps the agent's turn open; `release` ends it, and the client settles the thread. */

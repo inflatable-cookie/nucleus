@@ -143,6 +143,7 @@ test("session/new binds the thread's working directory and answers with the two 
   assert.equal(((session.models as Json).availableModels as unknown[]).length, ACP_MODELS.length);
   assert.equal(client.transport.turns.length, 1, "session/new attaches to the service once");
   assert.equal(client.transport.turns[0]!.waitMs, 0, "the opening attach never holds the turn");
+  assert.equal(client.transport.turns[0]!.attach, true, "and it asks for the current lifecycle line, not only a change");
   await client.closed();
 });
 
@@ -213,6 +214,37 @@ test("an injected ignore rule ends the prompt silently: no text shown, nothing f
   assert.equal(updates.length, 0, "an ignored wake prompt is never shown as the agent's words");
   assert.equal(client.transport.messages.length, 0, "and never forwarded as the operator's");
   assert.equal(client.transport.turns.length, 1, "only the attach call reached the service");
+  await client.closed();
+});
+
+test("a wake prompt arriving first consumes the opening slot, so the operator's next message is forwarded", async () => {
+  const client = harness({ agent: { ignore: text => text.includes("Delegated task node:delegated-task:") } });
+  await client.lines.untilResult(client.request("session/new", { cwd: "/fixture/checkout" }));
+  const wake = client.request("session/prompt", { sessionId: binding.sessionId, prompt: [{ type: "text", text: "Delegated task node:delegated-task:wake [completed]" }] });
+  await client.lines.untilResult(wake);
+  assert.equal(client.transport.messages.length, 0, "the wake itself is never forwarded");
+  // The operator's text may hold, so release it from the service's side.
+  const operator = client.request("session/prompt", { sessionId: binding.sessionId, prompt: [{ type: "text", text: "carry on with the review" }] });
+  await turnStarted(client.transport, 2);
+  client.transport.release();
+  await client.lines.untilResult(operator);
+  assert.equal(client.transport.messages.length, 1);
+  assert.equal(client.transport.messages[0]!.text, "carry on with the review");
+  await client.closed();
+});
+
+test("an empty first prompt also consumes the opening slot", async () => {
+  const client = harness();
+  await client.lines.untilResult(client.request("session/new", { cwd: "/fixture/checkout" }));
+  const empty = client.request("session/prompt", { sessionId: binding.sessionId, prompt: [] });
+  const emptyAnswer = await client.lines.untilResult(empty);
+  assert.deepEqual(emptyAnswer.result.result, { stopReason: "end_turn" });
+  const operator = client.request("session/prompt", { sessionId: binding.sessionId, prompt: [{ type: "text", text: "what is left?" }] });
+  await turnStarted(client.transport, 2);
+  client.transport.release();
+  await client.lines.untilResult(operator);
+  assert.equal(client.transport.messages.length, 1);
+  assert.equal(client.transport.messages[0]!.text, "what is left?");
   await client.closed();
 });
 

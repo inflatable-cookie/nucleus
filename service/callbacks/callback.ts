@@ -49,7 +49,11 @@ const helperAnswerSchema = z.object({
 // Spec 065: an ACP session names the task and session its minted binding carries.
 // Nothing here is a claimed identity: both are checked against the session record.
 const acpCallerSchema = z.object({ taskId: z.string().min(1).max(160), sessionId: z.string().min(1).max(160) }).strict();
-const acpTurnSchema = acpCallerSchema.extend({ waitMs: z.number().int().min(0).max(ACP_TURN_WAIT_MAX_MS).optional() }).strict();
+const acpTurnSchema = acpCallerSchema.extend({
+  waitMs: z.number().int().min(0).max(ACP_TURN_WAIT_MAX_MS).optional(),
+  /** An attach always answers with the current lifecycle line; a held poll only sends changes. */
+  attach: z.boolean().optional(),
+}).strict();
 const acpMessageSchema = acpCallerSchema.extend({
   eventId: z.string().regex(/^[a-f0-9]{64}$/),
   text: z.string().trim().min(1).max(AGENT_MESSAGE_MAX_CHARS),

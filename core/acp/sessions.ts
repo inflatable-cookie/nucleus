@@ -72,7 +72,12 @@ export class AcpSessions implements AcpSessionSurface {
     return mintAcpSession({ dataHome: this.dataHome, socketPath: this.options.socketPath, taskId: task.id, directory: task.directory });
   }
 
-  /** Ask whether to keep holding this turn, and which lifecycle lines to show. */
+  /**
+   * Ask whether to keep holding this turn, and which lifecycle lines to show. An
+   * attach (`attach: true`) always gets the current line: the agent may have been
+   * killed and relaunched while this service kept the session's shown signature, and
+   * a reloaded thread has nothing else to display.
+   */
   async turn(input: AcpTurnInput, token: string): Promise<AcpTurnReply> {
     const record = verifyAcpSession({ dataHome: this.dataHome, taskId: input.taskId, sessionId: input.sessionId }, token);
     const waitMs = Math.max(0, Math.min(input.waitMs ?? 0, ACP_TURN_WAIT_MAX_MS));
@@ -82,7 +87,7 @@ export class AcpSessions implements AcpSessionSurface {
       const task = this.engine.store.task(record.taskId);
       const signature = acpLifecycleSignature(task);
       const messages: string[] = [];
-      if (first || this.shown.get(record.sessionId) !== signature) {
+      if (first || input.attach === true || this.shown.get(record.sessionId) !== signature) {
         messages.push(acpTaskFinished(task) ? acpFinishedLine(task) : acpLifecycleLine(task));
         this.remember(record.sessionId, signature);
       }

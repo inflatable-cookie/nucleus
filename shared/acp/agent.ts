@@ -243,11 +243,15 @@ export class AcpAgent {
     catch (error) { throw new AcpRefusal(-32000, reasonOf(error)); }
   }
 
-  /** The first call of a session: proves the credential and reads the task's first lifecycle line. */
+  /**
+   * The first call of a session: proves the credential and reads the task's current
+   * lifecycle line. It asks for an attach, so a relaunched agent shows the line even
+   * when this service already showed it to the previous one.
+   */
   private async attach(source: AcpSessionSource): Promise<AcpTurnReply> {
     const { binding, transport } = source;
     try {
-      return await transport.turn({ taskId: binding.taskId, sessionId: binding.sessionId, waitMs: 0 }, new AbortController().signal);
+      return await transport.turn({ taskId: binding.taskId, sessionId: binding.sessionId, waitMs: 0, attach: true }, new AbortController().signal);
     } catch (error) {
       throw new AcpRefusal(-32000, `Nucleus is unreachable for task ${binding.taskId}: ${reasonOf(error)}`);
     }
@@ -261,6 +265,12 @@ export class AcpAgent {
     session.inFlight = true;
     try {
       const text = promptText(params.prompt);
+      // The thread's opening prompt establishes it and is never forwarded, so a session
+      // has exactly one. Any first prompt takes that slot, including one this agent does
+      // not answer: a host's wake arriving before the operator's first message must not
+      // turn that message into an opening prompt.
+      const opening = !session.prompted;
+      session.prompted = true;
       if (text === "" || this.options.ignore?.(text, session.binding)) {
         // Not the operator speaking: nothing is shown and nothing is forwarded.
         this.result(send, id, { stopReason: "end_turn" });
@@ -269,10 +279,7 @@ export class AcpAgent {
       session.cancelled = false;
       session.controller = new AbortController();
       for (const line of session.pending.splice(0)) this.emit(send, sessionId, line);
-      if (!session.prompted) {
-        // The thread's opening prompt establishes it. It is not a message to the task.
-        session.prompted = true;
-      } else {
+      if (!opening) {
         const forwarded = await this.forward(session, text, send);
         if (!forwarded) { this.result(send, id, { stopReason: "end_turn" }); return; }
       }
