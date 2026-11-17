@@ -31,6 +31,8 @@ test("a retained launch returns the parent's own child exit for this supervisor,
   assert.equal(exit.code, 7, "the child's own exit code is retained");
   assert.equal(exit.signal, null);
   assert.equal(exit.startIdentity, liveIdentity, "the retained start identity is the identity read while the child was alive");
+  assert.equal(exit.parentPid, process.pid, "the receipt names the observing parent");
+  assert.equal(exit.parentStartIdentity, hostRunProcessStartIdentity(process.pid), "the parent's own start identity travels with the wait");
   assert.equal(exit.source, "child-exit-event", "the wait is the parent's child exit event, not a census, EOF or poll");
 });
 

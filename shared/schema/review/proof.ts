@@ -57,6 +57,12 @@ export const qualificationExecutionSchema = z.object({
   environmentKeys: z.array(z.string()),
   /** The canonical digest of those keys' effective values (see the environment digest owner). */
   environmentDigest: qualificationDigestSchema,
+  /**
+   * The instant the one per-launch secret's own claims expire. The secret's
+   * value is inside `environmentDigest` and is never stored; recording its expiry
+   * lets the launch mint the same value and re-verify the digest.
+   */
+  tokenExpiresAt: z.number().int().positive(),
 }).strict();
 
 export type QualificationExecution = z.infer<typeof qualificationExecutionSchema>;
@@ -87,6 +93,12 @@ export const proofExecutionRequestSchema = z.object({
   inputs: z.array(z.string().trim().regex(/^(?:sha256:)?[a-f0-9]{64}$/, 'Input hashes are sha256 digests')).max(64).default([]),
   /** Only author-side proof is in scope; a reviewer proof stays its own independent run. */
   role: z.literal('author').default('author'),
+  /**
+   * Spec 064 P1: the explicit opt-in to qualification mode. Absent, the proof
+   * declaration and every record derived from it carry no qualification binding,
+   * so existing proof executions are byte-for-byte unchanged.
+   */
+  qualification: z.literal(true).optional(),
 }).strict();
 
 export type ProofExecutionRequest = z.infer<typeof proofExecutionRequestSchema>;

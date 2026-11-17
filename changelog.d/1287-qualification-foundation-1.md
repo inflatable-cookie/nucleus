@@ -6,8 +6,10 @@ exit, and stop by signalling only the one direct command.
   authorization and operation, brief version and digest, published head and tree,
   ordered input digests, declared selector, plus the bound host run, executable
   digest, literal argv, cwd and the canonical digest of the effective environment
-  values) is owned by `shared/schema/review/proof.ts`, carried by a proof run's
-  intent and accepted by the private supervisor plan. The host-run endpoint's
+  values) is owned by `shared/schema/review/proof.ts`, carried by an opted-in
+  proof run's intent and accepted by the private supervisor plan. Qualification
+  mode is opt-in at the proof declaration, so an ordinary proof execution records
+  none of it. The host-run endpoint's
   private `submitQualification` authenticates the executor run's own credential
   and resolves that subject from Nucleus's records before any submit write; a
   host-run token or a client-supplied caller grants nothing. The source is

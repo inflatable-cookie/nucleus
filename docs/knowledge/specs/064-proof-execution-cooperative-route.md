@@ -46,13 +46,15 @@ seams named below. **P4–P7 remain unimplemented**, and no qualification proof
 runs: the mode is opt-in, and with it absent every host-run, QA and proof
 behaviour is unchanged.
 
-- **P1** — the qualification binding (subject and execution halves, plus a
-  canonical environment-value digest) lives in `shared/schema/review/proof.ts`,
-  is carried by `runSchema.proofExecution` from `runIntent`, is recordable in
-  `hostRunSupervisorPlanSchema`, and is resolved by the endpoint's private
-  `submitQualification` from the executor run's own credential — never from a
-  host-run token or a client-supplied caller. `verifyProofSource` is rechecked
-  before the submit and again before acceptance
+- **P1** — the qualification binding (subject and execution halves, plus the
+  canonical digest of the complete effective environment values) lives in
+  `shared/schema/review/proof.ts` and is opt-in at the proof declaration
+  (`queue.proofExecution.qualification: true`), so an ordinary proof execution
+  records none of it. It is carried by `runSchema.proofExecution` from
+  `runIntent`, is recordable in `hostRunSupervisorPlanSchema`, and is resolved by
+  the endpoint's private `submitQualification` from the executor run's own
+  credential — never from a host-run token or a client-supplied caller.
+  `verifyProofSource` is rechecked before the submit and again before acceptance
   (`core/intake/callback-intake.ts`).
 - **P2** — `spawnDetachedSupervisor` has an opt-in retained-child return, so the
   service holds S's actual child exit for the whole attempt, and

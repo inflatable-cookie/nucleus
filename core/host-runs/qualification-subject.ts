@@ -10,7 +10,7 @@
  */
 import { createHash } from "node:crypto";
 import { readFileSync, realpathSync, statSync } from "node:fs";
-import type { HostRunSubmitBody } from "./host-run-wire";
+import { hostRunLaunchEnvironment, type HostRunSubmitBody } from "./host-run-wire";
 import type { Store } from "../store/store";
 import { verifyProofSource } from "../qa/proof-source";
 import { ProofExecutionRefusal } from "../qa/proof-refusal";
@@ -33,6 +33,13 @@ export interface QualificationSubmitInput {
   hostRun: { id: string; epoch: number };
   /** This endpoint's own environment, from which the effective PATH and HOME values come. */
   environment: Record<string, string | undefined>;
+  /**
+   * The one per-launch secret the endpoint minted for this resolved host run, and
+   * its own claim expiry. Its value enters the environment digest, so the binding
+   * covers every effective value the command receives; only the expiry is
+   * recorded, never the value.
+   */
+  token: { value: string; expiresAt: number };
 }
 
 export interface QualificationSubjectPorts {
@@ -63,7 +70,7 @@ function sourceRefusalCode(error: unknown): QualificationRefusalCode {
  */
 export function qualificationSubjectResolver(ports: QualificationSubjectPorts) {
   return async (input: QualificationSubmitInput): Promise<QualificationResolution> => {
-    const { credential, submission, hostRun, environment } = input;
+    const { credential, submission, hostRun, environment, token } = input;
 
     // A client-supplied caller is not an identity: the authenticated run owns the submit.
     if (submission.caller !== credential.runId)
@@ -83,6 +90,12 @@ export function qualificationSubjectResolver(ports: QualificationSubjectPorts) {
       return refused("subject_mismatch", `Run ${run.id} is a ${run.role} run, not an author-side proof executor`);
     const bound = run.proofExecution;
     if (!bound) return refused("subject_mismatch", `Executor run ${run.id} records no bound proof subject, so it has no qualification to submit`);
+    // Spec 064 P1: qualification mode is opt-in at the proof declaration. An
+    // ordinary proof execution records no qualification binding and can never be
+    // reinterpreted into one here.
+    if (!bound.qualification)
+      return refused("not_permitted",
+        `Executor run ${run.id} did not opt into qualification mode; an ordinary proof execution has no qualification to submit and is never reinterpreted into one`);
     if (run.released)
       return refused("not_permitted", `Executor run ${run.id} is released; its one proof execution is spent and is never repeated or refunded`);
     const task = ports.store.task(run.taskId);
@@ -131,11 +144,12 @@ export function qualificationSubjectResolver(ports: QualificationSubjectPorts) {
       return refused("subject_mismatch",
         `The checked-out tree ${source.tree} is not the bound tree ${subject.tree}; the subject's source moved before any effect`);
 
-    // The effective environment values, not just their names. The one secret
-    // per-launch variable is recorded as a key only and never enters the digest.
-    const effective: Record<string, string> = {
-      ...submission.env, PATH: environment.PATH ?? "", HOME: environment.HOME ?? "",
-    };
+    // The complete effective environment values, not their names: the same owner
+    // the launcher uses builds the map, so the digest provably covers every value
+    // the command receives — the submitted values, this endpoint's PATH and HOME,
+    // the host run id and the one per-launch secret. Only the secret's expiry is
+    // recorded; its value lives inside the digest.
+    const effective = hostRunLaunchEnvironment(submission.env, { runId: hostRun.id, token: token.value, env: environment });
     return {
       state: "resolved",
       binding: {
@@ -146,6 +160,7 @@ export function qualificationSubjectResolver(ports: QualificationSubjectPorts) {
           argv: submission.argv, cwd,
           environmentKeys: Object.keys(effective).sort(),
           environmentDigest: qualificationEnvironmentDigest(effective),
+          tokenExpiresAt: token.expiresAt,
         },
       },
     };

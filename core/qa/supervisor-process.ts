@@ -31,10 +31,17 @@ export const SUPERVISOR_STOP_GRACE_MS = 250;
  */
 export type DetachedSupervisorExit =
   | {
-    state: "observed"; pid: number; startIdentity: string; code: number | null; signal: string | null;
-    observedAt: string; source: "child-exit-event";
+    state: "observed"; pid: number; startIdentity: string;
+    /** The observing parent's own identity, so the wait names both ends of the edge. */
+    parentPid: number; parentStartIdentity: string;
+    code: number | null; signal: string | null; observedAt: string; source: "child-exit-event";
   }
-  | { state: "unknown"; pid: number; startIdentity: string | null; reason: string; observedAt: string };
+  | {
+    state: "unknown"; pid: number; startIdentity: string | null;
+    /** The observing parent's own identity, so the wait names both ends of the edge. */
+    parentPid: number; parentStartIdentity: string;
+    reason: string; observedAt: string;
+  };
 
 /** The opt-in retained-child return: the supervisor's pid and its exit promise. */
 export interface RetainedDetachedSupervisor {
@@ -96,12 +103,14 @@ function retainedChildExit(child: ChildProcess): Promise<DetachedSupervisorExit>
   return new Promise(resolvePromise => {
     const pid = child.pid ?? 0;
     const startIdentity = pid ? hostRunProcessStartIdentity(pid) : null;
+    const parentPid = process.pid;
+    const parentStartIdentity = hostRunProcessStartIdentity(parentPid);
     child.on("exit", (code, signal) => resolvePromise({
-      state: "observed", pid, startIdentity: startIdentity ?? "", code, signal,
+      state: "observed", pid, startIdentity: startIdentity ?? "", parentPid, parentStartIdentity, code, signal,
       observedAt: new Date().toISOString(), source: "child-exit-event",
     }));
     child.on("error", error => resolvePromise({
-      state: "unknown", pid, startIdentity, observedAt: new Date().toISOString(),
+      state: "unknown", pid, startIdentity, parentPid, parentStartIdentity, observedAt: new Date().toISOString(),
       reason: `The detached supervisor's own child exit was never observed: ${error instanceof Error ? error.message : String(error)}`,
     }));
   });

@@ -579,7 +579,20 @@ export class HostRunEndpoint {
     // The host run identity comes from the authenticated executor run, not from
     // the client-supplied caller the body may carry.
     const hostRunId = submissionRunId(parsed.data.credential.runId, parsed.data.submission.clientRequestId);
-    const resolved = await resolve({ ...parsed.data, hostRun: { id: hostRunId, epoch }, environment: this.env });
+    // Spec 064 P1: mint the one per-launch secret here so the resolved binding can
+    // digest the complete effective environment, including this value. Its expiry
+    // covers the reservation-plus-run window, and the launch mints the same value
+    // from the recorded expiry rather than a fresh one.
+    this.syncTokenKeys();
+    const tokenExpiresAt = this.nowMs() + parsed.data.submission.capacityDeadlineMs + parsed.data.submission.runTimeoutMs + this.tokenGraceMs;
+    const tokenValue = signRunToken({
+      runId: hostRunId, epoch, class: parsed.data.submission.class,
+      root: realpathSync(parsed.data.submission.cwd), exp: tokenExpiresAt,
+    }, this.keys!.current.keyB64);
+    const resolved = await resolve({
+      ...parsed.data, hostRun: { id: hostRunId, epoch }, environment: this.env,
+      token: { value: tokenValue, expiresAt: tokenExpiresAt },
+    });
     if (resolved.state === "refused") return { binding: null, code: qualificationClientCode(resolved.code), refusal: resolved.refusal };
     return {
       binding: resolved.binding, code: "not_permitted",
@@ -663,17 +676,17 @@ export class HostRunEndpoint {
     }
     const launched = this.scheduler.markLaunched(run.id);
     if (launched.state !== "running" || !launched.launchedAt) return;
+    const qualification = stored.body.qualification ?? null;
     const token = this.tokenForRun(launched, stored);
     const launchEnv = hostRunLaunchEnvironment(listedEnv, { runId: launched.id, token, env: this.env });
-    const qualification = stored.body.qualification ?? null;
-    // Spec 064 P1: the effective environment values are re-read here, before any
-    // effect, and must be the values the submit resolved. A changed PATH/HOME (a
-    // rolled service with a different environment) is a different execution.
+    // Spec 064 P1: the complete effective environment values are re-read here,
+    // before any effect, and must be exactly the values the submit resolved. A
+    // changed PATH/HOME, a different host run id or a different secret (a rolled
+    // service with another key) is a different execution and refuses the launch.
     if (qualification?.execution) {
-      const values: Record<string, string> = {};
-      for (const key of qualification.execution.environmentKeys) values[key] = launchEnv[key] ?? "";
-      if (qualificationEnvironmentDigest(values) !== qualification.execution.environmentDigest) {
-        this.scheduler.rejectBeforeLaunch(launched.id, `The effective environment values no longer match the qualification binding's digest for ${launched.id}; the submit is refused before any effect`);
+      if (qualificationEnvironmentDigest(launchEnv) !== qualification.execution.environmentDigest
+        || Object.keys(launchEnv).sort().join("\u0000") !== qualification.execution.environmentKeys.join("\u0000")) {
+        this.scheduler.rejectBeforeLaunch(launched.id, `The effective environment values no longer match the qualification binding's digest for ${launched.id}; the launch is refused before any effect`);
         return;
       }
     }
@@ -699,9 +712,14 @@ export class HostRunEndpoint {
     const keys = this.keys!;
     const root = realpathSync(stored.body.cwd);
     const launchedAt = Date.parse(run.launchedAt ?? new Date(this.nowMs()).toISOString());
+    // Spec 064 P1: a qualification run's secret was minted when its binding was
+    // resolved, and its digest covers that exact value. Re-mint the same claims
+    // from the recorded expiry instead of choosing a fresh one; an ordinary run
+    // keeps today's launch-time expiry.
+    const exp = stored.body.qualification?.execution?.tokenExpiresAt ?? launchedAt + run.runTimeoutMs + this.tokenGraceMs;
     return signRunToken({
       runId: run.id, epoch: run.epoch, class: stored.body.class, root,
-      exp: launchedAt + run.runTimeoutMs + this.tokenGraceMs,
+      exp,
     }, keys.current.keyB64);
   }
 
@@ -776,16 +794,20 @@ export class HostRunEndpoint {
     // record decides whether the stop goes through the supervisor's cancel
     // request; the process group is the fallback for a run it cannot name.
     const submitted = this.submission(runId);
+    // Spec 064 P3: the plan's stop mode is read before any fallback, so a
+    // qualification attempt can never inherit a group signal through a missing or
+    // unreadable submission.
+    const stopMode = this.runStopMode(runId);
     // A running cancel publishes the contract's `host.run.cancel` request; queued and
     // admitted runs get theirs from cancelQueued.
-    if (submitted || (run.processGroupId && run.startIdentity))
+    if (submitted || stopMode === "qualification_direct" || (run.processGroupId && run.startIdentity))
       this.scheduler.note(runId, "request", { method: "host.run.cancel", input: { runId, reason } });
     // A run this endpoint launched is stopped through its supervisor's durable
     // cancel request, so a Queue roll cannot lose the stop. Spec 064 P3: the
     // request persists the plan's stop mode, so a qualification run's stop stays
     // the direct-command-only stop after any roll.
-    if (submitted) {
-      writeHostRunCancelRequest(this.stateDir, runId, reason, new Date(this.nowMs()).toISOString(), this.runStopMode(runId));
+    if (submitted || stopMode === "qualification_direct") {
+      writeHostRunCancelRequest(this.stateDir, runId, reason, new Date(this.nowMs()).toISOString(), stopMode);
       this.watch.watchRun(runId);
       return run;
     }

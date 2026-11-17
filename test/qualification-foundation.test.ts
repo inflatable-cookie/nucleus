@@ -17,7 +17,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -30,12 +30,18 @@ import { qualificationSubjectResolver } from "../core/host-runs/qualification-su
 import {
   HostRunEndpoint,
   QUALIFICATION_FOUNDATION_INCOMPLETE,
+  hostRunLaunchEnvironment,
   hostRunRunDir,
+  hostRunSupervisorPaths,
   hostRunSupervisorPlanSchema,
+  readHostRunCancelRequest,
   readHostRunTokenKeys,
+  removeVerifiedOwnedFile,
   signRunToken,
   writeVerifiedOwnedFile,
 } from "../service/callbacks/host-run-endpoint";
+import { proofExecutionRecord } from "../core/qa/proof-records";
+import { proofExecutionRequestSchema } from "../shared/schema/review/proof";
 import { runHostRunSupervisorMain } from "../service/executor/host-run-supervisor";
 import { executeHookProgram } from "../core/machine/process-exec";
 import { hostRunProcessStartIdentity } from "../core/machine/start-identity";
@@ -54,7 +60,8 @@ const capacity = () => ({ cpuCapacity: 4, memoryCapacityBytes: 8_000_000_000, fr
  * at the same head on the task branch, plus the store, task, executor run and
  * callback credential a qualification submit resolves through.
  */
-function fixture(t: { after(fn: () => void | Promise<void>): void }, overrides: { subjectHeadDrift?: boolean } = {}) {
+function fixture(t: { after(fn: () => void | Promise<void>): void }, overrides: { subjectHeadDrift?: boolean; optIn?: boolean } = {}) {
+  const optIn = overrides.optIn !== false;
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ns-qualification-")));
   const origin = join(root, "origin.git"), repo = join(root, "repo"), checkout = join(root, "checkout");
   execFileSync("git", ["init", "--bare", "--initial-branch=main", origin], { stdio: "ignore" });
@@ -80,6 +87,8 @@ function fixture(t: { after(fn: () => void | Promise<void>): void }, overrides: 
   store.update(inserted.id, { directory: checkout, branch, hostId: "host" });
   const task = store.task(inserted.id);
 
+  // The proof declaration the brief would carry: qualification mode is opt-in.
+  if (optIn) store.update(task.id, { proofExecution: { selector, inputs, role: "author" as const, qualification: true } });
   const runId = randomUUID();
   const token = `credential-${randomUUID()}`;
   const authorizedBy = { role: "queue_dispatch" as const, caller: null, note: null };
@@ -96,7 +105,9 @@ function fixture(t: { after(fn: () => void | Promise<void>): void }, overrides: 
     completion: null, released: false,
     proofExecution: {
       selector, inputs, prNumber: null, tree, operationId: null, briefVersion: null, briefDigest: null,
-      returnPhase: "awaiting_review", authorizedBy, qualification: { subject, execution: null },
+      returnPhase: "awaiting_review", authorizedBy,
+      // An ordinary proof execution records no qualification binding at all.
+      ...(optIn ? { qualification: { subject, execution: null } } : {}),
     },
   });
   store.db.prepare("INSERT INTO runs VALUES(?,?,?)").run(run.id, run.taskId, JSON.stringify(run));
@@ -116,7 +127,7 @@ function fixture(t: { after(fn: () => void | Promise<void>): void }, overrides: 
   });
   return {
     root, origin, repo, checkout, head, tree, branch, stateDir, store, scheduler, endpoint, task,
-    executor: run, token, subject, subjectDigest: qualificationSubjectDigest(subject),
+    executor: run, token, subject, subjectDigest: qualificationSubjectDigest(subject), optIn,
     spawnCount: () => spawns,
   };
 }
@@ -221,15 +232,30 @@ test("an authenticated, matched submit resolves the full binding including the e
   assert.equal(execution.cwd, f.checkout);
   assert.equal(execution.executable, realpathSync(process.execPath));
   assert.match(execution.executableDigest, /^sha256:[a-f0-9]{64}$/, "the executable's content digest is bound");
-  const expectedEnvironment = qualificationEnvironmentDigest({
-    ...body.env, PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "",
-  });
-  assert.equal(execution.environmentDigest, expectedEnvironment, "the environment-value digest is recorded, not only the names");
-  assert.equal(execution.environmentDigest, qualificationEnvironmentDigest({
-    QUALIFICATION_FIXTURE: "value", PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "",
-  }));
-  assert.deepEqual(execution.environmentKeys, ["HOME", "PATH", "QUALIFICATION_FIXTURE"].sort());
+  // The digest covers every effective value the command receives. The one
+  // per-launch secret is inside it; only its expiry is recorded, so the test
+  // re-mints the same value from that expiry and the endpoint's own keys.
+  const keys = readHostRunTokenKeys(f.stateDir);
+  assert.ok(keys, "the endpoint published its host-run token keys");
+  const launchToken = signRunToken({
+    runId: execution.hostRunId, epoch: execution.hostEpoch, class: body.class,
+    root: f.checkout, exp: execution.tokenExpiresAt,
+  }, keys.current.keyB64);
+  const effective = hostRunLaunchEnvironment(body.env, { runId: execution.hostRunId, token: launchToken, env: process.env });
+  assert.deepEqual(execution.environmentKeys, Object.keys(effective).sort());
+  assert.deepEqual(execution.environmentKeys, ["HOME", "HOST_RUN_ID", "HOST_RUN_TOKEN", "PATH", "QUALIFICATION_FIXTURE"]);
+  assert.equal(execution.environmentDigest, qualificationEnvironmentDigest(effective),
+    "the environment-value digest covers the full effective environment, including the per-launch secret");
+  assert.ok(execution.tokenExpiresAt > Date.now(), "the secret's expiry is recorded, never its value");
   assert.equal(execution.hostEpoch, f.scheduler.authority().epoch);
+
+  // A different effective value is a different binding.
+  const changed = await f.endpoint.submitQualification({
+    credential: { taskId: f.task.id, runId: f.executor.id, token: f.token },
+    submission: { ...body, env: { ...body.env, QUALIFICATION_FIXTURE: "another-value" } },
+  });
+  assert.ok(changed.binding?.execution);
+  assert.notEqual(changed.binding.execution.environmentDigest, execution.environmentDigest);
 
   // The amendment's staged refusal: the binding resolved, and the mode is refused
   // before any write or spawn.
@@ -296,3 +322,85 @@ function hostRunDirExists(stateDir: string, runId: string, file?: string): boole
   const directory = hostRunRunDir(stateDir, runId);
   return file ? existsSync(join(directory, file)) : existsSync(directory);
 }
+
+test("qualification metadata is opt-in: an ordinary proof execution records none and cannot be submitted as one", async t => {
+  // The declaration's own opt-in: absent means the existing proof shape, unchanged.
+  assert.equal('qualification' in proofExecutionRequestSchema.parse({ selector }), false);
+  assert.equal(proofExecutionRequestSchema.parse({ selector, qualification: true }).qualification, true);
+
+  const f = fixture(t, { optIn: false });
+  await f.endpoint.start();
+  assert.equal(f.executor.proofExecution?.qualification, undefined, "the ordinary executor run records no qualification binding");
+
+  // An ordinary proof execution records the same proof receipt it always did.
+  const ordinary = proofExecutionRecord(f.executor, f.task, { role: "queue_dispatch", caller: null, note: null }, null);
+  assert.equal('qualification' in ordinary, false, "an ordinary proof receipt carries no qualification metadata");
+
+  // And it can never be reinterpreted into a qualification submit.
+  const refused = await f.endpoint.submitQualification({
+    credential: { taskId: f.task.id, runId: f.executor.id, token: f.token },
+    submission: submitBody(f.executor.id, { cwd: f.checkout }),
+  });
+  assert.equal(refused.binding, null);
+  assert.match(refused.refusal, /did not opt into qualification mode/);
+  assert.equal(f.spawnCount(), 0);
+});
+
+test("an opted-in proof receipt records the qualification reference and its subject digest", async t => {
+  const f = fixture(t);
+  const record = proofExecutionRecord(f.executor, f.task, { role: "queue_dispatch", caller: null, note: null }, null);
+  assert.ok(record.qualification, "an opted-in receipt names its qualification");
+  assert.equal(record.qualification.reference, `${f.task.id}/${f.executor.id}`);
+  assert.equal(record.qualification.subjectDigest, f.subjectDigest);
+  assert.equal(record.qualification.executionDigest, null, "no command is bound before a submit");
+});
+
+test("a qualification attempt's cancel persists its mode and never takes the group fallback", async t => {
+  const f = fixture(t);
+  await f.endpoint.start();
+  const wire = f.endpoint as unknown as {
+    onSubmit(id: string, body: unknown): { ok: boolean; body?: { runId: string } };
+    onCancel(id: string, body: unknown): { ok: boolean; body?: { state: string }; error?: { code: string } };
+  };
+
+  // A resolved binding is what a qualification plan would carry.
+  const resolved = await f.endpoint.submitQualification({
+    credential: { taskId: f.task.id, runId: f.executor.id, token: f.token },
+    submission: submitBody(f.executor.id, { cwd: f.checkout }),
+  });
+  assert.ok(resolved.binding);
+
+  // Two ordinary host runs, one of which is turned into a qualification attempt by
+  // its own plan; both lose their submission record, which is the shape that used
+  // to fall through to a group signal.
+  const ordinary = wire.onSubmit("q-ordinary", { ...submitBody("effigy@worker-stop", { cwd: f.repo }) });
+  const qualifiedRun = wire.onSubmit("q-qualified", { ...submitBody("effigy@worker-stop-2", { cwd: f.repo }) });
+  assert.equal(ordinary.ok, true); assert.equal(qualifiedRun.ok, true);
+  const runningId = qualifiedRun.body!.runId;
+  const ordinaryId = ordinary.body!.runId;
+
+  const planPath = hostRunSupervisorPaths(f.stateDir, runningId).planPath;
+  const plan = hostRunSupervisorPlanSchema.parse(JSON.parse(readFileSync(planPath, "utf8")));
+  writeVerifiedOwnedFile(f.stateDir, ["runs", runningId, "supervisor.plan.json"], JSON.stringify(hostRunSupervisorPlanSchema.parse({
+    ...plan, stopMode: "qualification_direct", qualification: resolved.binding,
+  })), 0o600);
+  for (const runId of [runningId, ordinaryId]) removeVerifiedOwnedFile(realpathSync(f.stateDir), ["runs", runId, "submission.json"]);
+
+  // The qualification stop is written with its mode and the run is reported as
+  // stopped-by-request; no process group is signalled.
+  const cancelled = wire.onCancel("c-qualified", { runId: runningId, reason: "qualification fixture stop" });
+  assert.equal(cancelled.ok, true, JSON.stringify(cancelled));
+  assert.equal(cancelled.body?.state, "running");
+  const request = readHostRunCancelRequest(f.stateDir, runningId);
+  assert.equal(request.state, "requested");
+  assert.equal(request.state === "requested" ? request.reason : "", "qualification fixture stop");
+  assert.equal(request.state === "requested" ? request.stopMode : undefined, "qualification_direct",
+    "the durable cancel request persists the qualification stop mode");
+
+  // The same shape without the mode keeps today's refusal: the group fallback is
+  // never reached by a qualification attempt.
+  const ordinaryCancel = wire.onCancel("c-ordinary", { runId: ordinaryId, reason: "ordinary fixture stop" });
+  assert.equal(ordinaryCancel.ok, false);
+  assert.equal(ordinaryCancel.error?.code, "not_permitted");
+  assert.equal(readHostRunCancelRequest(f.stateDir, ordinaryId).state, "absent");
+});

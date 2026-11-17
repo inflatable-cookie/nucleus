@@ -111,9 +111,13 @@ bytes, so nothing here is a rollback break.
   qualification submit resolved: task, participant run, authorization and
   operation, brief version and digest, published head and tree, the ordered
   input digests, the declared selector, and the bound host run/epoch, executable
-  digest, literal argv, cwd and the canonical digest of the effective
-  environment **values**. With the field absent every existing behaviour is
-  unchanged.
+  digest, literal argv, cwd and the canonical digest of the **complete effective
+  environment values** — every value the command receives, built by the same
+  environment owner the launcher uses, so the one per-launch secret is inside the
+  digest while only its expiry is recorded. With the field absent every existing
+  behaviour is unchanged: qualification mode is opt-in at the proof declaration
+  (`queue.proofExecution.qualification: true`), and an ordinary proof execution
+  records no qualification binding at all.
 - A plan carrying either field is refused by the supervisor before its first
   write or spawn while Spec 064 P4–P7 are unimplemented: `qualification
   foundation incomplete`. The endpoint's private `submitQualification` method
