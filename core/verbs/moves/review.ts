@@ -92,7 +92,9 @@ export async function moveToReview(engine: Engine, input: ReviewMoveInput, opera
   // A valid reader already reviewing this exact head is preserved and continued,
   // not replaced; the reader move decides that, or returns null for the ordinary
   // path. An unprovable reader binding refuses before any displacement.
-  const identity = reviewerIdentityAtHead(store.task(task.id), store, pr.head);
+  const identity = input.fresh === true
+    ? { kind: 'absent' as const }
+    : reviewerIdentityAtHead(store.task(task.id), store, pr.head);
   if (identity.kind === 'refused') throw Error(identity.refusal);
   const reading = input.fresh !== true && identity.kind === 'valid' ? identity.run : null;
   if (reading) {

@@ -533,19 +533,26 @@ export class RoleSelection {
   assertReviewProfileIndependent(task: Task, run: Run) {
     if (!task.hostId || run.hostId !== task.hostId) throw new Error('Waiting for a proven reviewer host');
     const profile = run.profile, assigned = task.resolution.reviewerProfile;
-    if (!profile || !assigned || task.resolution.reviewerAgentId !== run.agentId) throw new Error('Original reviewer profile/agent assignment is missing');
+    // A first review-entry reviewer is checked by the pre-send guard before
+    // createRun has returned the new agent ID and before delivery records the
+    // assignment on the task. Treat only that fully unassigned shape as a fresh
+    // selection; every recorded reviewer still needs its exact pinned identity.
+    const firstSelection = !run.agentId && !task.resolution.reviewerAgentId && !assigned;
+    if (!profile || (!firstSelection && (!assigned || task.resolution.reviewerAgentId !== run.agentId)))
+      throw new Error('Original reviewer profile/agent assignment is missing');
     const runtimeIdentity = (p: Profile) => JSON.stringify([p.provider, p.model, p.modeId, p.featureValues]);
     const configured = this.resolution.profiles().find(candidate => candidate.id === profile.id);
     if (!this.resolution.catalogKnown()) throw new Error('The daemon profile catalog is still loading after service start; retry shortly');
-    if (!configured || runtimeIdentity(configured) !== runtimeIdentity(profile) || runtimeIdentity(assigned) !== runtimeIdentity(profile) ||
-        assigned.thinkingOptionId !== profile.thinkingOptionId) throw new Error('Original reviewer profile runtime identity changed');
+    if (!configured || runtimeIdentity(configured) !== runtimeIdentity(profile) ||
+        (assigned && (runtimeIdentity(assigned) !== runtimeIdentity(profile) || assigned.thinkingOptionId !== profile.thinkingOptionId)))
+      throw new Error('Original reviewer profile runtime identity changed');
     if (profile.thinkingOptionId !== undefined && !configured.supportedThinking.includes(profile.thinkingOptionId))
       throw new Error(`Original reviewer profile no longer supports pinned thinking option ${profile.thinkingOptionId}`);
     const profileIssue = this.resolution.retainedProfileIssue(profile);
     if (profileIssue) throw new Error(`Original reviewer profile is unavailable: ${profileIssue}`);
     // The reviewer agent may not be an agent that authored any part of the task,
     // including the author-side proof execution (Spec 055).
-    if (this.resolution.authorAgentIds(task).has(run.agentId!) || proofExecutorAgents(task).includes(run.agentId!))
+    if (run.agentId && (this.resolution.authorAgentIds(task).has(run.agentId) || proofExecutorAgents(task).includes(run.agentId)))
       throw new Error('Original reviewer authored this task; independent continuation refused');
     const model = authorModelKey;
     const authors = taskAuthorModelKeys(task, this.store.runs(task.id).filter(item => item.role === 'revision'));
