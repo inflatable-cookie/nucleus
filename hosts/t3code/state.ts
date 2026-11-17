@@ -15,6 +15,7 @@ const intentKind = z.enum([
   'thread.settle', 'thread.unsettle', 'thread.metadata.update', 'thread.delete', 'thread.stop', 'thread.archive',
   'thread.tag.set', 'thread.created.record',
   'message.dispatch', 'runtime-request.respond', 'thread.user-input.dismiss',
+  'delegated_task.request', 'delegated_task.completion-delivery.dispose',
 ]);
 export type T3IntentKind = z.infer<typeof intentKind>;
 const agent = z.object({ id: z.string(), workspaceId: z.string(), labels: z.record(z.string(), z.string()), title: z.string().optional() });
@@ -57,6 +58,19 @@ const supportRow = z.object({ taskId: z.string(), threadId: z.string(), role: z.
   tag: z.enum(['pending', 'settled', 'unknown']).optional(),
   /** The card's outcome once known; a readback proves it without a resend. */
   card: z.enum(['pending', 'settled', 'unknown']).optional() });
+/**
+ * One task's parent thread: the Nucleus ACP session that owns the task's row, the
+ * checkout binding the launched agent resolves, and the facts the sweep needs to
+ * hold or release its held turn. `releasedAt` is the last release this host sent, so
+ * a sweep releases one turn once; `fallbackUntil` parks the native path after a child
+ * this host could not create, so the rest of the task's roles do not pay the wait.
+ */
+const parentThread = z.object({ taskId: z.string(), threadId: z.string(), sessionId: z.string(), bindingPath: z.string(),
+  workspaceId: z.string(), projectId: z.string(), directory: z.string(), createdAt: z.string(),
+  /** The task's own state title, the base the row's step rides after. */
+  title: z.string().optional(), archivedAt: z.string().optional(), releasedAt: z.string().optional(),
+  /** Set when this host re-entered the thread; a create inside its grace window keeps the turn. */
+  holdingSince: z.string().optional(), fallbackUntil: z.string().optional() });
 const schema = z.object({ version: z.literal(1), hostId: z.string(), lastPassedVersion: z.string(),
   workspaces: z.record(z.string(), workspace), agents: z.record(z.string(), agent), intents: z.record(z.string(), intent),
   pendingSettles: z.record(z.string(), settleIntent).optional(),
@@ -95,7 +109,21 @@ const schema = z.object({ version: z.literal(1), hostId: z.string(), lastPassedV
    * What this host read from T3's own settings at connect, never written back:
    * whether support threads are hidden by the client's tag setting.
    */
-  supportThreads: z.enum(['hidden', 'setting_off', 'tag_missing']).optional() });
+  supportThreads: z.enum(['hidden', 'setting_off', 'tag_missing']).optional(),
+  /**
+   * The task's parent thread on the Nucleus ACP provider, by task id. Role threads
+   * are that thread's native subagent children, so the parent is the task's one
+   * operator-visible row; it is keyed separately from `agents` because it is nobody's
+   * run, and `findAgents` must never mistake it for the worker this task created.
+   */
+  parents: z.record(z.string(), parentThread).optional(),
+  /**
+   * Why the native-parent path is not in use, when it is not: a missing provider
+   * instance, or a child that could not be created. Recorded for the host status and
+   * for the next pass, never as a task decision (a task keeps working on top-level
+   * role threads, which is the fallback).
+   */
+  nesting: z.object({ state: z.enum(['nested', 'fallback']), reason: z.string(), at: z.string() }).optional() });
 export type T3State = z.infer<typeof schema>;
 export type T3SettleIntent = z.infer<typeof settleIntent>;
 

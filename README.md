@@ -131,13 +131,31 @@ T3Code owns subscription usage display through its own features and plugins;
 Nucleus adds no subscription usage gauge. Its usage level remains a Nucleus
 dispatch setting, separate from monitoring provider subscription windows.
 
-On T3Code, a task starts one thread per agent: the worker, its reviewer, recovery,
-coordinator and executor threads. Nucleus tags those support threads
-`nucleus-support` and links each one from the worker's conversation as a card, so
-the worker thread is the task's one row and its title names the step. The support
-threads still appear in the sidebar as their own rows until you turn T3's own hide
-setting on. That setting is optional: with it off, everything above works the same
-and the support threads simply stay visible.
+On T3Code a task is one thread on the Nucleus ACP provider, and its worker,
+reviewer, recovery, coordinator and executor threads are that thread's native
+subagent children: T3 draws them inside the parent's card, so one row per task is
+what you see with no setting to turn on. The parent has no model. It shows the
+task's lifecycle text and holds its turn while a role runs, so the row reads as
+working exactly when the task is.
+
+That needs the Nucleus ACP provider registered in T3 once. T3 keeps it in its own
+provider settings, so paste this into an agent on the machine that runs T3:
+
+> Register the installed `nucleus-acp` command (on `PATH`, or as
+> `~/.local/bin/nucleus-acp`) as a T3Code ACP provider named `nucleus`, keeping
+> every existing provider exactly as it is. Show me the settings diff before saving.
+
+Nucleus checks for that provider at connect and before every launch and reports
+the answer as `service.health`'s `t3code.nativeParenting` line. Without it, a task
+falls back to one top-level thread per agent, which is the next paragraph, and
+nothing stops working.
+
+In that fallback, Nucleus tags the worker's sibling threads `nucleus-support` and
+links each one from the worker's conversation as a card, so the worker thread is
+the task's one row and its title names the step. Those threads still appear in the
+sidebar as their own rows until you turn T3's own hide setting on. That setting is
+optional: with it off, everything above works the same and the support threads
+simply stay visible.
 
 The hide switch lives in T3's server settings and has no settings screen:
 `hideTaggedThreads: true` plus `nucleus-support` in `hiddenThreadTags`. A client

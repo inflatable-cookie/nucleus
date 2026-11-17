@@ -60,9 +60,18 @@ export const acpBindingSchema = z
      * An optional regular-expression source, supplied by whichever host minted the
      * binding: prompts that match it are the host waking its own thread, not a person
      * speaking to the task. It is the agent's only host-shaped rule, and it arrives as
-     * configuration rather than parsed text.
+     * configuration rather than parsed text. Nothing is shown, nothing is forwarded and
+     * the turn ends.
      */
     ignorePattern: z.string().min(1).max(400).optional(),
+    /**
+     * An optional regular-expression source for the host's own re-entry prompt: the
+     * host re-arming a thread whose turn it released, so the thread has a live run to
+     * parent its next child. It is not a person speaking either — nothing is shown and
+     * nothing is forwarded — but the turn is held, which is the whole point of the
+     * re-entry. Configuration, never parsed text.
+     */
+    holdPattern: z.string().min(1).max(400).optional(),
   })
   .strict();
 export type AcpBinding = z.infer<typeof acpBindingSchema>;

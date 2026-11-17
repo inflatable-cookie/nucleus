@@ -12,9 +12,25 @@ import { decode, config, optionDescriptor, T3CompatibilityError, runtimeModes, d
 import { activeStatuses, T3Reads, type Projection, type ThreadReadKind } from './reads';
 import { identity, T3IntentLedger } from './intents';
 import { T3Presentation } from './presentation';
+import { T3Nesting } from './nesting';
 import { SUPPORT_THREADS_DOC, SUPPORT_THREAD_TAG, isSupportRole, supportThreadVisibility } from './one-row';
+import type { AcpSessionSurface } from '../../shared/acp/surface';
 
-export interface T3CodeConfig extends T3ConnectionConfig { statePath: string; probeThreadId?: string }
+export interface T3CodeConfig extends T3ConnectionConfig {
+  statePath: string;
+  probeThreadId?: string;
+  /**
+   * The service's ACP session surface, when this process serves one. It mints the
+   * binding a task's parent thread runs on and releases that thread's held turn; a
+   * host without it keeps top-level role threads (the fallback, nucleus#1305).
+   */
+  acp?: () => AcpSessionSurface | null;
+  /**
+   * How long one re-entry waits for the parent thread's run to appear. The default is
+   * the product bound; a test drives a short one (nucleus#1305).
+   */
+  reentryTimeoutMs?: number;
+}
 const unsupported = (capability: string): never => { throw new ProvenPreSendRefusalError(`T3Code does not support ${capability}`); };
 /**
  * The option descriptor a model's thinking level rides: the nightly marks a
@@ -79,6 +95,7 @@ export class T3CodeHost implements Host {
   readonly reads: T3Reads;
   readonly intents: T3IntentLedger;
   readonly presentation: T3Presentation;
+  readonly nesting: T3Nesting;
   hostId = '';
   version = '';
   private ready = false;
@@ -99,6 +116,19 @@ export class T3CodeHost implements Host {
       requireConnection: () => this.requireConnection(),
       reads: this.reads,
       intents: this.intents,
+      parentThreadOf: taskId => this.nesting.parentOf(taskId)?.threadId,
+      nestedChild: threadId => this.nesting.taskOfChild(threadId) !== undefined,
+    });
+    this.nesting = new T3Nesting({
+      rpc: this.rpc, state: this.state, reads: this.reads, intents: this.intents,
+      presentation: this.presentation,
+      hostId: () => this.hostId,
+      requireConnection: () => this.requireConnection(),
+      acp: options.acp ?? (() => null),
+      observationInventory: ids => this.observationInventory(ids),
+      ...(options.reentryTimeoutMs === undefined ? {} : { reentryTimeoutMs: options.reentryTimeoutMs }),
+      modelSelectionOptions: (profile, model) => this.modelSelectionOptions(profile, model),
+      runtimeMode: (profile, supported) => this.launchRuntimeMode(profile, supported),
     });
   }
   get connected() { return this.ready && this.rpc.connected; }
@@ -118,6 +148,11 @@ export class T3CodeHost implements Host {
     if (state === 'tag_missing') return `support threads visible: ${SUPPORT_THREAD_TAG} is not in hiddenThreadTags (${SUPPORT_THREADS_DOC})`;
     return `support threads visible: hide setting not enabled (${SUPPORT_THREADS_DOC})`;
   }
+  /**
+   * Whether this host is parenting role threads on the Nucleus ACP provider, or why
+   * it is not, as `service.health`'s `t3code.nativeParenting` line (nucleus#1305).
+   */
+  get nativeParentingStatus(): string { return this.nesting.statusLine(); }
   capabilities() { return { reportingViaMcp: false, supportsCoordinatorRecovery: false, nativeDecisions: false, uiContributions: false, lifecycleDispatch: false, perThreadEnvironment: false }; }
   async connect(probeThreadId = this.probeThreadId): Promise<void> {
     this.ready = false;
@@ -135,6 +170,9 @@ export class T3CodeHost implements Host {
       this.state.update(state => { state.hostId = hostId; state.lastPassedVersion = observed.environment.serverVersion;
         // Read-only: the client's own hide switch, never a settings write.
         state.supportThreads = supportThreadVisibility(observed.settings); });
+      // The nesting path needs the Nucleus ACP provider instance; record the answer
+      // from this same read-only probe so the host status says it up front.
+      try { this.nesting.recordProvider(observed); } catch { /* the status keeps whatever it had */ }
       this.hostId = hostId; this.version = observed.environment.serverVersion; this.ready = true;
     } catch (error) { this.close(); throw error; }
   }
@@ -189,6 +227,8 @@ export class T3CodeHost implements Host {
     if (!this.connected) return;
     await this.presentation.reconcileSupportRows();
     await this.presentation.reconcileWorkerRows(tasks);
+    try { await this.nesting.reconcile(tasks); }
+    catch { /* one pass's nesting fault never blocks the sweep; the next pass retries */ }
   }
 
 
@@ -306,8 +346,18 @@ export class T3CodeHost implements Host {
       throw new ProvenPreSendRefusalError(`T3Code provider ${spec.profile.provider} does not report model ${spec.profile.model}`);
     const options = this.modelSelectionOptions(spec.profile, provider.models.find(m => m.slug === spec.profile.model)!);
     const runtimeMode = this.launchRuntimeMode(spec.profile, provider.supportedRuntimeModes);
+    const title = this.presentation.numberedThreadTitle(spec.taskNumber, attempt.labels[WIRE_LABEL_KEYS.role], spec.title);
+    // Native parenting (nucleus#1305): the role thread becomes a child of the task's
+    // parent thread on the Nucleus ACP provider. A null answer means nothing was sent
+    // and the ordinary top-level launch below is the fallback.
+    const nested = await this.nesting.create({ spec, attempt, profile: spec.profile, observed,
+      workspace: { id: spec.workspaceId, projectId: workspace.projectId, directory: workspace.directory }, title });
+    if (nested) {
+      if (this.reads.threadShapePending) await this.reads.readProjection(nested.id, 'observation').catch(() => undefined);
+      return nested;
+    }
     const id = identity('thread', attempt.requestId);
-    const payload = { commandId: attempt.requestId, threadId: id, projectId: workspace.projectId, title: this.presentation.numberedThreadTitle(spec.taskNumber, attempt.labels[WIRE_LABEL_KEYS.role], spec.title),
+    const payload = { commandId: attempt.requestId, threadId: id, projectId: workspace.projectId, title,
       modelSelection: { instanceId: spec.profile.provider, model: spec.profile.model, ...(options.length ? { options } : {}) }, runtimeMode, interactionMode: 'default',
       workspaceStrategy: { type: 'existing_worktree', worktreePath: workspace.directory },
       initialMessage: { messageId: identity('message', attempt.requestId), text: attempt.prompt, attachments: [] } };
@@ -391,7 +441,13 @@ export class T3CodeHost implements Host {
     return options;
   }
 
-  async sendMessage(id: string, input: HostMessage) { await this.presentation.unsettleBeforeMessage(id, input.messageId); await this.intents.effect(input.messageId, 'orchestration.dispatchCommand', { type: 'message.dispatch', commandId: input.messageId, threadId: id, messageId: identity('message', input.messageId), text: input.text, attachments: [], createdBy: 'user', creationSource: 'server', dispatchMode: { type: 'queue_after_active' } }); }
+  async sendMessage(id: string, input: HostMessage) {
+    await this.presentation.unsettleBeforeMessage(id, input.messageId);
+    await this.intents.effect(input.messageId, 'orchestration.dispatchCommand', { type: 'message.dispatch', commandId: input.messageId, threadId: id, messageId: identity('message', input.messageId), text: input.text, attachments: [], createdBy: 'user', creationSource: 'server', dispatchMode: { type: 'queue_after_active' } });
+    // A follow-up to a nested child starts a new delegated task whose completion wake
+    // T3 does not dispose; the send already succeeded, so this never fails it.
+    await this.nesting.afterFollowUp(id, input.messageId).catch(() => undefined);
+  }
   async enqueueMessage(id: string, input: HostMessage): Promise<void> { await this.sendMessage(id, input); }
 
   async sendGuarded(id: string, input: HostGuardedMessage, guard: HostSendGuard) {
@@ -400,7 +456,9 @@ export class T3CodeHost implements Host {
     await this.presentation.unsettleBeforeMessage(id, input.messageId);
     await this.intents.effect(input.messageId, 'orchestration.dispatchCommand', { type: 'message.dispatch', commandId: input.messageId, threadId: id, messageId: identity('message', input.messageId), text: input.text, attachments: [], createdBy: 'user', creationSource: 'server', dispatchMode: { type: 'queue_after_active' } }, () => {
       if (!guard.stillAllowed()) throw new ProvenPreSendRefusalError('T3Code send guard changed'); guard.beforeSend?.();
-    }); return { sent: true as const };
+    });
+    await this.nesting.afterFollowUp(id, input.messageId).catch(() => undefined);
+    return { sent: true as const };
   }
 
   async sendWhenIdle(_id: string, _input: HostAsk): Promise<string | null> { return unsupported('in-thread Nucleus questions'); }

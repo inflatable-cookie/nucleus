@@ -5,56 +5,137 @@
   "protocolFrames": {
     "source": "Keys only, synthetic request IDs. Ping and Pong are Nightly frames recorded by 1213's read-only heartbeat (mutations 0). Exit, Chunk and Defect-without-requestId are Effect RPC JSON FromServerEncoded as Nightly uses; stock Effect Defect has no requestId and per-request defects go out as Exit Failure Die. Defect-with-requestId is constructed for the brief's attributable case and is not a recorded Nightly frame.",
     "recorded": {
-      "ping": { "_tag": "Ping" },
-      "pong": { "_tag": "Pong" }
+      "ping": {
+        "_tag": "Ping"
+      },
+      "pong": {
+        "_tag": "Pong"
+      }
     },
     "effect": {
-      "exit": { "_tag": "Exit", "requestId": "synthetic-request", "exit": { "_tag": "Success", "value": null } },
-      "chunk": { "_tag": "Chunk", "requestId": "synthetic-request", "values": [] },
-      "connectionDefect": { "_tag": "Defect" }
+      "exit": {
+        "_tag": "Exit",
+        "requestId": "synthetic-request",
+        "exit": {
+          "_tag": "Success",
+          "value": null
+        }
+      },
+      "chunk": {
+        "_tag": "Chunk",
+        "requestId": "synthetic-request",
+        "values": []
+      },
+      "connectionDefect": {
+        "_tag": "Defect"
+      }
     },
     "constructed": {
-      "defectWithRequestId": { "_tag": "Defect", "requestId": "synthetic-request" }
+      "defectWithRequestId": {
+        "_tag": "Defect",
+        "requestId": "synthetic-request"
+      }
     }
   },
   "boundaryDecodeExample": "Missing key\n  at [\"commandId\"]",
   "dispatchUnknownCommandExample": "Expected union member, got {\"type\":\"project.create\",\"commandId\":\"fixture:create\"}",
   "source": "packages/contracts/src/orchestrationV2.ts",
   "creationFields": {
-    "createdBy": ["user", "agent", "system"],
-    "creationSource": ["web", "mobile", "mcp", "provider", "server"]
+    "createdBy": [
+      "user",
+      "agent",
+      "system"
+    ],
+    "creationSource": [
+      "web",
+      "mobile",
+      "mcp",
+      "provider",
+      "server"
+    ]
   },
   "commands": {
     "thread.stop": {
-      "required": ["type", "commandId", "threadId"],
-      "optional": ["reason", "stopDelegatedTasks"]
+      "required": [
+        "type",
+        "commandId",
+        "threadId"
+      ],
+      "optional": [
+        "reason",
+        "stopDelegatedTasks"
+      ]
     },
     "thread.archive": {
-      "required": ["type", "commandId", "threadId"],
+      "required": [
+        "type",
+        "commandId",
+        "threadId"
+      ],
       "optional": []
     },
     "thread.delete": {
-      "required": ["type", "commandId", "threadId"],
-      "optional": ["onlyIfUnused"],
+      "required": [
+        "type",
+        "commandId",
+        "threadId"
+      ],
+      "optional": [
+        "onlyIfUnused"
+      ],
       "source": "packages/contracts/src/orchestrationV2.ts (thread.delete); cancels active runs and pending requests, and `onlyIfUnused: true` answers success without changing a thread that has runs or messages"
     },
     "thread.settle": {
-      "required": ["type", "commandId", "threadId"],
-      "optional": ["expectedLatestRunId", "settledAt"],
+      "required": [
+        "type",
+        "commandId",
+        "threadId"
+      ],
+      "optional": [
+        "expectedLatestRunId",
+        "settledAt"
+      ],
       "source": "packages/contracts/src/orchestrationV2.ts (thread.settle); a new message.dispatch clears the manual settled marker, so a woken thread is active again"
     },
     "thread.metadata.update": {
-      "required": ["type", "commandId", "threadId"],
-      "optional": ["title", "regenerateTitle", "branch", "worktreePath", "expectedWorktreePath", "expectedBranch", "expectedEmpty", "limitRecovery", "linkedPullRequest"],
+      "required": [
+        "type",
+        "commandId",
+        "threadId"
+      ],
+      "optional": [
+        "title",
+        "regenerateTitle",
+        "branch",
+        "worktreePath",
+        "expectedWorktreePath",
+        "expectedBranch",
+        "expectedEmpty",
+        "limitRecovery",
+        "linkedPullRequest"
+      ],
       "source": "T3 Code (Nightly) installed bundle: orchestration command union (thread.metadata.update)"
     },
     "thread.unsettle": {
-      "required": ["type", "commandId", "threadId", "reason"],
+      "required": [
+        "type",
+        "commandId",
+        "threadId",
+        "reason"
+      ],
       "optional": [],
-      "reasons": ["user"]
+      "reasons": [
+        "user"
+      ]
     },
     "thread.tag.set": {
-      "required": ["type", "commandId", "threadId", "tag", "tagged"],
+      "required": [
+        "type",
+        "commandId",
+        "threadId",
+        "tag",
+        "tagged"
+      ],
       "optional": [],
       "sourceBuild": "0.1.10-nightly.20261111.4529",
       "source": "apps/server bundle: orchestration command union (thread.tag.set) and packages/contracts/src/threadTags.ts (ThreadTag)",
@@ -65,7 +146,15 @@
       "taggedMeaning": "`tagged: true` sets the tag, `tagged: false` removes it"
     },
     "thread.created.record": {
-      "required": ["type", "commandId", "parentThreadId", "parentRunId", "parentNodeId", "targetThreadId", "targetRunId"],
+      "required": [
+        "type",
+        "commandId",
+        "parentThreadId",
+        "parentRunId",
+        "parentNodeId",
+        "targetThreadId",
+        "targetRunId"
+      ],
       "optional": [],
       "sourceBuild": "0.1.10-nightly.20261111.4529",
       "source": "apps/server bundle: orchestration command union (thread.created.record) and OrchestrationV2.dispatch.createdThreadRecord",
@@ -78,30 +167,185 @@
       "cardEffect": "One completed `thread_created` turn item on the parent thread under the parent run's root node; its id derives from the command id and its title is the target thread's own title",
       "noWake": "A card only: no run, no wake, no cascade and no lineage change"
     },
+    "delegated_task.request": {
+      "required": [
+        "type",
+        "createdBy",
+        "creationSource",
+        "commandId",
+        "parentThreadId",
+        "parentRunId",
+        "parentNodeId",
+        "task",
+        "modelSelection",
+        "runtimeMode",
+        "interactionMode"
+      ],
+      "optional": [
+        "title",
+        "workspaceStrategy",
+        "completionWake",
+        "createdAt"
+      ],
+      "sourceBuild": "0.1.11-nightly.20261117.4838",
+      "sourceRevision": "ea6d3fc30fb0",
+      "source": "apps/server dist ManagedEndpointRuntime-DSUxGyJj.mjs (OrchestrationV2 command union) and runtimeLayer-BOIZHCut.mjs (orchestrationV2.dispatch.delegatedTaskRequest); read-only bundle inspection of the installed Nightly",
+      "commandQuote": "Struct({ type: Literal(\"delegated_task.request\"), ...OrchestrationV2CreationFields, commandId: CommandId, parentThreadId: ThreadId, parentRunId: RunId, parentNodeId: NodeId, task: TrimmedNonEmptyString, title: optional(TrimmedNonEmptyString), modelSelection: ModelSelection, runtimeMode: RuntimeMode$1, interactionMode: ProviderInteractionMode, workspaceStrategy: optional(OrchestrationV2ThreadLaunchWorkspaceStrategy), completionWake: optional(Literals([\"always\", \"settled_only\"])), createdAt: optional(DateTimeUtc) })",
+      "parentGuards": [
+        "Parent run ${command.parentRunId} is not active.",
+        "Parent run ${command.parentRunId} is stopping.",
+        "Parent node ${command.parentNodeId} is not part of active run ${parentRun.id}."
+      ],
+      "activeRunStatuses": [
+        "preparing",
+        "starting",
+        "running",
+        "waiting"
+      ],
+      "derivedIds": {
+        "thread": "thread:delegated-task:<commandId>",
+        "node": "node:delegated-task:<commandId>",
+        "message": "message:delegated-task:<commandId>",
+        "turnItem": "turn-item:delegated-task:<commandId>",
+        "source": "idAllocator.derive.delegatedTaskThread/Node/Message/TurnItem in the installed bundle"
+      },
+      "workspaceStrategyAbsent": "Without a strategy the child is built from the parent thread and its first message dispatches start_immediately. With one the dispatch is defer_start and only T3's own MCP delegate_task handler calls threadLaunch.prepareRun, so an outside client's child would stay in preparing.",
+      "childLineage": {
+        "relationshipToParent": "subagent",
+        "parentThreadId": "the command's parentThreadId",
+        "rootThreadId": "the parent thread's root"
+      },
+      "completionWakeValues": [
+        "always",
+        "settled_only"
+      ],
+      "completionWakeMeaning": "`settled_only` never wakes a live parent; `always` does. Neither substitutes for disposing completion delivery.",
+      "questionRouting": "A pending child user_input calls wakeParent (DelegatedTaskQuestionReactor) whatever the completion-delivery state, so a working agent must never be the parent. The parent is the model-less Nucleus ACP agent, which answers nothing and holds its turn; Nucleus answers the child's requests itself (nucleus#1290 stop, nucleus#1305)."
+    },
+    "delegated_task.wake-policy": {
+      "required": [
+        "type",
+        "commandId",
+        "parentThreadId",
+        "taskId",
+        "completionWake"
+      ],
+      "optional": [],
+      "sourceBuild": "0.1.11-nightly.20261117.4838",
+      "commandQuote": "Struct({ type: Literal(\"delegated_task.wake-policy\"), commandId: CommandId, parentThreadId: ThreadId, taskId: NodeId, completionWake: Literals([\"always\", \"settled_only\"]) })",
+      "note": "Nucleus does not send this: a child is created with its wake policy and every completion is disposed."
+    },
+    "delegated_task.completion-delivery.dispose": {
+      "required": [
+        "type",
+        "commandId",
+        "parentThreadId",
+        "taskId"
+      ],
+      "optional": [],
+      "sourceBuild": "0.1.11-nightly.20261117.4838",
+      "commandQuote": "Struct({ type: Literal(\"delegated_task.completion-delivery.dispose\"), commandId: CommandId, parentThreadId: ThreadId, taskId: NodeId })",
+      "effect": "Sets that task's completionDelivery.state to disposed, before or after the child finishes; a task already disposed answers without an effect.",
+      "refusal": "`Delegated task ${command.taskId} is not an app-owned task of thread ${command.parentThreadId}.` \u2014 the node id must already exist, so a dispose named before the child exists is refused and its command id is spent.",
+      "deliveryStates": [
+        "pending",
+        "claimed",
+        "acknowledged",
+        "delivered",
+        "disposed"
+      ],
+      "deliveryStatesSource": "OrchestrationV2DelegatedCompletionTaskDeliveryState in the installed bundle",
+      "wakeConsequence": "Disposing after a wake was queued (state claimed) withdraws the queued parent run; disposing at creation keeps it off for the child's whole life, including follow-up tasks it inherits."
+    },
     "runtime-request.respond": {
-      "required": ["type", "commandId", "threadId", "requestId"],
-      "optional": ["decision", "feedback", "answers", "attachmentsByQuestionId"],
-      "decisions": ["accept", "acceptForSession", "acceptAlways", "decline", "cancel"],
+      "required": [
+        "type",
+        "commandId",
+        "threadId",
+        "requestId"
+      ],
+      "optional": [
+        "decision",
+        "feedback",
+        "answers",
+        "attachmentsByQuestionId"
+      ],
+      "decisions": [
+        "accept",
+        "acceptForSession",
+        "acceptAlways",
+        "decline",
+        "cancel"
+      ],
       "answers": "Record<string, unknown>"
     },
     "thread.user-input.dismiss": {
-      "required": ["type", "commandId", "threadId", "requestId"],
+      "required": [
+        "type",
+        "commandId",
+        "threadId",
+        "requestId"
+      ],
       "optional": []
     },
     "message.dispatch": {
-      "required": ["type", "createdBy", "creationSource", "commandId", "threadId", "messageId", "text", "attachments", "dispatchMode"],
-      "dispatchModes": ["defer_start", "steer_active", "restart_active", "queue_after_active", "start_immediately"],
-      "steerModes": ["steer_active", "restart_active"],
+      "required": [
+        "type",
+        "createdBy",
+        "creationSource",
+        "commandId",
+        "threadId",
+        "messageId",
+        "text",
+        "attachments",
+        "dispatchMode"
+      ],
+      "dispatchModes": [
+        "defer_start",
+        "steer_active",
+        "restart_active",
+        "queue_after_active",
+        "start_immediately"
+      ],
+      "steerModes": [
+        "steer_active",
+        "restart_active"
+      ],
       "steerRequiresTargetRunId": true
     }
   },
   "launchThread": {
-    "required": ["commandId", "projectId", "title", "modelSelection", "runtimeMode", "interactionMode", "workspaceStrategy"],
-    "existingWorktreeRequired": ["type", "worktreePath"],
-    "initialMessageRequired": ["text", "attachments"],
-    "modelSelectionRequired": ["instanceId", "model"],
-    "runtimeModes": ["approval-required", "auto-accept-edits", "auto", "full-access"],
-    "interactionModes": ["default", "plan"]
+    "required": [
+      "commandId",
+      "projectId",
+      "title",
+      "modelSelection",
+      "runtimeMode",
+      "interactionMode",
+      "workspaceStrategy"
+    ],
+    "existingWorktreeRequired": [
+      "type",
+      "worktreePath"
+    ],
+    "initialMessageRequired": [
+      "text",
+      "attachments"
+    ],
+    "modelSelectionRequired": [
+      "instanceId",
+      "model"
+    ],
+    "runtimeModes": [
+      "approval-required",
+      "auto-accept-edits",
+      "auto",
+      "full-access"
+    ],
+    "interactionModes": [
+      "default",
+      "plan"
+    ]
   },
   "runtimeModeContract": {
     "sourceBuild": "0.1.10-nightly.20261111.4529",
@@ -109,7 +353,12 @@
     "runtimeModeQuote": "const RuntimeMode$1 = Literals([\"approval-required\",\"auto-accept-edits\",\"auto\",\"full-access\"]); const DEFAULT_RUNTIME_MODE$1 = \"full-access\";",
     "providerFieldQuote": "supportedRuntimeModes: optional(ForwardCompatibleArray(RuntimeMode$1))",
     "providerSubsetQuote": "function providerRuntimeMode(runtimeMode, supportedRuntimeModes) { return supportedRuntimeModes === void 0 || supportedRuntimeModes.length === 0 || supportedRuntimeModes.includes(runtimeMode) ? runtimeMode : \"approval-required\"; }",
-    "values": ["approval-required", "auto-accept-edits", "auto", "full-access"],
+    "values": [
+      "approval-required",
+      "auto-accept-edits",
+      "auto",
+      "full-access"
+    ],
     "default": "full-access",
     "absentProviderFieldMeansAll": true,
     "unsupportedRequestRunsAs": "approval-required",
@@ -130,37 +379,112 @@
     "method": "projects.mutate",
     "sourceBuild": "0.1.10-nightly.20261111.4529",
     "source": "apps/server/src/project/ProjectMutation.ts + packages/contracts/src/rpc.ts (WsProjectsMutateRpc)",
-    "createRequired": ["type", "commandId", "projectId", "title", "workspaceRoot"],
-    "createOptional": ["createWorkspaceRootIfMissing", "defaultModelSelection", "scripts"],
-    "successFields": ["id", "title", "workspaceRoot", "repositoryIdentity", "defaultModelSelection", "scripts", "createdAt", "updatedAt", "deletedAt"],
-    "updateRequired": ["type", "commandId", "projectId"],
-    "updateOptional": ["title", "defaultModelSelection", "defaultThreadEnvMode", "autoPull", "scripts", "pinned", "archived"],
+    "createRequired": [
+      "type",
+      "commandId",
+      "projectId",
+      "title",
+      "workspaceRoot"
+    ],
+    "createOptional": [
+      "createWorkspaceRootIfMissing",
+      "defaultModelSelection",
+      "scripts"
+    ],
+    "successFields": [
+      "id",
+      "title",
+      "workspaceRoot",
+      "repositoryIdentity",
+      "defaultModelSelection",
+      "scripts",
+      "createdAt",
+      "updatedAt",
+      "deletedAt"
+    ],
+    "updateRequired": [
+      "type",
+      "commandId",
+      "projectId"
+    ],
+    "updateOptional": [
+      "title",
+      "defaultModelSelection",
+      "defaultThreadEnvMode",
+      "autoPull",
+      "scripts",
+      "pinned",
+      "archived"
+    ],
     "updateArchivedMeaning": "Threads and files are kept.",
-    "errorTags": ["ProjectMutationError", "EnvironmentAuthorizationError"]
+    "errorTags": [
+      "ProjectMutationError",
+      "EnvironmentAuthorizationError"
+    ]
   },
   "modelOptions": {
     "sourceBuild": "0.1.10-nightly.20261111.4529",
     "source": "packages/contracts/src/model.ts + packages/contracts/src/modelSelection.ts",
-    "descriptorTypes": ["select", "boolean"],
-    "choiceFields": ["id", "label", "description", "isDefault"],
+    "descriptorTypes": [
+      "select",
+      "boolean"
+    ],
+    "choiceFields": [
+      "id",
+      "label",
+      "description",
+      "isDefault"
+    ],
     "reasoningRoleMarker": "reasoning",
     "stockReasoningId": "reasoningEffort",
-    "optionSelectionRequired": ["id", "value"],
-    "optionSelectionValueTypes": ["string", "boolean"]
+    "optionSelectionRequired": [
+      "id",
+      "value"
+    ],
+    "optionSelectionValueTypes": [
+      "string",
+      "boolean"
+    ]
   },
   "subscribeThread": {
     "sourceBuild": "0.1.10-nightly.20261111.4529",
     "sourceRevision": "d2c25950b4d9",
     "source": "apps/server bundle: OrchestrationV2SubscribeThreadInput, OrchestrationV2ThreadDetailSnapshot and OrchestrationV2ThreadBoundedSnapshot; the windowed reads in readCanonicalProjection (runs, runtimeRequests, plans, contextHandoffs) that feed it; packages/shared/src/orchestrationV2BoundedSnapshot.ts",
-    "backgroundCoverage": {"source": "Installed Nightly ManagedEndpointRuntime-BSDb6iuk.mjs: derivePendingBackgroundWork, pendingBackgroundTurnItems, nativeTaskIdFromTurnItem; read-only bundle inspection", "shellSummary": "Empty while a run is active; absence is not background settlement", "backgroundTypes": ["command_execution", "dynamic_tool", "subagent"], "taskIdentity": "nativeItemRef.nativeId, falling back to item.id"},
+    "backgroundCoverage": {
+      "source": "Installed Nightly ManagedEndpointRuntime-BSDb6iuk.mjs: derivePendingBackgroundWork, pendingBackgroundTurnItems, nativeTaskIdFromTurnItem; read-only bundle inspection",
+      "shellSummary": "Empty while a run is active; absence is not background settlement",
+      "backgroundTypes": [
+        "command_execution",
+        "dynamic_tool",
+        "subagent"
+      ],
+      "taskIdentity": "nativeItemRef.nativeId, falling back to item.id"
+    },
     "roundTrip": "A bounded snapshot is sent only to a client that opts in; the plain read returns the complete detail projection instead",
-    "input": ["threadId", "afterSequence", "requestCompletionMarker", "acceptBoundedSnapshot", "acceptDeferredWork", "acceptCompactTurnItems", "acceptDedupedBodies", "acceptCompactIds"],
+    "input": [
+      "threadId",
+      "afterSequence",
+      "requestCompletionMarker",
+      "acceptBoundedSnapshot",
+      "acceptDeferredWork",
+      "acceptCompactTurnItems",
+      "acceptDedupedBodies",
+      "acceptCompactIds"
+    ],
     "boundedRequestField": "acceptBoundedSnapshot",
     "serverGuardQuote": "function shouldUseBoundedThreadSnapshot(input) { return input.acceptBoundedSnapshot === true; }",
     "boundedResponseQuote": "return { projection: compactProjection ?? projection, historyCursor: bounded.historyCursor, hasMoreHistory: bounded.hasMoreHistory, latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal, ...compactProjection === null ? {} : { turnItemsOmitLocalVisible: true }, ...input.compactIds ? { idTable: true } : {} };",
-    "boundedRequired": ["snapshotSequence", "projection", "historyCursor", "hasMoreHistory", "latestLocalTurnOrdinal"],
+    "boundedRequired": [
+      "snapshotSequence",
+      "projection",
+      "historyCursor",
+      "hasMoreHistory",
+      "latestLocalTurnOrdinal"
+    ],
     "coveragePair": "A window that dropped earlier history sets hasMoreHistory true and a non-null historyCursor; a complete window sets hasMoreHistory false and historyCursor null.",
-    "projectionWhole": ["thread"],
+    "projectionWhole": [
+      "thread"
+    ],
     "projectionRetained": {
       "runs": "every queued, preparing, starting, running or waiting run; the runs its window references; the run the shell presents; the todo-list owner; and, with a plan present, the latest started run. Older settled runs outside that set are absent.",
       "runtimeRequests": "every pending or waiting request; requests on window-referenced nodes or provider turns. Resolved history outside that set is absent.",
@@ -168,9 +492,19 @@
       "providerThreads": "active threads, window- or retained-node-referenced threads and the latest todo owner; older idle threads with internal pending tasks may be omitted.",
       "contextHandoffs": "pending or ready handoffs; a window-referenced one loses summaryText (detailInTurnItem true)."
     },
-    "projectionWindowed": ["turnItems", "messages", "visibleTurnItems"],
+    "projectionWindowed": [
+      "turnItems",
+      "messages",
+      "visibleTurnItems"
+    ],
     "retainedOutsideWindow": "run_interrupt_request items, and user_input_request or approval_request items whose request is still pending",
-    "rowPolicy": { "source": "THREAD_HISTORY_PAGE_POLICY", "maxUserTurns": 10, "maxItems": 75, "maxTurnItems": 500, "maxEncodedBytes": 1048576 },
+    "rowPolicy": {
+      "source": "THREAD_HISTORY_PAGE_POLICY",
+      "maxUserTurns": 10,
+      "maxItems": 75,
+      "maxTurnItems": 500,
+      "maxEncodedBytes": 1048576
+    },
     "optInFields": "turnItemsOmitLocalVisible and idTable appear only for acceptCompactTurnItems or acceptCompactIds; the plain decode here cannot restore either"
   },
   "supportRows": {
@@ -182,7 +516,10 @@
     },
     "clientFilterQuote": "let n=t(h(e));if(n?.hideTaggedThreads!==!0)return null;let r=n.hiddenThreadTags.map(e=>e.trim()).filter(e=>e!==``);return r.length>0?r:null",
     "readPath": "The settings ride `server.getConfig` (ServerConfig.settings), the same read-only call the adapter already makes at connect; Nucleus never sends `server.updateSettings`",
-    "defaults": { "hideTaggedThreads": false, "hiddenThreadTags": [] },
+    "defaults": {
+      "hideTaggedThreads": false,
+      "hiddenThreadTags": []
+    },
     "clientSide": "A client hides a top-level thread whose tag matches; the server keeps serving it"
   },
   "wireShapes": {
@@ -420,10 +757,39 @@
         "targetModel"
       ]
     },
-    "visibleTurnItemKeys": ["position", "sourceItemId", "sourceThreadId", "visibility", "item"],
-  "turnItemTypeSource": "assistant, user and command members come from the captured thread; user_input_request comes from the OrchestrationV2TurnItem union member in the installed bundle",
-    "providerThreadKeys": ["id", "driver", "providerInstanceId", "providerSessionId", "appThreadId", "ownerNodeId", "nativeThreadRef", "nativeConversationHeadRef", "status", "firstRunOrdinal", "lastRunOrdinal", "handoffIds", "forkedFrom", "pendingBackgroundTasks", "contextUsage", "nativeMetadata", "goal", "createdAt", "updatedAt"],
-    "pendingBackgroundTaskKeys": ["kind", "taskId"],
+    "visibleTurnItemKeys": [
+      "position",
+      "sourceItemId",
+      "sourceThreadId",
+      "visibility",
+      "item"
+    ],
+    "turnItemTypeSource": "assistant, user and command members come from the captured thread; user_input_request comes from the OrchestrationV2TurnItem union member in the installed bundle",
+    "providerThreadKeys": [
+      "id",
+      "driver",
+      "providerInstanceId",
+      "providerSessionId",
+      "appThreadId",
+      "ownerNodeId",
+      "nativeThreadRef",
+      "nativeConversationHeadRef",
+      "status",
+      "firstRunOrdinal",
+      "lastRunOrdinal",
+      "handoffIds",
+      "forkedFrom",
+      "pendingBackgroundTasks",
+      "contextUsage",
+      "nativeMetadata",
+      "goal",
+      "createdAt",
+      "updatedAt"
+    ],
+    "pendingBackgroundTaskKeys": [
+      "kind",
+      "taskId"
+    ],
     "backgroundSource": "Installed Nightly: OrchestrationV2PendingBackgroundTask, OrchestrationV2ProviderThread and BACKGROUND_TURN_ITEM_TYPES; read-only bundle inspection",
     "messageKeys": [
       "id",
@@ -438,7 +804,29 @@
       "streaming",
       "createdAt",
       "updatedAt"
-    ]
+    ],
+    "subagentKeys": [
+      "id",
+      "threadId",
+      "runId",
+      "parentNodeId",
+      "origin",
+      "createdBy",
+      "driver",
+      "providerInstanceId",
+      "providerThreadId",
+      "childThreadId",
+      "nativeTaskRef",
+      "prompt",
+      "title",
+      "model",
+      "status",
+      "result",
+      "startedAt",
+      "completedAt",
+      "updatedAt"
+    ],
+    "subagentSource": "OrchestrationV2Subagent in the installed bundle (0.1.11-nightly.20261117.4838): required fields; completionWake, completionDelivery, cancelledRunId, progress, workflow, executedModel, remoteChild, promptOmitted and resultOmitted are optional."
   },
   "examples": [
     {
@@ -448,40 +836,97 @@
         "threadId": "fixture-thread",
         "projectId": "fixture-project",
         "title": "Synthetic task",
-        "modelSelection": { "provider": "codex", "model": "synthetic", "instanceId": "synthetic-instance" },
+        "modelSelection": {
+          "provider": "codex",
+          "model": "synthetic",
+          "instanceId": "synthetic-instance"
+        },
         "runtimeMode": "approval-required",
         "interactionMode": "default",
-        "workspaceStrategy": { "type": "existing_worktree", "worktreePath": "/fixture/worktree", "branch": "fixture-branch" },
-        "initialMessage": { "messageId": "fixture-message", "text": "Synthetic prompt", "attachments": [] }
+        "workspaceStrategy": {
+          "type": "existing_worktree",
+          "worktreePath": "/fixture/worktree",
+          "branch": "fixture-branch"
+        },
+        "initialMessage": {
+          "messageId": "fixture-message",
+          "text": "Synthetic prompt",
+          "attachments": []
+        }
       }
     },
     {
       "method": "orchestration.dispatchCommand",
-      "payload": { "type": "message.dispatch", "createdBy": "user", "creationSource": "server", "commandId": "fixture:followup", "threadId": "fixture-thread", "messageId": "fixture-message-2", "text": "Continue", "attachments": [], "dispatchMode": { "type": "start_immediately" } }
+      "payload": {
+        "type": "message.dispatch",
+        "createdBy": "user",
+        "creationSource": "server",
+        "commandId": "fixture:followup",
+        "threadId": "fixture-thread",
+        "messageId": "fixture-message-2",
+        "text": "Continue",
+        "attachments": [],
+        "dispatchMode": {
+          "type": "start_immediately"
+        }
+      }
     },
     {
       "method": "orchestration.dispatchCommand",
-      "payload": { "type": "runtime-request.respond", "commandId": "fixture:answer", "threadId": "fixture-thread", "requestId": "fixture-request", "answers": { "fixture-question": ["Synthetic answer"] } }
+      "payload": {
+        "type": "runtime-request.respond",
+        "commandId": "fixture:answer",
+        "threadId": "fixture-thread",
+        "requestId": "fixture-request",
+        "answers": {
+          "fixture-question": [
+            "Synthetic answer"
+          ]
+        }
+      }
     },
     {
       "method": "orchestration.dispatchCommand",
-      "payload": { "type": "runtime-request.respond", "commandId": "fixture:permission", "threadId": "fixture-thread", "requestId": "fixture-permission", "decision": "accept" }
+      "payload": {
+        "type": "runtime-request.respond",
+        "commandId": "fixture:permission",
+        "threadId": "fixture-thread",
+        "requestId": "fixture-permission",
+        "decision": "accept"
+      }
     },
     {
       "method": "orchestration.dispatchCommand",
-      "payload": { "type": "thread.stop", "commandId": "fixture:stop", "threadId": "fixture-thread" }
+      "payload": {
+        "type": "thread.stop",
+        "commandId": "fixture:stop",
+        "threadId": "fixture-thread"
+      }
     },
     {
       "method": "orchestration.dispatchCommand",
-      "payload": { "type": "thread.archive", "commandId": "fixture:archive", "threadId": "fixture-thread" }
+      "payload": {
+        "type": "thread.archive",
+        "commandId": "fixture:archive",
+        "threadId": "fixture-thread"
+      }
     },
     {
       "method": "orchestration.dispatchCommand",
-      "payload": { "type": "thread.delete", "commandId": "fixture:delete", "threadId": "fixture-thread" }
+      "payload": {
+        "type": "thread.delete",
+        "commandId": "fixture:delete",
+        "threadId": "fixture-thread"
+      }
     },
     {
       "method": "orchestration.dispatchCommand",
-      "payload": { "type": "thread.settle", "commandId": "fixture:settle", "threadId": "fixture-thread", "expectedLatestRunId": "fixture-run" }
+      "payload": {
+        "type": "thread.settle",
+        "commandId": "fixture:settle",
+        "threadId": "fixture-thread",
+        "expectedLatestRunId": "fixture-run"
+      }
     }
   ]
 }
