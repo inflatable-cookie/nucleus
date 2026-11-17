@@ -1539,7 +1539,11 @@ request identities and submitted handoffs are not rewritten.
   a read that never answers cannot hold it, and a run whose cleanup proved itself
   complete is never scanned again — hourly or per pass. Cleanup runs on its own
   host lane (`cleanup:<host>`), one queued sweep per host, so it never holds a
-  task's exclusive lane and never starves an owner control behind it.
+  task's exclusive lane and never starves an owner control behind it. That queued
+  sweep is host-scoped, never task-scoped: a burst of tasks on one host coalesces
+  onto the sweep already waiting and it owes every run of the host, so no task's
+  cleanup is dropped because another task asked first. Nothing is queued while the
+  host owes no cleanup, so a task quantum never reads a process table for nothing.
   Prompts name the current run's directory, direct agents to prefix commands
   with that directory in `TMPDIR`, `TMP` and `TEMP` (including retained agents
   whose launch environment is older), direct agents to put fixtures in a child

@@ -1,4 +1,4 @@
-import { sweepSettledRunProcesses } from "../machine/run-process-cleanup";
+import { hostOwesRunProcessCleanup, sweepSettledRunProcesses } from "../machine/run-process-cleanup";
 import { LANE_PRIORITY_AUDIT } from "./lane-priorities";
 import { onCheckoutVolume } from "../workspaces/checkout-volume";
 import { reconcileRoutingSignoffs } from "../dispatch/routing-signoff";
@@ -57,13 +57,21 @@ export class TaskQuantum {
    * process table can never hold the task's exclusive lane and starve an owner
    * control behind it (nucleus#1306). The intent on the store is the proof of
    * completion; the waiting quantum is not.
+   *
+   * The queued sweep is host-scoped, not task-scoped: a burst of tasks on one host
+   * coalesces onto the one sweep already waiting, and that sweep owes every run of
+   * the host. Task-scoping it while coalescing across tasks would settle only the
+   * first task's runs and silently leave the rest (review 5943860105). Nothing is
+   * queued while the host owes no cleanup, so the sweep never reads a process
+   * table a task quantum does not need.
    */
   scheduleRunProcessCleanup(taskId: string): void {
     if (this.context.stopped) return;
     const hostId = this.context.store.task(taskId).hostId;
     const store = this.context.store, adapter = this.context.adapter;
+    if (!hostOwesRunProcessCleanup(store, hostId)) return;
     void this.context.cleanContext(() => this.context.scheduleLane(`cleanup:${hostId}`, LANE_PRIORITY_AUDIT,
-      () => sweepSettledRunProcesses(store, hostId, { taskId, pendingOnly: true, readProcesses: () => adapter.hostProcessListing!() }),
+      () => sweepSettledRunProcesses(store, hostId, { pendingOnly: true, readProcesses: () => adapter.hostProcessListing!() }),
       { coalesce: "settled-run-process-cleanup" })).catch(() => { /* the durable intent waits for the next pass */ });
   }
 

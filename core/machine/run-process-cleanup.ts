@@ -145,6 +145,14 @@ async function boundedRead<T>(read: () => Promise<T>, boundMs: number): Promise<
   } finally { if (timer) clearTimeout(timer); }
 }
 
+/**
+ * Whether this host owes a settled run's process cleanup. A host with no owed
+ * intent costs no process read: the quantum asks this before queueing a sweep.
+ */
+export function hostOwesRunProcessCleanup(store: Store, hostId: string): boolean {
+  return cleanupRuns(store, hostId).settled.some(run => store.getMeta<CleanupRun>(key(run.id))?.pending === true);
+}
+
 /** One process-table snapshot per sweep, shared by every run it settles. */
 async function snapshot(store: Store, options: Parameters<typeof sweepSettledRunProcesses>[2]): Promise<HostProcessFact[] | null> {
   const readBoundMs = options?.readBoundMs ?? RUN_PROCESS_READ_BOUND_MS;

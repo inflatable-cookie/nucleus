@@ -167,7 +167,6 @@ export class LaneScheduler {
    */
   discardQueuedLanes(): void {
     if (!this.lanes.size) return;
-    console.error('DEBUG discard lanes', JSON.stringify([...this.lanes.entries()].map(([key, items]) => [key, items.map(i => ({ priority: i.priority, coalesce: i.coalesce }))])));
     const queued: LaneItem[] = [];
     for (const queue of this.lanes.values()) queued.push(...queue);
     this.lanes.clear();
