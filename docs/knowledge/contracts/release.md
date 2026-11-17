@@ -294,7 +294,8 @@ own CLI for the plugin with ID `nucleus` only. The plugin is pinned to the servi
 build: a service whose build changed refuses the plugin by naming both builds and
 `nucleus bb install`, and reinstalling stays an explicit operator command. Preparing
 a release therefore needs an installed `bb` command, which the build uses to produce
-the plugin; the publication check's `--package` mode fails a package without it.
+the plugin (after the shared board bundle `scripts/bb/build-board.mjs` generates);
+the publication check's `--package` mode fails a package without it.
 `nucleus integrate paseo` is the separate host-registration step: it preserves
 unrelated config and refuses to replace a different existing registration. It
 never reloads Paseo. This scratch-tested installer does not change the live

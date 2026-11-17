@@ -48,6 +48,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { QueueService } from "../../service/transport/server";
+import { buildBoard } from "../bb/build-board.mjs";
 import { currentServiceBuildId } from "../../shared/service/build";
 import { hostIdFromDataDir } from "../../shared/host-operation";
 import {
@@ -354,6 +355,8 @@ async function main() {
     // The built plugin, packaged the way the release build ships it: the built bundles,
     // the packaged manifest that names them, and the Nucleus build identity.
     const pluginSource = join(checkout, "hosts", "bb", "plugin");
+    // The shared board bundle first (Spec 062, phase 6): the plugin's app imports it.
+    await buildBoard();
     await cli(["plugin", "build", pluginSource]);
     const packaged = join(proofRoot, "bb-plugin");
     cpSync(join(pluginSource, "dist"), join(packaged, "dist"), {

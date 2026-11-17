@@ -70,4 +70,4 @@ export function webSettingsRefusal(
 }
 
 /** Every transport surface a catalogue call may carry; a socket frame names only the bridge's. */
-export type CatalogueSurface = "paseo" | typeof WEB_SURFACE;
+export type CatalogueSurface = "paseo" | "bb" | typeof WEB_SURFACE;

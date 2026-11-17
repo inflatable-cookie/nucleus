@@ -1,6 +1,7 @@
 import { copyNodeRuntime } from './copy-node-runtime.mjs';
 import { checkPackageBbPlugin } from './check-publication.mjs';
 import { findBbCli } from '../shared/bb-cli.mjs';
+import { buildBoard } from './bb/build-board.mjs';
 import { build } from 'esbuild';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -48,6 +49,10 @@ export async function buildWeb(out) {
  * `nucleus-build.json`, which is the identity the plugin announces and the service
  * pins a connection to.
  *
+ * The shared board is bundled first (`scripts/bb/build-board.mjs`, Spec 062 phase 6):
+ * the plugin's `app.tsx` imports that generated module, and BB's build has no
+ * react-native alias to produce it from the sources itself.
+ *
  * The packaged manifest names the built bundles (`./dist/server.js`, `./dist/app.js`)
  * instead of the sources: BB's install validates that the entry files exist, and the
  * package ships no sources or `node_modules` to build them from.
@@ -58,6 +63,9 @@ export async function buildBbPlugin({ out, buildId, revision }) {
   if (!found.cli) {
     throw Error(`The release build produces the BB plugin with bb plugin build, and no installed BB was found; looked for the bb command at ${found.tried.join(', ')}`);
   }
+  // The board bundle is generated (gitignored) and `app.tsx` imports it; without it
+  // `bb plugin build` fails rather than shipping an app without the board.
+  await buildBoard();
   execFileSync(found.cli, ['plugin', 'build', pluginDir], { cwd: root, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
   const packaged = join(out, 'bb-plugin');
   await mkdir(packaged, { recursive: true });
@@ -84,10 +92,12 @@ export async function buildRuntime(destination) {
   async function hashTree(dir) {
     for (const entry of (await readdir(join(root, dir), { withFileTypes: true })).sort((a,b) => a.name.localeCompare(b.name))) {
       const path = join(dir, entry.name);
-      // `hosts/bb/plugin/dist` is `bb plugin build` output (gitignored), so it is not a
-      // source input: hashing it would make the identity depend on whether a developer
-      // had built the plugin, not on the committed bytes.
+      // `hosts/bb/plugin/dist` and the generated board bundle are build output
+      // (gitignored), so they are not source inputs: hashing them would make the
+      // identity depend on whether a developer had built the plugin, not on the
+      // committed bytes.
       if (path === 'hosts/bb/plugin/dist') continue;
+      if (path === 'hosts/bb/plugin/board/nucleus-board.js') continue;
       if (entry.isDirectory()) await hashTree(path);
       else if (entry.isFile()) {
         hash.update(path);

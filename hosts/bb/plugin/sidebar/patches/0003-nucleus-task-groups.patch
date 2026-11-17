@@ -1,10 +1,10 @@
 --- a/app/list/nucleusTaskGroups.tsx
 +++ b/app/list/nucleusTaskGroups.tsx
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,210 @@
 +/**
 + * The Nucleus task-group seam of the forked sidebar (Spec 062, decision 5a/5b).
 + *
-+ * This is the fork's own file, not an upstream one. It owns three things and
++ * This is the fork's own file, not an upstream one. It owns four things and
 + * nothing else:
 + *
 + * 1. the batched read — one `sidebarGroups` RPC call for every Nucleus task group,
@@ -16,7 +16,12 @@
 + * 3. the collapsed/expanded decision — a Nucleus task group is collapsed unless its
 + *    environment id is in the fork's own `expandedTaskGroups` preference.
 + *    `collapsedEnvironments` governs every other group and is never written for a
-+ *    task group, so the two group classes cannot disagree.
++ *    task group, so the two group classes cannot disagree;
++ * 4. the project-row board link (Spec 062, decision 5d) — the same read names the
++ *    BB projects Nucleus recorded for each Nucleus project, so a project row whose
++ *    BB project resolves gets one "Board" menu item linking to
++ *    `/plugins/nucleus/board/project/<nucleus-project-key>`; every other project
++ *    row's menu is upstream's.
 + *
 + * A group the read does not name — an unknown environment, a task whose first
 + * thread has not attached, or a read that has not landed — takes upstream's path
@@ -35,20 +40,32 @@
 +} from "react";
 +import { useAtom } from "jotai";
 +import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
++import { ActionMenuItem, type ActionMenuSurface } from "@/components/ui/action-menu-items";
 +import {
 +  BOARD_SIGNAL_CHANNEL,
++  projectBoardHref,
 +  sidebarGroupsContract,
 +  type SidebarGroup,
++  type SidebarProject,
 +} from "../../../sidebar-groups.js";
 +import { expandedTaskGroupsAtom } from "../preferences/atoms.js";
 +
 +interface NucleusTaskGroupsValue {
 +  groups: ReadonlyMap<string, SidebarGroup>;
++  /** The Nucleus project each recorded BB project id stands for. */
++  projects: ReadonlyMap<string, SidebarProject>;
 +  /** `loading` and `unavailable` both render upstream's group. */
 +  status: "loading" | "ready" | "unavailable";
 +}
 +
-+const EMPTY: NucleusTaskGroupsValue = { groups: new Map(), status: "loading" };
++const EMPTY: NucleusTaskGroupsValue = { groups: new Map(), projects: new Map(), status: "loading" };
++
++/** Index the read's projects by the BB project ids they name; the first project wins a shared id. */
++function projectsByBbProject(projects: readonly SidebarProject[]): Map<string, SidebarProject> {
++  const index = new Map<string, SidebarProject>();
++  for (const project of projects) for (const id of project.bbProjectIds) if (!index.has(id)) index.set(id, project);
++  return index;
++}
 +
 +const NucleusTaskGroupsContext = createContext<NucleusTaskGroupsValue | null>(null);
 +
@@ -68,6 +85,7 @@
 +      if (!mounted.current) return;
 +      setValue({
 +        groups: new Map(answer.groups.map((group) => [group.environmentId, group])),
++        projects: projectsByBbProject(answer.projects),
 +        status: "ready",
 +      });
 +    } catch {
@@ -75,7 +93,7 @@
 +      // sidebar; with nothing landed, every group renders upstream's header.
 +      if (!mounted.current) return;
 +      setValue((current) =>
-+        current.status === "ready" ? current : { groups: new Map(), status: "unavailable" },
++        current.status === "ready" ? current : { groups: new Map(), projects: new Map(), status: "unavailable" },
 +      );
 +    }
 +  }, [rpc]);
@@ -177,9 +195,25 @@
 +    </span>
 +  );
 +}
++
++/**
++ * The project row's board link: one "Board" menu item when the read names this BB
++ * project's Nucleus project, and nothing otherwise, so an unknown project's menu
++ * is upstream's. The link's key is the Nucleus project key (decision 5d), so a
++ * multi-repository project's rows all open the one board.
++ */
++export function NucleusProjectBoardMenuItem({ projectId, surface }: { projectId: string; surface: ActionMenuSurface }) {
++  const project = useContext(NucleusTaskGroupsContext)?.projects.get(projectId) ?? null;
++  if (!project) return null;
++  return (
++    <ActionMenuItem surface={surface} icon="LayoutDashboard" href={projectBoardHref(project.key)}>
++      Board
++    </ActionMenuItem>
++  );
++}
 --- a/app/list/nucleusTaskGroups.test.tsx
 +++ b/app/list/nucleusTaskGroups.test.tsx
-@@ -0,0 +1,428 @@
+@@ -0,0 +1,454 @@
 +// @vitest-environment jsdom
 +/**
 + * Spec 062, phase 5 acceptance (decision 5a/5b): the forked sidebar's Nucleus task
@@ -379,6 +413,7 @@
 +  groups?: ReadonlyArray<SidebarGroups["groups"][number]>;
 +  /** Omit the handler entirely: the read fails, as it does with the service away. */
 +  failRead?: boolean;
++  projects?: ReadonlyArray<SidebarGroups["projects"][number]>;
 +  onSetPreference?: (key: string, value: unknown) => void;
 +}
 +
@@ -401,6 +436,7 @@
 +    (rpc as unknown as Record<string, unknown>).sidebarGroups = async () => ({
 +      groups: options.groups ?? [GROUP],
 +      threads: [],
++      projects: options.projects ?? [],
 +    });
 +  }
 +  const slot = renderSlot(
@@ -606,5 +642,29 @@
 +    expect(
 +      upstreamHeaderByEnvironment(UPSTREAM_ENVIRONMENT).textContent,
 +    ).toContain(UPSTREAM_ENVIRONMENT);
++  });
++});
++
++describe("a project row's board link (phase 6, decision 5d)", () => {
++  it("adds one Board item linking to the Nucleus project's board when the read names this BB project", async () => {
++    renderTaskGroups({ projects: [{ key: "synthetic", name: "Synthetic", repositoryPaths: ["/synthetic/repo"], threadIds: ["thr_planner"], bbProjectIds: ["proj_other", "proj_test"] }] });
++    await waitFor(() => {
++      expect(taskGroupHeader(NUCLEUS_ENVIRONMENT)).not.toBeNull();
++    });
++    fireEvent.pointerDown(screen.getByRole("button", { name: "Test project actions" }), { button: 0 });
++    const board = await screen.findByRole("menuitem", { name: "Board" });
++    // The route key is the Nucleus project key, never the BB project id.
++    expect(board.getAttribute("href")).toBe("/plugins/nucleus/board/project/synthetic");
++    expect(screen.getAllByRole("menuitem", { name: "Board" })).toHaveLength(1);
++  });
++
++  it("leaves a project row the read does not name with upstream's menu", async () => {
++    renderTaskGroups({ projects: [{ key: "elsewhere", name: "Elsewhere", repositoryPaths: ["/synthetic/elsewhere"], threadIds: [], bbProjectIds: ["proj_other"] }] });
++    await waitFor(() => {
++      expect(taskGroupHeader(NUCLEUS_ENVIRONMENT)).not.toBeNull();
++    });
++    fireEvent.pointerDown(screen.getByRole("button", { name: "Test project actions" }), { button: 0 });
++    await screen.findByRole("menuitem", { name: "Project settings" });
++    expect(screen.queryByRole("menuitem", { name: "Board" })).toBeNull();
 +  });
 +});

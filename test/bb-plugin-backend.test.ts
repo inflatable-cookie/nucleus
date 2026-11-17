@@ -94,6 +94,7 @@ function fakeBackend(): FakeBackend {
       configure: () => ({ tools: [], skills: [] }),
       registerTool() {},
     },
+    events: { on() {} },
     providers: {},
     ui: {},
     sdk: {

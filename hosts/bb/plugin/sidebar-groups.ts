@@ -46,6 +46,15 @@ export const sidebarGroupSchema = z.object({
   stop: z.string().min(1).max(60).nullable(),
 }).strict();
 
+/** One Nucleus project: the per-project tab's threads and the sidebar rows that link to its board. */
+export const sidebarProjectSchema = z.object({
+  key: z.string().min(1).max(200),
+  name: z.string().min(1).max(200),
+  repositoryPaths: z.array(z.string().min(1).max(4096)).max(100),
+  threadIds: z.array(z.string().min(1).max(300)).max(101),
+  bbProjectIds: z.array(z.string().min(1).max(240)).max(100),
+}).strict();
+
 export const sidebarGroupsOutputSchema = z.object({
   groups: z.array(sidebarGroupSchema),
   threads: z.array(z.object({
@@ -54,9 +63,19 @@ export const sidebarGroupsOutputSchema = z.object({
     role: z.string().min(1).max(80),
     environmentId: z.string().min(1).max(240),
   }).strict()),
+  projects: z.array(sidebarProjectSchema),
 }).strict();
 
 export type SidebarGroup = z.infer<typeof sidebarGroupSchema>;
+export type SidebarProject = z.infer<typeof sidebarProjectSchema>;
+
+/** The route segment the board's panel takes for one project's board (decision 5d). */
+export const PROJECT_BOARD_SUBPATH = "project";
+
+/** The app route of one Nucleus project's board: `/plugins/nucleus/board/project/<key>`. */
+export function projectBoardHref(projectKey: string, pluginId = "nucleus"): string {
+  return `/plugins/${pluginId}/board/${PROJECT_BOARD_SUBPATH}/${encodeURIComponent(projectKey)}`;
+}
 export type SidebarGroups = z.infer<typeof sidebarGroupsOutputSchema>;
 
 /** The plugin's own RPC method names, registered in `server.ts` and read by the fork. */
@@ -69,17 +88,59 @@ export interface SidebarGroupsSource {
   request(method: string, input: unknown): Promise<unknown>;
 }
 
+/** One BB project as `bb.sdk.projects.list()` returns it: its id and its sources. */
+export interface BbProjectSource {
+  id: string;
+  sources?: Array<{ type?: string; path?: string }>;
+}
+
+/**
+ * Add the BB projects whose local-path source is one of a Nucleus project's
+ * repositories (decision 5d). The service names the BB projects its workspace
+ * handles recorded; this resolves the rest — a BB project registered before any
+ * task ran in it, or whose handles were all cleaned up — from BB's own project
+ * list, so a project row links to its board whether or not Nucleus ever ran a
+ * task there. The first Nucleus project that claims a path keeps it.
+ */
+export function withBbProjects(read: SidebarGroups, projects: readonly BbProjectSource[], samePath: (left: string, right: string) => boolean): SidebarGroups {
+  const claimed = new Set(read.projects.flatMap(project => project.bbProjectIds));
+  return {
+    ...read,
+    projects: read.projects.map(project => {
+      const ids = [...project.bbProjectIds];
+      for (const candidate of projects) {
+        if (claimed.has(candidate.id)) continue;
+        const local = (candidate.sources ?? []).filter(entry => entry.type === "local_path" && typeof entry.path === "string").map(entry => entry.path as string);
+        if (!local.some(path => project.repositoryPaths.some(repository => samePath(path, repository)))) continue;
+        claimed.add(candidate.id);
+        if (ids.length < 100) ids.push(candidate.id);
+      }
+      return { ...project, bbProjectIds: ids };
+    }),
+  };
+}
+
 /**
  * The RPC handler. A read that cannot reach the service rejects: the sidebar then
  * keeps (or falls back to) upstream's group header, which is the stated
- * degradation, never a blocked sidebar or an invented state line.
+ * degradation, never a blocked sidebar or an invented state line. A failed BB
+ * project list keeps the service's answer as it is: links it recorded still show.
  */
-export function createSidebarGroupsService(source: () => SidebarGroupsSource | null) {
+export function createSidebarGroupsService(
+  source: () => SidebarGroupsSource | null,
+  bbProjects?: { list(): Promise<unknown>; samePath(left: string, right: string): boolean },
+) {
   return {
     async sidebarGroups(): Promise<SidebarGroups> {
       const client = source();
       if (!client) throw new Error("The Nucleus service channel is not connected");
-      return sidebarGroupsOutputSchema.parse(await client.request(SIDEBAR_GROUPS_METHOD, null));
+      const read = sidebarGroupsOutputSchema.parse(await client.request(SIDEBAR_GROUPS_METHOD, null));
+      if (!bbProjects) return read;
+      let listed: unknown;
+      try { listed = await bbProjects.list(); } catch { return read; }
+      if (!Array.isArray(listed)) return read;
+      const rows = listed.filter((row): row is BbProjectSource => typeof row === "object" && row !== null && typeof (row as { id?: unknown }).id === "string");
+      return sidebarGroupsOutputSchema.parse(withBbProjects(read, rows, bbProjects.samePath));
     },
   };
 }

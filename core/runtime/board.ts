@@ -212,6 +212,7 @@ export class RuntimeBoard {
       workspaces: () => this.context.store.getMeta<Record<string, BbSidebarWorkspace>>("bbWorkspaces") ?? {},
       threads: () => this.context.store.getMeta<{ agents?: Record<string, BbSidebarThreadRecord> }>("bbThreads") ?? {},
       prStates: this.context.prStates,
+      projects: () => this.context.store.projects(),
     });
   }
 
