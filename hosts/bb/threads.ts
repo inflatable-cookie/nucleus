@@ -13,7 +13,7 @@ export interface BbWorkspaceRecord {
 interface BbAgent { id: string; task: string; run: string; role: string; workspaceId: string; parentThreadId: string; labels: Record<string, string> }
 interface SpawnIntent { task: string; run: string; workspaceId: string; attemptedAt: number; agentId?: string }
 interface WriteIntent { status: 'unknown' | 'refused' | 'settled'; value?: string }
-export interface BbThreadState { agents: Record<string, BbAgent>; spawns: Record<string, SpawnIntent>; writes: Record<string, WriteIntent>; parents?: Record<string, string> }
+export interface BbThreadState { agents: Record<string, BbAgent>; spawns: Record<string, SpawnIntent>; writes: Record<string, WriteIntent> }
 export const emptyBbThreadState = (): BbThreadState => ({ agents: {}, spawns: {}, writes: {} });
 export interface BbThreadPorts {
   hostId: string;
@@ -42,7 +42,7 @@ const unknown = (reason: string) => new HostUnknownDeliveryError({ command: 'bb.
 /** One bounded interaction row as the plugin projects it (Spec 062, phase 4). */
 export interface BbInteraction {
   interactionId: string; kind: string; status: 'pending' | 'resolving' | 'resolved' | 'interrupted'; title: string | null;
-  questions?: Array<{ id: string; header: string; question: string; options: string[] }>;
+  questions?: Array<{ id: string; header: string; question: string; options: Array<{ label: string; value: string }>; allowFreeText: boolean }>;
   decisions?: Array<'allow_once' | 'allow_for_session' | 'deny'>;
 }
 
@@ -108,7 +108,6 @@ export class BbThreads {
     this.ports.putWorkspace({ ...workspace, environmentId });
     const state = this.ports.state();
     state.agents[threadId] = { id: threadId, task, run, role, workspaceId, parentThreadId, labels: wireLabels({ task, run, role }) };
-    state.parents = { ...state.parents, [task]: parentThreadId };
     if (state.spawns[run]) state.spawns[run].agentId = threadId;
     this.ports.save(state);
     return { id: threadId, workspaceId };
@@ -315,7 +314,7 @@ export class BbThreads {
   async pendingQuestions(id: string) {
     return (await this.interactions(id))
       .filter(item => item.kind === 'user_question' && (item.status === 'pending' || item.status === 'resolving'))
-      .map(item => ({ requestId: item.interactionId, questions: (item.questions ?? []).map(question => ({ header: question.header, question: question.question, options: question.options })) }));
+      .map(item => ({ requestId: item.interactionId, questions: (item.questions ?? []).map(question => ({ header: question.header, question: question.question, options: question.options.map(option => option.label) })) }));
   }
   /** Bind the exact thread and request, then answer the native question once. */
   async answerQuestion(id: string, requestId: string, answers: Record<string, string>) {
@@ -346,19 +345,24 @@ export class BbThreads {
       return;
     }
     const key = `reparent:${id}:${parentThreadId}`;
+    const state = this.ports.state();
+    // The fresh read above proves this postcondition absent, so a settled record for
+    // the same destination is stale: keeping it would refuse a legitimate move back.
+    if (state.writes[key]?.status === 'settled') { delete state.writes[key]; this.ports.save(state); }
     if (Object.entries(this.ports.state().writes).some(([other, intent]) => other.startsWith(`reparent:${id}:`) && intent.status === 'unknown'))
       throw new HostUnknownDeliveryError({ command: 'bb.thread.reparent', guidance: 'A prior reparent of this thread has unknown delivery' });
     await this.write(key, 'thread.reparent', { threadId: id, parentThreadId });
   }
   /** The planner thread each of this task's threads is parented to (Spec 062, phase 4). */
   parent(taskId: string) { return this.ports.parent(taskId); }
-  /** Every recorded thread of one task, observed then reparented once. The planner is never touched. */
+  /**
+   * Every recorded thread of one task, observed then reparented once. There is no
+   * task-wide destination cache: a cached target would mask an older thread that was
+   * never moved, so each pass reads each thread and writes only the ones that differ.
+   * The planner itself is never touched.
+   */
   async reparentTaskThreads(taskId: string, parentThreadId: string) {
-    if (this.ports.state().parents?.[taskId] === parentThreadId) return;
     for (const agent of Object.values(this.ports.state().agents).filter(agent => agent.task === taskId)) await this.reparentThread(agent.id, parentThreadId);
-    const state = this.ports.state();
-    state.parents = { ...state.parents, [taskId]: parentThreadId };
-    this.ports.save(state);
   }
   /** The recorded thread for one id, so a caller can prove the workspace it answers in. */
   recordedAgent(id: string) { return this.ports.state().agents[id] }

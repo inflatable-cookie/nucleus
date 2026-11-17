@@ -211,7 +211,9 @@ export const hostOperationValueSchemas = {
         id: boundedText(128),
         header: boundedText(200),
         question: boundedText(2_000),
-        options: z.array(boundedText(400)).max(20),
+        /** The label is what an operator reads; the value is what the provider accepts back. */
+        options: z.array(z.object({ label: boundedText(400), value: boundedText(400) }).strict()).max(20),
+        allowFreeText: z.boolean(),
       }).strict()).max(32).optional(),
       decisions: z.array(z.enum(["allow_once", "allow_for_session", "deny"])).max(8).optional(),
     }).strict()).max(200),

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -25,6 +25,7 @@ import type { Adapter } from '../core/host';
  */
 const hostId = 'bb:0123456789abcdef0123456789abcdef';
 const handle = `bb-worktree-${'a'.repeat(40)}`;
+const wire = JSON.parse(readFileSync(new URL('./fixtures/bb-0.49-wire.json', import.meta.url), 'utf8')) as Record<string, any>;
 
 function fixture() {
   const fake = bbFake();
@@ -92,59 +93,76 @@ test('BB phase 4: an interaction answer binds the thread and request before any 
   const worker = await f.native.createAgent(f.spec());
   const reviewer = await f.native.createAgent(f.spec('review_synthetic', 'reviewer'));
   f.rows.get(reviewer.id).hasPendingInteraction = true;
+  // The row recorded from the isolated BB: a claude-code native question whose option
+  // labels ("Proceed") differ from their wire values ("option_synthetic_1").
   const question = bbWire('interactionQuestion', { threadId: reviewer.id });
   f.interactions.set(reviewer.id, [question]);
 
   const pending = await f.native.pendingQuestions(reviewer.id);
-  assert.deepEqual(pending, [{ requestId: question.id, questions: [{ header: 'Scope', question: 'How wide should the change go?', options: ['Just this file', 'The whole repository'] }] }]);
+  assert.deepEqual(pending, [{ requestId: question.id, questions: [{ header: 'Probe', question: 'Proceed with the synthetic probe?', options: ['Proceed', 'Stop'] }] }]);
   assert.deepEqual(await f.native.pendingQuestions(worker.id), [], 'another thread has no questions');
 
   // The answer binds the exact thread and request: a wrong thread or a wrong
   // request is refused before the resolve write.
-  await assert.rejects(f.native.answerQuestion(worker.id, question.id, { Scope: 'Just this file' }));
-  await assert.rejects(f.native.answerQuestion(reviewer.id, 'pint_other_request', { Scope: 'Just this file' }));
+  await assert.rejects(f.native.answerQuestion(worker.id, question.id, { Probe: 'Proceed' }));
+  await assert.rejects(f.native.answerQuestion(reviewer.id, 'pint_other_request', { Probe: 'Proceed' }));
   assert.equal(f.callsOf('threads.interactions.resolve').length, 0);
 
-  await f.native.answerQuestion(reviewer.id, question.id, { Scope: 'Just this file' });
+  // The operator picks the label; the wire carries the option's value. This is the
+  // exact resolution the isolated server recorded back for that row.
+  await f.native.answerQuestion(reviewer.id, question.id, { Probe: 'Proceed' });
   const resolved = f.callsOf('threads.interactions.resolve');
   assert.equal(resolved.length, 1);
-  assert.deepEqual(resolved[0]!.args, { threadId: reviewer.id, interactionId: question.id, resolution: { kind: 'user_answer', answers: { scope: { selected: ['Just this file'] } } } });
+  assert.deepEqual(resolved[0]!.args, { threadId: reviewer.id, interactionId: question.id, resolution: wire.questionResolution });
+  assert.equal((resolved[0]!.args.resolution as { answers: Record<string, { selected: string[] }> }).answers.question_synthetic.selected[0], 'option_synthetic_1');
 
-  // A free-text answer is carried as free text, never as a fake option.
+  // Naming the value directly answers the same way, and a free-text answer is only
+  // carried as free text because this question declared that it allows one.
   f.interactions.set(reviewer.id, [bbWire('interactionQuestion', { id: 'pint_free_text', threadId: reviewer.id })]);
-  await f.native.answerQuestion(reviewer.id, 'pint_free_text', { Scope: 'Only the two changed files' });
-  assert.deepEqual(f.callsOf('threads.interactions.resolve')[1]!.args.resolution, { kind: 'user_answer', answers: { scope: { selected: [], freeText: 'Only the two changed files' } } });
+  await f.native.answerQuestion(reviewer.id, 'pint_free_text', { Probe: 'option_synthetic_2' });
+  assert.deepEqual(f.callsOf('threads.interactions.resolve')[1]!.args.resolution, { kind: 'user_answer', answers: { question_synthetic: { selected: ['option_synthetic_2'] } } });
+  f.interactions.set(reviewer.id, [bbWire('interactionQuestion', { id: 'pint_text_only', threadId: reviewer.id })]);
+  await f.native.answerQuestion(reviewer.id, 'pint_text_only', { Probe: 'Only the two changed files' });
+  assert.deepEqual(f.callsOf('threads.interactions.resolve')[2]!.args.resolution, { kind: 'user_answer', answers: { question_synthetic: { selected: [], freeText: 'Only the two changed files' } } });
+
+  // A question that forbids free text refuses an answer outside its options before any write.
+  f.interactions.set(reviewer.id, [bbWire('interactionQuestion', { id: 'pint_no_text', threadId: reviewer.id, payload: { ...question.payload, questions: [{ ...question.payload.questions[0], allowFreeText: false }] } })]);
+  await assert.rejects(f.native.answerQuestion(reviewer.id, 'pint_no_text', { Probe: 'Something else' }), /not one of the offered choices/);
+  assert.equal(f.callsOf('threads.interactions.resolve').length, 3);
 
   // An answer whose delivery is unknown is never resent.
   f.interactions.set(reviewer.id, [bbWire('interactionQuestion', { id: 'pint_unknown', threadId: reviewer.id })]);
   f.controls.loseAnswer = true;
-  await assert.rejects(f.native.answerQuestion(reviewer.id, 'pint_unknown', { Scope: 'Just this file' }));
+  await assert.rejects(f.native.answerQuestion(reviewer.id, 'pint_unknown', { Probe: 'Proceed' }));
   const afterFirst = f.callsOf('threads.interactions.resolve').length;
-  await assert.rejects(f.native.answerQuestion(reviewer.id, 'pint_unknown', { Scope: 'Just this file' }), /unknown/i);
+  await assert.rejects(f.native.answerQuestion(reviewer.id, 'pint_unknown', { Probe: 'Proceed' }), /unknown/i);
   assert.equal(f.callsOf('threads.interactions.resolve').length, afterFirst, 'the recorded unknown intent fences a second answer');
 });
 
-test('BB phase 4: a permission answer maps onto BB decisions, refuses an unrepresentable one, and a question dismisses', async () => {
+test('BB phase 4: a permission answer maps onto the offered BB decisions and refuses the rest, and a question dismisses', async () => {
   const f = fixture();
   const reviewer = await f.native.createAgent(f.spec('review_synthetic', 'reviewer'));
+  // The recorded claude-code plan approval offers allow_once and deny, not allow_for_session.
   const approval = bbWire('interactionApproval', { id: 'pint_approval_one', threadId: reviewer.id });
   const second = bbWire('interactionApproval', { id: 'pint_approval_two', threadId: reviewer.id });
-  const third = bbWire('interactionApproval', { id: 'pint_approval_three', threadId: reviewer.id });
   const question = bbWire('interactionQuestion', { id: 'pint_question', threadId: reviewer.id });
-  f.interactions.set(reviewer.id, [approval, second, third, question]);
+  f.interactions.set(reviewer.id, [approval, second, question]);
 
   await f.native.answerPermission(reviewer.id, approval.id, 'accept', 'intent_one');
-  assert.deepEqual(f.callsOf('threads.interactions.resolve')[0]!.args.resolution, { decision: 'allow_once', grantedPermissions: null });
-  await f.native.answerPermission(reviewer.id, second.id, 'acceptForSession', 'intent_two');
-  assert.deepEqual(f.callsOf('threads.interactions.resolve')[1]!.args.resolution, { decision: 'allow_for_session', grantedPermissions: null });
-  // acceptAlways has no BB counterpart: it is refused before the write, not widened.
-  await assert.rejects(f.native.answerPermission(reviewer.id, third.id, 'acceptAlways', 'intent_three'), /no acceptAlways permission decision/);
-  assert.equal(f.callsOf('threads.interactions.resolve').length, 2);
+  assert.deepEqual(f.callsOf('threads.interactions.resolve')[0]!.args.resolution, wire.approvalResolution);
+  // acceptAlways has no BB counterpart and acceptForSession is not offered here:
+  // both are refused before the write rather than widened onto another decision.
+  await assert.rejects(f.native.answerPermission(reviewer.id, second.id, 'acceptAlways', 'intent_two'), /no acceptAlways permission decision/);
+  await assert.rejects(f.native.answerPermission(reviewer.id, second.id, 'acceptForSession', 'intent_three'), /does not offer allow_for_session/);
+  assert.equal(f.callsOf('threads.interactions.resolve').length, 1);
+  // A denial is expressible and uses the same offered set.
+  await f.native.answerPermission(reviewer.id, second.id, 'decline', 'intent_four');
+  assert.deepEqual(f.callsOf('threads.interactions.resolve')[1]!.args.resolution, { decision: 'deny' });
 
   await f.native.dismissQuestion(reviewer.id, question.id);
   assert.deepEqual(f.callsOf('threads.interactions.cancel')[0]!.args, { threadId: reviewer.id, interactionId: question.id });
   // Dismissal is only ever a question; a pending permission keeps its own state.
-  assert.equal(f.interactions.get(reviewer.id)!.find(row => row.id === third.id)!.status, 'pending');
+  assert.equal(f.interactions.get(reviewer.id)!.find(row => row.id === second.id)!.status, 'resolved');
   await assert.rejects(f.native.dismissQuestion(reviewer.id, approval.id), /not a native question/);
   assert.equal(f.callsOf('threads.interactions.cancel').length, 1);
 });
@@ -179,6 +197,36 @@ test('BB phase 4: a reparent writes every recorded thread parent once and reads 
   await f.native.reparentTaskThreads('task_synthetic', 'thr_successor_two');
   assert.equal(f.callsOf('threads.update').filter(call => call.args.parentThreadId === 'thr_successor_two').length, 5);
   for (const id of [worker.id, reviewer.id, recovery.id, coordinator.id, executor.id]) assert.equal(f.rows.get(id)!.parentThreadId, 'thr_successor_two');
+
+  // Moving back is a new write: a settled record for the destination is not proof
+  // that the thread is still there, so the fresh read decides.
+  f.setParent('thr_successor');
+  const backBefore = f.callsOf('threads.update').filter(call => call.args.parentThreadId === 'thr_successor').length;
+  await f.native.reparentTaskThreads('task_synthetic', 'thr_successor');
+  for (const id of [worker.id, reviewer.id, recovery.id, coordinator.id, executor.id]) assert.equal(f.rows.get(id)!.parentThreadId, 'thr_successor');
+  assert.equal(f.callsOf('threads.update').filter(call => call.args.parentThreadId === 'thr_successor').length, backBefore + 5);
+});
+
+test('BB phase 4: a role created after a partial reparent never strands an older role', async () => {
+  const f = fixture();
+  const worker = await f.native.createAgent(f.spec('run_worker', 'worker'));
+  const reviewer = await f.native.createAgent(f.spec('run_reviewer', 'reviewer'));
+  f.setParent('thr_successor');
+  // The first pass lands one write and then loses its answer, so the sweep stops
+  // with the second thread still on the old planner.
+  f.controls.loseReparent = true;
+  await assert.rejects(f.native.reparentTaskThreads('task_synthetic', 'thr_successor'));
+  f.controls.loseReparent = false;
+  assert.equal(f.rows.get(worker.id)!.parentThreadId, 'thr_successor');
+  assert.equal(f.rows.get(reviewer.id)!.parentThreadId, 'thr_planner');
+  // A later role is created directly under the new planner.
+  const executor = await f.native.createAgent(f.spec('run_executor', 'executor'));
+  assert.equal(f.rows.get(executor.id)!.parentThreadId, 'thr_successor');
+  // The next sweep must still move the older thread: no task-wide destination cache
+  // may stand in for reading each recorded thread.
+  await f.native.reparentTaskThreads('task_synthetic', 'thr_successor');
+  assert.equal(f.rows.get(reviewer.id)!.parentThreadId, 'thr_successor');
+  for (const id of [worker.id, reviewer.id, executor.id]) assert.equal(f.rows.get(id)!.parentThreadId, 'thr_successor');
 });
 
 test('BB phase 4: every support role spawns under the task planner with its own role metadata', async () => {

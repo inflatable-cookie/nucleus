@@ -127,6 +127,7 @@ export interface InteractionRow {
       options?: Array<{ label?: string; value?: string; description?: string }>;
       multiSelect?: boolean;
       allowFreeText?: boolean;
+      required?: boolean;
     }>;
   };
   resolution?: Record<string, unknown> | null;
@@ -380,13 +381,17 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
     const payload = row.payload;
     if (typeof payload !== "object" || payload === null || typeof payload.kind !== "string")
       throw new HostOperationError("unavailable", `interaction ${row.id} carries no payload kind`);
-    const base = { interactionId: row.id, kind: payload.kind, status } as { interactionId: string; kind: string; status: string; title: string | null; questions?: Array<{ id: string; header: string; question: string; options: string[] }>; decisions?: BbPermissionDecision[] };
+    const base = { interactionId: row.id, kind: payload.kind, status } as { interactionId: string; kind: string; status: string; title: string | null; questions?: Array<{ id: string; header: string; question: string; options: Array<{ label: string; value: string }>; allowFreeText: boolean }>; decisions?: BbPermissionDecision[] };
     if (payload.kind === "approval") {
       const decisions = payload.availableDecisions;
       if (!Array.isArray(decisions) || !decisions.length || decisions.some(decision => !(BB_PERMISSION_DECISIONS as readonly string[]).includes(decision)))
         throw new HostOperationError("unavailable", `approval ${row.id} carries no recognised decision set`);
-      const title = payload.subject?.presentation?.title;
-      return { ...base, title: typeof title === "string" ? title : typeof payload.subject?.kind === "string" ? payload.subject.kind : null, decisions: decisions as BbPermissionDecision[] };
+      const subject = payload.subject;
+      // Only a subject kind that declares a presentation carries one; reading it on a
+      // plan subject would invent a field the row does not have.
+      const presentation = subject && Object.hasOwn(subject, "presentation") ? subject.presentation : undefined;
+      const title = presentation?.title;
+      return { ...base, title: typeof title === "string" ? title : typeof subject?.kind === "string" ? subject.kind : null, decisions: decisions as BbPermissionDecision[] };
     }
     if (payload.kind === "user_question") {
       const questions = payload.questions;
@@ -397,11 +402,15 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
           throw new HostOperationError("unavailable", `question ${row.id} is missing its id or prompt`);
         if (question.options !== undefined && !Array.isArray(question.options))
           throw new HostOperationError("unavailable", `question ${row.id} carries unreadable options`);
+        if (typeof question.allowFreeText !== "boolean") throw new HostOperationError("unavailable", `question ${row.id} does not declare whether free text is allowed`);
         const options = (question.options ?? []).map(option => {
+          // The label is what an operator reads; the value is what the provider accepts
+          // back. They differ on real provider rows, so both are kept.
           if (typeof option?.label !== "string" || !option.label) throw new HostOperationError("unavailable", `question ${row.id} carries an option without a label`);
-          return option.label;
+          if (typeof option.value !== "string" || !option.value) throw new HostOperationError("unavailable", `question ${row.id} carries an option without a value`);
+          return { label: option.label, value: option.value };
         });
-        return { id: question.id, header: typeof question.shortLabel === "string" && question.shortLabel ? question.shortLabel : question.id, question: question.prompt, options };
+        return { id: question.id, header: typeof question.shortLabel === "string" && question.shortLabel ? question.shortLabel : question.id, question: question.prompt, options, allowFreeText: question.allowFreeText };
       }) };
     }
     return { ...base, title: typeof payload.title === "string" ? payload.title : null };
@@ -416,7 +425,7 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
   }
 
   /** The SDK's resolution union, built from the host contract's own answer shape. */
-  function resolutionFor(row: InteractionRow, answer: { kind: "question"; answers: Record<string, string> } | { kind: "permission"; decision: string }, projection: { questions?: Array<{ id: string; header: string; options: string[] }>; decisions?: BbPermissionDecision[] }) {
+  function resolutionFor(row: InteractionRow, answer: { kind: "question"; answers: Record<string, string> } | { kind: "permission"; decision: string }, projection: { questions?: Array<{ id: string; header: string; options: Array<{ label: string; value: string }>; allowFreeText: boolean }>; decisions?: BbPermissionDecision[] }) {
     if (answer.kind === "question") {
       if (!projection.questions) throw new HostOperationError("refused", `interaction ${row.id} is not a native question`);
       const answers: Record<string, { selected: string[]; freeText?: string }> = {};
@@ -426,7 +435,12 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
         const question = matches[0];
         if (answers[question.id]) throw new HostOperationError("refused", `answer key ${key} repeats question ${question.id}`);
         if (!value.trim()) throw new HostOperationError("refused", `answer for ${question.id} is empty`);
-        answers[question.id] = question.options.includes(value) ? { selected: [value] } : { selected: [], freeText: value };
+        // An offered choice is answered by its wire value, whether the caller named it
+        // by label or by value; free text is only sent where the provider allows it.
+        const offered = question.options.find(option => option.value === value) ?? question.options.find(option => option.label === value);
+        if (offered) answers[question.id] = { selected: [offered.value] };
+        else if (question.allowFreeText) answers[question.id] = { selected: [], freeText: value };
+        else throw new HostOperationError("refused", `answer for ${question.id} is not one of the offered choices and free text is not allowed`);
       }
       if (!Object.keys(answers).length) throw new HostOperationError("refused", "a native question answer names no question");
       return { kind: "user_answer" as const, answers };

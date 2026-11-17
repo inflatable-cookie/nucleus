@@ -32,7 +32,7 @@ import {
   type ProtocolError,
   type ServiceResponse,
 } from "./protocol";
-import type { HostOperationError, HostOperations } from "./operations";
+import { HostOperationError, type HostOperations } from "./operations";
 
 export interface HostChannelLogger {
   info(message: string): void;
@@ -267,12 +267,14 @@ function runOnce(options: HostChannelOptions, identity: ServiceIdentity, onDecla
           const outcome = await options.operations.execute(envelope.op as never, envelope.input);
           respond({ v: PROTOCOL_VERSION, id, result: outcome });
         } catch (error) {
-          const failure = error as HostOperationError;
+          // Only this executor's own typed refusal may name a code. A Node or SDK
+          // error can carry its own `code` (ENOENT and friends), and forwarding that
+          // would make the service read a real failure as a malformed refusal.
           respond({
             v: PROTOCOL_VERSION,
             id,
             error: {
-              code: typeof failure.code === "string" ? failure.code : "internal",
+              code: error instanceof HostOperationError ? error.code : "internal",
               message: (error instanceof Error ? error.message : String(error)).slice(0, 2_000),
             },
           });

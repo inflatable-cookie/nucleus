@@ -1045,25 +1045,32 @@ the same durable intents phase 3 established:
   written) when the thread has no live turn; any failure after the write is `unavailable` and therefore
   unknown delivery. `steerOrNotify` answers a proven not-sent steer with exactly one queued send under
   its own durable identity, and never resends an unknown steer, not even as that fallback.
-- Interactions are read as the pinned SDK declares them: `thread.interactions` projects each row's kind,
-  status, title, `user_question` questions (`id`, `header`, `question`, option labels) and an approval's
-  available decisions, and fails closed on a payload missing a required field. `pendingQuestions`
-  surfaces only native `user_question` rows; a plugin interaction is never read as one.
+- Interactions are read as the target BB declares them: `thread.interactions` projects each row's kind,
+  status, title, a `user_question`'s questions (`id`, `header`, `question`, each option's label *and* wire
+  value, and whether free text is allowed) and an approval's available decisions, and fails closed on a
+  payload missing a required field. `pendingQuestions` surfaces only native `user_question` rows, with
+  their option labels, because that is what an operator chooses between; a plugin interaction is never
+  read as one.
 - `thread.interaction.respond` and `thread.interaction.cancel` read the exact interaction first, so the
   thread and request are bound before anything is written, and `<thread>/<interaction>` refusals happen
   before the write. Answers map the host contract's decisions onto BB's three (`accept` → `allow_once`,
   `acceptForSession` → `allow_for_session`, `decline`/`cancel` → `deny`); `acceptAlways` has no BB
-  counterpart and is refused, never widened. A free-text answer is carried as `freeText`, never as a fake
-  option. Dismissal cancels a pending question only, never a permission.
+  counterpart and is refused, never widened, and a decision the interaction does not offer is refused
+  before the write. A question answer names an option by its label *or* its wire value and always sends
+  the option's value, because a real provider's label and value differ; only a question that declares
+  free text takes raw text, and a value outside the offered set is refused where it does not. Dismissal
+  cancels a pending question only, never a permission.
 - The planner ask and the reviewer consult are one queued send to a thread Nucleus did not create; the
   answer arrives through the relayed reply, never the recipient's chat output. `runDecider` and
   `createConsultReviewer` spawn one idle support thread in the task's recorded worktree under its
   planner, with the same parent-notifications-off and role metadata as every other role thread, and
   `askPlanner` then delivers its question.
 - `thread.reparent` writes `parentThreadId` and reads it back. A reparented task moves each of its own
-  recorded threads under the new planner on the ordinary sweep, observation first, one durable intent
-  per thread, and never touches the planner itself. An unknown reparent write is settled by a later read
-  and never re-sent.
+  recorded threads under the new planner on the ordinary sweep, one durable intent per thread, and never
+  touches the planner itself. There is no task-wide destination cache: the fresh per-thread read is the
+  only settlement, so an older role is never skipped because a newer one already names the new planner,
+  and a move back writes again when the read proves the thread left. An unknown reparent write is settled
+  by a later read and never re-sent.
 - `archiveAgent` gains the phase-4 cascade rule: the cascade read is the only proof, every id it names
   must be this task's own recorded thread, and a recorded child is archived before its parent so the
   parent's fresh read names only already-archived rows. A foreign id — including a foreign lifecycle
@@ -1076,17 +1083,24 @@ the same durable intents phase 3 established:
 - `capabilities()` now states `nativeDecisions: false`: a Nucleus-raised decision rides the board, and
   native provider questions and permissions are read and answered where the host raises them.
 
+Executor faults name a code only when the executor raised a typed `HostOperationError`: a Node or SDK
+error's own `code` (an `ENOENT` from a provider process, for example) is answered `internal`, because
+forwarding it would make the service read a real post-write failure as a refusal it may retry.
+
 Tests: `test/bb-phase4.test.ts` names every phase-4 acceptance case at the operation executor and
-through core's durable lanes (steer/queue, interaction binding, permission mapping and dismissal,
-reparent, support-role spawns, children-first closeout, cascade refusals and incomplete cleanup,
-reviewer replacement). `test/bb-worker-runs.test.ts` retains the phase-3 archive proof with the phase-4
+through core's durable lanes (steer/queue, interaction binding with label-to-value answers, permission
+mapping and dismissal, reparent including a move back and an older role after a partial pass,
+support-role spawns, children-first closeout, cascade refusals and incomplete cleanup, reviewer
+replacement). `test/bb-host-presence.test.ts` proves an executor failure's own code never reaches the
+wire as a refusal. `test/bb-worker-runs.test.ts` retains the phase-3 archive proof with the phase-4
 cascade rule.
 
-Evidence note: the interaction *transport* rows are the recorded BB 0.49 plugin interaction; the
-provider `user_question`/`approval` payload shapes come from the pinned SDK 0.6.132 declaration
-(`providerPendingInteractionSchema`) because eliciting a provider interaction in the isolated server
-needs a live model turn. No field outside that declaration is used, and the plugin refuses a payload
-missing one.
+Evidence: `interactionQuestion` and `interactionApproval` in `test/fixtures/bb-0.49-wire.json` are real
+provider rows recorded from the isolated BB 0.49 server by the opt-in pass
+`effigy proof:bb -- --record-interactions` (synthetic identities): a claude-code probe thread raises a
+native question and a plan approval, the plugin lists them, answers the label by the option's wire value,
+and the recording keeps the raw SDK rows and both resolutions. That pass needs an authenticated provider
+and runs only when asked; the default proof remains model-free.
 
 ### Phase 5 — the forked sidebar and the task group header
 

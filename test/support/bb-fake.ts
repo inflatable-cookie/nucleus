@@ -2,20 +2,16 @@ import { readFileSync } from 'node:fs';
 import { createHostOperations, type BbHostSdk } from '../../hosts/bb/plugin/operations';
 const recorded = JSON.parse(readFileSync(new URL('../fixtures/bb-0.49-wire.json', import.meta.url), 'utf8'));
 /**
- * The pinned SDK's declared provider interaction payloads (`providerPendingInteractionSchema`,
- * SDK 0.6.132). The isolated BB proof cannot elicit a provider interaction without a live model
- * turn, so these two rows are the SDK declaration rather than a recording; every field and its
- * key set is the SDK's, and a row missing one is refused exactly like a recorded row.
+ * Every row is captured from the isolated BB 0.49 server. `interactionQuestion` and
+ * `interactionApproval` come from the opt-in provider recording pass: the isolated server
+ * let a claude-code probe thread raise a native question and a plan approval, and the raw
+ * SDK rows are recorded here with synthetic identities. `questionResolution` and
+ * `approvalResolution` are the resolutions the isolated server recorded for those two.
  */
-const providerInteractions = JSON.parse(readFileSync(new URL('../fixtures/bb-0.6.132-provider-interactions.json', import.meta.url), 'utf8'));
-const wireRows = { ...recorded, interactionQuestion: providerInteractions.user_question, interactionApproval: providerInteractions.approval } as Record<BbWireKind, Record<string, unknown>>;
+const wireRows = recorded as Record<BbWireKind, Record<string, unknown>>;
 export const BB_STAMP = 1794849609702;
 
-/**
- * The kinds the fake can serve. `list`, `get`, `interaction`, `execution` and `timeline` are
- * captured from the isolated BB; the two provider interaction kinds are the pinned SDK's declared
- * shapes (see above).
- */
+/** The kinds the fake can serve: recorded BB rows, plus the two provider interaction kinds. */
 export type BbWireKind = 'get' | 'list' | 'interaction' | 'execution' | 'timeline' | 'interactionQuestion' | 'interactionApproval';
 
 /** Only values vary; every field is one the target BB or its pinned SDK declares. */
