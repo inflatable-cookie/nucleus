@@ -99,6 +99,12 @@ from `hosts/bb/plugin`: `effigy bb:sidebar-tests` runs the fork's own vitest sui
 `bb plugin build hosts/bb/plugin` writes `dist/` (ignored). A published copy needs
 its own `npm install` first, which is what upstream's fork routine provides.
 
+The vendored `server.ts` is upstream's, unchanged, and is not dead code: the
+plugin's own `server.ts` calls its default export (`threadListPlugin(bb)`) beside
+the adapter's RPC catalogue and the presence socket, so the fork's preference RPC
+and its `prefs` CLI register in the plugin BB actually loads. `test/bb-plugin-backend.test.ts`
+proves that composition against the production factory.
+
 `test-setup.ts` in the package root supplies the in-memory `localStorage` the
 preferences mirror reads: the repository's jsdom reaches a test window without one,
 and the host's browser has it. Nothing else about the environment is faked.

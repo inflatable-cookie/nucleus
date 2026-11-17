@@ -18,7 +18,11 @@
  *    selection, which prefers a non-bundled list) and pinning it to the bundled
  *    list is accepted and read back — the operator's documented fallback;
  * 5. the built app bundle still carries the host's row-status hook, so another
- *    plugin's row status keeps drawing through the fork (fact 23).
+ *    plugin's row status keeps drawing through the fork (fact 23);
+ * 6. the backend composes the vendored list's server entry (Spec 062, decision
+ *    5a): the plugin reports its `prefs` CLI and its preference RPC answers in
+ *    this server, which is the read the list hydrates through before it leaves its
+ *    loading skeleton.
  *
  * It deliberately does not claim a visual proof: the New-thread button, the
  * navigation rail and the footer are host-rendered chrome that this plugin never
@@ -154,7 +158,41 @@ async function main() {
     assert.equal(await provider(), "__automatic__", "resetting returns the host to automatic selection");
     note("provider-selection", true, { automatic: "__automatic__", pinned: bundled, reset: "__automatic__" });
 
-    // 5. The row-status path another plugin writes keeps drawing through the fork.
+    // 5. The vendored list's server entry is composed: its CLI and its preference
+    // RPC answer in this real backend, which is what the list hydrates through.
+    const listedCli = JSON.parse(await cli(["plugin", "list", "--json"])) as {
+      plugins: Array<{ id: string; cliCommand?: { name?: string } | string | null }>;
+    };
+    const reportedCli = listedCli.plugins.find(entry => entry.id === "nucleus")?.cliCommand ?? null;
+    const cliCommand = typeof reportedCli === "string" ? reportedCli : reportedCli?.name ?? null;
+    assert.equal(cliCommand, "nucleus", "the vendored list CLI registers under the plugin id");
+    const preferenceAnswer = await fetch(`${serverUrl}/api/v1/plugins/nucleus/rpc/listPreferences`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "null",
+    });
+    assert.equal(preferenceAnswer.status, 200, "the preference RPC answers in this backend");
+    const preferenceBody = (await preferenceAnswer.json()) as { ok?: boolean; result?: { preferences?: Record<string, unknown> } };
+    assert.equal(preferenceBody.ok, true, "the preference read succeeds");
+    const preferences = preferenceBody.result?.preferences ?? {};
+    assert.ok("expandedTaskGroups" in preferences, "the read carries the fork's own collapse preference");
+    assert.deepEqual(preferences.expandedTaskGroups, [], "a fresh sidebar has no expanded task groups");
+    let cliOutput = "";
+    try {
+      cliOutput = (await cli(["nucleus", "prefs", "list", "--json"])).trim();
+    } catch (error) {
+      cliOutput = `the isolated CLI did not run the command: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    evidence.preferenceRead = { cliCommand, preferences: Object.keys(preferences).sort(), cliOutput: cliOutput.slice(0, 400) };
+    note("sidebar-server-composition", true, {
+      cliCommand,
+      preferenceRpc: "listPreferences",
+      preferenceKeys: Object.keys(preferences).length,
+      expandedTaskGroups: preferences.expandedTaskGroups,
+      cliRan: !cliOutput.startsWith("the isolated CLI did not run"),
+    });
+
+    // 6. The row-status path another plugin writes keeps drawing through the fork.
     assert.ok(bundle!.includes("useSidebarThreadRowStatus"), "the fork's rows still honour the host row-status path");
     note("row-status-path", true, { honouredBy: "the vendored rows, unchanged by the patch set" });
 

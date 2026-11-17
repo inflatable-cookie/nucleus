@@ -1,14 +1,16 @@
 /**
- * Nucleus's BB plugin backend (Spec 062, phases 0–3).
+ * Nucleus's BB plugin backend (Spec 062, phases 0–5).
  *
- * Keeps the reverse service channel, executes bounded BB host operations and
- * supplies helper-reporting bindings from run metadata. Host registration,
- * repository routing and task lifecycle remain service-owned; sidebar and board
- * UI belong to later phases.
+ * Keeps the reverse service channel, executes bounded BB host operations, supplies
+ * helper-reporting bindings from run metadata, and composes the vendored thread
+ * list's own server entry so the forked sidebar has its preference store. Host
+ * registration, repository routing and task lifecycle remain service-owned; the
+ * board and the in-thread surfaces belong to phase 6.
  */
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { runHostChannel, type HostChannelClient } from "./channel";
 import { createHostOperations, type BbHostSdk } from "./operations";
+import threadListPlugin from "./sidebar/server.js";
 import {
   BOARD_SIGNAL_CHANNEL,
   createSidebarGroupsService,
@@ -97,6 +99,15 @@ export default async function plugin(bb: BbPluginApi) {
     sdkVersion: BB_PLUGIN_SDK_VERSION,
     dataDir: declarations.dataDir,
   });
+
+  // Spec 062 decision 5a: this backend composes the vendored list's own server
+  // entry with the adapter's RPC catalogue and the presence socket. One plugin,
+  // one connection, one catalogue — and the forked list's preference store, its
+  // `listPreferences`/`setPreference`/`resetPreference` RPC and its `prefs` CLI
+  // register here, so `PreferencesSync` can hydrate and the list leaves its
+  // loading skeleton. Without this call the vendored server entry is dead code and
+  // every Nucleus task group renders without its collapse preference.
+  await threadListPlugin(bb);
 
   // Metadata names the helper route; it carries no reporting credential and grants
   // no authority. The run ticket authenticates every helper request.

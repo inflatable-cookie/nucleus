@@ -1156,7 +1156,15 @@ handles and task records phases 0–4 landed:
   the `expandedTaskGroups` preference in `shared/preferences.ts` and `app/preferences/atoms.ts`, the
   fork's own `app/list/nucleusTaskGroups.tsx` (the batched read, its join and the collapse decision)
   and `app.tsx` exporting the list so the plugin's own entry registers it beside its other slots.
-  The two app-level tests load that entry; every other fork test is upstream's, unchanged.
+  The two app-level tests load that entry; every other fork test is upstream's, unchanged. The
+  plugin's own `server.ts` composes the vendored `threadListPlugin(bb)` with the adapter's RPC
+  catalogue and the presence socket: the list's preference store, its
+  `listPreferences`/`setPreference`/`resetPreference` RPC and its `prefs` CLI register there, so the
+  list hydrates and leaves its loading skeleton instead of sitting on it while every UI test passes
+  against an RPC fake. `test/bb-plugin-backend.test.ts` loads the production factory with a fake
+  plugin API and exercises those registrations: the preference read resolves with every key and
+  round-trips `expandedTaskGroups` through the plugin's own storage, the CLI registers as `nucleus`,
+  and the sidebar read registers beside them and fails closed without the service channel.
 - The read is one catalogue method, `bb.sidebar-groups`, answered by the service's board layer from
   the live task rows it already computed and the `bbWorkspaces` handles joined through the task's own
   workspace id. Its labels are the strings `shared/task-state.ts` and `shared/wait-state.ts` already
@@ -1190,8 +1198,9 @@ needs the network.
 Evidence: `effigy proof:bb:sidebar` builds the plugin with `bb plugin build`, installs it into the
 isolated BB server from phase 0, and records that it loads, that the host serves its app bundle with
 the `threadList` slot registered as `thread-list`, that `sidebar.threadListProvider` starts automatic
-and pinning `bb--thread-list` is accepted and read back, and that the built bundle still honours the
-host row-status path. The New-thread button, the navigation rail and the footer are host-rendered
+and pinning `bb--thread-list` is accepted and read back, that the plugin reports its `prefs` CLI and
+its preference RPC answers in that server with `expandedTaskGroups` present, and that the built bundle
+still honours the host row-status path. The New-thread button, the navigation rail and the footer are host-rendered
 chrome this plugin never registers; the proof establishes that from the plugin's slot registration and
 the fork's unchanged row tests rather than from a screenshot. The header names the stage and the
 recorded wait it has, never an invented check list or QA position (decision 5b's stated departure).
