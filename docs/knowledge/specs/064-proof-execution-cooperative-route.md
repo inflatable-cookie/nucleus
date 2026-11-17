@@ -1,6 +1,6 @@
 # 064 — Proof execution under cooperative qualification
 
-Status: implemented in part — P1–P3 landed behind a staged refusal; P4–P7 proposed
+Status: implemented in part — P1–P4 landed behind a staged refusal; P5–P7 proposed
 Scope: the route's seams; P1–P3 are code, the rest is still design and no proof activation
 
 ## Authority and changed premises
@@ -42,9 +42,9 @@ native measurements, qualification credit, new provider or execution authority.
 
 Tom's board decision `32e856b8-8e7d-4224-b541-1774efcf2363` v2 implements this
 proposal in three tranches. The first tranche implements **P1, P2 and P3** at the
-seams named below. **P4–P7 remain unimplemented**, and no qualification proof
-runs: the mode is opt-in, and with it absent every host-run, QA and proof
-behaviour is unchanged.
+seams named below; the second implements **P4**. **P5–P7 remain unimplemented**,
+and no qualification proof runs: the mode is opt-in, and with it absent every
+host-run, QA and proof behaviour is unchanged.
 
 - **P1** — the qualification binding (subject and execution halves, plus the
   canonical digest of the complete effective environment values) lives in
@@ -69,7 +69,7 @@ behaviour is unchanged.
   signal, no escaped-descendant signal and no KILL escalation. `cancelRun`
   persists the mode in the durable cancel request.
 
-Staged refusal (brief amendment, 2026-11-16): until P4–P7 land their named
+Staged refusal (brief amendment, 2026-11-16): until P5–P7 land their named
 missing-input refusal, real qualification proof mode is inaccessible. Every mode
 entry refuses before any effect with `qualification foundation incomplete`: a
 declared opt-in is refused by the proof-activation table the owner verb and
@@ -80,6 +80,51 @@ plan before its first write or spawn. The resolved binding is never written. Aut
 implies readiness. The first-effect clock, provider evidence, censuses, waits and
 closure are still absent, so nothing here is qualification credit, fit or a hold
 release.
+
+## Implementation status (tranche 2, 2026-11-17)
+
+The second tranche implements **P4**: the one combined raw artifact, the capture
+interface's real terminal markers, the process owner's strict observation, and
+the verified writer's durability report.
+
+- **One writer, one file.** `openHostRunRetainedOutput` takes an opt-in
+  qualification mode that opens only a mode-0600 `qualification.raw` (named by
+  `qualificationRawPath` in `hostRunSupervisorPaths`, created `O_EXCL`). It never
+  opens or creates `stdout`, `stderr`, a per-stream file, a concatenated copy, an
+  archive or a spool. With the mode absent both files, the token redaction and the
+  8 MiB per-stream cap are exactly what they were.
+- **The format.** Eight ASCII bytes `NQRAW001`, then 22-byte big-endian frames:
+  kind, stream, global sequence from 1, per-stream offset, length. DATA frames are
+  1–65,536 bytes, written with short-write loops one frame at a time and no queue.
+  Each stream gets one EOF frame on its real pipe EOF and one DRAIN frame after it,
+  at its final offset; an empty stream gets both at offset zero. Sequence, offsets,
+  payload counts and the artifact and per-stream SHA-256 hashes advance
+  incrementally as frames land, and `close()` proves the size identity
+  `8 + B + 22 x (N + 4)` against its own accounting.
+- **Real terminal events.** The capture interface gained `markEof` and
+  `markDrained`. `executeHookProgram` gained the opt-in strict qualification
+  capture: it propagates observer errors (latched and reported by rejecting the
+  step, with the stop it requested), reports each stream's real `end` and the
+  drain that follows its completed payload writes, and never destroys a pipe to
+  manufacture completion — settlement waits for both streams' own terminal event.
+- **Strict durability.** `close()` syncs and closes the artifact and reports
+  write, marker, fsync, close and directory-sync faults instead of swallowing
+  them; a latched fault keeps the partial artifact. `writeVerifiedOwnedFile` now
+  returns what it proved durable, with a separate directory-entry fact whose
+  fault used to be silent.
+- **Strict validation.** `decodeQualificationRaw` rejects unknown kinds or
+  streams, sequence gaps, wrong offsets or lengths, duplicate or missing terminal
+  markers, DATA after EOF, DRAIN before EOF, partial headers or payloads and
+  trailing bytes that are not complete frames. Decoding keeps no second full log:
+  payload copies exist only when a caller explicitly asks for them.
+
+Staged refusal still holds. Every mode entry — the proof-activation table, the
+dispatch funnel, `submitQualification` and the supervisor — refuses before its
+first effect with `qualification foundation incomplete`, so no
+`qualification.raw` can be created by a real proof. The supervisor therefore
+still opens the ordinary capture only; the qualification capture's wiring to S
+lands with the tranche that removes that refusal. Raw bytes have no reader, UI or
+export path yet: the artifact is private beside the run.
 
 ## One assessed route and its exact surface
 The smallest route assessed is to bind the existing proof executor's subject
@@ -331,8 +376,9 @@ citation is to the seam at base `5ae03a1d1b6c40460567aa55380869b378be9dd6`.
 
 ### P4 artifact format and finite capture controls
 
-Choose amendment option **(a)**: one complete combined raw artifact, with no
-consumer deviation to the one-log requirement. At the cited base,
+This section is implemented as written in tranche 2. Choose amendment option
+**(a)**: one complete combined raw artifact, with no consumer deviation to the
+one-log requirement. At the cited base,
 `openHostRunRetainedOutput:35–45` opens `stdout` and `stderr`, and
 `hostRunSupervisorPaths:273–274` names those two paths. Qualification mode
 instead opens **one** owned mode-0600 `qualification.raw` file. Ordinary host
