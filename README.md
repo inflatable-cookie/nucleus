@@ -58,10 +58,11 @@ BB, and nothing else in your BB is read or written.
    nucleus bb status
    ```
 
-   `nucleus bb install` runs BB's own install for the plugin with ID `nucleus`
-   and reloads it. `nucleus bb status` reports the installed plugin's version
-   and build against the running Nucleus service (`match`, or `behind` with the
-   command to fix it).
+   `nucleus bb install` runs BB's own install for the plugin with ID `nucleus`,
+   points the plugin at your Nucleus data home so it connects, and reloads it.
+   `nucleus bb status` reports the installed plugin's version and build against
+   the running Nucleus service (`match`, or `behind` with the command to fix it),
+   and says when the plugin is not configured to connect.
 2. **Point one test repository at BB.** Set the repository's host kind to `bb`
    (`repository.set` with `hostKind: "bb"`). Paseo stays the default; a live
    task never changes host.
@@ -75,7 +76,8 @@ BB, and nothing else in your BB is read or written.
    never writes into your BB on its own.
 4. **Remove it.** `nucleus bb uninstall` removes the plugin with ID `nucleus`.
    No other plugin, project or thread is touched; a plugin with ID `nucleus`
-   that is not a Nucleus build is refused rather than overwritten.
+   that is not a Nucleus build is refused by name rather than overwritten or
+   removed.
 
 Usage Pace is an optional BB plugin the operator installs separately; Nucleus
 never installs, updates or removes it. The operator notes

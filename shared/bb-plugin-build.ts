@@ -13,8 +13,8 @@
  * is how the private proofs run) is not pinned against a source service, and is
  * refused by a packaged one: it cannot be the plugin that package shipped.
  */
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { z } from "zod";
 
 /** The one plugin ID this integration installs, tests and uninstalls. */
@@ -56,9 +56,14 @@ export function readBbPluginBuild(directory: string): BbPluginBuild | null {
 }
 
 /**
- * Whether an installed plugin directory is a Nucleus build. The package name is the
- * fact, not the ID: a plugin that merely calls itself `nucleus` is exactly the case
- * the install route refuses to overwrite.
+ * Whether a plugin directory is the Nucleus plugin *package* by name, with the backend
+ * entry its manifest declares.
+ *
+ * The name is necessary and not sufficient: a plugin with ID `nucleus` is a package
+ * named `bb-plugin-nucleus`, so a namesake that shares the ID shares the name.
+ * Ownership (below) is the fact that decides whether the route may replace or remove
+ * it, and the built backend's own plugin id has to agree before anything is handed to
+ * BB's install.
  */
 export function isNucleusPluginPackage(directory: string): boolean {
   try {
@@ -66,11 +71,127 @@ export function isNucleusPluginPackage(directory: string): boolean {
       readFileSync(join(directory, "package.json"), "utf8"),
     ) as {
       name?: unknown;
+      bb?: { server?: unknown };
     };
-    return manifest.name === BB_PLUGIN_PACKAGE_NAME;
+    if (manifest.name !== BB_PLUGIN_PACKAGE_NAME) return false;
+    if (typeof manifest.bb?.server !== "string") return false;
+    return existsSync(join(directory, manifest.bb.server));
   } catch {
     return false;
   }
+}
+
+/** A built backend's own meta record, when the directory has one. */
+export function readBbPluginServerMeta(directory: string): {
+  pluginId: string | null;
+} | null {
+  try {
+    const meta = JSON.parse(
+      readFileSync(join(directory, "dist", "server.meta.json"), "utf8"),
+    ) as { pluginId?: unknown };
+    return {
+      pluginId: typeof meta.pluginId === "string" ? meta.pluginId : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether one built plugin directory is a Nucleus build this route may install: the
+ * Nucleus plugin package by name, with a built backend that belongs to plugin ID
+ * `nucleus`. Nothing else is ever handed to BB's install.
+ */
+export function nucleusPluginSource(
+  directory: string,
+): { ok: true } | { ok: false; reason: string } {
+  if (!isNucleusPluginPackage(directory)) {
+    return {
+      ok: false,
+      reason: `${directory} is not the Nucleus BB plugin package (${BB_PLUGIN_PACKAGE_NAME} with the backend entry it declares); refusing to install it`,
+    };
+  }
+  if (!existsSync(join(directory, "dist", "server.js"))) {
+    return {
+      ok: false,
+      reason: `${directory} has no built plugin (dist/server.js); run bb plugin build ${directory} and try ${BB_PLUGIN_INSTALL_COMMAND} again`,
+    };
+  }
+  const meta = readBbPluginServerMeta(directory);
+  if (meta && meta.pluginId !== BB_PLUGIN_ID) {
+    return {
+      ok: false,
+      reason: `${directory} carries a built backend for plugin ${JSON.stringify(meta.pluginId)}, not ${BB_PLUGIN_ID}; refusing to install it`,
+    };
+  }
+  return { ok: true };
+}
+
+/** The plugin directories this package ships, in the order the route prefers them. */
+export function bbPluginPackagePaths(packageRoot: string): string[] {
+  return [
+    join(packageRoot, BB_PLUGIN_PACKAGE_DIR),
+    join(packageRoot, BB_PLUGIN_SOURCE_DIR),
+  ];
+}
+
+export interface BbPluginOwnership {
+  /** True only for a directory this route may replace or remove. */
+  ours: boolean;
+  reason: string;
+  /** The packaged build identity, when the directory records one. */
+  buildId: string | null;
+}
+
+/**
+ * Whether an installed plugin with ID `nucleus` is ours to replace or remove.
+ *
+ * Two facts count, and only these: the directory carries the Nucleus build identity
+ * the release build writes (`nucleus-build.json`, so a plugin from an earlier package
+ * version stays ours across a roll), or it is one of this package's own plugin
+ * directories (the checkout install a developer or a private proof makes). A plugin
+ * that merely has the ID and the package name is the operator's — a namesake — and is
+ * never overwritten or removed.
+ */
+export function nucleusPluginOwnership(
+  rootDir: string | null,
+  packageRoot: string,
+): BbPluginOwnership {
+  if (!rootDir) {
+    return {
+      ours: false,
+      reason: `it is installed from an unknown directory`,
+      buildId: null,
+    };
+  }
+  const build = readBbPluginBuild(rootDir);
+  if (build) {
+    return {
+      ours: true,
+      reason: "it carries the Nucleus build identity",
+      buildId: build.buildId,
+    };
+  }
+  if (bbPluginPackagePaths(packageRoot).includes(resolve(rootDir))) {
+    return {
+      ours: true,
+      reason: "it is this Nucleus package's own plugin directory",
+      buildId: null,
+    };
+  }
+  if (isNucleusPluginPackage(rootDir)) {
+    return {
+      ours: false,
+      reason:
+        "it has the Nucleus package name but carries no Nucleus build identity and is not a directory this package ships",
+      buildId: null,
+    };
+  }
+  return {
+    ours: false,
+    reason: "it is not the Nucleus plugin package",
+    buildId: null,
+  };
 }
 
 /** The short form a person reads in a message; the full digest stays in the records. */

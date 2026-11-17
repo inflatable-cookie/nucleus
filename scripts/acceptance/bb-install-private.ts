@@ -18,9 +18,13 @@
  * 3. `nucleus bb status` reports the installed plugin's build as the running service's
  *    build, and reports it as behind when the plugin carries another build;
  * 4. `nucleus bb uninstall` removes that plugin and nothing else;
- * 5. the packaged plugin, configured with the private service's data home, connects:
- *    the service accepts a plugin from its own build and refuses one from another
- *    build by naming both and the fix, which is what the board then reports.
+ * 5. the packaged plugin connects on the setting `install` itself wrote — the
+ *    private service's data home — and the service accepts a plugin from its own
+ *    build, refuses one from another build by naming both and the fix, and accepts
+ *    the reinstalled matching one;
+ * 6. a plugin with ID `nucleus` that is not a Nucleus build is refused by name for
+ *    install *and* uninstall and left byte-identical, and an unrelated plugin
+ *    directory is never handed to BB's `plugin install`.
  *
  * Every write goes through BB's own CLI. The proof keeps its evidence in its own
  * scratch root and never writes into the operator's BB.
@@ -398,6 +402,7 @@ async function main() {
       plugin: { id: string; version: string; status: string };
       pluginBuildId: string;
       serviceBuildId: string;
+      dataDir: string;
     };
     assert.equal(installed.action, "installed");
     assert.equal(installed.plugin.id, PLUGIN_ID);
@@ -458,17 +463,18 @@ async function main() {
     );
     note("status-behind", true, { state: behind.state, detail: behind.detail });
 
-    // 3. the packaged plugin connects and is accepted by the matching service
-    const hostId = hostIdFromDataDir(bbData);
-    await cli([
-      "plugin",
-      "config",
-      PLUGIN_ID,
-      "set",
-      "serviceDataDir",
+    // 3. the install's own configuration is what connects the plugin: no second
+    // command, no manual `plugin config`.
+    assert.equal(installed.dataDir, serviceDataDir);
+    const settings = JSON.parse(
+      await cli(["plugin", "config", PLUGIN_ID, "--json"]),
+    ) as { values?: { serviceDataDir?: string } };
+    assert.equal(
+      settings.values?.serviceDataDir,
       serviceDataDir,
-    ]);
-    await cli(["plugin", "reload", PLUGIN_ID]);
+      "install wrote the plugin's serviceDataDir setting",
+    );
+    const hostId = hostIdFromDataDir(bbData);
     await waitFor(
       "the installed plugin to declare its executor role",
       async () => (service.hostExecutorIds().includes(hostId) ? true : null),
@@ -554,6 +560,98 @@ async function main() {
       action: removed.action,
       plugins: baseline.rows.length,
     });
+
+    // 7. a plugin with ID nucleus that is not a Nucleus build is refused by name for
+    // both install and uninstall, and left exactly as it was.
+    const namesake = join(proofRoot, "namesake");
+    mkdirSync(join(namesake, "dist"), { recursive: true });
+    writeFileSync(
+      join(namesake, "package.json"),
+      JSON.stringify(
+        {
+          name: "bb-plugin-nucleus",
+          version: "0.0.9",
+          private: true,
+          type: "module",
+          engines: { bb: ">=0.49", bbPluginSdk: ">=0.6.132" },
+          bb: {
+            name: "Namesake",
+            description: "A plugin that shares the ID, installed by the proof.",
+            branding: { icon: "Boxes" },
+            server: "./dist/server.js",
+          },
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    writeFileSync(
+      join(namesake, "dist", "server.js"),
+      "export default async function plugin() {}\n",
+    );
+    await cli(["plugin", "install", `path:${namesake}`, "--yes"]);
+    const namesakeDigest = directoryDigest(namesake);
+    const refusedInstall = await nucleus(["install"]).then(
+      () => null,
+      (error: Error) => error.message,
+    );
+    const refusedUninstall = await nucleus(["uninstall"]).then(
+      () => null,
+      (error: Error) => error.message,
+    );
+    for (const [step, message] of [
+      ["install", refusedInstall],
+      ["uninstall", refusedUninstall],
+    ] as const) {
+      assert.ok(message, `${step} refuses the namesake`);
+      assert.match(message, /not a Nucleus build/);
+      assert.ok(
+        message.includes(namesake),
+        `${step} names the namesake directory`,
+      );
+    }
+    assert.deepEqual(
+      directoryDigest(namesake),
+      namesakeDigest,
+      "the namesake's files are untouched",
+    );
+    assert.ok(
+      (await cli(["plugin", "list", "--json"])).includes(PLUGIN_ID),
+      "the namesake is still installed",
+    );
+    await cli(["plugin", "uninstall", PLUGIN_ID]);
+    const afterNamesake = (await nucleus(["status"])) as { state: string };
+    assert.equal(afterNamesake.state, "not-installed");
+    note("namesake-refused", true, {
+      install: refusedInstall?.slice(0, 160),
+      uninstall: refusedUninstall?.slice(0, 160),
+    });
+
+    // 8. an unrelated plugin directory is never handed to BB's install, whether it is
+    // passed explicitly or found in place of the packaged plugin.
+    const unrelated = await nucleus([
+      "install",
+      "--plugin-dir",
+      standIns[0]!.directory,
+    ]).then(
+      () => null,
+      (error: Error) => error.message,
+    );
+    assert.ok(unrelated, "install refuses an unrelated plugin directory");
+    assert.match(unrelated, /not the Nucleus BB plugin package/);
+    const stillThere = JSON.parse(await cli(["plugin", "list", "--json"])) as {
+      plugins: Array<{ id: string }>;
+    };
+    assert.ok(
+      stillThere.plugins.some((row) => row.id === PLUGIN_ID),
+      "no Nucleus plugin was installed by the refusal",
+    );
+    assert.deepEqual(
+      await otherPlugins(),
+      baseline,
+      "the refused installs changed no other plugin",
+    );
+    note("unrelated-refused", true, { detail: unrelated.slice(0, 160) });
 
     writeFileSync(
       join(proofRoot, "evidence.json"),

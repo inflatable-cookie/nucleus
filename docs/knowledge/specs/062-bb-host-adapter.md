@@ -1280,15 +1280,27 @@ build runs that check on its own output. Preparing a release therefore needs an 
 paths it looked in when there is none).
 
 **The commands.** `nucleus bb install` wraps BB's CLI: `bb plugin install path:<packaged plugin>`, then
-`bb plugin reload nucleus`. `nucleus bb status` reports the installed plugin's version and build against
-the running service's build (`match`, `behind`, `unpinned`, `not-installed`, `unrecognised`,
-`service-unavailable`). `nucleus bb uninstall` runs `bb plugin uninstall nucleus`. Every command names only
-the plugin with ID `nucleus`: a locally patched plugin loaded from thread storage (the operator's Usage
-Pace) and every other plugin are never read by id, never written and never removed. `--plugin-dir` installs
-a built plugin from an explicit directory instead of the packaged copy (the isolated proof uses it).
+`bb plugin config nucleus set serviceDataDir <this Nucleus data home>` and `bb plugin reload nucleus`. The
+setting is not optional: without it the plugin loads and waits, installed and never connected, which reads
+exactly like a healthy plugin with nothing to do — so the route writes it through BB's own `plugin config`,
+reads it back, and fails if BB did not keep it. `nucleus bb status` reports the installed plugin's version
+and build against the running service's build (`match`, `behind`, `unpinned`, `not-installed`,
+`unrecognised`, `service-unavailable`), names the `serviceDataDir` it read, and says when the plugin is not
+configured to connect to this data home. `nucleus bb uninstall` runs `bb plugin uninstall nucleus`. Every
+command names only the plugin with ID `nucleus`: a locally patched plugin loaded from thread storage (the
+operator's Usage Pace) and every other plugin are never read by id, never written and never removed.
+`--plugin-dir` installs a built plugin from an explicit directory instead of the packaged copy (the
+isolated proof uses it), and that directory must itself be a built Nucleus backend.
 
-**Refusals.** A plugin with ID `nucleus` whose package is not `bb-plugin-nucleus` is named and refused; it
-is never overwritten. The pin is enforced at connect: the plugin announces the Nucleus build it came from
+**Refusals.** "Ours" is not the plugin ID and not the package name: a plugin with ID `nucleus` is a package
+named `bb-plugin-nucleus`, so a namesake shares both. Ours means the directory carries the Nucleus build
+identity (`nucleus-build.json`, which also keeps a plugin from an earlier package version ours across a
+roll) or is one of this package's own plugin directories (the checkout install a developer or a private
+proof makes). A plugin with ID `nucleus` that is not ours is named and refused for install **and**
+uninstall — never overwritten, never removed — and an install source that is not a built Nucleus backend
+(the Nucleus package name, a `dist/server.js` built for plugin id `nucleus`, and the build identity for a
+packaged or explicit directory) never reaches `bb plugin install --yes` at all. The pin is enforced at
+connect: the plugin announces the Nucleus build it came from
 on its executor declaration, and the service refuses a different build — or an unpinned plugin against a
 packaged service — before the identity probe, with a message naming both builds and `nucleus bb install`.
 Nothing registers, so the host is unavailable with that reason rather than connected and half-working.
@@ -1318,14 +1330,18 @@ Operator steps (the same text the README carries):
 Usage Pace is an optional companion the operator installs separately; Nucleus never installs, updates or
 removes it.
 
-**Tests and proof.** `test/bb-plugin-install.test.ts` names the route's facts (install/reload/uninstall name
-only ID `nucleus`; a namesake is refused and written to nothing; `status` for every state; the plugin's own
-reader agreeing with the shared record; the publication gate failing a package without the built plugin),
+**Tests and proof.** `test/bb-plugin-install.test.ts` names the route's facts (install, the `serviceDataDir`
+write and reload name only ID `nucleus`; a namesake is refused for install and uninstall and written to
+nothing; an unrelated or namesake `--plugin-dir` never reaches BB; `status` for every state, including an
+unset or foreign `serviceDataDir`; the plugin's own reader agreeing with the shared record; the publication
+gate failing a package without the built plugin),
 and the pin cases live in `test/bb-host-registration.test.ts`. `effigy proof:bb:install` runs the whole
 route against the isolated BB server from phase 0: two pre-existing plugins (one an unrelated plugin, one
-standing in for Usage Pace) stay byte-identical and are named by no command across install, status and uninstall; the
-packaged plugin connects to a private service of the matching build, is refused by name when rebuilt from
-another build, and reconnects after reinstalling the matching one.
+standing in for Usage Pace) stay byte-identical and are named by no command across install, status and
+uninstall; the packaged plugin connects on the setting `install` itself wrote, is refused by name when
+rebuilt from another build, and reconnects after reinstalling the matching one; a namesake with ID `nucleus`
+is refused for install and uninstall and left byte-identical; and an unrelated plugin directory passed to
+`--plugin-dir` is refused before BB's install sees it.
 
 
 ## Phase 0 evidence (2026-11-16)

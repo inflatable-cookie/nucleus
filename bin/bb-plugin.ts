@@ -6,18 +6,28 @@
  * reloads it. `nucleus bb status` reports the installed plugin against the running
  * service's build. `nucleus bb uninstall` removes that same plugin and nothing else.
  *
- * Two rules decide the refusals:
+ * Three rules decide the refusals:
  *
  * - the route touches only the plugin with ID `nucleus`. Every other plugin,
  *   including a locally patched one loaded from thread storage, is left alone: no
  *   command this file issues names another ID, and BB's own routes are per-plugin;
- * - a plugin with ID `nucleus` that is not a Nucleus build (`bb-plugin-nucleus`) is
- *   named and refused, never overwritten. A namesake is the operator's plugin, not
- *   ours to replace.
+ * - a plugin with ID `nucleus` that is not ours is refused by name for install *and*
+ *   uninstall, never overwritten and never removed. "Ours" is the build identity the
+ *   release build writes (`nucleus-build.json`) or one of this package's own plugin
+ *   directories — not the plugin ID, and not the package name, which a namesake
+ *   shares (`shared/bb-plugin-build.ts`);
+ * - the install source must be a built Nucleus backend: the Nucleus plugin package
+ *   whose `dist/server.js` belongs to plugin ID `nucleus`. An unrelated plugin, or a
+ *   namesake, is never handed to BB's `plugin install --yes`.
  *
- * Nothing here writes into BB's data directory: every write is a `bb` command, and
- * the plugin is pinned to the service build by the identity file the release build
- * writes into the package (`shared/bb-plugin-build.ts`).
+ * After installing, the route writes the one setting the plugin needs to connect —
+ * `serviceDataDir`, this CLI's own Nucleus data home — through BB's own
+ * `plugin config`, then reloads. Without it the plugin loads and waits: installed but
+ * never connected, which is the half-working state this route exists to prevent.
+ *
+ * Nothing here writes into BB's data directory directly: every write is a `bb`
+ * command, and the plugin is pinned to the service build by the identity file the
+ * release build writes into the package.
  *
  * It lives under `bin/` because the CLI may import `bin/` and `shared/` only (the
  * folder-import boundary), while the package layout, the identity file and the pin
@@ -32,9 +42,9 @@ import { readServiceInfo } from "../shared/service/discovery";
 import {
   BB_PLUGIN_ID,
   BB_PLUGIN_INSTALL_COMMAND,
-  BB_PLUGIN_PACKAGE_DIR,
-  BB_PLUGIN_SOURCE_DIR,
-  isNucleusPluginPackage,
+  bbPluginPackagePaths,
+  nucleusPluginOwnership,
+  nucleusPluginSource,
   readBbPluginBuild,
   shortBuildId,
 } from "../shared/bb-plugin-build";
@@ -101,49 +111,46 @@ export const nucleusRow = (rows: BbPluginRow[]) =>
 
 /**
  * The built plugin directory to install: an explicit directory (a built plugin under
- * test), the copy shipped beside the Nucleus package, or the checkout's own package
- * in a source run. A directory with no built `dist/` is refused with the build command.
+ * test), the copy shipped beside the Nucleus package, or the checkout's own package in
+ * a source run. Every candidate is checked as a Nucleus build before it is returned,
+ * so an unrelated plugin, a namesake or an unbuilt directory never reaches BB's
+ * install.
  */
 export function resolveBbPluginDirectory(input: {
   packageRoot: string;
   pluginDir?: string | null;
-}): { directory: string; packaged: boolean } {
+}): { directory: string; packaged: boolean; buildId: string | null } {
   const candidates = input.pluginDir
     ? [{ directory: input.pluginDir, packaged: true }]
-    : [
-        {
-          directory: join(input.packageRoot, BB_PLUGIN_PACKAGE_DIR),
-          packaged: true,
-        },
-        {
-          directory: join(input.packageRoot, BB_PLUGIN_SOURCE_DIR),
-          packaged: false,
-        },
-      ];
-  for (const candidate of candidates) {
-    if (!existsSync(join(candidate.directory, "package.json"))) continue;
-    if (!existsSync(join(candidate.directory, "dist", "server.js"))) {
+    : bbPluginPackagePaths(input.packageRoot).map((directory, index) => ({
+        directory,
+        packaged: index === 0,
+      }));
+  const found = candidates.filter((candidate) =>
+    existsSync(join(candidate.directory, "package.json")),
+  );
+  if (!found.length) {
+    throw new Error(
+      `no BB plugin was found beside this Nucleus package (looked in ${candidates.map((item) => item.directory).join(" and ")}); reinstall the Nucleus package or pass --plugin-dir with a built plugin`,
+    );
+  }
+  for (const candidate of found) {
+    const source = nucleusPluginSource(candidate.directory);
+    if (!source.ok) throw new Error(source.reason);
+    const buildId = readBbPluginBuild(candidate.directory)?.buildId ?? null;
+    // The packaged plugin and an explicit directory must name the Nucleus build they
+    // came from: that record is what the service pins the connection to, and what
+    // tells our plugin from a namesake that shares both the ID and the package name.
+    if (candidate.packaged && buildId === null) {
       throw new Error(
-        `${candidate.directory} has no built plugin (dist/server.js); run bb plugin build ${candidate.directory} and try ${BB_PLUGIN_INSTALL_COMMAND} again`,
+        `${candidate.directory} carries no ${"nucleus-build.json"} naming the Nucleus build it came from; it is not a plugin this package built, so ${BB_PLUGIN_INSTALL_COMMAND} will not install it`,
       );
     }
-    return candidate;
+    return { ...candidate, buildId };
   }
   throw new Error(
-    `no built BB plugin was found beside this Nucleus package (looked in ${candidates.map((item) => item.directory).join(" and ")}); reinstall the Nucleus package or pass --plugin-dir with a built plugin`,
+    `no Nucleus BB plugin was found beside this Nucleus package (looked in ${found.map((item) => item.directory).join(" and ")})`,
   );
-}
-
-/** The installed plugin's own identity, when it is a Nucleus build that carries one. */
-export function installedPluginBuild(row: BbPluginRow | null): {
-  nucleusPackage: boolean;
-  buildId: string | null;
-} {
-  if (!row?.rootDir) return { nucleusPackage: false, buildId: null };
-  return {
-    nucleusPackage: isNucleusPluginPackage(row.rootDir),
-    buildId: readBbPluginBuild(row.rootDir)?.buildId ?? null,
-  };
 }
 
 export interface BbInstallReport {
@@ -152,13 +159,19 @@ export interface BbInstallReport {
   pluginBuildId: string | null;
   serviceBuildId: string | null;
   pluginDirectory: string;
+  /** The Nucleus data home this route wrote into the plugin's `serviceDataDir` setting. */
+  dataDir: string;
   detail: string;
 }
 
 /**
- * Install the packaged plugin under ID `nucleus`, then reload that plugin. A plugin
- * with the same ID that is not a Nucleus build is refused by name before anything is
- * written; every other installed plugin is never named to the CLI.
+ * Install the packaged plugin under ID `nucleus`, point it at this CLI's Nucleus data
+ * home, then reload that plugin.
+ *
+ * A plugin with the same ID that is not ours is refused by name before anything is
+ * written, and the install source must itself be a Nucleus build: BB's
+ * `plugin install --yes` is only ever given a directory this route built or ships.
+ * Every other installed plugin is never named to the CLI.
  */
 export function installBbPlugin(
   input: BbCommandContext & {
@@ -166,15 +179,39 @@ export function installBbPlugin(
     pluginDir?: string | null;
   },
 ): BbInstallReport {
-  const { directory } = resolveBbPluginDirectory(input);
+  const { directory, buildId: sourceBuildId } = resolveBbPluginDirectory(input);
   const before = listBbPlugins(input.exec);
   const existing = nucleusRow(before);
-  if (existing && !installedPluginBuild(existing).nucleusPackage) {
+  if (existing) {
+    const ownership = nucleusPluginOwnership(
+      existing.rootDir,
+      input.packageRoot,
+    );
+    if (!ownership.ours) {
+      throw new Error(
+        `a BB plugin with ID ${BB_PLUGIN_ID} is already installed from ${existing.rootDir ?? "an unknown directory"} and it is not a Nucleus build (${ownership.reason}); refusing to overwrite it. Remove it with bb plugin uninstall ${BB_PLUGIN_ID} if you mean to replace it`,
+      );
+    }
+  }
+  // The install carries the directory (a `path:` source). It is the only write that
+  // reaches BB before the plugin's own settings are configured.
+  input.exec(["plugin", "install", `path:${directory}`, "--yes"]);
+  // The one setting the plugin needs to connect: this CLI's own data home. Written
+  // through BB's own `plugin config`, for the plugin with ID `nucleus` only.
+  input.exec([
+    "plugin",
+    "config",
+    BB_PLUGIN_ID,
+    "set",
+    "serviceDataDir",
+    input.dataDir,
+  ]);
+  const configured = pluginConfig(input.exec);
+  if (configured.serviceDataDir !== input.dataDir) {
     throw new Error(
-      `a BB plugin with ID ${BB_PLUGIN_ID} is already installed from ${existing.rootDir ?? "an unknown directory"} and it is not a Nucleus build; refusing to overwrite it. Remove it with bb plugin uninstall ${BB_PLUGIN_ID} if you mean to replace it`,
+      `BB did not keep the plugin's serviceDataDir setting (it reads ${JSON.stringify(configured.serviceDataDir ?? null)}); the plugin would load without connecting, so ${BB_PLUGIN_INSTALL_COMMAND} did not finish`,
     );
   }
-  input.exec(["plugin", "install", `path:${directory}`, "--yes"]);
   input.exec(["plugin", "reload", BB_PLUGIN_ID]);
   const installed = nucleusRow(listBbPlugins(input.exec));
   if (!installed)
@@ -186,12 +223,12 @@ export function installBbPlugin(
       `BB installed the plugin from ${directory} but reports it as errored; read bb plugin logs ${BB_PLUGIN_ID}`,
     );
   }
-  const identity = installedPluginBuild(installed);
+  const pluginBuildId =
+    readBbPluginBuild(installed.rootDir ?? "")?.buildId ?? sourceBuildId;
   const serviceBuildId = runningServiceBuildId(input.dataDir);
-  const pluginBuildId = identity.buildId;
   const detail =
     pluginBuildId === null
-      ? `installed build ${installed.version ?? "unknown"} from a source checkout; a packaged service refuses an unpinned plugin, so install from a Nucleus package to pin it`
+      ? `installed plugin ${installed.version ?? "unknown"} built from the checkout; a packaged service refuses an unpinned plugin, so install from a Nucleus package to pin it`
       : serviceBuildId === null
         ? `installed build ${shortBuildId(pluginBuildId)}; no running service records a build to compare it with yet`
         : pluginBuildId === serviceBuildId
@@ -203,7 +240,28 @@ export function installBbPlugin(
     pluginBuildId,
     serviceBuildId,
     pluginDirectory: directory,
+    dataDir: input.dataDir,
     detail,
+  };
+}
+
+/** The plugin's own settings as BB reports them, or empty when the read fails. */
+export function pluginConfig(exec: BbCommandContext["exec"]): {
+  serviceDataDir: string | null;
+} {
+  let answer: unknown;
+  try {
+    answer = JSON.parse(exec(["plugin", "config", BB_PLUGIN_ID, "--json"]));
+  } catch {
+    return { serviceDataDir: null };
+  }
+  const values = (answer as { values?: unknown } | null)?.values;
+  if (typeof values !== "object" || values === null)
+    return { serviceDataDir: null };
+  const configured = (values as Record<string, unknown>).serviceDataDir;
+  return {
+    serviceDataDir:
+      typeof configured === "string" && configured ? configured : null,
   };
 }
 
@@ -221,6 +279,8 @@ export interface BbStatusReport {
   plugin: (BbPluginRow & { buildId: string | null }) | null;
   pluginBuildId: string | null;
   serviceBuildId: string | null;
+  /** The plugin's own `serviceDataDir` setting, as BB reports it. */
+  serviceDataDir: string | null;
 }
 
 /** The build the running service published, or null when none is running. */
@@ -232,7 +292,9 @@ export function runningServiceBuildId(dataDir: string): string | null {
 }
 
 /** The installed plugin against the running service's build. */
-export function bbPluginStatus(input: BbCommandContext): BbStatusReport {
+export function bbPluginStatus(
+  input: BbCommandContext & { packageRoot: string },
+): BbStatusReport {
   const plugin = nucleusRow(listBbPlugins(input.exec));
   const serviceBuildId = runningServiceBuildId(input.dataDir);
   if (!plugin) {
@@ -242,47 +304,58 @@ export function bbPluginStatus(input: BbCommandContext): BbStatusReport {
       plugin: null,
       pluginBuildId: null,
       serviceBuildId,
+      serviceDataDir: null,
     };
   }
-  const identity = installedPluginBuild(plugin);
-  const pluginBuildId = identity.buildId;
+  const ownership = nucleusPluginOwnership(plugin.rootDir, input.packageRoot);
+  const pluginBuildId = ownership.buildId;
+  const configured = pluginConfig(input.exec).serviceDataDir;
   const report = {
     plugin: { ...plugin, buildId: pluginBuildId },
     pluginBuildId,
     serviceBuildId,
+    serviceDataDir: configured,
   };
-  if (!identity.nucleusPackage) {
+  if (!ownership.ours) {
     return {
       ...report,
       state: "unrecognised",
-      detail: `a BB plugin with ID ${BB_PLUGIN_ID} is installed from ${plugin.rootDir ?? "an unknown directory"} and it is not a Nucleus build; ${BB_PLUGIN_INSTALL_COMMAND} refuses to overwrite it`,
+      detail: `a BB plugin with ID ${BB_PLUGIN_ID} is installed from ${plugin.rootDir ?? "an unknown directory"} and it is not a Nucleus build (${ownership.reason}); ${BB_PLUGIN_INSTALL_COMMAND} and ${BB_PLUGIN_ID} uninstall refuse to touch it`,
     };
   }
+  // An install with no data home loaded the plugin without connecting: installed and
+  // idle, which reads exactly like a healthy plugin that has nothing to do.
+  const connection =
+    configured === null
+      ? `; it is not configured to connect, because its serviceDataDir setting is unset — run ${BB_PLUGIN_INSTALL_COMMAND}`
+      : configured !== input.dataDir
+        ? `; it is configured for another Nucleus data home (${JSON.stringify(configured)}), so it cannot reach this one — run ${BB_PLUGIN_INSTALL_COMMAND}`
+        : "";
   if (pluginBuildId === null) {
     return {
       ...report,
       state: "unpinned",
-      detail: `the installed plugin carries no Nucleus build identity (a checkout build); a packaged service refuses it, so run ${BB_PLUGIN_INSTALL_COMMAND} from the installed package`,
+      detail: `the installed plugin carries no Nucleus build identity (a checkout build); a packaged service refuses it, so run ${BB_PLUGIN_INSTALL_COMMAND} from the installed package${connection}`,
     };
   }
   if (serviceBuildId === null) {
     return {
       ...report,
       state: "service-unavailable",
-      detail: `installed build ${shortBuildId(pluginBuildId)}; no running Nucleus service records a build to compare it with`,
+      detail: `installed build ${shortBuildId(pluginBuildId)}; no running Nucleus service records a build to compare it with${connection}`,
     };
   }
   if (pluginBuildId === serviceBuildId) {
     return {
       ...report,
       state: "match",
-      detail: `installed build ${shortBuildId(pluginBuildId)} matches the running service`,
+      detail: `installed build ${shortBuildId(pluginBuildId)} matches the running service${connection}`,
     };
   }
   return {
     ...report,
     state: "behind",
-    detail: `installed build ${shortBuildId(pluginBuildId)} is not the running service's build ${shortBuildId(serviceBuildId)}; run ${BB_PLUGIN_INSTALL_COMMAND} to install the matching plugin`,
+    detail: `installed build ${shortBuildId(pluginBuildId)} is not the running service's build ${shortBuildId(serviceBuildId)}; run ${BB_PLUGIN_INSTALL_COMMAND} to install the matching plugin${connection}`,
   };
 }
 
@@ -292,8 +365,14 @@ export interface BbUninstallReport {
   detail: string;
 }
 
-/** Remove the plugin with ID `nucleus` and nothing else. */
-export function uninstallBbPlugin(input: BbCommandContext): BbUninstallReport {
+/**
+ * Remove the plugin with ID `nucleus` and nothing else. A plugin with that ID that is
+ * not ours is refused by name: removing it would delete an operator's plugin because it
+ * shares an ID with this integration's.
+ */
+export function uninstallBbPlugin(
+  input: BbCommandContext & { packageRoot: string },
+): BbUninstallReport {
   const existing = nucleusRow(listBbPlugins(input.exec));
   if (!existing) {
     return {
@@ -301,6 +380,12 @@ export function uninstallBbPlugin(input: BbCommandContext): BbUninstallReport {
       plugin: null,
       detail: `no BB plugin with ID ${BB_PLUGIN_ID} is installed; nothing was removed`,
     };
+  }
+  const ownership = nucleusPluginOwnership(existing.rootDir, input.packageRoot);
+  if (!ownership.ours) {
+    throw new Error(
+      `a BB plugin with ID ${BB_PLUGIN_ID} is installed from ${existing.rootDir ?? "an unknown directory"} and it is not a Nucleus build (${ownership.reason}); refusing to remove it`,
+    );
   }
   input.exec(["plugin", "uninstall", BB_PLUGIN_ID]);
   const remaining = nucleusRow(listBbPlugins(input.exec));
@@ -318,7 +403,7 @@ export function uninstallBbPlugin(input: BbCommandContext): BbUninstallReport {
 
 export const BB_COMMAND_USAGE = [
   "nucleus bb install [--plugin-dir <directory>]",
-  `  Install the built BB plugin shipped with this Nucleus package under ID ${BB_PLUGIN_ID}, then reload it.`,
+  `  Install the built BB plugin shipped with this Nucleus package under ID ${BB_PLUGIN_ID}, point it at this Nucleus data home, then reload it.`,
   "nucleus bb status",
   "  Report the installed BB plugin against the running service's build.",
   `nucleus bb uninstall`,
@@ -385,8 +470,14 @@ export function bbCommand(
       pluginDir,
     });
   }
-  if (command === "status") return bbPluginStatus({ exec, dataDir });
-  if (command === "uninstall") return uninstallBbPlugin({ exec, dataDir });
+  if (command === "status")
+    return bbPluginStatus({ exec, dataDir, packageRoot: options.packageRoot });
+  if (command === "uninstall")
+    return uninstallBbPlugin({
+      exec,
+      dataDir,
+      packageRoot: options.packageRoot,
+    });
   throw new Error(
     `choose a bb command: install, status or uninstall (got ${command})`,
   );
