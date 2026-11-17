@@ -73,6 +73,9 @@ export function TaskSummaryBlock({ task, next, runs, qaRun, c }: { task: TaskDet
     verdict: next?.outcome.accepted && next.outcome.accepted.currentHead && !next.outcome.accepted.superseded ? next.outcome.accepted.status : null,
   });
   return <DetailSection c={c}>
+    {task.hostSelection && <Text accessibilityLabel={`Host selection: ${task.hostSelection.basis}${task.hostSelection.reason ? `; ${task.hostSelection.reason}` : ""}`} style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>
+      Host · {task.hostSelection.basis.replaceAll("_", " ")}{task.hostSelection.reason ? ` · ${task.hostSelection.reason}` : ""}
+    </Text>}
     <View style={{ gap: space.xxs }}>
       <Text accessibilityLabel={`Wait: ${wait.state}; owner ${wait.owner || "none"}; next ${wait.nextAction || "none"}`} style={{ color: c.foreground, fontSize: typeScale.body.fontSize, fontWeight: "600", lineHeight: typeScale.body.lineHeight }}>{wait.state}</Text>
       {Boolean(wait.actor) && <Text accessibilityLabel={`Working: ${wait.actor}`} style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>{wait.actor}</Text>}

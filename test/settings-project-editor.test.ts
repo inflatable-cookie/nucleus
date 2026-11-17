@@ -26,7 +26,7 @@ const done = (ui: { update(next: React.ReactElement): void }) => ui.update(h('Vi
 type Repo = { origin: string | null; path: string };
 const repo = (origin: string): Repo => ({ origin, path: `/workspace/user/Dev/${origin.split('/')[1]}` });
 const settingsRow = (repository: Repo, extra: Partial<RepositorySettings> = {}): RepositorySettings => ({
-  repository, scratchNamespace: null, closeout: null, validation: null, reviewer: null, qa: null, affectedTests: null, checksPolicy: null, hostKind: 'paseo', note: '', updatedAt: '2026-11-08T00:00:00.000Z', revision: 1, ...extra,
+  repository, scratchNamespace: null, closeout: null, validation: null, reviewer: null, qa: null, affectedTests: null, checksPolicy: null, hostKind: null, note: '', updatedAt: '2026-11-08T00:00:00.000Z', revision: 1, ...extra,
 });
 function row(key: string, name: string, repos: Repo[], extra: Partial<ProjectSettingsRow> & { settings?: Array<RepositorySettings | null>; planner?: string } = {}): ProjectSettingsRow {
   const { settings, planner, ...rest } = extra;
@@ -245,7 +245,7 @@ test('one repository: settings inline; Host, QA, Checks, Reviewer and Merge chec
     assert.deepEqual(app.calls[1], ['repository.set', { repository: 'acme/nucleus', qa: null }], 'an empty command clears qa');
 
     app.calls.length = 0;
-    ui.press('Host for acme/nucleus, Paseo');
+    ui.press('Host for acme/nucleus, Inherit');
     ui.press('Host for acme/nucleus: T3Code');
     await settle(() => app.calls.length === 1, 'host');
     assert.deepEqual(app.calls[0], ['repository.set', { repository: 'acme/nucleus', hostKind: 't3code' }]);

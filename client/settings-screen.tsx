@@ -105,6 +105,7 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
         retryAuthority={() => void capacityStateQuery.refetch()} refreshBoard={() => stateQuery.refetch()}
         saveUsage={(level, until) => persist(() => setUsage({ level, until }))} saveDemandOffsets={value => persist(() => setDemandOffsets(value))}
         saveCapacity={value => persist(async () => { await setCapacity(value); await queryClient.refetchQueries({ queryKey: ["nucleus", "capacity-state"], exact: true }); })}
+        saveDefaultHost={host => persist(async () => { await setCapacity({ ...capacityStateQuery.data!.effective, operatorDefaultHostKind: host }); await queryClient.refetchQueries({ queryKey: ["nucleus", "capacity-state"], exact: true }); })}
         saveProjectLimit={value => persist(() => setProjectLimit(value))} />
     </ScrollView>}
     {settingsTab === "projects" && <ProjectsSection c={c} compact={compact} inset={inset} query={projectsQuery}

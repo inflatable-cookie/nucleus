@@ -107,13 +107,20 @@ export class Operations {
     const promotion = (input.payload as { source?: { repository?: string } } | null)?.source;
     const repositoryOriginForSelection = promotion?.repository
       ?? (repoPath ? await repositoryOrigin(repoPath).catch(() => null) : null);
-    const hostId = previous ? previous.hostId : (input.taskId || control?.taskId || removal?.taskId
-      ? this.store.task((input.taskId ?? control?.taskId ?? removal?.taskId)!).hostId || undefined
-      : this.engine.selectIngressHost(input.hostId, repoPath, repositoryOriginForSelection));
     const taskId = input.taskId ?? control?.taskId ?? removal?.taskId;
-    const hostSelection = previous ? previous.hostSelection : taskId ? this.store.task(taskId).hostSelection
-      : hostId ? { hostId, basis: input.hostId ? 'explicit' as const : repoPath || repositoryOriginForSelection ? 'repository_host' as const : 'sole_online_host' as const,
-        ...((repoPath || repositoryOriginForSelection) && !input.hostId ? { reason: `Repository hostKind ${this.store.canonicalRepository(repoPath ?? '', repositoryOriginForSelection)?.hostKind ?? 'paseo'}` } : {}) } : undefined;
+    const plannerHostId = (submission as { originIdentity?: { hostId?: string } } | undefined)?.originIdentity?.hostId
+      ?? (input.payload as { identitySource?: { hostId?: string } } | null)?.identitySource?.hostId;
+    const selected = previous ? undefined : taskId ? undefined
+      : this.engine.selectIngressSelection(input.hostId, repoPath, repositoryOriginForSelection, plannerHostId)
+        ?? (() => {
+          // Older host ports and focused operation fixtures provide only an ID.
+          // Preserve that compatibility while the runtime's full port records provenance.
+          const hostId = this.engine.selectIngressHost(input.hostId, repoPath, repositoryOriginForSelection, plannerHostId);
+          return hostId ? { hostId, basis: input.hostId ? 'explicit' as const : repoPath || repositoryOriginForSelection ? 'repository_host' as const : 'sole_online_host' as const } : undefined;
+        })();
+    const hostId = previous ? previous.hostId : taskId
+      ? this.store.task(taskId).hostId || undefined : selected?.hostId;
+    const hostSelection = previous ? previous.hostSelection : taskId ? this.store.task(taskId).hostSelection : selected;
     if (!previous && !hostId && ["submit", "review_entry", "source_promote"].includes(input.kind))
       throw new Error("Host identity is unknown or ambiguous; select a registered host");
     const acceptance = this.store.acceptOperation({

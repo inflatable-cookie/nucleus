@@ -240,13 +240,13 @@ test('repository hostKind selects the online host of that kind; switching back l
       repoPath: '/repo', deferSchedule: true,
     });
     if (!('accepted' in accepted)) throw Error('backpressured');
-    assert.deepEqual(accepted.operation.hostSelection, { hostId: 't3code:env', basis: 'repository_host', reason: 'Repository hostKind t3code' });
+    assert.deepEqual(accepted.operation.hostSelection, { hostId: 't3code:env', basis: 'repository_override', reason: 'Repository host override t3code' });
     const submission = submissionSchema.parse({
       submissionId: 'live-t3', title: 'Live T3 task', repoPath: '/repo', planningCommit: 'a'.repeat(40),
       handoffPath: 'h', originAgentId: 'origin',
     });
     const live = runtime.store.insert(submission, 't3code:env', 'h', 'a'.repeat(40), { hostSelection: accepted.operation.hostSelection });
-    runtime.store.patchRepository({ origin: null, path: '/repo' }, { hostKind: 'paseo' });
+    runtime.store.patchRepository({ origin: null, path: '/repo' }, { hostKind: null });
     assert.equal(runtime.store.task(live.id).hostId, 't3code:env', 'switching the setting never rehosts a live task');
     assert.equal(runtime.engine.selectIngressHost(undefined, '/repo'), 'paseo-primary');
     const next = await runtime.engine.startOperation({
@@ -255,7 +255,7 @@ test('repository hostKind selects the online host of that kind; switching back l
     });
     if (!('accepted' in next)) throw Error('backpressured');
     assert.equal(next.operation.hostSelection?.hostId, 'paseo-primary');
-    assert.equal(next.operation.hostSelection?.basis, 'repository_host');
+    assert.equal(next.operation.hostSelection?.basis, 'operator_default');
     const summary = summarizeTask(runtime.store.task(live.id));
     assert.equal(summary.hostId, 't3code:env');
     const view = assembleOwnerTaskNext({
@@ -288,11 +288,17 @@ test('T3 Adapter enables lifecycleDispatch; the Host stays native-only; create w
   assert.equal(runTicketPath({ helperPath: join(directory, 'worker-report.mjs') }, 'run-t3'), join(directory, 'tickets', 'run-t3.json'));
 });
 
-test('resolveIngressHost fails closed when the opted-in kind is not online', () => {
-  assert.throws(() => resolveIngressHost({ hostKind: 't3code', registered: ['paseo-primary'], online: ['paseo-primary'] }), /T3Code host is not online/);
-  assert.throws(() => resolveIngressHost({ hostKind: 'paseo', registered: ['t3code:env'], online: ['t3code:env'] }), /Paseo host is not online/);
-  const explicit = resolveIngressHost({ explicit: 't3code:env', hostKind: 'paseo', registered: ['paseo-primary', 't3code:env'], online: ['paseo-primary', 't3code:env'] });
+test('host resolution prefers repository override, then online operator default, then the planner host', () => {
+  const explicit = resolveIngressHost({ explicit: 't3code:env', repositoryHostKind: 'paseo', registered: ['paseo-primary', 't3code:env'], online: ['paseo-primary', 't3code:env'] });
   assert.deepEqual(explicit.selection, { hostId: 't3code:env', basis: 'explicit' });
+  const repository = resolveIngressHost({ repositoryHostKind: 't3code', operatorDefaultHostKind: 'paseo', plannerHostId: 't3code:env', registered: ['paseo-primary', 't3code:env'], online: ['paseo-primary', 't3code:env'] });
+  assert.deepEqual(repository.selection, { hostId: 't3code:env', basis: 'repository_override', reason: 'Repository host override t3code' });
+  const defaultHost = resolveIngressHost({ operatorDefaultHostKind: 'paseo', plannerHostId: 't3code:env', registered: ['paseo-primary', 't3code:env'], online: ['paseo-primary', 't3code:env'] });
+  assert.deepEqual(defaultHost.selection, { hostId: 'paseo-primary', basis: 'operator_default', reason: 'Operator default host paseo' });
+  const offlineDefault = resolveIngressHost({ operatorDefaultHostKind: 'paseo', plannerHostId: 't3code:env', registered: ['paseo-primary', 't3code:env'], online: ['t3code:env'] });
+  assert.deepEqual(offlineDefault.selection, { hostId: 't3code:env', basis: 'planner_host', reason: 'Operator default host paseo is offline' });
+  const noDefault = resolveIngressHost({ plannerHostId: 't3code:env', registered: ['paseo-primary', 't3code:env'], online: ['paseo-primary', 't3code:env'] });
+  assert.deepEqual(noDefault.selection, { hostId: 't3code:env', basis: 'planner_host', reason: 'Planner host' });
 });
 
 test('the helper ask, message and answer subcommands post to the ticket-bound routes', async () => {

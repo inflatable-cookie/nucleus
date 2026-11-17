@@ -29,7 +29,7 @@ const DEFAULTS = {
   stallThresholdMinutes: DEFAULT_STALL_THRESHOLD_MINUTES, holdReminderMinutes: DEFAULT_HOLD_REMINDER_MINUTES,
   holdEscalationMinutes: DEFAULT_HOLD_ESCALATION_MINUTES, laneDrainMinutes: DEFAULT_LANE_DRAIN_MINUTES,
   laneDrainEscalationMinutes: DEFAULT_LANE_DRAIN_ESCALATION_MINUTES,
-  hostOutageNoticeMinutes: DEFAULT_HOST_OUTAGE_NOTICE_MINUTES,
+  hostOutageNoticeMinutes: DEFAULT_HOST_OUTAGE_NOTICE_MINUTES, operatorDefaultHostKind: "paseo",
 };
 
 function storeFixture(t: { after(fn: () => void): void }) {

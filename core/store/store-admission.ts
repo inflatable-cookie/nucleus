@@ -18,7 +18,7 @@ import { FRESH_STORE_SCHEMA, LEAD_READ_VIEW_SQL, OUTCOME_SEARCH_INDEX_SQL, STORE
 // Schema 57 (task 1010): one row stores independent publication counters.
 // Schema 58 (task 1112): the usage gauge's stored samples and per-subscription read state.
 // Schema 59 (task 1302): drop the retired subscription usage gauge storage.
-export const CURRENT_SCHEMA = 59;
+export const CURRENT_SCHEMA = 60;
 
 /**
  * Spec 028 revision "Store compaction" (audit B9): the WAL file is bounded after a
@@ -146,7 +146,7 @@ export class StoreAdmission {
         this.db.exec(FRESH_STORE_SCHEMA);
         this.createOutcomeSearchIndex();
         this.createLeadReadView();
-        this.core.setMeta("schema", CURRENT_SCHEMA); this.core.setMeta("paused", true); this.core.setMeta("pool", []);
+        this.core.setMeta("schema", CURRENT_SCHEMA); this.core.setMeta("paused", true); this.core.setMeta("pool", []); this.core.setMeta("operatorDefaultHostKind", "paseo");
       } else if (schema !== undefined && schema < CURRENT_SCHEMA) {
         onMigrationStart?.();
         checkSource();
@@ -183,6 +183,10 @@ export class StoreAdmission {
             OR key GLOB 'shadowStream*'
             OR key GLOB 'originNotificationTransfer:*'
             OR key IN ('capacityAuthorityFacts','hostRunEnvFileRedaction','host_run_env_redaction','legacyPapercutSourceEvidence','legacyHostSelectionOperations','legacyHostSelectionTasks');`);
+        if (schema < 60) {
+          this.db.exec("UPDATE repository_settings SET data=json_set(data,'$.hostKind',NULL) WHERE json_extract(data,'$.hostKind')='paseo'");
+          if (this.core.getMeta<unknown>("operatorDefaultHostKind") === undefined) this.core.setMeta("operatorDefaultHostKind", "paseo");
+        }
         this.core.setMeta('hostSelectionMigrationV1', true);
         // Schema 52 (task 987): the retention windows for rows that outlived their task or run.
         // The same rules run daily, so the one-time backlog and the steady state are one rule set.

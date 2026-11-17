@@ -57,7 +57,7 @@ export class PlanningSubmission {
     if (input.hostId) prepared.submission = { ...prepared.submission, hostId: input.hostId };
     if (input.dryRun) {
       const origin = await repositoryOrigin(prepared.submission.repoPath).catch(() => null);
-      const hostId = this.context.engine.selectIngressHost(input.hostId, prepared.submission.repoPath, origin);
+      const hostId = this.context.engine.selectIngressHost(input.hostId, prepared.submission.repoPath, origin, prepared.submission.originIdentity?.hostId);
       if (!hostId || !this.context.engine.hostAvailable(hostId)) throw new Error("Selected submission host is unavailable");
       const { verifyPublishedPlanning } = await import("../git/index");
       await verifyPublishedPlanning(prepared.submission);

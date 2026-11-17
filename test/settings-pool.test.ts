@@ -39,7 +39,8 @@ const entry = (profileId: string, group = 'subscription'): PoolEntry =>
   poolSchema.parse({ profileId, group, weight: 1, enabled: true, scopes: ['general'] });
 
 /** Settings-only capacity writes: the read Settings renders, with no change recorded yet. */
-const CAPACITY_VALUES = { globalLimit: 32, projectLimit: 5, papercutProjectLimit: 2, paseoCallLimit: 6, stallThresholdMinutes: 30, holdReminderMinutes: 120, holdEscalationMinutes: 240, laneDrainMinutes: 120, laneDrainEscalationMinutes: 1440, hostOutageNoticeMinutes: 120 };
+const CAPACITY_LIMITS = { globalLimit: 32, projectLimit: 5, papercutProjectLimit: 2, paseoCallLimit: 6, stallThresholdMinutes: 30, holdReminderMinutes: 120, holdEscalationMinutes: 240, laneDrainMinutes: 120, laneDrainEscalationMinutes: 1440, hostOutageNoticeMinutes: 120 };
+const CAPACITY_VALUES = { ...CAPACITY_LIMITS, operatorDefaultHostKind: "paseo" as const };
 interface CapacityView { effective: typeof CAPACITY_VALUES; changes: { version: number; at: string; surface: string; before: typeof CAPACITY_VALUES; after: typeof CAPACITY_VALUES }[] }
 const capacityAuthorityState = (overrides: Record<string, unknown> = {}): CapacityView => ({
   effective: CAPACITY_VALUES,
@@ -308,14 +309,14 @@ test('dark bundled Dispatch limits: three task slots first, Advanced reveals six
   await loadBundle();
   let authority: CapacityView = capacityAuthorityState();
   let state = board();
-  const writes: Record<string, number>[] = [];
+  const writes: Record<string, unknown>[] = [];
   const invoke = async (method: string, input: unknown) => {
     if (method === 'queue.ui-snapshot') return state;
     if (method === 'backup.list') return { snapshots: [], localError: null };
     if (method === 'queue.capacity-state') return authority;
     if (method === 'queue.capacity') {
-      writes.push(input as Record<string, number>);
-      const after = { ...authority.effective, ...(input as Record<string, number>) };
+      writes.push(input as Record<string, unknown>);
+      const after = { ...authority.effective, ...(input as Record<string, unknown>) };
       authority = { effective: after, changes: [...authority.changes, { version: authority.changes.length + 1, at: '2026-10-25T09:05:00.000Z', surface: 'paseo', before: authority.effective, after }] };
       return { ok: true };
     }
@@ -356,7 +357,7 @@ test('dark bundled Dispatch limits: three task slots first, Advanced reveals six
     // Typing saves the whole state once the pause elapses.
     ui.type('Global dispatch limit (slots, 1–64)', '21');
     await waitFor(() => writes.length === 1, 'the capacity change to autosave');
-    assert.deepEqual(writes[0], { ...CAPACITY_VALUES, globalLimit: 21 }, 'the write carries every limit, so no untouched one is reset');
+    assert.deepEqual(writes[0], { ...CAPACITY_LIMITS, globalLimit: 21 }, 'the write carries every numeric limit, so no untouched one is reset');
     // The save settles visibly; the server records the change, and the screen shows no receipt for it.
     await settle(() => saved(ui));
     assert.equal(authority.changes.length, 1, 'the server still records the applied change');
@@ -365,7 +366,7 @@ test('dark bundled Dispatch limits: three task slots first, Advanced reveals six
     // An advanced limit saves through the same section, and the write still carries the others.
     ui.type('Stall threshold dispatch limit (minutes, 1–240)', '45');
     await waitFor(() => writes.length === 2, 'the advanced change to autosave');
-    assert.deepEqual(writes[1], { ...CAPACITY_VALUES, globalLimit: 21, stallThresholdMinutes: 45 });
+    assert.deepEqual(writes[1], { ...CAPACITY_LIMITS, globalLimit: 21, stallThresholdMinutes: 45 });
     await settle(() => saved(ui));
 
     // An out-of-range value is never sent while it is typed, and collapsing writes nothing.
@@ -393,14 +394,14 @@ test('Dispatch limits steppers: one typeable field between − and +, bounded an
   // A fresh screen with its own capacity record and write log.
   const harness = () => {
     let authority: CapacityView = capacityAuthorityState();
-    const writes: Record<string, number>[] = [];
+    const writes: Record<string, unknown>[] = [];
     const invoke = async (method: string, input: unknown) => {
       if (method === 'queue.ui-snapshot') return board();
       if (method === 'backup.list') return { snapshots: [], localError: null };
       if (method === 'queue.capacity-state') return authority;
       if (method === 'queue.capacity') {
-        writes.push(input as Record<string, number>);
-        const after = { ...authority.effective, ...(input as Record<string, number>) };
+        writes.push(input as Record<string, unknown>);
+        const after = { ...authority.effective, ...(input as Record<string, unknown>) };
         authority = { effective: after, changes: [...authority.changes, { version: authority.changes.length + 1, at: '2026-10-25T09:05:00.000Z', surface: 'paseo', before: authority.effective, after }] };
         return { ok: true };
       }
@@ -424,7 +425,7 @@ test('Dispatch limits steppers: one typeable field between − and +, bounded an
     assert.equal(screen.writes[0]!.globalLimit, 33, 'a step writes the value one above');
     screen.ui.type('Global dispatch limit (slots, 1–64)', '21');
     await waitFor(() => screen.writes.length === 2, 'the typed value to autosave');
-    assert.deepEqual(screen.writes[1], { ...CAPACITY_VALUES, globalLimit: 21 }, 'the write carries every limit, so no untouched one is reset');
+    assert.deepEqual(screen.writes[1], { ...CAPACITY_LIMITS, globalLimit: 21 }, 'the write carries every numeric limit, so no untouched one is reset');
     await settle(() => saved(screen.ui));
     // The field takes digits only, and an out-of-range value is never sent while it is typed.
     const global = 'Global dispatch limit (slots, 1–64)';
