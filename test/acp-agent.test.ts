@@ -309,6 +309,19 @@ test("unknown methods, unknown sessions and unknown models are refused with thei
   await client.closed();
 });
 
+test("closing the client's stdio ends a held turn instead of leaving the agent holding it", async () => {
+  const client = harness();
+  await client.lines.untilResult(client.request("session/new", { cwd: "/fixture/checkout" }));
+  client.transport.hang = true;
+  const prompt = client.request("session/prompt", { sessionId: binding.sessionId, prompt: [{ type: "text", text: "opening" }] });
+  await turnStarted(client.transport, 2);
+  // A host that shuts down closes stdio; `closed()` only resolves once the turn ended.
+  const closing = client.closed();
+  const { result } = await client.lines.untilResult(prompt);
+  assert.deepEqual(result.result, { stopReason: "cancelled" }, "the held turn ends with the stream");
+  await closing;
+});
+
 test("the launched entry point answers a missing binding with its path, and never starts a session", async () => {
   const dir = mkdtempSync(join(tmpdir(), "ns-acp-entry-"));
   try {

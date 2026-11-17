@@ -124,6 +124,9 @@ export class AcpAgent {
         if (line) this.dispatch(line, send);
       }
     }
+    // The client closed the pipe: no one can answer a held turn any more, and the host
+    // may be shutting down. End every turn instead of leaving a process holding one.
+    for (const session of this.sessions.values()) this.cancel(session.sessionId);
     await Promise.allSettled([...this.work]);
   }
 

@@ -131,6 +131,8 @@ ends the turn with the reason rather than resending.
 - A prompt while a turn is in flight is refused (`-32602`); the client cancels
   and sends the person's text as a new prompt, which is exactly how an ACP
   client steers.
+- A closed stdin ends every held turn: a host that shuts down leaves no process
+  holding a turn nobody can release.
 - The agent never retries a message: unknown delivery is not permission.
 - A process that serves no ACP sessions refuses the routes rather than
   answering an empty turn.
