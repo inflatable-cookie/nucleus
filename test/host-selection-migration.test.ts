@@ -15,6 +15,8 @@ test('the schema step marks host selection migration complete without rewriting 
   store.setMeta('hostId', 'a');
   const make = (id: string, host: string) => store.insert(submissionSchema.parse({ submissionId: id, title: id, repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'h', originAgentId: 'origin' }), host, 'h', 'a'.repeat(40));
   const old = make('old', 'a'), unknown = make('unknown', ''), other = make('other', 'b');
+  store.putRepository({ origin: null, path: '/legacy-default' }, null, 'legacy', null, null, null, undefined, undefined, 'paseo');
+  store.putRepository({ origin: null, path: '/explicit-trial' }, null, 'trial', null, null, null, undefined, undefined, 't3code');
   store.db.prepare("UPDATE tasks SET data=json_remove(data,'$.hostSelection') WHERE id IN (?,?,?)").run(old.id, unknown.id, other.id);
   const payload = { type: 'review_entry', input: {} };
   const accepted = store.acceptOperation({ key: 'legacy-intent', kind: 'review_entry', inputHash: operationInputHash(payload), payload });
@@ -24,6 +26,8 @@ test('the schema step marks host selection migration complete without rewriting 
   store.setMeta('schema', 50);
   store.close();
   store = new Store(path);
+  assert.equal(store.canonicalRepository('/legacy-default')?.hostKind, null);
+  assert.equal(store.canonicalRepository('/explicit-trial')?.hostKind, 't3code');
   assert.equal(store.task(old.id).hostSelection, undefined);
   assert.equal(store.task(unknown.id).hostSelection, undefined);
   assert.equal(store.task(other.id).hostSelection, undefined);

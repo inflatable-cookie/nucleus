@@ -18,7 +18,7 @@ import { SettingsTelemetry } from "./settings-telemetry";
 import { BackupsPanel } from "./backups-panel";
 import { DispatchLimits } from "./limits";
 import { ProjectsSection } from "./projects-settings";
-/** A board from a service that predates Spec 052 carries no usage view. */
+/** A board from a service that predates Spec 052 carries no dispatch routing policy. */
 
 /**
  * Queue's native Paseo settings screen (Spec 026 / nucleus#934): Dispatch limits,
@@ -105,6 +105,7 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
         retryAuthority={() => void capacityStateQuery.refetch()} refreshBoard={() => stateQuery.refetch()}
         saveUsage={(level, until) => persist(() => setUsage({ level, until }))} saveDemandOffsets={value => persist(() => setDemandOffsets(value))}
         saveCapacity={value => persist(async () => { await setCapacity(value); await queryClient.refetchQueries({ queryKey: ["nucleus", "capacity-state"], exact: true }); })}
+        saveDefaultHost={host => persist(async () => { await setCapacity({ ...capacityStateQuery.data!.effective, operatorDefaultHostKind: host }); await queryClient.refetchQueries({ queryKey: ["nucleus", "capacity-state"], exact: true }); })}
         saveProjectLimit={value => persist(() => setProjectLimit(value))} />
     </ScrollView>}
     {settingsTab === "projects" && <ProjectsSection c={c} compact={compact} inset={inset} query={projectsQuery}

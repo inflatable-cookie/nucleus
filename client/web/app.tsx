@@ -13,13 +13,13 @@ import type { BoardTheme } from "../shell/types";
 
 const theme: BoardTheme = { colors: { surface0: "#111318", surface1: "#1a1d24", surface2: "#252932", border: "#39404b", foreground: "#f1f3f5", foregroundMuted: "#a5acb8", accent: "#8caaff", accentForeground: "#101521", statusSuccess: "#71c99a", statusWarning: "#e9bc68", statusDanger: "#ef8282" } };
 
-export function WebApp({ token }: { token: string }) {
+export function WebApp() {
   const [live, setLive] = useState(false);
   // The live channel's last failure. A stream that drops reconnects below, and
   // the reader says why in the meantime instead of failing silently.
   const [liveError, setLiveError] = useState<string | null>(null);
   const [settings, setSettings] = useState(false);
-  const transport = useMemo(() => createWebTransport(token), [token]);
+  const transport = useMemo(() => createWebTransport(), []);
   const query = useMemo(() => new QueryClient(), []);
   const context = useMemo(() => ({ transport, settings }), [transport, settings]);
   useEffect(() => { registerSettingsOpener(section => { if (section) hintSettingsSection(section); setSettings(true); }); }, []);

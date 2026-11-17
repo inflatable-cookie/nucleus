@@ -54,7 +54,7 @@ implemented; the contracts summarise the durable rules and link here.
 | [056 — Repository namespace re-key](056-repository-namespace-rekey.md) | implemented |
 | [057 — Retained change review and source approval awaiting proof](057-retained-change-review.md) | approved, not implemented |
 | [058 — Responsible tasks](058-responsible-tasks.md) | slices 1–17 installed (usage shadow, opt-in lifecycle, task.register, operator questions, live conversion, delegated answers, ask-in-turn, non-delivery ownership, review-round cap, one worker thread, the blocker ladder); rollout step 3 remainder and step 4 pending |
-| [059 — Subscription usage pressure gauge](059-usage-gauge.md) | implemented: readers, samples, projection and `usage.state`, plus the Usage page and Paseo sidebar rail |
+| [059 — Subscription usage pressure gauge](retired/059-usage-gauge.md) | retired 2026-11-17 (task 1302); subscription usage belongs to host apps and their plugins |
 | [060 — Named project agents](060-named-project-agents.md) | implemented |
 | [061 — Worker proof files reach the retained reviewer](061-worker-proof-files.md) | implemented |
 | [062 — BB host adapter](062-bb-host-adapter.md) | approved; phases 0–6 implemented, phase 0 proved against isolated BB; phase 7 (trial and parity call) not started |

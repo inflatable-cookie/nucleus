@@ -49,7 +49,7 @@ test('a repository hostKind selects the unique online host of that kind with dur
     assert.equal(runtime.engine.selectIngressHost(undefined, '/repo'), 't3code:env');
     const accepted = await runtime.engine.startOperation({ key: 'kind', kind: 'review_entry', payload: { type: 'review_entry', input: {} }, repoPath: '/repo', deferSchedule: true });
     if (!('accepted' in accepted)) throw Error('backpressured');
-    assert.deepEqual(accepted.operation.hostSelection, { hostId: 't3code:env', basis: 'repository_host', reason: 'Repository hostKind t3code' });
+    assert.deepEqual(accepted.operation.hostSelection, { hostId: 't3code:env', basis: 'repository_override', reason: 'Repository host override t3code' });
 
     runtime.store.putRepository({ origin: 'acme/origin-only', path: '' }, null, '', null, null, null, undefined, undefined, 't3code');
     assert.equal(runtime.engine.selectIngressHost(undefined, '/different-checkout', 'acme/origin-only'), 't3code:env');
@@ -62,16 +62,16 @@ test('a repository hostKind selects the unique online host of that kind with dur
     const submitted = await runtime.engine.startOperation({ key: 'origin-submission', kind: 'submit', repoPath: checkout, deferSchedule: true,
       payload: { type: 'submit', submission } });
     if (!('accepted' in submitted)) throw Error('backpressured');
-    assert.deepEqual(submitted.operation.hostSelection, { hostId: 't3code:env', basis: 'repository_host', reason: 'Repository hostKind t3code' });
+    assert.deepEqual(submitted.operation.hostSelection, { hostId: 't3code:env', basis: 'repository_override', reason: 'Repository host override t3code' });
     const promoted = await runtime.engine.startOperation({ key: 'origin-promotion', kind: 'source_promote', repoPath: '/different-checkout', deferSchedule: true,
       payload: { type: 'source_promote', source: { kind: 'lead', id: 'lead-1', repository: 'acme/origin-only', version: 1, digest: 'a'.repeat(64) },
         request: { id: 'lead-1', repository: 'acme/origin-only', board: true, note: '' } } });
     if (!('accepted' in promoted)) throw Error('backpressured');
-    assert.deepEqual(promoted.operation.hostSelection, { hostId: 't3code:env', basis: 'repository_host', reason: 'Repository hostKind t3code' });
+    assert.deepEqual(promoted.operation.hostSelection, { hostId: 't3code:env', basis: 'repository_override', reason: 'Repository host override t3code' });
 
     const noSettings = await runtime.engine.startOperation({ key: 'no-settings', kind: 'review_entry', repoPath: '/unconfigured', payload: { type: 'review_entry', input: {} }, deferSchedule: true });
     if (!('accepted' in noSettings)) throw Error('backpressured');
-    assert.deepEqual(noSettings.operation.hostSelection, { hostId: 'paseo-primary', basis: 'repository_host', reason: 'Repository hostKind paseo' });
+    assert.deepEqual(noSettings.operation.hostSelection, { hostId: 'paseo-primary', basis: 'operator_default', reason: 'Operator default host paseo' });
   } finally { await runtime.drain(); }
 });
 
@@ -106,17 +106,19 @@ test('a bb repository hostKind selects the online BB host, never rehosts a live 
     assert.equal(runtime.engine.selectIngressHost(undefined, '/bb-repo'), bbHostId);
     const accepted = await runtime.engine.startOperation({ key: 'bb-kind', kind: 'review_entry', repoPath: '/bb-repo', payload: { type: 'review_entry', input: {} }, deferSchedule: true });
     if (!('accepted' in accepted)) throw Error('backpressured');
-    assert.deepEqual(accepted.operation.hostSelection, { hostId: bbHostId, basis: 'repository_host', reason: 'Repository hostKind bb' });
+    assert.deepEqual(accepted.operation.hostSelection, { hostId: bbHostId, basis: 'repository_override', reason: 'Repository host override bb' });
 
     // Paseo stays the default for a repository with no setting.
     const unconfigured = await runtime.engine.startOperation({ key: 'default-kind', kind: 'review_entry', repoPath: '/unconfigured', payload: { type: 'review_entry', input: {} }, deferSchedule: true });
     if (!('accepted' in unconfigured)) throw Error('backpressured');
-    assert.deepEqual(unconfigured.operation.hostSelection, { hostId: 'paseo-primary', basis: 'repository_host', reason: 'Repository hostKind paseo' });
+    assert.deepEqual(unconfigured.operation.hostSelection, { hostId: 'paseo-primary', basis: 'operator_default', reason: 'Operator default host paseo' });
 
     // A live task keeps the host it started on when the repository setting changes.
     const submission = submissionSchema.parse({ submissionId: 'bb-switch', title: 'Task', repoPath: '/paseo-repo', planningCommit: 'a'.repeat(40), handoffPath: 'h', originAgentId: 'origin' });
     const task = runtime.store.insert(submission, 'paseo-primary', 'h', 'a'.repeat(40));
     assert.equal(runtime.store.task(task.id).hostId, 'paseo-primary');
+    runtime.store.setMeta('operatorDefaultHostKind', 'bb');
+    assert.equal(runtime.store.task(task.id).hostId, 'paseo-primary', 'changing the operator default never rehosts a live task');
     runtime.store.putRepository({ origin: null, path: '/paseo-repo' }, null, '', null, null, null, undefined, undefined, 'bb');
     assert.equal(runtime.store.task(task.id).hostId, 'paseo-primary', 'switching the setting never rehosts a live task');
 

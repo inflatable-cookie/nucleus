@@ -12,9 +12,8 @@
  * Covered here: the board renders and its calls reach the service; Settings opens
  * (the panel route, the board header's Settings button and the settings section);
  * a decision pill appears on its thread and resolves; a native question pill shows
- * and answers; the pending-interaction renderer submits and cancels; the board's
- * Usage view renders from a synthetic `usage.state` snapshot; and the per-project
- * tab shows a multi-repository project's every repository.
+ * and answers; the pending-interaction renderer submits and cancels; and the
+ * per-project tab shows a multi-repository project's every repository.
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -30,8 +29,6 @@ import { visibleTaskSummaries } from '../shared/task-view';
 import { submissionSchema, uiBoardSchema, decisionViewSchema, type DecisionView, type TaskSummary } from '../shared/contracts';
 import { RPC_CATALOGUE } from '../shared/rpc-catalogue';
 import { formatAgentId } from '../shared/agent-identity';
-import { usageStateOutputSchema } from '../shared/schema/usage';
-import { projectUsage } from '../shared/usage-projection';
 import { createBoardBridge } from '../hosts/bb/plugin/board-bridge';
 import { createTaskDetailCache } from '../core/telemetry/task-detail';
 
@@ -91,16 +88,6 @@ const decisionFixture = (over: Partial<DecisionView> = {}): DecisionView => deci
   createdAt: AT, updatedAt: AT, versions: [], stale: false, projectKey: 'synthetic', ...over,
 });
 
-const usageState = () => {
-  const window = { windowId: 'weekly', name: 'Weekly', usedFraction: 0.62, windowSeconds: 7 * 24 * 3600, windowStartsAt: null, resetsAt: '2026-11-21T12:00:00.000Z' };
-  return usageStateOutputSchema.parse({
-    generatedAt: AT,
-    subscriptions: [{ group: 'codex-main', provider: 'codex', profileIds: ['worker'], sourcePath: null,
-      reading: { status: 'ok', reason: null, asOf: AT, source: 'app-server', accountId: 'acc-1', windows: [window] },
-      projection: projectUsage({ now: NOW, windows: [window] }), nextReadAt: null, lastAttemptAt: AT, lastError: null }],
-  });
-};
-
 // ------------------------------------------------------------- the service fake
 
 type Call = { method: string; input: unknown; via: string | undefined };
@@ -137,7 +124,6 @@ function service(script: { tasks?: () => TaskSummary[]; decisions?: () => Decisi
         case 'decision.answer': script.onAnswer?.(method, input); return decisionFixture({ status: 'answered', answer: { text: (input as { answer: string }).answer, answeredBy: 'operator (board)', answeredAt: AT, relayed: null, note: '' } });
         case 'question.native-list': return script.questions?.() ?? [];
         case 'question.native-answer': script.onAnswer?.(method, input); return { ok: true };
-        case 'usage.state': return usageState();
         case 'queue.detail': return taskDetail((input as { taskId: string }).taskId);
         default: return emptyAnswer(method);
       }
@@ -286,16 +272,6 @@ test('the pending-interaction slot renders a Nucleus question, submits and cance
   assert.ok(malformed.text().includes('This question cannot be shown.'));
   malformed.press('Cancel question');
   await settle(() => cancelled === 2, 'the malformed question cancel');
-});
-
-test("the board's Usage view renders from a synthetic usage.state snapshot", async () => {
-  await load();
-  const { runtime, calls } = runtimeFor();
-  const tree = mount(h(runtime.BoardPanel, { subPath: '' }));
-  await settle(() => tree.query('Usage') !== undefined, 'the board navigation');
-  tree.press('Usage');
-  await settle(() => tree.text().includes('62% used'), 'the usage page');
-  assert.ok(calls.some(call => call.method === 'usage.state' && call.via === 'bb'), 'the page reads usage.state through the plugin');
 });
 
 test('the per-project tab and route show a multi-repository project with every repository and nothing else', async () => {

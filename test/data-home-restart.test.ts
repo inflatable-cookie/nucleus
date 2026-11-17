@@ -40,7 +40,7 @@ const base = 'b'.repeat(40);
 const CAPACITY = {
   globalLimit: 7, projectLimit: 3, papercutProjectLimit: 2, paseoCallLimit: 9,
   stallThresholdMinutes: 5, holdReminderMinutes: 90, holdEscalationMinutes: 150,
-  laneDrainMinutes: 45, laneDrainEscalationMinutes: 75, hostOutageNoticeMinutes: 120,
+  laneDrainMinutes: 45, laneDrainEscalationMinutes: 75, hostOutageNoticeMinutes: 120, operatorDefaultHostKind: "paseo",
 } as const;
 
 const PROFILES = [
@@ -129,6 +129,7 @@ async function liveView(dataDir: string) {
   await client.connect();
   try {
     const state = await client.request('queue.snapshot', {}) as Record<string, unknown> & { tasks?: Array<{ id: string }> };
+    const capacity = await client.request('queue.capacity-state', {}) as { effective?: Record<string, unknown> };
     const profiles = await client.request('profile.list', {}) as { profiles?: Array<{ id: string }> } | Array<{ id: string }>;
     const listed = Array.isArray(profiles) ? profiles : profiles.profiles ?? [];
     return {
@@ -139,6 +140,7 @@ async function liveView(dataDir: string) {
         holdReminderMinutes: state.holdReminderMinutes, holdEscalationMinutes: state.holdEscalationMinutes,
         laneDrainMinutes: state.laneDrainMinutes, laneDrainEscalationMinutes: state.laneDrainEscalationMinutes,
         hostOutageNoticeMinutes: state.hostOutageNoticeMinutes,
+        operatorDefaultHostKind: capacity.effective?.operatorDefaultHostKind,
       },
       taskIds: (state.tasks ?? []).map(task => task.id).sort(),
       profileIds: listed.map(profile => profile.id).sort(),

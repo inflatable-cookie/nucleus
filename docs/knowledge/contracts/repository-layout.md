@@ -52,7 +52,7 @@ surface. The old `server/` and `host/` source roots disappear after migration.
 | `core/verbs/` | Owner controls, disposition and control fences. | Neutral |
 | `core/runtime/` | Board, planning, question, settings and repository handlers with restricted contexts. | Neutral |
 | `core/scheduling/` | Lane scheduler, task wakes, the projection occurrence ledger and the bounded reconciliation sweep. | Neutral |
-| `core/telemetry/` | Task/board projections, usage, presence and runtime measurements. | Neutral |
+| `core/telemetry/` | Task/board projections, run usage, presence and runtime measurements. | Neutral |
 | `core/machine/` | Process identity, execution, tool custody, file facts and supervision primitives. | Neutral |
 | `service/` | Entrypoint and runtime owner: construct core and select host through its public service index. | Composes configured hosts |
 | `service/transport/` | Authenticated service socket, catalogue dispatch and local clients. | Neutral |

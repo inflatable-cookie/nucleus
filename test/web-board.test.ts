@@ -6,7 +6,9 @@ import {
   type IncomingMessage,
 } from "node:http";
 import { randomBytes } from "node:crypto";
-import { rmSync } from "node:fs";
+import { readFileSync, rmSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { createServer as createTcpServer } from "node:net";
 import {
   socketFixtureDirectory,
   assertSocketPathWithinBound,
@@ -20,7 +22,7 @@ import { SETTINGS_WRITE_METHODS } from "../shared/web-surface";
 
 /**
  * The local web board (service-boundary contract, "Local web board"): a loopback
- * HTTP server with a bearer token on every API request, the shared catalogue with
+ * HTTP server with a paired cookie on every API request, the shared catalogue with
  * `via: "web"`, and a live board channel. These cases use a real service and real
  * sockets; only the token clock is a fixture.
  */
@@ -41,11 +43,15 @@ function http(
     origin?: string;
     body?: unknown;
     settings?: boolean;
+    cookie?: string;
+    authorization?: string;
   } = {},
 ): Promise<Http> {
   const headers: Record<string, string> = {};
   if (options.host) headers.host = options.host;
-  if (options.token) headers.authorization = `Bearer ${options.token}`;
+  if (options.token) headers.cookie = options.token;
+  if (options.cookie) headers.cookie = options.cookie;
+  if (options.authorization) headers.authorization = options.authorization;
   if (options.origin) headers.origin = options.origin;
   if (options.settings) headers["x-nucleus-surface"] = "settings";
   const payload =
@@ -86,12 +92,14 @@ const rpc = (
   token?: string,
   host?: string,
   settings = false,
+  origin?: string,
 ) =>
   http(port, "/api/rpc", {
     method: "POST",
     body: { method, input },
     token,
     host: host ?? `127.0.0.1:${port}`,
+    origin: origin ?? `http://127.0.0.1:${port}`,
     settings,
   });
 
@@ -103,14 +111,14 @@ interface Fixture {
   clock: { now: number };
 }
 
-async function startBoard(): Promise<Fixture> {
+async function startBoard(port = 0): Promise<Fixture> {
   const dataDir = socketFixtureDirectory("queue-service.sock");
   const clock = { now: Date.now() };
   const service = new QueueService({
     owner: { dataDir },
     fixture: "fake",
     debug: true,
-    webBoard: { bundleDir: null, now: () => clock.now },
+    webBoard: { bundleDir: null, now: () => clock.now, port },
   });
   await service.start();
   const info = readServiceInfo(dataDir);
@@ -128,6 +136,14 @@ async function startBoard(): Promise<Fixture> {
   return { service, client, dataDir, port: info.httpPort, clock };
 }
 
+async function freePort(): Promise<number> {
+  const server = createTcpServer();
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as { port: number }).port;
+  await new Promise<void>(resolve => server.close(() => resolve()));
+  return port;
+}
+
 async function stopBoard(fixture: Fixture) {
   await fixture.client.close();
   await fixture.service.stop();
@@ -142,13 +158,31 @@ async function mintToken(
     "service.ui-link",
     ttlMinutes === undefined ? {} : { ttlMinutes },
   )) as { url: string; expiresAt: string };
-  const token = issued.url.split("#token=")[1];
+  const link = new URL(issued.url);
+  const token = new URLSearchParams(link.hash.slice(1)).get("token");
   assert.match(
     token ?? "",
     /^[A-Za-z0-9_-]{43}$/,
     "the link fragment carries a 43-character token",
   );
   return { ...issued, token: token! };
+}
+
+async function pairToken(port: number, token: string): Promise<string> {
+  const paired = await http(port, "/api/pair", { method: "POST", authorization: `Bearer ${token}`, host: `127.0.0.1:${port}` });
+  assert.equal(paired.status, 200, paired.body);
+  const cookie = paired.headers["set-cookie"]?.[0]?.split(";")[0];
+  assert.match(cookie ?? "", /^nucleus_session=[A-Za-z0-9_-]{43}$/);
+  assert.match(String(paired.headers["set-cookie"]), /HttpOnly/);
+  assert.match(String(paired.headers["set-cookie"]), /SameSite=Strict/);
+  assert.match(String(paired.headers["set-cookie"]), /Path=\//);
+  assert.equal((await http(port, "/api/session", { cookie, host: `127.0.0.1:${port}` })).status, 200);
+  return cookie!;
+}
+
+async function pairedToken(fixture: Fixture): Promise<string> {
+  const minted = await mintToken(fixture.client);
+  return pairToken(fixture.port, minted.token);
 }
 
 /** Open the live channel and collect its SSE events as they arrive. */
@@ -165,7 +199,7 @@ function openEvents(port: number, token?: string) {
       path: "/api/events",
       headers: {
         host: `127.0.0.1:${port}`,
-        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...(token ? { cookie: token } : {}),
       },
     },
     (response: IncomingMessage) => {
@@ -259,7 +293,7 @@ test("the board listens on 127.0.0.1 only and refuses any Host it does not name"
       host: "127.0.0.1",
       port: fixture.port,
     });
-    const token = (await mintToken(fixture.client)).token;
+    const token = await pairedToken(fixture);
     // A page on another domain that resolves to 127.0.0.1 still sends its own Host.
     for (const host of [
       `attacker.example:${fixture.port}`,
@@ -300,12 +334,18 @@ test("the board listens on 127.0.0.1 only and refuses any Host it does not name"
       403,
       "a foreign Origin is refused even with a valid token",
     );
+    const foreignLocal = await rpc(fixture.port, "queue.control", { paused: true }, token, undefined, false, `http://127.0.0.1:${fixture.port + 1}`);
+    assert.equal(foreignLocal.status, 403, "a cookie shared across localhost ports still requires this board's exact Origin on writes");
+    assert.equal(JSON.parse(foreignLocal.body).error.code, "origin");
+    const missingOrigin = await http(fixture.port, "/api/rpc", { method: "POST", token, body: { method: "queue.control", input: { paused: true } }, host: `127.0.0.1:${fixture.port}` });
+    assert.equal(missingOrigin.status, 403, "cookie-authenticated writes require an Origin header");
+    assert.equal(JSON.parse(missingOrigin.body).error.code, "origin");
   } finally {
     await stopBoard(fixture);
   }
 });
 
-test("every API request needs a live token: none, wrong, malformed, expired and revoked are refused alike", async () => {
+test("every API request needs a paired session and rejects missing, unknown, expired and revoked credentials", async () => {
   const fixture = await startBoard();
   try {
     const minted = await mintToken(fixture.client, 5);
@@ -338,24 +378,33 @@ test("every API request needs a live token: none, wrong, malformed, expired and 
     const events = await http(fixture.port, "/api/events", {
       host: `127.0.0.1:${fixture.port}`,
     });
-    assert.equal(events.status, 401, "the live channel is token-gated too");
+    assert.equal(events.status, 401, "the live channel requires a paired session too");
 
     assert.equal(
-      (await rpc(fixture.port, "queue.ui-snapshot", {}, minted.token)).status,
+      (await rpc(fixture.port, "queue.ui-snapshot", {}, await pairToken(fixture.port, minted.token))).status,
       200,
-      "a live token is served",
+      "a newly paired session is served",
     );
 
-    // Expiry is read from the token's own clock, not from the service.
-    fixture.clock.now += 6 * 60_000;
-    assert.equal(
-      (await rpc(fixture.port, "queue.ui-snapshot", {}, minted.token)).status,
-      401,
-      "an expired token is refused",
-    );
+    // Use extends the idle expiry, while the original one-time link still expires.
+    const cookie = await pairedToken(fixture);
+    fixture.clock.now += 29 * 24 * 60 * 60_000;
+    assert.equal((await rpc(fixture.port, "queue.ui-snapshot", {}, cookie)).status, 200);
+    fixture.clock.now += 2 * 24 * 60 * 60_000;
+    assert.equal((await rpc(fixture.port, "queue.ui-snapshot", {}, cookie)).status, 200, "a recent use rolls the session expiry forward");
+
+    // The link token's expiry is read from the service clock.
+    fixture.clock.now += 31 * 24 * 60 * 60_000;
+    const expiredPairing = await http(fixture.port, "/api/pair", {
+      method: "POST",
+      authorization: `Bearer ${minted.token}`,
+      host: `127.0.0.1:${fixture.port}`,
+    });
+    assert.equal(expiredPairing.status, 401, "an expired one-time link cannot pair");
+    assert.equal(JSON.parse(expiredPairing.body).error.code, "unauthenticated");
 
     // Revocation refuses every outstanding token at once.
-    const second = await mintToken(fixture.client);
+    const second = { token: await pairedToken(fixture) };
     assert.equal(
       (await rpc(fixture.port, "queue.ui-snapshot", {}, second.token)).status,
       200,
@@ -381,7 +430,7 @@ test("every API request needs a live token: none, wrong, malformed, expired and 
 test("a token read and a board verb work over the web; the verb lands in the store", async () => {
   const fixture = await startBoard();
   try {
-    const { token } = await mintToken(fixture.client);
+    const token = await pairedToken(fixture);
     const snapshot = await rpc(fixture.port, "queue.ui-snapshot", {}, token);
     assert.equal(snapshot.status, 200);
     const board = JSON.parse(snapshot.body).result as {
@@ -429,7 +478,7 @@ test("a token read and a board verb work over the web; the verb lands in the sto
 test("Settings writes work over the web with a token and record the web surface; the socket still refuses them", async () => {
   const fixture = await startBoard();
   try {
-    const { token } = await mintToken(fixture.client);
+    const token = await pairedToken(fixture);
     const before = (await fixture.client.request(
       "queue.capacity-state",
       {},
@@ -511,7 +560,7 @@ test("Settings writes work over the web with a token and record the web surface;
 test("a worker self-registration is refused over the web even with a token", async () => {
   const fixture = await startBoard();
   try {
-    const { token } = await mintToken(fixture.client);
+    const token = await pairedToken(fixture);
     const refused = await rpc(
       fixture.port,
       "task.register",
@@ -534,10 +583,10 @@ test("a worker self-registration is refused over the web even with a token", asy
   }
 });
 
-test("the live channel delivers the board revision, then each later change, and closes when its token is revoked", async () => {
+test("the live channel delivers revisions and revoke closes paired-session streams", async () => {
   const fixture = await startBoard();
   try {
-    const { token } = await mintToken(fixture.client);
+    const token = await pairedToken(fixture);
     const events = openEvents(fixture.port, token);
     try {
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -562,19 +611,65 @@ test("the live channel delivers the board revision, then each later change, and 
         (moved.data as { revision: number }).revision > firstBoard.revision,
       );
 
-      // Revoking the token closes the stream; no board arrives after it.
       await fixture.client.request("service.ui-link", { action: "revoke" });
       await events.next(() => false, 5_000).catch(() => undefined);
       assert.equal(
         events.ended(),
         true,
-        "the stream ends when its token is revoked",
+        "the stream ends when its paired session is revoked",
       );
     } finally {
       events.close();
     }
   } finally {
     await stopBoard(fixture);
+  }
+});
+
+test("a paired cookie and its digest survive a service restart on the same work root and port", async () => {
+  const preferredPort = await freePort();
+  const fixture = await startBoard(preferredPort);
+  const link = await mintToken(fixture.client);
+  const cookie = await pairToken(fixture.port, link.token);
+  const sessionFile = join(fixture.dataDir, "work", "nucleus-web-sessions.json");
+  try {
+    const stored = readFileSync(sessionFile, "utf8");
+    assert.ok(!stored.includes(cookie.split("=")[1]), "the raw cookie is never persisted");
+    assert.ok(!stored.includes(link.token), "the raw link token is never persisted");
+    assert.match(stored, /"digest":"[a-f0-9]{64}"/);
+    assert.equal(statSync(sessionFile).mode & 0o777, 0o600, "the session digest file is owner-only");
+    const oldPort = fixture.port;
+    assert.equal(oldPort, preferredPort, "the board binds its configured fixed port");
+    await fixture.client.close();
+    await fixture.service.stop();
+    const replacement = new QueueService({
+      owner: { dataDir: fixture.dataDir }, fixture: "fake", debug: true,
+      webBoard: { bundleDir: null, now: () => fixture.clock.now, port: oldPort },
+    });
+    await replacement.start();
+    assert.equal(replacement.webBoardAddress()?.port, oldPort, "the configured board URL is unchanged");
+    assert.equal((await rpc(oldPort, "queue.ui-snapshot", {}, cookie)).status, 200, "the paired cookie authenticates after restart");
+    assert.equal((await http(oldPort, "/api/session", { cookie, host: `127.0.0.1:${oldPort}` })).status, 200, "the plain board URL recognizes the existing paired browser");
+    await replacement.stop();
+  } finally {
+    rmSync(fixture.dataDir, { recursive: true, force: true });
+  }
+});
+
+test("a busy fixed port falls back to port zero and reports the selected port", async () => {
+  const blocker = createTcpServer();
+  await new Promise<void>(resolve => blocker.listen(0, "127.0.0.1", resolve));
+  const occupied = (blocker.address() as { port: number }).port;
+  const fixture = await startBoard(occupied);
+  try {
+    assert.notEqual(fixture.port, occupied);
+    const link = await fixture.client.request("service.ui-link", {} ) as { portFallback: boolean; port: number; url: string };
+    assert.equal(link.portFallback, true);
+    assert.equal(link.port, fixture.port);
+    assert.equal(new URL(link.url).port, String(fixture.port));
+  } finally {
+    await stopBoard(fixture);
+    await new Promise<void>(resolve => blocker.close(() => resolve()));
   }
 });
 

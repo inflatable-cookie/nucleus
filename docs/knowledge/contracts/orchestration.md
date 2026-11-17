@@ -3279,8 +3279,7 @@ movement invalidates source approval and preserves the normal readiness gates.
   still resolve (a purged prerequisite never satisfies a dependent and reads
   as "history purged") and a repeated submission returns the retained record
   instead of launching the work again. Outcome rows are permanent and never
-  purged ([Spec 025](../specs/025-outcome-query.md)); usage samples are
-  pruned separately at 14 days ([Spec 059](../specs/059-usage-gauge.md)).
+  purged ([Spec 025](../specs/025-outcome-query.md)).
 
 ## Test infrastructure
 

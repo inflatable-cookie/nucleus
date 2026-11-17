@@ -13,6 +13,10 @@ board runs as a plugin screen in its sidebar. More hosts, such as T3Code, are
 planned; a host without a plugin UI uses the local web board. Nucleus is
 trusted local software, not a sandbox between agents.
 
+Subscription usage displays belong to each host app and its plugins. Nucleus
+keeps the separate dispatch usage level in Settings → Dispatch limits because
+that setting controls routing demand and cost ceilings.
+
 ## Install
 
 The first release is **0.1.0** for **macOS on Apple silicon**. These commands
@@ -98,6 +102,10 @@ and the design are in [Spec 062](docs/knowledge/specs/062-bb-host-adapter.md).
    owner verbs and review entry. Every task runs the responsible lifecycle on
    its own: worker, reviewer, merge gates and recovery.
 
+Paseo and T3Code provide their own subscription usage display or host-specific
+plugins for it. Nucleus does not add a subscription usage screen or sidebar
+gauge; its Usage level setting controls dispatch routing only.
+
 ## Where to read more
 
 - [docs/README.md](docs/README.md) — the project's current state and front door.
@@ -118,6 +126,10 @@ and the design are in [Spec 062](docs/knowledge/specs/062-bb-host-adapter.md).
   undecided.
 
 ## T3: one row per task
+
+T3Code owns subscription usage display through its own features and plugins;
+Nucleus adds no subscription usage gauge. Its usage level remains a Nucleus
+dispatch setting, separate from monitoring provider subscription windows.
 
 On T3Code, a task starts one thread per agent: the worker, its reviewer, recovery,
 coordinator and executor threads. Nucleus tags those support threads

@@ -210,7 +210,8 @@ export class Engine {
   /** Registered and connected, independent of the ambient host context; the identity-routing read. */
   hostOnline(id: string): boolean { return Boolean(this.resolveHostAdapter(id)); }
   /** Runtime supplies the authenticated live-host selection at acceptance. */
-  selectIngressHost: (explicit?: string, _repoPath?: string, _origin?: string | null) => string | undefined = explicit => explicit ?? this.store.getMeta<string>("hostId") ?? undefined;
+  selectIngressHost: (explicit?: string, repoPath?: string, origin?: string | null, plannerHostId?: string) => string | undefined = explicit => explicit ?? this.store.getMeta<string>("hostId") ?? undefined;
+  selectIngressSelection: (explicit?: string, repoPath?: string, origin?: string | null, plannerHostId?: string) => import('../shared/host-selection').HostSelection | undefined = () => undefined;
   hostAvailable: (id: string) => boolean = () => true;
   taskHostAvailable(task: Task): boolean {
     return Boolean(task.hostId && (!this.activeHostId || this.activeHostId === task.hostId) && this.hostAvailable(task.hostId)

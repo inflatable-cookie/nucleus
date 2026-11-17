@@ -271,7 +271,7 @@ admission for every project without a restart. Owner verbs
 run and callback identity; a host-wide setting has no such gate.
 
 The Settings screen (through the plugin bridge or the local web board with a
-token, [below](#local-web-board)), the CLI (`bin/queue-cli.mjs`, which reads the
+paired session, [below](#local-web-board)), the CLI (`bin/queue-cli.mjs`, which reads the
 credential itself) and any task session's shell all reach the service as the
 same owner. Task launches expose only `nucleus_report`, `ask` and `tell` over MCP
 (with the `nucleus_ask` and `nucleus_message` aliases), but that is a discovery reduction, not a gate. The
@@ -283,7 +283,7 @@ change, not an identity check.
 ### Settings-only capacity writes (Tom, 2026-10-25)
 
 Dispatch limits change only from the Settings screen, on the plugin (Paseo or BB) or on the
-[local web board](#local-web-board) with a live token and the Settings marker. The CLI and agent routes
+[local web board](#local-web-board) with a paired session and the Settings marker. The CLI and agent routes
 refuse with a clear message, every applied change is recorded, and nothing needs
 a privileged install.
 
@@ -294,12 +294,12 @@ a privileged install.
 - **Provenance comes from the transport.** The bridge sets
   `ServiceRequest.via: "paseo"` on the frame it forwards
   (`shared/service/protocol.ts`); the web board's HTTP server sets `via: "web"`
-  only after a valid token; the BB plugin sets `via: "bb"` on the board calls it
+  only after a valid paired session; the BB plugin sets `via: "bb"` on the board calls it
   forwards over its retained host-executor connection (Spec 062, phase 6), and the
   server refuses `via: "bb"` as `invalid_input` on any connection that does not
   hold that role. `callCatalogueMethod` allows `queue.capacity` only with one of
   those three values. Every other caller (CLI, direct socket client,
-  task shell, tokenless web request) is refused before any handler with one typed `refused`:
+  task shell, unpaired web request) is refused before any handler with one typed `refused`:
   "only the operator changes Nucleus's dispatch limits, in Settings. Nothing
   changed; do not retry." Repeats refuse the same way. A body naming
   `authority`, `caller`, `relayed`, `approver`, `via` or `surface` fails input
@@ -347,7 +347,7 @@ a privileged install.
   reads the same values and record. Nothing resets them or re-asserts over a
   later change.
 - **Honest attribution.** The recorded surface `paseo` names the bridge and
-  `web` names the board with a token. Neither can tell the operator's press from
+  `web` names the board with a paired session. Neither can tell the operator's press from
   a same-uid process that sends the same bridge frame (for example
   `invokePluginRpc("nucleus", "queue.capacity", …)` on the daemon) or
   holds a board link, and neither claims to; Tom accepted that this is accident
@@ -371,27 +371,37 @@ service process, not a separate daemon, and it is not the Paseo plugin. The web
 UI shares the plugin components through a browser shell and react-native-web.
 The runtime build packages both bundles together.
 
-- **Bind.** `127.0.0.1` on a random free port, never another interface. The port
-  is recorded as `httpPort` in `queue-service.json`, beside the socket. A board
-  that cannot bind is logged and the socket keeps serving; `nucleus ui` then
-  refuses with `unavailable`.
+- **Bind (Tom, 2026-11-17).** The board binds `127.0.0.1` on port 4318 by
+  default; `NUCLEUS_WEB_PORT` configures another preferred port. If that port is
+  occupied, it falls back to port 0, logs the selected port, and `nucleus ui`
+  prints a link using it. It never fails service start because the preferred
+  port is busy. The selected port is recorded as `httpPort` in
+  `queue-service.json`, beside the socket.
 - **Host and Origin.** A `Host` other than `127.0.0.1:<port>` or
   `localhost:<port>` is refused with 403 before anything else, so a page on
   another domain that resolves to loopback (DNS rebinding) gets nothing. A present
   `Origin` must be one of those two origins. The server sends no CORS headers.
-- **Links and tokens.** `nucleus ui` asks the owner socket for one link,
-  `service.ui-link` (not a catalogue method), prints it and opens the browser;
-  `--no-open` only prints it. The link is
-  `http://127.0.0.1:<port>/#token=<token>`. A token is 32 random bytes. The service
-  holds only its SHA-256 digest, in memory. It expires after 8 hours by default
-  (5 minutes to 24 hours through `ttlMinutes`), and at most 16 are outstanding.
-  `nucleus ui --revoke` (`service.ui-link` with `action: "revoke"`) refuses every
-  outstanding token and closes the live streams they opened. A restart drops them
-  all. The plugin can call `service.ui-link` later; its bridge does not forward it yet.
-- **Carrying a token.** The page reads the fragment once on first load, keeps the
-  token in memory, and sends `Authorization: Bearer <token>` on every API request.
-  The fragment never reaches the server. No cookie or query string carries it. A
-  missing, malformed, unknown, expired or revoked token each get the same 401.
+- **Pairing and sessions (Tom, 2026-11-17).** `nucleus ui` asks the owner socket
+  for one link, `service.ui-link` (not a catalogue method), prints it and opens
+  the browser; `--no-open` only prints it. The link is
+  `http://127.0.0.1:<port>/#token=<token>&expiresAt=<unix-ms>`. Its 32-byte token
+  expires after 8 hours by default (5 minutes to 24 hours through `ttlMinutes`)
+  and is held as a digest in memory. The page reads the fragment once, exchanges
+  the token at `/api/pair`, then removes the fragment. The service sets an
+  HttpOnly, SameSite=Strict, Path=/ cookie (no Secure flag on loopback). It stores
+  only each cookie's SHA-256 digest and rolling expiry in
+  `<workRoot>/nucleus-web-sessions.json`, mode 0600. Sessions expire after 30 days
+  without use; use extends expiry. A service restart preserves paired sessions.
+  `nucleus ui --revoke` (`service.ui-link` with `action: "revoke"`) clears every
+  paired session and outstanding link token and closes their live streams.
+  The plugin can call `service.ui-link` later; its bridge does not forward it yet.
+- **Cookie boundary.** The page sends the cookie automatically on same-origin
+  requests; the fragment token is never sent to the server except to pair, and
+  no raw token or cookie value is written to disk or logs. Host checks are
+  unchanged. Origin checks remain exact to this board's loopback origin, and
+  cookie-authenticated mutations require that exact Origin even when a browser
+  sends the cookie to this port from another localhost port. Missing, malformed,
+  unknown, expired or revoked sessions each get the same 401.
 - **Routes.**
   - `GET /`, `/ui` and other GET paths serve the built bundle from `web/dist`
     in the installed runtime (or checkout when one exists). Otherwise they serve a minimal page that says
@@ -401,7 +411,12 @@ The runtime build packages both bundles together.
     board for `queue.ui-snapshot`, the executor, then output validation. Errors are
     typed: 400 `invalid_input`, 403 `refused`, 404 `method_unknown`, 401
     `unauthenticated`, 503 `busy`, `timeout` or `unavailable`.
-  - `GET /api/events` is a server-sent event stream. A `board` event carries the
+  - `POST /api/pair` exchanges the one-time link bearer for the paired session
+    cookie. The token is consumed; an invalid, expired or already-used token gets
+    the standard 401.
+  - `GET /api/session` checks an existing cookie so opening the plain board URL
+    after pairing, including after a service restart, enters the board directly.
+  - `GET /api/events` is a cookie-authenticated server-sent event stream. A `board` event carries the
     full projection when its revision moves, with the revision as its `id`. A
     `counters` event carries the unchanged-board acknowledgement when only the
     counters move, as the plugin's poll reads it. An `unavailable` event carries
@@ -416,25 +431,27 @@ The runtime build packages both bundles together.
   `profile.create`, `profile.update`, `profile.remove`;
   `SETTINGS_WRITE_METHODS` in `shared/web-surface.ts`) are served over the web only
   when the request also carries `x-nucleus-surface: settings`, which the web
-  Settings screen sends. A Settings write with a token but without the marker is
+  Settings screen sends. A Settings write with a session but without the marker is
   refused with a typed `refused` and changes nothing. A recorded capacity change
-  names its surface `web`. Every route without a token, and the socket, still
+  names its surface `web`. Every route without a paired session, and the socket, still
   refuses `queue.capacity`. The socket accepts only `via: "paseo"` on a frame, or
   `via: "bb"` on the BB plugin's host-executor connection, so a socket client cannot claim `web`. `task.register` is refused over the web with
   a typed `refused`: a worker registers from its own thread's shell.
 - **Native questions.** The board reads pending questions for each task-owned worker or retained reviewer. Before an answer reaches the host, the service rechecks task and thread identity and the pending request.
-- **The limit.** The token stops other sites and DNS-rebinding pages, and it makes
+- **The limit.** The session stops other sites and DNS-rebinding pages, and it makes
   every board write deliberate. It does not stop a process running as the same
   user from reading a link the owner issued or calling `service.ui-link` on the
   socket. That is the same accident-prevention boundary as the plugin's Settings
   screen, and the change record keeps every applied Settings change readable
   through `queue.capacity-state`.
 
-Proofs: `test/web-board.test.ts` (loopback bind and recorded port; Host and
-Origin refusals; no, wrong, malformed, expired and revoked tokens; a read and a
-board verb with a token; Settings over the web and the socket's refusal of the
-same write; the `task.register` refusal; the live channel's revision delivery and
-its close on revoke; the minimal page). The web shell's own proof lands with its task.
+Proofs: `test/web-board.test.ts` (fixed-port fallback and recorded port; Host and
+Origin refusals; pairing, persisted digest permissions, restart continuity and
+revoke; cookie-authenticated read and writes; Settings over the web and the
+socket's refusal of the same write; the `task.register` refusal; live revisions
+and stream close on revoke; the minimal page). `test/web-transport.test.ts`
+proves read retry after restart and no retry for mutations. The web shell's own
+proof lands with its task.
 
 ## Process and data ownership
 
@@ -1329,6 +1346,8 @@ BB plugin can connect before the daemon bootstrap and the daemon-identity guard
 reads that entry: the legacy unqualified `hostId`, the retired
 observation scope and the daemon-identity guard all read it, so a BB or T3 host
 that connects earlier still never displaces the host those records belong to.
+
+New task host routing is fixed when the task is accepted: explicit task host, an explicit repository `hostKind` override, the operator default host kind (seeded as `paseo`), then the proven submitting planner host. The operator default lives with Settings → Dispatch limits and is writable only through `queue.capacity`, so the CLI and other non-Settings routes refuse it just like other capacity fields. An offline operator default falls through to the planner host and records that reason; a task with no available host stays pinned to the host it wanted and waits visibly. A schema migration converts stored repository `paseo` defaults to inherit while preserving explicit T3Code and BB overrides. Existing task host identity never changes when either setting changes.
 
 The [T3Code adapter contract](../specs/t3code-host-adapter.md) defines the second
 host's connection and operation boundary. Before registration or

@@ -12,9 +12,8 @@
  * - the pending-interaction renderer for a Nucleus-raised blocking question;
  * - a "Project board" thread action on planner and named-agent rows.
  *
- * Usage is the board's own Usage view over `usage.state` (decision 5e): BB's card
- * and the operator's Usage Pace plugin cover glanceable usage, so this file adds
- * no usage surface of its own.
+ * Subscription usage belongs to BB's own card and the operator's host plugins
+ * (decision 5e); Nucleus adds no usage view.
  */
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Text, TextInput, View } from "react-native";

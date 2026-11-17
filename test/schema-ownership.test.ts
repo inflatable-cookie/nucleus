@@ -61,7 +61,7 @@ test('the cost scale is the capability scale, listed most expensive first', () =
 test('the capacity catalogue is the only place a limit is bounded and defaulted', () => {
   assert.deepEqual(Object.keys(capacitySchema.shape), ['globalLimit', 'projectLimit', 'papercutProjectLimit', 'paseoCallLimit',
     'stallThresholdMinutes', 'holdReminderMinutes', 'holdEscalationMinutes', 'laneDrainMinutes', 'laneDrainEscalationMinutes',
-    'hostOutageNoticeMinutes']);
+    'hostOutageNoticeMinutes', 'operatorDefaultHostKind']);
   // An absent field keeps the catalogue's default, and the bound is the catalogue's.
   assert.equal(capacityStateFields.paseoCallLimit.parse(undefined), DEFAULT_PASEO_CALL_LIMIT);
   assert.equal(capacityStateFields.paseoCallLimit.parse(MAX_PASEO_CALL_LIMIT), MAX_PASEO_CALL_LIMIT);
@@ -71,6 +71,7 @@ test('the capacity catalogue is the only place a limit is bounded and defaulted'
   const whole = capacityAuthorityValuesSchema.parse(Object.fromEntries([
     ['globalLimit', 1], ['projectLimit', 1],
     ...Object.entries(capacityBounds).map(([field, bound]) => [field, bound.fallback]),
+    ['operatorDefaultHostKind', 'paseo'],
   ]));
   assert.equal(whole.hostOutageNoticeMinutes, capacityBounds.hostOutageNoticeMinutes.fallback);
 });

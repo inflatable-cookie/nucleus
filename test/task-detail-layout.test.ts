@@ -11,6 +11,7 @@ const ui = () => boardSource();
 test('the task detail leads with an overview tab and keeps every detail group in tabs', () => {
   const source = ui();
   assert.match(source, /function TaskSummaryBlock/);
+  assert.match(source, /Host selection: \$\{task\.hostSelection\.basis\}/, 'the Overview shows the recorded host-selection basis');
   assert.match(source, /<TaskSummaryBlock\n/);
   // The summary: the current wait, who owns it and the next action, then the holds, progress and the newest headline.
   assert.match(source, /const wait = taskOverviewWait\(task\.waitState, next, task\.reason\)/);

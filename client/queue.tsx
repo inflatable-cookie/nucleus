@@ -15,7 +15,6 @@ import { activeSelection, effectiveSelection, projectHasRepository, scopeContain
 import { isOpenTask, navigationViews, openTaskCount, workspaceNavigationViews, type SettingsTarget } from "../shared/queue-navigation";
 import { errorText, readErrorText, storedBoardErrorText } from "./error-text";
 import { LaneScreen, isPapercut, type LaneDraft } from "./lane-screen";
-import { UsagePage } from "./usage";
 import { QaRunsTab, liveHostRun, type RunAccounting } from "./qa-runs-tab";
 import { attention } from "./board/text";
 import { BoardHeader } from "./board/header";
@@ -46,19 +45,6 @@ let settingsOpener: ((section?: SettingsTarget) => void) | null = null;
 export function registerSettingsOpener(open: (section?: SettingsTarget) => void): void { settingsOpener = open; }
 
 /**
- * A tab the sidebar's usage rings ask the board to show (nucleus#1123). The rings
- * sit beside the Nucleus button in the Paseo sidebar, and each opens the board on
- * its Usage tab; a request made while no board is mounted waits for the next one,
- * and while a board is open the newest request moves it.
- */
-let requestedBoardTab: BoardTab | null = null;
-const boardTabListeners = new Set<(tab: BoardTab) => void>();
-export function requestBoardTab(tab: BoardTab): void {
-  requestedBoardTab = tab;
-  for (const show of boardTabListeners) show(tab);
-}
-
-/**
  * The board shell: tabs, project scope and the open task or record. The header
  * (`board/header.tsx`), the Pipeline (`board/pipeline.tsx`) and the reads
  * (`board/use-board-data.ts`) live in their own modules.
@@ -75,14 +61,6 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard, now }: 
   const changeLaneStatus = useRpc(api.laneStatus);
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<BoardTab>("queue");
-  // A ring's tab request is taken on mount (that ring just opened the board) and
-  // while the board is open; the request is spent once a board has taken it.
-  useEffect(() => {
-    const show = (next: BoardTab) => setTab(next);
-    boardTabListeners.add(show);
-    if (requestedBoardTab) { const pending = requestedBoardTab; requestedBoardTab = null; show(pending); }
-    return () => { boardTabListeners.delete(show); };
-  }, []);
   // A board QA card opens the QA runs page on its run (Tom, 2026-11-01).
   const [surfaceScope, setSurfaceScope] = useProjectScope();
   // Spec 026 row 14c: the workspace panel's selection is preset to the workspace's
@@ -380,11 +358,6 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard, now }: 
             onOpenTask={selectTask}
             c={c}
           />
-        )}
-        {tab === "usage" && (
-          <View style={{ flex: 1, minHeight: 0 }}>
-            <UsagePage theme={theme} layout={{ compact }} now={now} />
-          </View>
         )}
         {tab === "queue" && (
         <View style={{ flex: 1, minHeight: 0, gap: space.sm, zIndex: 0 }}>

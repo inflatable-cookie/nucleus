@@ -24,7 +24,6 @@ import {StorePreSend} from "./store-pre-send";
 import {buildOutcomeRecord,StoreOutcomes,type TelemetryFactChunk,type VerbOutcome} from "./store-outcomes";
 import {StorePlanning} from "./store-planning";
 import {StoreProjectQa} from "./store-project-qa";
-import {StoreUsage,type UsageSample} from "./store-usage";
 import {StoreProjectRegistry} from "./store-project-registry";
 import {StoreRepositorySettings} from "./store-repository-settings";
 import {StoreProjectAgents} from "./store-project-agents";
@@ -333,7 +332,6 @@ export class Store {
   });
   private readonly hostRunStore = new StoreHostRuns(this.core);
   private readonly projectQaStore = new StoreProjectQa(this.core);
-  private readonly usageStore = new StoreUsage(this.core);
   private readonly planningStore = new StorePlanning(this.core, {
     requireLaneDocuments: (keys, repoPath, origin) => this.lanesStore.requireLaneDocuments(keys, repoPath, origin),
     laneDocumentPinsFor: task => this.lanesStore.laneDocumentPinsFor(task),
@@ -525,9 +523,6 @@ export class Store {
   /** One truncating WAL checkpoint; `busy` reports a reader that kept the WAL in place. */
   checkpointWal(): { busy: number; log: number; checkpointed: number } { return this.reclaimStore.checkpointWal(); }
   transaction<T>(fn: () => T): T { return this.core.transaction(fn); }
-  usageReadState(key: string): string | null { return this.usageStore.readState(key); }
-  recordUsageRead(key: string, data: string, samples: readonly UsageSample[]): void { return this.usageStore.recordRead(key, data, samples); }
-  pruneUsageSamples(before: string): void { return this.usageStore.pruneSamples(before); }
   private transactionHooks() {
     const undo = this.tasksStore.projectionUndo = { projection: this.tasksStore.taskProjection, clock: this.tasksStore.projectionClock, sequence: this.tasksStore.newestSequence,
       tasks: new Map(), runs: new Map(), counts: new Map() };
@@ -962,9 +957,9 @@ export class Store {
    */
   resolveRepositoryIdentity(input: { origin: string; path: string }): { origin: string; path: string } { return this.repositorySettingsStore.resolveRepositoryIdentity(input); }
   /** Monotonic write ordinal for repository settings rows, allocated inside the caller's transaction: durable latest-setting order independent of clock resolution. */
-  putRepository(identity: RepositorySettings["repository"], closeout: ProjectCloseout | null, note: string, validation: ProjectValidation | null = null, reviewer: RepositorySettings["reviewer"] = null, qa: ProjectQa | null = null, checksPolicy: RepositorySettings["checksPolicy"] | undefined = undefined, scratchNamespace?: string | null, hostKind?: import("../../shared/host-kind").HostKind, affectedTests?: RepositorySettings["affectedTests"]): RepositorySettings { return this.repositorySettingsStore.putRepository(identity, closeout, note, validation, reviewer, qa, checksPolicy, scratchNamespace, hostKind, affectedTests); }
+  putRepository(identity: RepositorySettings["repository"], closeout: ProjectCloseout | null, note: string, validation: ProjectValidation | null = null, reviewer: RepositorySettings["reviewer"] = null, qa: ProjectQa | null = null, checksPolicy: RepositorySettings["checksPolicy"] | undefined = undefined, scratchNamespace?: string | null, hostKind?: import("../../shared/host-kind").HostKind | null, affectedTests?: RepositorySettings["affectedTests"]): RepositorySettings { return this.repositorySettingsStore.putRepository(identity, closeout, note, validation, reviewer, qa, checksPolicy, scratchNamespace, hostKind, affectedTests); }
   /** Patch semantics: only the named fields change; `null` clears one and an absent field keeps its stored value. Returns the full resulting row. */
-  patchRepository(identity: RepositorySettings["repository"], patch: { scratchNamespace?: string | null; closeout?: ProjectCloseout | null; validation?: ProjectValidation | null; reviewer?: RepositorySettings["reviewer"]; qa?: ProjectQa | null; affectedTests?: RepositorySettings["affectedTests"]; checksPolicy?: RepositorySettings["checksPolicy"]; hostKind?: import("../../shared/host-kind").HostKind; note?: string }): RepositorySettings { return this.repositorySettingsStore.patchRepository(identity, patch); }
+  patchRepository(identity: RepositorySettings["repository"], patch: { scratchNamespace?: string | null; closeout?: ProjectCloseout | null; validation?: ProjectValidation | null; reviewer?: RepositorySettings["reviewer"]; qa?: ProjectQa | null; affectedTests?: RepositorySettings["affectedTests"]; checksPolicy?: RepositorySettings["checksPolicy"]; hostKind?: import("../../shared/host-kind").HostKind | null; note?: string }): RepositorySettings { return this.repositorySettingsStore.patchRepository(identity, patch); }
   scratchNamespaceFor(task: Pick<Task, "repoPath" | "repository">): string { return this.repositorySettingsStore.scratchNamespaceFor(task); }
   /** Task 382: the effective hosted-check policy for a task's repository. An absent or null setting keeps every check blocking, so existing repositories never gain advisory behaviour implicitly. */
   checksPolicyFor(task: Pick<Task, "repoPath" | "repository">): RepositoryChecksPolicy { return this.repositorySettingsStore.checksPolicyFor(task); }

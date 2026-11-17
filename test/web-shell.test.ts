@@ -25,7 +25,20 @@ test("web bundle renders the board against the daemon protocol without Paseo", a
   const link = server.issueLink(5).url;
   const dom = new JSDOM('<!doctype html><div id="root"></div>', { url: link, runScripts: "dangerously", pretendToBeVisual: true });
   try {
-    Object.assign(dom.window, { fetch: (path: string, options: RequestInit) => fetch(`http://127.0.0.1:${port}${path}`, options), TextDecoder, TextEncoder, AbortController });
+    let cookie = "";
+    Object.assign(dom.window, {
+      fetch: async (path: string, options: RequestInit = {}) => {
+        const headers = new Headers(options.headers);
+        if (cookie) headers.set("cookie", cookie);
+        const response = await fetch(`http://127.0.0.1:${port}${path}`, { ...options, headers });
+        const setCookie = response.headers.get("set-cookie");
+        if (setCookie) cookie = setCookie.split(";")[0]!;
+        return response;
+      },
+      TextDecoder,
+      TextEncoder,
+      AbortController,
+    });
     dom.window.eval(`(() => { ${bundle} })()`);
     for (let i = 0; i < 200 && !calls.includes("queue.ui-snapshot"); i++) await new Promise(resolve => setTimeout(resolve, 10));
     assert.ok(calls.includes("queue.ui-snapshot"), "board requested the snapshot through HTTP");

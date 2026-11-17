@@ -661,10 +661,10 @@ function lostDelivery(socketPath: string, payload: unknown): Promise<void> {
 /** The whole dispatch-limit state a Settings write carries. */
 const CAPACITY_STATE = { globalLimit: 20, projectLimit: 4, papercutProjectLimit: 2, paseoCallLimit: 6,
   stallThresholdMinutes: 30, holdReminderMinutes: 120, holdEscalationMinutes: 240,
-  laneDrainMinutes: 120, laneDrainEscalationMinutes: 1440, hostOutageNoticeMinutes: 120 };
+  laneDrainMinutes: 120, laneDrainEscalationMinutes: 1440, hostOutageNoticeMinutes: 120, operatorDefaultHostKind: "paseo" };
 interface CapacityStateView {
-  effective: Record<string, number>;
-  changes: { version: number; at: string; surface: string; before: Record<string, number>; after: Record<string, number> }[];
+  effective: Record<string, unknown>;
+  changes: { version: number; at: string; surface: string; before: Record<string, unknown>; after: Record<string, unknown> }[];
 }
 
 /**
@@ -705,10 +705,11 @@ test('Settings applies capacity through the real bridge forward, records it with
     // The Settings screen's own route: plugin RPC → ServiceBridge.forward → socket.
     // Parent falsification: at the dispatch base this same forward refuses with
     // `refused`, so this assertion is what the change turns around.
-    assert.deepEqual(await bridge.forward(capacityEntry, { globalLimit: 20, projectLimit: 4 }), { ok: true });
+    assert.deepEqual(await bridge.forward(capacityEntry, { globalLimit: 20, projectLimit: 4, operatorDefaultHostKind: "bb" }), { ok: true });
     const applied = await client.request('queue.capacity-state', {}) as State;
     assert.equal(applied.effective.globalLimit, 20);
     assert.equal(applied.effective.projectLimit, 4);
+    assert.equal(applied.effective.operatorDefaultHostKind, 'bb', 'Settings can update the operator default host through the same operator-only route');
     assert.equal(applied.effective.papercutProjectLimit, before.effective.papercutProjectLimit, 'an omitted field keeps the value in force');
     assert.equal(applied.changes.length, 1);
     const change = applied.changes[0]!;
@@ -779,7 +780,7 @@ test('Settings-only capacity: every other surface refuses with zero mutation, an
       client.request('queue.capacity', { globalLimit: 24, projectLimit: 4 }),
       client.request('queue.capacity', { globalLimit: 24, projectLimit: 4, papercutProjectLimit: 3, paseoCallLimit: 6 }),
       taskClient.request('queue.capacity', { globalLimit: 64, projectLimit: 32, papercutProjectLimit: 32, paseoCallLimit: 32,
-        stallThresholdMinutes: 240, holdReminderMinutes: 10080, holdEscalationMinutes: 10080, laneDrainMinutes: 10080, laneDrainEscalationMinutes: 10080, hostOutageNoticeMinutes: 10080 }),
+        stallThresholdMinutes: 240, holdReminderMinutes: 10080, holdEscalationMinutes: 10080, laneDrainMinutes: 10080, laneDrainEscalationMinutes: 10080, hostOutageNoticeMinutes: 10080, operatorDefaultHostKind: "paseo" }),
       taskClient.request('queue.capacity', { globalLimit: 1, projectLimit: 1 }),
     ];
     for (const refusal of refusals) {

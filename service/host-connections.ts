@@ -1,6 +1,5 @@
 import { parseAgentId } from "../shared/agent-identity";
 import {
-  DEFAULT_HOST_KIND,
   HOST_PLUGIN_RELOAD_COMMANDS,
   hostKindOf,
   type IdentitySource,
@@ -60,25 +59,26 @@ export interface EngineHostWiring {
  * does not also invent the routing policy.
  */
 export function wireEngineHosts(engine: Engine, runtime: EngineHostWiring): void {
-  engine.selectIngressHost = (explicit, repoPath, origin) => {
+  engine.selectIngressSelection = (explicit, repoPath, origin, plannerHostId) => {
     const registered = runtime.hostRegistry.known().map(host => host.id);
     const online = runtime.hostRegistry.onlineIds();
-    if (!repoPath && !origin) {
-      if (explicit) {
-        if (!registered.includes(explicit)) throw new Error('Selected host is not registered');
-        return explicit;
-      }
-      return online.length === 1 ? online[0] : undefined;
+    if (!repoPath && !origin && !explicit && !plannerHostId) {
+      if (online.length === 1) return { hostId: online[0]!, basis: 'sole_online_host' };
+      return undefined;
     }
     const settings = runtime.store.canonicalRepository(repoPath ?? '', origin);
-    const hostKind = settings?.hostKind ?? DEFAULT_HOST_KIND;
+    const storedDefault = runtime.store.getMeta<import('../shared/host-kind').HostKind | null>('operatorDefaultHostKind');
+    const operatorDefaultHostKind = storedDefault === undefined ? 'paseo' : storedDefault;
     try {
-      return resolveIngressHost({ explicit, hostKind, registered, online }).hostId;
+      return resolveIngressHost({ explicit, repositoryHostKind: settings?.hostKind ?? null,
+        operatorDefaultHostKind, plannerHostId, registered, online }).selection;
     } catch (error) {
-      if (settings) throw new Error(`Cannot select host for repository ${settings.repository.origin ?? settings.repository.path}: ${error instanceof Error ? error.message : String(error)}`);
+      if (settings?.hostKind) throw new Error(`Cannot select host for repository ${settings.repository.origin ?? settings.repository.path}: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
     }
   };
+  engine.selectIngressHost = (explicit, repoPath, origin, plannerHostId) =>
+    engine.selectIngressSelection(explicit, repoPath, origin, plannerHostId)?.hostId;
   engine.resolveHostAdapter = (id) => runtime.hostRegistry.get(id)?.adapter;
   engine.hostIds = () => runtime.hostRegistry.known().map((host) => host.id);
   engine.inventoryHostMatches = (id) => runtime.hostSession?.id === id;

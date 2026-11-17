@@ -91,6 +91,7 @@ export class RuntimeBoard {
       laneDrainMinutes: this.context.store.getMeta<number>("laneDrainMinutes") ?? DEFAULT_LANE_DRAIN_MINUTES,
       laneDrainEscalationMinutes: this.context.store.getMeta<number>("laneDrainEscalationMinutes") ?? DEFAULT_LANE_DRAIN_ESCALATION_MINUTES,
       hostOutageNoticeMinutes: this.context.store.getMeta<number>("hostOutageNoticeMinutes") ?? DEFAULT_HOST_OUTAGE_NOTICE_MINUTES,
+      operatorDefaultHostKind: this.context.store.getMeta<import("../../shared/host-kind").HostKind | null>("operatorDefaultHostKind") === undefined ? "paseo" : this.context.store.getMeta<import("../../shared/host-kind").HostKind | null>("operatorDefaultHostKind")!,
       paseoCallLimit: this.context.store.configuredPaseoCallLimit(),
       operationLimit: this.context.store.configuredOperationLimit(), operationBacklog: this.context.store.operationBacklog(),
     };

@@ -159,11 +159,11 @@ export class T3CodeHost implements Host {
     // shell inventory's tombstone is already positive proof of the deletion.
     if (found.deletedAt) {
       this.presentation.retireDeletedPresentationIntents(id);
-      return { id, workspaceId: this.reads.workspaceFor(found), title: found.title, archived: !!found.archivedAt, deleted: true };
+      return { id, workspaceId: this.reads.workspaceFor(found) ?? `t3-project:${found.projectId}`, title: found.title, archived: !!found.archivedAt, deleted: true };
     }
     const p = await this.reads.readProjection(id, 'observation');
     if (p.thread.deletedAt) this.presentation.retireDeletedPresentationIntents(id);
-    return { id, workspaceId: this.reads.workspaceFor(p.thread), title: p.thread.title, archived: !!p.thread.archivedAt,
+    return { id, workspaceId: this.reads.workspaceFor(p.thread) ?? `t3-project:${p.thread.projectId}`, title: p.thread.title, archived: !!p.thread.archivedAt,
       deleted: !!p.thread.deletedAt };
   }
   /** One synchronized thread snapshot: the reads module owns the decode, the host owns this entry to it. */
