@@ -33,7 +33,13 @@ ticket or route to bypass it. All other helpers connect directly to Nucleus;
 The CLI and submit, subscribe and reparent helpers identify the calling thread from its
 Nucleus-issued ticket first, then its host's identity. `NUCLEUS_TICKET` names the run
 or participant ticket; use the path delivered to this thread. An invalid or revoked
-ticket refuses. If neither source exists, the refusal names the sources tried.
+ticket refuses. Without a ticket, T3Code uses `T3CODE_THREAD_ID` together with
+`T3CODE_DESKTOP_HOST_SCOPE`; Nucleus matches that scope to its registered online
+T3 host and verifies the thread through that host's adapter. Paseo uses
+`PASEO_AGENT_ID`. If both host identities are present, T3Code takes precedence;
+an incomplete T3 identity refuses instead of falling through to Paseo. If no source
+exists, the refusal names the sources tried. These identities identify the caller
+only; they do not grant authority beyond a Nucleus ticket's existing scope.
 Explicit operator and relayed-note paths keep their existing meaning.
 
 Assigning a planner issues an owner-only participant ticket and hands its path over
@@ -43,7 +49,7 @@ authenticated call, and only a thread observed live on a host with no
 calling-thread identity of its own receives one message. Reassigning or clearing the
 planner revokes it, and a planner with no ticket yet shows as pending on the board.
 A task's own planner receives the same ticket, keyed per thread and scoped to the
-tasks that name it, so it can answer on a host without per-thread identity;
+tasks that name it, so it can answer on a host with its own caller identity;
 reparenting a task moves that scope and revokes the outgoing planner's ticket.
 Every named project agent takes its ticket by the same routes (Spec 060); renaming,
 reassigning or unregistering the name revokes it. Caller records use host-qualified
