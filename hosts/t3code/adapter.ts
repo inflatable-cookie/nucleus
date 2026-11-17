@@ -125,7 +125,6 @@ export class T3CodeHost implements Host {
       hostId: () => this.hostId,
       requireConnection: () => this.requireConnection(),
       acp: options.acp ?? (() => null),
-      observationInventory: ids => this.observationInventory(ids),
       ...(options.reentryTimeoutMs === undefined ? {} : { reentryTimeoutMs: options.reentryTimeoutMs }),
       modelSelectionOptions: (profile, model) => this.modelSelectionOptions(profile, model),
       runtimeMode: (profile, supported) => this.launchRuntimeMode(profile, supported),

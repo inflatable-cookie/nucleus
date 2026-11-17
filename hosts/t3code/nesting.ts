@@ -108,8 +108,6 @@ export interface T3NestingContext {
   requireConnection(): void;
   /** The service's ACP session surface; absent in a process that serves no ACP sessions. */
   acp(): AcpSessionSurface | null;
-  /** One fresh observation of a set of threads; null when any read was unavailable. */
-  observationInventory(ids: readonly string[]): Promise<Map<string, { active: boolean; status: string }> | null>;
   /** The profile's model options, from the launch's own config read (the host's fence). */
   modelSelectionOptions(profile: Profile, model: ConfigModel | undefined): Array<{ id: string; value: string | boolean }>;
   /** The profile's runtime mode as one provider offers it (the host's fence). */
@@ -141,11 +139,18 @@ export class T3Nesting {
     return Object.values(this.core.state.read().parents ?? {}).some(parent => parent.threadId === threadId);
   }
 
-  /** The task one nested child belongs to, when this host recorded it as a child. */
+  /**
+   * The task one nested child belongs to, when this host recorded it as a child.
+   * Only the child's own recorded parent thread counts: a role thread of a parented
+   * task that fell back to a top-level launch is a top-level thread and keeps every
+   * one-row and settle rule (nucleus#1305 review).
+   */
   taskOfChild(threadId: string): string | undefined {
     const state = this.core.state.read();
-    const taskId = labelTask(state.agents[threadId]?.labels);
-    return taskId && state.parents?.[taskId] ? taskId : undefined;
+    const agent = state.agents[threadId];
+    const taskId = labelTask(agent?.labels);
+    if (!agent?.parentThreadId || !taskId) return undefined;
+    return state.parents?.[taskId]?.threadId === agent.parentThreadId ? taskId : undefined;
   }
 
   /** What the host status reports: whether this host is nesting, or why it is not. */
@@ -188,17 +193,25 @@ export class T3Nesting {
     const provider = this.parentProvider(input.observed);
     if (!provider.ok) return this.degrade(taskId, provider.reason);
     const existing = this.parentOf(taskId);
-    // A role whose run needs another checkout cannot be a child: a child with no
-    // workspace strategy inherits the parent's worktree, and one with a strategy never
-    // starts outside T3's own MCP handler. Such a role stays a top-level thread.
-    if (existing && existing.workspaceId !== input.workspace.id) return null;
-    // The create owns the turn from here: a concurrent sweep must not release it
-    // between the parent-run read and the child command.
-    if (existing) this.core.state.update(state => {
-      const current = state.parents?.[taskId];
-      if (current) current.holdingSince = new Date().toISOString();
-    });
-    const parent = existing && !existing.archivedAt ? existing : await this.launchParent(input, provider, acp);
+    if (existing) {
+      // A role whose run needs another checkout cannot be a child: a child with no
+      // workspace strategy inherits the parent's worktree, and one with a strategy never
+      // starts outside T3's own MCP handler. Such a role stays a top-level thread.
+      if (existing.workspaceId !== input.workspace.id) return null;
+      // A parent that is finished (archived, or gone from a complete inventory) is not
+      // re-launched: its task works the rest of its roles as top-level threads. A
+      // second parent thread would orphan this task's children and re-mint its binding.
+      if (existing.archivedAt) return null;
+      const gone = await this.parentGone(existing).catch(() => null);
+      if (gone) { this.finishParent(taskId, gone); return null; }
+      // The create owns the turn from here: a concurrent sweep must not release it
+      // between the parent-run read and the child command.
+      this.core.state.update(state => {
+        const current = state.parents?.[taskId];
+        if (current) current.holdingSince = new Date().toISOString();
+      });
+    }
+    const parent = existing ?? await this.launchParent(input, provider, acp);
     if (!parent) return null;
     const commandId = identity('child', canonical([this.core.hostId(), input.attempt.requestId]));
     const threadId = childThreadId(commandId);
@@ -224,7 +237,7 @@ export class T3Nesting {
       const old = state.agents[threadId], record = { id: threadId, workspaceId: input.workspace.id, labels: input.attempt.labels };
       if (old && canonical({ id: old.id, workspaceId: old.workspaceId, labels: old.labels }) !== canonical(record))
         throw new ProvenPreSendRefusalError('T3Code retained identity changed');
-      state.agents[threadId] = { ...old, ...record, title: input.title };
+      state.agents[threadId] = { ...old, ...record, title: input.title, parentThreadId: parent.threadId };
     });
     try {
       await this.core.intents.effect(commandId, 'orchestration.dispatchCommand', payload, () => {
@@ -457,18 +470,21 @@ export class T3Nesting {
   }
 
   /**
-   * Whether any child of this task can still act. A child the host cannot read counts
-   * as live: an unreadable thread is never the reason to stop holding the parent.
+   * Whether any child of this task can still act. One complete inventory answers it:
+   * a thread absent from that list is deleted (a positive fact, never a read that
+   * failed), and a listed one is live only while its shell reports a live run. A
+   * deleted child must not hold the parent's turn forever (nucleus#1305 review), and
+   * an inventory this host cannot read keeps the turn rather than guessing.
    */
   private async anyChildLive(taskId: string): Promise<boolean> {
     const state = this.core.state.read();
-    const ids = Object.entries(state.agents)
+    const ids = new Set(Object.entries(state.agents)
       .filter(([id, agent]) => labelTask(agent.labels) === taskId && !this.core.intents.confirmedDeletion(state, id))
-      .map(([id]) => id);
-    if (!ids.length) return false;
-    const observed = await this.core.observationInventory(ids).catch(() => null);
-    if (!observed) return true;
-    return [...observed.values()].some(agent => agent.active || agent.status === 'gone');
+      .map(([id]) => id));
+    if (!ids.size) return false;
+    const { threads } = await this.core.reads.inventory();
+    return threads.some(thread => ids.has(thread.id)
+      && (activeStatuses.has(thread.status) || thread.activeRunId !== null));
   }
 
   /** The child thread T3 created for this command, when it exists after a lost reply. */
@@ -489,6 +505,30 @@ export class T3Nesting {
 
   private forgetParent(taskId: string): void {
     this.core.state.update(state => { if (state.parents?.[taskId]) delete state.parents[taskId]; });
+  }
+
+  /**
+   * Whether this task's parent thread is finished: `archived`, or absent from the
+   * complete inventory (deleted). Null means it is still readable and registered.
+   */
+  private async parentGone(parent: ParentThread): Promise<'archived' | 'deleted' | null> {
+    const { threads } = await this.core.reads.inventory();
+    const thread = threads.find(candidate => candidate.id === parent.threadId);
+    if (!thread) return 'deleted';
+    return thread.archivedAt ? 'archived' : null;
+  }
+
+  /**
+   * Record a parent this task will not use again, so later roles fall back at once and
+   * the sweep leaves it alone. The record stays: it is how the host remembers that a
+   * role of this task is a fallback thread rather than a child.
+   */
+  private finishParent(taskId: string, why: 'archived' | 'deleted'): void {
+    this.core.state.update(state => {
+      const current = state.parents?.[taskId];
+      if (current) current.archivedAt ??= new Date().toISOString();
+      state.nesting = { state: 'fallback', reason: `the task parent thread is ${why}`, at: new Date().toISOString() };
+    });
   }
 
   // ---------------------------------------------------------------------- fallbacks

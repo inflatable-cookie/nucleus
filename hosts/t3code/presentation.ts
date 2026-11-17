@@ -230,8 +230,9 @@ export class T3Presentation {
   async registerSupportThread(entry: { taskId: string; threadId: string; role: string }): Promise<void> {
     // A nested child is already drawn inside the parent row by T3 itself: no tag and
     // no `thread_created` card, because the parent is not an agent conversation that
-    // could carry one (nucleus#1305).
-    if (this.core.parentThreadOf?.(entry.taskId)) return;
+    // could carry one. Only the recorded child is skipped — a role thread of a parented
+    // task that fell back to a top-level launch keeps the one-row model (nucleus#1305).
+    if (this.core.nestedChild?.(entry.threadId)) return;
     this.core.state.update(state => {
       // This thread is the one the role now uses; any earlier thread for the same
       // task and role is displaced and stops naming the row's step.

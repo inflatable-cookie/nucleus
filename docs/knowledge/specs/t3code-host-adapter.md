@@ -656,6 +656,26 @@ fast-path dispose was lost. The binding also ignores the nightly's wake and rest
 wordings, so even a wake that arrives is never forwarded to the task as a person's
 message.
 
+**Only a recorded child is a child.** A task can have a parent and still run some
+of its roles as top-level threads (a different checkout, a parked native path, an
+archived parent). A child is a thread whose own recorded agent entry names the
+parent it was created under; nothing is inferred from the task having a parent. So a
+fallback role thread of a parented task keeps every one-row rule — it is tagged,
+linked, settled and stepped like any top-level support thread — and its follow-ups
+send no child dispose (nucleus#1305 review).
+
+**A finished parent is never relaunched.** A parent whose thread is archived, or
+absent from the complete inventory (which is how the host proves a deletion), ends
+the nested path for that task: the remaining roles launch as top-level threads and
+the record keeps its archived marker so later roles fall back at once. Launching a
+second parent would orphan the task's existing children and re-mint a binding under
+a thread nothing runs.
+
+**A deleted child does not hold the turn.** The release decision reads one complete
+inventory: a child absent from it is deleted (a positive fact, never a read that
+failed), and a listed child is live only while its shell reports a live run or an
+`activeRunId`. An inventory the host cannot read keeps the turn rather than guessing.
+
 **Identity and durability.** The parent thread id, its command id and the ACP
 session are deterministic for a task
 (`identity('thread', …)` and `identity('parent-launch', …)`), recorded in the
@@ -941,8 +961,11 @@ permissions answered on the child with the parent never addressed; a reconnect
 that re-enters the same parent rather than launching another; the fallbacks (no
 provider, a non-ACP driver, a role in another checkout, a parent T3 will not run)
 with the host status naming why; an unknown child command never resent under the
-same identity; and the recorded delegated-task wire shapes decoding into the
-projection. `test/acp-agent.test.ts` adds the hold rule (nothing shown, nothing
+same identity; the recorded delegated-task wire shapes decoding into the projection;
+a fallback role of a parented task staying a tagged, settled top-level thread that
+sends no child dispose; a deleted child releasing the parent turn; and a role
+launched after its parent was archived, or after the parent vanished from the
+inventory, falling back instead of relaunching it. `test/acp-agent.test.ts` adds the hold rule (nothing shown, nothing
 forwarded, the turn held) and keeps it distinct from the ignore rule;
 `test/acp-service.test.ts` proves a mint carries both prompt rules into the binding
 and that a mint without them writes neither.

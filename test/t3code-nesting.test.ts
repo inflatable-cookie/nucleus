@@ -12,7 +12,7 @@ import type { AcpSessionSurface } from '../shared/acp/surface';
 import { ProvenPreSendRefusalError } from '../core/host';
 import type { HostAgentSpec } from '../shared/host';
 import type { Profile, Task } from '../shared/contracts';
-import { t3Fake, syntheticRuntimeRequest, syntheticTurnItem } from './support/t3code-fake';
+import { t3Fake, STAMP, syntheticRuntimeRequest, syntheticTurnItem } from './support/t3code-fake';
 import { storedT3Labels } from './support/t3code-labels';
 
 const profile: Profile = { id: 'synthetic-profile', name: 'Synthetic', provider: 'synthetic-provider', model: 'synthetic-model',
@@ -259,6 +259,68 @@ test('without the nucleus provider the task keeps top-level role threads and say
   assert.equal(host.state.read().nesting?.state, 'fallback');
   assert.match(host.state.read().nesting!.reason, /nucleus/);
   assert.match(host.nativeParentingStatus, /native parenting off/);
+});
+
+test('a fallback role of a parented task is a top-level thread: tagged, settled, never disposed', async t => {
+  const { host, server, spec } = await fixture(t);
+  await host.createAgent(spec('worker-create', 'Do the work'));
+  // A review checkout gives the reviewer its own workspace, which cannot be a child:
+  // it is a top-level thread of a task that still has a parent.
+  const other = await host.createWorkspace({ title: 'Review checkout', requestId: 'review-workspace',
+    directory: await realpath(mkdtempSync(join(tmpdir(), 't3code-nesting-review-'))), project: { projectId: 'synthetic-project' } });
+  const reviewer = await host.createAgent({ ...spec('review-run', 'Review it', 'reviewer'), workspaceId: other.id });
+  assert.equal(host.state.read().agents[reviewer.id]!.parentThreadId, undefined, 'a fallback thread is not recorded as a child');
+  // The one-row fallback still applies to it: the tag is set and it settles on a report.
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.ok(commandsOf(server, 'thread.tag.set').some(command => command.threadId === reviewer.id && command.tag === 'nucleus-support'),
+    'a fallback support thread is tagged');
+  for (const run of server.threads.get(reviewer.id)!.runs) run.status = 'completed';
+  await host.settleReportedThread(reviewer.id, 'review-run');
+  assert.ok(commandsOf(server, 'thread.settle').some(command => command.threadId === reviewer.id),
+    'a fallback support thread settles like a top-level one');
+  // And its follow-ups are not delegated tasks, so nothing disposes them as children.
+  const before = commandsOf(server, 'delegated_task.completion-delivery.dispose').length;
+  await host.sendMessage(reviewer.id, { messageId: 'review-followup', text: 'One more look' });
+  assert.equal(commandsOf(server, 'delegated_task.completion-delivery.dispose').length, before,
+    'a fallback thread sends no child dispose');
+});
+
+test('a deleted child does not hold the parent turn', async t => {
+  const { host, server, acp, spec } = await fixture(t);
+  const child = await host.createAgent(spec('worker-create', 'Do the work'));
+  const parent = parentOf(host)!;
+  // The terminal lane removed the child; absence from the complete inventory is the
+  // positive fact, so the parent is released instead of holding forever.
+  server.threads.get(child.id)!.thread.deletedAt = STAMP;
+  await host.reconcileThreadTitles([{ id: 'synthetic-task', phase: 'working' } as Task]);
+  assert.deepEqual(acp.released.map(entry => entry.sessionId), [parent.sessionId]);
+});
+
+test('a role launched after its parent was archived falls back instead of re-launching it', async t => {
+  const { host, server, spec } = await fixture(t);
+  await host.createAgent(spec('worker-create', 'Do the work'));
+  const parent = parentOf(host)!;
+  server.threads.get(parent.threadId)!.thread.archivedAt = STAMP;
+  const reviewer = await host.createAgent(spec('review-run', 'Review it', 'reviewer'));
+  assert.equal(commandsOf(server, 'orchestration.launchThread').length, 2, 'the archived parent is not launched again');
+  assert.equal(commandsOf(server, 'orchestration.launchThread').at(-1)!.threadId, reviewer.id);
+  assert.deepEqual(commandsOf(server, 'orchestration.launchThread').at(-1)!.modelSelection,
+    { instanceId: 'synthetic-provider', model: 'synthetic-model' });
+  assert.equal(commandOf(server, 'delegated_task.request')!.parentThreadId, parent.threadId, 'only the worker became a child');
+  assert.notEqual(host.state.read().parents!['synthetic-task']!.archivedAt, undefined);
+  assert.match(host.state.read().nesting!.reason, /parent thread is archived/);
+});
+
+test('a parent gone from the complete inventory also falls back, without a refused command', async t => {
+  const { host, server, spec } = await fixture(t);
+  await host.createAgent(spec('worker-create', 'Do the work'));
+  const parent = parentOf(host)!;
+  server.threads.delete(parent.threadId);
+  const reviewer = await host.createAgent(spec('review-run', 'Review it', 'reviewer'));
+  assert.equal(commandsOf(server, 'orchestration.launchThread').at(-1)!.threadId, reviewer.id);
+  assert.equal(commandsOf(server, 'message.dispatch').some(command => command.threadId === parent.threadId), false,
+    'nothing is sent to a parent that no longer exists');
+  assert.match(host.state.read().nesting!.reason, /parent thread is deleted/);
 });
 
 test('a nucleus provider that is not an ACP driver falls back with guidance before any send', async t => {

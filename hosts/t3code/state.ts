@@ -18,7 +18,15 @@ const intentKind = z.enum([
   'delegated_task.request', 'delegated_task.completion-delivery.dispose',
 ]);
 export type T3IntentKind = z.infer<typeof intentKind>;
-const agent = z.object({ id: z.string(), workspaceId: z.string(), labels: z.record(z.string(), z.string()), title: z.string().optional() });
+const agent = z.object({ id: z.string(), workspaceId: z.string(), labels: z.record(z.string(), z.string()), title: z.string().optional(),
+  /**
+   * The parent thread this role thread was created as a delegated child of, recorded
+   * at creation. A role thread of a parented task that is *not* a child (a fallback
+   * launch, or a role whose run needs another checkout) never carries it, so
+   * "nested child" stays a recorded fact and is never inferred from the task
+   * (nucleus#1305 review).
+   */
+  parentThreadId: z.string().optional() });
 const diagnostic = z.object({ command: z.string().optional(), field: z.string().optional(), reason: z.string().optional(), guidance: z.string().optional() }).strict().refine(value => {
   const clean = sanitizeHostDeliveryDiagnostic(value);
   return clean.command === value.command && clean.field === value.field && clean.reason === value.reason && clean.guidance === value.guidance;
