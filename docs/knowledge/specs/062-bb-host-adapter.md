@@ -295,8 +295,7 @@ The shared board from `client/shell/` renders in a `navPanel` in BB's left rail 
 badge, and it renders per project in a fixed thread tab plus a `navPanel` sub-path route. The rest of
 the surface is as first drafted: Settings in a `settingsSection`, decision and native-question
 composer pills, and a `pendingInteraction` for a Nucleus-raised blocking question. Nucleus adds no
-usage UI to BB at all: glanceable usage is BB's own card plus the operator-installed Usage Pace plugin,
-and the full usage screen stays on the board (5e).
+subscription usage UI to BB: glanceable usage is BB's own card plus the operator-installed Usage Pace plugin (5e).
 
 The parts below are decisions, not options: 5a and 5b are the sidebar work, 5c extends the board
 phase, 5d is the per-project board the operator asked for beside the global one, 5e is usage (BB's card,
@@ -564,12 +563,7 @@ away from the thread it was asked about.
 
 #### 5e. Usage in BB: BB's card plus the operator's Usage Pace plugin
 
-**Recommendation.** Nucleus contributes **no usage UI** to BB — no rail block, no forked card, no usage
-source of its own (Tom, 2026-11-16: "usage pace is enough I think"). Glanceable usage in BB is BB's
-bundled `provider-usage` card (fact 27) plus the community plugin **Usage Pace**
-(`chug2k/bb-plugin-usage-pace`, MIT), which the operator installs beside it. Nucleus's full usage
-screen (Spec 059, dial and verdict) stays on the board, and the two surfaces answer different questions:
-the card answers "am I about to run out", the board answers "what is the whole picture".
+**Recommendation.** Nucleus contributes **no subscription usage UI** to BB — no rail block, forked card, source or board view (Tom, 2026-11-17: "I want to strip out the usage functionality from Nucleus - each host app now has at least _some_ usage functionality and anything missing should be added via host-specific plugins separately from Nucleus"). Glanceable usage in BB is BB's bundled `provider-usage` card (fact 27) plus the community plugin **Usage Pace** (`chug2k/bb-plugin-usage-pace`, MIT), which the operator installs beside it. Any missing host display belongs in a BB-specific plugin.
 
 **What BB's card already shows.** A sidebar-footer disclosure with each provider account's plan, and per
 usage window a bar, the used percent, the reset time and a cost when the source reports one, from
@@ -597,14 +591,7 @@ reported as `chug2k/bb-plugin-usage-pace#2`; until it lands, the operator runs a
 Nucleus neither vendors nor patches that plugin: a plugin we do not own is not a fork obligation, and
 its degradation is BB's card minus one metric.
 
-**One projection, and it is the board's.** The pace Nucleus states is `shared/usage-projection.ts` behind
-`usage.state`, which the board's Usage screen and the Paseo row draw (Spec 059). Usage Pace has its own
-implementation of the same idea, which the thread records as agreeing within a point or two; the
-difference that matters is that Nucleus's keeps Spec 059's rules (every pool profile keeps its gauge, a
-reset window counts as unused, no projection early in a window) while the card's shows BB's providers.
-Because Nucleus adds no BB surface, there is no second copy of the projection to keep in sync — and if
-exact agreement is ever wanted, it belongs to the community plugin as an upstream proposal, not to a
-Nucleus fork.
+**Nucleus display boundary.** BB and its plugins own subscription usage presentation. Spec 052's usage level remains a separate Nucleus dispatch policy.
 
 **Evidence.** The card's registration, aggregation, normalization and thresholds are facts 27–30,
 re-verified at the pinned commit; BB's Grok provider publishes no usage and none of the bundled sources
@@ -654,9 +641,9 @@ upstream slot can absorb it. Usage needs no such exit: there is nothing of ours 
 optional cost) read on the run's finish path, with `thread/tokenUsage/updated` as the timeline
 fallback; provider subscription windows come from `system.usageLimits`. The first draft fed a BB Usage
 page with that read, and 5e removed that page along with every other Nucleus usage surface in BB, so
-the adapter reads no subscription windows of its own and the board's Usage page keeps `usage.state`
-(Spec 059). That clause is the one change this amendment makes to decision 6, and it is here because
-the usage decision forces it.
+the adapter reads no subscription windows of its own and Nucleus contributes no subscription usage view.
+That clause is the one change this amendment makes to decision 6, and it is here because the usage
+decision forces it.
 
 `observationInventory(agentIds)` takes an arbitrary list, so it chunks the ids into runs of at most
 200 — the SDK's cap per `threads.list({ threadIds })` call — and reads the chunks one after another.
@@ -1215,13 +1202,13 @@ collapse hint a list can supply per group — would replace this phase's fork an
 keeping the header read and the tenure of the requirement. It is not scheduled; it is the exit that
 makes the fork a bounded commitment (5f).
 
-### Phase 6 — board, per-project board, settings, pills, usage and the planner terminal
+### Phase 6 — board, per-project board, settings, pills and the planner terminal
 
 **Outcome.** Operator parity in BB: the shared board in a `navPanel` with its attention badge in the
 left rail, the same board per project in a fixed thread tab and a sub-path route reachable from the
 forked sidebar's project and planner rows, a task-detail tab on a task's role threads, Settings in a
 `settingsSection`, decision and native-question composer pills, the pending-interaction slot for a
-Nucleus-raised blocking question, the board's own Usage view over `usage.state`, and lifecycle hints
+Nucleus-raised blocking question, and lifecycle hints
 forwarded from BB's events into the existing signal path. `bb nucleus terminal` ships
 with the plugin CLI as the thread-scoped planner tab; the task-directory `host_path` terminal ships
 only if phase 0 proved it appears where an operator would look.
@@ -1230,8 +1217,7 @@ only if phase 0 proved it appears where an operator would look.
 
 - UI tests through the existing board harness with the BB shell bound: the board renders, its calls
   reach the service, Settings opens, a decision pill appears and resolves, a native question pill
-  shows and answers, the pending-interaction slot submits and cancels, and usage renders from a
-  synthetic snapshot.
+  shows and answers, the pending-interaction slot submits and cancels.
 - The rail badge counts the tasks that need the operator from a synthetic snapshot, carries its tone
   and label, and drains as they settle.
 - The per-project tab is visible on a Nucleus project's planner and named-agent threads and nowhere
@@ -1300,9 +1286,7 @@ connection, sidebar read and board signal phases 0–5 landed:
   shape says so and offers Cancel. No core path raises a blocking Nucleus question on any host yet
   (`capabilities().nativeDecisions` stays `false`; decisions ride the pills and the board), so the
   renderer is the slot, not a new producer.
-- **5e, usage.** Nucleus registers no usage surface in BB: no sidebar footer, no homepage section,
-  no board view. BB's own provider-usage card plus the operator's Usage Pace plugin are the usage
-  surface (nucleus#1302 removed the board's Usage screen on every host).
+- **5e, usage.** BB's card plus the operator's host-specific plugins own subscription usage. Nucleus has no subscription usage view or source.
 - **Lifecycle hints.** `thread.created`, `thread.active`, `thread.idle`, `thread.failed`,
   `interaction.pending` and `thread.archived` forward as the existing `service.lifecycle-signal`
   kinds with the thread id alone; no hint carries a turn, interaction or environment payload.
@@ -1316,7 +1300,7 @@ Tests: `test/bb-board-surfaces.test.ts` runs the board through the existing harn
 shell bound and the real `boardCall` handler — the board renders and every call reaches the service
 as `via: "bb"`, Settings opens (route, header button, section), a decision pill appears and
 resolves, a native question pill shows and answers, the pending-interaction renderer submits and
-cancels, no usage surface is registered, the per-project tab and route show a
+cancels, the per-project tab and route show a
 multi-repository project's every repository and nothing else, and the `Task` tab shows the real
 `queue.detail` projection and follows a prerequisite link and back. `test/bb-board-model.test.ts` covers the badge (count, tone, label, drain), the routes, the
 tab visibility through each tab's own `useVisible`, the planner-row action, and BB's own

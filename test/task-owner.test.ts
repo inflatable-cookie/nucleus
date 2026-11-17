@@ -5,6 +5,7 @@ import {mkdtempSync,readFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {Engine} from '../core/engine';
+import {QueueRuntime} from '../service/runtime-owner';
 import {Store,digest} from '../core/store/store';
 import {completionMembership,holdOwnerOf,holdsOf,QUEUE_REPOSITORY_ORIGIN,reparentResultSchema,submissionSchema,taskControlInputSchema,TASK_OWNER_HOLD,taskOwner,type Notice} from '../shared/contracts';
 import type {Adapter,OriginAgent} from '../core/host';
@@ -207,6 +208,17 @@ test('the CLI takes the caller from its own thread and calls the one reparent me
  assert.match(source,/client\.request\('queue\.reparent'/);
  assert.doesNotMatch(source,/--caller/);
  assert.match(readFileSync(new URL('../shared/rpc-catalogue.ts',import.meta.url),'utf8'),/name: "queue\.reparent", contract: contracts\.reparent, method: "reparent"/);
+});
+
+test('the helper task reference resolves every reparent task ID before owner lookup', () => {
+ const f=fixture();try{
+  let task=f.add('numbered-reparent-task-001','old',{},'/barge');
+  for(let number=2;number<=64;number++)task=f.add(`numbered-reparent-task-${String(number).padStart(3,'0')}`,'old',{},'/barge');
+  const reference=f.store.numberFor(task.id)?.reference;
+  assert.equal(reference,'barge#064');
+  const resolved=QueueRuntime.prototype.resolveTaskReferences.call({store:f.store},{taskIds:[reference]});
+  assert.deepEqual(resolved,{taskIds:[task.id]});
+ }finally{f.store.close();rmSync(f.dir,{recursive:true,force:true})}
 });
 
 

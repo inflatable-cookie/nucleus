@@ -966,6 +966,15 @@ test('the origin read answers authoritative absence, and only an unread inventor
   await assert.rejects(host.originAgent(created.id), /authenticated host connection/);
 });
 
+test('an external T3 project thread has a project-scoped origin location without a Nucleus workspace', async t => {
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const native = server.threads.get(created.id)!;
+  native.thread.worktreePath = '/synthetic/external-project-path';
+  const origin = await host.originAgent(created.id);
+  assert.equal(origin?.workspaceId, `t3-project:${native.thread.projectId}`);
+});
+
 test('workspace creation registers a missing repository project once through the nightly projects.mutate route', async t => {
   const { host, server, root } = await fixture(t);
   server.projects.splice(0);

@@ -382,9 +382,16 @@ The runtime build packages both bundles together.
 - **Links and tokens.** `nucleus ui` asks the owner socket for one link,
   `service.ui-link` (not a catalogue method), prints it and opens the browser;
   `--no-open` only prints it. The link is
-  `http://127.0.0.1:<port>/#token=<token>`. A token is 32 random bytes. The service
+  `http://127.0.0.1:<port>/#token=<token>&expiresAt=<unix-ms>`. A token is 32 random bytes. The service
   holds only its SHA-256 digest, in memory. It expires after 8 hours by default
   (5 minutes to 24 hours through `ttlMinutes`), and at most 16 are outstanding.
+  Its fragment also carries the expiry timestamp, which remains in browser memory
+  only. Before expiry, the board posts its current bearer to `/api/renew`. A live
+  token is atomically swapped for a fresh random token with the same TTL; the old
+  token immediately fails, the outstanding count does not change, and existing
+  event streams stay attached to the replacement while the browser reconnects.
+  Missing, expired or revoked tokens cannot renew. Renewal state and tokens are
+  memory only and a service restart drops them.
   `nucleus ui --revoke` (`service.ui-link` with `action: "revoke"`) refuses every
   outstanding token and closes the live streams they opened. A restart drops them
   all. The plugin can call `service.ui-link` later; its bridge does not forward it yet.
@@ -401,6 +408,10 @@ The runtime build packages both bundles together.
     board for `queue.ui-snapshot`, the executor, then output validation. Errors are
     typed: 400 `invalid_input`, 403 `refused`, 404 `method_unknown`, 401
     `unauthenticated`, 503 `busy`, `timeout` or `unavailable`.
+  - `POST /api/renew` authenticates the current bearer and atomically swaps it
+    for a new bearer with the same TTL, returning the new token and expiry. The
+    old bearer is refused immediately; an invalid, expired or revoked bearer gets
+    the standard 401.
   - `GET /api/events` is a server-sent event stream. A `board` event carries the
     full projection when its revision moves, with the revision as its `id`. A
     `counters` event carries the unchanged-board acknowledgement when only the

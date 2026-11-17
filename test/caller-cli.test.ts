@@ -97,16 +97,16 @@ test('caller source precedence is ticket, T3Code, then Paseo, and incomplete T3 
   } finally { await f.close(); }
 });
 
-test('decision.add records the canonical caller resolved from the T3 thread environment', async () => {
+test('decision.add records the exact T3 thread on the verified host despite a different desktop scope', async () => {
   const f = await callerCliFixture();
   try {
     const result = await f.invoke('none', 'queue-cli.mjs', ['decision.add', '-'],
       { question: 'Which planning lane?', options: ['A', 'B'], recommendation: 'A' },
-      { T3CODE_THREAD_ID: 'synthetic-t3-thread', T3CODE_DESKTOP_HOST_SCOPE: 'synthetic-environment' });
+      { T3CODE_THREAD_ID: 'mcp:b619ccc9-a078-49f6-b80f-6bececcfa6ca', T3CODE_DESKTOP_HOST_SCOPE: 'e3587e2bcde8d42fdde2f3615032716c' });
     assert.equal(result.code, 1);
     assert.match(result.stderr, /Synthetic caller payload received/);
-    assert.deepEqual(f.hostResolutions, [{ hostKind: 't3code', nativeAgentId: 'synthetic-t3-thread', hostScope: 'synthetic-environment' }]);
-    assert.equal(f.calls.at(-1)?.input.askedBy, formatAgentId('t3code:synthetic-environment', 'synthetic-t3-thread'));
+    assert.deepEqual(f.hostResolutions, [{ hostKind: 't3code', nativeAgentId: 'mcp:b619ccc9-a078-49f6-b80f-6bececcfa6ca', hostScope: 'e3587e2bcde8d42fdde2f3615032716c' }]);
+    assert.equal(f.calls.at(-1)?.input.askedBy, formatAgentId('t3code:32be2844-7204-4edc-a95a-35b05e42ded4', 'mcp:b619ccc9-a078-49f6-b80f-6bececcfa6ca'));
   } finally { await f.close(); }
 });
 

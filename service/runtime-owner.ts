@@ -75,7 +75,6 @@ import { type OperationAcceptance, type OperationResult } from "../shared/operat
 import { capacitySchema, projectDispatchLimitSchema, DEFAULT_GLOBAL_LIMIT, DEFAULT_UNCERTAIN_MERGE_RETRY_MS, UNCERTAIN_MERGE_PROOF_TIMEOUT_MS, sourcePromotionInputSchema, submissionSchema, submitInstruction as submitInstructionRpc, reviewEntryReconcileInputSchema, BACKUP_DUE_CHECK_MS, type BoundRun } from "../shared/contracts";
 import { createTelemetrySnapshotCache, taskControlTelemetry } from '../core/telemetry/telemetry';
 import { RunUsageTracker } from '../core/telemetry/run-usage-tracker';
-import { UsageService, USAGE_TICK_INTERVAL_MS } from '../core/usage/usage-service';
 import { createTaskDetailCache } from '../core/telemetry/task-detail';
 import { createUiSnapshotFactsCache } from '../core/telemetry/ui-snapshot';
 import { QA_BOARD_PASS_FADE_MS } from '../core/qa/qa-board';
@@ -234,8 +233,6 @@ export class QueueRuntime {
   private readonly spawnToken: string | undefined;
   readonly hostRuns: HostRunScheduler;
   readonly papercuts: Papercuts;
-  /** Spec 059: the subscription usage gauge's paced readers, samples and projection. */
-  readonly usage: UsageService;
   readonly leads: Leads;
   readonly decisions: Decisions;
   readonly adapter: Adapter;
@@ -392,7 +389,6 @@ export class QueueRuntime {
     this.hostRuns = HostRunScheduler.forStore(this.store);
     this.hostRuns.setLaunchPredicate(() => !this.closing && !this.idleShutdownLatched);
     this.papercuts = new Papercuts(this.store);
-    this.usage = new UsageService(this.store);
     this.leads = new Leads(this.store);
     this.decisions = new Decisions(this.store);
     options.instrumentStore?.(this.store);
@@ -619,15 +615,6 @@ export class QueueRuntime {
       // pre-emptible, so running it more often only tightens the net.
       this.timers.push(setInterval(() => tick(false), this.sweepIntervalMs));
       this.timers.push(setInterval(() => tick(true), PROFILE_REFRESH_INTERVAL_MS));
-      // Spec 059: paced subscription usage reads run independently of host connections;
-      // a read touches only the provider's own local CLI or config, never an endpoint.
-      const usageTimer = setInterval(() => {
-        if (this.closing) return;
-        void this.usage.tick().catch(() => { /* the next tick retries; a missed sample is not a fault */ });
-      }, USAGE_TICK_INTERVAL_MS);
-      usageTimer.unref?.();
-      this.timers.push(usageTimer);
-      void this.usage.tick().catch(() => { /* the first paced pass runs now, not a minute in */ });
       // Task 530: the live run set's tabs and labels reconcile on their own cadence,
       // faster than the lifecycle sweep and independent of it.
       this.liveRunPresence?.start(LIVE_RUN_PRESENCE_INTERVAL_MS);
@@ -905,7 +892,6 @@ export class QueueRuntime {
       await settled(this.admissionEndpoint?.stop(), 5_000);
     } finally {
       this.runUsage.close();
-      this.usage.stop();
       if (this.store.getMeta<{ owner: string }>("processOwner")?.owner === this.owner) this.store.deleteMeta("processOwner");
       this.store.close();
       this.lifecycle.markStopped();
@@ -934,8 +920,6 @@ export class QueueRuntime {
   private drainProjection(): { drained: boolean; boundRuns: BoundRun[] } { return this.board.drainProjection(); }
 
   addPapercut(input: Parameters<Papercuts["add"]>[0]) { return this.papercuts.add(input); }
-  /** Spec 059: the subscriptions' usage readings, projections and freshness. Read-only. */
-  usageState() { return this.usage.state(); }
   listPapercuts(input: { repository?: string; state?: Papercut["state"] }) { return this.papercuts.list(input); }
   getPapercut(input: { id: string }) { return this.papercuts.get(input); }
   editPapercut(input: Parameters<Papercuts["edit"]>[0]) { return this.papercuts.edit(input); }
@@ -1176,7 +1160,7 @@ export class QueueRuntime {
     return Object.fromEntries(Object.entries(input).map(([key, value]) => {
       if (["taskId", "replacementTaskId", "until"].includes(key) && typeof value === "string" && value.includes('#'))
         return [key, this.store.resolveTaskId(value)];
-      if (["dependsOn", "waitsFor"].includes(key) && Array.isArray(value))
+      if (["dependsOn", "waitsFor", "taskIds"].includes(key) && Array.isArray(value))
         return [key, value.map(id => typeof id === "string" ? this.store.resolveTaskId(id) : id)];
       return [key, this.resolveTaskReferences(value)];
     }));
@@ -1230,6 +1214,21 @@ export class QueueRuntime {
   async reparent(input: ReparentInput) {
     await this.started;
     if (!this.anyHostConnected()) throw new Error(this.startError || "All hosts are disconnected");
+    const parsed = parseAgentId(input.toAgentId);
+    const t3Hosts = this.hostRegistry.onlineIds().filter(id => hostKindOf(id) === 't3code');
+    const candidates = parsed?.hostId && hostKindOf(parsed.hostId) === 't3code' ? [parsed.hostId] : !parsed ? t3Hosts : [];
+    if (candidates.length) {
+      const nativeAgentId = parsed?.nativeAgentId ?? input.toAgentId;
+      const owners: string[] = [];
+      for (const hostId of candidates) {
+        try {
+          const observation = await this.engine.withHost(hostId, () => this.engine.host.observe(nativeAgentId));
+          if (observation?.id === nativeAgentId && observation.status !== 'gone') owners.push(hostId);
+        } catch { /* An unverified host cannot own the requested thread. */ }
+      }
+      if (owners.length > 1) throw new Error(`T3Code thread ${nativeAgentId} is ambiguous; online T3 hosts: ${t3Hosts.join(', ') || '(none)'}`);
+      if (owners.length === 1) input = { ...input, toAgentId: formatAgentId(owners[0]!, nativeAgentId) };
+    }
     return this.engine.reparent(input);
   }
   availabilityControl(input: z.infer<typeof import("../shared/contracts").availabilityControl.input>) { return this.settingsOperations.availabilityControl(input); }
@@ -1367,18 +1366,19 @@ export class QueueRuntime {
     const hosts = this.hostRegistry.onlineIds().filter(id => hostKindOf(id) === input.hostKind);
     let hostId: string;
     if (input.hostKind === 't3code') {
-      if (!input.hostScope) throw new Error('T3Code caller identity has no registered host scope');
-      // T3 exposes its environment scope; Nucleus registers that environment as
-      // t3code:<scope>. Accept the already-qualified spelling for callers whose
-      // host context supplies the full registered ID.
-      const registeredScope = input.hostScope.startsWith('t3code:') ? input.hostScope : `t3code:${input.hostScope}`;
-      if (!hosts.includes(registeredScope)) throw new Error(`T3Code host scope ${input.hostScope} is not registered and online`);
-      hostId = registeredScope;
-      let observation;
-      try { observation = await this.engine.withHost(hostId, () => this.engine.host.observe(input.nativeAgentId)); }
-      catch { throw new Error(`T3Code thread ${input.nativeAgentId} could not be verified on registered host ${hostId}`); }
-      if (!observation || observation.id !== input.nativeAgentId || observation.status === 'gone')
-        throw new Error(`T3Code thread ${input.nativeAgentId} could not be verified on registered host ${hostId}`);
+      const owners: string[] = [];
+      for (const candidate of hosts) {
+        try {
+          const observation = await this.engine.withHost(candidate, () => this.engine.host.observe(input.nativeAgentId));
+          if (observation?.id === input.nativeAgentId && observation.status !== 'gone') owners.push(candidate);
+        } catch { /* A host that cannot verify this thread is not an owner. */ }
+      }
+      if (owners.length !== 1) {
+        const online = hosts.length ? hosts.join(', ') : '(none)';
+        const reason = owners.length > 1 ? 'is ambiguous' : 'is not owned by any online host';
+        throw new Error(`T3Code thread ${input.nativeAgentId} ${reason}; online T3 hosts: ${online}`);
+      }
+      hostId = owners[0]!;
     } else {
       if (hosts.length !== 1) throw new Error(`Calling host identity is unavailable or ambiguous for ${input.hostKind}`);
       hostId = hosts[0]!;

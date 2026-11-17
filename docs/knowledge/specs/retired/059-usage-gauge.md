@@ -1,6 +1,8 @@
 # 059 — Subscription usage pressure gauge
 
-Status: implemented (steps 1 and 2, including the Usage page and the Paseo sidebar row)
+Retired 2026-11-17 (task 1302). Tom: “I want to strip out the usage functionality from Nucleus - each host app now has at least _some_ usage functionality and anything missing should be added via host-specific plugins separately from Nucleus”. Subscription usage readers, samples, RPC and views are removed; host apps and their plugins own this functionality. Spec 052's dispatch usage level remains active and is not subscription monitoring.
+
+Status: retired 2026-11-17 (task 1302)
 Owner: Nucleus runtime maintainers
 Created: 2026-11-11
 Decision owner: operator (Tom, 2026-11-11, lane document `nucleus-usage-gauge`: track each
@@ -94,7 +96,7 @@ exhaustion from a refused run, after the fact.
   unavailable right now." with an empty dial, never 0 or green; their reason stays in `usage.state`. The page refreshes on a slow minute interval — the readers pace themselves, so
   the page adds no fast polling. Provider headings omit a group that only repeats the provider;
   the shared ProviderLogo uses bundled official marks for Codex, Claude and Grok, with the
-  existing generic icon retained for unknown providers. See [third-party notices](../../../THIRD_PARTY_NOTICES.md)
+  existing generic icon retained for unknown providers. See [third-party notices](../../../../THIRD_PARTY_NOTICES.md)
   for mark sources and terms.
 
 - **The Paseo sidebar row** is a compact plugin-only contribution (nucleus#1123): one row

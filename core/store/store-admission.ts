@@ -17,7 +17,8 @@ import { FRESH_STORE_SCHEMA, LEAD_READ_VIEW_SQL, OUTCOME_SEARCH_INDEX_SQL, STORE
 // a live re-bind of the same run identity restores the same credential.
 // Schema 57 (task 1010): one row stores independent publication counters.
 // Schema 58 (task 1112): the usage gauge's stored samples and per-subscription read state.
-export const CURRENT_SCHEMA = 58;
+// Schema 59 (task 1302): drop the retired subscription usage gauge storage.
+export const CURRENT_SCHEMA = 59;
 
 /**
  * Spec 028 revision "Store compaction" (audit B9): the WAL file is bounded after a
@@ -239,6 +240,10 @@ export class StoreAdmission {
       // validation-policy strip above; on a clean store it scans and changes nothing
       // (about 190 ms at the live store's size).
       this.hooks.migration.stripRetiredRowFields();
+      // Schema 59 (task 1302): remove the retired subscription usage gauge's
+      // samples and per-subscription read state on every open. IF EXISTS makes
+      // the cleanup safe for fresh stores and repeat opens.
+      this.hooks.migration.dropSubscriptionUsageStorage();
       this.db.exec("COMMIT");
     } catch (error) {
       if (this.db.isTransaction) this.db.exec("ROLLBACK");

@@ -293,6 +293,15 @@ call as pending. Subscription usage is each host's own surface: Nucleus adds usa
 BB's card plus host-specific plugins are BB's.
 
 
+Target host split (Tom, 2026-11-17): "use T3Code for standalone threads and probably for planners
+(who would dispatch to nucleus), then assuming BB is up to the task, use that as the task execution
+platform. T3 dispatches, BB executes. Paseo will probably be retired, I don't like having to patch
+the binary on every update and it's still a bit rough around the edges… we have to prove BB out
+first though, and I want the full end-to-end workflow in BB before any full switch." Until then
+Paseo stays the primary host. The BB trial (Spec 062 phase 7) has to prove the whole flow: a planner
+thread in T3 dispatching through Nucleus to tasks that run, get reviewed, merge and close out on BB.
+Usage display is the host's job, not Nucleus's (Tom, 2026-11-17).
+
 Profiles (Tom, 2026-11-06): Nucleus takes its agent profiles from Paseo's profile system today, and other apps have none. "We'll need to switch nucleus to a more traditional model picker system - have the host app provide a list of all the providers and models, then allow the operator to create profiles based on their selections". Profiles become Nucleus's own, and the host only lists what's available.
 On provider options (Tom, 2026-11-06): the picker shows whatever the host reports for a model. "We need to be able to control permission settings and agent-specific modes".
 

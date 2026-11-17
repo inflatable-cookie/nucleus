@@ -11,6 +11,10 @@ merge policy. Service composition injects those policies through `core/host`;
 the adapter never imports their implementation or another host. Paseo remains
 the primary host (Tom, 2026-11-11).
 
+Provider subscription usage belongs to T3Code and its host-specific plugins.
+Nucleus adds no subscription usage gauge; Spec 052's usage level remains a
+separate dispatch policy setting.
+
 Worker, reviewer and recovery identities are separate top-level T3 threads.
 No role uses T3's delegated-task relationship. The adapter does not patch T3,
 attach Nucleus MCP servers, raise Nucleus questions inside threads or contribute
@@ -26,19 +30,29 @@ Registering a transport must not make an unsupported task workflow executable.
 ## Calling thread identity
 
 When no `NUCLEUS_TICKET` is present, the CLI reads `T3CODE_THREAD_ID` and
-`T3CODE_DESKTOP_HOST_SCOPE` as the T3 caller source. The scope names the
-registered T3 environment (`t3code:<environmentId>`); the service accepts it
-only when that exact host is online, then asks its adapter to observe the thread.
-Missing, mismatched, deleted or unreadable threads refuse caller resolution before
-any caller-bound command is sent. A verified caller is recorded as the canonical
-host-qualified identity. This is caller attribution only and follows the same
-command permissions as a Paseo caller.
+`T3CODE_DESKTOP_HOST_SCOPE` as the T3 caller source. The desktop scope is not the
+registered T3 environment ID and is not used to construct a host identity. The
+service asks every online T3 host to observe the exact thread ID; exactly one
+matching live observation identifies the caller's host. No owner or multiple
+owners refuse before any caller-bound command is sent, naming the thread and
+online T3 hosts. Thread IDs, including an `mcp:` prefix, stay unchanged in both
+observation and the canonical host-qualified caller identity. The desktop scope
+is not used for host selection; resolution relies on observation until T3 offers
+a supported mapping to an environment. This is caller attribution only and follows
+the same command permissions as a Paseo caller.
 
 Source precedence is Nucleus ticket, T3Code identity, then Paseo's
 `PASEO_AGENT_ID`. A ticket refusal never falls through. When T3 and Paseo
 environment values coexist, T3 wins; a partial T3 identity refuses rather than
 using Paseo. Replies to `ask` and `tell` use the existing host-qualified T3
 delivery path.
+
+For reparenting, Nucleus verifies the candidate T3 thread through that host's
+observation and records its qualified ID. A T3 project thread can have no
+Nucleus-managed workspace registration; its origin location is represented by
+the stable `t3-project:<projectId>` scope from the T3 thread record. Task
+references such as `barge#064` are resolved at the service boundary before the
+reparent owner lookup.
 
 ## Protocol and connection
 
