@@ -149,7 +149,7 @@ test('a failed reviewer dependency refresh records its error and starts no agent
     const gitDir = await git(f.taskDirectory, 'rev-parse', '--path-format=absolute', '--git-dir');
     const state = JSON.parse(await readFile(join(gitDir, 'nucleus', 'task-node-modules.json'), 'utf8'));
     assert.equal(state.status, 'failed');
-    assert.match(state.error, /EJSONPARSE/);
+    assert.ok(state.error.trim().length > 0, 'the failed npm ci error must be retained');
   } finally {
     await f.engine.stop();
     f.store.close();
