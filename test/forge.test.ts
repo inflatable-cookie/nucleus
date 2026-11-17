@@ -119,7 +119,7 @@ test('integration refresh compares installed lock state and retries a failed npm
   const task={repoPath:root,baseBranch:'main',directory:taskWorkspace,resolution:{mergedCommit:merged}} as any;
   assert.equal(await syncMain(task),merged);
   await git(taskWorkspace,'fetch','origin','main');await git(taskWorkspace,'merge','--ff-only','FETCH_HEAD');
-  assert.equal(createRequire(join(taskWorkspace,'probe.cjs'))('fixture-dep').version,'2.0.0');
+  assert.equal(execFileSync(process.execPath,['-p',"require('fixture-dep').version"],{cwd:taskWorkspace,encoding:'utf8'}).trim(),'2.0.0');
   assert.equal((await git(taskWorkspace,'show','HEAD:package-lock.json')).includes('2.0.0'),true,'the next task head contains the lockfile that the shared install resolved');
 
   await git(writer,'checkout','-b','ns-merge-two');
@@ -140,7 +140,7 @@ test('integration refresh compares installed lock state and retries a failed npm
   process.env.PATH=originalPath;
   assert.equal(await syncMain({...task,resolution:{mergedCommit:failedMerge}}),failedMerge,'retry rebuilds the install after npm ci removed it');
   await git(taskWorkspace,'fetch','origin','main');await git(taskWorkspace,'merge','--ff-only','FETCH_HEAD');
-  assert.equal(createRequire(join(taskWorkspace,'probe.cjs'))('fixture-dep').version,'3.0.0');
+  assert.equal(execFileSync(process.execPath,['-p',"require('fixture-dep').version"],{cwd:taskWorkspace,encoding:'utf8'}).trim(),'3.0.0');
  }finally{process.env.PATH=originalPath;rmSync(dir,{recursive:true,force:true})}
 });
 

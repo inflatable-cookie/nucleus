@@ -6,7 +6,6 @@ import { mkdtemp, realpath, rm, mkdir, writeFile, symlink } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtempSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
@@ -71,7 +70,7 @@ test('dispatch refreshes the shared install after fast-forwarding a lockfile cha
   const taskDirectory = join(workspaceRoot, 'next-task');
   await git(repo, 'worktree', 'add', '-b', 'ns-next-task', taskDirectory, 'main');
   await symlink(join(repo, 'node_modules'), join(workspaceRoot, 'node_modules'), 'dir');
-  assert.equal(createRequire(join(taskDirectory, 'probe.cjs'))('fixture-dep').version, '1.0.0');
+  assert.equal(await command('node', ['-p', "require('fixture-dep').version"], taskDirectory), '1.0.0');
 
   const peer = join(root, 'peer');
   await command('git', ['clone', join(root, 'origin.git'), peer], root);
@@ -86,7 +85,7 @@ test('dispatch refreshes the shared install after fast-forwarding a lockfile cha
   assert.equal(await validateDispatch(task), await git(peer, 'rev-parse', 'HEAD'));
   await git(taskDirectory, 'fetch', 'origin', 'main');
   await git(taskDirectory, 'merge', '--ff-only', 'FETCH_HEAD');
-  assert.equal(createRequire(join(taskDirectory, 'probe.cjs'))('fixture-dep').version, '2.0.0');
+  assert.equal(await command('node', ['-p', "require('fixture-dep').version"], taskDirectory), '2.0.0');
 });
 
 test('a behind-only integration branch is fast-forwarded at dispatch', async t => {
