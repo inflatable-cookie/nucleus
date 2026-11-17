@@ -113,7 +113,9 @@ export class StoreTaskWrites {
     if (!inlineObservation) {
       const storedRaw = parts && "observation" in parts ? parts.observation : this.storedObservationRow(id);
       const stored = storedRaw ? JSON.parse(storedRaw) as Record<string, unknown> : {};
-      for (const field of STORED_OBSERVATION_FIELDS) record[field] = stored[field] ?? null;
+      for (const field of STORED_OBSERVATION_FIELDS) {
+        if (field !== "lastActivityAt" || stored[field] !== undefined) record[field] = stored[field] ?? null;
+      }
       // An observation-only write moves the task's write time without rewriting its row,
       // so the newer of the two is the time every reader saw before the fields moved.
       const seen = stored.updatedAt;

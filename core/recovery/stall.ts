@@ -97,7 +97,7 @@ export type StallsContext = Pick<Resolution, 'adapter' | 'attention' | 'host' | 
 
 export class Stalls {
   /** Per-agent coalescing for timeline peeks; the cached verdict holds for the window so repeated observations agree. */
-  private shellPeeks = new Map<string, { at: number; notice: string | null }>();
+  private shellPeeks = new Map<string, { at: number; notice: string | null; live: boolean }>();
   /** How long one peek's verdict is reused; tests shorten it to drive successive peeks. */
   peekTtlMs = 60_000;
   constructor(private readonly resolution: StallsContext) {}
@@ -124,13 +124,14 @@ export class Stalls {
     const role = run?.role === 'reviewer' ? 'Reviewer' : 'Worker';
     const runId = run?.id ?? current.runId;
     if (!runId) return null;
-    const shellNotice = await this.shellNotice(current, role, state);
+    const peek = await this.shellNotice(current, role, state);
+    const shellNotice = peek.notice;
     // No activity timestamp is no evidence of staleness; never judge without it.
     if (!state.updatedAt || !Number.isFinite(Date.parse(state.updatedAt)))
       return shellNotice ?? await this.ownedProcessNotice(current, run, role, runId);
     const quietMs = Date.now() - Date.parse(state.updatedAt);
     if (quietMs < this.thresholdMs()) return shellNotice;
-    const toolNotice = shellNotice ?? await this.runningToolNotice(current, role, state.id) ?? await this.ownedProcessNotice(current, run, role, runId);
+    const toolNotice = shellNotice ?? (peek.live ? `${role} is waiting on a running tool` : null) ?? await this.ownedProcessNotice(current, run, role, runId);
     if (toolNotice) return toolNotice;
     const turn = state.activeTurnId ? `, active turn ${state.activeTurnId}` : '';
     const pending = state.pendingRequest;
@@ -154,7 +155,7 @@ export class Stalls {
     const runId = run?.id ?? t.runId;
     if (!runId) return false;
     const role = run?.role === 'reviewer' ? 'Reviewer' : 'Worker';
-    return Boolean(await this.runningToolNotice(t, role, state.id) || await this.ownedProcessNotice(t, run, role, runId));
+    return Boolean((await this.shellNotice(t, role, state)).live || await this.ownedProcessNotice(t, run, role, runId));
   }
 
   /** A live process in this run's workspace or scratch is owned-tool activity. */
@@ -191,15 +192,6 @@ export class Stalls {
         return `${role} is running a long command (${issue})`;
     }
     return null;
-  }
-
-  /** A recorded running tool is positive evidence even before the notice age. */
-  private async runningToolNotice(t: Task, role: string, agentId: string): Promise<string | null> {
-    try {
-      const entries = await this.resolution.onTaskHost(t, () => this.resolution.host.agentTimeline(agentId));
-      const tool = entries && (runningOwnedTool(entries) ?? runningShellCommand(entries.filter(entry => !entry.item.callId)));
-      return tool ? `${role} is waiting on a running tool` : null;
-    } catch { return null; }
   }
 
   /**
@@ -245,22 +237,27 @@ export class Stalls {
    * threshold shows on the task instead of reading as healthy or stalled. The
    * timeline peek is coalesced per agent and a failed read is no notice.
    */
-  private async shellNotice(t: Task, role: string, state: AgentObservation): Promise<string | null> {
+  private async shellNotice(t: Task, role: string, state: AgentObservation): Promise<{ notice: string | null; live: boolean }> {
     const turnStartedAt = state.turnStartedAt ? Date.parse(state.turnStartedAt) : NaN;
     // A command cannot outlive its turn, so a young turn never needs a peek.
-    if (!Number.isFinite(turnStartedAt) || Date.now() - turnStartedAt < SHELL_NOTICE_MS) return null;
+    const stale = state.updatedAt && Number.isFinite(Date.parse(state.updatedAt)) && Date.now() - Date.parse(state.updatedAt) >= this.thresholdMs();
+    if ((!Number.isFinite(turnStartedAt) || Date.now() - turnStartedAt < SHELL_NOTICE_MS) && !stale) return { notice: null, live: false };
     const agentId = state.id;
     const lastPeek = this.shellPeeks.get(agentId);
-    if (lastPeek && Date.now() - lastPeek.at < this.peekTtlMs) return lastPeek.notice;
+    if (lastPeek && Date.now() - lastPeek.at < this.peekTtlMs) return lastPeek;
     let notice: string | null = null;
+    let live = false;
     try {
       const timeline = this.resolution.adapter.agentTimeline ? await this.resolution.onTaskHost(t, () => this.resolution.host.agentTimeline(agentId)) : undefined;
-      notice = this.shellNoticeText(role, runningShellCommand(timeline ?? null));
+      const shell = runningShellCommand(timeline ?? null);
+      notice = this.shellNoticeText(role, shell);
+      live = Boolean(shell || timeline && runningOwnedTool(timeline));
     }
     catch { notice = null; }
     if (this.shellPeeks.size > 512) this.shellPeeks.clear();
-    this.shellPeeks.set(agentId, { at: Date.now(), notice });
-    return notice;
+    const result = { at: Date.now(), notice, live };
+    this.shellPeeks.set(agentId, result);
+    return result;
   }
 
   /** The notice text for one peek result, or null; the durable shown event is written by settleNotice. */
