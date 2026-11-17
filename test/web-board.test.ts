@@ -142,7 +142,8 @@ async function mintToken(
     "service.ui-link",
     ttlMinutes === undefined ? {} : { ttlMinutes },
   )) as { url: string; expiresAt: string };
-  const token = issued.url.split("#token=")[1];
+  const link = new URL(issued.url);
+  const token = new URLSearchParams(link.hash.slice(1)).get("token");
   assert.match(
     token ?? "",
     /^[A-Za-z0-9_-]{43}$/,
@@ -562,7 +563,15 @@ test("the live channel delivers the board revision, then each later change, and 
         (moved.data as { revision: number }).revision > firstBoard.revision,
       );
 
-      // Revoking the token closes the stream; no board arrives after it.
+      // Swapping the token preserves the existing stream and the replacement
+      // credential can open a second stream while the board catches up.
+      const renewed = await http(fixture.port, "/api/renew", { method: "POST", token, host: `127.0.0.1:${fixture.port}` });
+      assert.equal(renewed.status, 200);
+      const replacement = JSON.parse(renewed.body).token as string;
+      assert.equal((await rpc(fixture.port, "queue.ui-snapshot", {}, token)).status, 401);
+      assert.equal((await rpc(fixture.port, "queue.ui-snapshot", {}, replacement)).status, 200);
+      assert.equal((await rpc(fixture.port, "queue.control", { paused: false }, replacement)).status, 200);
+      assert.ok(await events.next(event => event.event === "board" && (event.data as { revision: number }).revision > (moved.data as { revision: number }).revision), "the existing stream continues publishing across the swap");
       await fixture.client.request("service.ui-link", { action: "revoke" });
       await events.next(() => false, 5_000).catch(() => undefined);
       assert.equal(
@@ -573,6 +582,48 @@ test("the live channel delivers the board revision, then each later change, and 
     } finally {
       events.close();
     }
+  } finally {
+    await stopBoard(fixture);
+  }
+});
+
+test("the real web route swaps a live token without increasing the outstanding cap", async () => {
+  const fixture = await startBoard();
+  try {
+    const issued = await mintToken(fixture.client, 10);
+    const renew = async (token: string) => http(fixture.port, "/api/renew", { method: "POST", token, host: `127.0.0.1:${fixture.port}` });
+    const first = await renew(issued.token);
+    assert.equal(first.status, 200);
+    const replacement = JSON.parse(first.body) as { token: string; expiresAt: number };
+    assert.notEqual(replacement.token, issued.token);
+    assert.equal(replacement.expiresAt - fixture.clock.now, 10 * 60_000, "renewal retains the original TTL");
+    assert.equal((await rpc(fixture.port, "queue.ui-snapshot", {}, issued.token)).status, 401, "the old credential is refused after the swap");
+    assert.equal((await rpc(fixture.port, "queue.ui-snapshot", {}, replacement.token)).status, 200);
+    assert.equal((await renew(issued.token)).status, 401);
+
+    fixture.clock.now += 10 * 60_000;
+    assert.equal((await renew(replacement.token)).status, 401, "expired credentials cannot renew");
+  } finally {
+    await stopBoard(fixture);
+  }
+});
+
+test("renewal after revoke is refused and a swap does not evict another live token", async () => {
+  const fixture = await startBoard();
+  try {
+    const tokens = await Promise.all(Array.from({ length: 16 }, () => mintToken(fixture.client)));
+    const renew = async (token: string) => http(fixture.port, "/api/renew", { method: "POST", token, host: `127.0.0.1:${fixture.port}` });
+    const swapped = await renew(tokens[0]!.token);
+    assert.equal(swapped.status, 200);
+    const replacement = JSON.parse(swapped.body).token as string;
+    assert.equal((await rpc(fixture.port, "queue.ui-snapshot", {}, replacement)).status, 200);
+    assert.equal((await rpc(fixture.port, "queue.ui-snapshot", {}, tokens[1]!.token)).status, 200);
+    const seventeenth = await mintToken(fixture.client);
+    assert.equal((await rpc(fixture.port, "queue.ui-snapshot", {}, replacement)).status, 200);
+    assert.equal((await rpc(fixture.port, "queue.ui-snapshot", {}, seventeenth.token)).status, 200);
+    assert.equal((await rpc(fixture.port, "queue.ui-snapshot", {}, tokens[1]!.token)).status, 401, "the next issued link evicts only the oldest outstanding token");
+    await fixture.client.request("service.ui-link", { action: "revoke" });
+    assert.equal((await renew(replacement)).status, 401, "revoked credentials cannot renew");
   } finally {
     await stopBoard(fixture);
   }

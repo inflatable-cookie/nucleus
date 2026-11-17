@@ -99,7 +99,7 @@ function digest(token: string): string {
 
 /** In-memory token table: digests only, bounded, expiring, revocable. */
 export class WebTokens {
-  private readonly live = new Map<string, number>();
+  private readonly live = new Map<string, { expiresAt: number; ttlMs: number }>();
 
   constructor(private readonly now: () => number = Date.now) {}
 
@@ -113,8 +113,21 @@ export class WebTokens {
     }
     const token = randomBytes(32).toString("base64url");
     const expiresAt = this.now() + ttlMs;
-    this.live.set(digest(token), expiresAt);
+    this.live.set(digest(token), { expiresAt, ttlMs });
     return { token, expiresAt };
+  }
+
+  /** Swap a live token for a new one with the same lifetime. The cap is unchanged. */
+  renew(token: string | undefined): { token: string; expiresAt: number; key: string } | null {
+    const oldKey = this.admit(token);
+    if (!oldKey) return null;
+    const old = this.live.get(oldKey)!;
+    this.live.delete(oldKey);
+    const next = randomBytes(32).toString("base64url");
+    const key = digest(next);
+    const expiresAt = this.now() + old.ttlMs;
+    this.live.set(key, { expiresAt, ttlMs: old.ttlMs });
+    return { token: next, expiresAt, key };
   }
 
   /** The digest of a presented token that is live, or null for a missing, malformed, unknown, expired or revoked one. */
@@ -125,8 +138,8 @@ export class WebTokens {
   }
 
   isLive(key: string): boolean {
-    const expiresAt = this.live.get(key);
-    return expiresAt !== undefined && expiresAt > this.now();
+    const entry = this.live.get(key);
+    return entry !== undefined && entry.expiresAt > this.now();
   }
 
   /** Revoke every outstanding token; returns how many were live. */
@@ -138,8 +151,8 @@ export class WebTokens {
   }
 
   private prune() {
-    for (const [key, expiresAt] of this.live)
-      if (expiresAt <= this.now()) this.live.delete(key);
+    for (const [key, entry] of this.live)
+      if (entry.expiresAt <= this.now()) this.live.delete(key);
   }
 }
 
@@ -234,7 +247,7 @@ export class WebBoard {
   } {
     const { token, expiresAt } = this.tokens.issue(ttlMinutes * 60_000);
     return {
-      url: `http://${LOOPBACK}:${this.boundPort}/#token=${token}`,
+      url: `http://${LOOPBACK}:${this.boundPort}/#token=${token}&expiresAt=${expiresAt}`,
       expiresAt: new Date(expiresAt).toISOString(),
       ttlMinutes,
     };
@@ -311,6 +324,7 @@ export class WebBoard {
     }
     if (url.pathname === "/api/rpc") return this.rpc(request, response);
     if (url.pathname === "/api/events") return this.events(request, response);
+    if (url.pathname === "/api/renew") return this.renew(request, response);
     if (url.pathname.startsWith("/api/")) {
       sendJson(response, 404, refusal("not_found", "No such board route."));
       return;
@@ -386,6 +400,20 @@ export class WebBoard {
     const match =
       typeof header === "string" ? /^Bearer (\S+)$/.exec(header) : null;
     return this.tokens.admit(match?.[1]);
+  }
+
+  private renew(request: IncomingMessage, response: ServerResponse): void {
+    if (request.method !== "POST") {
+      sendJson(response, 405, refusal("method", "POST to renew the board token."));
+      return;
+    }
+    const header = request.headers.authorization;
+    const match = typeof header === "string" ? /^Bearer (\S+)$/.exec(header) : null;
+    const swapped = this.tokens.renew(match?.[1]);
+    if (!swapped) return this.refuseUnauthorized(response);
+    for (const stream of this.streams)
+      if (stream.key === digest(match![1]!)) stream.key = swapped.key;
+    sendJson(response, 200, { token: swapped.token, expiresAt: swapped.expiresAt });
   }
 
   private refuseUnauthorized(response: ServerResponse): void {
