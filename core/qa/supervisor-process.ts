@@ -12,45 +12,16 @@
  * owners, so a reused pid is never signalled.
  */
 import { spawn } from "node:child_process";
-import type { ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { runtimeNodeArgs } from "../../shared/runtime.mjs";
 import { processGroupEmpty, signalProcessGroup, signalProcessGroupByLeader, waitForProcessGroupEmpty } from "../machine/process-group";
 import { processesForStartIdentity, processStartIdentityLiveness } from "../machine/process-identity-search";
 import { supervisorLiveness, supervisorLivenessAsync } from "../machine/start-identity";
-import { hostRunProcessStartIdentity } from "../machine/start-identity";
 
 /** The grace a stale supervisor and its groups get between SIGTERM and SIGKILL. */
 export const SUPERVISOR_STOP_GRACE_MS = 250;
 /** Bounded proof window for process-group reaping after SIGKILL. */
 const SUPERVISOR_STOP_PROOF_WAIT_MS = 5_000;
-
-/**
- * Spec 064 P2: the detached supervisor's actual child exit, retained by the
- * parent that spawned it. It is the parent's own `exit` event for the child it
- * started — never a census, an EOF or a PID poll — and it carries both start
- * identities so a reused pid reads as a different process.
- */
-export type DetachedSupervisorExit =
-  | {
-    state: "observed"; pid: number; startIdentity: string;
-    /** The observing parent's own identity, so the wait names both ends of the edge. */
-    parentPid: number; parentStartIdentity: string;
-    code: number | null; signal: string | null; observedAt: string; source: "child-exit-event";
-  }
-  | {
-    state: "unknown"; pid: number; startIdentity: string | null;
-    /** The observing parent's own identity, so the wait names both ends of the edge. */
-    parentPid: number; parentStartIdentity: string;
-    reason: string; observedAt: string;
-  };
-
-/** The opt-in retained-child return: the supervisor's pid and its exit promise. */
-export interface RetainedDetachedSupervisor {
-  pid: number;
-  /** Settles only when this parent observes its actual child's exit (or its spawn error). */
-  exited: Promise<DetachedSupervisorExit>;
-}
 
 export interface DetachedSupervisorLaunch {
   /** The supervisor entry shipped beside the service. */
@@ -65,12 +36,6 @@ export interface DetachedSupervisorLaunch {
   environment?: NodeJS.ProcessEnv;
   /** What a launch with no pid means for this caller. */
   failureMessage: string;
-  /**
-   * Spec 064 P2 (opt-in): retain this parent's actual child exit for the whole
-   * attempt instead of returning only a pid. Absent keeps every existing caller's
-   * pid-only return unchanged.
-   */
-  retainChild?: boolean;
 }
 
 /**
@@ -79,43 +44,17 @@ export interface DetachedSupervisorLaunch {
  * it signals anything. A spawn that never produced a pid throws the caller's
  * failure; a supervisor that never appears is settled as lost or held by the
  * caller's own reconciliation, never relaunched blindly.
- *
- * Spec 064 P2: a caller that asks for `retainChild` gets this parent's actual
- * child exit promise for the whole attempt (the service→S wait), so the wait is
- * observed rather than inferred. Every other caller keeps the pid-only return.
  */
-export function spawnDetachedSupervisor(launch: DetachedSupervisorLaunch & { retainChild: true }): RetainedDetachedSupervisor;
-export function spawnDetachedSupervisor(launch: DetachedSupervisorLaunch): number;
-export function spawnDetachedSupervisor(launch: DetachedSupervisorLaunch): number | RetainedDetachedSupervisor {
+export function spawnDetachedSupervisor(launch: DetachedSupervisorLaunch): number {
   const child = spawn(process.execPath, [...runtimeNodeArgs(), launch.entry, ...launch.argv], {
     detached: true, stdio: "ignore",
     env: { ...process.env, ...launch.environment },
     cwd: fileURLToPath(new URL("../..", import.meta.url)),
   });
-  const exited = launch.retainChild ? retainedChildExit(child) : null;
   child.on("error", () => { /* no supervisor appears: the caller settles the run as lost or held */ });
   child.unref();
   if (!child.pid) throw new Error(launch.failureMessage);
-  if (!exited) return child.pid;
-  return { pid: child.pid, exited };
-}
-
-/** The parent's own observation of the child it just spawned; it never rejects. */
-function retainedChildExit(child: ChildProcess): Promise<DetachedSupervisorExit> {
-  return new Promise(resolvePromise => {
-    const pid = child.pid ?? 0;
-    const startIdentity = pid ? hostRunProcessStartIdentity(pid) : null;
-    const parentPid = process.pid;
-    const parentStartIdentity = hostRunProcessStartIdentity(parentPid);
-    child.on("exit", (code, signal) => resolvePromise({
-      state: "observed", pid, startIdentity: startIdentity ?? "", parentPid, parentStartIdentity, code, signal,
-      observedAt: new Date().toISOString(), source: "child-exit-event",
-    }));
-    child.on("error", error => resolvePromise({
-      state: "unknown", pid, startIdentity, parentPid, parentStartIdentity, observedAt: new Date().toISOString(),
-      reason: `The detached supervisor's own child exit was never observed: ${error instanceof Error ? error.message : String(error)}`,
-    }));
-  });
+  return child.pid;
 }
 
 export interface DetachedSupervisorStopTarget {
@@ -127,12 +66,6 @@ export interface DetachedSupervisorStopTarget {
   identityToken: string;
   /** The step process group the supervisor published, when it published one. */
   activeProcess?: { pid: number; processGroupId: number; startIdentity: string } | null;
-  /**
-   * Spec 064 P3: a qualification stop never terminates S as a cleanup shortcut.
-   * With `qualification_direct`, this route declines before any signal and the
-   * caller retains the unknown closure; only S's own cooperative stop may end it.
-   */
-  stopMode?: "group" | "qualification_direct";
 }
 
 /**
@@ -147,10 +80,6 @@ export interface DetachedSupervisorStopTarget {
  */
 export async function stopDetachedSupervisor(target: DetachedSupervisorStopTarget): Promise<boolean> {
   const { supervisorPid, supervisorStartIdentity, identityToken, activeProcess } = target;
-  // Spec 064 P3: a qualification attempt's supervisor is never stopped by this
-  // cleanup route. Nothing is signalled; false is "not proven stopped", which the
-  // caller keeps as unknown closure rather than escalating.
-  if (target.stopMode === "qualification_direct") return false;
   const signalActiveGroup = (signal: NodeJS.Signals): void => {
     if (!activeProcess) return;
     signalProcessGroup(activeProcess.processGroupId, identityToken, signal);

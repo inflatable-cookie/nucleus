@@ -3,7 +3,6 @@ import { hostRunResultSchema } from "../../shared/contracts";
 import {
   HOST_RUN_SUPERVISOR_PLAN_FORMAT,
   HOST_RUN_SUPERVISOR_STATE_FORMAT,
-  QUALIFICATION_FOUNDATION_INCOMPLETE,
   hostRunSupervisorPlanSchema,
   hostRunSupervisorStateSchema,
   readHostRunCancelRequest,
@@ -20,8 +19,7 @@ import {
 import { HOST_RUN_RETAINED_OUTPUT_BYTES } from "../../core/host-runs/host-run-endpoint-types";
 import { HOST_RUN_CPU_COVERAGE_FILE, hostRunCpuCoverageSidecar } from "../../core/host-runs/host-run-cpu-coverage";
 import { openHostRunRetainedOutput } from "../../core/host-runs/host-run-retained-output";
-import { executeHookProgram, type DirectChildWait, type ExecutionOutcome } from "../../core/machine/process-exec";
-import { qualificationProcessIdentity } from "../../core/host-runs/qualification-binding";
+import { executeHookProgram, type ExecutionOutcome } from "../../core/machine/process-exec";
 import { ProcessTreeCpuSampler } from "../../core/machine/process-tree-cpu";
 /**
  * Detached supervisor for contract 010 client-protocol runs (Spec 035 part 3).
@@ -94,48 +92,22 @@ class SupervisorState {
  * process owner, keep the run reserved until the escaped-descendant proof holds,
  * and write the durable result. An unreadable cancel request is unknown, never
  * absent: the run is stopped and the reason is recorded beside it.
- *
- * Spec 064 P1–P3: the private qualification mode is bound to one plan whose
- * subject and command identity were resolved before any effect. Until the later
- * tranches land their named missing-input refusal, this entry refuses such a plan
- * before its first write or spawn (brief amendment, 2026-11-16): the mode is
- * inaccessible, and authentication alone never starts a real proof.
  */
-/**
- * Spec 064 P1/P2: the process-start identity this plan's direct command inherits.
- * A qualification plan derives it from the immutable subject, so the marker the
- * binding's environment digest covers is exactly the one the command receives; an
- * ordinary plan keeps a fresh random identity.
- */
-export function supervisorSpawnIdentity(plan: Pick<HostRunSupervisorPlan, "qualification">): string {
-  return plan.qualification ? qualificationProcessIdentity(plan.qualification.subject) : randomUUID();
-}
-
-export interface HostRunSupervisorHooks {
-  /** Spec 064 P2: the supervisor's own direct-command exit observation, as it is made. */
-  onDirectChildWait?: (wait: DirectChildWait) => void;
-}
-
-export async function runHostRunSupervisorMain(argv: string[] = process.argv.slice(2), hooks: HostRunSupervisorHooks = {}): Promise<void> {
+export async function runHostRunSupervisorMain(argv: string[] = process.argv.slice(2)): Promise<void> {
   const [stateDir, runId] = argv;
   if (!stateDir || !runId) throw new Error("Host-run supervisor needs its state directory and run id");
   const plan = readSupervisorPlan(stateDir, runId);
-  if (plan.qualification || plan.stopMode === "qualification_direct")
-    throw new Error(`${QUALIFICATION_FOUNDATION_INCOMPLETE}: this supervisor refuses a qualification plan before its first effect; Spec 064 P4–P7 own the missing-input refusal`);
   // The plan holds env key names only; the values come from the run's ephemeral launch file.
   const launchEnv = readHostRunLaunchEnv(plan.stateDir, plan.runId);
   if (!launchEnv) throw new Error("Host-run launch env is missing; the run was never launched");
   const state = new SupervisorState(plan, new Date().toISOString());
   const output = openHostRunRetainedOutput(plan.stateDir, plan.runId, HOST_RUN_RETAINED_OUTPUT_BYTES, launchEnv.HOST_RUN_TOKEN);
   // A private identity marker inherited by the command and every descendant, so
-  // the process owner can inventory an escaped `setsid` descendant. A
-  // qualification plan's marker is the subject-derived one its binding digested.
-  const identity = supervisorSpawnIdentity(plan);
+  // the process owner can inventory an escaped `setsid` descendant.
+  const identity = randomUUID();
   const cpu = new ProcessTreeCpuSampler(identity, HOST_RUN_CPU_SAMPLE_MS);
   const recordedFaults = new Set<string>();
   let cancelRecorded = false;
-  /** Spec 064 P2: S's own direct-command exit observation, retained for the whole attempt. */
-  let directChildWait: DirectChildWait | null = null;
   let execution: ExecutionOutcome;
   try {
     execution = await executeHookProgram({
@@ -154,12 +126,6 @@ export async function runHostRunSupervisorMain(argv: string[] = process.argv.sli
       // Contract 010: the run stays reserved, its pipes open and its cancel
       // request polled until no escaped descendant is proven alive.
       settleOnEscapedDescendants: true,
-      // Spec 064 P2/P3: S records its own direct-command exit (the parent's child
-      // exit event) and, only for a qualification plan, would use the direct-command
-      // stop. An ordinary plan keeps the group stop it has always used.
-      directChildWait: true,
-      ...(plan.stopMode ? { stopMode: plan.stopMode } : {}),
-      onChildExit: wait => { directChildWait = wait; hooks.onDirectChildWait?.(wait); },
       env: launchEnv,
       onOutput: (stream, chunk) => output.write(stream, chunk),
       cancelReason: () => {
@@ -200,11 +166,6 @@ export async function runHostRunSupervisorMain(argv: string[] = process.argv.sli
   }
 
   if (execution.timedOut && state.termination === null) state.persist({ termination: "timeout" });
-  // Spec 064 P2: the direct-command exit is this supervisor's own child exit, and
-  // it must have been observed before the group settled. A missing observation is
-  // recorded as a fault, never inferred from the census, EOF or a PID poll.
-  if (directChildWait === null)
-    recordSupervisorFault(plan, "direct_child_wait_unknown", "The direct command's exit was never observed as this supervisor's own child");
   // Every chunk arrived before the process owner settled; close the retained
   // streams (which writes any truncation marker) ahead of the result record.
   output.close();

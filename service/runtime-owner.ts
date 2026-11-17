@@ -34,7 +34,6 @@ import { existsSync, readFileSync, writeFileSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { Store } from "../core/store/store";
-import { qualificationSubjectResolver } from "../core/host-runs/qualification-subject";
 import { StoreCompactor, freeBytesOn } from "../core/store/store-compaction";
 import { backupDirForDataDir } from "../core/store/backups";
 import { HostPolicies } from "../core/host/host-policies";
@@ -763,10 +762,6 @@ export class QueueRuntime {
           this.hostRunEndpoint = new HostRunEndpoint(this.hostRuns, {
             stateDir: this.hostRunStateDir,
             ...(this.hostRunFront ? { front: this.hostRunFront } : {}),
-            // Spec 064 P1: qualification submits resolve their immutable subject from
-            // the executor run's own credential and Nucleus's records. The endpoint
-            // refuses every submit before any write until tranches 2–3 land.
-            qualification: qualificationSubjectResolver({ store: this.store }),
           });
           await this.hostRunEndpoint.start();
           this.hostRunEndpointError = "";
