@@ -416,7 +416,15 @@ export class WebBoard {
     }
     const token = bearerToken(request);
     const key = this.tokens.consume(token);
-    if (!key) return;
+    if (!key) {
+      sendJson(
+        response,
+        401,
+        refusal("unauthenticated", "A valid, unexpired one-time board link is required to pair this browser."),
+        { "www-authenticate": 'Bearer realm="nucleus-board"' },
+      );
+      return;
+    }
     const cookie = randomBytes(32).toString("base64url");
     const sessionKey = digest(cookie);
     this.pruneSessions();

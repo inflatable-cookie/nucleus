@@ -395,11 +395,13 @@ test("every API request needs a paired session and rejects missing, unknown, exp
 
     // The link token's expiry is read from the service clock.
     fixture.clock.now += 31 * 24 * 60 * 60_000;
-    assert.equal(
-      (await rpc(fixture.port, "queue.ui-snapshot", {}, await pairToken(fixture.port, minted.token))).status,
-      401,
-      "an expired one-time link cannot pair",
-    );
+    const expiredPairing = await http(fixture.port, "/api/pair", {
+      method: "POST",
+      authorization: `Bearer ${minted.token}`,
+      host: `127.0.0.1:${fixture.port}`,
+    });
+    assert.equal(expiredPairing.status, 401, "an expired one-time link cannot pair");
+    assert.equal(JSON.parse(expiredPairing.body).error.code, "unauthenticated");
 
     // Revocation refuses every outstanding token at once.
     const second = { token: await pairedToken(fixture) };
