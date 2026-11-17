@@ -10,6 +10,14 @@ export function projectQaRecipientKey(agentId: string): string {
   return `${qualified.hostId}:${qualified.nativeAgentId}`;
 }
 
+export function qaSettlementNoticeId(runId: string, agentId: string): string {
+  return `project-qa-settled:${runId}:${projectQaRecipientKey(agentId)}`;
+}
+
+export function qaSettlementHostMessageId(runId: string, agentId: string): string {
+  return `project-qa-settled-${runId}-${agentId}`;
+}
+
 /** Preserve the first spelling while collapsing qualified and bare forms of one thread. */
 export function uniqueProjectQaRecipients(agentIds: Array<string | undefined>): string[] {
   const seen = new Set<string>();

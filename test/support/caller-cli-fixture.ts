@@ -56,6 +56,10 @@ export async function callerCliFixture(mismatch = false) {
       let result: unknown = {};
       if (frame.method === 'service.health') result = {protocolVersion:PROTOCOL_VERSION,rpcContracts: mismatch ? {} : rpcContracts};
       else if (frame.method === 'caller.resolve') {hostResolutions.push(frame.input);const hostId=frame.input.hostKind==='t3code'?'t3code:32be2844-7204-4edc-a95a-35b05e42ded4':'paseo-fixture';result = {caller:formatAgentId(hostId,frame.input.nativeAgentId),hostId,source:'host',...(hostParticipantTicket?{participantTicket:hostParticipantTicket}:{})};}
+      else if (frame.method === 'agent.tell') {
+        calls.push({method:frame.method,input:frame.input});
+        result = {status:'queued',messageId:frame.input.eventId,to:'the Swallowtail planner',role:'planner',recordedAt:new Date().toISOString(),detail:'queued for the project inbox'};
+      }
       else if (frame.method !== 'service.auth') {
         calls.push({method:frame.method,input:frame.input});
         if(frame.method === 'queue.detail') result = detail;

@@ -233,9 +233,10 @@ only to a thread observed live on a host that supplies no calling-thread identit
 its own, and never into an archived, gone or unreadable thread. A planner without a
 ticket is recorded ticket pending and the board's project entry says so. Startup
 reconciles that state and sends nothing. Reassignment or clearing revokes the ticket.
-For `nucleus ask` and `nucleus tell`, a host-supplied caller can proceed only when
-`caller.resolve` returns that thread's participant ticket; an unregistered host caller
-is refused before a verb is sent. A bare legacy project-planner ID binds to a matching
+For `nucleus tell`, a recognised caller proceeds from an explicit ticket, the current
+run ticket `caller.resolve` locates from the verified thread, a participant ticket, or
+the host-verified identity via `agent.tell`. `nucleus ask` still needs a run ticket.
+A slow host answers "The host is slow; retry" instead of hanging. A bare legacy project-planner ID binds to a matching
 native ID on Paseo regardless of the historical setter, and never to another host.
 The same ticket covers a task's own planner (task 1109): keyed per proven host and
 thread rather than per task, handed over by the same two routes, and valid only

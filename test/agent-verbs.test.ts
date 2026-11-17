@@ -399,12 +399,15 @@ test("a Paseo planner's host identity resolves its participant ticket before nuc
   } finally { await f.close(); }
 });
 
-test("an unregistered Paseo thread without a participant ticket cannot nucleus tell", async () => {
+test("a plain Paseo thread without a participant ticket tells through agent.tell", async () => {
   const f = await callerCliFixture();
   try {
-    const result = await f.invoke("host", "agent-verbs.mjs", ["tell", "-"], { to: { project: "Swallowtail" }, text: "Must not send." });
-    assert.notEqual(result.code, 0);
-    assert.match(result.stderr, /no participant role.*nothing was sent/);
+    const result = await f.invoke("host", "agent-verbs.mjs", ["tell", "-"], { to: { project: "Swallowtail" }, text: "Host identity is enough." });
+    assert.equal(result.code, 0, result.stderr);
+    const receipt = JSON.parse(result.stdout);
+    assert.equal(receipt.status, "queued");
+    assert.equal(f.hostResolutions.length, 1);
+    assert.equal(f.calls.some(call => call.method === "agent.tell"), true);
     assert.deepEqual(f.callbacks, []);
   } finally { await f.close(); }
 });

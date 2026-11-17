@@ -13,7 +13,10 @@ import {
   type HostRunResult, type HostRunSettlement, type ProjectQaRun, type ProjectQaStepName,
 } from "../../shared/contracts";
 import type { HostRunScheduler } from "../host-runs/host-run-scheduler";
-import { projectQaNotice, uniqueProjectQaRecipients } from "./project-qa-notice";
+import { HostUnknownDeliveryError } from "../host/errors";
+import {
+  projectQaNotice, qaSettlementHostMessageId, qaSettlementNoticeId, uniqueProjectQaRecipients,
+} from "./project-qa-notice";
 import {
   qaSupervisionPaths, readQaCancelRequest, readQaCpuCoverage, removeQaSupervisionFiles,
   type QaSupervisionState,
@@ -115,8 +118,9 @@ export const projectQaSettlement = {
 
   /**
    * Tell the project's planner (else the Queue planner) and the submitter that the
-   * run settled. A notice carries news; a delivery that failed is recorded on the
-   * run instead of being swallowed, and nothing about sending changes its state.
+   * run settled. Queue the notice first: an unavailable host leaves it pending for
+   * the drain, a typed unknown delivery stays uncertain and is never resent, and
+   * nothing about sending changes the run's state.
    */
   async notifySettled(this: QaSettleContext, saved: ProjectQaRun): Promise<ProjectQaRun> {
     if (!saved.finishedAt || !this.options.notify) return saved;
@@ -127,8 +131,37 @@ export const projectQaSettlement = {
     const recipients = uniqueProjectQaRecipients([planner ?? undefined, saved.submitterAgentId]);
     const message = projectQaNotice(saved);
     const notify = this.options.notify;
-    await Promise.all(recipients.map(agentId => notify(agentId, `project-qa-settled-${saved.id}-${agentId}`, message)
-      .catch(error => { faults.push(`the notice to ${agentId} was not delivered: ${error instanceof Error ? error.message : String(error)}`); })));
+    const taskId = `qa:${saved.id}`;
+    await Promise.all(recipients.map(async agentId => {
+      const id = qaSettlementNoticeId(saved.id, agentId);
+      const hostMessageId = qaSettlementHostMessageId(saved.id, agentId);
+      const existing = this.store.notices(taskId).find(notice => notice.id === id);
+      if (existing && existing.status !== "pending") return;
+      if (!existing) {
+        this.store.putNotice({
+          id, taskId, agentId, recipientAgentId: agentId, originEntry: false,
+          workspaceId: null, sources: [], kind: "qa", status: "pending", error: "", text: message,
+        });
+      }
+      const current = () => this.store.notices(taskId).find(notice => notice.id === id)!;
+      try {
+        await notify(agentId, hostMessageId, message);
+        this.store.putNotice({ ...current(), status: "delivered", error: "" });
+      } catch (error) {
+        const text = error instanceof Error ? error.message : String(error);
+        if (error instanceof HostUnknownDeliveryError || /host_call_past_deadline/.test(text)) {
+          this.store.putNotice({ ...current(), status: "uncertain", error: text });
+          faults.push(`the notice to ${agentId} was not delivered: ${text}`);
+          return;
+        }
+        if (/QA notification host is unavailable/i.test(text)) {
+          if (current().error !== text) this.store.putNotice({ ...current(), error: text });
+          return;
+        }
+        this.store.putNotice({ ...current(), error: text });
+        faults.push(`the notice to ${agentId} was not delivered: ${text}`);
+      }
+    }));
     if (!faults.length) return saved;
     const current = this.store.qaRun(saved.id) ?? saved;
     return this.store.putQaRun({ ...current,

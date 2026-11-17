@@ -30,6 +30,15 @@ export interface QaScheduleOptions {
 export const qaScheduleStateKey = (key: string) => `projectQaSchedule:${key}`;
 const active = (run: ProjectQaRun) => run.state === 'queued' || run.state === 'running';
 const HOUR = 3_600_000;
+/** A settlement notice stays live while its QA run exists; schedule notices keep their planner owner. */
+export function qaNoticeOwner(store: Store, notice: Notice): string | null {
+  if (notice.id.startsWith("project-qa-settled:")) {
+    const runId = notice.taskId.startsWith("qa:") ? notice.taskId.slice(3) : "";
+    return runId && store.qaRun(runId) ? notice.agentId : null;
+  }
+  return qaScheduleNoticeOwner(store, notice);
+}
+
 /** Pending schedule notifications follow the project's planner (else the Queue planner), never a task author. */
 export function qaScheduleNoticeOwner(store: Store, notice: Notice): string | null {
   const key = notice.taskId.slice('qa:'.length), row = store.repositoryFor(key);
