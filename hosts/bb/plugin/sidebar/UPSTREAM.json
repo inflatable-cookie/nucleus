@@ -164,7 +164,7 @@
     "hosts/bb/plugin/sidebar/shared/preferences.ts": "29e015713c1553b56d05e0b93b06c892cd300557c25ac69efb83b9eff492e43b",
     "hosts/bb/plugin/sidebar/sidebarRowRenders.test.tsx": "5b6e9cba0941d301e583f5ec86fec96cd1238cb085a20a32b9104735d018dac4",
     "hosts/bb/plugin/tsconfig.json": "d4abe8bb252b3142700d8e4c82aaab6cf4d56cb9d8143ad7530c5fd782281d53",
-    "hosts/bb/plugin/vitest.config.ts": "91b4c30875beec373249cce9397a1ea242199c00209edc45ec9a3b0240e31870"
+    "hosts/bb/plugin/vitest.config.ts": "ea5adabd3f573fb498748ad0f721770eaa71fe673694c3ef4a2e4db2045cff89"
   },
   "patched": [
     "hosts/bb/plugin/sidebar/app.test.tsx",

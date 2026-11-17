@@ -283,6 +283,15 @@ much"). Paseo stays the primary host until Tom decides.
 T3Code compatibility follows the auto-updating nightly, with read-only structural
 probes rather than a server-version pin (Tom, 2026-11-11). The connection and
 first-use command checks are owned by the [host boundary](contracts/service-boundary.md#host-identity-registry).
+BB (Tom, 2026-11-16/17): BB ([getbb.app](https://getbb.app)) is a third host beside Paseo and
+T3Code, opt-in per repository, with one workspace per task nested under the task's planner thread in
+BB's sidebar. His target is "T3 dispatches, BB executes", and he wants the full end-to-end workflow —
+submit, dispatch, worker report, independent review, merge, closeout and archive, with questions and
+notices back to the planner thread — proven in BB before any switch from Paseo. Paseo stays the
+primary host until he makes the parity call; [Spec 062](specs/062-bb-host-adapter.md) records that
+call as pending. Subscription usage is each host's own surface: Nucleus adds usage UI to no host, and
+BB's card plus host-specific plugins are BB's.
+
 
 Target host split (Tom, 2026-11-17): "use T3Code for standalone threads and probably for planners
 (who would dispatch to nucleus), then assuming BB is up to the task, use that as the task execution

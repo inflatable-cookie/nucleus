@@ -45,6 +45,9 @@ setup = "npm ci"
 # Spec 062 phase 7's operator install route: `nucleus bb install`, `status` and
 # `uninstall` against the same isolated BB server (never the operator's live BB).
 "proof:bb:install" = "node --import tsx scripts/acceptance/bb-install-private.ts {args}"
+# Spec 062 phase 7's trial: a plugin reload, a BB restart and a host outage mid-task
+# on the isolated BB server, each recovered by observation and never resent.
+"proof:bb:trial" = "node --import tsx scripts/acceptance/bb-trial-private.ts {args}"
 check = [{ task = "check:types" }, { task = "check:plugin-types" }, { task = "check:publication" }]
 # Test files a change can affect, from the import graph; `--run` runs them. See scripts/test-affected.mjs.
 "test:affected" = "node scripts/test-affected.mjs {args}"
