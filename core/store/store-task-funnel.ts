@@ -44,7 +44,7 @@ export interface TaskFunnelServices {
   resolveReviewRows(rows: Array<{ seq: number; data: string }>): Pick<Task["resolution"], "review" | "reviews">;
   runObservationOnly(run: Run): boolean;
   run(id: string): Run | null;
-  queueRunScratchCleanup(directory: string): void;
+  queueRunCleanup(run: { id: string; taskId: string; hostId?: string; agentId?: string | null; temporaryDirectory?: string }): void;
   queueRunReportingCleanup(runId: string, taskId: string): void;
   get path(): string;
   dependencyWait(task: Pick<Task, "dependsOn">): string;
@@ -274,13 +274,12 @@ export class StoreTaskFunnel {
     const hasTelemetry = Boolean(this.services.db.prepare("SELECT 1 FROM events WHERE taskId=? AND kind='telemetry_stage' LIMIT 1").get(id));
     const validated = this.services.tasksStore.validatedTask(next);
     this.services.db.prepare("UPDATE tasks SET data=? WHERE id=?").run(this.services.taskRow(next, task), id);
-    // Terminal cleanup takes every leaf this task's threads were launched with,
-    // once, on the transition; a live task's retained threads keep theirs (task
-    // 681). The task row's own leaf goes when its worker run identity changes.
+    // Persist process cleanup before a terminal transition or worker replacement
+    // loses its binding. Scratch is removed only after the owned tools stop.
     if ((terminal && task.phase !== next.phase) || (!task.removedAt && Boolean(next.removedAt)))
-      for (const run of this.services.runs(id)) if (run.temporaryDirectory) this.services.queueRunScratchCleanup(run.temporaryDirectory);
-    if (task.temporaryDirectory && task.runId && (task.runId !== next.runId || terminal))
-      this.services.queueRunScratchCleanup(task.temporaryDirectory);
+      for (const run of this.services.runs(id)) this.services.queueRunCleanup(run);
+    if (task.runId && (task.runId !== next.runId || terminal && task.phase !== next.phase || !task.completion && next.completion))
+      this.services.queueRunCleanup({ id: task.runId, taskId: id, hostId: task.hostId, agentId: task.agentId, temporaryDirectory: task.temporaryDirectory });
     if (this.services.tasksStore.taskProjection) {
       this.services.tasksStore.setProjectedTask(validated);
       this.services.tasksStore.integrationTaskIndex = null;
@@ -366,20 +365,6 @@ export class StoreTaskFunnel {
     return true;
   }
 
-  /**
-   * True once no later turn can reuse the run's thread, so the leaf its tools
-   * started with is no longer needed: an unlaunched run, an archived thread, or
-   * a task that is terminal or removed. A retained thread keeps its leaf until
-   * then, because its MCP children started with that environment and a live
-   * thread outlives the run that launched it (task 681: project-e#280).
-   */
-  private threadRetired(run: Run): boolean {
-    if (!run.agentId) return true;
-    if (run.hostId && this.services.threadArchiveEffect(run.agentId, run.hostId)?.status === "archived") return true;
-    const row = this.services.db.prepare("SELECT json_extract(data,'$.phase') AS phase, json_extract(data,'$.removedAt') AS removedAt FROM tasks WHERE id=?").get(run.taskId);
-    if (!row) return true;
-    return ["done", "cancelled"].includes(String(row.phase)) || row.removedAt != null;
-  }
   putRun(run: Run, options: { usageOnly?: boolean } = {}): void {
     // A release and its credential revocation are one durable state change.
     // Callers that already own a transaction keep their larger atomic boundary.
@@ -444,7 +429,7 @@ export class StoreTaskFunnel {
       }
     }
     if (!run.released) this.services.db.prepare("UPDATE credentials SET revoked=0 WHERE run=?").run(run.id);
-    if (run.released && run.temporaryDirectory && this.threadRetired(run)) this.services.queueRunScratchCleanup(run.temporaryDirectory);
+    if (run.released || run.completion) this.services.queueRunCleanup(run);
     if (this.services.tasksStore.taskProjection) {
       this.services.tasksStore.rememberProjectedRun(run.id, run.taskId);
       const states = this.services.tasksStore.runState!;

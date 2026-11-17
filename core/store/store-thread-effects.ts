@@ -7,8 +7,8 @@ export interface ThreadEffectServices {
   readonly db: DatabaseSync;
   getMeta<T>(key: string): T | undefined;
   setMeta(key: string, value: unknown): void;
-  /** Removes one recorded leaf the store proved; the caller's policy, not a new one. */
-  removeRecordedRunScratch(directory: string): boolean;
+  /** Records a cleanup intent; process stopping must precede scratch removal. */
+  queueRunCleanup(run: { id: string; taskId: string; hostId?: string; temporaryDirectory?: string }): void;
 }
 
 /**
@@ -87,7 +87,7 @@ export class StoreThreadEffects {
   }
 
   /**
-   * Remove every recorded run leaf a retired thread's tools were launched with,
+   * Schedule every recorded run leaf a retired thread's tools were launched with,
    * through the same recorded-leaf path release uses. A retained thread's later
    * runs each start with their own leaf, so all of them go when the thread can
    * take no further turn (task 681).
@@ -96,8 +96,10 @@ export class StoreThreadEffects {
     let removed = 0;
     const host = this.db.prepare("SELECT json_extract(data,'$.hostId') AS host FROM tasks WHERE id=?").get(taskId)?.host;
     if (typeof host !== 'string' || !host) return 0;
-    for (const row of this.db.prepare("SELECT json_extract(data,'$.temporaryDirectory') AS leaf FROM runs WHERE taskId=? AND json_extract(data,'$.agentId')=? AND json_extract(data,'$.hostId')=?").all(taskId, agentId, host))
-      if (typeof row.leaf === "string" && row.leaf && this.services.removeRecordedRunScratch(row.leaf)) removed++;
+    for (const row of this.db.prepare("SELECT data FROM runs WHERE taskId=? AND json_extract(data,'$.agentId')=? AND json_extract(data,'$.hostId')=?").all(taskId, agentId, host)) {
+      this.services.queueRunCleanup(JSON.parse(String(row.data)));
+      removed++;
+    }
     return removed;
   }
 }

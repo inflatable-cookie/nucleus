@@ -1,3 +1,4 @@
+import { sweepSettledRunProcesses } from "../machine/run-process-cleanup";
 import type { Adapter, OriginAgent } from '../host/adapter';
 import { HostFacade } from '../host/host-facade';
 import { Store, now } from '../store/store';
@@ -39,6 +40,7 @@ export async function settleArchive(store: Store, adapter: Adapter, taskId: stri
       store.deleteMeta(archiveProbeKey(store, taskId, agentId));
       store.event(taskId, 'thread_archive_observed', agentId);
       store.retireThreadScratch(taskId, agentId);
+      if (adapter.hostProcessListing) await sweepSettledRunProcesses(store, store.task(taskId).hostId, { taskId, pendingOnly: true, readProcesses: () => adapter.hostProcessListing!() });
       return;
     }
     // An intent from a previous process has an unknown outcome. Observe it,
@@ -67,6 +69,7 @@ export async function settleArchive(store: Store, adapter: Adapter, taskId: stri
     // The thread can take no further turn, so the leaves its tools started with
     // are done: removal goes through the same recorded-leaf path release uses.
     store.retireThreadScratch(taskId, agentId);
+    if (adapter.hostProcessListing) await sweepSettledRunProcesses(store, store.task(taskId).hostId, { taskId, pendingOnly: true, readProcesses: () => adapter.hostProcessListing!() });
   } catch (error) {
     // A breaker deferral reached no Paseo call. Deferred is a wait, not
     // uncertainty: the withdrawn intent stays retryable, and the unchanged wait

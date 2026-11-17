@@ -109,7 +109,7 @@ function carriesFlag(argv: readonly string[], name: string): boolean {
  * shell, or with a script from its own scratch directory or anywhere else, is
  * real work and still holds. An unreadable command is never infrastructure.
  */
-function providerRuntimePids(provider: HostProcessFact, processes: readonly HostProcessFact[]): Set<number> {
+export function providerRuntimePids(provider: HostProcessFact, processes: readonly HostProcessFact[]): Set<number> {
   const providerArgv = commandArgv(provider.command);
   const providerProgram = argvBase(providerArgv[0])?.toLowerCase() ?? "";
   const providerDirectories = new Set(programDirectories(providerArgv[0]));
@@ -176,6 +176,39 @@ function providerRuntimePids(provider: HostProcessFact, processes: readonly Host
     if (directory && scratchDirectories.has(directory)) runtimes.add(process.pid);
   }
   return runtimes;
+}
+
+/** The helper positively identifies its parent provider; a missing helper grants no new host identity. */
+export function runProviderBindings(processes: readonly HostProcessFact[]): Array<{ runId: string; provider: HostProcessFact; infrastructure: HostProcessFact[] }> {
+  return processes.flatMap(helper => {
+    const args = commandArgv(helper.command);
+    if (argvBase(args[0]) !== "node" || argvBase(args[1]) !== "mcp-report.mjs") return [];
+    const match = /(?:^|[\\/])mcp-(.+)\.json$/.exec(args[2] ?? "");
+    const provider = processes.find(fact => fact.pid === helper.ppid);
+    if (!match || !provider) return [];
+    const pids = providerRuntimePids(provider, processes);
+    pids.add(provider.pid); pids.add(helper.pid);
+    return [{ runId: match[1], provider, infrastructure: processes.filter(fact => pids.has(fact.pid)) }];
+  });
+}
+
+/** Agent hosts, their standing runtimes and report helpers are infrastructure, never run cleanup targets. */
+export function runInfrastructurePids(processes: readonly HostProcessFact[]): Set<number> {
+  const protectedPids = new Set<number>();
+  for (const helper of processes) {
+    const args = commandArgv(helper.command);
+    if (argvBase(args[0]) !== "node" || !["mcp-report.mjs", "worker-report.mjs"].includes(argvBase(args[1]) ?? "")) continue;
+    protectedPids.add(helper.pid);
+    const provider = processes.find(fact => fact.pid === helper.ppid);
+    if (!provider) continue;
+    for (const pid of providerRuntimePids(provider, processes)) protectedPids.add(pid);
+    let ancestor: HostProcessFact | undefined = provider;
+    while (ancestor && !protectedPids.has(ancestor.pid)) {
+      protectedPids.add(ancestor.pid);
+      ancestor = processes.find(fact => fact.pid === ancestor!.ppid);
+    }
+  }
+  return protectedPids;
 }
 
 export interface OwnedToolProcessProofOptions {

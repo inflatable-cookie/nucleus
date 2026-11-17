@@ -84,7 +84,6 @@ export const hostRunHoldReason = (run: { id: string; state: string }) =>
   `host run ${run.id} (${run.state === "settled" ? "settled, capacity still reserved" : run.state}) holds this workspace`;
 
 export class Store {
-  private readonly pendingRunScratchCleanup = new Set<string>();
   /**
    * The recorded-leaf remover. Production proves the recorded mount and removes
    * one proved real directory; a private fixture substitutes its own proved
@@ -152,7 +151,7 @@ export class Store {
       resolveReviewRows: rows => store.resolveReviewRows(rows),
       runObservationOnly: run => store.taskWritesStore.runObservationOnly(run),
       run: id => store.run(id),
-      queueRunScratchCleanup: directory => { store.pendingRunScratchCleanup.add(directory); },
+      queueRunCleanup: run => store.queueRunProcessCleanup(run),
       queueRunReportingCleanup: (runId, taskId) => { store.pendingRunReportingCleanup.set(runId, taskId); },
       get path() { return store.path; },
       dependencyWait: task => store.dependencyWait(task),
@@ -234,7 +233,7 @@ export class Store {
     return new StoreThreadEffects({
       get db() { return store.db; },
       getMeta: key => store.getMeta(key), setMeta: (key, value) => store.setMeta(key, value),
-      removeRecordedRunScratch: directory => store.runScratchRemover(directory),
+      queueRunCleanup: run => store.queueRunProcessCleanup(run),
     });
   })();
 
@@ -542,9 +541,6 @@ export class Store {
             this.pendingRunReportingCleanup.delete(runId);
           } catch { /* The credential row is already revoked; a later transaction retries file cleanup. */ }
         }
-        for (const directory of this.pendingRunScratchCleanup)
-          this.runScratchRemover(directory);
-        this.pendingRunScratchCleanup.clear();
         const dependents = [...this.settledDependents];
         this.settledDependents.clear();
         if (dependents.length) for (const listener of this.prerequisiteListeners) {
@@ -559,7 +555,6 @@ export class Store {
         this.projectRegistry.clearCache();
         this.tasksStore.projectionUndo = null;
         if (restorable && undo.clock === this.tasksStore.readProjectionClock()) this.tasksStore.restoreProjection(undo);
-        this.pendingRunScratchCleanup.clear();
         this.pendingRunReportingCleanup.clear();
         this.settledDependents.clear();
         // Audit B7: a rollback used to throw away every projection, so the next read re-parsed
@@ -1199,6 +1194,12 @@ export class Store {
   threadArchiveKey(agentId: string, hostId: string | null | undefined): string | null { return this.threadEffects.archiveKey(agentId, hostId); }
   putThreadArchiveEffect<T extends { status: string; at: string }>(key: string, _agentId: string, effect: T): void { return this.threadEffects.putArchiveEffect(key, effect); }
   threadArchiveEffect(agentId: string, hostId?: string | null): { status?: string } | undefined { return this.threadEffects.archiveEffect(agentId, hostId); }
+  /** Durable cleanup intent; written inside the settlement transaction, never a signal before commit. */
+  queueRunProcessCleanup(run: { id: string; taskId: string; hostId?: string; agentId?: string | null; temporaryDirectory?: string }): void {
+    this.setMeta(`runProcessCleanup:${run.id}`, { id: run.id, taskId: run.taskId, hostId: run.hostId, agentId: run.agentId, temporaryDirectory: run.temporaryDirectory, pending: true });
+  }
+  /** Called only after the run's process stop has settled. The recorded-volume proof still owns removal. */
+  removeRunScratchAfterProcesses(directory: string): boolean { return this.runScratchRemover(directory); }
   retireThreadScratch(taskId: string, agentId: string): number { return this.threadEffects.retireScratch(taskId, agentId); }
   /** Finished tasks on this host whose threads still owe an archive or removal; `store-thread-effects.ts` owns the keys. */
   finishedTasksOwingThreadCleanup(hostId: string, removal: boolean): Task[] { return this.threadEffects.finishedTasksOwingCleanup(hostId, removal); }

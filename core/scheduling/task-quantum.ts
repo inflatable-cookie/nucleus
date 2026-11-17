@@ -1,3 +1,4 @@
+import { sweepSettledRunProcesses } from "../machine/run-process-cleanup";
 import { onCheckoutVolume } from "../workspaces/checkout-volume";
 import { reconcileRoutingSignoffs } from "../dispatch/routing-signoff";
 import { archiveFinishedThreads } from '../workspaces/thread-archive';
@@ -89,6 +90,7 @@ export class TaskQuantum {
       // is never left holding a lane. Pause defers this path so a recovery escalate stays
       // stored. A reported unreleased thread reaches release in Observation (nucleus#937).
       this.context.settleFinishedRuns(task);
+      if (task.hostId && this.context.adapter.hostProcessListing) await sweepSettledRunProcesses(this.context.store, task.hostId, { taskId, pendingOnly: true, readProcesses: () => this.context.adapter.hostProcessListing!() });
       if (isDispositionActive(this.context.store.task(task.id))) return;
       // Queue #342: settle finished runs' regenerable output before any launch below, in the task's serial lane.
       await this.context.settleRunBuildOutputs(task.id);
@@ -202,6 +204,8 @@ export class TaskQuantum {
           await this.context.resolution.recovery.route(current);
       } catch (error) { this.context.noteStepFailure(taskId, error); }
     }
+    const cleanupHost = this.context.store.task(taskId).hostId;
+    if (cleanupHost && this.context.adapter.hostProcessListing) await sweepSettledRunProcesses(this.context.store, cleanupHost, { taskId, pendingOnly: true, readProcesses: () => this.context.adapter.hostProcessListing!() });
     await archiveFinishedThreads(this.context.store, this.context.adapter, taskId, async (agentId, workspaceId) => {
       const task = this.context.store.task(taskId), runs = this.context.store.runs(taskId);
       const runIds = participantToolRunIds(task, runs, agentId, workspaceId);
