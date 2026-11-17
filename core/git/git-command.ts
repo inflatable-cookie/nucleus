@@ -16,6 +16,22 @@ export async function gitText(cwd: string, ...args: string[]): Promise<string> {
   if (result.code !== 0) throw new Error(result.stderr);
   return result.stdout.toString("utf8").trim();
 }
+
+/** Fast-forward quietly, then use the checkout state as the success proof. */
+export async function gitFastForward(cwd: string, target: string): Promise<void> {
+  const expected = await gitText(cwd, "rev-parse", target);
+  let failure: unknown;
+  try {
+    const result = await gitRun(cwd, ["merge", "--ff-only", "--quiet", target]);
+    if (result.code !== 0) failure = new Error(result.stderr || `git merge --ff-only ${target} exited with code ${result.code}`);
+  } catch (error) { failure = error; }
+  const head = await gitText(cwd, "rev-parse", "HEAD");
+  const dirty = await gitText(cwd, "status", "--porcelain");
+  if (head === expected && !dirty) return;
+  if (failure) throw failure;
+  throw new Error("Git fast-forward did not leave a clean expected head");
+}
+
 export interface GitResult { code: number; signal?: NodeJS.Signals | null; stdout: Buffer; stderr: string; sshAuthExhausted?: SshAuthExhaustedError }
 
 /**

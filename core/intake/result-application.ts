@@ -137,7 +137,7 @@ export class ResultApplication {
       await this.resolution.ordinaryRoundCustody(t, run, true);
       const branch = readGitCheckout(t.directory!).branch;
       await ordinaryReviewSource(t, run.head, branch === '');
-      if (!branch) await git(t.directory!, 'checkout', t.branch);
+      if (!branch) await git(t.directory!, 'checkout', '--quiet', t.branch);
       await ordinaryReviewSource(t, run.head, false);
     }
     // A pass that read this reviewer as current before another pass settled it

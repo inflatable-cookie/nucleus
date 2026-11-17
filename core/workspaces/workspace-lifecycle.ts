@@ -2,6 +2,7 @@ import type { ExternalWorkspaceCatalog } from "../host/adapter";
 import type { ProcessSearch } from "../machine/process-identity";
 import { assertCheckoutAvailable, assertIntakeWorkspaceAvailable, CheckoutRefusalError, CheckoutUnavailableError, liveCheckoutDataDir } from "./checkout-volume";
 import { git, gitAncestry, gitBulk, queueCheckoutStatus } from "../git/index";
+import { gitFastForward } from "../git/git-command";
 import {
   classifyWorkspaceCreation, isOwnedWorkspacePath, ownedWorkspacePath, populateOwnedWorktree, removeOrphanCheckout,
   repoCommonDir, workspaceCreationRefusal, workspaceDataDirFor, type OrphanWorkspace,
@@ -311,7 +312,7 @@ export class WorkspaceLifecycle {
       if (existsSync(directory)) throw error;
       await gitBulk(task.repoPath, "worktree", "add", "--force", ...args);
     }
-    if (source.local && source.local !== source.head) await gitBulk(directory, "merge", "--ff-only", source.head);
+    if (source.local && source.local !== source.head) await gitFastForward(directory, source.head);
   }
   /** The recovered checkout must be clean on the queue branch at the recovered head. */
   private async verifiedRecoveredCheckout(task: Task, directory: string, head: string) {
