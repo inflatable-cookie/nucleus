@@ -111,23 +111,50 @@ test('a bare legacy planner binds to the Paseo host regardless of who set the as
   } finally { f.store.close(); }
 });
 
-test('caller.resolve hands a registered planner its ticket in the response and sends nothing', async () => {
-  const f = fixture();
+test('caller.resolve verifies a real-shaped T3 thread on the owning online host and hands back its ticket', async () => {
+  const hostId = 't3code:32be2844-7204-4edc-a95a-35b05e42ded4';
+  const threadId = 'mcp:b619ccc9-a078-49f6-b80f-6bececcfa6ca';
+  const desktopScope = 'e3587e2bcde8d42fdde2f3615032716c';
+  const f = fixture(hostId);
   try {
-    f.assign(formatAgentId(t3, 'planner'));
+    f.assign(formatAgentId(hostId, threadId));
     await f.tickets.ensure();
     // The runtime's own resolution path, with only the pieces it reads here.
     const resolved = await QueueRuntime.prototype.resolveHostCaller.call(
-      { hostRegistry: { onlineIds: () => [t3] }, plannerTickets: f.tickets, engine: f.engine } as never,
-      { hostKind: 't3code', nativeAgentId: 'planner', hostScope: 'synthetic' });
-    assert.equal(resolved.caller, formatAgentId(t3, 'planner'));
+      { hostRegistry: { onlineIds: () => [hostId] }, plannerTickets: f.tickets, engine: f.engine } as never,
+      { hostKind: 't3code', nativeAgentId: threadId, hostScope: desktopScope });
+    assert.equal(resolved.caller, formatAgentId(hostId, threadId));
     assert.equal(resolved.participantTicket, f.record()?.path);
     assert.deepEqual(f.messages, []);
     const second = await QueueRuntime.prototype.resolveHostCaller.call(
-      { hostRegistry: { onlineIds: () => [t3] }, plannerTickets: f.tickets, engine: f.engine } as never,
-      { hostKind: 't3code', nativeAgentId: 'planner', hostScope: 'synthetic' });
+      { hostRegistry: { onlineIds: () => [hostId] }, plannerTickets: f.tickets, engine: f.engine } as never,
+      { hostKind: 't3code', nativeAgentId: threadId, hostScope: desktopScope });
     assert.equal(second.participantTicket, resolved.participantTicket, 'the same ticket path comes back on every resolution');
   } finally { f.store.close(); }
+});
+
+test('T3 caller resolution refuses an unowned or ambiguous thread and names online hosts', async () => {
+  const threadId = 'mcp:synthetic-thread';
+  const hostA = 't3code:environment-a', hostB = 't3code:environment-b';
+  let currentHost = '';
+  let owners = new Set([hostA]);
+  const runtime = {
+    hostRegistry: { onlineIds: () => [hostA, hostB] },
+    plannerTickets: { forCaller: async () => undefined },
+    engine: {
+      withHost: (hostId: string, fn: () => unknown) => { currentHost = hostId; return fn(); },
+      host: { observe: async (id: string) => {
+        if (id !== threadId || !owners.has(currentHost)) throw new Error('not found');
+        return { id, status: 'idle' };
+      } },
+    },
+  };
+  const resolve = (hosts: string[]) => QueueRuntime.prototype.resolveHostCaller.call({
+    ...runtime, hostRegistry: { onlineIds: () => hosts },
+  } as never, { hostKind: 't3code', nativeAgentId: threadId, hostScope: 'desktop-scope' });
+  await assert.rejects(resolve([hostB]), new RegExp(`${threadId}.*online T3 hosts: ${hostB}`));
+  owners = new Set([hostA, hostB]);
+  await assert.rejects(resolve([hostA, hostB]), new RegExp(`${threadId}.*online T3 hosts: ${hostA}, ${hostB}`));
 });
 
 test('board assignment of a live T3 planner sends one message and names it in the response schema', async () => {
