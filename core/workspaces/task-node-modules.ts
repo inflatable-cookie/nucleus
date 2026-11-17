@@ -141,11 +141,12 @@ async function ensureLocked(taskDirectory: string, registeredCheckout: string, w
 type TrackedSourceState = { head: string; signature: string };
 
 async function trackedSourceState(taskDirectory: string): Promise<TrackedSourceState> {
-  const [head, diff] = await Promise.all([
+  const [head, staged, unstaged] = await Promise.all([
     git(taskDirectory, "rev-parse", "HEAD"),
-    git(taskDirectory, "diff", "--raw", "--full-index", "HEAD"),
+    git(taskDirectory, "diff", "--cached", "--raw", "--full-index", "HEAD"),
+    git(taskDirectory, "diff", "--raw", "--full-index"),
   ]);
-  return { head, signature: createHash("sha256").update(head).update("\0").update(diff).digest("hex") };
+  return { head, signature: createHash("sha256").update(head).update("\0").update(staged).update("\0").update(unstaged).digest("hex") };
 }
 
 async function lockFingerprint(taskDirectory: string): Promise<string | null> {

@@ -8,6 +8,7 @@ import { assertOrdinaryReviewIdentity, ordinaryReviewSource } from '../../review
 import { ownerReviewContext } from '../../review/owner-review-context';
 import type { Adapter } from '../../host/adapter';
 import { proofExecutionRecord, recordProofExecution } from '../../qa/proof-records';
+import { verifyProofSource } from '../../qa/proof-source';
 import { isPromptTooLargeError, redactDiagnostic } from '../../recovery/provider-refusal';
 import { BlockingRecoveryEffectsError, blockingRecoveryEffects, blockingRecoveryEffectsRefusal, recoveryEffectsRefusal } from '../../recovery/recovery-effects';
 import { settleObservedHostEffectOperations } from '../../recovery/effect-gates';
@@ -25,7 +26,8 @@ import { ensureTaskNodeModules } from '../../workspaces/task-node-modules';
  * uncertain or refused settlement when a step throws.
  */
 export class RunLaunchDeliver {
-  constructor(readonly resolution: LaunchDeliverContext) {}
+  constructor(readonly resolution: LaunchDeliverContext,
+    private readonly ensureTaskDependencies: typeof ensureTaskNodeModules = ensureTaskNodeModules) {}
   get store() { return this.resolution.store; }
   get adapter() { return this.resolution.adapter; }
   get machine(): LaunchMachinePorts { return this.adapter; }
@@ -53,7 +55,15 @@ export class RunLaunchDeliver {
       // after reservation. Recheck its dependencies after that final source
       // transition and before the retained reviewer reads the worktree.
       if (role !== 'closeout' && t.directory)
-        await ensureTaskNodeModules(t.directory, t.repoPath, dirname(t.directory));
+        await this.ensureTaskDependencies(t.directory, t.repoPath, dirname(t.directory));
+      // Proof launch preparation checked the exact source before reservation,
+      // but this delivery path may refresh dependencies again. Recheck after
+      // that setup and before any executor send or creation.
+      if (proofExecutor(role)) {
+        const source = await verifyProofSource(t, run.head, { remote: false });
+        if (source.tree !== run.proofExecution?.tree)
+          throw new Error('Proof source tree changed after run reservation; refusing to start an agent');
+      }
       if (agentId) {
         let fresh = this.store.task(t.id);
         // Spec 026: the task's own typed lane-document declaration is the whole

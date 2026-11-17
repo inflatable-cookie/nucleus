@@ -51,7 +51,7 @@ const dispatchTask = (repo: string, planningCommit: string) => ({
   handoffPath: 'docs/handoff.md', handoffText: handoff,
 }) as unknown as Task;
 
-async function reviewLockfileFixture(t: any, options: { mutateTrackedSourceOnInstall?: boolean } = {}) {
+async function reviewLockfileFixture(t: any, options: { mutateTrackedSourceOnInstall?: 'worktree' | 'index' } = {}) {
   const { root, repo } = await makeRepo(t);
   const writeDependency = async (directory: string, version: string) => {
     const dependency = join(directory, 'vendor', 'fixture-dep');
@@ -61,8 +61,12 @@ async function reviewLockfileFixture(t: any, options: { mutateTrackedSourceOnIns
     await writeFile(join(directory, '.gitignore'), 'node_modules/\n');
     await writeFile(join(directory, '.npmrc'), 'install-links=true\n');
     const packageJson: Record<string, unknown> = { name: 'review-lockfile-fixture', version: '1.0.0', dependencies: { 'fixture-dep': 'file:vendor/fixture-dep' } };
-    if (options.mutateTrackedSourceOnInstall && version === '2.0.0')
-      packageJson.scripts = { postinstall: `node -e "require('node:fs').writeFileSync('tracked-source.txt', 'mutated')"` };
+    if (options.mutateTrackedSourceOnInstall && version === '2.0.0') {
+      const mutation = options.mutateTrackedSourceOnInstall === 'index'
+        ? `const fs=require('node:fs'); require('node:child_process').execFileSync('git',['add','tracked-source.txt']); fs.writeFileSync('tracked-source.txt','original')`
+        : `require('node:fs').writeFileSync('tracked-source.txt', 'mutated')`;
+      packageJson.scripts = { postinstall: `node -e "${mutation}"` };
+    }
     await writeFile(join(directory, 'package.json'), JSON.stringify(packageJson));
     await command('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'], directory);
   };
@@ -161,7 +165,7 @@ test('a failed reviewer dependency refresh records its error and starts no agent
 });
 
 test('reviewer dependency setup refuses tracked-source changes made by npm scripts', async t => {
-  const f = await reviewLockfileFixture(t, { mutateTrackedSourceOnInstall: true });
+  const f = await reviewLockfileFixture(t, { mutateTrackedSourceOnInstall: 'worktree' });
   try {
     await f.engine.resolution.advance(f.store.task(f.task.id));
     const task = f.store.task(f.task.id);
@@ -170,6 +174,29 @@ test('reviewer dependency setup refuses tracked-source changes made by npm scrip
     assert.equal(f.reviewerStarts(), 0, 'the reviewer must not start from source mutated by dependency setup');
     assert.equal(f.store.runs(task.id).filter(run => run.role === 'reviewer').length, 0, 'source verification fails before run reservation');
     assert.equal(await readFile(join(f.taskDirectory, 'tracked-source.txt'), 'utf8'), 'mutated');
+
+    const gitDir = await git(f.taskDirectory, 'rev-parse', '--path-format=absolute', '--git-dir');
+    const state = JSON.parse(await readFile(join(gitDir, 'nucleus', 'task-node-modules.json'), 'utf8'));
+    assert.equal(state.status, 'failed');
+    assert.match(state.error, /npm ci changed tracked task source/);
+    await assert.rejects(ensureTaskNodeModules(f.taskDirectory, f.repo, f.workspaceRoot), /Tracked source changed during a previous npm ci attempt/);
+  } finally {
+    await f.engine.stop();
+    f.store.close();
+  }
+});
+
+test('reviewer dependency setup refuses staged source changes made by npm scripts', async t => {
+  const f = await reviewLockfileFixture(t, { mutateTrackedSourceOnInstall: 'index' });
+  try {
+    await f.engine.resolution.advance(f.store.task(f.task.id));
+    const task = f.store.task(f.task.id);
+    assert.match(task.reason, /Task node_modules setup failed with npm ci: npm ci changed tracked task source/);
+    assert.equal(task.phase, 'awaiting_review');
+    assert.equal(f.reviewerStarts(), 0, 'the reviewer must not start from source staged by dependency setup');
+    assert.equal(f.store.runs(task.id).filter(run => run.role === 'reviewer').length, 0, 'source verification fails before run reservation');
+    assert.equal(await readFile(join(f.taskDirectory, 'tracked-source.txt'), 'utf8'), 'original', 'the worktree remains clean');
+    assert.equal(await git(f.taskDirectory, 'show', ':tracked-source.txt'), 'mutated', 'the index-only change is still detected');
 
     const gitDir = await git(f.taskDirectory, 'rev-parse', '--path-format=absolute', '--git-dir');
     const state = JSON.parse(await readFile(join(gitDir, 'nucleus', 'task-node-modules.json'), 'utf8'));

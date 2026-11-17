@@ -1432,14 +1432,18 @@ request identities and submitted handoffs are not rewritten.
   separate checkout-local link only for proof-only task retention. Nucleus
   advances the registered checkout during `validateDispatchCheckout`
   (`core/git/git-dispatch.ts`) and advances the merge base in
-  `syncIntegrationCheckout` (`core/forge/merge.ts`). Before each worker or
-  proof-only launch, `WorkerLauncher` or `ProofOnlyLaunch` checks whether the
-  task worktree inherits the shared root link or has a checkout-local link to
-  the registered install, and runs `npm ci` in that worktree when its
+  `syncIntegrationCheckout` (`core/forge/merge.ts`). `WorkerLauncher` checks
+  after `verifyWorkspace`, which can fast-forward the task worktree. The shared
+  `RunLaunchSource` and `RunLaunchDeliver` paths check again after the exact
+  source is established and before a task-worktree agent is delivered, including
+  after an ordinary review switches to its detached head. They detect whether
+  the task worktree inherits the shared root link or has a checkout-local link
+  to the registered install, and run `npm ci` in that worktree when its
   per-worktree install state does not match its own `package.json` and npm
-  lockfile. The task-local `node_modules` shadows the shared parent link, so
-  this also follows non-main integration bases and retained workspaces whose
-  lockfile changed. Its durable
+  lockfile. Proof delivery also verifies the exact local source again after
+  delivery-time setup. The task-local `node_modules` shadows the shared parent
+  link, so this also follows non-main integration bases and retained workspaces
+  whose lockfile changed. Its durable
   pending/failed/installed state lives in the worktree's Git metadata, not in
   `node_modules`, so a failed `npm ci` remains retryable even if npm removed the
   install. The error reaches the existing launch failure path and is recorded
