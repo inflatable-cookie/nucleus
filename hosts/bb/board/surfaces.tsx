@@ -106,8 +106,8 @@ function snapshotReader(rpc: BbRpcClient) {
   };
 }
 
-/** Everything the registered surfaces share on one BB window. */
-export function createBoardRuntime(sdk: BbBoardSdk) {
+/** Everything the registered surfaces share on one BB window. `refreshMs` paces the pill modules (the board's own beat by default). */
+export function createBoardRuntime(sdk: BbBoardSdk, options: { refreshMs?: number } = {}) {
   const queryClient = new QueryClient();
   const pills = createPillStore();
   const sidebar = createSharedRead<BbSidebarGroups>();
@@ -213,8 +213,8 @@ export function createBoardRuntime(sdk: BbBoardSdk) {
     latest.current = navigate;
     useEffect(() => {
       const host: BoardHost = createBbBoardHost({ rpc, navigate: () => latest.current, pills });
-      const stopDecisions = registerDecisionPills(host, BOARD_PANEL_ID);
-      const stopQuestions = registerNativeQuestionPills(host);
+      const stopDecisions = registerDecisionPills(host, BOARD_PANEL_ID, options.refreshMs);
+      const stopQuestions = registerNativeQuestionPills(host, options.refreshMs);
       return () => { stopQuestions(); stopDecisions(); };
     }, [rpc]);
     return null;

@@ -64,7 +64,11 @@ test('request envelopes name the transport surface only as the one known value',
   const bridged = parseRequest({ v: PROTOCOL_VERSION, id: 'req-surface-2', method: 'queue.capacity', input: {}, via: 'paseo' });
   assert.ok(bridged.ok);
   assert.equal(bridged.request.via, 'paseo');
-  for (const via of ['settings', 'paseo ', '', null, 1, true, { via: 'paseo' }]) {
+  // Spec 062 phase 6: the BB plugin's forwarded board call; the server accepts it only on the executor connection.
+  const bb = parseRequest({ v: PROTOCOL_VERSION, id: 'req-surface-bb', method: 'queue.capacity', input: {}, via: 'bb' });
+  assert.ok(bb.ok);
+  assert.equal(bb.request.via, 'bb');
+  for (const via of ['settings', 'paseo ', 'bb ', 'BB', '', null, 1, true, { via: 'paseo' }]) {
     const parsed = parseRequest({ v: PROTOCOL_VERSION, id: 'req-surface-3', method: 'queue.capacity', input: {}, via });
     assert.equal(parsed.ok, false, `via ${JSON.stringify(via)} must fail closed`);
     if (!parsed.ok) assert.equal(parsed.error.code, 'invalid_input');

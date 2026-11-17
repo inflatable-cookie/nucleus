@@ -40,7 +40,10 @@ the change belongs upstream (Spec 062, decision 5f's exit path).
    while inline rename is open, takes upstream's markup and upstream's
    `collapsedEnvironments` path unchanged. Reason: Spec 062 decision 5b — the
    header has to say what the task is doing, and a collapsed group is where the
-   operator reads it.
+   operator reads it. Phase 6 adds one line to each of the project row's two
+   action menus (dropdown and context): the fork's `NucleusProjectBoardMenuItem`,
+   which renders a "Board" link to the Nucleus project's board when the batched
+   read names the row's BB project, and nothing otherwise (Spec 062, decision 5d).
 2. **`0002-expanded-task-groups-preference.patch` — `shared/preferences.ts`,
    `app/preferences/atoms.ts`.** One preference key, `expandedTaskGroups`
    (environment ids). Reason: a task group is collapsed by default and its expand
@@ -49,7 +52,8 @@ the change belongs upstream (Spec 062, decision 5f's exit path).
 3. **`0003-nucleus-task-groups.patch` — `app/list/nucleusTaskGroups.tsx` (new)
    and `app/list/nucleusTaskGroups.test.tsx` (new).** The batched read (`sidebarGroups`, one call for every group), its
    join by `environment.id`, the collapsed/expanded decision derived from (1) and
-   (2), and the state-line component. Reason: the fork's own logic belongs in one
+   (2), the state-line component, and (phase 6) the project-row board link,
+   resolved from the same read's `projects` by BB project id. Reason: the fork's own logic belongs in one
    file of the fork rather than smeared over upstream's components.
 4. **`0004-export-thread-list.patch` — `app.tsx`, `app.test.tsx`,
    `sidebarRowRenders.test.tsx`.** `app.tsx` exports the list's component and its

@@ -51,6 +51,7 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import { NO_HIDDEN_THREADS, useHiddenThreadsStatus } from "./groupRollups.js";
 import {
+  NucleusProjectBoardMenuItem,
   NucleusTaskGroupStateLine,
   taskGroupTitle,
   useNucleusTaskGroup,
@@ -2257,7 +2258,10 @@ function ProjectRowComponent({
         onRename={rename.startEditingFromMenu}
         onRemove={requestRemove}
         extraActions={(surface) => (
-          <ThreadListVisibilityMenuItems surface={surface} />
+          <>
+            <NucleusProjectBoardMenuItem projectId={project.id} surface={surface} />
+            <ThreadListVisibilityMenuItems surface={surface} />
+          </>
         )}
       />
     </SidebarHeaderControls>
@@ -2267,7 +2271,10 @@ function ProjectRowComponent({
     <>
       <ProjectActionsContextMenu
         extraActions={(surface) => (
-          <ThreadListVisibilityMenuItems surface={surface} />
+          <>
+            <NucleusProjectBoardMenuItem projectId={project.id} surface={surface} />
+            <ThreadListVisibilityMenuItems surface={surface} />
+          </>
         )}
         project={project}
         disabled={rename.isEditing}

@@ -40,6 +40,26 @@ class ExecutorClient {
     throw Object.assign(new Error("this executor answers nothing"), { name: "HostOperationError", code: "unavailable" });
   };
   received: Array<{ id: string; op: string; input: unknown }> = [];
+  /** Answers to the requests this executor writes itself (the plugin's forwarded board calls). */
+  private readonly own = new Map<string, (answer: { result?: unknown; error?: { code: string; message: string } }) => void>();
+
+  /** One request on this executor connection, as the plugin's board bridge writes it. */
+  request(method: string, input: unknown, via?: "bb"): Promise<{ result?: unknown; error?: { code: string; message: string } }> {
+    const id = `own-${++this.sequence}`;
+    return new Promise(resolve => {
+      this.own.set(id, resolve);
+      this.socket.write(encodeFrame({ v: PROTOCOL_VERSION, id, method, input, ...(via ? { via } : {}) }));
+    });
+  }
+
+  /** Settle one of this executor's own requests; true when the frame was one. */
+  settleOwn(frame: { id?: string; result?: unknown; error?: { code: string; message: string } }): boolean {
+    const settle = typeof frame.id === "string" ? this.own.get(frame.id) : undefined;
+    if (!settle) return false;
+    this.own.delete(frame.id!);
+    settle(frame);
+    return true;
+  }
 
   private constructor(private readonly socket: Socket, readonly declaration: HostExecutorDeclaration) {}
 
@@ -64,6 +84,7 @@ class ExecutorClient {
           socket.write(encodeFrame({ v: PROTOCOL_VERSION, id: "decl-1", method: "service.host-executor", input: declaration }));
           return;
         }
+        if (client!.settleOwn(value)) return;
         // A reverse request from the service. The declaration's own identity probe is
         // one of these and arrives before the declaration is answered, so a request is
         // answered whether or not this client has seen its acceptance yet.
@@ -366,6 +387,37 @@ test("no executor connection means no operation, rather than a guessed answer", 
   try {
     await assert.rejects(service.sendHostOperation(hostIdFromDataDir("/tmp/bb-data"), "identity.probe", {}), /No host executor is connected/);
   } finally {
+    await service.stop();
+  }
+});
+
+test("a forwarded BB board call carries `via: bb` only on the executor connection, and a Settings write records that surface", async () => {
+  const dir = socketFixtureDirectory("queue-service.sock");
+  const service = new QueueService({ owner: { dataDir: dir, timers: false }, fixture: "fake" });
+  await service.start();
+  const info = readServiceInfo(dir)!;
+  const owner = new ServiceClient({ socketPath: info.socketPath, credential: info.credential });
+  let executor: ExecutorClient | null = null;
+  try {
+    await owner.connect();
+    // A plain owner connection cannot claim the BB plugin's surface.
+    await assert.rejects(
+      (owner.request as (method: string, input: unknown, timeoutMs?: number, via?: string) => Promise<unknown>)("queue.capacity", { globalLimit: 23, projectLimit: 4 }, undefined, "bb"),
+      (error: unknown) => error instanceof ServiceRequestError && error.code === "invalid_input" && /host-executor/u.test(error.message),
+    );
+    executor = await ExecutorClient.connect(info, declarationFor("/tmp/bb-data-board"));
+    // The BB Settings section's capacity write, forwarded by the plugin on its executor connection.
+    const written = await executor.request("queue.capacity", { globalLimit: 23, projectLimit: 4 }, "bb");
+    assert.deepEqual(written.result, { ok: true });
+    const state = await owner.request("queue.capacity-state", {}) as { effective: { globalLimit: number }; changes: Array<{ surface: string }> };
+    assert.equal(state.effective.globalLimit, 23);
+    assert.equal(state.changes.at(-1)?.surface, "bb", "the record names the BB surface, which only the plugin's connection can carry");
+    // The same write with no surface is refused as every non-Settings route is.
+    const bare = await executor.request("queue.capacity", { globalLimit: 22, projectLimit: 4 });
+    assert.match(bare.error?.message ?? "", /queue\.capacity is refused/u);
+  } finally {
+    executor?.close();
+    await owner.close();
     await service.stop();
   }
 });

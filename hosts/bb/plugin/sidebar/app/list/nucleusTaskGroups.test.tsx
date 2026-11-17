@@ -197,6 +197,7 @@ interface RenderOptions {
   groups?: ReadonlyArray<SidebarGroups["groups"][number]>;
   /** Omit the handler entirely: the read fails, as it does with the service away. */
   failRead?: boolean;
+  projects?: ReadonlyArray<SidebarGroups["projects"][number]>;
   onSetPreference?: (key: string, value: unknown) => void;
 }
 
@@ -219,6 +220,7 @@ function renderTaskGroups(options: RenderOptions = {}): {
     (rpc as unknown as Record<string, unknown>).sidebarGroups = async () => ({
       groups: options.groups ?? [GROUP],
       threads: [],
+      projects: options.projects ?? [],
     });
   }
   const slot = renderSlot(
@@ -424,5 +426,29 @@ describe("a Nucleus task group's header", () => {
     expect(
       upstreamHeaderByEnvironment(UPSTREAM_ENVIRONMENT).textContent,
     ).toContain(UPSTREAM_ENVIRONMENT);
+  });
+});
+
+describe("a project row's board link (phase 6, decision 5d)", () => {
+  it("adds one Board item linking to the Nucleus project's board when the read names this BB project", async () => {
+    renderTaskGroups({ projects: [{ key: "synthetic", name: "Synthetic", threadIds: ["thr_planner"], bbProjectIds: ["proj_other", "proj_test"] }] });
+    await waitFor(() => {
+      expect(taskGroupHeader(NUCLEUS_ENVIRONMENT)).not.toBeNull();
+    });
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Test project actions" }), { button: 0 });
+    const board = await screen.findByRole("menuitem", { name: "Board" });
+    // The route key is the Nucleus project key, never the BB project id.
+    expect(board.getAttribute("href")).toBe("/plugins/nucleus/board/project/synthetic");
+    expect(screen.getAllByRole("menuitem", { name: "Board" })).toHaveLength(1);
+  });
+
+  it("leaves a project row the read does not name with upstream's menu", async () => {
+    renderTaskGroups({ projects: [{ key: "elsewhere", name: "Elsewhere", threadIds: [], bbProjectIds: ["proj_other"] }] });
+    await waitFor(() => {
+      expect(taskGroupHeader(NUCLEUS_ENVIRONMENT)).not.toBeNull();
+    });
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Test project actions" }), { button: 0 });
+    await screen.findByRole("menuitem", { name: "Project settings" });
+    expect(screen.queryByRole("menuitem", { name: "Board" })).toBeNull();
   });
 });
