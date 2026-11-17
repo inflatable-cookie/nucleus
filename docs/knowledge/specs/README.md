@@ -58,8 +58,14 @@ implemented; the contracts summarise the durable rules and link here.
 | [060 — Named project agents](060-named-project-agents.md) | implemented |
 | [061 — Worker proof files reach the retained reviewer](061-worker-proof-files.md) | implemented |
 | [062 — BB host adapter](062-bb-host-adapter.md) | approved; phases 0–6 implemented, phase 0 proved against isolated BB; phase 7 (trial and parity call) not started |
+| [065 — A host-agnostic ACP task session](065-acp-task-session.md) | implemented: the agent, its minted binding, the hold/release API and lifecycle text |
 
 ## Host adapters
+
+The [ACP task session](065-acp-task-session.md) is the host-agnostic provider: an
+ACP agent whose session is one Nucleus task's thread, with no model. A host
+adapter holds its turn while its role threads are active and releases it
+between them.
 
 The [T3Code host adapter](t3code-host-adapter.md) provides native thread operations
 for the nightly trial, with CLI-helper reporting, board questions and per-project

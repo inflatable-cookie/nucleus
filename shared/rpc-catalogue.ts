@@ -25,6 +25,9 @@ export interface RpcCatalogueEntry {
 
 export const RPC_CATALOGUE: RpcCatalogueEntry[] = [
   { name: "caller.resolve", contract: contracts.callerResolve, method: "resolveHostCaller", mutating: false },
+  // Spec 065: the ACP agent's one operator/host-facing route. Minting writes an
+  // owner-only binding file; no credential is returned over the wire.
+  { name: "acp.bind", contract: contracts.acpBind, method: "bindAcpSession", mutating: true },
   { name: "queue.snapshot", contract: contracts.snapshot, method: "snapshot", mutating: false },
   { name: "backup.now", contract: contracts.backupNow, method: "backupNow", mutating: true },
   { name: "backup.list", contract: contracts.backupList, method: "backupList", mutating: false },

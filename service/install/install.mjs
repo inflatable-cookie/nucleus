@@ -110,6 +110,9 @@ async function downloadRelease(url) {
 }
 
 const launcher = '#!/bin/sh\n# nucleus-owned-command-v1\nroot="$HOME/.local/share/nucleus/current"\nexec "$root/runtime/node" "$root/bin/nucleus.mjs" "$@"\n';
+// Spec 065: an ACP-capable app registers a provider as one executable command path.
+// This is that path: the same runtime and package, the ACP agent entry instead of the CLI.
+const acpLauncher = '#!/bin/sh\n# nucleus-owned-command-v1\nroot="$HOME/.local/share/nucleus/current"\nexec "$root/runtime/node" "$root/bin/nucleus-acp.mjs" "$@"\n';
 const retiredSkillName = 'northstar-queue';
 async function prepareEntrypoints(created) {
   const command = join(home(), '.local/bin/nucleus');
@@ -117,6 +120,10 @@ async function prepareEntrypoints(created) {
   if (await stat(command)) {
     if (await readFile(command, 'utf8') !== launcher) throw Error(`Command collision at ${command}; move the existing command before installing`);
   } else { await writeFile(command, launcher, { mode: 0o755, flag: 'wx' }); created.push(command); }
+  const acpCommand = join(home(), '.local/bin/nucleus-acp');
+  if (await stat(acpCommand)) {
+    if (await readFile(acpCommand, 'utf8') !== acpLauncher) throw Error(`Command collision at ${acpCommand}; move the existing command before installing`);
+  } else { await writeFile(acpCommand, acpLauncher, { mode: 0o755, flag: 'wx' }); created.push(acpCommand); }
   const roots = [join(home(), '.agents/skills')];
   for (const app of ['.codex', '.claude']) if (await stat(join(home(), app))) roots.push(join(home(), app, 'skills'));
   roots.push(...(process.env.NUCLEUS_SKILL_DIRS || '').split(delimiter).filter(Boolean).map(p => resolve(p)));

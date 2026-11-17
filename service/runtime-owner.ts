@@ -68,6 +68,7 @@ import { Engine, controlHasExternalEffect } from "../core/engine";
 
 import { taskControlOperation, TASK_CONTROL_KEY_LIMIT } from "../core/verbs/task-control-key";
 import { startCallbacks } from "./callbacks/callback";
+import { AcpSessions } from "../core/acp/sessions";
 
 import type { SnapshotState, SnapshotInput, UsageLevel, DemandRoleOffsets, Submission, PoolEntry, BulkDispositionRequest, ReparentInput, TaskControlRequest, ReviewEntryInput, OutcomeSearchInput } from "../shared/contracts";
 import { taskControlChanges } from "../shared/task-control-changes";
@@ -813,6 +814,9 @@ export class QueueRuntime {
       this.lifecycle.markReady();
       return;
     }
+    // Spec 065: an ACP binding points at that callback socket, so the session
+    // surface is attached only once the socket it names is served.
+    this.engine.acp = new AcpSessions(this.engine, { dataHome: this.dataDir, socketPath: this.paseo.socketPath });
     // Local reads are safe as soon as the callback surface and SQLite owner
     // exist. Daemon connection, profile refresh, durable operation resume and
     // the first reconciliation sweep continue in the background.

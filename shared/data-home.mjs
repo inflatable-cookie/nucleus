@@ -54,6 +54,7 @@ export const DATA_HOME_ENTRIES = Object.freeze([
   { path: "settings.json", kind: "durable", owner: "server/runtime-owner.ts" },
   { path: "profiles/", kind: "durable", owner: "server/runtime-owner.ts" },
   { path: "tickets/", kind: "durable", owner: "server/callback.ts" },
+  { path: "acp/", kind: "durable", owner: "core/acp/binding.ts (Spec 065 session records and checkout bindings)" },
   { path: "backups/", kind: "durable", owner: "core/store/backup-worker.mjs (fixtures); core/store/data-home-retention.ts (live stale copies)" },
   { path: "shadow-stream/", kind: "durable", owner: "retired contract 009 producer" },
   { path: "shadow-seeds/", kind: "durable", owner: "retired contract 009 producer" },
