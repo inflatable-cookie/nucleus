@@ -13,4 +13,4 @@ export const serviceState = defineRpc({ name: "queue.service-state", input: z.ob
  * thread's own identity record, and it is idempotent while the assignment stands,
  * so the method stays classified as a read.
  */
-export const callerResolve = defineRpc({ name: "caller.resolve", input: z.object({ hostKind: hostKindSchema, nativeAgentId: z.string().min(1) }).strict(), output: z.object({ caller: z.string().min(1), hostId: z.string().min(1), source: z.literal("host"), participantTicket: z.string().min(1).optional() }).strict() });
+export const callerResolve = defineRpc({ name: "caller.resolve", input: z.object({ hostKind: hostKindSchema, nativeAgentId: z.string().min(1), hostScope: z.string().trim().min(1).max(500).optional() }).strict(), output: z.object({ caller: z.string().min(1), hostId: z.string().min(1), source: z.literal("host"), participantTicket: z.string().min(1).optional() }).strict() });

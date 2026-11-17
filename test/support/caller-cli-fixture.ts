@@ -55,7 +55,7 @@ export async function callerCliFixture(mismatch = false) {
     const reader = createFrameReader((frame: any) => {
       let result: unknown = {};
       if (frame.method === 'service.health') result = {protocolVersion:PROTOCOL_VERSION,rpcContracts: mismatch ? {} : rpcContracts};
-      else if (frame.method === 'caller.resolve') {hostResolutions.push(frame.input);result = {caller:formatAgentId('paseo-fixture',frame.input.nativeAgentId),hostId:'paseo-fixture',source:'host',...(hostParticipantTicket?{participantTicket:hostParticipantTicket}:{})};}
+      else if (frame.method === 'caller.resolve') {hostResolutions.push(frame.input);const hostId=frame.input.hostKind==='t3code'?`t3code:${frame.input.hostScope}`:'paseo-fixture';result = {caller:formatAgentId(hostId,frame.input.nativeAgentId),hostId,source:'host',...(hostParticipantTicket?{participantTicket:hostParticipantTicket}:{})};}
       else if (frame.method !== 'service.auth') {
         calls.push({method:frame.method,input:frame.input});
         if(frame.method === 'queue.detail') result = detail;

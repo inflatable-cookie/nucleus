@@ -118,14 +118,14 @@ test('caller.resolve hands a registered planner its ticket in the response and s
     await f.tickets.ensure();
     // The runtime's own resolution path, with only the pieces it reads here.
     const resolved = await QueueRuntime.prototype.resolveHostCaller.call(
-      { hostRegistry: { onlineIds: () => [t3] }, plannerTickets: f.tickets } as never,
-      { hostKind: 't3code', nativeAgentId: 'planner' });
+      { hostRegistry: { onlineIds: () => [t3] }, plannerTickets: f.tickets, engine: f.engine } as never,
+      { hostKind: 't3code', nativeAgentId: 'planner', hostScope: 'synthetic' });
     assert.equal(resolved.caller, formatAgentId(t3, 'planner'));
     assert.equal(resolved.participantTicket, f.record()?.path);
     assert.deepEqual(f.messages, []);
     const second = await QueueRuntime.prototype.resolveHostCaller.call(
-      { hostRegistry: { onlineIds: () => [t3] }, plannerTickets: f.tickets } as never,
-      { hostKind: 't3code', nativeAgentId: 'planner' });
+      { hostRegistry: { onlineIds: () => [t3] }, plannerTickets: f.tickets, engine: f.engine } as never,
+      { hostKind: 't3code', nativeAgentId: 'planner', hostScope: 'synthetic' });
     assert.equal(second.participantTicket, resolved.participantTicket, 'the same ticket path comes back on every resolution');
   } finally { f.store.close(); }
 });
