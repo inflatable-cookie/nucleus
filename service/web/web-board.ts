@@ -24,6 +24,7 @@ import {
   type Server,
   type ServerResponse,
 } from "node:http";
+import { statSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { extname, join, resolve, sep } from "node:path";
 import { z, ZodError } from "zod";
