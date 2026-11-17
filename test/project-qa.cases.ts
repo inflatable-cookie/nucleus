@@ -1411,8 +1411,13 @@ test('a live supervisor with a stale heartbeat is terminated only after unchange
   const runner = new ProjectQaRunner(f.store, { dataDir: f.dataDir, supervisionPollMs: 100 });
   // Keep the original run's background watcher from racing the observer that
   // owns the stale-heartbeat proof below. Install the seam before run() starts it.
-  runner.inspectSupervisor = async () => ({ kind: "running", state: null });
+  let originalWatcherStarted = false;
+  runner.inspectSupervisor = async () => {
+    originalWatcherStarted = true;
+    return { kind: "running", state: null };
+  };
   const started = await runner.run({ repository: f.repo });
+  await waitFor(() => originalWatcherStarted, 60_000, 'the run watcher to attach before an independent reader');
   const runRoot = join(await realpath(f.dataDir), 'project-qa', digest(started.key).slice(0, 24));
   const { statePath } = qaSupervisionPaths(runRoot, started.id);
   await waitFor(() => readQaSupervision(statePath)?.activeProcess?.step === 'qa', 60_000, 'the supervisor to record the QA step process');
