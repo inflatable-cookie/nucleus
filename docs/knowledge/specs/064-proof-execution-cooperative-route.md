@@ -1,6 +1,12 @@
 # 064 — Proof execution under cooperative qualification
 
 Status: implemented in part — P1–P7 landed behind a named missing-input refusal; no proof activation
+
+> **Operator ruling, 2026-11-17 (decision 1b60743c):** Tom: "oxide and nucleus should not be tied
+> together, nucleus's run mechanics should have no effect on the proof." Nucleus run mechanics
+> (reservation, source capture, copies, supervisor launch) are not part of any consumer proof's
+> timing, custody or evidence. The common-clock producer work is withdrawn. The qualification
+> foundation merged in #1287–#1289 is under review for removal or dormancy; build nothing further on it.
 Scope: the route's seams; P1–P7 are code and the refusal is the delivery, not an activation
 
 ## Authority and changed premises
