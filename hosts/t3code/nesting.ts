@@ -471,10 +471,11 @@ export class T3Nesting {
 
   /**
    * Whether any child of this task can still act. One complete inventory answers it:
-   * a thread absent from that list is deleted (a positive fact, never a read that
-   * failed), and a listed one is live only while its shell reports a live run. A
-   * deleted child must not hold the parent's turn forever (nucleus#1305 review), and
-   * an inventory this host cannot read keeps the turn rather than guessing.
+   * a thread absent from that list, or listed as a `deletedAt` tombstone, is deleted (a
+   * positive fact, never a read that failed), and a live one counts only while its
+   * shell reports a live run. A deleted child must not hold the parent's turn forever
+   * (nucleus#1305 review), and an inventory this host cannot read keeps the turn
+   * rather than guessing.
    */
   private async anyChildLive(taskId: string): Promise<boolean> {
     const state = this.core.state.read();
@@ -483,7 +484,10 @@ export class T3Nesting {
       .map(([id]) => id));
     if (!ids.size) return false;
     const { threads } = await this.core.reads.inventory();
-    return threads.some(thread => ids.has(thread.id)
+    // A deleted thread is either absent from the list or carried as a tombstone with
+    // `deletedAt`; both are the same positive fact, and a tombstone with an old run
+    // record must not read as live (nucleus#1305 review).
+    return threads.some(thread => ids.has(thread.id) && !thread.deletedAt
       && (activeStatuses.has(thread.status) || thread.activeRunId !== null));
   }
 
@@ -508,13 +512,16 @@ export class T3Nesting {
   }
 
   /**
-   * Whether this task's parent thread is finished: `archived`, or absent from the
-   * complete inventory (deleted). Null means it is still readable and registered.
+   * Whether this task's parent thread is finished: `archived`, or deleted (absent from
+   * the complete inventory, or carried there as a `deletedAt` tombstone). Null means it
+   * is still readable and registered.
    */
   private async parentGone(parent: ParentThread): Promise<'archived' | 'deleted' | null> {
     const { threads } = await this.core.reads.inventory();
     const thread = threads.find(candidate => candidate.id === parent.threadId);
-    if (!thread) return 'deleted';
+    // Absence and a `deletedAt` tombstone are the same fact: the inventory either
+    // omits a removed thread or keeps its tombstone (nucleus#1305 review).
+    if (!thread || thread.deletedAt) return 'deleted';
     return thread.archivedAt ? 'archived' : null;
   }
 

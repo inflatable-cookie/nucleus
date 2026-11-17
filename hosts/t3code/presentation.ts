@@ -188,17 +188,30 @@ export class T3Presentation {
   }
 
   /**
-   * The task's worker-shaped thread: the parent thread when this host nests the task
-   * (nucleus#1305 — the parent is the one row), else no role label, else a revision
-   * thread (nucleus#1154).
+   * The thread one role agent is presented on: the task's parent row when that agent
+   * is a recorded nested child, and the agent's own thread otherwise. A worker or
+   * revision run that fell back to a top-level thread of a parented task is its own
+   * row, so its title, settle and unsettle are never written to the parent
+   * (nucleus#1305 review).
+   */
+  private rowFor(agentId: string): string {
+    if (!this.core.nestedChild?.(agentId)) return agentId;
+    const owner = this.taskOf(agentId);
+    return (owner ? this.core.parentThreadOf?.(owner) : undefined) ?? agentId;
+  }
+
+  /**
+   * The task's worker-shaped thread: no role label, else a revision thread
+   * (nucleus#1154) — and, when that thread is a recorded nested child, the parent row
+   * it is drawn inside (nucleus#1305). A worker that fell back to a top-level thread
+   * of a parented task stays its own row. With no recorded worker-shaped thread the
+   * parent, when there is one, is still the task's row.
    */
   workerThreadFor(taskId: string): string | undefined {
-    const parent = this.core.parentThreadOf?.(taskId);
-    if (parent) return parent;
     const agents = Object.entries(this.core.state.read().agents).filter(([, agent]) => labelTask(agent.labels) === taskId);
     const noRole = agents.find(([, agent]) => labelRole(agent.labels) === undefined);
-    if (noRole) return noRole[0];
-    return agents.find(([, agent]) => labelRole(agent.labels) === 'revision')?.[0];
+    const shaped = noRole?.[0] ?? agents.find(([, agent]) => labelRole(agent.labels) === 'revision')?.[0];
+    return shaped ? this.rowFor(shaped) : this.core.parentThreadOf?.(taskId);
   }
 
   /**
@@ -359,12 +372,16 @@ export class T3Presentation {
     const state = this.core.state.read();
     const taskLabel = WIRE_LABEL_KEYS.task, runLabel = WIRE_LABEL_KEYS.run, roleLabel = WIRE_LABEL_KEYS.role;
     const taskAgents = Object.entries(state.agents).filter(([, agent]) => agent.labels[taskLabel] === task.id);
-    const parent = this.core.parentThreadOf?.(task.id);
-    const threadId = parent ?? (task.agentId && state.agents[task.agentId]?.labels[taskLabel] === task.id
+    const recordedParent = this.core.parentThreadOf?.(task.id);
+    const shaped = task.agentId && state.agents[task.agentId]?.labels[taskLabel] === task.id
       ? task.agentId
       : taskAgents.find(([id, agent]) => agent.labels[roleLabel] === 'worker'
-        || agent.labels[roleLabel] === undefined && (id === task.agentId || task.runId !== undefined && agent.labels[runLabel] === task.runId))?.[0]);
+        || agent.labels[roleLabel] === undefined && (id === task.agentId || task.runId !== undefined && agent.labels[runLabel] === task.runId))?.[0];
+    // The row is the parent only when the recorded worker thread is a nested child; a
+    // worker that fell back to a top-level thread is titled on its own thread.
+    const threadId = shaped ? this.rowFor(shaped) : recordedParent;
     if (!threadId) throw Error('Task worker thread is missing');
+    const onParent = recordedParent !== undefined && threadId === recordedParent;
     if (this.core.intents.confirmedDeletion(state, threadId)) return;
     // The task's own state title is the row's base; the step its support threads
     // are doing rides after it, so the one visible row names both (one row per
@@ -378,7 +395,7 @@ export class T3Presentation {
         const prior = current.intents[key];
         if (prior?.status === 'unknown') current.intents[key] = { ...prior, status: 'settled', result: { title: desired } };
         if (current.agents[threadId]) current.agents[threadId].title = title;
-        if (parent && current.parents?.[task.id]) current.parents[task.id].title = title;
+        if (onParent && current.parents?.[task.id]) current.parents[task.id].title = title;
         current.rowTitles = { ...current.rowTitles, [threadId]: desired };
       });
     } else if (!projection.thread.archivedAt && !projection.thread.deletedAt) {
@@ -386,7 +403,7 @@ export class T3Presentation {
         { resendUnknownAfterRead: true });
       this.core.state.update(current => {
         if (current.agents[threadId]) current.agents[threadId].title = title;
-        if (parent && current.parents?.[task.id]) current.parents[task.id].title = title;
+        if (onParent && current.parents?.[task.id]) current.parents[task.id].title = title;
         current.rowTitles = { ...current.rowTitles, [threadId]: desired };
       });
     }
@@ -394,7 +411,7 @@ export class T3Presentation {
     // Task state sync also repairs the number-and-role prefix on existing support
     // threads. Their current remote title is the source of the task title, so a
     // restart can safely catch up threads created before numbered titles landed.
-    if (task.number && !parent) for (const [supportId, agent] of taskAgents) {
+    if (task.number && !onParent) for (const [supportId, agent] of taskAgents) {
       const role = agent.labels[roleLabel];
       if (!role || role === 'worker' || this.core.intents.confirmedDeletion(this.core.state.read(), supportId)) continue;
       const support = await this.core.reads.readProjection(supportId, 'observation');
@@ -534,8 +551,9 @@ export class T3Presentation {
 
   async unsettleWorkerThread(agentId: string, taskId: string): Promise<void> {
     this.core.requireConnection();
-    // The task's one visible row is its parent thread when this host nests it.
-    agentId = this.core.parentThreadOf?.(taskId) ?? agentId;
+    // A recorded nested child surfaces on the parent row it is drawn inside; a worker
+    // that fell back to a top-level thread surfaces on its own (nucleus#1305 review).
+    agentId = this.rowFor(agentId);
     if (this.core.intents.confirmedDeletion(this.core.state.read(), agentId)) { this.retireDeletedPresentationIntents(); return; }
     // Clear before the read: a later settle re-reads even when this send's
     // own reply is lost.
@@ -587,11 +605,11 @@ export class T3Presentation {
    */
   async settleWorkerThread(agentId: string, runId: string): Promise<void> {
     this.core.requireConnection();
-    // On a nested task the worker row is the parent thread, so its settlement is the
-    // parent's: a held turn is never settled (the projection read below refuses a run
-    // that is still active), and a released one is (nucleus#1305).
-    const owner = this.taskOf(agentId);
-    if (owner) agentId = this.core.parentThreadOf?.(owner) ?? agentId;
+    // A recorded nested child settles on the parent row it is drawn inside: a held turn
+    // is never settled (the projection read below refuses a run that is still active),
+    // and a released one is. A worker that fell back to a top-level thread settles on
+    // its own thread (nucleus#1305 review).
+    agentId = this.rowFor(agentId);
     if (this.core.intents.confirmedDeletion(this.core.state.read(), agentId)) { this.retireDeletedPresentationIntents(); return; }
     // Settled, and no unsettle since: no projection read, no second command.
     if (this.core.state.read().settledThreads?.[agentId]) return;

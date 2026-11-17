@@ -665,16 +665,18 @@ linked, settled and stepped like any top-level support thread — and its follow
 send no child dispose (nucleus#1305 review).
 
 **A finished parent is never relaunched.** A parent whose thread is archived, or
-absent from the complete inventory (which is how the host proves a deletion), ends
-the nested path for that task: the remaining roles launch as top-level threads and
-the record keeps its archived marker so later roles fall back at once. Launching a
-second parent would orphan the task's existing children and re-mint a binding under
-a thread nothing runs.
+deleted, ends the nested path for that task: the remaining roles launch as top-level
+threads and the record keeps its archived marker so later roles fall back at once.
+Launching a second parent would orphan the task's existing children and re-mint a
+binding under a thread nothing runs. Deletion is read two ways from the same
+inventory, because the nightly omits a removed thread from the shell lists and also
+serves it as a `deletedAt` tombstone: absent or tombstoned are the same fact.
 
 **A deleted child does not hold the turn.** The release decision reads one complete
-inventory: a child absent from it is deleted (a positive fact, never a read that
-failed), and a listed child is live only while its shell reports a live run or an
-`activeRunId`. An inventory the host cannot read keeps the turn rather than guessing.
+inventory: a child absent from it, or listed there as a `deletedAt` tombstone, is
+deleted (a positive fact, never a read that failed), and a live child counts only
+while its shell reports a live run or an `activeRunId`. An inventory the host cannot
+read keeps the turn rather than guessing.
 
 **Identity and durability.** The parent thread id, its command id and the ACP
 session are deterministic for a task
@@ -687,11 +689,14 @@ top-level thread under the launch's own command identity. The parent is kept out
 the recorded agent labels, because it is nobody's run: `findAgents` must not mistake
 it for the worker the task created.
 
-**Presentation follows the parent.** The parent is the task's one row: titles
-(including the step suffix), worker settles and the attention unsettle all address
-the parent thread while the run agents stay children. A child's own settle is a
-no-op: T3 draws it inside the parent. When the task ends, the sweep archives the
-parent; the shared project registration is untouched.
+**Presentation follows the recorded row.** A recorded child's title (including the
+step suffix), worker settle and attention unsettle address the parent row it is drawn
+inside, and a child's own settle is a no-op. A role thread that is not a recorded
+child — a worker or revision run that fell back to a top-level thread of a parented
+task — keeps its own row: its title, settle and unsettle are written to that thread
+and never to the parent, so a fallback worker is settled where it actually runs
+(nucleus#1305 review). When the task ends, the sweep archives the parent; the shared
+project registration is untouched.
 
 **The provider is checked, never assumed.** The nested path needs an enabled,
 ready provider instance named `nucleus` whose driver is `acpRegistry`, advertising
@@ -963,9 +968,12 @@ provider, a non-ACP driver, a role in another checkout, a parent T3 will not run
 with the host status naming why; an unknown child command never resent under the
 same identity; the recorded delegated-task wire shapes decoding into the projection;
 a fallback role of a parented task staying a tagged, settled top-level thread that
-sends no child dispose; a deleted child releasing the parent turn; and a role
-launched after its parent was archived, or after the parent vanished from the
-inventory, falling back instead of relaunching it. `test/acp-agent.test.ts` adds the hold rule (nothing shown, nothing
+sends no child dispose; a worker that fell back to a top-level thread keeping its own
+title, settle and unsettle instead of writing them to the parent; a deleted child
+releasing the parent turn; a `deletedAt` tombstone in the inventory counting as
+deleted for both a child and the parent; and a role launched after its parent was
+archived, or after the parent vanished from the inventory, falling back instead of
+relaunching it. `test/acp-agent.test.ts` adds the hold rule (nothing shown, nothing
 forwarded, the turn held) and keeps it distinct from the ignore rule;
 `test/acp-service.test.ts` proves a mint carries both prompt rules into the binding
 and that a mint without them writes neither.

@@ -261,7 +261,13 @@ export async function t3Fake(t: TestContext, directory: string) {
      * The parenting tests need the parent thread to be live while a child is created
      * (nightly: `Parent run ... is not active.`).
      */
-    runOnLaunch: false };
+    runOnLaunch: false,
+    /**
+     * Serve a removed thread as a `deletedAt` tombstone in the shell lists instead of
+     * omitting it. Both shapes exist on the wire, and a reader must treat either one as
+     * the same deletion fact (nucleus#1305 review).
+     */
+    shellTombstones: false };
   /** Command receipts make a replayed project mutation answer with its recorded outcome. */
   const projectReceipts = new Map<string, { type: string; projectId: string }>();
   const sockets = new Set<Socket>();

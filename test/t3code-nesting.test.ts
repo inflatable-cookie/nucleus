@@ -285,6 +285,35 @@ test('a fallback role of a parented task is a top-level thread: tagged, settled,
     'a fallback thread sends no child dispose');
 });
 
+test('a worker that fell back to a top-level thread keeps its own title, settle and unsettle', async t => {
+  // The parent launches and is recorded, but its turn never starts, so the worker
+  // falls back: this is the shape the review named, a task with a parent and a
+  // top-level worker. The worker's own presentation must not be written to the parent.
+  const { host, server, spec } = await fixture(t, { runOnLaunch: false });
+  const worker = await host.createAgent(spec('worker-create', 'Do the work'));
+  const parent = parentOf(host)!;
+  assert.ok(parent, 'the parent record stays after the fallback');
+  assert.equal(host.state.read().agents[worker.id]!.parentThreadId, undefined, 'the worker is not a child');
+
+  await host.setTaskWorkspaceTitle({ id: 'synthetic-task', number: 1305, title: 'Synthetic task', phase: 'working',
+    agentId: worker.id, runId: 'worker-run' } as Task, 'Synthetic task', 'title-intent', false);
+  assert.ok(commandsOf(server, 'thread.metadata.update').some(command => command.threadId === worker.id && command.title === 'Synthetic task'),
+    'the worker row is titled on its own thread');
+  assert.equal(commandsOf(server, 'thread.metadata.update').some(command => command.threadId === parent.threadId), false,
+    'the parent row is not titled for a fallback worker');
+
+  // The fallback launch ran no provider turn in this fixture, so give the worker one
+  // recorded run that has ended, as a real handover would have.
+  server.threads.get(worker.id)!.runs.push({ id: 'run:worker', status: 'completed', startedAt: STAMP, ordinal: 1, rootNodeId: 'node:root:worker' });
+  await host.settleWorkerThread(worker.id, 'worker-run');
+  assert.ok(commandsOf(server, 'thread.settle').some(command => command.threadId === worker.id), 'the worker settles on its own thread');
+  assert.equal(commandsOf(server, 'thread.settle').some(command => command.threadId === parent.threadId), false);
+
+  await host.unsettleWorkerThread(worker.id, 'synthetic-task');
+  assert.ok(commandsOf(server, 'thread.unsettle').some(command => command.threadId === worker.id), 'the worker surfaces on its own thread');
+  assert.equal(commandsOf(server, 'thread.unsettle').some(command => command.threadId === parent.threadId), false);
+});
+
 test('a deleted child does not hold the parent turn', async t => {
   const { host, server, acp, spec } = await fixture(t);
   const child = await host.createAgent(spec('worker-create', 'Do the work'));
@@ -294,6 +323,27 @@ test('a deleted child does not hold the parent turn', async t => {
   server.threads.get(child.id)!.thread.deletedAt = STAMP;
   await host.reconcileThreadTitles([{ id: 'synthetic-task', phase: 'working' } as Task]);
   assert.deepEqual(acp.released.map(entry => entry.sessionId), [parent.sessionId]);
+});
+
+test('a deletedAt tombstone in the inventory counts as deleted for a child and for the parent', async t => {
+  const { host, server, acp, spec } = await fixture(t);
+  // A nightly that keeps a removed thread's tombstone row instead of omitting it.
+  server.controls.shellTombstones = true;
+  const child = await host.createAgent(spec('worker-create', 'Do the work'));
+  const parent = parentOf(host)!;
+  server.threads.get(child.id)!.thread.deletedAt = STAMP;
+  await host.reconcileThreadTitles([{ id: 'synthetic-task', phase: 'working' } as Task]);
+  assert.deepEqual(acp.released.map(entry => entry.sessionId), [parent.sessionId], 'a tombstone child does not hold the turn');
+
+  // The parent itself as a tombstone: the next role falls back instead of sending to it.
+  server.threads.get(parent.threadId)!.thread.deletedAt = STAMP;
+  const sentBefore = server.commands.length;
+  const reviewer = await host.createAgent(spec('review-run', 'Review it', 'reviewer'));
+  assert.equal(commandsOf(server, 'orchestration.launchThread').at(-1)!.threadId, reviewer.id);
+  assert.equal(server.commands.slice(sentBefore).some(command => command.threadId === parent.threadId), false,
+    'nothing is sent to a tombstoned parent');
+  assert.match(host.state.read().nesting!.reason, /parent thread is deleted/);
+  assert.notEqual(host.state.read().parents!['synthetic-task']!.archivedAt, undefined);
 });
 
 test('a role launched after its parent was archived falls back instead of re-launching it', async t => {
