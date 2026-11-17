@@ -215,7 +215,8 @@ test('ordinary move refuses an unproven reader binding, while fresh move takes t
       const moved = await f.control({ action: 'move', to: 'review', fresh: true, reason: 'Replace the stale review' });
       assert.equal(moved.phase, 'awaiting_review', 'fresh move does not inspect the continuation identity');
       assert.equal(moved.resolution.reviewerAgentId, null);
-      assert.ok(f.run().released, 'the explicit fresh move settles the displaced reader');
+      if (busy) assert.ok(f.run().released, 'the explicit fresh move releases the turn it stopped');
+      else assert.ok(f.run().replacedAt, 'an idle but unproven reader remains fenced until archive is confirmed');
       assert.equal(f.stops.length, busy ? 1 : 0, 'only a live reader turn needs stopping');
     } finally { await f.close(); }
   }
