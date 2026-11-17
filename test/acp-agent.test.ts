@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
-import { ACP_MODELS, ACP_PROTOCOL_VERSION, AcpAgent, type AcpAgentOptions, type AcpMessageRequest, type AcpSessionTransport, type AcpTurnReply, type AcpTurnRequest } from "../core/acp/agent";
-import { runAcpAgentFromEnvironment } from "../core/acp/entry";
-import { acpBindingSchema, type AcpBinding } from "../core/acp/binding";
+import { ACP_MODELS, ACP_PROTOCOL_VERSION, AcpAgent, type AcpAgentOptions, type AcpMessageRequest, type AcpSessionTransport, type AcpTurnReply, type AcpTurnRequest } from "../shared/acp/agent";
+import { runAcpAgentFromEnvironment } from "../shared/acp/entry";
+import { acpBindingSchema, type AcpBinding } from "../shared/acp/binding";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

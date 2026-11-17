@@ -27,7 +27,7 @@ that speaks JSON-RPC over stdio and is a thin client of the running service.
 
 ### 1. The agent: ACP over stdio, no model, no host
 
-`core/acp/agent.ts` implements exactly the protocol an ACP client drives and
+`shared/acp/agent.ts` implements exactly the protocol an ACP client drives and
 nothing else:
 
 - `initialize` answers `protocolVersion`, `agentCapabilities.loadSession: true`
@@ -61,7 +61,8 @@ the binding and the task row.
 
 ### 2. The binding is minted, never read from text
 
-`core/acp/binding.ts` owns both files, under `<data home>/acp/`:
+`shared/acp/binding.ts` owns the shapes, the paths and the pointer read;
+`core/acp/binding.ts` owns minting and verification, under `<data home>/acp/`:
 
 - `sessions/<task id>.json` is the authority: `{sessionId, taskId, tokenHash,
   createdAt}`, owner-only. Minting again for the same task replaces it, so every
@@ -142,6 +143,11 @@ line and its release, an operator prompt forwarded, an ignored wake prompt,
 cancel and the following steer, a prompt refused while in flight, a service that
 never answers, a service unreachable at session/new, the refusal codes, and the
 launched entry point's missing-binding answer.
+
+`shared/acp/transport.ts` is the agent's socket client and `shared/acp/entry.ts`
+reads the environment and launches it; `bin/nucleus-acp.mjs` is the installed
+command, written to `~/.local/bin/nucleus-acp` by the installer as the absolute
+command path an ACP client registers.
 
 `test/acp-service.test.ts` covers the service side against a real store, engine
 and callback socket, including a spawned `bin/nucleus-acp.mjs` speaking ACP to

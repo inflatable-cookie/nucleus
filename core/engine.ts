@@ -26,7 +26,7 @@ import { type VerifiedEnclosingOperation } from './planning/enclosing-operation'
 
 import { z } from "zod";
 import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
-import type { AcpSessionSurface } from "./acp/surface";
+import type { AcpSessionSurface } from "../shared/acp/surface";
 import type { Task, Profile, Completion, CheckpointResult, Run, RecoveryActionBinding, BulkDisposition, BulkDispositionRequest, ReparentInput, WorkspaceArchiveRetry } from "../shared/contracts";
 import { isTransportFailure } from "../shared/transport";
 

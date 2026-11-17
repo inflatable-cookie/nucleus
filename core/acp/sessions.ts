@@ -20,7 +20,7 @@
 import type { Task } from "../../shared/contracts";
 import type { AgentMessageReceipt } from "../questions/agent-messages";
 import { verifyAcpSession, mintAcpSession } from "./binding";
-import type { AcpMessageInput, AcpSessionBinding, AcpSessionSurface, AcpTurnInput, AcpTurnReply } from "./surface";
+import type { AcpMessageInput, AcpSessionBinding, AcpSessionSurface, AcpTurnInput, AcpTurnReply } from "../../shared/acp/surface";
 import { acpFinishedLine, acpLifecycleLine, acpLifecycleSignature, acpTaskFinished, acpTaskName } from "./lifecycle";
 import type { Engine } from "../engine";
 

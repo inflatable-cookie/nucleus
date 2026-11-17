@@ -13,8 +13,8 @@
  * - `NUCLEUS_ACP_IGNORE_PATTERN`: a host's waking-prompt rule when the binding has none.
  */
 import { isAbsolute, join } from "node:path";
-import { compiledIdentity } from "../../shared/runtime.mjs";
-import { dataHome } from "../../shared/data-home.mjs";
+import { compiledIdentity } from "../runtime.mjs";
+import { dataHome } from "../data-home.mjs";
 import { AcpAgent } from "./agent";
 import { acpBindingPathFor, readAcpBinding } from "./binding";
 import { createAcpTransport } from "./transport";
