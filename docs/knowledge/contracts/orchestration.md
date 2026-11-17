@@ -1660,8 +1660,11 @@ review or merge credit; live participants and unsettled effects remain fences.
 ### Liveness and reminders
 
 - A run whose agent shows no timeline activity for the stall threshold (default
-  30 minutes) while Paseo reports it running is stalled and enters coordinator
-  recovery, one incident per run. A permission pending past that threshold is
+  30 minutes) while Paseo reports it running enters coordinator recovery, one incident per
+  run, unless its own recorded foreground tool or run-owned child in the task
+  tree is still live. Observation time and each run’s activity stamp are stored
+  separately. If that stall ends before recovery acts, its pending episode and
+  planner escalation close automatically. A permission pending past that threshold is
   the same stall: it raises owner attention and names the request. Nothing is
   auto-approved or auto-denied. Nucleus doesn't interrupt it and the lease holds
   until it stops. A missing activity timestamp is never stale. Merge lease wait

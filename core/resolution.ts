@@ -213,9 +213,9 @@ export class Resolution {
   readonly mergePhase = new MergePhase(portsContext(this, ['store', 'update']));
   readonly hookReplay = new HookReplayLifecycle(portsContext(this, ['graceMs', 'hooks', 'operatorReturn', 'paused', 'stopped', 'store', 'update']));
   readonly origins = new OriginRouting(this);
-  readonly recovery = new Recovery(portsContext(this, ['adapter', 'attention', 'automaticHookReplayPending', 'ensureIncident', 'escalateRefusedCoordinator', 'extendCallbackReminder', 'graceMs', 'host', 'hostAvailable', 'workerProviderUnavailable', 'idle', 'lease', 'onTaskHost', 'openPlannerEscalation', 'openReviewContinuationEscalation', 'recordStop', 'requiredRouteNote', 'responsibleBlockerLadder', 'resumeTransientProviderThread', 'select', 'slotAdmissionReason', 'startsNoRuns', 'stopped', 'store', 'suppressAutomaticRetry', 'update', 'usageCeilingNote', 'validationEvidence', 'waiting']));
+  readonly recovery: Recovery = new Recovery(portsContext(this, ['adapter', 'attention', 'automaticHookReplayPending', 'ensureIncident', 'escalateRefusedCoordinator', 'extendCallbackReminder', 'graceMs', 'host', 'hostAvailable', 'workerProviderUnavailable', 'idle', 'lease', 'onTaskHost', 'openPlannerEscalation', 'openReviewContinuationEscalation', 'recordStop', 'requiredRouteNote', 'responsibleBlockerLadder', 'resumeTransientProviderThread', 'select', 'slotAdmissionReason', 'startsNoRuns', 'stalls', 'stopped', 'store', 'suppressAutomaticRetry', 'update', 'usageCeilingNote', 'validationEvidence', 'waiting']));
   readonly checkpoints = new Checkpoints(portsContext(this, ['adapter', 'attention', 'hostAvailable', 'paused', 'store', 'withHost']));
-  readonly stalls = new Stalls(portsContext(this, ['adapter', 'attention', 'host', 'onTaskHost', 'paused', 'profiles', 'recordStop', 'recovery', 'saveIncident', 'store', 'update', 'waiting']));
+  readonly stalls: Stalls = new Stalls(portsContext(this, ['adapter', 'attention', 'host', 'onTaskHost', 'paused', 'profiles', 'recordStop', 'recovery', 'saveIncident', 'store', 'update', 'waiting']));
   readonly ownedTools = new OwnedTools(this);
   readonly holds = new Holds(portsContext(this, ['reviewRequired', 'store']));
   readonly continuedPrs = new ContinuedPrs(portsContext(this, ['adapter', 'continuedPrBinding', 'store']));

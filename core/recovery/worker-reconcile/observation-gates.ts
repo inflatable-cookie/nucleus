@@ -113,7 +113,7 @@ export function recordObservation(engine: WorkerReconcileContext, task: Task, st
   const active = observedActive(state);
   const changed = task.lastAgentStatus !== state.status || task.agentActive !== active;
   const modelChanged = Boolean(state.model && (state.model !== task.workerModel || !task.workerModels.includes(state.model)));
-  engine.store.update(task.id, { lastAgentStatus: state.status, agentActive: active, lastObservedAt: now(), ...(modelChanged ? { workerModel: state.model, workerModels: [...new Set([...task.workerModels, state.model!])] } : {}) }, changed ? "agent_state" : undefined, state.status);
+  engine.store.update(task.id, { lastAgentStatus: state.status, agentActive: active, lastObservedAt: now(), lastActivityAt: state.updatedAt || null, ...(modelChanged ? { workerModel: state.model, workerModels: [...new Set([...task.workerModels, state.model!])] } : {}) }, changed ? "agent_state" : undefined, state.status);
 }
 
 /** Observe without settling anything: the caller owns the answer. */
