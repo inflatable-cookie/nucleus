@@ -94,12 +94,14 @@ function environmentThread({
   environmentId,
   originPluginId,
   parentThreadId = null,
+  hasPendingInteraction = false,
 }: {
   id: string;
   title: string;
   environmentId: string;
   originPluginId: string | null;
   parentThreadId?: string | null;
+  hasPendingInteraction?: boolean;
 }): SidebarThread {
   return makeSidebarThread({
     id,
@@ -107,6 +109,7 @@ function environmentThread({
     titleFallback: title,
     projectId: "proj_test",
     parentThreadId,
+    hasPendingInteraction,
     originPluginId,
     environment: makeSidebarEnvironment({
       id: environmentId,
@@ -134,6 +137,9 @@ const THREADS: SidebarThread[] = [
     title: "Nucleus reviewer",
     environmentId: NUCLEUS_ENVIRONMENT,
     originPluginId: "nucleus",
+    // A hidden thread the host's roll-up resolves: the collapsed header keeps
+    // upstream's agent glyph for it.
+    hasPendingInteraction: true,
   }),
   environmentThread({
     id: "thr_second_worker",
@@ -301,6 +307,14 @@ describe("a Nucleus task group's header", () => {
     // Collapsed by default, with no `collapsedEnvironments` entry: the fork's own
     // preference decides, so the two group classes cannot disagree.
     expect(header.getAttribute("data-nucleus-task-group-collapsed")).toBe("true");
+    // The collapsed roll-up is the host's own: `experimental_resolveThreadStatus`
+    // over the hidden threads names the indicator, and upstream's glyph draws it.
+    // The row-level glyph sits beside the name block, like upstream's chevron.
+    expect(
+      taskGroupRow(NUCLEUS_ENVIRONMENT).querySelector(
+        '[data-thread-status-glyph="waiting-for-input"]',
+      ),
+    ).not.toBeNull();
   });
 
   it("draws upstream's header, with no state line and no read, on every other group", async () => {
