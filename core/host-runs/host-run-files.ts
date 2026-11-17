@@ -1,5 +1,10 @@
 /** Verified host-run paths, discovery files and socket handoff. */
 import { writeAtomicOwnedFile as publishOwnedFile } from "../machine/owned-file.mjs";
+import {
+  QUALIFICATION_ACK_LEAF,
+  QUALIFICATION_OBSERVATION_LEAF,
+  QUALIFICATION_SETTLEMENT_LEAF,
+} from "./qualification-evidence";
 import { CURRENT_DATA_HOME_LEAF } from "../../shared/data-home.mjs";
 import {
   constants,
@@ -265,6 +270,11 @@ export async function bindStagedHostRunSocket(
  * ordinary run keeps `stdout` and `stderr` instead and never creates this file.
  */
 export const QUALIFICATION_RAW_LEAF = "qualification.raw";
+export {
+  QUALIFICATION_ACK_LEAF,
+  QUALIFICATION_OBSERVATION_LEAF,
+  QUALIFICATION_SETTLEMENT_LEAF,
+} from "./qualification-evidence";
 export const hostRunRunDir = (stateDir: string, runId: string) => join(stateDir, "runs", runId);
 /** One run's supervisor plan, live state, cancel request, output and result. */
 export function hostRunSupervisorPaths(stateDir: string, runId: string) {
@@ -278,6 +288,10 @@ export function hostRunSupervisorPaths(stateDir: string, runId: string) {
     stdoutPath: join(root, "stdout"),
     stderrPath: join(root, "stderr"),
     qualificationRawPath: join(root, QUALIFICATION_RAW_LEAF),
+    /** Spec 064 P6: the three owned evidence sidecars, one writer each (see `qualification-evidence.ts`). */
+    qualificationObservationPath: join(root, QUALIFICATION_OBSERVATION_LEAF),
+    qualificationAckPath: join(root, QUALIFICATION_ACK_LEAF),
+    qualificationSettlementPath: join(root, QUALIFICATION_SETTLEMENT_LEAF),
     resultPath: join(root, "result.json"),
     submissionPath: join(root, "submission.json"),
     retentionPath: join(root, "output.retention.json"),

@@ -8,11 +8,11 @@
  * replaced so this file can prove that a refused qualification submit never
  * spawns anything, and the process cases use real child processes.
  *
- * Brief amendment (2026-11-16): until Spec 064 P4–P7 land their named
- * missing-input refusal, real qualification proof mode stays inaccessible. The
- * authenticated, matched submit below therefore resolves its full binding —
- * including the environment-value digest — and then refuses with
- * `qualification foundation incomplete` before any write or spawn.
+ * Tranche 3 replaced the staged "foundation incomplete" refusal with the named
+ * missing-input refusal (Spec 064 P5/P6): the authenticated, matched submit below
+ * resolves its full binding — including the one first-effect clock and the
+ * environment-value digest — and then refuses before any write or spawn, naming
+ * every external input real proof mode still lacks.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -31,9 +31,10 @@ import { PROCESS_START_IDENTITY_ENV } from "../core/machine/process-identity-sea
 import { Store } from "../core/store/store";
 import { HostRunScheduler } from "../core/host-runs/host-run-scheduler";
 import { qualificationSubjectResolver } from "../core/host-runs/qualification-subject";
+import { establishFirstEffectClock } from "../core/host-runs/qualification-clock";
+import { QUALIFICATION_REFUSED_BEFORE_EFFECTS } from "../core/host-runs/qualification-inputs";
 import {
   HostRunEndpoint,
-  QUALIFICATION_FOUNDATION_INCOMPLETE,
   hostRunLaunchEnvironment,
   hostRunRunDir,
   hostRunSupervisorPaths,
@@ -110,8 +111,10 @@ function fixture(t: { after(fn: () => void | Promise<void>): void }, overrides: 
     proofExecution: {
       selector, inputs, prNumber: null, tree, operationId: null, briefVersion: null, briefDigest: null,
       returnPhase: "awaiting_review", authorizedBy,
-      // An ordinary proof execution records no qualification binding at all.
-      ...(optIn ? { qualification: { subject, execution: null } } : {}),
+      // An ordinary proof execution records no qualification binding at all. An
+      // opted-in run carries the intent's subject and the attempt's one clock,
+      // exactly as `runIntent` records them before the reservation persists.
+      ...(optIn ? { qualification: { subject, execution: null, firstEffectClock: establishFirstEffectClock(Date.now() - 1) } } : {}),
     },
   });
   store.db.prepare("INSERT INTO runs VALUES(?,?,?)").run(run.id, run.taskId, JSON.stringify(run));
@@ -288,10 +291,14 @@ test("an authenticated, matched submit resolves the full binding including the e
     "the subject-derived spawn marker is stable across resolutions");
   assert.notEqual(changed.binding.execution.environmentDigest, execution.environmentDigest);
 
-  // The amendment's staged refusal: the binding resolved, and the mode is refused
-  // before any write or spawn.
+  // The named missing-input refusal: the binding resolved, and the mode is refused
+  // before any write or spawn with every absent external input named.
   assert.equal(outcome.code, "not_permitted");
-  assert.ok(outcome.refusal.startsWith(QUALIFICATION_FOUNDATION_INCOMPLETE), outcome.refusal);
+  assert.ok(outcome.refusal.startsWith(QUALIFICATION_REFUSED_BEFORE_EFFECTS), outcome.refusal);
+  for (const id of ["effigy_prepare_custody", "effigy_admission", "common_elapsed_clock", "creator_waits",
+    "deciding_census", "final_census", "image_attachment_evidence", "capture_delivery", "accounting_fit_readiness"])
+    assert.match(outcome.refusal, new RegExp(id), `the refusal names ${id}`);
+  assert.equal(binding.firstEffectClock?.targetMs, 600_000, "the resolved binding carries the attempt's one cumulative clock");
   const keyBefore = readFileSync(join(f.stateDir, "token.key"), "utf8");
   const again = await f.endpoint.submitQualification({
     credential: { taskId: f.task.id, runId: f.executor.id, token: f.token }, submission: body,
@@ -320,10 +327,13 @@ test("a qualification plan is refused by the supervisor before its first effect"
     argv: [process.execPath, "-e", "process.exit(0)"], cwd: f.repo, envKeys: [],
     runTimeoutMs: 10_000, graceMs: 10, startedAt: new Date().toISOString(),
     stopMode: "qualification_direct", qualification: resolved.binding,
+    firstEffectClock: resolved.binding.firstEffectClock,
   });
   writeVerifiedOwnedFile(f.stateDir, ["runs", runId, "supervisor.plan.json"], JSON.stringify(plan), 0o600);
 
-  await assert.rejects(runHostRunSupervisorMain([f.stateDir, runId]), /qualification foundation incomplete/);
+  // A plan whose readiness is absent is refused before the supervisor's first
+  // write or spawn, naming the missing inputs.
+  await assert.rejects(runHostRunSupervisorMain([f.stateDir, runId]), /qualification proof mode is refused before any effect/);
   // No effect: the supervisor's own state record (its first write) is absent, and
   // the P4 capture mode is unreachable — no artifact, no ordinary stream, no
   // per-stream file. The mode entry refuses before it opens anything.
@@ -426,6 +436,7 @@ test("a qualification attempt's cancel persists its mode and never takes the gro
   const plan = hostRunSupervisorPlanSchema.parse(JSON.parse(readFileSync(planPath, "utf8")));
   writeVerifiedOwnedFile(f.stateDir, ["runs", runningId, "supervisor.plan.json"], JSON.stringify(hostRunSupervisorPlanSchema.parse({
     ...plan, stopMode: "qualification_direct", qualification: resolved.binding,
+    firstEffectClock: resolved.binding.firstEffectClock,
   })), 0o600);
   for (const runId of [runningId, ordinaryId]) removeVerifiedOwnedFile(realpathSync(f.stateDir), ["runs", runId, "submission.json"]);
 

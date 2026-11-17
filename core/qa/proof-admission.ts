@@ -6,7 +6,8 @@
  * at that head is already recorded, refuses here.
  */
 import type { Run, Task } from '../../shared/contracts';
-import { QUALIFICATION_FOUNDATION_INCOMPLETE } from '../host-runs/qualification-binding';
+import { qualificationReadinessRefusal } from '../host-runs/qualification-inputs';
+import type { QualificationReadiness } from '../../shared/schema/review/proof';
 import { proofExecutions, spentProofExecution } from './proof-records';
 
 /**
@@ -21,15 +22,22 @@ export class ProofSingleFlightError extends Error {
 }
 
 /**
- * Spec 064 P1: qualification mode is declared, never entered, while its foundation
- * is incomplete. Every proof-execution entry — the activation table the owner verb
- * and preview read, and the dispatch funnel itself — asks this before anything is
- * dispatched, so an opted-in declaration cannot reach an ordinary executor
- * activation and be read as a running proof.
+ * Spec 064 P1/P5: qualification mode is declared, never entered, unless every
+ * external input is present and qualified. Every proof-execution entry — the
+ * activation table the owner verb and preview read, and the dispatch funnel
+ * itself — asks this before anything is dispatched, so an opted-in declaration
+ * cannot reach an ordinary executor activation and be read as a running proof.
+ *
+ * Today no supplier exists, so the refusal names every missing input instead of
+ * saying "unavailable" (Spec 064 P5/P6, "refuse before effects"). A readiness set
+ * a supplier resolved travels with the activation; absent, nothing is assumed.
  */
-export function qualificationModeRefusal(task: Pick<Task, 'proofExecution'>): string | null {
+export function qualificationModeRefusal(
+  task: Pick<Task, 'proofExecution'>,
+  readiness?: QualificationReadiness | null,
+): string | null {
   if (task.proofExecution?.qualification !== true) return null;
-  return `${QUALIFICATION_FOUNDATION_INCOMPLETE}: this proof execution declares qualification mode, and real qualification proof mode is refused before any dispatch until Spec 064 P4-P7 land their named missing-input refusal`;
+  return qualificationReadinessRefusal(readiness ?? null, 'a proof execution that declares qualification mode');
 }
 
 /**

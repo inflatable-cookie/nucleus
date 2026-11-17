@@ -94,7 +94,7 @@ Exactly one of `exitCode` and `signal` is non-null. Because the record outlives
 both the supervisor and the scheduler, a restart settles finished runs by what
 actually happened.
 
-### Private qualification mode (Spec 064 P1–P4)
+### Private qualification mode (Spec 064 P1–P7)
 
 The supervisor plan and the cancel request are queue-private records; contract
 010's client protocol and its frozen result/state records are not changed by
@@ -129,12 +129,68 @@ bytes, so nothing here is a rollback break.
   (`queue.proofExecution.qualification: true`), an ordinary proof execution
   records no qualification binding at all, and a declared opt-in is refused by the
   proof-activation table and the dispatch funnel before any executor run exists.
-- A plan carrying either field is refused by the supervisor before its first
-  write or spawn while Spec 064 P5–P7 are unimplemented: `qualification
-  foundation incomplete`. The endpoint's private `submitQualification` method
+- `firstEffectClock` (private, optional, required with `qualification`) is the
+  one cumulative first-effect clock: `{clockId, originTick, targetMs: 600000}`.
+  Its origin is taken in `DispatchLaunch.proofExecution` before the dispatch
+  funnel — reservation persistence included — and rides the plan, so the
+  supervisor, the endpoint and the settlement consume the same origin. A retry
+  continues the earliest recorded origin and never restarts the target, and an
+  effect ordered before the origin refuses. It is a local elapsed measurement,
+  never the qualified common clock across participating processes.
+- `qualification.readiness` (private, optional) is the set of external inputs the
+  submit resolved: Effigy's prepare custody and genuine admission, the common
+  elapsed clock, every creator's own wait, the joined DECIDING census, the
+  separate FINAL census, the image-attachment provider evidence, the
+  capture/delivery conjunction, and the accounting/fit/readiness measurement. No
+  supplier exists today, so a submit resolves them all as missing and the proof
+  mode refuses before any effect, naming each one. Readiness, a status, a capacity
+  reservation or an authenticated credential never starts a proof.
+- The supervisor admits a qualification plan only with a fully ready input set
+  and the attempt's clock; otherwise it refuses before its first write or spawn,
+  naming what is missing. The endpoint's private `submitQualification`
   authenticates the executor run's own credential, resolves that subject from
-  Queue's records, rechecks `verifyProofSource`, and then refuses before any
-  submit write. A host-run token and a client-supplied caller grant nothing.
+  Queue's records, rechecks `verifyProofSource`, and refuses before any submit
+  write. A host-run token and a client-supplied caller grant nothing.
+- A qualification attempt's storage ledger charges its full inventory under a
+  provider, owner, writer, method and sample tick: the database file with its WAL
+  and rollback journal (each whole where one run's share is not attributable),
+  publications, the combined log including framing, every permitted copy and
+  every retained failure. The entries are disjoint by construction — a shared
+  parent names the subtrees another entry charges, so no byte is counted twice —
+  and the combined sum is therefore a real total, not a double count. The
+  monitored 512 MiB target and the 22 GiB reserve safety are checked; a breach
+  latches the first fault and requests the direct-command stop, and an unknown
+  required charge is never read as fit. The ledger is logical sampling and claims
+  no all-physical peak, which stays literally unknown and is disclosed.
+- Three private evidence sidecars appear beside a qualification run, one writer
+  each. The supervisor alone writes `qualification.observation.json` — subject,
+  clock, its own direct-child wait, the parent waits it holds, each stream's real
+  terminal events, the combined artifact's exact evidence and the ledger, with
+  `not_applicable: unbuffered` recorded as the flush fact the unbuffered writer
+  can prove. The endpoint alone writes `qualification.ack.json` — the
+  observation digest and the artifact's encoded length, hash, per-stream
+  lengths, hashes and EOF/DRAIN sequences, with its durable acceptance tick and
+  whether that tick was inside the target — and `qualification.settlement.json`,
+  which records each independent gate (direct-child wait, parent waits, DECIDING
+  census, census join, FINAL census, image attachment, capture, storage), the
+  delivery receipt, and the separate target/workload/evidence/resources/closure
+  outcomes. There is no inferred `closed` flag; a gate settles only on its own
+  receipt, and the verdict is `proved` only when every gate and outcome proved.
+- Spec 064 P7: the disposition keeps the first fault, the spent occurrence, the
+  unresolved obligations and those separate outcomes. Losing the service→S parent
+  or a Queue roll during a proof spends the attempt as unknown/SPENT/retained,
+  even if S survives and writes a result; restart only reconciles that evidence.
+  Retention keeps the raw bytes, the sidecars and the charged residuals while
+  anything is unresolved, and the ordinary expiry marker is no deletion authority
+  for them; an attempt that already carries a recorded retention failure keeps
+  that row too, because nothing about it is resolved. An executor's
+  qualification-mode result is accepted only against the exact recorded settlement
+  digest, so a late or spent attempt can never report a pass.
+- The strict capture's EOF wait is bounded by the attempt's own first-effect
+  deadline (`originTick + targetMs`), so the wait can only spend what is left of
+  the target and never opens a fresh span of its own; when it expires the streams
+  stay `unknown` and the step settles. Nothing manufactures EOF, signals a group
+  or an escapee, or grants extra cleanup time.
 - Contract 010's stop, retention and result records are unchanged for every
   ordinary run, including the group TERM/SIGKILL stages. Its capture is unchanged
   too: an ordinary run appends `stdout` and `stderr` with the token redacted and

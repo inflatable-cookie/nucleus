@@ -80,10 +80,12 @@ export class HostRunScheduler {
    * event (names and times only, never a path or payload). A make-before-break
    * roll records `endpoint_handoff` with bound/answered/swapped instants; the
    * client-visible gap is then the probe window around that swap, not unbound to
-   * the next answered.
+   * the next answered. Spec 064 P6/P7: a qualification evidence refusal or a spend
+   * is recorded on the same journal — a refusal names what it refused, without
+   * turning the refusal into a verdict.
    */
   recordEndpointEvent(
-    event: "endpoint_bound" | "endpoint_unbound" | "endpoint_answered" | "endpoint_handoff" | "endpoint_reattach_refused",
+    event: "endpoint_bound" | "endpoint_unbound" | "endpoint_answered" | "endpoint_handoff" | "endpoint_reattach_refused" | "qualification_evidence",
     at = new Date(this.nowMs()).toISOString(),
     extra: Record<string, unknown> = {},
   ): void {

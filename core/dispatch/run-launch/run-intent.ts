@@ -34,6 +34,11 @@ export function runIntent(input: { task: Task; role: Run['role']; resolution: La
       head, tree: s.proofTree, selector: t.proofExecution.selector, inputs: t.proofExecution.inputs, authorizedBy,
     },
     execution: null,
+    // Spec 064 P5: the attempt's one clock rides the intent. The funnel established
+    // (or a retry carried) this origin before this reservation persisted, and no
+    // later owner starts a launch clock.
+    ...(s.options.proof?.firstEffectClock ? { firstEffectClock: s.options.proof.firstEffectClock } : {}),
+    ...(s.options.proof?.readiness ? { readiness: s.options.proof.readiness } : {}),
   } : null;
   const proofExecution = proofExecutor(role) && s.proofTree ? {
     selector: t.proofExecution!.selector, inputs: t.proofExecution!.inputs,

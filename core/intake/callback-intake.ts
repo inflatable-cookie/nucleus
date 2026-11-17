@@ -23,6 +23,7 @@ import { ownerArmedRetainedWorker } from '../recovery/task-reasons';
 import { completionRoute, foreignBranchRefusal, sourceApprovalRefusal } from './report-shape';
 import { reportReadyRefusal } from './report-ready';
 import { proofResultRefusal } from './proof-settlement';
+import { readQualificationSettlementReference } from '../host-runs/qualification-settlement';
 
 /**
  * A report's receipt hash is the accepted completion's own bytes, so the local
@@ -205,7 +206,12 @@ export class CallbackIntake {
     if (sourceRun?.role === 'executor' && input.status === 'proof_executed') {
       this.store.authenticate(input.runId, token);
       const duplicate = this.store.receipt(input, token); if (duplicate) return duplicate;
-      const refusal = proofResultRefusal(input, sourceRun);
+      // Spec 064 P6/P7: a qualification-mode result is consumed against the exact
+      // settlement the endpoint wrote, read from this store's own record.
+      const qualificationSettlement = sourceRun.proofExecution?.qualification
+        ? readQualificationSettlementReference(this.store, sourceRun.id)
+        : null;
+      const refusal = proofResultRefusal(input, sourceRun, qualificationSettlement);
       if (refusal) throw new Error(refusal);
       const task = this.store.task(input.taskId);
       const source = await verifyProofSource(task, sourceRun.head);

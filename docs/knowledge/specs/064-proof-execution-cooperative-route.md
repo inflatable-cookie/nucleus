@@ -1,7 +1,7 @@
 # 064 — Proof execution under cooperative qualification
 
-Status: implemented in part — P1–P4 landed behind a staged refusal; P5–P7 proposed
-Scope: the route's seams; P1–P3 are code, the rest is still design and no proof activation
+Status: implemented in part — P1–P7 landed behind a named missing-input refusal; no proof activation
+Scope: the route's seams; P1–P7 are code and the refusal is the delivery, not an activation
 
 ## Authority and changed premises
 
@@ -69,15 +69,16 @@ host-run, QA and proof behaviour is unchanged.
   signal, no escaped-descendant signal and no KILL escalation. `cancelRun`
   persists the mode in the durable cancel request.
 
-Staged refusal (brief amendment, 2026-11-16): until P5–P7 land their named
-missing-input refusal, real qualification proof mode is inaccessible. Every mode
-entry refuses before any effect with `qualification foundation incomplete`: a
-declared opt-in is refused by the proof-activation table the owner verb and
-preview read **and** by the dispatch funnel, so it cannot reach an ordinary
+Staged refusal (brief amendment, 2026-11-16), superseded in tranche 3: while
+P5–P7 were unimplemented, every mode entry refused with `qualification foundation
+incomplete`. Tranche 3 replaced that text with the named missing-input refusal
+(see the tranche 3 status above); the surrounding rules are unchanged and still
+stand: a declared opt-in is refused by the proof-activation table the owner verb
+and preview read **and** by the dispatch funnel, so it cannot reach an ordinary
 executor activation; `submitQualification` refuses without writing and performs no
-token-key work before it authenticates; and the supervisor refuses a qualification
-plan before its first write or spawn. The resolved binding is never written. Authentication alone never starts a proof and never
-implies readiness. The first-effect clock, provider evidence, censuses, waits and
+token-key work before it authenticates; and the supervisor refuses an unready
+qualification plan before its first write or spawn. Authentication alone never
+starts a proof and never implies readiness. The first-effect clock, provider evidence, censuses, waits and
 closure are still absent, so nothing here is qualification credit, fit or a hold
 release.
 
@@ -118,13 +119,81 @@ the verified writer's durability report.
   trailing bytes that are not complete frames. Decoding keeps no second full log:
   payload copies exist only when a caller explicitly asks for them.
 
-Staged refusal still holds. Every mode entry — the proof-activation table, the
-dispatch funnel, `submitQualification` and the supervisor — refuses before its
-first effect with `qualification foundation incomplete`, so no
-`qualification.raw` can be created by a real proof. The supervisor therefore
-still opens the ordinary capture only; the qualification capture's wiring to S
-lands with the tranche that removes that refusal. Raw bytes have no reader, UI or
-export path yet: the artifact is private beside the run.
+Staged refusal as it stood in tranche 2 (superseded by tranche 3 below). Every
+mode entry — the proof-activation table, the dispatch funnel,
+`submitQualification` and the supervisor — refused before its first effect with
+`qualification foundation incomplete`, so no `qualification.raw` could be created
+by a real proof, and the supervisor still opened the ordinary capture only. Raw
+bytes have no reader, UI or export path: the artifact is private beside the run.
+
+## Implementation status (tranche 3, 2026-11-17)
+
+The third tranche implements **P5, P6 and P7** at the seams below and replaces the
+staged `qualification foundation incomplete` refusal with the named
+missing-input refusal. No qualification proof runs, and the native 445-case
+ladder, the image and VM resources and the Oxide holds stay untouched.
+
+- **P5, the clock.** `firstEffectClock {clockId, originTick, targetMs: 600000}` is
+  established in `DispatchLaunch.proofExecution` before the dispatch funnel —
+  reservation persistence included — and rides the private plan and the test
+  intent, so the endpoint, the supervisor and the settlement read one origin.
+  A retry continues the earliest recorded origin instead of starting a new one,
+  an effect ordered before the origin refuses, and hitting the target is
+  permanent: late completion changes closure only. The 560/530/20/2 cutoffs are
+  expressed inside the same target and are never added to it. This is a local
+  elapsed measurement; the qualified common clock across participants is still a
+  required external input and is never synthesized from it.
+- **P5, the storage ledger.** `storageLedger` entries cover the spec's inventory —
+  database, WAL and journal (the whole shared footprint where one run's
+  attribution is unproven), publications, the combined log including framing,
+  every permitted copy and every retained failure — each with its provider,
+  root/device, owner and writers, method and units, sample tick, charge, missing
+  coverage and reserve safety. The entries are disjoint by construction, so the
+  combined total counts every byte once. The combined 512 MiB target (384 + 128 planning,
+  no free outside part) and the 22 GiB (20 + 2) reserve safety are monitored; a
+  breach latches the first fault and requests P3's direct-command stop, and an
+  unknown required charge is never read as fit. Logical sampling makes no
+  all-physical peak claim: the peak stays literally unknown and is disclosed.
+- **P6, typed evidence.** `hostRunQualificationObservationSchema`,
+  `hostRunQualificationAckSchema` and `hostRunQualificationSettlementSchema` live
+  in `shared/schema/host-runs.ts` with their owned sidecars. S alone writes
+  `qualification.observation.json`; the endpoint alone writes
+  `qualification.ack.json` and `qualification.settlement.json`, and each writer
+  refuses another's record. The ack binds the observation digest and the
+  artifact's exact encoded length, hash, per-stream lengths, hashes and EOF/DRAIN
+  sequences inside the target. The settlement records each independent gate and
+  the separate target/workload/evidence/resources/closure outcomes, with no
+  inferred `closed` flag: a passing gate never satisfies another. Intake consumes
+  the exact settlement digest through the executor's existing authentication and
+  passes a reference to the single raw artifact, never `proofFiles` copies.
+- **P7, spent retention and loss.** The disposition keeps the first fault, the
+  spent occurrence, the unresolved obligations and those separate outcomes.
+  Losing the service→S parent, or a Nucleus roll during a proof, settles
+  unknown/SPENT/retained even if S later writes a result; restart only reconciles
+  that evidence. Retention keeps the raw bytes, the sidecars and the charged
+  residuals while anything is unresolved, and the ordinary expiry marker is no
+  deletion authority for them.
+- **Refuse before effects.** Real qualification proof mode refuses before any
+  effect unless every external input is present and qualified, and the refusal
+  names each missing one: Effigy prepare custody and genuine admission, a common
+  elapsed-clock binding (no invented conversion), every creator's own direct wait
+  and reap, the completed joined custodian-bound DECIDING census, the separate
+  FINAL certain-empty census, complete positive image-attachment provider
+  evidence, source-bound EOF/drain/fsync/in-window ack and the publisher wait, and
+  actual accounting, fit and readiness. Today no supplier exists, so the mode
+  refuses and says what is missing; authentication alone starts nothing.
+- **P4 amendments from the #1288 review.** Strict capture's EOF wait is bounded by
+  the attempt's own first-effect deadline (`originTick + targetMs`), so it spends
+  only the remaining target and never opens a fresh span from when the wait
+  starts; it settles unknown/SPENT/retained when real EOF or DRAIN is not observed,
+  never by manufacturing EOF, adding a group or escapee signal or granting extra
+  cleanup time. Qualification wiring has no
+  `maxOutputBytes` cap and no overflow-triggered stop, and every capture buffer and
+  artifact byte is charged in the ledger. The unbuffered `writeSync` writer
+  records its flush as `not_applicable: unbuffered`. A partial frame makes the
+  on-disk artifact larger than the payload identity: the ledger charges the real
+  bytes and the settlement discloses the partial state instead of claiming
+  complete accounting or fit.
 
 ## One assessed route and its exact surface
 The smallest route assessed is to bind the existing proof executor's subject

@@ -46,6 +46,9 @@ import {
   hostRunOutputRetentionSchema,
   type HostRunOutputRetention,
 } from "./host-run-wire";
+import { QUALIFICATION_RAW_LEAF } from "./host-run-files";
+import { QUALIFICATION_EVIDENCE_LEAVES } from "./qualification-evidence";
+import { readQualificationSettlement } from "./qualification-settlement";
 import {
   HISTORY_RETENTION_MS,
 } from "../store/store";
@@ -221,6 +224,14 @@ export class HostRunRetention {
     let settlement: RetainedOutputSettlement;
     try { settlement = this.settleRetainedOutput(run); }
     catch (error) { settlement = { outcome: "unavailable", reason: `Retained output unavailable: ${errorText(error)}` }; }
+    if (settlement.outcome === "retained_unresolved") {
+      // Spec 064 P7: an unresolved qualification attempt keeps its raw bytes, its
+      // sidecars and its charged residuals, and it keeps its own recorded failure
+      // row too. Nothing here is resolved, so nothing is deleted and no row is
+      // rewritten: the entry stays exactly as visible as it was, and only the
+      // attempt's own later resolution may clear it.
+      return "";
+    }
     if (settlement.outcome === "expired" || settlement.outcome === "nothing_retained") {
       if (!recorded) return "";
       try { this.context.scheduler.store.deleteHostRunOutputFailure(run.id); }
@@ -407,6 +418,13 @@ export class HostRunRetention {
    *   never as "never written" and never as an empty stream.
    */
   settleRetainedOutput(run: HostRunInternalRecord): RetainedOutputSettlement {
+    // Spec 064 P7: one combined raw artifact and its sidecars are never expired by
+    // the ordinary stream path. While anything is unresolved they stay, with their
+    // charged residuals; a proved attempt keeps them too, because raw bytes have no
+    // reader or export path yet and the marker is no deletion authority.
+    const qualification = this.qualificationEvidence(run.id);
+    if (qualification.state === "present")
+      return { outcome: "retained_unresolved", reason: qualification.reason };
     const stored = this.readRetentionMarker(run.id);
     if (stored.state === "marker") return { outcome: "expired", marker: stored.marker };
     if (stored.state === "unreadable")
@@ -472,6 +490,39 @@ export class HostRunRetention {
       if (marker.runId !== runId) return { state: "unreadable", reason: `the retention marker names run ${marker.runId}` };
       return { state: "marker", marker };
     } catch { return { state: "unreadable", reason: "the retention marker is corrupt" }; }
+  }
+
+  /**
+   * Spec 064 P7: whether this run kept a qualification artifact, and why it is
+   * kept. An unreadable probe is `present` with the reason: unresolvable evidence
+   * is never a licence to delete.
+   */
+  qualificationEvidence(runId: string): { state: "absent" } | { state: "present"; reason: string } {
+    const directory = this.probeRetainedRunDirectory(runId);
+    if (directory.state === "absent") return { state: "absent" };
+    if (directory.state === "unreadable") return { state: "present", reason: `The qualification evidence cannot be verified (${directory.reason}); it is retained` };
+    const rawPath = join(realpathSync(this.context.stateDir), "runs", runId, QUALIFICATION_RAW_LEAF);
+    let rawBytes: number;
+    try {
+      const info = lstatSync(rawPath);
+      if (info.isSymbolicLink() || !info.isFile()) return { state: "present", reason: "The qualification artifact is not a regular owned file; it is retained for inspection" };
+      rawBytes = info.size;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") return { state: "absent" };
+      return { state: "present", reason: `The qualification artifact is unreadable (${errorText(error)}); it is retained` };
+    }
+    const settlement = readQualificationSettlement(this.context.stateDir, runId);
+    if (settlement.state === "absent")
+      return { state: "present", reason: `A qualification artifact of ${rawBytes} bytes is kept with ${QUALIFICATION_EVIDENCE_LEAVES.length} sidecars and no settlement; anything unresolved keeps its bytes and charged residuals` };
+    if (settlement.state === "unreadable")
+      return { state: "present", reason: `A qualification artifact of ${rawBytes} bytes is kept and its settlement is unreadable (${settlement.reason}); it is retained` };
+    if (settlement.settlement.disposition.retention.keep)
+      return {
+        state: "present",
+        reason: `A qualification artifact of ${rawBytes} bytes is kept: ${settlement.settlement.disposition.retention.reason}`,
+      };
+    return { state: "present", reason: `A proved qualification artifact of ${rawBytes} bytes is kept because raw bytes have no reader or export path yet` };
   }
 
   /** Contract 010's owned, symlink-refusing chain to one run's directory. */
