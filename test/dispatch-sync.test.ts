@@ -136,25 +136,21 @@ test('ordinary reviewer setup follows a lockfile changed after the worker instal
 
 test('a failed reviewer dependency refresh records its error and starts no agent', async t => {
   const f = await reviewLockfileFixture(t);
-  const fakeBin = join(f.root, 'failing-npm');
-  await mkdir(fakeBin);
-  await writeFile(join(fakeBin, 'npm'), '#!/bin/sh\nprintf "fixture reviewer npm ci failure" >&2\nexit 23\n');
-  await chmod(join(fakeBin, 'npm'), 0o755);
-  const previousPath = process.env.PATH;
-  process.env.PATH = `${fakeBin}:${previousPath ?? ''}`;
+  // The worker installed from the original lockfile. Corrupt the submitted PR's
+  // changed lockfile so the real npm ci lifecycle fails during review setup.
+  await writeFile(join(f.taskDirectory, 'package-lock.json'), '{ invalid lockfile');
   try {
     await f.engine.resolution.advance(f.store.task(f.task.id));
     const task = f.store.task(f.task.id);
-    assert.match(task.reason, /fixture reviewer npm ci failure/);
+    assert.match(task.reason, /Task node_modules setup failed with npm ci/);
     assert.equal(task.phase, 'needs_attention');
     assert.equal(f.reviewerStarts(), 0, 'the reviewer must not start while its install is stale');
     assert.equal(f.store.runs(task.id).filter(run => run.role === 'reviewer').length, 0, 'dependency setup fails before run reservation');
     const gitDir = await git(f.taskDirectory, 'rev-parse', '--path-format=absolute', '--git-dir');
     const state = JSON.parse(await readFile(join(gitDir, 'nucleus', 'task-node-modules.json'), 'utf8'));
     assert.equal(state.status, 'failed');
-    assert.match(state.error, /fixture reviewer npm ci failure/);
+    assert.match(state.error, /EJSONPARSE/);
   } finally {
-    process.env.PATH = previousPath;
     await f.engine.stop();
     f.store.close();
   }
