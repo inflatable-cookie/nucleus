@@ -1,6 +1,5 @@
-import { HostUnknownDeliveryError, ProvenPreSendRefusalError } from '../../core/host/errors';
-import type { TimelinePage } from '../../core/host/types';
-import type { AgentObservation } from '../../core/host/adapter';
+import { HostUnknownDeliveryError, ProvenPreSendRefusalError } from '../../core/host';
+import type { AgentObservation, TimelinePage } from '../../core/host';
 import type { HostAgentSpec, HostCatalog } from '../../shared/host';
 import type { HostOperationName, HostOperationOutcome } from '../../shared/host-operation';
 import { parseHostOperationOutcome } from '../../shared/service/host-channel';

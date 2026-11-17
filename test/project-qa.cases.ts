@@ -29,6 +29,7 @@ import {
   qaSupervisionPaths,
   qaSupervisionPlanSchema,
   readQaCancelRequest,
+  readQaHeartbeat,
   readHostRunResult,
   readQaSupervision,
   readQaSupervisionPlan,
@@ -1408,7 +1409,15 @@ test('a live supervisor with a stale heartbeat is terminated only after unchange
   f.store.putRepository({ origin: null, path: f.repo }, null, '', null, null,
     { argv: ['/bin/sh', '-c', 'sleep 60'], timeoutMs: 120_000, maxOutputBytes: 4096, terminationGraceMs: 30_000 });
   const runner = new ProjectQaRunner(f.store, { dataDir: f.dataDir, supervisionPollMs: 100 });
+  // Keep the original run's background watcher from racing the observer that
+  // owns the stale-heartbeat proof below. Install the seam before run() starts it.
+  let originalWatcherStarted = false;
+  runner.inspectSupervisor = async () => {
+    originalWatcherStarted = true;
+    return { kind: "running", state: null };
+  };
   const started = await runner.run({ repository: f.repo });
+  await waitFor(() => originalWatcherStarted, 60_000, 'the run watcher to attach before an independent reader');
   const runRoot = join(await realpath(f.dataDir), 'project-qa', digest(started.key).slice(0, 24));
   const { statePath } = qaSupervisionPaths(runRoot, started.id);
   await waitFor(() => readQaSupervision(statePath)?.activeProcess?.step === 'qa', 60_000, 'the supervisor to record the QA step process');
@@ -1432,25 +1441,51 @@ test('a live supervisor with a stale heartbeat is terminated only after unchange
       try { process.kill(supervisor.pid, 'SIGKILL'); } catch { /* the supervisor is already gone */ }
     }
   });
-  // Let this observer own the stale-stop proof; the original watcher must not
-  // race it to the stop while the real supervisor is deliberately frozen.
-  runner.inspectSupervisor = async () => ({ kind: "running", state: null });
+  // Let this observer own the stale-stop proof; the original watcher uses the
+  // harmless seam above while the real supervisor is deliberately frozen.
   recordQaServiceLifecycle(f.store, "start", new Date(Date.now() - 300_000).toISOString());
   recordQaServiceLifecycle(f.store, "roll");
   recordQaServiceLifecycle(f.store, "start");
+  const heartbeatPath = qaSupervisionPaths(runRoot, started.id).heartbeatPath;
+  await waitFor(() => readQaHeartbeat(heartbeatPath, supervisor) !== supervisor.heartbeatAt,
+    5_000, 'a completed asynchronous heartbeat write before freezing the supervisor');
   process.kill(supervisor.pid, 'SIGSTOP'); // freeze its event loop while preserving live identity
   assert.equal(supervisorLiveness(supervisor.pid, supervisor.identityToken).state, 'live', 'the stopped process still proves the run identity');
   const lastHeartbeatAt = new Date(Date.now() - 240_000).toISOString();
+  const readHeartbeatFileTime = async () => {
+    try { return (JSON.parse(await readFile(heartbeatPath, 'utf8')) as { heartbeatAt?: string }).heartbeatAt ?? null; }
+    catch { return null; }
+  };
   writeQaSupervision(statePath, { ...supervisor, heartbeatAt: lastHeartbeatAt });
-  await writeQaJsonAsync(qaSupervisionPaths(runRoot, started.id).heartbeatPath, {
+  await writeQaJsonAsync(heartbeatPath, {
     runId: started.id, pid: supervisor.pid, identityToken: supervisor.identityToken, heartbeatAt: lastHeartbeatAt,
   }, { durable: false });
+  const heartbeatDeadline = Date.now() + 5_000;
+  let heartbeatStable = false;
+  while (!heartbeatStable && Date.now() < heartbeatDeadline) {
+    if (await readHeartbeatFileTime() !== lastHeartbeatAt) {
+      await writeQaJsonAsync(heartbeatPath, {
+        runId: started.id, pid: supervisor.pid, identityToken: supervisor.identityToken, heartbeatAt: lastHeartbeatAt,
+      }, { durable: false });
+    }
+    await new Promise(resolve => setTimeout(resolve, 250));
+    heartbeatStable = await readHeartbeatFileTime() === lastHeartbeatAt;
+  }
+  assert.equal(heartbeatStable, true, 'the stale heartbeat remains unchanged after pending writes finish');
   assert.ok(Date.now() - Date.parse(readQaSupervision(statePath)!.heartbeatAt) > 180_000, 'the durable heartbeat exceeds the shared stale threshold');
-  await observer.reconcile(started.key, started.id); // first stale observation is never enough to kill
+  const firstStaleInspection = await observer.inspectSupervisor(f.store.qaRun(started.id)!);
+  assert.equal(firstStaleInspection.kind, 'running', 'the first stale observation only records a candidate');
   assert.equal(supervisorLiveness(supervisor.pid, supervisor.identityToken).state, 'live');
-  await new Promise(resolve => setTimeout(resolve, 5_100));
-  const staleInspection = await observer.inspectSupervisor(f.store.qaRun(started.id)!);
-  assert.equal(staleInspection.kind, 'dead');
+  // Match the production watcher: after confirmation, keep inspecting until
+  // every identity-owned process group is proved stopped. A stop attempt may
+  // still return running while that proof settles.
+  let staleInspection: Awaited<ReturnType<typeof observer.inspectSupervisor>> = firstStaleInspection;
+  const stopDeadline = Date.now() + 20_000;
+  while (staleInspection.kind !== 'dead' && Date.now() < stopDeadline) {
+    await new Promise(resolve => setTimeout(resolve, 250));
+    staleInspection = await observer.inspectSupervisor(f.store.qaRun(started.id)!);
+  }
+  assert.equal(staleInspection.kind, 'dead', `the confirmed stale supervisor must settle after stop proof: ${JSON.stringify(staleInspection)}`);
   if (staleInspection.kind === 'dead') {
     assert.equal(staleInspection.staleStop, true);
     const diagnostic = JSON.parse(staleInspection.reason.split("Supervisor diagnostics: ")[1]);
@@ -1485,6 +1520,7 @@ test('a live supervisor with a stale heartbeat is terminated only after unchange
   assert.ok(settled.durationMs > 0);
   assert.equal(existsSync(join(runRoot, started.id)), false, 'the Queue-owned checkout is reaped after teardown');
   assert.equal(readQaSupervision(statePath), null, 'the settled run removes its supervision file');
+  await runner.attachSupervisor(started.id, started.key);
 });
 
 test('stale heartbeat ages under the watchdog threshold and heartbeat progress do not confirm a hung supervisor', () => {

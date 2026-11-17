@@ -30,6 +30,7 @@ test('folder rules cover processes, public host indexes and host SDK confinement
     ['hosts/paseo/adapter/client.ts', 'core/store/index.ts', '../../../core/store', 'host-interface'],
     ['hosts/paseo/adapter/client.ts', 'core/host/adapter.ts', '../../../core/host/adapter', 'host-interface'],
     ['hosts/paseo/adapter/client.ts', 'core/host/index.ts', '../../../core/host', null],
+    ['bin/queue-client.mjs', 'hosts/t3code/cli/index.mjs', '../hosts/t3code/cli/index.mjs', null],
     ['service/runtime/index.ts', 'hosts/paseo/adapter/client.ts', '../../hosts/paseo/adapter/client', 'host-public-index'],
     ['service/runtime/index.ts', 'hosts/paseo/index.ts', '../../hosts/paseo', null],
     ['service/install/install.mjs', 'hosts/paseo/index.mjs', '../../hosts/paseo/index.mjs', null],

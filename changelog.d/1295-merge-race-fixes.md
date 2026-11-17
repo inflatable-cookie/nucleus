@@ -1,0 +1,1 @@
+Fixed three merge-race failures in the BB host and project QA tests. BB imports now use public host interfaces, and stale supervisor stops wait for bounded process-group exit proof before reporting completion.

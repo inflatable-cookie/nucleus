@@ -1,6 +1,6 @@
 import { HostPolicies } from '../core/host/host-policies';
 import type { Adapter, HostPolicyConstructor } from '../core/host';
-import { ArchiveNotDeliveredError, ProvenPreSendRefusalError } from '../core/host/errors';
+import { ArchiveNotDeliveredError, ProvenPreSendRefusalError } from '../core/host';
 import { taskWorkspaceTitle } from '../core/workspaces/workspace-title';
 import type { HostAgentSpec, HostPermissionDecision, HostWorkspaceRef, HostWorkspaceSpec } from '../shared/host';
 import type { Profile } from '../shared/contracts';
@@ -8,8 +8,7 @@ import type { Task, Run } from '../shared/contracts';
 import { runTicketPath } from '../core/dispatch/agent-creation';
 import { parseAgentId } from '../shared/agent-identity';
 import { join } from 'node:path';
-import { bbVocabulary } from '../hosts/bb/vocabulary';
-import { BbThreads, emptyBbThreadState, type BbThreadState, type BbWorkspaceRecord } from '../hosts/bb/threads';
+import { bbVocabulary, BbThreads, emptyBbThreadState, type BbThreadState, type BbWorkspaceRecord } from '../hosts/bb';
 import type { Store } from '../core/store/store';
 import type { HostOperationName, HostOperationOutcome } from '../shared/host-operation';
 
