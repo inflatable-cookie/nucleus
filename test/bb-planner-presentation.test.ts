@@ -209,6 +209,47 @@ test('BB presentation: titles name the repository and the role once the containe
   } finally { await f.close(); }
 });
 
+test('BB presentation: a superseded participant leaves the container, while a live or bound one stays', async () => {
+  const f = fixture();
+  try {
+    f.store.update(f.task().id, { plannerAgentId: f.plannerId(bbHost, 'thr_planner') });
+    f.livePlanner('thr_planner');
+    const worker = await f.adapter.guardedNativeAgentCreate(f.spec('run_worker', 'worker'), false, false);
+    f.store.update(f.task().id, { agentId: worker.id });
+    const firstReviewer = await f.adapter.guardedNativeAgentCreate(f.spec('run_reviewer_1', 'reviewer'), false, false);
+    const secondReviewer = await f.adapter.guardedNativeAgentCreate(f.spec('run_reviewer_2', 'reviewer'), false, false);
+    const recovery = await f.adapter.guardedNativeAgentCreate(f.spec('run_recovery', 'recovery'), false, false);
+    const pending = await f.adapter.guardedNativeAgentCreate(f.spec('run_reviewer_pending', 'reviewer'), false, false);
+
+    // Runs as Nucleus records them: the first reviewer and the recovery run settled
+    // and unbound, the second reviewer retained, the last one holding a question.
+    const at = new Date().toISOString();
+    const run = (id: string, role: 'reviewer' | 'recovery', agentId: string, released: boolean) => ({
+      id, taskId: f.task().id, hostId: bbHost, role, generation: 0, head: 'b'.repeat(40), base: 'a'.repeat(40),
+      agentId, workspaceId: handle, profile: f.spec('x').profile, profileGroup: null, status: 'finished' as const,
+      createdAt: at, lastObservedAt: at, active: false, idleSince: at, completion: null, released,
+    });
+    f.store.putRun(run('run_reviewer_1', 'reviewer', firstReviewer.id, true));
+    f.store.putRun(run('run_reviewer_2', 'reviewer', secondReviewer.id, false));
+    f.store.putRun(run('run_recovery', 'recovery', recovery.id, true));
+    f.store.putRun(run('run_reviewer_pending', 'reviewer', pending.id, true));
+    const bound = f.store.task(f.task().id);
+    f.store.update(f.task().id, { resolution: { ...bound.resolution, reviewerAgentId: secondReviewer.id, currentRunId: 'run_reviewer_2' } });
+    f.fake.rows.get(pending.id)!.hasPendingInteraction = true;
+
+    await f.adapter.reconcileThreadTitles!([f.store.task(f.task().id)]);
+
+    assert.notEqual(f.fake.rows.get(firstReviewer.id)!.archivedAt, null, 'the replaced reviewer is archived');
+    assert.equal(f.fake.rows.get(recovery.id)!.archivedAt !== null, true, 'the settled recovery thread is archived');
+    assert.equal(f.fake.rows.get(worker.id)!.archivedAt, null, 'the current worker stays');
+    assert.equal(f.fake.rows.get(secondReviewer.id)!.archivedAt, null, 'the retained reviewer stays');
+    assert.equal(f.fake.rows.get(pending.id)!.archivedAt, null, 'a thread with a pending interaction is never archived');
+    assert.equal(f.fake.rows.get('thr_planner')!.archivedAt, null, 'the planner is never touched');
+    // The archive is the plugin's own recorded-thread archive, with its cascade proof.
+    for (const id of [firstReviewer.id, recovery.id]) assert.equal(f.fake.calls.some(call => call.method === 'threads.archive' && call.args.threadId === id), true);
+  } finally { await f.close(); }
+});
+
 test('BB presentation: archiving the old planner leaves the task threads intact, and Nucleus never sets a lifecycle owner', async () => {
   const f = fixture();
   try {

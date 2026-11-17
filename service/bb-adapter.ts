@@ -208,6 +208,29 @@ export function composeBbAdapter(input: {
       const text = `${roleNamed ?? taskWorkspaceTitle(task, undefined, reference)}${step ? ` · ${step}` : ''}`.slice(0, 200);
       await threads.title(task.agentId, text, requestId);
     }
+    /**
+     * The task's recorded participant threads whose run settled and which no current
+     * binding names any more (nucleus#1313, item 12). Superseded, not merely idle: a
+     * role whose run is still unreleased, or whose identity the task still binds, is
+     * current and stays.
+     */
+    private supersededParticipants(task: Task): string[] {
+      const runs = new Map(store.runs(task.id).map(run => [run.id, run]));
+      const bindings = new Set<string | null>([
+        task.agentId, task.runId, task.coordinatorAgentId,
+        task.resolution.reviewerAgentId, task.resolution.currentRunId,
+        task.resolution.recovery?.agentId ?? null, task.resolution.recovery?.runId ?? null,
+      ]);
+      const expired: string[] = [];
+      for (const agent of threads.agents().filter(agent => agent.task === task.id)) {
+        const run = runs.get(agent.run);
+        // Only a settled run is superseded; support threads keep their own closeout.
+        if (!run?.released || !run.agentId) continue;
+        if (bindings.has(agent.id) || bindings.has(agent.run)) continue;
+        expired.push(agent.id);
+      }
+      return expired;
+    }
     /** The one reference every BB title and support thread names. */
     private taskReference(task: Task) {
       const name = repositoryLabel(task);
@@ -242,6 +265,20 @@ export function composeBbAdapter(input: {
           if (store.unreleasedRunsForAgent(retired.agentId, hostId).length) continue;
           try { await threads.archiveAgent(retired.agentId); }
           catch { /* The durable intent and fresh turn/cascade reads govern the next sweep. */ }
+        }
+        // nucleus#1313 (Tom, 2026-11-17, live trial): a superseded participant leaves
+        // the container. Replacing a reviewer, recovery or coordinator run otherwise
+        // left every earlier thread drawn as though it were current; each is archived
+        // once its own run is settled, it is bound by nothing, and its turn is proved
+        // idle. A live or pending-interaction thread is never archived, and the
+        // archive's own cascade proof still refuses anything this task does not own.
+        for (const superseded of this.supersededParticipants(task)) {
+          try {
+            // Never archive a thread that is still working or waiting on the operator.
+            const observed = await threads.observe(superseded);
+            if (observed.active || observed.permissions) continue;
+            await threads.archiveAgent(superseded);
+          } catch { /* A live turn or unknown delivery is observed again on the next sweep. */ }
         }
         if (!task.agentId || task.phase === 'done') continue;
         try { const title = taskWorkspaceTitle(task, undefined, this.taskReference(task)); await this.setTaskWorkspaceTitle(task, title, `${task.id}:${task.version}`, false); }

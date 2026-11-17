@@ -257,7 +257,12 @@ nor their reconcilers here. A released support thread simply stays in the planne
 that needs attention is shown by its worker row's step title, by BB's own pending-interaction
 indicator and unread state, and by the board. Replaced attempts follow the existing lifecycle: a
 superseded worker thread is archived as soon as its run is released and no live BB turn remains, and
-other displaced threads stay visible until closeout. Reparenting a live task to another planner
+so is every other superseded participant (nucleus#1313, Tom 2026-11-17, live trial: the container
+listed four reviewer rows and a recovery row as though each were current). A role thread whose own run
+is settled, which no task binding names any more and whose turn is proved idle is archived under the
+same recorded-thread and cascade proofs; a live thread, one with a pending interaction, the planner and
+the task's other threads are never touched. Archive rather than dim, because a dimmed row still looks
+like a participant to the archive proofs. Reparenting a live task to another planner
 thread writes `parentThreadId` on each of the task's threads under one durable intent per thread,
 observation-first, never on the planner itself; a planner change to a thread on another host writes
 `null` instead, the same write that clears the link. The `detach` owner verb (board, task row and
@@ -1238,6 +1243,9 @@ handles and task records phases 0–4 landed:
   state colour with the state in its accessible label.
 - The container's actions are the task's own (nucleus#1313): open the task, open the PR, detach from
   the planner — never upstream's new-thread, Edit or Archive, which every ordinary group keeps.
+- Superseded participants leave the container (nucleus#1313): a role thread whose run settled, which
+  no binding names and whose turn is idle, is archived; a live or pending-interaction thread, the
+  planner and the task's other threads are never archived.
 
 Tests: `hosts/bb/plugin/sidebar/app/list/nucleusTaskGroups.test.tsx` names this phase's UI acceptance
 in the fork's own runner (`effigy bb:sidebar-tests`): the collapsed default with number, title, shared
@@ -1250,8 +1258,9 @@ Personal): pointer instead of "No threads", one task counted once across its rol
 counted separately, a project with no threads keeping upstream's empty state, and its own root thread
 drawn as a row; the repository-led state line and the icon-plus-`#39` PR chip (open, merged and closed
 tones, the state in the label); and the container's own actions beside an ordinary group's unchanged
-upstream actions. `test/pull-request-badge.test.ts` proves the one shared PR mapping and the board
-badge that reads it, plus the shared repository label and its ambiguity rule.
+upstream actions; and the superseded-participant archive beside a live, bound and
+pending-interaction thread. `test/pull-request-badge.test.ts` proves the one shared PR mapping and the
+board badge that reads it, plus the shared repository label and its ambiguity rule.
 `test/bb-sidebar-vendored.test.ts` proves the vendored manifest (byte-identical or named as patched,
 the SDK floor at or below the release's, the forkable record, and that no patch hunk touches a drag
 binding or split prop); `test/bb-sidebar-groups.test.ts` proves the projection over real stored task
