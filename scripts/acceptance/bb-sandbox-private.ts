@@ -6,7 +6,8 @@
  * directory and port, installs this repository's plugin into that server only,
  * and runs two real `claude-code` threads in the same unmanaged task workspace
  * with BB's Claude provider sandbox on (the installed default `sandboxEnabled`)
- * and `accept-edits` permissions — the mode the live trial failed in.
+ * and `auto` ("Approve for me") permissions: a workspace-scope mode, so the
+ * provider sandbox applies, and unattended approvals are reviewed automatically.
  *
  * Each thread must run one shell command: prove a relative sibling checkout is
  * readable (`test -s ../sylib/README.md`) and, only then, hand its report to the
@@ -130,7 +131,7 @@ async function main(): Promise<void> {
 
     const spawned: Array<{ role: string; threadId: string }> = [];
     for (const thread of threads) {
-      const answer = await cliJson<{ id: string }>(["thread", "spawn", "--project", project.id, "--environment", workspace, "--provider", "claude-code", "--permission-mode", "accept-edits", "--prompt-file", thread.prompt, "--origin", "plugin", "--visibility", "hidden"]);
+      const answer = await cliJson<{ id: string }>(["thread", "spawn", "--project", project.id, "--environment", workspace, "--provider", "claude-code", "--permission-mode", "auto", "--prompt-file", thread.prompt, "--visibility", "hidden"]);
       spawned.push({ role: thread.role, threadId: answer.id });
     }
     // Both threads must deliver through the sandbox. The `test -s ../sylib` guard
@@ -144,7 +145,7 @@ async function main(): Promise<void> {
     assert.equal(bodies.every(body => body.taskId === "sandbox-task"), true);
     const head = await run("git", ["-C", workspace, "status", "--porcelain", "--untracked-files=all"], { env });
     assert.equal(head.stdout.trim(), "", "the sandboxed threads left the checkout clean");
-    writeFileSync(join(proofRoot, "evidence.json"), JSON.stringify({ sandbox: "claude-code accept-edits, provider sandboxEnabled = true", threads: spawned, reports: bodies, siblingRead: routes[0].sibling.trim() }, null, 2) + "\n");
+    writeFileSync(join(proofRoot, "evidence.json"), JSON.stringify({ sandbox: "claude-code auto (Approve for me), provider sandboxEnabled = true", threads: spawned, reports: bodies, siblingRead: routes[0].sibling.trim() }, null, 2) + "\n");
     console.log(JSON.stringify({ ok: true, proofRoot, threads: spawned, reports: bodies.map(body => ({ runId: body.runId, status: body.status })), sandbox: "on" }, null, 2));
   } finally {
     callback.closeAllConnections();
@@ -154,4 +155,4 @@ async function main(): Promise<void> {
   }
 }
 
-await main();
+main().catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });

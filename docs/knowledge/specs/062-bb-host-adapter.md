@@ -1621,6 +1621,14 @@ BB 0.49.
 
 ### The route that landed
 
+- **The mode an unattended sandboxed thread needs.** BB's workspace sandbox applies in
+  Accept Edits and Approve for me modes. In **Accept Edits** the helper command asked
+  the operator for approval (the proof thread sat pending on an approval interaction
+  it could never answer); in **auto** (Approve for me, BB's own product default) the
+  same command is reviewed automatically and ran. A BB role thread therefore reports
+  unattended in `auto` (or in Full Access, which has no sandbox); a profile in
+  Accept Edits needs an operator at the thread, and Nucleus does not silently change
+  one mode into another.
 - **Reports.** A run ticket records its host (`writeRunTicket`). A `bb:` ticket's
   generated helper POSTs the exact payload it would have sent to the socket, to
   the BB backend's own loopback route
@@ -1676,10 +1684,12 @@ registered route and its refusals; `test/bb-run-scratch.test.ts` pins the
 owner-only leaf existing before `run.attach` and a launch refusal when it cannot
 be proved; `test/siblings.test.ts` pins the pinned-sibling link for a BB
 workspace, no change on another host, and an occupied name left untouched.
-`effigy proof:bb:sandbox` runs two sandboxed Claude Code threads against an
-isolated BB server (the plugin installed into it, `sandboxEnabled` on, Accept
-Edits): each delivers its report through the relay to a recorded callback
-socket, and a relative `../<sibling>` read resolves.
+`effigy proof:bb:sandbox` runs two Claude Code threads against an isolated BB
+server (the plugin installed into it, `sandboxEnabled` on, `auto` permissions) in
+one task workspace whose sibling checkout is `../sylib`: each thread's single
+command requires the sibling read (`test -s ../sylib/README.md`) and then hands
+its report to the helper, so a delivered report proves both. Both reports
+arrived at the recorded callback socket, and the checkout stayed clean.
 
 ## Phase 0 evidence (2026-11-16)
 
