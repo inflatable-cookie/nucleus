@@ -27,6 +27,7 @@ function fakeSdk(seed: { projects?: ProjectRow[]; threads?: ThreadRow[]; attachE
   const attachEnvironment = seed.attachEnvironment ?? true;
   const projects = [...(seed.projects ?? [])];
   const threads = [...(seed.threads ?? [])];
+  const interactions = new Map<string, any[]>();
   const calls: string[] = [];
   // Cascade rows by thread id: the executor must read these before any archive.
   const cascade: Record<string, string[]> = {};
@@ -83,6 +84,32 @@ function fakeSdk(seed: { projects?: ProjectRow[]; threads?: ThreadRow[]; attachE
         calls.push("threads.list");
         return threads.filter(thread => (args.originPluginId ? thread.originPluginId === args.originPluginId : true));
       },
+      interactions: {
+        list: async args => {
+          calls.push("threads.interactions.list");
+          return (interactions.get(args.threadId) ?? []);
+        },
+        get: async args => {
+          calls.push("threads.interactions.get");
+          const row = (interactions.get(args.threadId) ?? []).find(item => item.id === args.interactionId);
+          if (!row) throw new Error("Interaction not found");
+          return structuredClone(row);
+        },
+        resolve: async args => {
+          calls.push("threads.interactions.resolve");
+          const row = (interactions.get(args.threadId) ?? []).find(item => item.id === args.interactionId);
+          if (!row) throw new Error("Interaction not found");
+          row.status = "resolved"; row.resolvedAt = 42; row.resolution = structuredClone(args.resolution);
+          return structuredClone(row);
+        },
+        cancel: async args => {
+          calls.push("threads.interactions.cancel");
+          const row = (interactions.get(args.threadId) ?? []).find(item => item.id === args.interactionId);
+          if (!row) throw new Error("Interaction not found");
+          row.status = "interrupted"; row.resolvedAt = 42;
+          return structuredClone(row);
+        },
+      },
       experimental_listPluginMetadata: async args => {
         calls.push("threads.experimental_listPluginMetadata");
         return {
@@ -116,6 +143,7 @@ function fakeSdk(seed: { projects?: ProjectRow[]; threads?: ThreadRow[]; attachE
     },
   };
   (sdk as unknown as { cascade: Record<string, string[]> }).cascade = cascade;
+  (sdk as unknown as { interactions: Map<string, any[]> }).interactions = interactions;
   return sdk;
 }
 

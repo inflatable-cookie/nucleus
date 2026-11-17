@@ -201,7 +201,8 @@ test('BB ordinary lifecycle: dispatch, helper report, independent review, revisi
   assert.equal(task.phase, 'working');
   const launch = f.fake.calls.find(c => c.method === 'threads.spawn')!.args;
   assert.equal(launch.parentThreadId, 'thr_planner'); assert.equal(launch.parentNotifications, 'off');
-  assert.match(launch.input[0].text, /worker-report.mjs/);
+  // The BB adapter reports through the packaged helper and this run's ticket, never MCP.
+  assert.match(launch.input[0].text, /packaged nucleus helper with this run's ticket/);
   assert.equal(launch.visibility, 'visible');
   f.fake.rows.get(workerId).queuedWork = 'waiting';
   const workspaceInventory = await (f.adapter as any).workspaceHost.workspaceThreads([task.workspaceId]);

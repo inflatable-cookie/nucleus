@@ -1,20 +1,31 @@
 import { readFileSync } from 'node:fs';
 import { createHostOperations, type BbHostSdk } from '../../hosts/bb/plugin/operations';
 const recorded = JSON.parse(readFileSync(new URL('../fixtures/bb-0.49-wire.json', import.meta.url), 'utf8'));
+/**
+ * Every row is captured from the isolated BB 0.49 server. `interactionQuestion` and
+ * `interactionApproval` come from the opt-in provider recording pass: the isolated server
+ * let a claude-code probe thread raise a native question and a plan approval, and the raw
+ * SDK rows are recorded here with synthetic identities. `questionResolution` and
+ * `approvalResolution` are the resolutions the isolated server recorded for those two.
+ */
+const wireRows = recorded as Record<BbWireKind, Record<string, unknown>>;
 export const BB_STAMP = 1794849609702;
 
-/** Captured on isolated BB 0.49 / SDK 0.6.132 by proof:bb. Only values vary. */
-export function bbWire(kind: 'get' | 'list' | 'interaction' | 'execution' | 'timeline', overrides: Record<string, unknown> = {}): any {
-  const row = structuredClone(recorded[kind]);
+/** The kinds the fake can serve: recorded BB rows, plus the two provider interaction kinds. */
+export type BbWireKind = 'get' | 'list' | 'interaction' | 'execution' | 'timeline' | 'interactionQuestion' | 'interactionApproval';
+
+/** Only values vary; every field is one the target BB or its pinned SDK declares. */
+export function bbWire(kind: BbWireKind, overrides: Record<string, unknown> = {}): any {
+  const row: Record<string, unknown> = structuredClone(wireRows[kind]);
   for (const key of Object.keys(overrides)) if (!Object.hasOwn(row, key)) throw new Error(`Invented BB ${kind} field: ${key}`);
   return { ...row, ...overrides };
 }
-export function assertBbWire(kind: 'get' | 'list' | 'interaction' | 'execution' | 'timeline', row: object) {
-  const expected = Object.keys(recorded[kind]).sort();
+export function assertBbWire(kind: BbWireKind, row: object) {
+  const expected = Object.keys(wireRows[kind]).sort();
   if (JSON.stringify(Object.keys(row).sort()) !== JSON.stringify(expected)) throw new Error(`Partial or invented BB ${kind} row`);
 }
 /** A read of a field absent from the captured DTO is a test failure. */
-function strictWire(kind: 'get' | 'list' | 'interaction' | 'execution' | 'timeline', row: object): any {
+function strictWire(kind: BbWireKind, row: object): any {
   assertBbWire(kind, row);
   const guard = (value: any): any => value && typeof value === 'object' ? new Proxy(value, {
     get(target, key) {
@@ -30,7 +41,9 @@ export function bbFake() {
   const interactions = new Map<string, any[]>(), cascades = new Map<string, string[]>();
   const projects: any[] = [], environments: any[] = [];
   const calls: Array<{ method: string; args: any }> = [];
-  const controls = { loseSpawn: false, delaySpawn: false, failList: false, omitId: '', partialMetadata: false, loseTitle: false, liveTimeline: false, loseStop: false, titleLands: true, failChunk: 0 };
+  const controls = { loseSpawn: false, delaySpawn: false, failList: false, omitId: '', partialMetadata: false, loseTitle: false, liveTimeline: false, loseStop: false, titleLands: true, failChunk: 0,
+    /** A steer whose write never landed: the SDK call throws before it is delivered. */
+    loseSteer: false, loseAnswer: false, loseReparent: false, loseCascade: false, cascadeNames: new Map<string, string[]>(), cascadeDelay: null as null | (() => void) };
   let delayed: (() => void) | null = null;
   const note = (method: string, args?: unknown) => { calls.push({ method, args }); };
   const sdk: BbHostSdk = {
@@ -77,10 +90,16 @@ export function bbFake() {
           (args.threadIds ? true : Boolean(r.archivedAt) === Boolean(args.archived)) && r.id !== controls.omitId);
         return filtered.slice(args.offset ?? 0, (args.offset ?? 0) + (args.limit ?? 200)).map(row => { return strictWire('list', structuredClone(row)); });
       },
-      async send(args) { note('threads.send', args); return structuredClone(recorded.send); },
+      async send(args) {
+        note('threads.send', args);
+        if (args.mode === 'steer' && controls.loseSteer) throw new Error('recorded steer failure');
+        return structuredClone(recorded.send);
+      },
       async update(args) {
         note('threads.update', args);
-        if (controls.titleLands) rows.get(args.threadId).title = args.title;
+        if (args.title !== undefined && controls.titleLands) rows.get(args.threadId).title = args.title;
+        if (args.parentThreadId !== undefined) rows.get(args.threadId).parentThreadId = args.parentThreadId;
+        if (controls.loseReparent && args.parentThreadId !== undefined) throw new Error('unknown reparent delivery');
         if (controls.loseTitle) throw new Error('unknown title delivery');
         const row = rows.get(args.threadId), get = bbWire('get');
         for (const key of Object.keys(get)) if (Object.hasOwn(row, key)) get[key] = row[key];
@@ -88,8 +107,31 @@ export function bbFake() {
       },
       async stop(args) { note('threads.stop', args); rows.get(args.threadId).status = 'idle'; rows.get(args.threadId).runtime.displayStatus = 'idle'; if (controls.loseStop) throw new Error('unknown stop delivery'); return structuredClone(recorded.stop); },
       async archive(args) { note('threads.archive', args); rows.get(args.threadId).archivedAt = BB_STAMP; return { ...structuredClone(recorded.archive), archivedThreadIds: [args.threadId] }; },
-      interactions: { async list(args) { note('threads.interactions.list', args); return (interactions.get(args.threadId) ?? []).map(row => { return strictWire('interaction', row); }); } },
-      async experimental_listCascade(args) { note('threads.experimental_listCascade', args); return { threads: args.threadIds.map(threadId => ({ threadId, cascadeThreadIds: cascades.get(threadId) ?? [] })) }; },
+      interactions: {
+        async list(args) { note('threads.interactions.list', args); return (interactions.get(args.threadId) ?? []).map(row => strictWire(row.payload.kind === 'user_question' ? 'interactionQuestion' : row.payload.kind === 'approval' ? 'interactionApproval' : 'interaction', row)); },
+        async get(args) {
+          note('threads.interactions.get', args);
+          const row = (interactions.get(args.threadId) ?? []).find(item => item.id === args.interactionId);
+          if (!row) throw new Error('Interaction not found');
+          return strictWire(row.payload.kind === 'user_question' ? 'interactionQuestion' : row.payload.kind === 'approval' ? 'interactionApproval' : 'interaction', structuredClone(row));
+        },
+        async resolve(args) {
+          note('threads.interactions.resolve', args);
+          const row = (interactions.get(args.threadId) ?? []).find(item => item.id === args.interactionId);
+          if (!row) throw new Error('Interaction not found');
+          if (controls.loseAnswer) throw new Error('unknown answer delivery');
+          row.status = 'resolved'; row.resolvedAt = BB_STAMP; row.resolution = structuredClone(args.resolution);
+          return strictWire(row.payload.kind === 'user_question' ? 'interactionQuestion' : row.payload.kind === 'approval' ? 'interactionApproval' : 'interaction', structuredClone(row));
+        },
+        async cancel(args) {
+          note('threads.interactions.cancel', args);
+          const row = (interactions.get(args.threadId) ?? []).find(item => item.id === args.interactionId);
+          if (!row) throw new Error('Interaction not found');
+          row.status = 'interrupted'; row.resolvedAt = BB_STAMP;
+          return strictWire(row.payload.kind === 'user_question' ? 'interactionQuestion' : row.payload.kind === 'approval' ? 'interactionApproval' : 'interaction', structuredClone(row));
+        },
+      },
+      async experimental_listCascade(args) { note('threads.experimental_listCascade', args); if (controls.cascadeDelay) { const land = controls.cascadeDelay; controls.cascadeDelay = null; land(); } if (controls.loseCascade) throw new Error('recorded cascade read failure'); return { threads: args.threadIds.map(threadId => ({ threadId, cascadeThreadIds: controls.cascadeNames.get(threadId) ?? cascades.get(threadId) ?? [] })) }; },
       async experimental_listPluginMetadata(args) { note('threads.experimental_listPluginMetadata', args); return { threads: args.threadIds.filter((id, i) => metadata.has(id) && (!controls.partialMetadata || i > 0)).map(threadId => ({ threadId, metadata: metadata.get(threadId) ?? null })) }; },
     },
     providers: {
