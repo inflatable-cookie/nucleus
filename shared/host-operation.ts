@@ -86,6 +86,11 @@ export interface HostExecutorDeclaration {
     dataDir: string;
     bbVersion: string;
     sdkVersion: string;
+    /**
+     * The Nucleus build the installed plugin came from (Spec 062, phase 7). A plugin
+     * installed from a source checkout carries none.
+     */
+    nucleusBuild?: string;
   };
 }
 

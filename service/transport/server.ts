@@ -61,6 +61,8 @@ import {
   type HostOperationOutcome,
 } from "../../shared/host-operation";
 import { parseHostExecutorDeclaration, parseHostOperationRequest } from "../../shared/service/host-channel";
+import { bbPluginBuildPin } from "../../shared/bb-plugin-build";
+import { compiledIdentity } from "../../shared/runtime.mjs";
 import { probeDiagnostics } from "../bb-host";
 import { WebBoard, defaultWebBundleDir, uiLinkInputSchema, type WebBoardHost, type WebBoardOptions } from "../web/web-board";
 
@@ -549,6 +551,35 @@ export class QueueService {
       return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: "refused", message: `This connection already executes host operations for ${connection.hostExecutor.hostId}` } }, false, request.method);
     }
     const hostId = hostIdFromDataDir(parsed.value.host.dataDir);
+    // Spec 062, phase 7: the plugin is pinned to the service build. Refuse a plugin
+    // from another build — or one carrying no identity against a packaged service —
+    // before the probe, with a message naming both builds and the command that fixes
+    // it. Nothing registers, so the board reports the host unavailable with this
+    // reason instead of a half-working connection.
+    const pin = bbPluginBuildPin({
+      serviceBuildId: currentServiceBuildId(),
+      serviceCompiled: compiledIdentity !== null,
+      pluginBuildId: parsed.value.host.nucleusBuild ?? null,
+    });
+    if (!pin.ok) {
+      void this.recordHostRefusal({
+        hostId,
+        dataDir: parsed.value.host.dataDir,
+        field: pin.field,
+        reason: pin.reason,
+      });
+      this.releaseBbHostExecutors(pin.reason);
+      return this.respond(
+        connection,
+        {
+          v: PROTOCOL_VERSION,
+          id: request.id,
+          error: { code: "refused", message: pin.reason },
+        },
+        true,
+        request.method,
+      );
+    }
     const link = new HostExecutorLink({
       hostId,
       declaration: parsed.value,

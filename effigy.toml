@@ -39,6 +39,9 @@ setup = "npm ci"
 # Spec 062 phase 5's install proof: builds the plugin and installs it into the
 # isolated BB server from phase 0 (never the operator's live BB).
 "proof:bb:sidebar" = "node --import tsx scripts/acceptance/bb-sidebar-private.ts {args}"
+# Spec 062 phase 7's operator install route: `nucleus bb install`, `status` and
+# `uninstall` against the same isolated BB server (never the operator's live BB).
+"proof:bb:install" = "node --import tsx scripts/acceptance/bb-install-private.ts {args}"
 check = [{ task = "check:types" }, { task = "check:plugin-types" }, { task = "check:publication" }]
 # Test files a change can affect, from the import graph; `--run` runs them. See scripts/test-affected.mjs.
 "test:affected" = "node scripts/test-affected.mjs {args}"

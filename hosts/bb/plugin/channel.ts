@@ -45,7 +45,13 @@ export interface HostChannelOptions {
   serviceDataDir: string;
   operations: HostOperations;
   /** What the plugin announces. Read lazily so a server that has not bound yet is not fatal. */
-  declaration: () => { dataDir: string; bbVersion: string; sdkVersion: string };
+  declaration: () => {
+    dataDir: string;
+    bbVersion: string;
+    sdkVersion: string;
+    /** The Nucleus build this plugin package came from; absent for a checkout install. */
+    nucleusBuild?: string;
+  };
   log: HostChannelLogger;
   signal: AbortSignal;
   /** Reconnect window; a plugin reload or a server restart is a reconnect, not a refusal. */
@@ -216,7 +222,12 @@ function runOnce(options: HostChannelOptions, identity: ServiceIdentity, onDecla
           const answer = frame as { result?: unknown; error?: { message?: unknown } };
           if (answer.error) { finish(`${awaiting} refused: ${String(answer.error.message ?? "no reason given")}`); return; }
           if (awaiting === "auth") {
-            let host: { dataDir: string; bbVersion: string; sdkVersion: string };
+            let host: {
+              dataDir: string;
+              bbVersion: string;
+              sdkVersion: string;
+              nucleusBuild?: string;
+            };
             try {
               host = options.declaration();
             } catch (error) {

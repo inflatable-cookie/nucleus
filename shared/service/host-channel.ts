@@ -29,14 +29,25 @@ const nullableText = (max: number) => boundedText(max).nullable();
 const timestamp = z.number().int().nonnegative();
 
 /** The identity a connection declares to become this server's host executor. */
-export const hostExecutorDeclarationSchema = z.object({
-  role: z.literal(HOST_EXECUTOR_ROLE),
-  host: z.object({
-    dataDir: boundedText(4_096),
-    bbVersion: boundedText(64),
-    sdkVersion: boundedText(64),
-  }).strict(),
-}).strict();
+export const hostExecutorDeclarationSchema = z
+  .object({
+    role: z.literal(HOST_EXECUTOR_ROLE),
+    host: z
+      .object({
+        dataDir: boundedText(4_096),
+        bbVersion: boundedText(64),
+        sdkVersion: boundedText(64),
+        // Spec 062, phase 7: the Nucleus build the installed plugin came from. Optional
+        // because a plugin installed from a source checkout carries no identity; the
+        // service refuses that against a packaged build instead of a schema error.
+        nucleusBuild: z
+          .string()
+          .regex(/^[a-f0-9]{8,64}$/)
+          .optional(),
+      })
+      .strict(),
+  })
+  .strict();
 
 export const hostOperationNameSchema = z.enum(HOST_OPERATIONS);
 

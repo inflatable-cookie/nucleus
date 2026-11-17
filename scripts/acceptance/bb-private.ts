@@ -50,6 +50,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { QueueService } from "../../service/transport/server";
 import { readServiceInfo } from "../../service/transport/identity";
 import { hostIdFromDataDir, workspaceHandleForPath } from "../../shared/host-operation";
+import { bbInstallFromCli, findBbCli } from "../../shared/bb-cli.mjs";
 
 const run = promisify(execFile);
 const checkout = fileURLToPath(new URL("../..", import.meta.url));
@@ -125,33 +126,18 @@ export interface BbInstall { cli: string; serverLauncher: string; daemonLauncher
 
 /** Find the installed BB from its own command shim; report every path tried when it is absent. */
 export function findBb(override: string | null): { install: BbInstall } | { install: null; tried: string[] } {
-  const tried: string[] = [];
-  const home = homedir();
-  const shim = override ?? [
-    join(home, ".bb", "bin", "bb"),
-    join(home, ".local", "bin", "bb"),
-    "/opt/homebrew/bin/bb",
-    "/usr/local/bin/bb",
-  ].find(path => existsSync(path)) ?? null;
-  if (!shim) return { install: null, tried: [join(home, ".bb", "bin", "bb"), join(home, ".local", "bin", "bb"), "/opt/homebrew/bin/bb", "/usr/local/bin/bb"] };
-  tried.push(shim);
-  let appDist: string | null = null;
-  try {
-    const source = readFileSync(shim, "utf8");
-    const entry = /^entry='([^']+)'/m.exec(source)?.[1];
-    if (entry) appDist = dirname(entry);
-  } catch { /* an executable binary shim names no entry; fall back to the app layout */ }
-  const candidates = [
-    appDist ? join(appDist, "bb-server.js") : null,
-    join(dirname(dirname(shim)), "..", "Resources", "app.asar.unpacked", "node_modules", "bb-app", "dist", "bb-server.js"),
-  ].filter((path): path is string => typeof path === "string").map(path => resolve(path));
-  const serverLauncher = candidates.find(path => existsSync(path));
-  tried.push(...candidates);
-  if (!serverLauncher) return { install: null, tried };
-  const daemonLauncher = join(dirname(serverLauncher), "bb-host-daemon.js");
-  tried.push(daemonLauncher);
-  if (!existsSync(daemonLauncher)) return { install: null, tried };
-  return { install: { cli: shim, serverLauncher, daemonLauncher } };
+  // One owner for the shim list and the app layout: `shared/bb-cli.mjs` (phase 7's
+  // `nucleus bb install` reads the same list, so a proof and an operator install
+  // can never disagree about which BB they mean).
+  let found: { install: BbInstall | null; tried: string[] };
+  if (override) found = bbInstallFromCli(override);
+  else {
+    const { cli, tried } = findBbCli();
+    found = cli ? bbInstallFromCli(cli) : { install: null, tried };
+  }
+  return found.install
+    ? { install: found.install }
+    : { install: null, tried: found.tried };
 }
 
 export async function freePort(): Promise<number> {
