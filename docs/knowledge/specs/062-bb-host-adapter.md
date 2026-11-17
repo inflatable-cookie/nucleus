@@ -1351,10 +1351,10 @@ Paseo stays Tom's call.
    mechanism, or missing with the reason. Subscription usage is met by the host: BB's own
    provider-usage card plus the operator-installed Usage Pace plugin, with no Nucleus usage screen to
    compare on any host (nucleus#1302).
-2. **Reload, restart and outage mid-task**, each starting from a live worker turn: `test/bb-lifecycle.test.ts`
-   drives the real runtime through each fault over recorded BB rows, and `effigy proof:bb:trial` does
-   the host half against an isolated BB 0.49.0 server, polling BB's own status to prove the turn is
-   `starting` or `active` when each fault lands.
+2. **Reload, restart and outage mid-task**, each starting from a worker turn a provider is running:
+   `test/bb-lifecycle.test.ts` drives the real runtime through each fault over recorded BB rows, and
+   `effigy proof:bb:trial` does the host half against an isolated BB 0.49.0 server, polling BB's own
+   status for `active` — a begun turn, never a spawn's `starting` (assumption 6) — before each fault.
 3. **The fork rebase** through the documented routine, with the drift report and the
    vendored-manifest test at the pin; no newer release tag exists yet, so the evidence is the routine
    re-run at the pin plus the drift report against a newer upstream ref.
@@ -1440,23 +1440,25 @@ completion and that hold rather than the reviewer launch; the reviewer launch is
 lifecycle test's ground.
 
 **The host layer** mints a task workspace on the isolated server, attaches a planner and a worker
-thread, and before each fault sends one queued message and polls until BB reports the turn as live
-(`starting` or `active`), recording that status in the evidence. It then records:
+thread, and before each fault sends one queued message and polls BB's own projection for `status:
+"active"` — the evidence that a provider turn has begun. `starting`, `provisioning` and
+`waiting-for-host` are *not* accepted: assumption 6 is that a spawn commits before its first turn
+starts, so those states would let a fault land on a turn that had not begun. A turn that ends or
+errors before it begins gets another message, up to four attempts, and no fault is thrown until a turn
+is `active`. It then records:
 
-- `bb plugin reload nucleus` mid-task: the turn is `starting` when the reload lands; a new acceptance
-  for the same identity arrives, the plugin's own counters restart at zero, one observation reads the
-  same environment id back, zero `threads.spawn` calls are made on the new connection, and exactly one
-  thread names the task's worker in the origin walk;
-- a BB server restart mid-task on the same data directory: the turn is `starting` when the server goes
-  away; the same identity and environment come back, the unmanaged environment is still listed at the
-  same path, and zero spawns happen after the restart;
+- `bb plugin reload nucleus` mid-task: the turn is `active` when the reload lands and BB reports the
+  interrupted turn as `error` afterwards; a new acceptance for the same identity arrives, the plugin's
+  own counters restart at zero, one observation reads the same environment id back, zero
+  `threads.spawn` calls are made on the new connection, and exactly one thread names the task's worker
+  in the origin walk;
+- a BB server restart mid-task on the same data directory: the turn is `active` when the server goes
+  away and is still `active` after it returns; the same identity and environment come back, the
+  unmanaged environment is still listed at the same path, and zero spawns happen after the restart;
 - `bb plugin disable nucleus` as the outage: the turn is `active` when the executor is unloaded, the
   service has no executor for the identity, so an observation is refused as *not sent*
   (`No host executor is connected for …`), which is never an idle reading; enabling the plugin again
   reconnects and one observation reads the same thread and environment, with zero spawns.
-
-The exact statuses each run recorded are in the proof's step output, because they are BB's answers from
-a live provider turn, not values this document can pin.
 
 #### The fork rebase
 

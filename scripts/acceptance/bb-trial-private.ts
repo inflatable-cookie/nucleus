@@ -164,17 +164,20 @@ async function main() {
     });
     assert.ok(worker.value.environmentId, "the worker attach recorded its environment");
     interface Projection { threadId: string; status: string; displayStatus: string; queuedWork: string; environmentId: string | null; updatedAt: number }
-    /** A turn BB reports as live right now: its own status fields, not a queued marker. */
-    const liveTurn = (row: Projection) =>
-      ["starting", "active", "stopping"].includes(row.status)
-      || ["provisioning", "waiting-for-host"].includes(row.displayStatus);
-    /** The adapter's broader "work outstanding" reading, kept for the identity checks. */
-    const activeTurn = (row: Projection) => liveTurn(row) || row.queuedWork === "waiting";
     /**
-     * Each fault must land on live work. One queued message starts a turn and a
-     * bounded poll waits for BB to report it as starting or active, so the fault is
-     * thrown while the worker is mid-task rather than on an idle thread. A provider
-     * that fails a turn immediately gets another message, up to four attempts.
+     * A provider turn that has actually begun: BB's own `active` status.
+     *
+     * `starting` is not this. Assumption 6 of the spec is explicit that a spawn is
+     * committed before its first turn starts, so `starting`, `provisioning` and
+     * `waiting-for-host` all mean "scheduled", not "working". Reading any of them as
+     * a live turn would let a fault land on a turn that had not begun.
+     */
+    const begunTurn = (row: Projection) => row.status === "active";
+    /**
+     * Each fault must land on work a provider is running. One queued message starts a
+     * turn, and a bounded poll waits for BB to report the turn `active`; a turn that
+     * ends or errors without ever beginning gets another message, up to four
+     * attempts, and no fault is thrown until a turn has begun.
      */
     const midTask = async (label: string): Promise<Projection> => {
       for (let attempt = 1; attempt <= 4; attempt++) {
@@ -182,14 +185,14 @@ async function main() {
           threadId: worker.value.threadId, messageId: `trial-fault-${label}-${attempt}`,
           text: "Hold this turn open for the fault proof. Do not run any tools.", mode: "queue",
         });
-        const deadline = Date.now() + 45_000;
+        const deadline = Date.now() + 120_000;
         while (Date.now() < deadline) {
           const current = await send<Projection>("thread.observe", { threadId: worker.value.threadId });
-          if (liveTurn(current.value)) return current.value;
+          if (begunTurn(current.value)) return current.value;
           await delay(300);
         }
       }
-      throw new Error(`the worker turn was never live before the ${label} fault`);
+      throw new Error(`the worker turn never began (status active) before the ${label} fault`);
     };
     const activeBeforeReload = await midTask("reload");
     note("mid-task", true, {
@@ -199,7 +202,7 @@ async function main() {
 
     // 5. Fault 1, plugin reload mid-task: a new connection, no resend, same thread.
     const beforeReload = await send<Projection>("thread.observe", { threadId: worker.value.threadId });
-    assert.equal(liveTurn(beforeReload.value), true, "the worker turn is live when the plugin reloads");
+    assert.equal(begunTurn(beforeReload.value), true, "the worker turn is active (begun) when the plugin reloads");
     await cli(["plugin", "reload", "nucleus"]);
     const reloaded = await waitFor("the re-declared host-executor connection", async () => {
       const status = service.hostExecutorStatus(hostId);
@@ -222,7 +225,7 @@ async function main() {
 
     // 6. Fault 2, BB restart mid-task: same data directory, environment and thread.
     const activeBeforeRestart = await midTask("restart");
-    assert.equal(liveTurn(activeBeforeRestart), true, "the worker turn is live when the server restarts");
+    assert.equal(begunTurn(activeBeforeRestart), true, "the worker turn is active (begun) when the server restarts");
     await stopProcess(server);
     server = null;
     await waitFor("the isolated server to go away", async () => (await portOpen(serverPort)) ? null : true, 60_000);
@@ -250,7 +253,7 @@ async function main() {
     // 7. Fault 3, a host outage during observation. BB stays up; its executor is
     //    unloaded, which is the outage an observation must not read as idle.
     const activeBeforeOutage = await midTask("outage");
-    assert.equal(liveTurn(activeBeforeOutage), true, "the worker turn is live when the executor goes away");
+    assert.equal(begunTurn(activeBeforeOutage), true, "the worker turn is active (begun) when the executor goes away");
     await cli(["plugin", "disable", "nucleus"]);
     await waitFor("the executor connection to go away", async () => service.hostExecutorStatus(hostId) ? null : true, 180_000);
     let outageRefusal = "";
