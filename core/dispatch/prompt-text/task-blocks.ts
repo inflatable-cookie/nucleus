@@ -63,13 +63,21 @@ ${current.text}
  * `queue.siblings: false` or no sibling pins get an empty block and keep their
  * exact prompts.
  */
-export function queueSiblingBlock(task: Pick<Task, 'siblingPins' | 'siblingFindings'>) {
+export function queueSiblingBlock(task: Pick<Task, 'siblingPins' | 'siblingFindings' | 'hostId'>) {
   const pins = task.siblingPins ?? [];
   if (!pins.length) return '';
   const lines = pins.map(pin => `- ${pin.repository} at ${pin.path} (pinned at ${pin.commit})`).join('\n');
   const findings = (task.siblingFindings ?? []).map(finding =>
     `- ${finding.repository} at ${finding.path}: expected ${finding.expected}, observed ${finding.actual ?? 'missing'}${finding.dirty ? ', dirty' : ''}`).join('\n');
-  return `Sibling repositories (read-only by rule; never edit, commit, merge or push them — the fix for a real change is a linked task):\n${lines}\n${findings ? `Recorded sibling changes under review:\n${findings}\n` : ''}`;
+  // BB registers the task worktree as an external directory and its provider runs
+  // inside an OS sandbox that may create nothing beside the checkout, so Nucleus
+  // places one link per pinned sibling there before the worker launches
+  // (nucleus#1315). Paseo worktree roots carry the repository's own link-task
+  // clones already, so no such line is added there.
+  const linked = typeof task.hostId === 'string' && task.hostId.startsWith('bb:')
+    ? `\nNucleus links each of these pinned checkouts beside this checkout (${pins.map(pin => `../${pin.path.split('/').pop() || pin.repository}`).join(', ')}), so a relative sibling path resolves without any other preparation. A missing link is a blocker to report, never permission to create one from the sandbox.`
+    : '';
+  return `Sibling repositories (read-only by rule; never edit, commit, merge or push them — the fix for a real change is a linked task):\n${lines}${linked}\n${findings ? `Recorded sibling changes under review:\n${findings}\n` : ''}`;
 }
 
 /**

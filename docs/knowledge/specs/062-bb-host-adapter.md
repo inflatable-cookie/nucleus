@@ -1581,6 +1581,106 @@ is refused for install and uninstall and left byte-identical; and an unrelated p
 `--plugin-dir` is refused before BB's install sees it.
 
 
+## Sandboxed role threads (nucleus#1315)
+
+Tom's live trial (poodle-lab#29) ran Claude Code threads inside Claude Code's own
+sandbox (`provider-claude-code`'s `sandboxEnabled`, on by default, applies in
+Accept Edits and Approve for me modes). It found that a Nucleus role thread
+could not deliver its report, could not write its recorded scratch root, and
+could not run Effigy at all. This section records what was measured, what
+landed, and the one need no allowance can meet.
+
+### What the sandbox allows (measured, Claude Code 2.1.326)
+
+Probed with BB's own sandbox shape (`enabled`, `failIfUnavailable`,
+`autoAllowBashIfSandboxed`, `allowUnsandboxedCommands`, `network.allowLocalBinding`):
+
+| Operation from inside the sandbox | Result |
+| --- | --- |
+| write under the checkout (`cwd`) | allowed |
+| write under the session's `$TMPDIR` | allowed |
+| write anywhere else (the recorded run scratch root, a sibling of `$TMPDIR`, `~/.nucleus`) | denied (`EPERM`) |
+| connect to `~/.nucleus/callback.sock` (any Unix socket) | denied (`EPERM`) |
+| connect to `127.0.0.1:<BB server port>` (loopback TCP) | allowed |
+| `proc_pidinfo` for its own pid | allowed |
+| `sysctlbyname("kern.bootsessionuuid")` (Effigy's boot identity) | denied (`EPERM`) |
+
+The Codex provider's workspace scope is the same shape for the reporting route:
+BB builds `workspaceWrite` with `networkAccess: true`, and Claude's sandbox
+leaves loopback reachable on purpose (its own documentation names loopback
+reachability as a risk). Both providers therefore reach a loopback service from
+inside the workspace sandbox; neither reaches a Unix socket.
+
+BB's Claude provider builds the workspace sandbox itself
+(`filesystem.allowWrite` from `additionalWorkspaceWriteRoots`, plus
+`network.allowLocalBinding`), and that provider option is not on the thread
+creation path (`sessionOptions` carries `string | boolean` only). No surface a
+plugin or a thread can reach adds `network.allowUnixSockets` or a write root, so
+the choice was never "which allowance": route (a) of the brief does not exist in
+BB 0.49.
+
+### The route that landed
+
+- **Reports.** A run ticket records its host (`writeRunTicket`). A `bb:` ticket's
+  generated helper POSTs the exact payload it would have sent to the socket, to
+  the BB backend's own loopback route
+  (`POST /api/v1/plugins/nucleus/http/report`, `auth: "local"`); the backend runs
+  in the BB server process, outside the provider sandbox, and forwards it to
+  `<data home>/callback.sock` with the ticket's own token. The route reads only
+  this data home's `tickets/<runId>.json` (by run id — never a path from the
+  invoking machine, which would name the wrong host's disk), requires an
+  owner-only regular file, the ticket's exact token, task and run, and forwards
+  only the helper's routes (`/complete`, `/ask`, `/message`, `/answer`,
+  `/task-next`). No token is logged or echoed, and every other host keeps the
+  callback socket unchanged. The helper's prompt is unchanged: `nucleus helper
+  report` still works, and the ticket chooses the transport.
+- **Scratch.** BB hands a provider no per-thread environment, so a sandboxed
+  thread cannot create its own leaf. The BB adapter creates the run's recorded
+  scratch leaf (owner-only, repository namespace) before `run.attach`, and refuses
+  the launch when the leaf cannot be proved. #1314 owns the same creation on the
+  general launch path; this is the BB-side guarantee beside it and is idempotent.
+  A sandboxed thread still cannot *write* that leaf (the table above): the
+  scratch exists for evidence bookkeeping and for the recorded paths, and the
+  prompt remains the only place a provider is told about it.
+- **Sibling checkouts.** A Paseo worktree root holds the sibling clones the
+  repository's own link tasks placed there. On BB the provider sandbox may create
+  nothing beside the checkout, so `WorkerLauncher` has the service place one link
+  per task-pinned sibling worktree (`linkPinnedSiblingCheckouts`) through the same
+  create-if-absent / reuse-exact / leave-anything-else placement the declared
+  links use, records the outcome as a `pinned_sibling_links` event, and the
+  worker prompt names the links so `../<sibling>` resolves. Only a `bb:` host is
+  affected; every other host's worktree root is untouched.
+
+### The proof that is missing
+
+**Effigy admission cannot work inside Claude Code's sandbox, and no allowance
+changes that.** Effigy's foreground identity is `process_identity(boot,
+start)`; the boot identity is `sysctlbyname("kern.bootsessionuuid")`, which the
+sandbox refuses (`EPERM`, measured above), so Effigy refuses with "foreground
+owner identity unavailable" before any command runs. Claude Code's sandbox
+settings expose no sysctl allowance, and BB's provider builds that sandbox
+itself. The brief's "Effigy admission working" item is therefore reported
+missing, not claimed: fixing it belongs to Effigy (a boot identity that a
+sandboxed process can read, or an explicit sandboxed-run mode) or to an operator
+ruling that a Nucleus BB role thread runs in Full Access (BB's own sandbox and
+approval bypass) instead of a sandboxed mode.
+
+### Tests and proof
+
+`test/bb-report-relay.test.ts` pins the relay's gate (ticket by run id,
+owner-only file, exact token/task/run, allowed routes only, the service's own
+status and body, no forward on any refusal); `test/callback-client.test.ts`
+pins the generated helper choosing the loopback route for a `bb:` ticket and
+never printing the credential; `test/bb-plugin-backend.test.ts` pins the
+registered route and its refusals; `test/bb-run-scratch.test.ts` pins the
+owner-only leaf existing before `run.attach` and a launch refusal when it cannot
+be proved; `test/siblings.test.ts` pins the pinned-sibling link for a BB
+workspace, no change on another host, and an occupied name left untouched.
+`effigy proof:bb:sandbox` runs two sandboxed Claude Code threads against an
+isolated BB server (the plugin installed into it, `sandboxEnabled` on, Accept
+Edits): each delivers its report through the relay to a recorded callback
+socket, and a relative `../<sibling>` read resolves.
+
 ## Phase 0 evidence (2026-11-16)
 
 Phase 0 is implemented and proved against an isolated BB 0.49.0 server. `effigy proof:bb` runs the

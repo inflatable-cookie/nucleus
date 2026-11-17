@@ -1,11 +1,13 @@
 import type { Task, WorktreeLinks } from "../../shared/contracts";
 import { worktreeLinksSchema } from "../../shared/contracts";
+import { basename, dirname } from "node:path";
+import { lstat } from "node:fs/promises";
 import { refreshCheckoutSiblings as inspectWorktreeRootSiblings, worktreeRootFor } from "./checkout-siblings";
 import type { Engine } from "../engine";
 import { siblingStoreRootFor } from "../store/sibling-store";
 import { createSiblingWorktrees, findingFor, inspectSiblingWorktrees, removeSiblingWorktrees, siblingMembers, siblingsEnabled } from "./siblings";
 import { now } from "../store/store";
-import { provisionWorktreeLinks, worktreeLinksDue, worktreeLinksSummary } from "./worktree-links";
+import { canonicalLinkRoot, placeWorktreeLink, provisionWorktreeLinks, worktreeLinksDue, worktreeLinksSummary } from "./worktree-links";
 
 /**
  * What a task's checkout gets beside it before its worker runs: sibling
@@ -140,6 +142,41 @@ export class WorkspaceProvisioning {
       try { this.store.event(current.id, "worktree_links_record_failed", recordFailure); } catch { /* not claimed as recorded */ }
       return { task: this.store.task(current.id), recordFailure };
     }
+  }
+  /**
+   * BB task workspaces get their sibling checkouts beside them (nucleus#1315).
+   *
+   * A Paseo worktree root holds the sibling clones the repository's own link
+   * tasks placed there, so a dependant's relative `../sibling` resolves. A BB
+   * workspace is registered by Nucleus as an external directory and the
+   * provider runs inside its own OS sandbox, so nothing in the thread may create
+   * that link (and the sandbox refuses writes outside the checkout anyway). The
+   * service places one link per task-pinned sibling worktree, through the same
+   * "create when absent, reuse an exact match, leave anything else untouched"
+   * placement the declared links use, and records the outcome as an event. It
+   * never blocks a launch: a missing link is disclosed as policy in the prompt
+   * and a worker reports a blocker if its work needs it.
+   */
+  async linkPinnedSiblingCheckouts(task: Task): Promise<Task> {
+    const current = this.store.task(task.id);
+    const pins = current.siblingPins ?? [];
+    if (this.adapter.vocabulary?.kind !== "bb" || !pins.length || !current.directory || !this.siblingDataDir) return current;
+    const outcomes: string[] = [];
+    for (const pin of pins) {
+      const name = basename(pin.path);
+      try {
+        const entry = await lstat(pin.path);
+        if (!entry.isDirectory() || entry.isSymbolicLink()) throw new Error("the pinned sibling path is not a real directory");
+        const dataDir = this.siblingDataDir;
+        const root = await canonicalLinkRoot(dataDir, current.repoPath, current.directory);
+        const placed = await placeWorktreeLink(root, name, pin.path);
+        outcomes.push(`${name} ${placed.outcome}${placed.reason ? `: ${placed.reason}` : ""}`);
+      } catch (error) {
+        outcomes.push(`${name} failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    try { this.store.event(current.id, "pinned_sibling_links", outcomes.join("; ").slice(0, 2000)); } catch { /* the placement is not less true for an unwritable event */ }
+    return current;
   }
   /** Best effort: an unreadable stash list only loses the readiness comparison. */
   async readStash(directory: string) {

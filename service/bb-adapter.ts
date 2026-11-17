@@ -6,6 +6,8 @@ import type { HostAgentSpec, HostPermissionDecision, HostWorkspaceRef, HostWorks
 import type { Profile } from '../shared/contracts';
 import type { Task, Run } from '../shared/contracts';
 import { runTicketPath } from '../core/dispatch/agent-creation';
+import { runTemporaryEnvironment } from '../core/workspaces/run-scratch';
+import { WIRE_LABEL_KEYS } from '../shared/wire-labels';
 import { parseAgentId } from '../shared/agent-identity';
 import { join } from 'node:path';
 import { bbVocabulary, BbThreads, emptyBbThreadState, type BbThreadState, type BbWorkspaceRecord } from '../hosts/bb';
@@ -59,11 +61,28 @@ export function composeBbAdapter(input: {
     readonly supportsCoordinatorRecovery = true;
     readonly admissionLaunchEnv = {};
     readonly testPlacement = undefined;
+    /** Repository scratch namespaces, so a BB run's leaf follows the repository's setting. */
+    scratchNamespaceFor = (task: Task) => store.scratchNamespaceFor(task);
     isConnected() { return input.connected(); }
     capabilities() { return { reportingViaMcp: false, supportsCoordinatorRecovery: true, nativeDecisions: false, lifecycleDispatch: true, perThreadEnvironment: false, repositorySharedWorkspaces: false }; }
     creationOwner() { return { ...super.creationOwner(), perThreadEnvironment: false as const }; }
     nativeAgentCreate(spec: HostAgentSpec, mcp: boolean) {
       if (!input.dataDir || mcp) throw new ProvenPreSendRefusalError('BB dispatch requires helper reporting');
+      // BB cannot hand a provider a per-thread environment, so the service creates
+      // the run's recorded scratch leaf before the thread exists (nucleus#1315,
+      // beside #1314's launch-path creation): it is owner-only, follows the
+      // repository's namespace, and proves its volume before it exists. A run
+      // whose scratch cannot be proved is refused before anything is spawned.
+      const labels = spec.attempt(false, false).labels;
+      const taskId = labels[WIRE_LABEL_KEYS.task], runId = labels[WIRE_LABEL_KEYS.run];
+      const task = taskId ? store.task(taskId) : null;
+      if (task && runId) {
+        try {
+          runTemporaryEnvironment(runId, this.scratchPlacement(task), store.run(runId)?.temporaryDirectory);
+        } catch (error) {
+          throw new ProvenPreSendRefusalError(`BB run scratch is unavailable: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
       return threads.createAgent(spec);
     }
     unsupportedMcp() { return false; }

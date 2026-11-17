@@ -819,6 +819,17 @@ handling and bounded waits, with no automatic replay, and keep their routes and
 event-ID construction. Operator CLIs share the authenticated direct client. Run
 tokens never become operator credentials, and nothing writes SQLite directly.
 
+**One reporting route per host, chosen from the ticket (nucleus#1315).** A run
+ticket records the host it was issued for. A `bb:` host reports over the BB
+backend's loopback relay (`/api/v1/plugins/nucleus/http/report`), because a BB
+role thread runs inside its provider's OS sandbox and Claude Code's sandbox
+refuses every Unix socket; the backend forwards the exact payload to
+`<data home>/callback.sock` with that ticket's own token. The relay reads only
+tickets under its own data home, by run id, requires an owner-only regular file
+and the ticket's exact token, task and run, and forwards only the routes a
+helper uses. Every other host keeps the callback socket. See
+[Spec 062](../specs/062-bb-host-adapter.md#sandboxed-role-threads-nucleus1315).
+
 ## Responsiveness
 
 The bridge performs bounded serialization and local transport only and awaits

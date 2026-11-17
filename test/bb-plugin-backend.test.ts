@@ -37,6 +37,13 @@ interface RegisteredCli {
   commands: Array<{ name: string; summary?: string; usage?: string }>;
 }
 
+interface RegisteredRoute {
+  method: string;
+  path: string;
+  handler: (context: unknown) => unknown;
+  options?: { auth?: string };
+}
+
 interface FakeBackend {
   bb: BbPluginApi;
   rpc: RegisteredRpc[];
@@ -45,6 +52,7 @@ interface FakeBackend {
   published: Array<{ channel: string; payload: unknown }>;
   services: string[];
   settingsSchema: Record<string, { default?: unknown }>;
+  routes: RegisteredRoute[];
 }
 
 /** A `BbPluginApi` fake: every surface the plugin factory touches, recorded. */
@@ -55,6 +63,7 @@ function fakeBackend(): FakeBackend {
   const published: Array<{ channel: string; payload: unknown }> = [];
   const services: string[] = [];
   const settingsSchema: Record<string, { default?: unknown }> = {};
+  const routes: RegisteredRoute[] = [];
   const settings = {
     define: (schema: Record<string, { default?: unknown }>) => {
       Object.assign(settingsSchema, schema);
@@ -72,7 +81,7 @@ function fakeBackend(): FakeBackend {
         delete: async (key: string) => { kv.delete(key); },
       },
     },
-    http: { route() {} },
+    http: { route: (method: string, path: string, handler: RegisteredRoute['handler'], options?: RegisteredRoute['options']) => { routes.push({ method, path, handler, options }); } },
     rpc: {
       register: (contract: object, handlers: RegisteredRpc['handlers'], options?: RegisteredRpc['options']) => {
         rpc.push({ methods: Object.keys(contract).sort(), handlers, options });
@@ -106,7 +115,7 @@ function fakeBackend(): FakeBackend {
     server: { experimental_dataDir: '/synthetic/bb-data' },
     onDispose() {},
   };
-  return { bb: bb as unknown as BbPluginApi, rpc, cli, kv, published, services, settingsSchema };
+  return { bb: bb as unknown as BbPluginApi, rpc, cli, kv, published, services, settingsSchema, routes };
 }
 
 test('the plugin backend composes the vendored list server: its preference RPC round-trips', async () => {
@@ -161,4 +170,29 @@ test("the adapter's own sidebar read is registered beside the vendored preferenc
   // upstream's header rather than an invented state line.
   await assert.rejects(read!.handlers.sidebarGroups(null) as Promise<unknown>, /not connected/u);
   assert.equal(backend.services.includes('nucleus-host-channel'), true, 'the presence socket service is still registered');
+});
+
+test('nucleus#1315 the sandboxed reporting route is one loopback POST with no token auth of its own', async () => {
+  const backend = fakeBackend();
+  await plugin(backend.bb);
+  const route = backend.routes.find(entry => entry.path === '/report');
+  assert.ok(route, 'the BB report relay registers');
+  assert.equal(route!.method, 'POST');
+  // A sandboxed helper has no BB plugin token; the run ticket in the body is the
+  // authority, and the handler proves it against this data home before forwarding.
+  assert.equal(route!.options?.auth, 'local');
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  const context = (body: unknown) => ({
+    req: { json: async () => body, header: () => null },
+    json,
+  });
+  // No configured data home: the route refuses rather than reading another path.
+  const refused = await route!.handler(context({ route: '/complete', taskId: 't', runId: 'r', token: 'x', payload: { taskId: 't', runId: 'r' } })) as Response;
+  assert.equal(refused.status, 409);
+  assert.match(String((await refused.json() as { error?: string }).error), /not configured/);
+  const oversized = await route!.handler({
+    req: { json: async () => ({}), header: (name: string) => name === 'content-length' ? String(64 * 1024 * 1024) : null },
+    json,
+  }) as Response;
+  assert.equal(oversized.status, 413);
 });

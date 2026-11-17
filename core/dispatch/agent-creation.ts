@@ -26,7 +26,10 @@ export function writeRunTicket(paths: CallbackPaths, task: Task, run: { id: stri
   // A coordinative run's generation never changes after creation, so the ticket can bind it for the
   // authenticated fallback: the helper sends it when the payload omits it. Other roles need no binding.
   const generation = ['closeout', 'recovery', 'executor'].includes(run.role) ? { coordinatorGeneration: run.generation } : {};
-  writeOwnedJson(path, { socketPath: paths.socketPath, taskId: task.id, runId: run.id, token, ...generation });
+  // The ticket names its host so the packaged helper can pick a reporting route a
+  // provider sandbox can reach (nucleus#1315). A `bb:` host reports over the BB
+  // backend's loopback relay; every other host keeps the callback socket.
+  writeOwnedJson(path, { socketPath: paths.socketPath, taskId: task.id, runId: run.id, host: task.hostId, token, ...generation });
   return path;
 }
 
