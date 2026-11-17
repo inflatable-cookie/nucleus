@@ -1,7 +1,7 @@
 /**
  * The Nucleus task-group seam of the forked sidebar (Spec 062, decision 5a/5b).
  *
- * This is the fork's own file, not an upstream one. It owns three things and
+ * This is the fork's own file, not an upstream one. It owns four things and
  * nothing else:
  *
  * 1. the batched read — one `sidebarGroups` RPC call for every Nucleus task group,
@@ -13,7 +13,12 @@
  * 3. the collapsed/expanded decision — a Nucleus task group is collapsed unless its
  *    environment id is in the fork's own `expandedTaskGroups` preference.
  *    `collapsedEnvironments` governs every other group and is never written for a
- *    task group, so the two group classes cannot disagree.
+ *    task group, so the two group classes cannot disagree;
+ * 4. the project-row board link (Spec 062, decision 5d) — the same read names the
+ *    BB projects Nucleus recorded for each Nucleus project, so a project row whose
+ *    BB project resolves gets one "Board" menu item linking to
+ *    `/plugins/nucleus/board/project/<nucleus-project-key>`; every other project
+ *    row's menu is upstream's.
  *
  * A group the read does not name — an unknown environment, a task whose first
  * thread has not attached, or a read that has not landed — takes upstream's path
@@ -32,20 +37,32 @@ import {
 } from "react";
 import { useAtom } from "jotai";
 import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
+import { ActionMenuItem, type ActionMenuSurface } from "@/components/ui/action-menu-items";
 import {
   BOARD_SIGNAL_CHANNEL,
+  projectBoardHref,
   sidebarGroupsContract,
   type SidebarGroup,
+  type SidebarProject,
 } from "../../../sidebar-groups.js";
 import { expandedTaskGroupsAtom } from "../preferences/atoms.js";
 
 interface NucleusTaskGroupsValue {
   groups: ReadonlyMap<string, SidebarGroup>;
+  /** The Nucleus project each recorded BB project id stands for. */
+  projects: ReadonlyMap<string, SidebarProject>;
   /** `loading` and `unavailable` both render upstream's group. */
   status: "loading" | "ready" | "unavailable";
 }
 
-const EMPTY: NucleusTaskGroupsValue = { groups: new Map(), status: "loading" };
+const EMPTY: NucleusTaskGroupsValue = { groups: new Map(), projects: new Map(), status: "loading" };
+
+/** Index the read's projects by the BB project ids they name; the first project wins a shared id. */
+function projectsByBbProject(projects: readonly SidebarProject[]): Map<string, SidebarProject> {
+  const index = new Map<string, SidebarProject>();
+  for (const project of projects) for (const id of project.bbProjectIds) if (!index.has(id)) index.set(id, project);
+  return index;
+}
 
 const NucleusTaskGroupsContext = createContext<NucleusTaskGroupsValue | null>(null);
 
@@ -65,6 +82,7 @@ export function NucleusSidebarGroupsProvider({ children }: { children: ReactNode
       if (!mounted.current) return;
       setValue({
         groups: new Map(answer.groups.map((group) => [group.environmentId, group])),
+        projects: projectsByBbProject(answer.projects),
         status: "ready",
       });
     } catch {
@@ -72,7 +90,7 @@ export function NucleusSidebarGroupsProvider({ children }: { children: ReactNode
       // sidebar; with nothing landed, every group renders upstream's header.
       if (!mounted.current) return;
       setValue((current) =>
-        current.status === "ready" ? current : { groups: new Map(), status: "unavailable" },
+        current.status === "ready" ? current : { groups: new Map(), projects: new Map(), status: "unavailable" },
       );
     }
   }, [rpc]);
@@ -172,5 +190,21 @@ export function NucleusTaskGroupStateLine({ group }: { group: SidebarGroup }) {
       )}
       <TaskGroupPullRequest group={group} />
     </span>
+  );
+}
+
+/**
+ * The project row's board link: one "Board" menu item when the read names this BB
+ * project's Nucleus project, and nothing otherwise, so an unknown project's menu
+ * is upstream's. The link's key is the Nucleus project key (decision 5d), so a
+ * multi-repository project's rows all open the one board.
+ */
+export function NucleusProjectBoardMenuItem({ projectId, surface }: { projectId: string; surface: ActionMenuSurface }) {
+  const project = useContext(NucleusTaskGroupsContext)?.projects.get(projectId) ?? null;
+  if (!project) return null;
+  return (
+    <ActionMenuItem surface={surface} icon="LayoutDashboard" href={projectBoardHref(project.key)}>
+      Board
+    </ActionMenuItem>
   );
 }

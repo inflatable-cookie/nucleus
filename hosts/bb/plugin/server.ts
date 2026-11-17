@@ -4,10 +4,12 @@
  * Keeps the reverse service channel, executes bounded BB host operations, supplies
  * helper-reporting bindings from run metadata, and composes the vendored thread
  * list's own server entry so the forked sidebar has its preference store. Host
- * registration, repository routing and task lifecycle remain service-owned; the
- * board and the in-thread surfaces belong to phase 6.
+ * registration, repository routing and task lifecycle remain service-owned.
+ * Phase 6 adds the board's forwarding call, BB's lifecycle events as bounded hints,
+ * and `bb nucleus terminal` (`board-bridge.ts`).
  */
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { realpathSync } from "node:fs";
 import { runHostChannel, type HostChannelClient } from "./channel";
 import { createHostOperations, type BbHostSdk } from "./operations";
 import threadListPlugin from "./sidebar/server.js";
@@ -16,6 +18,16 @@ import {
   createSidebarGroupsService,
   sidebarGroupsContract,
 } from "./sidebar-groups";
+import {
+  BB_LIFECYCLE_HINTS,
+  boardContract,
+  createBoardBridge,
+  forwardLifecycleHint,
+  withTerminalCommand,
+  type BbLifecycleEvent,
+  type CliRegistration,
+  type TerminalCreateSdk,
+} from "./board-bridge";
 
 /** The plugin SDK this build was written against. A diagnostic, never an allowlist. */
 export const BB_PLUGIN_SDK_VERSION = "0.6.132";
@@ -107,7 +119,25 @@ export default async function plugin(bb: BbPluginApi) {
   // register here, so `PreferencesSync` can hydrate and the list leaves its
   // loading skeleton. Without this call the vendored server entry is dead code and
   // every Nucleus task group renders without its collapse preference.
-  await threadListPlugin(bb);
+  //
+  // BB takes one CLI registration per plugin, so the list's `prefs` registration is
+  // captured here and registered once with `terminal` beside it (phase 6). Every
+  // other surface the list touches is the real API.
+  let vendoredCli: CliRegistration | null = null;
+  const listApi = new Proxy(bb, {
+    get(target, property) {
+      if (property === "cli") return { register: (registration: CliRegistration) => { vendoredCli = registration; } };
+      return Reflect.get(target, property, target);
+    },
+  });
+  await threadListPlugin(listApi);
+  const terminalSdk = () => bb.sdk as unknown as TerminalCreateSdk;
+  bb.cli.register(withTerminalCommand(vendoredCli ?? {
+    name: bb.pluginId,
+    summary: "Nucleus",
+    commands: [],
+    run: () => ({ exitCode: 2, stderr: "Unknown command. Try `bb nucleus terminal`.\n" }),
+  }, terminalSdk) as unknown as Parameters<typeof bb.cli.register>[0]);
 
   // Metadata names the helper route; it carries no reporting credential and grants
   // no authority. The run ticket authenticates every helper request.
@@ -115,10 +145,29 @@ export default async function plugin(bb: BbPluginApi) {
   // backend and forwarded over the retained connection, so the UI holds no service
   // credential and reads nothing the service does not publish.
   let channelClient: HostChannelClient | null = null;
-  bb.rpc.register(sidebarGroupsContract, createSidebarGroupsService(() => channelClient), {
+  // Project rows resolve through BB's own project list too (decision 5d), so a row
+  // keeps its board link with no live task workspace: one read per sidebar read.
+  const samePath = (left: string, right: string) => {
+    const canonical = (value: string) => { try { return realpathSync(value); } catch { return value.replace(/\/+$/, ""); } };
+    return canonical(left) === canonical(right);
+  };
+  bb.rpc.register(sidebarGroupsContract, createSidebarGroupsService(() => channelClient, {
+    list: () => (bb.sdk as unknown as { projects: { list(): Promise<unknown> } }).projects.list(),
+    samePath,
+  }), {
     experimental_description:
       "The forked sidebar's batched Nucleus task-group read: one answer for every group's state line.",
   });
+  // Phase 6: the board, its Settings and its pills reach the service catalogue
+  // through this one forwarding method, on the same retained connection.
+  bb.rpc.register(boardContract, createBoardBridge(() => channelClient), {
+    experimental_description:
+      "The Nucleus board's catalogue call: forwards one service catalogue method over the plugin's retained connection.",
+  });
+  // BB's thread events ride the existing bounded lifecycle hint, never a lifecycle write.
+  for (const event of Object.keys(BB_LIFECYCLE_HINTS) as BbLifecycleEvent[]) {
+    bb.events.on(event, payload => { void forwardLifecycleHint(() => channelClient, event, payload as { thread?: { id?: unknown } }); });
+  }
 
   bb.agents.configure(context => {
     const meta = context.pluginMetadata.nucleus;

@@ -139,7 +139,7 @@ export const capacityChangeSchema = z.object({
   version: z.number().int().positive(),
   at: z.string().max(64),
   // The transport surface, derived from the request frame, never from the body.
-  surface: z.enum(["paseo", "web"]),
+  surface: z.enum(["paseo", "web", "bb"]),
   before: capacityAuthorityValuesSchema,
   after: capacityAuthorityValuesSchema,
 }).strict();

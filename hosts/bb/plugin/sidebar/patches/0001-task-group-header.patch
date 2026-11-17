@@ -1,19 +1,20 @@
 --- a/app/list/ProjectRow.tsx
 +++ b/app/list/ProjectRow.tsx
-@@ -50,6 +50,12 @@
-   useSdk,
+@@ -51,6 +51,13 @@
  } from "@get-bb/plugin-sdk/app";
  import { NO_HIDDEN_THREADS, useHiddenThreadsStatus } from "./groupRollups.js";
-+import {
+ import {
++  NucleusProjectBoardMenuItem,
 +  NucleusTaskGroupStateLine,
 +  taskGroupTitle,
 +  useNucleusTaskGroup,
 +  type NucleusTaskGroup,
 +} from "./nucleusTaskGroups.js";
- import {
++import {
    findEnvironmentDisplayProvider,
    getEnvironmentLabelIconName,
-@@ -373,6 +379,8 @@
+   resolveEnvironmentDisplayName,
+@@ -373,6 +380,8 @@
  
  interface EnvironmentThreadGroupHeaderProps {
    dragBindings?: SidebarSortableDragBindings;
@@ -22,7 +23,7 @@
    environmentId: string;
    environmentProviderId: string | null;
    representativeThread: SidebarThread;
-@@ -722,6 +730,7 @@
+@@ -722,6 +731,7 @@
  
  function EnvironmentThreadGroupHeader({
    dragBindings,
@@ -30,7 +31,7 @@
    environmentId,
    environmentProviderId,
    representativeThread,
-@@ -821,18 +830,44 @@
+@@ -821,18 +831,44 @@
            SIDEBAR_GROUP_TEXT_CLASS,
          )}
        >
@@ -87,7 +88,7 @@
          <SidebarChildToggleChevron
            disabled={rename.isEditing}
            className={rename.isEditing ? "hidden" : undefined}
-@@ -959,6 +994,20 @@
+@@ -959,6 +995,20 @@
    const { sectionId, pinned } = useThreadCreationPlacement(sectionWhenUnpinned);
    const { archiveThreadsPending, onArchiveThreads } =
      useArchiveEnvironmentThreadGroupAction({ environmentId });
@@ -108,7 +109,7 @@
    const handleCreateNewThread = useCallback(() => {
      onProjectSelect?.();
      navigate.toCompose({
-@@ -976,7 +1025,7 @@
+@@ -976,7 +1026,7 @@
      useWindowedThreadItems({
        items: nodeItems,
        collapsedThreadIds,
@@ -117,7 +118,7 @@
        selectedThreadId,
      });
  
-@@ -989,6 +1038,7 @@
+@@ -989,6 +1039,7 @@
        >
          <EnvironmentThreadGroupHeader
            dragBindings={dragBindings}
@@ -125,7 +126,7 @@
            environmentId={environmentId}
            environmentProviderId={environmentProviderId}
            representativeThread={representativeThread}
-@@ -999,13 +1049,13 @@
+@@ -999,13 +1050,13 @@
            })}
            parentLineDepth={parentLineDepth}
            hiddenThreads={stats.hiddenThreads}
@@ -142,3 +143,27 @@
            <div className="relative space-y-px">
              <ThreadTreeGroupLine parentRowDepth={rowDepth} />
              <SidebarWindowedItems
+@@ -2207,7 +2258,10 @@
+         onRename={rename.startEditingFromMenu}
+         onRemove={requestRemove}
+         extraActions={(surface) => (
+-          <ThreadListVisibilityMenuItems surface={surface} />
++          <>
++            <NucleusProjectBoardMenuItem projectId={project.id} surface={surface} />
++            <ThreadListVisibilityMenuItems surface={surface} />
++          </>
+         )}
+       />
+     </SidebarHeaderControls>
+@@ -2217,7 +2271,10 @@
+     <>
+       <ProjectActionsContextMenu
+         extraActions={(surface) => (
+-          <ThreadListVisibilityMenuItems surface={surface} />
++          <>
++            <NucleusProjectBoardMenuItem projectId={project.id} surface={surface} />
++            <ThreadListVisibilityMenuItems surface={surface} />
++          </>
+         )}
+         project={project}
+         disabled={rename.isEditing}

@@ -11,3 +11,4 @@ evidence/acceptance-repo/
 # Private publication vocabulary stays on this machine.
 .publication-denylist
 hosts/bb/plugin/dist/
+hosts/bb/plugin/board/nucleus-board.js

@@ -65,8 +65,12 @@ export interface HostChannelOptions {
 
 /** What a declared connection can ask the service, on the same authenticated socket. */
 export interface HostChannelClient {
-  /** One bounded request; rejects when the service refused it, the link dropped, or it timed out. */
-  request(method: string, input: unknown, timeoutMs?: number): Promise<unknown>;
+  /**
+   * One bounded request; rejects when the service refused it, the link dropped, or
+   * it timed out. `via: "bb"` marks a forwarded board call (Spec 062, phase 6): the
+   * service accepts that provenance only on this host-executor connection.
+   */
+  request(method: string, input: unknown, timeoutMs?: number, via?: "bb"): Promise<unknown>;
 }
 
 interface ServiceIdentity {
@@ -236,7 +240,7 @@ function runOnce(options: HostChannelOptions, identity: ServiceIdentity, onDecla
           onDeclared();
           options.log.info(`Nucleus service accepted this plugin as host executor for ${hostId}`);
           connectionCleanup = options.onDeclared?.({
-            request: (method, input, timeoutMs = REQUEST_TIMEOUT_MS) => ask(method, input, timeoutMs),
+            request: (method, input, timeoutMs = REQUEST_TIMEOUT_MS, via) => ask(method, input, timeoutMs, via),
           }) ?? null;
           claimPresence();
           // A refused claim is retried here, on the retained connection, until it is
@@ -311,7 +315,7 @@ function runOnce(options: HostChannelOptions, identity: ServiceIdentity, onDecla
        * same authenticated connection; a refusal or a lost link rejects, and the
        * caller renders its fallback rather than a guess.
        */
-      function ask(method: string, input: unknown, timeoutMs: number): Promise<unknown> {
+      function ask(method: string, input: unknown, timeoutMs: number, via?: "bb"): Promise<unknown> {
         return new Promise<unknown>((resolveRequest, rejectRequest) => {
           if (settled) { rejectRequest(new Error("The service connection is closed")); return; }
           const id = `bb-plugin-request-${++sequence}`;
@@ -328,7 +332,7 @@ function runOnce(options: HostChannelOptions, identity: ServiceIdentity, onDecla
             }
             resolveRequest(answer.result);
           });
-          send({ v: PROTOCOL_VERSION, id, method, input });
+          send({ v: PROTOCOL_VERSION, id, method, input, ...(via ? { via } : {}) });
         });
       }
 

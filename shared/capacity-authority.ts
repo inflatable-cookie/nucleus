@@ -6,7 +6,9 @@
  * surface. Two routes reach it, and both carry transport provenance the service
  * derives itself: the Paseo plugin bridge (`via: "paseo"`, plugin RPC →
  * `ServiceBridge.forward` → the service socket) and the local web board with a
- * valid token (`via: "web"`, the HTTP server in `server/service/web-board.ts`).
+ * valid token (`via: "web"`, the HTTP server in `server/service/web-board.ts`),
+ * and the BB plugin's Settings section (`via: "bb"`, plugin RPC → the plugin's
+ * retained host-executor connection; Spec 062, phase 6).
  * Every other route — the documented CLI, a direct socket client, any agent
  * shell, a web request without a token — refuses.
  *
@@ -27,7 +29,7 @@
  * rather than `settings` because neither transport can tell an operator's press
  * from a same-uid process that sends the same frame.
  */
-export const CAPACITY_WRITE_SURFACES = ["paseo", "web"] as const;
+export const CAPACITY_WRITE_SURFACES = ["paseo", "web", "bb"] as const;
 export type CapacityWriteSurface = (typeof CAPACITY_WRITE_SURFACES)[number];
 /** The bridge surface, the default for a write that names no transport (fixtures and the in-process owner). */
 export const CAPACITY_WRITE_SURFACE: CapacityWriteSurface = "paseo";
@@ -38,7 +40,7 @@ export const CAPACITY_WRITE_SURFACE: CapacityWriteSurface = "paseo";
  * the dispatch refusal and the recorded attribution cannot disagree.
  */
 export function capacityWriteSurface(via: string | null | undefined): CapacityWriteSurface | null {
-  return via === "paseo" || via === "web" ? via : null;
+  return via === "paseo" || via === "web" || via === "bb" ? via : null;
 }
 
 /**
