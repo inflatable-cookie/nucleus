@@ -59,6 +59,7 @@ test('a new task gets a private install from the lockfile advanced by dispatch',
     await writeFile(join(dependency, 'package.json'), JSON.stringify({ name: 'fixture-dep', version, main: 'index.js' }));
     await writeFile(join(dependency, 'index.js'), `module.exports = { version: '${version}' };\n`);
     await writeFile(join(directory, '.gitignore'), 'node_modules/\n');
+    await writeFile(join(directory, '.npmrc'), 'install-links=true\n');
     await writeFile(join(directory, 'package.json'), JSON.stringify({ name: 'dispatch-lockfile-fixture', version: '1.0.0', dependencies: { 'fixture-dep': 'file:vendor/fixture-dep' } }));
     await command('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'], directory);
   };
@@ -78,7 +79,7 @@ test('a new task gets a private install from the lockfile advanced by dispatch',
   await git(peer, 'config', 'user.name', 'Queue test');
   await git(peer, 'config', 'user.email', 'queue@example.invalid');
   await writeDependency(peer, '2.0.0');
-  await git(peer, 'add', '.gitignore', 'package.json', 'package-lock.json', 'vendor');
+  await git(peer, 'add', '.gitignore', '.npmrc', 'package.json', 'package-lock.json', 'vendor');
   await git(peer, 'commit', '-m', 'land dependency update');
   await git(peer, 'push', 'origin', 'main');
 
@@ -126,6 +127,7 @@ test('a task on a non-main integration base installs from that base lockfile', a
     await writeFile(join(dependency, 'package.json'), JSON.stringify({ name: 'fixture-dep', version, main: 'index.js' }));
     await writeFile(join(dependency, 'index.js'), `module.exports = { version: '${version}' };\n`);
     await writeFile(join(directory, '.gitignore'), 'node_modules/\n');
+    await writeFile(join(directory, '.npmrc'), 'install-links=true\n');
     await writeFile(join(directory, 'package.json'), JSON.stringify({ name: 'dispatch-lockfile-fixture', version: '1.0.0', dependencies: { 'fixture-dep': 'file:vendor/fixture-dep' } }));
     await command('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'], directory);
   };
@@ -138,7 +140,7 @@ test('a task on a non-main integration base installs from that base lockfile', a
   await symlink(join(repo, 'node_modules'), join(workspaceRoot, 'node_modules'), 'dir');
   await git(repo, 'checkout', '-b', 'release/v0.5');
   await writeDependency(repo, '2.0.0');
-  await git(repo, 'add', '.gitignore', 'package.json', 'package-lock.json', 'vendor');
+  await git(repo, 'add', '.gitignore', '.npmrc', 'package.json', 'package-lock.json', 'vendor');
   await git(repo, 'commit', '-m', 'release dependency update');
   const release = await git(repo, 'rev-parse', 'HEAD');
   const taskDirectory = join(workspaceRoot, 'release-task');
@@ -157,6 +159,7 @@ test('failed task install keeps its error after npm ci deletes node_modules and 
     await writeFile(join(dependency, 'package.json'), JSON.stringify({ name: 'fixture-dep', version, main: 'index.js' }));
     await writeFile(join(dependency, 'index.js'), `module.exports = { version: '${version}' };\n`);
     await writeFile(join(directory, '.gitignore'), 'node_modules/\n');
+    await writeFile(join(directory, '.npmrc'), 'install-links=true\n');
     await writeFile(join(directory, 'package.json'), JSON.stringify({ name: 'dispatch-lockfile-fixture', version: '1.0.0', dependencies: { 'fixture-dep': 'file:vendor/fixture-dep' } }));
     await command('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'], directory);
   };
@@ -169,7 +172,7 @@ test('failed task install keeps its error after npm ci deletes node_modules and 
   await symlink(join(repo, 'node_modules'), join(workspaceRoot, 'node_modules'), 'dir');
   await git(repo, 'checkout', '-b', 'ns-task');
   await writeDependency(repo, '2.0.0');
-  await git(repo, 'add', '.gitignore', 'package.json', 'package-lock.json', 'vendor');
+  await git(repo, 'add', '.gitignore', '.npmrc', 'package.json', 'package-lock.json', 'vendor');
   await git(repo, 'commit', '-m', 'task lockfile update');
   await git(repo, 'checkout', 'main');
   const taskDirectory = join(workspaceRoot, 'task');
