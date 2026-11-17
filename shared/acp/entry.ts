@@ -44,6 +44,16 @@ export async function runAcpAgentFromEnvironment(options: AcpEntryOptions = {}):
   const explicitIgnore = env.NUCLEUS_ACP_IGNORE_PATTERN?.trim();
   const ignore = compileIgnore(explicitIgnore ?? null);
   if (!ignore.ok) { log(`NUCLEUS_ACP_IGNORE_PATTERN is not a usable regular expression: ${explicitIgnore}`); return 1; }
+  /** One compile per pattern: every prompt of a session asks the same rule. */
+  const hostRules = new Map<string, IgnoreCompilation>();
+  const hostRuleFor = (pattern: string | null): IgnoreCompilation => {
+    const key = pattern ?? "";
+    const cached = hostRules.get(key);
+    if (cached) return cached;
+    const compiled = compileIgnore(pattern);
+    hostRules.set(key, compiled);
+    return compiled;
+  };
   const agent = new AcpAgent({
     version: compiledIdentity?.revision?.slice(0, 12) ?? "dev",
     log,
@@ -52,7 +62,7 @@ export async function runAcpAgentFromEnvironment(options: AcpEntryOptions = {}):
       return { binding, transport: createAcpTransport(binding) };
     },
     ignore(text, binding) {
-      const hostRule = compileIgnore(binding.ignorePattern ?? null);
+      const hostRule = hostRuleFor(binding.ignorePattern ?? null);
       if (!hostRule.ok) { log(`the binding's ignorePattern is not a usable regular expression: ${binding.ignorePattern}`); return false; }
       return (ignore.rule?.(text) ?? false) || (hostRule.rule?.(text) ?? false);
     },
