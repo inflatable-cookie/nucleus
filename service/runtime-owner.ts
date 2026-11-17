@@ -68,7 +68,7 @@ import { Engine, controlHasExternalEffect } from "../core/engine";
 
 import { taskControlOperation, TASK_CONTROL_KEY_LIMIT } from "../core/verbs/task-control-key";
 import { startCallbacks } from "./callbacks/callback";
-import { AcpSessions } from "../core/acp/sessions";
+import { AcpSessions, bindAcpSession } from "../core/acp/sessions";
 
 import type { SnapshotState, SnapshotInput, UsageLevel, DemandRoleOffsets, Submission, PoolEntry, BulkDispositionRequest, ReparentInput, TaskControlRequest, ReviewEntryInput, OutcomeSearchInput } from "../shared/contracts";
 import { taskControlChanges } from "../shared/task-control-changes";
@@ -712,6 +712,11 @@ export class QueueRuntime {
   bbHostHeartbeat(input: { hostId: string; at: string }) {
     this.bbHost.heartbeat(input.hostId, input.at);
   }
+  /** Spec 065: mint a task's ACP session and the owner-only pointer in its checkout. */
+  bindAcpSession(input: { taskId: string }) {
+    return bindAcpSession(this.engine.acp, input);
+  }
+
   private clearPluginPresenceWatch() { this.hosts.clearPluginPresenceWatch(); }
   private pluginPresenceFaultMessage(): string { return this.hosts.pluginPresenceFaultMessage(); }
   private boardError(): string {

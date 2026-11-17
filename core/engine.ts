@@ -160,12 +160,6 @@ export class Engine {
    * without one refuses `acp.bind` rather than minting a binding nothing answers.
    */
   acp: AcpSessionSurface | null = null;
-
-  /** Mint a task's ACP session and the owner-only pointer in its checkout. */
-  bindAcpSession(input: { taskId: string }) {
-    if (!this.acp) throw Error("This process does not serve ACP sessions, so no binding was minted");
-    return this.acp.bind(input);
-  }
   readonly taskControlLifecycle = new TaskControlLifecycle(portsContext(this, ['store', 'resolveTaskControl', 'hostAvailable', 'withHost', 'taskControlDispatcher', 'resolution', 'forceCallerAuthorized', 'selfForceRole']));
 
   readonly engineStop = new EngineStop(portsContext(this, ['resolution', 'store']));

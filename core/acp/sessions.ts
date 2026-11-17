@@ -28,6 +28,8 @@ import type { Engine } from "../engine";
 export const ACP_TURN_WAIT_MAX_MS = 25_000;
 /** How often a held turn re-reads its task while it waits. */
 export const ACP_TURN_POLL_MS = 1_000;
+/** Sessions whose last shown signature is remembered; the oldest is dropped first. */
+export const ACP_SIGNATURE_MEMORY = 512;
 
 export interface AcpMessageReply { receipt: AgentMessageReceipt }
 
@@ -37,6 +39,16 @@ export interface AcpSessionsOptions {
   /** The callback socket the binding points the agent at. */
   socketPath: string;
   pollMs?: number;
+}
+
+/**
+ * Mint a session, or refuse when this process serves none. The catalogue's owner
+ * calls this with the surface the runtime attached, so the refusal is one rule
+ * rather than a check each caller remembers.
+ */
+export function bindAcpSession(acp: AcpSessionSurface | null, input: { taskId: string }): AcpSessionBinding {
+  if (!acp) throw new Error("This process does not serve ACP sessions, so no binding was minted");
+  return acp.bind(input);
 }
 
 export class AcpSessions implements AcpSessionSurface {
@@ -72,7 +84,7 @@ export class AcpSessions implements AcpSessionSurface {
       const messages: string[] = [];
       if (first || this.shown.get(record.sessionId) !== signature) {
         messages.push(acpTaskFinished(task) ? acpFinishedLine(task) : acpLifecycleLine(task));
-        this.shown.set(record.sessionId, signature);
+        this.remember(record.sessionId, signature);
       }
       const release = this.releases.get(record.sessionId);
       if (release !== undefined || acpTaskFinished(task)) {
@@ -106,11 +118,25 @@ export class AcpSessions implements AcpSessionSurface {
     };
   }
 
+  /** Remember one session's last line without letting the map grow with every task ever seen. */
+  private remember(sessionId: string, signature: string): void {
+    if (this.shown.size >= ACP_SIGNATURE_MEMORY && !this.shown.has(sessionId)) {
+      const oldest = this.shown.keys().next();
+      if (!oldest.done) this.shown.delete(oldest.value);
+    }
+    this.shown.set(sessionId, signature);
+  }
+
   /** One bounded wait: a release directive wakes it, otherwise it checks again on the next tick. */
   private wait(sessionId: string, ms: number): Promise<void> {
     return new Promise(resolve => {
       const timers = this.waiting.get(sessionId) ?? new Set<() => void>();
-      const done = () => { timers.delete(done); clearTimeout(timer); resolve(); };
+      const done = () => {
+        timers.delete(done);
+        if (timers.size === 0) this.waiting.delete(sessionId);
+        clearTimeout(timer);
+        resolve();
+      };
       const timer = setTimeout(done, Math.max(1, ms));
       timer.unref?.();
       timers.add(done);

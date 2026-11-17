@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { Engine } from "../core/engine";
 import { Store } from "../core/store/store";
 import { startCallbacks } from "../service/callbacks/callback";
-import { AcpSessions, ACP_TURN_WAIT_MAX_MS } from "../core/acp/sessions";
+import { AcpSessions, ACP_TURN_WAIT_MAX_MS, bindAcpSession } from "../core/acp/sessions";
 import { acpLifecycleLine, acpLifecycleSignature, acpTaskName } from "../core/acp/lifecycle";
 import { acpBindingPath, acpSessionPath, mintAcpSession, readAcpBinding, verifyAcpSession } from "../core/acp/binding";
 import { mkdirSync } from "node:fs";
@@ -108,12 +108,16 @@ test("bind mints an owner-only record and pointer, never puts the token in the r
 test("acp.bind is a catalogue method whose answer carries no credential", async () => {
   const fixture = await acpFixture();
   try {
-    const answer = await callCatalogueMethod(fixture.engine, "acp.bind", { taskId: fixture.taskId }) as Record<string, unknown>;
+    // The served owner is the runtime (test/catalogue.test.ts proves `bindAcpSession`
+    // exists there); this is that handler's one body, reached through the catalogue's
+    // input and output contracts.
+    const owner = { bindAcpSession: (input: { taskId: string }) => bindAcpSession(fixture.engine.acp, input) };
+    const answer = await callCatalogueMethod(owner, "acp.bind", { taskId: fixture.taskId }) as Record<string, unknown>;
     assert.deepEqual(Object.keys(answer).sort(), ["bindingPath", "sessionId", "taskId"]);
     assert.equal(String(answer.bindingPath).includes("token"), false);
     assert.equal(JSON.stringify(answer).includes(readAcpBinding(String(answer.bindingPath)).token), false, "no credential is returned over the wire");
-    await assert.rejects(() => callCatalogueMethod(fixture.engine, "acp.bind", { taskId: "no-such-task", extra: true }), /unrecognized key|Unrecognized/i);
-    await assert.rejects(() => callCatalogueMethod(fixture.engine, "acp.bind", { taskId: "no-such-task" }), /Task not found/);
+    await assert.rejects(() => callCatalogueMethod(owner, "acp.bind", { taskId: "no-such-task", extra: true }), /unrecognized key|Unrecognized/i);
+    await assert.rejects(() => callCatalogueMethod(owner, "acp.bind", { taskId: "no-such-task" }), /Task not found/);
   } finally { await fixture.close(); }
 });
 
@@ -128,8 +132,8 @@ test("a bind refuses a task without a checkout, a removed task, and a process th
     assert.throws(() => fixture.acp.bind({ taskId: bare.id }), /has no workspace checkout yet/);
     fixture.store.update(fixture.taskId, { removedAt: new Date().toISOString() });
     assert.throws(() => fixture.acp.bind({ taskId: fixture.taskId }), /was removed/);
-    const detached = new Engine(fixture.store, { hostId: "host" } as unknown as Adapter, 0);
-    assert.throws(() => detached.bindAcpSession({ taskId: fixture.taskId }), /does not serve ACP sessions/);
+    assert.throws(() => bindAcpSession(null, { taskId: fixture.taskId }), /does not serve ACP sessions/,
+      "a process that serves no ACP sessions mints nothing");
   } finally { await fixture.close(); }
 });
 
