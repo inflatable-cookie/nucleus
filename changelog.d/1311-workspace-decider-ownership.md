@@ -1,0 +1,1 @@
+Workspace archive ownership now recognizes task-scoped reviewer and decider labels, so a task's closed decider thread no longer blocks its workspace archive. Threads labelled for another task or without a task-scoped Nucleus label remain unrelated.

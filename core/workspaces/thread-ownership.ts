@@ -12,9 +12,10 @@ import type { Store } from '../store/store';
  * archive read the same functions.
  */
 
-/** Whether this task owns the thread: it must carry this task's own label. */
+/** Whether this task owns a thread through a task or task-scoped support label. */
 export function ownedByTask(labels: Record<string, string> | undefined, taskId: string): boolean {
-  return historicalWireLabel(labels, 'task') === taskId;
+  const taskScopedLabels = ['task', 'reviewer', 'decider'] as const;
+  return taskScopedLabels.some(label => historicalWireLabel(labels, label) === taskId);
 }
 
 /** Worker history also includes revision runs whose task pointer has moved on. */
