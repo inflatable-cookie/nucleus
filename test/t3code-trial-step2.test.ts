@@ -246,7 +246,7 @@ test('repository hostKind selects the online host of that kind; switching back l
       handoffPath: 'h', originAgentId: 'origin',
     });
     const live = runtime.store.insert(submission, 't3code:env', 'h', 'a'.repeat(40), { hostSelection: accepted.operation.hostSelection });
-    runtime.store.patchRepository({ origin: null, path: '/repo' }, { hostKind: 'paseo' });
+    runtime.store.patchRepository({ origin: null, path: '/repo' }, { hostKind: null });
     assert.equal(runtime.store.task(live.id).hostId, 't3code:env', 'switching the setting never rehosts a live task');
     assert.equal(runtime.engine.selectIngressHost(undefined, '/repo'), 'paseo-primary');
     const next = await runtime.engine.startOperation({

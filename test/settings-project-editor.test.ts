@@ -245,7 +245,7 @@ test('one repository: settings inline; Host, QA, Checks, Reviewer and Merge chec
     assert.deepEqual(app.calls[1], ['repository.set', { repository: 'acme/nucleus', qa: null }], 'an empty command clears qa');
 
     app.calls.length = 0;
-    ui.press('Host for acme/nucleus, Paseo');
+    ui.press('Host for acme/nucleus, Inherit');
     ui.press('Host for acme/nucleus: T3Code');
     await settle(() => app.calls.length === 1, 'host');
     assert.deepEqual(app.calls[0], ['repository.set', { repository: 'acme/nucleus', hostKind: 't3code' }]);

@@ -69,8 +69,8 @@ test('the default host control saves through the dispatch limits Settings callba
   let saved: CapacityAuthorityValues["operatorDefaultHostKind"] | undefined;
   const { ui, done } = await mountLimits({ saveDefaultHost: async (host: CapacityAuthorityValues["operatorDefaultHostKind"]) => { saved = host; } });
   try {
-    const control = ui.get('Default host');
-    control.props.onChange('bb');
+    ui.press('Default host, Paseo');
+    ui.press('Default host: BB');
     await settle(() => saved === 'bb');
     assert.equal(saved, 'bb');
   } finally { done(); }
@@ -83,7 +83,7 @@ test('a full record adds nothing to the screen: Frontier grants is the last sect
     assert.equal(ui.get('Global dispatch limit (slots, 1–64)').props.value, '32');
     assert.doesNotMatch(ui.text(), /Recorded changes|of 20 kept/);
     const titles = ui.ofType('Text').map(node => node.children.join('')).filter(text => ['Usage level', 'Default host', 'Task slots', 'Project overrides', 'Role demand', 'Frontier grants'].includes(text));
-    assert.deepEqual(titles, ['Usage level', 'Default host', 'Task slots', 'Project overrides', 'Role demand', 'Frontier grants']);
+    assert.deepEqual(titles, ['Usage level', 'Default host', 'Default host', 'Task slots', 'Project overrides', 'Role demand', 'Frontier grants']);
   } finally { done(); }
 });
 
