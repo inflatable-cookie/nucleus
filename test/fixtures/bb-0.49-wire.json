@@ -662,5 +662,98 @@
       "olderRowsSourceSeqEnd": null
     },
     "tag": "L5hTTrfuL-NQpDuRQ3TypL"
+  },
+  "interactionQuestion": {
+    "id": "pint_synthetic_question",
+    "threadId": "thr_synthetic",
+    "status": "pending",
+    "statusReason": null,
+    "createdAt": 1794849610461,
+    "expiresAt": null,
+    "resolvedAt": null,
+    "turnId": "turn_synthetic",
+    "providerId": "claude-code",
+    "providerThreadId": "pthr_synthetic",
+    "providerRequestId": "req_synthetic:interaction-1",
+    "origin": {
+      "kind": "provider",
+      "providerId": "claude-code",
+      "providerThreadId": "pthr_synthetic",
+      "providerRequestId": "req_synthetic:interaction-1"
+    },
+    "payload": {
+      "kind": "user_question",
+      "questions": [
+        {
+          "id": "question_synthetic",
+          "prompt": "Proceed with the synthetic probe?",
+          "shortLabel": "Probe",
+          "multiSelect": false,
+          "options": [
+            {
+              "value": "option_synthetic_1",
+              "label": "Proceed",
+              "description": "Continue with the synthetic probe."
+            },
+            {
+              "value": "option_synthetic_2",
+              "label": "Stop",
+              "description": "Do not run the synthetic probe."
+            }
+          ],
+          "allowFreeText": true,
+          "required": true
+        }
+      ]
+    },
+    "resolution": null
+  },
+  "interactionApproval": {
+    "id": "pint_synthetic_approval",
+    "threadId": "thr_synthetic",
+    "status": "pending",
+    "statusReason": null,
+    "createdAt": 1794849610461,
+    "expiresAt": null,
+    "resolvedAt": null,
+    "turnId": "turn_synthetic",
+    "providerId": "claude-code",
+    "providerThreadId": "pthr_synthetic",
+    "providerRequestId": "req_synthetic:interaction-2",
+    "origin": {
+      "kind": "provider",
+      "providerId": "claude-code",
+      "providerThreadId": "pthr_synthetic",
+      "providerRequestId": "req_synthetic:interaction-2"
+    },
+    "payload": {
+      "kind": "approval",
+      "subject": {
+        "kind": "plan",
+        "itemId": "item_synthetic",
+        "plan": "# Add greeting line to fixture.txt\n\n## Context\n`fixture.txt` holds one line: `Synthetic BB proof fixture`. Goal: add a greeting line.\n\n## Steps\n1. Append `Hello from the BB proof fixture.` as a new line at the end of `fixture.txt`. The original line stays as it is.\n2. Run `cat fixture.txt` and `git diff` to confirm the file has exactly two lines and the diff adds only that one line.\n",
+        "planFilePath": "/synthetic/plan.md"
+      },
+      "reason": null,
+      "availableDecisions": [
+        "allow_once",
+        "deny"
+      ]
+    },
+    "resolution": null
+  },
+  "questionResolution": {
+    "kind": "user_answer",
+    "answers": {
+      "question_synthetic": {
+        "selected": [
+          "option_synthetic_1"
+        ]
+      }
+    }
+  },
+  "approvalResolution": {
+    "decision": "allow_once",
+    "grantedPermissions": null
   }
 }

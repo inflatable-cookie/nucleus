@@ -1,0 +1,1 @@
+Workspace archive containment checks fetch preferred branches first and stop once one proves the archived head. The wider fallback uses bounded fetches and tolerates branches disappearing during the proof.

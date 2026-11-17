@@ -133,7 +133,7 @@ test('BB stop observes idle and archive is preceded by cascade proof; foreign de
   assert.equal(f.calls.some(c => c.method === 'threads.archive'), false);
   f.rows.get(agent.id).status = 'idle';
   f.cascades.set(agent.id, ['thr_foreign']);
-  await assert.rejects(f.native.archiveAgent(agent.id), /dependent/);
+  await assert.rejects(f.native.archiveAgent(agent.id), /does not own/);
   assert.equal(f.calls.some(c => c.method === 'threads.archive'), false);
   f.cascades.set(agent.id, []); await f.native.archiveAgent(agent.id);
   const archive = f.calls.findIndex(c => c.method === 'threads.archive');

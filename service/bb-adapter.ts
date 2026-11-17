@@ -1,8 +1,9 @@
 import { HostPolicies } from '../core/host/host-policies';
 import type { Adapter, HostPolicyConstructor } from '../core/host';
-import { ProvenPreSendRefusalError } from '../core/host';
+import { ArchiveNotDeliveredError, ProvenPreSendRefusalError } from '../core/host';
 import { taskWorkspaceTitle } from '../core/workspaces/workspace-title';
-import type { HostAgentSpec, HostWorkspaceRef, HostWorkspaceSpec } from '../shared/host';
+import type { HostAgentSpec, HostPermissionDecision, HostWorkspaceRef, HostWorkspaceSpec } from '../shared/host';
+import type { Profile } from '../shared/contracts';
 import type { Task, Run } from '../shared/contracts';
 import { runTicketPath } from '../core/dispatch/agent-creation';
 import { parseAgentId } from '../shared/agent-identity';
@@ -59,7 +60,7 @@ export function composeBbAdapter(input: {
     readonly admissionLaunchEnv = {};
     readonly testPlacement = undefined;
     isConnected() { return input.connected(); }
-    capabilities() { return { reportingViaMcp: false, supportsCoordinatorRecovery: true, lifecycleDispatch: true, perThreadEnvironment: false, repositorySharedWorkspaces: false }; }
+    capabilities() { return { reportingViaMcp: false, supportsCoordinatorRecovery: true, nativeDecisions: false, lifecycleDispatch: true, perThreadEnvironment: false, repositorySharedWorkspaces: false }; }
     creationOwner() { return { ...super.creationOwner(), perThreadEnvironment: false as const }; }
     nativeAgentCreate(spec: HostAgentSpec, mcp: boolean) {
       if (!input.dataDir || mcp) throw new ProvenPreSendRefusalError('BB dispatch requires helper reporting');
@@ -93,7 +94,53 @@ export function composeBbAdapter(input: {
         };
       } };
     }
-    notify(id: string, messageId: string, text: string) { return threads.send(id, text, messageId); }
+    notify(id: string, messageId: string, text: string) { return threads.deliver(id, text, messageId); }
+    /** A participant message steers a live turn; a proven not-sent steer falls back to one queued send. */
+    steerOrNotify(id: string, messageId: string, text: string) { return threads.steerOrNotify(id, text, messageId); }
+    pendingQuestions(id: string) { return threads.pendingQuestions(id); }
+    async answerNativeQuestion(agent: string, workspace: string, requestId: string, answers: Record<string, string>) {
+      this.requireQuestionThread(agent, workspace);
+      await threads.answerQuestion(agent, requestId, answers);
+    }
+    async answerNativePermission(agent: string, workspace: string, requestId: string, decision: HostPermissionDecision, intentId: string) {
+      this.requireQuestionThread(agent, workspace);
+      await threads.answerPermission(agent, requestId, decision, intentId);
+    }
+    async dismissNativeQuestion(agent: string, workspace: string, requestId: string) {
+      this.requireQuestionThread(agent, workspace);
+      await threads.dismissQuestion(agent, requestId);
+    }
+    /** The thread and its workspace are proven before anything is written. */
+    private requireQuestionThread(agent: string, workspace: string) {
+      const recorded = threads.recordedAgent(agent);
+      if (!recorded || recorded.workspaceId !== workspace) throw new ProvenPreSendRefusalError('Question thread identity or workspace changed');
+    }
+    /** The planner ask is one queued send; its answer arrives through the relayed reply, not chat output. */
+    async askPlanner(planner: string, ask: { prompt: string; signal: AbortSignal; timeoutMs: number; messageId: string; sourceAgentId?: string }) {
+      if (ask.signal.aborted) throw new ProvenPreSendRefusalError('The ask was abandoned before delivery');
+      await threads.deliver(planner, ask.prompt, ask.messageId);
+      return null;
+    }
+    async askReviewer(reviewer: string, ask: { prompt: string; signal: AbortSignal; timeoutMs: number; messageId: string; sourceAgentId?: string }) {
+      if (ask.signal.aborted) throw new ProvenPreSendRefusalError('The ask was abandoned before delivery');
+      await threads.deliver(reviewer, ask.prompt, ask.messageId);
+      return null;
+    }
+    /** A short-lived decider thread in the task worktree; core delivers the question and archives it. */
+    async runDecider(task: Task, ask: { profile: Profile; signal: AbortSignal; timeoutMs: number; decisionId: string }) {
+      if (ask.signal.aborted) throw new ProvenPreSendRefusalError('The decider was abandoned before creation');
+      if (!task.workspaceId) throw new ProvenPreSendRefusalError('BB decider needs the task workspace');
+      const created = await threads.createSupportThread({ task: task.id, workspaceId: task.workspaceId, role: 'decider', key: `decider-${ask.decisionId}`,
+        title: `${task.number ? `#${task.number} ` : ''}decider: ${task.title}`, profile: ask.profile });
+      return { agentId: created.id, text: null };
+    }
+    /** A consult reviewer keeps BB's one-worktree-per-task shape and is archived at closeout. */
+    async createConsultReviewer(task: Task, consult: { profile: Profile; id: string }) {
+      if (!task.workspaceId) throw new ProvenPreSendRefusalError('BB consult reviewer needs the task workspace');
+      const created = await threads.createSupportThread({ task: task.id, workspaceId: task.workspaceId, role: 'reviewer', key: `consult-${consult.id}`,
+        title: `${task.number ? `#${task.number} ` : ''}reviewer: ${task.title}`, profile: consult.profile });
+      return { id: created.id, workspaceId: created.workspaceId };
+    }
     findWorkspaces = (task: Task) => workspaces.findWorkspaces(task);
     workspaceAvailable(id: string) { return workspaces.workspaceAvailable!(id); }
     workspaceIdAccepted(id: unknown) { return workspaces.workspaceIdAccepted!(id); }
@@ -107,7 +154,14 @@ export function composeBbAdapter(input: {
       return { id, workspaceId: row.workspaceId, title: '', archived: row.status === 'closed', labels: row.labels };
     }
     stopAgentTurn(id: string) { return threads.stopAgentTurn(id); }
-    archiveAgent(id: string) { return threads.archiveAgent(id); }
+    archiveAgent(id: string) {
+      // A refusal the adapter or the plugin proves before its write is a not-delivered
+      // archive, so the durable effect stays ready instead of reading as uncertain.
+      return threads.archiveAgent(id).catch(error => {
+        if (input.notSent(error) || error instanceof ProvenPreSendRefusalError) throw new ArchiveNotDeliveredError(error);
+        throw error;
+      });
+    }
     catalog() { return threads.catalog(); }
     async profiles() { return []; }
     agentTimelinePage(id: string) { return threads.timeline(id); }
@@ -134,6 +188,12 @@ export function composeBbAdapter(input: {
     }
     async reconcileThreadTitles(tasks: readonly Task[]) {
       for (const task of tasks) {
+        // BB's parent link is presentation: a reparented task moves each of its own
+        // threads under the new planner, observation first and once per parent.
+        if (task.agentId) {
+          try { await threads.reparentTaskThreads(task.id, threads.parent(task.id)); }
+          catch { /* an unreadable or unknown write is retried only by observation on the next sweep */ }
+        }
         // BB keeps released support roles visible, but a replaced worker is owed
         // archive as soon as its run and native turn have both ended.
         for (const retired of task.retiredWorkers) {

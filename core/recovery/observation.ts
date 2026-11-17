@@ -121,7 +121,7 @@ export class Observation {
           const current = this.store.task(task.id);
           if (!current.workerModels.includes(state.model)) this.store.update(task.id, { workerModel: state.model, workerModels: [...new Set([...current.workerModels, state.model])] });
         }
-        run = { ...this.store.run(run.id)!, active: busy, lastObservedAt: observationStartedAt, idleSince: busy ? null : run.idleSince ?? observationStartedAt };
+        run = { ...this.store.run(run.id)!, active: busy, lastObservedAt: observationStartedAt, lastActivityAt: state.updatedAt || null, idleSince: busy ? null : run.idleSince ?? observationStartedAt };
         this.store.putRun(run);
         if (settlementHeld(this.store, this.resolution.stopped()) || run.released) continue;
         if (dispatchBlocked(this.store.task(task.id))) {

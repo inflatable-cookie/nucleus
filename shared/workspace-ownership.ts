@@ -26,3 +26,8 @@ export function workspaceOutsideQueueAllocation(task: Pick<Task, "workspaceOwner
   return Boolean(entry && entry.preserveWorkspace === false && task.workspaceId
     && task.directory && entry.workspaceId === task.workspaceId && entry.directory === task.directory);
 }
+
+/** Intake-created review entries are Queue-owned for closeout, but placed by intake. */
+export function intakeOwnedReviewWorkspace(task: Pick<Task, "workspaceOwnership" | "reviewEntry" | "workspaceId" | "directory">): boolean {
+  return !externalWorkspace(task) && workspaceOutsideQueueAllocation(task);
+}

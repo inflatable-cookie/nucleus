@@ -27,6 +27,13 @@
  * provisioning and never reads the turn's outcome, so nothing here depends on a
  * model answering.
  *
+ * `--record-interactions` adds an opt-in recording pass (Spec 062, phase 4): it
+ * spawns two probe threads on an authenticated provider, lets one raise a native
+ * question and the other a plan approval, records the raw SDK rows the plugin read
+ * and the resolutions it wrote, and leaves them in the run's scratch root. Unlike
+ * the default proof, that pass depends on a provider answering, so it never runs
+ * unless it is asked for.
+ *
  * It refuses to run against the operator's live BB data directory and reports what
  * it looked for when it cannot find an installed BB. Everything it creates lives in
  * one scratch directory it makes under this run's TMPDIR.
@@ -85,6 +92,10 @@ export function assertIsolatedDataDir(input: IsolationInput): { ok: true } | { o
 interface Args {
   provider: string;
   keep: boolean;
+  /** Opt-in provider interaction recording (needs an authenticated provider). */
+  recordInteractions: boolean;
+  recordProvider: string;
+  recordModel: string | null;
   /** Only ever used to demonstrate the refusal: the proof runs in its own root. */
   dataDir: string | null;
   bbApp: string | null;
@@ -93,10 +104,13 @@ interface Args {
 }
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { provider: "pi", keep: false, dataDir: null, bbApp: null, serverPort: null, daemonPort: null };
+  const args: Args = { provider: "pi", keep: false, recordInteractions: false, recordProvider: "claude-code", recordModel: null, dataDir: null, bbApp: null, serverPort: null, daemonPort: null };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--keep") args.keep = true;
+    else if (arg === "--record-interactions") args.recordInteractions = true;
+    else if (arg === "--record-provider") args.recordProvider = argv[++i] ?? args.recordProvider;
+    else if (arg === "--record-model") args.recordModel = argv[++i] ?? null;
     else if (arg === "--provider") args.provider = argv[++i] ?? args.provider;
     else if (arg === "--data-dir") args.dataDir = argv[++i] ?? null;
     else if (arg === "--bb-app") args.bbApp = argv[++i] ?? null;
@@ -537,6 +551,91 @@ let sdkRoot: any;
     const finalInventory = await send<{ rows: Array<{ threadId: string; archivedAt: number | null }> }>("thread.inventory", { projectId: workspace.value.projectId, archived: true });
     assert.ok(finalInventory.value.rows.every(row => row.archivedAt !== null), "everything this run created is archived");
     note("teardown-archived", true, { archivedThreads: finalInventory.value.rows.length, closedTerminals: 2 });
+
+    // 14. Opt-in (Spec 062, phase 4): record real provider interaction rows. The default
+    // proof never depends on a model answering; this pass does, so it only runs when asked.
+    if (args.recordInteractions) {
+      const models: string[] = [];
+      const collectModels = (value: unknown) => {
+        if (Array.isArray(value)) { for (const item of value) collectModels(item); return; }
+        if (!value || typeof value !== "object") return;
+        const record = value as Record<string, unknown>;
+        if (typeof record.model === "string" && record.model && !models.includes(record.model)) models.push(record.model);
+        for (const item of Object.values(record)) collectModels(item);
+      };
+      // A just-restarted provider reports its catalog a moment later; wait a bounded
+      // window for it rather than failing the recording pass on a cold catalog.
+      const catalogDeadline = Date.now() + 90_000;
+      while (!models.length && Date.now() < catalogDeadline) {
+        const catalog = await cliJson<unknown>(["provider", "models", args.recordProvider, "--json"]).catch(() => null);
+        collectModels(catalog);
+        if (!models.length) await delay(2_000);
+      }
+      const model = args.recordModel ?? models[0];
+      assert.ok(model, `the ${args.recordProvider} provider listed no model to run the interaction probes on`);
+      const waitInteraction = async (threadId: string, kind: string, timeoutMs = 180_000) => {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+          const listed = await send<{ interactions: Array<{ interactionId: string; kind: string; status: string; questions?: Array<{ id: string; header: string; options: Array<{ label: string; value: string }>; allowFreeText: boolean }>; decisions?: string[] }> }>("thread.interactions", { threadId });
+          const found = listed.value.interactions.find(item => item.kind === kind && (item.status === "pending" || item.status === "resolving"));
+          if (found) return found;
+          await delay(1_000);
+        }
+        throw new Error(`the ${kind} interaction never appeared on ${threadId}`);
+      };
+      const retireProbe = async (threadId: string) => {
+        await send("thread.stop", { threadId });
+        const threadCascade = await send<Cascade>("thread.cascade", { threadId, action: "archive" });
+        await send("thread.archive", { threadId, expectedCascadeThreadIds: threadCascade.value.cascadeThreadIds });
+      };
+
+      // A native question: the probe thread asks one and waits for the answer.
+      const questionThread = await send<Attached>("run.attach", {
+        projectId: workspace.value.projectId, title: "Synthetic question probe", environmentPath: worktree,
+        parentNotifications: "off", providerId: args.recordProvider, model, permissionMode: "accept-edits",
+        prompt: "Use your AskUserQuestion tool right now to ask: \"Proceed with the synthetic probe?\" with exactly two options, \"Proceed\" and \"Stop\". Then stop and wait for the answer.",
+        pluginMetadata: { nucleus: { task: "spike", run: "question-probe" } },
+      });
+      const question = await waitInteraction(questionThread.value.threadId, "user_question");
+      assert.ok(question.questions?.length, "the recorded question names at least one question");
+      const offered = question.questions![0]!;
+      assert.ok(offered.options.length >= 2, "the recorded question offers a choice");
+      assert.notEqual(offered.options[0]!.label, offered.options[0]!.value, "a real provider gives an option a wire value distinct from its label");
+      // The label is what the operator picks; the plugin must send the option's value.
+      const answered = await send<{ status: string; resolutionKind: string }>("thread.interaction.respond", {
+        threadId: questionThread.value.threadId, interactionId: question.interactionId,
+        answer: { kind: "question", answers: { [offered.header]: offered.options[0]!.label } },
+      });
+      assert.ok(["resolved", "resolving"].includes(answered.value.status), "the question answer is accepted");
+      await retireProbe(questionThread.value.threadId);
+
+      // An approval: the plan-mode probe thread proposes a plan and waits for a decision.
+      const approvalThread = await cliJson<{ id: string }>(["thread", "spawn", "--json", "--project", workspace.value.projectId,
+        "--machine", machines.id, "--environment", worktree, "--provider", args.recordProvider, "--model", model,
+        "--permission-mode", "accept-edits", "--plan", "--title", "Synthetic approval probe",
+        "--prompt", "Make a plan with two short steps to add a greeting line to fixture.txt. Stop after presenting the plan."]);
+      const approval = await waitInteraction(approvalThread.id, "approval");
+      assert.ok(approval.decisions?.includes("allow_once"), "the recorded approval offers allow_once");
+      const decided = await send<{ status: string; resolutionKind: string }>("thread.interaction.respond", {
+        threadId: approvalThread.id, interactionId: approval.interactionId, answer: { kind: "permission", decision: "accept" },
+      });
+      assert.ok(["resolved", "resolving"].includes(decided.value.status), "the approval answer is accepted");
+      await retireProbe(approvalThread.id);
+
+      // Keep the raw SDK rows and resolutions the plugin actually read and wrote.
+      const lines = readFileSync(wirePath, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line) as { method?: string; args?: unknown[]; result?: unknown });
+      const rawQuestion = lines.filter(line => line.method === "threads.interactions.list").flatMap(line => (line.result as Array<{ id?: string }> | undefined) ?? []).find(row => row.id === question.interactionId);
+      const rawApproval = lines.filter(line => line.method === "threads.interactions.list").flatMap(line => (line.result as Array<{ id?: string }> | undefined) ?? []).find(row => row.id === approval.interactionId);
+      const resolutions = lines.filter(line => line.method === "threads.interactions.resolve").map(line => ({ args: line.args, result: line.result }));
+      assert.ok(rawQuestion && rawApproval, "the raw provider interaction rows were recorded from this isolated server");
+      const recordedQuestionResolution = resolutions.find(entry => JSON.stringify(entry.args).includes(question.interactionId));
+      const recordedApprovalResolution = resolutions.find(entry => JSON.stringify(entry.args).includes(approval.interactionId));
+      assert.ok(recordedQuestionResolution && recordedApprovalResolution, "both resolutions were recorded");
+      writeFileSync(join(proofRoot, "provider-interactions.json"), JSON.stringify({ provider: args.recordProvider, model, question: rawQuestion, approval: rawApproval, resolutions: [recordedQuestionResolution, recordedApprovalResolution] }, null, 2));
+      note("provider-interactions-recorded", true, { file: "provider-interactions.json", provider: args.recordProvider,
+        questionKind: question.kind, questionOptions: offered.options.length, optionLabelDiffersFromValue: true,
+        approvalKind: approval.kind, approvalDecisions: approval.decisions, answered: [answered.value.status, decided.value.status] });
+    }
 
     writeFileSync(join(proofRoot, "evidence.json"), JSON.stringify(evidence, null, 2));
     console.log(`\nEvidence retained in this run's scratch directory (evidence.json, server logs, plugin sources).`);

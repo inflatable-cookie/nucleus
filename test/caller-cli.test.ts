@@ -2,6 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { callerCliFixture } from './support/caller-cli-fixture';
+import { callerSource } from '../shared/caller.mjs';
+import { hostCallerIdentity } from '../bin/queue-client.mjs';
+import { formatAgentId } from '../shared/agent-identity';
 
 const commands = [
   ['project.qa.run',{repository:'owner/repo'},'submitterAgentId'],
@@ -76,6 +79,35 @@ test('a refused participant ticket cannot fall through to host identity or send 
     const result=await f.invoke('participant','queue-cli.mjs',['project.set-planner','-'],{key:'project',agentId:'thread'},{PASEO_AGENT_ID:'host-fallback-thread'});
     assert.notEqual(result.code,0);assert.match(result.stderr,/revoked or invalid/);assert.equal(f.calls.length,0);assert.equal(f.hostResolutions.length,0);
   } finally {await f.close();}
+});
+
+test('caller source precedence is ticket, T3Code, then Paseo, and incomplete T3 identity fails closed', async () => {
+  const f = await callerCliFixture();
+  try {
+    const ticket = callerSource({ NUCLEUS_TICKET: `${f.dir}/run.json`, T3CODE_THREAD_ID: 't3-thread',
+      T3CODE_DESKTOP_HOST_SCOPE: 'synthetic', PASEO_AGENT_ID: 'paseo-thread' }, hostCallerIdentity);
+    assert.deepEqual(ticket, { source: 'ticket', path: `${f.dir}/run.json` });
+    assert.deepEqual(callerSource({ T3CODE_THREAD_ID: ' t3-thread ', T3CODE_DESKTOP_HOST_SCOPE: ' synthetic ',
+      PASEO_AGENT_ID: 'paseo-thread' }, hostCallerIdentity),
+    { source: 'host', hostKind: 't3code', nativeAgentId: 't3-thread', hostScope: 'synthetic' });
+    assert.deepEqual(callerSource({ PASEO_AGENT_ID: ' paseo-thread ' }, hostCallerIdentity),
+      { source: 'host', hostKind: 'paseo', nativeAgentId: 'paseo-thread' });
+    assert.throws(() => callerSource({ T3CODE_THREAD_ID: 't3-thread', PASEO_AGENT_ID: 'paseo-thread' }, hostCallerIdentity),
+      /T3Code caller identity is incomplete/);
+  } finally { await f.close(); }
+});
+
+test('decision.add records the canonical caller resolved from the T3 thread environment', async () => {
+  const f = await callerCliFixture();
+  try {
+    const result = await f.invoke('none', 'queue-cli.mjs', ['decision.add', '-'],
+      { question: 'Which planning lane?', options: ['A', 'B'], recommendation: 'A' },
+      { T3CODE_THREAD_ID: 'synthetic-t3-thread', T3CODE_DESKTOP_HOST_SCOPE: 'synthetic-environment' });
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /Synthetic caller payload received/);
+    assert.deepEqual(f.hostResolutions, [{ hostKind: 't3code', nativeAgentId: 'synthetic-t3-thread', hostScope: 'synthetic-environment' }]);
+    assert.equal(f.calls.at(-1)?.input.askedBy, formatAgentId('t3code:synthetic-environment', 'synthetic-t3-thread'));
+  } finally { await f.close(); }
 });
 
 test('CLI helpers prefer the current continuation ticket and refuse a mismatched run', async () => {

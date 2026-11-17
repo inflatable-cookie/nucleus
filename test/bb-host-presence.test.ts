@@ -193,3 +193,44 @@ test("the BB plugin declares the executor role, claims the one bridge presence, 
     await service.stop();
   }
 });
+
+test("a plugin failure carrying its own code is unknown delivery, never a malformed refusal", async () => {
+  const dir = socketFixtureDirectory("queue-service.sock");
+  const service = new QueueService({ owner: { dataDir: dir, timers: false }, fixture: "fake" });
+  await service.start();
+  const info = readServiceInfo(dir)!;
+  const dataDir = `${dir}/bb-data`;
+  const hostId = hostIdFromDataDir(dataDir);
+  const owner = new ServiceClient({ socketPath: info.socketPath, credential: info.credential });
+  // A Node or SDK failure can carry its own `code` (ENOENT and friends). The channel
+  // must answer `internal`, because forwarding that code would make the service read a
+  // real post-write failure as a refusal it may safely retry.
+  const operations = {
+    async execute(op: string) {
+      if (op === "identity.probe") return { operation: op, at: new Date().toISOString(), calls: {}, value: { dataDir, bbVersion: "0.49.0", sdkVersion: "0.6.132", hostIds: ["host_synthetic"] } };
+      throw Object.assign(new Error("the provider process could not start"), { code: "ENOENT" });
+    },
+    counters: () => ({ counters: {}, loadedAt: 0 }),
+  };
+  const controller = new AbortController();
+  const running = runHostChannel({
+    serviceDataDir: dir,
+    operations: operations as never,
+    declaration: () => ({ dataDir, bbVersion: "0.49.0", sdkVersion: "0.6.132" }),
+    log: silent, signal: controller.signal, backoff: { minMs: 20, maxMs: 100 }, heartbeatMs: 100,
+  });
+  try {
+    await owner.connect();
+    await waitUntil(() => (service.hostExecutorIds().includes(hostId) ? true : undefined), "the plugin declares the role");
+    await assert.rejects(
+      () => owner.request("service.bb-host-operation", { hostId, op: "thread.observe", input: { threadId: "thr_synthetic" } }),
+      /answered internal after the request was written: the provider process could not start/,
+      "the executor's own failure code is not forwarded as a refusal",
+    );
+  } finally {
+    controller.abort();
+    await running.catch(() => {});
+    await owner.close();
+    await service.stop();
+  }
+});

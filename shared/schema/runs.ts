@@ -4,6 +4,7 @@ import { hostSelectionSchema } from "../host-selection";
 import { taskPhaseSchema } from "../schema/task-primitives";
 import { pausedStopSchema, siblingPinSchema } from "./workspace";
 import { completionSchema, mechanicalReviewProofSchema, rejectedReviewReadingSchema, reviewCheckpointRecordSchema, reviewContinuationIntentSchema, reviewDeliveryAuthorizationSchema } from "./review";
+import { qualificationBindingSchema } from "./review/proof";
 import { profileSchema } from "./settings";
 
 /** Durable bounded retry state for provider errors that can recover in the same thread. */
@@ -105,6 +106,12 @@ export const runSchema = z.object({
     }).strict().optional(),
     returnPhase: taskPhaseSchema,
     authorizedBy: z.object({ role: z.enum(['project_owner', 'operator', 'authorized_relay', 'delegated', 'queue_dispatch']), caller: z.string().nullable().default(null), note: z.string().nullable().default(null) }).strict(),
+    /**
+     * Spec 064 P1: the qualification binding this run carries. The subject is
+     * fixed at dispatch; the execution half is bound at the one host-run submit
+     * seam, before any effect, and never by a client-supplied claim.
+     */
+    qualification: qualificationBindingSchema.optional(),
   }).strict().optional(),
   generation: z.number(), head: z.string(), base: z.string(), agentId: z.string().nullable(), workspaceId: z.string(),
   instruction: z.string().max(12000).nullable().optional(),
@@ -161,7 +168,7 @@ export const runSchema = z.object({
   /** Queue #650: this run's active turn was stopped while Queue was paused (unresolved until it resumes). */
   pausedStop: pausedStopSchema.optional(),
   profile: profileSchema.nullable(), status: z.enum(["intent", "running", "stopped", "finished", "superseded", "uncertain"]),
-  createdAt: z.string(), lastObservedAt: z.string().nullable(), active: z.boolean().nullable(), idleSince: z.string().nullable(),
+  createdAt: z.string(), lastObservedAt: z.string().nullable(), lastActivityAt: z.string().nullable().optional(), active: z.boolean().nullable(), idleSince: z.string().nullable(),
   completion: completionSchema.nullable(), released: z.boolean(),
   /** Spec 058 slice 1: usage observed on this run's agent; absent until Queue observes a turn. */
   usage: runUsageSchema.optional(),

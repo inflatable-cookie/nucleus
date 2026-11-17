@@ -1,5 +1,6 @@
 import type { HostProcessFact, HostWorktreeWorkspaceSpec } from "../../host/types";
 import type { Task } from "../../../shared/contracts";
+import { intakeOwnedReviewWorkspace } from "../../../shared/workspace-ownership";
 import { workspaceOutsideQueueAllocation } from "../../../shared/workspace-ownership";
 import type { HostWorkspaceRef } from "../../../shared/host";
 import { existsSync } from "node:fs";
@@ -64,7 +65,7 @@ export class WorkspaceContinuation {
     // placement. The latter still receive a direct volume check; every binding
     // is then checked against the retained workspace's own record and folder.
     if (placement && workspaceOutsideQueueAllocation(task)) {
-      try { if (task.reviewEntry?.preserveWorkspace === false) placement.admit(task.directory); }
+      try { if (intakeOwnedReviewWorkspace(task)) (placement.admitIntake ?? placement.admit)(task.directory); }
       catch (error) { return unavailable(error instanceof Error ? error.message : String(error)); }
     } else if (placement) {
       try { if (task.directory === await this.host.ownedPathFor(task)) placement.admit(task.directory); }

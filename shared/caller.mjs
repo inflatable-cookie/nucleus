@@ -49,7 +49,8 @@ export async function resolveCaller({ env = process.env, hostIdentity, resolveHo
   const selected = source ?? callerSource(env, hostIdentity);
   if (selected.source === 'host') {
     if (!resolveHost) throw new Error('Host caller resolution is unavailable');
-    return resolveHost({ hostKind: selected.hostKind, nativeAgentId: selected.nativeAgentId });
+    return resolveHost({ hostKind: selected.hostKind, nativeAgentId: selected.nativeAgentId,
+      ...(selected.hostScope ? { hostScope: selected.hostScope } : {}) });
   }
   const rollProgress = callerRollProgress(dataHome(env));
   if (rollProgress) throw new Error(rollProgress);

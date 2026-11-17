@@ -260,6 +260,11 @@ export async function bindStagedHostRunSocket(
   };
   return handoff;
 }
+/**
+ * Spec 064 P4: the one combined capture artifact a qualification run keeps. An
+ * ordinary run keeps `stdout` and `stderr` instead and never creates this file.
+ */
+export const QUALIFICATION_RAW_LEAF = "qualification.raw";
 export const hostRunRunDir = (stateDir: string, runId: string) => join(stateDir, "runs", runId);
 /** One run's supervisor plan, live state, cancel request, output and result. */
 export function hostRunSupervisorPaths(stateDir: string, runId: string) {
@@ -272,6 +277,7 @@ export function hostRunSupervisorPaths(stateDir: string, runId: string) {
     disconnectPath: join(root, "disconnect.json"),
     stdoutPath: join(root, "stdout"),
     stderrPath: join(root, "stderr"),
+    qualificationRawPath: join(root, QUALIFICATION_RAW_LEAF),
     resultPath: join(root, "result.json"),
     submissionPath: join(root, "submission.json"),
     retentionPath: join(root, "output.retention.json"),
@@ -380,6 +386,25 @@ export interface HostRunTraversalHooks {
   afterChainCheck?: () => void;
   /** Runs after the target open and before the post-open re-`lstat`. */
   afterOpen?: () => void;
+  /**
+   * Spec 064 P4: runs immediately before the publication directory fsync. A
+   * throw is a directory-sync fault at that exact point, reported in the
+   * publication record rather than escaping as an unexplained failure.
+   */
+  beforeDirectorySync?: () => void;
+}
+
+/**
+ * Spec 064 P4: what one verified write proved durable. The file's own bytes are
+ * `durable` only after its fsync and verified post-open re-`lstat`; the published
+ * directory entry is a separate fact. Its fault used to be silent, so callers
+ * read a publication as durable when only the rename had happened.
+ */
+export interface VerifiedOwnedFilePublication {
+  path: string;
+  bytes: number;
+  fileSync: "durable";
+  directorySync: { state: "synced" } | { state: "faulted"; reason: string };
 }
 
 /** A realpath is inside the owned subtree only when it equals the root or is below it. */
@@ -552,13 +577,18 @@ export function openVerifiedOwnedFile(stateDir: string, parts: string[], flags: 
   return openVerifiedTarget(realpathSync(stateDir), parts, flags, mode, hooks);
 }
 
-function fsyncDirectory(path: string): void {
+/**
+ * Sync one directory's entry, naming the fault instead of dropping it: a caller
+ * that needs durable visibility now has the fact it needs to refuse.
+ */
+function syncDirectory(path: string): { state: "synced" } | { state: "faulted"; reason: string } {
   let fd: number | null = null;
   try {
     fd = openSync(path, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0));
     fsyncSync(fd);
-  } catch { /* the rename is already durable; a directory fsync failure is not fatal */ }
-  finally { if (fd !== null) closeSync(fd); }
+    return { state: "synced" };
+  } catch (error) { return { state: "faulted", reason: readFailureText(error) }; }
+  finally { if (fd !== null) { try { closeSync(fd); } catch { /* the entry's fault is already the report */ } } }
 }
 
 /** Write a temporary file in the same directory, fsync, then rename over the target. */
@@ -574,7 +604,7 @@ export function writeAtomicOwnedFile(path: string, payload: Buffer | string, mod
  * every ancestor are re-`lstat`ed afterwards; any difference removes the target
  * and refuses.
  */
-export function writeVerifiedOwnedFile(stateDir: string, parts: string[], payload: Buffer | string, mode = 0o600, hooks?: HostRunTraversalHooks): void {
+export function writeVerifiedOwnedFile(stateDir: string, parts: string[], payload: Buffer | string, mode = 0o600, hooks?: HostRunTraversalHooks): VerifiedOwnedFilePublication {
   const root = realpathSync(stateDir);
   ensureTraversalParents(root, parts);
   const entries = statTraversalChain(root, parts.slice(0, -1), "directory");
@@ -591,7 +621,14 @@ export function writeVerifiedOwnedFile(stateDir: string, parts: string[], payloa
   hooks?.afterOpen?.();
   try { reverifyTraversalChain(root, entries, "directory", true); }
   catch (error) { try { unlinkSync(path); } catch { /* best effort */ } throw error; }
-  fsyncDirectory(parentPath);
+  const directorySync = (() => {
+    try { hooks?.beforeDirectorySync?.(); return syncDirectory(parentPath); }
+    catch (error) { return { state: "faulted" as const, reason: readFailureText(error) }; }
+  })();
+  return {
+    path, bytes: typeof payload === "string" ? Buffer.byteLength(payload) : payload.length,
+    fileSync: "durable", directorySync,
+  };
 }
 
 /** Append to one file under the owned subtree with the verified chain. */

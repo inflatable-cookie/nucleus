@@ -1,0 +1,1 @@
+The Nucleus CLI now resolves T3Code threads as callers using their thread ID and registered host scope. Nucleus verifies the thread on that host before recording its canonical identity, and T3 caller replies use the existing delivery path.

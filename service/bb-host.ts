@@ -193,6 +193,7 @@ export function createBbWorkspaceAdapter(
     capabilities: () => ({
       reportingViaMcp: false,
       supportsCoordinatorRecovery: true,
+      nativeDecisions: false,
       lifecycleDispatch: false,
       perThreadEnvironment: false,
       repositorySharedWorkspaces: false,

@@ -94,6 +94,59 @@ Exactly one of `exitCode` and `signal` is non-null. Because the record outlives
 both the supervisor and the scheduler, a restart settles finished runs by what
 actually happened.
 
+### Private qualification mode (Spec 064 P1–P4)
+
+The supervisor plan and the cancel request are queue-private records; contract
+010's client protocol and its frozen result/state records are not changed by
+this mode. An ordinary plan and an ordinary cancel record keep their exact
+bytes, so nothing here is a rollback break.
+
+- `stopMode: qualification_direct` (private, optional) selects a cooperative stop
+  that signals **only** the still-held direct command with SIGTERM. No process
+  group, no escaped descendant and no SIGKILL escalation is sent, including from
+  fallback paths, and the supervisor is never stopped as a cleanup shortcut. A
+  service-level stop route that knows the mode declines instead of signalling.
+  A cancel request persists the mode beside its reason. An **absent** plan keeps
+  Contract 010's group stop; a plan that exists but cannot be read is `unknown`,
+  and unknown evidence never becomes affirmative group mode: the endpoint records
+  the durable request without claiming a mode and signals no group.
+- `qualification` (private, optional) carries the subject/execution binding a
+  qualification submit resolved: task, participant run, authorization and
+  operation, brief version and digest, published head and tree, the ordered
+  input digests, the declared selector, and the bound host run/epoch, executable
+  digest, literal argv, cwd and the canonical digest of the **complete effective
+  environment values** — every value the command receives, built by the same
+  environment owner the launcher uses, so the one per-launch secret is inside the
+  digest while only its expiry is recorded, and the process-start marker is
+  derived from the immutable subject rather than chosen at spawn. The launch
+  re-checks that complete effective environment — marker included, supplied by
+  the same owner — before it writes the plan or spawns, and the supervisor
+  inherits the subject-derived marker instead of a fresh random one. No
+  qualification path writes a token key: the resolution signs with a key the
+  endpoint already holds, and an endpoint with no key for the epoch refuses the
+  resolution instead of creating one. With the field absent every existing
+  behaviour is unchanged: qualification mode is opt-in at the proof declaration
+  (`queue.proofExecution.qualification: true`), an ordinary proof execution
+  records no qualification binding at all, and a declared opt-in is refused by the
+  proof-activation table and the dispatch funnel before any executor run exists.
+- A plan carrying either field is refused by the supervisor before its first
+  write or spawn while Spec 064 P5–P7 are unimplemented: `qualification
+  foundation incomplete`. The endpoint's private `submitQualification` method
+  authenticates the executor run's own credential, resolves that subject from
+  Queue's records, rechecks `verifyProofSource`, and then refuses before any
+  submit write. A host-run token and a client-supplied caller grant nothing.
+- Contract 010's stop, retention and result records are unchanged for every
+  ordinary run, including the group TERM/SIGKILL stages. Its capture is unchanged
+  too: an ordinary run appends `stdout` and `stderr` with the token redacted and
+  the 8 MiB per-stream cap. A private opt-in qualification capture instead keeps
+  one mode-0600 `qualification.raw` — `NQRAW001` plus 22-byte big-endian frames,
+  one EOF and one DRAIN per stream, hashes and the size identity accumulated as
+  the frames land — with no per-stream file, cap, redaction, archive or second
+  full copy. `writeVerifiedOwnedFile` reports the published directory entry
+  separately from the file's own fsync instead of swallowing that fault. While the
+  staged refusal stands no plan reaches that capture: nothing creates
+  `qualification.raw`, and the artifact has no reader, UI or export path.
+
 ### Start identity
 
 A start identity is `<pid>@<basis>`, compared only as an exact string, never

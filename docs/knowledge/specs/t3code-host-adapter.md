@@ -23,6 +23,23 @@ checkout path as a fallback when origin is unavailable. An origin-only settings
 row is sufficient to select the host.
 Registering a transport must not make an unsupported task workflow executable.
 
+## Calling thread identity
+
+When no `NUCLEUS_TICKET` is present, the CLI reads `T3CODE_THREAD_ID` and
+`T3CODE_DESKTOP_HOST_SCOPE` as the T3 caller source. The scope names the
+registered T3 environment (`t3code:<environmentId>`); the service accepts it
+only when that exact host is online, then asks its adapter to observe the thread.
+Missing, mismatched, deleted or unreadable threads refuse caller resolution before
+any caller-bound command is sent. A verified caller is recorded as the canonical
+host-qualified identity. This is caller attribution only and follows the same
+command permissions as a Paseo caller.
+
+Source precedence is Nucleus ticket, T3Code identity, then Paseo's
+`PASEO_AGENT_ID`. A ticket refusal never falls through. When T3 and Paseo
+environment values coexist, T3 wins; a partial T3 identity refuses rather than
+using Paseo. Replies to `ask` and `tell` use the existing host-qualified T3
+delivery path.
+
 ## Protocol and connection
 
 The implementation lives behind `hosts/t3code/index.ts`. Its small RPC client

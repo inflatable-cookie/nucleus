@@ -98,16 +98,58 @@ export async function originBranchContaining(directory: string, head: string, pr
     .map(([sha, ref]) => [ref!.slice("refs/heads/".length), sha!] as const));
   const before = await advertised();
   if (!before.size) return null;
-  // Fetch objects without touching shared remote-tracking refs or FETCH_HEAD:
-  // other worktrees may be merging or fetching at the same time.
-  await git(directory, "fetch", "--no-tags", "--no-write-fetch-head", "--refmap=", "origin", ...[...before.keys()].map(name => `refs/heads/${name}`));
-  const live = await advertised();
+  const fetchRef = (name: string) => git(directory, "fetch", "--no-tags", "--no-write-fetch-head", "--refmap=", "origin", `refs/heads/${name}`);
+  const live = new Map<string, string>();
+  const prove = async (names: readonly string[]) => {
+    // Fetch objects without touching shared remote-tracking refs or FETCH_HEAD:
+    // other worktrees may be merging or fetching at the same time. Small
+    // batches keep argv bounded even when a repository has thousands of refs.
+    for (let offset = 0; offset < names.length; offset += 64) {
+      const batch = names.slice(offset, offset + 64);
+      try {
+        await git(directory, "fetch", "--no-tags", "--no-write-fetch-head", "--refmap=", "origin", ...batch.map(name => `refs/heads/${name}`));
+      } catch (error) {
+        // One ref can disappear after ls-remote. Refresh the set and retry the
+        // still-advertised refs individually so that one deletion cannot abort
+        // the archive proof. A second disappearance is simply absent evidence.
+        const refreshed = await advertised();
+        for (const name of batch) {
+          if (!refreshed.has(name)) continue;
+          try { await fetchRef(name); }
+          catch (retryError) {
+            if (!/couldn't find remote ref|remote ref .* not found|no such ref/i.test(String(retryError))) throw retryError;
+          }
+        }
+        // Preserve genuine failures (for example authentication or transport
+        // errors) from the batch. Missing-ref failures are handled above.
+        if (!/couldn't find remote ref|remote ref .* not found|no such ref/i.test(String(error))) throw error;
+      }
+    }
+    const current = await advertised();
+    for (const name of names) if (current.has(name)) live.set(name, current.get(name)!);
+  };
+  const preferredNames = [...new Set(preferred)].filter(name => before.has(name));
+  await prove(preferredNames);
   // This reader only ever proves containment: an unreadable ancestry adds no
   // branch to the proof, and the caller's refusal is "no branch proves it",
   // never a claim that the head is absent.
   const containing = new Set<string>();
-  for (const [name, sha] of before) {
-    if (live.get(name) === sha && await gitAncestry(directory, head, sha) === 'ancestor') containing.add(name);
-  }
-  return preferred.find(name => containing.has(name)) ?? [...containing].sort()[0] ?? null;
+  const ancestry = new Map<string, Awaited<ReturnType<typeof gitAncestry>>>();
+  const check = async (names: readonly string[]) => {
+    for (const name of names) {
+      const sha = before.get(name);
+      if (!sha || live.get(name) !== sha) continue;
+      let relation = ancestry.get(sha);
+      if (!relation) { relation = await gitAncestry(directory, head, sha); ancestry.set(sha, relation); }
+      if (relation === 'ancestor') containing.add(name);
+    }
+  };
+  await check(preferredNames);
+  const preferredMatch = preferred.find(name => containing.has(name));
+  if (preferredMatch) return preferredMatch;
+
+  const wider = [...before.keys()].filter(name => !preferredNames.includes(name));
+  await prove(wider);
+  await check(wider);
+  return [...containing].sort()[0] ?? null;
 }

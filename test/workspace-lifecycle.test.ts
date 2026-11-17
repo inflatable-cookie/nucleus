@@ -132,8 +132,8 @@ test("intake-owned review entry admits its recorded directory outside Queue plac
   const repo = join(root, "repo"), intakeDirectory = join(root, "paseo-worktrees", "source");
   mkdirSync(repo, { recursive: true });
   gitRepo(repo);
-  const admissions: string[] = [];
-  const host = hostStub({ testPlacement: { dataDir: join(root, "queue"), admit: path => admissions.push(path) } });
+  const admissions: string[] = [], intakeAdmissions: string[] = [];
+  const host = hostStub({ testPlacement: { dataDir: join(root, "queue"), admit: path => admissions.push(path), admitIntake: path => intakeAdmissions.push(path) } });
   const entry = reviewEntryRecordSchema.parse({
     operationId: "a".repeat(64), prNumber: 41, repository: "example/repo", branch: "feature/source",
     workspaceId: "wks_65f907ac97222689", verifiedHead: "b".repeat(40), verifiedBase: "c".repeat(40),
@@ -146,7 +146,8 @@ test("intake-owned review entry admits its recorded directory outside Queue plac
 
   await lifecycle.preflightWorkspaceStorage(intakeTask);
   assert.equal(await lifecycle.ownedPathFor(intakeTask), intakeDirectory);
-  assert.deepEqual(admissions, [intakeDirectory], "the intake directory gets its own volume admission, not Queue-root proof");
+  assert.deepEqual(admissions, [], "intake storage does not use Queue-root admission");
+  assert.deepEqual(intakeAdmissions, [intakeDirectory], "the intake directory gets its own volume admission");
   const closeout = terminalArchiveWorkspaces({ ...intakeTask, phase: "done", prHead: "d".repeat(40),
     resolution: { ...intakeTask.resolution, mergedCommit: "d".repeat(40), syncedCommit: "d".repeat(40) } }, []);
   assert.deepEqual(closeout[0], { id: entry.workspaceId, directory: intakeDirectory, head: "d".repeat(40), reportSource: false },

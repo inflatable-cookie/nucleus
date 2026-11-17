@@ -33,6 +33,7 @@ import { existsSync, readFileSync, writeFileSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { Store } from "../core/store/store";
+import { qualificationSubjectResolver } from "../core/host-runs/qualification-subject";
 import { StoreCompactor, freeBytesOn } from "../core/store/store-compaction";
 import { backupDirForDataDir } from "../core/store/backups";
 import { HostPolicies } from "../core/host/host-policies";
@@ -761,6 +762,10 @@ export class QueueRuntime {
           this.hostRunEndpoint = new HostRunEndpoint(this.hostRuns, {
             stateDir: this.hostRunStateDir,
             ...(this.hostRunFront ? { front: this.hostRunFront } : {}),
+            // Spec 064 P1: qualification submits resolve their immutable subject from
+            // the executor run's own credential and Nucleus's records. The endpoint
+            // refuses every submit before any write until tranches 2–3 land.
+            qualification: qualificationSubjectResolver({ store: this.store }),
           });
           await this.hostRunEndpoint.start();
           this.hostRunEndpointError = "";
@@ -1354,10 +1359,26 @@ export class QueueRuntime {
    * service binds the task to that thread's own live worktree. The Paseo
    * bridge path carries no reliable caller identity and is refused.
    */
-  async resolveHostCaller(input: { hostKind: HostKind; nativeAgentId: string }) {
+  async resolveHostCaller(input: { hostKind: HostKind; nativeAgentId: string; hostScope?: string }) {
     const hosts = this.hostRegistry.onlineIds().filter(id => hostKindOf(id) === input.hostKind);
-    if (hosts.length !== 1) throw new Error(`Calling host identity is unavailable or ambiguous for ${input.hostKind}`);
-    const hostId = hosts[0]!;
+    let hostId: string;
+    if (input.hostKind === 't3code') {
+      if (!input.hostScope) throw new Error('T3Code caller identity has no registered host scope');
+      // T3 exposes its environment scope; Nucleus registers that environment as
+      // t3code:<scope>. Accept the already-qualified spelling for callers whose
+      // host context supplies the full registered ID.
+      const registeredScope = input.hostScope.startsWith('t3code:') ? input.hostScope : `t3code:${input.hostScope}`;
+      if (!hosts.includes(registeredScope)) throw new Error(`T3Code host scope ${input.hostScope} is not registered and online`);
+      hostId = registeredScope;
+      let observation;
+      try { observation = await this.engine.withHost(hostId, () => this.engine.host.observe(input.nativeAgentId)); }
+      catch { throw new Error(`T3Code thread ${input.nativeAgentId} could not be verified on registered host ${hostId}`); }
+      if (!observation || observation.id !== input.nativeAgentId || observation.status === 'gone')
+        throw new Error(`T3Code thread ${input.nativeAgentId} could not be verified on registered host ${hostId}`);
+    } else {
+      if (hosts.length !== 1) throw new Error(`Calling host identity is unavailable or ambiguous for ${input.hostKind}`);
+      hostId = hosts[0]!;
+    }
     const caller = formatAgentId(hostId, input.nativeAgentId);
     // This call is the planner thread's own proof of life, so its participant
     // ticket travels in the response instead of a message into its thread.

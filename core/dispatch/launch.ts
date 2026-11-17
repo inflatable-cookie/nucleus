@@ -3,7 +3,8 @@ import { isDispositionActive, workerExclusionRefusal } from '../../shared/contra
 import { budgetPauseDetail, taskBudget } from '../../shared/task-budget';
 import { proofExecutor } from '../recovery/task-reasons';
 import { dispatchBlocked, DISPATCH_HELD_REASON } from './capacity';
-import { proofSingleFlightRefusal, ProofSingleFlightError } from '../qa/proof-admission';
+import { proofSingleFlightRefusal, qualificationModeRefusal, ProofSingleFlightError } from '../qa/proof-admission';
+import { refuseProof } from '../qa/proof-refusal';
 import { reviewAuthorizationRequired, reviewContinuationWait } from '../review/review-continuation';
 import type { ProofActivation, Resolution } from '../resolution';
 import { RunLaunchSource } from './run-launch/source';
@@ -83,10 +84,15 @@ export class DispatchLaunch {
    * activation that already recorded the allowance.
    */
   async proofExecution(t: Task, activation: ProofActivation, profile?: Profile): Promise<Task> {
+    // Spec 064 P1: a qualification declaration is refused before this funnel, so
+    // the mode cannot be entered through ordinary executor activation while its
+    // foundation is incomplete. Every dispatch path reaches this owner.
+    const current = this.context.store.task(t.id);
+    const qualificationRefusal = qualificationModeRefusal(current);
+    if (qualificationRefusal) refuseProof('not_authorized', qualificationRefusal);
     // Task 560: single-flight before the funnel. The reservation transaction
     // below re-checks authoritatively; this fast refusal keeps a second
     // trigger from ever reaching the adapter call.
-    const current = this.context.store.task(t.id);
     const head = current.proofOnly?.commit ?? current.prHead;
     if (head) {
       const refusal = proofSingleFlightRefusal(current, this.context.store.runs(t.id), head);

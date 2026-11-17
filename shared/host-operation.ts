@@ -57,6 +57,10 @@ export const HOST_OPERATIONS = [
   "thread.metadata",
   "thread.title",
   "thread.send",
+  "thread.reparent",
+  "thread.interactions",
+  "thread.interaction.respond",
+  "thread.interaction.cancel",
   "thread.timeline",
   "provider.catalog",
   "environment.list",
@@ -100,6 +104,26 @@ export interface HostExecutorAcceptance {
  * calls when the workspace was created".
  */
 export type HostCallCounters = Record<string, number>;
+
+/**
+ * How one send is delivered (Spec 062, phase 4): `queue` waits behind the live
+ * turn, and `steer` joins it. A steer the plugin can prove it never wrote is a
+ * non-delivery the adapter may answer with one queued send; anything else is
+ * unknown delivery and is never resent.
+ */
+export const HOST_SEND_MODES = ["queue", "steer"] as const;
+
+export type HostSendMode = (typeof HOST_SEND_MODES)[number];
+
+/** The native decision a permission answer carries, as the host contract names it. */
+export const HOST_PERMISSION_DECISIONS = ["accept", "acceptForSession", "acceptAlways", "decline", "cancel"] as const;
+
+export type HostPermissionAnswer = (typeof HOST_PERMISSION_DECISIONS)[number];
+
+/** One bound native answer: a question's answers by header, or a permission decision. */
+export type HostInteractionAnswer =
+  | { kind: "question"; answers: Record<string, string> }
+  | { kind: "permission"; decision: HostPermissionAnswer };
 
 /** One bounded operation answer. */
 export interface HostOperationOutcome {
