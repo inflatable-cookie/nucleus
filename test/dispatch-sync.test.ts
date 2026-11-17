@@ -13,7 +13,7 @@ import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
 import { submissionSchema, type Profile } from '../shared/contracts';
 import { PaseoAdapter, type Adapter } from '../service/paseo-composition';
-import { command, git, withIntegrationCheckout, cleanupIntegrationCheckout, validateDispatch, verifyWorkspace, proveRebindableDispatchBase } from '../core/git/index';
+import { command, git, withIntegrationCheckout, cleanupIntegrationCheckout, validateDispatch, verifyWorkspace, verifyResume, proveRebindableDispatchBase } from '../core/git/index';
 import type { Task } from '../shared/contracts';
 import { syncMain, integrationBaseGate, verifyCloseoutPublication } from '../core/forge/index';
 import { briefDigest } from '../core/planning/brief';
@@ -237,6 +237,46 @@ test('reviewer dependency setup preserves retained edits in an already-dirty tra
     assert.match(state.error, /preserve retained work/);
 
   } finally {
+    await f.engine.stop();
+    f.store.close();
+  }
+});
+
+test('retained-worker continuation refuses dependency setup before npm can overwrite dirty source', async t => {
+  const f = await reviewLockfileFixture(t, { mutateTrackedSourceOnInstall: 'worktree' });
+  const retainedWork = 'unfinished retained worker edit';
+  const npmBin = join(f.root, 'npm-bin');
+  const npmCalls = join(f.root, 'npm-calls.txt');
+  const previousPath = process.env.PATH;
+  let verifyResumeCalls = 0, workerStarts = 0;
+  try {
+    await writeFile(join(f.taskDirectory, 'tracked-source.txt'), retainedWork);
+    await mkdir(npmBin);
+    const realNpm = (await command('which', ['npm'], f.root)).trim();
+    await writeFile(join(npmBin, 'npm'), `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(npmCalls)}\nexec ${JSON.stringify(realNpm)} "$@"\n`);
+    await chmod(join(npmBin, 'npm'), 0o755);
+    process.env.PATH = `${npmBin}:${previousPath ?? ''}`;
+
+    f.engine.adapter.verifyResume = async task => { verifyResumeCalls++; return verifyResume(task); };
+    f.engine.adapter.observe = async agentId => ({ id: agentId, workspaceId: f.task.workspaceId!, status: 'idle', active: false, permissions: false, error: '' });
+    f.engine.adapter.createAgent = async task => { workerStarts++; return { id: 'continued-worker', workspaceId: task.workspaceId! }; };
+    f.store.update(f.task.id, {
+      phase: 'dispatching', completion: null, agentIntent: false, agentId: null, runId: null, prHead: null,
+      retiredWorkers: [{ agentId: 'worker-agent', runId: 'worker-run', profile: f.task.profile!, reason: 'Continue retained worker work' }],
+    });
+
+    await assert.rejects(f.engine.launchAgent(f.store.task(f.task.id)), /Task node_modules setup refused before npm ci: Tracked task source is dirty/);
+    assert.equal(verifyResumeCalls, 1, 'the retained worktree is verified through the dirty-work-tolerant continuation path');
+    assert.equal(existsSync(npmCalls), false, 'npm ci never starts');
+    assert.equal(workerStarts, 0, 'no continuation worker starts while dependency setup is stale');
+    assert.equal(await readFile(join(f.taskDirectory, 'tracked-source.txt'), 'utf8'), retainedWork, 'the uncommitted edit remains intact');
+    const gitDir = await git(f.taskDirectory, 'rev-parse', '--path-format=absolute', '--git-dir');
+    const state = JSON.parse(await readFile(join(gitDir, 'nucleus', 'task-node-modules.json'), 'utf8'));
+    assert.equal(state.failureKind, 'dirty_source');
+    assert.match(state.error, /refusing setup to preserve retained work/);
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
     await f.engine.stop();
     f.store.close();
   }
