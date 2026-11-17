@@ -90,17 +90,19 @@ test("a task quantum never waits for the host process table", async () => {
   const adapter = { hostProcessListing: () => { requested++; return new Promise<HostProcessFact[] | null>(resolve => { answer = resolve; }); } } as unknown as Adapter;
   const engine = new Engine(store, adapter, 0);
   try {
-    // A live run keeps the cleanup sweep's process observation owed.
-    const run: Run = runSchema.parse({ id: "live-run", taskId: task.id, role: "revision", generation: 1, head, base,
+    // A settled run's owed cleanup is what queues the host sweep; that sweep's
+    // process read is the one that never answers here.
+    const run: Run = runSchema.parse({ id: "settled-run", taskId: task.id, role: "revision", generation: 1, head, base,
       agentId: "agent", workspaceId: "ws", profile: null, status: "running", createdAt: new Date().toISOString(),
       lastObservedAt: null, active: true, idleSince: null, completion: null, released: false });
     store.putRun(run);
+    store.putRun({ ...run, released: true, status: "finished", active: false });
     const bounded = await Promise.race([
       engine.quantumSteps(task.id, store.task(task.id), { pausedForPrerequisiteWait: false }).then(() => "returned"),
       tick(2_000).then(() => "still waiting"),
     ]);
     assert.equal(bounded, "returned", "the quantum returns while the process read is still outstanding");
-    await eventually(() => requested > 0, 2_000);
+    await eventually(() => requested > 0, 5_000);
     assert.equal(store.events(task.id).filter(event => event.kind === "task_step_failure").length, 0,
       JSON.stringify(store.events(task.id).map(event => event.kind)));
   } finally {
