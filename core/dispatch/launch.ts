@@ -3,9 +3,7 @@ import { isDispositionActive, workerExclusionRefusal } from '../../shared/contra
 import { budgetPauseDetail, taskBudget } from '../../shared/task-budget';
 import { proofExecutor } from '../recovery/task-reasons';
 import { dispatchBlocked, DISPATCH_HELD_REASON } from './capacity';
-import { proofSingleFlightRefusal, qualificationModeRefusal, ProofSingleFlightError } from '../qa/proof-admission';
-import { continueFirstEffectClock, firstEffectClockRefusal, type FirstEffectClockChoice } from '../host-runs/qualification-clock';
-import { refuseProof } from '../qa/proof-refusal';
+import { proofSingleFlightRefusal, ProofSingleFlightError } from '../qa/proof-admission';
 import { reviewAuthorizationRequired, reviewContinuationWait } from '../review/review-continuation';
 import type { ProofActivation, Resolution } from '../resolution';
 import { RunLaunchSource } from './run-launch/source';
@@ -22,17 +20,6 @@ export type DispatchLaunchContext = Pick<Resolution, 'catalogKnown' | 'claimInte
 
 /** Dispatch sequencing with live adapter and shell delegates supplied at composition. */
 export class DispatchLaunch {
-  /**
-   * Spec 064 P5: the clock this attempt continues. Every recorded run intent's
-   * clock is read first, so a retry keeps the earliest origin and can never
-   * restart, shorten or lengthen the cumulative target.
-   */
-  private firstEffectClockFor(taskId: string): FirstEffectClockChoice {
-    const recorded = this.context.store.runs(taskId)
-      .map(run => run.proofExecution?.qualification?.firstEffectClock ?? null);
-    return continueFirstEffectClock(recorded, Date.now());
-  }
-
   readonly source = new RunLaunchSource(this.context);
   readonly thread = new RunLaunchThread(this.context);
   readonly reserve = new RunLaunchReserve(this.context);
@@ -96,40 +83,16 @@ export class DispatchLaunch {
    * activation that already recorded the allowance.
    */
   async proofExecution(t: Task, activation: ProofActivation, profile?: Profile): Promise<Task> {
-    const current = this.context.store.task(t.id);
-    // Spec 064 P5: the attempt's cumulative clock is established here — before the
-    // dispatch funnel and therefore before the reservation this funnel persists —
-    // and a retry continues the earliest origin it can read, never a new one. The
-    // clock is a tick and a minted id: establishing it causes no effect.
-    const qualification = current.proofExecution?.qualification === true;
-    const choice = qualification ? this.firstEffectClockFor(t.id) : null;
-    const clock = choice?.clock ?? null;
-    // A mandatory effect ordered before the origin is not this attempt's evidence;
-    // the reservation this call would persist is the first one, so the route
-    // refuses before it if the recorded origin is not already behind us.
-    if (clock) {
-      const clockRefusal = firstEffectClockRefusal(clock, [{ name: "reservation persistence", tick: Date.now() }]);
-      if (clockRefusal) refuseProof('not_authorized', clockRefusal);
-    }
-    // Spec 064 P5/P6: real qualification proof mode refuses before any effect
-    // unless every external input is present and qualified. No supplier exists
-    // today, so this names each missing input instead of saying "unavailable".
-    // Every dispatch path reaches this owner, so an opted-in declaration can never
-    // be read as a running proof.
-    const qualificationRefusal = qualificationModeRefusal(current, activation.readiness ?? null);
-    if (qualificationRefusal) refuseProof('not_authorized', qualificationRefusal);
     // Task 560: single-flight before the funnel. The reservation transaction
     // below re-checks authoritatively; this fast refusal keeps a second
     // trigger from ever reaching the adapter call.
+    const current = this.context.store.task(t.id);
     const head = current.proofOnly?.commit ?? current.prHead;
     if (head) {
       const refusal = proofSingleFlightRefusal(current, this.context.store.runs(t.id), head);
       if (refusal) throw new ProofSingleFlightError(refusal);
     }
-    await this.context.launch(t, 'executor', {
-      proof: { ...activation, ...(clock ? { firstEffectClock: clock } : {}) },
-      ...(profile ? { profile } : {}),
-    });
+    await this.context.launch(t, 'executor', { proof: activation, ...(profile ? { profile } : {}) });
     const after = this.context.store.task(t.id);
     const run = after.resolution.currentRunId ? this.context.store.run(after.resolution.currentRunId) : null;
     if (!run || run.role !== 'executor') throw new Error(`Proof execution was not dispatched: ${after.reason}`);

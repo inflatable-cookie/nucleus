@@ -42,28 +42,3 @@ test('proof-only preview refuses once the allowance is spent on a settled receip
   assert.equal(preview.available, false);
   assert.match((preview as { refusal: string }).refusal, /already spent its one execution/);
 });
-
-test('a declared qualification mode refuses before ordinary executor activation', () => {
-  const task = {
-    id: 't', version: 4, entrypoint: 'normal', phase: 'awaiting_review', prHead: 'head', prUrl: 'url',
-    proofExecution: { selector: 'effigy check', inputs: [], qualification: true }, proofExecutions: [],
-    resolution: {},
-  } as unknown as Task;
-  // The activation table the owner verb and the preview read refuses at the
-  // selector stage, which the dispatch funnel then enforces again before any
-  // executor run or host run exists.
-  const refusal = proofActivationRefusal(task, [], 'selector');
-  assert.ok(refusal, 'a qualification declaration is refused before dispatch');
-  // Tranche 3 replaced the staged "foundation incomplete" refusal with the named
-  // missing-input refusal: every external input the mode needs is named.
-  assert.match(refusal!, /^qualification proof mode is refused before any effect:/);
-  for (const id of ['effigy_prepare_custody', 'effigy_admission', 'common_elapsed_clock', 'creator_waits',
-    'deciding_census', 'final_census', 'image_attachment_evidence', 'capture_delivery', 'accounting_fit_readiness'])
-    assert.match(refusal!, new RegExp(id), `the refusal names ${id}`);
-  const preview = proofActivationPreview(task, [], []);
-  assert.equal(preview.available, false);
-  assert.equal((preview as { refusal: string }).refusal, refusal);
-  // The same task without the declaration keeps its existing activation shape.
-  const ordinary = { ...task, proofExecution: { selector: 'effigy check', inputs: [] } } as unknown as Task;
-  assert.equal(proofActivationRefusal(ordinary, [], 'selector'), null);
-});

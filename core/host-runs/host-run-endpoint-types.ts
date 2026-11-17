@@ -15,7 +15,6 @@ import {
   type HostRunSubmitBody,
   type HostRunSupervisorPlan,
 } from "./host-run-wire";
-import type { QualificationBinding } from "../../shared/schema/review/proof";
 export const HOST_RUN_CLIENT_PROTOCOL_VERSION = 1;
 /** One NDJSON request line is at most 1 MiB (contract 010, Transport). */
 export const HOST_RUN_MAX_REQUEST_BYTES = 1024 * 1024;
@@ -78,14 +77,7 @@ export type HostRunRetainedStream = HostRunRetainedStreamShape;
 export type RetainedOutputSettlement =
   | { outcome: "expired"; marker: HostRunOutputRetention }
   | { outcome: "nothing_retained"; reason: string }
-  | { outcome: "unavailable"; reason: string; streams?: { stdout: HostRunRetainedStream; stderr: HostRunRetainedStream } }
-  /**
-   * Spec 064 P7: a qualification attempt's evidence is kept rather than expired.
-   * Anything unresolved keeps the raw bytes, the sidecars and the charged
-   * residuals, and the ordinary expiry marker is no deletion authority for them.
-   * This is not a retention failure: nothing is missing and nothing is refused.
-   */
-  | { outcome: "retained_unresolved"; reason: string };
+  | { outcome: "unavailable"; reason: string; streams?: { stdout: HostRunRetainedStream; stderr: HostRunRetainedStream } };
 
 /** One error's text, without a stack or an untrusted object's shape. */
 export const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
@@ -104,11 +96,7 @@ export const stableJson = (value: unknown): string => {
 };
 
 /** A durable submission body: env key names only, never values (Spec 035). */
-export type StoredSubmissionBody = Omit<HostRunSubmitBody, "env"> & {
-  envKeys: string[];
-  /** Spec 064 P1: the qualification binding a qualification submit resolved (tranche 3 writes it). */
-  qualification?: QualificationBinding;
-};
+export type StoredSubmissionBody = Omit<HostRunSubmitBody, "env"> & { envKeys: string[] };
 
 export const storedBodyOf = (body: HostRunSubmitBody): StoredSubmissionBody => {
   const { env, ...rest } = body;
