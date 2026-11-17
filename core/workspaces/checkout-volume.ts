@@ -43,15 +43,19 @@ export function assertCheckoutAvailable(options: {
   read?: (mount: string) => CheckoutVolumeInfo;
   /** Exact candidate; existing descendants must also be canonical on this volume. */
   target?: string;
+  /** Intake review workspaces use the mounted volume boundary without Queue's placement roots. */
+  scope?: "queue" | "intake";
 } = {}): void {
   const mount = options.mount ?? getWorkRoot();
   try {
     const mountStat = proveWorkRoot(mount, options.uuid, options.observe, options.read);
-    const components = [join(mount, "queue"), join(mount, "queue", "workspaces"), join(mount, "queue", "project-qa")];
+    const components = options.scope === "intake" ? [] : [join(mount, "queue"), join(mount, "queue", "workspaces"), join(mount, "queue", "project-qa")];
     if (options.target) {
-      const base = join(mount, "queue"), rel = relative(base, options.target);
-      if (!rel || rel.startsWith(`..${sep}`) || rel === ".." || resolve(options.target) !== options.target ||
-          !["workspaces", "project-qa"].includes(rel.split(sep)[0])) throw new CheckoutRefusalError("target is outside Nucleus checkout roots");
+      const base = options.scope === "intake" ? mount : join(mount, "queue");
+      const rel = relative(base, options.target);
+      if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || resolve(options.target) !== options.target ||
+          (options.scope !== "intake" && !["workspaces", "project-qa"].includes(rel.split(sep)[0])))
+        throw new CheckoutRefusalError(options.scope === "intake" ? "intake workspace is outside the configured work root" : "target is outside Nucleus checkout roots");
       let path = base;
       for (const part of rel.split(sep)) { path = join(path, part); components.push(path); }
     }
@@ -59,6 +63,23 @@ export function assertCheckoutAvailable(options: {
   } catch (error) {
     throw checkoutUnavailable(error);
   }
+}
+
+/**
+ * Admit an intake-owned review checkout on the configured work volume without
+ * requiring it to live below Queue's allocation roots. Every existing path
+ * component from the mount to the target is still checked for canonicality,
+ * symlink redirection and device identity.
+ */
+export function assertIntakeWorkspaceAvailable(options: {
+  mount?: string;
+  uuid?: string;
+  observe?: (mount: string) => CheckoutVolumeInfo;
+  /** Fixture seam for the cached diskutil reader. */
+  read?: (mount: string) => CheckoutVolumeInfo;
+  target: string;
+}): void {
+  assertCheckoutAvailable({ ...options, scope: "intake" });
 }
 
 /**

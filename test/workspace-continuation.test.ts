@@ -167,7 +167,7 @@ test("an intake-owned review-entry continuation admits its exact directory direc
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const directory = join(root, "paseo-worktrees", "source");
   mkdirSync(directory, { recursive: true });
-  const admitted: string[] = [];
+  const admitted: string[] = [], intakeAdmitted: string[] = [];
   const entry = reviewEntryRecordSchema.parse({
     operationId: "a".repeat(64), prNumber: 41, repository: "example/repo", branch: "feature/source",
     workspaceId: "wks_65f907ac97222689", verifiedHead: "b".repeat(40), verifiedBase: "c".repeat(40),
@@ -175,13 +175,14 @@ test("an intake-owned review-entry continuation admits its exact directory direc
     authorDeclaration: { models: ["openai/gpt-5"], githubAuthor: "author", authoringSystem: "agent", attestedBy: "operator", provenance: "fixture" },
     checkedAt: new Date().toISOString(), preserveWorkspace: false, directory,
   });
-  const host = hostStub({ placement: () => ({ dataDir: "/queue", admit: path => admitted.push(path) }) }, {
+  const host = hostStub({ placement: () => ({ dataDir: "/queue", admit: path => admitted.push(path), admitIntake: path => intakeAdmitted.push(path) }) }, {
     ...state(), handle: { refresh: async () => true, record: () => ({ projectRootPath: "/repo" }), directory },
   });
   const intakeTask = task({ workspaceId: entry.workspaceId, directory, reviewEntry: entry });
 
   assert.deepEqual(await new WorkspaceContinuation(host).preflightWorkerContinuation(intakeTask), { available: true });
-  assert.deepEqual(admitted, [directory], "the intake directory receives volume admission without Queue-root allocation proof");
+  assert.deepEqual(admitted, [], "intake storage does not use Queue-root admission");
+  assert.deepEqual(intakeAdmitted, [directory], "the intake directory receives its own volume admission");
   assert.deepEqual(host.calls.filter(call => call !== "directory"), ["workspaceRef:wks_65f907ac97222689", "refresh", "current"]);
 });
 

@@ -15,7 +15,7 @@ import assert from "node:assert/strict";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assertCheckoutAvailable, CheckoutRefusalError, CheckoutUnavailableError, createCheckoutScratchDirectory, removeCheckoutRunScratchDirectory, type CheckoutVolumeInfo, cachedCheckoutVolume, CHECKOUT_VOLUME_READ_TTL_MS } from "../core/workspaces/checkout-volume";
+import { assertCheckoutAvailable, assertIntakeWorkspaceAvailable, CheckoutRefusalError, CheckoutUnavailableError, createCheckoutScratchDirectory, removeCheckoutRunScratchDirectory, type CheckoutVolumeInfo, cachedCheckoutVolume, CHECKOUT_VOLUME_READ_TTL_MS } from "../core/workspaces/checkout-volume";
 import { checkoutRunScratchPlacement, repositoryScratchNamespace, runScratchRoot, runTemporaryDirectory, runTemporaryEnvironment, removeRecordedRunScratchDirectory, withRunTemporaryDirectory } from "../core/workspaces/run-scratch";
 import { assertSocketPathWithinBound } from "./support/socket-fixture";
 
@@ -140,6 +140,32 @@ test("checkout admission checks mounted identity, writeability and unredirected 
       target: join(root, "outside") }), CheckoutRefusalError);
     rmSync(mount, { recursive: true });
     assert.throws(() => check(), /storage unavailable/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("intake review workspace admission proves the mounted volume outside Queue roots", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "intake-volume-admission-")));
+  const mount = join(root, "Stash"), elsewhere = join(root, "elsewhere");
+  mkdirSync(mount); mkdirSync(elsewhere);
+  const valid: CheckoutVolumeInfo = { MountPoint: mount, VolumeUUID: "fixture", Internal: false, Writable: true, WritableVolume: true };
+  const read = (path: string): CheckoutVolumeInfo => {
+    assert.equal(path, mount, "volume seam observes the configured mount");
+    return valid;
+  };
+  const intake = join(mount, "paseo", "worktrees", "review-id", "slug");
+  mkdirSync(intake, { recursive: true });
+  try {
+    assertIntakeWorkspaceAvailable({ mount, uuid: "fixture", read, target: intake });
+    assertCheckoutAvailable({ mount, uuid: "fixture", read, scope: "intake", target: intake });
+    assert.throws(() => assertCheckoutAvailable({ mount, uuid: "fixture", read, target: intake }), /outside Nucleus checkout roots/,
+      "Queue-owned admission remains restricted to Queue roots");
+
+    const otherVolume = join(elsewhere, "paseo", "worktrees", "review-id", "slug");
+    mkdirSync(otherVolume, { recursive: true });
+    assert.throws(() => assertIntakeWorkspaceAvailable({ mount, uuid: "fixture", read, target: otherVolume }), /outside the configured work root/);
+
+    symlinkSync(elsewhere, join(mount, "paseo", "redirected"));
+    assert.throws(() => assertIntakeWorkspaceAvailable({ mount, uuid: "fixture", read, target: join(mount, "paseo", "redirected", "review-id") }), /redirected/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

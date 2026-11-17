@@ -971,7 +971,8 @@ its directory sits outside Queue's allocation roots. Admission may use that
 directory without a Queue-allocation proof only while the task's
 `reviewEntry.workspaceId` and `reviewEntry.directory` exactly match its recorded
 `workspaceId` and `directory`, and `preserveWorkspace` is false. Its volume is
-checked at the directory itself. This admission rule does not make the workspace
-external: Nucleus still archives its workspace entry at closeout. A Queue-owned
-task with an unbound directory continues to require the ordinary allocation
-proof.
+checked against the configured work-root mount, including each existing path
+component from that mount to the directory for canonicality, symlink redirection
+and volume identity. Queue-owned allocations retain their stricter placement
+proof under Queue roots. This admission rule does not make the workspace
+external: Nucleus still archives its workspace entry at closeout.
