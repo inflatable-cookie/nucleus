@@ -1302,7 +1302,9 @@ service pins nothing against an unpinned plugin, and a packaged service refuses 
 
 **Documents that own the facts.** The release contract owns what the package contains and how it is
 published; the README's BB section is the operator's steps; `shared/bb-plugin-build.ts` owns the file name,
-the record shape and the pin decision; `service/bb-install.ts` owns the three commands and their refusals.
+the record shape and the pin decision; `bin/bb-plugin.ts` owns the three commands and their refusals (`bin/` may not import
+`service/`, so the commands live beside the CLI while the package layout and the pin
+decision stay in `shared/`).
 
 Operator steps (the same text the README carries):
 

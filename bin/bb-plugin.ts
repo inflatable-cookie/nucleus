@@ -18,6 +18,10 @@
  * Nothing here writes into BB's data directory: every write is a `bb` command, and
  * the plugin is pinned to the service build by the identity file the release build
  * writes into the package (`shared/bb-plugin-build.ts`).
+ *
+ * It lives under `bin/` because the CLI may import `bin/` and `shared/` only (the
+ * folder-import boundary), while the package layout, the identity file and the pin
+ * decision are `shared/` facts.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";

@@ -11,7 +11,7 @@ import {
   listBbPlugins,
   resolveBbPluginDirectory,
   uninstallBbPlugin,
-} from "../service/bb-install";
+} from "../bin/bb-plugin";
 import {
   BB_PLUGIN_BUILD_FILE,
   BB_PLUGIN_ID,
