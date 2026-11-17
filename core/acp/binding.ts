@@ -25,6 +25,7 @@ import { z } from "zod";
 import { writeOwnedJson } from "../machine/owned-file.mjs";
 import { digest } from "../store/store";
 import { UnauthorizedCallbackError } from "../store/store-auth";
+import type { AcpSessionBinding } from "./surface";
 
 export const ACP_SESSION_FORMAT = "nucleus.acp.session";
 export const ACP_BINDING_FORMAT = "nucleus.acp.binding";
@@ -104,13 +105,6 @@ export interface MintAcpSessionInput {
   /** A host's own waking-prompt rule for this session (see `acpBindingSchema`). */
   ignorePattern?: string;
   now?: () => string;
-}
-
-export interface AcpSessionBinding {
-  sessionId: string;
-  taskId: string;
-  /** Where the agent finds its credential; the token is in the file, never in this value. */
-  bindingPath: string;
 }
 
 /**

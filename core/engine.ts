@@ -26,7 +26,7 @@ import { type VerifiedEnclosingOperation } from './planning/enclosing-operation'
 
 import { z } from "zod";
 import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
-import type { AcpSessions } from "./acp/sessions";
+import type { AcpSessionSurface } from "./acp/surface";
 import type { Task, Profile, Completion, CheckpointResult, Run, RecoveryActionBinding, BulkDisposition, BulkDispositionRequest, ReparentInput, WorkspaceArchiveRetry } from "../shared/contracts";
 import { isTransportFailure } from "../shared/transport";
 
@@ -159,7 +159,7 @@ export class Engine {
    * socket exists (an ACP binding points the agent at that socket); a process
    * without one refuses `acp.bind` rather than minting a binding nothing answers.
    */
-  acp: AcpSessions | null = null;
+  acp: AcpSessionSurface | null = null;
 
   /** Mint a task's ACP session and the owner-only pointer in its checkout. */
   bindAcpSession(input: { taskId: string }) {

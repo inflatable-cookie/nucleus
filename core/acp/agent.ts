@@ -17,6 +17,9 @@
  */
 import { createHash } from "node:crypto";
 import type { AcpBinding } from "./binding";
+import type { AcpMessageInput, AcpTurnInput, AcpTurnReply } from "./surface";
+
+export type { AcpMessageInput, AcpTurnInput, AcpTurnReply };
 
 type Json = Record<string, unknown>;
 type Id = number | string;
@@ -38,14 +41,9 @@ export const ACP_MODELS = [
   { modelId: "nucleus-quiet", name: "Nucleus (quiet)", description: "The same task thread; the lifecycle lines are identical." },
 ] as const;
 
-export interface AcpTurnRequest { taskId: string; sessionId: string; waitMs: number }
-export interface AcpTurnReply {
-  state: "hold" | "release";
-  reason: string;
-  messages: string[];
-  task: { taskId: string; reference: string | null; phase: string; name: string };
-}
-export interface AcpMessageRequest { taskId: string; sessionId: string; eventId: string; text: string }
+/** The turn request the transport sends: the surface's input with the wait always named. */
+export interface AcpTurnRequest extends AcpTurnInput { waitMs: number }
+export type AcpMessageRequest = AcpMessageInput;
 export interface AcpMessageReply { receipt: { status: string; detail?: string } }
 
 /** The service calls one session makes. Injected, so the protocol is testable without a service. */

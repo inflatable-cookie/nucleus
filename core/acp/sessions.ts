@@ -19,7 +19,8 @@
  */
 import type { Task } from "../../shared/contracts";
 import type { AgentMessageReceipt } from "../questions/agent-messages";
-import { verifyAcpSession, mintAcpSession, type AcpSessionBinding } from "./binding";
+import { verifyAcpSession, mintAcpSession } from "./binding";
+import type { AcpMessageInput, AcpSessionBinding, AcpSessionSurface, AcpTurnInput, AcpTurnReply } from "./surface";
 import { acpFinishedLine, acpLifecycleLine, acpLifecycleSignature, acpTaskFinished, acpTaskName } from "./lifecycle";
 import type { Engine } from "../engine";
 
@@ -28,18 +29,6 @@ export const ACP_TURN_WAIT_MAX_MS = 25_000;
 /** How often a held turn re-reads its task while it waits. */
 export const ACP_TURN_POLL_MS = 1_000;
 
-export interface AcpTurnReply {
-  /** `hold` keeps the agent's turn open; `release` ends it, and the client settles the thread. */
-  state: "hold" | "release";
-  /** Why, in one line: the task's state, or the release directive the service recorded. */
-  reason: string;
-  /** Lifecycle lines the client shows as agent messages; empty when nothing changed. */
-  messages: string[];
-  task: { taskId: string; reference: string | null; phase: Task["phase"]; name: string };
-}
-
-export interface AcpTurnInput { taskId: string; sessionId: string; waitMs?: number }
-export interface AcpMessageInput { taskId: string; sessionId: string; eventId: string; text: string }
 export interface AcpMessageReply { receipt: AgentMessageReceipt }
 
 export interface AcpSessionsOptions {
@@ -50,7 +39,7 @@ export interface AcpSessionsOptions {
   pollMs?: number;
 }
 
-export class AcpSessions {
+export class AcpSessions implements AcpSessionSurface {
   /** The last lifecycle signature each session was shown, so a quiet task sends nothing. */
   private readonly shown = new Map<string, string>();
   /** Release directives from a host adapter, consumed by the turn that acts on them. */
