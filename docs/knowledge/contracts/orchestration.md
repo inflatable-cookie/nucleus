@@ -1425,14 +1425,20 @@ request identities and submitted handoffs are not rewritten.
   detached checkouts beside the task worktree to origin's default branch and
   records dirty, branched or diverged ones as findings; failure never blocks
   dispatch ([Spec 028](../specs/028-fresh-sibling-checkouts.md)).
-- `retainNodeModules` in `core/workspaces/workspace-allocation.ts` links a
-  proof-only task checkout's `node_modules` to the registered checkout's
-  install. After `syncIntegrationCheckout` in `core/forge/merge.ts` advances
-  that checkout, a changed `package-lock.json` or `npm-shrinkwrap.json` triggers
-  `npm ci` when the shared install exists. A failed install throws with npm's
-  error output before sync is recorded, so the existing lifecycle failure path
-  leaves the task held for attention instead of dispatching against stale
-  dependencies.
+- The per-repository task-workspace root's `node_modules` symlink is part of
+  shared workspace provisioning outside this repository and points at the
+  registered checkout; no Nucleus helper here creates that general root link.
+  `retainNodeModules` in
+  `core/workspaces/workspace-allocation.ts` creates a separate checkout-local
+  link only for proof-only task retention. At dispatch, after the registered
+  checkout is fast-forwarded, and after merge synchronization advances it,
+  Nucleus compares the shared install's recorded lock fingerprint with the
+  checkout's current `package.json` and npm lockfile. A mismatch runs `npm ci`
+  before dispatch or sync succeeds. The durable state lives beside Git's common
+  metadata, not in `node_modules`, so a failed `npm ci` remains pending/failed
+  even if npm removed the install. The failure and npm's error output reach the
+  existing lifecycle failure path and are recorded on the task for attention;
+  the next dispatch or sync retries until a successful install is recorded.
 
 ### Parked dispatch and workspace repair
 

@@ -1,1 +1,1 @@
-Task worktrees sharing the registered checkout's npm install now refresh it after a merge changes the lockfile. A failed refresh remains visible as a sync failure.
+Task worktrees that share the registered checkout's npm install now refresh it after dispatch or merge synchronization advances the checkout. A durable lock fingerprint detects stale installs even when a later merge does not change the lockfile, and failed `npm ci` attempts remain visible and retryable.

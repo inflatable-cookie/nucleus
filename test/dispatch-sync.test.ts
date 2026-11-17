@@ -2,10 +2,11 @@ import { observeIdle } from './support/fakes';
 import { configuredClone, materializeSeed } from './support/git-seed';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, realpath, rm, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, mkdir, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtempSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
@@ -47,6 +48,46 @@ const dispatchTask = (repo: string, planningCommit: string) => ({
   repoPath: repo, baseBranch: 'main', branch: 'ns-task', planningCommit,
   handoffPath: 'docs/handoff.md', handoffText: handoff,
 }) as unknown as Task;
+
+test('dispatch refreshes the shared install after fast-forwarding a lockfile change', async t => {
+  const { root, repo } = await makeRepo(t);
+  const writeDependency = async (directory: string, version: string) => {
+    const dependency = join(directory, 'vendor', 'fixture-dep');
+    await mkdir(dependency, { recursive: true });
+    await writeFile(join(dependency, 'package.json'), JSON.stringify({ name: 'fixture-dep', version, main: 'index.js' }));
+    await writeFile(join(dependency, 'index.js'), `module.exports = { version: '${version}' };\n`);
+    await writeFile(join(directory, '.gitignore'), 'node_modules/\n');
+    await writeFile(join(directory, 'package.json'), JSON.stringify({ name: 'dispatch-lockfile-fixture', version: '1.0.0', dependencies: { 'fixture-dep': 'file:vendor/fixture-dep' } }));
+    await command('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'], directory);
+  };
+
+  await writeDependency(repo, '1.0.0');
+  const planning = await commit(repo, 'planning with lockfile', { 'docs/handoff.md': handoff, '.gitignore': 'node_modules/\n' });
+  await git(repo, 'push', 'origin', 'main');
+  await command('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], repo);
+
+  const workspaceRoot = join(root, 'shared-workspaces');
+  await mkdir(workspaceRoot);
+  const taskDirectory = join(workspaceRoot, 'next-task');
+  await git(repo, 'worktree', 'add', '-b', 'ns-next-task', taskDirectory, 'main');
+  await symlink(join(repo, 'node_modules'), join(workspaceRoot, 'node_modules'), 'dir');
+  assert.equal(createRequire(join(taskDirectory, 'probe.cjs'))('fixture-dep').version, '1.0.0');
+
+  const peer = join(root, 'peer');
+  await command('git', ['clone', join(root, 'origin.git'), peer], root);
+  await git(peer, 'config', 'user.name', 'Queue test');
+  await git(peer, 'config', 'user.email', 'queue@example.invalid');
+  await writeDependency(peer, '2.0.0');
+  await git(peer, 'add', '.gitignore', 'package.json', 'package-lock.json', 'vendor');
+  await git(peer, 'commit', '-m', 'land dependency update');
+  await git(peer, 'push', 'origin', 'main');
+
+  const task = { ...dispatchTask(repo, planning), directory: taskDirectory } as unknown as Task;
+  assert.equal(await validateDispatch(task), await git(peer, 'rev-parse', 'HEAD'));
+  await git(taskDirectory, 'fetch', 'origin', 'main');
+  await git(taskDirectory, 'merge', '--ff-only', 'FETCH_HEAD');
+  assert.equal(createRequire(join(taskDirectory, 'probe.cjs'))('fixture-dep').version, '2.0.0');
+});
 
 test('a behind-only integration branch is fast-forwarded at dispatch', async t => {
   const { root, repo } = await makeRepo(t);
