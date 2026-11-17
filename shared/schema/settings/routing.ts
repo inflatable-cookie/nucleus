@@ -23,10 +23,10 @@ export const routePolicySchema = z.object({
   source: z.enum(["request", "preference", "dispatched"]),
   inPool: z.boolean(),
   cost: capabilityLevelSchema.nullable(),
-  /** The pool entry's capability; a frontier profile is request-only below Maximum. */
+  /** The pool entry's capability; a top-tier profile needs permission at Low and Normal (Spec 052). */
   capability: profileCapabilitySchema.nullable().optional(),
   /** Null when the profile is not in the pool: automatic selection never reaches it. */
-  automatic: z.enum(["allowed", "request_ceiling", "request_frontier"]).nullable(),
+  automatic: z.enum(["allowed", "request_tier"]).nullable(),
   explanation: z.string(),
   gates: z.array(z.string()),
   /** Spec 052: a request row's board sign-off; absent for other rows and requests that need none. `grantId` when a planner grant covered it. */
@@ -58,8 +58,9 @@ export const selectionExplanationSchema = z.object({
   role: z.literal("worker"),
   complexity: capabilityLevelSchema,
   roleOffset: z.number().int(),
-  usageOffset: z.number().int(),
-  /** The first-attempt rule as it applies at dispatch (`workerStepLabel`). */
+  /** The tier this usage level starts a task of this complexity at (`workerStartTier`). */
+  startTier: z.enum(["very_low", "low", "medium", "high", "very_high", "frontier"]),
+  /** How the first-attempt and step-up rules apply at dispatch (`workerStepLabel`). */
   step: z.string(),
   fullDemand: z.enum(["very_low", "low", "medium", "high", "very_high", "frontier"]),
   demand: z.enum(["very_low", "low", "medium", "high", "very_high", "frontier"]),
@@ -92,7 +93,7 @@ thinkingOptionId:z.string().optional(),
 requestedBy:z.string().max(300).optional(),
 /**
  * Spec 052 (Tom, 2026-10-21): a request for a profile above the usage level's
- * cost ceiling, or rated frontier below Maximum, applies only once the operator
+ * permission rule holds applies only once the operator
  * signs it off on the board.
  * Queue writes this; a submission or amendment never carries it.
  */

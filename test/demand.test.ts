@@ -1,8 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { demandPick, runDemand, workerDemandStep, taskDemandPreview, type DemandCandidate } from '../shared/demand';
-import { poolSchema, submissionSchema, type CapabilityLevel, type DemandLevel, type ProfileCapability, type Task } from '../shared/contracts';
+import { demandPick, requestedTier, runDemand, taskDemandPreview, workerStartTier, workerStepUp, type DemandCandidate } from '../shared/demand';
+import { poolSchema, submissionSchema, usageLevelSchema, usageLevels, type CapabilityLevel, type DemandLevel, type Profile, type ProfileCapability, type Task, type UsageLevel } from '../shared/contracts';
 import { chooseProfile } from '../core/dispatch/routing';
+import { requestOnly } from '../shared/pool';
+import { poolShapes } from './support/pool-shapes';
 
 /** Spec 053 acceptance, against the live pool's ratings on 2026-10-21, with Opus moved to frontier and Sol at very_high cost (Tom, 2026-11-09). */
 const entry = (profileId: string, cost: CapabilityLevel, capability: ProfileCapability) =>
@@ -18,124 +20,191 @@ const pool = [
 ];
 const profiles = pool.map(item => ({ id: item.profileId, model: `vendor/${item.profileId}-model`, available: true }));
 const candidates: DemandCandidate[] = pool.map(item => ({ ...item, model: `vendor/${item.profileId}-model`, available: true }));
-const pick = (demand: DemandLevel, usage: 'minimal' | 'low' | 'normal' | 'high' | 'maximum' = 'normal', exclude: string[] = []) =>
-  demandPick(demand, usage, candidates, new Set(), new Set(exclude.map(id => `${id}-model`)));
+const pick = (demand: DemandLevel, usage: UsageLevel = 'normal', exclude: string[] = [], requested?: DemandLevel | null) =>
+  demandPick(demand, usage, candidates, new Set(), new Set(exclude.map(id => `${id}-model`)), requested);
 
-test('053: demand is the task complexity moved by the role and the usage level, clamped, and unset counts as medium', () => {
-  assert.equal(runDemand('high', 'worker', 'normal'), 'high');
-  assert.equal(runDemand('high', 'reviewer', 'normal'), 'high', 'reviewer matches the task (Tom, 2026-10-21)');
-  assert.equal(runDemand('high', 'coordinator', 'normal'), 'low');
-  assert.equal(runDemand(null, 'worker', 'normal'), 'medium');
-  assert.equal(runDemand('high', 'worker', 'low'), 'medium');
-  assert.equal(runDemand('high', 'worker', 'maximum'), 'frontier', 'at Maximum demand may reach frontier (Tom, 2026-11-09)');
-  assert.equal(runDemand('very_high', 'worker', 'high'), 'very_high', 'below Maximum demand stays within very_high');
-  assert.equal(runDemand('very_high', 'worker', 'maximum'), 'frontier', 'clamped at frontier');
-  assert.equal(runDemand('very_low', 'coordinator', 'minimal'), 'very_low', 'clamped at the bottom');
-  assert.equal(runDemand('medium', 'worker', 'normal'), 'medium');
-  assert.equal(runDemand('medium', 'reviewer', 'normal'), 'medium');
+/** The start tier of every level for every complexity (Tom, 2026-11-17). */
+const START: Record<UsageLevel, Record<CapabilityLevel | 'unset', DemandLevel>> = {
+  low: { very_low: 'very_low', low: 'very_low', medium: 'low', high: 'medium', very_high: 'high', unset: 'low' },
+  normal: { very_low: 'very_low', low: 'low', medium: 'medium', high: 'medium', very_high: 'high', unset: 'medium' },
+  high: { very_low: 'very_low', low: 'low', medium: 'medium', high: 'high', very_high: 'very_high', unset: 'medium' },
+  extra_high: { very_low: 'very_low', low: 'low', medium: 'medium', high: 'high', very_high: 'very_high', unset: 'medium' },
+  maximum: { very_low: 'very_high', low: 'very_high', medium: 'very_high', high: 'very_high', very_high: 'very_high', unset: 'very_high' },
+};
+
+test('052: usage levels are low, normal, high, extra high and maximum; a stored minimal reads as low', () => {
+  assert.deepEqual([...usageLevels], ['low', 'normal', 'high', 'extra_high', 'maximum']);
+  assert.equal(usageLevelSchema.parse('minimal'), 'low', 'a stale writer maps to low at the wire boundary');
+  for (const level of usageLevels) assert.equal(usageLevelSchema.parse(level), level, `${level} is unchanged`);
 });
 
-test('053 rows 1–6: every profile meeting the demand rotates (cost leans, never excludes), best available on a shortfall, sign-off profiles named', () => {
-  assert.deepEqual(pick('medium').profileIds.sort(), ['deepseek', 'grok', 'haiku'], 'row 1: every profile rated medium or above rotates; Grok (high cost) is leaned against, not removed (Tom, 2026-11-04)');
-  assert.deepEqual(pick('high').profileIds, ['deepseek'], 'row 2: Deepseek, high capability at medium cost');
-  const authoredByDeepseek = pick('high', 'normal', ['deepseek']);
-  assert.equal(authoredByDeepseek.shortfall, true, 'row 2b: Sol\'s very_high cost is above the Normal ceiling');
-  assert.deepEqual(authoredByDeepseek.signoffOnly, ['opus', 'sol']);
-  assert.deepEqual(pick('low').profileIds.sort(), ['deepseek', 'glm', 'grok', 'haiku', 'muse'], 'row 3: a low demand keeps every profile rated low or above');
-  const veryHigh = pick('very_high');
-  assert.equal(veryHigh.shortfall, true, 'row 4: nothing automatic meets very_high at Normal');
-  assert.deepEqual(veryHigh.profileIds, ['deepseek'], 'the best available: the most capable automatic profiles');
-  assert.deepEqual(veryHigh.signoffOnly, ['opus', 'sol']);
-  const high = pick('very_high', 'high');
-  assert.deepEqual(high.profileIds, ['sol'], 'at High Sol (very_high cost, very_high capability) is automatic');
-  assert.deepEqual(high.signoffOnly, ['opus'], 'at High the frontier profile still needs a request');
-  assert.deepEqual(pick('very_high', 'maximum').profileIds, ['opus', 'sol'], 'row 5: at Maximum Opus and Sol are both automatic');
-  assert.deepEqual(pick('frontier', 'maximum').profileIds, ['opus'], 'a frontier demand at Maximum takes the frontier profile');
-  assert.deepEqual(pick('very_low', 'minimal').profileIds.sort(), ['glm', 'muse'], 'row 6: Minimal keeps to its low cost ceiling');
+test('052 table: every level starts a task at its own tier, with maximum on the top two tiers whatever the complexity', () => {
+  for (const level of usageLevels) for (const complexity of ['very_low', 'low', 'medium', 'high', 'very_high'] as const)
+    assert.equal(workerStartTier(level, complexity), START[level][complexity], `${level}/${complexity}`);
+  for (const level of usageLevels) assert.equal(workerStartTier(level, null), START[level].unset, `${level}/unset complexity is medium`);
+});
+
+test('052: the worker demand is the level start tier moved by the role offsets; a reviewer never sits below the worker', () => {
+  assert.equal(runDemand('very_high', 'worker', 'normal'), 'high', 'very-high complexity starts one tier below at normal');
+  assert.equal(runDemand('very_high', 'reviewer', 'normal'), 'high', 'the reviewer matches the worker');
+  assert.equal(runDemand('very_high', 'coordinator', 'normal'), 'low', 'the coordinator keeps its two-step offset');
+  assert.equal(runDemand('very_low', 'worker', 'low'), 'very_low', 'clamped at the bottom');
+  assert.equal(runDemand('very_high', 'worker', 'maximum'), 'very_high', 'at maximum workers ask for the top two tiers');
+  assert.equal(runDemand('very_high', 'reviewer', 'maximum'), 'very_high', 'and reviewers too, whatever the complexity');
+  assert.equal(runDemand('very_low', 'reviewer', 'maximum'), 'very_high', 'maximum lifts every complexity to the top two tiers');
+  assert.equal(runDemand(null, 'worker', 'normal'), 'medium', 'unset complexity counts as medium');
+});
+
+test('052: against the real pool shape, every level starts at its table tier and maximum puts workers and reviewers on the top two tiers', () => {
+  const realEntries = poolShapes.map((shape, index) => poolSchema.parse({ profileId: `shape-${index}`, ...shape.entry }));
+  const realProfiles: Profile[] = realEntries.map((entry, index) => ({ id: entry.profileId, name: poolShapes[index]!.profile.label,
+    provider: poolShapes[index]!.profile.provider, model: poolShapes[index]!.profile.model, available: true, problem: '', notes: '', supportedThinking: [] }));
+  for (const level of usageLevels) for (const complexity of ['very_low', 'low', 'medium', 'high', 'very_high'] as const)
+    assert.equal(workerStartTier(level, complexity), START[level][complexity], `real pool shape: ${level}/${complexity}`);
+  for (const complexity of ['very_low', 'low', 'medium', 'high', 'very_high'] as const) {
+    const rows = taskDemandPreview({ complexity }, realEntries, realProfiles, 'maximum', new Set());
+    const topTwo = new Set(['very_high', 'frontier']);
+    for (const row of rows.slice(0, 2)) assert.ok(row.pick.profileIds.length > 0, `${complexity}: ${row.role} has a pick at maximum`);
+    for (const row of rows.slice(0, 2)) for (const id of row.pick.profileIds) {
+      const entry = realEntries.find(item => item.profileId === id)!;
+      assert.ok(topTwo.has(entry.capability!), `${complexity}: ${row.role} runs on ${entry.capability} at maximum`);
+    }
+  }
+});
+
+test('052: coordinator and recovery offsets are unchanged under every level, maximum included', () => {
+  for (const level of usageLevels) for (const complexity of ['low', 'medium', 'high', 'very_high'] as const) {
+    const worker = runDemand(complexity, 'worker', level);
+    const coordinator = runDemand(complexity, 'coordinator', level);
+    const scale = ['very_low', 'low', 'medium', 'high', 'very_high', 'frontier'];
+    assert.equal(coordinator, scale[Math.max(0, scale.indexOf(worker) - 2)],
+      `${level}/${complexity}: the coordinator is two tiers under the worker`);
+    const reviewer = runDemand(complexity, 'reviewer', level);
+    assert.ok(['very_low', 'low', 'medium', 'high', 'very_high', 'frontier'].indexOf(reviewer) >= ['very_low', 'low', 'medium', 'high', 'very_high', 'frontier'].indexOf(worker),
+      `${level}/${complexity}: the reviewer is never below the worker`);
+  }
+});
+
+test('052: climbing back after review changes moves one tier, capped at the requested tier', () => {
+  // A very-high complexity task on Low starts at high and climbs to its requested very-high tier.
+  assert.equal(requestedTier('very_high'), 'very_high');
+  assert.equal(workerStepUp('high', 'very_high'), 'very_high');
+  assert.equal(workerStepUp('very_high', 'very_high'), 'very_high', 'never past the requested tier');
+  assert.equal(workerStepUp('frontier', 'very_high'), 'frontier', 'an explicit route above it is not pulled back');
+  assert.equal(workerStepUp('low', 'medium'), 'medium');
+  assert.equal(workerStepUp('very_low', 'low'), 'low');
+  assert.equal(requestedTier('very_low'), 'low', 'the cheapest tier a profile carries');
+  assert.equal(requestedTier(null), 'medium');
+});
+
+test('052 permission: each level gates exactly the runs the level table names', () => {
+  // very-high complexity asks for the very_high tier; medium asks for medium.
+  const top = [
+    ['low', 'frontier', 'very_high', true], ['low', 'frontier', 'very_high', true],
+    ['normal', 'frontier', 'medium', true], ['normal', 'very_high', 'medium', true],
+    ['normal', 'very_high', 'very_high', false], ['normal', 'frontier', 'frontier', false],
+    ['high', 'frontier', 'medium', true], ['high', 'very_high', 'medium', false],
+    ['extra_high', 'frontier', 'medium', false], ['extra_high', 'very_high', 'medium', false],
+    ['maximum', 'frontier', 'medium', false], ['maximum', 'very_high', 'medium', false],
+  ] as const;
+  for (const [level, capability, requested, gated] of top)
+    assert.equal(requestOnly({ cost: 'very_high', capability }, level, requested), gated, `${level}/${capability}/${requested}`);
+  // A lower tier never needs permission, whatever the level.
+  for (const capability of ['low', 'medium', 'high'] as const) for (const level of usageLevels)
+    assert.equal(requestOnly({ cost: 'very_high', capability }, level, 'low'), false, `${level}/${capability}`);
+});
+
+test('053 rows: only profiles the level covers form the automatic set; gated ones meet the demand as sign-off only, and cost never excludes', () => {
+  // Unset complexity asks for medium; on Normal the top two tiers need permission.
+  assert.deepEqual(pick('medium', 'normal', [], 'medium'), {
+    profileIds: ['deepseek', 'haiku', 'grok'],
+    shortfall: false,
+    signoffOnly: ['opus', 'sol'],
+  }, 'row 1: every covered profile rated medium or above rotates; a top-tier profile is named as needing a request');
+  assert.deepEqual(pick('medium', 'normal', ['deepseek'], 'medium').profileIds.sort(), ['grok', 'haiku'], 'an excluded author model leaves the set');
+  assert.deepEqual(pick('very_high', 'normal', [], 'very_high'), {
+    profileIds: ['sol'], shortfall: false, signoffOnly: ['opus'],
+  }, 'the task\'s own very-high tier needs no request at Normal; frontier still does');
+  assert.deepEqual(pick('very_high', 'low', [], 'medium').signoffOnly, ['opus', 'sol'], 'on Low a top-tier run needs permission even at the requested tier unless the submission gate approved it');
+  assert.deepEqual(pick('very_high', 'high', [], 'medium'), {
+    profileIds: ['sol'], shortfall: false, signoffOnly: ['opus'],
+  }, 'at High only frontier needs permission');
+  assert.deepEqual(pick('very_high', 'extra_high', [], 'medium'), { profileIds: ['opus', 'sol'], shortfall: false, signoffOnly: [] }, 'at Extra high nothing needs permission');
+  assert.deepEqual(pick('very_high', 'maximum', [], 'medium'), { profileIds: ['opus', 'sol'], shortfall: false, signoffOnly: [] }, 'at Maximum nothing needs permission');
+  // Cost is only the lean: a very expensive profile is not gated for its cost.
+  const lowDemand = pick('low', 'extra_high', [], 'low').profileIds;
+  assert.deepEqual(lowDemand.sort(), ['deepseek', 'glm', 'grok', 'haiku', 'muse', 'opus', 'sol'], 'a low demand keeps every profile rated low or above, whatever its cost');
+  // On a shortfall the most capable covered profiles form the set; a gated one never does.
+  const short = pick('very_high', 'normal', ['sol'], 'very_high');
+  assert.deepEqual(short.profileIds, ['deepseek'], 'the best covered profile');
+  assert.deepEqual(short.signoffOnly, ['opus']);
 });
 
 test('053: unavailable groups, disabled and catalog-missing profiles are never picked', () => {
-  const offline = demandPick('high', 'normal', candidates, new Set(['deepseek']));
-  assert.equal(offline.shortfall, true);
+  const offline = demandPick('high', 'normal', candidates, new Set(['deepseek']), new Set(), 'medium');
   assert.ok(!offline.profileIds.includes('deepseek'));
-  const disabled = demandPick('high', 'normal', candidates.map(item => item.profileId === 'deepseek' ? { ...item, enabled: false } : item));
+  const disabled = demandPick('high', 'normal', candidates.map(item => item.profileId === 'deepseek' ? { ...item, enabled: false } : item), new Set(), new Set(), 'medium');
   assert.ok(!disabled.profileIds.includes('deepseek'));
-  assert.deepEqual(demandPick('high', 'normal', []).profileIds, []);
+  assert.deepEqual(demandPick('high', 'normal', [], new Set(), new Set(), 'medium').profileIds, []);
 });
 
-test('053 preview: per-role rows, the reviewer excludes every author model', () => {
+test('053 preview: per-role rows from the level start tier, the reviewer excludes every author model, and requests show their reach', () => {
   const rows = taskDemandPreview({ complexity: 'high', workerModel: 'vendor/deepseek-model', workerModels: ['vendor/deepseek-model'] },
     pool, profiles, 'normal', new Set());
-  assert.deepEqual(rows.map(row => [row.role, row.demand, row.pick.profileIds.join('|')]), [
-    ['worker', 'medium', 'deepseek|haiku|grok'],
-    ['reviewer', 'high', 'haiku|grok'],
-    ['coordinator', 'low', 'deepseek|glm|muse|haiku|grok'],
-  ]);
-  assert.equal(rows[1].pick.shortfall, true, 'the Deepseek-authored high task has no automatic high reviewer at Normal: Sol is above the cost ceiling');
-  assert.ok(!rows[1].pick.profileIds.includes('deepseek'));
-});
-
-test('053 preview: an unrated cost is never cost-gated, as at selection (Sol, #592); every recorded author is excluded, an opaque author blocks review, and requests are shown', () => {
-  const mystery = poolSchema.parse({ profileId: 'mystery', enabled: true, group: 'mystery', roles: ['worker'], weight: 1, scopes: ['general'], capability: 'low' });
-  const alone = demandPick('very_low', 'minimal', [{ ...mystery, model: 'vendor/mystery-model', available: true }]);
-  assert.deepEqual(alone.profileIds, ['mystery'], 'Spec 052: a pool entry with no cost is never cost-gated');
-  assert.deepEqual(alone.signoffOnly, []);
-  const runtime = chooseProfile(submissionSchema.parse({ submissionId: 'u', title: 'U', repoPath: '/r', planningCommit: 'a'.repeat(40), handoffPath: 'h.md', originAgentId: 'o', complexity: 'very_low' }) as Task,
-    [{ id: 'mystery', name: 'mystery', provider: 'p', model: 'vendor/mystery-model', available: true, problem: '', notes: '', supportedThinking: [] }], [mystery], {}, new Set(), 'worker', {}, 'minimal');
-  assert.equal(runtime?.profile.id, 'mystery', 'the runtime admits the same profile the preview names');
-  const opaqueCandidate = taskDemandPreview({ complexity: 'very_high', workerModel: 'vendor/muse-model' },
-    [...pool, poolSchema.parse({ profileId: 'opaque', enabled: true, group: 'opaque', roles: ['worker'], weight: 1, scopes: ['general'], cost: 'very_low', capability: 'very_high' })],
-    [...profiles, { id: 'opaque', model: 'default', available: true }], 'normal', new Set());
-  assert.ok(!opaqueCandidate[1].pick.profileIds.includes('opaque'), 'an opaque-model profile never reviews');
-  assert.ok(opaqueCandidate[0].pick.profileIds.includes('opaque'), 'it can still work');
-  const reviewEntry = taskDemandPreview({ complexity: 'high', reviewEntry: { authorDeclaration: { models: ['vendor/deepseek-model'] } } }, pool, profiles, 'normal', new Set());
-  assert.ok(!reviewEntry[1].pick.profileIds.includes('deepseek'), 'a review-entry author is excluded from its own review');
-  const opaque = taskDemandPreview({ complexity: 'high', workerModel: 'default' }, pool, profiles, 'normal', new Set());
-  assert.equal(opaque[1].blocked, 'an opaque author model cannot prove review independence');
-  assert.deepEqual(opaque[1].pick.profileIds, []);
-  const signed = { status: 'approved', decisionId: 'd', by: 'operator (board)', at: 'now', note: '' };
+  assert.deepEqual(rows.map(row => [row.role, row.demand]), [
+    ['worker', 'medium'], ['reviewer', 'medium'], ['coordinator', 'very_low'],
+  ], 'a high complexity task starts one tier below at normal; the reviewer matches and the coordinator keeps its offset');
+  const signed = { status: 'approved' as const, decisionId: 'd', by: 'operator (board)', at: 'now', note: '' };
   const requested = taskDemandPreview({ complexity: 'medium', profileRequests: {
     worker: { profileId: 'sol', reason: 'needs it', signoff: signed }, reviewer: { profileId: 'sol', reason: 'needs it' }, coordinator: { profileId: 'glm', reason: 'cheap' },
   } }, pool, profiles, 'normal', new Set());
   assert.deepEqual(requested.map(row => row.request), [
     { profileId: 'sol', replaces: true }, { profileId: 'sol', replaces: false }, { profileId: 'glm', replaces: true },
-  ], 'a signed-off or within-level request replaces the result; an unsigned above-ceiling one does not');
+  ], 'a signed-off or covered request replaces the result; an unsigned gated one does not');
 });
 
-
-test('initial worker step reduces demand without raising the floor', () => {
-  assert.equal(workerDemandStep('high', true), 'medium');
-  assert.equal(workerDemandStep('very_high', true), 'high');
-  assert.equal(workerDemandStep('low', true), 'low');
-  assert.equal(workerDemandStep('very_low', true), 'very_low');
-  assert.equal(workerDemandStep('high', false), 'high');
+test('053 preview: an opaque author blocks review, and a review-entry author is excluded from its own review', () => {
+  const opaque = taskDemandPreview({ complexity: 'high', workerModel: 'default' }, pool, profiles, 'normal', new Set());
+  assert.equal(opaque[1].blocked, 'an opaque author model cannot prove review independence');
+  assert.deepEqual(opaque[1].pick.profileIds, []);
+  const reviewEntry = taskDemandPreview({ complexity: 'high', reviewEntry: { authorDeclaration: { models: ['vendor/deepseek-model'] } } }, pool, profiles, 'normal', new Set());
+  assert.ok(!reviewEntry[1].pick.profileIds.includes('deepseek'));
 });
 
+test('053 cost lean: cost shifts the share within the set, never removes a profile', () => {
+  const live = [['glm', 'low', 'medium'], ['deepseek', 'medium', 'high'], ['grok', 'medium', 'medium'], ['haiku', 'medium', 'medium']] as const;
+  const leanProfiles: Profile[] = live.map(([id]) => ({ id, name: id, provider: 'test', model: `vendor/${id}-model`, available: true, problem: '', notes: '', supportedThinking: [] }));
+  const leanPool = live.map(([id, cost, capability]) => entry(id, cost, capability));
+  const shares = simulate({ complexity: 'medium' } as Task, leanProfiles, leanPool, 100, new Set(), 'normal');
+  assert.deepEqual(shares, { glm: 40, deepseek: 20, grok: 20, haiku: 20 }, '100 medium selections: GLM (low cost, lean 8) takes 40, each medium-cost profile 20');
+});
 
-test('only the first worker selection gets the Normal-level demand step down', () => {
-  const task = { complexity: 'high' as const };
-  for (const usage of ['minimal', 'low', 'normal', 'high', 'maximum'] as const) {
-    const initial = taskDemandPreview(task, pool, profiles, usage, new Set());
-    const full = taskDemandPreview(task, pool, profiles, usage, new Set(), undefined, true);
-    assert.equal(initial[0].demand, usage === 'normal' ? 'medium' : runDemand('high', 'worker', usage));
-    assert.equal(full[0].demand, runDemand('high', 'worker', usage));
-    assert.equal(initial[1].demand, full[1].demand);
+/** The share of `selections` picks each profile gets when every pick is recorded (recent and lifetime counts both). */
+function simulate(task: Task, selectionProfiles: Profile[], selectionPool: typeof pool, selections: number,
+  unavailable: Set<string> = new Set(), usage: UsageLevel = 'normal'): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (let i = 0; i < selections; i++) {
+    const chosen = chooseProfile(task, selectionProfiles, selectionPool, counts, unavailable, 'worker', counts, usage);
+    if (!chosen) break;
+    counts[`profile:${chosen.profile.id}`] = (counts[`profile:${chosen.profile.id}`] ?? 0) + 1;
+    counts[chosen.entry.group] = (counts[chosen.entry.group] ?? 0) + 1;
   }
-});
+  return Object.fromEntries(Object.entries(counts).filter(([key]) => key.startsWith('profile:')).map(([key, n]) => [key.slice('profile:'.length), n]));
+}
 
-test('the first worker selection step is explicit and independent of review history', () => {
-  const routes = [entry('m1', 'medium', 'medium'), entry('m2', 'medium', 'medium'), entry('h1', 'high', 'high'), entry('h2', 'high', 'high')];
-  const catalog = routes.map(e => ({ id: e.profileId, name: e.profileId, provider: 'p', model: e.profileId, available: true, problem: '', notes: '', supportedThinking: [] }));
+test('053: selection takes the level start tier, and a revision after review changes climbs one tier', () => {
+  const routes = [entry('a1', 'medium', 'medium'), entry('a2', 'medium', 'medium'), entry('z1', 'medium', 'high'), entry('z2', 'medium', 'high')];
+  const catalog = routes.map(item => ({ id: item.profileId, name: item.profileId, provider: 'p', model: item.profileId, available: true, problem: '', notes: '', supportedThinking: [] }));
   const task = submissionSchema.parse({ submissionId: 's', title: 'T', repoPath: '/r', planningCommit: 'a'.repeat(40), handoffPath: 'h', originAgentId: 'o', complexity: 'high' }) as Task;
-  const select = (initialWorker: boolean, unavailable: string[], usage: 'normal' | 'low' | 'high' | 'minimal' | 'maximum' = 'normal', role: 'worker' | 'reviewer' = 'worker') =>
-    chooseProfile(task, catalog, routes, {}, new Set(unavailable), role, {}, usage, undefined, initialWorker)?.profile.id;
-  // The first step (medium) keeps every profile rated medium or above; on a fresh pool the id breaks the tie (Spec 053, Tom 2026-11-04).
-  assert.equal(select(true, []), 'h1');
-  assert.equal(select(true, ['h1', 'h2']), 'm1', 'the step admits the medium profiles');
-  assert.equal(select(true, ['h1', 'h2', 'm1']), 'm2');
-  assert.equal(select(false, []), 'h1');
-  assert.equal(select(false, ['h1']), 'h2');
-  assert.equal(select(false, [], 'normal', 'reviewer'), 'h1');
-  for (const usage of ['minimal', 'low', 'high', 'maximum'] as const)
-    assert.equal(select(false, [], usage), select(true, [], usage));
+  const select = (candidate: Task, usage: UsageLevel = 'normal', role: 'worker' | 'reviewer' = 'worker') =>
+    chooseProfile(candidate, catalog, routes, {}, new Set(), role, {}, usage)?.profile.id;
+  // Normal starts a high complexity task one tier below: medium.
+  assert.equal(select(task), 'a1', 'the first run asks for medium; the id breaks the tie');
+  // A revision run after review changes climbs to the requested high tier.
+  const changes = { ...task, phase: 'changes_requested' as const };
+  assert.equal(select(changes), 'z1', 'the revision run after review changes asks for high');
+  assert.equal(select({ ...task, phase: 'changes_requested' as const, complexity: 'very_high' }), 'z1', 'the climb is capped at the requested tier, not pushed past the pool');
+  assert.equal(select(task, 'maximum'), 'z1', 'at maximum the first run asks for the top two tiers');
+  assert.equal(select(task, 'extra_high'), 'z1', 'at extra high the first run asks for the requested tier');
+  assert.equal(select(task, 'normal', 'reviewer'), 'a1', 'the reviewer matches the worker');
 });

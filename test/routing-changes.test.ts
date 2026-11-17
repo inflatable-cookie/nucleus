@@ -77,7 +77,7 @@ test('030-5/6 replacement profile validation and bounded specific eligibility re
   assert.equal(validateNamedProfile('normal','worker','complex',profiles,f.store.pool(),'Change').profile.id,'normal','scope no longer gates (Spec 053)');
   assert.equal(validateNamedProfile('special','worker','complex',profiles,f.store.pool(),'Needed').profile.id,'special');
   const mixed=eligibilityReasons({...task,scope:'complex',preferredProfileId:'normal',requirePreferred:true},profiles,f.store.pool().map(e=>e.profileId==='strong'?{...e,enabled:false}:e),[{group:'normal',unavailable:true,reason:'quota',retryAt:'2099-01-01'}]);
-  assert.match(mixed,/preference required but ineligible/);assert.doesNotMatch(mixed,/scope/);assert.match(mixed,/disabled/);assert.match(mixed,/frontier below Maximum without a signed-off request/);assert.match(mixed,/group normal unavailable: quota \(retry 2099-01-01\)/);assert.ok(mixed.length<=2000);
+  assert.match(mixed,/preference required but ineligible/);assert.doesNotMatch(mixed,/scope/);assert.match(mixed,/disabled/);assert.match(mixed,/special: frontier tier needs the operator's board sign-off at the normal usage level/);assert.match(mixed,/group normal unavailable: quota \(retry 2099-01-01\)/);assert.ok(mixed.length<=2000);
  }finally{void f.close();}
 });
 

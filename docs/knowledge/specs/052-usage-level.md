@@ -86,45 +86,69 @@ profiles.
   at it again if the need arises").
 
 The operator sets one host-wide usage level on a five-stop slider (Settings →
-Dispatch limits, or `queue.usage`), with an optional end time when it returns to
-Normal, picked from a calendar in local time. Settings offers the end time at High
-and Maximum only, as small text on the section's heading row ("No end" or "until
-<date>"), and moving to a lower level clears it (Tom, 2026-11-09). Dispatch limits has no save
+Dispatch limits, or `queue.usage`): **low, normal, high, extra high and maximum**
+(Tom, 2026-11-17; `minimal` is removed). The level carries an optional end time
+when it returns to Normal, picked from a calendar in local time. Settings offers
+the end time above Normal (High, Extra high and Maximum), as small text on the
+section's heading row ("No end" or "until <date>"), and moving to a lower level
+clears it (Tom, 2026-11-09). Dispatch limits has no save
 buttons: the level, its end time, role demand, task slots and project overrides
 save as they change, an invalid value is not sent, and each section shows
-a brief Saved or the reason it was not saved (Tom, 2026-10-22; Saving… stays quiet, Tom 2026-11-08). The levels:
+a brief Saved or the reason it was not saved (Tom, 2026-10-22; Saving… stays quiet, Tom 2026-11-08).
 
-| Level | Automatic selection may use | Demand offset ([Spec 053](053-demand-based-selection.md)) |
+"Tiers" here are the capability scale profiles already carry. "The top two
+tiers" are `frontier` (Opus-class) and `very_high` (Sol extra-high-class).
+
+| Level | Where a task's worker starts | Permission |
 | --- | --- | --- |
-| Minimal | cost up to `low` | −2 |
-| Low | cost up to `medium` | −1 |
-| Normal (default) | cost up to `high`; frontier only on request | 0 |
-| High | every cost; frontier only on request | +1 |
-| Maximum | every cost, frontier included | +2 |
+| **Low** | Every task starts one tier below its complexity. | High and very-high complexity work needs permission at submission: a decision opens on the board and the task is held until the operator approves. Once approved, the Low rules apply. Any run on the top two tiers needs permission. |
+| **Normal** (default) | High and very-high complexity tasks start one tier below; lower complexities start at their requested tier. | Any run on the top two tiers needs permission, except climbing back to the task's own requested tier, which is always allowed. |
+| **High** | At the requested tier. | Frontier needs permission. |
+| **Extra high** | At the requested tier. | None. |
+| **Maximum** | Workers and reviewers run on frontier or very-high models regardless of complexity. | None. |
 
-- **Eligibility** (Tom, 2026-11-09). Automatic selection may use a profile
-  when its capability tier, its cost and its On/Off switch allow it at the
-  level in force, nothing else. Outside that, a profile needs an explicit
-  request with a reason and sign-off.
-- **Ceiling.** Above the level's cost ceiling a profile needs an explicit
-  request with a reason. A pool entry with no cost is never cost-gated. Cost is
-  a ceiling only: a very_high-cost, very_high-capability profile (Sol) is
-  automatic at High.
+- **The task's requested tier** is its complexity on the profile capability
+  scale (`very_low` and `low` ask for `low`; complexity never asks for
+  `frontier`). A run above the requested tier is an explicit planner or
+  operator route, never automatic.
+- **Step-up.** When a review asks for changes on a task that started below its
+  requested tier, the next worker run climbs one tier, up to the requested tier
+  and never past it (the durable signal is the task's `changes_requested`
+  phase). Climbing back to the requested tier never needs permission. Going
+  above it is an explicit planner or operator route.
+- **Nothing waits for an escalation sign-off** except the Low submission gate.
+  A role whose preferred profile needs permission runs on the best allowed tier
+  while the decision is open on the board, as before.
+- **Other roles.** Reviewers keep the independence rule and at least the
+  worker's capability: the reviewer's demand never sits below the worker's.
+  Coordinator and recovery runs keep their existing offset under every level,
+  including Maximum.
+- **Eligibility** (Tom, 2026-11-09). Automatic selection may use a profile when
+  its capability tier and its On/Off switch allow it at the level in force,
+  nothing else. Outside that, a profile needs an explicit request with a reason
+  and sign-off. Cost is a rotation lean ([Spec 053](053-demand-based-selection.md)),
+  never a permission rule (Tom, 2026-11-17).
 - **Frontier is a capability tier, not a cost** (Tom, 2026-11-09: "Can we get
   rid of very low, and instead add `frontier` to the other end of the scale?…
   then Opus would move to `frontier` to distinguish it better from Sol"). A
   profile's capability runs `low, medium, high, very_high, frontier`; a stored
-  `very_low` reads as `low`. A profile rated `frontier` is request-only at
-  Minimal, Low, Normal and High, and joins automatic selection only at
-  Maximum ("Yes, at Maximum only"). The 2026-10-01/15 rule that very_high cost
-  meant frontier is retired.
+  `very_low` reads as `low`. The 2026-10-01/15 rule that very_high cost meant
+  frontier is retired.
+- **The Low submission gate** (Tom, 2026-11-17). Submitting a high or very-high
+  complexity task while Low is in force opens one operator decision linked to
+  the task and places a dispatch hold naming the level and the complexity. The
+  task does not dispatch until the decision is approved on the board; a relayed
+  answer does not approve it. A decline keeps the hold, and the owner's exit is
+  lowering the complexity (`set_routing`) or raising the level, either of which
+  withdraws the question and clears the gate's own fence. The gate never clears
+  an operator's separate hold.
 - **By request is retired** (Tom, 2026-11-09: "Retire it, fold into #1002";
   earlier the same day: "lift it at maximum slider? That's sort of the point of
   that slider setting"). The pool's `byRequest` flag, its toggle and its row
   status are gone; the store drops stored flags on open, and a pool write that
   still carries one reads without it. Requests and grants still work for any
-  profile above the level's ceiling or rated frontier below Maximum.
-- **Preference.** The level moves each run's demand, not a weight: since
+  profile the level's permission rule holds.
+- **Preference.** The level sets each run's start tier, not a weight: since
   [Spec 053](053-demand-based-selection.md) (Tom, 2026-10-21; 2026-11-04) the
   set is every profile rated at or above the demand, with rotation and fair
   share inside it, weighted by a cost lean that never removes a profile. The
@@ -134,13 +158,13 @@ a brief Saved or the reason it was not saved (Tom, 2026-10-22; Saving… stays q
 - **Roles.** The level applies to every automatic selection: worker, reviewer,
   coordinator and replacements. Review independence is unchanged; the reviewer
   still excludes every author model.
-- **Coordinators.** A coordinator's `route` is refused above the level's
-  ceiling, and to a frontier profile below Maximum. At Normal that keeps the
-  2026-10-15 rule that a coordinator never routes to a very_high-cost profile.
+- **Coordinators.** A coordinator's `route` is refused to a profile the level's
+  permission rule holds: a top-tier profile above the task's requested tier at
+  Low or Normal, or a frontier profile at High.
 - **Explicit requests and sign-off** (Tom, 2026-10-21: "fully bound by
   default, but allow explicit override with reason _and_ sign off from me").
   A request (`profileRequests`, owner or coordinator `route`, `set_routing`)
-  for a profile above the level's ceiling, or rated frontier below Maximum, applies only
+  for a profile the level's permission rule holds applies only
   once the operator signs it off on the board. Nucleus asks through an operator
   decision linked to the task, on the requester's behalf: approve the
   requested profile, pick another from the role's pool, or decline. A required
@@ -186,14 +210,14 @@ a brief Saved or the reason it was not saved (Tom, 2026-10-22; Saving… stays q
   which level is in force, and when a set level has expired. The board
   re-projects once when the level in force changes, so an open Settings screen
   never keeps showing an expired level.
-- **Diagnostics.** When the ceiling, not the pool, leaves a role with no
-  profile, the wait says so: it names the profile the level holds selection
-  below, and says to raise the level or `route` the role. A catalogued
+- **Diagnostics.** When the level's permission rule, not the pool, leaves a
+  role with no profile, the wait says so: it names the tier the level holds
+  selection below, and says to raise the level or `route` the role. A catalogued
   profile the eligible set filtered out is reported as filtered, never as
   missing: excluded for this task, sharing the reviewer's model, or filtered
   from the eligible set; only a profile outside the catalog is absent. The wait stays a
-  verb-free `route_unavailable` wait, since a coordinator cannot route above the
-  ceiling either; `next` offers the owner `route`.
+  verb-free `route_unavailable` wait, since a coordinator cannot route past the
+  level's permission either; `next` offers the owner `route`.
 - **Effective policy on reads.** Tom chose this explanation as the Nucleus
   priority on 2026-10-19 (decision 83556116; papercut b6804a4b): an owner read
   a stored flag as absolute and rerouted a correct automatic Maximum pick.
@@ -202,9 +226,8 @@ a brief Saved or the reason it was not saved (Tom, 2026-10-22; Saving… stays q
   - `task.next` and `queue.detail` carry `routingPolicy`: the dispatch-level policy, and
     one row per profile the task names (worker request, worker preference,
     recorded worker or reviewer run, reviewer and coordinator requests). Each
-    row has `cost`, `capability`, `automatic` (`allowed`, `request_ceiling`
-    for a cost above the ceiling, `request_frontier` for "Frontier:
-    request-only below Maximum", or null outside the pool), its pool `gates` (disabled,
+    row has `cost`, `capability`, `automatic` (`allowed`, `request_tier` when the
+    level's permission rule holds the profile, or null outside the pool), its pool `gates` (disabled,
     group unavailable) and an `explanation`. A request stays
     explicit at every level; a preference alone does not satisfy a request
     requirement; a recorded run is history, not relabelled by today's level.
@@ -218,6 +241,7 @@ a brief Saved or the reason it was not saved (Tom, 2026-10-22; Saving… stays q
     subscription group is unavailable reads "group unavailable" in both
     choosers, with the reason and reset time once chosen. Long labels wrap.
     Settings → Profiles rows show a status only for a problem (unavailable, or
-    a paused subscription group); the capability slider's (?) says frontier
-    runs only on request below Maximum.
-- **Normal.** Normal adds no demand offset.
+    a paused subscription group); the capability slider's (?) says the top two
+    tiers need permission at Low and Normal and frontier at High.
+- **Normal.** Normal starts high and very-high complexity one tier below and
+  every lower complexity at its requested tier.

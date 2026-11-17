@@ -64,7 +64,7 @@ test('Queue asks once, and a board approval signs the request off', () => {
     const decision = f.decisions.get({ id: pending.decisionId! });
     assert.equal(decision.askedBy.agentId, 'planner', 'the question is asked on the requester\'s behalf');
     assert.deepEqual(decision.links.tasks, [task.id]);
-    assert.match(decision.question, /reviewer: use Sol oracle\? It is rated frontier, which is request-only below Maximum\./);
+    assert.match(decision.question, /reviewer: use Sol oracle\? It is rated frontier, which needs the operator's permission at the Normal usage level\./);
     assert.deepEqual(decision.options, [signoffApprove('Sol oracle'), SIGNOFF_DECLINE, signoffUse('cheap'), signoffUse('opus')]);
     assert.match(decision.context ?? '', /Independent complete review/);
     f.reconcile(task.id);

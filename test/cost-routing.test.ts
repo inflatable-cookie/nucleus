@@ -94,10 +94,10 @@ const tiered=(ids:Record<string,{cost:Level|null;capability?:Exclude<Level,'very
 // The live shape: a heavily weighted cheap profile, a very_high-cost Sol-class
 // profile and a frontier Opus-class one. The task's complexity is unset (medium).
 const live=tiered({cheap:{cost:'very_low',capability:'low',weight:4},mid:{cost:'medium',capability:'medium'},pricey:{cost:'high',capability:'high'},'frontier-a':{cost:'very_high',capability:'very_high'},'frontier-b':{cost:'very_high',capability:'frontier'}});
-const pick=(usage:'minimal'|'low'|'normal'|'high'|'maximum',recent:Record<string,number>={},unavailable=new Set<string>(),request?:{profileId:string;reason:string})=>{
+const pick=(usage:'low'|'normal'|'high'|'extra_high'|'maximum',recent:Record<string,number>={},unavailable=new Set<string>(),request?:{profileId:string;reason:string})=>{
   const f=fixture();try{
     const task=f.store.update(f.task.id,{profileRequests:request?profileRequestsSchema.parse({worker:{...request,required:false,signoff:SIGNED}}):undefined});
-    return chooseProfile(task,live.profiles,live.pool,recent,unavailable,'worker',recent,usage)?.profile.id??null;
+    return chooseProfile(task,live.profiles,live.pool,recent,unavailable,'worker',recent,usage,undefined,true)?.profile.id??null;
   }finally{f.close()}
 };
 
@@ -105,7 +105,7 @@ test('Spec 053: the usage level moves the demand; the set meeting it rotates wit
   assert.equal(pick('normal'),'mid','demand medium: every profile rated medium or above rotates, cost leaning the share (mid lean 4, pricey lean 2)');
   assert.equal(pick('normal',{'profile:mid':50}),'pricey','heavy use leans the share to the costlier profile in the set; mid stays in it (Tom, 2026-11-04)');
   assert.equal(pick('normal',{},new Set(['mid'])),'pricey','an unavailable group leaves the tier');
-  assert.match(String(pick('high')),/^(pricey|frontier-a)$/,'demand high: pricey and, at High usage, the very_high-cost profile rotate; the frontier profile stays request-only (Spec 052, Spec 053)');
+  assert.match(String(pick('high')),/^(pricey|frontier-a)$/,'demand medium: pricey and the very-high tier rotate at High; the frontier profile stays request-only (Spec 052, Spec 053)');
   assert.equal(pick('high',{'profile:pricey':50}),'frontier-a','at High the very_high-cost, very_high-capability profile is automatic');
   assert.notEqual(pick('high',{'profile:pricey':50,'profile:frontier-a':50}),'frontier-b','at High a frontier profile is never automatic');
   assert.match(String(pick('maximum')),/^frontier-[ab]$/,'demand very_high: both the very_high and the frontier profile are automatic at Maximum');
@@ -114,13 +114,14 @@ test('Spec 053: the usage level moves the demand; the set meeting it rotates wit
   assert.equal(pick('low'),'cheap','demand low');
 });
 
-test('Spec 053: minimal keeps to the low cost ceiling; an explicit request is unaffected by the level',()=>{
-  assert.equal(pick('minimal'),'cheap');
-  assert.equal(pick('minimal',{},new Set(['cheap'])),null,'nothing above low cost is automatic at minimal');
-  assert.equal(pick('minimal',{},new Set(),{profileId:'pricey',reason:'Needs the stronger model'}),'pricey');
+test('Spec 052 (Tom, 2026-11-17): Extra high needs no permission and cost excludes nothing, while Low demands permission for the top two tiers',()=>{
+  assert.match(String(pick('extra_high')),/^frontier-[ab]$/,'at Extra high the whole pool is automatic, cost and tier alike');
+  assert.equal(pick('low'),'cheap','at Low a medium task starts a tier below and keeps to the covered tiers');
+  assert.notEqual(pick('low'),'frontier-b','a frontier profile still needs permission at Low');
+  assert.equal(pick('low',{},new Set(),{profileId:'frontier-b',reason:'Needs the strongest model'}),'frontier-b','a signed-off request is unaffected by the level');
 });
 
-test('Spec 052: a frontier profile is request-only below Maximum whatever its cost, and automatic at Maximum',()=>{
+test('Spec 052: a frontier profile needs permission at High whatever its cost, and is automatic at Maximum',()=>{
   const special=tiered({cheap:{cost:'very_low'},frontier:{cost:'low',capability:'frontier',weight:9}});
   const f=fixture();try{
     const task=f.store.task(f.task.id);
@@ -139,20 +140,22 @@ test('Spec 052: the stored level returns to normal when its end time passes',()=
   }finally{f.close()}
 });
 
-test('Spec 052: a role left without a profile by the usage ceiling says so and names the way out', () => {
+test('Spec 052: a role left without a profile by the level permission says so and names the way out', () => {
   const f=fixture();try{
-    // The only independent reviewer costs high: Normal selects it, Low does not.
-    const reviewPool=tiered({author:{cost:'low'},critic:{cost:'high'}});
+    // The author's own model cannot review it; the only other reviewer is frontier,
+    // which needs the operator's permission at Normal and Low.
+    const reviewPool=tiered({author:{cost:'low'},critic:{cost:'high',capability:'frontier'}});
     f.store.setMeta('pool',reviewPool.pool);const engine=new Engine(f.store,{} as Adapter);engine.profiles=reviewPool.profiles;
     const task={...f.task,workerModel:'author'};
-    assert.equal(engine.resolution.select(task,'reviewer')?.profile.id,'critic');
-    assert.equal(engine.resolution.usageCeilingNote(task,'reviewer'),'');
-    f.store.setMeta('usageLevel',{level:'low',until:null,setAt:new Date().toISOString()});
     assert.equal(engine.resolution.select(task,'reviewer'),null);
-    assert.equal(engine.resolution.usageCeilingNote(task,'reviewer'),'; the low usage level holds automatic selection below critic (high cost): raise the usage level or route the reviewer to a profile');
+    assert.equal(engine.resolution.usageCeilingNote(task,'reviewer'),'; the normal usage level needs the operator\'s board sign-off for frontier runs: raise the usage level or route the reviewer to a profile');
+    f.store.setMeta('usageLevel',{level:'extra_high',until:null,setAt:new Date().toISOString()});
+    assert.equal(engine.resolution.select(task,'reviewer')?.profile.id,'critic','Extra high needs no permission');
+    assert.equal(engine.resolution.usageCeilingNote(task,'reviewer'),'');
     // The retained-reviewer replacement wait carries the same note.
+    f.store.setMeta('usageLevel',{level:'low',until:null,setAt:new Date().toISOString()});
     const retained={...task,phase:'awaiting_review' as const,resolution:{...task.resolution,reviewerProfile:{...reviewPool.profiles[1],id:'gone'}}};
-    assert.match(engine.resolution.usageCeilingNote(retained,'reviewer'),/low usage level holds automatic selection below critic/);
+    assert.match(engine.resolution.usageCeilingNote(retained,'reviewer'),/low usage level needs the operator's board sign-off for frontier runs/);
     // When the pool itself has no candidate, the note stays silent.
     f.store.setMeta('pool',tiered({author:{cost:'low'}}).pool);
     assert.equal(engine.resolution.usageCeilingNote(task,'reviewer'),'');

@@ -13,76 +13,103 @@ export const PROFILE_CAPABILITY_LEVELS: readonly ProfileCapability[] = profileCa
 export const DEMAND_LEVELS: readonly DemandLevel[] = ["very_low", "low", "medium", "high", "very_high", "frontier"];
 export function demandRank(value:DemandLevel):number{return DEMAND_LEVELS.indexOf(value);}
 /**
- * Spec 052 (Tom, 2026-10-18): the highest cost automatic selection may land on
- * at each usage level. Above it a profile needs an explicit request with a
- * reason. Cost is a ceiling only; frontier is a capability tier (Tom, 2026-11-09).
+ * Spec 052 (Tom, 2026-11-17): each level's permission rule is about a profile's
+ * capability tier, not its cost. "The top two tiers" are frontier
+ * (Opus-class) and very-high (Sol extra-high-class).
  */
-export const USAGE_COST_CEILING: Record<UsageLevel, CapabilityLevel> = { minimal: "low", low: "medium", normal: "high", high: "very_high", maximum: "very_high" };
-export const USAGE_LABELS: Record<UsageLevel, { label: string; detail: string }> = {
-  minimal: { label: "Minimal", detail: "Every run needs two steps less; nothing above low cost without a request" },
-  low: { label: "Low", detail: "Every run needs a step less; nothing above medium cost without a request" },
-  normal: { label: "Normal", detail: "Runs need what the task needs; nothing above high cost without a request; frontier profiles only on request" },
-  high: { label: "High", detail: "Every run needs a step more; every cost is automatic; frontier profiles only on request" },
-  maximum: { label: "Maximum", detail: "Every run needs two steps more; frontier profiles join automatic selection" },
-};
-/** Whether automatic selection at this level may use a profile of this cost; unset cost is never cost-gated. */
-export function withinUsage(level: UsageLevel, cost: CapabilityLevel | null | undefined): boolean {
-  return !cost || capabilityRank(cost) <= capabilityRank(USAGE_COST_CEILING[level]);
-}
-/** Spec 052 (Tom, 2026-11-09: "Yes, at Maximum only"): a frontier profile is automatic only at Maximum. */
-export function frontierAllowed(level: UsageLevel, capability: ProfileCapability | null | undefined): boolean {
-  return capability !== "frontier" || level === "maximum";
-}
+export const TOP_TIERS: readonly ProfileCapability[] = ["very_high", "frontier"];
+
+/** Whether a profile's capability is one of the top two tiers. */
+export const topTier = (capability: ProfileCapability | null | undefined): boolean =>
+  capability === "very_high" || capability === "frontier";
+
 /**
- * Whether a pool entry needs an explicit request at this usage level: a cost
- * above the level's ceiling, or a frontier capability below Maximum. Automatic
- * eligibility is capability tier × level, cost × level and On/Off, nothing
- * else (Tom, 2026-11-09, retiring By request). One predicate for preflight,
- * eligibility, selection and the read-only explanation below.
+ * The operator's levels, spelled once for diagnostics and Settings: what a
+ * level does, in one line, and the rule behind it.
  */
-export const requestOnly = (entry: Pick<PoolEntry, "cost" | "capability">, usage: UsageLevel = "normal") =>
-  !withinUsage(usage, entry.cost) || !frontierAllowed(usage, entry.capability);
+export const USAGE_LABELS: Record<UsageLevel, { label: string; detail: string; summary: string }> = {
+  low: { label: "Low", summary: "Starts one tier below the task; high-complexity work needs permission at submission",
+    detail: "Every task starts one tier below its complexity. High and very-high complexity work needs permission when it is submitted, and any run on the top two tiers needs permission." },
+  normal: { label: "Normal", summary: "High-complexity work starts one tier below; the top two tiers need permission",
+    detail: "High and very-high complexity work starts one tier below its complexity; lower complexities start at the requested tier. Any run on the top two tiers needs permission, except climbing back to the task's own requested tier." },
+  high: { label: "High", summary: "Starts at the requested tier; frontier needs permission",
+    detail: "Every task starts at its requested tier. Frontier profiles need permission; very-high profiles are automatic." },
+  extra_high: { label: "Extra high", summary: "Starts at the requested tier; nothing needs permission",
+    detail: "Every task starts at its requested tier, and no run needs permission." },
+  maximum: { label: "Maximum", summary: "Workers and reviewers run on frontier or very-high profiles",
+    detail: "Workers and reviewers run on frontier or very-high models regardless of complexity, and no run needs permission." },
+};
+
+/**
+ * Whether automatic selection needs the operator's sign-off to run this pool
+ * entry (Spec 052, Tom 2026-11-17). `requested` is the task's own requested
+ * tier, which climbing back to never needs permission. Cost is only the
+ * rotation lean (Spec 053) and never a permission rule.
+ */
+export function requestOnly(entry: Pick<PoolEntry, "cost" | "capability">, usage: UsageLevel = "normal", requested?: DemandLevel | null): boolean {
+  const tier = entry.capability;
+  if (!tier) return false;
+  switch (usage) {
+    case "maximum":
+    case "extra_high": return false;
+    case "high": return tier === "frontier";
+    case "normal":
+    case "low": return topTier(tier) && (!requested || demandRank(tier) !== demandRank(requested));
+  }
+}
+
+/**
+ * Whether a submission of this complexity needs the operator's permission at
+ * this usage level (Tom, 2026-11-17): on Low, high and very-high complexity work
+ * opens a decision and is held until the operator approves it. No other level
+ * gates a submission.
+ */
+export function submissionNeedsPermission(level: UsageLevel, complexity: CapabilityLevel | null | undefined): boolean {
+  return level === "low" && (complexity === "high" || complexity === "very_high");
+}
 /** Spec 052: the operator signed this request off on the board. */
 export const requestSignedOff = (request: { signoff?: { status: string } | null } | null | undefined) => request?.signoff?.status === "approved";
 /**
- * Whether an explicit request reaches this pool entry. A profile within the
- * usage level needs none; one above its cost ceiling, or rated frontier below
- * Maximum, needs the request with a reason and the operator's board sign-off
- * (Tom, 2026-10-21).
+ * Whether an explicit request reaches this pool entry. A profile the level
+ * covers needs none; a top-tier profile at Low or Normal (above the task's own
+ * requested tier) or a frontier profile at High needs the request with a reason
+ * and the operator's board sign-off (Tom, 2026-10-21; 2026-11-17).
  */
 export const requestReaches = (entry: Pick<PoolEntry, "cost" | "capability" | "profileId">, usage: UsageLevel,
-  request: { profileId: string; reason: string; signoff?: { status: string } | null } | null | undefined) =>
-  !requestOnly(entry, usage) || (request?.profileId === entry.profileId && Boolean(request.reason.trim()) && requestSignedOff(request));
+  request: { profileId: string; reason: string; signoff?: { status: string } | null } | null | undefined, requested?: DemandLevel | null) =>
+  !requestOnly(entry, usage, requested) || (request?.profileId === entry.profileId && Boolean(request.reason.trim()) && requestSignedOff(request));
 /**
  * The request a selection honours: unchanged when its profile is within the
  * level, or signed off; otherwise none, so an unsigned request never pins a
  * profile, waits for one, or sets its thinking (automatic selection applies).
  */
 export function honouredRequest<T extends { profileId: string; reason: string; signoff?: { status: string } | null }>(
-  request: T | null | undefined, pool: readonly Pick<PoolEntry, "cost" | "capability" | "profileId">[], usage: UsageLevel): T | null {
+  request: T | null | undefined, pool: readonly Pick<PoolEntry, "cost" | "capability" | "profileId">[], usage: UsageLevel,
+  requested?: DemandLevel | null): T | null {
   if (!request) return null;
   const entry = pool.find(item => item.profileId === request.profileId);
-  return !entry || requestReaches(entry, usage, request) ? request : null;
+  return !entry || requestReaches(entry, usage, request, requested) ? request : null;
 }
 /**
  * Spec 052 diagnostics: what the usage level in force means for automatic
  * selection of one pool entry. A read of `requestOnly`, never a gate; other
- * gates (enabled, group, catalog) are reported beside it, not folded in. A
- * cost above the ceiling is named first, then a frontier tier below Maximum.
+ * gates (enabled, group, catalog) are reported beside it, not folded in.
  */
-export function automaticSelection(entry: Pick<PoolEntry, "cost" | "capability">, level: UsageLevel): NonNullable<RoutePolicy["automatic"]> {
-  if (!withinUsage(level, entry.cost)) return "request_ceiling";
-  return frontierAllowed(level, entry.capability) ? "allowed" : "request_frontier";
+export function automaticSelection(entry: Pick<PoolEntry, "cost" | "capability">, level: UsageLevel, requested?: DemandLevel | null): NonNullable<RoutePolicy["automatic"]> {
+  return requestOnly(entry, level, requested) ? "request_tier" : "allowed";
 }
 /** One plain sentence for `automaticSelection`; `time` formats the optional end time (the client passes local time). */
-export function describeAutomaticSelection(entry: Pick<PoolEntry, "cost" | "capability">, usage: UsageView, time: (iso: string) => string = iso => iso): string {
+export function describeAutomaticSelection(entry: Pick<PoolEntry, "cost" | "capability">, usage: UsageView, time: (iso: string) => string = iso => iso, requested?: DemandLevel | null): string {
   const label = USAGE_LABELS[usage.level].label;
   const ends = !usage.expired && usage.until && usage.level !== "normal" ? ` until ${time(usage.until)}` : "";
   const ended = usage.expired && usage.until ? ` (${USAGE_LABELS[usage.setLevel].label} ended ${time(usage.until)})` : "";
-  switch (automaticSelection(entry, usage.level)) {
+  switch (automaticSelection(entry, usage.level, requested)) {
     case "allowed": return `${entry.capability === "frontier" ? "Frontier · " : ""}Automatic at ${label}${ends}${ended}`;
-    case "request_frontier": return `Frontier: request-only below Maximum${ended}`;
-    case "request_ceiling": return `Explicit request required at ${label}: ${entry.cost!.replaceAll("_", " ")} cost is above its ceiling${ended}`;
+    case "request_tier": {
+      const tier = entry.capability === "frontier" ? "Frontier" : "Very high";
+      const rule = usage.level === "high" ? "request-only at High" : `top two tiers need permission at ${label}`;
+      return `${tier}: ${rule}${ended}`;
+    }
   }
 }
 /**
@@ -90,12 +117,11 @@ export function describeAutomaticSelection(entry: Pick<PoolEntry, "cost" | "capa
  * wrap, so the tag stays a few words (compact routing dialogs at 360 pt); the
  * chosen profile's wrapping sentence carries the level and end time.
  */
-export function automaticSelectionTag(entry: Pick<PoolEntry, "cost" | "capability">, level: UsageLevel): string {
-  const automatic = automaticSelection(entry, level);
-  return automatic === "request_frontier" ? " · frontier" : automatic === "request_ceiling" ? " · request only" : "";
+export function automaticSelectionTag(entry: Pick<PoolEntry, "cost" | "capability">, level: UsageLevel, requested?: DemandLevel | null): string {
+  return automaticSelection(entry, level, requested) === "request_tier" ? " · request only" : "";
 }
 /** The full sentence for one routing policy row; the server passes ISO time, the client local time. */
-export function describeRoutePolicy(policy: Omit<RoutePolicy, "explanation">, usage: UsageView, time: (iso: string) => string = iso => iso): string {
+export function describeRoutePolicy(policy: Omit<RoutePolicy, "explanation">, usage: UsageView, time: (iso: string) => string = iso => iso, requested?: DemandLevel | null): string {
   const asked = policy.source === "request" && policy.automatic?.startsWith("request");
   const signoff = policy.signoff;
   if (signoff?.endedGrantId) return `Explicit ${policy.role} request was covered by grant ${signoff.endedGrantId.slice(0, 8)}, which has ended; automatic selection applies`;
@@ -108,7 +134,7 @@ export function describeRoutePolicy(policy: Omit<RoutePolicy, "explanation">, us
     : `Recorded ${policy.role} run used it (history, not today's policy)`;
   if (!policy.automatic) return `${source}; not in the pool, so automatic selection never uses it`;
   const preferenceOnly = policy.source === "preference" && policy.automatic.startsWith("request");
-  return `${source}; automatic selection: ${describeAutomaticSelection(policy, usage, time)}${preferenceOnly ? "; a preference alone does not select it" : ""}${policy.gates.length ? `; also ${policy.gates.join(", ")}` : ""}`;
+  return `${source}; automatic selection: ${describeAutomaticSelection(policy, usage, time, requested)}${preferenceOnly ? "; a preference alone does not select it" : ""}${policy.gates.length ? `; also ${policy.gates.join(", ")}` : ""}`;
 }
 export function saveProfileSettings(pool:PoolEntry[],settings:ProfileSettings):PoolEntry[]{
  const group=settings.group.trim();
@@ -186,8 +212,8 @@ export function workerThinking(task: { thinkingOptionId?: string; profileRequest
  * an unsigned request's level never narrows automatic or replacement selection.
  */
 export function honouredWorkerThinking(task: { thinkingOptionId?: string; profileRequests?: { worker?: ({ profileId: string; reason: string; thinkingOptionId?: string; signoff?: { status: string } | null }) | null } | null },
-  pool: readonly Pick<PoolEntry, "cost" | "capability" | "profileId">[], usage: UsageLevel): string {
-  return honouredRequest(task.profileRequests?.worker ?? null, pool, usage) ? workerThinking(task) : task.thinkingOptionId || "";
+  pool: readonly Pick<PoolEntry, "cost" | "capability" | "profileId">[], usage: UsageLevel, requested?: DemandLevel | null): string {
+  return honouredRequest(task.profileRequests?.worker ?? null, pool, usage, requested) ? workerThinking(task) : task.thinkingOptionId || "";
 }
 
 /**
@@ -213,8 +239,9 @@ export function supersedingRouteProfile(
   recordedProfileId: string | null | undefined,
   pool: readonly Pick<PoolEntry, "cost" | "capability" | "profileId">[],
   usage: UsageLevel,
+  requested?: DemandLevel | null,
 ): string | null {
-  const honoured = honouredRequest(request ?? null, pool, usage);
+  const honoured = honouredRequest(request ?? null, pool, usage, requested);
   return honoured?.required && honoured.profileId !== recordedProfileId ? honoured.profileId : null;
 }
 

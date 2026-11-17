@@ -267,9 +267,9 @@ test('each host\'s routing snapshot carries its translation, selection and routi
   engine.hostIds = () => ['paseo:local', 't3code:env'];
   engine.resolveHostAdapter = id => id === 't3code:env' ? t3Adapter : paseo;
   try {
-    // Only Opus and the plan-mode Codex are enabled; Opus is rated very high at medium cost.
+    // Only Opus and the plan-mode Codex are enabled; Opus is rated high at medium cost.
     const pool = storedPool().map(entry => ({ ...entry, enabled: entry.profileId === 'shape-4' || entry.profileId === 'shape-10',
-      ...(entry.profileId === 'shape-4' ? { capability: 'very_high' as const, cost: 'medium' as const } : {}) }));
+      ...(entry.profileId === 'shape-4' ? { capability: 'high' as const, cost: 'medium' as const } : {}) }));
     store.setProfiles(poolShapes.map((_, index) => stored(index)));
     store.setMeta('pool', pool);
     await engine.refresh();
@@ -317,31 +317,28 @@ test('each host\'s routing snapshot carries its translation, selection and routi
   } finally { await engine.stop(); store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('routingPolicy explains a medium task landing on the cheapest low-rated profile', () => {
+test('routingPolicy explains a medium task landing on the cheapest profile that meets the demand', () => {
   const dir = mkdtempSync(join(tmpdir(), 'profile-vocabulary-selection-'));
   const store = new Store(join(dir, 'db'));
   try {
-    // The Swallowtail case on T3: Luna and Muse are rated low with very low cost,
-    // DeepSeek medium with low cost. This catalog reports no Pi thinking option,
-    // so Muse and DeepSeek are out on T3.
-    const pool = storedPool();
+    // Two medium-rated profiles on different costs: the cost lean decides between
+    // them, and a low-rated profile is not in the set at all (the level starts a
+    // medium task at its requested tier now, Tom 2026-11-17).
+    const pool = [
+      poolSchema.parse({ profileId: 'pricey', enabled: true, group: 'g1', roles: ['worker'], weight: 1, scopes: ['general'], cost: 'very_high', capability: 'medium' }),
+      poolSchema.parse({ profileId: 'cheap', enabled: true, group: 'g2', roles: ['worker'], weight: 1, scopes: ['general'], cost: 'very_low', capability: 'medium' }),
+      poolSchema.parse({ profileId: 'lowrated', enabled: true, group: 'g3', roles: ['worker'], weight: 4, scopes: ['general'], cost: 'very_low', capability: 'low' }),
+    ];
     store.setMeta('pool', pool);
-    const levels = (...ids: string[]) => ids.map(id => ({ id, label: id }));
-    const catalog: HostCatalog = { providers: nightlyProviders().filter(provider => provider.enabled).map(provider => ({ key: provider.instanceId, label: provider.displayName, available: true, problem: '',
-      models: provider.models.map(model => ({ id: model.slug, label: model.name, aliases: [], thinkingOptions: model.slug.startsWith('gpt') || model.slug.startsWith('grok') ? levels('low', 'medium', 'high', 'xhigh', 'max') : [], defaultThinkingOptionId: null,
-        modes: ['approval-required', 'auto-accept-edits', 'auto', 'full-access'].map(id => ({ id, label: id })), features: [] })) })) };
-    const t3Profiles = routingProfiles(poolShapes.map((_, index) => stored(index)), catalog, t3codeVocabulary);
-    const retained = store.insert(taskOf({ complexity: 'medium' }), 't3code:env', 'handoff', 'a'.repeat(40));
-    const policy = store.routingPolicy(store.task(retained.id), Date.now(), t3Profiles);
+    store.setProfiles(['pricey', 'cheap', 'lowrated'].map(id => ({ id, name: id, provider: 'test', model: `test/${id}`, notes: '' })));
+    const retained = store.insert(taskOf({ complexity: 'medium' }), 'paseo:local', 'handoff', 'a'.repeat(40));
+    const policy = store.routingPolicy(store.task(retained.id), Date.now(), ['pricey', 'cheap', 'lowrated'].map(id => (
+      { id, name: id, provider: 'test', model: `test/${id}`, available: true, problem: '', notes: '', supportedThinking: [] })));
     const selection = policy.selection!;
-    assert.deepEqual([selection.complexity, selection.roleOffset, selection.usageOffset, selection.fullDemand, selection.demand], ['medium', 0, 0, 'medium', 'low']);
-    assert.match(selection.step, /first attempt: one step down/);
-    // Luna leads the set on its very low cost (16× weight 2 = 32).
-    assert.equal(selection.met[0]!.profileId, 'shape-0');
-    assert.equal(selection.met[0]!.effectiveWeight, 32);
-    assert.equal(selection.choice?.profileId, 'shape-0');
+    assert.deepEqual([selection.complexity, selection.roleOffset, selection.startTier, selection.fullDemand, selection.demand], ['medium', 0, 'medium', 'medium', 'medium']);
+    assert.match(selection.step, /first attempt: at the Normal start tier/);
+    assert.deepEqual(selection.met.map(item => item.profileId).sort(), ['cheap', 'pricey'], 'the low-rated profile is below the demand');
+    assert.equal(selection.choice?.profileId, 'cheap', 'the cost lean favours the very-low-cost profile');
     assert.match(selection.choice!.reason, /fewest recent assignments per effective weight/);
-    assert.ok(!selection.met.some(item => item.profileId === 'shape-7' || item.profileId === 'shape-8'), 'Muse and DeepSeek are not in the T3 set');
-    assert.ok(policy.host!.effects.some(effect => effect.profileId === 'shape-8' && effect.effect === 'unavailable'));
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
 });

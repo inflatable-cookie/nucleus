@@ -2,7 +2,7 @@ import { hostSelectionSchema } from "../host-selection";
 import { z } from "zod";
 import { holdKindSchema, taskPhaseSchema } from "../schema/task-primitives";
 import { checkpointStateSchema, completionSchema, proofExecutionRecordSchema, proofFileRecordSchema, proofOnlyResultSchema, proofReceiptAcceptanceSchema, reportAcceptanceSchema, reviewEntryRecordSchema, submissionSchema } from "./review";
-import { capabilityLevelSchema, completionCohortMemberSchema, completionRecipientSchema, completionSubscriptionSchema, profileSchema } from "./settings";
+import { capabilityLevelSchema, completionCohortMemberSchema, completionRecipientSchema, completionSubscriptionSchema, profileSchema, usageLevelSchema } from "./settings";
 import { legacyHoldProjectionFields, retainedPrerequisiteWaitSchema, stashEntrySchema, taskHoldsSchema, workerExclusionSchema } from "./task-holds";
 import { checkoutSiblingFindingSchema, pausedStopSchema, siblingFindingSchema, siblingPinSchema, worktreeLinksSchema } from "./workspace";
 import { transientProviderRetrySchema } from "./runs";
@@ -123,6 +123,19 @@ export const taskSchema = submissionSchema.extend({
     outcome: z.enum(["empty", "found"]).nullable(),
   }).strict().nullable().default(null),
   disposition: dispositionSchema.nullable().default(null),
+  // Spec 052 (Tom, 2026-11-17): the Low usage level's submission gate. A high
+  // or very-high complexity task opens one board decision and stays held until
+  // it is approved; the record names the question and the fence it placed.
+  usageGate: z.object({
+    decisionId: z.string().nullable().default(null),
+    status: z.enum(["pending", "approved", "declined"]),
+    level: usageLevelSchema,
+    complexity: capabilityLevelSchema,
+    /** The dispatch fence this gate placed, compared before clearing it. */
+    holdAt: z.string().nullable().default(null),
+    at: z.string(),
+    note: z.string().max(400).default(""),
+  }).strict().nullable().default(null),
   // Brief-mode tasks only: every pinned version, oldest first, and the version each worker run was given.
   briefVersions: z.array(briefVersionSchema).default([]),
   briefRuns: z.array(z.object({ runId: z.string(), version: z.number().int().positive() }).strict()).default([]),

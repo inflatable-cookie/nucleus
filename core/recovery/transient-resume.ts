@@ -1,6 +1,7 @@
 import type { Profile, Run, Task, TransientProviderRetry } from '../../shared/contracts';
 import { isDispositionActive, isDispositionComplete, workerProfileIsExcluded } from '../../shared/contracts';
 import { requestOnly, groupIsUnavailable } from '../../shared/pool';
+import { requestedTier } from '../../shared/demand';
 import { steppedDelay } from '../../shared/backoff';
 import { escalationWaitDetail, plannerEscalations, type LadderEvent } from '../questions/ladder';
 import { dispatchBlocked } from '../dispatch/capacity';
@@ -107,7 +108,7 @@ export class TransientResume {
       && pool.some(entry => entry.profileId === candidate.id
         && (oldEntry?.capability ? entry.capability === oldEntry.capability : true)
         && entry.cost !== 'very_high'
-        && !requestOnly(entry, this.store.usageLevel())
+        && !requestOnly(entry, this.store.usageLevel(), requestedTier(routeTask.complexity))
         && (oldGroup ? entry.group !== oldGroup : true)));
     const routeTask = { ...task, preferredProfileId: '', requirePreferred: false, thinkingOptionId: '',
       profileRequests: { ...task.profileRequests, worker: undefined } };

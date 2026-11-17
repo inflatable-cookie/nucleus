@@ -371,7 +371,7 @@ test('Advanced limits has a gap above it, closed and open, and the advanced card
   } finally { done(); }
 });
 
-/* Task 1014: the usage level's end time is small text on the heading row's right, at High and Maximum only. */
+/* Task 1014: the usage level's end time is small text on the heading row's right, above Normal only. */
 
 const usage = (level: string, until: string | null = null) => ({ usage: { level, setLevel: level, until, expired: false } });
 /** Mount Limits with a usage level and record each usage save. `fail` rejects every save. */
@@ -386,8 +386,8 @@ async function mountUsage(level: string, until: string | null = null, fail = fal
 const header = (ui: { ofType: (type: string) => Node[] }, title: string) =>
   ui.ofType('Text').find(node => node.props.accessibilityRole === 'header' && node.children.join('') === title)!;
 
-test('Minimal, Low and Normal show no end time; the slider is the section body on its own', async () => {
-  for (const level of ['minimal', 'low', 'normal']) {
+test('Low and Normal show no end time; the slider is the section body on its own', async () => {
+  for (const level of ['low', 'normal']) {
     const { ui, done } = await mountUsage(level);
     try {
       assert.equal(ui.query(/^Return to Normal/), undefined, `${level}: no end-time link`);
@@ -397,7 +397,13 @@ test('Minimal, Low and Normal show no end time; the slider is the section body o
   }
 });
 
-test('High with no date reads "No end" as small muted text on the heading row, and the slider keeps its width', async () => {
+test('High and Extra high carry the end time; High with no date reads "No end" as small muted text on the heading row', async () => {
+  for (const level of ['high', 'extra_high', 'maximum']) {
+    const mounted = await mountUsage(level);
+    try {
+      assert.ok(mounted.ui.query(/^Return to Normal/), `${level}: the end time is offered`);
+    } finally { mounted.done(); }
+  }
   const { roles, type } = await import('../client/design');
   const { ui, done } = await mountUsage('high');
   try {

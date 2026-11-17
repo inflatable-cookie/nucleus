@@ -217,7 +217,7 @@ export function ProfileEditor({ c, catalog, catalogs, directory, projects, repos
         {sliderLabel("Cost", "Each cost step down doubles this profile's share. Above the usage level's ceiling it needs a request. Unset ranks as medium and is never cost-gated.", entry.cost)}
         <StopSlider captions={false} c={c} a11yLabel="Cost" stops={COST_LEVELS} value={entry.cost ?? null} labelFor={levelLabel} stopLabel={cost => `Cost ${cost.replaceAll("_", " ")}`} onChange={cost => onChangePool({ cost: entry.cost === cost ? null : cost })} />
       </View><View style={{ ...half, gap: space.xs }}>
-        {sliderLabel("Capability", "Each run needs the task's complexity moved by its role and the usage level. Selection rotates among profiles at or above that. Frontier runs only on request below Maximum. Unset counts as medium.", entry.capability)}
+        {sliderLabel("Capability", "Each run starts at the usage level's tier for the task's complexity, moved by its role. Selection rotates among profiles at or above that. The top two tiers need permission at Low and Normal, frontier at High. Unset counts as medium.", entry.capability)}
         <StopSlider captions={false} c={c} a11yLabel="Capability" stops={PROFILE_CAPABILITY_LEVELS} unsetStop="medium" value={entry.capability ?? null} labelFor={levelLabel} stopLabel={level => `Capability ${level.replaceAll("_", " ")}`} onChange={level => onChangePool({ capability: entry.capability === level ? null : level })} />
       </View></View>}
     {initial && confirmingRemove && onRemove && <View style={{ ...row, gap: space.sm, paddingTop: space.xs, borderTopWidth: 1, borderTopColor: c.border }}>

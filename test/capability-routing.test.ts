@@ -54,10 +54,11 @@ test('invalid enum values are refused on the pool rating, task complexity and sc
 
 test('explicit preferred and required requests win independent of rating distance',()=>{
   const {profiles,pool}=ladder();
-  const far=pool.find(e=>e.profileId==='agent-low')!,near=pool.find(e=>e.profileId==='agent-very_high')!;
+  const far=pool.find(e=>e.profileId==='agent-low')!,near=pool.find(e=>e.profileId==='agent-high')!;
   const usage=equalUsage(pool);
   assert.equal(ids(chooseProfile(taskOf({complexity:'very_high',preferredProfileId:far.profileId}),profiles,pool,usage,new Set())),far.profileId,'optional preference wins over the best fit');
   assert.equal(ids(chooseProfile(taskOf({complexity:'very_low',preferredProfileId:near.profileId}),profiles,pool,usage,new Set())),near.profileId);
+  assert.equal(chooseProfile(taskOf({complexity:'very_low',preferredProfileId:'agent-very_high',requirePreferred:true}),profiles,pool,usage,new Set()),null,'a preference never reaches a profile the level needs permission for (Spec 052, 2026-11-17)');
   assert.equal(chooseProfile(taskOf({complexity:'very_high',preferredProfileId:far.profileId,requirePreferred:true}),profiles,pool.filter(e=>e.profileId!==far.profileId),usage,new Set()),null,'required preference never falls back to a perfect fit');
   const requested=taskOf({complexity:'very_high',profileRequests:{worker:{profileId:far.profileId,reason:'Operator asked for this profile',required:false}}});
   assert.equal(ids(chooseProfile(requested,profiles,pool,usage,new Set())),far.profileId);
@@ -74,7 +75,7 @@ test('Spec 053: disabled, frontier (below Maximum) and unavailable profiles stay
   assert.equal(ids(chooseProfile(task,profiles,pool,usage,new Set(['g-3']))),'agent-high','an unavailable group is gated');
   for(const changed of [{scopes:['mechanical'] as const},{roles:['reviewer'] as const}] as const){
     const entries=pool.map(e=>e.profileId==='agent-very_high'?poolSchema.parse({...e,...changed}):e);
-    assert.equal(ids(chooseProfile(task,profiles,entries,usage,new Set())),'agent-very_high',`${JSON.stringify(changed)} no longer gates (Spec 053)`);
+    assert.equal(ids(chooseProfile(task,profiles,entries,usage,new Set())),'agent-high',`${JSON.stringify(changed)} no longer gates; the start tier is unchanged (Spec 053)`);
   }
   assert.match(eligibilityReasons({...task,scope:'complex'},profiles,pool.map(e=>e.profileId==='agent-very_high'?{...e,enabled:false}:e),[{group:'g-0',unavailable:true,reason:'quota',retryAt:null}]),/disabled/);
   assert.match(eligibilityReasons({...task,scope:'complex'},profiles,pool,[{group:'g-0',unavailable:true,reason:'quota',retryAt:null}]),/quota/);
@@ -85,8 +86,9 @@ test('Spec 053: disabled, frontier (below Maximum) and unavailable profiles stay
 test('Spec 053: the demand keeps every profile that meets it, rotates within them, and falls short to the most capable',()=>{
   const {profiles,pool}=ladder();
   const usage=equalUsage(pool);
-  for(const level of ['very_low','low','medium','high','very_high'] as const)
-    assert.equal(ids(chooseProfile(taskOf({complexity:level}),profiles,pool,usage,new Set())),`agent-${level==='very_low'?'low':level}`,`complexity ${level}`);
+  // Normal starts high and very-high complexity one tier below; lower complexities start at their requested tier (Spec 052).
+  for(const [level,expected] of [['very_low','agent-low'],['low','agent-low'],['medium','agent-medium'],['high','agent-medium'],['very_high','agent-high']] as const)
+    assert.equal(ids(chooseProfile(taskOf({complexity:level}),profiles,pool,usage,new Set())),expected,`complexity ${level}`);
   assert.equal(ids(chooseProfile(taskOf({complexity:'very_high'}),profiles,pool,usage,new Set(),'worker',usage,'maximum')),'agent-frontier','at Maximum demand reaches frontier and the frontier profile is automatic');
   assert.equal(ids(chooseProfile(taskOf({}),profiles,pool,usage,new Set())),'agent-medium','an unset complexity counts as medium');
   const priced=pool.map(e=>poolSchema.parse({...e,cost:e.profileId==='agent-very_high'?'low':'very_high'}));
@@ -95,8 +97,8 @@ test('Spec 053: the demand keeps every profile that meets it, rotates within the
   assert.equal(ids(chooseProfile(taskOf({complexity:'very_high'}),profiles,capped,usage,new Set())),'agent-medium','a shortfall takes the most capable available');
   assert.equal(ids(chooseProfile(taskOf({complexity:'high'}),profiles,pool,usage,new Set(),'worker',usage,'low')),'agent-medium','the Low usage level takes a step off the demand');
   const sameCost=pool.map(e=>poolSchema.parse({...e,cost:'medium'}));
-  assert.deepEqual([0,1,2].map(i=>ids(chooseProfile(taskOf({complexity:'medium'}),profiles,sameCost,{...usage,[`profile:agent-medium`]:9,[`profile:agent-high`]:9+i},new Set()))),['agent-very_high','agent-very_high','agent-very_high'],'every profile meeting the demand rotates at equal cost, the least used first');
-  assert.equal(ids(chooseProfile(taskOf({complexity:'medium'}),profiles,sameCost,usage,new Set())),'agent-high','equal use: the id tie-break inside the tier');
+  assert.equal(ids(chooseProfile(taskOf({complexity:'medium'}),profiles,sameCost,usage,new Set())),'agent-high','equal use: the id tie-break inside the tier at equal cost');
+  assert.equal(ids(chooseProfile(taskOf({complexity:'medium'}),profiles,sameCost,{...usage,'profile:agent-high':9},new Set())),'agent-medium','the least used profile in the set rotates in');
 });
 
 test('Spec 053: the stored role offsets move every automatic selection; invalid stored offsets fall back to the defaults',()=>{
@@ -105,13 +107,15 @@ test('Spec 053: the stored role offsets move every automatic selection; invalid 
     const {profiles,pool}=ladder();
     store.setMeta('pool',pool);
     const engine=new Engine(store,{} as Adapter);engine.profiles=profiles;
-    const base={...taskOf({complexity:'high'}),workerModel:'other-author',workerModels:['other-author']};
+    const base={...taskOf({complexity:'very_high'}),workerModel:'other-author',workerModels:['other-author']};
     assert.deepEqual(store.demandRoleOffsets(),{worker:0,reviewer:0,coordinator:-2});
-    assert.equal(engine.resolution.select(base,'reviewer')?.profile.id,'agent-high');
-    store.setMeta('demandRoleOffsets',{worker:1,reviewer:-1,coordinator:0});
-    assert.equal(engine.resolution.select(base,'reviewer')?.profile.id,'agent-high','reviewer −1 admits every profile rated medium or above; a fresh pool ties and the id breaks it');
-    assert.equal(engine.resolution.select(base,'coordinator')?.profile.id,'agent-high','coordinator 0');
-    assert.equal(ids(chooseProfile(base,profiles,pool,equalUsage(pool),new Set(),'worker',equalUsage(pool),'normal',store.demandRoleOffsets())),'agent-very_high','worker +1');
+    assert.equal(engine.resolution.select(base,'reviewer')?.profile.id,'agent-high','a very-high complexity task starts a tier below at Normal; the reviewer matches');
+    store.setMeta('demandRoleOffsets',{worker:0,reviewer:1,coordinator:0});
+    assert.equal(engine.resolution.select(base,'reviewer')?.profile.id,'agent-very_high','reviewer +1 asks one tier more');
+    assert.equal(engine.resolution.select(base,'coordinator')?.profile.id,'agent-high','coordinator 0 keeps the start tier');
+    assert.equal(ids(chooseProfile(base,profiles,pool,equalUsage(pool),new Set(),'worker',equalUsage(pool),'normal',store.demandRoleOffsets())),'agent-high','worker 0 keeps the start tier');
+    store.setMeta('demandRoleOffsets',{worker:1,reviewer:0,coordinator:0});
+    assert.equal(ids(chooseProfile(base,profiles,pool,equalUsage(pool),new Set(),'worker',equalUsage(pool),'normal',store.demandRoleOffsets())),'agent-very_high','worker +1 asks one tier more');
     store.setMeta('demandRoleOffsets',{worker:9,reviewer:0,coordinator:0});
     assert.deepEqual(store.demandRoleOffsets(),{worker:0,reviewer:0,coordinator:-2},'an out-of-range stored value is ignored');
   }finally{store.close();rmSync(dir,{recursive:true,force:true});}
@@ -125,8 +129,8 @@ test('Spec 053: worker, reviewer and coordinator selection use the demand; the c
     const engine=new Engine(store,{} as Adapter);engine.profiles=profiles;
     for(const entry of pool){store.chargeAssignment(entry.group,entry.profileId);}
     const base={...taskOf({complexity:'very_high'}),workerModel:'other-author',workerModels:['other-author']};
-    assert.equal(engine.resolution.select(base,'reviewer')?.profile.id,'agent-very_high','the reviewer matches the task');
-    assert.equal(engine.resolution.select(base,'coordinator')?.profile.id,'agent-medium','the coordinator needs two steps less');
+    assert.equal(engine.resolution.select(base,'reviewer')?.profile.id,'agent-high','the reviewer matches the worker');
+    assert.equal(engine.resolution.select(base,'coordinator')?.profile.id,'agent-low','the coordinator needs two steps less');
     const requested={...base,profileRequests:{...base.profileRequests,reviewer:{profileId:'agent-low',reason:'Operator named the reviewer',required:false}}};
     assert.equal(engine.resolution.select(requested,'reviewer')?.profile.id,'agent-low');
   }finally{store.close();rmSync(dir,{recursive:true,force:true});}
@@ -242,16 +246,15 @@ test('Spec 053 cost lean: equal cost follows configured weight; a very_low-cost 
   const ratio=simulate(taskOf({complexity:'very_high'}),[profile('cheap'),profile('dear')],costs,170,new Set(),'maximum');
   assert.deepEqual(ratio,{cheap:160,dear:10},'16 : 1 by the cost lean, and the frontier profile still runs at its predictable share');
 });
-test('Spec 053 cost lean: an unavailable group leaves the set and the rest rotate; ceilings and the frontier tier still exclude',()=>{
+test('Spec 053 cost lean: an unavailable group leaves the set and the rest rotate; the level permission still excludes',()=>{
   const live=[['glm','low','medium'],['deepseek','medium','high'],['haiku','medium','medium'],['frontier','very_high','very_high'],['flagged','medium','frontier']] as const;
   const profiles=live.map(([id])=>profile(id));
   const pool=live.map(([id,cost,capability])=>poolSchema.parse({profileId:id,enabled:true,group:id,roles:['worker'],weight:1,scopes:['general'],cost,capability}));
   const skipped=simulate(taskOf({complexity:'medium'}),profiles,pool,60,new Set(['glm']));
   assert.deepEqual(skipped,{deepseek:30,haiku:30},'an unavailable group is skipped; the rest of the set rotates at equal lean; the frontier profile stays out');
   const top=simulate(taskOf({complexity:'very_high'}),profiles,pool,20);
-  assert.equal(top.frontier,undefined,'very_high cost stays above the Normal ceiling without a request');
-  assert.equal(top.flagged,undefined,'a frontier profile stays out of automatic selection below Maximum');
-  assert.deepEqual(top,{deepseek:20},'a shortfall takes the most capable automatic profile');
+  assert.equal(top.flagged,undefined,'a frontier profile stays out of automatic selection at Normal');
+  assert.deepEqual(top,{deepseek:16,frontier:4},'the task\'s own very-high tier is allowed and rotates with the cost lean');
 });
 
 test('deterministic ties break by profile id and stay stable across repeated selection',()=>{

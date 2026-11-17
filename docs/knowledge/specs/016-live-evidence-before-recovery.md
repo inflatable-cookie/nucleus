@@ -267,7 +267,7 @@ interrupted operation never alters callback evidence without the replacement
 landing. The single post-commit wake can therefore select only the
 new route: the exhausted old route is never an intermediate dispatch candidate,
 and no worker turn or verdict is created. With `reviewer` omitted the existing
-behaviour is unchanged. A frontier or above-ceiling profile still needs its real
+behaviour is unchanged. A profile the usage level's permission rule holds still needs its real
 per-role reason. An absent, unavailable, disabled, wrong-role,
 wrong-scope, incompatible-thinking, opaque, same-author, excluded or changed
 profile refuses the whole control; Nucleus never substitutes another model. The

@@ -128,7 +128,7 @@ halts". Don't put a yes/no approval in front of Tom, and that includes extending
 2×: decide it (approve) and record why. Only two kinds still go to Tom: releases and outward actions
 (tag, publish, external resources), as a decision; and product or scope changes, as a proper
 discussion with the context, the options and your recommendation, never a bare approve/hold
-question. Frontier or above-ceiling profiles keep their board sign-off, or a
+question. Profiles the usage level holds keep their board sign-off, or a
 planner grant the operator has already said yes to (below). A grant is permission to request
 them where needed, not an instruction to use them.
 
@@ -415,7 +415,7 @@ other decisions. Use `choice` instead of `answer` when copying an offered label.
 
 Classify a worker's question from its meaning; its supplied kind is only a hint.
 Answer from the brief and repository within the existing authority. Only product
-or scope changes, releases or outward actions, and frontier or above-ceiling profiles
+or scope changes, releases or outward actions, and profiles the usage level holds
 need the operator. If only the operator can decide, send `decision: "operator"`
 and a one-line `reason`, omitting the answer. A product or scope change is a
 proper discussion through `decision.add` with context, options and a recommendation.
@@ -471,27 +471,30 @@ cross-cutting changes, `very_high` only when the strongest model is needed.
 ### Usage level
 
 The operator sets a host-wide usage level (Settings → Dispatch limits slider, or
-`queue.usage`): `minimal`, `low`, `normal` (default), `high` or `maximum`, with
-an optional `until` when it returns to normal. The level moves every run's
-demand: `minimal` two steps down, `low` one, `high` one up, `maximum` two. It
-also caps cost: below `high`, a profile above the level's cost ceiling (at
-`normal`, very_high cost) needs a signed-off request. A profile rated
-`frontier` (capability runs `low` to `frontier`) needs one at every level below
-`maximum`; at `maximum` it joins automatic selection. Automatic eligibility is
-capability tier × level, cost × level and On/Off, nothing else. A brief
-needs no `profileRequests` just to get a stronger model; raise `complexity`
-instead. Read the level in force from the board state's `usage`.
+`queue.usage`): `low`, `normal` (default), `high`, `extra_high` or `maximum`,
+with an optional `until` when it returns to normal (Tom, 2026-11-17; `minimal` is
+gone and a stored value reads as `low`). Tiers are the capability scale profiles
+carry; the top two are `frontier` (Opus-class) and `very_high` (Sol
+extra-high-class). Where a task starts and what needs permission:
 
-A request for a profile above the cost ceiling, or rated frontier below
-`maximum`, is a question
-to the operator, not a pin: Nucleus opens a decision on the board, and the role
-runs on automatic selection until the operator approves, picks another profile
-or declines. Nothing waits for the answer. Prefer setting `complexity` over
-naming a profile; ask for a specific profile only when the work needs it, with
-a reason the operator can judge. `routingPolicy` shows each request's sign-off.
-Before rerouting a frontier dispatch, read `routingPolicy` on `task.next` (or
-`queue.detail`), which explains each profile the task names under the current
-level.
+| Level | Worker starts | Permission |
+| --- | --- | --- |
+| `low` | one tier below its complexity | high and very-high complexity work needs permission when it is submitted (a board decision holds the task); any run on the top two tiers needs permission |
+| `normal` | high and very-high complexity one tier below; lower complexities at the requested tier | any run on the top two tiers needs permission, except climbing back to the task's own requested tier |
+| `high` | at the requested tier | frontier needs permission |
+| `extra_high` | at the requested tier | none |
+| `maximum` | workers and reviewers on frontier or very-high models whatever the complexity | none |
+
+A request for a profile the level's permission rule holds (a top-tier profile
+above the task's requested tier at `low` or `normal`, or frontier at `high`) is a
+question to the operator, not a pin: Nucleus opens a decision on the board, and
+the role runs on automatic selection until the operator approves, picks another
+profile or declines. Nothing waits for the answer, except the `low` submission
+gate described above. Prefer setting `complexity` over naming a profile; ask for
+a specific profile only when the work needs it, with a reason the operator can
+judge. `routingPolicy` shows each request's sign-off. Before rerouting a
+frontier dispatch, read `routingPolicy` on `task.next` (or `queue.detail`),
+which explains each profile the task names under the current level.
 Change it only on the operator's word (Spec 052):
 
 ```sh
@@ -502,20 +505,20 @@ JSON
 
 ### Planner frontier grant
 
-**A grant is permission, not an instruction.** Frontier and above-ceiling profiles cost the most,
+**A grant is permission, not an instruction.** Frontier and other top-tier profiles the level needs permission for cost the most,
 so naming one for a task normally needs the operator's sign-off on that task. A grant gives one
 planner standing permission to name them without a per-task question, for a block of work. It does not
 say which model to use, and it changes nothing about how other tasks route.
 
 What a grant does and doesn't do:
 
-- It **does** let your own `profileRequests` (and `route`) name a frontier or above-ceiling profile
-  and take effect immediately, for the tasks where you ask.
+- It **does** let your own `profileRequests` (and `route`) name a frontier or top-tier profile the
+  level's permission rule holds and take effect immediately, for the tasks where you ask.
 - It **does not** pin anything. A task without a `profileRequests` entry routes automatically, exactly
   as before: Nucleus picks among every eligible ordinary profile by `complexity`, role and usage
   level, leaning cheaper. Ordinary profiles stay the default for everything.
-- It **does not** move automatic selection or demand. Frontier profiles don't join the automatic pool
-  because you hold a grant (they join only at usage level `maximum`).
+- It **does not** move automatic selection or a run's start tier. Frontier profiles don't join the
+  automatic pool because you hold a grant (the level's permission rule decides that).
 - It **is not** "the profile to use". Holding a grant for a frontier model and then requesting it on
   every task, or routing trivial work to it, is the misuse to avoid.
 
@@ -541,8 +544,8 @@ nucleus queue.routing-grant - <<'JSON'
 JSON
 ```
 
-The CLI fills `caller` from the calling thread (its Nucleus ticket or host identity). Optional `profiles` (named set; omit for every frontier
-and above-ceiling profile) and `until`. A repeat while a request is open joins it. An active grant is
+The CLI fills `caller` from the calling thread (its Nucleus ticket or host identity). Optional `profiles` (named set; omit for every profile
+that needs permission) and `until`. A repeat while a request is open joins it. An active grant is
 reported as already standing. Only a board yes activates it; a relayed `decision.answer` does not. The
 operator revokes from Settings → Limits.
 

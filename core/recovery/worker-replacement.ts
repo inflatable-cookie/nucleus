@@ -17,6 +17,7 @@
  * the retained worker.
  */
 import { requestOnly, honouredRequest } from "../../shared/pool";
+import { requestedTier } from "../../shared/demand";
 import { WORKER_REPLACEMENT_CEILING } from "../../shared/contracts";
 import type { PoolEntry, Task, UsageLevel } from "../../shared/contracts";
 import { isQuotaExhaustion } from "./exhaustion";
@@ -76,18 +77,19 @@ export function retainedWorkerFailureCause(args: {
 
 /**
  * Whether the named worker route is approved and effective: a profile within
- * the usage level needs no approval, while a frontier or above-ceiling profile
+ * the usage level covers needs no approval, while a profile it holds
  * needs the operator's board sign-off on this task and profile.
  */
 export function isWorkerRouteApproved(
-  task: Pick<Task, "profileRequests">,
+  task: Pick<Task, "profileRequests" | "complexity">,
   profileId: string,
   pool: readonly Pick<PoolEntry, "cost" | "capability" | "profileId">[],
   usage: UsageLevel,
 ): boolean {
   const entry = pool.find(item => item.profileId === profileId);
-  if (!entry || !requestOnly(entry, usage)) return true;
-  return honouredRequest(task.profileRequests?.worker ?? null, pool, usage)?.profileId === profileId;
+  const requested = requestedTier(task.complexity);
+  if (!entry || !requestOnly(entry, usage, requested)) return true;
+  return honouredRequest(task.profileRequests?.worker ?? null, pool, usage, requested)?.profileId === profileId;
 }
 
 /**

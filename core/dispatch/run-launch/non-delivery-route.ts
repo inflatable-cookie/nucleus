@@ -2,6 +2,7 @@ import type { LaunchThreadContext } from '../launch';
 import type { Profile, Run, Task } from '../../../shared/contracts';
 import { workerProfileIsExcluded } from '../../../shared/contracts';
 import { requestOnly, unavailableGroupNames } from '../../../shared/pool';
+import { requestedTier } from '../../../shared/demand';
 import { escalationWaitDetail, plannerEscalations, type LadderEvent } from '../../questions/ladder';
 import { message } from '../../recovery/task-reasons';
 import { chooseProfile } from '../routing';
@@ -32,7 +33,7 @@ export async function resolveNonDeliveryRoute(ctx: LaunchThreadContext, t: Task,
   const profiles = ctx.profiles().filter(candidate => candidate.provider !== old?.provider
     && !workerProfileIsExcluded(t, candidate.id)
     && pool.some(entry => entry.profileId === candidate.id && entry.capability === oldEntry?.capability && entry.cost !== 'very_high'
-      && !requestOnly(entry, ctx.store.usageLevel())));
+      && !requestOnly(entry, ctx.store.usageLevel(), requestedTier(t.complexity))));
   const routeTask = { ...t, preferredProfileId: '', requirePreferred: false, thinkingOptionId: '',
     profileRequests: { ...t.profileRequests, worker: undefined } };
   const selected = chooseProfile(routeTask, profiles, pool, ctx.store.counts(),

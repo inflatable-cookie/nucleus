@@ -6,6 +6,7 @@
  * to do is not written.
  */
 import { requestOnly, USAGE_LABELS } from "../../../shared/pool";
+import { requestedTier } from "../../../shared/demand";
 import { normalizeRepositoryOrigin } from "../../../shared/lanes";
 import { taskOwner, type Profile, type Task } from "../../../shared/contracts";
 import type { Decisions } from "../../planning/decisions";
@@ -13,6 +14,7 @@ import type { Store } from "../../store/store";
 import { now } from "../../store/store";
 import { liveRun, liveRunForRole } from "../../task-decision-rules";
 import { coveringGrant, reconcileGrantDecisions } from "./grants";
+import { reconcileUsageGate } from "../usage-gate";
 import {
   ROLES, SIGNOFF_DECLINE, outcome, priorApprovedSignoff, readSignoffEvents, signoffQuestion,
   withGrantSignoff, withdrawOpen, withoutGrantSignoff,
@@ -46,6 +48,9 @@ export function reconcileRoutingSignoffs(store: Store, decisions: Decisions, tas
   // Expire and answered grants, never the queue-wide settle: this pass runs once
   // per task per sweep, and the task it is for settles below.
   reconcileGrantDecisions(store, decisions);
+  // Spec 052 (Tom, 2026-11-17): the Low usage level's submission gate opens one
+  // board decision and holds a high-complexity task until it is approved.
+  reconcileUsageGate(store, decisions, taskId, profiles);
   try { task = store.task(taskId); } catch { return approvedRoutes; }
   const finished = task.phase === "done" || task.phase === "cancelled";
   task = reconcileUnavailablePreference(store, decisions, task, profiles, finished);
@@ -91,7 +96,7 @@ export function reconcileRoutingSignoffs(store: Store, decisions: Decisions, tas
     if (signoff?.endedGrantId) continue;
     if (signoff?.status === "approved" || signoff?.status === "declined") continue;
     const entry = pool.find(item => item.profileId === request.profileId);
-    if (!entry || !requestOnly(entry, usage)) {
+    if (!entry || !requestOnly(entry, usage, requestedTier(task.complexity))) {
       // The level now covers the profile: nothing to ask, and an open question is moot.
       if (signoff?.status === "pending" && signoff.decisionId)
         withdrawSignoff(store, decisions, task.id, signoff.decisionId, `The ${USAGE_LABELS[usage].label} usage level now covers this profile`);

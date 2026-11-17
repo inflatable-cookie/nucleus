@@ -571,7 +571,7 @@ allow = ["docs/knowledge/retired.toml", "docs/knowledge/vision.md", "docs/knowle
 [[retired]]
 id = "pool-by-request-flag"
 retired = "2026-11-09"
-replacement = "Automatic eligibility is capability tier × usage level (frontier only at Maximum), cost × usage level and On/Off. A frontier profile, or one above the level's cost ceiling, needs a signed-off request or a planner grant. The store drops stored flags on open."
+replacement = "Automatic eligibility is capability tier × the usage level's permission rule and On/Off. A profile the level holds (a top-tier profile above the task's requested tier at Low or Normal, or frontier at High) needs a signed-off request or a planner grant. The store drops stored flags on open."
 owner = "docs/knowledge/specs/052-usage-level.md"
 terms = ["byRequestOnly", "BY_REQUEST_HELP", "request_flag"]
 paths = []

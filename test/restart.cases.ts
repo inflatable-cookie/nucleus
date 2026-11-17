@@ -2147,11 +2147,11 @@ async function coordinatorRouteCostScenario(): Promise<void> {
       Object.assign(f.adapter as unknown as Record<string, unknown>, { supportsCoordinatorRecovery: true });
       // Spec 052: the operator's usage level bounds what a coordinator may route to.
       f.store.setMeta('usageLevel', { level: usage, until: null, setAt: new Date().toISOString() });
-      // Sol-class is very_high cost; the alternative costs the same as the current worker.
+      // Sol-class is a frontier profile: permission-only at Normal, automatic at Maximum.
       const sol = profile('sol-worker', 'test/sol', ['worker']), alt = profile('alt-worker', 'test/alt', ['worker']);
       f.engine.profiles = [...f.engine.profiles, sol, alt];
       f.store.setMeta('pool', [...f.store.pool(),
-        { profileId: sol.id, enabled: true, group: sol.id, roles: ['worker'], weight: 1, scopes: ['general'], cost: 'very_high' },
+        { profileId: sol.id, enabled: true, group: sol.id, roles: ['worker'], weight: 1, scopes: ['general'], cost: 'very_high', capability: 'frontier' },
         { profileId: alt.id, enabled: true, group: alt.id, roles: ['worker'], weight: 1, scopes: ['general'], cost: 'low' }]);
       f.store.update(f.taskId, { phase: 'blocked', agentId: 'worker-agent', runId: 'blocked-worker', workspaceId: 'workspace',
         directory: '/worktree', profile: f.profiles.worker, workerModel: f.profiles.worker.model,
@@ -2171,9 +2171,9 @@ async function coordinatorRouteCostScenario(): Promise<void> {
       await f.engine.wake();
       if (target === 'sol-worker' && usage === 'normal') {
         const refused = f.events('coordinator_action_refused').find(event => event.detail === `route-${target}`);
-        assert.ok(refused, 'a coordinator route to a very_high-cost profile is refused');
+        assert.ok(refused, 'a coordinator route to a frontier profile is refused at Normal');
         const outcome = f.store.verbOutcomes('1970-01-01T00:00:00.000Z').find(row => row.action === 'route' && row.outcome === 'refused');
-        assert.match(String(outcome?.detail.reason), /very_high cost is above the operator's normal usage level/);
+        assert.match(String(outcome?.detail.reason), /needs the operator's permission at the normal usage level/);
         assert.notEqual(f.current().profileRequests?.worker?.profileId, 'sol-worker', 'nothing routes to Sol');
       } else {
         assert.ok(f.events('coordinator_action_applied').some(event => event.detail === `route-${target}`), `${target} at ${usage}: the route applies`);

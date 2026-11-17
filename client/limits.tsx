@@ -86,21 +86,26 @@ function FrontierGrants({ c, state, refresh }: { c: Colors; state: UiQueueState;
     {!state.routingGrants.length && <Text style={muted(c)}>None. A planner asks once, and the request arrives on the board.</Text>}
     {state.routingGrants.length > 0 && <View style={{ gap: space.sm }}>
       {state.routingGrants.map(grant => <GrantCard key={grant.id} c={c} grant={grant} planner={plannerName(grant.planner)}
-        profiles={grant.profiles.length ? grant.profiles.map(profileName).join(", ") : "All frontier and above-ceiling profiles"} busy={busy} onRevoke={() => void revoke(grant)} />)}
+        profiles={grant.profiles.length ? grant.profiles.map(profileName).join(", ") : "All profiles that need permission"} busy={busy} onRevoke={() => void revoke(grant)} />)}
     </View>}
   </Section>;
 }
 
+/**
+ * Spec 052 (Tom, 2026-11-17): what each level does to a task's start tier and
+ * which runs need the operator's permission. The full sentence sits behind the
+ * slider's (?).
+ */
 const USAGE_EFFECT: Record<UsageLevel, string> = {
-  minimal: "Runs need two fewer capability steps. High-cost profiles need an explicit request.",
-  low: "Runs need one fewer capability step. The highest-cost profiles need an explicit request.",
-  normal: "Runs match the task's capability need. The highest-cost profiles need an explicit request.",
-  high: "Runs need one extra capability step. High-cost profiles can be selected automatically.",
-  maximum: "Runs need two extra capability steps. High-cost profiles can be selected automatically.",
+  low: "Every task starts one tier below its complexity. High and very-high complexity work needs permission when it is submitted; the top two tiers need permission.",
+  normal: "High and very-high complexity work starts one tier below its complexity. The top two tiers need permission, except climbing back to the task's own requested tier.",
+  high: "Every task starts at its requested tier. Frontier profiles need permission.",
+  extra_high: "Every task starts at its requested tier, and nothing needs permission.",
+  maximum: "Workers and reviewers run on frontier or very-high models regardless of complexity, and nothing needs permission.",
 };
 
 /** The levels that can carry an end time: above Normal, where returning to Normal means something. */
-const LIFTED: ReadonlySet<UsageLevel> = new Set(["high", "maximum"]);
+const LIFTED: ReadonlySet<UsageLevel> = new Set(["high", "extra_high", "maximum"]);
 
 /**
  * Spec 052: the operator's overall usage level as a five-stop slider. What a level does sits behind the (?).
@@ -129,7 +134,7 @@ function UsageSlider({ c, usage, save }: { c: Colors; usage: UiQueueState["usage
   const end = LIFTED.has(level)
     ? <View style={{ marginLeft: "auto", flexShrink: 1, minWidth: 0, maxWidth: "100%" }}><DateTimeLink c={c} label="Return to Normal" prefix="until " emptyText="No end" value={until} onChange={setUntil} /></View>
     : undefined;
-  return <Section c={c} title="Usage level" label="Usage level" note={note} status={auto.status} action={end} description={`${USAGE_EFFECT[level]} At High or Maximum, the end time returns the level to Normal when it is reached.`}>
+  return <Section c={c} title="Usage level" label="Usage level" note={note} status={auto.status} action={end} description={`${USAGE_EFFECT[level]} Above Normal, the end time returns the level to Normal when it is reached.`}>
     <StopSlider c={c} a11yLabel="Usage level" stops={usageLevels} value={level} labelFor={stop => USAGE_LABELS[stop].label} stopLabel={stop => `Usage ${USAGE_LABELS[stop].label}`} onChange={setLevel} />
   </Section>;
 }
