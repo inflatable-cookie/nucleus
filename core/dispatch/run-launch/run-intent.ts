@@ -19,12 +19,33 @@ export function runIntent(input: { task: Task; role: Run['role']; resolution: La
   const machine: LaunchMachinePorts = resolution.adapter;
   const s = input.source;
   const brief = currentBrief(t);
+  // The exact source this run binds: a closeout the synced commit, a resumed pre-PR worker its
+  // retained head, a proof the merged commit, anything else the published head or planning base.
+  const head = role === 'closeout' ? t.resolution.syncedCommit! : s.prePrWorkerResume ? s.retainedPrePrHead! : s.source.continuedPr?.head ?? t.proofOnly?.commit ?? t.prHead ?? t.planningBase;
+  const base = s.prePrWorkerResume ? t.planningBase : role === 'reviewer' ? s.roundBase : t.resolution.mergeBase ?? t.planningBase;
+  const authorizedBy = s.options.proof?.authorizedBy ?? { role: 'queue_dispatch' as const, caller: null, note: null };
+  // Spec 064 P1: qualification mode is opt-in at the proof declaration. Absent the
+  // opt-in, an ordinary proof execution records no qualification binding at all,
+  // so its intent and every record derived from it are unchanged.
+  const qualificationSubject = t.proofExecution?.qualification === true && s.proofTree ? {
+    subject: {
+      taskId: t.id, participantRunId: s.runId, operationId: s.options.proof?.operationId ?? null,
+      briefVersion: brief?.version ?? null, briefDigest: brief?.digest ?? null,
+      head, tree: s.proofTree, selector: t.proofExecution.selector, inputs: t.proofExecution.inputs, authorizedBy,
+    },
+    execution: null,
+  } : null;
   const proofExecution = proofExecutor(role) && s.proofTree ? {
     selector: t.proofExecution!.selector, inputs: t.proofExecution!.inputs,
     prNumber: t.proofOnly ? null : taskPrNumber(t), tree: s.proofTree, operationId: s.options.proof?.operationId ?? null,
     briefVersion: brief?.version ?? null, briefDigest: brief?.digest ?? null,
     ...(s.options.proof?.goEvidence ? { goEvidence: s.options.proof.goEvidence } : {}),
-    returnPhase: t.phase, authorizedBy: s.options.proof?.authorizedBy ?? { role: 'queue_dispatch' as const, caller: null, note: null },
+    returnPhase: t.phase, authorizedBy,
+    // Spec 064 P1: the subject half of this attempt's qualification binding, fixed
+    // here and never reinterpreted. The command half (executable digest, literal
+    // argv, cwd and the effective-environment digest) is bound at the one
+    // `submitQualification` seam before any effect, because no command exists yet.
+    ...(qualificationSubject ? { qualification: qualificationSubject } : {}),
   } : null;
   // This run's own scratch, and the two source intents a reservation may consume from the task.
   const scratch = machine.runTemporaryDirectory ? { temporaryDirectory: machine.runTemporaryDirectory(s.runId, t) } : {};
@@ -35,10 +56,6 @@ export function runIntent(input: { task: Task; role: Run['role']; resolution: La
     ...(role === 'reviewer' && t.resolution.proofRetry?.head === t.prHead
       ? { proofRetry: { forRunId: t.resolution.proofRetry.runId, head: t.resolution.proofRetry.head, proofs: t.resolution.proofRetry.proofs } } : {}),
   };
-  // The exact source this run binds: a closeout the synced commit, a resumed pre-PR worker its
-  // retained head, a proof the merged commit, anything else the published head or planning base.
-  const head = role === 'closeout' ? t.resolution.syncedCommit! : s.prePrWorkerResume ? s.retainedPrePrHead! : s.source.continuedPr?.head ?? t.proofOnly?.commit ?? t.prHead ?? t.planningBase;
-  const base = s.prePrWorkerResume ? t.planningBase : role === 'reviewer' ? s.roundBase : t.resolution.mergeBase ?? t.planningBase;
   // A reviewer's reason, publication form and responsibility requirement belong to that role alone.
   const reviewDelivery = role === 'reviewer' ? {
     reviewReason: t.resolution.pendingReviewReason,

@@ -1,6 +1,6 @@
 import { DISPOSITION_CONTROL_REFUSAL, REMOVED_TASK_REFUSAL } from '../verbs/control-refusals';
 import { holdOwnerOf, holdsOf, isDispositionActive, type Run, type Task, type TaskControlInput, type DecisionView } from '../../shared/contracts';
-import { proofHeadAdmission, proofSingleFlightRefusal } from './proof-admission';
+import { proofHeadAdmission, proofSingleFlightRefusal, qualificationModeRefusal } from './proof-admission';
 import { proofOnlyGoAnsweredEvent, proofOnlyGoQuestionId } from './proof-only-go';
 
 /** Stored proof admission facts shared by previews and activation. */
@@ -20,7 +20,9 @@ export function proofActivationRefusal(task: Task, runs: Run[], stage: 'removed'
   if (stage === 'disposition') return isDispositionActive(task) ? DISPOSITION_CONTROL_REFUSAL : null;
   if (stage === 'terminal') return ['done', 'cancelled'].includes(task.phase) ? `The task is ${task.phase}; proof execution is closed` : null;
   if (stage === 'proof-only') return !['queued', 'blocked'].includes(task.phase) ? `A proof-only qualification without release GO activates only from queued or after a pre-selector refusal; the task is ${task.phase}` : null;
-  if (stage === 'selector') return !task.proofExecution ? 'This task names no author-side proof selector; the brief or handoff must set queue.proofExecution with the selector and input hashes' : null;
+  if (stage === 'selector') return !task.proofExecution
+    ? 'This task names no author-side proof selector; the brief or handoff must set queue.proofExecution with the selector and input hashes'
+    : qualificationModeRefusal(task);
   if (stage === 'ordinary') {
     return proofActivationRefusal(task, runs, 'merging')
       ?? proofActivationRefusal(task, runs, 'before-review')

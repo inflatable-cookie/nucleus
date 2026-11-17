@@ -15,6 +15,7 @@ import {
   type HostRunSubmitBody,
   type HostRunSupervisorPlan,
 } from "./host-run-wire";
+import type { QualificationBinding } from "../../shared/schema/review/proof";
 export const HOST_RUN_CLIENT_PROTOCOL_VERSION = 1;
 /** One NDJSON request line is at most 1 MiB (contract 010, Transport). */
 export const HOST_RUN_MAX_REQUEST_BYTES = 1024 * 1024;
@@ -96,7 +97,11 @@ export const stableJson = (value: unknown): string => {
 };
 
 /** A durable submission body: env key names only, never values (Spec 035). */
-export type StoredSubmissionBody = Omit<HostRunSubmitBody, "env"> & { envKeys: string[] };
+export type StoredSubmissionBody = Omit<HostRunSubmitBody, "env"> & {
+  envKeys: string[];
+  /** Spec 064 P1: the qualification binding a qualification submit resolved (tranche 3 writes it). */
+  qualification?: QualificationBinding;
+};
 
 export const storedBodyOf = (body: HostRunSubmitBody): StoredSubmissionBody => {
   const { env, ...rest } = body;

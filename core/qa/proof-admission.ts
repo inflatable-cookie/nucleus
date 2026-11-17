@@ -6,6 +6,7 @@
  * at that head is already recorded, refuses here.
  */
 import type { Run, Task } from '../../shared/contracts';
+import { QUALIFICATION_FOUNDATION_INCOMPLETE } from '../host-runs/qualification-binding';
 import { proofExecutions, spentProofExecution } from './proof-records';
 
 /**
@@ -17,6 +18,18 @@ export class ProofSingleFlightError extends Error {
     super(refusal);
     this.name = 'ProofSingleFlightError';
   }
+}
+
+/**
+ * Spec 064 P1: qualification mode is declared, never entered, while its foundation
+ * is incomplete. Every proof-execution entry — the activation table the owner verb
+ * and preview read, and the dispatch funnel itself — asks this before anything is
+ * dispatched, so an opted-in declaration cannot reach an ordinary executor
+ * activation and be read as a running proof.
+ */
+export function qualificationModeRefusal(task: Pick<Task, 'proofExecution'>): string | null {
+  if (task.proofExecution?.qualification !== true) return null;
+  return `${QUALIFICATION_FOUNDATION_INCOMPLETE}: this proof execution declares qualification mode, and real qualification proof mode is refused before any dispatch until Spec 064 P4-P7 land their named missing-input refusal`;
 }
 
 /**
