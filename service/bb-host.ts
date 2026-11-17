@@ -21,8 +21,8 @@
  * `dataDir` instead of quietly registering a second BB host.
  */
 import { composeBbAdapter } from "./bb-adapter";
-import type { BbWorkspaceRecord } from "../hosts/bb/threads";
-import { ProvenPreSendRefusalError } from "../core/host/errors";
+import type { BbWorkspaceRecord } from "../hosts/bb";
+import { ProvenPreSendRefusalError } from "../core/host";
 import { Admission, admitAdapter } from "../core/host/admission";
 import type { Adapter } from "../core/host/adapter";
 import type { HostRegistry } from "../core/host/host-registry";
