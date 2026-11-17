@@ -102,6 +102,7 @@ import { Closeout } from './closeout/closeout';
 import { ReviewPublication } from './review/review-publication';
 
 import { type EscalationVerbChoice } from './questions/ladder';
+import type { QualificationFirstEffectClock, QualificationReadiness } from '../shared/schema/review/proof';
 
 /** Task 382: the check evidence a merge gate reports beside its wait: the effective hosted-check policy, the required and advisory results at the exact head, and the repository settings revision the policy came from. */
 export type OverdueCheckEvidence = {key: string; name: string; state: string; elapsedMs: number; jobUrl: string; runnerLabels: string[]};
@@ -120,6 +121,18 @@ export interface ProofActivation {
   operationId: string | null;
   tree?: string;
   goEvidence?: NonNullable<Run['proofExecution']>['goEvidence'];
+  /**
+   * Spec 064 P5/P6: the readiness set an external supplier resolved for this
+   * activation. Absent, real qualification proof mode refuses before any effect
+   * and names the missing inputs. No supplier exists today.
+   */
+  readiness?: QualificationReadiness;
+  /**
+   * Spec 064 P5: the attempt's one cumulative first-effect clock, as the funnel
+   * established (or a retry carried) it. It rides the intent, so the reservation
+   * records the same origin no later owner may restart.
+   */
+  firstEffectClock?: QualificationFirstEffectClock;
 }
 /**
  * Task 408: the owner closeout reconciliation of a queued review-entry task

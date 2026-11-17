@@ -16,9 +16,13 @@ import { verifyProofSource } from "../qa/proof-source";
 import { ProofExecutionRefusal } from "../qa/proof-refusal";
 import type { QualificationBinding, QualificationSubject } from "../../shared/schema/review/proof";
 import {
-  QUALIFICATION_FOUNDATION_INCOMPLETE,
   qualificationEnvironmentDigest, qualificationProcessIdentityEnvironment, qualificationSubjectDigest,
 } from "./qualification-binding";
+import {
+  missingQualificationReadiness,
+  qualificationReadiness,
+  type QualificationInputClaim,
+} from "./qualification-inputs";
 
 /** Why a qualification submit was refused before any write. */
 export type QualificationRefusalCode = "invalid" | "unauthenticated" | "subject_mismatch" | "source_unavailable" | "not_permitted";
@@ -50,6 +54,12 @@ export interface QualificationSubmitInput {
 export interface QualificationSubjectPorts {
   /** The one credential owner: a run id and the token issued for it. */
   store: Pick<Store, "authenticate" | "run" | "task">;
+  /**
+   * Spec 064 P5/P6: the external suppliers' readiness claims. Absent, every
+   * required input is missing — which is today's truth, and why real proof mode
+   * refuses and names each one instead of synthesizing it.
+   */
+  readiness?: () => readonly QualificationInputClaim[];
 }
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -121,6 +131,13 @@ export function qualificationSubjectResolver(ports: QualificationSubjectPorts) {
         return refused("subject_mismatch",
           `The proof subject recomputed from the store (${subjectDigest}) is not the subject this run recorded (${recordedDigest}); the subject is immutable and is never reinterpreted`);
     }
+    // Spec 064 P5: the attempt's cumulative clock was established before the
+    // dispatch funnel and rides the recorded intent. A binding without it has no
+    // cumulative interval, so no proof may be started on it.
+    const firstEffectClock = bound.qualification.firstEffectClock;
+    if (!firstEffectClock)
+      return refused("not_permitted",
+        `Executor run ${run.id} records no first-effect clock; the cumulative target cannot be counted and the route refuses before any effect`);
     if (submission.selector !== subject.selector)
       return refused("subject_mismatch", `The submitted selector ${JSON.stringify(submission.selector)} is not the bound subject's selector ${JSON.stringify(subject.selector)}`);
 
@@ -159,15 +176,21 @@ export function qualificationSubjectResolver(ports: QualificationSubjectPorts) {
     const token = mintToken();
     if (!token)
       return refused("not_permitted",
-        `${QUALIFICATION_FOUNDATION_INCOMPLETE}: this endpoint holds no host-run token key for epoch ${hostRun.epoch}, so the execution identity cannot be bound; nothing was written and no key was created`);
+        `qualification foundation incomplete: this endpoint holds no host-run token key for epoch ${hostRun.epoch}, so the execution identity cannot be bound; nothing was written and no key was created`);
     const effective = {
       ...hostRunLaunchEnvironment(submission.env, { runId: hostRun.id, token: token.value, env: environment }),
       ...qualificationProcessIdentityEnvironment(subject),
     };
+    // Spec 064 P5/P6: the readiness set the submit resolved. Every external input
+    // it names comes from its own owner; nothing here is inferred from
+    // authentication, a capacity reservation or a command exit.
+    const readiness = ports.readiness ? qualificationReadiness(ports.readiness()) : missingQualificationReadiness();
     return {
       state: "resolved",
       binding: {
         subject,
+        firstEffectClock,
+        readiness,
         execution: {
           hostRunId: hostRun.id, hostEpoch: hostRun.epoch,
           executable, executableDigest: sha256(executableBytes),

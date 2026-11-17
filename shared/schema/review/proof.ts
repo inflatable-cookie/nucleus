@@ -9,6 +9,99 @@ import { profileSchema } from "../settings";
  */
 export const qualificationDigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/, "A qualification digest is sha256:<hex>");
 
+/**
+ * Spec 064 P5: the one cumulative target, in milliseconds, counted from the
+ * first mandatory effect. The clock's identity and origin are recorded with the
+ * attempt; the target is fixed, so no stage can restart or extend it.
+ */
+export const QUALIFICATION_FIRST_EFFECT_TARGET_MS = 600_000;
+
+/**
+ * Spec 064 P5: the first-effect clock. `originTick` is the epoch-millisecond tick
+ * immediately before the attempt's first mandatory effect (reservation
+ * persistence included), `clockId` names that one origin so a retry can prove it
+ * kept the same clock instead of starting a new one. It is a local elapsed
+ * measurement: it is not the qualified common clock across participating
+ * processes, which stays a required external input.
+ */
+export const qualificationFirstEffectClockSchema = z.object({
+  clockId: z.string().trim().min(1).max(200),
+  originTick: z.number().int().nonnegative(),
+  targetMs: z.literal(QUALIFICATION_FIRST_EFFECT_TARGET_MS),
+}).strict();
+
+export type QualificationFirstEffectClock = z.infer<typeof qualificationFirstEffectClockSchema>;
+
+/**
+ * Spec 064 P5/P6 (refuse before effects): every external input real
+ * qualification proof mode needs before it may cause an effect. Nucleus supplies
+ * none of them itself; the identities name the owner each one comes from, so a
+ * refusal can say exactly what is missing instead of "mode unavailable".
+ */
+export const QUALIFICATION_REQUIRED_INPUTS = [
+  { id: "effigy_prepare_custody", requirement: "Effigy's prepare custody: an actual surviving prepare parent holding its own prepare children before any effect" },
+  { id: "effigy_admission", requirement: "Effigy's genuine selector admission and attributable completion for the exact selector, with no maintenance substitution" },
+  { id: "common_elapsed_clock", requirement: "one common elapsed-clock binding for every participating process, with no invented RAW or cross-process conversion" },
+  { id: "creator_waits", requirement: "every creator's own positive direct wait and reap for each required child (S, E, A, C, M, leaves and each publisher)" },
+  { id: "deciding_census", requirement: "the completed, joined, custodian-bound DECIDING census with its exact named monitor-sent message" },
+  { id: "final_census", requirement: "the separate FINAL census, certain-empty, independent of DECIDING, join and waits" },
+  { id: "image_attachment_evidence", requirement: "complete positive provider evidence that every mount and every attached device of each owned image is absent" },
+  { id: "capture_delivery", requirement: "source-bound EOF, drain, successful fsync, in-window durable ack and the publisher's positive wait" },
+  { id: "accounting_fit_readiness", requirement: "actual accounting of every charged footprint, measured fit and readiness, with no fabricated reserve" },
+] as const;
+
+export const qualificationInputIdSchema = z.enum([
+  "effigy_prepare_custody", "effigy_admission", "common_elapsed_clock", "creator_waits",
+  "deciding_census", "final_census", "image_attachment_evidence", "capture_delivery",
+  "accounting_fit_readiness",
+]);
+
+export type QualificationInputId = z.infer<typeof qualificationInputIdSchema>;
+
+/**
+ * One required external input, as its owner supplied it. `present` needs its
+ * evidence provenance; an input nobody supplied is `missing`, and one whose
+ * supplier could not be verified is `unknown`. Neither absence nor uncertainty is
+ * ever read as satisfied.
+ */
+export const qualificationInputSchema = z.object({
+  id: qualificationInputIdSchema,
+  state: z.enum(["present", "missing", "unknown"]),
+  evidence: z.object({
+    owner: z.string().trim().min(1).max(200),
+    source: z.string().trim().min(1).max(400),
+    digest: qualificationDigestSchema.nullable().default(null),
+    observedAt: z.string().datetime(),
+  }).strict().nullable().default(null),
+}).strict().superRefine((input, context) => {
+  if (input.state === "present" && input.evidence === null)
+    context.addIssue({ code: "custom", message: "A present input carries the evidence it was supplied with", path: ["evidence"] });
+  if (input.state !== "present" && input.evidence !== null)
+    context.addIssue({ code: "custom", message: "An input that is missing or unknown carries no evidence of satisfaction", path: ["evidence"] });
+});
+
+export type QualificationInput = z.infer<typeof qualificationInputSchema>;
+
+/**
+ * Spec 064 P5/P6: the readiness set one attempt was refused or admitted on. It
+ * is the only place a real proof mode reads "is every external input present and
+ * qualified", and it never synthesizes one: an absent set refuses.
+ */
+export const qualificationReadinessSchema = z.object({
+  inputs: z.array(qualificationInputSchema).length(QUALIFICATION_REQUIRED_INPUTS.length),
+}).strict().superRefine((readiness, context) => {
+  const seen = new Set<string>();
+  for (const input of readiness.inputs) {
+    if (seen.has(input.id)) context.addIssue({ code: "custom", message: `The readiness set names ${input.id} twice`, path: ["inputs"] });
+    seen.add(input.id);
+  }
+  for (const required of QUALIFICATION_REQUIRED_INPUTS) {
+    if (!seen.has(required.id)) context.addIssue({ code: "custom", message: `The readiness set omits ${required.id}`, path: ["inputs"] });
+  }
+});
+
+export type QualificationReadiness = z.infer<typeof qualificationReadinessSchema>;
+
 /** Who authorized one proof execution; the record and the subject share it. */
 export const proofAuthorizationSchema = z.object({
   role: z.enum(['project_owner', 'operator', 'authorized_relay', 'delegated', 'queue_dispatch']),
@@ -75,6 +168,18 @@ export type QualificationExecution = z.infer<typeof qualificationExecutionSchema
 export const qualificationBindingSchema = z.object({
   subject: qualificationSubjectSchema,
   execution: qualificationExecutionSchema.nullable().default(null),
+  /**
+   * Spec 064 P5: the one cumulative first-effect clock. `DispatchLaunch.proofExecution`
+   * establishes its origin before the dispatch funnel (reservation persistence
+   * included); every later owner consumes this record and never starts its own.
+   * Absent on an attempt whose clock was never established, which refuses.
+   */
+  firstEffectClock: qualificationFirstEffectClockSchema.optional(),
+  /**
+   * Spec 064 P5/P6: the readiness set the submit resolved. Absent means no
+   * readiness was established, which refuses real proof mode before any effect.
+   */
+  readiness: qualificationReadinessSchema.optional(),
 }).strict();
 
 export type QualificationBinding = z.infer<typeof qualificationBindingSchema>;
@@ -114,6 +219,15 @@ export const proofExecutionResultSchema = z.object({
   selector: z.string().trim().min(1).max(2000),
   exitCode: z.number().int().nullable().optional(),
   evidence: z.string().trim().max(4000).optional(),
+  /**
+   * Spec 064 P6: a qualification-mode result names the exact settlement it read,
+   * so intake consumes that digest rather than trusting a status. The artifact is
+   * referenced by its digest, never copied into the proof files.
+   */
+  qualification: z.object({
+    settlementDigest: qualificationDigestSchema,
+    artifactSha256: qualificationDigestSchema,
+  }).strict().optional(),
 }).strict();
 
 export type ProofExecutionResult = z.infer<typeof proofExecutionResultSchema>;
@@ -153,6 +267,18 @@ export const proofExecutionRecordSchema = z.object({
     reference: z.string().min(1).max(400),
     subjectDigest: qualificationDigestSchema,
     executionDigest: qualificationDigestSchema.nullable().default(null),
+    /**
+     * Spec 064 P6/P7: the exact settlement this receipt settled from, and the
+     * disposition it kept — the verdict, whether the attempt was spent, its
+     * permanent first fault and its unresolved obligations. The settlement's own
+     * sidecar holds each independent gate; this reference is never a substitute
+     * for it, and no late result can turn a spent attempt into a pass.
+     */
+    settlementDigest: qualificationDigestSchema.optional(),
+    verdict: z.enum(['proved', 'failed', 'unknown']).optional(),
+    spent: z.boolean().optional(),
+    firstFault: z.string().trim().min(1).max(4000).optional(),
+    unresolvedObligations: z.array(z.string().trim().min(1).max(400)).max(64).optional(),
   }).strict().optional(),
   exitCode: z.number().int().nullable().optional(), evidence: z.string().max(4000).default(''),
 }).strict();
