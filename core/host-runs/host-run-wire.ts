@@ -4,13 +4,10 @@ import { z } from "zod";
 import { qualificationBindingSchema } from "../../shared/schema/review/proof";
 import { readCheckedHostRunFile, readCheckedHostRunFileRead, removeVerifiedOwnedFile, writeVerifiedOwnedFile } from "./host-run-files";
 export const HOST_RUN_SUPERVISOR_PLAN_FORMAT = "host.run.supervisor.plan";
-/**
- * Spec 064 P1–P3: the refusal every qualification mode entry shares until the
- * later tranches land their named missing-input refusal (brief amendment,
- * 2026-11-16). It lives beside the plan schema so the detached supervisor, which
- * may import no Store or runtime module, can refuse without reaching one.
- */
-export const QUALIFICATION_FOUNDATION_INCOMPLETE = "qualification foundation incomplete";
+// Spec 064 P1–P3: the qualification refusal has one owner beside the binding
+// identities; re-exported here because the plan owner and the detached supervisor
+// both refuse through this module.
+export { QUALIFICATION_FOUNDATION_INCOMPLETE } from "./qualification-binding";
 export const HOST_RUN_SUPERVISOR_STATE_FORMAT = "host.run.supervisor.state";
 
 // ---------------------------------------------------------------------------

@@ -67,10 +67,13 @@ behaviour is unchanged.
   persists the mode in the durable cancel request.
 
 Staged refusal (brief amendment, 2026-11-16): until P4–P7 land their named
-missing-input refusal, real qualification proof mode is inaccessible. Both mode
-entries — `submitQualification` and the supervisor's qualification plan — refuse
-before any effect with `qualification foundation incomplete`, and the resolved
-binding is never written. Authentication alone never starts a proof and never
+missing-input refusal, real qualification proof mode is inaccessible. Every mode
+entry refuses before any effect with `qualification foundation incomplete`: a
+declared opt-in is refused by the proof-activation table the owner verb and
+preview read **and** by the dispatch funnel, so it cannot reach an ordinary
+executor activation; `submitQualification` refuses without writing and performs no
+token-key work before it authenticates; and the supervisor refuses a qualification
+plan before its first write or spawn. The resolved binding is never written. Authentication alone never starts a proof and never
 implies readiness. The first-effect clock, provider evidence, censuses, waits and
 closure are still absent, so nothing here is qualification credit, fit or a hold
 release.

@@ -17,13 +17,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { runSchema, type Run } from "../shared/schema/runs";
 import { submissionSchema } from "../shared/contracts";
-import { qualificationEnvironmentDigest, qualificationSubjectDigest } from "../core/host-runs/qualification-binding";
+import {
+  qualificationEnvironmentDigest, qualificationProcessIdentity, qualificationSubjectDigest,
+} from "../core/host-runs/qualification-binding";
+import { PROCESS_START_IDENTITY_ENV } from "../core/machine/process-identity-search";
 import { Store } from "../core/store/store";
 import { HostRunScheduler } from "../core/host-runs/host-run-scheduler";
 import { qualificationSubjectResolver } from "../core/host-runs/qualification-subject";
@@ -241,11 +244,17 @@ test("an authenticated, matched submit resolves the full binding including the e
     runId: execution.hostRunId, epoch: execution.hostEpoch, class: body.class,
     root: f.checkout, exp: execution.tokenExpiresAt,
   }, keys.current.keyB64);
-  const effective = hostRunLaunchEnvironment(body.env, { runId: execution.hostRunId, token: launchToken, env: process.env });
+  const effective = {
+    ...hostRunLaunchEnvironment(body.env, { runId: execution.hostRunId, token: launchToken, env: process.env }),
+    [PROCESS_START_IDENTITY_ENV]: qualificationProcessIdentity(binding.subject),
+  };
   assert.deepEqual(execution.environmentKeys, Object.keys(effective).sort());
-  assert.deepEqual(execution.environmentKeys, ["HOME", "HOST_RUN_ID", "HOST_RUN_TOKEN", "PATH", "QUALIFICATION_FIXTURE"]);
+  assert.deepEqual(execution.environmentKeys,
+    ["HOME", "HOST_RUN_ID", "HOST_RUN_TOKEN", "PATH", "QUALIFICATION_FIXTURE", PROCESS_START_IDENTITY_ENV].sort());
+  assert.equal(effective[PROCESS_START_IDENTITY_ENV], qualificationProcessIdentity(f.subject),
+    "the spawn marker is derived from the immutable subject, not chosen at spawn");
   assert.equal(execution.environmentDigest, qualificationEnvironmentDigest(effective),
-    "the environment-value digest covers the full effective environment, including the per-launch secret");
+    "the environment-value digest covers the full effective environment, including the per-launch secret and the start marker");
   assert.ok(execution.tokenExpiresAt > Date.now(), "the secret's expiry is recorded, never its value");
   assert.equal(execution.hostEpoch, f.scheduler.authority().epoch);
 
@@ -255,6 +264,8 @@ test("an authenticated, matched submit resolves the full binding including the e
     submission: { ...body, env: { ...body.env, QUALIFICATION_FIXTURE: "another-value" } },
   });
   assert.ok(changed.binding?.execution);
+  assert.equal(qualificationProcessIdentity(changed.binding.subject), qualificationProcessIdentity(binding.subject),
+    "the subject-derived spawn marker is stable across resolutions");
   assert.notEqual(changed.binding.execution.environmentDigest, execution.environmentDigest);
 
   // The amendment's staged refusal: the binding resolved, and the mode is refused
@@ -403,4 +414,78 @@ test("a qualification attempt's cancel persists its mode and never takes the gro
   assert.equal(ordinaryCancel.ok, false);
   assert.equal(ordinaryCancel.error?.code, "not_permitted");
   assert.equal(readHostRunCancelRequest(f.stateDir, ordinaryId).state, "absent");
+});
+
+test("a refused qualification submit performs no token-key work before authentication", async t => {
+  const f = fixture(t);
+  await f.endpoint.start();
+  // A second endpoint shares the scheduler's authority but has never synchronized
+  // its own token keys. With the fix, no unauthenticated submit may write them.
+  const freshState = join(f.root, "hr-fresh");
+  // A rolled endpoint whose state root exists but whose token keys are gone.
+  mkdirSync(freshState, { recursive: true, mode: 0o700 });
+  const fresh = new HostRunEndpoint(f.scheduler, {
+    stateDir: freshState, env: process.env, qualification: qualificationSubjectResolver({ store: f.store }),
+    supervisorSpawn: () => { throw new Error("a refused qualification submit must never spawn"); },
+  });
+  t.after(async () => { await fresh.stop(); });
+  const keyPath = join(freshState, "token.key");
+  assert.equal(existsSync(keyPath), false, "the fresh endpoint holds no token keys yet");
+
+  const refused = await fresh.submitQualification({
+    credential: { taskId: f.task.id, runId: f.executor.id, token: "not-a-run-credential" },
+    submission: submitBody(f.executor.id, { cwd: f.checkout }),
+  });
+  assert.equal(refused.binding, null);
+  assert.match(refused.refusal, /did not authenticate/);
+  assert.equal(existsSync(keyPath), false, "an unauthenticated submit wrote no token key");
+
+  // The rule still holds for every other refusal that precedes the mint.
+  const mismatched = await fresh.submitQualification({
+    credential: { taskId: f.task.id, runId: f.executor.id, token: f.token },
+    submission: { ...submitBody(f.executor.id, { cwd: f.checkout }), selector: "effigy check" },
+  });
+  assert.equal(mismatched.binding, null);
+  assert.equal(existsSync(keyPath), false, "a mismatched subject wrote no token key");
+
+  // Only the authenticated, matched resolve mints: the key appears exactly then.
+  const resolved = await fresh.submitQualification({
+    credential: { taskId: f.task.id, runId: f.executor.id, token: f.token },
+    submission: submitBody(f.executor.id, { cwd: f.checkout }),
+  });
+  assert.ok(resolved.binding?.execution);
+  assert.equal(existsSync(keyPath), true, "the authenticated resolve minted the per-launch secret's key");
+  assert.equal(f.spawnCount(), 0);
+});
+
+test("an unreadable plan keeps the cancel's closure unknown instead of becoming group mode", async t => {
+  const f = fixture(t);
+  await f.endpoint.start();
+  const wire = f.endpoint as unknown as {
+    onSubmit(id: string, body: unknown): { ok: boolean; body?: { runId: string } };
+    onCancel(id: string, body: unknown): { ok: boolean; error?: { code: string } };
+  };
+  const first = wire.onSubmit("q-unknown-mode", { ...submitBody("effigy@worker-unknown", { cwd: f.repo }) });
+  assert.equal(first.ok, true);
+  const runId = first.body!.runId;
+  removeVerifiedOwnedFile(realpathSync(f.stateDir), ["runs", runId, "submission.json"]);
+  // The plan exists but cannot be read: the stop mode is unknown, never group.
+  writeVerifiedOwnedFile(f.stateDir, ["runs", runId, "supervisor.plan.json"], "{\"format\":\"host.run.supervisor.plan\"} truncated", 0o600);
+
+  const cancelled = wire.onCancel("c-unknown-mode", { runId, reason: "unknown-mode fixture stop" });
+  assert.equal(cancelled.ok, true, JSON.stringify(cancelled));
+  const request = readHostRunCancelRequest(f.stateDir, runId);
+  assert.equal(request.state, "requested");
+  assert.equal(request.state === "requested" ? request.stopMode : "unexpected", undefined,
+    "an unknown stop mode is recorded without claiming one, and no group signal was sent");
+
+  // No plan at all keeps today's behaviour: the endpoint refuses to claim a stop.
+  const second = wire.onSubmit("q-no-plan", { ...submitBody("effigy@worker-no-plan", { cwd: f.repo }) });
+  const secondId = second.body!.runId;
+  removeVerifiedOwnedFile(realpathSync(f.stateDir), ["runs", secondId, "submission.json"]);
+  removeVerifiedOwnedFile(realpathSync(f.stateDir), ["runs", secondId, "supervisor.plan.json"]);
+  const refused = wire.onCancel("c-no-plan", { runId: secondId, reason: "no-plan fixture stop" });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.error?.code, "not_permitted");
+  assert.equal(readHostRunCancelRequest(f.stateDir, secondId).state, "absent");
 });

@@ -106,7 +106,10 @@ bytes, so nothing here is a rollback break.
   group, no escaped descendant and no SIGKILL escalation is sent, including from
   fallback paths, and the supervisor is never stopped as a cleanup shortcut. A
   service-level stop route that knows the mode declines instead of signalling.
-  A cancel request persists the mode beside its reason.
+  A cancel request persists the mode beside its reason. An **absent** plan keeps
+  Contract 010's group stop; a plan that exists but cannot be read is `unknown`,
+  and unknown evidence never becomes affirmative group mode: the endpoint records
+  the durable request without claiming a mode and signals no group.
 - `qualification` (private, optional) carries the subject/execution binding a
   qualification submit resolved: task, participant run, authorization and
   operation, brief version and digest, published head and tree, the ordered
@@ -114,10 +117,13 @@ bytes, so nothing here is a rollback break.
   digest, literal argv, cwd and the canonical digest of the **complete effective
   environment values** — every value the command receives, built by the same
   environment owner the launcher uses, so the one per-launch secret is inside the
-  digest while only its expiry is recorded. With the field absent every existing
-  behaviour is unchanged: qualification mode is opt-in at the proof declaration
-  (`queue.proofExecution.qualification: true`), and an ordinary proof execution
-  records no qualification binding at all.
+  digest while only its expiry is recorded, and the process-start marker is
+  derived from the immutable subject rather than chosen at spawn. With the field
+  absent every existing behaviour is unchanged: qualification mode is opt-in at
+  the proof declaration (`queue.proofExecution.qualification: true`), an ordinary
+  proof execution records no qualification binding at all, and a declared opt-in
+  is refused by the proof-activation table and the dispatch funnel before any
+  executor run exists.
 - A plan carrying either field is refused by the supervisor before its first
   write or spawn while Spec 064 P4–P7 are unimplemented: `qualification
   foundation incomplete`. The endpoint's private `submitQualification` method

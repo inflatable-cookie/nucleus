@@ -24,6 +24,9 @@ exit, and stop by signalling only the one direct command.
   request persists the mode.
 
 Qualification mode stays opt-in and inaccessible: until the later tranches land
-their named missing-input refusal, both mode entries refuse before any effect
-with `qualification foundation incomplete`, and no qualification proof runs.
+their named missing-input refusal, every mode entry refuses before any effect with
+`qualification foundation incomplete` — a declared opt-in is refused at proof
+activation and at the dispatch funnel before an executor run exists, a submit
+performs no token-key work before it authenticates, and the supervisor refuses a
+qualification plan before its first write — and no qualification proof runs.
 Ordinary host runs, QA and proof executions keep their existing behaviour.

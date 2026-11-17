@@ -8,7 +8,32 @@
  * environment cannot be reinterpreted to match.
  */
 import { createHash } from "node:crypto";
+import { PROCESS_START_IDENTITY_ENV } from "../machine/process-identity-search";
 import type { QualificationExecution, QualificationSubject } from "../../shared/schema/review/proof";
+
+/**
+ * The refusal every qualification mode entry shares until the later tranches
+ * land their named missing-input refusal (brief amendment, 2026-11-16). It lives
+ * with the binding's other identities so the detached supervisor, the dispatch
+ * funnel and the plan owner all read one string.
+ */
+export const QUALIFICATION_FOUNDATION_INCOMPLETE = "qualification foundation incomplete";
+
+/**
+ * Spec 064 P1: the process-start marker a qualification attempt's direct command
+ * inherits. Ordinary spawns choose a fresh random marker, which no binding could
+ * cover; a qualifying spawn derives it from the immutable subject instead, so the
+ * marker is one of the effective environment values the binding digests. The
+ * environment variable is the same one the process owner overlays at spawn.
+ */
+export function qualificationProcessIdentity(subject: QualificationSubject): string {
+  return `qualification:${qualificationSubjectDigest(subject)}`;
+}
+
+/** The environment entry that carries the marker, for the binding's effective values. */
+export function qualificationProcessIdentityEnvironment(subject: QualificationSubject): Record<string, string> {
+  return { [PROCESS_START_IDENTITY_ENV]: qualificationProcessIdentity(subject) };
+}
 
 /**
  * Canonical JSON for one qualification record: object keys sorted at every

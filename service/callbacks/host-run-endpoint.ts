@@ -22,7 +22,7 @@ import {
   defaultHostRunStateDir,
   ensureVerifiedDirectoryChain,
   hostRunSupervisorPaths,
-  readCheckedHostRunFile,
+  readCheckedHostRunFileRead,
   writeVerifiedOwnedFile,
 } from "../../core/host-runs/host-run-files";
 import {
@@ -579,19 +579,22 @@ export class HostRunEndpoint {
     // The host run identity comes from the authenticated executor run, not from
     // the client-supplied caller the body may carry.
     const hostRunId = submissionRunId(parsed.data.credential.runId, parsed.data.submission.clientRequestId);
-    // Spec 064 P1: mint the one per-launch secret here so the resolved binding can
-    // digest the complete effective environment, including this value. Its expiry
-    // covers the reservation-plus-run window, and the launch mints the same value
-    // from the recorded expiry rather than a fresh one.
-    this.syncTokenKeys();
-    const tokenExpiresAt = this.nowMs() + parsed.data.submission.capacityDeadlineMs + parsed.data.submission.runTimeoutMs + this.tokenGraceMs;
-    const tokenValue = signRunToken({
-      runId: hostRunId, epoch, class: parsed.data.submission.class,
-      root: realpathSync(parsed.data.submission.cwd), exp: tokenExpiresAt,
-    }, this.keys!.current.keyB64);
+    // Spec 064 P1: the per-launch secret enters the environment digest, but it is
+    // minted only when the resolver has authenticated the executor run and every
+    // subject rule holds — an unauthenticated or mismatched submit performs no key
+    // work and writes nothing. Its expiry covers the reservation-plus-run window,
+    // and the launch re-mints the same value from the recorded expiry.
+    const mintToken = () => {
+      this.syncTokenKeys();
+      const expiresAt = this.nowMs() + parsed.data.submission.capacityDeadlineMs + parsed.data.submission.runTimeoutMs + this.tokenGraceMs;
+      const value = signRunToken({
+        runId: hostRunId, epoch, class: parsed.data.submission.class,
+        root: realpathSync(parsed.data.submission.cwd), exp: expiresAt,
+      }, this.keys!.current.keyB64);
+      return { value, expiresAt };
+    };
     const resolved = await resolve({
-      ...parsed.data, hostRun: { id: hostRunId, epoch }, environment: this.env,
-      token: { value: tokenValue, expiresAt: tokenExpiresAt },
+      ...parsed.data, hostRun: { id: hostRunId, epoch }, environment: this.env, mintToken,
     });
     if (resolved.state === "refused") return { binding: null, code: qualificationClientCode(resolved.code), refusal: resolved.refusal };
     return {
@@ -796,18 +799,22 @@ export class HostRunEndpoint {
     const submitted = this.submission(runId);
     // Spec 064 P3: the plan's stop mode is read before any fallback, so a
     // qualification attempt can never inherit a group signal through a missing or
-    // unreadable submission.
+    // unreadable submission, and an unreadable plan never becomes affirmative
+    // group mode: its closure stays unknown and the request is recorded instead.
     const stopMode = this.runStopMode(runId);
+    const durableOnly = stopMode === "qualification_direct" || stopMode === "unknown";
     // A running cancel publishes the contract's `host.run.cancel` request; queued and
     // admitted runs get theirs from cancelQueued.
-    if (submitted || stopMode === "qualification_direct" || (run.processGroupId && run.startIdentity))
+    if (submitted || durableOnly || (run.processGroupId && run.startIdentity))
       this.scheduler.note(runId, "request", { method: "host.run.cancel", input: { runId, reason } });
     // A run this endpoint launched is stopped through its supervisor's durable
     // cancel request, so a Queue roll cannot lose the stop. Spec 064 P3: the
     // request persists the plan's stop mode, so a qualification run's stop stays
-    // the direct-command-only stop after any roll.
-    if (submitted || stopMode === "qualification_direct") {
-      writeHostRunCancelRequest(this.stateDir, runId, reason, new Date(this.nowMs()).toISOString(), stopMode);
+    // the direct-command-only stop after any roll. An unknown mode records the
+    // request without claiming one.
+    if (submitted || durableOnly) {
+      writeHostRunCancelRequest(this.stateDir, runId, reason, new Date(this.nowMs()).toISOString(),
+        stopMode === "qualification_direct" ? "qualification_direct" : undefined);
       this.watch.watchRun(runId);
       return run;
     }
@@ -819,16 +826,21 @@ export class HostRunEndpoint {
 
   /**
    * The stop mode this run's private plan records, read from the plan itself so a
-   * rolled service persists the same stop the run was launched with. An absent or
-   * unreadable plan is Contract 010's group stop, unchanged.
+   * rolled service persists the same stop the run was launched with.
+   *
+   * An **absent** plan is Contract 010's group stop, unchanged: this endpoint did
+   * not launch the run and has no stop evidence to read. A plan that exists but
+   * cannot be read is `unknown` — unknown evidence never becomes affirmative group
+   * mode, so it may not reach a group signal either.
    */
-  private runStopMode(runId: string): "group" | "qualification_direct" {
-    const raw = readCheckedHostRunFile(this.stateDir, ["runs", runId, "supervisor.plan.json"]);
-    if (!raw) return "group";
+  private runStopMode(runId: string): "group" | "qualification_direct" | "unknown" {
+    const read = readCheckedHostRunFileRead(this.stateDir, ["runs", runId, "supervisor.plan.json"]);
+    if (read.state === "absent") return "group";
+    if (read.state === "unreadable") return "unknown";
     try {
-      const plan = hostRunSupervisorPlanSchema.parse(JSON.parse(raw.toString("utf8")));
+      const plan = hostRunSupervisorPlanSchema.parse(JSON.parse(read.bytes.toString("utf8")));
       return plan.stopMode === "qualification_direct" ? "qualification_direct" : "group";
-    } catch { return "group"; }
+    } catch { return "unknown"; }
   }
 
   // -- status ---------------------------------------------------------------

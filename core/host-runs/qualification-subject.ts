@@ -15,7 +15,9 @@ import type { Store } from "../store/store";
 import { verifyProofSource } from "../qa/proof-source";
 import { ProofExecutionRefusal } from "../qa/proof-refusal";
 import type { QualificationBinding, QualificationSubject } from "../../shared/schema/review/proof";
-import { qualificationEnvironmentDigest, qualificationSubjectDigest } from "./qualification-binding";
+import {
+  qualificationEnvironmentDigest, qualificationProcessIdentityEnvironment, qualificationSubjectDigest,
+} from "./qualification-binding";
 
 /** Why a qualification submit was refused before any write. */
 export type QualificationRefusalCode = "invalid" | "unauthenticated" | "subject_mismatch" | "source_unavailable" | "not_permitted";
@@ -34,12 +36,14 @@ export interface QualificationSubmitInput {
   /** This endpoint's own environment, from which the effective PATH and HOME values come. */
   environment: Record<string, string | undefined>;
   /**
-   * The one per-launch secret the endpoint minted for this resolved host run, and
-   * its own claim expiry. Its value enters the environment digest, so the binding
-   * covers every effective value the command receives; only the expiry is
+   * Mint the one per-launch secret for this authenticated attempt, and its claim
+   * expiry. It is called only after the credential authenticates and every other
+   * subject rule holds, so an unauthenticated or mismatched submit performs no key
+   * work and writes nothing. Its value enters the environment digest, so the
+   * binding covers every effective value the command receives; only the expiry is
    * recorded, never the value.
    */
-  token: { value: string; expiresAt: number };
+  mintToken: () => { value: string; expiresAt: number };
 }
 
 export interface QualificationSubjectPorts {
@@ -70,7 +74,7 @@ function sourceRefusalCode(error: unknown): QualificationRefusalCode {
  */
 export function qualificationSubjectResolver(ports: QualificationSubjectPorts) {
   return async (input: QualificationSubmitInput): Promise<QualificationResolution> => {
-    const { credential, submission, hostRun, environment, token } = input;
+    const { credential, submission, hostRun, environment, mintToken } = input;
 
     // A client-supplied caller is not an identity: the authenticated run owns the submit.
     if (submission.caller !== credential.runId)
@@ -144,12 +148,18 @@ export function qualificationSubjectResolver(ports: QualificationSubjectPorts) {
       return refused("subject_mismatch",
         `The checked-out tree ${source.tree} is not the bound tree ${subject.tree}; the subject's source moved before any effect`);
 
-    // The complete effective environment values, not their names: the same owner
-    // the launcher uses builds the map, so the digest provably covers every value
-    // the command receives — the submitted values, this endpoint's PATH and HOME,
-    // the host run id and the one per-launch secret. Only the secret's expiry is
-    // recorded; its value lives inside the digest.
-    const effective = hostRunLaunchEnvironment(submission.env, { runId: hostRun.id, token: token.value, env: environment });
+    // The complete effective environment values, not their names. The launcher's
+    // own owner builds the map, and the subject-derived process marker is added
+    // beside the launch values, so the digest proves every value the command
+    // receives: the submitted values, this endpoint's PATH and HOME, the host run
+    // id, the one per-launch secret and the start marker. Only the secret's expiry
+    // is recorded; its value lives inside the digest. The secret is minted here,
+    // after authentication, so a refused submit never touches the token keys.
+    const token = mintToken();
+    const effective = {
+      ...hostRunLaunchEnvironment(submission.env, { runId: hostRun.id, token: token.value, env: environment }),
+      ...qualificationProcessIdentityEnvironment(subject),
+    };
     return {
       state: "resolved",
       binding: {
