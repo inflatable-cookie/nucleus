@@ -13,8 +13,8 @@ import { usePlanningLane } from "../project-scope-controls";
 import { runAccounting } from "../qa-runs-tab";
 import type { RecordNoticeValue } from "../task/parts";
 
-/** The board's tabs. #866 folded Lanes into Planning; #1113 added Usage. */
-export type BoardTab = "queue" | "planning" | "qa" | "usage";
+/** The board's tabs. #866 folded Lanes into Planning. */
+export type BoardTab = "queue" | "planning" | "qa";
 type BoardStateQuery = ReturnType<typeof useBoardState>["stateQuery"];
 
 /** The open task's detail and next reads, polled while it is selected. */

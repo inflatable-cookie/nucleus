@@ -11,6 +11,10 @@ merge policy. Service composition injects those policies through `core/host`;
 the adapter never imports their implementation or another host. Paseo remains
 the primary host (Tom, 2026-11-11).
 
+Provider subscription usage belongs to T3Code and its host-specific plugins.
+Nucleus adds no subscription usage gauge; Spec 052's usage level remains a
+separate dispatch policy setting.
+
 Worker, reviewer and recovery identities are separate top-level T3 threads.
 No role uses T3's delegated-task relationship. The adapter does not patch T3,
 attach Nucleus MCP servers, raise Nucleus questions inside threads or contribute

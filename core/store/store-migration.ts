@@ -29,6 +29,11 @@ export class StoreMigration {
     if (cleaned.some((entry, index) => entry !== stored[index])) this.core.setMeta("pool", cleaned);
   }
 
+  /** Schema 59 (task 1302): subscription usage readings now belong to host apps and plugins. */
+  dropSubscriptionUsageStorage(): void {
+    this.db.exec("DROP TABLE IF EXISTS usage_samples; DROP TABLE IF EXISTS usage_read_state;");
+  }
+
   /**
    * nucleus#1261: a task registered by `task.register` before this build has no
    * `workspaceOwnership` field, so the schema default would read its own

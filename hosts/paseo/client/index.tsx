@@ -14,11 +14,10 @@ const BOARD_PANEL_ID = "queue-board";
 export default function contribute(client: PluginClientContext) {
   bindBoardShell(paseoShell);
   const host = paseoHost(client);
-  // Spec 059 step 2 / nucleus#1123: where the host carries plugin screens and custom
-  // sidebar rows, the board is one titled "Nucleus" screen and the one Nucleus row
-  // (board button plus usage rings) opens it, so neither Paseo's native sidebar item
-  // nor the plugin's own "main" surface is registered — nothing appears twice. Older
-  // hosts keep the surface and the native item, and render no rings.
+  // Where the host carries plugin screens and custom sidebar rows, the board is
+  // one titled "Nucleus" screen and one Nucleus row, so neither Paseo's native
+  // sidebar item nor the plugin's own "main" surface is registered — nothing
+  // appears twice. Older hosts keep the surface and the native item.
   const sidebar = registerNucleusSidebar(client);
   const removeSurface = sidebar.combined
     ? () => {}
