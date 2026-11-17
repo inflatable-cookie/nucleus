@@ -183,9 +183,11 @@ const root = new URL("./", import.meta.url).pathname;
 export default defineConfig({
   // One runner, wherever it is started from: the config owns its root.
   root,
-  resolve: { alias: { "@": root } },
+  // The board bundle is generated (\`effigy bb:board-build\`) and never built by this
+  // runner: the plugin entry's import of it resolves to a no-op registration here.
+  resolve: { alias: [{ find: /^\\.\\/board\\/nucleus-board\\.js$/, replacement: \`\${root}board/nucleus-board.stub.ts\` }, { find: "@", replacement: root }] },
   test: {
-    alias: { "@": root },
+    alias: [{ find: /^\\.\\/board\\/nucleus-board\\.js$/, replacement: \`\${root}board/nucleus-board.stub.ts\` }, { find: "@", replacement: root }],
     silent: "passed-only",
     name: "bb-plugin-nucleus-sidebar",
     environmentOptions: { jsdom: { url: "http://localhost/" } },

@@ -82,6 +82,11 @@ test('every vendored file is byte-identical to the pin or named as patched, and 
 test('every file the copy writes is accounted for: the registry modules and the fork configuration included', () => {
   for (const path of pinnedPaths) {
     assert.ok(existsSync(join(root, path)), `${path} is recorded in UPSTREAM.json but missing`);
+    // Generated files the routine owns (the fork's tsconfig and test runner) drift
+    // silently if only their presence is checked: a hand edit here is what a rebase
+    // would drop. Every recorded path that is not patched must be the recorded bytes.
+    if (patched.includes(path)) continue;
+    assert.equal(sha256(readFileSync(join(root, path))), manifest.pinFiles[path], `${path} must be the bytes the routine generates for the pin`);
   }
   const registry = walk(join(pluginDir, 'components')).concat(walk(join(pluginDir, 'lib'))).map(path => relative(root, path));
   assert.ok(registry.length > 0, 'the registry modules the fork imports are written into the package');

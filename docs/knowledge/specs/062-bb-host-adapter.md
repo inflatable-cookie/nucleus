@@ -1,14 +1,16 @@
 # BB host adapter
 
-Status: approved. Phase 0 (the transport spike) is implemented and proved, phase 1 (host
-registration, identity and health) phase 2 (workspace custody) phase 3 (worker runs, observation
-presentation), phase 4 (delivery, questions and the support roles), phase 5 (the forked sidebar
-and the task group header) and phase 6 (the boards, settings, pills, usage view and the planner
-terminal) are implemented; phase 7 (trial and parity call) has not started. This document is the design and the phased plan, and [phase 0
-evidence](#phase-0-evidence-2026-11-16) answers its eight assumptions. Amended 2026-11-16: decision 5
-now carries the forked sidebar, the two boards and BB usage left to BB's card plus the operator's Usage
-Pace plugin, and the experimental inventory and the plan from phase 5 on follow it; phases 0–4 are
-unchanged.
+Status: approved. Phases 0–7 are implemented. Phase 0 (the transport spike) is proved, phase 1 (host
+registration, identity and health), phase 2 (workspace custody), phase 3 (worker runs, observation
+presentation), phase 4 (delivery, questions and the support roles), phase 5 (the forked sidebar and
+the task group header) and phase 6 (the boards, settings, pills and the planner terminal) are in
+place, and phase 7 records its parity table and evidence with the operator's parity call still
+pending (see [phase 7](#phase-7--trial-and-parity-call)). This document is the design and the phased
+plan, and [phase 0 evidence](#phase-0-evidence-2026-11-16) answers its eight assumptions. Amended
+2026-11-16: decision 5 now carries the forked sidebar, the two boards and BB usage left to BB's card
+plus the operator's Usage Pace plugin, and the experimental inventory and the plan from phase 5 on
+follow it; phases 0–4 are unchanged. Amended 2026-11-17 (nucleus#1302): subscription usage leaves
+Nucleus, so BB's card and the operator's plugins are the whole usage surface on either host.
 Owner: Nucleus runtime maintainers
 
 BB ([getbb.app](https://getbb.app)) is a third Nucleus host beside Paseo and T3Code (Tom,
@@ -1298,8 +1300,9 @@ connection, sidebar read and board signal phases 0–5 landed:
   shape says so and offers Cancel. No core path raises a blocking Nucleus question on any host yet
   (`capabilities().nativeDecisions` stays `false`; decisions ride the pills and the board), so the
   renderer is the slot, not a new producer.
-- **5e, usage.** The board's own Usage view over `usage.state`, reached from the board's navigation.
-  Nucleus registers no usage surface of its own in BB: no sidebar footer, no homepage section.
+- **5e, usage.** Nucleus registers no usage surface in BB: no sidebar footer, no homepage section,
+  no board view. BB's own provider-usage card plus the operator's Usage Pace plugin are the usage
+  surface (nucleus#1302 removed the board's Usage screen on every host).
 - **Lifecycle hints.** `thread.created`, `thread.active`, `thread.idle`, `thread.failed`,
   `interaction.pending` and `thread.archived` forward as the existing `service.lifecycle-signal`
   kinds with the thread id alone; no hint carries a turn, interaction or environment payload.
@@ -1313,7 +1316,7 @@ Tests: `test/bb-board-surfaces.test.ts` runs the board through the existing harn
 shell bound and the real `boardCall` handler — the board renders and every call reaches the service
 as `via: "bb"`, Settings opens (route, header button, section), a decision pill appears and
 resolves, a native question pill shows and answers, the pending-interaction renderer submits and
-cancels, Usage renders from a synthetic `usage.state`, the per-project tab and route show a
+cancels, no usage surface is registered, the per-project tab and route show a
 multi-repository project's every repository and nothing else, and the `Task` tab shows the real
 `queue.detail` projection and follows a prerequisite link and back. `test/bb-board-model.test.ts` covers the badge (count, tone, label, drain), the routes, the
 tab visibility through each tab's own `useVisible`, the planner-row action, and BB's own
@@ -1334,23 +1337,143 @@ installed bundle by the planner after the roll.
 
 **Outcome.** One repository opts into BB and runs real tasks through it beside Paseo, through
 milestone QA's own runs; the open questions this spec leaves are answered from that evidence and
-written back into this document.
+written back into this document. Tom's 2026-11-17 target — "T3 dispatches, BB executes" — is part of
+that evidence: the whole workflow, from a planner thread submitting the brief to the closeout notice
+returning to it, is proven on the isolated setup before any switch from Paseo.
 
-**Acceptance.**
+**Acceptance.** Each bullet is named here with its evidence.
 
-- A written parity table against the Paseo plugin for the sidebar and its task groups, the global
-  board, the per-project board, settings, decision pills, native question pills, usage and lifecycle
-  hints, each marked met, met by a different mechanism, or missing with the reason. Usage is recorded
-  as met by BB's own card plus the operator's Usage Pace plugin — a host surface Nucleus does not own —
-  with the board's Usage screen as Nucleus's full view.
-- Evidence for plugin reload mid-task, BB restart mid-task, and a host outage during observation:
-  each leaves the task uncertain and recovered by observation, never resent and never read as idle.
-- Evidence for one fork rebase against a newer BB release tag through the documented routine, with
-  the drift report and the vendored-manifest test at the new pin.
-- The operator's call on whether BB becomes a supported host (Tom; this phase records it, it does
-  not assume it).
+1. **The parity table below**, against the Paseo plugin for the sidebar and its task groups, the
+   global board, the per-project board, settings, decision pills, native question pills, usage and
+   lifecycle hints, plus Tom's 2026-11-17 end-to-end addition. Each row is met, met by a different
+   mechanism, or missing with the reason. Subscription usage is met by the host: BB's own
+   provider-usage card plus the operator-installed Usage Pace plugin, with no Nucleus usage screen to
+   compare on any host (nucleus#1302).
+2. **Reload, restart and outage mid-task**: `test/bb-lifecycle.test.ts` drives the real runtime
+   through each fault and `effigy proof:bb:trial` does the same against an isolated BB 0.49.0 server.
+3. **The fork rebase** through the documented routine, with the drift report and the
+   vendored-manifest test at the pin; no newer release tag exists yet, so the evidence is the routine
+   re-run at the pin plus the drift report against a newer upstream ref.
+4. **The operator's call** is recorded pending: the planner answered on Tom's behalf on 2026-11-17 that
+   he has not made it and the merge hold stays until he does.
 
-**Dependencies.** Phases 0–6.
+**Dependencies.** Phases 0–6 and the operator install route.
+
+#### The parity table (2026-11-17)
+
+| Surface | Paseo plugin | BB | Mark | Evidence |
+| --- | --- | --- | --- | --- |
+| Sidebar and its task groups | The Paseo sidebar draws Nucleus task rows and groups | A vendor copy of BB's own `thread-list` (decision 5a), with the task group header's state line, collapsed-by-default task groups and their own `expandedTaskGroups` preference | **met, by a different mechanism** — BB's list is forked because its group row is the operator's unit; Paseo's list is its own host surface. Both draw the same shared state helper | `test/bb-sidebar-vendored.test.ts`, the fork's `nucleusTaskGroups.test.tsx`, `effigy bb:sidebar-tests`, `effigy proof:bb:sidebar` |
+| Global board | The shared board from `client/shell/` | The same board in a `navPanel` (`nucleus-board`) with a `warning`/`critical` attention badge and its label, drained as tasks settle | **met** | `test/bb-board-surfaces.test.ts`, `test/bb-board-model.test.ts` |
+| Per-project board | The shared board filtered by project | A fixed `Board` tab on a Nucleus project's planner and named-agent threads plus a `project/<nucleus-project-key>` sub-path route; a multi-repository project shows every repository | **met, by a different mechanism** — BB's route key is the Nucleus project, never a BB project, because one Nucleus project spans repositories | `test/bb-board-surfaces.test.ts`, `test/bb-board-model.test.ts`, `test/bb-sidebar-groups.test.ts` |
+| Settings | The board's Settings screen | The same Settings in a `settingsSection`, calling the catalogue through `boardCall` with `via: "bb"`; a capacity change records `surface: "bb"` | **met** | `test/bb-board-surfaces.test.ts`, `test/bb-board-bridge.test.ts`, `test/bb-host-channel.test.ts` |
+| Decision pills | Composer pills from the shared registrations | The same registrations in BB's composer, opening in the plugin's popup | **met** | `test/bb-board-surfaces.test.ts` |
+| Native question pills | The host's own question surface | The pills read `question.native-list` and answer through `question.native-answer`; the plugin never writes a BB interaction | **met, by a different mechanism** — BB's interactions are written by its own agent runtime, so the plugin reads and answers through the catalogue | `test/bb-board-surfaces.test.ts`, `test/bb-board-bridge.test.ts` |
+| Usage | None since nucleus#1302 | BB's own provider-usage card, plus the operator's Usage Pace plugin if he installs it | **met by the host** — Nucleus contributes no usage UI on either host; a missing host display belongs in a host plugin, not here | decision 5e; nucleus#1302 |
+| Lifecycle hints | The Paseo bridge forwards its lifecycle hints | `thread.created`, `thread.active`, `thread.idle`, `thread.failed`, `interaction.pending` and `thread.archived` forward as the existing `service.lifecycle-signal` kinds, thread id only | **met** | `test/bb-board-bridge.test.ts`, `test/bb-plugin-backend.test.ts` |
+| **End to end: T3 dispatches, BB executes** | — | A T3 planner thread submits, BB executes, the notice returns to T3 | **one step missing**, named below | `test/bb-lifecycle.test.ts` ("a T3 planner submits…") |
+
+The end-to-end row, step by step, because Tom asked for each step:
+
+| Step | Mark | Evidence and reason |
+| --- | --- | --- |
+| A planner thread on the T3 host submits the brief through Nucleus | **met** | The task's `originHostId` is the T3 host, the lead check runs against it, and the repository selects the BB host. `test/bb-lifecycle.test.ts` |
+| The task dispatches to BB | **missing** for a T3-only plan; **met** once the task has a planner thread on BB | BB parents every thread Nucleus creates to the task's planner thread (decision 4), so the BB adapter refuses a T3-only plan before any spawn: "BB dispatch needs a planner thread on this BB host". Recording a BB planner thread for the task then dispatches and spawns exactly once. Finding for the planner: choose whether a T3-submitted task gets a BB project/planner thread, or whether the parent link becomes optional |
+| The worker runs and reports | **met** | A BB worker thread on the task's unmanaged environment; the packaged helper reports against its run ticket. `test/bb-lifecycle.test.ts` |
+| The independent reviewer reviews | **met** | A separate retained BB reviewer thread in the same environment; its verdict drives the same lifecycle. `test/bb-lifecycle.test.ts` |
+| Merge, closeout and archive | **met** | The BB adapter's merge gate and workspace archive, the task's role threads archived after their cascade reads, the planner thread and the workspace's published-source proof untouched. `test/bb-lifecycle.test.ts` |
+| The planner's questions and notices route back to the T3 thread | **met for notices; met differently for questions** | The closeout notice reaches the T3 origin thread through its own host adapter. A worker's question goes to the task's *planner* thread, which on a BB-executed task is the BB thread, not the T3 origin — recorded here so the planner's ruling covers both. `test/bb-lifecycle.test.ts` |
+
+#### The trial repository
+
+The trial repository is synthetic and planner-directed (planner ruling, 2026-11-17): Tom has not
+designated a live repository, so phase 7's evidence uses synthetic repositories and the isolated BB
+server only. Installing the plugin into Tom's BB and pointing one repository at it
+(`repository.set` with `hostKind: "bb"`) are the operator's steps from
+[the install route](#the-operator-install-route-landed-2026-11-17); a worker never writes into the
+operator's BB.
+
+#### Reload, restart and outage
+
+**`test/bb-lifecycle.test.ts`** drives the real `QueueRuntime` and the real BB adapter over recorded
+BB 0.49.0 rows, and each fault names the same three claims — uncertain, recovered by observation, never
+resent, never read as idle:
+
+- **plugin reload mid-task**: the host claim is released before the re-declaration. Four observation
+  passes touch no host read or write at all; the task's phase, agent, `idleSince`, `lastObservedAt` and
+  completion are unchanged. After the re-declaration one pass observes the same run, the recorded
+  `threads.spawn` count stays at one, and the worker's ordinary report still launches the reviewer.
+- **BB restart mid-task**: the worker's turn is live when the server goes away; the outage pass reads
+  nothing and records no observation. A fresh adapter over the same recorded state and rows (the
+  restarted plugin has no memory of its own) resolves the same run workspace, reads the live turn as
+  active rather than idle, records the observation, never respawns, and the same run ticket still
+  accepts the worker's report.
+- **host outage during observation**: three observation passes and wakes during the outage touch
+  nothing; the lane, its reason, agent, completion, `idleSince` and `lastObservedAt` all stay put. When
+  the host returns the observation is recorded again and the ordinary lifecycle continues.
+
+**`effigy proof:bb:trial`** is the host-level half, against an isolated BB 0.49.0 server with its own
+data directory and port (never the operator's live BB). It mints a task workspace, attaches a planner
+and a live worker thread, and records:
+
+- `bb plugin reload nucleus` mid-task: a new acceptance for the same identity one second later, the
+  plugin's own counters restarted at zero, the same environment id read back by one observation, zero
+  `threads.spawn` calls on the new connection, and exactly one thread naming the task's worker in the
+  origin walk;
+- a BB server restart mid-task on the same data directory: the same identity and environment, the
+  unmanaged environment still listed at the same path, zero spawns after the restart;
+- `bb plugin disable nucleus` as the outage: the service has no executor for the identity, so an
+  observation is refused as *not sent* (`No host executor is connected for …`), which is never an idle
+  reading; enabling the plugin again reconnects and one observation reads the same thread and
+  environment, with zero spawns.
+
+#### The fork rebase
+
+The pin is still the newest BB release. `git ls-remote --tags` on 2026-11-17 lists
+`desktop-v0.49.0` as the highest `desktop-v*` tag, so there is no newer release to rebase onto yet.
+What was proved instead, through the routine in [PATCHES.md](../../../hosts/bb/plugin/sidebar/PATCHES.md):
+
+- **The routine reproduces the pin.** A clean clone of this repository at the branch head, with a fresh
+  clone of BB at `desktop-v0.49.0`, runs `node scripts/bb/vendor-sidebar.mjs --upstream <clone>` to
+  completion: 154 files vendored, 4 patches applied, 44 registry items written, and no diff in the
+  vendored tree or the registry paths afterwards.
+- **The drift report at the pin is clean.** `effigy bb:sidebar-drift` at `desktop-v0.49.0`: no drift,
+  the SDK floor `>=0.6.112` covered by the release's `0.6.132`, `plugins/thread-list` still on
+  upstream's forkable list.
+- **The drift report against a newer ref names the next rebase's work.** `effigy bb:sidebar-drift main`
+  (upstream `1320c88e`, release SDK `0.6.149`, an unreleased branch head) reports 23 changed files, 3
+  files upstream gained and none it lost, the SDK floor still covered and the plugin still forkable.
+  That is the candidate list for the first release tag after the pin; the routine's rebase half runs
+  then, against the tag rather than the branch head (decision 5a).
+- **The routine surfaced two defects, both fixed here.** The generated `hosts/bb/plugin/vitest.config.ts`
+  had been edited by hand after phase 6 (the board-stub alias) without the generator knowing, so a
+  rebase would have silently dropped the stubs; the generator now emits that alias, and
+  `UPSTREAM.json`'s recorded hash is re-derived from the routine. The vendored-manifest test checked
+  only that the routine-owned generated files existed, not that they were the recorded bytes, so it now
+  hashes every recorded path that is not patched. The vendored-manifest test and the fork's own tests
+  pass at the re-derived pin.
+
+#### The operator's parity call: pending
+
+Tom has not decided whether BB becomes a supported host (planner, 2026-11-17). This document records
+the call as **pending** and assumes nothing: BB stays an opt-in host per repository beside Paseo and
+T3Code, Paseo stays the primary host (vision.md), and the task's merge hold stands until Tom decides.
+The evidence above is what the decision reads: operator parity is in place on every surface except the
+one end-to-end step the table names, that step's cause is written down, and the trial in Tom's own BB
+is his install to run.
+
+**Findings for the planner (not fixed here).**
+
+- A T3-only planner cannot dispatch a task to BB, because BB parents every role thread to a BB planner
+  thread. The parity table's missing step; the ruling is whether a T3-submitted task gets a BB planner
+  thread or the parent link becomes optional.
+- In the fixture, a BB worker observed mid-turn across a restart, whose turn then ends and reports,
+  holds at `needs_attention` with "Completion received; waiting for the worker to release the
+  workspace" beyond the bounded pass budget: the lease-release pass is inside the engine's 60 s grace
+  window and the fixture stops there rather than asserting the reviewer launch. The restart evidence
+  itself is complete; whether a live trial shows the same hold deserves one bounded diagnostic during
+  Tom's trial.
+
 ### The operator install route (landed 2026-11-17)
 
 The plugin installed into the operator's own BB: it ships in the Nucleus package, one command installs it,
