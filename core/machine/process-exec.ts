@@ -83,12 +83,6 @@ export interface ExecutionOutcome {
   streamTerminals?: StreamTerminals;
   /** Spec 064 P4: the first strict-capture observer fault, when one latched. */
   captureFault?: string;
-  /**
-   * Spec 064 P4 (amended): the strict capture's EOF wait hit its bound, so one or
-   * both streams are not terminal. The terminals stay `unknown`; nothing
-   * manufactures EOF, no extra signal is sent and no cleanup time is granted.
-   */
-  eofWaitTimedOut?: boolean;
 }
 
 const POST_KILL_PROCESS_GROUP_WAIT_MS = 5_000;
@@ -153,16 +147,6 @@ export interface ExecutionRequest {
    */
   qualificationCapture?: boolean;
   /**
-   * Spec 064 P4 (amended): the absolute tick by which the strict capture's EOF
-   * wait must end. A pipe held open outside the group cannot keep the wait
-   * unbounded, and the wait never buys extra time: it is the attempt's own
-   * first-effect deadline (`originTick + targetMs`), measured from the origin, so
-   * the remaining target at the moment the wait begins is all that is left. When
-   * it expires the streams stay `unknown` and the step settles. Gated with
-   * `qualificationCapture`.
-   */
-  eofWaitDeadlineMs?: number;
-  /**
    * Spec 064 P4: each stream's real pipe EOF, on that stream's own `end` event.
    * These are the strict capture's events: with `qualificationCapture` absent the
    * listener is not registered and the callback never fires.
@@ -213,27 +197,6 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
     const streamEnded = { stdout: false, stderr: false };
     const streamsTerminal = (): boolean => streamEnded.stdout && streamEnded.stderr;
     let captureFault: Error | null = null;
-    /**
-     * Spec 064 P4 (amended): the bounded EOF wait for the strict capture. The
-     * bound is the attempt's own first-effect deadline, so the wait can only spend
-     * what is left of the target — never a fresh span from when the wait starts. A
-     * deadline already past settles at once.
-     */
-    const eofWaitDeadlineMs = strictCapture && Number.isFinite(request.eofWaitDeadlineMs) ? request.eofWaitDeadlineMs! : null;
-    let eofWaitTimer: NodeJS.Timeout | null = null;
-    let eofWaitExpired = false;
-    const boundEofWait = (): boolean => {
-      if (eofWaitExpired) return true;
-      if (eofWaitDeadlineMs === null || eofWaitTimer) return false;
-      const remainingMs = Math.max(1, eofWaitDeadlineMs - Date.now());
-      eofWaitTimer = setTimeout(() => {
-        eofWaitExpired = true;
-        outcome.eofWaitTimedOut = true;
-        void finishWhenGroupIsEmpty();
-      }, remainingMs);
-      eofWaitTimer.unref?.();
-      return false;
-    };
     /** The last escaped-descendant scan, so a settlement tick never reads the host table every 20 ms. */
     let lastEscapedScanAt = 0;
     /** When the stop began, so escaped descendants get the same grace the group does. */
@@ -258,7 +221,6 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
-      if (eofWaitTimer) clearTimeout(eofWaitTimer);
       if (cancelTimer) clearInterval(cancelTimer);
       if (groupTimer) clearInterval(groupTimer);
       outcome.durationMs = Date.now() - started;
@@ -427,7 +389,7 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
       if (settled || finishing || !leaderExited) return;
       if (!request.settleOnProcessGroup || !processGroupId) {
         // Spec 064 P4: a strict capture waits for both streams' real terminals.
-        if (strictCapture ? !streamsTerminal() && !boundEofWait() : !pipesClosed) return;
+        if (strictCapture ? !streamsTerminal() : !pipesClosed) return;
         // A signalled leader can exit before its group's termination is
         // recorded; settle with that record, not ahead of it.
         if (termination) { finishing = true; await termination; }
@@ -438,7 +400,7 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
       if (escapedCustody && !proveEscapedAbsence(processGroupId, terminationAt)) return;
       // Spec 064 P4: never destroy a pipe to manufacture completion. The strict
       // capture settles only after each stream's own terminal event.
-      if (strictCapture && !streamsTerminal() && !boundEofWait()) return;
+      if (strictCapture && !streamsTerminal()) return;
       finishing = true;
       outcome.processGroupEmpty = true;
       // The escaped-descendant rule has one owner: this is its settled inventory,

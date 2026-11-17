@@ -59,7 +59,7 @@ implemented; the contracts summarise the durable rules and link here.
 | [061 — Worker proof files reach the retained reviewer](061-worker-proof-files.md) | implemented |
 | [062 — BB host adapter](062-bb-host-adapter.md) | approved; phases 0–6 implemented, phase 0 proved against isolated BB; phase 7 (trial and parity call) not started |
 | [063 — Proof execution through host runs](063-proof-execution-host-runs.md) | fits:false; design only |
-| [064 — Proof execution under cooperative qualification](064-proof-execution-cooperative-route.md) | P1–P7 implemented behind a named missing-input refusal; no proof activation |
+| [064 — Proof execution under cooperative qualification](064-proof-execution-cooperative-route.md) | conditional proposal; no implementation or proof activation |
 
 ## Host adapters
 

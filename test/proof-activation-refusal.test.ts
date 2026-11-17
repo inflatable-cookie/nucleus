@@ -54,12 +54,7 @@ test('a declared qualification mode refuses before ordinary executor activation'
   // executor run or host run exists.
   const refusal = proofActivationRefusal(task, [], 'selector');
   assert.ok(refusal, 'a qualification declaration is refused before dispatch');
-  // Tranche 3 replaced the staged "foundation incomplete" refusal with the named
-  // missing-input refusal: every external input the mode needs is named.
-  assert.match(refusal!, /^qualification proof mode is refused before any effect:/);
-  for (const id of ['effigy_prepare_custody', 'effigy_admission', 'common_elapsed_clock', 'creator_waits',
-    'deciding_census', 'final_census', 'image_attachment_evidence', 'capture_delivery', 'accounting_fit_readiness'])
-    assert.match(refusal!, new RegExp(id), `the refusal names ${id}`);
+  assert.match(refusal!, /^qualification foundation incomplete:/);
   const preview = proofActivationPreview(task, [], []);
   assert.equal(preview.available, false);
   assert.equal((preview as { refusal: string }).refusal, refusal);

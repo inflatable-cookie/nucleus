@@ -66,7 +66,6 @@ import {
 } from "../../core/host-runs/qualification-subject";
 import type { QualificationBinding } from "../../shared/schema/review/proof";
 import { qualificationLaunchRefusal } from "../../core/host-runs/qualification-binding";
-import { qualificationReadinessRefusal } from "../../core/host-runs/qualification-inputs";
 import {
   listSubmissionRunIds,
   readStoredSubmission,
@@ -602,13 +601,10 @@ export class HostRunEndpoint {
       ...parsed.data, hostRun: { id: hostRunId, epoch }, environment: this.env, mintToken,
     });
     if (resolved.state === "refused") return { binding: null, code: qualificationClientCode(resolved.code), refusal: resolved.refusal };
-    // Spec 064 P5/P6: the resolved binding is not a start. Real proof mode refuses
-    // before any effect unless every external input is present and qualified, and
-    // the refusal names each one that is not. Nothing is written, no run is
-    // submitted and no supervisor is spawned.
-    const readinessRefusal = qualificationReadinessRefusal(resolved.binding.readiness, `the qualification attempt for ${hostRunId}`);
-    if (readinessRefusal) return { binding: resolved.binding, code: "not_permitted", refusal: readinessRefusal };
-    return { binding: resolved.binding, code: "not_permitted", refusal: `${QUALIFICATION_FOUNDATION_INCOMPLETE}: the fully supplied attempt for ${hostRunId} resolved and nothing was written; no submit seam may start a real proof yet` };
+    return {
+      binding: resolved.binding, code: "not_permitted",
+      refusal: `${QUALIFICATION_FOUNDATION_INCOMPLETE}: the subject and command identity for ${hostRunId} resolved and nothing was written; real qualification proof mode is refused until Spec 064 P4–P7 land their named missing-input refusal`,
+    };
   }
 
   /** Spec 064 P2: the service's retained S wait for one qualification run, if this endpoint spawned it. */
@@ -709,14 +705,10 @@ export class HostRunEndpoint {
       envKeys: Object.keys(launchEnv).sort(),
       runTimeoutMs: launched.runTimeoutMs, graceMs: this.terminationGraceMs,
       startedAt: launched.launchedAt,
-      // Spec 064 P1/P3/P5: a qualification plan carries its binding, its one
-      // cumulative first-effect clock and its direct-command stop, so the
-      // supervisor and a later cancel read the same attempt the dispatch
-      // established. An ordinary plan keeps today's exact shape.
-      ...(qualification ? {
-        stopMode: "qualification_direct" as const, qualification,
-        ...(qualification.firstEffectClock ? { firstEffectClock: qualification.firstEffectClock } : {}),
-      } : {}),
+      // Spec 064 P1/P3: a qualification plan carries its binding and its stop
+      // mode, so the supervisor and a later cancel read the same stop the submit
+      // resolved. An ordinary plan keeps today's exact shape.
+      ...(qualification ? { stopMode: "qualification_direct" as const, qualification } : {}),
     };
     writeVerifiedOwnedFile(this.stateDir, ["runs", launched.id, "supervisor.plan.json"], JSON.stringify(hostRunSupervisorPlanSchema.parse(plan)), 0o600);
     this.supervisorSpawn(plan);
@@ -781,18 +773,6 @@ export class HostRunEndpoint {
       if (!run || run.state === "settled") continue;
       if (run.state === "queued" || run.state === "admitted") {
         try { this.scheduler.attach(runId, this.handlerFor(stored)); } catch { /* stale epoch: a later owner reconciles */ }
-      }
-      // Spec 064 P7: a running qualification attempt whose supervisor this service
-      // did not spawn has lost its service→S parent — a Nucleus roll during the
-      // proof. The attempt is spent unknown/SPENT/retained now, so even a later
-      // result from the surviving supervisor can never be read as a pass. Restart
-      // only reconciles this evidence: it restores no wait credit.
-      if (run.state === "running" && stored.body.qualification && !this.retainedSupervisors.has(runId)) {
-        this.watch.settleQualificationRoll(runId,
-          "a Nucleus roll ended the service→S parent during this qualification proof; the attempt is spent unknown/SPENT/retained and this restart only reconciles it");
-        this.scheduler.recordEndpointEvent("qualification_evidence", undefined, {
-          code: "qualification_spent_on_roll", runId,
-        });
       }
       this.watch.watchRun(runId);
     }

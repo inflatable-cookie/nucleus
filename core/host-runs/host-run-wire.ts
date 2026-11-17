@@ -1,7 +1,7 @@
 /** Contract 010 request/supervisor schemas and the allowlisted launch environment. */
 import { realpathSync } from "node:fs";
 import { z } from "zod";
-import { qualificationBindingSchema, qualificationFirstEffectClockSchema, type QualificationFirstEffectClock } from "../../shared/schema/review/proof";
+import { qualificationBindingSchema } from "../../shared/schema/review/proof";
 import { readCheckedHostRunFile, readCheckedHostRunFileRead, removeVerifiedOwnedFile, writeVerifiedOwnedFile } from "./host-run-files";
 export const HOST_RUN_SUPERVISOR_PLAN_FORMAT = "host.run.supervisor.plan";
 // Spec 064 P1–P3: the qualification refusal has one owner beside the binding
@@ -106,26 +106,9 @@ export const hostRunSupervisorPlanSchema = z.object({
    * still-held direct command and never signals a group, an escapee or KILL.
    */
   stopMode: z.enum(["group", "qualification_direct"]).optional(),
-  /**
-   * Spec 064 P5 (private): the one cumulative first-effect clock. Its origin was
-   * established before the dispatch funnel, reservation persistence included, and
-   * every later owner consumes it; nobody starts a launch clock. A qualification
-   * plan must carry it.
-   */
-  firstEffectClock: qualificationFirstEffectClockSchema.optional(),
   /** Spec 064 P1 (private): the qualification binding a qualification run carries. */
   qualification: qualificationBindingSchema.optional(),
-}).strip().superRefine((plan, context) => {
-  // A qualification plan's clock is the binding's own clock: two readings of the
-  // same origin may not disagree, and a qualification plan may not omit it.
-  const bindingClock: QualificationFirstEffectClock | undefined = plan.qualification?.firstEffectClock;
-  if (!plan.qualification) return;
-  if (!plan.firstEffectClock)
-    context.addIssue({ code: "custom", message: "A qualification plan carries the attempt's first-effect clock", path: ["firstEffectClock"] });
-  if (bindingClock && plan.firstEffectClock
-      && (bindingClock.clockId !== plan.firstEffectClock.clockId || bindingClock.originTick !== plan.firstEffectClock.originTick))
-    context.addIssue({ code: "custom", message: "The plan's first-effect clock is not the binding's clock", path: ["firstEffectClock"] });
-});
+}).strip();
 export type HostRunSupervisorPlan = z.infer<typeof hostRunSupervisorPlanSchema>;
 
 export const hostRunSupervisorStateSchema = z.object({
