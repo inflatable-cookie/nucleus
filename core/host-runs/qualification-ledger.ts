@@ -17,7 +17,7 @@
  * unknown and is disclosed rather than guaranteed.
  */
 import { lstatSync, readdirSync, statfsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import type {
   HostRunQualificationLedger,
   HostRunQualificationLedgerEntry,
@@ -249,18 +249,18 @@ export function qualificationRunFootprints(stateDir: string, runId: string): Qua
 
 /**
  * The footprints the service charges for one qualification attempt: the database
- * and its WAL and journal (the whole shared footprint, because attribution to one
- * run is not proven), the publications under the host-run state root, and the one
- * combined artifact. Copies and retained failures stay charged under the state
- * root too.
+ * file with its WAL and rollback journal (each charged whole, because one run's
+ * share of that shared file is not attributable), the publications under the
+ * host-run state root, and the one combined artifact. Copies and retained failures
+ * stay charged under the state root too.
  */
 export function qualificationServiceFootprints(input: { stateDir: string; databasePath: string | null; runId: string }): QualificationFootprint[] {
-  const databaseRoot = input.databasePath ? dirname(input.databasePath) : input.stateDir;
+  const database = input.databasePath ?? join(input.stateDir, "queue.sqlite");
   const shared = ["attribution of one run's share is not proven, so the whole shared footprint is charged"];
   return [
-    { scope: "database", label: "Nucleus database", root: databaseRoot, attributionProven: false, missingCoverage: shared },
-    { scope: "wal", label: "Nucleus WAL", root: databaseRoot, attributionProven: false, missingCoverage: shared },
-    { scope: "journal", label: "ordered journal and scheduler records", root: databaseRoot, attributionProven: false, missingCoverage: shared },
+    { scope: "database", label: "Nucleus database", root: database, attributionProven: false, missingCoverage: shared },
+    { scope: "wal", label: "Nucleus WAL", root: `${database}-wal`, attributionProven: false, missingCoverage: shared },
+    { scope: "journal", label: "ordered journal and scheduler records", root: `${database}-journal`, attributionProven: false, missingCoverage: shared },
     { scope: "publication", label: "host-run publications", root: input.stateDir, attributionProven: false, missingCoverage: shared },
     { scope: "copy", label: "evidence copies and retained failures", root: input.stateDir, attributionProven: false, missingCoverage: shared },
     { scope: "raw_capture", label: "combined raw artifact", root: join(input.stateDir, "runs", input.runId), attributionProven: true, missingCoverage: [] },

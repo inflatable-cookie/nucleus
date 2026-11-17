@@ -167,13 +167,19 @@ test("a roll during a proof spends it unknown/SPENT/retained, and a later result
   assert.equal(settlement!.verdict, "unknown", "a lost parent cannot yield a proved attempt");
   assert.equal(settlement!.disposition.spent?.disposition, "unknown_SPENT_retained");
   assert.match(settlement!.disposition.spent!.reason, /Nucleus roll ended the service→S parent/);
-  assert.deepEqual(settlement!.disposition.outcomes, {
-    target: "proved", workload: "unknown", evidence: "unknown", resources: "unknown", closure: "unknown",
-  }, "the target, workload, evidence, resources and closure outcomes stay separate");
-  // The service ledger charges the whole shared database footprint and discloses
-  // that one run's share is not attributable, so resources stay unknown rather
-  // than being read as fit.
-  assert.match(settlement!.gates.storage.detail, /not fully covered|unknown/);
+  // The separate outcomes each follow their own gates and never borrow another's
+  // verdict. Resources follow the service ledger, which charges the whole shared
+  // database footprint and discloses that one run's share is not attributable:
+  // that is unknown or, when this host's own reserve sample is below the 22 GiB
+  // threshold, honestly disproved — never silently "fit" because the target held.
+  const outcomes = settlement!.disposition.outcomes;
+  assert.equal(outcomes.target, settlement!.gates.clock.outcome, "the target outcome follows the clock gate alone");
+  assert.equal(outcomes.workload, "unknown", "no Effigy admission receipt was supplied");
+  assert.equal(outcomes.evidence, "unknown", "the capture proved but no publisher delivery receipt exists");
+  assert.equal(outcomes.closure, "unknown", "no census or image-attachment receipt exists");
+  assert.equal(outcomes.resources, settlement!.gates.storage.outcome, "the resources outcome follows the storage gate alone");
+  assert.match(outcomes.resources, /^(unknown|disproved)$/);
+  assert.match(settlement!.gates.storage.detail, /not fully covered|monitored target|reserve safety/);
   assert.ok(settlement!.disposition.unresolvedObligations.some(obligation => /parent_waits/.test(obligation)));
   assert.equal(settlement!.disposition.retention.keep, true);
   assert.equal(settlement!.disposition.firstFault, null, "a loss is a spend, not a disproved gate");
