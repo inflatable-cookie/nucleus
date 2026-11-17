@@ -94,7 +94,7 @@ Exactly one of `exitCode` and `signal` is non-null. Because the record outlives
 both the supervisor and the scheduler, a restart settles finished runs by what
 actually happened.
 
-### Private qualification mode (Spec 064 P1–P3)
+### Private qualification mode (Spec 064 P1–P4)
 
 The supervisor plan and the cancel request are queue-private records; contract
 010's client protocol and its frozen result/state records are not changed by
@@ -130,13 +130,22 @@ bytes, so nothing here is a rollback break.
   records no qualification binding at all, and a declared opt-in is refused by the
   proof-activation table and the dispatch funnel before any executor run exists.
 - A plan carrying either field is refused by the supervisor before its first
-  write or spawn while Spec 064 P4–P7 are unimplemented: `qualification
+  write or spawn while Spec 064 P5–P7 are unimplemented: `qualification
   foundation incomplete`. The endpoint's private `submitQualification` method
   authenticates the executor run's own credential, resolves that subject from
   Queue's records, rechecks `verifyProofSource`, and then refuses before any
   submit write. A host-run token and a client-supplied caller grant nothing.
-- Contract 010's stop, capture, retention and result records are unchanged for
-  every ordinary run, including the group TERM/SIGKILL stages.
+- Contract 010's stop, retention and result records are unchanged for every
+  ordinary run, including the group TERM/SIGKILL stages. Its capture is unchanged
+  too: an ordinary run appends `stdout` and `stderr` with the token redacted and
+  the 8 MiB per-stream cap. A private opt-in qualification capture instead keeps
+  one mode-0600 `qualification.raw` — `NQRAW001` plus 22-byte big-endian frames,
+  one EOF and one DRAIN per stream, hashes and the size identity accumulated as
+  the frames land — with no per-stream file, cap, redaction, archive or second
+  full copy. `writeVerifiedOwnedFile` reports the published directory entry
+  separately from the file's own fsync instead of swallowing that fault. While the
+  staged refusal stands no plan reaches that capture: nothing creates
+  `qualification.raw`, and the artifact has no reader, UI or export path.
 
 ### Start identity
 
