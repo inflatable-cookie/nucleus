@@ -2,7 +2,6 @@ import type { BuildOutputCleanupResult, BuildOutputCleanupHooks } from '../host/
 import type { BuildOutputObservation } from "../../shared/contracts";
 export type { BuildOutputCleanupResult, BuildOutputCleanupHooks } from '../host/types';
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
 import { lstat, readdir, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -189,7 +188,7 @@ export interface BuildOutputCleanupOptions {
 /** Remove each task-local Cargo target and node_modules root; leave an untracked canonical root symlink for checkout removal; retain and report roots whose ownership cannot be proved. */
 export async function removeBuildOutput(directory: string, options: BuildOutputCleanupOptions = {}): Promise<BuildOutputCleanupResult> {
   // An absent directory has nothing to remove, and its contents cannot be read: the record settles as complete.
-  if (!existsSync(directory)) return { detail: "directory absent; nothing to clean up", removed: false, safe: true, observations: [] };
+  if (await buildOutputDirectoryAbsent(directory)) return { detail: "directory absent; nothing to clean up", removed: false, safe: true, observations: [] };
   const checkout = resolve(directory);
   if (await realpath(checkout) !== checkout) throw new Error("Task worktree directory identity changed before build output cleanup");
   const discovery = await discoverBuildRoots(checkout);
@@ -295,6 +294,15 @@ export async function removeBuildOutput(directory: string, options: BuildOutputC
   if (linked.length) observations.push("link");
   if (!observations.length) observations.push("empty");
   return { removed: removed.length > 0, detail: details.join(". "), safe: skipped.length === 0, observations };
+}
+
+/** Only a definite missing directory settles cleanup; an unreadable path stays held. */
+export async function buildOutputDirectoryAbsent(directory: string): Promise<boolean> {
+  try { await lstat(directory); return false; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true;
+    throw error;
+  }
 }
 
 /**

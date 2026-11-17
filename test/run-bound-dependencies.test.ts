@@ -34,6 +34,21 @@ function authorResult(f: Awaited<ReturnType<typeof setup>>, eventId: string, sta
 
 const runRecord = (f: Awaited<ReturnType<typeof setup>>) => f.store.task(f.task.id).resolution.buildOutputCleanups.find(item => item.runId === f.task.runId);
 
+test("a released run's cleanup settles when its checkout is already absent", { timeout: HOOK_TEST_TIMEOUT_MS }, async t => {
+  const f = await setup(t);
+  authorResult(f, "author-absent", "blocked");
+  await rm(f.directory, { recursive: true, force: true });
+  const engine = new Engine(f.store, settlingAdapter(f, { active: false }), 0);
+  try {
+    await engine.settleRunBuildOutputs(f.task.id);
+    assert.equal(runRecord(f)?.state, "complete");
+    assert.equal(runRecord(f)?.detail, "directory absent; nothing to clean up");
+    const version = f.store.task(f.task.id).version;
+    await engine.settleRunBuildOutputs(f.task.id);
+    assert.equal(f.store.task(f.task.id).version, version);
+  } finally { await engine.stop(); f.store.close(); }
+});
+
 test("blocked and error author results keep root and nested node_modules while Cargo output is cleared", { timeout: HOOK_TEST_TIMEOUT_MS }, async t => {
   for (const status of ["blocked", "error"] as const) {
     const f = await setup(t, false, true);

@@ -13,7 +13,7 @@ import { isAgentGoneRefusal } from "../host/errors";
 import { canRetireCancelledWorkspace } from "../workspaces/terminal-workspace-retirement";
 import { externalWorkspace } from "../../shared/workspace-ownership";
 import { archiveUnusedWorkspace } from "../workspaces/unused-workspace";
-import { buildOutputCheckoutMismatch, removeBuildOutput, type BuildOutputCleanupResult } from "../workspaces/worktree-cleanup";
+import { buildOutputCheckoutMismatch, buildOutputDirectoryAbsent, removeBuildOutput, type BuildOutputCleanupResult } from "../workspaces/worktree-cleanup";
 
 /**
  * Taking a task off the board and clearing what a finished run leaves in its
@@ -201,6 +201,14 @@ export class TaskRemoval {
       // checkout, so recheck synchronously at the removal boundary (review #564).
       const lateHostRun = this.store.hostRunHoldingWorkspace(record.directory);
       if (lateHostRun) { this.recordRunBuildOutputState(taskId, record, record.state, hostRunHoldReason(lateHostRun)); continue; }
+      if (await buildOutputDirectoryAbsent(record.directory)) {
+        this.recordRunBuildOutputState(taskId, record, "complete", "directory absent; nothing to clean up");
+        continue;
+      }
+      // The directory may have appeared since the hold observation. Prove its
+      // identity before any removal, even when the earlier observation was absent.
+      const identity = await buildOutputCheckoutMismatch(task.repoPath, record.directory);
+      if (identity) { this.recordRunBuildOutputState(taskId, record, record.state, identity); continue; }
       let result: BuildOutputCleanupResult;
       // Queue #342 (node_modules superseded, 2026-10-20): run-bound settlement never removes installed dependencies; terminal cleanup does.
       try { result = await removeBuildOutput(record.directory, { keepDependencies: true }); }
@@ -261,8 +269,6 @@ export class TaskRemoval {
     if (hostRun) return hostRunHoldReason(hostRun);
     const agentId = run?.agentId ?? record.agentId ?? null;
     if (!agentId) return "no agent is bound to the run";
-    const identity = await buildOutputCheckoutMismatch(task.repoPath, record.directory);
-    if (identity) return identity;
     const fence = await this.engine.supersededIdleFence({ id: runId, taskId: task.id, agentId, workspaceId: record.workspaceId } as Run);
     if (fence) return fence;
     try { await this.engine.workspaceParticipantsIdle(task, record.workspaceId); }
@@ -271,6 +277,12 @@ export class TaskRemoval {
       && (other.workspaceId === record.workspaceId || other.directory === record.directory
         || other.resolution.coordinatorWorkspaceId === record.workspaceId || other.resolution.closeoutWorkspaceId === record.workspaceId)))
       return 'workspace is referenced by another task';
+    // A missing checkout has no output to remove. Still prove the participants
+    // idle first, and recheck absence in removeBuildOutput at the effect boundary.
+    if (!await buildOutputDirectoryAbsent(record.directory)) {
+      const identity = await buildOutputCheckoutMismatch(task.repoPath, record.directory);
+      if (identity) return identity;
+    }
     const lateHostRun = this.store.hostRunHoldingWorkspace(record.directory);
     if (lateHostRun) return hostRunHoldReason(lateHostRun);
     return this.engine.unreleasedRunIn(record.workspaceId);
