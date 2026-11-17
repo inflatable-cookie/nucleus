@@ -147,7 +147,8 @@ async function main() {
     else { try { result = await call(`queue.${method}`); } catch (error) { if (!unknown(error)) throw error; result = await call(method); } }
     if (uiCommand && payloadInput.action === 'issue') {
       console.log(result.url);
-      console.error(`Board link valid until ${result.expiresAt}; refused after that, or once \`nucleus ui --revoke\` runs.`);
+      if (result.portFallback) console.error(`Board port ${result.port} is in use; this link uses the available fallback port.`);
+      console.error(`Pair this link before ${result.expiresAt}; its session stays paired until \`nucleus ui --revoke\` or 30 days without use.`);
       if (!rest.includes('--no-open')) openInBrowser(result.url);
     } else console.log(JSON.stringify(result, null, 2));
   } catch (error) {
