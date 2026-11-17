@@ -13,6 +13,8 @@ type TaskInstallState = {
   status: "pending" | "failed" | "installed";
   fingerprint: string;
   updatedAt: string;
+  sourceHead?: string;
+  sourceSignature?: string;
   error?: string;
 };
 
@@ -57,11 +59,43 @@ async function ensureLocked(taskDirectory: string, registeredCheckout: string, w
   if (!sharedRoute) return;
   if (previous?.status === "installed" && previous.fingerprint === fingerprint && await hasPrivateInstall(localModules)) return;
 
+  let sourceBefore: TrackedSourceState;
+  try { sourceBefore = await trackedSourceState(taskDirectory); }
+  catch (error) {
+    const detail = `Tracked source could not be verified before npm ci: ${npmErrorDetail(error)}`;
+    await writeState(statePath, {
+      schema: "nucleus.task-node-modules.v1",
+      status: "failed",
+      fingerprint,
+      updatedAt: new Date().toISOString(),
+      error: detail.slice(0, 8000),
+    });
+    throw new Error(`Task node_modules setup failed with npm ci: ${detail}`, { cause: error });
+  }
+
+  // A previous npm ci may have changed tracked source before it failed or the
+  // process stopped. Don't reinterpret that mutation as intentional task work
+  // on a retry at the same commit; require a source restore or new commit.
+  if (previous && (previous.status === "pending" || previous.status === "failed") &&
+      previous.fingerprint === fingerprint && previous.sourceHead === sourceBefore.head &&
+      previous.sourceSignature && previous.sourceSignature !== sourceBefore.signature) {
+    const detail = "Tracked source changed during a previous npm ci attempt; restore it or advance the task head before retrying";
+    await writeState(statePath, {
+      ...previous,
+      status: "failed",
+      updatedAt: new Date().toISOString(),
+      error: detail,
+    });
+    throw new Error(`Task node_modules setup failed with npm ci: ${detail}`);
+  }
+
   await writeState(statePath, {
     schema: "nucleus.task-node-modules.v1",
     status: "pending",
     fingerprint,
     updatedAt: new Date().toISOString(),
+    sourceHead: sourceBefore.head,
+    sourceSignature: sourceBefore.signature,
   });
 
   try {
@@ -72,6 +106,9 @@ async function ensureLocked(taskDirectory: string, registeredCheckout: string, w
       timeout: 10 * 60 * 1000,
     });
     if (!(await hasPrivateInstall(localModules))) throw new Error("npm ci exited successfully without creating a private task node_modules directory");
+    const sourceAfter = await trackedSourceState(taskDirectory);
+    if (sourceAfter.head !== sourceBefore.head || sourceAfter.signature !== sourceBefore.signature)
+      throw new Error("npm ci changed tracked task source; refusing to start an agent");
   } catch (error) {
     const detail = npmErrorDetail(error);
     const message = `Task node_modules setup failed with npm ci: ${detail}`;
@@ -81,6 +118,8 @@ async function ensureLocked(taskDirectory: string, registeredCheckout: string, w
         status: "failed",
         fingerprint,
         updatedAt: new Date().toISOString(),
+        sourceHead: sourceBefore.head,
+        sourceSignature: sourceBefore.signature,
         error: detail.slice(0, 8000),
       });
     } catch (stateError) {
@@ -94,7 +133,19 @@ async function ensureLocked(taskDirectory: string, registeredCheckout: string, w
     status: "installed",
     fingerprint,
     updatedAt: new Date().toISOString(),
+    sourceHead: sourceBefore.head,
+    sourceSignature: sourceBefore.signature,
   });
+}
+
+type TrackedSourceState = { head: string; signature: string };
+
+async function trackedSourceState(taskDirectory: string): Promise<TrackedSourceState> {
+  const [head, diff] = await Promise.all([
+    git(taskDirectory, "rev-parse", "HEAD"),
+    git(taskDirectory, "diff", "--raw", "--full-index", "HEAD"),
+  ]);
+  return { head, signature: createHash("sha256").update(head).update("\0").update(diff).digest("hex") };
 }
 
 async function lockFingerprint(taskDirectory: string): Promise<string | null> {
