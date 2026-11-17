@@ -31,7 +31,7 @@ test("rollback preserves scratch and does not publish a cleanup intent", async (
   } finally { await f.close(); }
 });
 
-test("settled attached tools stop after helper exit while their observed provider stays alive", async () => {
+test("a settled run's tools under a live agent host are left alone until that host exits", async () => {
   const f = fixture();
   try {
     const run = f.run(), child = await f.hostTool(run);
@@ -39,9 +39,21 @@ test("settled attached tools stop after helper exit while their observed provide
     assert.equal(processParentPid(child.tool), child.host, "the tool has a live non-init parent");
     process.kill(child.helper, "SIGKILL");
     await wait(() => !runningPid(child.helper));
-    f.release(run); await f.cleanup();
+    f.release(run);
+    // Sweeping twice must neither stop a process under a live ancestor nor
+    // repeat the record of leaving it alone.
+    await f.cleanup(); await f.cleanup();
+    assert.ok(runningPid(child.host)); assert.ok(runningPid(child.tool), "a live non-init ancestor is never a target");
+    assert.ok(existsSync(run.temporaryDirectory!), "a process under a live ancestor keeps the scratch it may still use");
+    const leftAlone = f.store.events(f.task.id).filter(event => event.kind === "run_process_cleanup_left_alone");
+    assert.equal(leftAlone.length, 1, JSON.stringify(leftAlone));
+    assert.match(leftAlone[0]!.detail, /live-ancestor/);
+    assert.equal(f.store.events(f.task.id).filter(event => event.kind === "run_process_cleanup").length, 0);
+    // Once the host exits, the orphaned tool is a run-owned leftover again.
+    process.kill(child.host, "SIGKILL");
+    await wait(() => processParentPid(child.tool) === 1);
+    await f.cleanup();
     await wait(() => !runningPid(child.tool));
-    assert.ok(runningPid(child.host)); assert.equal(runningPid(child.helper), false);
     assert.equal(existsSync(run.temporaryDirectory!), false);
   } finally { await f.close(); }
 });

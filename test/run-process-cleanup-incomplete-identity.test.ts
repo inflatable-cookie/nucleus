@@ -5,14 +5,19 @@ import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fixture, runningPid, wait } from "./support/run-process-cleanup-fixture";
 import { readHostUidProcesses } from "../core/machine/host-process-listing";
+import { processParentPid } from "../core/machine/process-identity";
 import { runProcessEnvironments } from "../core/machine/run-process-identity";
 import { sweepSettledRunProcesses } from "../core/machine/run-process-cleanup";
 
-test("an owned process with an unknown start identity retains scratch and intent until a fresh read", async () => {
+test("an owned orphan with an unknown start identity retains scratch and intent until a fresh read", async () => {
   const f = fixture();
   try {
     const run = f.run(), child = await f.hostTool(run);
     await f.cleanup();
+    // A live agent host owns the tool; cleanup only ever stops an orphan, so the
+    // host and its helper exit first and the tool is reparented to init.
+    process.kill(child.host, "SIGKILL"); process.kill(child.helper, "SIGKILL");
+    await wait(() => !runningPid(child.host) && !runningPid(child.helper) && processParentPid(child.tool) === 1);
     f.release(run);
     const read = await readHostUidProcesses(); assert.equal(read.state, "listed");
     if (read.state !== "listed") return;

@@ -195,7 +195,8 @@ export class Operations {
     // A task-scoped command shares the task's exclusive lane so it is FIFO with
     // that task's lifecycle quanta and its nested control runs inline.
     const key = operationLaneKey(this.store.operationPayload(id), operation);
-    void this.engine.cleanContext(() => this.engine.scheduleLane(key, LANE_PRIORITY_OPERATION, () => this.engine.runOperation(id))).catch(() => { /* recorded on the operation record */ });
+    void this.engine.cleanContext(() => this.engine.scheduleLane(key, LANE_PRIORITY_OPERATION, () => this.engine.runOperation(id),
+      { coalesce: `operation:${id}` })).catch(() => { /* recorded on the operation record */ });
   }
   async runOperation(id: string): Promise<void> {
     if (this.activeOperations.has(id)) return;

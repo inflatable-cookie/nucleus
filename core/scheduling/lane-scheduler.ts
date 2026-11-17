@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { LANE_PRIORITY_CONTROL } from "./lane-priorities";
 
-interface LaneItem { priority: number; run: () => Promise<void>; settle: () => void; fail: (error: unknown) => void }
+interface LaneItem { priority: number; run: () => Promise<void>; settle: () => void; fail: (error: unknown) => void; coalesce?: string; promise?: Promise<void> }
 
 /**
  * Exclusive per-key quanta, quiesce and shutdown. Same-name `Engine` methods
@@ -28,8 +28,11 @@ export class LaneScheduler {
   private quiesceWaiters: { resolve: () => void; ignoreKey?: string }[] = [];
   /** wake() calls still in their prelude: accepted, but with no lane to show for it yet. */
   wakePreludes = 0;
-  /** Schedule one bounded quantum on an exclusive lane key. Same-key work is FIFO. */
-  scheduleLane(key: string, priority: number, work: () => Promise<void> | void): Promise<void> {
+  /** Schedule one bounded quantum on an exclusive lane key. Same-key work is FIFO at its priority. */
+  scheduleLane(key: string, priority: number, work: () => Promise<void> | void, options: {
+    /** One queued item per tag on a lane: the caller is covered by the quantum already waiting. */
+    coalesce?: string;
+  } = {}): Promise<void> {
     // Inline when the current lane already holds this key: a command that
     // performs its task-scoped effect must not queue a second quantum behind
     // itself. After `stop()` nothing new is queued either, so a durable command
@@ -37,12 +40,30 @@ export class LaneScheduler {
     // receipt) still completes inline and an effect quantum is never parked
     // forever holding a slot.
     if (this.stopped || this.laneKey.getStore() === key) return Promise.resolve().then(work).then(() => undefined);
-    return new Promise<void>((resolve, reject) => {
-      const queue = this.lanes.get(key) ?? [];
-      queue.push({ priority, run: async () => { await work(); }, settle: resolve, fail: reject });
-      this.lanes.set(key, queue);
-      this.dispatchLanes();
-    });
+    const queue = this.lanes.get(key) ?? [];
+    // Already accepted work for the same tag covers this request: a queued
+    // quantum reads the store when it runs, so it observes whatever this caller
+    // just wrote. Only an actively running item is never reused.
+    if (options.coalesce) {
+      const covering = queue.find(item => item.coalesce === options.coalesce);
+      if (covering?.promise) return covering.promise;
+    }
+    let settle!: () => void, fail!: (error: unknown) => void;
+    const promise = new Promise<void>((resolve, reject) => { settle = resolve; fail = reject; });
+    const item: LaneItem = {
+      priority, coalesce: options.coalesce,
+      run: async () => { await work(); }, settle, fail, promise,
+    };
+    // Within one key the smaller priority runs first (an owner control before a
+    // queued observation quantum) and equal priorities keep their arrival order.
+    // Without this, a lane held by one overrunning quantum let every later
+    // observation queued behind it delay an accepted owner control (nucleus#1306).
+    let at = queue.length;
+    while (at > 0 && queue[at - 1]!.priority > priority) at--;
+    queue.splice(at, 0, item);
+    this.lanes.set(key, queue);
+    this.dispatchLanes();
+    return promise;
   }
   /**
    * Resolves once currently scheduled lane work and already-accepted lifecycle

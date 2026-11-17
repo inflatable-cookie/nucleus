@@ -161,7 +161,7 @@ export class Engine {
 
   readonly prerequisiteReleases = new PrerequisiteReleases(portsContext(this, ['cleanContext', 'pendingPrerequisiteReleases', 'prerequisiteReleaseWork', 'refreshCheckoutSiblings', 'scheduleLane', 'stopped', 'store', 'wakeRepository', 'wakeTask']));
 
-  readonly taskQuantumOwner = new TaskQuantum(enginePorts(this, ['adapter', 'cleanContext', 'enqueueTitle', 'hooks', 'launchAgent', 'launchProofOnly', 'note', 'noteStepFailure', 'prerequisiteWaitYieldsToLiveWork', 'profileCatalogKnown', 'profiles', 'quantumFinish', 'quantumSteps', 'reconcile', 'reconcileBlockedEffects', 'reconcileClosedRetainedReviewer', 'recover', 'routeTask', 'settleFinishedRuns', 'settleHistoricalProofExecutions', 'settleRunBuildOutputs', 'settleSupersededIdleRuns', 'signoffDecisions', 'stopped', 'store', 'wakeRepository'], ['advance', 'beginValidationScanPass', 'holdProofOnlyGoWait', 'ownedToolHold', 'owns', 'raiseOperatorQuestions', 'reconcileHoldUntil', 'recordStop', 'recoverExternalMerge', 'recovery', 'resumeClearedAttention', 'settleBudgetClock']));
+  readonly taskQuantumOwner = new TaskQuantum(enginePorts(this, ['adapter', 'cleanContext', 'enqueueTitle', 'hooks', 'launchAgent', 'launchProofOnly', 'note', 'noteStepFailure', 'prerequisiteWaitYieldsToLiveWork', 'profileCatalogKnown', 'profiles', 'quantumFinish', 'quantumSteps', 'reconcile', 'reconcileBlockedEffects', 'reconcileClosedRetainedReviewer', 'recover', 'routeTask', 'scheduleLane', 'settleFinishedRuns', 'settleHistoricalProofExecutions', 'settleRunBuildOutputs', 'settleSupersededIdleRuns', 'signoffDecisions', 'stopped', 'store', 'wakeRepository'], ['advance', 'beginValidationScanPass', 'holdProofOnlyGoWait', 'ownedToolHold', 'owns', 'raiseOperatorQuestions', 'reconcileHoldUntil', 'recordStop', 'recoverExternalMerge', 'recovery', 'resumeClearedAttention', 'settleBudgetClock']));
 
   readonly plannerGrantCleanup = new PlannerGrantCleanup(portsContext(this, ['adapter', 'host', 'signoffDecisions', 'store', 'withHost', 'hostAvailable']));
 
@@ -563,10 +563,10 @@ export class Engine {
       finally { scope.emitDestroy(); }
     });
   }
-  /** Schedule one bounded quantum on an exclusive lane key. Same-key work is FIFO. */
-  scheduleLane(key: string, priority: number, work: () => Promise<void> | void): Promise<void> {
+  /** Schedule one bounded quantum on an exclusive lane key. Same-key work runs at its priority. */
+  scheduleLane(key: string, priority: number, work: () => Promise<void> | void, options: { coalesce?: string } = {}): Promise<void> {
     const hostId = this.laneHost(key);
-    return this.laneScheduler.scheduleLane(key, priority, hostId ? () => this.withHost(hostId, work) : work);
+    return this.laneScheduler.scheduleLane(key, priority, hostId ? () => this.withHost(hostId, work) : work, options);
   }
   quiesce(exclude?: "audit"): Promise<void> { return this.laneScheduler.quiesce(exclude); }
   private engineBusy(ignoreKey?: string): boolean { return this.laneScheduler.engineBusy(ignoreKey); }
