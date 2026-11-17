@@ -124,7 +124,7 @@ test('integration refresh compares installed lock state and retries a failed npm
 
   await git(writer,'checkout','-b','ns-merge-two');
   writePackage(writer,'3.0.0','dep-three');
-  await git(writer,'add','package.json','package-lock.json');await git(writer,'commit','-m','introduce unresolvable lockfile');await git(writer,'push','-u','origin','ns-merge-two');
+  await git(writer,'add','package.json','package-lock.json','vendor');await git(writer,'commit','-m','change dependency after a refresh failure');await git(writer,'push','-u','origin','ns-merge-two');
   await git(writer,'checkout','main');await git(writer,'merge','--no-ff','--no-edit','ns-merge-two');await git(writer,'push','origin','main');
   const failedMerge=await git(writer,'rev-parse','HEAD');
   const fakeBin=join(dir,'bin');mkdirSync(fakeBin);
