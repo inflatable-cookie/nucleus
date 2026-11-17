@@ -26,6 +26,7 @@ import { defaultDataDir, markMaintenance, markMigration, SPAWN_TOKEN_ENV } from 
  * unchanged: every method below keeps its previous name, schema and semantics.
  */
 import { readPrStates } from "../core/forge/pr-status";
+import type { BbSidebarGroups } from "../shared/schema/bb-sidebar";
 import { type ProfileSettings } from "../shared/pool";
 
 import { join } from "node:path";
@@ -921,6 +922,14 @@ export class QueueRuntime {
 
   snapshot(input: SnapshotInput = {}): SnapshotState { return this.board.snapshot(input); }
   uiSnapshot(input: { revision?: number } = {}): import("../shared/contracts").UiBoard { return this.board.uiSnapshot(input); }
+  /**
+   * Spec 062 decision 5b: the forked sidebar's one batched read. Live tasks joined
+   * to their recorded BB workspace handles through the task's own workspace id, so
+   * the answer carries every Nucleus task group at once and no group costs a call.
+   */
+  bbSidebarGroups(): BbSidebarGroups {
+    return this.board.sidebarGroups();
+  }
   queuedPage(input: { repoPath: string; offset: number; limit: number }) { return this.board.queuedPage(input); }
   laneTaskPage(input: { lane: string; offset: number; limit: number }) { return this.board.laneTaskPage(input); }
   detail(input: { taskId?: string; reference?: string; repository?: string; number?: number }) { return this.board.detail(input); }

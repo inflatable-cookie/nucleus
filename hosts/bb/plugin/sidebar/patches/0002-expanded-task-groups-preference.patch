@@ -1,0 +1,31 @@
+--- a/shared/preferences.ts
++++ b/shared/preferences.ts
+@@ -220,6 +220,15 @@
+     "Machine ids whose rows are collapsed.",
+     null,
+   ),
++  // Spec 062 (decision 5b): Nucleus task groups are collapsed by default, and an
++  // operator's explicit expand persists here. `collapsedEnvironments` keeps
++  // governing every other group, so each group class reads exactly one list.
++  expandedTaskGroups: definePreference(
++    stringListSchema,
++    [],
++    "Environment ids of Nucleus task groups the operator expanded. A task group is collapsed unless it is listed here.",
++    null,
++  ),
+ } as const;
+ 
+ export type PreferenceKey = keyof typeof preferenceDefinitions;
+--- a/app/preferences/atoms.ts
++++ b/app/preferences/atoms.ts
+@@ -10,6 +10,10 @@
+ );
+ export const collapsedSidebarSectionIdsAtom =
+   createSyncedPreferenceAtom("collapsedSections");
++// Spec 062 (decision 5b): the fork's own collapse list for Nucleus task groups.
++export const expandedTaskGroupsAtom = createSyncedPreferenceAtom(
++  "expandedTaskGroups",
++);
+ export const sidebarSectionOrderAtom =
+   createSyncedPreferenceAtom("sectionOrder");
+ export const sidebarManualSectionOrderAtom =

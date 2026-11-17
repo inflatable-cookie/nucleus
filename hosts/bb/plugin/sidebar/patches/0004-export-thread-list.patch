@@ -1,0 +1,89 @@
+--- a/app.tsx
++++ b/app.tsx
+@@ -1,7 +1,4 @@
+-import {
+-  definePluginApp,
+-  type PluginThreadListProps,
+-} from "@get-bb/plugin-sdk/app";
++import type { PluginThreadListProps } from "@get-bb/plugin-sdk/app";
+ import { CompactViewportOverrideProvider } from "@/components/ui/hooks/use-compact-viewport";
+ import { TooltipProvider } from "@/components/ui/tooltip";
+ import { PreferencesSync } from "./app/preferences/PreferencesSync.js";
+@@ -10,7 +7,12 @@
+ import { moveThreadAction } from "./app/rows/moveThreadAction.js";
+ import { ThreadSelectionProvider } from "./app/selection/threadSelection.js";
+ 
+-function ThreadList({
++/**
++ * The forked thread list (Spec 062, decision 5a seam 4). The fork defines the
++ * list's component and exports it; Nucleus's own plugin entry registers it beside
++ * the board and the rest of its slots.
++ */
++export function ThreadList({
+   activeThreadId,
+   isCompactViewport,
+   onNavigate,
+@@ -31,13 +33,13 @@
+   );
+ }
+ 
+-export default definePluginApp((app) => {
+-  app.slots.experimental_threadList({
+-    id: "thread-list",
+-    title: "Thread list",
+-    description:
+-      "Pinned threads, custom sections, projects, machines, and nested threads.",
+-    component: ThreadList,
+-  });
+-  app.slots.experimental_threadAction(moveThreadAction);
+-});
++/** The registration this fork hands its plugin entry, so one plugin owns one list. */
++export const threadListRegistration = {
++  id: "thread-list",
++  title: "Thread list",
++  description:
++    "Pinned threads, custom sections, projects, machines, and nested threads, with a state line on each Nucleus task group.",
++  component: ThreadList,
++} as const;
++
++export { moveThreadAction };
+--- a/app.test.tsx
++++ b/app.test.tsx
+@@ -24,7 +24,9 @@
+   type PreferenceValues,
+ } from "./shared/preferences.js";
+ 
+-const app = await loadPluginApp(() => import("./app"));
++// Spec 062 (decision 5a, seam 4): the fork exports its list and the plugin
++// entry registers it, so the app-level tests load that entry.
++const app = await loadPluginApp(() => import("../app"));
+ const registration = app.threadLists[0];
+ if (!registration) throw new Error("thread-list slot not registered");
+ 
+@@ -212,7 +214,12 @@
+     const { rpcCalls } = renderList({ organizationMode: "chronological" });
+ 
+     await screen.findByText("Pinned thread");
+-    expect(rpcCalls.map((call) => call.method)).toEqual(["listPreferences"]);
++    // The list still makes exactly one preferences read. The plugin entry's own
++    // Nucleus task-group read rides beside it (Spec 062, decision 5b) and is not
++    // part of the list's own call shape.
++    expect(
++      rpcCalls.filter((call) => call.method === "listPreferences"),
++    ).toHaveLength(1);
+     expect(sectionHeaders()).toEqual(["Pinned", "Later", "Review", "Threads"]);
+     expect(threadIds()).toEqual([
+       "thr_pinned",
+--- a/sidebarRowRenders.test.tsx
++++ b/sidebarRowRenders.test.tsx
+@@ -39,7 +39,9 @@
+   };
+ });
+ 
+-const app = await loadPluginApp(() => import("./app"));
++// Spec 062 (decision 5a, seam 4): the fork exports its list and the plugin
++// entry registers it, so the app-level tests load that entry.
++const app = await loadPluginApp(() => import("../app"));
+ const registration = app.threadLists[0];
+ if (!registration) throw new Error("thread-list slot not registered");
+ 

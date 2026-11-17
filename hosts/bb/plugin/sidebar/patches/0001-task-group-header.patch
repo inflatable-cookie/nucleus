@@ -1,0 +1,144 @@
+--- a/app/list/ProjectRow.tsx
++++ b/app/list/ProjectRow.tsx
+@@ -50,6 +50,12 @@
+   useSdk,
+ } from "@get-bb/plugin-sdk/app";
+ import { NO_HIDDEN_THREADS, useHiddenThreadsStatus } from "./groupRollups.js";
++import {
++  NucleusTaskGroupStateLine,
++  taskGroupTitle,
++  useNucleusTaskGroup,
++  type NucleusTaskGroup,
++} from "./nucleusTaskGroups.js";
+ import {
+   findEnvironmentDisplayProvider,
+   getEnvironmentLabelIconName,
+@@ -373,6 +379,8 @@
+ 
+ interface EnvironmentThreadGroupHeaderProps {
+   dragBindings?: SidebarSortableDragBindings;
++  /** The Nucleus task group this row stands for, or null for every other group. */
++  taskGroup: NucleusTaskGroup | null;
+   environmentId: string;
+   environmentProviderId: string | null;
+   representativeThread: SidebarThread;
+@@ -722,6 +730,7 @@
+ 
+ function EnvironmentThreadGroupHeader({
+   dragBindings,
++  taskGroup,
+   environmentId,
+   environmentProviderId,
+   representativeThread,
+@@ -821,18 +830,44 @@
+           SIDEBAR_GROUP_TEXT_CLASS,
+         )}
+       >
+-        {rename.editor ?? (
+-          <span
+-            className="min-w-0 truncate"
+-            onDoubleClick={(event) => {
+-              event.preventDefault();
+-              event.stopPropagation();
+-              rename.startEditingFromDoubleClick();
+-            }}
+-          >
+-            {displayName}
+-          </span>
+-        )}
++        {rename.editor ??
++          (taskGroup === null ? (
++            <span
++              className="min-w-0 truncate"
++              onDoubleClick={(event) => {
++                event.preventDefault();
++                event.stopPropagation();
++                rename.startEditingFromDoubleClick();
++              }}
++            >
++              {displayName}
++            </span>
++          ) : (
++            // Spec 062 (decision 5b): a Nucleus task group names its task and
++            // carries the task's state. Only this branch changes; every other
++            // group, and every group while inline rename is open, takes
++            // upstream's markup.
++            <span
++              className="flex min-w-0 flex-1 flex-col"
++              data-nucleus-task-group=""
++              data-nucleus-task-group-id={taskGroup.group.taskId}
++              data-nucleus-task-group-environment={environmentId}
++              data-nucleus-task-group-collapsed={String(isCollapsed)}
++            >
++              <span
++                className="min-w-0 truncate"
++                title={taskGroupTitle(taskGroup.group)}
++                onDoubleClick={(event) => {
++                  event.preventDefault();
++                  event.stopPropagation();
++                  rename.startEditingFromDoubleClick();
++                }}
++              >
++                {taskGroupTitle(taskGroup.group)}
++              </span>
++              <NucleusTaskGroupStateLine group={taskGroup.group} />
++            </span>
++          ))}
+         <SidebarChildToggleChevron
+           disabled={rename.isEditing}
+           className={rename.isEditing ? "hidden" : undefined}
+@@ -959,6 +994,20 @@
+   const { sectionId, pinned } = useThreadCreationPlacement(sectionWhenUnpinned);
+   const { archiveThreadsPending, onArchiveThreads } =
+     useArchiveEnvironmentThreadGroupAction({ environmentId });
++  // Spec 062 (decision 5b): a Nucleus task group's collapse state is the fork's own
++  // `expandedTaskGroups` preference, and its toggle writes that list only. Every
++  // other group keeps upstream's `collapsedEnvironments` path untouched.
++  const taskGroup = useNucleusTaskGroup(environmentId);
++  const groupCollapsed = taskGroup === null ? isCollapsed : taskGroup.isCollapsed;
++  const onToggleGroupCollapsed =
++    taskGroup === null ? onToggleEnvironmentCollapsed : taskGroup.toggleExpanded;
++  const groupCollapsedEnvironmentIds = useMemo(() => {
++    if (taskGroup === null) return collapsedEnvironmentIds;
++    const next = new Set(collapsedEnvironmentIds);
++    if (groupCollapsed) next.add(environmentId);
++    else next.delete(environmentId);
++    return next;
++  }, [taskGroup, groupCollapsed, collapsedEnvironmentIds, environmentId]);
+   const handleCreateNewThread = useCallback(() => {
+     onProjectSelect?.();
+     navigate.toCompose({
+@@ -976,7 +1025,7 @@
+     useWindowedThreadItems({
+       items: nodeItems,
+       collapsedThreadIds,
+-      collapsedEnvironmentIds,
++      collapsedEnvironmentIds: groupCollapsedEnvironmentIds,
+       selectedThreadId,
+     });
+ 
+@@ -989,6 +1038,7 @@
+       >
+         <EnvironmentThreadGroupHeader
+           dragBindings={dragBindings}
++          taskGroup={taskGroup}
+           environmentId={environmentId}
+           environmentProviderId={environmentProviderId}
+           representativeThread={representativeThread}
+@@ -999,13 +1049,13 @@
+           })}
+           parentLineDepth={parentLineDepth}
+           hiddenThreads={stats.hiddenThreads}
+-          isCollapsed={isCollapsed}
++          isCollapsed={groupCollapsed}
+           archiveThreadsPending={archiveThreadsPending}
+           onArchiveThreads={onArchiveThreads}
+           onCreateNewThread={handleCreateNewThread}
+-          onToggleCollapsed={onToggleEnvironmentCollapsed}
++          onToggleCollapsed={onToggleGroupCollapsed}
+         />
+-        {!isCollapsed ? (
++        {!groupCollapsed ? (
+           <div className="relative space-y-px">
+             <ThreadTreeGroupLine parentRowDepth={rowDepth} />
+             <SidebarWindowedItems

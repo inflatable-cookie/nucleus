@@ -1,6 +1,7 @@
 // Compatibility entry point. Domain modules import their dependencies directly.
 export * from "./schema/task-primitives";
 export * from "./schema/task-view";
+export * from "./schema/bb-sidebar";
 export * from "./holds";
 export * from "./retained-profile";
 export * from "./disposition";

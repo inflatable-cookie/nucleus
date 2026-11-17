@@ -2,8 +2,8 @@
 
 Status: approved. Phase 0 (the transport spike) is implemented and proved, phase 1 (host
 registration, identity and health) phase 2 (workspace custody) phase 3 (worker runs, observation
-and presentation) and phase 4 (delivery, questions and the support roles) are implemented; phases 5–6
-are not implemented. This document is the design and the phased plan, and [phase 0
+presentation), phase 4 (delivery, questions and the support roles) and phase 5 (the forked sidebar
+and the task group header) are implemented; phase 6 is not implemented. This document is the design and the phased plan, and [phase 0
 evidence](#phase-0-evidence-2026-11-16) answers its eight assumptions. Amended 2026-11-16: decision 5
 now carries the forked sidebar, the two boards and BB usage left to BB's card plus the operator's Usage
 Pace plugin, and the experimental inventory and the plan from phase 5 on follow it; phases 0–4 are
@@ -1143,6 +1143,67 @@ mechanical and a stray edit to a vendored file fails a test instead of surviving
 
 **Dependencies.** Phases 0–4: the plugin package and its transport, the workspace handles phase 2
 records, and live tasks from phase 3 give the header something real to read.
+
+**Implemented (2026-11-16).** The plugin owns BB's sidebar on the same reverse channel, workspace
+handles and task records phases 0–4 landed:
+
+- `hosts/bb/plugin/sidebar/` is `plugins/thread-list` vendored from tag `desktop-v0.49.0`
+  (`7b26cae7`, SDK 0.6.132) through upstream's own fork routine
+  (`scripts/bb/vendor-sidebar.mjs`, which imports `scripts/lib/plugin-fork.mjs` from the checkout at
+  the pin), with upstream's MIT notice, a `PATCHES.md` and a `UPSTREAM.json` recording the pin, the
+  release's SDK, a SHA-256 per file, the patched and added files, the registry items and the
+  forkable-list record. The patch set is four seams: the group header in `app/list/ProjectRow.tsx`,
+  the `expandedTaskGroups` preference in `shared/preferences.ts` and `app/preferences/atoms.ts`, the
+  fork's own `app/list/nucleusTaskGroups.tsx` (the batched read, its join and the collapse decision)
+  and `app.tsx` exporting the list so the plugin's own entry registers it beside its other slots.
+  The two app-level tests load that entry; every other fork test is upstream's, unchanged. The
+  plugin's own `server.ts` composes the vendored `threadListPlugin(bb)` with the adapter's RPC
+  catalogue and the presence socket: the list's preference store, its
+  `listPreferences`/`setPreference`/`resetPreference` RPC and its `prefs` CLI register there, so the
+  list hydrates and leaves its loading skeleton instead of sitting on it while every UI test passes
+  against an RPC fake. `test/bb-plugin-backend.test.ts` loads the production factory with a fake
+  plugin API and exercises those registrations: the preference read resolves with every key and
+  round-trips `expandedTaskGroups` through the plugin's own storage, the CLI registers as `nucleus`,
+  and the sidebar read registers beside them and fails closed without the service channel.
+- The read is one catalogue method, `bb.sidebar-groups`, answered by the service's board layer from
+  the live task rows it already computed and the `bbWorkspaces` handles joined through the task's own
+  workspace id. Its labels are the strings `shared/task-state.ts` and `shared/wait-state.ts` already
+  name for the Paseo board; the PR number and state are the card's own fields and the board's
+  `prStates` record; a task with no attached environment is absent, so its group draws upstream's
+  header. The plugin's own RPC method `sidebarGroups` forwards it over the retained connection, and
+  the plugin's schema is validated against the service's in `test/bb-sidebar-groups.test.ts`.
+- Live updates ride one signal: the backend watches the service's board revision on the retained
+  connection and publishes `nucleus.board-signal` when it moves; the sidebar refetches its one read
+  when the signal arrives. A signal that never arrives delays a header and never adds a second polling
+  loop or a per-group request.
+- Collapse: a Nucleus task group is collapsed unless its environment id is in the fork's own
+  `expandedTaskGroups` preference, and its toggle writes that list only. `collapsedEnvironments` keeps
+  governing every other group, so each group class reads exactly one list and the two cannot
+  disagree. A group the read does not name — unknown, unattached, or a read that has not landed or
+  failed — renders upstream's header: the state line is an addition, never a precondition.
+
+Tests: `hosts/bb/plugin/sidebar/app/list/nucleusTaskGroups.test.tsx` names this phase's UI acceptance
+in the fork's own runner (`effigy bb:sidebar-tests`): the collapsed default with number, title, shared
+state label, recorded wait and PR state; upstream's header and one read for every other group; one
+call for many groups plus the refetch on the board signal; an explicit expand written to
+`expandedTaskGroups` with `collapsedEnvironments` never written for a task group; the stored
+preference read back on a fresh mount; and upstream's header when the read fails.
+`test/bb-sidebar-vendored.test.ts` proves the vendored manifest (byte-identical or named as patched,
+the SDK floor at or below the release's, the forkable record, and that no patch hunk touches a drag
+binding or split prop); `test/bb-sidebar-groups.test.ts` proves the projection over real stored task
+rows and workspace handles, the one forwarding call, the two schemas agreeing, and the board signal.
+`effigy bb:sidebar-drift` reports no drift at the pin and never runs in `effigy check`, because it
+needs the network.
+
+Evidence: `effigy proof:bb:sidebar` builds the plugin with `bb plugin build`, installs it into the
+isolated BB server from phase 0, and records that it loads, that the host serves its app bundle with
+the `threadList` slot registered as `thread-list`, that `sidebar.threadListProvider` starts automatic
+and pinning `bb--thread-list` is accepted and read back, that the plugin reports its `prefs` CLI and
+its preference RPC answers in that server with `expandedTaskGroups` present, and that the built bundle
+still honours the host row-status path. The New-thread button, the navigation rail and the footer are host-rendered
+chrome this plugin never registers; the proof establishes that from the plugin's slot registration and
+the fork's unchanged row tests rather than from a screenshot. The header names the stage and the
+recorded wait it has, never an invented check list or QA position (decision 5b's stated departure).
 
 **Deferred exit path.** Option B — an upstream group-row metadata slot (per-environment data) plus a
 collapse hint a list can supply per group — would replace this phase's fork and delete the patch set,

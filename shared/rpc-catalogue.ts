@@ -32,6 +32,8 @@ export const RPC_CATALOGUE: RpcCatalogueEntry[] = [
   { name: "lane.task-page", contract: contracts.laneTaskPage, method: "laneTaskPage", mutating: false },
   { name: "queue.ui-snapshot", contract: contracts.uiSnapshot, method: "uiSnapshot", mutating: false },
   { name: "queue.detail", contract: contracts.detail, method: "detail", mutating: false },
+  // Spec 062 decision 5b: the forked sidebar's one batched task-group read.
+  { name: "bb.sidebar-groups", contract: contracts.bbSidebarGroups, method: "bbSidebarGroups", mutating: false },
   { name: "queue.outcome", contract: contracts.outcome, method: "outcome", mutating: false },
   { name: "queue.outcome-search", contract: contracts.outcomeSearch, method: "outcomeSearch", mutating: false },
   { name: "papercut.add", contract: contracts.papercutAdd, method: "addPapercut", mutating: true },

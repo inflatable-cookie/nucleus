@@ -10,3 +10,4 @@ evidence/acceptance-repo/
 
 # Private publication vocabulary stays on this machine.
 .publication-denylist
+hosts/bb/plugin/dist/
