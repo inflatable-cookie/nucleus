@@ -67,6 +67,11 @@ try {
     const service = await import('../service/transport/main-channel.mjs');
     console.log(JSON.stringify(await (command === 'channel' ? service.configureChannel(...args) : service.requestRollback())));
   }
+  else if (command === 'bb') {
+    // The BB host's operator install route (Spec 062, phase 7): install, report and
+    // remove this integration's BB plugin, and nothing else in the operator's BB.
+    await import('./nucleus-bb.mjs');
+  }
   else {
     // Delegate the complete catalogue, payload handling and output contract.
     await import('./queue-cli.mjs');

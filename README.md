@@ -45,6 +45,44 @@ overrides it; `nucleus data-home` prints the resolution). Release preparation,
 proof and publishing follow the
 [release contract](docs/knowledge/contracts/release.md).
 
+## BB host
+
+Nucleus also runs tasks in [BB](https://getbb.app) (bb 0.49 or newer). The
+Nucleus package ships the built BB plugin; one command installs it into your
+BB, and nothing else in your BB is read or written.
+
+1. **Install the plugin.** After installing or rolling the Nucleus package:
+
+   ```sh
+   nucleus bb install
+   nucleus bb status
+   ```
+
+   `nucleus bb install` runs BB's own install for the plugin with ID `nucleus`,
+   points the plugin at your Nucleus data home so it connects, and reloads it.
+   `nucleus bb status` reports the installed plugin's version and build against
+   the running Nucleus service (`match`, or `behind` with the command to fix it),
+   and says when the plugin is not configured to connect.
+2. **Point one test repository at BB.** Set the repository's host kind to `bb`
+   (`repository.set` with `hostKind: "bb"`). Paseo stays the default; a live
+   task never changes host.
+3. **Expect.** The board names the BB host online with its BB and plugin SDK
+   versions, a dispatched task's worker thread appears under its planner in BB,
+   and the sidebar's Nucleus task groups carry the task's state, PR and wait.
+   The plugin is pinned to the Nucleus build it shipped with: after a service
+   roll, `nucleus bb status` says the plugin is behind, the plugin's connection
+   is refused with a message naming both builds, and the board shows the BB host
+   unavailable with that reason. Reinstall with `nucleus bb install`; Nucleus
+   never writes into your BB on its own.
+4. **Remove it.** `nucleus bb uninstall` removes the plugin with ID `nucleus`.
+   No other plugin, project or thread is touched; a plugin with ID `nucleus`
+   that is not a Nucleus build is refused by name rather than overwritten or
+   removed.
+
+Usage Pace is an optional BB plugin the operator installs separately; Nucleus
+never installs, updates or removes it. The operator notes
+and the design are in [Spec 062](docs/knowledge/specs/062-bb-host-adapter.md).
+
 ## Getting started
 
 1. **Connect a host.** For Paseo: `nucleus integrate paseo` registers the

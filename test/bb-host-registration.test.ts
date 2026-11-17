@@ -15,6 +15,11 @@ import {
   type HostExecutorDeclaration,
 } from "../shared/host-operation";
 import { socketFixtureDirectory } from "./support/socket-fixture";
+import { currentServiceBuildId } from "../shared/service/build";
+import {
+  BB_PLUGIN_INSTALL_COMMAND,
+  shortBuildId,
+} from "../shared/bb-plugin-build";
 
 /**
  * Spec 062, phase 1: host registration, identity and health, over the real
@@ -763,6 +768,148 @@ test("a connection that closes while its identity is verified leaves no register
     assert.equal(listed?.state, "offline");
     assert.match(listed?.reason ?? "", /closed/);
   } finally {
+    await bridge.close();
+    await service.stop();
+  }
+});
+
+/**
+ * Spec 062, phase 7: the plugin is pinned to the service build. The declaration names
+ * the Nucleus build the installed plugin came from; a plugin from another build is
+ * refused before its identity probe with a message naming both builds and the command
+ * that fixes it, and the board reads the host unavailable with that reason.
+ */
+const pinnedDeclaration = (
+  dataDir: string,
+  nucleusBuild: string | undefined,
+): HostExecutorDeclaration => ({
+  role: "host-executor",
+  host: {
+    dataDir,
+    bbVersion: "0.49.0",
+    sdkVersion: "0.6.132",
+    ...(nucleusBuild === undefined ? {} : { nucleusBuild }),
+  },
+});
+
+test("a plugin from another build is refused on connect, naming both builds and the fix", async () => {
+  const dir = socketFixtureDirectory("queue-service.sock");
+  const service = new QueueService({
+    owner: { dataDir: dir, timers: false },
+    fixture: "fake",
+  });
+  await service.start();
+  const info = readServiceInfo(dir)!;
+  const bridge = new ServiceClient({
+    socketPath: info.socketPath,
+    credential: info.credential,
+  });
+  const dataDir = `${dir}/bb-pinned`;
+  const hostId = hostIdFromDataDir(dataDir);
+  const serviceBuildId = currentServiceBuildId();
+  // A build that is not this one, whatever this service's own identity happens to be.
+  const otherBuild = (serviceBuildId[0] === "a" ? "b" : "a").repeat(64);
+  let matching: FakeExecutor | null = null;
+  let stale: FakeExecutor | null = null;
+  try {
+    await bridge.connect();
+    // The plugin the package shipped for this build connects.
+    matching = await FakeExecutor.open(
+      info,
+      pinnedDeclaration(dataDir, serviceBuildId),
+    );
+    assert.equal(matching.refusal, null, "the plugin from this build connects");
+    assert.equal(matching.acceptance?.hostId, hostId);
+    await waitForHealth(
+      bridge,
+      (value) => value.bb?.online === true,
+      "the pinned plugin registers",
+    );
+
+    // The service rolls: the installed plugin is now a different build.
+    stale = await FakeExecutor.open(
+      info,
+      pinnedDeclaration(dataDir, otherBuild),
+    );
+    assert.equal(stale.refusal?.code, "refused");
+    const message = stale.refusal?.message ?? "";
+    assert.match(message, new RegExp(shortBuildId(otherBuild)));
+    assert.match(message, new RegExp(shortBuildId(serviceBuildId)));
+    assert.ok(
+      message.includes(BB_PLUGIN_INSTALL_COMMAND),
+      `the refusal names the command that fixes it: ${message}`,
+    );
+    assert.deepEqual(
+      stale.received.map((entry) => entry.op),
+      [],
+      "the refusal lands before the identity probe, so nothing is registered",
+    );
+    assert.deepEqual(
+      service.hostExecutorIds(),
+      [],
+      "the stale plugin holds no executor role",
+    );
+
+    // The board's data: the host is unavailable with that reason, never half-working.
+    const health = await waitForHealth(
+      bridge,
+      (value) =>
+        value.bb?.lastRefusal?.field === "nucleusBuild" &&
+        value.bb?.online === false,
+      "health records the pin refusal",
+    );
+    assert.match(
+      health.bb!.offlineReason,
+      new RegExp(shortBuildId(otherBuild)),
+    );
+    assert.match(
+      health.bb!.offlineReason,
+      new RegExp(shortBuildId(serviceBuildId)),
+    );
+    assert.ok(health.bb!.offlineReason.includes(BB_PLUGIN_INSTALL_COMMAND));
+    const listed = health.hosts?.find((entry) => entry.id === hostId);
+    assert.equal(listed?.state, "offline");
+    assert.equal(listed?.reason, health.bb!.offlineReason);
+  } finally {
+    stale?.close();
+    matching?.close();
+    await bridge.close();
+    await service.stop();
+  }
+});
+
+test("a plugin with no build identity connects to a source service, which has no package to pin it to", async () => {
+  const dir = socketFixtureDirectory("queue-service.sock");
+  const service = new QueueService({
+    owner: { dataDir: dir, timers: false },
+    fixture: "fake",
+  });
+  await service.start();
+  const info = readServiceInfo(dir)!;
+  const bridge = new ServiceClient({
+    socketPath: info.socketPath,
+    credential: info.credential,
+  });
+  const dataDir = `${dir}/bb-unpinned`;
+  let executor: FakeExecutor | null = null;
+  try {
+    await bridge.connect();
+    executor = await FakeExecutor.open(
+      info,
+      pinnedDeclaration(dataDir, undefined),
+    );
+    assert.equal(
+      executor.refusal,
+      null,
+      "a checkout install is what the private proofs install, so a source service accepts it",
+    );
+    await waitForHealth(
+      bridge,
+      (value) => value.bb?.online === true,
+      "the unpinned plugin registers",
+    );
+  } finally {
+    executor?.close();
     await bridge.close();
     await service.stop();
   }

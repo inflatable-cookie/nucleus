@@ -12,6 +12,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { realpathSync } from "node:fs";
 import { runHostChannel, type HostChannelClient } from "./channel";
 import { createHostOperations, type BbHostSdk } from "./operations";
+import { readNucleusBuild } from "./build-identity";
 import threadListPlugin from "./sidebar/server.js";
 import {
   BOARD_SIGNAL_CHANNEL,
@@ -76,6 +77,15 @@ export function watchBoardSignal(bb: BbPluginApi, client: HostChannelClient): ()
 
 export default async function plugin(bb: BbPluginApi) {
   bb.log.info(`nucleus host executor loaded (plugin SDK ${BB_PLUGIN_SDK_VERSION})`);
+  // The Nucleus build this package came from (Spec 062, phase 7). A packaged plugin
+  // declares it, so the service can refuse a plugin from another build by name; a
+  // checkout install carries none and is what the private proofs install.
+  const nucleusBuild = readNucleusBuild(import.meta.url);
+  bb.log.info(
+    nucleusBuild
+      ? `nucleus plugin build ${nucleusBuild.slice(0, 12)} (pinned to the service build)`
+      : "nucleus plugin built from a source checkout; the service build pin reads this install as unpinned",
+  );
 
   // The Nucleus data home whose `queue-service.json` names the socket and
   // credential. One setting, not a copy of Nucleus's configuration: the service
@@ -206,7 +216,12 @@ export default async function plugin(bb: BbPluginApi) {
         },
         log: { info: message => bb.log.info(message), warn: message => bb.log.warn(message), error: message => bb.log.error(message) },
         signal,
-        declaration: () => ({ dataDir: declarations.dataDir(), bbVersion: declarations.version ?? "unknown", sdkVersion: BB_PLUGIN_SDK_VERSION }),
+        declaration: () => ({
+          dataDir: declarations.dataDir(),
+          bbVersion: declarations.version ?? "unknown",
+          sdkVersion: BB_PLUGIN_SDK_VERSION,
+          ...(nucleusBuild ? { nucleusBuild } : {}),
+        }),
       });
     },
   });
