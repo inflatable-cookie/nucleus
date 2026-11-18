@@ -138,9 +138,11 @@ export function routeHostAdapter(
           )
             return false;
           const fault =
-            error instanceof HostTransportFault
-              ? error
-              : new HostTransportFault(hostId, error);
+            error === undefined
+              ? null
+              : error instanceof HostTransportFault
+                ? error
+                : new HostTransportFault(hostId, error);
           engine.markAuditHostUnavailable(hostId);
           engine.hostOutages.observe(hostId, false);
           for (const task of engine.store.tasks()) {
@@ -150,6 +152,7 @@ export function routeHostAdapter(
             )
               continue;
             engine.hostWait(task);
+            if (!fault) continue;
             if (
               engine.store.task(task.id).resolution.stop?.reason ===
               "host_unavailable"

@@ -213,11 +213,7 @@ export class Dispatch {
       (task.resolution.hostWait ||
         task.resolution.stop?.reason === "host_unavailable")
     )
-      recordHostFailure(
-        this.adapter,
-        task.hostId,
-        new Error(`Host ${task.hostId} is unavailable`),
-      );
+      recordHostFailure(this.adapter, task.hostId, undefined);
   }
   /** Proof-only dispatch always enters its executor/release-GO route, never the worker launcher. */
   launchProofOnly(

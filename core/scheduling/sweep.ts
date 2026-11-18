@@ -407,11 +407,7 @@ export class Sweep {
         }
         // Nothing is read from a host that is away: the wait itself is the stop.
         if (!passed) {
-          recordHostFailure(
-            this.engine.adapter,
-            host,
-            new Error(`Host ${host} is unavailable`),
-          );
+          recordHostFailure(this.engine.adapter, host, undefined);
           continue;
         }
         // Spec 066 R1/R6 (C2): the pass's reading of one host, shared with that
