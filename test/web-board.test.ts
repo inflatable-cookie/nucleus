@@ -6,7 +6,7 @@ import {
   type IncomingMessage,
 } from "node:http";
 import { randomBytes } from "node:crypto";
-import { readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createServer as createTcpServer } from "node:net";
 import {
@@ -633,30 +633,69 @@ test("the live channel delivers revisions and revoke closes paired-session strea
   }
 });
 
-test("a paired cookie and its digest survive a service restart on the same work root and port", async () => {
+test("paired sessions live in the data home and migrate once from the work root", async () => {
   const preferredPort = await freePort();
   const fixture = await startBoard(preferredPort);
   const link = await mintToken(fixture.client);
   const cookie = await pairToken(fixture.port, link.token);
-  const sessionFile = join(fixture.dataDir, "work", "nucleus-web-sessions.json");
+  const sessionFile = join(fixture.dataDir, "web-sessions.json");
+  const oldSessionFile = join(fixture.dataDir, "work", "nucleus-web-sessions.json");
   try {
     const stored = readFileSync(sessionFile, "utf8");
     assert.ok(!stored.includes(cookie.split("=")[1]), "the raw cookie is never persisted");
     assert.ok(!stored.includes(link.token), "the raw link token is never persisted");
     assert.match(stored, /"digest":"[a-f0-9]{64}"/);
     assert.equal(statSync(sessionFile).mode & 0o777, 0o600, "the session digest file is owner-only");
+    assert.equal(existsSync(oldSessionFile), false, "a fresh start does not create a session file in the work root");
     const oldPort = fixture.port;
     assert.equal(oldPort, preferredPort, "the board binds its configured fixed port");
     await fixture.client.close();
     await fixture.service.stop();
+    renameSync(sessionFile, oldSessionFile);
     const replacement = new QueueService({
       owner: { dataDir: fixture.dataDir }, fixture: "fake", debug: true,
       webBoard: { bundleDir: null, now: () => fixture.clock.now, port: oldPort },
     });
     await replacement.start();
+    assert.equal(existsSync(oldSessionFile), false, "the old file is removed after migration verifies");
+    assert.equal(readFileSync(sessionFile, "utf8"), stored, "migration preserves the stored session bytes");
     assert.equal(replacement.webBoardAddress()?.port, oldPort, "the configured board URL is unchanged");
     assert.equal((await rpc(oldPort, "queue.ui-snapshot", {}, cookie)).status, 200, "the paired cookie authenticates after restart");
     assert.equal((await http(oldPort, "/api/session", { cookie, host: `127.0.0.1:${oldPort}` })).status, 200, "the plain board URL recognizes the existing paired browser");
+    await replacement.stop();
+
+    const repeated = new QueueService({
+      owner: { dataDir: fixture.dataDir }, fixture: "fake", debug: true,
+      webBoard: { bundleDir: null, now: () => fixture.clock.now, port: oldPort },
+    });
+    await repeated.start();
+    assert.equal(readFileSync(sessionFile, "utf8"), stored, "a repeated start leaves the data-home file unchanged");
+    assert.equal((await rpc(oldPort, "queue.ui-snapshot", {}, cookie)).status, 200, "the paired cookie still authenticates");
+    await repeated.stop();
+  } finally {
+    rmSync(fixture.dataDir, { recursive: true, force: true });
+  }
+});
+
+test("when both session stores exist, the data-home store wins and the old file stays in place", async () => {
+  const fixture = await startBoard();
+  const link = await mintToken(fixture.client);
+  const cookie = await pairToken(fixture.port, link.token);
+  const sessionFile = join(fixture.dataDir, "web-sessions.json");
+  const oldSessionFile = join(fixture.dataDir, "work", "nucleus-web-sessions.json");
+  try {
+    await fixture.client.close();
+    await fixture.service.stop();
+    mkdirSync(join(fixture.dataDir, "work"), { recursive: true });
+    writeFileSync(oldSessionFile, JSON.stringify({ version: 1, sessions: [] }), { mode: 0o600 });
+    const oldContents = readFileSync(oldSessionFile, "utf8");
+    const replacement = new QueueService({
+      owner: { dataDir: fixture.dataDir }, fixture: "fake", debug: true,
+      webBoard: { bundleDir: null, now: () => fixture.clock.now, port: fixture.port },
+    });
+    await replacement.start();
+    assert.equal((await rpc(fixture.port, "queue.ui-snapshot", {}, cookie)).status, 200, "the data-home paired session is authoritative");
+    assert.equal(readFileSync(oldSessionFile, "utf8"), oldContents, "the conflicting old file is left untouched");
     await replacement.stop();
   } finally {
     rmSync(fixture.dataDir, { recursive: true, force: true });

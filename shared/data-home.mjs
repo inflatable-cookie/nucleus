@@ -70,6 +70,7 @@ export const DATA_HOME_ENTRIES = Object.freeze([
   { path: "queue-service-roll.json", kind: "durable", owner: "server/service/identity.ts" },
   { path: "queue-service-startup-failure.json", kind: "durable", owner: "server/service/identity.ts" },
   { path: "queue-service-executor-fault.json", kind: "durable", owner: "server/service/identity.ts" },
+  { path: "web-sessions.json", kind: "durable", owner: "service/transport/server.ts" },
   { path: "queue-service.claim.json", kind: "ephemeral", owner: "hosts/paseo/plugin/bridge.ts" },
   { path: "queue-service-<pid>.maintenance", kind: "ephemeral", owner: "server/service/standby.ts" },
   { path: "queue-standby-<pid>.ready", kind: "ephemeral", owner: "server/service/standby.ts" },
