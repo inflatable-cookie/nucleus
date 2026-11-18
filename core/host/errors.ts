@@ -153,3 +153,12 @@ export class HostCallAbandonedError extends HostUnknownDeliveryError {
     this.deadlineMs = input.deadlineMs;
   }
 }
+
+/** A host operation did not answer before its caller's deadline. Delivery is unknown. */
+export class HostOperationTimeoutError extends HostUnknownDeliveryError {
+  constructor(readonly hostId: string, readonly operation: string, readonly timeoutMs: number) {
+    super({ command: operation, reason: 'host_operation_timed_out' });
+    this.name = 'HostOperationTimeoutError';
+    this.message = `Transport not connected: host ${hostId} operation ${operation} timed out after ${timeoutMs} ms; delivery is unknown`;
+  }
+}
