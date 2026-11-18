@@ -3,7 +3,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { HostProcessFact } from "../host/types";
 import { cwdInWorktree } from "../workspaces/worktree-validation";
-import { processGroupHasStartIdentity, processGroupHasStartIdentityAsync } from "./process-group";
+import {
+  processGroupHasStartIdentity,
+  processGroupHasStartIdentityAsync,
+} from "./process-group";
 import { processStartIdentityLiveness } from "./process-identity-search";
 import { startIdentityMatches } from "./start-identity";
 import type { Store } from "../store/store";
@@ -37,15 +40,22 @@ export interface HostProcessTarget {
 }
 
 /** A recorded process group the task's own runs, hooks or validation left behind. */
-export function recordedProcessGroupsForTask(store: Store, task: Task): RecordedProcessGroup[] {
+export function recordedProcessGroupsForTask(
+  store: Store,
+  task: Task,
+): RecordedProcessGroup[] {
   const groups = new Map<number, string | null>();
-  const remember = (pgid: number | null | undefined, identity: string | null | undefined) => {
+  const remember = (
+    pgid: number | null | undefined,
+    identity: string | null | undefined,
+  ) => {
     if (!pgid || !Number.isSafeInteger(pgid) || pgid <= 0) return;
     const current = groups.get(pgid);
     if (!current && identity) groups.set(pgid, identity);
     else if (!groups.has(pgid)) groups.set(pgid, identity ?? null);
   };
-  for (const record of store.hookEvents(task.id)) remember(record.processGroupId, record.leaderStartIdentity);
+  for (const record of store.hookEvents(task.id))
+    remember(record.processGroupId, record.leaderStartIdentity);
   const validation = task.resolution.projectValidation;
   if (validation) {
     remember(validation.processGroupId, validation.leaderStartIdentity);
@@ -60,17 +70,25 @@ export function recordedProcessGroupsForTask(store: Store, task: Task): Recorded
 /** Queue's own process group: never a sweep target, and never a recorded group. */
 export function queueProcessGroupId(): number {
   try {
-    const getpgid = (process as NodeJS.Process & { getpgid?: (pid?: number) => number }).getpgid;
+    const getpgid = (
+      process as NodeJS.Process & { getpgid?: (pid?: number) => number }
+    ).getpgid;
     if (typeof getpgid === "function") return getpgid(0);
-  } catch { /* EPERM: fall through to pid. */ }
+  } catch {
+    /* EPERM: fall through to pid. */
+  }
   return process.pid;
 }
 
 function livePgid(pid: number): number | null {
   try {
-    const getpgid = (process as NodeJS.Process & { getpgid?: (pid?: number) => number }).getpgid;
+    const getpgid = (
+      process as NodeJS.Process & { getpgid?: (pid?: number) => number }
+    ).getpgid;
     if (typeof getpgid === "function") return getpgid(pid);
-  } catch { /* ESRCH/EPERM: unproven. */ }
+  } catch {
+    /* ESRCH/EPERM: unproven. */
+  }
   return null;
 }
 
@@ -80,19 +98,30 @@ function startTimeOf(identity: string): string {
 }
 
 function commandLooksLikePaseo(command: string): boolean {
-  return command.trim().split(/\s+/).some(token => {
-    const base = token.split(/[\\/]/).pop() ?? "";
-    return /^(paseo|paseod|paseo-daemon|paseo-supervisor)(\.exe)?$/i.test(base) || /Paseo\.app/i.test(token);
-  });
+  return command
+    .trim()
+    .split(/\s+/)
+    .some((token) => {
+      const base = token.split(/[\\/]/).pop() ?? "";
+      return (
+        /^(paseo|paseod|paseo-daemon|paseo-supervisor)(\.exe)?$/i.test(base) ||
+        /Paseo\.app/i.test(token)
+      );
+    });
 }
 
 function paseoDaemonPidFromFile(): number | null {
   try {
-    const contents = readFileSync(join(homedir(), ".paseo", "paseo.pid"), "utf8");
+    const contents = readFileSync(
+      join(homedir(), ".paseo", "paseo.pid"),
+      "utf8",
+    );
     const match = /^\s*(\d+)\s*$/.exec(contents);
     const pid = match ? Number(match[1]) : NaN;
     return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 export interface PaseoProcessOwnership {
@@ -108,15 +137,24 @@ export function paseoProcessOwnership(
   configuredDaemonPid?: number | null,
   lookupMissingDaemonPgid = true,
 ): PaseoProcessOwnership {
-  const configured = configuredDaemonPid === undefined ? paseoDaemonPidFromFile() : configuredDaemonPid;
-  const daemonPid = Number.isSafeInteger(configured) && configured! > 0 ? configured! : null;
-  const byPid = new Map(processes.map(fact => [fact.pid, fact]));
+  const configured =
+    configuredDaemonPid === undefined
+      ? paseoDaemonPidFromFile()
+      : configuredDaemonPid;
+  const daemonPid =
+    Number.isSafeInteger(configured) && configured! > 0 ? configured! : null;
+  const byPid = new Map(processes.map((fact) => [fact.pid, fact]));
   const roots = new Set<number>();
-  for (const fact of processes) if (commandLooksLikePaseo(fact.command)) roots.add(fact.pid);
+  for (const fact of processes)
+    if (commandLooksLikePaseo(fact.command)) roots.add(fact.pid);
   if (daemonPid !== null) roots.add(daemonPid);
 
   const daemonFact = daemonPid === null ? undefined : byPid.get(daemonPid);
-  const daemonPgid = daemonFact?.pgid ?? (lookupMissingDaemonPgid && daemonPid !== null ? livePgid(daemonPid) : null);
+  const daemonPgid =
+    daemonFact?.pgid ??
+    (lookupMissingDaemonPgid && daemonPid !== null
+      ? livePgid(daemonPid)
+      : null);
   const pids = new Set<number>();
   const pgids = new Set<number>();
   if (daemonPgid !== null && daemonPgid > 0) pgids.add(daemonPgid);
@@ -127,10 +165,16 @@ export function paseoProcessOwnership(
     let owned = false;
     while (current && !visited.has(current.pid)) {
       visited.add(current.pid);
-      if (roots.has(current.pid)) { owned = true; break; }
+      if (roots.has(current.pid)) {
+        owned = true;
+        break;
+      }
       const parent = current.ppid;
       if (!parent || parent <= 0 || parent === current.pid) break;
-      if (roots.has(parent)) { owned = true; break; }
+      if (roots.has(parent)) {
+        owned = true;
+        break;
+      }
       current = byPid.get(parent);
     }
     if (daemonPgid !== null && fact.pgid === daemonPgid) owned = true;
@@ -141,7 +185,10 @@ export function paseoProcessOwnership(
   return { daemonPid, daemonPgid, pids, pgids };
 }
 
-function hostProcessTarget(fact: HostProcessFact, via: HostProcessTarget["via"]): HostProcessTarget {
+function hostProcessTarget(
+  fact: HostProcessFact,
+  via: HostProcessTarget["via"],
+): HostProcessTarget {
   return {
     pid: fact.pid,
     pgid: fact.pgid,
@@ -155,12 +202,20 @@ function hostProcessTarget(fact: HostProcessFact, via: HostProcessTarget["via"])
 
 /** This process, its parent, and the caller's own protected identities. */
 export function protectedHostPids(extra?: Iterable<number>): Set<number> {
-  const protectedPids = new Set<number>([process.pid, process.ppid].filter(pid => Number.isSafeInteger(pid) && pid > 0));
-  if (extra) for (const pid of extra) if (Number.isSafeInteger(pid) && pid > 0) protectedPids.add(pid);
+  const protectedPids = new Set<number>(
+    [process.pid, process.ppid].filter(
+      (pid) => Number.isSafeInteger(pid) && pid > 0,
+    ),
+  );
+  if (extra)
+    for (const pid of extra)
+      if (Number.isSafeInteger(pid) && pid > 0) protectedPids.add(pid);
   return protectedPids;
 }
 
-export function isGroupBirthIdentity(identity: string | null): identity is string {
+export function isGroupBirthIdentity(
+  identity: string | null,
+): identity is string {
   return Boolean(identity && !identity.includes("@") && identity.length >= 8);
 }
 
@@ -175,11 +230,17 @@ export function recordedGroupIdentityProven(
   processes?: HostProcessFact[],
 ): boolean {
   const identity = group.startIdentity;
-  if (!identity || !Number.isSafeInteger(group.pgid) || group.pgid <= 0) return false;
-  if (!identity.includes("@") && identity.length >= 8) return processGroupHasStartIdentity(group.pgid, identity);
+  if (!identity || !Number.isSafeInteger(group.pgid) || group.pgid <= 0)
+    return false;
+  if (!identity.includes("@") && identity.length >= 8)
+    return processGroupHasStartIdentity(group.pgid, identity);
   if (!identity.includes("@") || identity.endsWith("@unknown")) return false;
   if (processes) {
-    return processes.some(fact => fact.pgid === group.pgid && startIdentityMatches(identity, fact.startIdentity));
+    return processes.some(
+      (fact) =>
+        fact.pgid === group.pgid &&
+        startIdentityMatches(identity, fact.startIdentity),
+    );
   }
   const pid = Number(identity.slice(0, identity.indexOf("@")));
   if (!Number.isSafeInteger(pid) || pid <= 0) return false;
@@ -212,8 +273,10 @@ export async function recordedGroupIdentityProvenAsync(
   processes?: HostProcessFact[],
 ): Promise<boolean> {
   const identity = group.startIdentity;
-  if (!identity || !Number.isSafeInteger(group.pgid) || group.pgid <= 0) return false;
-  if (!identity.includes("@")) return processGroupHasStartIdentityAsync(group.pgid, identity);
+  if (!identity || !Number.isSafeInteger(group.pgid) || group.pgid <= 0)
+    return false;
+  if (!identity.includes("@"))
+    return processGroupHasStartIdentityAsync(group.pgid, identity);
   return recordedGroupIdentityProven(group, processes);
 }
 
@@ -227,7 +290,8 @@ export async function provenRecordedPgidsAsync(
   const proven = new Set<number>();
   for (const group of groups) {
     if (group.pgid === queuePgid || protectedPgids.has(group.pgid)) continue;
-    if (await recordedGroupIdentityProvenAsync(group, processes)) proven.add(group.pgid);
+    if (await recordedGroupIdentityProvenAsync(group, processes))
+      proven.add(group.pgid);
   }
   return proven;
 }
@@ -246,13 +310,20 @@ export function selectHostProcessTargetsAndSkips(input: {
   paseo: PaseoProcessOwnership;
 }): HostProcessSelection {
   const blockedPgids = new Set(input.paseo.pgids);
-  const provenPgids = provenRecordedPgids(input.recordedGroups, input.queuePgid, input.processes, blockedPgids);
+  const provenPgids = provenRecordedPgids(
+    input.recordedGroups,
+    input.queuePgid,
+    input.processes,
+    blockedPgids,
+  );
   const selected = new Map<number, HostProcessTarget>();
   const skippedPaseo: HostProcessTarget[] = [];
   for (const fact of input.processes) {
     if (fact.startIdentity.endsWith("@unknown")) continue;
     const inGroup = provenPgids.has(fact.pgid);
-    const inTree = Boolean(input.worktree && fact.cwd && cwdInWorktree(fact.cwd, input.worktree));
+    const inTree = Boolean(
+      input.worktree && fact.cwd && cwdInWorktree(fact.cwd, input.worktree),
+    );
     if (!inGroup && !inTree) continue;
     const target = hostProcessTarget(fact, inGroup ? "pgid" : "cwd");
     if (input.paseo.pids.has(fact.pid)) {
@@ -286,6 +357,10 @@ export function selectHostProcessTargets(input: {
   // This selector is a pure decision over the supplied process snapshot. The
   // production reap path may resolve the configured daemon and query its live
   // pgid before calling the lower-level selector.
-  const paseo = paseoProcessOwnership(input.processes, input.paseoDaemonPid ?? null, false);
+  const paseo = paseoProcessOwnership(
+    input.processes,
+    input.paseoDaemonPid ?? null,
+    false,
+  );
   return selectHostProcessTargetsAndSkips({ ...input, paseo }).targets;
 }
