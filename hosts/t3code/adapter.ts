@@ -109,6 +109,7 @@ export class T3CodeHost implements Host {
       rpc: this.rpc, state: this.state,
       hostId: () => this.hostId,
       requireConnection: () => this.requireConnection(),
+      forgetRead: id => this.reads.forget(id),
     });
     this.presentation = new T3Presentation({
       state: this.state,
@@ -201,20 +202,36 @@ export class T3CodeHost implements Host {
    * Only the launch identity (workspace and labels) is kept, so an exact settle or
    * lookup still answers; the ledger, the settle markers and every recorded intent
    * stay exactly as recorded.
+   *
+   * The move is reversible: a thread T3 no longer reports archived (a person or a
+   * planner re-attached it) returns to observation on the next pass, with the same
+   * launch identity. Nothing else about the thread is restored, because nothing else
+   * was ever needed to observe it.
    */
   async reconcileObservation(): Promise<void> {
-    const tracked = Object.keys(this.state.read().agents);
-    if (!tracked.length) return;
-    const retired: string[] = [];
-    for (const id of tracked) if (!await this.reads.isObserved(id)) retired.push(id);
-    if (!retired.length) return;
-    this.state.update(state => {
-      state.retiredAgents ??= {};
-      for (const id of retired) {
-        const record = state.agents[id];
+    const state = this.state.read();
+    const tracked = Object.keys(state.agents), retiredIds = Object.keys(state.retiredAgents ?? {});
+    if (!tracked.length && !retiredIds.length) return;
+    const retire: string[] = [], restore: string[] = [];
+    for (const id of tracked) if (!await this.reads.isObserved(id)) retire.push(id);
+    for (const id of retiredIds) {
+      if (state.retiredAgents?.[id]?.deletedAt) continue;
+      if (await this.reads.isObserved(id)) restore.push(id);
+    }
+    if (!retire.length && !restore.length) return;
+    this.state.update(next => {
+      next.retiredAgents ??= {};
+      for (const id of retire) {
+        const record = next.agents[id];
         if (!record) continue;
-        state.retiredAgents[id] = { workspaceId: record.workspaceId, labels: record.labels };
-        delete state.agents[id];
+        next.retiredAgents[id] = { workspaceId: record.workspaceId, labels: record.labels };
+        delete next.agents[id];
+      }
+      for (const id of restore) {
+        const record = next.retiredAgents?.[id];
+        if (!record || next.agents[id]) continue;
+        next.agents[id] = { id, workspaceId: record.workspaceId, labels: record.labels };
+        delete next.retiredAgents[id];
       }
     });
   }
@@ -411,6 +428,9 @@ export class T3CodeHost implements Host {
       if (old && canonical({ id: old.id, workspaceId: old.workspaceId, labels: old.labels }) !== canonical(record))
         throw new ProvenPreSendRefusalError('T3Code retained identity changed');
       state.agents[id] = { ...old, ...record };
+      // A thread this host launches again is observed again, whatever the retired
+      // index last said about it (nucleus#1328 review).
+      delete state.retiredAgents?.[id];
     });
     const result = await this.intents.effect(attempt.requestId, 'orchestration.launchThread', payload, () => {
       if (spec.guard && !spec.guard.stillAllowed()) throw new ProvenPreSendRefusalError('T3Code launch guard changed');

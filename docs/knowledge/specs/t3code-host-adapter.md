@@ -558,13 +558,32 @@ one snapshot per pass. A transcript read is never served from a bounded snapshot
 and an unreadable thread list falls back to the plain per-thread read instead of
 holding a marker it could not prove.
 
+The move is reversible: a thread T3 no longer reports archived — a person or a
+planner re-attached it — returns to observation on the next pass with the same
+launch identity, and recording a thread again under its own identity (an ordinary
+launch, or a child created again) writes its live record and retires the retired
+entry. A confirmed removal keeps its entry marked, is never restored, and is never
+an exact-lookup answer, so one thread is never named twice.
+
 Leaving observation never turns a delivery fact into a settled one. An unknown
 `thread.settle` for a thread this host no longer observes is left exactly as
 recorded — never resent, never reconciled, and never marked settled without a T3
 read that proves it — and a recorded worker settle can no longer be presented, so
-its retry record is dropped while its receipt, if any, stays as recorded. A control
-action still works: an explicit stop reads the live run from the thread list's own
-`activeRunId`, and a guarded send refuses before it reads anything.
+its retry record is dropped while its receipt, if any, stays as recorded.
+
+A control action still works, and it never confuses "nothing is running" with "I
+could not look". An explicit stop reads the live run from the thread list's own
+`activeRunId` for a thread that left observation, exactly as `activeRunId` answers
+`tell`'s steer-or-notify and the interrupt-and-continue path; a thread list that
+cannot be read is an error there, not an empty run set, so a stop is refused and
+retried instead of being recorded as sent. Absence from a complete list is a
+removal, and a removal cancels its runs, so that answer is empty and final. A
+guarded send refuses on the same gate before it reads a projection.
+
+A command dispatched to a thread drops the snapshot held for it, so a read later in
+the same pass cannot answer a post-write question with a pre-write answer: an
+unsettle followed by a settle in one pass sees the unsettle, and a title write
+followed by a title reconciliation sees the title it just sent.
 
 Report active run, idle, pending question/permission and archived state from
 positive native facts. A removed thread has no projection; the origin read uses

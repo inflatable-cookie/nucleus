@@ -171,7 +171,15 @@ export class T3Reads {
   }
   /** One thread's row in T3's thread list, or undefined when the list cannot answer. */
   private async listRow(threadId: string): Promise<ShellRow | undefined> {
-    try { return (await this.memoisedInventory()).threads.find(row => row.id === threadId); } catch { return undefined; }
+    try { return await this.readListRow(threadId); } catch { return undefined; }
+  }
+  /**
+   * The same row, but a list that cannot be read is an error rather than an absent
+   * answer: a caller that must not confuse "nothing is running" with "I could not
+   * look" reads through here (nucleus#1328 review).
+   */
+  private async readListRow(threadId: string): Promise<ShellRow | undefined> {
+    return (await this.memoisedInventory()).threads.find(row => row.id === threadId);
   }
   /**
    * One thread's row inside a pass: the change marker for its snapshot. Only a pass
@@ -346,7 +354,10 @@ export class T3Reads {
     const state = this.core.state.read(), matches = (candidate: { labels: Record<string, string> }) =>
       Object.entries(labels).every(([k,v]) => candidate.labels[k] === v);
     const live = Object.entries(state.agents).filter(([, agent]) => matches(agent));
-    const retired = Object.entries(state.retiredAgents ?? {}).filter(([, agent]) => !agent.deletedAt && matches(agent));
+    const liveIds = new Set(live.map(([id]) => id));
+    // A thread recorded live again after it retired answers once, from its live record;
+    // a removed thread is never an answer (nucleus#1328 review).
+    const retired = Object.entries(state.retiredAgents ?? {}).filter(([id, agent]) => !agent.deletedAt && !liveIds.has(id) && matches(agent));
     const found = await Promise.all(live.map(async ([id, {workspaceId}]) => {
       if (!this.observes(id)) return { id, workspaceId };
       const p = await this.readProjection(id, 'observation');
@@ -431,20 +442,31 @@ export class T3Reads {
   }
 
   async activeRunId(id: string): Promise<string | null> {
-    if (!await this.isObserved(id)) return (await this.listRow(id))?.activeRunId ?? null;
+    if (!await this.isObserved(id)) {
+      // The thread list is the only answer an unobserved thread has, and a list that
+      // cannot be read is not "no active run": a steer and a stop must both see the
+      // difference (nucleus#1328 review).
+      const row = await this.readListRow(id);
+      return row?.activeRunId ?? null;
+    }
     const projection = await this.readProjection(id, 'observation');
     const native = (await this.inventory()).threads.find(t => t.id === id);
     return projection.runs.find(r => activeStatuses.has(r.status))?.id ?? native?.activeRunId ?? null;
   }
+  /** Drop the snapshot held for one thread, because a command is about to change it. */
+  forget(threadId: string) { this.held.delete(threadId); }
+
   /**
    * Every run of this thread that is live, the identity an explicit stop names. A
    * thread that has left observation still answers from the thread list's own
-   * `activeRunId`: stopping a live turn is a control action, not a read of the
-   * thread this host stopped paying for (nucleus#1328 review).
+   * `activeRunId`, because stopping a live turn is a control action and not a read of
+   * the thread this host stopped paying for. A list that cannot be read is an error:
+   * a stop must never report success because it could not look (nucleus#1328 review).
    */
   async activeRunIds(id: string): Promise<string[]> {
     if (!await this.isObserved(id)) {
-      const row = await this.listRow(id);
+      const row = await this.readListRow(id);
+      // Absence from a complete list is a removal, and a removal cancels its runs.
       return row?.activeRunId ? [row.activeRunId] : [];
     }
     const projection = await this.readProjection(id, 'observation');

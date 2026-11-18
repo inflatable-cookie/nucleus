@@ -257,7 +257,9 @@ test('a live task still reads its own threads once for their step and row title'
   await host.reconcileThreadTitles(tasks);
   await host.endHostPass();
   assert.equal(snapshotsFor(reviewer.id, before), 1, 'the reviewer thread is read once for its step');
-  assert.equal(snapshotsFor(worker.id, before), 1, 'the worker row is read once for its title');
+  // The title write this pass sent drops the worker's held snapshot, so the settle
+  // path that follows it reads the row it just wrote rather than the one before.
+  assert.equal(snapshotsFor(worker.id, before), 2, 'the worker row is read once for its title, and once after its own title write');
   assert.ok(host.state.read().agents[reviewer.id] !== undefined, 'a live support thread stays observed');
   const titles = server.commands.filter(command => command.type === 'thread.metadata.update').map(command => command.title);
   assert.ok(titles.some(title => String(title).includes('blocked: reviewer')), 'the row names the faulted reviewer');
@@ -319,4 +321,74 @@ test('an unknown settle for a thread that left observation stays exactly as reco
   assert.deepEqual(after?.payload, (recorded[1] as { payload: string }).payload, 'the recorded wire is untouched');
   assert.equal(server.commands.filter(command => command.type === 'thread.settle').length, 0, 'nothing was sent');
   assert.equal(snapshotsFor(thread.id, before), 0, 'and nothing was read for it');
+});
+
+test('an unreadable thread list never reads as "nothing to stop"', async t => {
+  // A stop must not report success because it could not look: core records a sent
+  // stop from a plain return, so an unreadable list is an error here, and nothing is
+  // sent (nucleus#1328 review).
+  const alive = { id: threadId('alive'), taskId: 'task-cancelled', runId: 'run-alive', role: 'revision' as const };
+  const { host, server, served } = await fixture(t, {
+    threads: [alive],
+    seed: (fake, directory) => {
+      const projection = seed(fake, alive.id, directory, p => {
+        p.runs.push(syntheticRun(alive.id, 1, { id: 'live-native-run', status: 'running', rootNodeId: 'node-root' }));
+      });
+      projection.thread.archivedAt = STAMP;
+    },
+  });
+  const tasks = [taskFact(alive.taskId, 'cancelled')] as Task[];
+  // The pass retires the thread, then the list becomes unreadable, as a transient
+  // server fault leaves it.
+  await host.beginHostPass(tasks);
+  assert.equal(host.state.read().agents[alive.id], undefined, 'the thread left observation');
+  const before = served();
+  (host as unknown as { reads: { readShell: () => Promise<unknown> } }).reads.readShell = async () => {
+    throw new Error('synthetic shell read failure');
+  };
+  await assert.rejects(host.stopAgentTurn(alive.id), /synthetic shell read failure/,
+    'a stop on an unreadable list is refused, never silently skipped');
+  assert.equal(server.commands.filter(command => command.type === 'thread.stop').length, 0, 'and nothing was sent');
+  await host.endHostPass();
+  assert.equal(served(), before, 'the refusal cost no thread snapshot');
+});
+
+test('a command sent in a pass drops the snapshot held for its thread', async t => {
+  // A post-write read in the same pass must see the write, not the snapshot taken
+  // before it (nucleus#1328 review).
+  const thread = { id: threadId('written'), taskId: 'task-live', runId: 'run-written' };
+  const { host, snapshotsFor, served } = await fixture(t, { threads: [thread] });
+  await host.beginHostPass([taskFact(thread.taskId, 'working') as Task]);
+  const before = served();
+  // Warm the held snapshot, then write through the ledger's own dispatch path.
+  const warm = await host.readProjection(thread.id, 'observation');
+  assert.equal(warm.thread.settledOverride, null);
+  await host.intents.effect('synthetic-title-write', 'orchestration.dispatchCommand',
+    { type: 'thread.metadata.update', commandId: 'synthetic-title-write', threadId: thread.id, title: 'Written in this pass' });
+  const after = await host.readProjection(thread.id, 'observation');
+  assert.equal(after.thread.title, 'Written in this pass', 'the read after the write is fresh');
+  assert.equal(snapshotsFor(thread.id, before), 2, 'the write invalidated the held snapshot exactly once');
+  await host.endHostPass();
+});
+
+test('a retired thread returns to observation when T3 stops reporting it archived', async t => {
+  // Re-attaching is an ordinary fact, not a one-way move: the same launch identity
+  // comes back, and an exact lookup names it once (nucleus#1328 review).
+  const thread = { id: threadId('reattached'), taskId: 'task-live', runId: 'run-reattached', role: 'reviewer' as const };
+  const { host, server } = await fixture(t, { threads: [thread],
+    seed: (fake, directory) => { seed(fake, thread.id, directory); fake.threads.get(thread.id)!.thread.archivedAt = STAMP; } });
+  const tasks = [taskFact(thread.taskId, 'working')] as Task[];
+  await host.beginHostPass(tasks);
+  await host.endHostPass();
+  assert.equal(host.state.read().agents[thread.id], undefined, 'the archived thread is not observed');
+  assert.ok(host.state.read().retiredAgents?.[thread.id], 'and its launch identity is kept');
+  // T3 no longer reports it archived: the next pass observes it again.
+  server.threads.get(thread.id)!.thread.archivedAt = null;
+  await host.beginHostPass(tasks);
+  await host.endHostPass();
+  assert.deepEqual(host.state.read().agents[thread.id]?.labels, host.state.read().retiredAgents?.[thread.id]?.labels ?? host.state.read().agents[thread.id]?.labels,
+    'the same launch identity is observed again');
+  assert.equal(host.state.read().retiredAgents?.[thread.id], undefined, 'and the retired entry is gone');
+  const found = await host.findAgents({ [WIRE_LABEL_KEYS.task]: thread.taskId, [WIRE_LABEL_KEYS.run]: thread.runId });
+  assert.deepEqual(found.map(entry => entry.id), [thread.id], 'an exact lookup names the thread once');
 });

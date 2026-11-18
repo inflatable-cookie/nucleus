@@ -238,6 +238,8 @@ export class T3Nesting {
       if (old && canonical({ id: old.id, workspaceId: old.workspaceId, labels: old.labels }) !== canonical(record))
         throw new ProvenPreSendRefusalError('T3Code retained identity changed');
       state.agents[threadId] = { ...old, ...record, title: input.title, parentThreadId: parent.threadId };
+      // A child created again on a thread id this host had retired is observed again.
+      delete state.retiredAgents?.[threadId];
     });
     try {
       await this.core.intents.effect(commandId, 'orchestration.dispatchCommand', payload, () => {

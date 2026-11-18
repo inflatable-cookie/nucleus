@@ -108,6 +108,12 @@ export interface T3IntentContext {
   /** The durable host identity this connection proved; empty before connect. */
   hostId(): string;
   requireConnection(): void;
+  /**
+   * A command is about to be sent to this thread: drop any snapshot held for it, so a
+   * read later in the same pass cannot answer a post-write question with a pre-write
+   * answer (nucleus#1328 review).
+   */
+  forgetRead?(threadId: string): void;
 }
 
 export interface EffectOptions {
@@ -208,6 +214,9 @@ export class T3IntentLedger {
       }
       beforeSend?.();
       wrote = true;
+      // The thread is about to change: the pass's held snapshot of it is stale from
+      // here on, whatever this command's outcome turns out to be.
+      if (threadId) this.core.forgetRead?.(threadId);
       const result = await rpc.call(method, payload);
       state.update(current => { if (current.intents[key]?.status !== 'moot') current.intents[key] = { ...current.intents[key], kind, threadId, payload: encoded, status: 'settled', result }; });
       return result;
