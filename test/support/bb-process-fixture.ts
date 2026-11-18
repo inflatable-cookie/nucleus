@@ -10,8 +10,8 @@ export async function bbProcessFixture(directory: string, thread: string | null 
   const facts = [
     { ...fact(100, 1, `${bb} /opt/host-daemon/dist/daemon-bundle.mjs`), cwd: '/elsewhere' },
     fact(101, 100, `${bb} /opt/host-daemon/dist/bb-provider-bridge-worker.mjs /artifact plugin /data`),
-    fact(102, 101, '/home/user/.local/bin/claude --output-format stream-json'),
-    fact(103, 102, '/home/user/.local/bin/cua-driver mcp'),
+    fact(102, 101, '/fixture/bin/claude --output-format stream-json'),
+    fact(103, 102, '/fixture/bin/cua-driver mcp'),
   ];
   await readBbSessionEnvironments(facts, {
     identity: async pid => ({ kind: 'identity', identity: `${pid}@fixture` }),
