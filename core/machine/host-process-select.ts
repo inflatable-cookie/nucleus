@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { HostProcessFact } from "../host/types";
 import { cwdInWorktree } from "../workspaces/worktree-validation";
-import { processGroupHasStartIdentity } from "./process-group";
+import { processGroupHasStartIdentity, processGroupHasStartIdentityAsync } from "./process-group";
 import { processStartIdentityLiveness } from "./process-identity-search";
 import { startIdentityMatches } from "./start-identity";
 import type { Store } from "../store/store";
@@ -198,6 +198,36 @@ export function provenRecordedPgids(
   for (const group of groups) {
     if (group.pgid === queuePgid || protectedPgids.has(group.pgid)) continue;
     if (recordedGroupIdentityProven(group, processes)) proven.add(group.pgid);
+  }
+  return proven;
+}
+
+/**
+ * The same proof off the event loop. A `pid@time` record is answered from the
+ * caller's table; only a legacy marker identity needs a member read, and that one
+ * is spawned.
+ */
+export async function recordedGroupIdentityProvenAsync(
+  group: RecordedProcessGroup,
+  processes?: HostProcessFact[],
+): Promise<boolean> {
+  const identity = group.startIdentity;
+  if (!identity || !Number.isSafeInteger(group.pgid) || group.pgid <= 0) return false;
+  if (!identity.includes("@")) return processGroupHasStartIdentityAsync(group.pgid, identity);
+  return recordedGroupIdentityProven(group, processes);
+}
+
+/** `provenRecordedPgids` with its legacy marker proofs awaited. */
+export async function provenRecordedPgidsAsync(
+  groups: RecordedProcessGroup[],
+  queuePgid: number,
+  processes?: HostProcessFact[],
+  protectedPgids: ReadonlySet<number> = new Set(),
+): Promise<Set<number>> {
+  const proven = new Set<number>();
+  for (const group of groups) {
+    if (group.pgid === queuePgid || protectedPgids.has(group.pgid)) continue;
+    if (await recordedGroupIdentityProvenAsync(group, processes)) proven.add(group.pgid);
   }
   return proven;
 }

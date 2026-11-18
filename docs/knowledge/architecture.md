@@ -701,7 +701,12 @@ owner to the rules it enforces.
   to a task/run credential. Every transport carries every field the canonical
   schemas accept and drops or infers none. `shared/service/callback-client.mjs` holds
   the pure transport; the root `mcp-report.mjs` keeps paths issued to retained
-  sessions. Review entry preserves externally owned PR workspaces.
+  sessions. The bridge's lifetime is its session's (nucleus#1329): it ends when the
+  agent's stdio stream ends or when it is reparented away from the process that
+  started it, and it never exits while that session is live. A bridge a crash
+  leaves behind is stopped by the run's own cleanup under the PID and start
+  identity the run recorded, never by a command pattern. Review entry preserves
+  externally owned PR workspaces.
 - `core/hooks/hooks.ts` is the hook domain's front: the lifecycle entry points,
   closeout authority, the finished-task stop and compatibility re-exports. Each
   mechanism behind it has one owner: `hook-occurrence.ts` owns durable occurrence

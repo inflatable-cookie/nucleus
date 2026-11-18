@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { pidAlive } from "./pid";
-import { parseLinuxProcStat, linuxStartIdentity, macStartIdentity, startIdentityMatches } from "./start-identity";
-import { darwinProcessReads } from "./process-host-reads";
+import { parseLinuxProcStat, linuxStartIdentity, macStartIdentity, readHostRunStartIdentity, startIdentityMatches } from "./start-identity";
+import { darwinProcessReads, darwinProcessReadsAsync, type HostProcessLine } from "./process-host-reads";
 
 /**
  * Which host processes carry one process group's private birth identity, and
@@ -76,6 +76,24 @@ export function processStartIdentityLiveness(pid: number, startIdentity: string)
   return "unknown";
 }
 
+/**
+ * The same tri-state liveness answer off the event loop, for callers that share
+ * one loop with the service's accepting socket. Linux reads `/proc` and needs no
+ * child; macOS reads the kernel's own start time through the spawned `ps` reader
+ * that `start-identity.ts` owns. A read that cannot be made is `unknown` while
+ * the pid still answers liveness and `dead` once only kernel ESRCH proves it
+ * gone — the same rule the synchronous reader applies.
+ */
+export async function processStartIdentityLivenessAsync(pid: number, startIdentity: string): Promise<ProcessStartIdentityLiveness> {
+  if (!Number.isSafeInteger(pid) || pid <= 0 || !startIdentity.startsWith(`${pid}@`)) return "unknown";
+  if (process.platform !== "darwin") return processStartIdentityLiveness(pid, startIdentity);
+  const read = await readHostRunStartIdentity(pid);
+  if (read.kind === "gone") return "dead";
+  if (read.kind === "unavailable") return pidAlive(pid) ? "unknown" : "dead";
+  if (read.identity.endsWith("@unknown")) return "unknown";
+  return startIdentityMatches(startIdentity, read.identity) ? "alive" : "dead";
+}
+
 /** Test seam: substitute identity listings. Production is null. */
 let identityListingOverride: ProcessStartIdentitySearch | null = null;
 export function overrideIdentityListing(result: ProcessStartIdentitySearch | null): void {
@@ -129,23 +147,13 @@ export function processesForStartIdentity(identity: string): ProcessStartIdentit
 }
 
 /**
- * Identity-bearing processes reachable from this run's group or already-known
- * pids. Darwin walks the cheap host listing (no `-E`) and reads marker
- * environments only for those candidates, so a `setsid` descendant is found
- * while its parent still lives without a host-wide `ps -E -A`. Linux already
- * walks `/proc` for the marker, so it uses the full search.
+ * The candidate pids of one identity tree: the run's group members, the pids
+ * already known, and every descendant of those in the same listing.
  */
-export function processesForStartIdentityInTree(
-  identity: string,
+function identityTreeCandidates(
+  listing: readonly HostProcessLine[],
   roots: { processGroupId: number | null; pids: readonly number[] },
-): ProcessStartIdentitySearch {
-  if (!identity) return { state: "absent" };
-  if (identityListingOverride) return identityListingOverride;
-  if (process.platform === "linux") return processesForStartIdentity(identity);
-  if (process.platform !== "darwin") return { state: "unknown" };
-  const reads = darwinReads();
-  const listing = reads.processListing();
-  if (listing === null) return { state: "unknown" };
+): number[] {
   const children = new Map<number, number[]>();
   for (const line of listing) {
     const siblings = children.get(line.ppid);
@@ -158,6 +166,40 @@ export function processesForStartIdentityInTree(
     const pid = pending.pop()!;
     for (const child of children.get(pid) ?? []) if (!candidates.has(child)) { candidates.add(child); pending.push(child); }
   }
-  if (!candidates.size) return { state: "absent" };
-  return reads.environmentScan(identity, [...candidates]);
+  return [...candidates];
+}
+
+/**
+ * The two searches off the event loop: a settlement check that shares the
+ * service's loop must not block it on a host-wide `ps`. Darwin walks the cheap
+ * host listing (no `-E`) and reads marker environments only for the candidates
+ * it reaches — the run's group members, the pids already known and their
+ * descendants — so a `setsid` descendant is found while its parent still lives
+ * without a host-wide `ps -E -A`. Linux reads `/proc` and needs no child. Both
+ * answer by the same rule as the synchronous readers, including `unknown` for a
+ * read that could not be made.
+ */
+export async function processesForStartIdentityAsync(identity: string): Promise<ProcessStartIdentitySearch> {
+  if (!identity) return { state: "absent" };
+  if (identityListingOverride) return identityListingOverride;
+  if (process.platform === "linux") return linuxIdentitySearch(identity);
+  if (process.platform === "darwin") return darwinProcessReadsAsync().fullEnvironmentScan(identity);
+  return { state: "unknown" };
+}
+
+/** The tree search without blocking the event loop. */
+export async function processesForStartIdentityInTreeAsync(
+  identity: string,
+  roots: { processGroupId: number | null; pids: readonly number[] },
+): Promise<ProcessStartIdentitySearch> {
+  if (!identity) return { state: "absent" };
+  if (identityListingOverride) return identityListingOverride;
+  if (process.platform === "linux") return processesForStartIdentity(identity);
+  if (process.platform !== "darwin") return { state: "unknown" };
+  const reads = darwinProcessReadsAsync();
+  const listing = await reads.processListing();
+  if (listing === null) return { state: "unknown" };
+  const candidates = identityTreeCandidates(listing, roots);
+  if (!candidates.length) return { state: "absent" };
+  return reads.environmentScan(identity, candidates);
 }
