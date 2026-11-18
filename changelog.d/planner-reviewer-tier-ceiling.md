@@ -1,1 +1,1 @@
-- A reviewer is no longer capped at the task's requested tier: when no independent profile carries its tier, the nearest tier above that the usage level permits reviews, instead of parking the task until a planner routes one.
+- The reviewer offset now applies: a reviewer's tier is the worker's tier moved by the offset, so a negative offset reviews on a lower tier. No reviewer floor parks review any more; when no independent profile sits at the reviewer's tier, the nearest permitted tier above serves, or the most capable permitted profile.

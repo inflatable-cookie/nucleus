@@ -4,7 +4,7 @@ import { authorModelKey, queueAuthorModelKey, taskAuthorModelKeys } from "../../
 import {activeGroupLimit,demandRank,unavailableGroupNames,workerThinking} from '../../shared/pool';
 export {workerThinking};
 import {automaticReachable, automaticSelection, requestOnly, describeRoutePolicy, honouredRequest, requestReaches, groupIsUnavailable, topTier} from '../../shared/pool';
-import {DEMAND_ROLE_OFFSETS, climbedTier, effectiveWeight, requestedTier, runDemand, selectionTier, usageCeiling, workerActualTier, workerClimbTarget, workerStartTier, workerStepLabel, workerStepUp} from '../../shared/demand';
+import {DEMAND_ROLE_OFFSETS, climbedTier, effectiveWeight, requestedTier, reviewerDemand, runDemand, selectionTier, usageCeiling, workerActualTier, workerClimbTarget, workerStartTier, workerStepLabel, workerStepUp} from '../../shared/demand';
 type Role = "worker"|"reviewer"|"coordinator";
 /**
  * Spec 050: whether the task's recorded reviewer request is an owner `route`
@@ -256,19 +256,21 @@ export function chooseProfile(task: Task, profiles: Profile[], pool: PoolEntry[]
   // Spec 053 / Spec 052 (Tom, 2026-11-17): the run's tier decides the set.
   const fullDemand = runDemand(task.complexity, role, usage, offsets);
   const workerActual = workerActualTier(task, pool);
-  const raised = workerActual && demandRank(workerActual) > demandRank(fullDemand) ? workerActual : fullDemand;
+  const raised = role === "reviewer" ? reviewerDemand(task, pool, usage, offsets)
+    : workerActual && demandRank(workerActual) > demandRank(fullDemand) ? workerActual : fullDemand;
   // A task keeps the worker tier it earned: a first run starts at the level's
-  // tier, a climbed or routed worker never falls back below its actual profile,
-  // and a reviewer is floored at the same actual profile.
+  // tier, and a climbed or routed worker never falls back below its actual
+  // profile. A reviewer's demand is the worker's tier moved by the reviewer offset.
   const demand = role === "worker" ? (climb ? climb.to : raised) : role === "reviewer" ? raised : fullDemand;
   // Maximum reserves the top two tiers for workers and reviewers (an explicit
   // request included), and a reviewer never runs below the worker's actual tier.
   const roleMeets = (entry: PoolEntry) => {
     if (usage === "maximum" && role !== "coordinator" && !topTier(entry.capability)) return false;
-    if (role !== "reviewer") return true;
-    // An unrated capability counts as medium, as the demand rank does.
-    const rank = entry.capability ? demandRank(entry.capability) : demandRank("medium");
-    return !workerActual || rank >= demandRank(workerActual);
+    // No absolute reviewer floor (Tom, 2026-11-18: "a reviewer should be able to
+    // be lower tier", "a Sol reviewer for an Opus worker is fine"): the reviewer
+    // offset sets its demand, and a critical task prefers a rigorous reviewer
+    // below, falling back to the best independent one when none is available.
+    return true;
   };
   let eligible = pool.flatMap(entry => {
     const profile = profiles.find(p => p.id === entry.profileId);
@@ -561,9 +563,9 @@ export class RoleSelection {
     if (!entry) return null;
     if (usage === "maximum" && !topTier(reviewer))
       return `reviewer profile ${assigned.name || assigned.id} is rated ${reviewer ?? "unrated"}, below the top two tiers Maximum reserves for reviewers`;
-    const worker = workerActualTier(t, pool);
-    const calculated = runDemand(t.complexity, "reviewer", usage, this.store.demandRoleOffsets());
-    const required = worker && demandRank(worker) > demandRank(calculated) ? worker : calculated;
+    // A retained reviewer is measured against the offset demand, not the critical
+    // preference, so a critical task's fallback reviewer is not churned.
+    const required = reviewerDemand({ ...t, critical: false }, pool, usage, this.store.demandRoleOffsets());
     const reviewerRank = reviewer ? demandRank(reviewer) : demandRank("medium");
     return reviewerRank < demandRank(required)
       ? `reviewer profile ${assigned.name || assigned.id} is rated ${reviewer ?? "unrated"}, below the ${required} tier this run needs`
