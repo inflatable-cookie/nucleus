@@ -140,11 +140,11 @@ test('Spec 052 diagnostics: next and a cached detail read explain the policy fre
     const normal = rows(after);
     assert.equal(normal['worker:frontier']!.automatic, 'request_tier');
     assert.match(normal['worker:frontier']!.explanation, new RegExp(String.raw`^Recorded worker run used it \(history, not today's policy\); automatic selection: Frontier: above the task's requested medium tier, so an explicit route is required \(Maximum ended ${until}\)$`));
-    assert.equal(normal['reviewer:pricey']!.automatic, 'request_tier', 'a profile above the task\'s requested tier needs an explicit route');
+    assert.equal(normal['reviewer:pricey']!.automatic, 'allowed', 'a reviewer is not capped at the task\'s requested tier (Tom, 2026-11-18)');
     assert.equal(normal['worker:cheap-flag']!.automatic, 'request_tier', 'below Maximum a frontier profile needs a request whatever its cost');
     assert.match(normal['worker:cheap-flag']!.explanation, /^Worker preference; automatic selection: Frontier: above the task's requested medium tier, so an explicit route is required \(Maximum ended .*\); a preference alone does not select it$/);
     store.setMeta('usageLevel', { level: 'high', until: null, setAt: '2026-10-19T00:00:00.000Z' });
-    assert.equal(rows(after)['reviewer:pricey']!.automatic, 'request_tier', 'a profile above the task\'s requested tier needs an explicit route');
+    assert.equal(rows(after)['reviewer:pricey']!.automatic, 'allowed', 'a reviewer is not capped at the task\'s requested tier; at High only frontier needs a request (Tom, 2026-11-18)');
     assert.equal(rows(after)['worker:cheap-flag']!.automatic, 'request_tier', 'at High frontier still needs a request');
     store.setMeta('usageLevel', { level: 'extra_high', until: null, setAt: '2026-10-19T00:00:00.000Z' });
     assert.equal(rows(after)['worker:cheap-flag']!.automatic, 'request_tier', 'at Extra high a frontier profile still sits above the requested tier');
