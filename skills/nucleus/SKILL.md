@@ -1,6 +1,6 @@
 ---
 name: nucleus
-description: Shape a project's long-horizon direction with the operator (Atlas). Read and write Nucleus planning records (plan.get, plan.set, lanes, lane documents), write and promote briefs and leads, file papercuts and operator decisions, run project QA, and hand over planner ownership. Also plan and submit approved work to the Paseo queue, steer a task with the owner verbs (next, stop, route, restart, move, complete, retry_effect, proof), activate one source-immutable author-side proof execution for an external author, review existing external PRs through review entry, and resolve blocked-task escalations. Use for requests such as plan.get, papercut.add, decision.add, project.qa.run, planner handover, "adopt this PR", "put this PR through the queue", approved dispatch, planning rulings on blockers, and deliberate supersession; planning alone does not authorize execution or abandonment.
+description: Read and write Nucleus planning records (plan.get, plan.set, lanes, lane documents), write and promote briefs and leads, file papercuts and operator decisions, run project QA, and hand over planner ownership. Also plan and submit approved work to the Paseo queue, steer a task with the owner verbs (next, stop, route, restart, move, complete, retry_effect, proof), activate one source-immutable author-side proof execution for an external author, review existing external PRs through review entry, and resolve blocked-task escalations. Use for requests such as plan.get, papercut.add, decision.add, project.qa.run, planner handover, "adopt this PR", "put this PR through the queue", approved dispatch, planning rulings on blockers, and deliberate supersession; planning alone does not authorize execution or abandonment.
 ---
 
 The data home is `~/.nucleus`, or `NUCLEUS_DATA_HOME` when set.
@@ -1198,9 +1198,10 @@ extend one PR's authorization to its siblings or to release/provider mutations.
 
 For planning and lane documents, read [plan](references/plan.md); for writing,
 approving and promoting briefs, read [brief](references/brief.md); for passing
-planner ownership and notifications to a successor, read [handover](references/handover.md); for shaping
-long-horizon direction with the operator, read [Atlas](references/atlas.md).
-Repository knowledge and documentation structure remain in the Northstar skill.
+planner ownership and notifications to a successor, read [handover](references/handover.md).
+Shaping long-horizon direction with the operator is the separate Atlas skill
+(Northstar). Repository knowledge and documentation structure remain in the
+Northstar skill.
 
 - **Planner** owns the project's plan, lane documents, leads, briefs and
   dispatch approval. It runs milestone QA on `main` with `project.qa.run`.
