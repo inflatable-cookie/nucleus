@@ -48,11 +48,13 @@ a supported mapping to an environment. This is caller attribution only and follo
 the same command permissions as a Paseo caller.
 
 Source precedence is Nucleus ticket, T3Code identity, then Paseo's
-`PASEO_AGENT_ID`. A ticket refusal never falls through. When T3 and Paseo
-environment values coexist, T3 wins; a partial T3 identity refuses rather than
-using Paseo. An explicit planner ticket still wins when `T3CODE_THREAD_ID` is an
-`mcp:` session: the ticket's thread is the recorded asker and delivery target,
-never that session. Replies to `ask` and `tell` use the existing host-qualified T3
+`PASEO_AGENT_ID`. A ticket refusal never falls through: a named `NUCLEUS_TICKET`
+that is missing, invalid or revoked refuses rather than recording an `mcp:`
+session as the caller; an unset ticket still uses the T3 host identity. When T3
+and Paseo environment values coexist, T3 wins; a partial T3 identity refuses
+rather than using Paseo. An explicit planner ticket still wins when
+`T3CODE_THREAD_ID` is an `mcp:` session: the ticket's thread is the recorded
+asker and delivery target, never that session. Replies to `ask` and `tell` use the existing host-qualified T3
 delivery path. A decision answer reaches that recorded thread or stays queued with
 a visible wait (attempts > 0).
 

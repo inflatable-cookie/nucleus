@@ -24,6 +24,8 @@ export function callerSource(env = process.env, hostIdentity = () => null) {
   if (continuationPath) return { source: 'ticket', path: continuationPath };
   if (path && existsSync(path)) return { source: 'ticket', path };
   const host = hostIdentity(env);
+  if (path && typeof host?.nativeAgentId === 'string' && host.nativeAgentId.startsWith('mcp:'))
+    throw new Error('NUCLEUS_TICKET names a missing file; refusing it never falls through to an MCP session. Restore the ticket.');
   if (host) return { source: 'host', ...host };
   throw new Error('CLI records the calling thread; no caller identity found. Tried: Nucleus run or participant ticket (NUCLEUS_TICKET), host-supplied identity');
 }

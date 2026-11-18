@@ -40,7 +40,9 @@ asker and delivery target, never an MCP session or host scope from the environme
 Any recognised caller can `tell` a project planner or task role, including a
 host-only identity and a task-planner ticket. `ask` still needs a run ticket.
 `NUCLEUS_TICKET` names the run or participant ticket; use the path delivered to this
-thread. An invalid or revoked ticket refuses. Without a ticket, T3Code uses
+thread. An invalid or revoked ticket refuses. A named `NUCLEUS_TICKET` whose file is
+missing refuses when the host identity is an MCP session, rather than recording that
+session. Without a ticket, T3Code uses
 `T3CODE_THREAD_ID` together with `T3CODE_DESKTOP_HOST_SCOPE`; Nucleus matches that
 scope to its registered online T3 host and verifies the thread through that host's
 adapter. Paseo uses `PASEO_AGENT_ID`. If both host identities are present, T3Code
