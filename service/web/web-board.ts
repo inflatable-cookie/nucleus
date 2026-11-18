@@ -175,7 +175,7 @@ export interface WebBoardOptions {
   now?: () => number;
   /** Preferred loopback port. A busy configured port falls back to an ephemeral port. */
   port?: number;
-  /** Owner-only file under the configured work root that holds session digests. */
+  /** Owner-only file in the data home that holds session digests. */
   sessionFile?: string;
 }
 

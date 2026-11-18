@@ -38,6 +38,7 @@ import {
   hostFaultHost,
   recordHostFailure,
 } from "../host/adapter-routing";
+import { creationLookup } from "./absent-creation/restarts";
 
 export type ObservationContext = Pick<
   Resolution,
@@ -200,8 +201,9 @@ export class Observation {
           if (provenAbsentCreation(run)) continue;
           const found = await this.adapter.findRunAgents!(run);
           if (dispatchBlocked(this.store.task(task.id))) continue;
-          if (found.length === 1 && found[0].workspaceId === run.workspaceId) {
-            run = { ...run, agentId: found[0].id, status: "running" };
+          const lookup = creationLookup(found, run.workspaceId);
+          if (lookup.kind === "bound") {
+            run = { ...run, agentId: lookup.agentId, status: "running" };
             this.store.putRun(run);
             if (run.role === "reviewer")
               this.resolution.update(task, {

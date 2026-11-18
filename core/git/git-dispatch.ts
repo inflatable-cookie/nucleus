@@ -6,9 +6,10 @@
  * base) happens only under the exact recorded identity it repairs, and never
  * over divergent or dirty work.
  */
+import { existsSync } from "node:fs";
 import { realpath, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import type { Task } from "../../shared/contracts";
 import { taskCheckoutTarget } from "../workspaces/checkout-target";
 import { git, gitAncestry, gitBulk, gitFastForward, gitRaw, messageOf, requireGitAncestry } from "./git-command";
@@ -16,6 +17,7 @@ import { gitStatus, queueCheckoutStatus, currentWorkerBranch } from "./git-check
 import { assertPinnedBrief, validateSubmission, verifyBriefWorkerIdentity } from "./git-submission";
 import { dirtyWorktreeError } from "./git-stash";
 import { verifyRecordedOrigin } from "./git-proof";
+import type { Store } from "../store/store";
 
 /**
  * A refused private-root cleanup after the integration operation had already
@@ -32,9 +34,90 @@ export class IntegrationCheckoutCleanupError extends Error {
   }
 }
 const integrationCheckoutLocks = new Map<string, Promise<void>>();
+
+/** One fast-forward a checkout moved: the head it had and the origin head it now carries. */
+export interface IntegrationFastForward { from: string; to: string }
+
+/**
+ * Fast-forward an integration checkout that is provably, strictly behind origin:
+ * on the integration branch, no in-progress rebase, merge, cherry-pick or revert,
+ * no tracked or untracked change (`.gitignore` respected), and HEAD an ancestor
+ * of `origin/<base>`. Every other state refuses by name with the wording the
+ * contention matcher reads, and the checkout is never touched. Returns the moved
+ * heads, or null when the checkout already equals origin.
+ *
+ * Call only inside `withIntegrationCheckout`, which holds the per-base lock: the
+ * registered checkout is shared by every agent's CLI, so the check and the move
+ * must not interleave with another integration write.
+ */
+export async function fastForwardIntegrationBase(checkout: string, baseBranch: string): Promise<IntegrationFastForward | null> {
+  // An in-progress rebase detaches HEAD, so the operation is named before the branch.
+  const markers = ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply"];
+  for (const marker of markers) {
+    const gitPath = await git(checkout, "rev-parse", "--git-path", marker);
+    if (existsSync(resolve(checkout, gitPath))) throw new Error(`Integration checkout has an operation in progress (${marker}) at ${checkout}; finish or abort it before integration`);
+  }
+  const branch = await git(checkout, "branch", "--show-current");
+  if (branch !== baseBranch) throw new Error(`Integration checkout is on a different branch (${branch || "detached HEAD"}) at ${checkout}; origin/${baseBranch} is not fast-forwarded`);
+  if (await gitStatus(checkout, "status", "--porcelain")) throw new Error(`Integration checkout is dirty at ${checkout}; preserve it and resolve before integration`);
+  await git(checkout, "fetch", "origin", baseBranch);
+  const head = await git(checkout, "rev-parse", "HEAD");
+  const remote = await git(checkout, "rev-parse", `refs/remotes/origin/${baseBranch}`);
+  if (head === remote) return null;
+  const behind = await gitAncestry(checkout, head, remote);
+  if (behind === "unknown")
+    throw new Error(`Local integration branch's relation to origin/${baseBranch} cannot be read at ${checkout}; resolve the checkout before integration`);
+  if (behind === "diverged") {
+    const ahead = await gitAncestry(checkout, remote, head) === "ancestor";
+    throw new Error(`Local integration branch differs from origin: local ${baseBranch} ${ahead ? `has commits that origin/${baseBranch} does not` : `and origin/${baseBranch} have diverged`} at ${checkout}`);
+  }
+  await gitFastForward(checkout, remote);
+  if (await git(checkout, "rev-parse", "HEAD") !== remote || await gitStatus(checkout, "status", "--porcelain"))
+    throw new Error("Integration synchronization did not leave a clean expected head");
+  return { from: head, to: remote };
+}
+
+/** The one event text for a fast-forward: the base branch and both exact heads. */
+export function describeIntegrationFastForward(baseBranch: string, move: IntegrationFastForward): string {
+  return `${baseBranch}: ${move.from} -> ${move.to}`;
+}
+
+/** The event every registered-checkout fast-forward records. */
+export const INTEGRATION_FAST_FORWARD_EVENT = "integration_checkout_fast_forwarded";
+
+/**
+ * Every path that can move the registered checkout passes an observer and calls it
+ * at the moment the move lands, before any later step of the same pass can fail. A
+ * move that is recorded late, or only on success, is a move the audit trail lost.
+ */
+export type IntegrationFastForwardObserver = (move: IntegrationFastForward) => void;
+
+/** The one recorder behind every observer: one move, one `integration_checkout_fast_forwarded` event. */
+export function recordIntegrationFastForward(store: Pick<Store, "event">, task: { id: string; baseBranch: string }, move: IntegrationFastForward): void {
+  store.event(task.id, INTEGRATION_FAST_FORWARD_EVENT, describeIntegrationFastForward(task.baseBranch, move));
+}
+
+async function serializeIntegrationCheckout<T>(key: string, work: () => Promise<T>): Promise<T> {
+  const previous = integrationCheckoutLocks.get(key);
+  let release!: () => void;
+  const pending = new Promise<void>(done => { release = done; });
+  integrationCheckoutLocks.set(key, pending);
+  await previous?.catch(() => undefined);
+  try { return await work(); }
+  finally {
+    release();
+    if (integrationCheckoutLocks.get(key) === pending) integrationCheckoutLocks.delete(key);
+  }
+}
+
 export async function withIntegrationCheckout<T>(task: Pick<Task, "repoPath" | "baseBranch"> & Partial<Pick<Task, "brief">>, operation: (checkout: string, unchanged: () => Promise<void>) => Promise<T>): Promise<T> {
   const originalBranch = await git(task.repoPath, "branch", "--show-current");
-  if (originalBranch === task.baseBranch) return operation(task.repoPath, async () => {});
+  if (originalBranch === task.baseBranch) {
+    // The registered checkout takes the same per-base lock as a Queue-owned one, so
+    // a fast-forward or read never interleaves with another integration write.
+    const common = await realpath(await git(task.repoPath, "rev-parse", "--path-format=absolute", "--git-common-dir"));
+    return serializeIntegrationCheckout(`${common}:${task.baseBranch}`, () => operation(task.repoPath, async () => {}));
+  }
   if (!task.brief || task.baseBranch === "main" || originalBranch !== "main")
     throw new Error("Integration checkout is on a different branch");
   if (!isAbsolute(task.repoPath) || await realpath(task.repoPath) !== task.repoPath ||
@@ -89,11 +172,11 @@ export async function cleanupIntegrationCheckout(repoPath: string, root: string,
     throw new Error(`Preserving uncertain private integration worktree: ${checkout}`);
   await rm(root, { recursive: true, force: true });
 }
-export async function validateDispatch(task: Task) {
-  const base = await withIntegrationCheckout(task, (checkout, unchanged) => validateDispatchCheckout({...task, repoPath: checkout}, unchanged));
+export async function validateDispatch(task: Task, observe?: IntegrationFastForwardObserver) {
+  const base = await withIntegrationCheckout(task, (checkout, unchanged) => validateDispatchCheckout({...task, repoPath: checkout}, unchanged, observe));
   return base;
 }
-async function validateDispatchCheckout(task: Task, unchanged: () => Promise<void> = async () => {}) {
+async function validateDispatchCheckout(task: Task, unchanged: () => Promise<void> = async () => {}, observe?: IntegrationFastForwardObserver) {
   const { handoffText } = await validateSubmission(task);
   if (handoffText !== task.handoffText) throw new Error("Planning handoff content changed");
   if (await git(task.repoPath, "branch", "--show-current") !== task.baseBranch) throw new Error("Integration checkout is on a different branch");
@@ -112,9 +195,11 @@ async function validateDispatchCheckout(task: Task, unchanged: () => Promise<voi
       if (relation === 'unknown') throw new Error("Local integration branch's relation to origin cannot be read; resolve the checkout before dispatch");
       if (relation !== 'ancestor') throw new Error("Local integration branch diverged from origin; resolve it before dispatch");
       await unchanged();
+      const from = local;
       await gitFastForward(task.repoPath, remote);
       local = await git(task.repoPath, "rev-parse", `refs/heads/${task.baseBranch}`);
       if (local !== remote) throw new Error("Local integration branch could not be fast-forwarded to origin");
+      observe?.({ from, to: remote });
     }
   }
   const base = await git(task.repoPath, "rev-parse", `refs/heads/${task.baseBranch}`);

@@ -398,7 +398,10 @@ The runtime build packages both bundles together.
   the token at `/api/pair`, then removes the fragment. The service sets an
   HttpOnly, SameSite=Strict, Path=/ cookie (no Secure flag on loopback) with
   `Max-Age=2592000` (30 days). It stores only each cookie's SHA-256 digest and
-  rolling expiry in `<workRoot>/nucleus-web-sessions.json`, mode 0600. Sessions
+  rolling expiry in `<dataDir>/web-sessions.json`, mode 0600. On first start,
+  the service migrates `<workRoot>/nucleus-web-sessions.json` after verifying
+  the data-home copy. If both files exist, the data-home file wins and the old
+  file is left in place with a log note. Sessions
   expire after 30 days without use; use extends expiry and re-sends the cookie
   with a fresh 30-day `Max-Age` at most about once a day. Event-stream keepalives
   do not count as use. A refused request clears the cookie with `Max-Age=0`, but

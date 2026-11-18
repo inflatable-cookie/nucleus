@@ -8,6 +8,7 @@ import { gitText } from "../git/git-snapshot";
 import { pidAlive } from "../machine/process-identity";
 import { hookRecordTarget, preArchiveWorktreeHead, type HookEmissionResult } from "./hook-context";
 import { okResult } from "./hook-occurrence";
+import { recordIntegrationFastForward, type IntegrationFastForwardObserver } from "../git/git-dispatch";
 import { validatePublishedCommit, type HookPublication } from "./hook-publication";
 
 /**
@@ -37,7 +38,7 @@ export class HookReconciler {
   private get settle() { return this.context.settle; }
   private get matchingCommits() { return (task: Task, record: HookRecord) => this.context.publication.matchingCommits(task, record); }
   private get reconcilePush() { return (record: HookRecord) => this.context.publication.reconcilePush(record); }
-  private get syncCanonical() { return (root: string, baseBranch: string, baseCommit: string, target: string) => this.context.publication.syncCanonical(root, baseBranch, baseCommit, target); }
+  private get syncCanonical() { return (root: string, baseBranch: string, baseCommit: string, target: string, observe?: IntegrationFastForwardObserver) => this.context.publication.syncCanonical(root, baseBranch, baseCommit, target, observe); }
   private get cleanupPublished() { return (task: Task, record: HookRecord) => this.context.publication.cleanupPublished(task, record); }
   private get removeIsolatedCheckout() { return (task: Task, path: string, force: boolean) => this.context.publication.removeIsolatedCheckout(task, path, force); }
 
@@ -109,7 +110,7 @@ export class HookReconciler {
       if (record.state === "sync_intent" || record.state === "synced") {
         if (!record.commit) return this.uncertainSync(record, "Synchronization intent lost the published commit");
         if (await gitText(task.repoPath, "rev-parse", "HEAD").catch(() => null) === record.commit) return this.cleanupPublished(task, record);
-        const syncError = await this.syncCanonical(task.repoPath, record.baseBranch, record.baseCommit, record.commit);
+        const syncError = await this.syncCanonical(task.repoPath, record.baseBranch, record.baseCommit, record.commit, move => recordIntegrationFastForward(this.store, task, move));
         if (syncError) return this.uncertainSync(record, `Canonical synchronization requires reconciliation: ${syncError}`);
         return this.cleanupPublished(task, this.save(record, { state: "synced", reconciledAt: now() }));
       }

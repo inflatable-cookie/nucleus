@@ -3,7 +3,7 @@ import {
   foreignIdentityRefusal,
   parseAgentId,
 } from "../../shared/agent-identity";
-import type { ReviewEntryInput } from "../../shared/contracts";
+import type { ReviewEntryInput, Run, Task } from "../../shared/contracts";
 import {
   originReviewProof,
   type OriginReviewHost,
@@ -11,6 +11,14 @@ import {
 import type { Adapter, AgentObservation, OriginAgent } from "./adapter";
 import type { Engine } from "../engine";
 import { isTransportFailure } from "../../shared/transport";
+import type { Store } from "../store/store";
+import {
+  creationProducerId,
+  readCreationAttempt,
+  settleCreationAttempt,
+} from "../store/store-task-funnel";
+import { trackHostCreation } from "./admission";
+import { HostCallAbandonedError, ProvenPreSendRefusalError } from "./errors";
 const faultHosts = new WeakMap<object, string>();
 const HOST_FAILURE = Symbol("host-failure");
 
@@ -90,7 +98,7 @@ const AGENT_ARGS: Record<string, number[]> = {
 export interface HostAdapterRoutingOwner {
   readonly activeHostId: string | undefined;
   resolveHostAdapter: (id: string) => Adapter | undefined;
-  store: {
+  store: Pick<Store, "db" | "event" | "transaction"> & {
     task(id: string): { originHostId?: string | null; hostId?: string | null };
   };
   withHost<T>(id: string, fn: () => T): T;
@@ -124,6 +132,7 @@ export function routeHostAdapter(
       return new HostTransportFault(host, error);
     return record(host, error);
   };
+  const creating = new Set<string>();
   const proxy: Adapter = new Proxy(fallback, {
     get: (selectedFallback, property) => {
       if (property === HOST_FAILURE)
@@ -223,6 +232,71 @@ export function routeHostAdapter(
         };
       }
       if (typeof value !== "function") return value;
+      if (property === "createAgent" || property === "createRun") {
+        return async (...args: unknown[]) => {
+          const task = args[0] as Task;
+          const binding =
+            property === "createRun"
+              ? { ...(args[1] as Run), hostId: task.hostId }
+              : {
+                  id: task.runId!,
+                  taskId: task.id,
+                  hostId: task.hostId,
+                  workspaceId: task.workspaceId,
+                  role: "worker" as const,
+                };
+          const attempt = readCreationAttempt(owner.store, binding);
+          if (!attempt) {
+            try {
+              return await Reflect.apply(value, selected, args);
+            } catch (error) {
+              throw recordCall(id, property, error);
+            }
+          }
+          let admitted = false;
+          try {
+            return await trackHostCreation(
+              selected,
+              property,
+              args,
+              async (create) => {
+                admitted = true;
+                const current = readCreationAttempt(owner.store, binding);
+                if (
+                  current?.attemptId !== attempt.attemptId ||
+                  current.producerId !== creationProducerId ||
+                  current.settlement ||
+                  creating.has(attempt.attemptId)
+                )
+                  throw new ProvenPreSendRefusalError(
+                    "Agent creation reservation is no longer available",
+                  );
+                creating.add(attempt.attemptId);
+                let outcome: "returned" | "threw" = "threw";
+                try {
+                  const agent = await create();
+                  outcome = "returned";
+                  return agent;
+                } finally {
+                  creating.delete(attempt.attemptId);
+                  settleCreationAttempt(owner.store, attempt, outcome);
+                }
+              },
+            );
+          } catch (error) {
+            // A caller deadline does not stop the native promise. Its own
+            // return or throw will record settlement, even after abandonment.
+            if (
+              !admitted &&
+              !(error instanceof HostCallAbandonedError) &&
+              attempt.producerId === creationProducerId &&
+              !creating.has(attempt.attemptId)
+            )
+              settleCreationAttempt(owner.store, attempt, "threw");
+            throw recordCall(id, property, error);
+          }
+        };
+      }
       // Some older call sites still use adapter methods directly instead of
       // HostFacade. Keep that compatibility safe at the transport boundary:
       // qualified IDs are unwrapped only for the selected host, for every

@@ -2,6 +2,7 @@ import type { LaunchReserveContext } from '../launch';
 import type { LaunchMachinePorts } from './machine';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { Profile, Run, StashEntry, Task } from '../../../shared/contracts';
+import { recordIntegrationFastForward } from '../../git/index';
 import { currentBrief } from '../../planning/brief';
 import { checkHistoryFromStore } from '../../forge/index';
 import { ordinaryReviewDelta } from '../../review/ordinary-review';
@@ -80,7 +81,7 @@ export class RunReservationSource {
     // A subsequent round reads covering checks and the integration base only: asking whether a
     // review approves merging would refuse the very reviewer that has yet to review this head.
     const coveringEvidence = previousReview && previousReview.head !== t.prHead
-      ? await this.machine.coveringEvidence!(t, checkHistoryFromStore(this.store, t.repoPath, Date.now(), t.prHead ?? ""), this.store.checksPolicyFor(t))
+      ? await this.machine.coveringEvidence!(t, checkHistoryFromStore(this.store, t.repoPath, Date.now(), t.prHead ?? ""), this.store.checksPolicyFor(t), move => recordIntegrationFastForward(this.store, t, move))
       : null;
     if (coveringEvidence && coveringEvidence.head !== t.prHead) throw Error('Covering evidence belongs to a different review head');
     const roundBase = coveringEvidence?.base ?? t.resolution.mergeBase ?? t.planningBase;

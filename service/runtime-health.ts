@@ -15,6 +15,7 @@ import type { HostRegistry } from "../core/host/host-registry";
 import type { Engine } from "../core/engine";
 import { hostKindOf } from "../shared/host-kind";
 import type { BbHostStatus } from "./bb-host";
+import type { BbPluginRollRecord } from "../shared/bb-plugin-roll";
 import type { CapacityChangeJournal } from "../core/dispatch/capacity-changes";
 import type { AdmissionRpcMetrics } from "../core/qa/effigy-admission-metrics";
 import type {
@@ -82,6 +83,13 @@ export interface RuntimeHealth {
    * executor announced, its heartbeat and — while it is offline — the field that refused it.
    */
   bb?: BbHostStatus;
+  /**
+   * The BB plugin step the last landed roll ran (nucleus#1339), read from its
+   * owner-only record beside the roll record: a failed install names its cause
+   * here, so health reports it without reading the roll prose. Absent before any
+   * landed roll has run the step, and on a machine the step left alone.
+   */
+  bbPlugin?: BbPluginRollRecord;
   schema: number | null;
   lastStoreAccessAt: string | null;
   taskIdentities: number;
@@ -167,6 +175,8 @@ export interface RuntimeHealthContext {
   readonly t3Host: () => T3HostConnection | null;
   /** The BB host's registration, identity and heartbeat (Spec 062, phase 1). */
   bb(): BbHostStatus;
+  /** The last landed roll's BB plugin step (nucleus#1339), or null before one ran. */
+  bbPluginRoll?: () => BbPluginRollRecord | null;
   readonly admission: Admission;
   readonly capacityChanges: CapacityChangeJournal;
   readonly maintenance: StoreMaintenance;
@@ -309,6 +319,7 @@ export class RuntimeHealthProjection {
     const { store, hostRegistry, lifecycle } = this.context;
     const t3 = this.context.t3Host()?.status();
     const bb = this.context.bb();
+    const bbPlugin = this.context.bbPluginRoll?.() ?? null;
     const endpoint = this.context.hostRunEndpoint();
     return {
       phase: lifecycle.phase,
@@ -327,6 +338,7 @@ export class RuntimeHealthProjection {
       hostIdentityConflict: lifecycle.identityConflict,
       ...(t3 ? { t3code: t3 } : {}),
       ...(bb.hosts.length || bb.offlineReason || bb.lastRefusal ? { bb } : {}),
+      ...(bbPlugin ? { bbPlugin } : {}),
       hosts: this.hostStates(t3, bb),
       bootstrap: {
         pending: Boolean(lifecycle.bootstrapRunning),

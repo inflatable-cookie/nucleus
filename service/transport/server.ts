@@ -19,8 +19,9 @@ import { dataHome } from "../../shared/data-home.mjs";
  */
 import { createServer, type Server, type Socket } from "node:net";
 import { chmodSync, existsSync, rmSync, unlinkSync } from "node:fs";
+import { chmod, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { timingSafeEqual, createHash } from "node:crypto";
+import { timingSafeEqual, createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { RuntimeHealth, RuntimeOwnerOptions } from "../runtime-owner";
 import type { AdmissionOptions } from "../../core/host/admission";
@@ -319,7 +320,9 @@ export class QueueService {
   /** Start the local web board; a bind failure is logged and leaves the socket serving without it. */
   private async openWebBoard(): Promise<WebBoard | null> {
     const configuredPort = this.options.webBoard?.port ?? configuredWebPort();
-    const web = new WebBoard({ host: this.webHost(), bundleDir: defaultWebBundleDir(), ...this.options.webBoard, port: configuredPort, sessionFile: join(getWorkRoot(this.dataDir), "nucleus-web-sessions.json") });
+    const sessionFile = join(this.dataDir, "web-sessions.json");
+    await this.migrateWebSessions(sessionFile);
+    const web = new WebBoard({ host: this.webHost(), bundleDir: defaultWebBundleDir(), ...this.options.webBoard, port: configuredPort, sessionFile });
     try {
       await web.listen();
       if (web.usedFallbackPort) console.error(`Nucleus board preferred port ${configuredPort} was occupied; using ${web.address?.port}.`);
@@ -328,6 +331,26 @@ export class QueueService {
       console.error(`Nucleus board HTTP server did not start; the socket still serves: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }
+  }
+
+  /** Move the previous work-root session store only after its data-home copy is verified. */
+  private async migrateWebSessions(sessionFile: string): Promise<void> {
+    const oldFile = join(getWorkRoot(this.dataDir), "nucleus-web-sessions.json");
+    if (!existsSync(oldFile)) return;
+    if (existsSync(sessionFile)) {
+      console.error(`Nucleus board found both session stores; using ${sessionFile} and leaving ${oldFile} in place.`);
+      return;
+    }
+
+    const contents = await readFile(oldFile);
+    const temporary = `${sessionFile}.${process.pid}.${randomBytes(6).toString("hex")}.migration.tmp`;
+    await writeFile(temporary, contents, { mode: 0o600, flag: "wx" });
+    await chmod(temporary, 0o600);
+    await rename(temporary, sessionFile);
+    await chmod(sessionFile, 0o600);
+    const copied = await readFile(sessionFile);
+    if (!contents.equals(copied)) throw new Error("The migrated web session file did not verify");
+    unlinkSync(oldFile);
   }
 
   private async closeWebBoard() {

@@ -10,7 +10,7 @@ function makeOwner(adapters: Record<string, Adapter>, active?: string): HostAdap
   return {
     get activeHostId() { return state.activeHostId; },
     resolveHostAdapter: (id: string) => adapters[id],
-    store: { task: (id: string) => ({ id, hostId: 'worker-host', originHostId: id === 'cross' ? 'origin-host' : 'worker-host' }) },
+    store: { task: (id: string) => ({ id, hostId: 'worker-host', originHostId: id === 'cross' ? 'origin-host' : 'worker-host' }) } as unknown as HostAdapterRoutingOwner['store'],
     withHost: <T>(id: string, fn: () => T) => { const previous = state.activeHostId; state.activeHostId = id; try { return fn(); } finally { state.activeHostId = previous; } },
     hostAvailable: (id: string) => Boolean(adapters[id]),
     host: {
@@ -57,7 +57,7 @@ test('inspectReviewEntry keeps this on a class withHost that reads instance stat
     activeHostId: string | undefined;
     constructor(private readonly adapters: Record<string, Adapter>, active?: string) { this.activeHostId = active; }
     resolveHostAdapter(id: string) { return this.adapters[id]; }
-    store = { task: (id: string) => ({ hostId: 'worker-host', originHostId: id === 'cross' ? 'origin-host' : 'worker-host' }) };
+    store = { task: (id: string) => ({ hostId: 'worker-host', originHostId: id === 'cross' ? 'origin-host' : 'worker-host' }) } as unknown as HostAdapterRoutingOwner['store'];
     withHost<T>(id: string, fn: () => T): T { return this.hostContext.run(id, fn); }
     hostAvailable(id: string) { return Boolean(this.adapters[id]); }
     host = {

@@ -27,6 +27,62 @@ import { STORED_OBSERVATION_FIELDS } from "./store-task-writes";
 import type { UsageLevel } from "../../shared/contracts";
 import { repositoryIdentity,type StoreTasks } from "./store-tasks";
 
+// One lifecycle writer owns the store. An opaque process identity cannot be
+// mistaken for the previous writer after a service roll or PID reuse.
+export const creationProducerId = randomUUID();
+const creationReserved = 'creation_attempt_reserved';
+const creationSettled = 'creation_attempt_settled';
+type CreationBinding = Pick<Run, 'id' | 'taskId' | 'hostId'> & { workspaceId: string | null; role: Run['role'] | 'worker' };
+type CreationReservation = CreationBinding & { producerId: string; attemptId: string };
+type CreationOutcome = 'returned' | 'threw';
+type CreationSettlement = { attemptId: string; outcome: CreationOutcome };
+export type CreationAttempt = CreationReservation & {
+  reservedAt: string;
+  settlement: (CreationSettlement & { at: string }) | null;
+};
+type CreationJournal = Pick<TaskFunnelServices, 'db' | 'event' | 'transaction'>;
+
+function reserveCreation(store: CreationJournal, binding: CreationBinding) {
+  const reservation: CreationReservation = { ...binding, producerId: creationProducerId, attemptId: randomUUID() };
+  store.event(binding.taskId, creationReserved, JSON.stringify(reservation));
+}
+
+function creationAttemptSettlement(store: Pick<CreationJournal, 'db'>, taskId: string, attemptId: string): CreationAttempt['settlement'] {
+  const settled = store.db.prepare(`
+    SELECT detail, at FROM events WHERE taskId=? AND kind=?
+    AND CASE WHEN json_valid(detail) THEN json_extract(detail,'$.attemptId') END=?
+    ORDER BY id DESC LIMIT 1
+  `).get(taskId, creationSettled, attemptId);
+  return settled ? { ...JSON.parse(String(settled.detail)) as CreationSettlement, at: String(settled.at) } : null;
+}
+
+/** The task's indexed event journal retains both sides of each creation attempt. */
+export function readCreationAttempt(store: Pick<CreationJournal, 'db'>, binding: CreationBinding): CreationAttempt | null {
+  const reserved = store.db.prepare(`
+    SELECT detail, at FROM events WHERE taskId=? AND kind=?
+    AND CASE WHEN json_valid(detail) THEN json_extract(detail,'$.id') END=?
+    ORDER BY id DESC LIMIT 1
+  `).get(binding.taskId, creationReserved, binding.id);
+  if (!reserved) return null;
+  const reservation: CreationReservation = JSON.parse(String(reserved.detail));
+  if (!reservation.producerId || !reservation.attemptId || reservation.taskId !== binding.taskId
+      || reservation.hostId !== binding.hostId || reservation.workspaceId !== binding.workspaceId || reservation.role !== binding.role) return null;
+  return { ...reservation, reservedAt: String(reserved.at),
+    settlement: creationAttemptSettlement(store, binding.taskId, reservation.attemptId) };
+}
+
+export function settleCreationAttempt(store: CreationJournal, attempt: CreationAttempt, outcome: CreationOutcome): void {
+  store.transaction(() => {
+    const reserved = store.db.prepare(`
+      SELECT 1 FROM events WHERE taskId=? AND kind=?
+      AND CASE WHEN json_valid(detail) THEN json_extract(detail,'$.attemptId') END=? LIMIT 1
+    `).get(attempt.taskId, creationReserved, attempt.attemptId);
+    if (!reserved || creationAttemptSettlement(store, attempt.taskId, attempt.attemptId)) return;
+    const settlement: CreationSettlement = { attemptId: attempt.attemptId, outcome };
+    store.event(attempt.taskId, creationSettled, JSON.stringify(settlement));
+  });
+}
+
 /**
  * The store services the task and run funnels call. The funnel is the single writer of task
  * and run rows; everything here is a service it reads or records into, never another write
@@ -304,6 +360,10 @@ export class StoreTaskFunnel {
     }
     if (!hasTelemetry || previousTelemetryStage !== nextTelemetryStage) this.services.event(id, "telemetry_stage", nextTelemetryStage);
     if (task.removedAt !== next.removedAt) this.services.taskCountChanged();
+    // The initial worker owns its run on the task row. A retained worker
+    // continuation has no creation reservation.
+    if (kind === 'agent_intent' && next.agentIntent && !next.agentId && next.runId)
+      reserveCreation(this.services, { id: next.runId, taskId: id, hostId: next.hostId, workspaceId: next.workspaceId, role: 'worker' });
     if (kind) this.services.event(id, kind, detail);
     const becameTerminal = Boolean(terminal && task.phase !== next.phase);
     const becameRemovedFinished = !task.removedAt && Boolean(next.removedAt) && ["done", "cancelled"].includes(next.phase);
@@ -473,6 +533,10 @@ export class StoreTaskFunnel {
     else this.services.advanceRevision();
     // After the clock is acknowledged: a task read before that discards the whole projection.
     if (!existed && !options.usageOnly) {
+      if (run.status === 'intent' && !run.agentId && !run.released && !run.completion) {
+        const { id, taskId, hostId, workspaceId, role } = run;
+        reserveCreation(this.services, { id, taskId, hostId, workspaceId, role });
+      }
       try { this.services.noteGrantRun(this.services.task(run.taskId), this.routeRoleForRun(run.role)); } catch { /* a missing task cannot increment a grant */ }
     }
     this.services.taskChanged(run.taskId); }

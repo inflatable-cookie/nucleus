@@ -8,6 +8,7 @@ import type { Task } from "../../shared/contracts";
 import { type Store, now } from "../store/store";
 import { gitText, snapshotGit, statusEntries, ignoredPathCollides, inspectChangedPaths, isolatedRepositoryIsCleanAt, type GitSnapshot } from "../git/git-snapshot";
 import { gitFastForward, gitRun, } from "../git/git-command";
+import { recordIntegrationFastForward, type IntegrationFastForwardObserver } from "../git/git-dispatch";
 import { gitNulEach } from "../git/git-command";
 import { blobDigest } from "./hook-manifest";
 import { executablePath, hookProgramExecutable, type HookEmissionResult } from "./hook-context";
@@ -155,7 +156,7 @@ export class HookPublication {
   /** After remote publication: fast-forward the canonical checkout, prove the remote, then remove the isolated checkout. */
   private async completePublication(task: Task, record: HookRecord, commit: string, result: HookResult, path: string): Promise<HookRecord> {
     let current = this.save(record, { state: "sync_intent", commit });
-    const syncError = await this.syncCanonical(task.repoPath, record.baseBranch, record.baseCommit, commit);
+    const syncError = await this.syncCanonical(task.repoPath, record.baseBranch, record.baseCommit, commit, move => recordIntegrationFastForward(this.store, task, move));
     if (syncError) return this.uncertainSync(current, `Canonical synchronization requires reconciliation: ${syncError}`);
     current = this.save(this.store.hookEvent(current.id)!, { state: "synced", commit });
     this.store.event(task.id, "hook_synced", `${current.hookId} ${commit}`);
@@ -166,7 +167,7 @@ export class HookPublication {
   }
 
   /** Fast-forward the operator checkout from the event base to a published commit and prove it matches the remote. */
-  async syncCanonical(root: string, baseBranch: string, baseCommit: string, target: string): Promise<string | null> {
+  async syncCanonical(root: string, baseBranch: string, baseCommit: string, target: string, observe?: IntegrationFastForwardObserver): Promise<string | null> {
     try {
       if (await gitText(root, "branch", "--show-current") !== baseBranch) return "canonical checkout is not on the base branch";
       if ((await statusEntries(root, false)).length) return "canonical checkout has tracked or untracked changes";
@@ -176,6 +177,7 @@ export class HookPublication {
         const collisions = await this.ignoredCollisions(root, head, target);
         if (collisions.length) return `ignored operator content would be overwritten: ${collisions.join(", ")}`;
         await gitFastForward(root, target);
+        observe?.({ from: head, to: target });
       }
       await gitText(root, "fetch", "origin", baseBranch);
       const remote = await gitText(root, "rev-parse", `refs/remotes/origin/${baseBranch}`);
@@ -262,7 +264,7 @@ export class HookPublication {
       const remote = await gitText(task.repoPath, "rev-parse", `refs/remotes/origin/${record.baseBranch}`);
       const contains = remote === record.commit || (await gitRun(task.repoPath, ["merge-base", "--is-ancestor", record.commit, remote])).code === 0;
       if (!contains) return this.uncertainSync(record, `Remote ${record.baseBranch} does not contain published commit ${record.commit}`);
-      const syncError = await this.syncCanonical(task.repoPath, record.baseBranch, record.baseCommit, remote);
+      const syncError = await this.syncCanonical(task.repoPath, record.baseBranch, record.baseCommit, remote, move => recordIntegrationFastForward(this.store, task, move));
       if (syncError) return this.uncertainSync(record, `Canonical synchronization requires reconciliation: ${syncError}`);
       return this.cleanupPublished(task, this.save(this.store.hookEvent(record.id)!, { state: "synced", reconciledAt: now() }));
     } catch (error) {

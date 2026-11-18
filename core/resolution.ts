@@ -1,3 +1,5 @@
+import type { IntegrationFastForwardObserver } from './git/git-dispatch';
+import type { FormalReviewRuntime } from './forge/reviews';
 import { portsContext } from './port-context';
 import { ambientHostPorts, onOwnerHost, type HostPorts } from './host/host-ports';
 import { CriticalReviewFallback } from './dispatch/critical-review-fallback';
@@ -157,16 +159,16 @@ export interface ResolutionAdapter {
   reconcileReviewPublication?(store:Store, task:Task, run:Run, reviewer:ReviewerSetting, reason:string, allowed:()=>boolean):Promise<number>;
   verifyReview(task: Task, run: Run, result: Completion, reviewer?: ReviewerSetting): Promise<number | void>;
   externalMerge?(task: Task, acceptHead?: boolean, retainedSource?: boolean): Promise<{head:string;commit:string}|null>;
-  mergeGate(task: Task, history?: CheckHistory, reviewer?: ReviewerSetting, checksPolicy?: RepositoryChecksPolicy): Promise<MergeGateResult>;
+  mergeGate(task: Task, history?: CheckHistory, reviewer?: ReviewerSetting, checksPolicy?: RepositoryChecksPolicy, runtime?: FormalReviewRuntime, observeFastForward?: IntegrationFastForwardObserver): Promise<MergeGateResult>;
   requiredChecks?(task: Task, history?: CheckHistory, checksPolicy?: RepositoryChecksPolicy): Promise<RequiredChecksResult>;
   /** Checks and integration base for a subsequent review round, without merge-review admission. */
-  coveringEvidence?(task: Task, history?: CheckHistory, checksPolicy?: RepositoryChecksPolicy): Promise<RequiredChecksResult & { base: string }>;
+  coveringEvidence?(task: Task, history?: CheckHistory, checksPolicy?: RepositoryChecksPolicy, observeFastForward?: IntegrationFastForwardObserver): Promise<RequiredChecksResult & { base: string }>;
   /** Queue 524: bounded pointer to author evidence posted as PR issue comments (never bodies). Empty when none exist. */
   authorCommentEvidence?(task: Task, priorCommentId?: number | null): Promise<string>;
   rerunFailedWorkflowRuns?(task: Task, runIds: string[]): Promise<string[]>;
   merge(task: Task, allowed?: () => boolean): Promise<void>;
   merged(task: Task): Promise<{ merged: boolean; commit: string | null; head: string; base: string; proof?: { proven: boolean; detail: string } }>;
-  syncMain(task: Task, allowed?: () => boolean): Promise<string>;
+  syncMain(task: Task, allowed?: () => boolean, observeFastForward?: IntegrationFastForwardObserver): Promise<string>;
   verifyCloseout(task: Task, result?:Completion): Promise<string|void>;
   notify(agentId: string, messageId: string, text: string, sourceAgentId?: string): Promise<void>;
 }

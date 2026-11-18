@@ -33,7 +33,6 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -41,6 +40,8 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -470,8 +471,38 @@ async function main() {
       build: buildId.slice(0, 12),
     });
 
+    // A BB update rebuilds every installed plugin's frontend bundle, staging the new
+    // one in a fresh directory inside `dist/` and swapping it in. The managed copy is
+    // writable by the same user BB runs as, so that rebuild lands here with no operator
+    // action (nucleus#1348) — and it is not a build mismatch: the status reads the
+    // Nucleus build identity, never the bundle.
+    const installedCopy = join(serviceDataDir, "bb-plugin-install", PLUGIN_ID);
+    const stage = join(installedCopy, "dist", ".stage-bb-update");
+    mkdirSync(stage, { recursive: true });
+    writeFileSync(join(stage, "app.js"), "// rebuilt by the BB update\n");
+    renameSync(join(stage, "app.js"), join(installedCopy, "dist", "app.js"));
+    rmSync(stage, { recursive: true, force: true });
+    assert.match(
+      readFileSync(join(installedCopy, "dist", "app.js"), "utf8"),
+      /rebuilt by the BB update/,
+      "BB's own bundle rebuild writes into the installed copy",
+    );
+    const rebuilt = (await nucleus(["status"])) as {
+      state: string;
+      pluginBuildId: string;
+    };
+    assert.equal(
+      rebuilt.state,
+      "match",
+      "a frontend bundle BB rebuilt itself is not a build mismatch",
+    );
+    assert.equal(rebuilt.pluginBuildId, buildId);
+    note("bb-update-rebuild", true, {
+      state: rebuilt.state,
+      build: buildId.slice(0, 12),
+    });
+
     // A rebuild from another build reads as behind, without a second install.
-    chmodSync(installedIdentityFile, 0o644);
     writeFileSync(
       installedIdentityFile,
       JSON.stringify(

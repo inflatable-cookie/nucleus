@@ -1,7 +1,7 @@
 import { taskPrNumber } from './pr-identity';
 import { reviewRequiredFor } from '../../shared/review-requirement';
 import { type Task, operatorSourceAcceptance, qualifiedOwnerAcceptance, type Run, type RepositoryChecksPolicy, type Completion } from '../../shared/contracts';
-import { withIntegrationCheckout, git, gitStatus, verifyPr, queueCheckoutStatus } from '../git/index';
+import { withIntegrationCheckout, fastForwardIntegrationBase, git, gitStatus, verifyPr, queueCheckoutStatus, type IntegrationFastForwardObserver } from '../git/index';
 import { type ReviewerSetting, type FormalReviewRuntime, verifyReview } from './reviews';
 import { readyReviewAtHead } from '../recovery/task-reasons';
 import { type CheckHistory, type GateEvidence, type CheckRequirementTransport, requiredCheckRequirements, branchUpdateRequired, observeCheckClassification, type CheckClassification, requiredChecks } from './checks';
@@ -26,13 +26,18 @@ export function classifyGithubMerge(p: {mergeable: string; mergeStateStatus: str
   if (p.mergeStateStatus === 'BLOCKED' && updateBranchRequired) return {wait: 'Repository requires the PR head to include the current base', needsRebase: true};
   return {wait: `GitHub merge state is ${p.mergeStateStatus}; branch rules must be satisfied`};
 }
-export async function integrationBaseGate(t: Pick<Task,'repoPath'|'baseBranch'|'directory'> & Partial<Pick<Task,'brief'>>,_head:string) {
+/**
+ * The integration base a merge gate proves. A clean checkout strictly behind origin
+ * is fast-forwarded here, under the integration lock, before the base is read; any
+ * other state refuses by name and is left untouched. `observe` is called at the moment
+ * this call moves the checkout, so the move is recorded even if a later read of the pass fails.
+ */
+export async function integrationBaseGate(t: Pick<Task,'repoPath'|'baseBranch'|'directory'> & Partial<Pick<Task,'brief'>>,_head:string,observe?: IntegrationFastForwardObserver): Promise<{base: string; wait: string}> {
+  if(!t.directory)throw new Error('Task has no worktree');
   return withIntegrationCheckout(t, async (checkout, unchanged) => {
-    await git(checkout, 'fetch', 'origin', t.baseBranch);
-    if (await git(checkout, 'branch', '--show-current') !== t.baseBranch || await gitStatus(checkout, 'status', '--porcelain')) throw new Error('Preserving dirty or switched integration checkout');
+    const fastForward = await fastForwardIntegrationBase(checkout, t.baseBranch);
+    if (fastForward) observe?.(fastForward);
     const base=await git(checkout,'rev-parse',`refs/remotes/origin/${t.baseBranch}`);
-    if(await git(checkout,'rev-parse','HEAD')!==base)throw new Error('Local integration branch must match origin before merge');
-    if(!t.directory)throw new Error('Task has no worktree');
     await unchanged();
     return {base,wait:''};
   });
@@ -59,7 +64,7 @@ export function reviewRequirementsWait(t: Task, reviewDecision: string | null | 
     && (reviewDecision === 'CHANGES_REQUESTED' || reviewDecision === 'REVIEW_REQUIRED')
     ? 'GitHub review requirements are not satisfied' : '';
 }
-export async function mergeGate(t: Task, history?: CheckHistory, reviewer?: ReviewerSetting | null, checksPolicy: RepositoryChecksPolicy = 'all', runtime?: FormalReviewRuntime): Promise<GateEvidence> {
+export async function mergeGate(t: Task, history?: CheckHistory, reviewer?: ReviewerSetting | null, checksPolicy: RepositoryChecksPolicy = 'all', runtime?: FormalReviewRuntime, observeFastForward?: IntegrationFastForwardObserver): Promise<GateEvidence> {
   const timings: Record<string, number> = {};
   const timed = async <T>(name: string, work: () => Promise<T>): Promise<T> => {
     const started = Date.now();
@@ -79,7 +84,7 @@ export async function mergeGate(t: Task, history?: CheckHistory, reviewer?: Revi
   const [data, , gate, requirements, updateRequired] = await Promise.all([
     timed('graphql', () => api(t, 'graphql', ['-f', `query=${query}`, '-f', `owner=${owner}`, '-f', `repo=${repository}`, '-F', `number=${taskPrNumber(t)}`])),
     timed('review_identity', () => requiredMergeReview(t, reviewer, {...runtime, verifyPr: async () => pr})),
-    timed('integration_base', () => integrationBaseGate(t, pr.head)),
+    timed('integration_base', () => integrationBaseGate(t, pr.head, observeFastForward)),
     checksPolicy === 'required' ? timed('check_requirements', () => requiredCheckRequirements(t, owner, repository, t.baseBranch, read)) : undefined,
     // Finish the other reads before surfacing a strict-rule refusal. In
     // particular, the integration checkout must not outlive this attempt.
@@ -107,9 +112,9 @@ export async function mergeGate(t: Task, history?: CheckHistory, reviewer?: Revi
  * integration base it would merge into. It never asks whether a review approves
  * merging — the next reviewer has not reviewed yet — and grants no merge credit;
  * the full merge gate still runs before any merge. */
-export async function coveringEvidence(t: Task, history?: CheckHistory, checksPolicy: RepositoryChecksPolicy = 'all'): Promise<CheckClassification & {head: string; base: string}> {
+export async function coveringEvidence(t: Task, history?: CheckHistory, checksPolicy: RepositoryChecksPolicy = 'all', observeFastForward?: IntegrationFastForwardObserver): Promise<CheckClassification & {head: string; base: string}> {
   const checks = await requiredChecks(t, history, checksPolicy);
-  const gate = await integrationBaseGate(t, checks.head);
+  const gate = await integrationBaseGate(t, checks.head, observeFastForward);
   return { ...checks, base: gate.base };
 }
 export async function merge(t: Task, allowed: () => boolean = () => true) {
@@ -170,14 +175,14 @@ export async function exactIntendedMerge(t: Pick<Task,'repoPath'|'baseBranch'|'r
   if(matches.length>1)throw Error('Multiple exact merge commits match the recorded merge intent');
   return matches[0]?.split(' ')[0]??null;
 }
-export async function syncMain(t: Task, allowed: () => boolean = () => true) {
-  const commit = await withIntegrationCheckout(t, (checkout, unchanged) => syncIntegrationCheckout({...t, repoPath: checkout}, allowed, unchanged));
+export async function syncMain(t: Task, allowed: () => boolean = () => true, observeFastForward?: IntegrationFastForwardObserver) {
+  const commit = await withIntegrationCheckout(t, (checkout, unchanged) => syncIntegrationCheckout({...t, repoPath: checkout}, allowed, unchanged, observeFastForward));
   if (await git(t.repoPath, 'branch', '--show-current') === t.baseBranch) {
     requestServiceRollAfterRepositorySync(t.repoPath);
   }
   return commit;
 }
-async function syncIntegrationCheckout(t: Task, allowed: () => boolean, unchanged: () => Promise<void>) {
+async function syncIntegrationCheckout(t: Task, allowed: () => boolean, unchanged: () => Promise<void>, observeFastForward?: IntegrationFastForwardObserver) {
   if (!t.resolution.mergedCommit) throw new Error('Merge has not been verified');
   if (await git(t.repoPath, 'branch', '--show-current') !== t.baseBranch || await gitStatus(t.repoPath, 'status', '--porcelain')) throw new Error('Preserving dirty or switched integration checkout after merge');
   await git(t.repoPath, 'fetch', 'origin', t.baseBranch);
@@ -195,7 +200,9 @@ async function syncIntegrationCheckout(t: Task, allowed: () => boolean, unchange
   if (await git(t.repoPath, 'branch', '--show-current') !== t.baseBranch || await gitStatus(t.repoPath, 'status', '--porcelain')) throw new Error('Integration checkout changed while fetching');
   await unchanged();
   if (!allowed()) throw new Error('Paused before local main update');
+  const from = await git(t.repoPath, 'rev-parse', 'HEAD');
   await gitFastForward(t.repoPath, remote);
+  if (from !== remote) observeFastForward?.({ from, to: remote });
   if (await git(t.repoPath, 'rev-parse', 'HEAD') !== remote || await gitStatus(t.repoPath, 'status', '--porcelain')) throw new Error('Integration synchronization did not leave a clean expected head');
   return remote;
 }

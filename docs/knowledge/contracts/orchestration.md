@@ -1811,16 +1811,20 @@ review or merge credit; live participants and unsettled effects remain fences.
 
 ### Uncertain creation and absence
 
-- A run or worker creation that errors, or whose host call passes its admission
-  deadline, is `uncertain` with no agent. Nothing resends it.
-- Observation runs an exact lookup on each pending agentless run. Zero matches
-  after the grace window is absence. The first absence gets one same-role
-  automatic replacement. A second absence, with the replacement budget spent,
-  settles the run as absent: it records `absentProvenAt`, observation never
-  looks it up again, and it stops being a blocking run-delivery effect, so
-  `next` does not offer `retry_effect` for it. The task waits with `route` and
-  `restart` suggested. No coordinator is engaged, because the coordinator's own
-  creation runs on the same host.
+- Each fresh agent reservation records the service process and creation attempt
+  in the same transaction. The native creation call records its return or throw
+  against that attempt. An admission deadline leaves a pending native call owned.
+- The recovery sweep and coordinator restart require a complete exact lookup on
+  the recorded host and workspace to release an agentless recovery. A zero
+  result clears its run, credential and episode binding together when the lookup
+  started after grace and the attempt had settled or belonged to a previous
+  service process. A legacy reservation without a producer record stays unknown.
+- A single exact match binds in the sweep. An incomplete, unavailable or
+  ambiguous reading holds the reservation. Release keeps the original task stop
+  and recovery allowance. Ordinary admission gives any later launch a fresh run.
+- Worker and other resolution sweeps retain agentless creations on empty
+  inventory. Their owner-control cutover is tracked in
+  [Spec 066](../specs/066-one-reconciler.md).
 - `route role=reviewer now` on a proven-absent run releases it without an archive
   wait: its credential is revoked and its incident resolves. The reviewer then
   launches one fresh run on the named profile. A creation not yet proven absent
@@ -2373,9 +2377,23 @@ movement invalidates source approval and preserves the normal readiness gates.
   tasks take a per-repository FIFO integration turn held through verification,
   merge, synchronization and closeout; a changed base refreshes verification
   against the unchanged head without a rebase unless GitHub or branch policy
-  requires one. A local integration base that origin has moved past is
-  fast-forwarded by the gate itself, at most three times per pass, and parks
-  for an operator only after that bound ([repository hooks](repository-hooks.md#prospective-merge-target)).
+  requires one.
+- Nucleus keeps the registered integration checkout current. Before a merge
+  gate, integration sync or prospective-merge check, a checkout that is on the
+  integration branch, clean (`.gitignore` respected), with no rebase, merge,
+  cherry-pick or revert in progress, and strictly behind `origin/<base>` is
+  fast-forwarded under the per-base integration lock. One
+  `integration_checkout_fast_forwarded` event names the old and new heads; a
+  second pass finds the checkout current and records nothing. Every path that
+  moves the registered checkout (the merge gate and its covering and forced
+  observers, the prospective-merge base, integration sync, stale-base renewal,
+  dispatch validation and canonical publication sync) records that event at the
+  moment the move lands, so a later failure in the same pass cannot lose it. Every other state
+  (dirty, ahead, diverged, another or detached branch, an operation in progress)
+  is never touched: the task waits on the named reason and repository.
+- A stale-base refusal from a repository hook is renewed by the same
+  fast-forward at most three times per pass and parks for an operator only after
+  that bound ([repository hooks](repository-hooks.md#prospective-merge-target)).
 - Uncertain unlanded merge responses use the bounded proof and single guarded
   re-issue of [Spec 038](../specs/038-bounded-uncertain-merge-reconciliation.md);
   every fresh-gate hold in that recovery shares the 30-minute bound, after which
@@ -2904,14 +2922,8 @@ movement invalidates source approval and preserves the normal readiness gates.
 - An attention notice states the current stop. A resolved recovery episode,
   including an action recorded not applied because an owner verb superseded it,
   is history and is never quoted as a live blockage.
-- After the grace, one complete exact lookup resolves an uncertain creation: a
-  single match binds; proven absence revokes the callback and issues at most one
-  same-role replacement; ambiguity escalates.
-- An uncertain reviewer or coordinator creation with no agent ID stays fenced
-  until a versioned operator action proves zero matches, revokes the callback
-  and launches one fresh run. A failed recovery-coordinator creation is
-  reconciled only when its error is recorded and its generation is current.
-  Generic retry never clears an unresolved creation intent.
+- Agentless recovery follows the proof and release rules in
+  [Uncertain creation and absence](#uncertain-creation-and-absence).
 - A decision that escalates, spends a coordinator run or returns work verifies
   live the facts named in Spec 016 rule 4, once per attempt; a failed read is
   `unverified` and retries within a bounded grace
@@ -2990,7 +3002,9 @@ movement invalidates source approval and preserves the normal readiness gates.
   re-arms a pending deadline when the task or operation is observed. A successful
   retry of the failed resolution operation closes its episode even if the task
   stays in the same phase; a skipped pass or another operation does not.
-- Nucleus serializes its own canonical-checkout fast-forwards. Git lock files
+- Nucleus serializes its own canonical-checkout fast-forwards, and the registered
+  integration checkout's reads and fast-forwards share the per-base integration
+  lock with Queue-owned integration checkouts. Git lock files
   do not identify their owner: another Nucleus or Paseo Git process may hold
   one. Nucleus waits and never removes the lock. A merged task retains its
   integration turn while synchronization waits.
@@ -3020,6 +3034,65 @@ movement invalidates source approval and preserves the normal readiness gates.
 - Archive and removal failure never holds task advancement; reviewer and
   coordinator archives and every closeout removal have durable intent, observed
   result and uncertain state.
+
+### Restart recovery inventory
+
+[Spec 066's commit boundary](../specs/066-one-reconciler.md#commit-boundary) requires
+each persisted action to complete, settle or surface an applicable owner action.
+The table lists the `*_intent` kinds derived from task-event writers, including
+event names assembled from state and the hook publication states. The reader
+column describes current behavior, including gaps where an intent only fences
+a repeat send. The terminal column records whether the sweep reaches that reader
+after the task finishes.
+
+| Recorded kind | Writer | Restart reader or owner exit | Terminal sweep |
+| --- | --- | --- | --- |
+| `agent_ask_resume_intent` | `AgentAsks.notifyAskAnswered` | `resumePendingAskAnswers` can deliver a saved answer before its send intent. A bare send intent fences delivery and lacks a receipt observer. | No bare-intent settlement |
+| `agent_intent` | `WorkerLauncher`, `WorkerFailover`, `review-continuation/result-fence.ts` | `TaskQuantum` calls creation recovery, which looks up the exact worker. Reviewer continuation uses its stored run and delivery fence. | No general terminal visit |
+| `brief_amendment_delivery_intent` | `BriefAmendmentDelivery.recordIntents` | `deliverPending` indexes the intent events and sends only before an attempt marker. An attempted send lacks a receipt observer. | Yes, for unattempted delivery |
+| `build_output_cleanup_intent` | `buildOutputCleanupHooks.begin` | `Lifecycle.archive` repeats the checkout and host proofs. For an already archived binding, it confirms storage, catalog and directory absence and records the result. A refused archive appears in `retry_effect workspace_archive.<id>`. | Done. Cancellation uses disposition or retirement |
+| `closeout_workspace_intent` | `CloseoutRecovery.recover` | The same lifecycle pass looks for one exact existing match before verifying and binding it. A missing or ambiguous result holds closeout. | No, requires syncing or closing |
+| `dispatch_intent` | `FirstDispatch` admission transaction | `TaskQuantum` calls creation recovery to verify and adopt the workspace. `retry_effect workspace_creation` can re-prove a parked pre-dispatch creation. | No general terminal visit |
+| `disposition_effect_intent` | `disposition/effects.ts` effect runner | `resumeDispositions` advances an active fence and reconciles the named target. An uncertain workspace step can use `retry_effect disposition_workspace.<id>`. | Yes, while its fence is active |
+| `executor_report_request_intent` | `resendExecutorReport` | The request fences a second send for the same run. A callback can settle the work. There is no sweep observer for the request. | No |
+| `external_workspace_archive_intent` | `settleExternalWorkspaceArchive` | The lifecycle observes the exact catalog registration. `retry_effect external_workspace_archive.<id>` uses the same proof and preserves the folder. | Done for preserved review-entry workspaces |
+| `hook_intent` | `HookOccurrence`; `HookRetention` for retained-worktree reconciliation | `RepositoryHooks.reconcileTask` reads the stored occurrence. Known gates revisit it and `retry_effect hook.<eventId>` handles applicable held occurrences. | Finished and pre-archive hooks have terminal readers |
+| `hook_workspace_intent` / `workspace_intent` | `HookPublication.executeIntegrationWrite`, event and hook state | `HookReconciler.reconcile` checks the recorded path, checkout and base before adopting or preparing it. | Through an applicable terminal hook |
+| `commit_intent` | `HookPublication.publish`, hook state | `HookReconciler.reconcile` looks for one exact attributed commit. Ambiguity holds the occurrence. | Through an applicable terminal hook |
+| `push_intent` | `HookPublication.publish`, hook state | `HookReconciler.reconcile` observes the base branch and the recorded commit before any publication. | Through an applicable terminal hook |
+| `sync_intent` | `HookPublication.completePublication`, hook state | `HookReconciler.reconcile` proves publication and rechecks the canonical checkout before synchronization. | Through an applicable terminal hook |
+| `cleanup_intent` | `HookPublication` completion and cleanup methods, hook state | `HookReconciler.reconcile` checks the isolated checkout and finishes the recorded cleanup. | Through an applicable terminal hook |
+| `hook_automatic_replay_intent` | `HookReplay` | The next applicable gate reads the replay lineage and prior occurrence in `RepositoryHooks.emit`. | Only through an applicable gate |
+| `hook_unpublished_checkout_discard_intent` | `HookRetry.discardUnpublishedOccurrence` | `retry_effect hook.<eventId>` re-proves the checkout and remote before explicit disposal. No general sweep resumes this operator action. | Owner action |
+| `merge_intent` | `MergeGates.requestMerge` | `MergeIntent.reconcileMergeIntent` observes the exact PR head and base. Unknown delivery holds the lease. `retry_effect merge-response.merge-response` observes the same response. | No normal terminal visit |
+| `merge_retry_intent` | `MergeIntent.reconcileMergeIntent` | The same reader verifies the result or settles the spent guarded retry as uncertain. | No normal terminal visit |
+| `native_manual_answer_intent` | `RuntimeQuestions` manual answer control | The same request identity fences repeat delivery. No sweep observes a receipt for the manual answer. | No |
+| `native_permission_cancel_intent` | `WithdrawnQuestion` permission cancellation | Dispatch re-reads the original pending permission and fences the same send. A still-present request after unknown delivery lacks a dedicated owner retry. | No |
+| `native_question_delegate_intent` | `NativeQuestions` delegation callback | `resumeAskQuestions` reads the saved delegation route and the decision ledger. | No general terminal visit |
+| `native_question_dismiss_intent` | `QuestionSupersession` | Dispatch re-reads withdrawn pending questions. A dismissal intent alone fences duplicate sends and lacks a dedicated sweep of its own. | No |
+| `native_question_response_intent` | `NativeQuestions` response delivery | `resumeResponsibleAnsweredQuestions` reads persisted answers and original requests. A bare delivery intent fences repeat sends and has no receipt observer. | No general terminal visit |
+| `owner_restart_instruction_intent` | `WorkerRestarts` | Recovery effects index the instruction. `retry_effect` observes the exact message on its retained binding or settles it from later evidence. | Owner action when still applicable |
+| `owner_settled_merge_intent` | `ForceVerbs` settlement | This event records an owner settlement already made in the same write. There is no outgoing request. | Already settled |
+| `owner_stop_intent` | `VerbFences.cancelDisplacedTurns` | The enclosing control can re-observe the run through the operation and owner stop path. The bare event has no standalone sweep reader. | No standalone visit |
+| `paused_resume_intent` | `PausedStops.resumeOnePausedStop` | `resumePausedStops` reads the paused-stop marker. The current path can repeat delivery using the stable request ID without first reading a receipt. | No |
+| `paused_stop_intent` | `PausedStops.stopActiveThreads` | The unpause sweep reads the post-send marker. A stop whose reply was lost before that marker is written lacks a sweep reader. | No |
+| `planner_escalation_wake_intent` | `resumeEscalationWaits` | The ladder revisits the recorded wait and observes whether the requested action applied before resuming ordinary work. | No general terminal visit |
+| `pre_merge_candidate_intent` | `ProspectiveMerge.prospectiveMergeGate` | The same gate re-proves the candidate path, integration base, reviewed head and pinned hook. | No, runs at the merge gate |
+| `project_validation_candidate_intent` | `ProjectValidation.projectValidationGate` | The same validation gate rechecks the candidate path and input identity. | No general terminal visit |
+| `project_validation_intent` | `ProjectValidation.projectValidationGate` | The gate reads the persisted supervisor and host run by binding. `retry_effect project-validation.project-validation` is the owner route for unsettled execution. | No general terminal visit |
+| `report_ready_planner_notice_intent` | `worker-reconcile/result-acceptance.ts` | The report is durably in `report_ready`, but the one-shot planner message has no receipt observer. | No |
+| `reviewer_escalation_direction_intent` | `EscalationSettlement` | The ladder retains its decision and fences repeat sends. No reader confirms a bare send intent against the reviewer timeline. | No |
+| `reviewer_report_request_intent` | `requestReviewerReport` | The owner action names the unknown request and directs the owner to its retained thread. No sweep reads a delivery receipt. | No |
+| `route_stop_intent` | `RouteControls.stopRouteRun` | Replay of the same durable control observes the recorded turn before doing anything. No standalone terminal reader for the event. | Operation replay only |
+| `run_build_output_intent` | `RunCallbackIntake.completeBuildOutput`; initial worker intake records the same row with its completion | Lifecycle schedules `settleRunBuildOutputs` after run release. The handler proves ownership and idle participants or confirms authoritative absence. | Done and cancelled |
+| `run_intent` | `RunReservationAdmission.admit` | `Observation.observe` performs the exact creation lookup. Lifecycle abandons an agentless reservation at terminal phase without a new launch. Terminal creation with unknown delivery still needs proof. | Agentless reservation settlement only |
+| `sibling_worktrees_intent` | `WorkspaceProvisioning.ensureSiblings` | The same provisioner checks recorded paths and pinned commits before adopting or creating a checkout. A terminal row with intent and no pins lacks a reader. | No, terminal cleanup reads pins |
+| `stalled_turn_stop_intent` | `StalledTurnStops` | Worker or run observation reconciles the recorded turn or accepts its authenticated completion. | No general terminal visit |
+| `thread_archive_intent` | `archiveFinishedThreads` and replacement archive writers | Thread cleanup observes the exact native identity. Terminal catch-up revisits deletion-capable hosts. Archive-only hosts lack that terminal catch-up. Exhausted matching retries can be rearmed through `retry_effect workspace_archive.<id>`. | Deletion-capable hosts only |
+| `transient_provider_resume_intent` | `TransientResume` worker and run paths | Worker and run observation re-enter the provider resume path using the retained binding and bounded episode. A terminal row receives no continuation. | No |
+| `unused_workspace_archive_intent` | `archiveUnusedWorkspace` | `retry_effect workspace_archive.<id>` observes the catalog or re-proves local teardown. The duplicate retains its own evidence. | Owner action |
+| `workspace_archive_intent` | `ArchiveProof.archiveProvedWorkspace` and `TaskRemoval.removeTask` | Lifecycle uses `reconcileGoneWorkspace` and the existing archive proofs. An unreadable binding remains a named `retry_effect workspace_archive.<id>` observation. | Done, plus observation of an outstanding removal intent |
+| `workspace_retirement_intent` | `progressWorkspaceRetirement` via `recordWorkspaceRetirement` | The terminal lifecycle schedules the same retirement on the task lane. It reads the catalog before continuing under recorded authority and current proofs. | Cancelled with recorded authorization |
 
 ## Cleanup
 
@@ -3343,6 +3416,22 @@ movement invalidates source approval and preserves the normal readiness gates.
   it exited between the listing and its inspection leaves the table instead of
   blocking with an unreadable fact; only a genuinely unreadable read stays
   unknown.
+  BB's own provider bridge, session and direct `cua-driver mcp` server are
+  participant runtime when the session's readable `BB_THREAD_ID` matches the
+  recorded BB participant and the bridge's parent is the BB host daemon. The
+  bridge carries no thread identity itself. An unreadable or different thread
+  holds; a command beneath the session or its MCP server remains a tool. The
+  same binding protects these runtime processes from run cleanup and permits
+  workspace proof after BB reports the participant idle or closed. Archive
+  proof includes every recorded task run in the workspace, including recovery
+  and closeout, as well as task-row workers. The process
+  reader retains only the thread identity and checks the session's start identity
+  after reading its environment. The Cua server's loaded executable, read by PID
+  and rechecked against its start identity, must resolve to the installed
+  executable; displayed arguments alone do not prove it. On Darwin it reads NUL-delimited kernel process
+  arguments through the system JavaScript automation bridge and `sysctl`; an unavailable reader or
+  denied kernel read stays unknown. Task sweeps also preserve plausible BB
+  bridge runtimes with unknown identity and do not signal their process groups.
   Those runtimes take two facts from the listing, never a provider
   name list: the program is one the provider ships (inside an application bundle
   such as `Foo.app/Contents/…`, or beside the provider's own executable under

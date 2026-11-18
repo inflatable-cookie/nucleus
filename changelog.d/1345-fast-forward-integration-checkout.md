@@ -1,0 +1,1 @@
+Nucleus fast-forwards a clean registered integration checkout that is behind origin before a merge gate, integration sync or prospective-merge check, so an outside merge no longer parks a task on "must match origin". Dirty, ahead, diverged, other-branch, detached and mid-rebase checkouts are never touched and wait on a named reason.
