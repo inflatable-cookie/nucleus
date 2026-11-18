@@ -202,10 +202,20 @@ test('BB presentation: titles name the repository and the role once the containe
     assert.equal(f.fake.rows.get(reviewer.id)!.title, reviewerSpawn.title);
 
     // A support thread names the same reference (the decider is a container member too).
-    await f.adapter.runDecider!(f.store.task(f.task().id), { profile: f.spec('x').profile,
+    const decider = await f.adapter.runDecider!(f.store.task(f.task().id), { profile: f.spec('x').profile,
       signal: new AbortController().signal, timeoutMs: 1_000, decisionId: 'dec_1' });
     const deciderSpawn = f.spawns().at(-1)!.args as { title: string };
     assert.equal(deciderSpawn.title, `${reference} decider: BB presentation`);
+
+    // Item 12 archives the superseded participants; an archived thread is no longer
+    // a container member, so a now-lone live worker returns to its phase-prefixed
+    // title rather than keeping the grouped role-named one (review finding).
+    f.fake.rows.get(reviewer.id)!.archivedAt = BB_STAMP;
+    f.fake.rows.get(decider.agentId)!.archivedAt = BB_STAMP;
+    await f.reconcile();
+    const loneAgain = titles(worker.id).at(-1)!;
+    assert.match(loneAgain, new RegExp(`^[^:]+: ${reference} `), 'Working: repo#N <title> again');
+    assert.doesNotMatch(loneAgain, / worker: /);
   } finally { await f.close(); }
 });
 

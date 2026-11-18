@@ -266,6 +266,12 @@ export class BbThreads {
       this.ports.save(state); return;
     }
     const key = `title:${id}:${requestId}:${title}`;
+    const state = this.ports.state();
+    // The fresh read above proves the row is not at this title. A settled record for
+    // this exact key therefore names an earlier write the row has left (a container
+    // that emptied when its reviewer was archived, at an unchanged task version), so
+    // it can neither answer this call nor refuse it.
+    if (state.writes[key]?.status === 'settled') { delete state.writes[key]; this.ports.save(state); }
     if (Object.entries(this.ports.state().writes).some(([other, intent]) => other.startsWith(`title:${id}:`) && intent.status === 'unknown')) throw new HostUnknownDeliveryError({ command: 'bb.thread.title' });
     await this.write(key, 'thread.title', { threadId: id, title });
   }

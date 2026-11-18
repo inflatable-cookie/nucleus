@@ -203,10 +203,22 @@ export function composeBbAdapter(input: {
       if (!task.agentId) return;
       const step = await this.step(task);
       const reference = this.taskReference(task);
-      const container = threads.agents().filter(agent => agent.task === task.id).length > 1;
-      const roleNamed = container && task.number !== null ? `${reference} worker: ${task.title}` : null;
+      // The container is the threads sharing this environment, so an archived
+      // participant no longer counts (item 12): a lone live worker goes back to its
+      // phase-prefixed title once its reviewer is archived.
+      const grouped = await this.liveParticipants(task) > 1;
+      const roleNamed = grouped && task.number !== null ? `${reference} worker: ${task.title}` : null;
       const text = `${roleNamed ?? taskWorkspaceTitle(task, undefined, reference)}${step ? ` · ${step}` : ''}`.slice(0, 200);
       await threads.title(task.agentId, text, requestId);
+    }
+    /** This task's recorded threads that are still visible: an archived one is no participant. */
+    private async liveParticipants(task: Task): Promise<number> {
+      let live = 0;
+      for (const agent of threads.agents().filter(agent => agent.task === task.id)) {
+        try { if ((await threads.observe(agent.id)).status !== 'closed') live += 1; }
+        catch { live += 1; /* an unreadable thread is still recorded; never flip the title on a failed read */ }
+      }
+      return live;
     }
     /**
      * The task's recorded participant threads whose run settled and which no current

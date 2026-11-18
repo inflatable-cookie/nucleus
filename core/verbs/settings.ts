@@ -153,8 +153,9 @@ export class SettingsControls {
    * group; it changes no planner, no question route and no lifecycle, so a
    * planner thread may be replaced or archived without its tasks' threads. A
    * reparent that names a new planner clears it (`OriginRouting.writeOwner`).
-   * Only the operator or the task's own planner detaches; a caller naming
-   * neither is refused before anything is written.
+   * Any authenticated local caller may detach, as with every other owner control
+   * (Spec 050): the record is presentation only, so there is no pre-write authority
+   * refusal; the caller is recorded on the audit line and on the record itself.
    */
   detachPresentation(task: Task, input: TaskControlInput): Task {
     // Any authenticated local caller may detach, as with every other owner control

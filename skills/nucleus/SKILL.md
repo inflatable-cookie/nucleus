@@ -1162,7 +1162,8 @@ A task's presentation can be detached from its planner without changing the plan
 has no planner thread for presentation, so each host renders it standalone — used when a planner thread
 must be replaced or archived. It is host-general and changes nothing about planning questions; naming a
 new planner with `nucleus helper reparent` (or any route that changes the task's planner) clears the
-record and nests the group again. The operator at the board or the task's owner or planner applies it.
+record and nests the group again. Any authenticated local caller may apply it (the caller is recorded on
+the control's audit line and on the record); it is presentation only, so it needs no owner authority.
 
 A project may name a fallback planner with `project.set-planner` (`key`, `agentId`
 or null; the calling thread is recorded as `setBy`, and an unregistered thread is

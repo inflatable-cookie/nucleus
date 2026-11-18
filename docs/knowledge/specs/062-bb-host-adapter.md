@@ -249,6 +249,9 @@ task's only thread its title is the shared `taskWorkspaceTitle` projection
 (`Working: poodle-lab#29 <title>`) plus ` · ` and the step its role threads report, as T3Code's
 row does; once the container holds a second participant the worker is named by role like the
 others (`poodle-lab#29 worker: <title>`) and the phase lives on the container's state line alone.
+The container is the task's **live** threads: an archived participant is no member, so a worker left
+alone again by the superseded-participant archive returns to its phase-prefixed title (a fresh read
+proves the row left the earlier title, so a settled title intent never blocks that return).
 A support thread's title is `<reference> <role>: <title>`. Nucleus never sets
 `lifecycleOwnerThreadId`.
 
@@ -1245,7 +1248,8 @@ handles and task records phases 0–4 landed:
   the planner — never upstream's new-thread, Edit or Archive, which every ordinary group keeps.
 - Superseded participants leave the container (nucleus#1313): a role thread whose run settled, which
   no binding names and whose turn is idle, is archived; a live or pending-interaction thread, the
-  planner and the task's other threads are never archived.
+  planner and the task's other threads are never archived, and a worker the archive leaves alone
+  returns to its phase-prefixed title.
 
 Tests: `hosts/bb/plugin/sidebar/app/list/nucleusTaskGroups.test.tsx` names this phase's UI acceptance
 in the fork's own runner (`effigy bb:sidebar-tests`): the collapsed default with number, title, shared
