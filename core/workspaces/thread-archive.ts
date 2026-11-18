@@ -58,8 +58,8 @@ export async function archiveFinishedThreads(store: Store, adapter: Adapter, tas
     // Ordinary completion can finish before the catch-up query gets here. The
     // common terminal lane owns this marker, so neither route can miss it.
     const current = store.task(taskId), completionKey = finishedThreadCleanupKey(taskId);
-    if (removesThreads(adapter) && current.hostId && terminalThreadCleanup(current, true)
-        && !threadCleanupPending(store, current, true) && !store.getMeta(completionKey))
+    if (current.hostId && terminalThreadCleanup(current, removesThreads(adapter))
+        && !threadCleanupPending(store, current, removesThreads(adapter)) && !store.getMeta(completionKey))
       store.setMeta(completionKey, now());
     return;
   }
@@ -141,6 +141,17 @@ async function archiveTerminalTaskThreads(store: Store, adapter: Adapter, task: 
       // remapped as another task's coordinator) (review #543).
       if (threadHasUnreleasedRun(store, task, agentId)) { wait(agentId, 'Thread has an unreleased run'); return; }
       if (threadBoundToAnotherLiveTask(store, task, agentId)) { wait(agentId, 'Thread belongs to another active task'); return; }
+      // A legacy thread may have vanished before an intent was ever recorded.
+      // A direct host answer settles it without issuing a new command.
+      try {
+        const origin = await host.originAgent(agentId);
+        if ((!origin || origin.id === agentId) && cleanupComplete(origin, op)) {
+          store.putThreadArchiveEffect(key, agentId, { status: 'archived', at: now(), detail: 'Observed archived, removed or absent', op } satisfies ArchiveEffect);
+          store.deleteMeta(archiveProbeKey(store, task.id, agentId));
+          store.event(task.id, 'thread_archive_observed', agentId);
+          return;
+        }
+      } catch { /* The ordinary observation below records an actionable wait. */ }
       let observed;
       try { observed = await host.observe(agentId); }
       catch (error) {
@@ -149,7 +160,7 @@ async function archiveTerminalTaskThreads(store: Store, adapter: Adapter, task: 
         // thread has no projection). Anything else waits for a readable pass.
         let origin: OriginAgent | null = null, readable = false;
         try { origin = await host.originAgent(agentId); readable = true; } catch { /* the same outage keeps the wait */ }
-        if (readable && cleanupComplete(origin, op)) {
+        if (readable && (!origin || origin.id === agentId) && cleanupComplete(origin, op)) {
           store.putThreadArchiveEffect(key, agentId, { status: 'archived', at: now(), detail: 'Observed archived, removed or absent', op } satisfies ArchiveEffect);
           store.deleteMeta(archiveProbeKey(store, task.id, agentId));
           store.event(task.id, 'thread_archive_observed', agentId);
@@ -279,9 +290,9 @@ export function finishedThreadCleanupCatchUp(store: Store, hostId: string, remov
 
 /** One finished task's cleanup, called on its existing task lane by the sweep. */
 export async function catchUpFinishedTaskThreads(store: Store, adapter: Adapter, taskId: string): Promise<void> {
-  if (store.getMeta('paused') || !removesThreads(adapter)) return;
+  if (store.getMeta('paused')) return;
   const task = store.task(taskId);
-  if (!terminalThreadCleanup(task, true) || store.getMeta(finishedThreadCleanupKey(taskId))) return;
+  if (!terminalThreadCleanup(task, removesThreads(adapter)) || store.getMeta(finishedThreadCleanupKey(taskId))) return;
   try { await archiveFinishedThreads(store, adapter, taskId); }
   catch (error) { store.event(taskId, 'thread_cleanup_catch_up_error', String(error).slice(0, 2000)); }
 }

@@ -5,6 +5,10 @@ import { Engine } from '../core/engine';
 import { enginePorts } from '../core/port-context';
 import { HostPass } from '../core/scheduling/host-pass';
 import type { Adapter, AgentObservation } from '../core/host';
+import { fakeAdapter, submission, observeIdle } from './support/fakes';
+import { catchUpFinishedTaskThreads } from '../core/workspaces/thread-archive';
+import { hostDependents } from '../core/host/host-dependents';
+import { queueOperationSchema } from '../shared/operations';
 
 /**
  * nucleus#1257: one host's audit steps are their own owner. A step that throws is
@@ -78,4 +82,44 @@ test('a step that fails at the transport boundary answers nothing for that host 
   // The next host's pass is its own reading, and the previous failure is not carried.
   const other = await f.engine.withHost('host-2', () => f.hostPass.run('host-2'));
   assert.equal(other.transportAnswered, true, 'one host\'s transport failure never answers for another');
+});
+
+
+test('terminal history is observed and superseded once on an archive-only host', async t => {
+  let active = false;
+  let activeTaskId = '';
+  const adapter = fakeAdapter({
+    originAgent: async (id: string) => id === 'gone' ? null : { id, workspaceId: 'ws', title: '', archived: false },
+    observe: async (id: string) => ({ ...(await observeIdle('ws')(id)), active, labels: { 'northstar.task': id === 'active' ? activeTaskId : taskId } }),
+    archiveAgent: async () => assert.fail('an active thread must not be archived'),
+  });
+  const f = fixture(t, adapter);
+  f.store.setMeta('paused', false);
+  const initial = f.store.insert(submission(), HOST, 'handoff', 'a'.repeat(40));
+  const taskId = initial.id;
+  f.store.update(taskId, { phase: 'done', agentId: 'gone', resolution: { ...initial.resolution, mergedCommit: 'b'.repeat(40) } });
+  const at = new Date().toISOString();
+  f.store.putOperation(queueOperationSchema.parse({ id: 'a'.repeat(64), key: 'terminal-control', kind: 'task_control',
+    inputHash: 'b'.repeat(64), state: 'needs_attention', taskId, hostId: HOST, createdAt: at, attempts: 1,
+    effect: { kind: 'task_control', target: 'restart', intentAt: at, status: 'uncertain' } }));
+  const pass = () => f.engine.withHost(HOST, () => f.hostPass.run(HOST));
+  const first = await pass();
+  assert.ok(first.finishedCatchUp.has(taskId));
+  await catchUpFinishedTaskThreads(f.store, adapter, taskId);
+  assert.equal(f.store.threadArchiveEffect('gone', HOST)?.status, 'archived');
+  assert.equal(f.store.eventsAll(taskId).filter(event => event.kind === 'operation_superseded').length, 1);
+  assert.equal(f.store.eventsAll(taskId).filter(event => event.kind === 'thread_archive_observed').length, 1);
+  assert.equal(hostDependents(f.store, { id: HOST, kind: 'paseo', primary: true }).some(item => item.kind === 'effect'), false);
+  await pass();
+  await catchUpFinishedTaskThreads(f.store, adapter, taskId);
+  assert.equal(f.store.eventsAll(taskId).filter(event => event.kind === 'operation_superseded').length, 1);
+  assert.equal(f.store.eventsAll(taskId).filter(event => event.kind === 'thread_archive_observed').length, 1);
+
+  const other = f.store.insert(submission({ submissionId: 'active-thread' }), HOST, 'handoff', 'a'.repeat(40));
+  f.store.update(other.id, { phase: 'done', agentId: 'active', resolution: { ...other.resolution, mergedCommit: 'b'.repeat(40) } });
+  activeTaskId = other.id;
+  active = true;
+  await catchUpFinishedTaskThreads(f.store, adapter, other.id);
+  assert.equal(f.store.threadArchiveEffect('active', HOST), undefined);
+  assert.ok(f.store.finishedTasksOwingThreadCleanup(HOST, false).some(task => task.id === other.id));
 });

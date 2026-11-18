@@ -52,13 +52,20 @@ export function hostDependents(source: HostDependentsSource, host: { id: string;
   const effects: string[] = [];
   const states = LIVE_OPERATION_STATES.map(() => "?").join(",");
   for (const row of db.prepare(`SELECT kind, taskId FROM operations
-    WHERE state IN (${states}) AND json_extract(data,'$.hostId')=? ORDER BY rowid`).all(...LIVE_OPERATION_STATES, host.id))
+    WHERE state IN (${states}) AND json_extract(data,'$.hostId')=?
+      AND NOT (state='needs_attention' AND EXISTS (SELECT 1 FROM events
+        WHERE events.taskId=operations.taskId AND events.kind='operation_superseded' AND json_valid(events.detail)
+          AND json_extract(events.detail,'$.id')=operations.id
+          AND json_extract(events.detail,'$.inputHash')=operations.inputHash
+          AND json_extract(events.detail,'$.attempt')=json_extract(operations.data,'$.attempts')
+          AND json_extract(events.detail,'$.intentAt') IS json_extract(operations.data,'$.effect.intentAt')
+          AND json_type(events.detail,'$.evidence')='text')) ORDER BY rowid`).all(...LIVE_OPERATION_STATES, host.id))
     effects.push(`${String(row.kind).replace(/_/g, " ")}${row.taskId ? ` for ${ref(String(row.taskId))}` : ""}`);
   for (const row of db.prepare(`SELECT json_extract(value,'$.taskId') AS taskId FROM meta
     WHERE key LIKE 'runProcessCleanup:%' AND json_extract(value,'$.pending')=1 AND json_extract(value,'$.hostId')=?
     ORDER BY key`).all(host.id))
     effects.push(`process cleanup for ${ref(String(row.taskId))}`);
-  for (const task of source.finishedTasksOwingThreadCleanup(host.id, true))
+  for (const task of source.finishedTasksOwingThreadCleanup(host.id, host.kind === 't3code'))
     effects.push(`thread cleanup for ${ref(task.id)}`);
   if (effects.length) out.push({ kind: "effect", label: "unsettled effect", names: effects });
 

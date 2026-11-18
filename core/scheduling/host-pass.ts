@@ -7,6 +7,7 @@ import { catchUpFinishedTaskThreads, finishedThreadCleanupCatchUp } from '../wor
 import { removesThreads } from '../workspaces/thread-archive-effect';
 import { sanitizeHostFailureDetail, sanitizeHostFailureReason } from "../host";
 import { isTransportFailure } from "../../shared/transport";
+import { hasRecordedOperationSettlement } from '../recovery/recovery-effects';
 
 const REVIEW_PHASES = new Set(['awaiting_review', 'report_ready', 'reviewing', 'changes_requested', 'verifying', 'merging', 'syncing', 'closing', 'done']);
 const SUPPORT_ROLES = new Set(['reviewer', 'recovery', 'coordinator', 'decider', 'executor']);
@@ -170,6 +171,27 @@ export class HostPass {
       await this.step(host, 'settledRunProcesses', () => sweepSettledRunProcesses(this.store, host,
         { pendingOnly: !historical, readProcesses: () => this.adapter.hostProcessListing!() }));
     }
+    // Terminal tasks no longer have an owner step for these accepted controls.
+    // Keep the original operation and record only the superseded occurrence.
+    await this.step(host, 'settleTerminalOperations', () => {
+      const candidates = this.store.db.prepare(`SELECT operations.id FROM operations JOIN tasks ON tasks.id=operations.taskId
+        WHERE operations.state='needs_attention' AND operations.kind IN ('task_control','submit')
+          AND json_extract(operations.data,'$.hostId')=? AND json_extract(tasks.data,'$.phase') IN ('done','cancelled')
+        ORDER BY operations.rowid`).all(host);
+      let settled = 0;
+      for (const row of candidates) {
+        if (settled >= 25) break;
+        this.store.transaction(() => {
+          const operation = this.store.operation(String(row.id));
+          if (!operation || operation.state !== 'needs_attention' || !operation.taskId) return;
+          const task = this.store.task(operation.taskId);
+          if (!['done', 'cancelled'].includes(task.phase) || hasRecordedOperationSettlement(this.store, task, operation)) return;
+          this.store.event(task.id, 'operation_superseded', JSON.stringify({ id: operation.id, inputHash: operation.inputHash,
+            attempt: operation.attempts, intentAt: operation.effect?.intentAt, evidence: `task is ${task.phase}` }));
+          settled++;
+        });
+      }
+    });
     await this.step(host, 'reconcileReportedSettlements', () => this.adapter.reconcileReportedSettlements?.());
     await this.step(host, 'settleFinishedT3Threads', () => this.settleFinishedT3Threads(host));
     await this.step(host, 'surfaceWorkerRows', () => this.surfaceWorkerRows(host));
@@ -192,8 +214,8 @@ export class HostPass {
     await this.step(host, 'reconcileSettledThreads', () => this.adapter.reconcileSettledThreads?.());
     // Select directly from finished history, but never await cleanup in the
     // shared host pass. These tasks join the rotating, bounded task window.
-    if (!this.store.getMeta('paused') && removesThreads(this.adapter))
-      for (const task of finishedThreadCleanupCatchUp(this.store, host, true))
+    if (!this.store.getMeta('paused'))
+      for (const task of finishedThreadCleanupCatchUp(this.store, host, removesThreads(this.adapter)))
         result.finishedCatchUp.set(task.id, task);
     if (this.context.inventoryHostMatches(host)) result.inventory = observed;
     return result;

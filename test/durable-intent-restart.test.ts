@@ -370,9 +370,7 @@ test("brief_amendment_delivery_intent waits for a channel across a roll", async 
 });
 
 for (const removal of [true, false]) {
-  const skip = removal
-    ? false
-    : "The finished thread catch-up scan is limited to hosts that support deletion";
+  const skip = false;
   test(`thread_archive_intent on a finished ${removal ? "deletion-capable" : "archive-only"} host observes a lost reply`, async (t) => {
     const { store } = tempStore(t);
     store.setMeta("paused", false);

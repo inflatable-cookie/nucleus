@@ -3062,7 +3062,7 @@ after the task finishes.
 | `run_intent` | `RunReservationAdmission.admit` | `Observation.observe` performs the exact creation lookup. Lifecycle abandons an agentless reservation at terminal phase without a new launch. Terminal creation with unknown delivery still needs proof. | Agentless reservation settlement only |
 | `sibling_worktrees_intent` | `WorkspaceProvisioning.ensureSiblings` | The same provisioner checks recorded paths and pinned commits before adopting or creating a checkout. A terminal row with intent and no pins lacks a reader. | No, terminal cleanup reads pins |
 | `stalled_turn_stop_intent` | `StalledTurnStops` | Worker or run observation reconciles the recorded turn or accepts its authenticated completion. | No general terminal visit |
-| `thread_archive_intent` | `archiveFinishedThreads` and replacement archive writers | Thread cleanup observes the exact native identity. Terminal catch-up revisits deletion-capable hosts. Archive-only hosts lack that terminal catch-up. Exhausted matching retries can be rearmed through `retry_effect workspace_archive.<id>`. | Deletion-capable hosts only |
+| `thread_archive_intent` | `archiveFinishedThreads` and replacement archive writers | Thread cleanup observes the exact native identity. Terminal catch-up revisits archive-only and deletion-capable hosts, recording a direct observation of an already archived or absent thread. Exhausted matching retries can be rearmed through `retry_effect workspace_archive.<id>`. | Done and completed cancellation where supported |
 | `transient_provider_resume_intent` | `TransientResume` worker and run paths | Worker and run observation re-enter the provider resume path using the retained binding and bounded episode. A terminal row receives no continuation. | No |
 | `unused_workspace_archive_intent` | `archiveUnusedWorkspace` | `retry_effect workspace_archive.<id>` observes the catalog or re-proves local teardown. The duplicate retains its own evidence. | Owner action |
 | `workspace_archive_intent` | `ArchiveProof.archiveProvedWorkspace` and `TaskRemoval.removeTask` | Lifecycle uses `reconcileGoneWorkspace` and the existing archive proofs. An unreadable binding remains a named `retry_effect workspace_archive.<id>` observation. | Done, plus observation of an outstanding removal intent |
@@ -3115,7 +3115,7 @@ after the task finishes.
   support thread still owes deletion. Unknown deletion delivery is never resent,
   and only a proven pre-delivery failure remains retryable through the terminal
   lane; cleanup failure never blocks task closeout.
-- The sweep directly queries already-finished T3 tasks with outstanding thread
+- The sweep directly queries already-finished tasks with outstanding thread
   cleanup, rather than using the active-capacity index. A bounded rotating window
   schedules those tasks on their existing task lanes, so a slow cleanup cannot
   hold the host sweep and permanently pending candidates cannot starve later tasks.
@@ -3124,7 +3124,10 @@ after the task finishes.
   before the catch-up query therefore still has its completion record, and later
   sweeps do nothing once cleanup is confirmed.
 - Paseo keeps its existing archive behaviour for released support threads,
-  reviewer replacement and terminal cleanup.
+  reviewer replacement and terminal cleanup. Its finished-task catch-up also
+  records a direct archived or absent observation, including legacy threads with
+  no prior intent. Terminal task control and submit operations in attention are
+  superseded in bounded host passes, preserving their occurrence history.
 - A done task's workspace is archived with every thread in it (Tom, 2026-09-27);
   only a running thread (active turn or pending permission) makes it wait. No
   unreleased task run may remain. Uncommitted files, unexpected or unpublished
