@@ -186,6 +186,8 @@ export class EpisodeRestarts {
     if (this.adapter.workspaceAvailable && !await this.adapter.workspaceAvailable(task.workspaceId!)) throw Error('Absent resolution-run recovery requires the retained task workspace');
     if (!this.resolution.adapter.findRunAgents) throw Error('Run identity lookup is unavailable');
     const found = await this.resolution.adapter.findRunAgents(run);
+    // A fresh run needs creation capability; refuse before anything is settled.
+    if (restart && !found.length && !this.resolution.adapter.createRun) throw Error('Agent creation is unavailable; uncertain run restart refused');
     if (restart && !found.length) {
       const latest = this.store.task(task.id), wait = this.engine.dispatchWaitsFor(latest);
       // A newly placed hold defers intent, never carries this inventory read
@@ -207,8 +209,6 @@ export class EpisodeRestarts {
     if (restart && !found.length) {
       const wait = this.engine.dispatchWaitsFor(check());
       if (wait) return this.engine.deferOwnerVerb(check(), restart.input, wait, { runId: run.id });
-      await this.resolution.admitUncertainRunRestart(check(), run.id, settling);
-      admitLocal();
     }
     return async () => {
       const current = check();
@@ -228,7 +228,8 @@ export class EpisodeRestarts {
       if (restart) {
         const wait = this.engine.dispatchWaitsFor(current);
         if (wait) return this.engine.deferOwnerVerb(current, restart.input, wait, { runId: run.id });
-        return this.resolution.restartUncertainRun(current, run.id, restart.instruction, input.settleFences);
+        // The lookup above read zero matches: the creation is absent, so a fresh run starts from the current route.
+        return this.resolution.replaceAbsentRunFromRoute(current, run.id, restart.instruction, input.settleFences);
       }
       throw Error('Restart authorization is required');
     };

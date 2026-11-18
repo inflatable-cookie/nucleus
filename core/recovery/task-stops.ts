@@ -386,6 +386,16 @@ export class TaskStops {
     if (!this.store.events(current.id).some(event => event.kind === kind && event.detail === detail)) this.store.event(current.id, kind, detail);
     return true;
   }
+  /**
+   * A transport wait is a reading of the host at one moment. Once the host is
+   * back, the pass that sees it clears it, so the task's next step is decided
+   * afresh rather than shown under a stale "Daemon transport unavailable" reason.
+   */
+  clearTransportWait(t: Task): Task {
+    const current = this.store.task(t.id);
+    if (current.resolution.stop?.reason !== 'external_unavailable' || !current.reason.startsWith('Daemon transport unavailable')) return current;
+    return this.resolution.update(current, { stop: null }, { reason: TASK_PROGRESSING_REASON }, 'transport_wait_cleared', `Host ${current.hostId ?? 'unknown'} is back; the wait is re-evaluated`);
+  }
   /** A host outage must not replace a retained task decision with a retry instruction. */
   transportDeferred(t: Task, error: unknown) {
     // A stopping owner closes its own Paseo client before its in-flight work quiesces

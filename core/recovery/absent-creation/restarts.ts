@@ -1,18 +1,15 @@
-import { randomBytes } from 'node:crypto';
-import { isDeepStrictEqual } from 'node:util';
 import { type Run, type Task } from '../../../shared/contracts';
 import { now } from '../../store/store';
-import { ABSENT_WORKER_REASON, PRE_AGENT_LAUNCH_FAILURE_REASON, ABSENT_WORKER_REPLACEMENT_REASON, ABSENT_RESOLUTION_REASON, resolutionCreationRoles, coordinative } from '../task-reasons';
+import { ABSENT_WORKER_REASON, PRE_AGENT_LAUNCH_FAILURE_REASON, ABSENT_WORKER_REPLACEMENT_REASON, ABSENT_RESOLUTION_REASON, resolutionCreationRoles } from '../task-reasons';
 import { isDispositionActive, isDispositionComplete } from '../../../shared/contracts';
 import { isPiSettingsLockFailure } from '../exhaustion';
-import { runFenceRefusal, runSettlementFence, DurableFenceRefusal } from '../../intake/run-settlement';
-import { ownerReviewContext } from '../../review/owner-review-context';
 import { taskPrNumber } from '../../forge/index';
 import type { Resolution } from '../../resolution';
 import { absentReplacementRecord, absentReplacementSpent } from './budget';
+import { provenAbsentCreation } from './decisions';
 
 /** Recreate proven-absent runs and workers under their same identities. */
-export type AbsentRestartsContext = Pick<Resolution, 'adapter' | 'attention' | 'ensureIncident' | 'graceMs' | 'paused' | 'recordIncidentEvent' | 'resolveIncident' | 'resumeWorkerContinuation' | 'settleVerbFences' | 'store' | 'update'>;
+export type AbsentRestartsContext = Pick<Resolution, 'adapter' | 'attention' | 'ensureIncident' | 'graceMs' | 'paused' | 'recordIncidentEvent' | 'resolveIncident' | 'resumeWorkerContinuation' | 'settleVerbFences' | 'store' | 'update' | 'waiting'>;
 
 /**
  * The resolution-side half of absence: admit and replay a proven-absent worker
@@ -81,67 +78,44 @@ export class AbsentRestarts {
   }
 
   /**
-   * Spec 050 `restart`: recreate one proven-absent resolution run under the SAME
-   * run ID. The caller has already completed the inventory lookup; this reserves
-   * fresh, valid creation identities for the existing run and calls the launcher
-   * once, so no second run is minted.
+   * Spec 050 `restart` on a proven-absent resolution run: settle the run as
+   * released history and let the ordinary launch create a fresh run from the
+   * role's current route. The recorded creation payload is never replayed, so a
+   * profile that changed provider since the intent is what launches. The new
+   * run has its own identity and creation intent. The caller has already run the
+   * exact lookup and read it as zero matches.
    */
-  async admitUncertainRunRestart(t:Task,runId:string,settleRunIds:string[]=[]):Promise<void>{
-    this.admitAbsentResolution(t,runId,settleRunIds);
-    if(this.resolution.paused())throw Error('Nucleus is paused; uncertain run restart is deferred');
-    if(!this.adapter.createRun)throw Error('Agent creation is unavailable; uncertain run restart refused');
+  replaceAbsentRunFromRoute(t: Task, runId: string, instruction: string | null, settleFences?: { detail: string; runIds: string[]; displacedRunIds?: string[] }): Task {
+    if (this.resolution.paused()) throw Error('Nucleus is paused; absent run replacement is deferred');
+    const settling = settleFences ? [...settleFences.runIds, ...(settleFences.displacedRunIds ?? [])] : [];
+    return this.store.transaction(() => {
+      const current = this.store.task(t.id), run = this.store.run(runId);
+      if (current.version !== t.version || current.resolution.currentRunId !== runId || !run || run.released || run.agentId || run.status !== 'uncertain')
+        throw Error('Absent run changed during restart; refresh before retrying');
+      this.admitAbsentResolution(current, runId, settling);
+      if (settleFences) this.resolution.settleVerbFences(t.id, settleFences);
+      this.releaseAbsentRun(current, runId, `restart ${run.role}${instruction ? `: ${instruction.slice(0, 80)}` : ''}`);
+      const phase = run.role === 'reviewer' ? 'awaiting_review' : run.role === 'executor' ? (run.proofExecution?.returnPhase ?? 'awaiting_review') : 'closing';
+      return this.resolution.update(this.store.task(t.id), { currentRunId: null, attention: false },
+        { phase, reason: `Absent ${run.role} creation settled; a fresh ${run.role} run launches from the current route` },
+        'absent_creation_routed', `${run.role}:${run.id}`);
+    });
   }
 
-  async restartUncertainRun(t:Task,runId:string,instruction:string|null,settleFences?:{detail:string;runIds:string[];displacedRunIds?:string[]}):Promise<Task>{
-    let run=this.store.run(runId)!;
-    await this.admitUncertainRunRestart(t,runId,settleFences?[...settleFences.runIds,...(settleFences.displacedRunIds??[])]:[]);
-    const recheck = () => {
-      const task=this.store.task(t.id), latest=this.store.run(runId);
-      if(task.version!==t.version||task.resolution.currentRunId!==runId||!isDeepStrictEqual(latest,run))
-        throw Error('Uncertain run changed during restart; inspect the recorded creation outcome before retrying');
-      this.admitAbsentResolution(task,runId,settleFences?[...settleFences.runIds,...(settleFences.displacedRunIds??[])]:[]);
-      for(const id of [...(settleFences?.runIds??[]),...(settleFences?.displacedRunIds??[])]){
-        const settling=this.store.run(id);
-        const why=settling&&!settling.released?runSettlementFence({store:this.store,task},settling):null;
-        if(why)throw new DurableFenceRefusal(runFenceRefusal(settling!,why));
-      }
-      if(this.resolution.paused())throw Error('Nucleus is paused; uncertain run restart is deferred');
-    };
-    recheck();
-    const token=randomBytes(32).toString('hex');
-    // Review #534: the recreated agent's credential is durable before the agent
-    // exists, so a crash after creation leaves an agent whose callbacks still
-    // authenticate once exact lookup binds it (the launcher owns credentials).
-    this.store.transaction(()=>{
-      this.store.deleteCredential(run!.id);
-      this.store.setCredential(run!.id,token);
-    });
-    let created:{id:string;workspaceId:string|null};
-    try{
-      const fresh = this.store.task(t.id), savedRun = this.store.run(run.id)!;
-      created=await this.adapter.createRun!(fresh,savedRun,token,null,ownerReviewContext(this.store,fresh,savedRun));
-    }catch(error){
-      this.resolution.ensureIncident(this.store.task(t.id),this.store.run(run.id)!,ABSENT_RESOLUTION_REASON,'exact_lookup');
-      throw error;
-    }
-    if(created.workspaceId!==run.workspaceId)throw Error('Recreated run returned in the wrong workspace');
-    const current=this.store.task(t.id);
-    return this.store.transaction(()=>{
-      recheck();
-      const latest=this.store.run(run.id)!;
-      if(latest.released||latest.agentId||latest.completion)throw Error('Uncertain run changed during restart; no second run was created');
-      // Spec 050 (#3569): the restart settles its armed fences atomically with
-      // the recreation; a refusal inside rolls both back.
-      if(settleFences)this.resolution.settleVerbFences(t.id,settleFences);
-      const settledTask=this.store.task(t.id);
-      // The recreated agent authenticates on the token persisted before creation.
-      this.store.putRun({...latest,agentId:created.id,status:'running',active:true});
-      const updated=this.resolution.update(settledTask,{attention:false,...(latest.role==='reviewer'?{reviewerAgentId:created.id,reviewerProfile:latest.profile}:{})},
-        {...(coordinative(latest)&&current.coordinatorGeneration===latest.generation&&!current.coordinatorAgentId?{coordinatorAgentId:created.id}:{}),
-          reason:`Restarted ${latest.role} run ${latest.id} under the same run ID`},'absent_creation_restarted',`${latest.id}/${created.id}${instruction?` instruction ${instruction.slice(0,80)}`:''}`);
-      this.resolution.resolveIncident(this.store.task(t.id),latest.id,`Restart recreated ${latest.role} run ${latest.id} under the same run ID`);
-      return this.store.task(updated.id);
-    });
+  /**
+   * Release one unreleased, agentless uncertain creation as settled history:
+   * its credential is revoked so a late callback cannot authenticate, the run is
+   * superseded and released, and its incident resolves. Nothing is archived or
+   * stopped, because no thread exists. The caller proves the absence first; the
+   * route and restart paths both do. Writes only inside the caller's transaction.
+   */
+  releaseAbsentRun(t: Task, runId: string, detail: string): void {
+    const run = this.store.run(runId);
+    if (!run || run.released || run.agentId || run.status !== 'uncertain') throw Error('Only an uncertain creation with no agent can be released as absent');
+    this.store.deleteCredential(run.id);
+    this.store.putRun({ ...run, status: 'superseded', released: true, active: false, absentProvenAt: run.absentProvenAt ?? now() });
+    this.store.event(t.id, 'absent_creation_released', `${run.role}:${run.id}: ${detail}`);
+    this.resolution.resolveIncident(this.store.task(t.id), run.id, `Absent ${run.role} creation released: ${detail}`);
   }
 
   /**
@@ -151,12 +125,18 @@ export class AbsentRestarts {
    */
   async reconcileAbsentCreation(t: Task, run: Run, found: { id: string; workspaceId: string | null }[]) {
     if (isDispositionActive(t) || isDispositionComplete(t)) return;
+    // A creation already proved absent is settled: nothing re-looks it up, reopens its incident or escalates again.
+    if (provenAbsentCreation(this.store.run(run.id) ?? run)) return;
     const incident = this.resolution.ensureIncident(t, run, ABSENT_RESOLUTION_REASON, 'exact_lookup');
     if (Date.now() - Date.parse(incident.createdAt) < this.graceMs) return;
     const current = this.store.task(t.id);
-    // The replacement budget is durable: one recorded same-role replacement means the next absence escalates.
+    // The replacement budget is durable: one recorded same-role replacement means the next absence settles as absent for the owner.
     if (absentReplacementSpent(this.store.events(t.id), run.role)) {
-      this.resolution.attention(current, `A replacement ${run.role} creation also proved absent after an exact lookup; coordinator attention required`);
+      if (found.length) {
+        this.resolution.attention(current, `${run.role} creation lookup found ${found.length} matching agents; no resource was created`);
+        return;
+      }
+      this.settleAbsentProof(current, run);
       return;
     }
     if (found.length > 1) {
@@ -168,6 +148,25 @@ export class AbsentRestarts {
     } catch (error) {
       this.resolution.attention(this.store.task(t.id), `Absent ${run.role} creation could not be replaced safely: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  /**
+   * Record that an exact lookup proved this uncertain creation produced no agent,
+   * once the replacement budget is spent. The run keeps its lease until an owner
+   * control releases it, but observation stops looking it up and the effect no
+   * longer blocks other verbs. The task names the owner controls that replace it.
+   */
+  settleAbsentProof(t: Task, run: Run): void {
+    this.store.transaction(() => {
+      const latest = this.store.run(run.id);
+      if (!latest || latest.released || latest.agentId || latest.absentProvenAt) return;
+      this.store.putRun({ ...latest, absentProvenAt: now() });
+      this.store.event(t.id, 'absent_creation_proven', `${run.role}:${run.id}`);
+    });
+    // The exact-lookup window has ended with an absence: the incident records that and stops asking for a retry.
+    this.resolution.resolveIncident(this.store.task(t.id), run.id, 'Exact lookup proved no agent; the creation settled as absent');
+    // A wait, not attention: the coordinator's own creation runs on the same host that never answered, so the owner replaces this run instead.
+    this.resolution.waiting(this.store.task(t.id), `A replacement ${run.role} creation also proved absent after an exact lookup; route now or restart fresh replaces it from the current route`, 'lifecycle', { suggestedVerbs: ['route', 'restart'] });
   }
 
   /** Atomically revoke one proven-absent callback and issue exactly one same-role replacement. */

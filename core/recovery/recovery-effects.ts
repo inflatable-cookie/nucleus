@@ -4,6 +4,7 @@ import type { VerifiedEnclosingOperation } from '../planning/enclosing-operation
 import { classifyReviewPublication, reviewPublicationKey, type ReviewPublicationClassification } from '../review/review-publication';
 import { reviewCheckpointRefusal } from '../review/review-continuation';
 import type { Store } from '../store/store';
+import { provenAbsentCreation } from './absent-creation/decisions';
 
 /**
  * Spec 012/016/033/039/049: one read-only projection of the durable recovery
@@ -183,7 +184,7 @@ export function recoveryEffects(store: Store, task: Task, options: RecoveryEffec
     // same proof every other checkpoint gate uses), including for a released
     // historical run. Its individual sends are judged by their own
     // `review-delivery` rows below.
-    if (include('run-delivery') && run.status === 'uncertain') {
+    if (include('run-delivery') && run.status === 'uncertain' && !provenAbsentCreation(run)) {
       const checkpoint = run.reviewCheckpoints?.at(-1);
       const creationProven = Boolean(run.agentId) && Boolean(checkpoint)
         && reviewCheckpointRefusal(store, task, run, checkpoint!) === null;

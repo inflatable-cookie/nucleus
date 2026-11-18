@@ -122,12 +122,13 @@ test('a throw at sendRun on a retained thread leaves the intent, its credential 
   } finally { await f.close(); }
 });
 
-test('a throw at createRun leaves the intent and its credential', async () => {
+test('a throw at createRun leaves the intent and its credential, awaiting exact lookup', async () => {
   const f = fixture();
   try {
     const { run, context } = reserved(f);
     f.adapter.createRun = async () => { throw new Error('boom at createRun'); };
-    await assert.rejects(() => f.engine.resolution.deliverLaunchRun(f.current(), 'reviewer', context), /boom at createRun/);
+    // An uncertain resolution creation waits for its exact lookup; it is not a thrown operator stop.
+    await f.engine.resolution.deliverLaunchRun(f.current(), 'reviewer', context);
     assert.equal(f.store.run(run.id)?.status, 'uncertain');
     assert.ok(credential(f.store, run.id));
     assert.equal(f.current().resolution.currentRunId, run.id);

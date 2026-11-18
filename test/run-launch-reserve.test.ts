@@ -100,7 +100,8 @@ test('a throw at createRun after reservation leaves the run_intent record', asyn
   const f = fixture();
   try {
     f.adapter.createRun = async () => { throw new Error('boom at createRun'); };
-    await assert.rejects(() => f.engine.resolution.launch(f.current(), 'reviewer'), /boom at createRun/);
+    // An uncertain resolution creation waits for its exact lookup; launch resolves with the intent recorded.
+    await f.engine.resolution.launch(f.current(), 'reviewer');
     const { events, run, credential } = intentRecord(f.store, f.task.id);
     assert.equal(events.length, 1);
     assert.ok(run);

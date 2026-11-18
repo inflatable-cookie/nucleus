@@ -1,3 +1,4 @@
+import { staleWorkerIntent, releaseStaleWorkerIntent } from '../recovery/absent-creation/stale-worker';
 import type { Resolution } from '../resolution';
 import type { Profile, Task } from "../../shared/contracts";
 import { WORKER_REPLACEMENT_CEILING, workerExclusionFor, workerProfileIsExcluded } from "../../shared/contracts";
@@ -219,13 +220,39 @@ function planWorkerFailover(task: Task, state: AgentObservation, erroredWithoutT
  * tests replace the adapter.
  */
 export type WorkerFailoverContext = Pick<Engine, 'activeHostId' | 'adapter' | 'host' | 'launchAgent' | 'note' | 'profileCatalogKnown' | 'profiles' | 'workerProviderUnavailable' | 'stopped' | 'store' | 'taskHostAvailable' | 'withHost'>
-  & { readonly resolution: Pick<Resolution, 'recordStop' | 'resumeTransientProviderThread' | 'resumeTransientWorker' | 'retainedWorkerProfileIssue' | 'suppressAutomaticRetry' | 'transportDeferred' | 'waiting'> };
+  & { readonly resolution: Pick<Resolution, 'clearTransportWait' | 'graceMs' | 'recordStop' | 'resumeTransientProviderThread' | 'resumeTransientWorker' | 'retainedWorkerProfileIssue' | 'suppressAutomaticRetry' | 'transportDeferred' | 'waiting'> };
 
 export class WorkerFailover {
   constructor(readonly engine: WorkerFailoverContext) {}
   get store() { return this.engine.store; }
   get adapter() { return this.engine.adapter; }
   get resolution() { return this.engine.resolution; }
+  /**
+   * Settle a worker creation intent that never bound an agent, once a route or
+   * restart armed a replacement over it. Exact lookup decides: no agent releases
+   * the intent so the armed replacement launches from the current route; one
+   * matching agent binds to the task; anything else waits or escalates. A creation
+   * younger than the grace window is still the in-flight launch's to settle.
+   */
+  private async settleStaleWorkerIntent(task: Task): Promise<void> {
+    const intent = this.store.eventsAll(task.id).filter(event => event.kind === 'agent_intent' && event.detail === task.runId).at(-1);
+    if (intent && Date.now() - Date.parse(intent.at) < this.resolution.graceMs) return;
+    let found;
+    try { found = await this.adapter.findAgents(task); }
+    catch (error) { if (isTransportFailure(error)) { this.resolution.transportDeferred(this.store.task(task.id), error); return; } throw error; }
+    const latest = this.store.task(task.id);
+    if (!staleWorkerIntent(latest) || latest.version !== task.version) return;
+    if (found.length === 0) {
+      this.store.transaction(() => releaseStaleWorkerIntent(this.store, latest, 'exact lookup proved no worker; the armed replacement launches from the current route'));
+      return;
+    }
+    if (found.length === 1 && found[0]!.workspaceId === task.workspaceId) {
+      this.store.update(task.id, { agentId: found[0]!.id, phase: 'working', reason: 'Recovered worker identity' }, 'agent_recovered', found[0]!.id);
+      return;
+    }
+    this.engine.note(task.id, `Worker creation lookup is ambiguous (${found.length} matching agents); no resource was created`, 'operator_needed', 'needs_attention');
+  }
+
   async recoverExhaustedWorkers(scopedHost?: string): Promise<void> {
     if (!scopedHost) {
       const hosts = new Set(this.store.activeCapacityTasks().flatMap(task => task.hostId ? [task.hostId] : []));
@@ -236,6 +263,13 @@ export class WorkerFailover {
       if (startsNoRuns(this.store, this.engine.stopped)) return;
       if (original.hostId !== scopedHost) continue;
       if (!this.engine.taskHostAvailable(original)) continue;
+      // The host is back: a host-unavailable wait recorded by an earlier pass is re-evaluated here, not kept as a stale reason.
+      this.resolution.clearTransportWait(original);
+      // A route-armed replacement over a stale creation intent cannot be consumed until an exact lookup settles that intent.
+      if (staleWorkerIntent(original) && original.failoverReason && original.phase !== 'queued') {
+        await this.settleStaleWorkerIntent(original);
+        continue;
+      }
       // An owner `move to=work` for a gone author is a replacement with no old
       // agent: nothing runs, so there is nothing to observe or retire.
       const absentAuthor = !original.agentId && !original.agentIntent && Boolean(original.failoverReason && original.workspaceId && original.profile);

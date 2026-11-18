@@ -238,7 +238,7 @@ export class Resolution {
     this, ['adapter', 'assignIntegrationTurn', 'attention', 'environmentDeferred', 'executionLease', 'gitTransientFailure', 'hasEarlierIntegrationTurn', 'host', 'openPlannerEscalation', 'paused', 'resolveIncident', 'reviewRequired', 'store', 'transportDeferred', 'update', 'waiting'],
     { recovery: portsContext(this.recovery, ['releaseWithNotAppliedAction', 'settledEpisodeChanges']) },
   ));
-  readonly absentRestarts = new AbsentRestarts(portsContext(this, ['adapter', 'attention', 'ensureIncident', 'graceMs', 'paused', 'recordIncidentEvent', 'resolveIncident', 'resumeWorkerContinuation', 'settleVerbFences', 'store', 'update']));
+  readonly absentRestarts = new AbsentRestarts(portsContext(this, ['adapter', 'attention', 'ensureIncident', 'graceMs', 'paused', 'recordIncidentEvent', 'resolveIncident', 'resumeWorkerContinuation', 'settleVerbFences', 'store', 'update', 'waiting']));
   readonly observation = new Observation(portsContext(this, ['adapter', 'attention', 'environmentDeferred', 'extendCallbackReminder', 'graceMs', 'heavyRunAlive', 'host', 'hostAvailable', 'inventoryHostMatches', 'launchingRuns', 'onTaskHost', 'orphanRuns', 'paused', 'reconcileAbsentCreation', 'reconcileStalledTurnStop', 'recoverRefusedReviewer', 'remindStoppedRun', 'resolveIncident', 'resumeTransientProviderThread', 'retainedProfileIssue', 'stalls', 'stopped', 'store', 'supersedeOrphans', 'transportDeferred', 'update', 'waiting', 'withHost']));
   readonly delegation = new Delegation(this);
   readonly reviewerConsult = new ReviewerConsult(this);
@@ -443,6 +443,7 @@ export class Resolution {
   /** Spec 033: an opted-in repository requires the reviewer's exact-head approval even when the submission skipped review. */
   reviewRequired(t: Task): boolean { return reviewRequiredForTask(this.store, t); }
   transportDeferred(t: Task, error: unknown) { return this.taskStops.transportDeferred(t, error); }
+  clearTransportWait(t: Task): Task { return this.taskStops.clearTransportWait(t); }
   environmentDeferred(t: Task, error: unknown) { return this.taskStops.environmentDeferred(t, error); }
 
   /** Queue #705: a written closeout frees the repository's turn at once, so the engine can wake the next holder itself. */
@@ -488,14 +489,10 @@ export class Resolution {
   resumeAbsentWorker(t:Task,instruction:string,authorized=false){ return this.absentRestarts.resumeAbsentWorker(t, instruction, authorized); }
   absentResolutionRun(t:Task){ return this.absentRestarts.absentResolutionRun(t); }
   admitAbsentResolution(t:Task,runId:string,settleRunIds:string[]=[]): Run { return this.absentRestarts.admitAbsentResolution(t, runId, settleRunIds); }
-  /**
-   * Spec 050 `restart`: recreate one proven-absent resolution run under the SAME
-   * run ID. The caller has already completed the inventory lookup; this reserves
-   * fresh, valid creation identities for the existing run and calls the launcher
-   * once, so no second run is minted.
-   */
-  admitUncertainRunRestart(t:Task,runId:string,settleRunIds:string[]=[]):Promise<void>{ return this.absentRestarts.admitUncertainRunRestart(t, runId, settleRunIds); }
-  restartUncertainRun(t:Task,runId:string,instruction:string|null,settleFences?:{detail:string;runIds:string[];displacedRunIds?:string[]}):Promise<Task>{ return this.absentRestarts.restartUncertainRun(t, runId, instruction, settleFences); }
+  /** Spec 050 `restart` of a proven-absent resolution run: a fresh run from the current route. */
+  replaceAbsentRunFromRoute(t:Task,runId:string,instruction:string|null,settleFences?:{detail:string;runIds:string[];displacedRunIds?:string[]}):Task{ return this.absentRestarts.replaceAbsentRunFromRoute(t, runId, instruction, settleFences); }
+  releaseAbsentRun(t:Task,runId:string,detail:string):void{ return this.absentRestarts.releaseAbsentRun(t, runId, detail); }
+  settleAbsentProof(t:Task,run:Run):void{ return this.absentRestarts.settleAbsentProof(t, run); }
   recordBlockedPrIdentity(t: Task, prNumber: number, source: string): Promise<Task> {
     return this.prAdoption.recordBlockedPrIdentity(t, prNumber, source);
   }

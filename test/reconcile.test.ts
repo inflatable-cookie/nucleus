@@ -15,6 +15,10 @@ import { deriveTaskTelemetry, telemetrySnapshot } from '../core/telemetry/teleme
 import { REPOSITORY_CONTENTION_GRACE_MS } from '../core/scheduling/repository-contention';
 import { stepEngine } from './support/engine-step';
 import { taskStopRecord } from '../shared/task-stop';
+import { HostCallAbandonedError } from '../core/host/errors';
+import { collectOwnerVerbFacts, ownerVerbViews } from '../core/verbs/owner-verbs';
+import { blockingRecoveryEffects } from '../core/recovery/recovery-effects';
+import { provenAbsentCreation } from '../core/recovery/absent-creation/decisions';
 
 const head = 'a'.repeat(40), base = 'b'.repeat(40), merged = 'c'.repeat(40);
 
@@ -717,5 +721,143 @@ test('terminal tasks keep telemetry attribution while skipping routine reconcili
     assert.equal(telemetry.currentStage, 'complete');
     const snapshot = telemetrySnapshot(f.store, { window: 'all' });
     assert.ok(snapshot.groups[0].taskCount >= 2);
+  } finally { await f.close(); }
+});
+
+// A replacement-budget-spent absence: the reviewer creation never answers, its
+// exact lookup finds nothing, and the second absence settles as absent.
+type Fixture = ReturnType<typeof fixture>;
+const OWNER = 'owner-thread';
+function ageIncident(f: Fixture) {
+  const task = f.current();
+  f.store.update(task.id, { resolution: { ...task.resolution, incident: { ...task.resolution.incident!, createdAt: new Date(Date.now() - 100_000).toISOString() } } });
+}
+function addProfile(f: Fixture, extra: Profile, group: string, role: 'reviewer' | 'worker') {
+  const pool = f.store.pool();
+  f.store.setMeta('pool', [...pool, { profileId: extra.id, enabled: true, group, roles: [role], weight: 1, scopes: ['general'] }]);
+  f.engine.profiles = [...f.engine.profiles.filter(p => p.id !== extra.id), extra];
+  const listed = f.adapter.profiles!;
+  f.adapter.profiles = async () => [...(await listed()).filter(p => p.id !== extra.id), extra];
+}
+async function uncertainReviewerAbsence(f: Fixture, failure: () => Error) {
+  f.plantReview();
+  const create = f.adapter.createRun!;
+  const attempts: string[] = [];
+  f.adapter.createRun = async (_t, r) => { attempts.push(r.id); throw failure(); };
+  await f.engine.wake();
+  const first = f.run();
+  ageIncident(f); await f.engine.wake(); await f.engine.wake();
+  const second = f.run();
+  ageIncident(f); await f.engine.wake(); await f.engine.wake();
+  return { create, attempts, first, second };
+}
+
+test('a proven-absent reviewer creation settles absent, is never resent, and stops blocking owner verbs', async () => {
+  const f = fixture(50_000); try {
+    const { attempts, first, second } = await uncertainReviewerAbsence(f, () => new HostCallAbandonedError({ call: 'control', holder: 'createRun', ageMs: 60_000, deadlineMs: 60_000 }));
+    assert.equal(f.store.run(first.id)?.released, true, 'the first absence is replaced once');
+    assert.equal(f.store.run(second.id)?.status, 'uncertain');
+    assert.equal(f.store.run(second.id)?.agentId, null);
+    assert.ok(provenAbsentCreation(f.store.run(second.id)!), 'the second absence is recorded as absent');
+    assert.equal(attempts.filter(id => id === second.id).length, 1, 'the absent creation is never resent');
+    assert.equal(attempts.filter(id => id === first.id).length, 1);
+    assert.equal(blockingRecoveryEffects(f.store, f.current()).some(effect => effect.kind === 'run-delivery'), false);
+    assert.equal(f.current().resolution.attention, false, 'no coordinator is engaged for the absence');
+    assert.deepEqual(f.current().resolution.stop?.suggestedVerbs, ['route', 'restart'], 'the owner replaces it with route or restart');
+    await f.engine.wake(); await f.engine.wake();
+    assert.equal(f.store.run(second.id)?.released, false, 'observation does not look the absent run up again');
+  } finally { await f.close(); }
+});
+
+test('route now on a proven-absent reviewer creation launches one fresh run on the named profile, with no reopened incident', async () => {
+  const f = fixture(50_000); try {
+    const { create, second } = await uncertainReviewerAbsence(f, () => new Error('Transport lost'));
+    const pi = profile('reviewer-pi', 'reviewer-pi', { provider: 'pi' });
+    addProfile(f, pi, 'review-pi', 'reviewer');
+    f.adapter.createRun = create;
+    await f.engine.performTaskControl({ taskId: f.task.id, version: f.current().version, action: 'route', role: 'reviewer', profileId: pi.id, now: true, reason: 'Owner route', caller: OWNER });
+    assert.equal(f.store.run(second.id)?.released, true);
+    await f.engine.wake();
+    const fresh = f.run();
+    assert.equal(fresh.role, 'reviewer'); assert.notEqual(fresh.id, second.id); assert.equal(fresh.profile?.id, pi.id);
+    assert.equal(f.store.run(second.id)?.status, 'superseded');
+    const incident = f.current().resolution.incident;
+    assert.ok(!incident || incident.runId !== second.id || incident.status === 'resolved', 'the old run incident is not reopened');
+    assert.equal(f.current().resolution.attention, false);
+  } finally { await f.close(); }
+});
+
+test('restart fresh on a proven-absent reviewer creation creates with the profile current provider, not the recorded one', async () => {
+  const f = fixture(50_000); try {
+    const opencode = profile('reviewer', 'reviewer', { provider: 'opencode' });
+    f.engine.profiles = f.engine.profiles.map(p => p.id === 'reviewer' ? opencode : p);
+    const listed = f.adapter.profiles!;
+    f.adapter.profiles = async () => (await listed()).map(p => p.id === 'reviewer' ? opencode : p);
+    const { create, second } = await uncertainReviewerAbsence(f, () => new Error('Transport lost'));
+    assert.equal(f.store.run(second.id)?.profile?.provider, 'opencode', 'the recorded creation carries the old provider');
+    const pi = { ...opencode, provider: 'pi' };
+    f.engine.profiles = f.engine.profiles.map(p => p.id === 'reviewer' ? pi : p);
+    f.adapter.profiles = async () => (await listed()).map(p => p.id === 'reviewer' ? pi : p);
+    f.adapter.createRun = create;
+    await f.engine.performTaskControl({ taskId: f.task.id, version: f.current().version, action: 'route', role: 'reviewer', profileId: 'reviewer', reason: 'Owner route', caller: OWNER });
+    await f.engine.performTaskControl({ taskId: f.task.id, version: f.current().version, action: 'restart', role: 'reviewer', fresh: true, reason: 'Owner restart', caller: OWNER });
+    await f.engine.wake();
+    const fresh = f.run();
+    assert.notEqual(fresh.id, second.id, 'a fresh run identity');
+    assert.equal(fresh.profile?.provider, 'pi');
+  } finally { await f.close(); }
+});
+
+test('next omits retry_effect for a run delivery that settled absent', async () => {
+  const f = fixture(50_000); try {
+    await uncertainReviewerAbsence(f, () => new Error('Transport lost'));
+    const views = ownerVerbViews(collectOwnerVerbFacts(f.store, f.current()));
+    assert.equal(views.some(view => view.verb === 'retry_effect' && view.available === true), false);
+  } finally { await f.close(); }
+});
+
+/** The barge#066 stored shape: a worker creation intent with no agent, on a changes_requested task with no PR. */
+function staleWorkerTask(f: Fixture) {
+  f.store.update(f.task.id, { phase: 'changes_requested', agentId: null, agentIntent: true, runId: 'stale-worker-run', prHead: null, prUrl: null, completion: null, reason: 'Changes: stale creation' });
+  return f.current();
+}
+
+test('a route armed over a stale worker creation intent launches a fresh worker from the current route after exact lookup', async () => {
+  const f = fixture(); try {
+    const author2 = profile('author-2');
+    addProfile(f, author2, 'author-2', 'worker');
+    const launched: string[] = [];
+    const createAgent = f.adapter.createAgent!;
+    f.adapter.createAgent = async (t, token, prompt, legacy) => { launched.push(t.profile?.id ?? ''); return createAgent(t, token, prompt, legacy); };
+    staleWorkerTask(f);
+    await f.engine.performTaskControl({ taskId: f.task.id, version: f.current().version, action: 'route', role: 'worker', profileId: author2.id, reason: 'Owner route', caller: OWNER });
+    await f.engine.wake(); await f.engine.wake();
+    const task = f.current();
+    assert.equal(task.profile?.id, author2.id);
+    assert.notEqual(task.runId, 'stale-worker-run');
+    assert.equal(task.agentId, `agent-${task.runId}`, 'the fresh worker is created');
+    assert.deepEqual(launched, [author2.id]);
+  } finally { await f.close(); }
+});
+
+test('a host-unavailable transport wait is re-evaluated once the host is back, not kept as a stale reason', async () => {
+  const f = fixture(); try {
+    f.store.update(f.task.id, { phase: 'changes_requested', reason: 'Changes: waiting on host' });
+    f.engine.resolution.transportDeferred(f.current(), new Error('host srv_1 is unavailable'));
+    assert.equal(f.current().resolution.stop?.reason, 'external_unavailable');
+    await f.engine.wake();
+    assert.notEqual(f.current().resolution.stop?.reason, 'external_unavailable');
+    assert.doesNotMatch(f.current().reason, /^Daemon transport unavailable/);
+  } finally { await f.close(); }
+});
+
+test('restart role=worker on a stale creation intent launches a fresh worker from the current route', async () => {
+  const f = fixture(); try {
+    staleWorkerTask(f);
+    await f.engine.performTaskControl({ taskId: f.task.id, version: f.current().version, action: 'restart', role: 'worker', reason: 'Owner restart', caller: OWNER });
+    await f.engine.wake(); await f.engine.wake();
+    const task = f.current();
+    assert.notEqual(task.runId, 'stale-worker-run');
+    assert.equal(task.agentId, `agent-${task.runId}`);
   } finally { await f.close(); }
 });

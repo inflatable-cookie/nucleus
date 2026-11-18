@@ -20,6 +20,9 @@ import { declaredLaneDocumentKeys } from '../../planning/brief-lane-documents';
 import { dirname } from 'node:path';
 import { ensureTaskNodeModules } from '../../workspaces/task-node-modules';
 
+// Proof executors keep their own refusal path; reviewer and closeout creations wait for their exact lookup.
+const creationRoles = new Set<Run['role']>(['reviewer', 'closeout']);
+
 /**
  * Deliver the run a launch reserved: the ordinary review custody and checkout
  * proofs, the guarded native send or creation, then the binding and the
@@ -243,6 +246,13 @@ export class RunLaunchDeliver {
       this.store.putRun({ ...this.store.run(run.id)!, status: 'uncertain' });
       // Record the exact-lookup window now: automatic reconciliation owns the fault before any coordinator can engage.
       this.resolution.ensureIncident(this.store.task(t.id), run, ABSENT_RESOLUTION_REASON, 'exact_lookup');
+      // An uncertain creation is decided by its exact lookup, which observation runs for every pending
+      // run. The thrown error must not write an operator stop that blocks that lookup (a host call past
+      // its deadline never answers, so its exact lookup is the only exit).
+      if (!agentId && dispatchInvoked && !run.ordinaryDetached && creationRoles.has(role)) {
+        this.resolution.waiting(this.store.task(t.id), `${role === 'reviewer' ? 'Reviewer' : role === 'closeout' ? 'Closeout' : 'Run'} creation is uncertain; exact lookup decides whether it produced an agent`, 'lifecycle');
+        return;
+      }
       throw error;
     }
   }
