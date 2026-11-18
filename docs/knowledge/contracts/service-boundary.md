@@ -1069,6 +1069,18 @@ already outranks observation. A phase transition may enqueue one idempotent
 title update; ordinary wakes do not walk retained workspaces, and confirmed
 titles make no request. Backpressure delays work durably and visibly.
 
+Unreleased active runs are observed on their task lane against their observation
+deadline, including recovery runs without a result. Health reports an overdue
+callback wait when its last busy observation becomes stale. Phase latency ends
+when the next step is admitted, including the integration turn or the report's
+handoff to its planner. A delegated escalation held by a worker's pending ask
+remains pending until its recorded direction is applied or definitively refused;
+the same recipient can correct a refusal.
+The live planner route does not submit that pending direction again. If an
+observation remains unknown, retries use the normal backoff after the first
+deadline attempt. An operator-held integration handoff remains recorded, but
+health counts a new Nucleus admission wait only after the hold is released.
+
 After the dispatch itself has populated its owned worktree, workspace
 registration may skip the live `git worktree add` process scan: the completed
 populate call is the current proof that add has finished. Recovery and all

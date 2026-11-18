@@ -1,18 +1,38 @@
 import type { Engine } from "../engine";
 import type { Run, Task } from "../../shared/contracts";
-import { classifyGitTransientFailure, ForgeOutageError, gitDeliveryUnknown, ReviewPublicationTransientError } from "../forge/forge-health";
-import { GIT_TRANSIENT_LIMIT_MS, nextGitTransientAttempt, type GitTransientEpisode } from "../git/git-transient-backoff";
+import {
+  classifyGitTransientFailure,
+  ForgeOutageError,
+  gitDeliveryUnknown,
+  ReviewPublicationTransientError,
+} from "../forge/forge-health";
+import {
+  GIT_TRANSIENT_LIMIT_MS,
+  nextGitTransientAttempt,
+  type GitTransientEpisode,
+} from "../git/git-transient-backoff";
 import { boardDispatchHoldApplies } from "../../shared/board-dispatch-hold";
-import { CheckoutRefusalError, CheckoutUnavailableError } from "../workspaces/checkout-volume";
+import {
+  CheckoutRefusalError,
+  CheckoutUnavailableError,
+} from "../workspaces/checkout-volume";
 import { routeUnavailableStop } from "../../shared/task-stop";
 import { CAPACITY_WAIT_PREFIX } from "../../shared/wait-state";
 import { WorkspaceObservationUnavailableError } from "../workspaces/workspace-allocation";
 import { isTransportFailure } from "../../shared/transport";
-import { isLoginSessionFault, LoginSessionFaultError } from "../../shared/session-fault";
-import { dispatchBlocked, fairSlotRequestOrder, occupiesSlot } from "../dispatch/capacity";
+import {
+  isLoginSessionFault,
+  LoginSessionFaultError,
+} from "../../shared/session-fault";
+import {
+  dispatchBlocked,
+  fairSlotRequestOrder,
+  occupiesSlot,
+} from "../dispatch/capacity";
 import { LANE_PRIORITY_TASK } from "./lane-priorities";
 import { now, type Store } from "../store/store";
 import { settlementHeld, startsNoRuns } from "../closeout/queue-drain";
+import { markPhaseFact } from "./phase-latency";
 
 /**
  * A wake that threw after its caller stopped waiting. The engine being stopped is
@@ -21,14 +41,27 @@ import { settlementHeld, startsNoRuns } from "../closeout/queue-drain";
  * sender, so it is recorded on the task's timeline instead of vanishing with the
  * promise; the next scheduling decision is a fresh one, never this resend.
  */
-function recordWakeFailure(store: Store, stopped: boolean, taskId: string, wake: string, error: unknown): void {
+function recordWakeFailure(
+  store: Store,
+  stopped: boolean,
+  taskId: string,
+  wake: string,
+  error: unknown,
+): void {
   if (stopped) return;
   const detail = error instanceof Error ? error.message : String(error);
   // The record is best-effort by contract, like the engine's own diagnostics: a
   // store that is closing refuses the write, and a lost wake is never resent
   // because its record could not be written either.
-  try { store.event(taskId, 'wake_failed', `${wake} failed: ${detail}`.slice(0, 2000)); }
-  catch { /* the store refused the record; the wake itself is still lost */ }
+  try {
+    store.event(
+      taskId,
+      "wake_failed",
+      `${wake} failed: ${detail}`.slice(0, 2000),
+    );
+  } catch {
+    /* the store refused the record; the wake itself is still lost */
+  }
 }
 
 /**
@@ -37,19 +70,31 @@ function recordWakeFailure(store: Store, stopped: boolean, taskId: string, wake:
  * only — no decision in the plan reads it.
  */
 function transientDetail(error: unknown): string {
-  return (error instanceof Error ? error.message : String(error)).replace(/; operator SSH\/key inspection required/g, '').slice(0, 800);
+  return (error instanceof Error ? error.message : String(error))
+    .replace(/; operator SSH\/key inspection required/g, "")
+    .slice(0, 800);
 }
 
 /** Named git-transient plan over already-read store facts. */
 export type GitTransientPlan =
-  | { kind: 'ignore' }
-  | { kind: 'skip_unknown' }
-  | { kind: 'exhausted'; failureKind: 'lock' | 'ssh' | 'network'; attempts: number; detail: string }
-  | { kind: 'retry_lock'; episode: GitTransientEpisode; detail: string }
-  | { kind: 'retry_shared'; episode: GitTransientEpisode; host: GitTransientEpisode; detail: string };
+  | { kind: "ignore" }
+  | { kind: "skip_unknown" }
+  | {
+      kind: "exhausted";
+      failureKind: "lock" | "ssh" | "network";
+      attempts: number;
+      detail: string;
+    }
+  | { kind: "retry_lock"; episode: GitTransientEpisode; detail: string }
+  | {
+      kind: "retry_shared";
+      episode: GitTransientEpisode;
+      host: GitTransientEpisode;
+      detail: string;
+    };
 
 export function gitTransientPlan(facts: {
-  failureKind: 'lock' | 'ssh' | 'network' | null;
+  failureKind: "lock" | "ssh" | "network" | null;
   deliveryUnknown: boolean;
   publicationTransient: boolean;
   operation: boolean;
@@ -59,23 +104,54 @@ export function gitTransientPlan(facts: {
   detail: string;
   now: number;
 }): GitTransientPlan {
-  if (!facts.failureKind) return { kind: 'ignore' };
-  if (facts.deliveryUnknown && (facts.operation || !facts.publicationTransient || !facts.hasReviewPublication))
-    return { kind: 'skip_unknown' };
+  if (!facts.failureKind) return { kind: "ignore" };
+  if (
+    facts.deliveryUnknown &&
+    (facts.operation ||
+      !facts.publicationTransient ||
+      !facts.hasReviewPublication)
+  )
+    return { kind: "skip_unknown" };
   const next = nextGitTransientAttempt(facts.old, facts.detail, facts.now);
-  if (!next) return { kind: 'exhausted', failureKind: facts.failureKind, attempts: facts.old?.attempts ?? 0, detail: facts.detail };
-  if (facts.failureKind !== 'lock') {
-    const shared = facts.host && facts.host.retryAt > facts.now
-      ? facts.host
-      : nextGitTransientAttempt(facts.host ?? null, facts.detail, facts.now) ?? next;
-    next.retryAt = Math.min(next.startedAt + GIT_TRANSIENT_LIMIT_MS, shared.retryAt);
-    return { kind: 'retry_shared', episode: next, host: shared, detail: facts.detail };
+  if (!next)
+    return {
+      kind: "exhausted",
+      failureKind: facts.failureKind,
+      attempts: facts.old?.attempts ?? 0,
+      detail: facts.detail,
+    };
+  if (facts.failureKind !== "lock") {
+    const shared =
+      facts.host && facts.host.retryAt > facts.now
+        ? facts.host
+        : (nextGitTransientAttempt(
+            facts.host ?? null,
+            facts.detail,
+            facts.now,
+          ) ?? next);
+    next.retryAt = Math.min(
+      next.startedAt + GIT_TRANSIENT_LIMIT_MS,
+      shared.retryAt,
+    );
+    return {
+      kind: "retry_shared",
+      episode: next,
+      host: shared,
+      detail: facts.detail,
+    };
   }
-  return { kind: 'retry_lock', episode: next, detail: facts.detail };
+  return { kind: "retry_lock", episode: next, detail: facts.detail };
 }
 
 /** Route a step failure after the git-transient gate. */
-export type StepFailureRoute = 'git_transient' | 'cleanup' | 'checkout_refusal' | 'external_wait' | 'transport' | 'session' | 'attention';
+export type StepFailureRoute =
+  | "git_transient"
+  | "cleanup"
+  | "checkout_refusal"
+  | "external_wait"
+  | "transport"
+  | "session"
+  | "attention";
 
 export function stepFailureRoute(facts: {
   terminal: boolean;
@@ -85,16 +161,19 @@ export function stepFailureRoute(facts: {
   transport: boolean;
   session: boolean;
 }): StepFailureRoute {
-  if (!facts.terminal && facts.gitTransient) return 'git_transient';
-  if (facts.terminal) return 'cleanup';
-  if (facts.checkoutRefusal) return 'checkout_refusal';
-  if (facts.externalWait) return 'external_wait';
-  if (facts.transport) return 'transport';
-  if (facts.session) return 'session';
-  return 'attention';
+  if (!facts.terminal && facts.gitTransient) return "git_transient";
+  if (facts.terminal) return "cleanup";
+  if (facts.checkoutRefusal) return "checkout_refusal";
+  if (facts.externalWait) return "external_wait";
+  if (facts.transport) return "transport";
+  if (facts.session) return "session";
+  return "attention";
 }
 
-export { quantumFollowUps, type QuantumFollowUp } from '../closeout/completion-follow-ups';
+export {
+  quantumFollowUps,
+  type QuantumFollowUp,
+} from "../closeout/completion-follow-ups";
 
 /**
  * Task wakes: what a task's quantum owes after it runs, the bounded timers that
@@ -103,59 +182,122 @@ export { quantumFollowUps, type QuantumFollowUp } from '../closeout/completion-f
  * per call, and moved code calls its siblings through `this.engine`, so
  * instance overrides still fire. `Engine.stop` calls `stop()`.
  */
-export type TaskWakesContext = Pick<Engine, 'resolution' | 'admission' | 'armGitTransient' | 'cleanContext' | 'completionFollowUps' | 'deferGitTransient' | 'dispatchQueued' | 'dispatchTask' | 'gitTransientWaiting' | 'note' | 'scheduleDispatch' | 'scheduleLane' | 'scheduleLifecycleFollowUp' | 'scheduleOperation' | 'scheduleTaskQuantum' | 'stopped' | 'store' | 'taskHostAvailable' | 'taskQuantum' | 'terminalThreadsPending' | 'transientKey' | 'wakeTask' | 'withHost'>;
+export type TaskWakesContext = Pick<
+  Engine,
+  | "resolution"
+  | "admission"
+  | "applyDeferredOwnerVerbs"
+  | "armGitTransient"
+  | "cleanContext"
+  | "completionFollowUps"
+  | "deferGitTransient"
+  | "dispatchQueued"
+  | "dispatchTask"
+  | "gitTransientWaiting"
+  | "note"
+  | "scheduleDispatch"
+  | "scheduleLane"
+  | "scheduleLifecycleFollowUp"
+  | "scheduleOperation"
+  | "scheduleTaskQuantum"
+  | "stopped"
+  | "store"
+  | "taskHostAvailable"
+  | "taskQuantum"
+  | "terminalThreadsPending"
+  | "transientKey"
+  | "wakeTask"
+  | "withHost"
+>;
 
 export class TaskWakes {
   constructor(readonly engine: TaskWakesContext) {}
-  get store() { return this.engine.store; }
-  get resolution() { return this.engine.resolution; }
-  get admission() { return this.engine.admission; }
+  get store() {
+    return this.engine.store;
+  }
+  get resolution() {
+    return this.engine.resolution;
+  }
+  get admission() {
+    return this.engine.admission;
+  }
   readonly lifecycleFollowUps = new Set<string>();
-  private readonly gitTransientTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly gitTransientTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
 
   /**
    * Record a step failure. A transport failure leaves the lane where it is so the next
    * sweep retries it; anything else is a task fault and parks for attention as before.
    */
-  transientKey(id: string): string { return `gitTransient:${id}`; }
+  transientKey(id: string): string {
+    return `gitTransient:${id}`;
+  }
   armGitTransient(id: string, retryAt: number, operation = false): void {
     if (this.gitTransientTimers.has(id) || this.engine.stopped) return;
-    const timer = setTimeout(() => {
-      this.gitTransientTimers.delete(id);
-      if (this.engine.stopped) return;
-      if (operation) {
-        if (settlementHeld(this.store, this.engine.stopped)) return;
-        this.engine.cleanContext(() => this.engine.scheduleOperation(id));
-      } else {
-        const task = this.store.task(id);
-        if (task.phase === 'queued') {
-          if (startsNoRuns(this.store, this.engine.stopped)) return;
-          void this.engine.cleanContext(() => this.engine.scheduleLane(`task:${id}`, LANE_PRIORITY_TASK, () => this.engine.dispatchTask(id, this.store.getMeta<boolean>('dispatchHeld') ?? false)))
-            .catch(error => recordWakeFailure(this.store, this.engine.stopped, id, 'Git-transient dispatch retry', error));
-        } else {
+    const timer = setTimeout(
+      () => {
+        this.gitTransientTimers.delete(id);
+        if (this.engine.stopped) return;
+        if (operation) {
           if (settlementHeld(this.store, this.engine.stopped)) return;
-          void this.engine.cleanContext(() => this.engine.wakeTask(id));
+          this.engine.cleanContext(() => this.engine.scheduleOperation(id));
+        } else {
+          const task = this.store.task(id);
+          if (task.phase === "queued") {
+            if (startsNoRuns(this.store, this.engine.stopped)) return;
+            void this.engine
+              .cleanContext(() =>
+                this.engine.scheduleLane(`task:${id}`, LANE_PRIORITY_TASK, () =>
+                  this.engine.dispatchTask(
+                    id,
+                    this.store.getMeta<boolean>("dispatchHeld") ?? false,
+                  ),
+                ),
+              )
+              .catch((error) =>
+                recordWakeFailure(
+                  this.store,
+                  this.engine.stopped,
+                  id,
+                  "Git-transient dispatch retry",
+                  error,
+                ),
+              );
+          } else {
+            if (settlementHeld(this.store, this.engine.stopped)) return;
+            void this.engine.cleanContext(() => this.engine.wakeTask(id));
+          }
         }
-      }
-    }, Math.max(0, retryAt - Date.now()));
+      },
+      Math.max(0, retryAt - Date.now()),
+    );
     timer.unref();
     this.gitTransientTimers.set(id, timer);
   }
   deferGitTransient(id: string, error: unknown, operation = false): boolean {
     const facts = this.gitTransientFacts(id, error, operation);
     const plan = gitTransientPlan(facts);
-    if (plan.kind === 'ignore' || plan.kind === 'skip_unknown') return false;
+    if (plan.kind === "ignore" || plan.kind === "skip_unknown") return false;
     const key = this.engine.transientKey(id);
-    if (plan.kind === 'exhausted') {
+    if (plan.kind === "exhausted") {
       this.store.deleteMeta(key);
-      const reason = `Git or GitHub failed after ${plan.attempts} retries over 15 minutes: ${plan.detail}${plan.failureKind === 'ssh' ? '; inspect SSH authentication and keys' : ''}`;
+      const reason = `Git or GitHub failed after ${plan.attempts} retries over 15 minutes: ${plan.detail}${plan.failureKind === "ssh" ? "; inspect SSH authentication and keys" : ""}`;
       if (operation) {
         const current = this.store.operation(id);
-        if (current) this.store.putOperation({ ...current, state: 'needs_attention', settledAt: now(), diagnostic: reason });
-      } else this.engine.note(id, reason, 'operator_needed', 'needs_attention');
+        if (current)
+          this.store.putOperation({
+            ...current,
+            state: "needs_attention",
+            settledAt: now(),
+            diagnostic: reason,
+          });
+      } else this.engine.note(id, reason, "operator_needed", "needs_attention");
       return true;
     }
-    if (plan.kind === 'retry_shared') this.store.setMeta('gitTransientHost:github', plan.host);
+    if (plan.kind === "retry_shared")
+      this.store.setMeta("gitTransientHost:github", plan.host);
     const next = plan.episode;
     const source = this.resolution.gitFailureSource(error);
     if (source ?? facts.old?.source) next.source = source ?? facts.old?.source;
@@ -163,13 +305,26 @@ export class TaskWakes {
     const reason = `Git or GitHub failed: ${plan.detail}. Retrying at ${new Date(next.retryAt).toISOString()}`;
     if (operation) {
       const current = this.store.operation(id);
-      if (current) this.store.putOperation({ ...current, state: 'pending', settledAt: null, diagnostic: reason });
-    } else this.resolution.waiting(this.store.task(id), reason, 'external_unavailable');
+      if (current)
+        this.store.putOperation({
+          ...current,
+          state: "pending",
+          settledAt: null,
+          diagnostic: reason,
+        });
+    } else
+      this.resolution.waiting(
+        this.store.task(id),
+        reason,
+        "external_unavailable",
+      );
     this.engine.armGitTransient(id, next.retryAt, operation);
     return true;
   }
   gitTransientWaiting(id: string, operation = false): boolean {
-    const episode = this.store.getMeta<GitTransientEpisode | null>(this.engine.transientKey(id));
+    const episode = this.store.getMeta<GitTransientEpisode | null>(
+      this.engine.transientKey(id),
+    );
     if (!episode || episode.retryAt <= Date.now()) return false;
     this.engine.armGitTransient(id, episode.retryAt, operation);
     return true;
@@ -179,16 +334,23 @@ export class TaskWakes {
    * decides the uncertain-delivery skip, so the episode reads here are only its
    * input: nothing in this class re-derives that conjunction beside it.
    */
-  private gitTransientFacts(id: string, error: unknown, operation: boolean): Parameters<typeof gitTransientPlan>[0] {
+  private gitTransientFacts(
+    id: string,
+    error: unknown,
+    operation: boolean,
+  ): Parameters<typeof gitTransientPlan>[0] {
     const failureKind = classifyGitTransientFailure(error);
     const deliveryUnknown = gitDeliveryUnknown(error);
-    const publicationTransient = error instanceof ReviewPublicationTransientError;
+    const publicationTransient =
+      error instanceof ReviewPublicationTransientError;
     let hasReviewPublication = false;
     if (failureKind && deliveryUnknown && !operation && publicationTransient) {
       // Only the publication protocol can observe this write on the next pass. A
       // purged task has no record to observe; that is a fact about the record.
       const runId = this.store.taskOrNull(id)?.resolution.currentRunId;
-      hasReviewPublication = Boolean(runId && this.store.getMeta(`reviewPublication:${runId}`));
+      hasReviewPublication = Boolean(
+        runId && this.store.getMeta(`reviewPublication:${runId}`),
+      );
     }
     return {
       failureKind,
@@ -196,67 +358,152 @@ export class TaskWakes {
       publicationTransient,
       operation,
       hasReviewPublication,
-      old: this.store.getMeta<GitTransientEpisode | null>(this.engine.transientKey(id)) ?? null,
-      host: failureKind && failureKind !== 'lock' ? this.store.getMeta<GitTransientEpisode | null>('gitTransientHost:github') ?? null : null,
-      detail: failureKind ? transientDetail(error) : '',
+      old:
+        this.store.getMeta<GitTransientEpisode | null>(
+          this.engine.transientKey(id),
+        ) ?? null,
+      host:
+        failureKind && failureKind !== "lock"
+          ? (this.store.getMeta<GitTransientEpisode | null>(
+              "gitTransientHost:github",
+            ) ?? null)
+          : null,
+      detail: failureKind ? transientDetail(error) : "",
       now: Date.now(),
     };
   }
   noteStepFailure(taskId: string, error: unknown) {
     const current = this.store.task(taskId);
-    const terminal = ['done', 'cancelled'].includes(current.phase);
-    const gitTransient = !terminal && this.engine.deferGitTransient(taskId, error);
-    switch (stepFailureRoute({
-      terminal, gitTransient,
-      checkoutRefusal: error instanceof CheckoutRefusalError,
-      externalWait: error instanceof WorkspaceObservationUnavailableError || error instanceof ForgeOutageError || error instanceof CheckoutUnavailableError,
-      transport: isTransportFailure(error),
-      session: error instanceof LoginSessionFaultError || isLoginSessionFault(error),
-    })) {
-      case 'git_transient': return;
-      case 'cleanup':
-        this.store.update(taskId, { resolution: { ...current.resolution, cleanupReason: String(error instanceof Error ? error.message : error) } }, 'cleanup_failed');
+    const terminal = ["done", "cancelled"].includes(current.phase);
+    const gitTransient =
+      !terminal && this.engine.deferGitTransient(taskId, error);
+    switch (
+      stepFailureRoute({
+        terminal,
+        gitTransient,
+        checkoutRefusal: error instanceof CheckoutRefusalError,
+        externalWait:
+          error instanceof WorkspaceObservationUnavailableError ||
+          error instanceof ForgeOutageError ||
+          error instanceof CheckoutUnavailableError,
+        transport: isTransportFailure(error),
+        session:
+          error instanceof LoginSessionFaultError || isLoginSessionFault(error),
+      })
+    ) {
+      case "git_transient":
         return;
-      case 'checkout_refusal':
-        this.engine.note(taskId, (error as Error).message, 'operator_needed', this.store.getMeta("paused") ? undefined : "needs_attention");
+      case "cleanup":
+        this.store.update(
+          taskId,
+          {
+            resolution: {
+              ...current.resolution,
+              cleanupReason: String(
+                error instanceof Error ? error.message : error,
+              ),
+            },
+          },
+          "cleanup_failed",
+        );
         return;
-      case 'external_wait':
-        this.resolution.waiting(this.store.task(taskId), (error as Error).message, 'external_unavailable');
+      case "checkout_refusal":
+        this.engine.note(
+          taskId,
+          (error as Error).message,
+          "operator_needed",
+          this.store.getMeta("paused") ? undefined : "needs_attention",
+        );
         return;
-      case 'transport':
+      case "external_wait":
+        this.resolution.waiting(
+          this.store.task(taskId),
+          (error as Error).message,
+          "external_unavailable",
+        );
+        return;
+      case "transport":
         this.resolution.transportDeferred(this.store.task(taskId), error);
         return;
-      case 'session':
+      case "session":
         this.resolution.environmentDeferred(this.store.task(taskId), error);
         return;
-      case 'attention':
-        this.engine.note(taskId, String(error instanceof Error ? error.message : error), 'classify', this.store.getMeta("paused") ? undefined : "needs_attention");
+      case "attention":
+        this.engine.note(
+          taskId,
+          String(error instanceof Error ? error.message : error),
+          "classify",
+          this.store.getMeta("paused") ? undefined : "needs_attention",
+        );
     }
   }
 
   /** One bounded lifecycle quantum for a task on its exclusive lane key. */
   scheduleTaskQuantum(taskId: string): Promise<void> {
-    return this.engine.scheduleLane(`task:${taskId}`, LANE_PRIORITY_TASK, async () => {
-      const task = this.store.task(taskId);
-      if (!task.hostId) return;
-      return this.engine.withHost(task.hostId, async () => {
-      if (this.engine.gitTransientWaiting(taskId)) return;
-      const transientBefore = this.store.getMeta<GitTransientEpisode | null>(this.engine.transientKey(taskId));
-      const before = this.store.task(taskId);
-      if (!this.engine.taskHostAvailable(before)) return;
-      const heldIntegration = this.resolution.holdsIntegrationTurn(before);
-      const beforeRuns = this.store.runs(taskId);
-      const threadWorkBefore = this.engine.terminalThreadsPending(before, beforeRuns);
-      const occupied = occupiesSlot(before, beforeRuns);
-      // The sweep observes retained runs separately; a callback or status hint must
-      // be able to observe its own reported run without waiting for that pass.
-      if (!settlementHeld(this.store, this.engine.stopped) && beforeRuns.some(run => !run.released && run.completion && run.role !== "recovery"))
-        await this.resolution.observe(null, taskId);
-      await this.resolution.integrationQuantum(taskId, () => this.engine.taskQuantum(taskId));
-      if (settlementHeld(this.store, this.engine.stopped)) return;
-      this.engine.completionFollowUps.finishQuantum(taskId, before, beforeRuns, transientBefore, heldIntegration, threadWorkBefore, occupied);
-      });
-    }, { coalesce: "task-quantum" });
+    return this.engine.scheduleLane(
+      `task:${taskId}`,
+      LANE_PRIORITY_TASK,
+      async () => {
+        const task = this.store.task(taskId);
+        if (!task.hostId) return;
+        return this.engine.withHost(task.hostId, async () => {
+          if (this.engine.gitTransientWaiting(taskId)) return;
+          const transientBefore =
+            this.store.getMeta<GitTransientEpisode | null>(
+              this.engine.transientKey(taskId),
+            );
+          const before = this.store.task(taskId);
+          if (!this.engine.taskHostAvailable(before)) return;
+          const heldIntegration = this.resolution.holdsIntegrationTurn(before);
+          const beforeRuns = this.store.runs(taskId);
+          const threadWorkBefore = this.engine.terminalThreadsPending(
+            before,
+            beforeRuns,
+          );
+          const occupied = occupiesSlot(before, beforeRuns);
+          // The sweep observes retained runs separately; a callback or status hint must
+          // be able to observe its own reported run without waiting for that pass.
+          if (
+            !settlementHeld(this.store, this.engine.stopped) &&
+            beforeRuns.some(
+              (run) =>
+                !run.released &&
+                run.role !== "recovery" &&
+                (run.completion ||
+                  (run.active &&
+                    Date.now() -
+                      Date.parse(run.lastObservedAt ?? run.createdAt) >=
+                      16000)),
+            )
+          )
+            await this.resolution.observe(null, taskId);
+          for (const previous of beforeRuns) {
+            const current = this.store.run(previous.id);
+            if (!previous.released && current?.released && current.completion)
+              markPhaseFact(
+                this.store,
+                taskId,
+                `release:${current.id}:${current.completion.eventId}`,
+                `${current.role} result released; next step awaiting admission`,
+              );
+          }
+          await this.resolution.integrationQuantum(taskId, () =>
+            this.engine.taskQuantum(taskId),
+          );
+          if (settlementHeld(this.store, this.engine.stopped)) return;
+          this.engine.completionFollowUps.finishQuantum(
+            taskId,
+            before,
+            beforeRuns,
+            transientBefore,
+            heldIntegration,
+            threadWorkBefore,
+            occupied,
+          );
+        });
+      },
+      { coalesce: "task-quantum" },
+    );
   }
 
   /**
@@ -268,9 +515,14 @@ export class TaskWakes {
    */
   wakeIntegrationSuccessor(repoPath: string): void {
     if (this.engine.stopped) return;
-    const next = this.store.integrationTasks(repoPath)
-      .filter(task => this.resolution.holdsIntegrationTurn(task))
-      .sort((left, right) => (left.resolution.integrationTurn?.sequence ?? 0) - (right.resolution.integrationTurn?.sequence ?? 0))[0];
+    const next = this.store
+      .integrationTasks(repoPath)
+      .filter((task) => this.resolution.holdsIntegrationTurn(task))
+      .sort(
+        (left, right) =>
+          (left.resolution.integrationTurn?.sequence ?? 0) -
+          (right.resolution.integrationTurn?.sequence ?? 0),
+      )[0];
     if (next) this.engine.scheduleLifecycleFollowUp(next.id);
   }
 
@@ -286,37 +538,98 @@ export class TaskWakes {
    */
   wakeCapacityWaiter(releasingTaskId: string): void {
     const held = this.store.getMeta<boolean>("dispatchHeld") ?? false;
-    const candidate = (task: Task) => task.id !== releasingTaskId
-      && !(held && boardDispatchHoldApplies(task))
-      && (!routeUnavailableStop(task) || this.store.routingRetryAllowed(task))
-      && !occupiesSlot(task) && (task.phase === "queued" || task.reason.startsWith(CAPACITY_WAIT_PREFIX))
-      && ["queued", "awaiting_review", "changes_requested", "verifying"].includes(task.phase);
-    const ready = (task: Task) => !task.prerequisiteWait
-      && (task.phase !== "queued" || !this.store.dependencyWait(task) && !this.resolution.projectInFlightAdmissionReason(task))
-      && !this.resolution.slotAdmissionReason(task);
-    const next = fairSlotRequestOrder(this.store.admissionCandidates(), candidate).find(ready);
+    const candidate = (task: Task) =>
+      task.id !== releasingTaskId &&
+      !(held && boardDispatchHoldApplies(task)) &&
+      (!routeUnavailableStop(task) || this.store.routingRetryAllowed(task)) &&
+      !occupiesSlot(task) &&
+      (task.phase === "queued" ||
+        task.reason.startsWith(CAPACITY_WAIT_PREFIX)) &&
+      ["queued", "awaiting_review", "changes_requested", "verifying"].includes(
+        task.phase,
+      );
+    const ready = (task: Task) =>
+      Boolean(
+        task.hostId &&
+          this.engine.withHost(task.hostId, () =>
+            this.engine.taskHostAvailable(task),
+          ),
+      ) &&
+      !task.prerequisiteWait &&
+      (task.phase !== "queued" ||
+        (!this.store.dependencyWait(task) &&
+          !this.resolution.projectInFlightAdmissionReason(task))) &&
+      !this.resolution.slotAdmissionReason(task);
+    const next = fairSlotRequestOrder(
+      this.store.admissionCandidates(),
+      candidate,
+    ).find(ready);
     if (!next) return;
+    markPhaseFact(
+      this.store,
+      next.id,
+      `capacity:${releasingTaskId}:${next.version}`,
+      "Freed slot awaiting admission",
+    );
     this.engine.cleanContext(() => {
-      if (next.phase !== "queued") { void this.engine.cleanContext(() => this.engine.wakeTask(next.id)); return; }
-      void this.engine.scheduleLane(`task:${next.id}`, LANE_PRIORITY_TASK, () => this.engine.dispatchTask(next.id, this.store.getMeta<boolean>("dispatchHeld") ?? false))
-        .catch(error => recordWakeFailure(this.store, this.engine.stopped, next.id, 'Freed-slot dispatch', error));
+      if (next.phase !== "queued") {
+        void this.engine.cleanContext(() => this.engine.wakeTask(next.id));
+        return;
+      }
+      void this.engine
+        .scheduleLane(`task:${next.id}`, LANE_PRIORITY_TASK, () => {
+          return this.engine.dispatchTask(
+            next.id,
+            this.store.getMeta<boolean>("dispatchHeld") ?? false,
+          );
+        })
+        .catch((error) =>
+          recordWakeFailure(
+            this.store,
+            this.engine.stopped,
+            next.id,
+            "Freed-slot dispatch",
+            error,
+          ),
+        );
     });
   }
 
   scheduleLifecycleFollowUp(taskId: string): boolean {
     if (this.lifecycleFollowUps.has(taskId)) return true;
     this.lifecycleFollowUps.add(taskId);
+    const queuedAt = now();
     setImmediate(() => {
       try {
         if (settlementHeld(this.store, this.engine.stopped)) return;
         let task: Task;
-        try { task = this.store.task(taskId); } catch { return; }
+        try {
+          task = this.store.task(taskId);
+        } catch {
+          return;
+        }
         if (task.removedAt || dispatchBlocked(task)) return;
+        markPhaseFact(
+          this.store,
+          taskId,
+          `phase:${task.version}`,
+          `${task.phase} follow-up awaiting admission`,
+          queuedAt,
+        );
         // AsyncLocalStorage propagates through setImmediate. Exit the old lane
         // context so this queues behind it instead of taking the inline path.
         this.engine.cleanContext(() => {
-          void this.engine.scheduleTaskQuantum(taskId)
-            .catch(error => recordWakeFailure(this.store, this.engine.stopped, taskId, 'Lifecycle follow-up', error));
+          void this.engine
+            .scheduleTaskQuantum(taskId)
+            .catch((error) =>
+              recordWakeFailure(
+                this.store,
+                this.engine.stopped,
+                taskId,
+                "Lifecycle follow-up",
+                error,
+              ),
+            );
         });
       } finally {
         // Keep the id in the set until the lane is queued (or this turn
@@ -335,18 +648,75 @@ export class TaskWakes {
     // A callback or control is authoritative evidence that this task's agents
     // changed state, so its cached observations must not answer for them.
     const admission = this.admission;
-    if (admission) {
-      try {
-        const task = this.store.task(taskId);
-        for (const id of [task.agentId, task.coordinatorAgentId, task.resolution.reviewerAgentId,
-          ...this.store.runs(taskId).filter(run => !run.released && run.completion).map(run => run.agentId)]) admission.invalidate(id ?? "");
-      } catch { /* a purged or missing task has no cached observation to invalidate */ }
+    try {
+      const task = this.store.task(taskId);
+      const runs = this.store.runs(taskId);
+      const callbacks = runs
+        .filter((run) => !run.released && run.completion)
+        .map((run) => run.completion!);
+      if (task.phase === "working" && task.completion?.runId === task.runId)
+        callbacks.push(task.completion);
+      const events = callbacks.length ? this.store.eventsAll(taskId) : [];
+      for (const callback of callbacks) {
+        const event = events.findLast(
+          (item) =>
+            item.kind ===
+            (callback.runId === task.runId
+              ? "completion_received"
+              : "run_completion"),
+        );
+        markPhaseFact(
+          this.store,
+          taskId,
+          `callback:${callback.eventId}`,
+          "Accepted result awaiting task admission",
+          event?.at ?? now(),
+        );
+      }
+      if (admission)
+        for (const id of [
+          task.agentId,
+          task.coordinatorAgentId,
+          task.resolution.reviewerAgentId,
+          ...runs
+            .filter((run) => !run.released && run.completion)
+            .map((run) => run.agentId),
+        ])
+          admission.invalidate(id ?? "");
+    } catch {
+      /* a purged or missing task has no observation or latency to record */
     }
     // A discarded quantum at shutdown has no caller with a durable decision to
     // make: the task lane records its own faults, so callers stay fire-and-forget.
     // A wake that fails with the engine still running is recorded on the task.
-    return this.engine.scheduleTaskQuantum(taskId)
-      .catch(error => recordWakeFailure(this.store, this.engine.stopped, taskId, 'Task quantum wake', error));
+    return this.engine
+      .scheduleTaskQuantum(taskId)
+      .then(() => {
+        if (
+          this.store.taskOrNull(taskId)?.resolution.deferredVerb?.input
+            .__workerAsk
+        )
+          void this.engine
+            .cleanContext(() => this.engine.applyDeferredOwnerVerbs())
+            .catch((error) =>
+              recordWakeFailure(
+                this.store,
+                this.engine.stopped,
+                taskId,
+                "Deferred direction wake",
+                error,
+              ),
+            );
+      })
+      .catch((error) =>
+        recordWakeFailure(
+          this.store,
+          this.engine.stopped,
+          taskId,
+          "Task quantum wake",
+          error,
+        ),
+      );
   }
 
   /**
@@ -358,7 +728,9 @@ export class TaskWakes {
    */
   wakeRepository(repoPath: string | null | undefined): Promise<void> {
     if (this.engine.stopped || !repoPath) return Promise.resolve();
-    return this.engine.dispatchQueued(repoPath).catch(() => { /* the durable queue keeps every task the pass did not reach */ });
+    return this.engine.dispatchQueued(repoPath).catch(() => {
+      /* the durable queue keeps every task the pass did not reach */
+    });
   }
 
   /** Clears every pending timer. `Engine.stop` calls this before the projections stop. */
