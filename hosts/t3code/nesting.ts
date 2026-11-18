@@ -315,7 +315,7 @@ export class T3Nesting {
     if (provider.driver !== undefined && provider.driver !== PARENT_DRIVER)
       return { ok: false, reason: `T3Code provider ${PARENT_PROVIDER} is not an ACP provider (the ${PARENT_DRIVER} driver)` };
     if (!provider.enabled || provider.status !== 'ready')
-      return { ok: false, reason: `T3Code provider ${PARENT_PROVIDER} is not ready` };
+      return { ok: false, reason: `T3Code provider ${PARENT_PROVIDER} is registered but not ready (${provider.enabled ? provider.status : 'disabled'})${provider.message ? `: ${provider.message}` : ''}` };
     const model = provider.models.find(candidate => candidate.slug === PARENT_MODEL) ?? provider.models[0];
     if (!model) return { ok: false, reason: `T3Code provider ${PARENT_PROVIDER} reports no model; the Nucleus ACP agent advertises ${PARENT_MODEL}` };
     return { ok: true, model, supportedRuntimeModes: provider.supportedRuntimeModes };

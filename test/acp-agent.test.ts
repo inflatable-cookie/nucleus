@@ -402,7 +402,7 @@ test("closing the client's stdio ends a held turn instead of leaving the agent h
   await closing;
 });
 
-test("the launched entry point answers a missing binding with its path, and never starts a session", async () => {
+test("an unbound directory opens an inert session but cannot prompt or load", async () => {
   const dir = mkdtempSync(join(tmpdir(), "ns-acp-entry-"));
   try {
     const input = new PassThrough();
@@ -415,9 +415,16 @@ test("the launched entry point answers a missing binding with its path, and neve
     });
     input.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "session/new", params: { cwd: dir, mcpServers: [] } })}\n`);
     const { result } = await lines.untilResult(1);
-    assert.equal((result.error as Json).code, -32000);
-    assert.match(String((result.error as Json).message), /No Nucleus ACP binding at/);
-    assert.match(String((result.error as Json).message), /acp\/bindings/);
+    const opened = result.result as Json;
+    const models = opened.models as Json;
+    assert.deepEqual((models.availableModels as Json[]).map(model => model.modelId), ["nucleus", "nucleus-quiet"]);
+    input.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "session/prompt", params: { sessionId: opened.sessionId, prompt: [] } })}\n`);
+    const prompt = (await lines.untilResult(2)).result.error as Json;
+    assert.notEqual(prompt.code, -32000);
+    assert.match(String(prompt.message), /No Nucleus task is bound to this directory; Nucleus opens task threads itself/i);
+    assert.doesNotMatch(String(prompt.message), /authenticat|credentials|log in/i);
+    input.write(`${JSON.stringify({ jsonrpc: "2.0", id: 3, method: "session/load", params: { cwd: dir, sessionId: opened.sessionId } })}\n`);
+    assert.equal(((await lines.untilResult(3)).result.error as Json).code, -32000);
     input.end();
     assert.equal(await running, 0, "a client closing stdin is an ordinary exit");
     assert.deepEqual(errors, [], "nothing is logged for a session refusal; the client shows it");

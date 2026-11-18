@@ -793,8 +793,9 @@ registers it once with `nucleus t3 install` ([operator install
 route](#operator-install-route)); the adapter reads `server.getConfig` at connect
 and at each create, records what it found in its own state, and reports it as
 `service.health`'s `t3code.nativeParenting` line. A missing, disabled or
-wrong-driver instance falls back to top-level role threads with guidance naming the
-provider to register. The adapter and the service never write T3 settings; only
+wrong-driver instance falls back to top-level role threads. The status distinguishes
+an absent instance from a registered instance that is not ready, including T3's
+status message when present. The adapter and the service never write T3 settings; only
 the operator's `nucleus t3 install` and `nucleus t3 uninstall` do, through T3's own
 `server.updateSettings`, and only the `nucleus` provider instance (Tom,
 2026-11-18; nucleus#1330).

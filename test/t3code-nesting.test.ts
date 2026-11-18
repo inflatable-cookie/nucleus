@@ -99,7 +99,11 @@ test('the connect probe records whether the nucleus ACP provider is there, befor
   const missing = await fixture(t, { provider: false });
   assert.equal(missing.host.state.read().nesting?.state, 'fallback');
   assert.match(missing.host.state.read().nesting!.reason, /register the installed nucleus-acp command/);
-  assert.match(missing.host.nativeParentingStatus, /native parenting off/);
+  assert.match(missing.host.nativeParentingStatus, /native parenting off.*no nucleus ACP provider/);
+  const warning = await fixture(t, { provider: false });
+  warning.server.controls.providers = [{ ...nucleusProvider, status: 'warning', message: 'The probe failed' }];
+  await warning.host.connect();
+  assert.match(warning.host.nativeParentingStatus, /registered but not ready.*warning.*The probe failed/);
 });
 
 test('the first role launches the task parent on the nucleus ACP provider and runs as its child', async t => {

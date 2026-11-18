@@ -18,7 +18,8 @@
  * binding, the transport, the "this prompt is not for you" rule — is injected by
  * whoever launches it (the ACP client's provider configuration and Nucleus itself).
  */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { AcpBindingMissingError } from "./binding";
 import type { AcpBinding } from "./binding";
 import type { AcpMessageInput, AcpTurnInput, AcpTurnReply } from "./surface";
 
@@ -112,6 +113,7 @@ interface SessionState {
  */
 export class AcpAgent {
   private readonly sessions = new Map<string, SessionState>();
+  private readonly inertSessions = new Set<string>();
   private readonly work = new Set<Promise<unknown>>();
   private model: string = ACP_MODELS[0].modelId;
 
@@ -222,7 +224,17 @@ export class AcpAgent {
   private async open(params: Json, id: Id, send: Send, loading: boolean): Promise<void> {
     const cwd = typeof params.cwd === "string" && params.cwd ? params.cwd : process.cwd();
     const requested = typeof params.sessionId === "string" ? params.sessionId : null;
-    const source = await this.resolve(cwd);
+    let source: AcpSessionSource;
+    try { source = await this.options.resolve(cwd); }
+    catch (error) {
+      if (!loading && error instanceof AcpBindingMissingError) {
+        const sessionId = randomUUID();
+        this.inertSessions.add(sessionId);
+        this.result(send, id, this.sessionResult(sessionId));
+        return;
+      }
+      throw new AcpRefusal(-32000, reasonOf(error));
+    }
     const { binding } = source;
     if (loading) {
       if (requested !== binding.sessionId)
@@ -246,12 +258,6 @@ export class AcpAgent {
     return { sessionId, models: { availableModels: ACP_MODELS.map(model => ({ ...model })), currentModelId: this.model } };
   }
 
-  /** Resolve a working directory's binding, and attach to the service it names. */
-  private async resolve(cwd: string): Promise<AcpSessionSource> {
-    try { return await this.options.resolve(cwd); }
-    catch (error) { throw new AcpRefusal(-32000, reasonOf(error)); }
-  }
-
   /**
    * The first call of a session: proves the credential and reads the task's current
    * lifecycle line. It asks for an attach, so a relaunched agent shows the line even
@@ -268,6 +274,8 @@ export class AcpAgent {
 
   private async prompt(params: Json, id: Id, send: Send): Promise<void> {
     const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
+    if (this.inertSessions.has(sessionId))
+      throw new AcpRefusal(-32602, "No Nucleus task is bound to this directory; Nucleus opens task threads itself.");
     const session = this.sessions.get(sessionId);
     if (!session) throw new AcpRefusal(-32602, `Unknown session ${sessionId || "(none)"}; open it with session/new first`);
     if (session.inFlight) throw new AcpRefusal(-32602, `A turn is already in flight for ${sessionId}; cancel it before sending another`);

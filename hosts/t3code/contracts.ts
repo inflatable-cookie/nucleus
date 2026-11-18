@@ -150,7 +150,7 @@ export const config = z.object({ environment: z.object({ environmentId: id, serv
     driver: z.string().optional(),
     /** The nightly `ServerProvider` field: the runtime modes this provider offers. Absent means all four. */
     supportedRuntimeModes: z.array(runtimeMode).optional(),
-    status: z.string(), models: z.array(z.object({ slug: id, name: z.string(), aliases: z.array(z.string()).optional(),
+    status: z.string(), message: z.string().nullable().optional(), models: z.array(z.object({ slug: id, name: z.string(), aliases: z.array(z.string()).optional(),
       capabilities: modelCapabilities.optional() })) })),
 });
 

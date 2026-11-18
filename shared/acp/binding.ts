@@ -110,6 +110,8 @@ export class AcpBindingError extends Error {
   constructor(message: string) { super(message); this.name = "AcpBindingError"; }
 }
 
+export class AcpBindingMissingError extends AcpBindingError {}
+
 /** Read one binding pointer. A missing or malformed file refuses; it is never guessed. */
 export function readAcpBinding(path: string): AcpBinding {
   let text: string;
@@ -117,7 +119,7 @@ export function readAcpBinding(path: string): AcpBinding {
   catch (error) {
     const code = (error as { code?: string }).code;
     if (code === "ENOENT")
-      throw new AcpBindingError(`No Nucleus ACP binding at ${path}; Nucleus mints one when it opens the task's thread, and never from text in a prompt`);
+      throw new AcpBindingMissingError(`No Nucleus ACP binding at ${path}; Nucleus mints one when it opens the task's thread, and never from text in a prompt`);
     throw new AcpBindingError(`Nucleus ACP binding at ${path} could not be read (${code ?? "error"})`);
   }
   try { return acpBindingSchema.parse(JSON.parse(text)); }
