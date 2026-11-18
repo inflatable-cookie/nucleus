@@ -403,7 +403,10 @@ export class T3IntentLedger {
       throw new ProvenPreSendRefusalError(
         "T3Code command was refused; no retry",
       );
-    if (prior?.status === "unknown" && this.awaitingLate.has(key))
+    if (
+      prior?.status === "unknown" &&
+      (prior.timedOut || this.awaitingLate.has(key))
+    )
       throw new HostUnknownDeliveryError(prior.diagnostic);
     if (
       prior &&
@@ -485,6 +488,8 @@ export class T3IntentLedger {
             : undefined,
       );
       const unknown = new HostUnknownDeliveryError(diagnostic);
+      if (error instanceof T3RpcError && error.code === "timeout")
+        unknown.cause = error;
       if (error instanceof T3RpcError && error.late) {
         this.awaitingLate.add(key);
         unknown.lateDelivery = error.command === "message.dispatch";
@@ -515,6 +520,9 @@ export class T3IntentLedger {
               kind,
               threadId,
               diagnostic,
+              ...(error instanceof T3RpcError && error.code === "timeout"
+                ? { timedOut: true }
+                : {}),
             };
         });
       } catch (persistenceError) {

@@ -1140,9 +1140,13 @@ request has it refused rather than sent outside the admission it no longer holds
 BB's reverse channel retains timed-out effect requests on one shared connection,
 with bounded capacity; exhausting that capacity refuses new writes before send
 while fresh recovery reads remain available. T3 retains the original attempt's
-ownership while its reply is pending, so a fresh read cannot authorize a second
-send. Paseo's admission deadline fences any send that has not started yet; only
-an already-issued send can supply a late delivery acknowledgement.
+ownership in durable intent while its reply is pending, so replacing the ledger
+or taking a fresh read cannot authorize a second send. Socket backpressure refuses
+only the new BB request as unsent; earlier writes on the connection remain
+unknown. Paseo's admission deadline fences any send that has not started yet:
+it sends only on an immediately available transport and retains the response
+waiter for an already-issued send, including a late acknowledgement. A timeout
+ends nested host polling for the pass instead of starting more host requests.
 `service.health.admission` names every held slot past five seconds (`heldSlots`:
 class, holder, age, deadline) and the last abandoned call, and logs a wait for a
 slot with the oldest holder and its age. `heldSlots` names the admitted effect

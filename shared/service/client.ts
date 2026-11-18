@@ -248,8 +248,24 @@ export class ServiceClient {
     if (!socket || socket.destroyed)
       throw new Error("Service socket is not connected");
     if (socket.bufferSize > 32 * 1024 * 1024) {
+      // The current frame has not been written; earlier waiters may already
+      // have reached the service and must not inherit a pre-send refusal.
+      const current = id ? this.pending.get(id) : undefined;
+      if (id) this.pending.delete(id);
+      if (current) {
+        clearTimeout(current.timer);
+        current.reject(
+          new ServiceRequestError(
+            "busy",
+            "Socket write buffer exceeded before send",
+          ),
+        );
+      }
       this.teardown(
-        new ServiceRequestError("busy", "Socket write buffer exceeded"),
+        new ServiceRequestError(
+          "unavailable",
+          "Socket write buffer exceeded; earlier delivery is unknown",
+        ),
       );
       return;
     }

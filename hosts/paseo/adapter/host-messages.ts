@@ -1,3 +1,4 @@
+import { ProvenPreSendRefusalError } from "../../../core/host/errors";
 import {
   ensureHostCallOpen,
   recordHostSend,
@@ -57,6 +58,7 @@ export class PaseoMessageHost {
     await agent.send(text, { messageId });
   }
   private readonly idleDeliveries = new Map<string, Promise<void>>();
+  private readonly retainedSends = new Set<string>();
   /** Bound host reads, delivery and queue waits without cancelling an unknown send. */
   async beforeDeliveryDeadline<T>(
     operation: Promise<T>,
@@ -201,35 +203,77 @@ export class PaseoMessageHost {
     agentId: string,
     input: { prompt: string; messageId: string; sourceAgentId?: string },
   ): Promise<void> {
-    // Only an explicit negative response is safe to retry. Transport failures are unknown.
-    const client = this.owner.provenanceClient as unknown as {
-      sendRequest(
-        args: unknown,
-      ): Promise<{ accepted: boolean; error?: string | null }>;
-    };
-    const requestId = crypto.randomUUID();
-    const response = await client.sendRequest({
-      requestId,
-      message: {
+    const send = async (
+      client: any,
+      sourceAgentId?: string,
+    ): Promise<{ accepted: boolean; error?: string | null }> => {
+      // The SDK's queued send and default waiter timeout cannot prove a write
+      // before the admission deadline or retain a late acknowledgement. Use its
+      // immediate connected path and its request-id waiter, with no waiter timer.
+      if (
+        !client.isConnected ||
+        !client.transport ||
+        client.chunkedTransport?.isWriting ||
+        this.retainedSends.size >= 1024
+      )
+        throw new ProvenPreSendRefusalError(
+          "Paseo transport cannot write immediately",
+        );
+      const requestId = crypto.randomUUID();
+      const message = {
         type: "send_agent_message_request",
         requestId,
         agentId,
         text: input.prompt,
         messageId: input.messageId,
-        sourceAgentId: input.sourceAgentId ?? "nucleus",
-      },
-      options: { skipQueue: true },
-      select: (msg: { type: string; payload: { requestId: string } }) =>
-        msg.type === "send_agent_message_response" &&
-        msg.payload.requestId === requestId
-          ? msg.payload
-          : null,
-    });
+        ...(sourceAgentId ? { sourceAgentId } : {}),
+      };
+      const waiter = client.waitForWithCancel(
+        (frame: any) => {
+          if (frame?.payload?.requestId !== requestId) return null;
+          if (frame.type === "rpc_error")
+            throw new Error("Paseo message request failed");
+          return frame.type === "send_agent_message_response"
+            ? frame.payload
+            : null;
+        },
+        0,
+        { requestId },
+      );
+      this.retainedSends.add(requestId);
+      try {
+        ensureHostCallOpen();
+        // Do not enter sendWhenConnected or the chunker's queued-write path.
+        const sent =
+          typeof client.sendSessionPayload === "function"
+            ? client.sendSessionPayload(message)
+            : client.sendSessionMessage(message);
+        await Promise.race([
+          waiter.promise,
+          Promise.resolve(sent).then(() => waiter.promise),
+        ]);
+        return await waiter.promise;
+      } catch (error) {
+        waiter.cancel(
+          error instanceof Error ? error : new Error(String(error)),
+        );
+        void waiter.promise.catch(() => {});
+        throw error;
+      } finally {
+        this.retainedSends.delete(requestId);
+      }
+    };
+    const response = await send(
+      this.owner.provenanceClient,
+      input.sourceAgentId ?? "nucleus",
+    );
     if (!response.accepted) {
       ensureHostCallOpen();
-      await this.owner.client.sendAgentMessage(agentId, input.prompt, {
-        messageId: input.messageId,
-      });
+      const fallback = await send(this.owner.client);
+      if (!fallback.accepted)
+        throw new ProvenPreSendRefusalError(
+          fallback.error ?? "Paseo rejected the message",
+        );
     }
   }
 }

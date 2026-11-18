@@ -591,10 +591,15 @@ test("an already sent Paseo request remains correlated after admission expires",
   const messages = new PaseoMessageHost({
     api: { agents: { ref: () => agent } },
     provenanceClient: {
-      sendRequest: async () => {
+      isConnected: true,
+      transport: {},
+      chunkedTransport: { isWriting: false },
+      waitForWithCancel: () => ({
+        promise: blocked.then(() => ({ accepted: true })),
+        cancel: () => {},
+      }),
+      sendSessionPayload: () => {
         sends++;
-        await blocked;
-        return { accepted: true };
       },
     },
   } as never);

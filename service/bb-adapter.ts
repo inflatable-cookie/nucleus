@@ -534,7 +534,8 @@ export function composeBbAdapter(input: {
         .filter((agent) => agent.task === task.id)) {
         try {
           if ((await threads.observe(agent.id)).status !== "closed") live += 1;
-        } catch {
+        } catch (error) {
+          if (isHostOperationTimeout(error)) throw error;
           live += 1; /* an unreadable thread is still recorded; never flip the title on a failed read */
         }
       }

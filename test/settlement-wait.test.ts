@@ -206,3 +206,36 @@ test("late host writes do not use active service-client read slots", async () =>
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
+
+test("socket backpressure rejects only the new request as unsent", async () => {
+  const client = new ServiceClient({
+    socketPath: "/synthetic",
+    credential: "synthetic",
+  });
+  const inner = client as any;
+  let oldReject!: (error: Error) => void;
+  const old = new Promise((_resolve, reject) => {
+    oldReject = reject;
+  });
+  inner.socket = {
+    destroyed: false,
+    bufferSize: 33 * 1024 * 1024,
+    destroy() {
+      this.destroyed = true;
+    },
+  };
+  inner.pending.set("earlier", {
+    resolve() {},
+    reject: oldReject,
+    timer: undefined,
+  });
+  const prior = assert.rejects(
+    old,
+    (error: any) => error.code === "unavailable",
+  );
+  await assert.rejects(
+    client.request("service.bb-host-operation", { op: "thread.send" }),
+    (error: any) => error.code === "busy",
+  );
+  await prior;
+});

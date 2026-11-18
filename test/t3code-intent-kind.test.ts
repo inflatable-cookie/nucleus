@@ -246,10 +246,67 @@ test("an unknown T3 command cannot be resent while its original reply is pending
       ),
     );
     assert.equal(calls, 1);
+    const replacement = new T3IntentLedger({
+      state: new T3StateFile(join(dir, "state.json")),
+      hostId: () => "t3code:fixture",
+      requireConnection: () => {},
+      rpc: {
+        call: async () => {
+          calls++;
+          return {};
+        },
+      } as never,
+    });
+    await assert.rejects(
+      replacement.effect(
+        "settle-1",
+        "orchestration.dispatchCommand",
+        payload,
+        undefined,
+        undefined,
+        { resendUnknownAfterRead: true },
+      ),
+    );
+    assert.equal(calls, 1, "a replacement ledger retains the timeout fence");
     release({ ok: true });
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(state.read().intents["settle-1"].status, "settled");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("T3 settlement loops propagate a timeout without visiting later entries", async () => {
+  const { T3Presentation } = await import("../hosts/t3code/presentation");
+  const { T3RpcError } = await import("../hosts/t3code/rpc");
+  const intent = {
+    status: "unknown",
+    kind: "thread.settle",
+    threadId: "thread-1",
+    payload: "{}",
+  };
+  const state = {
+    intents: { one: intent, two: intent },
+    pendingSettles: { one: {}, two: {} },
+    workerSettles: {},
+  };
+  const presentation = new T3Presentation({
+    state: { read: () => state },
+    reads: { observes: () => true },
+    requireConnection: () => {},
+  } as never) as any;
+  presentation.retireDeletedPresentationIntents = () => {};
+  presentation.pruneWorkerSettles = () => {};
+  let calls = 0;
+  const timeout = () => {
+    calls++;
+    throw new T3RpcError("timeout", "orchestration.dispatchCommand");
+  };
+  presentation.reconcileSettleIntent = timeout;
+  await assert.rejects(presentation.reconcileReportedSettlements(), /timeout/);
+  assert.equal(calls, 1);
+  calls = 0;
+  presentation.attemptWorkerSettle = timeout;
+  await assert.rejects(presentation.reconcileSettledThreads(), /timeout/);
+  assert.equal(calls, 1);
 });

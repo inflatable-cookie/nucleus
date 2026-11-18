@@ -802,3 +802,34 @@ test("BB presentation and inventory propagate host request timeouts", async () =
     await f.close();
   }
 });
+
+test("BB stops participant reads when the host hangs after answering earlier reads", async () => {
+  const f = fixture();
+  try {
+    const worker = await f.adapter.guardedNativeAgentCreate(
+      f.spec("worker-midpass"),
+      false,
+      false,
+    );
+    await f.adapter.guardedNativeAgentCreate(
+      f.spec("reviewer-midpass", "reviewer"),
+      false,
+      false,
+    );
+    f.store.update(f.task().id, { agentId: worker.id });
+    const original = f.fake.operations.execute;
+    let calls = 0;
+    f.fake.operations.execute = async (op, input) => {
+      if (op === "thread.observe" && ++calls === 3)
+        throw new HostOperationTimeoutError(op, 10, new Promise(() => {}));
+      return original(op, input);
+    };
+    await assert.rejects(
+      f.adapter.setTaskWorkspaceTitle!(f.task(), "title", "request", false),
+      HostOperationTimeoutError,
+    );
+    assert.equal(calls, 3);
+  } finally {
+    await f.close();
+  }
+});
