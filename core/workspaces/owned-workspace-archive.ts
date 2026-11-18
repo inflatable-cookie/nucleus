@@ -359,7 +359,9 @@ export class OwnedWorkspaceArchive {
                       const processes = await this.host.hostProcessListing();
                       if (!processes)
                         return "the host process listing is unreadable";
-                      const bbThreads = bbWorkspaceThreads(task, runs, id);
+                      const bbThreads = bbWorkspaceThreads(task, runs, id, {
+                        includeAllRuns: true,
+                      });
                       const ownThread = bbThreadForAgent(
                         agentId,
                         runs.find((run) => runIds.includes(run.id))?.hostId ??

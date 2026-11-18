@@ -3337,7 +3337,9 @@ movement invalidates source approval and preserves the normal readiness gates.
   bridge carries no thread identity itself. An unreadable or different thread
   holds; a command beneath the session or its MCP server remains a tool. The
   same binding protects these runtime processes from run cleanup and permits
-  workspace proof after BB reports the participant idle or closed. The process
+  workspace proof after BB reports the participant idle or closed. Archive
+  proof includes every recorded task run in the workspace, including recovery
+  and closeout, as well as task-row workers. The process
   reader retains only the thread identity and checks the session's start identity
   after reading its environment. The Cua server's loaded executable, read by PID
   and rechecked against its start identity, must resolve to the installed

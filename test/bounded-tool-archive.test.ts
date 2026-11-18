@@ -186,6 +186,34 @@ test("archive includes a task-row worker when proving another BB participant", a
   assert.deepEqual(await f.archive(), []);
 });
 
+for (const role of ["recovery", "closeout"] as const)
+  test(`archive recognizes a retained BB ${role} in the worker workspace`, async (t) => {
+    const f = await fixture(t, false, "bb:fixture");
+    f.store.putRun({
+      ...f.run(`${role}-run`, f.oldScratch),
+      role,
+      agentId: "coordinator",
+      hostId: "bb:fixture",
+    });
+    const worker = await bbProcessFixture(f.directory, f.agentId);
+    const coordinator = (
+      await bbProcessFixture(f.directory, "coordinator")
+    ).map((fact) => ({
+      ...fact,
+      pid: fact.pid + 1000,
+      ppid: fact.ppid === 1 ? 1 : fact.ppid! + 1000,
+    }));
+    f.setProcesses([
+      ...worker,
+      ...coordinator,
+      { ...coordinator[2]!, pid: 3000, ppid: 1102, command: "node build.mjs" },
+    ]);
+    await assert.rejects(f.archive(), /process 3000 remains/);
+    assert.equal(existsSync(f.directory), true);
+    f.setProcesses([...worker, ...coordinator]);
+    assert.deepEqual(await f.archive(), []);
+  });
+
 test("workspace archive refreshes the run inventory before local teardown", async (t) => {
   const f = await fixture(t, true);
   let reads = 0;

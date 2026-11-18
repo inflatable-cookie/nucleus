@@ -48,6 +48,7 @@ export function bbWorkspaceThreads(
   task: Task,
   runs: readonly Run[],
   workspaceId?: string | null,
+  options: { includeAllRuns?: boolean } = {},
 ): string[] {
   if (!workspaceId) return [];
   const threads = new Set<string>();
@@ -72,7 +73,8 @@ export function bbWorkspaceThreads(
     if (
       run.taskId === task.id &&
       run.workspaceId === workspaceId &&
-      ["revision", "reviewer", "executor"].includes(run.role)
+      (options.includeAllRuns ||
+        ["revision", "reviewer", "executor"].includes(run.role))
     )
       add(run.agentId, run.hostId ?? task.hostId);
   return [...threads];
