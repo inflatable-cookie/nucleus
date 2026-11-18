@@ -208,52 +208,23 @@ test('a blocking recovery effect settles the run as superseded and hands the wai
   } finally { await f.close(); }
 });
 
-test('an uncertain project create the task has since answered lets review dispatch and settles by evidence', async () => {
+test('a later workspace binding without target evidence keeps an uncertain restart blocking', async () => {
   const f = fixture();
   try {
-    // The swallowtail#225 shape: a restart's `project.create` delivery was never
-    // observed, so the control stayed needs_attention while the task moved on.
     const accepted = new Date(Date.now() - 60_000).toISOString();
     const operationId = 'e'.repeat(64);
-    f.store.putOperation(queueOperationSchema.parse({
-      id: operationId, key: 'restart-control', kind: 'task_control', inputHash: 'a'.repeat(64), state: 'needs_attention',
-      taskId: f.task.id, expectedVersion: null, repoPath: '/repo', submissionId: null, createdAt: accepted,
-      startedAt: accepted, settledAt: accepted, attempts: 1,
-      diagnostic: 'Host delivery is unknown; command was not resent; command project.create', result: null,
-      effect: { kind: 'task_control', target: 'restart', intentAt: accepted, status: 'uncertain', result: null, resultAt: null },
-    }));
-    // The wait the trial recorded for two hours: the phase holds this exact
-    // sentence against the current blocking set and dispatches nothing. It is
-    // read before the later evidence exists, so the same sentence describes the
-    // state on either side of this change.
-    const blocked = recoveryEffectsRefusal(blockingRecoveryEffects(f.store, f.current(), { noticeKinds: 'all' }))!;
-    assert.match(blocked, new RegExp(`operation ${operationId} is uncertain`), 'the operation is what blocks the review');
-    f.store.update(f.task.id, { phase: 'reviewing', reason: `Ordinary review waits for ${blocked}; settle it with retry_effect before continuing` },
-      'review_waiting_on_effects', blocked);
-    // Later evidence, exactly as the trial produced it: the project exists for
-    // the root, the workspace is bound to it and the task's own runs have used
-    // it since.
+    f.store.putOperation(queueOperationSchema.parse({ id: operationId, key: 'restart-control', kind: 'task_control',
+      inputHash: 'a'.repeat(64), state: 'needs_attention', taskId: f.task.id, createdAt: accepted,
+      startedAt: accepted, settledAt: accepted, attempts: 1, diagnostic: 'Transport', result: null,
+      effect: { kind: 'task_control', target: 'restart', intentAt: accepted, status: 'uncertain', result: null, resultAt: null } }));
     f.store.event(f.task.id, 'workspace_created', 'workspace');
-    f.store.putRun(runSchema.parse({
-      id: 'revision-after-restart', taskId: f.task.id, role: 'revision', generation: 1, head, base,
+    f.store.putRun(runSchema.parse({ id: 'revision-after-restart', taskId: f.task.id, role: 'revision', generation: 1, head, base,
       agentId: 'revision-agent', workspaceId: 'workspace', profile: f.worker, status: 'finished',
-      createdAt: new Date().toISOString(), lastObservedAt: null, active: false, idleSince: null, completion: null, released: true,
-    }));
-    const launched: string[] = [];
-    const launch = async (_task: unknown, role: string) => { launched.push(role); };
-    f.engine.resolution.launch = launch as unknown as typeof f.engine.resolution.launch;
-    // One ordinary pass: the reconciler settles the answered control...
+      createdAt: new Date().toISOString(), lastObservedAt: null, active: false, idleSince: null, completion: null, released: true }));
     f.engine.reconcileBlockedEffects(f.task.id);
-    const settled = f.store.operation(operationId)!;
-    assert.equal(settled.state, 'succeeded');
-    assert.equal(settled.effect?.status, 'reconciled');
-    assert.match(settled.effect?.result ?? '', /workspace workspace was bound at \/worktree/);
-    assert.match(settled.effect?.result ?? '', /revision-after-restart/);
-    assert.ok(f.store.eventsAll(f.task.id).some(event => event.kind === 'operation_settled_by_evidence'
-      && event.detail.startsWith(`${operationId}: `)), 'the settlement records its own evidence');
-    // ...and the review phase then dispatches instead of waiting.
-    await f.engine.resolution.advancePhase(f.current());
-    assert.deepEqual(launched, ['reviewer'], 'the review dispatched with no human step');
+    assert.equal(f.store.operation(operationId)?.state, 'needs_attention');
+    assert.ok(blockingRecoveryEffects(f.store, f.current()).some(effect => effect.identity === operationId));
+    assert.equal(f.store.eventsAll(f.task.id).filter(event => event.kind === 'operation_settled_by_evidence').length, 0);
   } finally { await f.close(); }
 });
 

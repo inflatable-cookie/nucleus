@@ -19,7 +19,8 @@ import {
   type Run, type Task,
 } from '../shared/contracts';
 import { hookRecordSchema } from '../shared/hooks';
-import { ownerPendingEffects, collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
+import { ownerPendingEffects, collectOwnerVerbFacts, ownerTaskNext, ownerControlEventDetail } from '../core/verbs/owner-verbs';
+import { supersedeIdleRunInTx } from '../core/recovery/fence-settlement';
 import { RuntimeRetirementService, type EffigyAttempt } from '../core/runtime/runtime-retirement';
 import { HOOK_TEST_TIMEOUT_MS } from './support/budgets';
 import type { Adapter, AgentObservation } from '../core/host';
@@ -1582,14 +1583,24 @@ test('next lists and retry_effect reconciles an exact uncertain run creation', a
   } finally { await f.close(); }
 });
 
-test('next omits a released run whose exact delivery was already settled', async () => {
+test('next omits an overwritten released delivery after its real observer settled it', async () => {
   const f = fixture(); try {
     dispatched(f);
-    const run = reviewerRun(f, { status: 'uncertain', released: true });
+    const run = reviewerRun(f, { status: 'uncertain' });
+    f.timelineEntries.push({ timestamp: new Date().toISOString(), item: { type: 'user_message', messageId: `ns-run-${run.id}` } });
+    await f.engine.performTaskControl(taskControlInputSchema.parse({ action: 'retry_effect', taskId: f.taskId, version: f.task().version,
+      effect: `run-delivery.${run.id}`, reason: 'Observe the original creation', caller: CALLER }));
+    assert.equal(f.store.run(run.id)?.status, 'running');
+    // Recreate the stale released row whose settled history survived overwrite.
+    f.store.putRun({ ...f.store.run(run.id)!, status: 'uncertain', released: true });
     const offered = () => f.next().verbs.some(item => item.verb === 'retry_effect' && item.available
       && JSON.stringify(item.args).includes(`run-delivery.${run.id}`));
-    assert.equal(offered(), true);
-    f.store.event(f.taskId, 'run_delivery_reconciled', `${run.id}: exact creation message observed`);
+    assert.equal(offered(), false);
+    f.engine.reconcileBlockedEffects(f.taskId);
+    assert.equal(f.store.run(run.id)?.status, 'superseded');
+    assert.equal(f.events('run_delivery_superseded').length, 1);
+    f.engine.reconcileBlockedEffects(f.taskId);
+    assert.equal(f.events('run_delivery_superseded').length, 1);
     assert.equal(offered(), false);
   } finally { await f.close(); }
 });
@@ -1764,40 +1775,59 @@ test('retry_effect settles an uncertain retry operation after its named effect i
   } finally { await f.close(); }
 });
 
-test('retry_effect settles an uncertain host-effect control later evidence answered, without force', async () => {
+test('next drops a displaced restart after its old target is released', async () => {
   const f = fixture(); try {
     dispatched(f);
-    // A restart whose project create was never observed, accepted before the
-    // workspace existed (the swallowtail#225 shape).
+    const run = reviewerRun(f, { id: 'old-review', createdAt: '2026-01-01T00:00:00.000Z' });
+    f.store.update(f.taskId, { resolution: { ...f.task().resolution, currentRunId: null } });
+    const input = taskControlInputSchema.parse({ action: 'restart', role: 'reviewer', taskId: f.taskId,
+      version: f.task().version, reason: 'Resume reader', caller: CALLER });
+    const { key, payload } = taskControlOperation(input), id = operationIdForKey(key);
+    const accepted = '2026-01-02T00:00:00.000Z';
+    f.store.putOperation(queueOperationSchema.parse({ id, key, kind: 'task_control', inputHash: operationInputHash(payload),
+      state: 'needs_attention', taskId: f.taskId, expectedVersion: input.version, createdAt: accepted,
+      startedAt: accepted, settledAt: accepted, attempts: 1, diagnostic: 'Transport', result: null,
+      effect: { kind: 'task_control', target: 'restart', intentAt: accepted, status: 'uncertain', result: null, resultAt: null } }), payload);
+    f.store.event(f.taskId, 'owner_control', ownerControlEventDetail(f.task(), input, 'needs_attention', 'reviewing'));
+    f.store.db.prepare("UPDATE events SET at=? WHERE id=(SELECT MAX(id) FROM events WHERE taskId=?)").run(accepted, f.taskId);
+    f.store.update(f.taskId, { reason: 'New binding' });
+    reviewerRun(f, { id: 'new-review', agentId: 'new-review-agent' });
+    const offered = () => f.next().verbs.some(view => view.verb === 'retry_effect' && JSON.stringify(view.args ?? {}).includes(`operation.${id}`));
+    assert.equal(offered(), true);
+    assert.equal(supersedeIdleRunInTx(f.store, f.taskId, run, 'Observed old reader idle'), true);
+    assert.equal(offered(), false);
+    f.engine.reconcileBlockedEffects(f.taskId);
+    assert.equal(f.events('operation_superseded').length, 1);
+    f.engine.reconcileBlockedEffects(f.taskId);
+    assert.equal(f.events('operation_superseded').length, 1);
+    assert.equal(offered(), false);
+  } finally { await f.close(); }
+});
+
+test('next retains an uncertain restart when a later workspace has no target evidence', async () => {
+  const f = fixture(); try {
+    dispatched(f);
     const accepted = new Date(Date.now() - 60_000).toISOString();
-    const control = taskControlInputSchema.parse({ action: 'restart', taskId: f.taskId, version: f.task().version, role: 'worker', reason: 'Recover the worker' });
+    const control = taskControlInputSchema.parse({ action: 'restart', taskId: f.taskId, version: f.task().version, role: 'worker', reason: 'Recover' });
     const { key, payload } = taskControlOperation(control), id = operationIdForKey(key);
     f.store.putOperation(queueOperationSchema.parse({ id, key, kind: 'task_control', inputHash: operationInputHash(payload),
-      state: 'needs_attention', taskId: f.taskId, expectedVersion: control.version, repoPath: null, submissionId: null,
-      createdAt: accepted, startedAt: accepted, settledAt: accepted, attempts: 1,
-      diagnostic: 'Host delivery is unknown; command was not resent; command project.create', result: null,
+      state: 'needs_attention', taskId: f.taskId, expectedVersion: control.version, createdAt: accepted,
+      startedAt: accepted, settledAt: accepted, attempts: 1, diagnostic: 'Transport', result: null,
       effect: { kind: 'task_control', target: 'restart', intentAt: accepted, status: 'uncertain', result: null, resultAt: null } }), payload);
-    // Later evidence: the workspace is bound to the project and a run has used it.
     f.store.event(f.taskId, 'workspace_created', 'workspace');
     f.store.putRun(runSchema.parse({ id: 'revision-after-restart', taskId: f.taskId, role: 'revision', generation: 1, head, base,
       agentId: 'revision-agent', workspaceId: 'workspace', profile: workerProfile, status: 'finished',
       createdAt: new Date().toISOString(), lastObservedAt: null, active: false, idleSince: null, completion: null, released: true }));
-    // An answered control is history, not a fence: `next` no longer offers it.
-    assert.equal(f.next().verbs.some(view => view.verb === 'retry_effect' && JSON.stringify(view.args ?? {}).includes(`operation.${id}`)),
-      false, 'an answered operation does not block');
-    const settled = await f.engine.performTaskControl(taskControlInputSchema.parse({ action: 'retry_effect', taskId: f.taskId,
-      version: f.task().version, effect: `operation.${id}`, reason: 'Observe whether the recorded host effect landed', caller: CALLER }));
-    assert.equal(settled.id, f.taskId);
-    const operation = f.store.operation(id)!;
-    assert.equal(operation.state, 'succeeded');
-    assert.equal(operation.effect?.status, 'reconciled');
-    assert.match(operation.effect?.result ?? '', /workspace workspace was bound at \/worktree/);
-    assert.match(operation.effect?.result ?? '', /revision-after-restart/);
-    assert.ok(f.events('operation_settled_by_evidence').length === 1);
-    // A second call has nothing left to observe: no resend, no new settlement.
-    await assert.rejects(f.engine.performTaskControl(taskControlInputSchema.parse({ action: 'retry_effect', taskId: f.taskId,
-      version: f.task().version, effect: `operation.${id}`, reason: 'Observe again', caller: CALLER })), /No recorded side effect/);
-    assert.equal(f.events('operation_settled_by_evidence').length, 1);
+    assert.ok(f.next().verbs.some(view => view.verb === 'retry_effect' && JSON.stringify(view.args ?? {}).includes(`operation.${id}`)));
+    f.engine.reconcileBlockedEffects(f.taskId);
+    assert.equal(f.store.operation(id)?.state, 'needs_attention');
+    assert.equal(f.events('operation_superseded').length, 0);
+    f.store.update(f.taskId, { phase: 'syncing', resolution: { ...f.task().resolution, mergeHead: head, mergedCommit: base } }, 'merge_verified', '');
+    assert.equal(f.next().verbs.some(view => view.verb === 'retry_effect' && JSON.stringify(view.args ?? {}).includes(`operation.${id}`)), false);
+    f.engine.reconcileBlockedEffects(f.taskId);
+    assert.equal(f.events('operation_superseded').length, 1);
+    f.engine.reconcileBlockedEffects(f.taskId);
+    assert.equal(f.events('operation_superseded').length, 1);
   } finally { await f.close(); }
 });
 

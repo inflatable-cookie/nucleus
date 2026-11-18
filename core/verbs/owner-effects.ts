@@ -135,8 +135,9 @@ export function ownerPendingEffects(facts: OwnerVerbFacts): OwnerEffect[] {
   // A task-control retry may itself be left uncertain after its effect was
   // applied. Keep that operation visible until an owner re-proves its target
   // or a later control supersedes it.
+  const blockingOperations = new Set(blockingRecoveryEffects(store, task, { kinds: ['operation'] }).map(effect => effect.identity));
   for (const operation of store.operations({ taskId: task.id, states: ["needs_attention"], limit: 1000 })) {
-    if (operation.kind !== "task_control") continue;
+    if (operation.kind !== "task_control" || !blockingOperations.has(operation.id)) continue;
     const payload = store.operationPayload(operation.id) as { control?: { action?: string } } | null;
     if (payload?.control?.action !== "retry_effect") continue;
     effects.push({ effect: `task_control_operation.${operation.id}`, kind: "task_control_operation",
