@@ -213,7 +213,7 @@ test('a review-entry bind names a prerequisite by reference and stores its UUID,
   let prerequisite:Task|undefined;
   const f=await admittedReviewEntry((store,repo,planningCommit)=>{
     prerequisite=addTask(store,repo,planningCommit,'review-entry-reference-prerequisite');
-    const [name,number]=prerequisite.reference.split('#');
+    const [name,number]=prerequisite!.reference!.split('#');
     return [`${name}#${number!.padStart(4,'0')}`];
   });
   try{
