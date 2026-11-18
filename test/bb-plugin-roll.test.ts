@@ -33,7 +33,10 @@ import {
 import { RollScheduler } from "../hosts/paseo/plugin/roll";
 import { BridgeSession } from "../hosts/paseo/plugin/session";
 import { bridgeProcessActions } from "../service/install/bridge-process-actions";
-import { RuntimeHealthProjection, type RuntimeHealthContext } from "../service/runtime-health";
+import {
+  RuntimeHealthProjection,
+  type RuntimeHealthContext,
+} from "../service/runtime-health";
 
 /**
  * nucleus#1339: a landed service roll keeps BB's installed Nucleus plugin on the
@@ -68,9 +71,14 @@ function packagedPlugin(directory: string, buildId = BUILD_A): string {
     bb: { name: "Nucleus", server: "./dist/server.js", app: "./dist/app.js" },
   });
   writeJson(join(directory, "dist", "server.js"), "export {};\n");
-  writeJson(join(directory, "dist", "server.meta.json"), { pluginId: BB_PLUGIN_ID });
+  writeJson(join(directory, "dist", "server.meta.json"), {
+    pluginId: BB_PLUGIN_ID,
+  });
   writeJson(join(directory, "dist", "app.js"), "export default {};\n");
-  writeJson(join(directory, BB_PLUGIN_BUILD_FILE), { buildId, revision: REVISION });
+  writeJson(join(directory, BB_PLUGIN_BUILD_FILE), {
+    buildId,
+    revision: REVISION,
+  });
   return directory;
 }
 
@@ -134,9 +142,14 @@ function fakeBb(list: () => Array<Record<string, unknown>>): FakeBb {
       if (args[1] === "install") {
         if (fake.failInstall) throw new Error(fake.failInstall);
         const source = args[2] ?? "";
-        const rootDir = source.startsWith("path:") ? source.slice("path:".length) : source;
+        const rootDir = source.startsWith("path:")
+          ? source.slice("path:".length)
+          : source;
         // BB rebuilds the plugin it installs, in the copy it was given.
-        writeFileSync(join(rootDir, "dist", "app.js"), "BB rebuilt this plugin\n");
+        writeFileSync(
+          join(rootDir, "dist", "app.js"),
+          "BB rebuilt this plugin\n",
+        );
         const existing = plugins.findIndex((row) => row.id === BB_PLUGIN_ID);
         if (existing === -1) plugins.push(rowFor(rootDir));
         else plugins[existing] = rowFor(rootDir);
@@ -166,7 +179,11 @@ function fakeBb(list: () => Array<Record<string, unknown>>): FakeBb {
 }
 
 interface Recorder {
-  run: (command: string, args: string[], options: { env: NodeJS.ProcessEnv; timeoutMs: number }) => Promise<BbCommandRun>;
+  run: (
+    command: string,
+    args: string[],
+    options: { env: NodeJS.ProcessEnv; timeoutMs: number },
+  ) => Promise<BbCommandRun>;
   commands: string[][];
   envs: NodeJS.ProcessEnv[];
 }
@@ -177,7 +194,11 @@ interface Recorder {
  * the installed command would print, and a thrown refusal becomes the exit status
  * and stderr a real subprocess would produce.
  */
-function routeRunner(input: { packageRoot: string; dataDir: string; exec: (args: string[]) => string }): Recorder {
+function routeRunner(input: {
+  packageRoot: string;
+  dataDir: string;
+  exec: (args: string[]) => string;
+}): Recorder {
   const commands: string[][] = [];
   const envs: NodeJS.ProcessEnv[] = [];
   return {
@@ -195,7 +216,12 @@ function routeRunner(input: { packageRoot: string; dataDir: string; exec: (args:
           dataDir: input.dataDir,
           packageRoot: input.packageRoot,
         });
-        return { status: 0, signal: null, stdout: JSON.stringify(answer), stderr: "" };
+        return {
+          status: 0,
+          signal: null,
+          stdout: JSON.stringify(answer),
+          stderr: "",
+        };
       } catch (error) {
         return {
           status: 1,
@@ -216,7 +242,10 @@ function treeBytes(directory: string): Record<string, string> {
       const path = join(at, entry.name);
       const name = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.isDirectory()) visit(path, name);
-      else files[name] = createHash("sha256").update(readFileSync(path)).digest("hex");
+      else
+        files[name] = createHash("sha256")
+          .update(readFileSync(path))
+          .digest("hex");
     }
   };
   visit(directory);
@@ -227,36 +256,66 @@ test("a landed roll installs the BB plugin BB reports behind, which then reports
   const packageRoot = versionRoot();
   const dataDir = dataHomeWithService(BUILD_A);
   // The operator's BB carries the Nucleus plugin from an earlier build.
-  const plugins: Array<Record<string, unknown>> = [rowFor(join(dataDir, "bb-plugin-install", BB_PLUGIN_ID))];
-  writeJson(join(dataDir, "bb-plugin-install", BB_PLUGIN_ID, BB_PLUGIN_BUILD_FILE), { buildId: BUILD_B, revision: REVISION });
+  const plugins: Array<Record<string, unknown>> = [
+    rowFor(join(dataDir, "bb-plugin-install", BB_PLUGIN_ID)),
+  ];
+  writeJson(
+    join(dataDir, "bb-plugin-install", BB_PLUGIN_ID, BB_PLUGIN_BUILD_FILE),
+    { buildId: BUILD_B, revision: REVISION },
+  );
   writeJson(join(dataDir, "bb-plugin-install", BB_PLUGIN_ID, "package.json"), {
     name: "bb-plugin-nucleus",
     version: "0.1.0",
     bb: { server: "./dist/server.js" },
   });
-  mkdirSync(join(dataDir, "bb-plugin-install", BB_PLUGIN_ID, "dist"), { recursive: true });
-  writeFileSync(join(dataDir, "bb-plugin-install", BB_PLUGIN_ID, "dist", "server.js"), "export {};\n");
+  mkdirSync(join(dataDir, "bb-plugin-install", BB_PLUGIN_ID, "dist"), {
+    recursive: true,
+  });
+  writeFileSync(
+    join(dataDir, "bb-plugin-install", BB_PLUGIN_ID, "dist", "server.js"),
+    "export {};\n",
+  );
   const bb = fakeBb(() => plugins);
   const runner = routeRunner({ packageRoot, dataDir, exec: bb.exec });
   const before = treeBytes(packageRoot);
 
-  const record = await bbPluginRoll({ packageRoot, dataDir, buildId: BUILD_A, run: runner.run });
+  const record = await bbPluginRoll({
+    packageRoot,
+    dataDir,
+    buildId: BUILD_A,
+    run: runner.run,
+  });
 
   assert.equal(record?.action, "installed");
   assert.equal(record?.state, "match");
   assert.equal(record?.buildId, BUILD_A);
-  assert.equal(bb.values.serviceDataDir, dataDir, "the plugin can reach the service it now matches");
+  assert.equal(
+    bb.values.serviceDataDir,
+    dataDir,
+    "the plugin can reach the service it now matches",
+  );
   assert.deepEqual(
     runner.commands,
-    [["bb", "status"], ["bb", "install"], ["bb", "status"]],
+    [
+      ["bb", "status"],
+      ["bb", "install"],
+      ["bb", "status"],
+    ],
     "the step reports first, installs only what BB says is behind, then confirms it",
   );
   assert.ok(
     bb.commands.every((args) => !args.includes("usage-pace")),
     "no command names another installed plugin",
   );
-  assert.deepEqual(treeBytes(packageRoot), before, "the installed version directory is untouched (#1319)");
-  assert.match(bbPluginRollNote(record!), /installed the BB plugin for this build/);
+  assert.deepEqual(
+    treeBytes(packageRoot),
+    before,
+    "the installed version directory is untouched (#1319)",
+  );
+  assert.match(
+    bbPluginRollNote(record!),
+    /installed the BB plugin for this build/,
+  );
 });
 
 test("a machine whose BB has no Nucleus plugin is untouched: no install is attempted", async () => {
@@ -266,13 +325,26 @@ test("a machine whose BB has no Nucleus plugin is untouched: no install is attem
   const bb = fakeBb(() => plugins);
   const runner = routeRunner({ packageRoot, dataDir, exec: bb.exec });
 
-  const record = await bbPluginRoll({ packageRoot, dataDir, buildId: BUILD_A, run: runner.run });
+  const record = await bbPluginRoll({
+    packageRoot,
+    dataDir,
+    buildId: BUILD_A,
+    run: runner.run,
+  });
 
   assert.equal(record?.action, "skipped");
   assert.equal(record?.state, "not-installed");
-  assert.deepEqual(runner.commands, [["bb", "status"]], "status only: nothing was installed");
+  assert.deepEqual(
+    runner.commands,
+    [["bb", "status"]],
+    "status only: nothing was installed",
+  );
   assert.ok(bb.commands.every((args) => args[1] !== "install"));
-  assert.equal(bbPluginRollNote(record!), "", "an untouched machine adds no roll note");
+  assert.equal(
+    bbPluginRollNote(record!),
+    "",
+    "an untouched machine adds no roll note",
+  );
 });
 
 test("a plugin that is not this integration's is left alone, and no install is attempted", async () => {
@@ -291,31 +363,55 @@ test("a plugin that is not this integration's is left alone, and no install is a
   const bb = fakeBb(() => plugins);
   const runner = routeRunner({ packageRoot, dataDir, exec: bb.exec });
 
-  const record = await bbPluginRoll({ packageRoot, dataDir, buildId: BUILD_A, run: runner.run });
+  const record = await bbPluginRoll({
+    packageRoot,
+    dataDir,
+    buildId: BUILD_A,
+    run: runner.run,
+  });
 
   assert.equal(record?.action, "skipped");
   assert.equal(record?.state, "unrecognised");
   assert.deepEqual(runner.commands, [["bb", "status"]]);
-  assert.deepEqual(plugins.map((row) => row.rootDir), [checkout], "the operator's own install is not replaced");
+  assert.deepEqual(
+    plugins.map((row) => row.rootDir),
+    [checkout],
+    "the operator's own install is not replaced",
+  );
 });
 
 test("a failed install keeps the roll landed and names its cause", async () => {
   const packageRoot = versionRoot();
   const dataDir = dataHomeWithService(BUILD_A);
-  const plugins: Array<Record<string, unknown>> = [rowFor(join(dataDir, "bb-plugin-install", BB_PLUGIN_ID))];
-  writeJson(join(dataDir, "bb-plugin-install", BB_PLUGIN_ID, BB_PLUGIN_BUILD_FILE), { buildId: BUILD_B, revision: REVISION });
+  const plugins: Array<Record<string, unknown>> = [
+    rowFor(join(dataDir, "bb-plugin-install", BB_PLUGIN_ID)),
+  ];
+  writeJson(
+    join(dataDir, "bb-plugin-install", BB_PLUGIN_ID, BB_PLUGIN_BUILD_FILE),
+    { buildId: BUILD_B, revision: REVISION },
+  );
   writeJson(join(dataDir, "bb-plugin-install", BB_PLUGIN_ID, "package.json"), {
     name: "bb-plugin-nucleus",
     version: "0.1.0",
     bb: { server: "./dist/server.js" },
   });
-  mkdirSync(join(dataDir, "bb-plugin-install", BB_PLUGIN_ID, "dist"), { recursive: true });
-  writeFileSync(join(dataDir, "bb-plugin-install", BB_PLUGIN_ID, "dist", "server.js"), "export {};\n");
+  mkdirSync(join(dataDir, "bb-plugin-install", BB_PLUGIN_ID, "dist"), {
+    recursive: true,
+  });
+  writeFileSync(
+    join(dataDir, "bb-plugin-install", BB_PLUGIN_ID, "dist", "server.js"),
+    "export {};\n",
+  );
   const bb = fakeBb(() => plugins);
   bb.failInstall = "bb plugin install refused: the plugin build failed";
   const runner = routeRunner({ packageRoot, dataDir, exec: bb.exec });
 
-  const record = await bbPluginRoll({ packageRoot, dataDir, buildId: BUILD_A, run: runner.run });
+  const record = await bbPluginRoll({
+    packageRoot,
+    dataDir,
+    buildId: BUILD_A,
+    run: runner.run,
+  });
 
   assert.equal(record?.action, "failed");
   assert.equal(record?.state, "behind");
@@ -331,14 +427,37 @@ test("a version root with no compiled CLI, or a BB that cannot answer, runs noth
   const runs: string[][] = [];
   const run = async (_command: string, args: string[]) => {
     runs.push(args);
-    return { status: 1, signal: null, stdout: "", stderr: "no installed BB was found" };
+    return {
+      status: 1,
+      signal: null,
+      stdout: "",
+      stderr: "no installed BB was found",
+    };
   };
-  const source = await bbPluginRoll({ packageRoot: bare, dataDir, buildId: BUILD_A, run });
-  assert.equal(source, null, "a checkout ships no compiled command, so the step steps aside");
+  const source = await bbPluginRoll({
+    packageRoot: bare,
+    dataDir,
+    buildId: BUILD_A,
+    run,
+  });
+  assert.equal(
+    source,
+    null,
+    "a checkout ships no compiled command, so the step steps aside",
+  );
   assert.deepEqual(runs, []);
 
-  const unreadable = await bbPluginRoll({ packageRoot: versionRoot(), dataDir, buildId: BUILD_A, run });
-  assert.equal(unreadable, null, "a BB this host cannot run is left exactly as it was");
+  const unreadable = await bbPluginRoll({
+    packageRoot: versionRoot(),
+    dataDir,
+    buildId: BUILD_A,
+    run,
+  });
+  assert.equal(
+    unreadable,
+    null,
+    "a BB this host cannot run is left exactly as it was",
+  );
 });
 
 /** A `spawn` that records what a landed roll asked for and starts nothing. */
@@ -354,24 +473,36 @@ function recorderSpawn(spawned: Array<{ command: string; args: string[] }>) {
  * roll record and observe the BB plugin step every landed roll runs.
  */
 function landedRollFixture(input: {
-  step: (request: { packageRoot: string; dataDir: string; buildId: string }) => Promise<BbPluginRollRecord | null>;
+  step: (request: {
+    packageRoot: string;
+    dataDir: string;
+    buildId: string;
+  }) => Promise<BbPluginRollRecord | null>;
 }) {
   const dataDir = dataHomeWithService(BUILD_A);
   const spawned: Array<{ command: string; args: string[] }> = [];
   const sourcePath = versionRoot();
   const session = new BridgeSession(BUILD_A, BUILD_B, sourcePath, REVISION);
-  const processActions = { ...bridgeProcessActions, spawn: recorderSpawn(spawned) };
+  const processActions = {
+    ...bridgeProcessActions,
+    spawn: recorderSpawn(spawned),
+  };
   const scheduler = new RollScheduler({
     options: {
       processActions,
       dataDir,
       bbPluginRoll: input.step,
-      reloadPluginCommand: () => ({ command: "paseo", args: ["plugin", "reload", "nucleus"] }),
+      reloadPluginCommand: () => ({
+        command: "paseo",
+        args: ["plugin", "reload", "nucleus"],
+      }),
     },
     dataDir,
     session,
     processActions,
-    ensure: async () => { throw new Error("a landed roll never spawns here"); },
+    ensure: async () => {
+      throw new Error("a landed roll never spawns here");
+    },
   });
   return { scheduler, dataDir, spawned, sourcePath, session };
 }
@@ -382,9 +513,12 @@ test("a landed roll writes the BB step where health reads it and names a failure
     buildId: BUILD_A,
     action: "failed" as const,
     state: "behind",
-    detail: "nucleus bb install exit 1: bb plugin install refused: the plugin build failed",
+    detail:
+      "nucleus bb install exit 1: bb plugin install refused: the plugin build failed",
   };
-  const { scheduler, dataDir, spawned } = landedRollFixture({ step: async () => failure });
+  const { scheduler, dataDir, spawned } = landedRollFixture({
+    step: async () => failure,
+  });
   writeServiceRoll(dataDir, {
     status: "replacing",
     fromBuild: BUILD_B,
@@ -400,9 +534,19 @@ test("a landed roll writes the BB step where health reads it and names a failure
   const roll = readServiceRoll(dataDir)!;
   assert.equal(roll.status, "rolled", "the roll still lands");
   assert.equal(roll.toBuild, BUILD_A);
-  assert.match(roll.detail, /the BB plugin was not updated \(behind: nucleus bb install exit 1/);
-  assert.deepEqual(readBbPluginRoll(dataDir), failure, "health reads the same record");
-  assert.equal(bbPluginRollSchema.parse(readBbPluginRoll(dataDir)).action, "failed");
+  assert.match(
+    roll.detail,
+    /the BB plugin was not updated \(behind: nucleus bb install exit 1/,
+  );
+  assert.deepEqual(
+    readBbPluginRoll(dataDir),
+    failure,
+    "health reads the same record",
+  );
+  assert.equal(
+    bbPluginRollSchema.parse(readBbPluginRoll(dataDir)).action,
+    "failed",
+  );
   assert.equal(spawned.length, 1, "the landed roll still reloads the plugin");
   assert.deepEqual(spawned[0]!.args.slice(-3), ["plugin", "reload", "nucleus"]);
 });
@@ -417,51 +561,89 @@ test("a landed roll that installed the BB plugin says so, and a step that throws
   };
   const first = landedRollFixture({ step: async () => installed });
   writeServiceRoll(first.dataDir, {
-    status: "replacing", fromBuild: BUILD_B, toBuild: BUILD_A, digest: REVISION,
-    at: "2026-11-18T09:59:00.000Z", detail: "replacing", deferrals: [],
+    status: "replacing",
+    fromBuild: BUILD_B,
+    toBuild: BUILD_A,
+    digest: REVISION,
+    at: "2026-11-18T09:59:00.000Z",
+    detail: "replacing",
+    deferrals: [],
   });
   await first.scheduler.settleLandedRoll(BUILD_A);
-  assert.match(readServiceRoll(first.dataDir)!.detail, /installed the BB plugin for this build \(match\)/);
+  assert.match(
+    readServiceRoll(first.dataDir)!.detail,
+    /installed the BB plugin for this build \(match\)/,
+  );
   assert.deepEqual(readBbPluginRoll(first.dataDir), installed);
 
   const second = landedRollFixture({
-    step: async () => { throw new Error("the command seam lost its child"); },
+    step: async () => {
+      throw new Error("the command seam lost its child");
+    },
   });
   writeServiceRoll(second.dataDir, {
-    status: "replacing", fromBuild: BUILD_B, toBuild: BUILD_A, digest: REVISION,
-    at: "2026-11-18T10:01:00.000Z", detail: "replacing", deferrals: [],
+    status: "replacing",
+    fromBuild: BUILD_B,
+    toBuild: BUILD_A,
+    digest: REVISION,
+    at: "2026-11-18T10:01:00.000Z",
+    detail: "replacing",
+    deferrals: [],
   });
   await second.scheduler.settleLandedRoll(BUILD_A);
   const roll = readServiceRoll(second.dataDir)!;
-  assert.equal(roll.status, "rolled", "a broken step is recorded, never a failed roll");
-  assert.match(roll.detail, /the BB plugin step could not run: the command seam lost its child/);
+  assert.equal(
+    roll.status,
+    "rolled",
+    "a broken step is recorded, never a failed roll",
+  );
+  assert.match(
+    roll.detail,
+    /the BB plugin step could not run: the command seam lost its child/,
+  );
   assert.match(readBbPluginRoll(second.dataDir)!.detail, /lost its child/);
 });
 
 test("a roll whose BB step is not configured leaves the operator's BB alone", async () => {
   const dataDir = dataHomeWithService(BUILD_A);
   const spawned: Array<{ command: string; args: string[] }> = [];
-  const processActions = { ...bridgeProcessActions, spawn: recorderSpawn(spawned) };
+  const processActions = {
+    ...bridgeProcessActions,
+    spawn: recorderSpawn(spawned),
+  };
   const scheduler = new RollScheduler({
     options: { processActions, dataDir },
     dataDir,
     session: new BridgeSession(BUILD_A, BUILD_B, versionRoot(), REVISION),
     processActions,
-    ensure: async () => { throw new Error("a landed roll never spawns here"); },
+    ensure: async () => {
+      throw new Error("a landed roll never spawns here");
+    },
   });
   writeServiceRoll(dataDir, {
-    status: "replacing", fromBuild: BUILD_B, toBuild: BUILD_A, digest: REVISION,
-    at: "2026-11-18T10:02:00.000Z", detail: "replacing", deferrals: [],
+    status: "replacing",
+    fromBuild: BUILD_B,
+    toBuild: BUILD_A,
+    digest: REVISION,
+    at: "2026-11-18T10:02:00.000Z",
+    detail: "replacing",
+    deferrals: [],
   });
 
   await scheduler.settleLandedRoll(BUILD_A);
 
   assert.equal(readServiceRoll(dataDir)!.status, "rolled");
-  assert.equal(existsSync(join(dataDir, BB_PLUGIN_ROLL_FILE)), false, "no step ran, so there is no record to report");
+  assert.equal(
+    existsSync(join(dataDir, BB_PLUGIN_ROLL_FILE)),
+    false,
+    "no step ran, so there is no record to report",
+  );
 });
 
 /** The smallest health context: every member the projection reads, nothing else. */
-function healthContext(plugins: { roll: BbPluginRollRecord | null }): RuntimeHealthContext {
+function healthContext(plugins: {
+  roll: BbPluginRollRecord | null;
+}): RuntimeHealthContext {
   return {
     store: { getMeta: () => undefined, countTasks: () => 0 },
     engine: { reconciliationSnapshot: () => ({}) },
@@ -477,7 +659,12 @@ function healthContext(plugins: { roll: BbPluginRollRecord | null }): RuntimeHea
     },
     hostRegistry: { known: () => [], primary: () => null, get: () => null },
     t3Host: () => null,
-    bb: () => ({ online: false, hosts: [], offlineReason: "", lastRefusal: null }),
+    bb: () => ({
+      online: false,
+      hosts: [],
+      offlineReason: "",
+      lastRefusal: null,
+    }),
     bbPluginRoll: () => plugins.roll,
     admission: { snapshot: () => ({}) },
     capacityChanges: { state: () => ({ changes: [], effective: {} }) },
@@ -500,12 +687,21 @@ test("service health names the landed roll's BB plugin failure and its cause", (
     buildId: BUILD_A,
     action: "failed",
     state: "behind",
-    detail: "nucleus bb install exit 1: bb plugin install refused: the plugin build failed",
+    detail:
+      "nucleus bb install exit 1: bb plugin install refused: the plugin build failed",
   };
-  const health = new RuntimeHealthProjection(healthContext({ roll: failure })).health();
+  const health = new RuntimeHealthProjection(
+    healthContext({ roll: failure }),
+  ).health();
   assert.deepEqual(health.bbPlugin, failure);
   assert.match(health.bbPlugin!.detail, /the plugin build failed/);
 
-  const quiet = new RuntimeHealthProjection(healthContext({ roll: null })).health();
-  assert.equal("bbPlugin" in quiet, false, "a machine the step never ran reports nothing");
+  const quiet = new RuntimeHealthProjection(
+    healthContext({ roll: null }),
+  ).health();
+  assert.equal(
+    "bbPlugin" in quiet,
+    false,
+    "a machine the step never ran reports nothing",
+  );
 });

@@ -1,9 +1,23 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { backendSourceDigest, sourcePathFromModule } from "../../../shared/service/build";
-import { readServiceRoll, SERVICE_ROLL_REQUEST_FILE } from "../../../shared/service/discovery";
-import { BB_PLUGIN_ROLL_FILE, bbPluginRollNote, bbPluginRollSchema, type BbPluginRollRecord } from "../../../shared/bb-plugin-roll";
-import type { ServiceRoll, ServiceRollDeferral } from "../../../shared/service-roll";
+import {
+  backendSourceDigest,
+  sourcePathFromModule,
+} from "../../../shared/service/build";
+import {
+  readServiceRoll,
+  SERVICE_ROLL_REQUEST_FILE,
+} from "../../../shared/service/discovery";
+import {
+  BB_PLUGIN_ROLL_FILE,
+  bbPluginRollNote,
+  bbPluginRollSchema,
+  type BbPluginRollRecord,
+} from "../../../shared/bb-plugin-roll";
+import type {
+  ServiceRoll,
+  ServiceRollDeferral,
+} from "../../../shared/service-roll";
 import type { ServiceClient } from "../../../shared/service/client";
 import type { BridgeMainChannel } from "../../../shared/service/bridge-process";
 import { CONNECT_ATTEMPT_TIMEOUT_MS, type BridgeOptions } from "./options";
@@ -23,7 +37,6 @@ export interface RollContext {
   processActions: BridgeOptions["processActions"];
   /** The bridge's single-flight connect, used by the watchers. */
   ensure(): Promise<ServiceClient>;
-
 }
 
 /**
@@ -58,26 +71,42 @@ export class RollScheduler {
 
   constructor(private readonly core: RollContext) {}
 
-  private get session() { return this.core.session; }
+  private get session() {
+    return this.core.session;
+  }
 
   /** Start watching the main channel and the service's roll request hint. */
   start() {
     const every = this.core.options.rollCheckMs ?? ROLL_CHECK_MS;
-    if (this.rollCheckTimer || this.rollRequestTimer || this.session.expected instanceof Error) return;
+    if (
+      this.rollCheckTimer ||
+      this.rollRequestTimer ||
+      this.session.expected instanceof Error
+    )
+      return;
     if (every > 0) {
-      this.rollCheckTimer = setInterval(() => { void this.core.ensure().catch(() => {}); void this.checkSource(); }, every);
+      this.rollCheckTimer = setInterval(() => {
+        void this.core.ensure().catch(() => {});
+        void this.checkSource();
+      }, every);
       this.rollCheckTimer.unref?.();
     }
     // The service writes this hint only after syncing Queue's registered
     // checkout. Polling the hint keeps the backend digest check on its relaxed
     // interval while starting an authorized self-roll promptly.
     this.rollRequestTimer = setInterval(() => {
-      if (!existsSync(join(this.core.dataDir, SERVICE_ROLL_REQUEST_FILE))) return;
-      void this.core.ensure().then(() => {
-        if (this.session.closed || !this.session.client?.connected) return;
-        const request = this.core.processActions.consumeServiceRollRequest(this.core.dataDir);
-        if (request) void this.checkSource(request.force);
-      }).catch(() => {});
+      if (!existsSync(join(this.core.dataDir, SERVICE_ROLL_REQUEST_FILE)))
+        return;
+      void this.core
+        .ensure()
+        .then(() => {
+          if (this.session.closed || !this.session.client?.connected) return;
+          const request = this.core.processActions.consumeServiceRollRequest(
+            this.core.dataDir,
+          );
+          if (request) void this.checkSource(request.force);
+        })
+        .catch(() => {});
     }, 250);
     this.rollRequestTimer.unref?.();
   }
@@ -97,17 +126,23 @@ export class RollScheduler {
     // `ensure` on the replacement path inside `rollOnce`; this entry does not
     // spawn just to learn that.
     if (force) this.rollForced = true;
-    if (this.rolling) { this.rollAgain = true; return this.rolling; }
+    if (this.rolling) {
+      this.rollAgain = true;
+      return this.rolling;
+    }
     this.rolling = this.active = (async () => {
       let last: ServiceRoll | null = null;
       do {
         this.rollAgain = false;
         const forced = this.rollForced;
         this.rollForced = false;
-        last = await this.rollOnce(forced) ?? last;
+        last = (await this.rollOnce(forced)) ?? last;
       } while (this.rollAgain);
       return last;
-    })().finally(() => { this.rolling = null; this.active = null; });
+    })().finally(() => {
+      this.rolling = null;
+      this.active = null;
+    });
     return this.rolling;
   }
 
@@ -117,7 +152,8 @@ export class RollScheduler {
    */
   async resumeInstalled(sourcePath: string): Promise<void> {
     try {
-      const channel = this.mainChannel = await this.core.processActions.openMainChannel(sourcePath);
+      const channel = (this.mainChannel =
+        await this.core.processActions.openMainChannel(sourcePath));
       const pending = await channel?.pending();
       if (!channel || !pending) return;
       const staged = await this.core.processActions.verifyVersion(pending.root);
@@ -139,7 +175,9 @@ export class RollScheduler {
     try {
       mkdirSync(this.core.dataDir, { recursive: true, mode: 0o700 });
       this.core.processActions.writeServiceRoll(this.core.dataDir, roll);
-    } catch { /* the record is advisory: the typed state still reports the service */ }
+    } catch {
+      /* the record is advisory: the typed state still reports the service */
+    }
   }
 
   /** Record integrity failures in the same durable health/board channel as roll failures. */
@@ -148,33 +186,52 @@ export class RollScheduler {
     if (!cause.includes("Installed version changed:")) return false;
     this.writeRoll({
       status: "failed",
-      fromBuild: typeof this.session.expected === "string" ? this.session.expected : "",
+      fromBuild:
+        typeof this.session.expected === "string" ? this.session.expected : "",
       toBuild: null,
       digest: this.session.sourceDigest ?? "",
       at: new Date().toISOString(),
-      detail: `the current installed version failed integrity verification (${cause}); the running Paseo bridge was kept available. Repair by reinstalling this version or rolling to a fresh build`.slice(-4000),
+      detail:
+        `the current installed version failed integrity verification (${cause}); the running Paseo bridge was kept available. Repair by reinstalling this version or rolling to a fresh build`.slice(
+          -4000,
+        ),
       deferrals: [...this.deferrals],
     });
     return true;
   }
 
-  private rememberDeferral(reason: ServiceRollDeferral["reason"], until: string): void {
+  private rememberDeferral(
+    reason: ServiceRollDeferral["reason"],
+    until: string,
+  ): void {
     const at = new Date().toISOString();
     const last = this.deferrals[this.deferrals.length - 1];
-    if (last && last.reason === reason && last.until === until) { last.at = at; return; }
+    if (last && last.reason === reason && last.until === until) {
+      last.at = at;
+      return;
+    }
     this.deferrals.push({ at, reason, until });
-    if (this.deferrals.length > 64) this.deferrals.splice(0, this.deferrals.length - 64);
+    if (this.deferrals.length > 64)
+      this.deferrals.splice(0, this.deferrals.length - 64);
   }
 
   private async heavyFollowersAttached(): Promise<boolean> {
-    if (this.core.options.heavyFollowers) return this.core.options.heavyFollowers();
+    if (this.core.options.heavyFollowers)
+      return this.core.options.heavyFollowers();
     const count = (health: Record<string, unknown> | null | undefined) => {
-      const endpoint = health?.hostRunEndpoint as { heavyFollowers?: unknown } | null | undefined;
+      const endpoint = health?.hostRunEndpoint as
+        | { heavyFollowers?: unknown }
+        | null
+        | undefined;
       return Number(endpoint?.heavyFollowers ?? 0);
     };
     try {
       if (!this.session.client) return false;
-      const health = await this.session.client.request("service.health", {}, CONNECT_ATTEMPT_TIMEOUT_MS) as Record<string, unknown>;
+      const health = (await this.session.client.request(
+        "service.health",
+        {},
+        CONNECT_ATTEMPT_TIMEOUT_MS,
+      )) as Record<string, unknown>;
       this.session.health = health;
       return count(health) > 0;
     } catch {
@@ -204,7 +261,8 @@ export class RollScheduler {
 
   private recordRetrying(detail: string): void {
     const existing = readServiceRoll(this.core.dataDir);
-    const buildId = typeof this.session.expected === "string" ? this.session.expected : "";
+    const buildId =
+      typeof this.session.expected === "string" ? this.session.expected : "";
     const roll: ServiceRoll = {
       status: "retrying",
       fromBuild: existing?.fromBuild || buildId,
@@ -226,7 +284,8 @@ export class RollScheduler {
         this.mainChannel = await this.core.processActions.openMainChannel(root);
       } catch (error) {
         const cause = error instanceof Error ? error.message : String(error);
-        if (this.recordIntegrityFailure(error)) return readServiceRoll(this.core.dataDir);
+        if (this.recordIntegrityFailure(error))
+          return readServiceRoll(this.core.dataDir);
         const detail = `main roll check could not open the installed version: ${cause}`;
         const roll: ServiceRoll = {
           status: "failed",
@@ -251,23 +310,41 @@ export class RollScheduler {
       if (!target) return null;
       digest = target.key;
     } catch (error) {
-      const roll: ServiceRoll = { status: "failed", fromBuild: this.session.expected, toBuild: null, digest: this.session.sourceDigest ?? "", at: new Date().toISOString(), detail: `main build source unavailable: ${error instanceof Error ? error.message : String(error)}`, deferrals: [] };
-      if (this.recordIntegrityFailure(error)) return readServiceRoll(this.core.dataDir);
+      const roll: ServiceRoll = {
+        status: "failed",
+        fromBuild: this.session.expected,
+        toBuild: null,
+        digest: this.session.sourceDigest ?? "",
+        at: new Date().toISOString(),
+        detail: `main build source unavailable: ${error instanceof Error ? error.message : String(error)}`,
+        deferrals: [],
+      };
+      if (this.recordIntegrityFailure(error))
+        return readServiceRoll(this.core.dataDir);
       this.writeRoll(roll);
       return roll;
     }
-    if (digest === this.session.sourceDigest || digest === this.session.failedDigest) {
+    if (
+      digest === this.session.sourceDigest ||
+      digest === this.session.failedDigest
+    ) {
       // An unfinished replacement (or a handoff a reload interrupted) is retried on
       // each check, not left waiting for a request.
       const status = readServiceRoll(this.core.dataDir)?.status;
       let ensureError: unknown = null;
       if (status === "retrying" || status === "replacing") {
-        try { await this.core.ensure(); } catch (error) { ensureError = error; }
+        try {
+          await this.core.ensure();
+        } catch (error) {
+          ensureError = error;
+        }
       }
       const activationError = await this.convergeActivation();
       if (activationError) return readServiceRoll(this.core.dataDir);
       if (ensureError) {
-        this.recordRetrying(`the replacement did not complete and is retried: ${ensureError instanceof Error ? ensureError.message : String(ensureError)}`);
+        this.recordRetrying(
+          `the replacement did not complete and is retried: ${ensureError instanceof Error ? ensureError.message : String(ensureError)}`,
+        );
         return readServiceRoll(this.core.dataDir);
       }
       const buildId = this.session.health?.["buildId"];
@@ -279,50 +356,95 @@ export class RollScheduler {
       this.lastDigestChangeAt = Date.now();
     }
     const fromBuild = this.session.expected;
-    const record = (status: ServiceRoll["status"], toBuild: string | null, detail: string): ServiceRoll => {
+    const record = (
+      status: ServiceRoll["status"],
+      toBuild: string | null,
+      detail: string,
+    ): ServiceRoll => {
       const roll: ServiceRoll = {
-        status, fromBuild, toBuild, digest, at: new Date().toISOString(),
-        detail: detail.slice(-4000), deferrals: [...this.deferrals],
+        status,
+        fromBuild,
+        toBuild,
+        digest,
+        at: new Date().toISOString(),
+        detail: detail.slice(-4000),
+        deferrals: [...this.deferrals],
       };
       this.writeRoll(roll);
       return roll;
     };
-    record("typechecking", null, "Building main locally while the settle window runs");
+    record(
+      "typechecking",
+      null,
+      "Building main locally while the settle window runs",
+    );
     try {
-      staged = target.staged ?? await channel.build(target.revision!);
+      staged = target.staged ?? (await channel.build(target.revision!));
       const latest = await channel.target();
-      if (latest?.key !== target.key) { this.rollAgain = true; return null; }
+      if (latest?.key !== target.key) {
+        this.rollAgain = true;
+        return null;
+      }
     } catch (error) {
       this.session.failedDigest = digest;
-      return record("failed", null, `the main build failed: ${error instanceof Error ? error.message : String(error)}`);
+      return record(
+        "failed",
+        null,
+        `the main build failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
     const settleMs = this.core.options.rollSettleMs ?? ROLL_SETTLE_MS;
-    const capMs = this.core.options.rollHeavyFollowerCapMs ?? ROLL_HEAVY_FOLLOWER_CAP_MS;
+    const capMs =
+      this.core.options.rollHeavyFollowerCapMs ?? ROLL_HEAVY_FOLLOWER_CAP_MS;
     if (!force && settleMs > 0) {
       const waitMs = this.lastDigestChangeAt + settleMs - Date.now();
       if (waitMs > 0) {
-        this.rememberDeferral("settle_window", new Date(this.lastDigestChangeAt + settleMs).toISOString());
-        return record("deferred", null, `waiting ${Math.ceil(waitMs / 1000)}s after the last backend change before rolling`);
+        this.rememberDeferral(
+          "settle_window",
+          new Date(this.lastDigestChangeAt + settleMs).toISOString(),
+        );
+        return record(
+          "deferred",
+          null,
+          `waiting ${Math.ceil(waitMs / 1000)}s after the last backend change before rolling`,
+        );
       }
     }
-    if (!force && capMs > 0 && await this.heavyFollowersAttached()) {
+    if (!force && capMs > 0 && (await this.heavyFollowersAttached())) {
       if (!this.heavyDeferSince) this.heavyDeferSince = Date.now();
       const waitMs = this.heavyDeferSince + capMs - Date.now();
       if (waitMs > 0) {
-        this.rememberDeferral("heavy_follower", new Date(this.heavyDeferSince + capMs).toISOString());
-        return record("deferred", null, `a heavy run has an attached follower; rolling after it settles or ${Math.ceil(waitMs / 1000)}s`);
+        this.rememberDeferral(
+          "heavy_follower",
+          new Date(this.heavyDeferSince + capMs).toISOString(),
+        );
+        return record(
+          "deferred",
+          null,
+          `a heavy run has an attached follower; rolling after it settles or ${Math.ceil(waitMs / 1000)}s`,
+        );
       }
     }
     this.heavyDeferSince = 0;
     const identity = { digest, buildId: staged.buildId };
-    const previousSourcePath = this.session.sourcePath, previousDigest = this.session.sourceDigest;
+    const previousSourcePath = this.session.sourcePath,
+      previousDigest = this.session.sourceDigest;
     const previousActivation = this.activateInstalled;
-    try { await channel.prepare(staged, target); }
-    catch (error) {
+    try {
+      await channel.prepare(staged, target);
+    } catch (error) {
       this.session.failedDigest = digest;
-      return record("failed", identity.buildId, `the staged main build failed startup proof: ${error instanceof Error ? error.message : String(error)}`);
+      return record(
+        "failed",
+        identity.buildId,
+        `the staged main build failed startup proof: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
-    record("replacing", identity.buildId, "Main build and startup proof verified; replacing the service");
+    record(
+      "replacing",
+      identity.buildId,
+      "Main build and startup proof verified; replacing the service",
+    );
     this.session.sourcePath = staged.root;
     const activationRoot = staged.root;
     this.activateInstalled = async () => {
@@ -342,9 +464,17 @@ export class RollScheduler {
     try {
       await this.core.ensure();
       const activationError = await this.convergeActivation();
-      if (activationError) return record("retrying", identity.buildId, activationError);
-      const bbNote = await this.bbPluginRollNote(activationRoot, identity.buildId);
-      const rolled = record("rolled", identity.buildId, `Service replaced after a verified main build${this.standbyRollNote()}${bbNote}`);
+      if (activationError)
+        return record("retrying", identity.buildId, activationError);
+      const bbNote = await this.bbPluginRollNote(
+        activationRoot,
+        identity.buildId,
+      );
+      const rolled = record(
+        "rolled",
+        identity.buildId,
+        `Service replaced after a verified main build${this.standbyRollNote()}${bbNote}`,
+      );
       this.deferrals = [];
       this.pendingDigest = null;
       this.reloadPlugin(identity.buildId);
@@ -363,7 +493,11 @@ export class RollScheduler {
       // The new build is now the expected one; the next request or check retries the replace.
       const activationError = await this.convergeActivation();
       const replacement = `the replacement did not complete and is retried: ${error instanceof Error ? error.message : String(error)}`;
-      return record("retrying", identity.buildId, activationError ? `${replacement}; ${activationError}` : replacement);
+      return record(
+        "retrying",
+        identity.buildId,
+        activationError ? `${replacement}; ${activationError}` : replacement,
+      );
     } finally {
       this.session.handoff = wasHandoff;
       this.session.rollNote = null;
@@ -389,7 +523,10 @@ export class RollScheduler {
    * and the next landed roll runs the step again. Unset in fixtures, so a test roll
    * never reaches the operator's BB.
    */
-  private async bbPluginRollNote(packageRoot: string, buildId: string): Promise<string> {
+  private async bbPluginRollNote(
+    packageRoot: string,
+    buildId: string,
+  ): Promise<string> {
     const step = this.core.options.bbPluginRoll;
     if (!step) return "";
     let record: BbPluginRollRecord | null;
@@ -401,7 +538,10 @@ export class RollScheduler {
         buildId,
         action: "failed",
         state: "error",
-        detail: `the BB plugin step could not run: ${error instanceof Error ? error.message : String(error)}`.slice(-4000),
+        detail:
+          `the BB plugin step could not run: ${error instanceof Error ? error.message : String(error)}`.slice(
+            -4000,
+          ),
       };
     }
     if (!record) return "";
@@ -410,7 +550,9 @@ export class RollScheduler {
         join(this.core.dataDir, BB_PLUGIN_ROLL_FILE),
         bbPluginRollSchema.parse(record),
       );
-    } catch { /* the record is advisory, like the roll record itself */ }
+    } catch {
+      /* the record is advisory, like the roll record itself */
+    }
     return bbPluginRollNote(record);
   }
 
@@ -427,33 +569,63 @@ export class RollScheduler {
     if (this.activateInstalled) return;
     const roll = readServiceRoll(this.core.dataDir);
     if (!roll) return;
-    const named = (roll.status === "retrying" || roll.status === "replacing") && roll.toBuild === buildId;
-    const overtaken = (roll.status === "deferred" || roll.status === "typechecking")
-      && roll.toBuild === null && this.session.sourceDigest !== null && roll.digest === this.session.sourceDigest;
-    let abandoned = roll.status === "retrying" && roll.toBuild !== buildId && !this.session.handoff;
+    const named =
+      (roll.status === "retrying" || roll.status === "replacing") &&
+      roll.toBuild === buildId;
+    const overtaken =
+      (roll.status === "deferred" || roll.status === "typechecking") &&
+      roll.toBuild === null &&
+      this.session.sourceDigest !== null &&
+      roll.digest === this.session.sourceDigest;
+    let abandoned =
+      roll.status === "retrying" &&
+      roll.toBuild !== buildId &&
+      !this.session.handoff;
     if (abandoned) {
       // A healthy old bridge is not evidence that another bridge's current
       // target was abandoned. Keep main-channel and claimed attempts visible.
-      abandoned = !this.mainChannel && !claimIsFresh(join(this.core.dataDir, SPAWN_CLAIM_FILE), this.core.processActions.pidAlive);
+      abandoned =
+        !this.mainChannel &&
+        !claimIsFresh(
+          join(this.core.dataDir, SPAWN_CLAIM_FILE),
+          this.core.processActions.pidAlive,
+        );
       const root = this.session.sourcePath ?? sourcePathFromModule();
       try {
-        const selected = existsSync(join(root, "manifest.json")) ? this.session.sourceDigest : backendSourceDigest(root);
+        const selected = existsSync(join(root, "manifest.json"))
+          ? this.session.sourceDigest
+          : backendSourceDigest(root);
         abandoned = abandoned && selected !== roll.digest;
-      } catch { abandoned = false; }
+      } catch {
+        abandoned = false;
+      }
     }
     if (!named && !overtaken && !abandoned) return;
     // `rolled` says the target build answered; only a roll's own `rolled` write
     // follows a passing roll typecheck, so these details name what is unproven.
-    const detail = abandoned ? "The previous replacement attempt was superseded; the selected service is healthy"
-      : roll.status === "retrying" ? "Service replaced after a retried replacement"
-      : roll.status === "replacing" ? "Service replaced after the interrupted replacement"
-      : roll.status === "deferred" ? "A fresh bridge loaded this source and replaced the service while the roll was deferred, bypassing the roll; no roll typecheck ran for it"
-      : "A fresh bridge loaded this source and replaced the service while the roll was typechecking; that check's completion was not observed and no passing roll typecheck is recorded";
+    const detail = abandoned
+      ? "The previous replacement attempt was superseded; the selected service is healthy"
+      : roll.status === "retrying"
+        ? "Service replaced after a retried replacement"
+        : roll.status === "replacing"
+          ? "Service replaced after the interrupted replacement"
+          : roll.status === "deferred"
+            ? "A fresh bridge loaded this source and replaced the service while the roll was deferred, bypassing the roll; no roll typecheck ran for it"
+            : "A fresh bridge loaded this source and replaced the service while the roll was typechecking; that check's completion was not observed and no passing roll typecheck is recorded";
     // A landed roll keeps BB's installed plugin on the build it landed, wherever
     // the landing was observed from: the version root is what this bridge now
     // spawns from, and a root that ships no compiled CLI steps aside.
-    const bbNote = await this.bbPluginRollNote(this.session.sourcePath ?? sourcePathFromModule(), buildId);
-    this.writeRoll({ ...roll, status: "rolled", toBuild: buildId, at: new Date().toISOString(), detail: `${detail}${bbNote}` });
+    const bbNote = await this.bbPluginRollNote(
+      this.session.sourcePath ?? sourcePathFromModule(),
+      buildId,
+    );
+    this.writeRoll({
+      ...roll,
+      status: "rolled",
+      toBuild: buildId,
+      at: new Date().toISOString(),
+      detail: `${detail}${bbNote}`,
+    });
     this.reloadPlugin(buildId);
   }
 
@@ -465,12 +637,25 @@ export class RollScheduler {
    */
   reloadPlugin(buildId: string) {
     const command = this.core.options.reloadPluginCommand?.();
-    if (!command || this.session.reloadedFor === buildId || buildId === this.session.pluginBuild) return;
+    if (
+      !command ||
+      this.session.reloadedFor === buildId ||
+      buildId === this.session.pluginBuild
+    )
+      return;
     this.session.reloadedFor = buildId;
     try {
-      const child = this.core.processActions.spawn(command.command, command.args, { detached: true, stdio: "ignore", env: process.env });
-      child.on("error", () => { /* the header notice still asks for a manual reload */ });
+      const child = this.core.processActions.spawn(
+        command.command,
+        command.args,
+        { detached: true, stdio: "ignore", env: process.env },
+      );
+      child.on("error", () => {
+        /* the header notice still asks for a manual reload */
+      });
       child.unref();
-    } catch { /* the header notice still asks for a manual reload */ }
+    } catch {
+      /* the header notice still asks for a manual reload */
+    }
   }
 }

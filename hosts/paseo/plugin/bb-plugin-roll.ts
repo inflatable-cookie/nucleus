@@ -50,7 +50,11 @@ export interface BbPluginRollInput {
   /** The build the roll landed, recorded so health names what the step aimed at. */
   buildId: string;
   /** Test seam: run one command to completion. Production spawns it. */
-  run?: (command: string, args: string[], options: { env: NodeJS.ProcessEnv; timeoutMs: number }) => Promise<BbCommandRun>;
+  run?: (
+    command: string,
+    args: string[],
+    options: { env: NodeJS.ProcessEnv; timeoutMs: number },
+  ) => Promise<BbCommandRun>;
   /** Test seam: the clock. */
   now?: () => Date;
   /** The environment the CLI runs in; NUCLEUS_DATA_HOME is pinned to `dataDir`. */
@@ -65,11 +69,15 @@ export interface BbPluginRollInput {
 export function bbPluginCli(root: string): Command | null {
   const node = join(root, "runtime", "node");
   const cli = join(root, "bin", "nucleus.mjs");
-  return existsSync(node) && existsSync(cli) ? { command: node, args: [cli] } : null;
+  return existsSync(node) && existsSync(cli)
+    ? { command: node, args: [cli] }
+    : null;
 }
 
 /** The status answer `nucleus bb status` prints, as far as this step reads it. */
-function readStatus(run: BbCommandRun): { state: string; detail: string } | null {
+function readStatus(
+  run: BbCommandRun,
+): { state: string; detail: string } | null {
   if (run.status !== 0) return null;
   let answer: unknown;
   try {
@@ -114,7 +122,10 @@ export async function bbPluginRoll(
   if (!cli) return null;
   const run = input.run ?? spawnCommand;
   const now = input.now ?? (() => new Date());
-  const env = { ...(input.env ?? process.env), NUCLEUS_DATA_HOME: input.dataDir };
+  const env = {
+    ...(input.env ?? process.env),
+    NUCLEUS_DATA_HOME: input.dataDir,
+  };
   const record = (
     action: BbPluginRollRecord["action"],
     state: string,
@@ -126,7 +137,10 @@ export async function bbPluginRoll(
     state,
     detail: detail.slice(-4000),
   });
-  const call = async (args: string[], timeoutMs: number): Promise<BbCommandRun> => {
+  const call = async (
+    args: string[],
+    timeoutMs: number,
+  ): Promise<BbCommandRun> => {
     try {
       return await run(cli.command, [...cli.args, ...args], { env, timeoutMs });
     } catch (error) {
@@ -189,12 +203,27 @@ function spawnCommand(
     const timer = setTimeout(() => {
       try {
         child.kill("SIGKILL");
-      } catch { /* the child is already gone */ }
+      } catch {
+        /* the child is already gone */
+      }
     }, options.timeoutMs);
     timer.unref?.();
-    child.stdout?.setEncoding("utf8").on("data", (chunk: string) => { stdout = keep(stdout, chunk); });
-    child.stderr?.setEncoding("utf8").on("data", (chunk: string) => { stderr = keep(stderr, chunk); });
-    child.once("error", (error) => settle({ status: null, signal: null, stdout, stderr: `${stderr}${error.message}` }));
-    child.once("close", (status, signal) => settle({ status, signal, stdout, stderr }));
+    child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
+      stdout = keep(stdout, chunk);
+    });
+    child.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
+      stderr = keep(stderr, chunk);
+    });
+    child.once("error", (error) =>
+      settle({
+        status: null,
+        signal: null,
+        stdout,
+        stderr: `${stderr}${error.message}`,
+      }),
+    );
+    child.once("close", (status, signal) =>
+      settle({ status, signal, stdout, stderr }),
+    );
   });
 }
