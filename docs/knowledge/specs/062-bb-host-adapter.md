@@ -1213,11 +1213,12 @@ makes the fork a bounded commitment (5f).
 The shared board's historical `plans` method name is translated by the BB bridge to the canonical
 `queue.plans` catalogue method. BB threads may also call the CLI through `BB_THREAD_ID`; the service
 verifies that exact thread on one online BB host before recording its host-qualified identity. An
-online BB host is valid for authenticated submission ingress; an offline selected BB ingress host
-refuses with typed `invalid_input` before operation acceptance. The operation and task retain the
-repository or operator-default work-host selection; a caller's BB host never becomes a task work
-host. When no repository or operator-default route is set, the sole online non-BB host is the
-unambiguous work-host fallback. The bridge forwards service-catalogue methods over the retained BB
+online BB host is valid for authenticated submission ingress; an offline BB caller or explicitly
+selected BB ingress host refuses with typed `invalid_input` during dry-run and before operation
+acceptance, even when a separate work host is online. The operation and task retain the repository
+or operator-default work-host selection; a caller's BB host never becomes a task work host. When no
+repository or operator-default route is set, the sole online non-BB host is the unambiguous work-host
+fallback. The bridge forwards service-catalogue methods over the retained BB
 connection, answers the bridge-catalogue `queue.service-state` read from `service.health`, and permits
 only the board's `host.run.board` read and `host.run.capacity.release` action from the reverse host
 channel. Other host-control calls remain refused.

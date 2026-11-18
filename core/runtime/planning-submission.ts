@@ -7,6 +7,7 @@ import { ProtocolError } from "../../shared/service/protocol";
 import { repositoryOrigin } from "../planning/lanes";
 import { prepareDraftContent, proofOnlyPreferenceWarning, reportOnlyDeliveryRefusal } from "../planning/handoff";
 import { validateSubmission } from "../git/index";
+import { assertBbSubmissionIngressAvailable } from "../planning/submission-routing";
 import type { PlanningContext } from "./planning";
 
 /** Owns draft and handoff preparation before the runtime accepts planning work. */
@@ -58,6 +59,7 @@ export class PlanningSubmission {
     if (input.hostId) prepared.submission = { ...prepared.submission, hostId: input.hostId };
     if (input.dryRun) {
       const origin = await repositoryOrigin(prepared.submission.repoPath).catch(() => null);
+      assertBbSubmissionIngressAvailable(this.context.engine, input.hostId, prepared.submission.originIdentity?.hostId);
       const hostId = this.context.engine.selectIngressHost(input.hostId, prepared.submission.repoPath, origin, prepared.submission.originIdentity?.hostId);
       if (!hostId || !this.context.engine.hostIngressAvailable(hostId))
         throw new ProtocolError("invalid_input", `Selected submission host ${hostId ?? '(none)'} is offline or unavailable for ingress`);

@@ -16,6 +16,7 @@ import { OPERATION_COMPATIBILITY_WAIT_MS, operationIsSettled, type OperationAcce
 import { repositoryRekeyInputSchema, type RepositoryRekeyInput } from "../../shared/repository-rekey";
 import { hostKindOf, type IdentitySource } from "../../shared/host-kind";
 import { ProtocolError } from "../../shared/service/protocol";
+import { assertBbSubmissionIngressAvailable } from "./submission-routing";
 import type { Engine } from "../engine";
 import { SubmissionUnavailableError } from "../git/index";
 import { LANE_PRIORITY_OPERATION } from "../scheduling/lane-priorities";
@@ -122,12 +123,9 @@ export class Operations {
           return hostId ? { hostId, basis: input.hostId ? 'explicit' as const : repoPath || repositoryOriginForSelection ? 'repository_host' as const : 'sole_online_host' as const } : undefined;
         })();
     const submissionKind = ["submit", "review_entry", "source_promote"].includes(input.kind);
-    const bbIngressHostId = plannerHostId && hostKindOf(plannerHostId) === "bb" ? plannerHostId
-      : input.hostId && hostKindOf(input.hostId) === "bb" ? input.hostId : undefined;
-    if (!previous && submissionKind && input.hostId && hostKindOf(input.hostId) === "bb" && plannerHostId !== input.hostId)
-      throw new ProtocolError("invalid_input", `Selected BB submission host ${input.hostId} must match the verified caller identity`);
-    if (!previous && submissionKind && bbIngressHostId && !this.engine.hostIngressAvailable(bbIngressHostId))
-      throw new ProtocolError("invalid_input", `Selected submission host ${bbIngressHostId} is offline or unavailable for ingress`);
+    const bbIngressHostId = !previous && submissionKind
+      ? assertBbSubmissionIngressAvailable(this.engine, input.hostId, plannerHostId)
+      : undefined;
 
     // BB proves the authenticated caller's ingress identity, but it cannot run
     // task work. Persist the repository/default work host on the operation and
