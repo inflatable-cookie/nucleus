@@ -35,7 +35,7 @@ import { chooseProfile } from '../core/dispatch/routing';
 import { createTaskDetailCache } from '../core/telemetry/task-detail';
 import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
 import { USAGE_GATE_APPROVE, USAGE_GATE_WAIT, reconcileUsageGate, usageGateBlocked } from '../core/dispatch/usage-gate';
-import { automaticSelection, automaticSelectionTag, describeAutomaticSelection, requestOnly } from '../shared/pool';
+import { automaticReachable, automaticSelection, automaticSelectionTag, demandRank, describeAutomaticSelection, requestOnly } from '../shared/pool';
 import { workerStartTier } from '../shared/demand';
 import { configurePool, poolSchema, submissionSchema, usageLevels, type Profile, type Task, type UsageLevel, type UsageView } from '../shared/contracts';
 
@@ -58,20 +58,26 @@ test('Spec 052 diagnostics: the explanation matches what chooseProfile does, for
         const picked = chooseProfile(adopt, profiles, [entry], {}, new Set(), role, {}, level)?.profile.id ?? null;
         assert.equal(picked === 'p', automatic === 'allowed', `${label} ${role}: automatic selection agrees with the explanation`);
         const requestedProfile = { ...adopt, profileRequests: { [role]: { profileId: 'p', reason: 'Owner request', required: false } } };
-        assert.equal(chooseProfile(requestedProfile, profiles, [entry], {}, new Set(), role, {}, level)?.profile.id === 'p', automatic === 'allowed',
-          `${label} ${role}: an unsigned request reaches the profile only where automatic selection could`);
+        // A request reaches exactly the profiles the level's permission rule does
+        // not hold; the task's requested-tier bound only stops automatic
+        // selection, which is what the explanation reports.
+        assert.equal(chooseProfile(requestedProfile, profiles, [entry], {}, new Set(), role, {}, level)?.profile.id === 'p',
+          !requestOnly(entry, level, requested), `${label} ${role}: an unsigned request reaches exactly where the level grants permission`);
         const signed = { ...adopt, profileRequests: { [role]: { profileId: 'p', reason: 'Owner request', required: false,
           signoff: { status: 'approved' as const, decisionId: 'd', by: 'operator (board)', at: '2026-10-21T00:00:00.000Z', note: '' } } } };
         assert.equal(chooseProfile(signed, profiles, [entry], {}, new Set(), role, {}, level)?.profile.id, 'p', `${label} ${role}: a signed-off request works at every level`);
       }
-      // Cost is never the permission rule (Tom, 2026-11-17).
-      if (capability === null || capability === 'low' || capability === 'medium' || capability === 'high')
-        assert.equal(automatic, 'allowed', `${label}: a lower tier never needs permission`);
-      // The gate is the level's tier rule, never the requested tier's own climb back (except on Low before approval).
-      assert.equal(requestOnly(entry, level, requested), automatic === 'request_tier', label);
+      // Cost is never the permission rule (Tom, 2026-11-17), and a tier at or
+      // below the task's requested tier is automatic whenever the level's
+      // permission rule does not hold it.
+      if (level !== 'maximum' && !requestOnly(entry, level, requested) && (capability === null || demandRank(capability) <= demandRank(requested)))
+        assert.equal(automatic, 'allowed', `${label}: a covered tier at or below the requested tier is automatic`);
+      // The level's tier rule and the task's requested-tier bound are the two
+      // automatic bounds, never the climb exception before a recorded climb.
+      assert.equal(automatic === 'request_tier', !automaticReachable(entry, level, requested), label);
       const usage: UsageView = { level, setLevel: level, until: null, expired: false };
       const text = describeAutomaticSelection(entry, usage, iso => iso, requested);
-      assert.equal(/permission|request-only/.test(text), automatic === 'request_tier', `${label}: "${text}"`);
+      assert.equal(/permission|request-only|explicit route|below the top two tiers/.test(text), automatic === 'request_tier', `${label}: "${text}"`);
       assert.equal(automaticSelectionTag(entry, level, requested) !== '', automatic === 'request_tier', label);
       assert.ok(automaticSelectionTag(entry, level, requested).length <= 16, `${label}: the button tag stays short enough not to overflow a compact chooser`);
     }
@@ -128,15 +134,16 @@ test('Spec 052 diagnostics: next and a cached detail read explain the policy fre
 
     const normal = rows(after);
     assert.equal(normal['worker:frontier']!.automatic, 'request_tier');
-    assert.match(normal['worker:frontier']!.explanation, new RegExp(String.raw`^Recorded worker run used it \(history, not today's policy\); automatic selection: Frontier: top two tiers need permission at Normal \(Maximum ended ${until}\)$`));
-    assert.equal(normal['reviewer:pricey']!.automatic, 'allowed', 'a high tier never needs permission at Normal');
+    assert.match(normal['worker:frontier']!.explanation, new RegExp(String.raw`^Recorded worker run used it \(history, not today's policy\); automatic selection: Frontier: above the task's requested medium tier, so an explicit route is required \(Maximum ended ${until}\)$`));
+    assert.equal(normal['reviewer:pricey']!.automatic, 'request_tier', 'a profile above the task\'s requested tier needs an explicit route');
     assert.equal(normal['worker:cheap-flag']!.automatic, 'request_tier', 'below Maximum a frontier profile needs a request whatever its cost');
-    assert.match(normal['worker:cheap-flag']!.explanation, /^Worker preference; automatic selection: Frontier: top two tiers need permission at Normal \(Maximum ended .*\); a preference alone does not select it$/);
+    assert.match(normal['worker:cheap-flag']!.explanation, /^Worker preference; automatic selection: Frontier: above the task's requested medium tier, so an explicit route is required \(Maximum ended .*\); a preference alone does not select it$/);
     store.setMeta('usageLevel', { level: 'high', until: null, setAt: '2026-10-19T00:00:00.000Z' });
-    assert.equal(rows(after)['reviewer:pricey']!.automatic, 'allowed', 'at High a very-high tier profile is automatic');
+    assert.equal(rows(after)['reviewer:pricey']!.automatic, 'request_tier', 'a profile above the task\'s requested tier needs an explicit route');
     assert.equal(rows(after)['worker:cheap-flag']!.automatic, 'request_tier', 'at High frontier still needs a request');
     store.setMeta('usageLevel', { level: 'extra_high', until: null, setAt: '2026-10-19T00:00:00.000Z' });
-    assert.equal(rows(after)['worker:cheap-flag']!.automatic, 'allowed', 'at Extra high nothing needs permission');
+    assert.equal(rows(after)['worker:cheap-flag']!.automatic, 'request_tier', 'at Extra high a frontier profile still sits above the requested tier');
+    assert.match(rows(after)['worker:cheap-flag']!.explanation, /above the task's requested medium tier/);
     store.setMeta('usageLevel', { level: 'maximum', until, setAt: '2026-10-19T00:00:00.000Z' });
 
     // task.next reads the same projection; nothing about the task or settings changes.
@@ -221,8 +228,9 @@ test('052: on Low, submitting a high or very-high complexity task opens a decisi
     assert.equal(usageGateBlocked(approved, 'low'), false, 'the approved task dispatches');
     // It runs one tier below its very-high complexity, and a revision after review changes climbs back to very_high.
     assert.equal(chooseProfile(approved, profiles, entries, {}, new Set(), 'worker', {}, 'low', undefined, true)?.profile.id, 'a-high');
-    assert.equal(chooseProfile({ ...approved, phase: 'changes_requested' }, profiles, entries, {}, new Set(), 'worker', {}, 'low', undefined, false)?.profile.id, 'z-very-high');
-    assert.ok(!chooseProfile(approved, profiles, entries, {}, new Set(), 'worker', {}, 'low', undefined, true)?.profile.id.includes('frontier'),
+    const reviewing = { ...approved, resolution: { ...approved.resolution, review: { eventId: 'review-1', taskId: approved.id, runId: 'review-1', status: 'changes_required' as const, summary: 'Fix the defect', head: 'a'.repeat(40) } } };
+    assert.equal(chooseProfile(reviewing, profiles, entries, {}, new Set(), 'worker', {}, 'low', undefined, false)?.profile.id, 'z-very-high');
+    assert.ok(!chooseProfile(reviewing, profiles, entries, {}, new Set(), 'worker', {}, 'low', undefined, false)?.profile.id.includes('frontier'),
       'a frontier run above the requested tier still needs its own request');
   } finally { store.close(); }
 });
@@ -251,6 +259,53 @@ test('052: a declined Low gate keeps the task held, and lowering its complexity 
     assert.equal(released.usageGate, null);
     assert.equal(released.holds.dispatch, undefined);
     assert.equal(usageGateBlocked(released, 'low'), false);
+  } finally { store.close(); }
+});
+
+test('052: the Low gate is decided at admission, so a level change never holds work submitted earlier or already started', () => {
+  const store = new Store(':memory:');
+  try {
+    store.setMeta('usageLevel', { level: 'normal', until: null, setAt: '2026-11-17T00:00:00.000Z' });
+    const submitted = store.insert(submissionSchema.parse({ submissionId: 'before-low', title: 'Before low', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'h.md', originAgentId: 'origin', complexity: 'high' }), 'host', 'handoff', 'a'.repeat(40));
+    assert.equal(submitted.usageGate, null, 'a submission made under Normal carries no gate');
+    store.setMeta('usageLevel', { level: 'low', until: null, setAt: '2026-11-17T01:00:00.000Z' });
+    const decisions = new Decisions(store);
+    reconcileUsageGate(store, decisions, submitted.id);
+    const after = store.task(submitted.id);
+    assert.equal(after.usageGate, null, 'the level change never retroactively gates accepted work');
+    assert.equal(after.holds.dispatch, undefined);
+    assert.equal(usageGateBlocked(after, 'low'), false);
+
+    // An already-started task that was admitted under Low keeps its gate only as
+    // history: dispatching is no longer refused once it is running.
+    store.setMeta('usageLevel', { level: 'low', until: null, setAt: '2026-11-17T02:00:00.000Z' });
+    const started = store.insert(submissionSchema.parse({ submissionId: 'started-under-low', title: 'Started', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'h.md', originAgentId: 'origin', complexity: 'high' }), 'host', 'handoff', 'a'.repeat(40));
+    assert.equal(started.usageGate?.status, 'pending');
+    store.update(started.id, { usageGate: { ...started.usageGate!, status: 'approved' }, phase: 'working', agentId: 'worker', runId: 'run', workspaceId: 'ws', directory: '/worktree' });
+    assert.equal(usageGateBlocked(store.task(started.id), 'low'), false, 'an approved/running task dispatches');
+  } finally { store.close(); }
+});
+
+test('052: a pre-existing board hold is never replaced by the Low gate, and approving the gate does not clear it', () => {
+  const store = new Store(':memory:');
+  try {
+    store.setMeta('usageLevel', { level: 'low', until: null, setAt: '2026-11-17T00:00:00.000Z' });
+    const task = store.insert(submissionSchema.parse({ submissionId: 'already-held', title: 'Already held', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'h.md', originAgentId: 'origin', complexity: 'high' }), 'host', 'handoff', 'a'.repeat(40));
+    assert.equal(task.usageGate?.status, 'pending');
+    const fence = { owner: 'operator (board)', reason: 'Operator board hold', at: '2026-11-17T03:00:00.000Z', generation: 1, until: null };
+    store.update(task.id, { holds: { dispatch: fence }, held: true, holdOwner: fence.owner, holdReason: fence.reason, holdAt: fence.at, holdGeneration: 1 });
+    const decisions = new Decisions(store);
+    reconcileUsageGate(store, decisions, task.id);
+    const gated = store.task(task.id);
+    assert.equal(gated.holds.dispatch?.reason, 'Operator board hold', 'the existing hold stays the visible fence');
+    assert.equal(gated.holds.dispatch?.at, fence.at);
+    assert.equal(gated.usageGate?.holdAt, null, 'the gate records that it placed no fence');
+    const decision = decisions.get({ id: gated.usageGate!.decisionId! });
+    decisions.answer({ id: decision.id, version: decision.version, answer: USAGE_GATE_APPROVE, answeredBy: 'operator (board)', relayed: false, note: '' });
+    reconcileUsageGate(store, decisions, task.id);
+    const approved = store.task(task.id);
+    assert.equal(approved.usageGate?.status, 'approved');
+    assert.equal(approved.holds.dispatch?.reason, 'Operator board hold', 'approval clears only the gate\'s own fence, never the operator\'s hold');
   } finally { store.close(); }
 });
 

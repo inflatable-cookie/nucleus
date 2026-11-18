@@ -18,6 +18,7 @@ import {
   submissionRecordFromLegacy,submissionSchema,taskControlInputSchema,type Profile,type PoolEntry,type Task,type UsageLevel,
 } from '../shared/contracts';
 import {saveProfileSettings} from '../shared/pool';
+import {runDemand} from '../shared/demand';
 import type {Adapter} from '../core/host';
 
 
@@ -97,7 +98,7 @@ test('Spec 053: the demand keeps every profile that meets it, rotates within the
   assert.equal(ids(chooseProfile(taskOf({complexity:'very_high'}),profiles,capped,usage,new Set())),'agent-medium','a shortfall takes the most capable available');
   assert.equal(ids(chooseProfile(taskOf({complexity:'high'}),profiles,pool,usage,new Set(),'worker',usage,'low')),'agent-medium','the Low usage level takes a step off the demand');
   const sameCost=pool.map(e=>poolSchema.parse({...e,cost:'medium'}));
-  assert.equal(ids(chooseProfile(taskOf({complexity:'medium'}),profiles,sameCost,usage,new Set())),'agent-high','equal use: the id tie-break inside the tier at equal cost');
+  assert.equal(ids(chooseProfile(taskOf({complexity:'medium'}),profiles,sameCost,usage,new Set())),'agent-medium','the run selects its own medium tier at equal cost');
   assert.equal(ids(chooseProfile(taskOf({complexity:'medium'}),profiles,sameCost,{...usage,'profile:agent-high':9},new Set())),'agent-medium','the least used profile in the set rotates in');
 });
 
@@ -111,11 +112,15 @@ test('Spec 053: the stored role offsets move every automatic selection; invalid 
     assert.deepEqual(store.demandRoleOffsets(),{worker:0,reviewer:0,coordinator:-2});
     assert.equal(engine.resolution.select(base,'reviewer')?.profile.id,'agent-high','a very-high complexity task starts a tier below at Normal; the reviewer matches');
     store.setMeta('demandRoleOffsets',{worker:0,reviewer:1,coordinator:0});
-    assert.equal(engine.resolution.select(base,'reviewer')?.profile.id,'agent-very_high','reviewer +1 asks one tier more');
+    assert.equal(engine.resolution.select(base,'reviewer')?.profile.id,'agent-high','reviewer +1 asks for the requested tier, which is held at Normal before any climb; the nearest covered tier is high');
+    const climbed={...base,resolution:{...base.resolution,workerClimb:{reviewRunId:'review-1',from:'high' as const,to:'very_high' as const,profileId:'agent-very_high',at:'2026-11-17T00:00:00.000Z'}}};
+    assert.equal(engine.resolution.select(climbed,'reviewer')?.profile.id,'agent-very_high','after the recorded climb the reviewer runs at the requested tier');
     assert.equal(engine.resolution.select(base,'coordinator')?.profile.id,'agent-high','coordinator 0 keeps the start tier');
     assert.equal(ids(chooseProfile(base,profiles,pool,equalUsage(pool),new Set(),'worker',equalUsage(pool),'normal',store.demandRoleOffsets())),'agent-high','worker 0 keeps the start tier');
     store.setMeta('demandRoleOffsets',{worker:1,reviewer:0,coordinator:0});
-    assert.equal(ids(chooseProfile(base,profiles,pool,equalUsage(pool),new Set(),'worker',equalUsage(pool),'normal',store.demandRoleOffsets())),'agent-very_high','worker +1 asks one tier more');
+    assert.equal(ids(chooseProfile(base,profiles,pool,equalUsage(pool),new Set(),'worker',equalUsage(pool),'normal',store.demandRoleOffsets())),'agent-high','worker +1 asks one tier more');
+    store.setMeta('demandRoleOffsets',{worker:2,reviewer:0,coordinator:0});
+    assert.equal(ids(chooseProfile(base,profiles,pool,equalUsage(pool),new Set(),'worker',equalUsage(pool),'normal',store.demandRoleOffsets())),'agent-high','worker +2 asks for the requested tier, which is held at Normal before any climb; the nearest covered tier is high');
     store.setMeta('demandRoleOffsets',{worker:9,reviewer:0,coordinator:0});
     assert.deepEqual(store.demandRoleOffsets(),{worker:0,reviewer:0,coordinator:-2},'an out-of-range stored value is ignored');
   }finally{store.close();rmSync(dir,{recursive:true,force:true});}
@@ -232,9 +237,9 @@ test('Spec 053 cost lean (Tom, 2026-11-04): cost shifts the share within the set
   const profiles=live.map(([id])=>profile(id));
   const pool=live.map(([id,cost,capability])=>poolSchema.parse({profileId:id,enabled:true,group:id,roles:['worker'],weight:1,scopes:['general'],cost,capability}));
   const shares=simulate(taskOf({complexity:'medium'}),profiles,pool,100);
-  assert.deepEqual(shares,{glm:40,deepseek:20,grok:20,haiku:20},'100 selections: GLM (low, lean 8) takes 40, each medium-cost profile (lean 4) takes 20; none starved');
+  assert.deepEqual(shares,{glm:50,grok:25,haiku:25},'100 medium selections: the medium tier rotates, GLM (low, lean 8) takes 50 and each medium-cost profile 25; DeepSeek sits above the requested tier');
   const high=simulate(taskOf({complexity:'medium'}),profiles,pool.map(e=>e.profileId==='grok'?poolSchema.parse({...e,cost:'high'}):e),100);
-  assert.ok(Math.abs(high.grok-100*2/18)<=1,`a high-cost profile in the set takes its lean share (2 of 18), not none: ${high.grok}`);
+  assert.ok(Math.abs(high.grok-100*2/14)<=1,`a high-cost profile in the set takes its lean share (2 of 14), not none: ${high.grok}`);
 });
 test('Spec 053 cost lean: equal cost follows configured weight; a very_low-cost profile gets 16 times a very_high-cost one',()=>{
   const profiles=[profile('heavy'),profile('light')];
@@ -251,10 +256,10 @@ test('Spec 053 cost lean: an unavailable group leaves the set and the rest rotat
   const profiles=live.map(([id])=>profile(id));
   const pool=live.map(([id,cost,capability])=>poolSchema.parse({profileId:id,enabled:true,group:id,roles:['worker'],weight:1,scopes:['general'],cost,capability}));
   const skipped=simulate(taskOf({complexity:'medium'}),profiles,pool,60,new Set(['glm']));
-  assert.deepEqual(skipped,{deepseek:30,haiku:30},'an unavailable group is skipped; the rest of the set rotates at equal lean; the frontier profile stays out');
+  assert.deepEqual(skipped,{haiku:60},'an unavailable group is skipped; the medium tier keeps haiku; the frontier profile stays out');
   const top=simulate(taskOf({complexity:'very_high'}),profiles,pool,20);
   assert.equal(top.flagged,undefined,'a frontier profile stays out of automatic selection at Normal');
-  assert.deepEqual(top,{deepseek:16,frontier:4},'the task\'s own very-high tier is allowed and rotates with the cost lean');
+  assert.deepEqual(top,{deepseek:20},'the start tier is the nearest covered profile below the requested very-high tier');
 });
 
 test('deterministic ties break by profile id and stay stable across repeated selection',()=>{

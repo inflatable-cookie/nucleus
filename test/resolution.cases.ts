@@ -1993,6 +1993,44 @@ test("changes return to the same worker and re-review resumes the same reviewer"
   } finally {
     await f.close();
   }
+test('Spec 052: an applied changes-required review climbs the next worker run one tier, and a retained reviewer below the climbed worker is replaced',async()=>{
+ const f=fixture(false,false,undefined,true);try{
+  f.adapter.verifyResume=async()=>{};
+  f.store.update(f.task.id,{complexity:'high'});
+  const highWorker=profile('worker-high','test/worker-high');
+  f.engine.profiles=[...f.engine.profiles,highWorker];
+  f.store.setMeta('pool',[...f.store.pool(),
+   {profileId:highWorker.id,enabled:true,group:'worker-high',roles:['worker'],weight:1,scopes:['general'],capability:'high',cost:'low'}]);
+  await f.engine.wake();
+  assert.equal(f.run().role,'reviewer');
+  await f.report('changes_required');
+  // The ordinary revision launch (not the phase alone) reads the applied review
+  // outcome, selects the climbed tier, and arms the replacement on that profile.
+  await f.engine.resolution.launch(f.current(),'revision');
+  const armed=f.current();
+  assert.equal(armed.resolution.workerClimb?.to,'high');
+  assert.equal(armed.resolution.workerClimb?.from,'medium');
+  assert.equal(armed.replacementProfile?.profileId,highWorker.id,'the climb arms the high profile for the replacement sweep');
+  assert.ok(f.store.events(f.task.id).some(event=>event.kind==='worker_climb_armed'));
+  // The replacement selection honours the recorded climb's tier permission and
+  // the armed profile, then a later review round does not climb again.
+  const replacement={
+    ...f.store.update(f.task.id,{profile:highWorker,agentId:null,runId:null}),
+    preferredProfileId:highWorker.id,requirePreferred:true,profileRequests:{...armed.profileRequests,worker:{profileId:highWorker.id,reason:'step-up',required:true}},
+  };
+  assert.equal(chooseProfile(replacement,[...f.engine.profiles,highWorker],f.store.pool(),{},new Set(),'worker',{},'normal',f.store.demandRoleOffsets())?.profile.id,highWorker.id);
+  assert.equal(chooseProfile({...replacement,resolution:{...replacement.resolution,workerClimb:{...replacement.resolution.workerClimb!,reviewRunId:'a-different-review'}}},[...f.engine.profiles,highWorker],f.store.pool(),{},new Set(),'worker',{},'normal',f.store.demandRoleOffsets())?.profile.id,highWorker.id,'the recorded tier stays permitted for later runs');
+  // A retained reviewer below the climbed worker is not reused: the re-review
+  // selects above the worker's actual profile.
+  const highReviewer=profile('reviewer-high','test/reviewer-high');
+  f.engine.profiles=[...f.engine.profiles,highReviewer];
+  f.store.setMeta('pool',[...f.store.pool(),
+   {profileId:highReviewer.id,enabled:true,group:'reviewer-high',roles:['reviewer'],weight:1,scopes:['general'],capability:'high',cost:'medium'}]);
+  const reviewTask={...f.current(),profile:highWorker,profileGroup:'worker-high',resolution:{...f.current().resolution,reviewerProfile:profile('reviewer')}};
+  assert.equal(f.engine.resolution.select(reviewTask,'reviewer')?.profile.id,highReviewer.id,'the reviewer is at least the worker\'s actual tier');
+ }finally{await f.close()}
+});
+
 });
 test("re-review replaces a closed reviewer while preserving the ordinary source workspace", async () => {
   const f = fixture(false, false, undefined, true);
@@ -2803,8 +2841,11 @@ test("responsible non-delivery gets one retained pushback, one same-capability p
         cost: "very_high",
       },
     ]);
+    // Spec 052 (Tom, 2026-11-17): Maximum reserves workers for the top two tiers;
+    // this non-delivery behaviour is about provider spreading, so High keeps the
+    // medium capability ladder in play.
     f.store.setMeta("usageLevel", {
-      level: "maximum",
+      level: "high",
       until: null,
       setAt: new Date().toISOString(),
     });
@@ -2946,6 +2987,7 @@ test("responsible non-delivery gets one retained pushback, one same-capability p
   } finally {
     await f.close();
   }
+
 });
 
 test("a pending non-delivery replacement with no eligible provider escalates once to the planner", async () => {

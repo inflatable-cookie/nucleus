@@ -20,8 +20,8 @@ const pool = [
 ];
 const profiles = pool.map(item => ({ id: item.profileId, model: `vendor/${item.profileId}-model`, available: true }));
 const candidates: DemandCandidate[] = pool.map(item => ({ ...item, model: `vendor/${item.profileId}-model`, available: true }));
-const pick = (demand: DemandLevel, usage: UsageLevel = 'normal', exclude: string[] = [], requested?: DemandLevel | null) =>
-  demandPick(demand, usage, candidates, new Set(), new Set(exclude.map(id => `${id}-model`)), requested);
+const pick = (demand: DemandLevel, usage: UsageLevel = 'normal', exclude: string[] = [], requested?: DemandLevel | null, climb?: DemandLevel | null) =>
+  demandPick(demand, usage, candidates, new Set(), new Set(exclude.map(id => `${id}-model`)), requested, climb);
 
 /** The start tier of every level for every complexity (Tom, 2026-11-17). */
 const START: Record<UsageLevel, Record<CapabilityLevel | 'unset', DemandLevel>> = {
@@ -100,15 +100,22 @@ test('052: climbing back after review changes moves one tier, capped at the requ
 test('052 permission: each level gates exactly the runs the level table names', () => {
   // very-high complexity asks for the very_high tier; medium asks for medium.
   const top = [
-    ['low', 'frontier', 'very_high', true], ['low', 'frontier', 'very_high', true],
+    ['low', 'frontier', 'very_high', true],
     ['normal', 'frontier', 'medium', true], ['normal', 'very_high', 'medium', true],
-    ['normal', 'very_high', 'very_high', false], ['normal', 'frontier', 'frontier', false],
+    ['normal', 'very_high', 'very_high', true], ['normal', 'frontier', 'frontier', true],
     ['high', 'frontier', 'medium', true], ['high', 'very_high', 'medium', false],
     ['extra_high', 'frontier', 'medium', false], ['extra_high', 'very_high', 'medium', false],
     ['maximum', 'frontier', 'medium', false], ['maximum', 'very_high', 'medium', false],
   ] as const;
   for (const [level, capability, requested, gated] of top)
     assert.equal(requestOnly({ cost: 'very_high', capability }, level, requested), gated, `${level}/${capability}/${requested}`);
+  // The requested-tier exception belongs only to a recorded climb, never to a
+  // first attempt before any review climbed (Tom, 2026-11-17).
+  for (const level of ['low', 'normal'] as const) {
+    assert.equal(requestOnly({ cost: 'very_high', capability: 'very_high' }, level, 'very_high'), true, `${level}: no climb recorded`);
+    assert.equal(requestOnly({ cost: 'very_high', capability: 'very_high' }, level, 'very_high', 'very_high'), false, `${level}: the recorded climb`);
+    assert.equal(requestOnly({ cost: 'very_high', capability: 'frontier' }, level, 'very_high', 'very_high'), true, `${level}: frontier is always an explicit route`);
+  }
   // A lower tier never needs permission, whatever the level.
   for (const capability of ['low', 'medium', 'high'] as const) for (const level of usageLevels)
     assert.equal(requestOnly({ cost: 'very_high', capability }, level, 'low'), false, `${level}/${capability}`);
@@ -117,26 +124,29 @@ test('052 permission: each level gates exactly the runs the level table names', 
 test('053 rows: only profiles the level covers form the automatic set; gated ones meet the demand as sign-off only, and cost never excludes', () => {
   // Unset complexity asks for medium; on Normal the top two tiers need permission.
   assert.deepEqual(pick('medium', 'normal', [], 'medium'), {
-    profileIds: ['deepseek', 'haiku', 'grok'],
+    profileIds: ['haiku', 'grok'],
     shortfall: false,
     signoffOnly: ['opus', 'sol'],
-  }, 'row 1: every covered profile rated medium or above rotates; a top-tier profile is named as needing a request');
-  assert.deepEqual(pick('medium', 'normal', ['deepseek'], 'medium').profileIds.sort(), ['grok', 'haiku'], 'an excluded author model leaves the set');
-  assert.deepEqual(pick('very_high', 'normal', [], 'very_high'), {
+  }, 'row 1: the run selects its own medium tier; a profile above the requested tier is not automatic, and a held one needs a request');
+  assert.deepEqual(pick('medium', 'normal', ['haiku'], 'medium').profileIds, ['grok'], 'an excluded author model leaves the set');
+  assert.deepEqual(pick('very_high', 'normal', [], 'very_high', 'very_high'), {
     profileIds: ['sol'], shortfall: false, signoffOnly: ['opus'],
-  }, 'the task\'s own very-high tier needs no request at Normal; frontier still does');
-  assert.deepEqual(pick('very_high', 'low', [], 'medium').signoffOnly, ['opus', 'sol'], 'on Low a top-tier run needs permission even at the requested tier unless the submission gate approved it');
-  assert.deepEqual(pick('very_high', 'high', [], 'medium'), {
+  }, 'the recorded climb back to the very-high tier needs no request at Normal; frontier still does');
+  assert.equal(pick('very_high', 'normal', [], 'very_high').profileIds.includes('sol'), false, 'before the recorded climb the very-high tier is held at Normal');
+  assert.deepEqual(pick('very_high', 'low', [], 'very_high', 'very_high'), {
+    profileIds: ['sol'], shortfall: false, signoffOnly: ['opus'],
+  }, 'on Low the recorded climb back to the requested very-high tier needs no second request; frontier still does');
+  assert.equal(pick('very_high', 'low', [], 'very_high').profileIds.includes('sol'), false, 'before a recorded climb the very-high tier is held on Low');
+  assert.deepEqual(pick('very_high', 'high', [], 'very_high'), {
     profileIds: ['sol'], shortfall: false, signoffOnly: ['opus'],
   }, 'at High only frontier needs permission');
-  assert.deepEqual(pick('very_high', 'extra_high', [], 'medium'), { profileIds: ['opus', 'sol'], shortfall: false, signoffOnly: [] }, 'at Extra high nothing needs permission');
-  assert.deepEqual(pick('very_high', 'maximum', [], 'medium'), { profileIds: ['opus', 'sol'], shortfall: false, signoffOnly: [] }, 'at Maximum nothing needs permission');
+  assert.deepEqual(pick('very_high', 'extra_high', [], 'very_high'), { profileIds: ['sol'], shortfall: false, signoffOnly: [] }, 'at Extra high a covered very-high tier is automatic and frontier awaits an explicit route');
+  assert.deepEqual(pick('very_high', 'maximum', [], 'medium'), { profileIds: ['opus', 'sol'], shortfall: false, signoffOnly: [] }, 'at Maximum workers use the top two tiers');
   // Cost is only the lean: a very expensive profile is not gated for its cost.
-  const lowDemand = pick('low', 'extra_high', [], 'low').profileIds;
-  assert.deepEqual(lowDemand.sort(), ['deepseek', 'glm', 'grok', 'haiku', 'muse', 'opus', 'sol'], 'a low demand keeps every profile rated low or above, whatever its cost');
-  // On a shortfall the most capable covered profiles form the set; a gated one never does.
+  assert.deepEqual(pick('low', 'extra_high', [], 'low').profileIds.sort(), ['glm', 'muse'], 'a low demand selects its own low tier whatever the cost');
+  // On a shortfall the nearest covered profile forms the set; a gated one never does.
   const short = pick('very_high', 'normal', ['sol'], 'very_high');
-  assert.deepEqual(short.profileIds, ['deepseek'], 'the best covered profile');
+  assert.deepEqual(short.profileIds, ['deepseek'], 'the nearest covered profile below the tier');
   assert.deepEqual(short.signoffOnly, ['opus']);
 });
 
@@ -176,7 +186,7 @@ test('053 cost lean: cost shifts the share within the set, never removes a profi
   const leanProfiles: Profile[] = live.map(([id]) => ({ id, name: id, provider: 'test', model: `vendor/${id}-model`, available: true, problem: '', notes: '', supportedThinking: [] }));
   const leanPool = live.map(([id, cost, capability]) => entry(id, cost, capability));
   const shares = simulate({ complexity: 'medium' } as Task, leanProfiles, leanPool, 100, new Set(), 'normal');
-  assert.deepEqual(shares, { glm: 40, deepseek: 20, grok: 20, haiku: 20 }, '100 medium selections: GLM (low cost, lean 8) takes 40, each medium-cost profile 20');
+  assert.deepEqual(shares, { glm: 50, grok: 25, haiku: 25 }, '100 medium selections: the medium tier rotates, GLM (low cost, lean 8) takes 50, each medium-cost profile 25; DeepSeek sits above the requested tier');
 });
 
 /** The share of `selections` picks each profile gets when every pick is recorded (recent and lifetime counts both). */
@@ -200,11 +210,12 @@ test('053: selection takes the level start tier, and a revision after review cha
     chooseProfile(candidate, catalog, routes, {}, new Set(), role, {}, usage)?.profile.id;
   // Normal starts a high complexity task one tier below: medium.
   assert.equal(select(task), 'a1', 'the first run asks for medium; the id breaks the tie');
-  // A revision run after review changes climbs to the requested high tier.
-  const changes = { ...task, phase: 'changes_requested' as const };
-  assert.equal(select(changes), 'z1', 'the revision run after review changes asks for high');
-  assert.equal(select({ ...task, phase: 'changes_requested' as const, complexity: 'very_high' }), 'z1', 'the climb is capped at the requested tier, not pushed past the pool');
-  assert.equal(select(task, 'maximum'), 'z1', 'at maximum the first run asks for the top two tiers');
+  // An applied changes-required review authorizes one climb to the requested high tier.
+  const changes = { ...task, resolution: { ...task.resolution, review: { eventId: 'review-1', taskId: task.id, runId: 'review-1', status: 'changes_required' as const, summary: 'Fix the defect', head: 'a'.repeat(40) } } };
+  assert.equal(select(changes), 'z1', 'the next worker run after an applied changes-required review asks for high');
+  assert.equal(select({ ...task, phase: 'changes_requested' as const }), 'a1', 'the phase alone does not authorize a climb');
+  assert.equal(select({ ...changes, complexity: 'very_high' }), 'z1', 'the climb is capped at the requested tier, not pushed past the pool');
+  assert.equal(select(task, 'maximum'), undefined, 'at maximum only the top two tiers are automatic; this pool has none');
   assert.equal(select(task, 'extra_high'), 'z1', 'at extra high the first run asks for the requested tier');
   assert.equal(select(task, 'normal', 'reviewer'), 'a1', 'the reviewer matches the worker');
 });

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { recoveryActionSchema } from "./task-common";
 import { completionSchema, coordinatorActionSchema, externalOwnerRevisionReceiptSchema, mechanicalVerificationSchema, ownerAcceptanceRecordSchema, reviewRecordSchema, reviewSupersessionSchema } from "./review";
+import { demandLevelSchema, profileCapabilitySchema } from "./settings";
 import { taskStopRecordSchema } from "../task-stop";
 import { budgetClockSchema, taskBudgetLimitsSchema } from "../task-budget";
 import { taskHostWaitSchema } from "../host-outage";
@@ -117,6 +118,18 @@ export const resolutionSchema = z.object({
   // `verification`: retired with the verification run role (nucleus#765). Nothing
   // writes it; it stays so one finished task's stored row keeps parsing.
   review: completionSchema.nullable().default(null), verification: completionSchema.nullable().default(null),
+  /**
+   * Spec 052 (Tom, 2026-11-17): the one worker climb an applied
+   * changes-required review authorized, so a later selection inside the same
+   * review round never climbs again and the climbed tier stays permitted.
+   */
+  workerClimb: z.object({
+    reviewRunId: z.string().min(1),
+    from: demandLevelSchema.nullable().default(null),
+    to: profileCapabilitySchema,
+    profileId: z.string().nullable().default(null),
+    at: z.string(),
+  }).strict().nullable().optional(),
   // Spec 037: append-only review records, each with its verdicts and reviewer identity.
   reviews: z.array(reviewRecordSchema).default([]),
   // Qualified owner acceptance (2026-10-17): append-only owner decisions recorded

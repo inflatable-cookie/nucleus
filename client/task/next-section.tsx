@@ -2,7 +2,7 @@ import { errorText } from "../error-text";
 import { useState } from "react";
 import { Text, View } from "react-native";
 import { Button, DetailSection, Field, muted, row, type Colors } from "../controls";
-import type { PoolEntry, Profile, Task, TaskNext, TaskNextVerb, RoutingPolicy, UsageView } from "../../shared/contracts";
+import type { DemandLevel, PoolEntry, Profile, Task, TaskNext, TaskNextVerb, RoutingPolicy, UsageView } from "../../shared/contracts";
 import { activeGroupLimit, automaticSelection, automaticSelectionTag, describeAutomaticSelection, describeRoutePolicy } from "../../shared/pool";
 import { formatLocalDateTime } from "../../shared/date-time";
 import { suggestedVerbRefusals, taskActionPlan } from "../../shared/task-detail-summary";
@@ -79,9 +79,10 @@ const verbText = (verb: TaskNextVerb) => {
   return verbLabel(verb.verb);
 };
 export const NORMAL_USAGE: UsageView = { level: "normal", setLevel: "normal", until: null, expired: false };
-function VerbField({ field, value, onChange, roleValue, pool, profiles, usage, availability, c, required = true }: {
+type RoutingContext = { requested: DemandLevel; climbTier: DemandLevel | null };
+function VerbField({ field, value, onChange, roleValue, pool, profiles, usage, availability, routing, c, required = true }: {
   field: string; value: string; onChange: (value: string) => void; roleValue: string;
-  pool: PoolEntry[]; profiles: Profile[]; usage: UsageView; availability: Availability; c: Colors; required?: boolean;
+  pool: PoolEntry[]; profiles: Profile[]; usage: UsageView; availability: Availability; routing: RoutingContext | undefined; c: Colors; required?: boolean;
 }) {
   if (field === "role") return <View style={row}>
     <Text style={muted(c)}>Role</Text>
@@ -96,8 +97,8 @@ function VerbField({ field, value, onChange, roleValue, pool, profiles, usage, a
     return <View style={{ gap: space.xxs }}>
       <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>Profile{roleValue ? ` for ${roleValue}` : ""}{choices.length ? "" : " · none eligible"}</Text>
       <View style={row}>{choices.map(({ entry, profile }) =>
-        <Button key={entry.profileId} small wrap c={c} text={`${profile!.name}${choiceTag(entry, usage, availability)}`} label={`Profile ${profile!.name}`} selected={value === entry.profileId} onPress={() => onChange(entry.profileId)} />)}</View>
-      <SelectedProfilePolicy entry={choices.find(item => item.entry.profileId === value)?.entry} usage={usage} availability={availability} explicit={() => "Route is an explicit request and applies at every usage level. "} c={c} />
+        <Button key={entry.profileId} small wrap c={c} text={`${profile!.name}${choiceTag(entry, usage, availability, routing?.requested, routing?.climbTier)}`} label={`Profile ${profile!.name}`} selected={value === entry.profileId} onPress={() => onChange(entry.profileId)} />)}</View>
+      <SelectedProfilePolicy entry={choices.find(item => item.entry.profileId === value)?.entry} usage={usage} availability={availability} requested={routing?.requested} climbTier={routing?.climbTier} explicit={() => "Route is an explicit request and applies at every usage level. "} c={c} />
     </View>;
   }
   const multiline = field === "instruction" || field === "reviewInstruction";
@@ -108,16 +109,17 @@ function VerbField({ field, value, onChange, roleValue, pool, profiles, usage, a
 
 type Availability = { group: string; unavailable: boolean; reason: string; retryAt: string | null }[];
 /** A chooser button's tag: an unavailable group, then the usage policy. The choosers offer enabled profiles only. */
-export function choiceTag(entry: PoolEntry, usage: UsageView, availability: Availability): string {
-  return activeGroupLimit(availability, entry.group) ? " · group unavailable" : automaticSelectionTag(entry, usage.level);
+export function choiceTag(entry: PoolEntry, usage: UsageView, availability: Availability,
+  requested?: DemandLevel, climbTier?: DemandLevel | null): string {
+  return activeGroupLimit(availability, entry.group) ? " · group unavailable" : automaticSelectionTag(entry, usage.level, requested, climbTier);
 }
 /** Spec 052: the chosen profile's automatic-selection policy under the level in force, beside the explicit choice. */
-export function SelectedProfilePolicy({ entry, usage, availability, explicit, c }: { entry: PoolEntry | undefined; usage: UsageView; availability: Availability; explicit: (requestRequired: boolean) => string; c: Colors }) {
+export function SelectedProfilePolicy({ entry, usage, availability, requested, climbTier, explicit, c }: { entry: PoolEntry | undefined; usage: UsageView; availability: Availability; requested?: DemandLevel; climbTier?: DemandLevel | null; explicit: (requestRequired: boolean) => string; c: Colors }) {
   if (!entry) return null;
   // An unavailable subscription group holds every dispatch to the profile, chosen or automatic, until it returns.
   const group = activeGroupLimit(availability, entry.group);
   if (group) return <Text style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize, flexShrink: 1 }}>Subscription group {entry.group} is unavailable{group.reason ? `: ${group.reason}` : ""}{group.retryAt ? ` · until ${formatLocalDateTime(group.retryAt)}` : ""}. Nothing dispatches to this profile until the group returns, whatever the usage level.</Text>;
-  return <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, flexShrink: 1 }}>{explicit(automaticSelection(entry, usage.level).startsWith("request"))}Automatic selection: {describeAutomaticSelection(entry, usage, formatLocalDateTime)}.</Text>;
+  return <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, flexShrink: 1 }}>{explicit(automaticSelection(entry, usage.level, requested, climbTier).startsWith("request"))}Automatic selection: {describeAutomaticSelection(entry, usage, formatLocalDateTime, requested, climbTier)}.</Text>;
 }
 /** Spec 052: the profiles this task's routing names, read against the usage level in force. */
 export function RoutingPolicyLines({ policy, c }: { policy: RoutingPolicy | undefined; c: Colors }) {
@@ -210,13 +212,15 @@ export function NextSection({ next, loading, error, onRetry, busy, pool, profile
     {activeVerb && <View style={{ gap: space.xs }}>
       {fill.map(field => <VerbField key={field} field={field} required={field !== "dependsOn"} value={values[field] ?? ""}
         onChange={value => setValues(current => ({ ...current, [field]: value }))}
-        roleValue={values.role ?? (typeof activeVerb.args?.role === "string" ? activeVerb.args.role : "")} pool={pool} profiles={profiles} usage={next.routingPolicy?.usage ?? usage} availability={availability} c={c} />)}
+        roleValue={values.role ?? (typeof activeVerb.args?.role === "string" ? activeVerb.args.role : "")} pool={pool} profiles={profiles} usage={next.routingPolicy?.usage ?? usage} availability={availability}
+        routing={next.routingPolicy ? { requested: next.routingPolicy.requested, climbTier: next.routingPolicy.climbTier } : undefined} c={c} />)}
       {qualifying.length > 0 && <Text accessibilityLabel={`Qualifying fields: ${qualifying.join(", ")}`} style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, flexShrink: 1 }}>
         {partialQualification ? "Supply every qualifying field or none; a partial acceptance cannot be applied." : "Optional, all or none: leave them empty for the ordinary path. Supply every one only for the qualified acceptance this verb names."}
       </Text>}
       {qualifying.map(field => <VerbField key={field} field={field} required={false} value={values[field] ?? ""}
         onChange={value => setValues(current => ({ ...current, [field]: value }))}
-        roleValue="" pool={pool} profiles={profiles} usage={next.routingPolicy?.usage ?? usage} availability={availability} c={c} />)}
+        roleValue="" pool={pool} profiles={profiles} usage={next.routingPolicy?.usage ?? usage} availability={availability}
+        routing={next.routingPolicy ? { requested: next.routingPolicy.requested, climbTier: next.routingPolicy.climbTier } : undefined} c={c} />)}
       <Button small c={c} text="Apply" label={`Confirm ${verbLabel(activeVerb.verb)}`} disabled={busy || applying || missing} onPress={apply} />
     </View>}
     {notice && <RecordNotice notice={notice} c={c} />}

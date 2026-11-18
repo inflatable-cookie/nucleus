@@ -288,14 +288,14 @@ test('each host\'s routing snapshot carries its translation, selection and routi
     assert.throws(() => settings.profileUpdate({ id: 'shape-4', hosts: { t3code: { excluded: true } } } as never), /Unrecognized key/);
     const current = engine.profilesFor('t3code:env');
 
-    const task = { ...taskOf({ complexity: 'medium' }), workerModel: 'other-author', workerModels: ['other-author'] };
+    const task = { ...taskOf({ complexity: 'high' }), workerModel: 'other-author', workerModels: ['other-author'] };
     const plan = current.find(profile => profile.id === 'shape-10')!;
     assert.deepEqual([plan.available, plan.problem], [false, "T3Code can't run codex in mode plan"]);
     const planOnly = pool.map(entry => ({ ...entry, enabled: entry.profileId === 'shape-10' }));
     assert.equal(chooseProfile(task, current, planOnly, {}, new Set(), 'worker', {}, 'normal', store.demandRoleOffsets(), true), null);
     assert.equal(chooseProfile(task, current, pool, {}, new Set(), 'worker', {}, 'normal', store.demandRoleOffsets(), true)?.profile.provider, 'claudeAgent');
 
-    const retained = store.insert(taskOf({ complexity: 'medium' }), 't3code:env', 'handoff', 'a'.repeat(40));
+    const retained = store.insert(taskOf({ complexity: 'high' }), 't3code:env', 'handoff', 'a'.repeat(40));
     const policy = store.routingPolicy(store.task(retained.id), Date.now(), current);
     assert.deepEqual(policy.host?.effects, [
       { profileId: 'shape-4', name: 'Claude opus (full-access)', effect: 'translated', reason: 'launches as claudeAgent/claude-opus-5-5, mode full-access, options effort=high' },

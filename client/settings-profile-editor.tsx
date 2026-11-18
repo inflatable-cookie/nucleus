@@ -214,7 +214,7 @@ export function ProfileEditor({ c, catalog, catalogs, directory, projects, repos
     </View>}
     {availability && !availability.available && <Text accessibilityLabel="Profile availability preview" style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize }}>{availability.problem}</Text>}
     {entry && onChangePool && state && <View style={{ ...pair, alignItems: "flex-start" }}><View style={{ ...half, gap: space.xs }}>
-        {sliderLabel("Cost", "Each cost step down doubles this profile's share. Above the usage level's ceiling it needs a request. Unset ranks as medium and is never cost-gated.", entry.cost)}
+        {sliderLabel("Cost", "Each cost step down doubles this profile's share. Cost is only the rotation lean and never needs a request. Unset ranks as medium and is never cost-gated.", entry.cost)}
         <StopSlider captions={false} c={c} a11yLabel="Cost" stops={COST_LEVELS} value={entry.cost ?? null} labelFor={levelLabel} stopLabel={cost => `Cost ${cost.replaceAll("_", " ")}`} onChange={cost => onChangePool({ cost: entry.cost === cost ? null : cost })} />
       </View><View style={{ ...half, gap: space.xs }}>
         {sliderLabel("Capability", "Each run starts at the usage level's tier for the task's complexity, moved by its role. Selection rotates among profiles at or above that. The top two tiers need permission at Low and Normal, frontier at High. Unset counts as medium.", entry.capability)}

@@ -51,6 +51,9 @@ export type ProfileCapability = (typeof profileCapabilityLevels)[number];
 /** A run's demand: a task complexity moved by role and usage; only Maximum may reach `frontier` (Spec 053). */
 export type DemandLevel = CapabilityLevel | "frontier";
 
+/** The demand scale on one list, for the schemas that carry a tier (Spec 052, Spec 053). */
+export const demandLevelSchema = z.enum(["very_low", "low", "medium", "high", "very_high", "frontier"]);
+
 /**
  * Spec 052: the operator's overall usage level, a five-stop slider (Tom,
  * 2026-11-17). Each level says plainly where a task's worker starts on the

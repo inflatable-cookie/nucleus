@@ -111,16 +111,33 @@ tiers" are `frontier` (Opus-class) and `very_high` (Sol extra-high-class).
   scale (`very_low` and `low` ask for `low`; complexity never asks for
   `frontier`). A run above the requested tier is an explicit planner or
   operator route, never automatic.
-- **Step-up.** When a review asks for changes on a task that started below its
-  requested tier, the next worker run climbs one tier, up to the requested tier
-  and never past it (the durable signal is the task's `changes_requested`
-  phase). Climbing back to the requested tier never needs permission. Going
-  above it is an explicit planner or operator route.
+- **Step-up.** When an applied review requests changes on a task that started
+  below its requested tier, the next worker run climbs one tier, up to the
+  requested tier and never past it. The applied review outcome
+  (`resolution.review.status === "changes_requested"`) authorizes it, never the
+  `changes_requested` phase alone (an owner move or recovery also takes that
+  phase), and one climb is recorded per review run
+  (`resolution.workerClimb`). A retained worker thread cannot change profile, so
+  the climb is the one automatic worker replacement: the ordinary revision
+  launch arms the next tier's profile and the replacement sweep retires the
+  retained worker and continues the task on a fresh agent, recording the climb
+  before the sweep so its tier stays permitted. Climbing back to the requested
+  tier never needs permission; going above it is an explicit planner or
+  operator route.
+- **Automatic selection stays at or below the requested tier.** The run's tier
+  is its demand: it rotates inside that tier, takes the nearest tier above only
+  when nothing carries it, and falls back to the most capable profile at or
+  below the requested tier on a shortfall. A profile above the requested tier is
+  never automatic (except at Maximum, whose own rule is the top two tiers); an
+  explicit request reaches it.
 - **Nothing waits for an escalation sign-off** except the Low submission gate.
   A role whose preferred profile needs permission runs on the best allowed tier
   while the decision is open on the board, as before.
 - **Other roles.** Reviewers keep the independence rule and at least the
-  worker's capability: the reviewer's demand never sits below the worker's.
+  worker's actual capability: the reviewer's demand is floored at the pool
+  rating of the profile the worker actually ran on (not its calculated demand),
+  and a retained reviewer below a climbed or routed worker is replaced on the
+  next round.
   Coordinator and recovery runs keep their existing offset under every level,
   including Maximum.
 - **Eligibility** (Tom, 2026-11-09). Automatic selection may use a profile when
@@ -137,11 +154,15 @@ tiers" are `frontier` (Opus-class) and `very_high` (Sol extra-high-class).
 - **The Low submission gate** (Tom, 2026-11-17). Submitting a high or very-high
   complexity task while Low is in force opens one operator decision linked to
   the task and places a dispatch hold naming the level and the complexity. The
-  task does not dispatch until the decision is approved on the board; a relayed
-  answer does not approve it. A decline keeps the hold, and the owner's exit is
-  lowering the complexity (`set_routing`) or raising the level, either of which
-  withdraws the question and clears the gate's own fence. The gate never clears
-  an operator's separate hold.
+  gate is decided at admission: `store.insert` records it only when the level in
+  force then is Low and the complexity qualifies, so work submitted earlier or
+  already running when the level changes is never held. If the task already
+  carries a board or planner hold, the gate opens its question beside it and
+  places no fence of its own; later approval clears only a fence the gate
+  placed. The task does not dispatch until the decision is approved on the
+  board; a relayed answer does not approve it. A decline keeps the hold, and the
+  owner's exit is lowering the complexity (`set_routing`) or raising the level,
+  either of which withdraws the question and clears the gate's own fence.
 - **By request is retired** (Tom, 2026-11-09: "Retire it, fold into #1002";
   earlier the same day: "lift it at maximum slider? That's sort of the point of
   that slider setting"). The pool's `byRequest` flag, its toggle and its row

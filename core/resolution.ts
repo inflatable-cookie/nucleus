@@ -267,7 +267,7 @@ export class Resolution {
   readonly resultApplication = new ResultApplication(portsContext(this, ['adapter', 'advanceCloseoutResult', 'attention', 'hooks', 'lease', 'openPlannerEscalation', 'ordinaryRoundCustody', 'recordBlockedPrIdentity', 'responsibleBlockerLadder', 'responsiblePrReportRefused', 'reviewerSetting', 'settleAttentionEpisode', 'settleAutomaticReplayHold', 'stopped', 'store', 'suppressAutomaticRetry', 'update', 'waiting']));
   readonly closeout = new Closeout(portsContext(this, ['adapter', 'attention', 'claimIntegrationTurn', 'closeoutAuthority', 'closeoutWritten', 'executionLease', 'hookCloseout', 'hooks', 'launch', 'paused', 'queueCloseout', 'settleAutomaticReplayHold', 'stopped', 'store', 'turnReleased', 'update', 'waiting']));
   readonly reviewPublication = new ReviewPublication(portsContext(this, ['adapter', 'lease', 'operatorReturn', 'paused', 'reviewerSetting', 'store']));
-  readonly dispatchLaunch = new DispatchLaunch(portsContext(this, ['adapter', 'advanceAttempt', 'assertReviewProfileIndependent', 'attention', 'authorAgentIds', 'bindContinuedPrInTx', 'bindReportedHeadForReview', 'catalogKnown', 'claimIntegrationTurn', 'continuedPrBinding', 'continuedProgressWait', 'deliverLaunchRun', 'ensureIncident', 'host', 'launch', 'launchingRuns', 'lease', 'leaseDeclineText', 'openPlannerEscalation', 'ordinaryReviewRuns', 'ordinaryRoundCustody', 'orphanRuns', 'pauseForPrerequisiteWait', 'paused', 'profiles', 'progressEffectsPending', 'recordCriticalReviewFallback', 'requiredRouteNote', 'reserveLaunchRun', 'resolveWithdrawnPending', 'responsibleJointQuestion', 'retainedProfileIssue', 'retainedWorkerProfileIssue', 'retryContext', 'reviewerSetting', 'select', 'selectLaunchThread', 'signoffIssue', 'slotAdmissionReason', 'startsNoRuns', 'store', 'supersedeOrphans', 'update', 'usageCeilingNote', 'waiting', 'workerContinuation']));
+  readonly dispatchLaunch = new DispatchLaunch(portsContext(this, ['adapter', 'advanceAttempt', 'assertReviewProfileIndependent', 'attention', 'authorAgentIds', 'bindContinuedPrInTx', 'bindReportedHeadForReview', 'catalogKnown', 'claimIntegrationTurn', 'continuedPrBinding', 'continuedProgressWait', 'deliverLaunchRun', 'ensureIncident', 'host', 'launch', 'launchingRuns', 'lease', 'leaseDeclineText', 'openPlannerEscalation', 'ordinaryReviewRuns', 'ordinaryRoundCustody', 'orphanRuns', 'pauseForPrerequisiteWait', 'paused', 'profiles', 'progressEffectsPending', 'recordCriticalReviewFallback', 'requiredRouteNote', 'reserveLaunchRun', 'resolveWithdrawnPending', 'responsibleJointQuestion', 'retainedProfileIssue', 'retainedWorkerProfileIssue', 'reviewerCapabilityIssue', 'retryContext', 'reviewerSetting', 'select', 'selectLaunchThread', 'signoffIssue', 'slotAdmissionReason', 'startsNoRuns', 'store', 'supersedeOrphans', 'update', 'usageCeilingNote', 'waiting', 'workerContinuation']));
   readonly adapter: Adapter & Partial<ResolutionAdapter>;
   /**
    * Every host question this root answers, wired as one set by the runtime that
@@ -589,6 +589,10 @@ export class Resolution {
   }
   retainedProfileIssue(assigned:Profile|null){
     return this.selection.retainedProfileIssue(assigned);
+  }
+  /** Spec 052 (Tom, 2026-11-17): a retained reviewer below the worker's actual tier is replaced. */
+  reviewerCapabilityIssue(t:Task,assigned:Profile|null){
+    return this.selection.reviewerCapabilityIssue(t, assigned);
   }
   retainedWorkerProfileIssue(t:Task){
     return this.selection.retainedWorkerProfileIssue(t);

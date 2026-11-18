@@ -17,7 +17,7 @@
  * the retained worker.
  */
 import { requestOnly, honouredRequest } from "../../shared/pool";
-import { requestedTier } from "../../shared/demand";
+import { climbedTier, requestedTier } from "../../shared/demand";
 import { WORKER_REPLACEMENT_CEILING } from "../../shared/contracts";
 import type { PoolEntry, Task, UsageLevel } from "../../shared/contracts";
 import { isQuotaExhaustion } from "./exhaustion";
@@ -88,8 +88,9 @@ export function isWorkerRouteApproved(
 ): boolean {
   const entry = pool.find(item => item.profileId === profileId);
   const requested = requestedTier(task.complexity);
-  if (!entry || !requestOnly(entry, usage, requested)) return true;
-  return honouredRequest(task.profileRequests?.worker ?? null, pool, usage, requested)?.profileId === profileId;
+  const climb = climbedTier(task);
+  if (!entry || !requestOnly(entry, usage, requested, climb)) return true;
+  return honouredRequest(task.profileRequests?.worker ?? null, pool, usage, requested, climb)?.profileId === profileId;
 }
 
 /**

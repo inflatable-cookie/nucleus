@@ -56,6 +56,7 @@ export async function retainReviewerThread(ctx: LaunchThreadContext, t: Task, ro
       agentId = null;
     } else {
       const issue = ctx.retainedProfileIssue(profile) ?? ctx.signoffIssue(t, profile, 'reviewer')
+        ?? ctx.reviewerCapabilityIssue(t, profile)
         ?? (supersedingReviewer ? `a required reviewer route names ${supersedingReviewer}, superseding the retained reviewer` : null);
       if (issue) {
         const prior = ctx.store.runs(t.id).findLast(run => run.role === 'reviewer' && run.agentId === agentId);

@@ -11,6 +11,7 @@ import { DISPATCH_WAIT_REASON } from "../../shared/task-stop";
 import { EMPTY_RUN_USAGE } from "../telemetry/run-usage";
 import { TaskChangedRefusal } from "../../shared/task-version";
 import { plainProfileRequest,workerThinkingConflict } from "../dispatch/routing";
+import { submissionNeedsPermission } from "../../shared/pool";
 import { runBuildOutputIntent } from "../hooks/build-output-records";
 import { purgeReleasedRunTicket } from "../intake/reporting-files";
 import { initialBriefVersion } from "../planning/brief";
@@ -23,6 +24,7 @@ import type { BudgetClock } from "../../shared/task-budget";
 import { buildOutcomeRecord } from "./store-outcomes";
 import { submissionHash } from "./store-submissions";
 import { STORED_OBSERVATION_FIELDS } from "./store-task-writes";
+import type { UsageLevel } from "../../shared/contracts";
 import { repositoryIdentity,type StoreTasks } from "./store-tasks";
 
 /**
@@ -33,6 +35,8 @@ import { repositoryIdentity,type StoreTasks } from "./store-tasks";
 export interface TaskFunnelServices {
   readonly db: DatabaseSync;
   readonly tasksStore: StoreTasks;
+  /** Spec 052 (Tom, 2026-11-17): the usage level in force at admission, read once for the Low submission gate. */
+  usageLevel(): UsageLevel;
   transaction<T>(fn: () => T): T;
   task(id: string): Task;
   event(taskId: string, kind: string, detail: string): void;
@@ -116,7 +120,14 @@ export class StoreTaskFunnel {
       const repository = repositoryIdentity(input.repoPath, origin);
       this.services.ensureProject(input.repoPath, normalizeRepositoryOrigin(origin ?? repository));
       const assigned = this.services.assignNumber(id, repository);
-      const task: Task = { ...input, critical: input.critical ?? false, ...(responsible === undefined ? {} : { responsible }), repository, ...assigned, brief: input.brief ? { ...input.brief, digest: briefVersions[0].digest } : null, id, createdAt: now(), updatedAt: now(), version: 1,
+      // Spec 052 (Tom, 2026-11-17): the Low submission gate is decided at
+      // admission, not by the level that happens to be in force later. The
+      // reconciler opens its one decision and fence from this record.
+      const usageLevel = this.services.usageLevel();
+      const usageGate = submissionNeedsPermission(usageLevel, input.complexity) && input.complexity
+        ? { decisionId: null, status: "pending" as const, level: usageLevel, complexity: input.complexity, holdAt: null, at: now(), note: "" }
+        : null;
+      const task: Task = { ...input, ...(usageGate ? { usageGate } : {}), critical: input.critical ?? false, ...(responsible === undefined ? {} : { responsible }), repository, ...assigned, brief: input.brief ? { ...input.brief, digest: briefVersions[0].digest } : null, id, createdAt: now(), updatedAt: now(), version: 1,
         papercutTask: input.planningSource?.kind === "papercut",
         entrypoint:input.proofOnly?"proof":"worker",reviewEntry:null,originWorkspaceId:null,notificationAgentId:isOperatorOrigin(input.originAgentId)?null:input.originAgentId,originError:"",originLookupError:"",
         presentationDetached:null,presentationParent:null,

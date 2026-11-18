@@ -57,10 +57,11 @@ demand = clamp(start + role offset, very_low..frontier)
   of the scale"). A `frontier` profile meets any demand when the level's
   permission rule allows it ([Spec 052](052-usage-level.md)).
 - **Step-up after review changes** (Tom, 2026-11-17, replacing the 2026-11-01
-  first-worker step): while a task sits in `changes_requested`, the next worker
-  selection climbs one tier from the level's start tier, capped at the task's
-  requested tier. An honoured profile request still replaces automatic
-  selection.
+  first-worker step): an applied `changes_required` review authorizes one climb
+  for the next worker run, one tier from the worker's actual tier and capped at
+  the task's requested tier. The ordinary revision launch arms it on a fresh
+  worker agent and records it once per review run. An honoured profile request
+  still replaces automatic selection.
 - **Worker selection after review** (Spec 058 cutover 3): review history never
   adds demand or automatically replaces the author. A stronger worker model is
   selected only by an effective `route role=worker` or ordinary provider-failure
@@ -74,8 +75,11 @@ Selection for a run then:
    reviewer. A
    profile with no cost is never cost-gated ([Spec 052](052-usage-level.md));
    the board's preview applies the same gate.
-2. Keeps every one whose `capability` is at least the demand, whatever its cost.
-   An unrated capability counts as `medium`.
+2. Keeps every profile at the run's own tier (the demand), whatever its cost; the
+   nearest tier above is the bail-out when none carries it, and a shortfall takes
+   the most capable profile at or below the task's requested tier. A profile
+   above the requested tier is never automatic; Maximum's rule is the top two
+   tiers. An unrated capability counts as `medium`.
 3. Weights each kept profile by its **effective weight**: the configured
    `weight` times the **cost lean**. The lean is `COST_LEAN` (2) for each cost
    step below `very_high`: very_low ×16, low ×8, medium ×4, high ×2, very_high

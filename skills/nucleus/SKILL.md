@@ -479,15 +479,18 @@ extra-high-class). Where a task starts and what needs permission:
 
 | Level | Worker starts | Permission |
 | --- | --- | --- |
-| `low` | one tier below its complexity | high and very-high complexity work needs permission when it is submitted (a board decision holds the task); any run on the top two tiers needs permission |
-| `normal` | high and very-high complexity one tier below; lower complexities at the requested tier | any run on the top two tiers needs permission, except climbing back to the task's own requested tier |
+| `low` | one tier below its complexity | high and very-high complexity work needs permission when it is submitted (a board decision holds the task); any run on the top two tiers needs permission, except the recorded climb back to the task's requested tier |
+| `normal` | high and very-high complexity one tier below; lower complexities at the requested tier | any run on the top two tiers needs permission, except the recorded climb back to the task's own requested tier |
 | `high` | at the requested tier | frontier needs permission |
 | `extra_high` | at the requested tier | none |
 | `maximum` | workers and reviewers on frontier or very-high models whatever the complexity | none |
 
 A request for a profile the level's permission rule holds (a top-tier profile
 above the task's requested tier at `low` or `normal`, or frontier at `high`) is a
-question to the operator, not a pin: Nucleus opens a decision on the board, and
+question to the operator, not a pin. An applied review that asks for changes lets
+the next worker run climb one tier toward the task's requested tier, on a fresh
+worker agent, and records that climb for the round. A profile above the task's
+requested tier is never automatic; an explicit request reaches it: Nucleus opens a decision on the board, and
 the role runs on automatic selection until the operator approves, picks another
 profile or declines. Nothing waits for the answer, except the `low` submission
 gate described above. Prefer setting `complexity` over naming a profile; ask for

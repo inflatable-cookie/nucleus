@@ -139,6 +139,7 @@ export class Store {
     return new StoreTaskFunnel({
       get db() { return store.db; },
       get tasksStore() { return store.tasksStore; },
+      usageLevel: () => store.usageLevel(),
       transaction: fn => store.transaction(fn),
       task: id => store.task(id),
       event: (taskId, kind, detail) => store.event(taskId, kind, detail),

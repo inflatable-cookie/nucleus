@@ -8,7 +8,8 @@ import { OPERATOR_WORKER_REMAP_REASON, proofExecutor } from '../../recovery/task
 import { retainedProgressRun } from '../retained-work';
 import { assertCanonicalPrSource, evidenceOnlyPr, taskPrNumber } from '../../forge/index';
 import { verifyProofSource } from '../../qa/proof-source';
-import { groupIsUnavailable, supersedingRouteProfile } from '../../../shared/pool';
+import { demandRank, groupIsUnavailable, supersedingRouteProfile } from '../../../shared/pool';
+import { workerClimbTarget } from '../../../shared/demand';
 import { retainedProfileReason, workerProfileIsExcluded, type Profile, type Run, type Task } from '../../../shared/contracts';
 import { dirname } from 'node:path';
 import { ensureTaskNodeModules } from '../../workspaces/task-node-modules';
@@ -79,6 +80,32 @@ export class RunLaunchSource {
         t = this.resolution.update(t, {}, { failoverReason: `${OPERATOR_WORKER_REMAP_REASON}. ${supersedingReason}. Continue the existing task: ${this.resolution.workerContinuation(t)}`.slice(0, 2000),
           replacementProfile: { profileId: superseding, reason: supersedingReason } }, 'worker_route_honoured', superseding);
         return;
+      }
+      // Spec 052 (Tom, 2026-11-17): an applied changes-required review authorizes
+      // one climb. The next worker run moves one tier above the retained worker's
+      // actual profile, capped at the task's requested tier, on a fresh worker
+      // agent (the retained thread's profile cannot change). The climb is recorded
+      // before the replacement sweep so its tier stays permitted, and a later
+      // selection inside the same review round never climbs again. An explicit
+      // owner route above it already returned above; no eligible profile at the
+      // target tier leaves the retained worker continuing.
+      const climb = workerClimbTarget(t, this.store.pool(), this.store.usageLevel());
+      if (climb && t.agentId) {
+        const unavailable = new Set(this.store.db.prepare('SELECT data FROM availability').all().flatMap(row => {
+          const state = JSON.parse(String((row as { data: string }).data)); return groupIsUnavailable(state) ? [state.group as string] : [];
+        }));
+        const workerProfiles = this.resolution.profiles().filter(profile => !workerProfileIsExcluded(t, profile.id) && profile.model !== 'default'
+          && !reviewerFiltersWorker(t.resolution.reviewerProfile, profile));
+        const selected = chooseProfile(t, workerProfiles, this.store.pool(), this.store.counts(), unavailable, 'worker',
+          this.store.recentCounts(), this.store.usageLevel(), this.store.demandRoleOffsets(), false);
+        const to = selected?.entry.capability ?? null;
+        if (selected && to && demandRank(to) > demandRank(climb.from)) {
+          const reason = `Spec 052 step-up after review ${climb.reviewRunId} asked for changes: the worker climbs from ${climb.from} to ${to} (${selected.profile.provider}/${selected.profile.model}). Continue the existing task: ${this.resolution.workerContinuation(t)}`.slice(0, 2000);
+          this.resolution.update(t, { workerClimb: { reviewRunId: climb.reviewRunId, from: climb.from, to, profileId: selected.profile.id, at: new Date().toISOString() } },
+            { failoverReason: reason, replacementProfile: { profileId: selected.profile.id, reason: `Spec 052 step-up: review changes climb the worker from ${climb.from} to ${to}` } },
+            'worker_climb_armed', selected.profile.id);
+          return;
+        }
       }
     }
     const prePrWorkerResume=role==='revision'&&!t.completion?.prNumber&&!t.resumePrNumber;

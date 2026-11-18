@@ -14,11 +14,15 @@ climbs, and what needs the operator's permission (Tom, 2026-11-17).
   task's requested tier.
 - **Permission** is about the capability tier, not cost: the top two tiers
   (very-high and frontier) need a board sign-off at `low` and `normal` except
-  when a run is climbing back to the task's own requested tier, frontier needs
-  one at `high`, and `extra_high` and `maximum` need none. Submitting a high or
-  very-high complexity task at `low` now opens one board decision and holds the
-  task until it is approved.
+  the recorded climb back to the task's own requested tier, frontier needs one at
+  `high`, and `extra_high` and `maximum` need none. Submitting a high or
+  very-high complexity task at `low` opens one board decision and holds the task
+  until it is approved; the gate is decided at admission, so a later level change
+  never holds work that was already accepted, and it never replaces an existing
+  board hold.
 - Coordinator and recovery offsets are unchanged under every level, including
-  `maximum`; reviewers keep independence and at least the worker's capability.
-- Settings slider labels, `queue.usage`, `routingPolicy`, Spec 052, Spec 053 and
-  the Nucleus skill describe the new rules.
+  `maximum`; reviewers keep independence and at least the worker's actual
+  profile tier, so a retained reviewer below a climbed worker is replaced.
+- Settings slider labels, `queue.usage`, `routingPolicy`, the board's profile
+  tags and explanations, Spec 052, Spec 053 and the Nucleus skill describe the
+  new rules; the profile editor no longer mentions a cost ceiling.

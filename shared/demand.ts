@@ -63,6 +63,65 @@ export function runDemand(complexity: CapabilityLevel | null | undefined, role: 
 }
 
 /**
+ * The worker's actual tier from the profile it selected (an unrated entry
+ * counts as medium). Reviewer selection floors against this actual rating, not
+ * the calculated demand: a run that rotated onto a stronger profile is reviewed
+ * by at least that capability (Tom, 2026-11-17).
+ */
+export function workerActualTier(task: { profile?: { id?: string; [key: string]: unknown } | null },
+  pool: readonly Pick<PoolEntry, "profileId" | "capability">[]): DemandLevel | null {
+  const profileId = task.profile?.id;
+  if (!profileId) return null;
+  const entry = pool.find(item => item.profileId === profileId);
+  return entry ? DEMAND_LEVELS[profileRank(entry.capability)] : null;
+}
+
+/**
+ * The one climb an applied changes-required review authorizes (Tom,
+ * 2026-11-17): the next worker run moves one tier above the worker's actual
+ * tier, capped at the task's requested tier. The applied review outcome —
+ * never the phase alone — authorizes it, and a recorded climb for the same
+ * review run authorizes no second one.
+ */
+export function workerClimbTarget(task: {
+  complexity?: CapabilityLevel | null;
+  profile?: { id?: string; [key: string]: unknown } | null;
+  resolution?: { review?: { status: string; runId: string } | null; workerClimb?: { reviewRunId: string } | null; [key: string]: unknown } | null;
+}, pool: readonly Pick<PoolEntry, "profileId" | "capability">[], usage: UsageLevel): { from: DemandLevel; to: DemandLevel; reviewRunId: string } | null {
+  const review = task.resolution?.review;
+  if (!review || review.status !== "changes_required") return null;
+  if (task.resolution?.workerClimb?.reviewRunId === review.runId) return null;
+  const from = workerActualTier(task, pool) ?? workerStartTier(usage, task.complexity);
+  const requested = requestedTier(task.complexity);
+  const target = Math.min(demandRank(from) + 1, demandRank(requested));
+  if (target <= demandRank(from)) return null;
+  return { from, to: DEMAND_LEVELS[target], reviewRunId: review.runId };
+}
+
+/**
+ * The tier a recorded climb earned: the permission exception belongs to the run
+ * that climbs back to the task's requested tier, and never to a first attempt
+ * before any climb (Tom, 2026-11-17). Null once the requested tier moved below
+ * the recorded climb.
+ */
+export function climbedTier(task: { complexity?: CapabilityLevel | null;
+  resolution?: { workerClimb?: { to: ProfileCapability } | null; [key: string]: unknown } | null }): DemandLevel | null {
+  const to = task.resolution?.workerClimb?.to;
+  if (!to) return null;
+  return demandRank(to) <= demandRank(requestedTier(task.complexity)) ? to : null;
+}
+
+/**
+ * The highest tier automatic selection may reach at this level: frontier at
+ * Maximum (which runs workers and reviewers on the top two tiers regardless of
+ * complexity), the task's own requested tier otherwise. Going above the
+ * requested tier is an explicit planner or operator route (Tom, 2026-11-17).
+ */
+export function usageCeiling(usage: UsageLevel, requested: DemandLevel): DemandLevel {
+  return usage === "maximum" ? "frontier" : requested;
+}
+
+/**
  * One step back up toward the task's requested tier, capped there (Tom,
  * 2026-11-17). A review asking for changes on a task that started below its
  * requested tier gives the next worker run one tier more; it never climbs past
@@ -99,17 +158,34 @@ export const costLean = (cost: CapabilityLevel | null | undefined): number => CO
 export const effectiveWeight = (weight: number, cost: CapabilityLevel | null | undefined): number => weight * costLean(cost);
 
 /**
- * The tier a demand selects from rated entries: every entry rated at or above
- * the demand (Spec 053 Tom 2026-11-04: filter by complexity, then weight by
- * cost); on a shortfall, the most capable entries. Cost never removes an entry.
- * Rotation and the cost lean then choose within the returned set. One rule for
- * selection and preview.
+ * The tier set one run selects from (Spec 052, Tom 2026-11-17; Spec 053
+ * rotation). Automatic selection reaches the run's own tier: profiles rated at
+ * that tier rotate by the cost lean. When none carries the tier, the nearest
+ * tier above is the bail-out, and a shortfall takes the most capable profile at
+ * or below the ceiling. Maximum is its own rule: workers and reviewers use the
+ * top two tiers whatever the complexity, and no lower tier is a substitute.
+ * The ceiling keeps automatic selection from reaching above the task's own
+ * requested tier, which is an explicit route.
  */
-export function demandTier<T extends { capability?: ProfileCapability | null }>(demand: DemandLevel, entries: readonly T[]): { tier: T[]; shortfall: boolean } {
-  const meeting = entries.filter(entry => profileRank(entry.capability) >= demandRank(demand));
-  if (meeting.length) return { tier: meeting, shortfall: false };
-  const best = Math.max(...entries.map(entry => profileRank(entry.capability)));
-  return { tier: entries.filter(entry => profileRank(entry.capability) === best), shortfall: true };
+export function selectionTier<T extends { capability?: ProfileCapability | null }>(
+  demand: DemandLevel, entries: readonly T[], usage: UsageLevel, requested: DemandLevel,
+): { tier: T[]; shortfall: boolean } {
+  if (usage === "maximum") {
+    const top = entries.filter(entry => entry.capability === "very_high" || entry.capability === "frontier");
+    return { tier: top, shortfall: !top.length };
+  }
+  const ceiling = demandRank(usageCeiling(usage, requested));
+  const within = entries.filter(entry => profileRank(entry.capability) <= ceiling);
+  if (!within.length) return { tier: [], shortfall: true };
+  const exact = within.filter(entry => profileRank(entry.capability) === demandRank(demand));
+  if (exact.length) return { tier: exact, shortfall: false };
+  const above = within.filter(entry => profileRank(entry.capability) > demandRank(demand));
+  if (above.length) {
+    const nearest = Math.min(...above.map(entry => profileRank(entry.capability)));
+    return { tier: above.filter(entry => profileRank(entry.capability) === nearest), shortfall: false };
+  }
+  const best = Math.max(...within.map(entry => profileRank(entry.capability)));
+  return { tier: within.filter(entry => profileRank(entry.capability) === best), shortfall: true };
 }
 
 export type DemandCandidate = Pick<PoolEntry, "profileId" | "enabled" | "group" | "cost" | "capability"> & { model: string; available: boolean };
@@ -129,16 +205,20 @@ export type DemandPick = {
  */
 export function demandPick(demand: DemandLevel, usage: UsageLevel, candidates: readonly DemandCandidate[],
   unavailableGroups: ReadonlySet<string> = new Set(), excludedModels: ReadonlySet<string> = new Set(),
-  requested?: DemandLevel | null): DemandPick {
+  requested?: DemandLevel | null, climbTier?: DemandLevel | null): DemandPick {
   const modelKey = (model: string) => model.split("/").at(-1)!.toLowerCase();
   const usable = candidates.filter(candidate => candidate.enabled && candidate.available && !unavailableGroups.has(candidate.group)
     && !excludedModels.has(modelKey(candidate.model)));
   // The same tier gate selection applies (Spec 052).
-  const gated = (candidate: DemandCandidate) => requestOnly(candidate, usage, requested);
+  const within = requested ?? demand;
+  const gated = (candidate: DemandCandidate) => requestOnly(candidate, usage, within, climbTier);
   const automatic = usable.filter(candidate => !gated(candidate));
+  // A signed-off request reaches a profile the level's permission rule holds,
+  // including one above the task's requested tier (an explicit route); the
+  // requested-tier bound only stops automatic selection.
   const signoffOnly = usable.filter(candidate => gated(candidate) && profileRank(candidate.capability) >= demandRank(demand))
     .map(candidate => candidate.profileId);
-  const { tier: chosen, shortfall } = demandTier(demand, automatic);
+  const { tier: chosen, shortfall } = selectionTier(demand, automatic, usage, within);
   return {
     profileIds: chosen.map(candidate => candidate.profileId),
     shortfall: shortfall || !chosen.length,
@@ -173,17 +253,22 @@ export function taskDemandPreview(task: PreviewTask, pool: readonly PoolEntry[],
   });
   const authors = taskAuthorModelKeys(task);
   const requested = requestedTier(task.complexity);
+  const climb = workerClimbTarget(task, pool, usage);
+  const climbed = climbedTier(task);
   return (["worker", "reviewer", "coordinator"] as const).map(role => {
     const fullDemand = runDemand(task.complexity, role, usage, offsets);
-    const demand = role === "worker" && reviewed ? workerStepUp(fullDemand, requested) : fullDemand;
+    const workerActual = workerActualTier(task, pool);
+    const roleDemand = role === "reviewer" && workerActual ? (demandRank(workerActual) > demandRank(fullDemand) ? workerActual : fullDemand) : fullDemand;
+    const demand = role === "worker" ? (climb ? climb.to : reviewed ? workerStepUp(roleDemand, requested) : roleDemand) : roleDemand;
+    const exception = role === "worker" ? climb?.to ?? climbed : climbed;
     const raw = task.profileRequests?.[role] ?? null;
-    const request = raw ? { profileId: raw.profileId, replaces: Boolean(honouredRequest(raw, pool, usage, requested)) } : null;
+    const request = raw ? { profileId: raw.profileId, replaces: Boolean(honouredRequest(raw, pool, usage, requested, exception)) } : null;
     // Runtime never picks a reviewer for an opaque author: independence cannot be proved.
     const blocked = role === "reviewer" && authors.has("default") ? "an opaque author model cannot prove review independence" : null;
     const pick = blocked ? { profileIds: [], shortfall: true, signoffOnly: [] }
       // A reviewer never runs on an opaque provider-default model either, as runtime refuses.
       : demandPick(demand, usage, role === "reviewer" ? candidates.filter(candidate => candidate.model.trim() && candidate.model.split("/").at(-1)!.toLowerCase() !== "default") : candidates,
-        unavailableGroups, role === "reviewer" ? authors : new Set(), requested);
+        unavailableGroups, role === "reviewer" ? authors : new Set(), requested, exception);
     return { role, demand, pick, request, blocked };
   });
 }

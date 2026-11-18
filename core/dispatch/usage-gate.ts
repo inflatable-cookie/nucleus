@@ -4,9 +4,12 @@
  * opens one decision on the board and holds the task with a dispatch fence until
  * that decision is approved; nothing else in the level waits for a sign-off.
  *
- * The record lives on the task (`usageGate`), so the board reads the gate with
- * the task and the fence carries the visible wait. One per-task pass opens the
- * question, applies the answer and clears the fence, and it is idempotent.
+ * The gate is decided at admission: `store.insert` records `usageGate` only when
+ * the level in force then is Low and the complexity qualifies, so work already
+ * running when the level changes is never gated. The record lives on the task,
+ * so the board reads the gate with the task. One per-task pass opens the
+ * question, applies the answer and clears only the fence it placed, and it is
+ * idempotent.
  */
 import type { CapabilityLevel, Profile, Task, UsageLevel } from "../../shared/contracts";
 import { holdsOf, OPERATOR_BOARD_CALLER, taskOwner } from "../../shared/contracts";
@@ -24,9 +27,13 @@ export const USAGE_GATE_DECLINE = "Decline: keep it held";
 export const usageGateHoldReason = (complexity: CapabilityLevel) =>
   `Low usage level: a ${complexity.replaceAll("_", "-")} complexity task needs the operator's approval before it runs (Spec 052)`;
 
-/** Whether this task's submission needs the operator's permission right now, before any run. */
+/**
+ * Whether this task's submission still needs the operator's permission before a
+ * run. Only a task admitted under the gate carries the record; the level and the
+ * complexity decide whether it is still in force.
+ */
 export function usageGateBlocked(task: Pick<Task, "complexity" | "usageGate">, level: UsageLevel): boolean {
-  return submissionNeedsPermission(level, task.complexity) && task.usageGate?.status !== "approved";
+  return Boolean(task.usageGate) && task.usageGate!.status !== "approved" && submissionNeedsPermission(level, task.complexity);
 }
 
 /** Withdraw an open gate question; a closed one is left as it is. */
@@ -36,6 +43,16 @@ function withdraw(decisions: Decisions, decisionId: string | null | undefined, r
     const decision = decisions.get({ id: decisionId });
     if (decision.status === "open") decisions.withdraw({ id: decision.id, version: decision.version, reason, withdrawnBy: "queue" });
   } catch { /* an unreadable question has nothing left to withdraw */ }
+}
+
+/**
+ * Place the gate's dispatch fence only when the task carries none. An existing
+ * board or planner hold is left exactly as it is: the gate opens its question
+ * beside it and later clears only a fence it placed itself.
+ */
+function placeHold(existing: ReturnType<typeof holdsOf>["dispatch"], complexity: CapabilityLevel, at: string) {
+  if (existing) return null;
+  return { at, fence: { owner: OPERATOR_BOARD_CALLER, reason: usageGateHoldReason(complexity), at, generation: 1, until: null } };
 }
 
 /** Drop only the fence this gate placed; an operator's own later hold is never cleared. */
@@ -56,8 +73,11 @@ export function reconcileUsageGate(store: Store, decisions: Decisions, taskId: s
   try { task = store.task(taskId); } catch { return; }
   if (task.removedAt) return;
   const level = store.usageLevel();
-  const needed = submissionNeedsPermission(level, task.complexity);
   const gate = task.usageGate;
+  // No admission record: the task was submitted under a level that did not gate
+  // it. A later level change never retroactively holds work already accepted.
+  if (!gate) return;
+  const needed = submissionNeedsPermission(level, task.complexity);
 
   // The level or the complexity moved away: withdraw a question nobody owes an
   // answer to, clear the fence this gate placed, and forget the record.
@@ -99,7 +119,7 @@ export function reconcileUsageGate(store: Store, decisions: Decisions, taskId: s
 
   // A question Nucleus could not place leaves the fence standing with its reason
   // recorded; the owner's exit is the same (lower the complexity or raise the level).
-  if (gate && !gate.decisionId) return;
+  if (!gate.decisionId && gate.note) return;
   // Nothing asked yet: one decision on the board and one dispatch fence on the task.
   const origin = normalizeRepositoryOrigin(task.repository ?? "");
   const complexity = task.complexity ?? "medium";
@@ -119,19 +139,20 @@ export function reconcileUsageGate(store: Store, decisions: Decisions, taskId: s
     const at = now();
     const note = (error instanceof Error ? error.message : String(error)).slice(0, 400);
     const holds = holdsOf(task);
+    const placed = placeHold(holds.dispatch, complexity, at);
     store.update(task.id, {
-      holds: { ...holds, dispatch: { owner: OPERATOR_BOARD_CALLER, reason: usageGateHoldReason(complexity), at, generation: (holds.dispatch?.generation ?? 0) + 1, until: null } },
-      usageGate: { decisionId: null, status: "pending", level, complexity, holdAt: at, at, note },
-      reason: USAGE_GATE_WAIT,
+      ...(placed ? { holds: { ...holds, dispatch: placed.fence } } : {}),
+      usageGate: { decisionId: null, status: "pending", level, complexity, holdAt: placed?.at ?? null, at, note },
+      ...(placed ? { reason: USAGE_GATE_WAIT } : {}),
     }, "usage_gate_unplaceable", JSON.stringify({ level, complexity, note }));
     return;
   }
   const at = now();
   const holds = holdsOf(task);
-  const fence = { owner: OPERATOR_BOARD_CALLER, reason: usageGateHoldReason(complexity), at, generation: (holds.dispatch?.generation ?? 0) + 1, until: null };
+  const placed = placeHold(holds.dispatch, complexity, at);
   store.update(task.id, {
-    holds: { ...holds, dispatch: fence },
-    usageGate: { decisionId: decision.id, status: "pending", level, complexity, holdAt: at, at, note: "" },
-    reason: USAGE_GATE_WAIT,
-  }, "usage_gate_requested", JSON.stringify({ decisionId: decision.id, level, complexity }));
+    ...(placed ? { holds: { ...holds, dispatch: placed.fence } } : {}),
+    usageGate: { decisionId: decision.id, status: "pending", level, complexity, holdAt: placed?.at ?? null, at, note: "" },
+    ...(placed ? { reason: USAGE_GATE_WAIT } : {}),
+  }, "usage_gate_requested", JSON.stringify({ decisionId: decision.id, level, complexity, held: Boolean(placed) }));
 }
