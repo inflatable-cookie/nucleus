@@ -225,7 +225,11 @@ function compactHistory(state: T3State): void {
     if (!intent.threadId) { const threadId = intentThreadId(intent); if (threadId) intent.threadId = threadId; }
   }
   const terminal = keys.filter(key => state.intents[key].status !== 'unknown');
-  for (const key of terminal.slice(0, terminal.length - RETAINED_INTENT_BODIES)) {
+  // Only the commands beyond the newest window are compacted. A record with fewer
+  // than the window (`length - RETAINED_INTENT_BODIES` negative) keeps every body:
+  // a host's first commands must not lose what a retry within the window replays.
+  const compacted = Math.max(0, terminal.length - RETAINED_INTENT_BODIES);
+  for (const key of terminal.slice(0, compacted)) {
     const intent = state.intents[key];
     if (intent.payloadDigest || intent.status === 'refused' || !intent.kind || BODY_LOOKUP_KINDS.has(intent.kind)) continue;
     state.intents[key] = { ...intent, payload: '', payloadDigest: payloadDigest(intent.payload), result: replayReceipt(intent.kind, intent.result) };

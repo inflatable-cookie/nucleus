@@ -160,6 +160,24 @@ function ledgerFor(statePath: string) {
   };
 }
 
+test('the retained window keeps every body below it and compacts only what is beyond it', (t: TestContext) => {
+  // A negative end to `slice` would compact the newest bodies of a young record
+  // and, because a compacted body is permanent, lose them for good (#1327 review).
+  for (const count of [RETAINED_INTENT_BODIES - 1, RETAINED_INTENT_BODIES + 1]) {
+    const { statePath } = fixture(t);
+    const commands = manyCommands(count);
+    const keys = Object.keys(commands);
+    writeFileSync(statePath, storedState(commands), { mode: 0o600 });
+    const state = new T3StateFile(statePath);
+    state.update(next => { next.lastPassedVersion = 'synthetic-window'; });
+    const saved = JSON.parse(readFileSync(statePath, 'utf8')) as { intents: Record<string, { payload: string; payloadDigest?: string }> };
+    const compacted = keys.filter(key => saved.intents[key].payloadDigest !== undefined);
+    const beyond = Math.max(0, count - RETAINED_INTENT_BODIES);
+    assert.deepEqual(compacted, keys.slice(0, beyond), `${count} terminal commands compact exactly the bodies beyond the ${RETAINED_INTENT_BODIES}-command window`);
+    for (const key of keys.slice(beyond)) assert.equal(saved.intents[key].payload, commands[key].payload, `${key} keeps its whole body`);
+  }
+});
+
 test('bounded history keeps every delivery receipt and drops only the bodies it no longer reads', async (t: TestContext) => {
   const { statePath } = fixture(t);
   const commands = manyCommands(400);
