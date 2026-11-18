@@ -90,7 +90,10 @@ test('terminal history is observed and superseded once on an archive-only host',
   let activeTaskId = '';
   const adapter = fakeAdapter({
     originAgent: async (id: string) => id === 'gone' ? null : { id, workspaceId: 'ws', title: '', archived: false },
-    observe: async (id: string) => ({ ...(await observeIdle('ws')(id)), active, labels: { 'northstar.task': id === 'active' ? activeTaskId : taskId } }),
+    observe: async (id: string) => {
+      if (id === 'gone') throw Error('Thread absent');
+      return { ...(await observeIdle('ws')(id)), active, labels: { 'northstar.task': id === 'active' ? activeTaskId : taskId } };
+    },
     archiveAgent: async () => assert.fail('an active thread must not be archived'),
   });
   const f = fixture(t, adapter);

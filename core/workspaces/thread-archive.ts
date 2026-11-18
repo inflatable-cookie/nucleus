@@ -141,19 +141,11 @@ async function archiveTerminalTaskThreads(store: Store, adapter: Adapter, task: 
       // remapped as another task's coordinator) (review #543).
       if (threadHasUnreleasedRun(store, task, agentId)) { wait(agentId, 'Thread has an unreleased run'); return; }
       if (threadBoundToAnotherLiveTask(store, task, agentId)) { wait(agentId, 'Thread belongs to another active task'); return; }
-      // A legacy thread may have vanished before an intent was ever recorded.
-      // A direct host answer settles it without issuing a new command.
-      try {
-        const origin = await host.originAgent(agentId);
-        if ((!origin || origin.id === agentId) && cleanupComplete(origin, op)) {
-          store.putThreadArchiveEffect(key, agentId, { status: 'archived', at: now(), detail: 'Observed archived, removed or absent', op } satisfies ArchiveEffect);
-          store.deleteMeta(archiveProbeKey(store, task.id, agentId));
-          store.event(task.id, 'thread_archive_observed', agentId);
-          return;
-        }
-      } catch { /* The ordinary observation below records an actionable wait. */ }
       let observed;
-      try { observed = await host.observe(agentId); }
+      try {
+        observed = await host.observe(agentId);
+        if (!observed) throw Error('Thread observation unavailable');
+      }
       catch (error) {
         // A thread the host already reports archived, removed or absent is done,
         // even when its own projection can no longer be read (a removed T3
