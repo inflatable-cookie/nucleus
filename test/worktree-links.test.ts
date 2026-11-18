@@ -17,6 +17,7 @@ import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { Store } from "../core/store/store";
 import { Engine } from "../core/engine";
+import { RunLaunchReserve } from "../core/dispatch/run-launch/reserve";
 import { workerPrompt } from "../core/dispatch/prompts";
 import { command, git, gitSync } from "../core/git/index";
 import { discoverCheckoutSiblings } from "../core/workspaces/checkout-siblings";
@@ -575,6 +576,31 @@ test(
       worktreeLinks: { ...placed, at: new Date().toISOString() },
     };
     assert.equal(await bbWorktreeLinksWait(view), null);
+    const observation = { dataDir: f.data, required: configured.slice(1) };
+    const retained = { ...view, worktreeLinks: undefined };
+    assert.equal(
+      await bbWorktreeLinksWait(retained, configured, observation),
+      null,
+      "a retained workspace with correct links needs no old record",
+    );
+    const stale = {
+      ...view,
+      worktreeLinks: {
+        ...view.worktreeLinks,
+        findings: [
+          {
+            kind: "source_unresolved" as const,
+            name: "other",
+            detail: "old failure",
+          },
+        ],
+      },
+    };
+    assert.equal(
+      await bbWorktreeLinksWait(stale, configured, observation),
+      null,
+      "a stale failure cannot hide the current valid links",
+    );
     assert.match(
       (await bbWorktreeLinksWait({ ...view, worktreeLinks: undefined }))!,
       /no prepared link record/,
@@ -603,6 +629,58 @@ test(
       }))!,
       /recorded copy/,
     );
+    let admissionWait = "";
+    const retainedTask = {
+      ...retained,
+      siblings: true,
+      repository: null,
+      resolution: {},
+    } as unknown as Task;
+    const admission = new RunLaunchReserve({
+      adapter: { helperPath: join(f.data, "worker-report.mjs") },
+      store: {
+        repositories: () => configured.map((repository) => ({ repository })),
+        projects: () => [],
+        projectFor: () => null,
+        task: () => retainedTask,
+        runs: () => [],
+      },
+      waiting: (_task: Task, reason: string) => {
+        admissionWait = reason;
+      },
+      ordinaryReviewRuns: () => {
+        throw new Error("review admission passed");
+      },
+    } as never);
+    await rm(join(f.root, "other"));
+    assert.match(
+      (await bbWorktreeLinksWait(retained, configured, observation))!,
+      /other/,
+    );
+    await admission.reserveLaunchRun(
+      retainedTask,
+      "reviewer",
+      {},
+      {} as never,
+      {} as never,
+    );
+    assert.match(admissionWait, /other/);
+    await symlink(pins[1]!.path, join(f.root, "other"));
+    assert.equal(
+      await bbWorktreeLinksWait(retained, configured, observation),
+      null,
+      "the same retained workspace proceeds after repair",
+    );
+    await assert.rejects(
+      admission.reserveLaunchRun(
+        retainedTask,
+        "reviewer",
+        {},
+        {} as never,
+        {} as never,
+      ),
+      /review admission passed/,
+    );
     await rm(join(f.root, "other"));
     assert.match(
       (await bbWorktreeLinksWait(view))!,
@@ -623,6 +701,56 @@ test(
         (link) =>
           link.outcome === "failed" && /copy is missing/.test(link.reason!),
       ),
+    );
+  },
+);
+
+test(
+  "BB accepts an explicit sibling alias to a pinned subdirectory",
+  { timeout: HOOK_TEST_TIMEOUT_MS },
+  async (t) => {
+    const f = await fixture(
+      t,
+      `${PREPARE} ../project-j/packages/api=project-j`,
+    );
+    await commitFiles(f.projectJ, "add package", {
+      "packages/api/index.js": "module.exports = 1\n",
+    });
+    const taskId = randomUUID(),
+      directory = await f.checkout(taskId);
+    const path = join(f.data, "siblings", taskId, "project-j");
+    await mkdir(dirname(path), { recursive: true });
+    await git(f.projectJ, "worktree", "add", "--detach", path, "HEAD");
+    const pin = {
+      repository: f.projectJ,
+      path,
+      commit: await git(f.projectJ, "rev-parse", "HEAD"),
+    };
+    const placed = await provisionWorktreeLinks({
+      dataDir: f.data,
+      task: task(f, directory),
+      configured: f.configured,
+      pinned: { taskId, pins: [pin], required: [f.configured[1]!] },
+    });
+    const view = {
+      id: taskId,
+      hostId: `bb:${"b".repeat(32)}`,
+      repoPath: f.primary,
+      directory,
+      workspaceId: "ws-1",
+      siblingPins: [pin],
+      worktreeLinks: { ...placed, at: new Date().toISOString() },
+    };
+    assert.equal(
+      await realpath(join(f.root, "project-j")),
+      await realpath(join(path, "packages/api")),
+    );
+    assert.equal(
+      await bbWorktreeLinksWait(view, f.configured, {
+        dataDir: f.data,
+        required: [f.configured[1]!],
+      }),
+      null,
     );
   },
 );

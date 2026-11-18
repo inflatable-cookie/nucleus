@@ -1441,7 +1441,11 @@ request identities and submitted handoffs are not rewritten.
   sibling pin links to that task's recorded copy without colliding with another
   task's links. Existing workspace bindings retain their original paths. A
   missing or changed copy or a conflicting link is a named wait before the
-  worker or reviewer; review checks the current binding, declaration and pins.
+  worker or reviewer; review checks the current binding, declaration and pins
+  from the filesystem, so an absent or stale provisioning record does not hide
+  a correct retained workspace. It never replaces an occupied path. A shared
+  dependency link at the repository worktree root still triggers a private npm
+  install for a task nested under its own parent.
   BB does not run `worktree.setup`.
   BB cannot inject a per-thread environment, so visibility of Paseo's Playwright
   browser cache is a named capability gap until observed in the BB thread.

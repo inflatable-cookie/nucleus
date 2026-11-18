@@ -18,6 +18,8 @@ import {
 } from "./reservation-source";
 import { runIntent } from "./run-intent";
 import { bbWorktreeLinksWait } from "../../workspaces/worktree-links";
+import { siblingMembers, siblingsEnabled } from "../../workspaces/siblings";
+import { dirname } from "node:path";
 
 /**
  * Reserve the run a launch will deliver: read the source facts, build the run
@@ -50,10 +52,30 @@ export class RunLaunchReserve {
     selection: ReservationSelection,
   ): Promise<void> {
     if (role === "reviewer") {
-      const wait = await bbWorktreeLinksWait(t, [
+      const configured = [
         ...this.store.repositories().map((row) => row.repository),
         ...this.store.projects().flatMap((project) => project.repositories),
-      ]);
+      ];
+      const dataDir =
+        this.adapter.helperPath && dirname(this.adapter.helperPath);
+      const wait =
+        t.hostId?.startsWith("bb:") && !dataDir
+          ? "BB sibling provisioning waits: the service data directory is unavailable"
+          : await bbWorktreeLinksWait(
+              t,
+              configured,
+              dataDir && t.hostId?.startsWith("bb:")
+                ? {
+                    dataDir,
+                    required: siblingsEnabled(t)
+                      ? siblingMembers(
+                          t,
+                          this.store.projectFor(t.repoPath, t.repository),
+                        )
+                      : [],
+                  }
+                : undefined,
+            );
       if (wait) {
         this.resolution.waiting(this.store.task(t.id), wait, "lifecycle");
         return;

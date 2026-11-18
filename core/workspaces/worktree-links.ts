@@ -602,6 +602,7 @@ export async function provisionWorktreeLinks(input: {
     pins: Task["siblingPins"];
     required: readonly ConfiguredCheckout[];
   };
+  observeOnly?: boolean;
 }): Promise<Omit<Extract<WorktreeLinks, { state: "prepared" }>, "at">> {
   const directory = input.task.directory!,
     workspaceId = input.task.workspaceId!;
@@ -780,7 +781,13 @@ export async function provisionWorktreeLinks(input: {
       });
       continue;
     }
-    const placed = await placeWorktreeLink(root, candidate.name, target);
+    const placed = input.observeOnly
+      ? {
+          name: candidate.name,
+          target,
+          ...(await observeLink(join(root, candidate.name), target)),
+        }
+      : await placeWorktreeLink(root, candidate.name, target);
     links.push(
       placed.reason
         ? { ...placed, reason: placed.reason.slice(0, DETAIL_MAX) }
@@ -803,11 +810,39 @@ export async function bbWorktreeLinksWait(
     | "id"
   >,
   configured?: readonly ConfiguredCheckout[],
+  observation?: { dataDir: string; required: readonly ConfiguredCheckout[] },
 ): Promise<string | null> {
   if (!task.hostId?.startsWith("bb:")) return null;
   if (!task.directory || !task.workspaceId)
     return "BB sibling provisioning waits: this workspace has no prepared link record";
-  if (task.worktreeLinks?.state !== "prepared") {
+  const observed =
+    observation && configured
+      ? await provisionWorktreeLinks({
+          dataDir: observation.dataDir,
+          task,
+          configured,
+          observeOnly: true,
+          pinned: {
+            taskId: task.id,
+            pins: task.siblingPins,
+            required: [
+              ...observation.required,
+              ...configured.filter(
+                (row) =>
+                  task.siblingPins.some(
+                    (pin) => pin.repository === (row.origin || row.path),
+                  ) &&
+                  !observation.required.some(
+                    (required) =>
+                      required.path === row.path &&
+                      required.origin === row.origin,
+                  ),
+              ),
+            ],
+          },
+        })
+      : null;
+  if (!observed && task.worktreeLinks?.state !== "prepared") {
     if (!task.siblingPins.length && configured) {
       const declared = await declaredWorktreeLinks({
         directory: task.directory,
@@ -818,7 +853,9 @@ export async function bbWorktreeLinksWait(
     }
     return "BB sibling provisioning waits: this workspace has no prepared link record";
   }
-  const record = task.worktreeLinks;
+  const record =
+    observed ??
+    (task.worktreeLinks as Extract<WorktreeLinks, { state: "prepared" }>);
   if (
     record.workspaceId !== task.workspaceId ||
     record.directory !== task.directory
@@ -846,11 +883,9 @@ export async function bbWorktreeLinksWait(
       parentEntry.isSymbolicLink()
     )
       return `BB sibling provisioning waits: ${name} is not the task's recorded sibling copy`;
-    if (
-      !root ||
-      !link ||
-      (await realpath(link.target).catch(() => null)) !== root
-    )
+    const linkedTarget =
+      link && (await realpath(link.target).catch(() => null));
+    if (!root || !link || !linkedTarget || !isWithin(root, linkedTarget))
       return `BB sibling provisioning waits: ${name} has no link to its recorded copy`;
     if (
       (await gitText(pin.path, "rev-parse", "--verify", "HEAD^{commit}").catch(
