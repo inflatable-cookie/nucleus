@@ -140,7 +140,10 @@ test("a checkout in the middle of a rebase is refused by its operation and not m
   await commit(f.root, "conflict.txt", "main");
   await git(f.root, "checkout", "topic");
   await assert.rejects(git(f.root, "rebase", "main"));
+  // A conflicting rebase stops with HEAD at the onto commit, not at the topic commit.
+  const stopped = await git(f.root, "rev-parse", "HEAD");
+  assert.notEqual(stopped, topic);
   await assert.rejects(fastForwardIntegrationBase(f.root, "main"), /Integration checkout has an operation in progress \(rebase-(merge|apply)\)/);
-  assert.equal(await git(f.root, "rev-parse", "HEAD"), topic);
+  assert.equal(await git(f.root, "rev-parse", "HEAD"), stopped);
   await git(f.root, "rebase", "--abort");
 });

@@ -886,7 +886,7 @@ test('prospective release verification refuses dirty, owned and unsynchronized b
   await git(repo, 'branch', '-f', 'release/v0.5', main);
   const refusal = await hooks.prospectiveMergeGate(task, { head: main });
   assert.equal(refusal.kind, 'hold');
-  assert.match(refusal.kind === 'hold' ? refusal.detail : '', /Local integration base differs from origin/);
+  assert.match(refusal.kind === 'hold' ? refusal.detail : '', /Local integration (?:base|branch) differs from origin/);
   assert.equal(await git(repo, 'rev-parse', 'release/v0.5'), main, 'verification never repairs or advances a ref');
   await assert.rejects(hooks.integrationBase({ ...task, brief: null }), /different branch/);
   assert.equal(await git(repo, 'branch', '--show-current'), 'main');
