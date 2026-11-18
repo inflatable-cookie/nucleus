@@ -1193,15 +1193,19 @@ test('absent reviewer creation: restart releases the uncertain run and resumes r
     f.store.update(f.taskId, { resolution: { ...f.current().resolution, currentRunId: run.id, reviewerAgentId: null, reviewerProfile: f.profiles.reviewer } });
 
     const task = await f.control();
-    assert.equal(f.store.run(run.id)!.released, false, 'the run is restarted, not released');
-    assert.equal(f.store.run(run.id)!.agentId, 'agent-absent-review-run');
-    assert.equal(task.resolution.currentRunId, run.id, 'the same run ID is kept');
-    assert.equal(task.resolution.reviewerAgentId, 'agent-absent-review-run');
+    assert.equal(f.store.run(run.id)!.released, true, 'the absent creation is released, not recreated under its run ID');
+    assert.equal(task.resolution.currentRunId, null);
+    assert.equal(task.phase, 'awaiting_review');
     assert.equal(ownerControlCount(f), 1);
+    await f.engine.wake();
+    const fresh = f.current().resolution.currentRunId!;
+    assert.notEqual(fresh, run.id, 'a fresh run identity');
+    assert.equal(f.store.run(fresh)!.agentId, `agent-${fresh}`);
+    assert.equal(f.current().resolution.reviewerAgentId, `agent-${fresh}`);
     // An authenticated reviewer result on the recreated run advances the task.
-    const token = f.createdRunTokens.get(run.id)!;
-    await f.engine.complete({ eventId: randomUUID(), taskId: f.taskId, runId: run.id, status: 'changes_required', summary: 'The author must address the finding', head, reviewResponsibility: 'author', reviewText: 'The retry path is missing an idempotency guard; please add one.' }, token);
-    assert.equal(f.store.run(run.id)!.completion?.status, 'changes_required', 'the authenticated result is recorded on the recreated run');
+    const token = f.createdRunTokens.get(fresh)!;
+    await f.engine.complete({ eventId: randomUUID(), taskId: f.taskId, runId: fresh, status: 'changes_required', summary: 'The author must address the finding', head, reviewResponsibility: 'author', reviewText: 'The retry path is missing an idempotency guard; please add one.' }, token);
+    assert.equal(f.store.run(fresh)!.completion?.status, 'changes_required', 'the authenticated result is recorded on the recreated run');
     assert.ok(f.events('run_completion').length >= 1, 'the authenticated result wrote its completion event');
     await f.engine.wake();
     assert.equal(f.current().phase, 'changes_requested', 'the authenticated result advanced the task');
@@ -1669,7 +1673,7 @@ test('an uncertain resolution restart settles a finished idle recovery run (#356
     // The delegated creation ignores unreleased recovery runs, so the finished
     // one settles with the restart instead of riding along unreleased.
     const task = await f.control({ instruction: 'Create the reviewer once and continue' });
-    assert.equal(f.store.run('uncertain-review')!.agentId, 'agent-uncertain-review', 'the restart recreated the reviewer');
+    assert.equal(f.store.run('uncertain-review')!.released, true, 'the absent reviewer creation is released for a fresh run');
     const settled = f.store.run('recovery-run')!;
     assert.equal(settled.released, true);
     assert.equal(settled.status, 'finished');
@@ -2250,7 +2254,8 @@ test('uncertain re-creation persists the new credential before the agent exists,
       try { f.store.authenticate(r.id, token); authenticatedDuringCreate = true; } catch { /* not yet persisted */ }
       throw new Error('simulated crash after creation');
     };
-    await assert.rejects(f.control());
+    await f.control();
+    await f.engine.wake();
     assert.equal(authenticatedDuringCreate, true, 'the creation token authenticates before the binding commits');
   } finally { await f.close(); }
 });

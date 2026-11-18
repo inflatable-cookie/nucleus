@@ -1911,8 +1911,9 @@ test('a proven-absent reviewer creation is replaced once, then escalates without
   // One automatic replacement ran after the exact lookup proved the creation absent.
   assert.equal(calls,2);assert.equal(f.store.runs(f.task.id).filter(r=>r.role==='reviewer'&&r.released).length,1);
   await f.engine.wake();
-  // The second absence escalates to the coordinator instead of looping.
-  assert.equal(calls,2);assert.equal(f.current().resolution.attention,true);assert.match(f.current().reason,/also proved absent/);
+  // The second absence settles as absent and waits for the owner: no coordinator, no relaunch.
+  assert.equal(calls,2);assert.equal(f.current().resolution.attention,false);assert.match(f.current().reason,/also proved absent/);
+  assert.deepEqual(f.current().resolution.stop?.suggestedVerbs,['route','restart']);
   assert.equal(f.current().resolution.recovery?.runId ?? null,null);
  }finally{await f.close()}
 });

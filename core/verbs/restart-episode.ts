@@ -186,6 +186,8 @@ export class EpisodeRestarts {
     if (this.adapter.workspaceAvailable && !await this.adapter.workspaceAvailable(task.workspaceId!)) throw Error('Absent resolution-run recovery requires the retained task workspace');
     if (!this.resolution.adapter.findRunAgents) throw Error('Run identity lookup is unavailable');
     const found = await this.resolution.adapter.findRunAgents(run);
+    // A fresh run needs creation capability; refuse before anything is settled.
+    if (restart && !found.length && !this.resolution.adapter.createRun) throw Error('Agent creation is unavailable; uncertain run restart refused');
     if (restart && !found.length) {
       const latest = this.store.task(task.id), wait = this.engine.dispatchWaitsFor(latest);
       // A newly placed hold defers intent, never carries this inventory read

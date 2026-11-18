@@ -20,7 +20,8 @@ import { declaredLaneDocumentKeys } from '../../planning/brief-lane-documents';
 import { dirname } from 'node:path';
 import { ensureTaskNodeModules } from '../../workspaces/task-node-modules';
 
-const creationRoles = new Set<Run['role']>(['reviewer', 'closeout', 'executor']);
+// Proof executors keep their own refusal path; reviewer and closeout creations wait for their exact lookup.
+const creationRoles = new Set<Run['role']>(['reviewer', 'closeout']);
 
 /**
  * Deliver the run a launch reserved: the ordinary review custody and checkout
