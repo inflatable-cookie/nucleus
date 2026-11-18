@@ -42,8 +42,16 @@ import {
   type ReactNode,
 } from "react";
 import { useAtom } from "jotai";
-import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
-import { ActionMenuItem, type ActionMenuSurface } from "@/components/ui/action-menu-items";
+import {
+  useRealtime,
+  useRpc,
+  type PluginSidebarThreadIndicator,
+  type PluginThreadStatus,
+} from "@get-bb/plugin-sdk/app";
+import {
+  ActionMenuItem,
+  type ActionMenuSurface,
+} from "@/components/ui/action-menu-items";
 import { Icon } from "@/components/ui/icon";
 import {
   BOARD_SIGNAL_CHANNEL,
@@ -71,23 +79,37 @@ interface NucleusTaskGroupsValue {
   status: "loading" | "ready" | "unavailable";
 }
 
-const EMPTY: NucleusTaskGroupsValue = { groups: new Map(), projects: new Map(), status: "loading" };
+const EMPTY: NucleusTaskGroupsValue = {
+  groups: new Map(),
+  projects: new Map(),
+  status: "loading",
+};
 
 /** Index the read's projects by the BB project ids they name; the first project wins a shared id. */
-function projectsByBbProject(projects: readonly SidebarProject[]): Map<string, SidebarProject> {
+function projectsByBbProject(
+  projects: readonly SidebarProject[],
+): Map<string, SidebarProject> {
   const index = new Map<string, SidebarProject>();
-  for (const project of projects) for (const id of project.bbProjectIds) if (!index.has(id)) index.set(id, project);
+  for (const project of projects)
+    for (const id of project.bbProjectIds)
+      if (!index.has(id)) index.set(id, project);
   return index;
 }
 
-const NucleusTaskGroupsContext = createContext<NucleusTaskGroupsValue | null>(null);
+const NucleusTaskGroupsContext = createContext<NucleusTaskGroupsValue | null>(
+  null,
+);
 
 /**
  * Reads the batched projection once, and again whenever the backend publishes a
  * board revision change. One component owns the read for the whole list, so a
  * hundred groups still cost one call.
  */
-export function NucleusSidebarGroupsProvider({ children }: { children: ReactNode }) {
+export function NucleusSidebarGroupsProvider({
+  children,
+}: {
+  children: ReactNode;
+}) {
   const rpc = useRpc<typeof sidebarGroupsContract>();
   const [value, setValue] = useState<NucleusTaskGroupsValue>(EMPTY);
   const mounted = useRef(true);
@@ -97,7 +119,9 @@ export function NucleusSidebarGroupsProvider({ children }: { children: ReactNode
       const answer = await rpc.call("sidebarGroups", null);
       if (!mounted.current) return;
       setValue({
-        groups: new Map(answer.groups.map((group) => [group.environmentId, group])),
+        groups: new Map(
+          answer.groups.map((group) => [group.environmentId, group]),
+        ),
         projects: projectsByBbProject(answer.projects),
         status: "ready",
       });
@@ -106,7 +130,9 @@ export function NucleusSidebarGroupsProvider({ children }: { children: ReactNode
       // sidebar; with nothing landed, every group renders upstream's header.
       if (!mounted.current) return;
       setValue((current) =>
-        current.status === "ready" ? current : { groups: new Map(), projects: new Map(), status: "unavailable" },
+        current.status === "ready"
+          ? current
+          : { groups: new Map(), projects: new Map(), status: "unavailable" },
       );
     }
   }, [rpc]);
@@ -140,27 +166,37 @@ export interface NucleusTaskGroup {
  * One group's state, or `null` for every group that is not a Nucleus task group.
  * The caller renders upstream's header unchanged when this returns `null`.
  */
-export function useNucleusTaskGroup(environmentId: string): NucleusTaskGroup | null {
+export function useNucleusTaskGroup(
+  environmentId: string,
+): NucleusTaskGroup | null {
   const context = useContext(NucleusTaskGroupsContext);
   const [expanded, setExpanded] = useAtom(expandedTaskGroupsAtom);
   const group = context?.groups.get(environmentId) ?? null;
   const toggleExpanded = useCallback(
     (id: string) => {
       setExpanded((current) =>
-        current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id],
+        current.includes(id)
+          ? current.filter((entry) => entry !== id)
+          : [...current, id],
       );
     },
     [setExpanded],
   );
   return useMemo(() => {
     if (!group) return null;
-    return { group, isCollapsed: !expanded.includes(environmentId), toggleExpanded };
+    return {
+      group,
+      isCollapsed: !expanded.includes(environmentId),
+      toggleExpanded,
+    };
   }, [group, expanded, environmentId, toggleExpanded]);
 }
 
 /** The one line the header adds: `#12 A title` over the task's state and its PR. */
-const PR_CHIP_CLASS = "inline-flex shrink-0 items-center gap-1 text-[10px] leading-4";
-const STATE_LINE_CLASS = "min-w-0 truncate text-[11px] leading-4 text-subtle-foreground";
+const PR_CHIP_CLASS =
+  "inline-flex shrink-0 items-center gap-1 text-[10px] leading-4";
+const STATE_LINE_CLASS =
+  "min-w-0 truncate text-[11px] leading-4 text-subtle-foreground";
 /**
  * The tone palette, in the host app's own tokens: the board's theme roles
  * (success/accent/danger/warning/muted) as CSS variables, so one shared mapping
@@ -181,6 +217,43 @@ export function taskGroupTitle(group: SidebarGroup): string {
   return group.number === null ? title : `#${group.number} ${title}`;
 }
 
+/** The accessible label for a task that needs the operator while its threads do not. */
+export const TASK_ATTENTION_LABEL = "Task needs your attention";
+
+/** What a task container's leading icon slot draws in place of its folder. */
+export interface TaskGroupLeadingStatus {
+  indicator: PluginSidebarThreadIndicator;
+  label: string;
+}
+
+/**
+ * nucleus#1336: the container's leading status. BB's own roll-up of the hidden
+ * threads (empty while expanded, as upstream rolls up only a collapsed group)
+ * decides, with one addition: a task Nucleus marks as needing the operator
+ * (`attention`, e.g. an escalated resolution) draws BB's needs-you glyph even
+ * while its threads are idle, collapsed or expanded, because no thread row
+ * shows it. An unread failure keeps BB's precedence over it. Null keeps the
+ * folder.
+ */
+export function taskGroupLeadingStatus(
+  group: SidebarGroup,
+  rollup: PluginThreadStatus,
+): TaskGroupLeadingStatus | null {
+  const fromRollup =
+    rollup.indicator === "none"
+      ? null
+      : {
+          indicator: rollup.indicator,
+          label: rollup.label ?? TASK_ATTENTION_LABEL,
+        };
+  if (fromRollup !== null && rollup.indicator === "unread-error")
+    return fromRollup;
+  if (group.attention) {
+    return { indicator: "waiting-for-input", label: TASK_ATTENTION_LABEL };
+  }
+  return fromRollup;
+}
+
 /**
  * The third line's PR chip: the standard state icon plus `#39` in the state
  * colour, with no visible state word — the state is the accessible label
@@ -189,7 +262,10 @@ export function taskGroupTitle(group: SidebarGroup): string {
  */
 export function TaskGroupPullRequest({ group }: { group: SidebarGroup }) {
   if (group.prNumber === null || group.prState === null) return null;
-  const badge = pullRequestBadge({ state: group.prState, blocked: group.attention });
+  const badge = pullRequestBadge({
+    state: group.prState,
+    blocked: group.attention,
+  });
   const color = PR_TONE_COLOR[badge.tone];
   return (
     <span
@@ -225,7 +301,10 @@ export function NucleusTaskGroupStateLine({ group }: { group: SidebarGroup }) {
       className="flex min-w-0 items-center gap-1.5"
       aria-label={`${group.repository}, ${group.reference ?? group.taskId}: ${group.stateLabel}${group.waitLabel ? `, ${group.waitLabel}` : ""}${group.prState ? `, pull request ${group.prState}` : ""}`}
     >
-      <span className={`${STATE_LINE_CLASS} inline-flex shrink-0 items-center gap-1`} data-nucleus-task-group-repository="">
+      <span
+        className={`${STATE_LINE_CLASS} inline-flex shrink-0 items-center gap-1`}
+        data-nucleus-task-group-repository=""
+      >
         <Icon name="Folder" className="size-3" aria-hidden />
         <span className="truncate">{group.repository}</span>
       </span>
@@ -272,20 +351,34 @@ export function nestedTaskPointers(
 ): NestedTaskPointer[] {
   if (!projectId) return [];
   const byId = new Map(threads.map((thread) => [thread.id, thread]));
-  const pointers = new Map<string, { pointer: NestedTaskPointer; tasks: Set<string> }>();
+  const pointers = new Map<
+    string,
+    { pointer: NestedTaskPointer; tasks: Set<string> }
+  >();
   for (const thread of threads) {
     if (thread.projectId !== projectId || thread.isHidden) continue;
     if (resolveSidebarProjectId(thread, byId) === projectId) continue;
-    const parent = thread.parentThreadId === null ? null : byId.get(thread.parentThreadId) ?? null;
+    const parent =
+      thread.parentThreadId === null
+        ? null
+        : (byId.get(thread.parentThreadId) ?? null);
     if (parent === null) continue;
     // Every role thread of one task shares its environment, which the batched read
     // names: the pointer counts the task once, however many of its threads nest here.
     const environmentId = thread.environment?.id ?? null;
-    const identity = environmentId !== null && taskEnvironmentIds.has(environmentId) ? environmentId : thread.id;
+    const identity =
+      environmentId !== null && taskEnvironmentIds.has(environmentId)
+        ? environmentId
+        : thread.id;
     const entry = pointers.get(parent.id);
     if (entry === undefined) {
       pointers.set(parent.id, {
-        pointer: { key: parent.id, count: 0, parentTitle: parent.displayTitle, href: parent.href },
+        pointer: {
+          key: parent.id,
+          count: 0,
+          parentTitle: parent.displayTitle,
+          href: parent.href,
+        },
         tasks: new Set([identity]),
       });
     } else {
@@ -294,13 +387,17 @@ export function nestedTaskPointers(
   }
   return [...pointers.values()]
     .map(({ pointer, tasks }) => ({ ...pointer, count: tasks.size }))
-    .sort((left, right) =>
-      left.parentTitle.localeCompare(right.parentTitle) || left.key.localeCompare(right.key),
+    .sort(
+      (left, right) =>
+        left.parentTitle.localeCompare(right.parentTitle) ||
+        left.key.localeCompare(right.key),
     );
 }
 
 /** The same read, from the live sidebar data: `[]` outside a host-backed list. */
-export function useNucleusNestedTaskPointers(projectId: string | null | undefined): NestedTaskPointer[] {
+export function useNucleusNestedTaskPointers(
+  projectId: string | null | undefined,
+): NestedTaskPointer[] {
   const { projects } = useSidebarData();
   const taskGroups = useContext(NucleusTaskGroupsContext)?.groups;
   return useMemo(() => {
@@ -323,10 +420,17 @@ export function nestedTaskPointerLabel(pointer: NestedTaskPointer): string {
  * is a plain anchor on the parent's own app route, so the host routes the click and
  * middle-click, copy-link and open-in-new-window keep working.
  */
-export function NucleusNestedTaskPointers({ pointers }: { pointers: readonly NestedTaskPointer[] }) {
+export function NucleusNestedTaskPointers({
+  pointers,
+}: {
+  pointers: readonly NestedTaskPointer[];
+}) {
   if (pointers.length === 0) return null;
   return (
-    <div data-nucleus-nested-task-pointers="" className="flex flex-col gap-0.5 px-2 py-1">
+    <div
+      data-nucleus-nested-task-pointers=""
+      className="flex flex-col gap-0.5 px-2 py-1"
+    >
       {pointers.map((pointer) => (
         <a
           key={pointer.key}
@@ -348,11 +452,22 @@ export function NucleusNestedTaskPointers({ pointers }: { pointers: readonly Nes
  * is upstream's. The link's key is the Nucleus project key (decision 5d), so a
  * multi-repository project's rows all open the one board.
  */
-export function NucleusProjectBoardMenuItem({ projectId, surface }: { projectId: string; surface: ActionMenuSurface }) {
-  const project = useContext(NucleusTaskGroupsContext)?.projects.get(projectId) ?? null;
+export function NucleusProjectBoardMenuItem({
+  projectId,
+  surface,
+}: {
+  projectId: string;
+  surface: ActionMenuSurface;
+}) {
+  const project =
+    useContext(NucleusTaskGroupsContext)?.projects.get(projectId) ?? null;
   if (!project) return null;
   return (
-    <ActionMenuItem surface={surface} icon="LayoutDashboard" href={projectBoardHref(project.key)}>
+    <ActionMenuItem
+      surface={surface}
+      icon="LayoutDashboard"
+      href={projectBoardHref(project.key)}
+    >
       Board
     </ActionMenuItem>
   );

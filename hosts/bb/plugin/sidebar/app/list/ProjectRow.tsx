@@ -54,6 +54,7 @@ import {
   NucleusNestedTaskPointers,
   NucleusProjectBoardMenuItem,
   NucleusTaskGroupStateLine,
+  taskGroupLeadingStatus,
   taskGroupTitle,
   useNucleusNestedTaskPointers,
   useNucleusTaskGroup,
@@ -251,7 +252,8 @@ interface ChronologicalBuiltInSidebarSections {
   threads: Omit<BuiltInSidebarSectionOptions, "content">;
 }
 
-interface ChronologicalSectionThreadSectionsProps extends SectionThreadTreeProps {
+interface ChronologicalSectionThreadSectionsProps
+  extends SectionThreadTreeProps {
   builtInSections: ChronologicalBuiltInSidebarSections;
   onCreateThread?: () => void;
   topLevelSectionOrder: readonly SidebarSectionId[];
@@ -799,6 +801,14 @@ function EnvironmentThreadGroupHeader({
     null,
   );
   const showRollupGlyph = isCollapsed && rollup.indicator !== "none";
+  // nucleus#1336: a Nucleus task container draws its status in the leading icon
+  // slot, so the trailing slot holds only the chevron, and the whole row toggles.
+  const leadingStatus =
+    taskGroup === null ? null : taskGroupLeadingStatus(taskGroup.group, rollup);
+  const onTaskRowClick =
+    taskGroup === null || rename.isEditing
+      ? undefined
+      : () => onToggleCollapsed(environmentId);
   const className = cn(
     SIDEBAR_HOVER_ACTIONS_ROW_CLASS,
     stickyLevel === undefined && "relative",
@@ -819,13 +829,20 @@ function EnvironmentThreadGroupHeader({
           SIDEBAR_GROUP_TEXT_CLASS,
           COARSE_POINTER_GLYPH_BOX_CLASS,
         )}
-        aria-hidden="true"
+        aria-hidden={leadingStatus === null ? "true" : undefined}
+        role={leadingStatus === null ? undefined : "img"}
+        aria-label={leadingStatus?.label}
+        data-nucleus-task-group-status={leadingStatus?.indicator}
       >
-        <Icon
-          name={iconName}
-          className={COARSE_POINTER_ICON_SIZE_CLASS}
-          aria-hidden="true"
-        />
+        {leadingStatus !== null ? (
+          <ThreadStatusGlyph indicator={leadingStatus.indicator} />
+        ) : (
+          <Icon
+            name={iconName}
+            className={COARSE_POINTER_ICON_SIZE_CLASS}
+            aria-hidden="true"
+          />
+        )}
       </span>
       <span
         className={cn(
@@ -878,50 +895,54 @@ function EnvironmentThreadGroupHeader({
           expandLabel={`Expand ${displayName} threads`}
           collapseLabel={`Collapse ${displayName} threads`}
           onToggle={() => onToggleCollapsed(environmentId)}
-          revealOnHover={!isCollapsed}
+          revealOnHover={taskGroup !== null || !isCollapsed}
         />
       </span>
-      {showRollupGlyph || taskGroup === null ? <span
-        className={cn(
-          "relative z-10 inline-flex shrink-0 items-center",
-          rename.isEditing && "hidden",
-        )}
-      >
-        {showRollupGlyph ? (
-          <span
-            data-sidebar-hover-actions-open={isActionsOpen ? "true" : undefined}
-            className={cn(
-              SIDEBAR_HOVER_ACTIONS_FADE_CLASS,
-              COARSE_POINTER_ROW_ACTION_SIZE_CLASS,
-              "pointer-events-none absolute right-0 flex items-center justify-center text-subtle-foreground [@media(hover:none)]:static [@media(hover:none)]:shrink-0",
-            )}
-          >
-            <ThreadStatusGlyph indicator={rollup.indicator} />
-          </span>
-        ) : null}
-        {taskGroup === null ? <div
-          data-sidebar-hover-actions-open={isActionsOpen ? "true" : undefined}
-          data-sidebar-hover-actions-mobile={
-            SIDEBAR_HOVER_ACTIONS_MOBILE_ALWAYS_VALUE
-          }
+      {taskGroup === null ? (
+        <span
           className={cn(
-            SIDEBAR_HOVER_ACTIONS_CLASS,
-            SIDEBAR_CONTROL_PAIR_SIZE_CLASS,
-            "relative flex items-center justify-end",
+            "relative z-10 inline-flex shrink-0 items-center",
             rename.isEditing && "hidden",
-            isCollapsed && "[@media(hover:none)]:hidden",
           )}
         >
-          <EnvironmentThreadGroupHeaderActions
-            archiveThreadsPending={archiveThreadsPending}
-            onArchiveThreads={onArchiveThreads}
-            onCreateNewThread={onCreateNewThread}
-            onRenameEnvironment={rename.startEditingFromMenu}
-            onCloseAutoFocus={rename.onCloseAutoFocus}
-            onOpenChange={setIsActionsOpen}
-          />
-        </div> : null}
-      </span> : null}
+          {showRollupGlyph ? (
+            <span
+              data-sidebar-hover-actions-open={
+                isActionsOpen ? "true" : undefined
+              }
+              className={cn(
+                SIDEBAR_HOVER_ACTIONS_FADE_CLASS,
+                COARSE_POINTER_ROW_ACTION_SIZE_CLASS,
+                "pointer-events-none absolute right-0 flex items-center justify-center text-subtle-foreground [@media(hover:none)]:static [@media(hover:none)]:shrink-0",
+              )}
+            >
+              <ThreadStatusGlyph indicator={rollup.indicator} />
+            </span>
+          ) : null}
+          <div
+            data-sidebar-hover-actions-open={isActionsOpen ? "true" : undefined}
+            data-sidebar-hover-actions-mobile={
+              SIDEBAR_HOVER_ACTIONS_MOBILE_ALWAYS_VALUE
+            }
+            className={cn(
+              SIDEBAR_HOVER_ACTIONS_CLASS,
+              SIDEBAR_CONTROL_PAIR_SIZE_CLASS,
+              "relative flex items-center justify-end",
+              rename.isEditing && "hidden",
+              isCollapsed && "[@media(hover:none)]:hidden",
+            )}
+          >
+            <EnvironmentThreadGroupHeaderActions
+              archiveThreadsPending={archiveThreadsPending}
+              onArchiveThreads={onArchiveThreads}
+              onCreateNewThread={onCreateNewThread}
+              onRenameEnvironment={rename.startEditingFromMenu}
+              onCloseAutoFocus={rename.onCloseAutoFocus}
+              onOpenChange={setIsActionsOpen}
+            />
+          </div>
+        </span>
+      ) : null}
     </>
   );
 
@@ -934,8 +955,9 @@ function EnvironmentThreadGroupHeader({
         tier="parent"
         data-sidebar-rename-row=""
         level={stickyLevel}
-        className={className}
+        className={cn(className, onTaskRowClick && "cursor-pointer")}
         style={style}
+        onClick={onTaskRowClick}
       >
         {content}
       </SidebarStickyTier>
@@ -948,8 +970,9 @@ function EnvironmentThreadGroupHeader({
       {...dragBindings?.listeners}
       ref={dragBindings?.setActivatorNodeRef}
       data-sidebar-rename-row=""
-      className={className}
+      className={cn(className, onTaskRowClick && "cursor-pointer")}
       style={style}
+      onClick={onTaskRowClick}
     >
       {content}
     </div>
@@ -1001,9 +1024,12 @@ const EnvironmentThreadGroupRow = memo(function EnvironmentThreadGroupRow({
   // `expandedTaskGroups` preference, and its toggle writes that list only. Every
   // other group keeps upstream's `collapsedEnvironments` path untouched.
   const taskGroup = useNucleusTaskGroup(environmentId);
-  const groupCollapsed = taskGroup === null ? isCollapsed : taskGroup.isCollapsed;
+  const groupCollapsed =
+    taskGroup === null ? isCollapsed : taskGroup.isCollapsed;
   const onToggleGroupCollapsed =
-    taskGroup === null ? onToggleEnvironmentCollapsed : taskGroup.toggleExpanded;
+    taskGroup === null
+      ? onToggleEnvironmentCollapsed
+      : taskGroup.toggleExpanded;
   const groupCollapsedEnvironmentIds = useMemo(() => {
     if (taskGroup === null) return collapsedEnvironmentIds;
     const next = new Set(collapsedEnvironmentIds);
@@ -2269,7 +2295,10 @@ function ProjectRowComponent({
         onRemove={requestRemove}
         extraActions={(surface) => (
           <>
-            <NucleusProjectBoardMenuItem projectId={project.id} surface={surface} />
+            <NucleusProjectBoardMenuItem
+              projectId={project.id}
+              surface={surface}
+            />
             <ThreadListVisibilityMenuItems surface={surface} />
           </>
         )}
@@ -2282,7 +2311,10 @@ function ProjectRowComponent({
       <ProjectActionsContextMenu
         extraActions={(surface) => (
           <>
-            <NucleusProjectBoardMenuItem projectId={project.id} surface={surface} />
+            <NucleusProjectBoardMenuItem
+              projectId={project.id}
+              surface={surface}
+            />
             <ThreadListVisibilityMenuItems surface={surface} />
           </>
         )}

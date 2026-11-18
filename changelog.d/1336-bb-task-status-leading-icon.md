@@ -1,0 +1,1 @@
+A BB task container now shows its status (spinner while a participant works, the needs-you glyph when one waits for you or Nucleus needs you on the task) in place of its folder icon, so the expand chevron sits alone on the right and no longer overlaps it. Clicking anywhere on the container row expands or collapses it.

@@ -53,6 +53,16 @@ the change belongs upstream (Spec 062, decision 5f's exit path).
    does not know about), no Edit (it renames an environment the header no longer shows) and no
    Archive (it would archive live role threads behind Nucleus's back). Every ordinary worktree group
    keeps upstream's actions untouched.
+   nucleus#1336: a collapsed container draws its roll-up (upstream's `experimental_resolveThreadStatus`
+   over the hidden threads, drawn with `experimental_ThreadStatusGlyph`) in the leading icon slot in
+   place of the folder, labelled with the status for assistive technology, and renders no trailing
+   slot at all; its chevron reveals on hover or focus whether collapsed or expanded, and a click
+   anywhere on the row toggles it. Upstream draws that roll-up absolutely positioned in the trailing
+   slot, where it overlapped the chevron. A task the projection marks `attention` draws BB's
+   needs-you glyph there even while its threads are idle, collapsed or expanded, since no thread row
+   shows it; an unread failure keeps BB's precedence. The choice lives in the fork's
+   `taskGroupLeadingStatus` (patch 3). An idle container keeps the folder. Ordinary groups keep
+   upstream's markup.
 2. **`0002-expanded-task-groups-preference.patch` — `shared/preferences.ts`,
    `app/preferences/atoms.ts`.** One preference key, `expandedTaskGroups`
    (environment ids). Reason: a task group is collapsed by default and its expand
@@ -65,7 +75,8 @@ the change belongs upstream (Spec 062, decision 5f's exit path).
    resolved from the same read's `projects` by BB project id, and (nucleus#1313) the nested-elsewhere
    pointer with its counting rule, the repository-led state line (folder icon plus the repository
    label), the PR chip (the shared `shared/pull-request-badge.ts` mapping as an icon plus `#39` in the
-   state colour, with the state in the aria-label) and the task container's own action menu items.
+   state colour, with the state in the aria-label) and the task container's own action menu items,
+   and (nucleus#1336) the container's leading status.
    Reason: the fork's own logic belongs in one file of the fork rather than smeared over upstream's
    components.
 4. **`0004-export-thread-list.patch` — `app.tsx`, `app.test.tsx`,

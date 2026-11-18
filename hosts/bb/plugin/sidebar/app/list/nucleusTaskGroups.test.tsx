@@ -96,6 +96,8 @@ function environmentThread({
   originPluginId,
   parentThreadId = null,
   hasPendingInteraction = false,
+  runtimeStatus = "idle",
+  isUnread,
 }: {
   id: string;
   title: string;
@@ -103,6 +105,8 @@ function environmentThread({
   originPluginId: string | null;
   parentThreadId?: string | null;
   hasPendingInteraction?: boolean;
+  runtimeStatus?: SidebarThread["runtimeStatus"];
+  isUnread?: boolean;
 }): SidebarThread {
   return makeSidebarThread({
     id,
@@ -111,6 +115,8 @@ function environmentThread({
     projectId: "proj_test",
     parentThreadId,
     hasPendingInteraction,
+    runtimeStatus,
+    ...(isUnread === undefined ? {} : { isUnread }),
     originPluginId,
     environment: makeSidebarEnvironment({
       id: environmentId,
@@ -188,7 +194,9 @@ function Harness({ children, store }: HarnessProps) {
 }
 
 /** The fork's own defaults, with the one preference a test needs overridden. */
-function preferenceValues(overrides: Partial<PreferenceValues> = {}): PreferenceValues {
+function preferenceValues(
+  overrides: Partial<PreferenceValues> = {},
+): PreferenceValues {
   return { ...defaultPreferences(), ...overrides };
 }
 
@@ -217,7 +225,10 @@ function renderTaskGroups(options: RenderOptions = {}): {
   const rpc: PluginRpcTestHandlers<never> = {
     listPreferences: async () => ({ preferences: preferenceValues }),
     setPreference: async (input: never) => {
-      const { key, value } = input as unknown as { key: string; value: unknown };
+      const { key, value } = input as unknown as {
+        key: string;
+        value: unknown;
+      };
       options.onSetPreference?.(key, value);
       return { key, value } as never;
     },
@@ -240,7 +251,9 @@ function renderTaskGroups(options: RenderOptions = {}): {
         <NucleusSidebarGroupsProvider>
           <ProjectRow
             project={project}
-            threadListState={options.threadListState ?? { status: "ready", threads: THREADS }}
+            threadListState={
+              options.threadListState ?? { status: "ready", threads: THREADS }
+            }
             isActive={false}
             isCollapsed={false}
             compareThreads={() => 0}
@@ -260,14 +273,24 @@ function renderTaskGroups(options: RenderOptions = {}): {
         threads: allThreads,
         // Every project a thread names is in the live view; the row under test is
         // the one this harness parameterises.
-        projects: [...new Map(
-          [makeSidebarProject({ id: "proj_test" }), project,
-            ...allThreads.map((thread) => makeSidebarProject({
-              id: thread.projectId,
-              name: thread.projectId === "proj_personal" ? "Personal" : thread.projectId,
-              isPersonal: thread.projectId === "proj_personal",
-            }))].map((entry) => [entry.id, entry]),
-        ).values()],
+        projects: [
+          ...new Map(
+            [
+              makeSidebarProject({ id: "proj_test" }),
+              project,
+              ...allThreads.map((thread) =>
+                makeSidebarProject({
+                  id: thread.projectId,
+                  name:
+                    thread.projectId === "proj_personal"
+                      ? "Personal"
+                      : thread.projectId,
+                  isPersonal: thread.projectId === "proj_personal",
+                }),
+              ),
+            ].map((entry) => [entry.id, entry]),
+          ).values(),
+        ],
       },
     },
   );
@@ -285,6 +308,16 @@ function taskGroupRow(environmentId: string): HTMLElement {
   return taskGroupHeader(environmentId)!.closest<HTMLElement>(
     "[data-sidebar-rename-row]",
   )!;
+}
+
+/** The block holding a task container's title, state line and chevron. */
+function nameBlock(environmentId: string): HTMLElement {
+  return taskGroupHeader(environmentId)!.parentElement!;
+}
+
+/** The row's leading icon slot: the folder, or the rolled-up status glyph. */
+function leadingSlot(environmentId: string): HTMLElement {
+  return nameBlock(environmentId).previousElementSibling as HTMLElement;
 }
 
 /** The upstream-style group header for an environment, found by its rendered name. */
@@ -316,7 +349,8 @@ describe("a Nucleus task group's header", () => {
       "#1297 BB host phase 6",
     );
     expect(
-      header.querySelector("[data-nucleus-task-group-state-label]")?.textContent,
+      header.querySelector("[data-nucleus-task-group-state-label]")
+        ?.textContent,
     ).toBe("Reviewing");
     expect(
       header.querySelector("[data-nucleus-task-group-wait]")?.textContent,
@@ -324,15 +358,19 @@ describe("a Nucleus task group's header", () => {
     // The PR chip is the state icon plus `#191`; the state rides the label.
     const pullRequest = header.querySelector("[data-nucleus-task-group-pr]");
     expect(pullRequest?.textContent).toBe("#191");
-    expect(pullRequest?.getAttribute("aria-label")).toBe("Pull request #191, open");
+    expect(pullRequest?.getAttribute("aria-label")).toBe(
+      "Pull request #191, open",
+    );
     // Collapsed by default, with no `collapsedEnvironments` entry: the fork's own
     // preference decides, so the two group classes cannot disagree.
-    expect(header.getAttribute("data-nucleus-task-group-collapsed")).toBe("true");
+    expect(header.getAttribute("data-nucleus-task-group-collapsed")).toBe(
+      "true",
+    );
     // The collapsed roll-up is the host's own: `experimental_resolveThreadStatus`
-    // over the hidden threads names the indicator, and upstream's glyph draws it.
-    // The row-level glyph sits beside the name block, like upstream's chevron.
+    // over the hidden threads names the indicator, and upstream's glyph draws it
+    // in the leading icon slot (nucleus#1336).
     expect(
-      taskGroupRow(NUCLEUS_ENVIRONMENT).querySelector(
+      leadingSlot(NUCLEUS_ENVIRONMENT).querySelector(
         '[data-thread-status-glyph="waiting-for-input"]',
       ),
     ).not.toBeNull();
@@ -390,7 +428,9 @@ describe("a Nucleus task group's header", () => {
     expect(expand).not.toBeNull();
     fireEvent.click(expand!);
     await waitFor(() => {
-      expect(writes.some((write) => write.key === "expandedTaskGroups")).toBe(true);
+      expect(writes.some((write) => write.key === "expandedTaskGroups")).toBe(
+        true,
+      );
     });
     expect(
       writes.find((write) => write.key === "expandedTaskGroups")?.value,
@@ -418,7 +458,11 @@ describe("a Nucleus task group's header", () => {
     await hydratePreferences({
       call: async (method: string) =>
         method === "listPreferences"
-          ? { preferences: preferenceValues({ expandedTaskGroups: [NUCLEUS_ENVIRONMENT] }) }
+          ? {
+              preferences: preferenceValues({
+                expandedTaskGroups: [NUCLEUS_ENVIRONMENT],
+              }),
+            }
           : { key: "expandedTaskGroups", value: [] },
     });
     renderTaskGroups({ store });
@@ -450,23 +494,51 @@ describe("a Nucleus task group's header", () => {
 
 describe("a project row's board link (phase 6, decision 5d)", () => {
   it("adds one Board item linking to the Nucleus project's board when the read names this BB project", async () => {
-    renderTaskGroups({ projects: [{ key: "synthetic", name: "Synthetic", repositoryPaths: ["/synthetic/repo"], threadIds: ["thr_planner"], bbProjectIds: ["proj_other", "proj_test"] }] });
+    renderTaskGroups({
+      projects: [
+        {
+          key: "synthetic",
+          name: "Synthetic",
+          repositoryPaths: ["/synthetic/repo"],
+          threadIds: ["thr_planner"],
+          bbProjectIds: ["proj_other", "proj_test"],
+        },
+      ],
+    });
     await waitFor(() => {
       expect(taskGroupHeader(NUCLEUS_ENVIRONMENT)).not.toBeNull();
     });
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Test project actions" }), { button: 0 });
+    fireEvent.pointerDown(
+      screen.getByRole("button", { name: "Test project actions" }),
+      { button: 0 },
+    );
     const board = await screen.findByRole("menuitem", { name: "Board" });
     // The route key is the Nucleus project key, never the BB project id.
-    expect(board.getAttribute("href")).toBe("/plugins/nucleus/board/project/synthetic");
+    expect(board.getAttribute("href")).toBe(
+      "/plugins/nucleus/board/project/synthetic",
+    );
     expect(screen.getAllByRole("menuitem", { name: "Board" })).toHaveLength(1);
   });
 
   it("leaves a project row the read does not name with upstream's menu", async () => {
-    renderTaskGroups({ projects: [{ key: "elsewhere", name: "Elsewhere", repositoryPaths: ["/synthetic/elsewhere"], threadIds: [], bbProjectIds: ["proj_other"] }] });
+    renderTaskGroups({
+      projects: [
+        {
+          key: "elsewhere",
+          name: "Elsewhere",
+          repositoryPaths: ["/synthetic/elsewhere"],
+          threadIds: [],
+          bbProjectIds: ["proj_other"],
+        },
+      ],
+    });
     await waitFor(() => {
       expect(taskGroupHeader(NUCLEUS_ENVIRONMENT)).not.toBeNull();
     });
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Test project actions" }), { button: 0 });
+    fireEvent.pointerDown(
+      screen.getByRole("button", { name: "Test project actions" }),
+      { button: 0 },
+    );
     await screen.findByRole("menuitem", { name: "Project settings" });
     expect(screen.queryByRole("menuitem", { name: "Board" })).toBeNull();
   });
@@ -480,7 +552,10 @@ describe("a project row's board link (phase 6, decision 5d)", () => {
  * project, nested under a planner thread in Tom's Personal project.
  */
 describe("a project whose task nests under a planner in another project", () => {
-  const TASK_PROJECT = makeSidebarProject({ id: "proj_poodle_lab", name: "poodle-lab" });
+  const TASK_PROJECT = makeSidebarProject({
+    id: "proj_poodle_lab",
+    name: "poodle-lab",
+  });
   const TASK_ENVIRONMENT = "env_poodle_task";
   const SECOND_TASK_ENVIRONMENT = "env_poodle_task_2";
   const planner = makeSidebarThread({
@@ -498,12 +573,28 @@ describe("a project whose task nests under a planner in another project", () => 
       titleFallback: title,
       parentThreadId: "thr_personal_planner",
       originPluginId: "nucleus",
-      environment: makeSidebarEnvironment({ id: environmentId, name: environmentId, isWorktree: true }),
+      environment: makeSidebarEnvironment({
+        id: environmentId,
+        name: environmentId,
+        isWorktree: true,
+      }),
       latestAttentionAt: 6,
     });
-  const worker = taskThread("thr_poodle_worker", "#1313 BB presentation", TASK_ENVIRONMENT);
-  const reviewer = taskThread("thr_poodle_reviewer", "1313 reviewer", TASK_ENVIRONMENT);
-  const secondWorker = taskThread("thr_poodle_second", "#1314 Second task", SECOND_TASK_ENVIRONMENT);
+  const worker = taskThread(
+    "thr_poodle_worker",
+    "#1313 BB presentation",
+    TASK_ENVIRONMENT,
+  );
+  const reviewer = taskThread(
+    "thr_poodle_reviewer",
+    "1313 reviewer",
+    TASK_ENVIRONMENT,
+  );
+  const secondWorker = taskThread(
+    "thr_poodle_second",
+    "#1314 Second task",
+    SECOND_TASK_ENVIRONMENT,
+  );
 
   /** The batched read names both task environments, as the service does for live tasks. */
   const TASK_GROUPS = [GROUP, SECOND_GROUP].map((group, index) => ({
@@ -512,32 +603,62 @@ describe("a project whose task nests under a planner in another project", () => 
   }));
 
   it("shows a compact pointer to the planner instead of upstream's 'No threads'", async () => {
-    renderTaskGroups({ project: TASK_PROJECT, allThreads: [planner, worker], threadListState: { status: "ready", threads: [] }, groups: TASK_GROUPS });
-    const pointer = await screen.findByText("1 task under Tom's Personal planner");
+    renderTaskGroups({
+      project: TASK_PROJECT,
+      allThreads: [planner, worker],
+      threadListState: { status: "ready", threads: [] },
+      groups: TASK_GROUPS,
+    });
+    const pointer = await screen.findByText(
+      "1 task under Tom's Personal planner",
+    );
     expect(screen.queryByText("No threads")).toBeNull();
     // The pointer is the planner's own app route, so the host routes the click.
     const anchor = pointer.closest("a");
     expect(anchor?.getAttribute("href")).toBe(
       "/projects/proj_personal/threads/thr_personal_planner",
     );
-    expect(document.querySelectorAll("[data-nucleus-nested-task-pointer]")).toHaveLength(1);
+    expect(
+      document.querySelectorAll("[data-nucleus-nested-task-pointer]"),
+    ).toHaveLength(1);
   });
 
   it("counts one task once however many of its role threads nest under the planner", async () => {
-    renderTaskGroups({ project: TASK_PROJECT, allThreads: [planner, worker, reviewer], threadListState: { status: "ready", threads: [] }, groups: TASK_GROUPS });
-    expect(await screen.findByText("1 task under Tom's Personal planner")).not.toBeNull();
+    renderTaskGroups({
+      project: TASK_PROJECT,
+      allThreads: [planner, worker, reviewer],
+      threadListState: { status: "ready", threads: [] },
+      groups: TASK_GROUPS,
+    });
+    expect(
+      await screen.findByText("1 task under Tom's Personal planner"),
+    ).not.toBeNull();
   });
 
   it("counts two tasks under the same planner as two", async () => {
-    renderTaskGroups({ project: TASK_PROJECT, allThreads: [planner, worker, secondWorker], threadListState: { status: "ready", threads: [] }, groups: TASK_GROUPS });
-    expect(await screen.findByText("2 tasks under Tom's Personal planner")).not.toBeNull();
+    renderTaskGroups({
+      project: TASK_PROJECT,
+      allThreads: [planner, worker, secondWorker],
+      threadListState: { status: "ready", threads: [] },
+      groups: TASK_GROUPS,
+    });
+    expect(
+      await screen.findByText("2 tasks under Tom's Personal planner"),
+    ).not.toBeNull();
     expect(screen.queryByText("No threads")).toBeNull();
   });
 
   it("keeps upstream's empty state for a project with no threads anywhere", async () => {
-    renderTaskGroups({ project: TASK_PROJECT, allThreads: [planner], threadListState: { status: "ready", threads: [] }, groups: [] });
+    renderTaskGroups({
+      project: TASK_PROJECT,
+      allThreads: [planner],
+      threadListState: { status: "ready", threads: [] },
+      groups: [],
+    });
     expect(await screen.findByText("No threads")).not.toBeNull();
-    expect(document.querySelector("[data-nucleus-nested-task-pointer]")).toBeNull();
+    expect(
+      document.querySelector("[data-nucleus-nested-task-pointer]"),
+    ).toBeNull();
   });
 
   it("draws a project's own root thread as a row, never as a pointer", async () => {
@@ -547,9 +668,16 @@ describe("a project whose task nests under a planner in another project", () => 
       title: "poodle-lab chat",
       latestAttentionAt: 9,
     });
-    renderTaskGroups({ project: TASK_PROJECT, allThreads: [planner, worker, root], threadListState: { status: "ready", threads: [root] }, groups: TASK_GROUPS });
+    renderTaskGroups({
+      project: TASK_PROJECT,
+      allThreads: [planner, worker, root],
+      threadListState: { status: "ready", threads: [root] },
+      groups: TASK_GROUPS,
+    });
     expect(await screen.findByText("poodle-lab chat")).not.toBeNull();
-    expect(document.querySelector("[data-nucleus-nested-task-pointer]")).toBeNull();
+    expect(
+      document.querySelector("[data-nucleus-nested-task-pointer]"),
+    ).toBeNull();
     expect(screen.queryByText("No threads")).toBeNull();
   });
 });
@@ -560,54 +688,71 @@ describe("a project whose task nests under a planner in another project", () => 
  * colour, and the row title and state take the freed menu width.
  */
 describe("a task container's repository, PR chip and row width", () => {
-
   it("leads the state line with the folder icon and the repository", async () => {
     renderTaskGroups({ groups: [{ ...GROUP, repository: "poodle-lab" }] });
     const repository = await waitFor(() => {
-      const found = document.querySelector<HTMLElement>("[data-nucleus-task-group-repository]");
+      const found = document.querySelector<HTMLElement>(
+        "[data-nucleus-task-group-repository]",
+      );
       expect(found).not.toBeNull();
       return found!;
     });
     expect(repository.textContent).toBe("poodle-lab");
     expect(repository.querySelector('[data-icon="Folder"]')).not.toBeNull();
     // The chip keeps the PR state in the label, not in visible text.
-    const chip = document.querySelector<HTMLElement>("[data-nucleus-task-group-pr]")!;
+    const chip = document.querySelector<HTMLElement>(
+      "[data-nucleus-task-group-pr]",
+    )!;
     expect(chip.textContent).toBe("#191");
   });
 
   it("draws the PR as the state icon and #39 with the state in the label, never as text", async () => {
     renderTaskGroups({ groups: [GROUP] });
     const chip = await waitFor(() => {
-      const found = document.querySelector<HTMLElement>("[data-nucleus-task-group-pr]");
+      const found = document.querySelector<HTMLElement>(
+        "[data-nucleus-task-group-pr]",
+      );
       expect(found).not.toBeNull();
       return found!;
     });
     expect(chip.textContent).toBe("#191");
     expect(chip.textContent).not.toContain("OPEN");
     expect(chip.querySelector('[data-icon="GitPullRequest"]')).not.toBeNull();
-    expect(chip.getAttribute("data-nucleus-task-group-pr-tone")).toBe("success");
+    expect(chip.getAttribute("data-nucleus-task-group-pr-tone")).toBe(
+      "success",
+    );
     expect(chip.getAttribute("aria-label")).toBe("Pull request #191, open");
   });
 
   it("uses the merged glyph and the merged tone, and the closed one for closed", async () => {
     renderTaskGroups({ groups: [{ ...GROUP, prState: "MERGED" }] });
     const merged = await waitFor(() => {
-      const found = document.querySelector<HTMLElement>("[data-nucleus-task-group-pr]");
+      const found = document.querySelector<HTMLElement>(
+        "[data-nucleus-task-group-pr]",
+      );
       expect(found).not.toBeNull();
       return found!;
     });
     expect(merged.querySelector('[data-icon="GitMerge"]')).not.toBeNull();
-    expect(merged.getAttribute("data-nucleus-task-group-pr-tone")).toBe("accent");
+    expect(merged.getAttribute("data-nucleus-task-group-pr-tone")).toBe(
+      "accent",
+    );
 
     cleanup();
     renderTaskGroups({ groups: [{ ...GROUP, prState: "CLOSED" }] });
     const closed = await waitFor(() => {
-      const found = document.querySelector<HTMLElement>("[data-nucleus-task-group-pr]");
+      const found = document.querySelector<HTMLElement>(
+        "[data-nucleus-task-group-pr]",
+      );
       expect(found).not.toBeNull();
       return found!;
     });
-    expect(closed.querySelector('[data-icon="GitPullRequestClosed"]')).not.toBeNull();
-    expect(closed.getAttribute("data-nucleus-task-group-pr-tone")).toBe("danger");
+    expect(
+      closed.querySelector('[data-icon="GitPullRequestClosed"]'),
+    ).not.toBeNull();
+    expect(closed.getAttribute("data-nucleus-task-group-pr-tone")).toBe(
+      "danger",
+    );
   });
 
   it("removes the task container menu and gives the title and state line the row width", async () => {
@@ -617,17 +762,50 @@ describe("a task container's repository, PR chip and row width", () => {
     });
     // The task row no longer reserves the action area left by its removed menu.
     const container = taskGroupRow(NUCLEUS_ENVIRONMENT);
-    expect(within(container).queryByRole("button", { name: "New thread in environment" })).toBeNull();
-    expect(within(container).queryByRole("button", { name: "Environment actions" })).toBeNull();
-    expect(within(container).queryByRole("button", { name: "Task actions" })).toBeNull();
+    expect(
+      within(container).queryByRole("button", {
+        name: "New thread in environment",
+      }),
+    ).toBeNull();
+    expect(
+      within(container).queryByRole("button", { name: "Environment actions" }),
+    ).toBeNull();
+    expect(
+      within(container).queryByRole("button", { name: "Task actions" }),
+    ).toBeNull();
     expect(within(container).queryByRole("menu")).toBeNull();
-    // No hover-actions slot is rendered, so nothing reserves width beside the name block.
-    expect(container.querySelector("[data-sidebar-hover-actions-mobile]")).toBeNull();
-    const nameBlock = container.querySelector<HTMLElement>("[data-nucleus-task-group]");
+    // No hover-actions slot is rendered, so nothing reserves width beside the name
+    // block; the only hover-revealed control is the chevron inside it (nucleus#1336).
+    const hoverRevealed = [
+      ...container.querySelectorAll("[data-sidebar-hover-actions-mobile]"),
+    ];
+    expect(hoverRevealed).toHaveLength(1);
+    expect(hoverRevealed[0]!.getAttribute("aria-label")).toMatch(
+      /^Expand .* threads$/,
+    );
+    const nameBlock = container.querySelector<HTMLElement>(
+      "[data-nucleus-task-group]",
+    );
     expect(nameBlock).not.toBeNull();
     expect(nameBlock!.className).toContain("flex-1");
     expect(nameBlock!.className).toContain("min-w-0");
-    expect(nameBlock!.querySelector<HTMLElement>("[data-nucleus-task-group-state]")!.className).toContain("min-w-0");
+    expect(
+      nameBlock!.querySelector<HTMLElement>("[data-nucleus-task-group-state]")!
+        .className,
+    ).toContain("min-w-0");
+    // nucleus#1336: the collapsed container's roll-up (this fixture has a thread
+    // waiting for input) moves into the leading slot, so the row grows no trailing
+    // slot for it: the name block is the row's last element and the title keeps
+    // the width #1323 reclaimed.
+    expect(
+      leadingSlot(NUCLEUS_ENVIRONMENT).getAttribute(
+        "data-nucleus-task-group-status",
+      ),
+    ).toBe("waiting-for-input");
+    expect(nameBlock!.parentElement!.nextElementSibling).toBeNull();
+    expect(
+      container.querySelectorAll("[data-thread-status-glyph]"),
+    ).toHaveLength(1);
   });
 
   it("leaves an ordinary worktree group with upstream's actions", async () => {
@@ -639,11 +817,279 @@ describe("a task container's repository, PR chip and row width", () => {
     // environment menu keeps Rename and Archive.
     const ordinary = upstreamHeaderByEnvironment(UPSTREAM_ENVIRONMENT);
     // The hover-actions slot the task container no longer renders is upstream's own.
-    expect(ordinary.querySelector("[data-sidebar-hover-actions-mobile]")).not.toBeNull();
-    expect(within(ordinary).getByRole("button", { name: "New thread in environment" })).not.toBeNull();
-    fireEvent.pointerDown(within(ordinary).getByRole("button", { name: "Environment actions" }), { button: 0 });
-    expect(await screen.findByRole("menuitem", { name: "Rename" })).not.toBeNull();
+    expect(
+      ordinary.querySelector("[data-sidebar-hover-actions-mobile]"),
+    ).not.toBeNull();
+    expect(
+      within(ordinary).getByRole("button", {
+        name: "New thread in environment",
+      }),
+    ).not.toBeNull();
+    fireEvent.pointerDown(
+      within(ordinary).getByRole("button", { name: "Environment actions" }),
+      { button: 0 },
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "Rename" }),
+    ).not.toBeNull();
     expect(screen.getByRole("menuitem", { name: "Archive" })).not.toBeNull();
-    expect(screen.queryByRole("menuitem", { name: "Detach from planner" })).toBeNull();
+    expect(
+      screen.queryByRole("menuitem", { name: "Detach from planner" }),
+    ).toBeNull();
+  });
+});
+
+/**
+ * nucleus#1336 (Tom, 2026-11-18): the collapsed container's status glyph and its
+ * reveal chevron shared the trailing slot and overlapped. The status takes the
+ * leading icon instead, and the trailing slot holds only the hover chevron.
+ */
+describe("a task container's status in the leading icon", () => {
+  function threadsWith(nucleus: {
+    runtimeStatus?: SidebarThread["runtimeStatus"];
+    hasPendingInteraction?: boolean;
+  }): SidebarThread[] {
+    return [
+      environmentThread({
+        id: "thr_nucleus_worker",
+        title: "Nucleus worker",
+        environmentId: NUCLEUS_ENVIRONMENT,
+        originPluginId: "nucleus",
+        runtimeStatus: nucleus.runtimeStatus,
+        isUnread: false,
+      }),
+      environmentThread({
+        id: "thr_nucleus_reviewer",
+        title: "Nucleus reviewer",
+        environmentId: NUCLEUS_ENVIRONMENT,
+        originPluginId: "nucleus",
+        hasPendingInteraction: nucleus.hasPendingInteraction,
+        isUnread: false,
+      }),
+      environmentThread({
+        id: "thr_upstream_worker",
+        title: "Upstream worker",
+        environmentId: UPSTREAM_ENVIRONMENT,
+        originPluginId: null,
+        runtimeStatus: "active",
+      }),
+      environmentThread({
+        id: "thr_upstream_other",
+        title: "Upstream other",
+        environmentId: UPSTREAM_ENVIRONMENT,
+        originPluginId: null,
+      }),
+    ];
+  }
+
+  function renderWith(threads: SidebarThread[], groups = [GROUP]) {
+    renderTaskGroups({
+      groups,
+      threadListState: { status: "ready", threads },
+      allThreads: threads,
+    });
+  }
+
+  async function collapsedContainer(): Promise<HTMLElement> {
+    return waitFor(() => {
+      const header = taskGroupHeader(NUCLEUS_ENVIRONMENT);
+      expect(header).not.toBeNull();
+      expect(header!.getAttribute("data-nucleus-task-group-collapsed")).toBe(
+        "true",
+      );
+      return taskGroupRow(NUCLEUS_ENVIRONMENT);
+    });
+  }
+
+  it("draws the spinner in the leading slot while a participant works, with nothing status-like trailing", async () => {
+    renderWith(threadsWith({ runtimeStatus: "active" }));
+    const row = await collapsedContainer();
+    const leading = leadingSlot(NUCLEUS_ENVIRONMENT);
+    expect(leading.getAttribute("data-nucleus-task-group-status")).toBe(
+      "runtime",
+    );
+    expect(
+      leading.querySelector('[data-thread-status-glyph="runtime"]'),
+    ).not.toBeNull();
+    // The folder gives way to the glyph rather than sitting beside it.
+    expect(leading.querySelector("[data-icon]")).toBeNull();
+    // The only status glyph on the row is the leading one, and nothing follows the
+    // name block, whose last control is the chevron.
+    expect(row.querySelectorAll("[data-thread-status-glyph]")).toHaveLength(1);
+    expect(nameBlock(NUCLEUS_ENVIRONMENT).nextElementSibling).toBeNull();
+    const chevron = within(row).getByRole("button", {
+      name: /^Expand .* threads$/,
+    });
+    expect(nameBlock(NUCLEUS_ENVIRONMENT).lastElementChild).toBe(chevron);
+  });
+
+  it("keeps an accessible status label when the glyph replaces the folder", async () => {
+    renderWith(threadsWith({ runtimeStatus: "active" }));
+    const row = await collapsedContainer();
+    const status = within(row).getByRole("img", { name: "Thread working" });
+    expect(status).toBe(leadingSlot(NUCLEUS_ENVIRONMENT));
+    expect(status.getAttribute("aria-hidden")).toBeNull();
+  });
+
+  it("draws the needs-you glyph in the leading slot when a participant waits for the operator", async () => {
+    // Attention outranks work, as on thread rows.
+    renderWith(
+      threadsWith({ runtimeStatus: "active", hasPendingInteraction: true }),
+    );
+    const row = await collapsedContainer();
+    const leading = leadingSlot(NUCLEUS_ENVIRONMENT);
+    expect(leading.getAttribute("data-nucleus-task-group-status")).toBe(
+      "waiting-for-input",
+    );
+    expect(
+      leading.querySelector('[data-thread-status-glyph="waiting-for-input"]'),
+    ).not.toBeNull();
+    expect(
+      within(row).getByRole("img", { name: "Thread needs user input" }),
+    ).toBe(leading);
+  });
+
+  it("draws the needs-you glyph when Nucleus marks the task for attention while every thread is idle", async () => {
+    // e.g. an escalated resolution: no thread has a pending interaction.
+    renderWith(threadsWith({}), [{ ...GROUP, attention: true }]);
+    const row = await collapsedContainer();
+    const leading = leadingSlot(NUCLEUS_ENVIRONMENT);
+    expect(leading.getAttribute("data-nucleus-task-group-status")).toBe(
+      "waiting-for-input",
+    );
+    expect(
+      leading.querySelector('[data-thread-status-glyph="waiting-for-input"]'),
+    ).not.toBeNull();
+    expect(leading.querySelector("[data-icon]")).toBeNull();
+    expect(
+      within(row).getByRole("img", { name: "Task needs your attention" }),
+    ).toBe(leading);
+    expect(row.querySelectorAll("[data-thread-status-glyph]")).toHaveLength(1);
+  });
+
+  it("toggles when the row body is clicked, not only the chevron", async () => {
+    const writes: unknown[] = [];
+    renderTaskGroups({
+      groups: [GROUP],
+      threadListState: { status: "ready", threads: threadsWith({}) },
+      allThreads: threadsWith({}),
+      onSetPreference: (key, value) => {
+        if (key === "expandedTaskGroups") writes.push(value);
+      },
+    });
+    await collapsedContainer();
+    fireEvent.click(
+      within(taskGroupHeader(NUCLEUS_ENVIRONMENT)!).getByText(
+        "#1296 BB host phase 5",
+      ),
+    );
+    await waitFor(() => {
+      expect(
+        taskGroupHeader(NUCLEUS_ENVIRONMENT)!.getAttribute(
+          "data-nucleus-task-group-collapsed",
+        ),
+      ).toBe("false");
+    });
+    await waitFor(() => {
+      expect(writes.at(-1)).toEqual([NUCLEUS_ENVIRONMENT]);
+    });
+    fireEvent.click(leadingSlot(NUCLEUS_ENVIRONMENT));
+    await waitFor(() => {
+      expect(
+        taskGroupHeader(NUCLEUS_ENVIRONMENT)!.getAttribute(
+          "data-nucleus-task-group-collapsed",
+        ),
+      ).toBe("true");
+    });
+  });
+
+  it("keeps the folder while the task is idle", async () => {
+    renderWith(threadsWith({}));
+    const row = await collapsedContainer();
+    const leading = leadingSlot(NUCLEUS_ENVIRONMENT);
+    expect(leading.getAttribute("data-nucleus-task-group-status")).toBeNull();
+    expect(leading.getAttribute("aria-hidden")).toBe("true");
+    expect(leading.getAttribute("role")).toBeNull();
+    expect(leading.querySelector("[data-icon]")).not.toBeNull();
+    expect(row.querySelector("[data-thread-status-glyph]")).toBeNull();
+  });
+
+  it("reveals the chevron only on hover or focus, collapsed and expanded, and the chevron toggles", async () => {
+    let expanded: unknown = null;
+    renderTaskGroups({
+      groups: [GROUP],
+      threadListState: {
+        status: "ready",
+        threads: threadsWith({ runtimeStatus: "active" }),
+      },
+      allThreads: threadsWith({ runtimeStatus: "active" }),
+      onSetPreference: (key, value) => {
+        if (key === "expandedTaskGroups") expanded = value;
+      },
+    });
+    const row = await collapsedContainer();
+    const collapsedChevron = within(row).getByRole("button", {
+      name: /^Expand .* threads$/,
+    });
+    // Upstream's hover-reveal class: hidden until the row is hovered or focused.
+    expect(collapsedChevron.className).toContain("bb-sidebar-hover-actions");
+    fireEvent.click(collapsedChevron);
+    await waitFor(() => {
+      expect(
+        taskGroupHeader(NUCLEUS_ENVIRONMENT)!.getAttribute(
+          "data-nucleus-task-group-collapsed",
+        ),
+      ).toBe("false");
+    });
+    await waitFor(() => {
+      expect(expanded).toEqual([NUCLEUS_ENVIRONMENT]);
+    });
+    const expandedChevron = within(taskGroupRow(NUCLEUS_ENVIRONMENT)).getByRole(
+      "button",
+      { name: /^Collapse .* threads$/ },
+    );
+    expect(expandedChevron.className).toContain("bb-sidebar-hover-actions");
+    // Expanded, each thread row shows its own status, so the container is the folder again.
+    expect(
+      leadingSlot(NUCLEUS_ENVIRONMENT).querySelector("[data-icon]"),
+    ).not.toBeNull();
+    expect(
+      leadingSlot(NUCLEUS_ENVIRONMENT).getAttribute(
+        "data-nucleus-task-group-status",
+      ),
+    ).toBeNull();
+  });
+
+  it("leaves an ordinary collapsed group's header exactly as upstream draws it", async () => {
+    renderWith(threadsWith({ runtimeStatus: "active" }));
+    await collapsedContainer();
+    const ordinary = upstreamHeaderByEnvironment(UPSTREAM_ENVIRONMENT);
+    const name =
+      within(ordinary).getByText(UPSTREAM_ENVIRONMENT).parentElement!;
+    // Leading slot: upstream's icon, hidden from assistive technology, no status.
+    const leading = name.previousElementSibling as HTMLElement;
+    expect(leading.getAttribute("aria-hidden")).toBe("true");
+    expect(leading.getAttribute("role")).toBeNull();
+    expect(leading.getAttribute("data-nucleus-task-group-status")).toBeNull();
+    expect(leading.querySelector("[data-icon]")).not.toBeNull();
+    expect(leading.querySelector("[data-thread-status-glyph]")).toBeNull();
+    // Collapsed, upstream keeps the chevron visible (no hover-reveal class) and
+    // draws the roll-up in its trailing slot beside the hover actions.
+    const chevron = within(ordinary).getByRole("button", {
+      name: /^Expand .* threads$/,
+    });
+    expect(chevron.className).not.toContain("bb-sidebar-hover-actions");
+    const trailing = name.nextElementSibling as HTMLElement;
+    expect(trailing).not.toBeNull();
+    const glyph = trailing.querySelector(
+      '[data-thread-status-glyph="runtime"]',
+    );
+    expect(glyph).not.toBeNull();
+    expect(glyph!.parentElement!.className).toContain(
+      "bb-sidebar-hover-actions-fade",
+    );
+    expect(
+      trailing.querySelector("[data-sidebar-hover-actions-mobile]"),
+    ).not.toBeNull();
   });
 });
