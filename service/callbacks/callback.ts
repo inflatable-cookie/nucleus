@@ -134,7 +134,21 @@ async function relayThroughBb(route,payload,options){
   }
   throw last||new Error('BB report relay: no BB server answered');
 }
-const deliver=(route,payload,options)=>viaBbRelay?relayThroughBb(route,payload,options):callbackRequest({socketPath,token},route,payload,options);
+async function deliver(route,payload,options){
+  if(!viaBbRelay)return await callbackRequest({socketPath,token},route,payload,options);
+  // The relay is the route a provider sandbox can reach. A relay that is not
+  // there (an older BB server, a fixture, a host whose plugin is not loaded) never
+  // strands the report: the callback socket is still tried, and the event id is
+  // deterministic, so a relay that forwarded before its answer was lost is
+  // answered from the receipt rather than applied twice.
+  let relayError=null;
+  try{return await relayThroughBb(route,payload,options);}catch(error){relayError=error;}
+  try{return await callbackRequest({socketPath,token},route,payload,options);}
+  catch(socketError){
+    const detail=(error)=>error&&error.message?error.message:String(error);
+    throw new Error('BB report relay failed (' + detail(relayError) + ') and the callback socket failed (' + detail(socketError) + ')');
+  }
+}
 // The next argument reads the task-scoped plan the recovery coordinator launched with; it sends no report and takes no stdin.
 const command=process.argv[3];
 if(command==='next'){const plan=await deliver('/task-next',{callerTaskId:taskId,callerRunId:runId},{timeoutMs:45000,timeoutMessage:'Callback timed out; retry next'});console.log(JSON.stringify(plan));return;}

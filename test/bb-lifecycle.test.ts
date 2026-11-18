@@ -56,7 +56,7 @@ async function driveUntil(f: Fixture, ready: () => boolean, label: string, taskI
 
 const helperReport = (f: Fixture, ticketPath: string, payload: Record<string, unknown>) =>
   new Promise<{ code: number | null; out: string; err: string }>((resolve, reject) => {
-    const child = spawn(process.execPath, [f.helperPath, ticketPath], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [f.helperPath, ticketPath], { stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, BB_SERVER_URL: 'http://127.0.0.1:1' } });
     let out = '', err = '';
     child.stdout.on('data', chunk => { out += chunk; });
     child.stderr.on('data', chunk => { err += chunk; });
@@ -216,6 +216,10 @@ async function fixture(t: TestContext): Promise<Fixture> {
   runtime.store.setMeta('paused', false);
   await runtime.engine.refresh();
 
+  // A `bb:` ticket's helper first tries the BB plugin's loopback relay. No relay is
+  // served here (this fixture proves lifecycle rules, not the sandbox transport), so
+  // the attempt is refused at once and the helper uses the callback socket: the same
+  // bytes, the same event id, and no discovery of a local BB install.
   const close = async () => { await runtime.drain(); };
   return { runtime, repo, root, fake, adapter, planner, helperPath, merges, paseoObserves, close, dataDir, disconnectHost, reconnectHost, restartAdapter,
     t3Planner: formatAgentId(t3Host, 'planner'), t3 };
