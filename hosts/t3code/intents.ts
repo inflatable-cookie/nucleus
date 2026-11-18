@@ -3,7 +3,11 @@ import { HostUnknownDeliveryError, ProvenPreSendRefusalError, sanitizeHostDelive
 import type { T3RpcClient } from './rpc';
 import { T3RpcError } from './rpc';
 import { T3CompatibilityError } from './contracts';
-import { canonical, type T3State, type T3StateFile, type T3IntentKind } from './state';
+import { canonical, intentKindOf, intentThreadId, payloadDigest, type T3State, type T3StateFile, type T3IntentKind } from './state';
+
+// The ledger's readers decide from these, and the state file's own bounded history
+// needs them too: one derivation, in the one place that reads the stored wire.
+export { intentKindOf, intentThreadId } from './state';
 
 /** A command identity: the same purpose and fact always name the same command. */
 export const identity = (purpose: string, value: string) => `nucleus-${purpose}-${createHash('sha256').update(value).digest('hex').slice(0, 40)}`;
@@ -11,27 +15,18 @@ export const identity = (purpose: string, value: string) => `nucleus-${purpose}-
 /** One command payload as recorded in the ledger, and the kind it is. */
 type RecordedWire = { method?: string; payload?: { type?: unknown; threadId?: unknown; commandId?: unknown; requestId?: unknown; title?: unknown } };
 
-/** The kind of one ledger entry, derived once from the wire when a legacy entry has none. */
-export function intentKindOf(intent: T3State['intents'][string]): T3IntentKind | undefined {
-  if (intent.kind) return intent.kind;
-  return kindOfWire(intent.payload);
-}
-
 /** Whether this entry records the named command. */
 export function isIntent(kind: T3IntentKind, intent: T3State['intents'][string] | undefined): boolean {
   return Boolean(intent) && intentKindOf(intent!) === kind;
 }
 
-/** The thread one entry addresses, from the record or, for a legacy entry, from its wire. */
-export function intentThreadId(intent: T3State['intents'][string]): string | undefined {
-  if (intent.threadId) return intent.threadId;
-  try {
-    const payload = (JSON.parse(intent.payload) as RecordedWire).payload;
-    return typeof payload?.threadId === 'string' ? payload.threadId : undefined;
-  } catch {
-    return undefined;
-  }
-}
+/**
+ * Whether a recorded entry records exactly this wire. An entry the state file's
+ * bounded history compacted keeps the digest of that wire instead of its body, so
+ * a repeat of the same command is still told apart from a changed one.
+ */
+const sameWire = (intent: T3State['intents'][string], encoded: string): boolean =>
+  intent.payloadDigest ? intent.payloadDigest === payloadDigest(encoded) : intent.payload === encoded;
 
 /** The kind one command's payload names, for the ledger to record at reserve time. */
 export function intentKindOfPayload(method: string, payload: unknown): T3IntentKind {
@@ -45,18 +40,6 @@ export function intentKindOfPayload(method: string, payload: unknown): T3IntentK
 export function threadIdOfPayload(payload: unknown): string | undefined {
   const threadId = (payload as { threadId?: unknown } | null)?.threadId;
   return typeof threadId === 'string' ? threadId : undefined;
-}
-
-function kindOfWire(encoded: string): T3IntentKind | undefined {
-  try {
-    const wire = JSON.parse(encoded) as RecordedWire;
-    if (wire.method === 'orchestration.launchThread') return 'launchThread';
-    if (wire.method === 'projects.mutate') return wire.payload?.type === 'project.update' ? 'project.update' : 'project.create';
-    if (wire.method !== 'orchestration.dispatchCommand' || typeof wire.payload?.type !== 'string') return undefined;
-    return wire.payload.type as T3IntentKind;
-  } catch {
-    return undefined;
-  }
 }
 
 /**
@@ -201,7 +184,7 @@ export class T3IntentLedger {
           workspaceId: current.agents[wire.threadId]?.workspaceId, input: legacyInput };
         if (original.workspaceId !== response!.binding.workspaceId || original.input !== response!.binding.input)
           throw new ProvenPreSendRefusalError(`T3Code original runtime response is ${old.status}; changed answer was not sent`);
-      } else if (old && old.payload !== encoded && !projectCreateRouteMigrated(old.payload, encoded))
+      } else if (old && !sameWire(old, encoded) && !projectCreateRouteMigrated(old.payload, encoded))
         throw new ProvenPreSendRefusalError('T3Code intent payload changed');
       if (!old || old.status === 'refused' && options.retryRefusedBeforeSend) {
         if (response || !options.retryRefusedBeforeSend) this.core.requireConnection();

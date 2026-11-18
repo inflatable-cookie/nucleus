@@ -73,34 +73,37 @@ export class T3Presentation {
     if (observedIntent?.status === 'unknown' && !observedIntent.deletionObservedAt && observedId) {
       observeDelete = isIntent('thread.delete', observedIntent) && intentThreadId(observedIntent) === observedId;
     }
-    const retire = (state: T3State): boolean => {
+    // `apply` is false for the pre-write scan: the state this adapter reads is the
+    // service's live record, so a scan must never mutate it. Nothing awaits between
+    // the scan and the write, so the planned retirements are the ones applied.
+    const retire = (state: T3State, apply: boolean): boolean => {
       let changed = false;
       for (const [key, intent] of Object.entries(state.intents)) {
         if (intent.status !== 'unknown') continue;
         const id = presentationThread(intent);
         const deletion = id ? this.core.intents.confirmedDeletion(state, id) : undefined;
         if (!deletion) continue;
-        state.intents[key] = { ...intent, status: 'moot', retiredByDeletion: deletion };
+        if (apply) state.intents[key] = { ...intent, status: 'moot', retiredByDeletion: deletion };
         changed = true;
       }
       for (const [key, entry] of Object.entries(state.pendingSettles ?? {})) {
         if (!this.core.intents.confirmedDeletion(state, entry.agentId)) continue;
-        delete state.pendingSettles![key];
+        if (apply) delete state.pendingSettles![key];
         changed = true;
       }
       for (const agentId of Object.keys(state.settledThreads ?? {})) {
         if (!this.core.intents.confirmedDeletion(state, agentId)) continue;
-        delete state.settledThreads![agentId];
+        if (apply) delete state.settledThreads![agentId];
         changed = true;
       }
       return changed;
     };
-    if (!observeDelete && !retire(snapshot)) return;
+    if (!observeDelete && !retire(snapshot, false)) return;
     this.core.state.update(state => {
       if (observeDelete && state.intents[observeKey!]?.payload === observedIntent!.payload
           && state.intents[observeKey!].status === 'unknown')
         state.intents[observeKey!].deletionObservedAt ??= new Date().toISOString();
-      retire(state);
+      retire(state, true);
     });
   }
 

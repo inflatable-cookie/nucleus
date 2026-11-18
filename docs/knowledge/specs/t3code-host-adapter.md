@@ -447,10 +447,32 @@ refused before send: …` — instead of the absent-creation exact-lookup ladder
 which would find nothing and send a replacement into the same refusal.
 
 The adapter's owner-only state file binds those records to the authenticated
-environment. Synchronous exclusive locking and atomic, synced replacement keep
-intent durable across a crash. A held or abandoned lock refuses writes; the
-adapter never guesses that a prior process finished. Settled commands return
-their recorded outcome; unresolved commands are never resent.
+environment. The service is that file's single owner: it holds the parsed record
+in memory for the life of the connection and writes through on every change, so a
+status line, a health read or the board snapshot never reads or re-parses the file
+(nucleus#1327: on 2026-11-18 every status getter re-read a 12 MB file, 35% of the
+executor's samples). The owner-only mode, ownership and symlink checks run on the
+one load; a file that is corrupted or unsafe there refuses the record exactly as
+before, and a second owner-path reader in the same process gets its own load.
+Synchronous exclusive locking and atomic, synced replacement keep intent durable
+across a crash: a write that fails or is refused leaves the file as it was and
+discards the in-memory record, so the next read loads what the file holds. A held
+or abandoned lock refuses writes; the adapter never guesses that a prior process
+finished. Settled commands return their recorded outcome; unresolved commands are
+never resent.
+
+The history the file carries is bounded. Beyond the newest 64 terminal commands an
+entry keeps its delivery receipt — status, kind, thread, the digest of the wire it
+delivered, its deletion marks and, for a launch, the thread a replay reads — and
+loses the message or launch body. The entry itself is never dropped: a command
+identity stays taken, so an exact lookup, a settle and the attention-unsettle and
+row-title ladders still find what they recorded, and a repeat replays the receipt
+instead of sending again. An unresolved intent (`unknown` delivery) is never
+compacted, a pre-send refusal keeps the wire a recorded retry replays, and the
+kinds whose body a later exact lookup parses (a confirmed deletion, a runtime
+response, a project mutation) keep theirs. Per-thread records — agents, parents,
+workspaces, settle markers, row titles — are one small entry per thread and each is
+the exact fact a later lookup reads, so they are kept (24 KB of that 12 MB file).
 
 Runtime responses also bind the native thread/request pair to their original
 intent and caller input before reading the request's current status. The binding
