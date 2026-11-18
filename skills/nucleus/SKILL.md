@@ -30,28 +30,9 @@ ticket or route to bypass it. All other helpers connect directly to Nucleus;
 
 ## Calling thread identity
 
-The CLI and helpers identify the calling thread in one order: an explicit Nucleus
-ticket (`NUCLEUS_TICKET`); the current run's ticket, located from the thread's own
-identity even when the shell environment is stale; then the host-verified thread
-identity. A slow host never times out silently — the caller hears "The host is slow;
-retry". An explicit ticket wins for every verb that records a caller (`decision.add`,
-`lead.submit`, `question.answer`, `tell`): Nucleus records the ticket's thread as
-asker and delivery target, never an MCP session or host scope from the environment.
-Any recognised caller can `tell` a project planner or task role, including a
-host-only identity and a task-planner ticket. `ask` still needs a run ticket.
-`NUCLEUS_TICKET` names the run or participant ticket; use the path delivered to this
-thread. An invalid or revoked ticket refuses. A named `NUCLEUS_TICKET` whose file is
-missing refuses when the host identity is an MCP session, rather than recording that
-session. Without a ticket, T3Code uses
-`T3CODE_THREAD_ID` together with `T3CODE_DESKTOP_HOST_SCOPE`; Nucleus matches that
-scope to its registered online T3 host and verifies the thread through that host's
-adapter. Paseo uses `PASEO_AGENT_ID`. If both host identities are present, T3Code
-takes precedence; an incomplete T3 identity refuses instead of falling through to
-Paseo. If no source exists, the refusal names the sources tried. These identities
-identify the caller only; they do not grant authority beyond a Nucleus ticket's
-existing scope. Explicit operator and relayed-note paths keep their existing meaning.
-A decision answer is delivered to that recorded asker or queued with a visible wait
-(attempts > 0); an identity Nucleus cannot route is shown on the decision.
+The CLI and helpers identify the calling thread in this order: an explicit Nucleus ticket (`NUCLEUS_TICKET`); the current run's ticket, located from the thread's own identity even when the shell environment is stale; then the host-verified thread identity. A slow host never times out silently: the caller hears "The host is slow; retry". An explicit ticket wins for every verb that records a caller (`decision.add`, `lead.submit`, `question.answer`, `tell`): Nucleus records the ticket's thread as asker and delivery target, never an MCP session or host scope from the environment. Any recognised caller can `tell` a project planner or task role, including a host-only identity and a task-planner ticket. `ask` still needs a run ticket.
+
+`NUCLEUS_TICKET` names the run or participant ticket; use the path delivered to this thread. An invalid or revoked ticket refuses. A named `NUCLEUS_TICKET` whose file is missing refuses when the host identity is an MCP session, rather than recording that session. Without a ticket, T3Code uses `T3CODE_THREAD_ID` together with `T3CODE_DESKTOP_HOST_SCOPE`; Nucleus matches that scope to its registered online T3 host and verifies the thread through that host's adapter. BB uses `BB_THREAD_ID`; Nucleus verifies the exact thread through one registered online BB host before recording the host-qualified caller. Paseo uses `PASEO_AGENT_ID`. If multiple host identities are present, T3Code takes precedence over BB, and BB over Paseo; an incomplete T3 or BB identity refuses instead of falling through. If no source exists, the refusal names the sources tried. These identities identify the caller only; they do not grant authority beyond a Nucleus ticket's existing scope. Online BB hosts can carry submission ingress, while dispatch still follows repository host settings or the operator default. Explicit operator and relayed-note paths keep their existing meaning. A decision answer is delivered to that recorded asker or queued with a visible wait (attempts > 0); an identity Nucleus cannot route is shown on the decision.
 
 Assigning a planner issues an owner-only participant ticket and hands its path over
 without messaging the thread: the planner that named itself takes it in that
