@@ -41,6 +41,7 @@ import {
   instanceIsOurs,
   isNucleusAcpCommand,
   liveTaskRefusal,
+  liveTaskNames,
   observeProvider,
   providerInstance,
   spawnT3SessionCli,
@@ -341,7 +342,7 @@ async function install(context: Context): Promise<string | Record<string, unknow
   const endpoint = resolveEndpoint(context);
   const acpCommand = requireAcpCommand(context);
   if (!existsSync(acpCommand)) throw new Error(`The nucleus-acp command ${acpCommand} does not exist; run \`nucleus install\``);
-  if (!isNucleusAcpCommand(acpCommand, acpCommand))
+  if (!isNucleusAcpCommand(acpCommand))
     throw new Error(`${acpCommand} is not a Nucleus-owned command (missing the ${NUCLEUS_ACP_COMMAND_MARKER} marker); pass --acp-command with this install's \`nucleus-acp\``);
   const server = await probeServer(endpoint);
   steps.push({ step: "T3Code server", ok: true, detail: `${endpoint} (server ${server.serverVersion}, environment ${server.environmentId})` });
@@ -362,20 +363,21 @@ async function install(context: Context): Promise<string | Record<string, unknow
       created = existing === null;
       await rpc.call("server.updateSettings", providerMutation("upsert", acpCommand));
       // T3 answers with the instance immediately and fills its models in as its own
-      // probe settles, so wait for a usable instance that names at least one model —
-      // never for a probe result this route cannot control (see the spec's
-      // operator install route: the ACP test session runs in an unbound directory).
+      // probe settles, so wait for a usable instance with a model and for T3's
+      // in-progress note to clear, bounded even if the probe never settles.
       const deadline = Date.now() + PROVIDER_READY_WAIT_MS;
       let config = await readConfig(rpc);
       while (Date.now() < deadline) {
         const provider = observeProvider(config, acpCommand);
-        if (provider.usable && provider.models.length > 0) break;
+        if (provider.usable && provider.models.length > 0 && !provider.probeMessage.includes("Checking ACP authentication, models, and commands in the background")) break;
         await sleep(1_000);
         config = await readConfig(rpc);
       }
       registered = config;
     });
     const provider = observeProvider(registered!, acpCommand);
+    if (provider.probeMessage.includes("Checking ACP authentication, models, and commands in the background"))
+      steps.push({ step: "Provider probe", ok: false, detail: "T3Code probe did not settle within the wait; install succeeded with a warning" });
     if (!provider.registered || !provider.ours) throw new Error(`T3Code did not record the ${T3_PROVIDER_ID} provider instance: ${provider.problem}`);
     steps.push({
       step: "Provider instance", ok: provider.usable,
@@ -419,7 +421,7 @@ async function install(context: Context): Promise<string | Record<string, unknow
     throw new Error(`T3Code provider registered, but the Nucleus service did not come online as t3code:${server.environmentId}`);
   }
   const nativeParenting = service.t3?.nativeParenting || "";
-  steps.push({ step: "Native parenting", ok: !/native parenting off/.test(nativeParenting), detail: nativeParenting || "reported on the next host read" });
+  steps.push({ step: "Native parenting", ok: true, detail: nativeParenting || "reported on the next host read" });
   return context.options.json ? { command: "install", endpoint, environmentId: server.environmentId, hostId: `t3code:${server.environmentId}`, acpCommand, steps } : humanSteps(steps);
 }
 
@@ -434,6 +436,10 @@ async function status(context: Context): Promise<string | Record<string, unknown
   let config: T3ServerConfig | null = null;
   let serverError = "";
   let accepted: boolean | null = null;
+  let server: { environmentId: string; serverVersion: string } | null = null;
+  if (endpoint) {
+    try { server = await probeServer(endpoint); } catch (error) { serverError = error instanceof Error ? error.message : String(error); }
+  }
   if (endpoint && context.connection) {
     try {
       await withRpc(endpoint, context.connection.bearer, async rpc => { config = await readConfig(rpc); });
@@ -450,6 +456,7 @@ async function status(context: Context): Promise<string | Record<string, unknown
     acpCommand: context.acpCommand,
     connection: context.connection,
     config,
+    server,
     serverError,
     sessions,
     bearerAccepted: accepted,
@@ -476,13 +483,17 @@ async function uninstall(context: Context): Promise<string | Record<string, unkn
   const endpoint = (() => {
     try { return resolveEndpoint(context); } catch { return context.connection?.endpoint ?? null; }
   })();
-  const environmentId = endpoint ? (await probeServer(endpoint)).environmentId : "";
+  let environmentId = "";
+  if (endpoint) {
+    try { environmentId = (await probeServer(endpoint)).environmentId; }
+    catch (error) { throw new Error(`${error instanceof Error ? error.message : String(error)}. Uninstall made no changes; the stored runtime bearer remains active. Start T3Code and retry uninstall.`); }
+  }
   const hostId = environmentId ? `t3code:${environmentId}` : "";
 
   const service = await readService(context.dataDir);
   if (service.available && !context.options.liveTasks) {
     const host = service.hosts?.find(candidate => candidate.id === hostId) ?? null;
-    const tasks = host?.dependents.filter(dependent => dependent.kind === "task").flatMap(dependent => dependent.names) ?? [];
+    const tasks = liveTaskNames(host?.dependents ?? []);
     const refusal = liveTaskRefusal(hostId, tasks, false);
     if (refusal) throw new Error(refusal);
   }

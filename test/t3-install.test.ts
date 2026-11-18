@@ -17,7 +17,7 @@ import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { t3Fake } from './support/t3code-fake';
-import { liveTaskRefusal, t3StatusReport } from '../shared/t3/operator';
+import { liveTaskNames, liveTaskRefusal, t3StatusReport } from '../shared/t3/operator';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const cliPath = join(repoRoot, 'bin', 'nucleus-t3.mjs');
@@ -192,12 +192,20 @@ test('install succeeds while T3 reports its own ACP probe warning, and reports t
   const target = fixture();
   const fake = await t3Fake(t, target.directory);
   writeDescriptor(target, fake.endpoint);
-  fake.controls.upsertProviderStatus = 'warning';
-  fake.controls.upsertProviderMessage = 'The ACP agent could not create a test session.';
+  fake.controls.upsertProviderStatus = 'ready';
+  fake.controls.upsertProviderMessage = 'Checking ACP authentication, models, and commands in the background…';
+  const transition = setInterval(() => {
+    if (fake.controls.providers?.some(row => row.instanceId === 'nucleus')) {
+      fake.controls.providers = [readyRow({ status: 'warning', models: [{ slug: 'default' }], message: 'The ACP agent could not create a test session.' })];
+      clearInterval(transition);
+    }
+  }, 500);
+  t.after(() => clearInterval(transition));
   const result = await runCli(target, installArgs(target));
   assert.equal(result.code, 0, result.stderr);
   const answer = JSON.parse(result.stdout) as { steps: Array<{ step: string; ok: boolean; detail: string }> };
   const lines = answer.steps.map(step => `${step.step}: ${step.detail}`).join('\n');
+  assert.ok(calls(fake, 'server.getConfig').length >= 3, 'the in-progress probe was polled again');
   assert.match(lines, /Provider instance: registered nucleus .*enabled, warning/);
   assert.match(lines, /The ACP agent could not create a test session\./);
   assert.match(lines, /Provider readiness: T3Code reports warning: The ACP agent could not create a test session\./);
@@ -324,7 +332,8 @@ test('uninstall refuses a foreign instance and leaves it alone', async t => {
 });
 
 test('uninstall refuses while tasks are live on the host, and names them', () => {
-  const refusal = liveTaskRefusal('t3code:synthetic-environment', ['nucleus#1301', 'nucleus#1302'], false);
+  const names = liveTaskNames([{ kind: 'task', label: 'Tasks', names: ['nucleus#1301', 'nucleus#1302'] }, { kind: 'project', label: 'Projects', names: ['synthetic/project'] }]);
+  const refusal = liveTaskRefusal('t3code:synthetic-environment', names, false);
   assert.match(refusal ?? '', /still has live tasks: nucleus#1301, nucleus#1302/);
   assert.match(refusal ?? '', /--live-tasks/);
   assert.equal(liveTaskRefusal('t3code:synthetic-environment', ['nucleus#1301'], true), null);
@@ -352,4 +361,41 @@ test('the status report carries the adapter native-parenting line and the projec
   assert.equal(report.service.nativeParenting, 'native parenting: nucleus provider ready');
   assert.deepEqual(report.projects, [{ name: 'github.com/synthetic/opted-in' }]);
   assert.equal(report.ok, false);
+});
+
+
+test('an unmarked executable is refused before any write', async t => {
+  const target = fixture();
+  const fake = await t3Fake(t, target.directory);
+  writeDescriptor(target, fake.endpoint);
+  writeFileSync(target.acpCommand, '#!/bin/sh\nexit 0\n');
+  const result = await runCli(target, installArgs(target));
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /missing the nucleus-owned-command-v1 marker/);
+  assert.equal(calls(fake, 'server.updateSettings').length, 0);
+  assert.ok(!existsSync(join(target.dataDir, 'settings.json')));
+  const status = await runCli(target, statusArgs(target));
+  assert.equal(JSON.parse(status.stdout).acp.owned, false);
+});
+
+test('status probes a reachable server without a stored connection', async t => {
+  const target = fixture();
+  const fake = await t3Fake(t, target.directory);
+  writeDescriptor(target, fake.endpoint);
+  const result = await runCli(target, statusArgs(target));
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.server.reachable, true);
+  assert.equal(report.server.environmentId, 'synthetic-environment');
+  assert.equal(report.bearer.present, false);
+});
+
+test('uninstall refuses without changes when the server is down', async () => {
+  const target = fixture();
+  const endpoint = 'http://127.0.0.1:1';
+  writeDescriptor(target, endpoint);
+  writeFileSync(join(target.dataDir, 'settings.json'), JSON.stringify({ t3code: { endpoint, bearer: 'synthetic-bearer' } }));
+  const result = await runCli(target, uninstallArgs(target));
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /Uninstall made no changes; the stored runtime bearer remains active/);
+  assert.equal((settingsFile(target).t3code as { bearer: string }).bearer, 'synthetic-bearer');
 });

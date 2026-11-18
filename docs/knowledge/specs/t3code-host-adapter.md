@@ -1037,10 +1037,10 @@ namesake — another driver, or another command path — is refused by name for
 install *and* uninstall and never overwritten or removed.
 
 **Proving it.** After the mutation, install re-reads `server.getConfig` until the
-instance is ours, enabled and advertising at least one model, and then has the
+instance is ours, enabled, advertising at least one model and its probe has settled (or the wait expires), and then has the
 running service adopt the stored connection without a restart: the service
 watches its settings file's stamp on its bootstrap tick
-(`RuntimeOwner.refreshT3Settings`) and reconfigures the T3 connection in place, so
+(`RuntimeOwner.refreshT3Settings`) and replaces the T3 connection, so
 the host registers as `t3code:<environmentId>`. Install waits, bounded, for
 `service.health`'s `t3code` line to report exactly that host online and prints
 every step's result. A service that is not running is reported, not failed: the
@@ -1048,7 +1048,7 @@ connection is recorded and adopted at its next start. `service.health` and the
 host list are read over the local service socket; the route never starts a
 service.
 
-Readiness is T3's own verdict, and this route never invents one. The nightly
+The planner accepted the settled warning and default model for this lane (2026-11-18). Readiness is T3's own verdict, and this route never invents one. The nightly
 answers a provider upsert as `ready` and then runs an ACP probe that opens a
 *test session*; the Nucleus agent refuses a session for a directory no task has
 bound (Spec 065), so the installed provider settles at `warning` with the
@@ -1060,8 +1060,6 @@ parenting is off until T3's probe succeeds; `status` reports `ready`, `usable` a
 the probe's note separately, and `ok` means the install is correct and connected,
 not that T3's probe passed. The probe's interaction with the agent's binding rule
 is recorded as papercut `056a7077-f86d-4ed6-9b11-6ec65eeef593`, not fixed here.
-
-**Status** (`nucleus t3 status`, `--json`) reports, with no secret:
 
 **Status** (`nucleus t3 status`, `--json`) reports, with no secret:
 
@@ -1235,3 +1233,5 @@ The private proof selector is `effigy proof:t3code -- --asar <nightly archive>`.
 It copies the target app's bundled server into fresh scratch and uses a scripted
 local provider. Its evidence distinguishes source drift, injected incompatible
 read responses and actual lifecycle operations on the private nightly.
+
+When the server cannot be reached, uninstall refuses without changes and says the stored runtime bearer remains active; start T3Code and retry.

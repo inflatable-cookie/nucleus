@@ -1,4 +1,8 @@
 import { test } from 'node:test';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { QueueRuntime } from '../service/runtime-owner';
+import { writeT3Connection } from '../shared/t3/settings';
 import assert from 'node:assert/strict';
 import { T3HostConnection } from '../service/t3code-host';
 import { HostRegistry, type KnownHost } from '../core/host/host-registry';
@@ -172,45 +176,29 @@ test('private connection settings refuse credential-bearing endpoints', () => {
   }
 });
 
-test('a live reconfigure adopts the operator route\'s new connection without a restart', async () => {
-  // nucleus#1330: `nucleus t3 install` writes the stored connection while the
-  // service runs. The adopted connection releases the previous environment's
-  // claim and registers the one the new file names; a cleared connection drops it.
+
+test('runtime refresh adopts changed settings and retains the connection on malformed input', t => {
+  const dir = mkdtempSync(join(process.env.TMPDIR!, 't3-refresh-'));
+  let connects = 0;
+  t.mock.method(T3HostConnection.prototype, 'ensureConnected', async () => { connects++; });
   const { hosts } = registry();
-  const first = new NativeHost();
-  const second = new NativeHost();
-  second.hostId = 't3code:second-environment';
-  const configs: Array<{ endpoint: string; bearer: string }> = [];
-  const manager = new T3HostConnection(
-    { endpoint: 'http://127.0.0.1:10002', bearer: 'synthetic-private-bearer' },
-    '/synthetic-state', hosts, () => new Admission(),
-    {
-      create: input => {
-        configs.push({ endpoint: input.endpoint, bearer: input.bearer });
-        return (configs.length === 1 ? first : second) as never;
-      },
-      adapter: () => ({ observe: async (id: string) => ({ id, workspaceId: null, status: 'idle', active: false, permissions: false, error: '' }) } as Adapter),
-    });
-  try {
-    await manager.ensureConnected();
-    assert.deepEqual(hosts.onlineIds(), ['paseo-environment', 't3code:synthetic-environment']);
-
-    manager.reconfigure({ endpoint: 'http://127.0.0.1:10003', bearer: 'synthetic-rotated-bearer' });
-    assert.equal(manager.status().connected, false, 'the previous claim is released immediately');
-    assert.deepEqual(hosts.onlineIds(), ['paseo-environment']);
-    await manager.ensureConnected();
-    assert.deepEqual(hosts.onlineIds(), ['paseo-environment', 't3code:second-environment']);
-    assert.equal(configs.length, 2);
-    assert.equal(configs[1]!.endpoint, 'http://127.0.0.1:10003');
-    assert.equal(configs[1]!.bearer, 'synthetic-rotated-bearer');
-
-    // An unchanged connection is not a reconnect: the operator re-running install
-    // with the same file must not churn the host.
-    manager.reconfigure({ endpoint: 'http://127.0.0.1:10003', bearer: 'synthetic-rotated-bearer' });
-    assert.equal(manager.status().connected, true);
-    assert.equal(configs.length, 2);
-  } finally {
-    manager.close();
-  }
-  assert.deepEqual(hosts.onlineIds(), ['paseo-environment']);
+  const state: any = { closing: false, dataDir: dir, t3SettingsStamp: 'missing', t3Config: null, t3Host: null, hostRegistry: hosts, makeAdmission: () => new Admission(), engine: {} };
+  const refresh = () => QueueRuntime.prototype.refreshT3Settings.call(state);
+  const config = { endpoint: 'http://127.0.0.1:10002', bearer: 'synthetic-bearer' };
+  writeT3Connection(dir, config);
+  refresh();
+  const first = state.t3Host;
+  assert.ok(first);
+  assert.equal(connects, 1);
+  refresh();
+  assert.equal(state.t3Host, first);
+  assert.equal(connects, 1);
+  writeFileSync(join(dir, 'settings.json'), JSON.stringify({ t3code: { endpoint: 42 } }));
+  refresh();
+  assert.equal(state.t3Host, first);
+  assert.deepEqual(state.t3Config, config);
+  writeFileSync(join(dir, 'settings.json'), '{}');
+  refresh();
+  assert.equal(state.t3Host, null);
+  assert.equal(state.t3Config, null);
 });

@@ -90,7 +90,7 @@ export function findAcpCommand(options: { explicit?: string | null; home?: strin
  * or a launcher carrying the installer's ownership marker. A namesake's command
  * is neither, and this is what "ours" means for a provider instance.
  */
-export function isNucleusAcpCommand(path: string, installed: string | null): boolean {
+export function isNucleusAcpCommand(path: string, installed: string | null = null): boolean {
   const candidate = resolve(path);
   if (installed && candidate === resolve(installed)) return true;
   try {
@@ -298,6 +298,7 @@ export interface T3StatusInput {
   acpCommand: string | null;
   connection: T3ConnectionSettings | null;
   config: T3ServerConfig | null;
+  server?: { environmentId: string; serverVersion: string } | null;
   serverError: string;
   sessions: T3SessionSummary[] | null;
   bearerAccepted: boolean | null;
@@ -320,13 +321,13 @@ export interface T3StatusReport {
 
 /** Assemble the report once every fact is read; no I/O and no secret here. */
 export function t3StatusReport(input: T3StatusInput): T3StatusReport {
-  const reachable = input.config !== null;
-  const environmentId = input.config?.environment.environmentId ?? "";
+  const reachable = input.server != null || input.config !== null;
+  const environmentId = input.server?.environmentId ?? input.config?.environment.environmentId ?? "";
   const hostId = environmentId ? `t3code:${environmentId}` : "";
   const serverProblem = reachable ? "" : input.serverError || "the T3Code server is unreachable";
   const provider = input.config
     ? observeProvider(input.config, input.acpCommand)
-    : { registered: false, ours: false, driver: null, displayName: null, enabled: false, ready: false, usable: false, status: "unknown", probeMessage: "", commandPath: null, commandMatchesInstalled: false, models: [], problem: serverProblem };
+    : { registered: false, ours: false, driver: null, displayName: null, enabled: false, ready: false, usable: false, status: "unknown", probeMessage: "", commandPath: null, commandMatchesInstalled: false, models: [], problem: input.serverError || "provider cannot be verified without a connection" };
   const bearer = observeBearer(input.connection, input.sessions, input.bearerAccepted, input.now ?? Date.now());
   const service: T3ServiceFacts = input.service ?? { available: false, connected: false, hostId: null, error: "the Nucleus service is not running", nativeParenting: "", supportThreads: "" };
   const problems = [serverProblem, bearer.problem, provider.problem, service.available ? "" : service.error,
@@ -334,10 +335,10 @@ export function t3StatusReport(input: T3StatusInput): T3StatusReport {
   return {
     ok: reachable && bearer.present && bearer.valid !== false && provider.usable,
     problems,
-    server: { endpoint: input.endpoint, reachable, version: input.config?.environment.serverVersion ?? "", environmentId, hostId, problem: serverProblem },
+    server: { endpoint: input.endpoint, reachable, version: input.server?.serverVersion ?? input.config?.environment.serverVersion ?? "", environmentId, hostId, problem: serverProblem },
     bearer, provider, service,
     projects: (input.projects ?? []).filter(project => project.hostKind === "t3code").map(project => ({ name: project.name })),
-    acp: { commandPath: input.acpCommand, owned: input.acpCommand !== null && isNucleusAcpCommand(input.acpCommand, input.acpCommand) },
+    acp: { commandPath: input.acpCommand, owned: input.acpCommand !== null && isNucleusAcpCommand(input.acpCommand) },
   };
 }
 
@@ -349,6 +350,10 @@ export function t3StatusReport(input: T3StatusInput): T3StatusReport {
  * keep their T3 threads either way — this command never touches a thread or a
  * project registration.
  */
+export function liveTaskNames(dependents: Array<{ kind: string; label?: string; names: string[] }>): string[] {
+  return dependents.filter(dependent => dependent.kind === "task").flatMap(dependent => dependent.names);
+}
+
 export function liveTaskRefusal(hostId: string, tasks: string[], force: boolean): string | null {
   if (!tasks.length || force) return null;
   return `T3Code host ${hostId} still has live tasks: ${tasks.join(", ")}. Removing the provider and the bearer now leaves them running with no Nucleus connection. Pass --live-tasks to remove anyway.`;

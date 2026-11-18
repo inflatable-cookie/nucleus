@@ -83,20 +83,6 @@ export class T3HostConnection {
     this.#config = validateConfig(config);
   }
 
-  /**
-   * Adopt the connection `nucleus t3 install` / `uninstall` just wrote, without a
-   * service restart (nucleus#1330). The previous environment's claim is released
-   * first, so the next `ensureConnected` registers the host the new file names —
-   * or, after an uninstall, nothing. Callers pass an already-validated shape.
-   */
-  reconfigure(config: T3ConnectionConfig): void {
-    const next = validateConfig(config);
-    if (this.#config.bearer === next.bearer && this.#config.endpoint === next.endpoint
-      && this.#config.probeThreadId === next.probeThreadId) return;
-    this.#config = next;
-    this.detach();
-  }
-
   /** Drop this connection's claim and native host, leaving the object usable. */
   private detach(): void {
     if (this.session) this.registry.disconnect(this.session.id, this.session.token);
