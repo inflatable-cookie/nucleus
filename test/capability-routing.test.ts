@@ -370,3 +370,18 @@ test('nucleus#1139: a task\'s host catalog keeps profiles it cannot run out of s
   }finally{await engine.stop();store.close();rmSync(dir,{recursive:true,force:true});}
 });
 
+
+test('a reviewer takes the nearest permitted tier above when no independent profile carries its tier (2026-11-18 review backlog)',()=>{
+  const {profiles,pool}=ladder();
+  const usage=equalUsage(pool);
+  // The worker ran on the only high profile, so review independence removes it
+  // from the candidates; the next independent match is one tier higher.
+  const worker=profiles.find(p=>p.id==='agent-high')!;
+  const task={...taskOf({complexity:'high'}),profile:worker} as Task;
+  const independent=profiles.filter(p=>p.id!=='agent-high');
+  assert.equal(ids(chooseProfile(task,independent,pool,usage,new Set(),'reviewer',usage,'high')),'agent-very_high','at High the very-high profile reviews instead of parking the task');
+  assert.equal(ids(chooseProfile(task,independent,pool,usage,new Set(),'reviewer',usage,'extra_high')),'agent-very_high','the nearest tier above, not the top tier');
+  assert.equal(chooseProfile(task,independent,pool,usage,new Set(),'reviewer',usage,'normal'),null,'at Normal the very-high tier still needs sign-off, so review waits for a route');
+  assert.equal(ids(chooseProfile(task,profiles,pool,usage,new Set(),'reviewer',usage,'high')),'agent-high','an independent profile at the exact tier still wins over a higher one');
+  assert.equal(ids(chooseProfile(task,independent,pool,usage,new Set(),'worker',usage,'high')),'agent-medium','a worker stays capped at the requested tier');
+});

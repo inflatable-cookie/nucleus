@@ -139,15 +139,17 @@ tiers" are `frontier` (Opus-class) and `very_high` (Sol extra-high-class).
   is its demand: it rotates inside that tier, takes the nearest tier above only
   when nothing carries it, and falls back to the most capable profile at or
   below the requested tier on a shortfall. A profile above the requested tier is
-  never automatic, and neither a worker preference nor a `preferredProfileId`
+  never automatic for a worker, and neither a worker preference nor a `preferredProfileId`
   reaches it; only an explicit request or owner route does. Maximum's own rule
   is the top two tiers for workers and reviewers, an explicit worker request
   included, and an unrated retained reviewer is below it too; a coordinator keeps
   its configured offset instead.
 - **Reviewers never run below the worker's actual tier.** A fresh, preferred or
   retained reviewer below the pool rating of the profile the worker actually ran
-  on is not usable: selection returns no reviewer and the role waits for a route
-  rather than certifying a stronger tier on a weaker profile. At Maximum the same
+  on is not usable. When no independent profile carries the reviewer's tier,
+  the nearest tier above that the usage level permits reviews instead. Only
+  when none is permitted does the role wait for a
+  route, rather than certify a stronger tier on a weaker profile. At Maximum the same
   floor is the top two tiers, so a level change replaces a retained reviewer that
   no longer meets it.
 - **Nothing waits for an escalation sign-off** except the Low submission gate.

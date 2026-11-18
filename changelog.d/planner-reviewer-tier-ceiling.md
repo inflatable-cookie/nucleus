@@ -1,0 +1,1 @@
+- A reviewer is no longer capped at the task's requested tier: when no independent profile carries its tier, the nearest tier above that the usage level permits reviews, instead of parking the task until a planner routes one.

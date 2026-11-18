@@ -300,9 +300,13 @@ export function chooseProfile(task: Task, profiles: Profile[], pool: PoolEntry[]
   // A reviewer must at least match the worker's actual capability, so its
   // ceiling rises to that tier even when the worker sits above the task's own
   // requested tier; a worker never exceeds the requested tier automatically.
+  // A reviewer is never capped at the task's requested tier: when no
+  // independent profile carries its tier, the nearest permitted tier above
+  // serves (selectionTier still prefers the exact tier, and `eligible` already
+  // holds only profiles the usage level permits). Capping it at the requested
+  // tier parked every review whose only independent match sat one tier higher.
   const ceiling = role === "coordinator" ? requested
-    : role === "reviewer" && demandRank(demand) > demandRank(requested) ? demand
-    : usage === "maximum" ? "frontier"
+    : role === "reviewer" || usage === "maximum" ? "frontier"
     : requested;
   // Maximum's top-tier rule is for workers and reviewers; a coordinator keeps
   // its configured offset and the ordinary tier set.
