@@ -3384,15 +3384,21 @@ bundled shell imports to the same host hooks and native stand-ins.
   reads the committed head only: changed paths come from `git diff --no-renames`
   against the merge base, and the graph from one `git ls-tree` plus one
   `git cat-file --batch` read. Import edges reuse `importEdges` from
-  `scripts/check-folder-imports.mjs`. A test is selected when it transitively
-  imports a changed file (through `.js`/`.mjs` emitted specifiers, index files and
-  `.d.mts` declarations of their implementation), when it names a changed path or a
+  `scripts/check-folder-imports.mjs`. A test is selected when it imports a changed
+  file directly or through the `test/` tree's helpers and shard case files (through
+  `.js`/`.mjs` emitted specifiers, index files and `.d.mts` declarations of their
+  implementation); the walk never passes through a production module, because hub
+  modules reached ~92% of the suite (Tom, 2026-11-18). It is also selected when it names a changed path or a
   path suffix of two or more segments as a string literal in its own source or in
   the `test/` helpers it reaches, or when it quotes any ancestor directory of the
   changed file as a whole literal (directory walkers recurse, so `client/` covers
   `client/board/x.tsx`). A changed test file always
   runs. Paths outside the graph and the docs (`package.json`, `effigy.toml`,
   `tsconfig*.json`) are reported as unmapped, never expanded to a full suite.
+  At most 60 files are selected, nearest first: a changed test, then direct
+  importers before chains through test helpers, then the tests the most changed
+  files reach, then path literals, then directory walkers. The rest are printed as
+  deferred to milestone QA and are never a review finding.
 - Test races are fixed as a class (Tom, 2026-10-15): a milestone failure that
   passes alone is attributed to its race shape, and one task covers every test
   with that shape. A failed physical file is investigated alone before any
