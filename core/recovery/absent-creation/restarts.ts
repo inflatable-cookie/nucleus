@@ -8,13 +8,21 @@ import type { Resolution } from '../../resolution';
 import { absentReplacementRecord, absentReplacementSpent } from './budget';
 import { provenAbsentCreation } from './decisions';
 
-/** Recreate proven-absent runs and workers under their same identities. */
+/** Classify a complete, occurrence-bound lookup without treating uncertain placement as absence. */
+export function creationLookup(found: { id: string; workspaceId: string | null }[], workspaceId: string | null):
+  { kind: 'absent' } | { kind: 'bound'; agentId: string } | { kind: 'unknown' } {
+  if (found.length === 0) return { kind: 'absent' };
+  if (found.length === 1 && workspaceId && found[0]!.workspaceId === workspaceId && found[0]!.id)
+    return { kind: 'bound', agentId: found[0]!.id };
+  return { kind: 'unknown' };
+}
+
+/** Admit replacements for proven-absent creations. */
 export type AbsentRestartsContext = Pick<Resolution, 'adapter' | 'attention' | 'ensureIncident' | 'graceMs' | 'paused' | 'recordIncidentEvent' | 'resolveIncident' | 'resumeWorkerContinuation' | 'settleVerbFences' | 'store' | 'update' | 'waiting'>;
 
 /**
- * The resolution-side half of absence: admit and replay a proven-absent worker
- * creation, recreate one proven-absent reviewer, closeout or executor run under
- * the SAME run id, and issue exactly one same-role replacement. The engine-side
+ * The resolution-side half of absence: settle a proven-absent worker or
+ * resolution run and route a fresh same-role creation. The engine-side
  * half, which owns workspace creation and the worker-absence observations, is
  * `CreationRecovery` in `creation.ts`; the budget both read is `budget.ts`.
  */
@@ -53,9 +61,9 @@ export class AbsentRestarts {
     const action=this.admitAbsentWorker(t,instruction,authorized);
     return this.resolution.resumeWorkerContinuation(t,authorized,current=>{
       this.store.deleteCredential(current.runId!);
-      // Spec 050 `restart`: keep the run identity and mark it, so the launcher
-      // reuses it for the retried creation instead of minting a second run.
-      return this.store.update(current.id,{agentIntent:false,runId:current.runId,restartRunId:current.runId,transientProviderRetry:undefined,phase:'dispatching',reason:'Confirmed absent worker; creating a worker in the retained workspace',resolution:{...current.resolution,pendingWorkerInstruction:action}},authorized?'absent_worker_operator_replacement':'absent_worker_retry',action);
+      // A settled occurrence is never replayed. Ordinary admission selects the
+      // current route and reserves a fresh run before creating another worker.
+      return this.store.update(current.id,{agentIntent:false,runId:null,restartRunId:null,transientProviderRetry:undefined,phase:'queued',reason:'Confirmed absent worker; waiting for ordinary admission',resolution:{...current.resolution,attention:false,pendingWorkerInstruction:action}},authorized?'absent_worker_operator_replacement':'absent_worker_retry',action);
     });
   }
 
@@ -139,7 +147,7 @@ export class AbsentRestarts {
       this.settleAbsentProof(current, run);
       return;
     }
-    if (found.length > 0) {
+    if (creationLookup(found, run.workspaceId).kind !== 'absent') {
       this.resolution.attention(current, `${run.role} creation lookup is ambiguous (${found.length} matching agents); no resource was created`);
       return;
     }

@@ -1,1 +1,1 @@
-Keep uncertain creation intents owned when a matching agent appears outside the recorded workspace.
+Keep misplaced creation matches owned and route proven-absent workers through fresh admission on the current route.

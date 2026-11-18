@@ -1,4 +1,5 @@
-import type { Resolution } from '../../resolution';
+import type { Resolution, ResolutionAdapter } from '../../resolution';
+import type { Run } from '../../../shared/contracts';
 import type { Task } from "../../../shared/contracts";
 import { isDispositionActive } from "../../../shared/contracts";
 import type { Engine } from '../../engine';
@@ -8,6 +9,7 @@ import { retainNodeModules, workspaceCreationRefusal } from '../../workspaces/wo
 import { startsNoRuns } from '../../closeout/queue-drain';
 import { ABSENT_WORKER_REASON, ABSENT_WORKER_REPLACEMENT_REASON, PRE_AGENT_LAUNCH_FAILURE_REASON } from '../task-reasons';
 import { absentWorkerStep, workspaceReplayAllowed } from './decisions';
+import { creationLookup } from './restarts';
 
 export type CreationRecoveryContext = Pick<Engine, 'adapter' | 'idleGraceMs' | 'launchAgent' | 'launchProofOnly' | 'note' | 'reconcileAbsentWorker' | 'recoverProofOnlyDispatch' | 'stopped' | 'store'>
   & { readonly resolution: Pick<Resolution, 'ensureIncident' | 'resolveIncident' | 'resumeAbsentWorker' | 'returnToDispatch' | 'saveIncident'> };
@@ -73,20 +75,29 @@ export class CreationRecovery {
       this.engine.note(task.id, workspaceCreationRefusal(classified), 'operator_needed', "needs_attention");
       return;
     } else if (task.agentIntent && !task.agentId) {
-      const found = await this.adapter.findAgents(task);
-      if (found.length === 1 && found[0].workspaceId === task.workspaceId) {
+      // Worker intents live on the task, but the host lookup must still carry
+      // the exact run label. A task-only inventory can contain older threads.
+      const lookup = this.adapter as typeof this.adapter & Partial<Pick<ResolutionAdapter, 'findRunAgents'>>;
+      if (!task.runId || !lookup.findRunAgents) {
+        this.engine.note(task.id, 'Exact worker creation lookup is unavailable; the intent remains owned', 'operator_needed', 'needs_attention');
+        return;
+      }
+      const identity = { id: task.runId, taskId: task.id, hostId: task.hostId, role: 'worker', workspaceId: task.workspaceId } as unknown as Run;
+      const found = await lookup.findRunAgents(identity);
+      const decision = creationLookup(found, task.workspaceId);
+      if (decision.kind === 'bound') {
         const latest = this.store.task(task.id);
         // Another reconciliation may have bound or replaced this intent while
         // lookup was in flight. Its newer state owns the task; do not park it.
         if (latest.version !== task.version || !latest.agentIntent || latest.agentId || latest.runId !== task.runId || latest.workspaceId !== task.workspaceId) return;
         this.resolution.resolveIncident(latest, task.runId, 'Exact lookup bound the created worker');
-        this.store.update(task.id, { agentId: found[0].id, phase: "working", reason: "Recovered worker identity" }, "agent_recovered", found[0].id);
+        this.store.update(task.id, { agentId: decision.agentId, phase: "working", reason: "Recovered worker identity" }, "agent_recovered", decision.agentId);
         return;
       }
       const latest = this.store.task(task.id);
       if (latest.version !== task.version || !latest.agentIntent || latest.agentId || latest.runId !== task.runId || latest.workspaceId !== task.workspaceId) return;
       // A match in a different workspace is unknown placement, not absence.
-      if (found.length === 1) {
+      if (decision.kind === 'unknown' && found.length === 1) {
         this.engine.note(latest.id, 'Worker creation lookup found an agent outside the retained workspace; no resource was created', 'operator_needed', 'needs_attention');
         return;
       }

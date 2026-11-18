@@ -1,3 +1,4 @@
+import { creationLookup } from './absent-creation/restarts';
 import { missingReportBindingCompletion } from '../intake/reporting-failure';
 import { digest, now } from '../store/store';
 import type {Run, Task} from '../../shared/contracts';
@@ -172,7 +173,8 @@ export class CoordinatorPass {
      const latestRun=this.store.run(run.id);
      if(!latestRun||latestRun.released||t.resolution.recovery?.runId!==latestRun.id||latestRun.generation!==t.coordinatorGeneration)continue;
      run=latestRun;
-     if(!run.agentId&&found.length===0&&this.episode.failedCreationRun(t,run)){
+     const creation=creationLookup(found,run.workspaceId);
+     if(!run.agentId&&creation.kind==='absent'&&this.episode.failedCreationRun(t,run)){
       const absentRunId=run.id,taskId=t.id;
       this.resolution.adapter.purgeReportingFiles?.(taskId,[absentRunId]);
       this.store.transaction(()=>{
@@ -182,8 +184,8 @@ export class CoordinatorPass {
       });
       continue;
      }
-     if(!run.agentId&&(found.length!==1||found[0].workspaceId!==run.workspaceId)){this.episode.escalate(t,'Coordinator recovery creation is uncertain; no duplicate was launched. Inspect the queue run before retrying.');continue;}
-     if(!run.agentId){run={...run,agentId:found[0]!.id,status:'running'};this.store.putRun(run);}
+     if(!run.agentId&&creation.kind!=='bound'){this.episode.escalate(t,'Coordinator recovery creation is uncertain; no duplicate was launched. Inspect the queue run before retrying.');continue;}
+     if(!run.agentId&&creation.kind==='bound'){run={...run,agentId:creation.agentId,status:'running'};this.store.putRun(run);}
      if(t.coordinatorGeneration===run.generation&&!t.coordinatorAgentId)this.store.update(t.id,{coordinatorAgentId:run.agentId!},'coordinator_assigned',run.agentId!);
     }
     const state=await this.resolution.onTaskHost(t, () => this.resolution.host.observe(run!.agentId!));if(this.resolution.stopped())return;

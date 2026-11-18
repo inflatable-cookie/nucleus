@@ -307,15 +307,27 @@ test('repository checkout contention waits in place and only one task escalates 
 test('a proven-absent worker creation is replaced once in the retained workspace without any coordinator', async () => {
   const f = fixture(); try {
     const oldRunId = f.current().runId!;
+    const nextProfile = profile('current-worker-route');
+    addProfile(f, nextProfile, 'current-worker-route', 'worker');
+    const created: string[] = [];
+    const createAgent = f.adapter.createAgent;
+    f.adapter.createAgent = async (task, token, prompt, legacy) => {
+      created.push(task.runId!);
+      return createAgent(task, token, prompt, legacy);
+    };
     f.store.setCredential(oldRunId, 'old-token');
-    f.store.update(f.task.id, { agentId: null, prUrl: null, prHead: null });
+    f.store.update(f.task.id, { agentId: null, prUrl: null, prHead: null,
+      profileRequests: { ...f.current().profileRequests, worker: { profileId: nextProfile.id, reason: 'Current owner route', ownerRoute: true, required: true } } });
     await f.engine.wake(); await f.engine.wake();
     const t = f.current();
     // Same role, same retained workspace, one fresh creation: no coordinator, no new workspace.
-    // Spec 050 `restart` replays a proven-absent creation under the same run
-    // identity (task 323): the launch is retried for the retained run.
+    // Ordinary admission mints a fresh run after the old credential is revoked.
     assert.equal(t.workspaceId, 'workspace'); assert.equal(t.agentIntent, true);
-    assert.equal(t.runId, oldRunId, 'the proven-absent replacement keeps the retained run identity');
+    assert.notEqual(t.runId, oldRunId, 'the replacement receives a fresh run identity');
+    assert.equal(t.profile?.id, nextProfile.id, 'ordinary admission selects the current route');
+    assert.deepEqual(created, [t.runId], 'only the fresh occurrence is created');
+    await f.engine.wake();
+    assert.deepEqual(created, [t.runId], 'a repeated pass creates no additional worker');
     assert.equal(t.agentId, `agent-${t.runId}`); assert.equal(t.phase, 'working');
     assert.equal(f.store.runs(t.id).length, 0);
     assert.throws(() => f.store.authenticate(oldRunId, 'old-token'), /Unauthorized/);
@@ -442,6 +454,31 @@ test('an exact single worker match binds the creation without a replacement', as
   } finally { await f.close(); }
 });
 
+test('worker creation lookup uses the exact task and run identity', async () => {
+  const f = fixture(); try {
+    const runId = f.current().runId!;
+    f.store.update(f.task.id, { agentId: null, prUrl: null, prHead: null });
+    f.adapter.findAgents = async () => [{ id: 'older-worker', workspaceId: 'workspace' }];
+    f.foundAgents.set(runId, [{ id: 'current-worker', workspaceId: 'workspace' }]);
+    await f.engine.recover(f.current());
+    assert.equal(f.current().agentId, 'current-worker');
+    assert.equal(f.current().runId, runId);
+  } finally { await f.close(); }
+});
+
+test('worker creation stays owned when exact lookup is unsupported', async () => {
+  const f = fixture(); try {
+    const runId = f.current().runId!;
+    f.store.update(f.task.id, { agentId: null, prUrl: null, prHead: null });
+    delete (f.adapter as Partial<ResolutionAdapter>).findRunAgents;
+    await f.engine.recover(f.current());
+    assert.equal(f.current().runId, runId);
+    assert.equal(f.current().agentId, null);
+    assert.equal(f.current().agentIntent, true);
+    assert.equal(f.events('absent_worker_retry').length, 0);
+  } finally { await f.close(); }
+});
+
 test('a worker found outside its workspace is not replaced', async () => {
   const f = fixture(); try {
     const runId = f.current().runId!;
@@ -476,7 +513,7 @@ test('an ambiguous worker lookup creates nothing and reaches the coordinator fir
 test('a PR identity change racing the worker lookup creates nothing', async () => {
   const f = fixture(); try {
     f.store.update(f.task.id, { agentId: null, prUrl: null, prHead: null });
-    f.adapter.findAgents = async t => { f.store.update(t.id, { prHead: 'd'.repeat(40) }); return []; };
+    f.adapter.findRunAgents = async r => { f.store.update(r.taskId, { prHead: 'd'.repeat(40) }); return []; };
     await f.engine.wake(); await f.engine.wake();
     const t = f.current();
     assert.equal(t.prHead, 'd'.repeat(40), 'the newer PR identity remains intact');
