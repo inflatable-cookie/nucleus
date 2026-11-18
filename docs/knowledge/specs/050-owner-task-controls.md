@@ -570,7 +570,7 @@ replacement.
   reviewed merge never names a head.
 - Cases that needed bespoke code on 2026-10-13 each take one owner call:
   - a pre-dispatch task parked by admission, including review entry, whatever its attention flag says (#325);
-  - a run whose creation is uncertain, retained until its original producer is proved unable to deliver;
+  - an uncertain worker creation held by the sweep; the existing owner restart still needs the producer-proof cutover;
   - a top-tier author continuing (#311).
 - Transient admission conditions (origin author busy, capacity, route unavailable) wait instead of parking.
 - Coordinators run only for stops they can act on (lean audit, 2026-10-15). A hold (`held`), Nucleus's own lifecycle step (`lifecycle`: integration turn, required checks, merge-outcome probe) and a read-only GitHub or git probe failing with a forge 5xx, truncated response or fetch race (`external_unavailable`) are waits: no coordinator run, no attention notice, no park. `waiting()` never yields `operator_needed` unless the task already carries a fault. A mutating call (merge, push, any non-GET `gh api`) is never treated as transient.

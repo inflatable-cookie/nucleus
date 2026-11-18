@@ -145,8 +145,9 @@ export class CreationRecovery {
     if (Date.now() - Date.parse(incident.createdAt) < this.engine.idleGraceMs) return;
     const current = this.store.task(t.id);
     if (!current.agentIntent || current.agentId || current.runId !== t.runId) return;
+    const replacementSpent = this.store.events(t.id).some(event => event.kind === 'absent_worker_retry');
     const reason = matches === 0
-      ? 'Worker creation remains uncertain: no agent was found, but the original create may still deliver'
+      ? `Worker creation remains uncertain: no agent was found, but the original create may still deliver${replacementSpent ? '; the automatic replacement allowance was already used' : ''}`
       : `Worker creation lookup is ambiguous (${matches} matching agents); no resource was created`;
     this.engine.note(current.id, reason, 'operator_needed', 'needs_attention');
   }

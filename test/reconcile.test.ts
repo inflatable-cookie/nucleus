@@ -320,6 +320,11 @@ test('an empty worker lookup retains its run and credential across repeated pass
     assert.equal(f.current().agentId, null);
     assert.doesNotThrow(() => f.store.authenticate(runId, 'old-token'));
     assert.equal(creates, 0);
+    f.store.event(f.task.id, 'absent_worker_retry', 'previous replacement');
+    await f.engine.recover(f.current());
+    assert.match(f.current().reason, /automatic replacement allowance was already used/);
+    assert.equal(f.current().runId, runId);
+    assert.equal(creates, 0);
   } finally { await f.close(); }
 });
 
