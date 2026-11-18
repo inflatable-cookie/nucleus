@@ -3,9 +3,9 @@ import { worktreeLinksSchema } from "../../shared/contracts";
 import { refreshCheckoutSiblings as inspectWorktreeRootSiblings, worktreeRootFor } from "./checkout-siblings";
 import type { Engine } from "../engine";
 import { siblingStoreRootFor } from "../store/sibling-store";
-import { createSiblingWorktrees, ensureSharedSiblingCheckouts, findingFor, inspectSiblingWorktrees, removeSiblingWorktrees, siblingMembers, siblingsEnabled } from "./siblings";
+import { createSiblingWorktrees, ensureSharedSiblingCheckouts, findingFor, inspectSiblingWorktrees, removeSiblingWorktrees, siblingIdentity, siblingMembers, siblingsEnabled } from "./siblings";
 import { now } from "../store/store";
-import { canonicalLinkRoot, provisionWorktreeLinks, worktreeLinksDue, worktreeLinksSummary } from "./worktree-links";
+import { bbWorktreeLinksWait, canonicalLinkRoot, provisionWorktreeLinks, worktreeLinksDue, worktreeLinksSummary } from "./worktree-links";
 
 /**
  * What a task's checkout gets beside it before its worker runs: sibling
@@ -29,14 +29,15 @@ export class WorkspaceProvisioning {
    */
   async ensureSiblings(task: Task): Promise<Task> {
     const current = this.store.task(task.id);
-    if (!siblingsEnabled(current) || !this.siblingDataDir || current.siblingPins.length) return current;
-    const members = siblingMembers(current, this.store.projectFor(current.repoPath, current.repository));
+    if (!siblingsEnabled(current) || !this.siblingDataDir || (current.siblingPins.length && !current.hostId?.startsWith("bb:"))) return current;
+    const members = siblingMembers(current, this.store.projectFor(current.repoPath, current.repository))
+      .filter(member => !current.siblingPins.some(pin => pin.repository === siblingIdentity(member)));
     if (!members.length) return current;
     if (!current.siblingIntent)
       this.store.update(current.id, { siblingIntent: true }, "sibling_worktrees_intent", `${members.length} sibling worktree(s) for project ${this.store.projectFor(current.repoPath, current.repository)?.key ?? "unknown"}`);
     const { pins, skipped } = await createSiblingWorktrees({ dataDir: this.siblingDataDir, taskId: current.id, baseBranch: current.baseBranch, members });
     const detail = pins.length ? pins.map(pin => `${pin.repository}@${pin.commit.slice(0, 12)}`).join(", ") : "none created";
-    return this.store.update(current.id, { siblingPins: pins, siblingIntent: false }, "sibling_worktrees_created",
+    return this.store.update(current.id, { siblingPins: [...current.siblingPins, ...pins], siblingIntent: false }, "sibling_worktrees_created",
       skipped.length ? `${detail}; skipped ${skipped.map(skip => `${skip.repository} (${skip.reason})`).join("; ")}` : detail);
   }
   /** Remove a task's sibling worktrees with the task's own. Best effort: a
@@ -105,24 +106,33 @@ export class WorkspaceProvisioning {
   /**
    * Links-only provisioning (Tom, 2026-10-23): the first worker of a new
    * checkout gets the sibling links its `nucleus worktree prepare` call and the
-   * primary's Effigy ledger declare. Runs once per pending record; failures
-   * and conflicts are findings and never block the launch.
+   * primary's Effigy ledger declare. Other hosts keep non-blocking findings;
+   * BB retries a failed pre-worker placement and waits on unresolved links.
    */
   async prepareWorktreeLinks(task: Task): Promise<{ task: Task; recordFailure: string | null }> {
     const current = this.store.task(task.id);
-    if (!this.siblingDataDir || !worktreeLinksDue(current)) return { task: current, recordFailure: null };
-    // Never blocks the launch: an unexpected failure becomes the record's finding.
+    const existingWait = await bbWorktreeLinksWait(current);
+    const previousAt = current.worktreeLinks?.state === "prepared" ? current.worktreeLinks.at : null;
+    const retry = Boolean(existingWait && current.hostId?.startsWith("bb:") && current.worktreeLinks?.state === "prepared" &&
+      current.worktreeLinks.workspaceId === current.workspaceId && current.worktreeLinks.directory === current.directory &&
+      !current.agentIntent && !current.agentId && !current.runId && !current.retiredWorkers.length && !current.continuesWorkspace);
+    if (existingWait && !retry) throw new Error(existingWait);
+    if (current.hostId?.startsWith("bb:") && (worktreeLinksDue(current) || retry) && !this.siblingDataDir)
+      throw new Error("BB sibling provisioning waits: the sibling data directory is unavailable");
+    if (!this.siblingDataDir || (!worktreeLinksDue(current) && !retry)) return { task: current, recordFailure: null };
+    // An unexpected failure becomes the record's finding.
     const dataDir = this.siblingDataDir;
+    const bb = current.hostId?.startsWith("bb:") && siblingsEnabled(current);
     const result = await (async () => provisionWorktreeLinks({ dataDir, task: current, configured: [
       ...this.store.repositories().map(row => row.repository),
       ...this.store.projects().flatMap(project => project.repositories),
-    ] }))()
+    ], ...(bb ? { pinned: { taskId: current.id, pins: current.siblingPins, required: siblingMembers(current, this.store.projectFor(current.repoPath, current.repository)) } } : {}) }))()
       .catch(error => ({ state: "prepared" as const, workspaceId: current.workspaceId!, directory: current.directory!, commit: null, links: [],
         findings: [{ kind: "manifest_invalid" as const, name: null, detail: `Links-only provisioning failed: ${error instanceof Error ? error.message : String(error)}`.slice(0, 2000) }] }));
     try {
-      return { task: this.store.transaction(() => {
+      const prepared = this.store.transaction(() => {
         const latest = this.store.task(current.id);
-        if (!worktreeLinksDue(latest) || latest.workspaceId !== current.workspaceId || latest.directory !== current.directory) return latest;
+        if ((!worktreeLinksDue(latest) && !(retry && !latest.agentIntent && !latest.agentId && !latest.runId && latest.worktreeLinks?.state === "prepared" && latest.worktreeLinks.at === previousAt)) || latest.workspaceId !== current.workspaceId || latest.directory !== current.directory) return latest;
         let record: WorktreeLinks = { ...result, at: now() };
         // Backstop: a record outside the schema's bounds is never written as such.
         if (!worktreeLinksSchema.safeParse(record).success) {
@@ -131,8 +141,13 @@ export class WorkspaceProvisioning {
             detail: `Per-link outcomes exceeded the record bounds and are not recorded.${placed ? ` Placed beside the checkout: ${placed}` : " No link was placed."}`.slice(0, 2000) }] };
         }
         return this.store.update(latest.id, { worktreeLinks: record }, "worktree_links_prepared", worktreeLinksSummary(record));
-      }), recordFailure: null };
+      });
+      const wait = await bbWorktreeLinksWait(prepared);
+      if (wait) throw new Error(wait);
+      return { task: prepared, recordFailure: null };
     } catch (error) {
+      if (error instanceof Error && error.message.startsWith("BB sibling provisioning waits:")) throw error;
+      if (bb) throw new Error(`BB sibling provisioning waits: link result could not be recorded: ${error instanceof Error ? error.message : String(error)}`);
       // The record stays pending (placement unknown, not success). The event is
       // best effort on a store that just failed; the prompt line comes from this
       // attempt's own failure. Every later store write keeps its ordinary failure.
@@ -141,24 +156,12 @@ export class WorkspaceProvisioning {
       return { task: this.store.task(current.id), recordFailure };
     }
   }
-  /**
-   * A repository's worktree root keeps one shared checkout per sibling repository
-   * (nucleus#1315; Paseo parity, Spec 028).
-   *
-   * A Paseo worktree root holds the sibling clones the repository's own link tasks
-   * placed there, shared by every task of that repository, and a dependant's
-   * relative `../sibling` resolves against them. A BB workspace is registered by
-   * Nucleus as an external directory, so a BB role thread cannot create anything
-   * beside its checkout. The service therefore makes the same shared checkout
-   * every BB task of the repository can read: one detached worktree per project
-   * sibling member under the canonical worktree root, at the sibling's fetched
-   * `origin/<base>` when it is first created. An existing path is never replaced
-   * (Spec 028's refresh owns freshness, and another task may be reading it), and
-   * an occupied path is recorded, not removed. Only a `bb:` host is touched.
-   */
+  /** Legacy unqualified BB workspaces retain their shared-checkout behavior. */
   async ensureSharedSiblingCheckouts(task: Task): Promise<Task> {
     const current = this.store.task(task.id);
-    if (this.adapter.vocabulary?.kind !== "bb" || !current.directory || !this.siblingDataDir) return current;
+    // BB now uses the same declared-link placement as Paseo; creating shared
+    // directories here would conflict with those links.
+    if (current.hostId?.startsWith("bb:") || this.adapter.vocabulary?.kind !== "bb" || !current.directory || !this.siblingDataDir) return current;
     const members = siblingMembers(current, this.store.projectFor(current.repoPath, current.repository));
     if (!members.length) return current;
     let detail: string;

@@ -8,6 +8,7 @@ import type { ProofActivation } from '../../resolution';
 import { RunReservationAdmission } from './reservation-admission';
 import { RunReservationSource, type ReservationSelection, type ReservationSourceInput } from './reservation-source';
 import { runIntent } from './run-intent';
+import { bbWorktreeLinksWait } from '../../workspaces/worktree-links';
 
 /**
  * Reserve the run a launch will deliver: read the source facts, build the run
@@ -24,6 +25,10 @@ export class RunLaunchReserve {
   get machine(): LaunchMachinePorts { return this.adapter; }
   async reserveLaunchRun(t: Task, role: Run['role'], options: { profile?: Profile; instruction?: string; proof?: ProofActivation },
     source: ReservationSourceInput, selection: ReservationSelection): Promise<void> {
+    if (role === 'reviewer') {
+      const wait = await bbWorktreeLinksWait(t);
+      if (wait) { this.resolution.waiting(this.store.task(t.id), wait, 'lifecycle'); return; }
+    }
     const reservationSource = new RunReservationSource(this.resolution);
     const facts = await reservationSource.read({ task: t, role, options, source, selection });
     const run = runIntent({ task: t, role, resolution: this.resolution, source: facts });

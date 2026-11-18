@@ -18,6 +18,7 @@ import { repositoryOrigin } from "../planning/lanes";
 import { ownedWorkspaceRoot, repoCommonDir, WORKSPACES_DIR } from "./workspace-allocation";
 import { assertCheckoutAvailable, liveCheckoutDataDir } from "./checkout-volume";
 import { getWorkRoot } from "./work-root.mjs";
+import { siblingNameFor, siblingPathFor } from "./siblings";
 
 export interface WorktreeSiblingSpec {
   source: string;
@@ -313,6 +314,7 @@ export async function provisionWorktreeLinks(input: {
   dataDir: string;
   task: Pick<Task, "repoPath" | "directory" | "workspaceId">;
   configured: readonly ConfiguredCheckout[];
+  pinned?: { taskId: string; pins: Task["siblingPins"]; required: readonly ConfiguredCheckout[] };
 }): Promise<Omit<Extract<WorktreeLinks, { state: "prepared" }>, "at">> {
   const directory = input.task.directory!, workspaceId = input.task.workspaceId!;
   const declared = await declaredWorktreeLinks({ directory, primaryRoot: input.task.repoPath, configured: input.configured })
@@ -324,6 +326,23 @@ export async function provisionWorktreeLinks(input: {
   for (const link of declared.candidates.filter(link => !fits(link)))
     findings.push({ kind: "argument_unsupported", name: link.name.slice(0, LINK_NAME_MAX), detail: `link name or target exceeds the record bound; no link placed`.slice(0, DETAIL_MAX) });
   let candidates = declared.candidates.filter(fits);
+  if (input.pinned) {
+    for (const repo of input.pinned.required) {
+      const identity = repo.origin || repo.path;
+      const pin = input.pinned.pins.find(item => item.repository === identity);
+      const name = pin ? basename(pin.path) : siblingNameFor(repo);
+      const target = await realpath(repo.path).catch(() => null);
+      if (!target) { findings.push({ kind: "source_unresolved", name, detail: `Sibling ${identity} source is unavailable` }); continue; }
+      const existing = candidates.find(item => item.name === name);
+      if (existing && !isWithin(target, existing.target)) {
+        candidates = candidates.filter(item => item.name !== name);
+        findings.push({ kind: "name_conflict", name, detail: `Sibling ${name} has conflicting sources; no link placed` });
+      } else if (!existing) candidates.push({ name, target });
+    }
+  }
+  for (const link of candidates.filter(link => !fits(link)))
+    findings.push({ kind: "argument_unsupported", name: link.name.slice(0, LINK_NAME_MAX), detail: "link name or target exceeds the record bound; no link placed" });
+  candidates = candidates.filter(fits);
   if (candidates.length > LINKS_MAX) {
     findings.push({ kind: "argument_unsupported", name: null, detail: `${candidates.length} links declared, more than ${LINKS_MAX}; none placed` });
     candidates = [];
@@ -334,18 +353,51 @@ export async function provisionWorktreeLinks(input: {
   const links: WorktreeLink[] = [];
   for (const candidate of candidates) {
     let root: string;
+    let target = candidate.target;
     try {
       // Re-proved for each link, at the moment of change.
       root = await canonicalLinkRoot(input.dataDir, input.task.repoPath, directory);
-      await configuredSourceRoot(candidate.target, input.configured, TASK_PREFIX);
+      const source = await configuredSourceRoot(candidate.target, input.configured, TASK_PREFIX);
+      if (input.pinned) {
+        let row: ConfiguredCheckout | undefined;
+        for (const repo of input.pinned.required) {
+          if (await realpath(repo.path).catch(() => null) === source.root) { row = repo; break; }
+        }
+        const pin = input.pinned.pins.find(item => item.repository === (row?.origin || source.root));
+        if (row && !pin) throw new Error(`Sibling ${row.origin || source.root} copy is missing`);
+        if (pin) {
+          const expected = siblingPathFor(input.dataDir, input.pinned.taskId, basename(pin.path));
+          const entry = await lstat(pin.path).catch(() => null);
+          if (pin.path !== expected || !entry?.isDirectory() || entry.isSymbolicLink()) throw new Error(`Sibling ${pin.repository} copy is missing or outside its task root`);
+          if (await gitText(pin.path, "rev-parse", "--verify", "HEAD^{commit}") !== pin.commit ||
+              await gitText(pin.path, "rev-parse", "--path-format=absolute", "--git-common-dir") !== await gitText(source.root, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+            throw new Error(`Sibling ${pin.repository} copy no longer matches its pin`);
+          target = await realpath(join(pin.path, source.relativePath));
+          if (!isWithin(await realpath(pin.path), target)) throw new Error(`Sibling ${pin.repository} copy redirects outside its worktree`);
+        }
+      }
     } catch (error) {
       links.push({ ...candidate, outcome: "failed", reason: message(error) || "refused" });
       continue;
     }
-    const placed = await placeWorktreeLink(root, candidate.name, candidate.target);
+    const placed = await placeWorktreeLink(root, candidate.name, target);
     links.push(placed.reason ? { ...placed, reason: placed.reason.slice(0, DETAIL_MAX) } : placed);
   }
   return { ...base, links, findings: bounded(findings) };
+}
+
+/** Recheck BB's recorded links before admitting a reviewer; never replace a changed path. */
+export async function bbWorktreeLinksWait(task: Pick<Task, "hostId" | "directory" | "worktreeLinks">): Promise<string | null> {
+  if (!task.hostId?.startsWith("bb:") || !task.directory || task.worktreeLinks?.state !== "prepared") return null;
+  const record = task.worktreeLinks;
+  const failure = record.findings[0]?.detail ?? record.links.find(link => link.outcome === "failed" || link.outcome === "conflict")?.reason;
+  if (failure) return `BB sibling provisioning waits: ${failure}`;
+  for (const link of record.links) {
+    const actual = await realpath(join(dirname(task.directory), link.name)).catch(() => null);
+    const expected = await realpath(link.target).catch(() => null);
+    if (!actual || !expected || actual !== expected) return `BB sibling provisioning waits: ${link.name} copy or link is missing or changed`;
+  }
+  return null;
 }
 
 /** Whether this launch is the first worker of the checkout the pending record names. */

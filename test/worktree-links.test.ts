@@ -15,7 +15,7 @@ import { ownedWorkspacePath, ownedWorkspaceRoot, repoCommonDir } from "../core/w
 import { queueWorktreeLinkBlock } from "../core/dispatch/prompts";
 import { collectOwnerVerbFacts, ownerTaskNext } from "../core/verbs/owner-verbs";
 import {
-  WORKTREE_LINKS_LEDGER_MAX_BYTES, WORKTREE_LINKS_MANIFEST_MAX_BYTES, canonicalLinkRoot, declaredWorktreeLinks, placeWorktreeLink,
+  WORKTREE_LINKS_LEDGER_MAX_BYTES, WORKTREE_LINKS_MANIFEST_MAX_BYTES, bbWorktreeLinksWait, canonicalLinkRoot, declaredWorktreeLinks, placeWorktreeLink,
   provisionWorktreeLinks, resolveSiblingSource, worktreeLinksDue, worktreeLinksForBinding, worktreeLinksForClearedIntent, worktreeLinksForIntent, worktreeSetupScripts, worktreeSiblingSpecs,
   worktreeSiblingTokens, type ConfiguredCheckout,
 } from "../core/workspaces/worktree-links";
@@ -200,6 +200,35 @@ test("prepare and ledger duplicates dedupe by target; conflicting targets are a 
   const placed = await provisionWorktreeLinks({ dataDir: f.data, task: task(f, directory), configured });
   assert.deepEqual(placed.links.map(link => [link.name, link.outcome]), [["project-j", "created"]]);
   assert.equal(existsSync(join(f.root, "lib")), false, "a conflicting name places nothing");
+});
+
+test("BB placement publishes every declared pinned copy and names a missing copy", { timeout: HOOK_TEST_TIMEOUT_MS }, async t => {
+  const f = await fixture(t, `${PREPARE} ../project-j ../other && effigy setup`);
+  const other = join(f.base, "repos", "other");
+  await repo(other, { "README.md": "other\n" });
+  const configured = [...f.configured, { origin: null, path: other }];
+  const taskId = randomUUID(), directory = await f.checkout(taskId);
+  const pins = [];
+  for (const source of [f.projectJ, other]) {
+    const path = join(f.data, "siblings", taskId, source === other ? "other" : "project-j");
+    await mkdir(dirname(path), { recursive: true });
+    await git(source, "worktree", "add", "--detach", path, "HEAD");
+    pins.push({ repository: source, path, commit: await git(source, "rev-parse", "HEAD") });
+  }
+  const placed = await provisionWorktreeLinks({ dataDir: f.data, task: task(f, directory), configured,
+    pinned: { taskId, pins, required: configured.slice(1) } });
+  assert.deepEqual(placed.links.map(link => [link.name, link.outcome]), [["project-j", "created"], ["other", "created"]]);
+  for (const pin of pins) assert.equal(await realpath(join(f.root, pin.path.split("/").pop()!)), await realpath(pin.path));
+  const view = { hostId: `bb:${"b".repeat(32)}`, directory, worktreeLinks: { ...placed, at: new Date().toISOString() } };
+  assert.equal(await bbWorktreeLinksWait(view), null);
+  await rm(join(f.root, "other"));
+  assert.match((await bbWorktreeLinksWait(view))!, /other copy or link is missing or changed/);
+
+  const missingTask = randomUUID(), missingDirectory = await f.checkout(missingTask);
+  const missing = await provisionWorktreeLinks({ dataDir: f.data, task: task(f, missingDirectory), configured,
+    pinned: { taskId: missingTask, pins: [], required: configured.slice(1) } });
+  assert.equal(missing.links.length, 2);
+  assert.ok(missing.links.every(link => link.outcome === "failed" && /copy is missing/.test(link.reason!)));
 });
 
 test("placement: absent creates, a match is reused, anything else is a conflict left untouched", { timeout: HOOK_TEST_TIMEOUT_MS }, async t => {
