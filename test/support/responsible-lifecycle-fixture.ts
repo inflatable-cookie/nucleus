@@ -214,8 +214,13 @@ export function fixture(
     findWorkspaces: async () => [],
     findAgents: async () => [],
     findRunAgents: async () => [],
-    createAgent: async () => {
-      throw Error("fixtures do not create the initial agent");
+    createAgent: async (t: { workspaceId?: string | null }) => {
+      // A revision after a Spec 052 climb starts on a fresh agent; the initial
+      // worker is bound by the fixture itself.
+      const id = `agent-replacement-${states.size + 1}`;
+      idle(id);
+      states.set(id, { ...states.get(id)!, workspaceId: t.workspaceId ?? "workspace", status: "running", active: true });
+      return { id, workspaceId: t.workspaceId ?? "workspace" };
     },
     createRun: async (_task: ParameterTask, run: Run, token: string) => {
       creates.push(run);

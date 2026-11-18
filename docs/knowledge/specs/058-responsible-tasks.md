@@ -116,7 +116,7 @@ answered by an agent where possible so tasks don't get blocked overnight."
 - Every remaining question has a kind. Only these stay the operator's: scope or product changes
   (changing what a task delivers, abandoning work), raised as a discussion rather than a yes/no
   question; releases and outward actions (publishing, production enablement, creating external
-  resources); and frontier or above-ceiling profiles (board sign-off). Everything else is delegated,
+  resources); and profiles the usage level's permission rule holds (board sign-off). Everything else is delegated,
   including accepting a head whose native, consumer or post-merge proofs haven't run, and spend
   past 2× a task's budget.
 - **Approve by default (Tom, 2026-11-03).** "When the question is just approve something or to
@@ -679,7 +679,7 @@ Busy time consumes the existing answer window.
   and latest review to the project planner, or to an automatically selected short-lived decider
   if no planner answers within ten minutes. The delegate answers through the original permission,
   keyed by question header; activity records the answer and reason. A delegate leaves product or scope changes, releases or outward actions, and frontier or
-  above-ceiling profile requests for the operator as discussions, with context, options, a
+  top-tier profile requests the usage level holds for the operator as discussions, with context, options, a
   recommendation and the reason recorded. A delegate answers binary approve/hold questions approve
   by default unless they concern one of those operator matters; spending past twice the budget is
   delegated. Its `Decision: operator` or hold stands (Tom, 2026-11-06). A permission already answered
@@ -865,7 +865,7 @@ a product or scope change or a release or outward action, `blocked` only outside
   excludes that same profile while preferring another eligible profile. Worker restart and
   automatic failover use the existing replacement on the same workspace, branch and PR without a
   recovery coordinator; committed and pushed work carries over. A within-level route needs no
-  sign-off; a frontier or above-ceiling route needs the operator's board sign-off on that task and
+  sign-off; a route to a profile the usage level holds needs the operator's board sign-off on that task and
   profile.
 - Every other path continues the same retained worker agent: recovery actions, "remap"
   restarts, owner restarts without a model change, route requests still waiting on sign-off,
@@ -946,7 +946,7 @@ path for a stuck responsible task (`server/blocker-ladder.ts` owns the pure part
 - An `agent_ask_delegation_unknown` record is terminal for delivery recovery: later reconciliation
   never emits another unknown record or repeats the send. Once its originating run ends and the
   task no longer has the matching stop, Nucleus settles the ask as `agent_ask_superseded`.
-- **Tom, last.** Only release or outward actions, product or scope changes, frontier or above-ceiling
+- **Tom, last.** Only release or outward actions, product or scope changes, profiles the usage level holds
   profiles, or a planner that explicitly says it cannot decide, reach the operator. Budget
   extensions, including past 2x, remain delegated under approve by default, Tom 2026-11-03.
   The operator's board answer settles the escalation through the same ordinary verbs, relayed.

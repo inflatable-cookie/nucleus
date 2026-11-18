@@ -11,7 +11,8 @@
  * the same recorded sign-off, so the shape of a request's sign-off and the rules
  * that change it live here, and both writers call them.
  */
-import { USAGE_LABELS, withinUsage } from "../../../shared/pool";
+import { USAGE_LABELS, requestOnly } from "../../../shared/pool";
+import { requestedTier } from "../../../shared/demand";
 import { clipDecisionQuestion, type DecisionView, type Profile, type RoutingGrant, type Task } from "../../../shared/contracts";
 import type { Decisions } from "../../planning/decisions";
 import type { Store } from "../../store/store";
@@ -185,8 +186,9 @@ export function priorApprovedSignoff(store: Store, taskId: string, role: Role, p
 export function signoffQuestion(store: Store, profiles: readonly Profile[], task: Task, role: Role, request: Request) {
   const entry = store.pool().find(item => item.profileId === request.profileId)!;
   const usage = store.usageLevel();
-  const why = withinUsage(usage, entry.cost)
-    ? "is rated frontier, which is request-only below Maximum" : `is above the ${USAGE_LABELS[usage].label} usage level (${entry.cost!.replaceAll("_", " ")} cost)`;
+  // The question names the tier, not a cost (Tom, 2026-11-17); a request only
+  // reaches a gated profile, so the tier is one the level's permission rule holds.
+  const why = `is rated ${(entry.capability ?? "unrated").replaceAll("_", " ")}, which needs the operator's permission at the ${USAGE_LABELS[usage].label} usage level`;
   const name = nameOf(profiles, request.profileId);
   return {
     name,

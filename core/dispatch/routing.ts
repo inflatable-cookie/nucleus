@@ -1,10 +1,10 @@
-import type { Task, Run, Profile, PoolEntry, DemandRoleOffsets, RoutePolicy, RoutingPolicy, UsageLevel, UsageView, HostEffect, SelectionExplanation } from "../../shared/contracts";
+import type { Task, Run, Profile, PoolEntry, DemandRoleOffsets, ProfileCapability, RoutePolicy, RoutingPolicy, UsageLevel, UsageView, HostEffect, SelectionExplanation } from "../../shared/contracts";
 import type { Resolution } from "../resolution";
 import { authorModelKey, queueAuthorModelKey, taskAuthorModelKeys } from "../../shared/authors";
 import {activeGroupLimit,demandRank,unavailableGroupNames,workerThinking} from '../../shared/pool';
 export {workerThinking};
-import {automaticSelection, requestOnly, describeRoutePolicy, honouredRequest, requestReaches, groupIsUnavailable, withinUsage} from '../../shared/pool';
-import {DEMAND_ROLE_OFFSETS, DEMAND_USAGE_OFFSETS, demandTier, effectiveWeight, runDemand, workerDemandStep, workerStepDown, workerStepLabel} from '../../shared/demand';
+import {automaticReachable, automaticSelection, requestOnly, describeRoutePolicy, honouredRequest, requestReaches, groupIsUnavailable, topTier} from '../../shared/pool';
+import {DEMAND_ROLE_OFFSETS, climbedTier, effectiveWeight, requestedTier, runDemand, selectionTier, usageCeiling, workerActualTier, workerClimbTarget, workerStartTier, workerStepLabel, workerStepUp} from '../../shared/demand';
 type Role = "worker"|"reviewer"|"coordinator";
 /**
  * Spec 050: whether the task's recorded reviewer request is an owner `route`
@@ -40,6 +40,8 @@ export type RoutingPreflightInput = {
   scope: Task["scope"];
   /** Spec 052: the usage level in force; absent is `normal`. */
   usage?: UsageLevel;
+  /** Spec 052: the task's complexity, which fixes its requested tier; absent asks for the default. */
+  complexity?: Task["complexity"];
   preferredProfileId?: string;
   requirePreferred?: boolean;
   profileRequests?: Task["profileRequests"];
@@ -90,10 +92,11 @@ function identityRoutes(
   pool: readonly PoolEntry[],
 ): Array<{ id: string; model: string; key: string }> {
   const request = role === "worker" ? workerRequest(routing) : reviewerRequest(routing);
+  const requested = requestedTier(routing.complexity);
   return pool.flatMap(entry => {
     const profile = profiles.find(candidate => candidate.id === entry.profileId);
     if (!entry.enabled || !profile?.available) return [];
-    if (requestOnly(entry, routing.usage) && request?.profileId !== entry.profileId) return [];
+    if (requestOnly(entry, routing.usage, requested) && request?.profileId !== entry.profileId) return [];
     const key = authorModelKey(profile.model);
     if (key === "default") return [];
     return [{ id: profile.id, model: profile.model, key }];
@@ -204,7 +207,9 @@ function eligibilityAbsence(task:Task,profileId:string,catalog:readonly Profile[
 }
 export function eligibilityReasons(task:Task,profiles:Profile[],pool:PoolEntry[],availability:{group:string;unavailable:boolean;reason:string;retryAt:string|null}[],usage:UsageLevel="normal",catalog:readonly Profile[]=profiles) {
   const raw=task.profileRequests?.worker;
-  const request=honouredRequest(raw,pool,usage);
+  const requested=requestedTier(task.complexity);
+  const climb=climbedTier(task);
+  const request=honouredRequest(raw,pool,usage,requested,climb);
   const preferred=request?.profileId??(raw?"":task.preferredProfileId);
   const required=request?.required??(!raw&&task.requirePreferred);
   const reasons=pool.map(entry=>{
@@ -213,7 +218,7 @@ export function eligibilityReasons(task:Task,profiles:Profile[],pool:PoolEntry[]
     if(!entry.enabled)causes.push("disabled");
     if(!p)causes.push(eligibilityAbsence(task,entry.profileId,catalog));
     else if(!p.available)causes.push(`unavailable: ${p.problem}`);
-    if(!requestReaches(entry,usage,request))causes.push(raw?.profileId===entry.profileId?"awaiting the operator's board sign-off":!withinUsage(usage,entry.cost)?`${entry.cost} cost above the ${usage} usage level without a signed-off request`:`frontier below Maximum without a signed-off request`);
+    if(!requestReaches(entry,usage,request,requested,climb))causes.push(raw?.profileId===entry.profileId?"awaiting the operator's board sign-off":`${entry.capability ?? "unrated"} tier needs the operator's board sign-off at the ${usage} usage level`);
     const thinking=workerThinking(task);
     if(thinking&&p&&!p.supportedThinking.includes(thinking))causes.push(`thinking option ${thinking} unsupported`);
     const group=availability.find(a=>a.group===entry.group&&groupIsUnavailable(a));
@@ -236,26 +241,55 @@ export function chooseProfile(task: Task, profiles: Profile[], pool: PoolEntry[]
   // dropped whole: it pins nothing, waits for nothing and sets no thinking, so
   // the role runs on automatic selection until the operator signs it off.
   const raw=task.profileRequests?.[role];
-  const request=honouredRequest(raw, pool, usage);
+  const requested=requestedTier(task.complexity);
+  // Spec 052 (Tom, 2026-11-17): the applied changes-required review authorizes
+  // one worker climb (recorded then), and the record keeps the climbed tier
+  // permitted for this task's later runs. A first attempt before any climb has
+  // no exception.
+  const climb = role === "worker" ? workerClimbTarget(task, pool, usage) : null;
+  const climbTier = climb?.to ?? climbedTier(task);
+  const request=honouredRequest(raw, pool, usage, requested, climbTier);
   const unsigned=Boolean(raw&&!request);
   const preferredId=request?.profileId ?? (role === "worker" && !unsigned ? task.preferredProfileId : "");
   const required=request?.required ?? (role === "worker" && !unsigned && task.requirePreferred);
   const thinkingOptionId=role === "worker" ? (unsigned ? task.thinkingOptionId ?? "" : workerThinking(task)) : request?.thinkingOptionId ?? "";
+  // Spec 053 / Spec 052 (Tom, 2026-11-17): the run's tier decides the set.
+  const fullDemand = runDemand(task.complexity, role, usage, offsets);
+  const workerActual = workerActualTier(task, pool);
+  const raised = workerActual && demandRank(workerActual) > demandRank(fullDemand) ? workerActual : fullDemand;
+  // A task keeps the worker tier it earned: a first run starts at the level's
+  // tier, a climbed or routed worker never falls back below its actual profile,
+  // and a reviewer is floored at the same actual profile.
+  const demand = role === "worker" ? (climb ? climb.to : raised) : role === "reviewer" ? raised : fullDemand;
+  // Maximum reserves the top two tiers for workers and reviewers (an explicit
+  // request included), and a reviewer never runs below the worker's actual tier.
+  const roleMeets = (entry: PoolEntry) => {
+    if (usage === "maximum" && role !== "coordinator" && !topTier(entry.capability)) return false;
+    if (role !== "reviewer") return true;
+    // An unrated capability counts as medium, as the demand rank does.
+    const rank = entry.capability ? demandRank(entry.capability) : demandRank("medium");
+    return !workerActual || rank >= demandRank(workerActual);
+  };
   let eligible = pool.flatMap(entry => {
     const profile = profiles.find(p => p.id === entry.profileId);
     // Spec 053 retires the pool's role and scope switches: every model can work, review and coordinate.
     if (!entry.enabled || !profile?.available || unavailable.has(entry.group)) return [];
-    // Above the usage level's cost ceiling, or rated frontier below Maximum
-    // (Tom, 2026-11-09), automatic selection never lands on a
-    // profile; only an explicit request with a reason that the operator signed
-    // off on the board does (Tom, 2026-10-01/15/21; Spec 052).
-    if(!requestReaches(entry, usage, request))return [];
+    // A profile the level's permission rule holds (Spec 052, Tom 2026-11-17)
+    // is never selected automatically; only an explicit request with a reason
+    // that the operator signed off on the board reaches it.
+    if(!requestReaches(entry, usage, request, requested, climbTier))return [];
     if (thinkingOptionId && !profile.supportedThinking.includes(thinkingOptionId)) return [];
     return [{ entry, profile: { ...profile, thinkingOptionId: thinkingOptionId || profile.thinkingOptionId } }];
   });
   if (preferredId) {
     const preferred = eligible.find(e => e.profile.id === preferredId);
-    if (preferred) return preferred;
+    // An explicit (honoured) request or owner route is its own permission; a
+    // plain preference never reaches above the requested tier or a tier the
+    // level holds. A preferred reviewer must also meet the worker's capability.
+    const preferredReaches = Boolean(preferred) && roleMeets(preferred!.entry) && (request
+      ? true
+      : automaticReachable(preferred!.entry, usage, requested, climbTier, role));
+    if (preferred && preferredReaches) return preferred;
     if (required) return null;
   }
   if (role === "reviewer" && task.critical) {
@@ -263,16 +297,21 @@ export function chooseProfile(task: Task, profiles: Profile[], pool: PoolEntry[]
     // Availability includes usage/sign-off gates above. A shortfall never parks review.
     if (rigorous.length) eligible = rigorous;
   }
-  // Spec 053 (Tom, 2026-10-21; 2026-11-04): the run's demand decides the set.
-  // Demand is the task's complexity moved by the role and the usage level; the
-  // set is every eligible profile rated at or above it, or on a shortfall the
-  // most capable. Cost never removes a profile: the last 50 assignments rotate
-  // within the set by per-model share, recent use over the effective weight
-  // (configured weight times the cost lean). The subscription group's recent
-  // count paces without deciding, and lifetime use breaks ties.
-  const fullDemand = runDemand(task.complexity, role, usage, offsets);
-  const demand = role === "worker" && initialWorker ? workerDemandStep(fullDemand, workerStepDown(usage, false)) : fullDemand;
-  const { tier } = demandTier(demand, eligible.map(candidate => candidate.entry));
+  // A reviewer must at least match the worker's actual capability, so its
+  // ceiling rises to that tier even when the worker sits above the task's own
+  // requested tier; a worker never exceeds the requested tier automatically.
+  const ceiling = role === "coordinator" ? requested
+    : role === "reviewer" && demandRank(demand) > demandRank(requested) ? demand
+    : usage === "maximum" ? "frontier"
+    : requested;
+  // Maximum's top-tier rule is for workers and reviewers; a coordinator keeps
+  // its configured offset and the ordinary tier set.
+  const topOnly = usage === "maximum" && role !== "coordinator";
+  const { tier: rawTier } = selectionTier(demand, eligible.map(candidate => candidate.entry), topOnly, ceiling);
+  // The reviewer floor is absolute: when every independent candidate is weaker
+  // than the worker's actual tier, the role waits for a route rather than
+  // certifying that tier on a weaker profile.
+  const tier = rawTier.filter(entry => roleMeets(entry));
   const inTier = new Set(tier.map(entry => entry.profileId));
   const ranked = eligible.filter(candidate => inTier.has(candidate.entry.profileId));
   const share = (candidate: typeof ranked[number]) => effectiveWeight(candidate.entry.weight, candidate.entry.cost);
@@ -300,7 +339,9 @@ export function taskRoutingPolicy(task: Task, pool: readonly PoolEntry[], usage:
   add("reviewer", task.profileRequests?.reviewer?.profileId, "request");
   add("reviewer", task.resolution.reviewerProfile?.id, "dispatched");
   add("coordinator", task.profileRequests?.coordinator?.profileId, "request");
-  return { usage, scope: task.scope, profiles: named.map(({ role, profileId, source }) => {
+  const taskTier = requestedTier(task.complexity);
+  const climbTier = climbedTier(task);
+  return { usage, requested: taskTier, climbTier, scope: task.scope, profiles: named.map(({ role, profileId, source }) => {
     const entry = pool.find(item => item.profileId === profileId);
     const group = entry && availability.find(item => item.group === entry.group && groupIsUnavailable(item, at));
     // The task host's own catalog is the availability answer when the caller
@@ -315,9 +356,9 @@ export function taskRoutingPolicy(task: Task, pool: readonly PoolEntry[], usage:
     ];
     const requested = source === "request" ? task.profileRequests?.[role]?.signoff : undefined;
     const policy = { role, profileId, source, inPool: Boolean(entry), cost: entry?.cost ?? null, capability: entry?.capability ?? null,
-      automatic: entry ? automaticSelection(entry, usage.level) : null, gates,
+      automatic: entry ? automaticSelection(entry, usage.level, taskTier, climbTier, role) : null, gates,
       ...(requested ? { signoff: { status: requested.status, decisionId: requested.decisionId, note: requested.note, ...(requested.grantId ? { grantId: requested.grantId } : {}), ...(requested.endedGrantId ? { endedGrantId: requested.endedGrantId } : {}) } } : {}) };
-    return { ...policy, explanation: describeRoutePolicy(policy, usage) };
+    return { ...policy, explanation: describeRoutePolicy(policy, usage, undefined, taskTier, climbTier) };
   }), ...(profiles.length && selectionCounts ? { selection: workerSelectionExplanation(task, pool, profiles, usage.level,
     new Set(availability.filter(item => groupIsUnavailable(item, at)).map(item => item.group)), selectionCounts) } : {}),
   ...(task.hostId && profiles.length ? { host: { hostId: task.hostId, effects: hostEffects(pool, profiles) } } : {}) };
@@ -331,11 +372,13 @@ export function taskRoutingPolicy(task: Task, pool: readonly PoolEntry[], usage:
 export function workerSelectionExplanation(task: Task, pool: readonly PoolEntry[], profiles: readonly Profile[], usage: UsageLevel,
   unavailableGroups: ReadonlySet<string>, { counts, recent, offsets }: SelectionCounts): SelectionExplanation {
   const complexity = task.complexity ?? "medium";
-  const fullDemand = runDemand(complexity, "worker", usage, offsets);
-  const demand = workerDemandStep(fullDemand, workerStepDown(usage, false));
-  const eligible = pool.filter(entry => entry.enabled && !unavailableGroups.has(entry.group) && requestReaches(entry, usage, null)
+  const requested = requestedTier(complexity);
+  const climb = workerClimbTarget(task, pool, usage);
+  const climbTier = climb?.to ?? climbedTier(task);
+  const demand = climb ? climb.to : runDemand(complexity, "worker", usage, offsets);
+  const eligible = pool.filter(entry => entry.enabled && !unavailableGroups.has(entry.group) && requestReaches(entry, usage, null, requested, climbTier)
     && profiles.some(profile => profile.id === entry.profileId && profile.available));
-  const { tier, shortfall } = demandTier(demand, eligible);
+  const { tier, shortfall } = selectionTier(demand, eligible, usage === "maximum", usageCeiling(usage, requested));
   const nameOf = (id: string) => profiles.find(profile => profile.id === id)?.name ?? id;
   const met = tier.map(entry => ({ profileId: entry.profileId, name: nameOf(entry.profileId), capability: entry.capability ?? null, cost: entry.cost ?? null,
     weight: entry.weight, effectiveWeight: effectiveWeight(entry.weight, entry.cost), recent: recent[`profile:${entry.profileId}`] ?? 0 }))
@@ -347,8 +390,8 @@ export function workerSelectionExplanation(task: Task, pool: readonly PoolEntry[
     : picked.profile.id === named ? "named by the task's request or preference"
     : row ? `fewest recent assignments per effective weight in the set: ${row.recent} of the last 50 over weight ${row.weight} × cost lean ${row.effectiveWeight / row.weight} (cost ${row.cost ?? "unset"})${met.length > 1 ? `; next ${met.filter(item => item.profileId !== row.profileId).slice(0, 2).map(item => `${item.name} ${item.recent} over ${item.effectiveWeight}`).join(", ")}` : ""}`
     : "outside the demand set";
-  return { role: "worker", complexity, roleOffset: offsets.worker, usageOffset: DEMAND_USAGE_OFFSETS[usage], step: workerStepLabel(usage, false),
-    fullDemand, demand, shortfall, met, choice: picked ? { profileId: picked.profile.id, name: picked.profile.name, reason } : null };
+  return { role: "worker", complexity, roleOffset: offsets.worker, startTier: workerStartTier(usage, complexity), step: workerStepLabel(usage, false),
+    fullDemand: demand, demand, shortfall, met, choice: picked ? { profileId: picked.profile.id, name: picked.profile.name, reason } : null };
 }
 
 /**
@@ -468,7 +511,7 @@ export class RoleSelection {
     }) !== 'collision')
       .filter(p => role !== 'executor' || (p.model !== 'default' && !excludedProfiles.has(p.id)
         && !(t.entrypoint === 'proof' && t.resolution.reviewerProfile && model(p.model) === model(t.resolution.reviewerProfile.model))));
-    return chooseProfile({ ...t, preferredProfileId: '', requirePreferred: false, thinkingOptionId: '', scope: role === 'coordinator' && !honouredRequest(t.profileRequests?.coordinator, pool, usage) ? 'general' as const : t.scope }, profiles, pool, this.store.counts(), unavailable, role === 'executor' ? 'worker' : role,this.store.recentCounts(),usage,this.store.demandRoleOffsets());
+    return chooseProfile({ ...t, preferredProfileId: '', requirePreferred: false, thinkingOptionId: '', scope: role === 'coordinator' && !honouredRequest(t.profileRequests?.coordinator, pool, usage, requestedTier(t.complexity), climbedTier(t)) ? 'general' as const : t.scope }, profiles, pool, this.store.counts(), unavailable, role === 'executor' ? 'worker' : role,this.store.recentCounts(),usage,this.store.demandRoleOffsets());
   }
   /**
    * When a required profile request is what leaves a role without a profile,
@@ -490,12 +533,37 @@ export class RoleSelection {
    * with no profile, say so and name the way out. Empty when the pool itself is
    * the cause.
    */
-  usageCeilingNote(t: Task, role: 'reviewer' | 'coordinator' | 'worker', extraUnavailable: Iterable<string> = [], excludedProfiles: ReadonlySet<string> = new Set(), widened?: () => { profile: Profile; entry: { cost?: string | null } } | null): string {
+  usageCeilingNote(t: Task, role: 'reviewer' | 'coordinator' | 'worker', extraUnavailable: Iterable<string> = [], excludedProfiles: ReadonlySet<string> = new Set(), widened?: () => { profile: Profile; entry: { cost?: string | null; capability?: ProfileCapability | null } } | null): string {
     const usage = this.store.usageLevel();
-    if (usage === 'high' || usage === 'maximum') return '';
+    if (usage === 'extra_high' || usage === 'maximum') return '';
     if (role !== 'worker' && !widened && this.resolution.select(t, role, extraUnavailable, excludedProfiles)) return '';
     const above = widened ? widened() : role === 'worker' ? null : this.resolution.select(t, role, extraUnavailable, excludedProfiles, 'maximum');
-    return above ? `; the ${usage} usage level holds automatic selection below ${above.profile.id} (${above.entry.cost ?? 'unset'} cost): raise the usage level or route the ${role} to a profile` : '';
+    return above ? `; the ${usage} usage level needs the operator's board sign-off for ${(above.entry.capability ?? 'top-tier').replaceAll('_', ' ')} runs: raise the usage level or route the ${role} to a profile` : '';
+  }
+  /**
+   * Spec 052 (Tom, 2026-11-17): a reviewer must be at least as capable as the
+   * worker's actual profile. A retained reviewer below a climbed or routed
+   * worker is replaced on the next round; the reselection floors against the
+   * same rating.
+   */
+  reviewerCapabilityIssue(t: Task, assigned: Profile | null): string | null {
+    if (!assigned) return null;
+    const pool = this.store.pool();
+    const usage = this.store.usageLevel();
+    const entry = pool.find(item => item.profileId === assigned.id);
+    // A null capability is a supported rating (unrated counts as medium), not
+    // an absent profile: Maximum's top-tier floor still applies to it.
+    const reviewer = entry?.capability ?? null;
+    if (!entry) return null;
+    if (usage === "maximum" && !topTier(reviewer))
+      return `reviewer profile ${assigned.name || assigned.id} is rated ${reviewer ?? "unrated"}, below the top two tiers Maximum reserves for reviewers`;
+    const worker = workerActualTier(t, pool);
+    const calculated = runDemand(t.complexity, "reviewer", usage, this.store.demandRoleOffsets());
+    const required = worker && demandRank(worker) > demandRank(calculated) ? worker : calculated;
+    const reviewerRank = reviewer ? demandRank(reviewer) : demandRank("medium");
+    return reviewerRank < demandRank(required)
+      ? `reviewer profile ${assigned.name || assigned.id} is rated ${reviewer ?? "unrated"}, below the ${required} tier this run needs`
+      : null;
   }
   retainedProfileIssue(assigned:Profile|null){
     if(!assigned)return 'assigned profile is missing';
@@ -527,7 +595,7 @@ export class RoleSelection {
     // A request the operator has since signed off for another profile takes over
     // from the retained one, as an owner route does.
     if(request?.signoff?.status==='approved'&&request.profileId!==assigned.id)return `the operator signed off ${request.profileId} for the ${role}`;
-    if(!entry||requestReaches(entry,usage,request))return null;
+    if(!entry||requestReaches(entry,usage,request,requestedTier(t.complexity),climbedTier(t)))return null;
     return `profile ${assigned.name||assigned.id} needs the operator's board sign-off at the ${usage} usage level`;
   }
   assertReviewProfileIndependent(task: Task, run: Run) {

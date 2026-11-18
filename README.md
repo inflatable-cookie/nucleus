@@ -15,7 +15,7 @@ trusted local software, not a sandbox between agents.
 
 Subscription usage displays belong to each host app and its plugins. Nucleus
 keeps the separate dispatch usage level in Settings → Dispatch limits because
-that setting controls routing demand and cost ceilings.
+that setting controls where runs start and which profiles need the operator's permission.
 
 ## Install
 

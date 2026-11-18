@@ -101,7 +101,7 @@ test('a covered request raises no decision, records the grant, and next names it
     assert.equal(chooseProfile(f.store.task(task.id), profiles, pool, {}, new Set(), 'reviewer', {}, f.store.usageLevel())?.profile.id, 'sol');
     const policy = f.store.routingPolicy(f.store.task(task.id)).profiles.find(row => row.role === 'reviewer' && row.source === 'request')!;
     assert.equal(policy.signoff?.grantId, grant.id);
-    assert.equal(policy.automatic, 'request_frontier', 'a frontier request covered by a grant runs at Normal (Tom, 2026-11-09)');
+    assert.equal(policy.automatic, 'request_tier', 'a frontier request covered by a grant runs at Normal (Tom, 2026-11-09)');
     assert.match(policy.explanation, new RegExp(`covered by grant ${grant.id.slice(0, 8)}`));
     assert.match(describeRoutePolicy(policy, f.store.usageView()), /covered by grant /);
   } finally { f.close(); }

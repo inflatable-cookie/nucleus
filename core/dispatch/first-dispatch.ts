@@ -12,6 +12,7 @@ import { startsNoRuns } from '../closeout/queue-drain';
 import type { Resolution } from '../resolution';
 import { chooseProfile, eligibilityReasons } from './routing';
 import { dispatchGate } from './dispatch-decisions';
+import { USAGE_GATE_WAIT, usageGateBlocked } from './usage-gate';
 
 /** The engine facts one first dispatch reads; review admission is a peer owner, not a nested dispatch. */
 export type FirstDispatchContext = Pick<Engine,
@@ -58,6 +59,14 @@ export class FirstDispatch {
     if (dispatchGate({ task })) return;
     if (dispatchGate({ stopped: this.context.stopped, paused: this.context.stopped ? false : this.store.getMeta<boolean>("paused") })) return;
     if (dispatchGate({ task, dispatchHeld })) return;
+    // Spec 052 (Tom, 2026-11-17): at the Low usage level a high or very-high
+    // complexity submission waits for the operator's board approval. The gate's
+    // own dispatch fence is the hold; this read keeps a dispatch that arrives
+    // before the reconcile pass from starting an unapproved run.
+    if (usageGateBlocked(task, this.store.usageLevel())) {
+      if (task.reason !== USAGE_GATE_WAIT) this.store.update(task.id, { reason: USAGE_GATE_WAIT });
+      return;
+    }
     if (dispatchGate({ catalogKnown: this.context.profileCatalogKnown() })) return;
     const admission = this.context.admission;
     const owned = admission ? this.store.activeCapacityTasks().filter(candidate => occupiesSlot(candidate) && candidate.workspaceId).length : 0;

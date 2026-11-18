@@ -1260,7 +1260,7 @@ request identities and submitted handoffs are not rewritten.
   eligible profiles, then rotates over the last 50 assignments by recent use
   over effective weight: configured weight times a cost lean that doubles per
   cost step down (Spec 053, Tom, 2026-11-04: cost leans, it doesn't exclude).
-- Frontier profiles, and profiles above the usage level's cost ceiling, need a
+- Frontier profiles, and profiles the usage level's permission rule holds, need a
   per-role request with a reason and the operator's board sign-off unless the
   usage level puts them in automatic selection: frontier only at Maximum
   ([Spec 052](../specs/052-usage-level.md), Tom 2026-11-09). Worker authorization does
@@ -1270,7 +1270,7 @@ request identities and submitted handoffs are not rewritten.
 - A coordinator's `route` never names a very_high-cost (Sol-class) profile;
   availability and environment blocks are not capability failures (Tom,
   2026-10-01 and 2026-10-15). Owners may route there with a reason and board
-  sign-off. A coordinator never routes to a frontier profile below Maximum either.
+  sign-off. A coordinator never routes to a profile the level's permission rule holds either.
 - Before every retained revision Nucleus rechecks the worker profile against the
   live catalog, role, enablement and subscription group; failure stops in
   `needs_attention` before run intent and escalates without a coordinator turn.
