@@ -611,8 +611,8 @@ export function observedHostEffectEvidence(
     operation.effect.status === "uncertain"
   ) {
     // A terminal task answers a restart only once every possible participant
-    // has been released. An untracked initial worker still needs its own
-    // completion; terminal phase alone cannot prove the target stopped.
+    // has been released. An untracked worker needs a direct archive
+    // observation; a report or terminal phase cannot prove the target stopped.
     if (
       ["done", "cancelled"].includes(task.phase) &&
       (!operation.hostId || operation.hostId === task.hostId)
@@ -624,9 +624,11 @@ export function observedHostEffectEvidence(
       if (
         runs.every((run) => run.released) &&
         ((!task.runId && !task.agentId) ||
-          task.completion ||
           (initial?.released &&
-            (!task.agentId || initial.agentId === task.agentId)))
+            (!task.agentId || initial.agentId === task.agentId)) ||
+          (task.agentId &&
+            store.threadArchiveEffect(task.agentId, task.hostId)?.status ===
+              "archived"))
       )
         return `terminal task ${task.phase} has no unreleased restart participant`;
     }

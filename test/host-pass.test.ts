@@ -585,3 +585,63 @@ test("legacy submissions settle while a live restart target remains owed", async
     1,
   );
 });
+
+test("a stale worker completion does not settle an untracked current restart", async (t) => {
+  const f = fixture(t, fakeAdapter({}));
+  const task = f.store.insert(submission(), HOST, "handoff", "a".repeat(40));
+  f.store.update(task.id, {
+    phase: "done",
+    agentId: "current-agent",
+    runId: "current-run",
+    completion: {
+      taskId: task.id,
+      runId: "old-run",
+      eventId: "old",
+      status: "ready_for_review",
+      summary: "old result",
+    },
+    resolution: { ...task.resolution, mergedCommit: "b".repeat(40) },
+  });
+  const at = new Date().toISOString();
+  const control = {
+    type: "task_control",
+    control: { action: "restart", taskId: task.id, version: task.version },
+  };
+  const key = "restart-with-stale-completion";
+  const op = f.store.putOperation(
+    queueOperationSchema.parse({
+      id: operationIdForKey(key),
+      key,
+      kind: "task_control",
+      inputHash: operationInputHash(control),
+      state: "needs_attention",
+      taskId: task.id,
+      hostId: HOST,
+      expectedVersion: task.version,
+      createdAt: at,
+      startedAt: at,
+      settledAt: at,
+      attempts: 1,
+      effect: {
+        kind: "task_control",
+        target: "restart",
+        intentAt: at,
+        status: "uncertain",
+      },
+    }),
+    control,
+  );
+  await f.engine.withHost(HOST, () => f.hostPass.run(HOST));
+  assert.equal(
+    recoveryEffects(f.store, f.store.task(task.id), {
+      kinds: ["operation"],
+    }).find((effect) => effect.identity === op.id)?.state,
+    "uncertain",
+  );
+  assert.equal(
+    f.store
+      .eventsAll(task.id)
+      .filter((event) => event.kind === "operation_superseded").length,
+    0,
+  );
+});
