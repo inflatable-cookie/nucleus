@@ -9,6 +9,7 @@ import { now } from '../store/store';
 import type { Engine } from '../engine';
 import { collectOwnerVerbFacts, ownerEffectIdentity, ownerPendingEffects } from './owner-verbs';
 import { buildOutputCleanupHooks, buildOutputDirectoryAbsent } from '../workspaces/worktree-cleanup';
+import { terminalArchiveWorkspaces } from '../closeout/terminal-archive';
 
 /**
  * The owner's `retry_effect` verb: one named failed or uncertain side effect is
@@ -37,10 +38,15 @@ export class RetryEffectControls {
     const dispositionSettled = this.engine.replayedDispositionWorkspaceOutcome(task, input, operationId);
     if (dispositionSettled) return dispositionSettled;
     this.engine.requireOwnerControlCurrent(task, input.version, 'Task changed; refresh before retrying');
-    const beforeSettlement = this.engine.retryEffectBeforeSettlement(task, input);
-    if (beforeSettlement) return beforeSettlement;
+    const archiveId = input.effect ? ownerEffectIdentity(input.effect, 'workspace_archive') : null;
+    if (archiveId && task.resolution.archivedWorkspaceIds.includes(archiveId)
+      && terminalArchiveWorkspaces(task, this.store.runs(task.id)).some(workspace => workspace.id === archiveId && workspace.directory && workspace.head)) return task;
+    // Observe a gone build-output target before any cleanup send. Workspace
+    // archives instead join the serialized cleanup lane and its proof gates.
     const absentCleanup = await this.settleAbsentCleanup(task, input);
     if (absentCleanup) return absentCleanup;
+    const beforeSettlement = this.engine.retryEffectBeforeSettlement(task, input);
+    if (beforeSettlement) return beforeSettlement;
     // An uncertain host-effect control the task has since answered settles by
     // observation, without force: the owner asked for the effect to be observed,
     // and the task's own later record is that observation (nucleus#1159).
@@ -78,10 +84,13 @@ export class RetryEffectControls {
 
   /** Settle an already-gone terminal target without replaying a cleanup effect. */
   private async settleAbsentCleanup(task: Task, input: TaskControlInput): Promise<Task | null> {
+    // Leave paused retries to the ordinary handler, which reports the hold
+    // without observing the host or changing cleanup state.
+    if (this.store.getMeta('paused') === true) return null;
     const id = input.effect ? ownerEffectIdentity(input.effect, 'build_output_cleanup') : null;
     if (!id || !['done', 'cancelled'].includes(task.phase) || task.workspaceId !== id || !task.directory) return null;
     const record = task.resolution.buildOutputCleanups.find(item => item.workspaceId === id && !item.runId);
-    if (!record || !['uncertain', 'skipped'].includes(record.state) || record.directory !== task.directory) return null;
+    if (!record || !['uncertain', 'skipped', 'intent'].includes(record.state) || record.directory !== task.directory) return null;
     if (!await buildOutputDirectoryAbsent(record.directory)) return null;
     const adapter = this.engine.adapter;
     if (!adapter.preflightWorkspaceStorage || !adapter.taskWorkspaceArchived)

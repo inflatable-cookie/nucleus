@@ -21,6 +21,9 @@ export type ExternalMergeContext = Pick<Resolution, 'adapter' | 'assignIntegrati
   recovery: Pick<Resolution['recovery'], 'releaseWithNotAppliedAction' | 'settledEpisodeChanges'>;
 };
 
+/** Catch-all written by `RetryOrchestration.prepareRetry`; C6 observes past it. */
+const RESOLUTION_CHECK_RETRY_REASON = 'Resolution check retry requested';
+
 /** The route whose acceptance this merge follows, with the witnesses that route proved. */
 type AcceptanceRoute =
   | { kind: 'ordinary'; enclosingOperation?: () => VerifiedEnclosingOperation | undefined }
@@ -275,8 +278,63 @@ export class ExternalMerge {
       throw Error('Retained source or ancestry changed during merge observation');
     return observed;
   }
+  /**
+   * Spec 066 C6: a verified merge already recorded on the task is an integration
+   * obligation, not a retry-text or pre-attention park. Stale episode, released
+   * current-run binding, attention leftover and the catch-all resolution-retry
+   * reason are settled from those facts so the ordinary syncing/closing advance
+   * can run on this pass. Unreleased runs keep the live participant gate.
+   */
+  private reconcileVerifiedMergeProgress(t: Task): Task | null {
+    if (!t.resolution.mergedCommit || ['done', 'cancelled', 'queued'].includes(t.phase)) return null;
+    if (this.store.runs(t.id).some(run => !run.released)) return null;
+    const bound = t.resolution.currentRunId ? this.store.run(t.resolution.currentRunId) : null;
+    const staleRun = Boolean(t.resolution.currentRunId && (!bound || bound.released));
+    const unresolvedEpisode = Boolean(t.resolution.recovery && t.resolution.recovery.status !== 'resolved');
+    const staleEpisode = Boolean(t.resolution.recoveryActive || unresolvedEpisode);
+    const staleAttention = Boolean(t.resolution.attention || t.resolution.externalMergePreAttention);
+    const staleReason = t.reason === RESOLUTION_CHECK_RETRY_REASON
+      || t.reason.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX)
+      || t.reason === EXTERNAL_MERGE_CHECK_RECOVERED_REASON
+      || t.phase === 'needs_attention';
+    const missingTurn = !t.resolution.integrationTurn;
+    const stalePhase = !['merging', 'syncing', 'closing'].includes(t.phase);
+    if (!staleRun && !staleEpisode && !staleAttention && !staleReason && !stalePhase && !missingTurn) return null;
+    if (missingTurn && !staleRun && !staleEpisode && !staleAttention && !staleReason && !stalePhase)
+      return this.resolution.assignIntegrationTurn(t);
+    return this.store.transaction(() => {
+      const current = this.store.task(t.id);
+      if (current.version !== t.version || this.store.runs(current.id).some(run => !run.released)) return null;
+      const latest = this.resolution.assignIntegrationTurn(current);
+      const waiting = this.resolution.hasEarlierIntegrationTurn(latest);
+      const phase = latest.resolution.syncedCommit ? 'closing' : waiting ? 'merging' : 'syncing';
+      const reason = latest.resolution.syncedCommit
+        ? 'Recorded merge re-observed; coordinator closeout pending'
+        : waiting
+          ? 'Recorded merge re-observed; waiting for the integration turn'
+          : 'Recorded merge re-observed; synchronizing main before closeout';
+      const keepReason = !staleReason && latest.phase === phase;
+      const episodeOwned = Boolean(latest.resolution.recovery && latest.resolution.recovery.status !== 'resolved');
+      const episode = this.resolution.recovery.settledEpisodeChanges(latest,
+        'Recorded merge re-observed at the forge', episodeOwned);
+      this.resolution.update(latest, {
+        currentRunId: null, attention: false, stop: null, externalMergePreAttention: null, ...(episode ?? {}),
+      }, { phase, reason: keepReason ? latest.reason : reason },
+        'recorded_merge_phase_reconciled',
+        JSON.stringify({ head: latest.resolution.mergeHead ?? latest.prHead, commit: latest.resolution.mergedCommit }));
+      return this.store.task(t.id);
+    });
+  }
   async recoverExternalMerge(t: Task) {
     if (this.resolution.paused() || !this.adapter.externalMerge || !t.workspaceId || (!t.agentId&&!t.reviewEntry) || !(t.reviewEntry?.prNumber||t.completion?.prNumber || t.resumePrNumber) || ['done','cancelled','queued'].includes(t.phase)) return false;
+    // A verified merge already in syncing/closing owes integration, not another
+    // forge probe. Settle leftover retry-text, episode and released-run bindings
+    // and return false so this pass re-reads and advances. needs_attention still
+    // takes the forge re-observe branch below so a mismatched identity stays gated.
+    if (t.resolution.mergedCommit && ['syncing', 'closing'].includes(t.phase)) {
+      this.reconcileVerifiedMergeProgress(t);
+      return false;
+    }
     if (t.resolution.mergedCommit && !['syncing', 'closing'].includes(t.phase)) {
       if (!this.externalMergeProbeDue(t) || this.store.runs(t.id).some(run => !run.released)) return false;
       if (!await this.resolution.executionLease(t, undefined, false, true)) return false;
@@ -440,6 +498,22 @@ export class ExternalMerge {
    * the ordinary resolution path runs again instead of idling.
    */
   resumeClearedAttention(t: Task): Task | null {
+    // A verified merge never restores a pre-attention snapshot: that would put
+    // a recorded merge back under a check park or an older phase. Check-parks
+    // stay in needs_attention until a successful probe; every other leftover
+    // (retry-text, stranded attention) observes the current integration obligation.
+    if (t.resolution.mergedCommit) {
+      if (t.phase !== 'needs_attention' || t.resolution.attention || t.resolution.currentRunId) return null;
+      if (this.store.runs(t.id).some(run => !run.released)) return null;
+      const checkPark = t.reason.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX)
+        || t.reason === EXTERNAL_MERGE_CHECK_RECOVERED_REASON;
+      if (checkPark) {
+        if (t.resolution.externalMergePreAttention)
+          this.resolution.update(t, { externalMergePreAttention: null }, {}, 'external_merge_pre_attention_superseded');
+        return null;
+      }
+      return this.reconcileVerifiedMergeProgress(t);
+    }
     return resumeClearedAttentionFor({ store: this.store, resolution: this.resolution }, t);
   }
 }
