@@ -1582,6 +1582,18 @@ test('next lists and retry_effect reconciles an exact uncertain run creation', a
   } finally { await f.close(); }
 });
 
+test('next omits a released run whose exact delivery was already settled', async () => {
+  const f = fixture(); try {
+    dispatched(f);
+    const run = reviewerRun(f, { status: 'uncertain', released: true });
+    const offered = () => f.next().verbs.some(item => item.verb === 'retry_effect' && item.available
+      && JSON.stringify(item.args).includes(`run-delivery.${run.id}`));
+    assert.equal(offered(), true);
+    f.store.event(f.taskId, 'run_delivery_reconciled', `${run.id}: exact creation message observed`);
+    assert.equal(offered(), false);
+  } finally { await f.close(); }
+});
+
 test('next lists and retry_effect reconciles an exact attention notice message', async () => {
   const f=fixture(); try {
     const id='attention-notice-1';

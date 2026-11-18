@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { Store, digest, operationIdForKey, operationInputHash } from '../core/store/store';
 import { classifyReviewPublication, reviewPublicationKey } from '../core/review/review-publication';
 import { recoveryEffects, blockingRecoveryEffects, blockingRecoveryEffectsRefusal, isBlockingRecoveryEffect, blockingTaskOperations, observedHostEffectEvidence, reviewEffectWait, reviewEffectWaitRefusal } from '../core/recovery/recovery-effects';
+import { settleObservedHostEffectOperations } from '../core/recovery/effect-gates';
 import { verifyEnclosingOperation } from '../core/planning/enclosing-operation';
 import { taskControlOperation } from '../core/verbs/task-control-key';
 import { reviewPublicationBody } from '../core/forge/index';
@@ -376,5 +377,27 @@ test('the blocked-review wait is read from the stop Queue itself records', () =>
       'a stop that is not the review wait decodes nothing');
     assert.equal(reviewEffectWaitRefusal(stopFor('Another unresolved task operation fences reviewer continuation')), null);
     assert.equal(reviewEffectWaitRefusal(store.task(task.id)), null, 'a task with no recorded wait decodes nothing');
+  } finally { store.close(); }
+});
+
+
+test('released run delivery uses its own observer settlement and converges', () => {
+  const { store, task } = fixture();
+  try {
+    const run = reviewRun(store, task, { id: 'old-run', status: 'uncertain' });
+    store.event(task.id, 'run_delivery_reconciled', 'other-run: exact creation message observed');
+    assert.equal(blockingRecoveryEffects(store, task, { kinds: ['run-delivery'] }).length, 1);
+    store.event(task.id, 'run_delivery_reconciled', `${run.id}: exact creation message observed`);
+    store.putRun({ ...run, released: false });
+    assert.equal(blockingRecoveryEffects(store, task, { kinds: ['run-delivery'] }).length, 1, 'live target still gates');
+    store.putRun(run);
+    assert.equal(recoveryEffects(store, task, { kinds: ['run-delivery'] })[0]?.state, 'superseded');
+    settleObservedHostEffectOperations(store, task.id);
+    assert.equal(store.run(run.id)?.status, 'superseded');
+    const events = store.eventsAll(task.id).filter(event => event.kind === 'run_delivery_superseded');
+    assert.equal(events.length, 1);
+    assert.match(events[0]!.detail, /run_delivery_reconciled/);
+    settleObservedHostEffectOperations(store, task.id);
+    assert.equal(store.eventsAll(task.id).filter(event => event.kind === 'run_delivery_superseded').length, 1);
   } finally { store.close(); }
 });

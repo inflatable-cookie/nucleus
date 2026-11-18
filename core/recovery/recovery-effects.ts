@@ -1,4 +1,4 @@
-import type { Task } from '../../shared/contracts';
+import type { Run, Task } from '../../shared/contracts';
 import type { QueueOperation } from '../../shared/operations';
 import type { VerifiedEnclosingOperation } from '../planning/enclosing-operation';
 import { classifyReviewPublication, reviewPublicationKey, type ReviewPublicationClassification } from '../review/review-publication';
@@ -188,7 +188,11 @@ export function recoveryEffects(store: Store, task: Task, options: RecoveryEffec
       const checkpoint = run.reviewCheckpoints?.at(-1);
       const creationProven = Boolean(run.agentId) && Boolean(checkpoint)
         && reviewCheckpointRefusal(store, task, run, checkpoint!) === null;
-      if (!creationProven)
+      const evidence = releasedRunDeliveryEvidence(store, run);
+      if (evidence)
+        push({ kind: 'run-delivery', identity: run.id, taskId: task.id, runId: run.id, state: 'superseded',
+          reason: `run ${run.id} delivery was settled: ${evidence}`, publication: null });
+      else if (!creationProven)
         push({ kind: 'run-delivery', identity: run.id, taskId: task.id, runId: run.id, state: 'uncertain',
           reason: `run ${run.id} has an uncertain delivery`, publication: null });
     }
@@ -239,6 +243,21 @@ export function recoveryEffects(store: Store, task: Task, options: RecoveryEffec
   const settled = new Set(task.resolution.ownerSettlements.flatMap(record => record.recoveryKeys));
   return effects.map(effect => settled.has(recoverySettlementKey(task, effect))
     ? { ...effect, state: 'superseded' as const, reason: `Owner settled: ${effect.reason}` } : effect);
+}
+
+/** Evidence written by the delivery observer for this exact released run. */
+export function releasedRunDeliveryEvidence(store: Store, run: Run): string | null {
+  if (!run.released || run.status !== 'uncertain' || !run.agentId || !run.workspaceId) return null;
+  const created = Date.parse(run.createdAt);
+  if (!Number.isFinite(created)) return null;
+  const found = store.eventsAll(run.taskId).find(event => {
+    if (!(Date.parse(event.at) >= created)) return false;
+    if (event.kind === 'run_delivery_reconciled') return event.detail === `${run.id}: exact creation message observed`;
+    return event.kind === 'run_delivery_not_delivered'
+      && (event.detail === `${run.id}: agent ${run.agentId} archived; complete readable timeline has no ns-run-${run.id}`
+        || event.detail === `${run.id}: agent ${run.agentId} closed; complete readable timeline has no ns-run-${run.id}`);
+  });
+  return found ? `${found.kind} at ${found.at}: ${found.detail}` : null;
 }
 
 /** Stable occurrence identity; fixed-key effects carry the current attempt's identity. */

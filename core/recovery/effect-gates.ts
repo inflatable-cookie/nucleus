@@ -2,7 +2,7 @@ import type { Task } from '../../shared/contracts';
 import type { QueueOperation } from '../../shared/operations';
 import { BLOCKED_EFFECT_ATTENTION_PREFIX } from '../../shared/task-stop';
 import { now, type Store } from '../store/store';
-import { blockingRecoveryEffects, observedHostEffectEvidence, recoveryEffectsRefusal, reviewEffectWait } from './recovery-effects';
+import { blockingRecoveryEffects, observedHostEffectEvidence, releasedRunDeliveryEvidence, recoveryEffectsRefusal, reviewEffectWait } from './recovery-effects';
 
 /**
  * Nucleus#1159: an uncertain side effect answers itself when later evidence
@@ -32,6 +32,18 @@ export const BLOCKED_EFFECT_ATTENTION_MS = 10 * 60_000;
  */
 export function settleObservedHostEffectOperations(store: Store, taskId: string): QueueOperation[] {
   const settled: QueueOperation[] = [];
+  // The observer's own exact-run event can outlive an overwritten run row.
+  // Re-read inside the transaction and preserve the event; no send is retried.
+  store.transaction(() => {
+    for (const candidate of store.runs(taskId)) {
+      const run = store.run(candidate.id);
+      if (!run || run.taskId !== taskId) continue;
+      const evidence = releasedRunDeliveryEvidence(store, run);
+      if (!evidence) continue;
+      store.putRun({ ...run, status: 'superseded' });
+      store.event(taskId, 'run_delivery_superseded', `${run.id}: ${evidence}`);
+    }
+  });
   for (const operation of store.operations({ taskId, states: ['needs_attention'], limit: 1000 })) {
     if (!operation.taskId || operation.taskId !== taskId) continue;
     const task = store.task(taskId);
