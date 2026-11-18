@@ -26,7 +26,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { t3Fake } from "./support/t3code-fake";
-import { t3HttpOrigin } from "../bin/t3-install";
+import { serviceHasSession, t3HttpOrigin } from "../bin/t3-install";
 import {
   liveTaskNames,
   liveTaskRefusal,
@@ -917,4 +917,21 @@ test("WebSocket origin normalization preserves secure transport, host and port",
     t3HttpOrigin("http://localhost:3774"),
   );
   assert.throws(() => t3HttpOrigin("ws://user:pass@localhost/ws"));
+});
+
+test("install waits for the newly issued session even when the same host is already online", () => {
+  const old = { connected: true, id: "t3code:synthetic", sessionId: "old" };
+  assert.equal(serviceHasSession(old, old.id, "new"), false);
+  assert.equal(
+    serviceHasSession({ ...old, sessionId: "new" }, old.id, "new"),
+    true,
+  );
+  assert.equal(
+    serviceHasSession(
+      { ...old, connected: false, sessionId: "new" },
+      old.id,
+      "new",
+    ),
+    false,
+  );
 });
