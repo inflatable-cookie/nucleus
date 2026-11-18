@@ -119,7 +119,7 @@ export class StoreTaskFunnel {
       const task: Task = { ...input, critical: input.critical ?? false, ...(responsible === undefined ? {} : { responsible }), repository, ...assigned, brief: input.brief ? { ...input.brief, digest: briefVersions[0].digest } : null, id, createdAt: now(), updatedAt: now(), version: 1,
         papercutTask: input.planningSource?.kind === "papercut",
         entrypoint:input.proofOnly?"proof":"worker",reviewEntry:null,originWorkspaceId:null,notificationAgentId:isOperatorOrigin(input.originAgentId)?null:input.originAgentId,originError:"",originLookupError:"",
-        presentationDetached:null,
+        presentationDetached:null,presentationParent:null,
         creatorCompletionRecipients:[],completionSubscriptionOverrides:[],completionNotificationCohort:null,
         removedAt: null, finishedAt: null, queuePriority:0, prerequisiteWait: null, phase: "queued", reason: DISPATCH_WAIT_REASON,
         held: false, mergeHold: false, budgetSince: null, holdOwner: null, holdReason: null, holdAt: null, holdGeneration: 0, holdBlocking: null, holdUntil: null, holds: {},

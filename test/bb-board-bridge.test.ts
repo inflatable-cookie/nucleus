@@ -178,7 +178,7 @@ test("BB parentChanged: the plugin forwards an operator drag and drops Nucleus's
 
   // Nucleus's own reparent: BB echoes it as parentChanged, and nothing is recorded.
   await operations.execute('thread.reparent', { threadId: 'thr_synthetic_worker', parentThreadId: null });
-  assert.deepEqual(sent, [], "Nucleus's own threads.update echo is not an operator move");
+  assert.equal(sent.length, 0, "Nucleus's own threads.update echo is not an operator move");
 
   // The operator drags the same thread under another thread: forwarded once, as is.
   await move('thr_synthetic_worker', 'thr_synthetic_other');
