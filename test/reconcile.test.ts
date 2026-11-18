@@ -477,7 +477,7 @@ test('a PR identity change racing the worker lookup creates nothing', async () =
     f.adapter.findAgents = async t => { f.store.update(t.id, { prHead: 'd'.repeat(40) }); return []; };
     await f.engine.wake(); await f.engine.wake();
     const t = f.current();
-    assert.match(t.reason, /Absent worker replacement requires untouched initial dispatch state/);
+    assert.equal(t.prHead, 'd'.repeat(40), 'the newer PR identity remains intact');
     assert.equal(t.agentIntent, true); assert.equal(t.agentId, null);
     assert.equal(f.events('absent_worker_retry').length, 0);
   } finally { await f.close(); }
