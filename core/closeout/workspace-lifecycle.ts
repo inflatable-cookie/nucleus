@@ -14,15 +14,18 @@ import {
   settleExternalWorkspaceArchive,
 } from "../workspaces/external-workspace-archive";
 import {
+  archiveIntentOutstanding,
   archiveIntentUnreadable,
   archiveSettledByOwner,
 } from "../workspaces/archive-intent";
+import { buildOutputCleanupHooks, buildOutputDirectoryAbsent } from "../workspaces/worktree-cleanup";
 import {
   archiveRetryWaiting,
   recordArchiveRetry,
   terminalArchiveSource,
   terminalArchiveWorkspaces,
   workspaceArchiveFailureReason,
+  type TerminalWorkspace,
   type WorkspaceArchiveRetry,
 } from "./terminal-archive";
 import { ArchiveProof, type LifecycleAdapter } from "./archive-proof";
@@ -105,7 +108,7 @@ export class Lifecycle {
       adapter: engine.adapter,
       hooks: engine.hooks,
       retirement: engine.retirement,
-      stopped: engine.stopped,
+      get stopped() { return engine.stopped; },
       store: engine.store,
       resolution: { update: engine.resolution.update.bind(engine.resolution) },
     });
@@ -120,7 +123,7 @@ export class Lifecycle {
         engine.scheduleRunBuildOutputs(taskId),
       settleTerminalIntentRuns: (taskId) =>
         engine.settleTerminalIntentRuns(taskId),
-      stopped: engine.stopped,
+      get stopped() { return engine.stopped; },
       store: engine.store,
       taskHostAvailable: (task) => engine.taskHostAvailable(task),
       withHost: (id, fn) => engine.withHost(id, fn),
@@ -355,6 +358,22 @@ export class Lifecycle {
       return;
     }
   }
+  /** A prior archive may have settled while its build-output result was still missing. */
+  private async settleArchivedBuildOutput(task: Task, workspace: TerminalWorkspace) {
+    const { id, directory } = workspace;
+    if (!id || !directory || !this.adapter.taskWorkspaceArchived || !this.adapter.preflightWorkspaceStorage || this.paused()) return;
+    const pending = (current: Task) => current.resolution.archivedWorkspaceIds.includes(id)
+      && current.resolution.buildOutputCleanups.some(record => !record.runId && record.workspaceId === id
+        && record.directory === directory && record.state === 'intent');
+    if (!pending(task) || !await buildOutputDirectoryAbsent(directory)) return;
+    await this.adapter.preflightWorkspaceStorage(task);
+    if (!await this.adapter.taskWorkspaceArchived(id) || !await buildOutputDirectoryAbsent(directory)) return;
+    const current = this.store.task(task.id);
+    if (this.paused() || current.removedAt || current.version !== task.version || !pending(current)) return;
+    buildOutputCleanupHooks(this.store, task.id, id, directory, () => !this.paused()).observed({
+      safe: true, removed: false, detail: 'directory absent; nothing to clean up', observations: [],
+    });
+  }
   async archive(task: Task, retryWorkspaceId?: string) {
     // A terminal task's stale recovery episode settles before any gate below can
     // return: a cancelled task never reaches the done-only archive, and a done task
@@ -457,12 +476,21 @@ export class Lifecycle {
           );
         }),
     );
-    for (const workspace of terminalArchiveWorkspaces(task, runs)) {
+    const workspaces = terminalArchiveWorkspaces(task, runs);
+    const intended = archiveIntentOutstanding(task) ? task.resolution.archiveIntentWorkspaceId : null;
+    if (intended && !workspaces.some(workspace => workspace.id === intended && workspace.directory && workspace.head))
+      await this.observeUnreadableArchiveIntent(task, retryWorkspaceId);
+    for (const workspace of workspaces) {
+      if (retryWorkspaceId && retryWorkspaceId !== workspace.id) continue;
+      if (workspace.id && task.resolution.archivedWorkspaceIds.includes(workspace.id)) {
+        await this.settleArchivedBuildOutput(task, workspace);
+        task = this.store.task(task.id);
+        continue;
+      }
       if (
         !workspace.id ||
         !workspace.directory ||
-        !workspace.head ||
-        task.resolution.archivedWorkspaceIds.includes(workspace.id)
+        !workspace.head
       )
         continue;
       const id = workspace.id;
@@ -471,7 +499,7 @@ export class Lifecycle {
         archiveSettledByOwner(this.store.task(task.id), id)
       )
         continue;
-      if (retryWorkspaceId && retryWorkspaceId !== id) continue;
+      if (archiveIntentOutstanding(task) && task.resolution.archiveIntentWorkspaceId !== id) continue;
       const retry: WorkspaceArchiveRetry | undefined = this.store
         .task(task.id)
         .resolution.workspaceArchiveRetries.find(
@@ -484,6 +512,8 @@ export class Lifecycle {
         runs,
         attachedAgentIds,
       });
+      task = this.store.task(task.id);
+      await this.settleArchivedBuildOutput(task, workspace);
       task = this.store.task(task.id);
     }
   }

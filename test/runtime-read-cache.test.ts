@@ -171,7 +171,11 @@ const oracleCapacity = (store: Store) =>
     return Object.assign(task, { hasUnreleasedRun: taskHasUnreleasedRun(task, Boolean(row.hasUnreleasedResolutionRun)), hasLiveRun: Boolean(row.hasLiveRun) });
   });
 const oracleLifecycle = (store: Store) => oracleRows(store, `SELECT data FROM tasks WHERE json_extract(data,'$.removedAt') IS NULL AND (
-  json_extract(data,'$.phase') NOT IN ('done','cancelled') OR (json_extract(data,'$.phase')='done' AND (
+  json_extract(data,'$.phase') NOT IN ('done','cancelled')
+  OR (json_extract(data,'$.resolution.archiveIntentWorkspaceId') IS NOT NULL AND NOT EXISTS
+    (SELECT 1 FROM json_each(json_extract(data,'$.resolution.archivedWorkspaceIds')) WHERE value=json_extract(tasks.data,'$.resolution.archiveIntentWorkspaceId')))
+  OR (json_extract(data,'$.phase')='done' AND (
+    EXISTS (SELECT 1 FROM json_each(json_extract(data,'$.resolution.buildOutputCleanups')) WHERE json_extract(value,'$.runId') IS NULL AND json_extract(value,'$.state')='intent') OR
     ((json_extract(data,'$.reviewEntry') IS NULL OR json_extract(data,'$.reviewEntry.preserveWorkspace')=0) AND json_extract(data,'$.workspaceId') IS NOT NULL AND NOT EXISTS
       (SELECT 1 FROM json_each(json_extract(data,'$.resolution.archivedWorkspaceIds')) WHERE value=json_extract(tasks.data,'$.workspaceId')))
     OR (json_extract(data,'$.resolution.closeoutWorkspaceId') IS NOT NULL AND NOT EXISTS

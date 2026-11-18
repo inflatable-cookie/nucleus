@@ -12,6 +12,7 @@ import { hostRunHoldReason } from '../store/store';
 import { reportOnlySourceHead } from '../git/index';
 import { archiveFailureKeepsScope } from '../workspaces/archive-failure';
 import { reconcileGoneWorkspace } from './archive-reconcile';
+import { archiveIntentOutstanding } from '../workspaces/archive-intent';
 import { recordArchiveRetry, workspaceArchiveFailureReason, type TerminalWorkspace } from './terminal-archive';
 
 /** The host operations a workspace archive and its runtime retirement ask for. */
@@ -69,6 +70,7 @@ export class ArchiveProof {
     try {
       await this.archiveProvedWorkspace(task, { ...workspace, id, directory: workspace.directory! }, facts);
     } catch (error) {
+      if (this.context.stopped) return;
       const reason = error instanceof Error ? error.message : String(error);
       recordArchiveRetry({ store: this.store, update: this.context.resolution.update }, task.id, id, reason, false);
       // A teardown Paseo reported as failed is not a clean archive either:
@@ -117,7 +119,7 @@ export class ArchiveProof {
         if (!latest || JSON.stringify(latest.reviewSourceView) !== JSON.stringify(reviewRun.reviewSourceView)) return false;
         assertReviewSourceIdentity(current, latest, () => this.primaryArchived(task), this.adapter.workspaceIdAccepted?.bind(this.adapter));
       }
-      return !this.paused() && current.phase === 'done' && !holdsOf(current).dispatch
+      return !this.paused() && !current.removedAt && current.phase === 'done' && !holdsOf(current).dispatch
         && current.workspaceId === task.workspaceId && current.directory === task.directory && current.branch === task.branch
         && !(id === current.workspaceId && externalWorkspace(current))
         && !this.store.runs(task.id).some(run => !run.released) && !this.store.workspaceUsedByOtherTaskRun(task.id, id) && !this.store.hostRunHoldingWorkspace(directory)
@@ -138,10 +140,14 @@ export class ArchiveProof {
     // The adapter calls allowed immediately before archiving. Persist intent at that boundary.
     const archived = await this.adapter.archiveTaskWorkspace!(task, id, directory, head, () => {
       if (!allowed()) return false;
-      this.context.resolution.update(this.store.task(task.id), { archiveIntentWorkspaceId: id, archiveIntentHead: head }, {}, 'workspace_archive_intent', head);
+      const current = this.store.task(task.id);
+      if (archiveIntentOutstanding(current))
+        return current.resolution.archiveIntentWorkspaceId === id && (current.resolution.archiveIntentHead ?? head) === head;
+      this.context.resolution.update(current, { archiveIntentWorkspaceId: id, archiveIntentHead: head }, {}, 'workspace_archive_intent', head);
       return true;
     }, archiveUncertain, { requirePublished: true, attachedAgentIds, requireDirectory: false, allowIdleForeignThreads: !reviewRun,
       buildOutputCleanup, reviewRun: reviewRun ?? undefined, discard, primaryArchived, participantRuns: () => this.store.runs(task.id) });
+    if (this.context.stopped) return;
     if (!archived) {
       // The adapter declined without any effect: no native archive request was
       // sent and nothing was deleted. A retained build-output root is a named,

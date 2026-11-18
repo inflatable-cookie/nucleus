@@ -9,6 +9,7 @@ import { holdsOf } from "../../shared/holds";
 import { externalWorkspace } from "../../shared/workspace-ownership";
 import { boardVisible, StoreBoardIndex } from "./store-board-index";
 import { StoreQueueIndex } from "./store-queue-index";
+import { archiveIntentOutstanding } from "../workspaces/archive-intent";
 import type { FinishedDrainTask } from "../planning/lane-drains";
 
 /** One stored task's detached parts; a bulk read supplies the side stores for its page. */
@@ -432,9 +433,11 @@ export class StoreTasks {
       if (isLivePhase(task)) return true;
       if (task.resolution?.buildOutputCleanups?.some(record => record.runId && ['intent', 'uncertain'].includes(record.state))) return true;
       if (task.resolution?.workspaceRetirement && ['authorized', 'intent', 'uncertain'].includes(task.resolution.workspaceRetirement.state)) return true;
+      if (archiveIntentOutstanding(task)) return true;
       // A cancelled task's stale recovery episode owes a sweep once no recovery run of its own is unreleased (Queue #680).
       if (task.phase === "cancelled" && task.resolution?.recoveryActive) return !this.runs(task.id).some(run => run.role === "recovery" && !run.released);
       if (task.phase !== "done") return false;
+      if (task.resolution.buildOutputCleanups.some(record => !record.runId && record.state === 'intent')) return true;
       // Spec 017: a merged review-entry task's preserved external workspace owes
       // its catalog archive pass until every registration the last complete
       // inventory observed is settled. It is not a Queue-owned workspace archive,
