@@ -34,7 +34,11 @@ export type ReviewEntryAdmissionContext = Pick<
 > & {
   readonly resolution: Pick<
     Resolution,
-    "requiredRouteNote" | "select" | "usageCeilingNote"
+    | "requiredRouteNote"
+    | "select"
+    | "usageCeilingNote"
+    | "slotAdmissionReason"
+    | "update"
   >;
 };
 
@@ -126,7 +130,33 @@ export class ReviewEntryAdmission {
         return;
       const dependencyWait = this.store.dependencyWait(latest);
       if (dependencyWait) return;
-      if (capacityRefusal(this.store, latest)) return;
+      // Proof of the origin's return puts this review back in the shared slot
+      // order before admission. Only clear the wait we just proved, never a stop
+      // installed while the proof was in flight.
+      const recoveredOrigin =
+        task.originHostId !== task.hostId &&
+        task.resolution.stop?.reason === "origin_busy" &&
+        latest.resolution.stop?.reason === "origin_busy" &&
+        latest.resolution.stop.since === task.resolution.stop.since;
+      if (
+        task.originHostId !== task.hostId &&
+        task.resolution.stop?.reason === "origin_busy" &&
+        !recoveredOrigin
+      )
+        return;
+      if (recoveredOrigin)
+        this.resolution.update(
+          latest,
+          { stop: null },
+          { reason: "Origin available; awaiting review admission" },
+          "origin_wait_cleared",
+        );
+      const slotWait = () => {
+        if (!recoveredOrigin) return "";
+        return this.resolution.slotAdmissionReason(this.store.task(task.id));
+      };
+      if (slotWait() || capacityRefusal(this.store, this.store.task(task.id)))
+        return;
       const preDispatch = await this.context.hooks.emit(
         "task.pre_dispatch",
         latest,
@@ -169,8 +199,7 @@ export class ReviewEntryAdmission {
         const wait = this.store.dependencyWait(current);
         if (wait) return wait;
         assertReviewEntryUnowned(this.store, input, current.id);
-        if (capacityRefusal(this.store, current))
-          throw Error("Concurrent task-slot limit reached");
+        if (slotWait() || capacityRefusal(this.store, current)) return null;
         this.store.update(
           current.id,
           {

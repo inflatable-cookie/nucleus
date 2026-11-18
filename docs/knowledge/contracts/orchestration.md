@@ -1348,7 +1348,8 @@ request identities and submitted handoffs are not rewritten.
   steps and healthy tasks. The diagnostic is a separate idempotent event, so repeated
   refusals leave the outage wait unchanged. A review waiting on a different origin
   host names that host and does not mark its execution host offline or reserve a
-  slot. A fault outside a host still records `engineError`.
+  slot. Queue scans continue past those waits; a recovered origin is proved before
+  the review rejoins fair slot ordering. A fault outside a host still records `engineError`.
   Bounding calls that never return is tracked separately in nucleus#1347.
 - A queued task waiting for an unavailable host does not reserve an available
   slot ahead of another host; its reservation returns when its host wait clears.

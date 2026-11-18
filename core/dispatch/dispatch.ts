@@ -167,7 +167,7 @@ export class Dispatch {
           : 0;
         const candidates = queuedDispatchOrder(
           this.store.readyQueueHeads(
-            limit + 2 + skipped,
+            limit + 2 + skipped + failedTasks.size,
             repoPath,
             dispatchHeld,
           ),

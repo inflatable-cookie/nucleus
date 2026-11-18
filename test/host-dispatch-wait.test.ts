@@ -6,7 +6,10 @@ import { submissionSchema, summarizeTask } from "../shared/contracts";
 import type { Adapter } from "../core/host/adapter";
 import { fakeAdapter, profile, submission } from "./support/fakes";
 import { HostTransportFault } from "../core/host/adapter-routing";
-import { record as reviewRecord } from "./support/review-entry-fixture";
+import {
+  record as reviewRecord,
+  ownerRevisionFixture,
+} from "./support/review-entry-fixture";
 
 test("an offline or unknown task host waits without starting a workspace effect", async () => {
   const store = new Store(":memory:");
@@ -404,8 +407,23 @@ test("a refused BB origin holds only its review while Paseo and T3 use real admi
       directory: "/synthetic/review-workspace",
     },
   );
+  const extraReviews = Array.from({ length: 5 }, (_, index) =>
+    store.insert(
+      submission({ title: `review-${index}`, repoPath: "/synthetic/review" }),
+      "paseo:primary",
+      "handoff",
+      "a".repeat(40),
+      {
+        entrypoint: "review",
+        reviewEntry: reviewRecord(),
+        originHostId: "bb:origin",
+        workspaceId: `workspace-${index}`,
+        directory: `/synthetic/review-${index}`,
+      },
+    ),
+  );
   const paseo = store.insert(
-    submission({ title: "paseo", repoPath: "/synthetic/paseo" }),
+    submission({ title: "paseo", repoPath: "/synthetic/review" }),
     "paseo:primary",
     "handoff",
     "a".repeat(40),
@@ -423,6 +441,11 @@ test("a refused BB origin holds only its review while Paseo and T3 use real admi
     assert.ok(originReads >= 1);
     assert.equal(store.task(review.id).resolution.stop?.reason, "origin_busy");
     assert.match(store.task(review.id).reason, /bb:origin/);
+    assert.ok(
+      extraReviews.every(
+        (item) => store.task(item.id).resolution.stop?.reason === "origin_busy",
+      ),
+    );
     assert.equal(store.task(review.id).resolution.hostWait, null);
     assert.deepEqual(new Set(launches), new Set([paseo.id, t3.id]));
     assert.equal(engine.taskHostAvailable(store.task(paseo.id)), true);
@@ -430,5 +453,86 @@ test("a refused BB origin holds only its review while Paseo and T3 use real admi
   } finally {
     await engine.stop();
     store.close();
+  }
+});
+
+test("a recovered cross-host review rejoins fair slot order before admission", async () => {
+  const f = ownerRevisionFixture();
+  f.store.setMeta("paused", false);
+  f.store.setMeta("hostId", "host");
+  f.store.setMeta("pool", [
+    {
+      profileId: "reviewer",
+      enabled: true,
+      group: "reviewers",
+      roles: ["reviewer"],
+      weight: 1,
+      scopes: ["general"],
+    },
+  ]);
+  const { engine, adapter } = f.buildEngine();
+  engine.hostAvailable = () => true;
+  engine.resolveHostAdapter = () => adapter;
+  try {
+    f.store.setMeta("globalLimit", 1);
+    const review = f.store.insert(
+      f.reviewInput.submission,
+      "host",
+      "handoff",
+      f.planningCommit,
+      {
+        entrypoint: "review",
+        reviewEntry: {
+          ...reviewRecord(),
+          verifiedHead: f.oldHead,
+          verifiedBase: f.planningCommit,
+          planningCommit: f.planningCommit,
+        },
+        originHostId: "bb:origin",
+        workspaceId: "workspace",
+        directory: f.workspace,
+        branch: "feature/external",
+        prHead: f.oldHead,
+        queuePriority: 0,
+      },
+    );
+    engine.note(review.id, "Waiting for origin host bb:origin", "origin_busy");
+    const earlier = f.store.insert(
+      {
+        ...f.reviewInput.submission,
+        submissionId: "earlier-slot",
+        title: "Earlier slot",
+      },
+      "host",
+      "handoff",
+      f.planningCommit,
+      { queuePriority: 10 },
+    );
+    await engine.withHost("host", () =>
+      engine.dispatchOwner.dispatchReviewEntry(f.store.task(review.id)),
+    );
+    const waiting = f.store.task(review.id);
+    assert.equal(waiting.phase, "queued");
+    assert.equal(
+      waiting.reviewEntry?.dispatchBase,
+      null,
+      "proof does not bypass the earlier reservation",
+    );
+    assert.match(
+      engine.resolution.slotAdmissionReason(waiting),
+      /Waiting behind 1 earlier queued reservations/,
+    );
+    f.store.update(earlier.id, { phase: "done" });
+    await engine.withHost("host", () =>
+      engine.dispatchOwner.dispatchReviewEntry(f.store.task(review.id)),
+    );
+    assert.equal(f.store.task(review.id).phase, "awaiting_review");
+    assert.equal(
+      f.store.task(review.id).reviewEntry?.dispatchBase,
+      f.planningCommit,
+    );
+  } finally {
+    await engine.stop();
+    f.close();
   }
 });
