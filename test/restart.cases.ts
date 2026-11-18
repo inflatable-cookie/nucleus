@@ -19,7 +19,6 @@ import { REVIEW_AUTHORIZATION_REQUIRED, reviewCheckpointPathFor, writeReviewChec
 import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
 import { runFenceRefusal } from '../core/intake/run-settlement';
 import { recoveryEffects } from '../core/recovery/recovery-effects';
-import { supersedeIdleRunInTx } from '../core/recovery/fence-settlement';
 import { restartShape } from '../core/verbs/owner-restart';
 import { taskProgressDigest } from '../core/recovery/coordinator-report';
 import { runPrompt } from '../core/dispatch/prompts';
@@ -948,29 +947,7 @@ test("a real lost restart settles after its old worker is isolated and released"
       agentActive: false,
       lastAgentStatus: "idle",
     });
-    const old = runSchema.parse({
-      id: "worker-run",
-      taskId: f.taskId,
-      role: "revision",
-      generation: 1,
-      head,
-      base,
-      agentId: "worker-agent",
-      workspaceId: "workspace",
-      profile: f.profiles.worker,
-      status: "running",
-      createdAt: new Date(Date.now() - 60_000).toISOString(),
-      lastObservedAt: null,
-      active: false,
-      idleSince: null,
-      completion: null,
-      released: false,
-    });
-    f.store.event(
-      f.taskId,
-      "owner_stopped",
-      JSON.stringify({ runIds: [old.id] }),
-    );
+    f.store.event(f.taskId, 'owner_stopped', JSON.stringify({ runIds: ['worker-run'] }));
     let sends = 0;
     f.setNotify(async () => {
       sends++;
@@ -997,8 +974,6 @@ test("a real lost restart settles after its old worker is isolated and released"
     assert.equal(operation.state, "needs_attention");
     assert.equal(operation.effect?.status, "uncertain");
     assert.equal(f.events("owner_control").length, 0);
-    // Recreate the target's retained run record without altering the operation history.
-    f.store.putRun(old);
     const offered = () =>
       f
         .next()
@@ -1009,26 +984,26 @@ test("a real lost restart settles after its old worker is isolated and released"
         );
     assert.equal(offered(), true);
     await new Promise((resolve) => setTimeout(resolve, 10));
-    const replacement = runSchema.parse({
-      ...old,
-      id: "replacement",
-      agentId: "replacement-agent",
-      createdAt: new Date().toISOString(),
-    });
-    f.store.putRun(replacement);
-    f.store.update(f.taskId, {
-      runId: replacement.id,
-      agentId: replacement.agentId,
-    });
-    assert.equal(
-      offered(),
-      true,
-      "a still-live original target keeps the conflict",
-    );
-    assert.equal(
-      supersedeIdleRunInTx(f.store, f.taskId, old, "Observed old worker idle"),
-      true,
-    );
+    const alternate = profile('worker-alt', 'test/worker-alt', ['worker']);
+    f.engine.profiles = [f.profiles.worker, f.profiles.reviewer, f.profiles.coord, alternate];
+    f.store.setMeta('pool', [
+      { profileId: f.profiles.worker.id, enabled: true, group: f.profiles.worker.id, roles: ['worker'], weight: 1, scopes: ['general'] },
+      { profileId: alternate.id, enabled: true, group: alternate.id, roles: ['worker'], weight: 1, scopes: ['general'] },
+    ]);
+    f.observations.set('worker-agent', { ...f.observations.get('worker-agent')!, status: 'error', error: 'Connection error' });
+    f.store.update(f.taskId, { failoverReason: 'agent_errored: Connection error' });
+    assert.equal(offered(), true, 'the original worker remains the target before retirement');
+    await f.engine.recoverExhaustedWorkers();
+    assert.equal(f.store.run('worker-run'), null, 'initial workers have no Run row');
+    assert.equal(f.current().retiredWorkers.some(worker => worker.runId === 'worker-run' && worker.agentId === 'worker-agent'), true);
+    assert.equal(f.events('worker_replacement').length, 1);
+    assert.notEqual(f.current().agentId, 'worker-agent');
+    const replaced = f.current();
+    f.store.update(f.taskId, { retiredWorkers: [] });
+    assert.equal(offered(), true, 'a replacement without the target retirement stays unknown');
+    f.store.update(f.taskId, { retiredWorkers: replaced.retiredWorkers, agentId: 'worker-agent' });
+    assert.equal(offered(), true, 'a replacement using the old agent is not isolated');
+    f.store.update(f.taskId, { agentId: replaced.agentId });
     assert.equal(offered(), false);
     f.engine.reconcileBlockedEffects(f.taskId);
     assert.equal(f.events("operation_superseded").length, 1);

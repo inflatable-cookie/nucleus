@@ -3,7 +3,7 @@ import type { QueueOperation } from '../../shared/operations';
 import type { VerifiedEnclosingOperation } from '../planning/enclosing-operation';
 import { classifyReviewPublication, reviewPublicationKey, type ReviewPublicationClassification } from '../review/review-publication';
 import { reviewCheckpointRefusal } from '../review/review-continuation';
-import { operationIdForKey, operationInputHash, type Store } from '../store/store';
+import { digest, operationIdForKey, operationInputHash, type Store } from '../store/store';
 import { provenAbsentCreation } from './absent-creation/decisions';
 
 /**
@@ -299,13 +299,41 @@ export function observedHostEffectEvidence(store: Store, task: Task, operation: 
   if (owner) return `owner settlement at ${owner.at}: ${owner.reason}`;
   const accepted = Date.parse(operation.createdAt);
   const boundary = Date.parse(operation.settledAt ?? '');
+  const started = Date.parse(operation.startedAt ?? '');
   const events = store.eventsAll(task.id);
-  const payload = store.operationPayload(operation.id) as { control?: { action?: string; taskId?: string; version?: number; role?: string; caller?: string; reason?: string } } | null;
+  const payload = store.operationPayload(operation.id) as { control?: {
+    action?: string; taskId?: string; version?: number; role?: string; instruction?: string;
+  } } | null;
   const control = payload?.control;
-  if (Number.isFinite(accepted) && Number.isFinite(boundary) && boundary >= accepted && operation.expectedVersion && task.version > operation.expectedVersion
+  if (Number.isFinite(accepted) && Number.isFinite(started) && Number.isFinite(boundary)
+      && started >= accepted && boundary >= started && operation.expectedVersion && task.version > operation.expectedVersion
       && control?.action === 'restart' && control.taskId === task.id && control.version === operation.expectedVersion
       && operation.id === operationIdForKey(operation.key) && operation.inputHash === operationInputHash(payload)
       && operation.attempts > 0 && operation.effect.status === 'uncertain') {
+    // The initial worker has no Run row. Its durable pre-send intent names
+    // the exact target; replacement records that identity before launching the
+    // new worker and retains cleanup of the old thread.
+    if ((!control.role || control.role === 'worker') && (!operation.hostId || operation.hostId === task.hostId)) {
+      for (const event of events) {
+        if (event.kind !== 'owner_restart_instruction_intent'
+            || !(Date.parse(event.at) >= started && Date.parse(event.at) <= boundary)) continue;
+        try {
+          const target = JSON.parse(event.detail) as { runId?: string; agentId?: string; messageId?: string };
+          if (!target.runId || !target.agentId) continue;
+          const instruction = control.instruction?.trim()
+            || 'Continue the existing task under its current approved instruction source and within its approved scope.';
+          const messageId = `ns-owner-restart-${digest(`${task.id}:${target.runId}:${digest(instruction)}`).slice(0, 32)}`;
+          if (target.messageId !== messageId) continue;
+          const retired = task.retiredWorkers.some(worker => worker.runId === target.runId && worker.agentId === target.agentId);
+          const replacement = events.some(item => item.kind === 'worker_replacement'
+            && Date.parse(item.at) >= boundary && item.id > event.id);
+          const isolated = task.runId && task.agentId && task.runId !== target.runId && task.agentId !== target.agentId
+            && !store.runs(task.id).some(run => !run.released && run.agentId === target.agentId);
+          if (retired && replacement && isolated)
+            return `restart target ${target.runId} on ${target.agentId} was retired by worker replacement; its cleanup remains owed`;
+        } catch { /* malformed intent is not target evidence */ }
+      }
+    }
     const roles: Record<string, Run['role'][]> = { worker: ['revision'], reviewer: ['reviewer'],
       coordinator: ['recovery', 'closeout'], executor: ['executor'] };
     const role = control.role ? roles[control.role] : ['reviewer', 'revision', 'verification', 'closeout', 'recovery', 'executor'] as Run['role'][];
@@ -313,7 +341,12 @@ export function observedHostEffectEvidence(store: Store, task: Task, operation: 
       const runs = store.runs(task.id);
       const roleRuns = runs.filter(run => role.includes(run.role));
       const incompleteHistory = roleRuns.some(run => !Number.isFinite(Date.parse(run.createdAt)));
-      const candidates = roleRuns.filter(run => Date.parse(run.createdAt) <= boundary);
+      // A run positively released before acceptance was no longer a possible
+      // target; it must not need a second release after this attempt.
+      const releasedBefore = (run: Run) => run.released && events.some(event => Date.parse(event.at) < accepted
+        && (event.kind === 'run_released_from_recorded_completion' && event.detail === `${run.role} ${run.id}`
+          || event.kind === 'run_released_from_observed_liveness' && event.detail.startsWith(`${run.role} ${run.id}: `)));
+      const candidates = roleRuns.filter(run => Date.parse(run.createdAt) <= boundary && !releasedBefore(run));
       const untrackedWorker = (!control.role || control.role === 'worker') && task.runId && !runs.some(run => run.id === task.runId);
       const released = (run: Run) => run.released && Boolean(run.agentId) && ['finished', 'superseded'].includes(run.status)
         && !(task.checkpoints.intent?.status === 'pending' && task.checkpoints.intent.runId === run.id)

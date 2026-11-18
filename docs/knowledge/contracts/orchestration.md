@@ -2316,7 +2316,9 @@ movement invalidates source approval and preserves the normal readiness gates.
   occurrence obsolete. A later workspace binding alone does not identify its
   target. An exact owner settlement, a verified merge of the task's exact head,
   or an isolated later binding after all possible recorded targets are observed
-  released can supersede it. The original operation stays uncertain; a durable
+  released can supersede it. An initial worker's restart intent binds its run and
+  agent to the later worker-retirement record; older runs already released before
+  the attempt need no second release. The original operation stays uncertain; a durable
   occurrence-bound event records the supersession without permitting replay.
   A released run's exact delivery-observer settlement also survives a stale run
   row. Its separate workspace and participant cleanup obligations remain.

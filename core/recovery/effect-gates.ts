@@ -14,9 +14,12 @@ function authenticatedCompletion(store: Store, run: Run): boolean {
     .get(completion.eventId, run.taskId, run.id) as { hash?: string; response?: string } | undefined;
   try {
     if (!receipt || JSON.parse(receipt.response ?? '').accepted !== true) return false;
-    const withoutReview = { ...completion }; delete withoutReview.reviewId;
-    const withoutComment = { ...completion }; delete withoutComment.reviewCommentId;
-    const withoutBoth = { ...withoutReview }; delete withoutBoth.reviewCommentId;
+    const withoutReview = { ...completion };
+    delete withoutReview.reviewId;
+    const withoutComment = { ...completion };
+    delete withoutComment.reviewCommentId;
+    const withoutBoth = { ...withoutReview };
+    delete withoutBoth.reviewCommentId;
     return [completion, withoutReview, withoutComment, withoutBoth]
       .some(value => digest(JSON.stringify(value)) === receipt.hash);
   } catch { return false; }

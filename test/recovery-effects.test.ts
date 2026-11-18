@@ -12,7 +12,7 @@ import { Store, digest, operationIdForKey, operationInputHash } from '../core/st
 import { classifyReviewPublication, reviewPublicationKey } from '../core/review/review-publication';
 import { recoveryEffects, blockingRecoveryEffects, blockingRecoveryEffectsRefusal, isBlockingRecoveryEffect, blockingTaskOperations, observedHostEffectEvidence, reviewEffectWait, reviewEffectWaitRefusal } from '../core/recovery/recovery-effects';
 import { settleObservedHostEffectOperations } from '../core/recovery/effect-gates';
-import { supersedeIdleRunInTx } from '../core/recovery/fence-settlement';
+import { releaseRunFromRecordedCompletion, supersedeIdleRunInTx } from '../core/recovery/fence-settlement';
 import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
 import { verifyEnclosingOperation } from '../core/planning/enclosing-operation';
 import { taskControlOperation } from '../core/verbs/task-control-key';
@@ -500,3 +500,36 @@ for (const [role, runRole] of [['reviewer', 'reviewer'], ['worker', 'revision'],
     } finally { store.close(); }
   });
 }
+
+
+test('an earlier released reviewer round does not hold a later displaced restart', async () => {
+  const { store, task } = fixture();
+  try {
+    const historical = reviewRun(store, task, { id: 'past-round', released: false, status: 'finished',
+      completion: reviewCompletion(task.id, 'past-round', 'changes_required') });
+    releaseRunFromRecordedCompletion(store, task.id, historical);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    const target = reviewRun(store, task, { id: 'restart-target', agentId: 'target-agent', status: 'running', released: false });
+    const input = taskControlInputSchema.parse({ taskId: task.id, version: store.task(task.id).version,
+      action: 'restart', role: 'reviewer', reason: 'Continue', caller: 'owner' });
+    const { key, payload } = taskControlOperation(input), id = operationIdForKey(key), accepted = new Date().toISOString();
+    store.putOperation(queueOperationSchema.parse({ id, key, kind: 'task_control', inputHash: operationInputHash(payload),
+      state: 'needs_attention', taskId: task.id, expectedVersion: input.version, createdAt: accepted,
+      startedAt: accepted, settledAt: accepted, attempts: 1, diagnostic: 'Transport', result: null,
+      effect: { kind: 'task_control', target: 'restart', intentAt: accepted, status: 'uncertain', result: null, resultAt: null } }), payload);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    store.update(task.id, { reason: 'A new review binding' });
+    reviewRun(store, task, { id: 'next-round', agentId: 'new-agent', status: 'running', released: false, createdAt: new Date().toISOString() });
+    const offered = () => ownerTaskNext(collectOwnerVerbFacts(store, store.task(task.id))).verbs.some(view =>
+      view.verb === 'retry_effect' && JSON.stringify(view.args ?? {}).includes(`operation.${id}`));
+    assert.equal(blockingTaskOperations(store, store.task(task.id)).length, 1, 'the real target is still live');
+    assert.equal(offered(), true);
+    assert.equal(supersedeIdleRunInTx(store, task.id, target, 'Observed target idle'), true);
+    assert.equal(blockingTaskOperations(store, store.task(task.id)).length, 0);
+    assert.equal(offered(), false);
+    settleObservedHostEffectOperations(store, task.id);
+    assert.equal(store.eventsAll(task.id).filter(event => event.kind === 'operation_superseded').length, 1);
+    settleObservedHostEffectOperations(store, task.id);
+    assert.equal(store.eventsAll(task.id).filter(event => event.kind === 'operation_superseded').length, 1);
+  } finally { store.close(); }
+});
