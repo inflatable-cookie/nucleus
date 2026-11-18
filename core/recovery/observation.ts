@@ -33,7 +33,11 @@ import {
 import type { Resolution } from "../resolution";
 import { settlementHeld, startsNoRuns } from "../closeout/queue-drain";
 import { provenAbsentCreation } from "./absent-creation/decisions";
-import { HostTransportFault, hostFaultHost } from "../host/adapter-routing";
+import {
+  HostTransportFault,
+  hostFaultHost,
+  recordHostFailure,
+} from "../host/adapter-routing";
 
 export type ObservationContext = Pick<
   Resolution,
@@ -159,6 +163,7 @@ export class Observation {
         } catch (error) {
           const failedHost = hostFaultHost(error);
           if (!failedHost) throw error;
+          if (recordHostFailure(this.adapter, failedHost, error)) continue;
           for (const run of candidates)
             if (run.hostId === failedHost)
               this.resolution.transportDeferred(
@@ -634,12 +639,14 @@ export class Observation {
           await this.resolution.remindStoppedRun(this.store.task(task.id), run);
         }
       } catch (error) {
+        const failedHost = hostFaultHost(error);
+        if (failedHost && recordHostFailure(this.adapter, failedHost, error))
+          continue;
         if (
           this.resolution.paused() ||
           dispatchBlocked(this.store.task(task.id))
         )
           continue;
-        const failedHost = hostFaultHost(error);
         if (failedHost) {
           this.resolution.transportDeferred(
             this.store.task(task.id),

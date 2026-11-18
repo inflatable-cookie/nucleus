@@ -15,7 +15,11 @@ import { startsNoRuns } from "../closeout/queue-drain";
 import { now } from "../store/store";
 import { HostPass } from "./host-pass";
 import { SweepMaintenance } from "./sweep-maintenance";
-import { HostTransportFault, hostFaultHost } from "../host/adapter-routing";
+import {
+  HostTransportFault,
+  hostFaultHost,
+  recordHostFailure,
+} from "../host/adapter-routing";
 import { archiveRetiredErroredAgents } from "../workspaces/retired-agent-archive";
 
 /**
@@ -195,31 +199,11 @@ export class Sweep {
         error instanceof HostTransportFault
           ? error
           : new HostTransportFault(hostId, error);
-      this.engine.markAuditHostUnavailable(hostId);
-      this.engine.hostOutages.observe(hostId, false);
+      recordHostFailure(this.engine.adapter, hostId, fault);
       this.engine.store.setMeta(
         "hostPassError",
         `${hostId}/${name}: ${fault.message}`.slice(0, 2000),
       );
-      for (const task of this.engine.store.tasks()) {
-        if (
-          task.hostId !== hostId ||
-          ["done", "cancelled"].includes(task.phase)
-        )
-          continue;
-        this.engine.hostWait(task);
-        if (
-          this.engine.store.task(task.id).resolution.stop?.reason ===
-          "host_unavailable"
-        )
-          this.engine.noteStepFailure(task.id, fault);
-        else
-          this.engine.store.event(
-            task.id,
-            "host_transport_fault",
-            fault.message,
-          );
-      }
     }
   }
   sweepOnce(): Promise<void> {
@@ -418,20 +402,29 @@ export class Sweep {
           // A connected registry claim can still fail at the transport boundary.
           // Keep this host's tasks on the existing outage wait for this pass, and
           // continue the fleet sweep without turning the host loss into engineError.
-          this.engine.markAuditHostUnavailable(host);
-          this.engine.hostOutages.observe(host, false);
+          recordHostFailure(this.engine.adapter, host, error);
           continue;
         }
         // Nothing is read from a host that is away: the wait itself is the stop.
-        if (!passed) continue;
+        if (!passed) {
+          recordHostFailure(
+            this.engine.adapter,
+            host,
+            new Error(`Host ${host} is unavailable`),
+          );
+          continue;
+        }
         // Spec 066 R1/R6 (C2): the pass's reading of one host, shared with that
         // host's task visits. A step that failed at the transport boundary means the
         // host did not answer, even though the registry still claims the connection:
         // the reading is the failure, not the claim. So this host's tasks keep their
         // host-scoped wait for the pass, and no other host's visit sees it.
         if (!passed.transportAnswered) {
-          this.engine.markAuditHostUnavailable(host);
-          this.engine.hostOutages.observe(host, false);
+          recordHostFailure(
+            this.engine.adapter,
+            host,
+            new Error(`Host ${host} did not answer its pass`),
+          );
         } else {
           // Never-started queue heads are absent from the lifecycle window, but
           // their host wait must settle before they can reserve a slot again.

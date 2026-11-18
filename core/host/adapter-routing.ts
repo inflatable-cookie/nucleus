@@ -9,8 +9,21 @@ import {
   type OriginReviewHost,
 } from "../review/origin-review-adapter";
 import type { Adapter, AgentObservation, OriginAgent } from "./adapter";
+import type { Engine } from "../engine";
 import { isTransportFailure } from "../../shared/transport";
 const faultHosts = new WeakMap<object, string>();
+const HOST_FAILURE = Symbol("host-failure");
+
+/** Record one host's outage through its engine, including queued tasks. */
+export function recordHostFailure(
+  adapter: Adapter,
+  hostId: string,
+  error: unknown,
+): boolean {
+  const record = Reflect.get(adapter, HOST_FAILURE);
+  if (typeof record !== "function") return false;
+  return record(hostId, error) === true;
+}
 
 /** A transport failure attributed at the adapter boundary, before host context is lost. */
 export class HostTransportFault extends Error {
@@ -113,6 +126,52 @@ export function routeHostAdapter(
   };
   const proxy: Adapter = new Proxy(fallback, {
     get: (selectedFallback, property) => {
+      if (property === HOST_FAILURE)
+        return (hostId: string, error: unknown) => {
+          const engine = owner as unknown as Engine;
+          if (
+            !engine.markAuditHostUnavailable ||
+            !engine.hostOutages ||
+            !engine.hostWait ||
+            !engine.noteStepFailure ||
+            !engine.store.tasks
+          )
+            return false;
+          const fault =
+            error instanceof HostTransportFault
+              ? error
+              : new HostTransportFault(hostId, error);
+          engine.markAuditHostUnavailable(hostId);
+          engine.hostOutages.observe(hostId, false);
+          for (const task of engine.store.tasks()) {
+            if (
+              task.hostId !== hostId ||
+              ["done", "cancelled"].includes(task.phase)
+            )
+              continue;
+            engine.hostWait(task);
+            if (
+              engine.store.task(task.id).resolution.stop?.reason ===
+              "host_unavailable"
+            )
+              engine.noteStepFailure(task.id, fault);
+            else if (
+              !engine.store
+                .events(task.id)
+                .some(
+                  (event) =>
+                    event.kind === "host_transport_fault" &&
+                    event.detail === fault.message,
+                )
+            )
+              engine.store.event(
+                task.id,
+                "host_transport_fault",
+                fault.message,
+              );
+          }
+          return true;
+        };
       const id = owner.activeHostId;
       const selected = id ? owner.resolveHostAdapter(id) : selectedFallback;
       if (!selected)

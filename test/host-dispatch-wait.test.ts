@@ -132,6 +132,7 @@ test("real admission gives one free slot to healthy hosts while a BB host waits,
   for (const refusal of [
     "Transport not connected: host bb:offline is unavailable",
     "plugin build mismatch",
+    "registry offline",
   ]) {
     const store = new Store(":memory:");
     const worker = profile("worker");
@@ -168,7 +169,8 @@ test("real admission gives one free slot to healthy hosts while a BB host waits,
     engine.profileCatalogKnown = () => true;
     engine.profilesFor = () => [worker];
     let bbOnline = false;
-    engine.hostAvailable = () => true;
+    engine.hostAvailable = (host) =>
+      !(refusal === "registry offline" && host === "bb:offline" && !bbOnline);
     const refusing = fakeAdapter({
       ...adapter,
       validate: async () => {
@@ -224,7 +226,7 @@ test("real admission gives one free slot to healthy hosts while a BB host waits,
     const paseo = add("paseo:primary", "paseo");
     const t3 = add("t3code:primary", "t3");
     try {
-      await engine.dispatchQueued();
+      await engine.auditPass(true);
       assert.equal(
         store.task(bb.id).resolution.stop?.reason,
         "host_unavailable",
@@ -267,6 +269,17 @@ test("real admission gives one free slot to healthy hosts while a BB host waits,
         "no duplicate launch",
       );
       store.update(bb2.id, { phase: "done", agentActive: false });
+      bbOnline = false;
+      const direct = add("bb:offline", "direct");
+      await engine.dispatchTask(direct.id, false);
+      assert.equal(
+        store.task(direct.id).resolution.stop?.reason,
+        "host_unavailable",
+        "direct dispatch records the host wait",
+      );
+      store.update(direct.id, { phase: "done" });
+      bbOnline = true;
+      engine.resetAuditHostAvailability();
       const invalid = add("paseo:invalid", "invalid");
       const after = add("t3code:primary", "after");
       const invalidAdapter = fakeAdapter({

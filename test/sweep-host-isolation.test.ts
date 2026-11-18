@@ -5,6 +5,7 @@ import { Engine } from "../core/engine";
 import type { Adapter } from "../core/host";
 import { submission, profile } from "./support/fakes";
 import { HostTransportFault } from "../core/host/adapter-routing";
+import { runSchema } from "../shared/contracts";
 
 const OFFLINE_HOST = "bb:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const HEALTHY_HOST = "paseo:primary";
@@ -324,6 +325,63 @@ test("a host fault preserves an owner stop through outage and return", async (t)
     f.store.task(f.offline.id).resolution.stop?.detail,
     "Awaiting proof decision",
   );
+});
+
+test("an observation fault preserves an owner stop and holds the host until the next pass", async (t) => {
+  let online = false;
+  const adapter = {
+    observe: async (id: string) => {
+      if (!online)
+        throw new Error("Transport not connected: observation failed");
+      return {
+        id,
+        workspaceId: "workspace",
+        status: "running",
+        active: true,
+        permissions: false,
+        error: "",
+      };
+    },
+  };
+  const f = fixture(t, adapter);
+  const task = f.store.update(f.offline.id, { workspaceId: "workspace" });
+  f.engine.resolution.recordStop(
+    task,
+    "awaiting_proof",
+    "Awaiting proof decision",
+  );
+  const run = runSchema.parse({
+    id: "review-run",
+    taskId: task.id,
+    hostId: OFFLINE_HOST,
+    role: "reviewer",
+    generation: 1,
+    head: "6".repeat(40),
+    base: "7".repeat(40),
+    agentId: "reviewer",
+    workspaceId: "workspace",
+    profile: null,
+    status: "running",
+    createdAt: new Date().toISOString(),
+    lastObservedAt: null,
+    active: null,
+    idleSince: null,
+    released: false,
+    completion: null,
+  });
+  f.store.putRun(run);
+  f.engine.resolution.observe = (inventory, taskId, released) =>
+    f.engine.resolution.observation.observe(inventory, taskId, released);
+  const first = await f.engine.auditPass(true);
+  assert.equal(first.fault, null);
+  assert.equal(f.store.task(task.id).resolution.stop?.reason, "awaiting_proof");
+  assert.ok(f.store.task(task.id).resolution.hostWait);
+  assert.equal(f.processed.includes(`quantum:${task.id}`), false);
+  assert.ok(f.processed.includes(`quantum:${f.healthy.id}`));
+  online = true;
+  await f.engine.auditPass(true);
+  assert.equal(f.store.task(task.id).resolution.hostWait, null);
+  assert.equal(f.store.task(task.id).resolution.stop?.reason, "awaiting_proof");
 });
 
 test("a disconnected host does not skip another host’s retired-agent cleanup", async (t) => {

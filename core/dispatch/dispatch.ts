@@ -20,7 +20,11 @@ import { FirstDispatch } from "./first-dispatch";
 import { ReviewEntryAdmission } from "./review-entry-admission";
 import { ProofOnlyLaunch } from "./proof-only-launch";
 import { WorkspacePressure } from "./workspace-pressure";
-import { HostTransportFault, hostFaultHost } from "../host/adapter-routing";
+import {
+  HostTransportFault,
+  hostFaultHost,
+  recordHostFailure,
+} from "../host/adapter-routing";
 
 export {
   dispatchGate,
@@ -138,40 +142,18 @@ export class Dispatch {
             const hostId = hostFaultHost(error);
             if (!hostId) throw error;
             failedHosts.add(hostId);
-            const fault =
-              error instanceof HostTransportFault
-                ? error
-                : new HostTransportFault(hostId, error);
-            this.engine.markAuditHostUnavailable(hostId);
-            this.engine.hostOutages.observe(hostId, false);
-            for (const task of this.store.tasks()) {
-              if (
-                task.hostId !== hostId ||
-                ["done", "cancelled"].includes(task.phase)
-              )
-                continue;
-              this.engine.hostWait(task);
-              if (
-                this.store.task(task.id).resolution.stop?.reason ===
-                "host_unavailable"
-              )
-                this.engine.noteStepFailure(task.id, fault);
-              else
-                this.store.event(
-                  task.id,
-                  "host_transport_fault",
-                  fault.message,
-                );
-            }
+            recordHostFailure(this.adapter, hostId, error);
           })
           .then(() => {
             // FirstDispatch can record the transport wait itself before returning.
             const task = this.store.task(candidate.id);
             if (
               task.hostId &&
-              task.resolution.stop?.reason === "host_unavailable"
-            )
+              (task.resolution.hostWait ||
+                task.resolution.stop?.reason === "host_unavailable")
+            ) {
               failedHosts.add(task.hostId);
+            }
             if (task.phase === "needs_attention") failedTasks.add(task.id);
           });
       for (;;) {
@@ -217,8 +199,25 @@ export class Dispatch {
     this.pressure.arm();
   }
   /** Dispatch shares ownership with task controls and hook reconciliation. */
-  dispatchTask(taskId: string, dispatchHeld: boolean): Promise<void> {
-    return this.first.dispatch(taskId, dispatchHeld);
+  async dispatchTask(taskId: string, dispatchHeld: boolean): Promise<void> {
+    try {
+      await this.first.dispatch(taskId, dispatchHeld);
+    } catch (error) {
+      if (!(error instanceof HostTransportFault)) throw error;
+      recordHostFailure(this.adapter, error.hostId, error);
+      return;
+    }
+    const task = this.store.task(taskId);
+    if (
+      task.hostId &&
+      (task.resolution.hostWait ||
+        task.resolution.stop?.reason === "host_unavailable")
+    )
+      recordHostFailure(
+        this.adapter,
+        task.hostId,
+        new Error(`Host ${task.hostId} is unavailable`),
+      );
   }
   /** Proof-only dispatch always enters its executor/release-GO route, never the worker launcher. */
   launchProofOnly(
