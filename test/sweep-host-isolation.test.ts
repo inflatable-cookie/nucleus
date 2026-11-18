@@ -119,3 +119,26 @@ test('a transport failure inside the failover pass answers for one host and leav
   assert.ok(f.processed.includes(`quantum:${f.healthy.id}`), 'the other host\'s tasks are still visited');
   assert.ok(f.processed.includes(`dispatch:${f.healthy.id}`), 'and dispatched');
 });
+
+test('a stalled host pass yields to other hosts and does not start a duplicate pass', async t => {
+  let release!: () => void;
+  const stalled = new Promise<void>(resolve => { release = resolve; });
+  let starts = 0;
+  const f = fixture(t, {
+    reconcileReportedSettlements: async () => {
+      if (f.engine.activeHostId === OFFLINE_HOST) { starts++; await stalled; }
+    },
+  });
+  // The production bound is the task quantum bound; shorten it for this test.
+  (f.engine as unknown as { sweep: { hostPassBoundMs: number } }).sweep.hostPassBoundMs = 10;
+  try {
+    const first = await f.engine.auditPass(true);
+    assert.equal(first.fault, null);
+    assert.equal(f.store.getMeta('engineError'), '');
+    assert.equal(f.store.task(f.offline.id).resolution.stop?.reason, 'host_unavailable');
+    assert.ok(f.processed.includes(`quantum:${f.healthy.id}`));
+    assert.ok(f.processed.includes(`dispatch:${f.healthy.id}`));
+    await f.engine.auditPass(true);
+    assert.equal(starts, 1, 'the unresolved pass retains ownership');
+  } finally { release(); }
+});

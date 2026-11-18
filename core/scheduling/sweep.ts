@@ -31,6 +31,10 @@ export type SweepContext = Pick<Engine, 'adapter' | 'applyDeferredOwnerVerbs' | 
 
 export class Sweep {
   private hostPassOwner: HostPass | null = null;
+  /** A timed-out host pass retains ownership until it actually settles. */
+  private readonly pendingHostPasses = new Map<string, Promise<Awaited<ReturnType<HostPass['run']>>>>();
+  /** The same bound used for a task quantum; replaceable in tests. */
+  hostPassBoundMs = TASK_QUANTUM_BOUND_MS;
   private maintenanceOwner: SweepMaintenance | null = null;
   /** The one owner of one host's audit steps: settlement, presentation and observation reads. */
   get hostPass(): HostPass {
@@ -71,6 +75,22 @@ export class Sweep {
   maxSweepWindows = MAX_SWEEP_WINDOWS;
   readonly sweepStats = { windows: 0, swept: 0, tasks: 0, lastPassAt: null as string | null };
   constructor(readonly engine: SweepContext) {}
+  private async runHostPass(host: string): Promise<Awaited<ReturnType<HostPass['run']>> | null> {
+    let pending = this.pendingHostPasses.get(host);
+    if (!pending) {
+      pending = Promise.resolve().then(() => this.engine.withHost(host, () => this.hostPass.run(host)));
+      this.pendingHostPasses.set(host, pending);
+      void pending.finally(() => {
+        if (this.pendingHostPasses.get(host) === pending) this.pendingHostPasses.delete(host);
+      }).catch(() => {});
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([pending, new Promise<null>(resolve => {
+        timer = setTimeout(() => resolve(null), this.hostPassBoundMs);
+      })]);
+    } finally { clearTimeout(timer); }
+  }
   sweepOnce(): Promise<void> {
     if (this.engine.stopped) return Promise.resolve();
     void this.engine.flushPrerequisiteReleases().catch(() => {});
@@ -186,13 +206,15 @@ export class Sweep {
       const hosts = new Set([...this.engine.hostIds(), ...this.engine.store.tasks().flatMap(task => task.hostId ? [task.hostId] : [])]);
       for (const host of hosts) {
         let passed: Awaited<ReturnType<HostPass['run']>> | null;
+        let available = false;
         try {
           passed = await this.engine.withHost(host, async () => {
             // Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): one durable
             // record of when this host went away, kept whether or not it has tasks.
-            this.engine.hostOutages.observe(host, this.engine.hostAvailable(host));
-            if (!this.engine.hostAvailable(host)) return null;
-            return this.hostPass.run(host);
+            available = this.engine.hostAvailable(host);
+            this.engine.hostOutages.observe(host, available);
+            if (!available) return null;
+            return this.runHostPass(host);
           });
         } catch (error) {
           if (!isTransportFailure(error)) throw error;
@@ -204,7 +226,12 @@ export class Sweep {
           continue;
         }
         // Nothing is read from a host that is away: the wait itself is the stop.
-        if (!passed) continue;
+        if (!passed) {
+          this.engine.markAuditHostUnavailable(host);
+          this.engine.hostOutages.observe(host, false);
+          if (available) this.engine.store.setMeta('hostPassError', `${host}: host pass did not answer within ${this.hostPassBoundMs} ms`);
+          continue;
+        }
         // Spec 066 R1/R6 (C2): the pass's reading of one host, shared with that
         // host's task visits. A step that failed at the transport boundary means the
         // host did not answer, even though the registry still claims the connection:
