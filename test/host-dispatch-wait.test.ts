@@ -5,6 +5,7 @@ import { Store } from '../core/store/store';
 import { submissionSchema, summarizeTask } from '../shared/contracts';
 import type { Adapter } from '../core/host/adapter';
 import { fakeAdapter, profile, submission } from './support/fakes';
+import { HostTransportFault } from '../core/host/adapter-routing';
 
 test('an offline or unknown task host waits without starting a workspace effect', async () => {
   const store = new Store(':memory:');
@@ -54,6 +55,7 @@ test('new dispatch for a project on an offline host waits with host_unavailable'
 });
 
 test('real admission gives one free slot to healthy hosts while a BB host waits, then resumes BB', async () => {
+ for (const refusal of ['Transport not connected: host bb:offline is unavailable', 'plugin build mismatch']) {
   const store = new Store(':memory:');
   const worker = profile('worker');
   const launches: string[] = [];
@@ -70,7 +72,9 @@ test('real admission gives one free slot to healthy hosts while a BB host waits,
   engine.profileCatalogKnown = () => true;
   engine.profilesFor = () => [worker];
   let bbOnline = false;
-  engine.hostAvailable = host => host !== 'bb:offline' || bbOnline;
+  engine.hostAvailable = () => true;
+  const refusing = new Proxy(adapter, { get() { throw new HostTransportFault('bb:offline', new Error(refusal)); } });
+  engine.resolveHostAdapter = host => host === 'bb:offline' && !bbOnline ? refusing : adapter;
   engine.enqueueTitle = () => {};
   engine.launchAgent = async task => {
     launches.push(task.id);
@@ -89,10 +93,12 @@ test('real admission gives one free slot to healthy hosts while a BB host waits,
     assert.deepEqual(launches, [paseo.id, t3.id], 'T3 takes the released slot');
     store.update(t3.id, { phase: 'done', agentActive: false });
     bbOnline = true;
+    engine.resetAuditHostAvailability();
     engine.hostWait(store.task(bb.id));
     await engine.dispatchQueued();
     assert.deepEqual(launches, [paseo.id, t3.id, bb.id], 'BB starts once on return');
     await engine.dispatchQueued();
     assert.deepEqual(launches, [paseo.id, t3.id, bb.id], 'no duplicate launch');
   } finally { await engine.stop(); store.close(); }
+ }
 });

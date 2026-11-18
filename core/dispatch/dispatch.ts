@@ -81,7 +81,7 @@ export class Dispatch {
           if (task.hostId && task.resolution.stop?.reason === 'host_unavailable') failedHosts.add(task.hostId);
         });
       for (;;) {
-        const skipped = this.store.tasks().filter(task => task.hostId && failedHosts.has(task.hostId)).length;
+        const skipped = failedHosts.size ? this.store.tasks().filter(task => task.hostId && failedHosts.has(task.hostId)).length : 0;
         const candidates = queuedDispatchOrder(this.store.readyQueueHeads(limit + 2 + skipped, repoPath, dispatchHeld))
           .filter(task => !attempted.has(task.id) && (!task.hostId || !failedHosts.has(task.hostId)));
         const { start } = queuedVisits(candidates, this.store.activeCapacityTasks().filter(task => occupiesSlot(task)),
