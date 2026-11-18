@@ -2769,8 +2769,7 @@ movement invalidates source approval and preserves the normal readiness gates.
 - Kept controls: `set_routing` and `exclude_worker`; holds,
   dependencies (`set_dependencies`, `set_prerequisite_wait`), `set_lane`,
   `amend_brief`, `promote` and cancellation keep their own actions. Narrow
-  aliases were deleted (Tom, 2026-10-15 and 2026-10-19,
-  [retired](../retired.toml)). The named-agent `coordinator` action was
+  aliases were deleted (Tom, 2026-10-15 and 2026-10-19). The named-agent `coordinator` action was
   deleted 2026-11-06; `route role=coordinator` assigns.
 - A checkpoint continuation is `restart role=reviewer`. On a blocked reviewed
   task, `restart role=reviewer` with an `instruction` returns it to fresh review

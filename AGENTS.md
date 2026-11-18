@@ -13,7 +13,6 @@ stand in for it; Tom, 2026-10-20).
 
 - Current state: `docs/README.md`
 - Knowledge (one owner per fact): `docs/knowledge/README.md`
-- Retired concepts, which must not come back: `docs/knowledge/retired.toml`
 - Open questions: `docs/knowledge/questions.md`
 - Writing style for docs, PRs and reports: `docs/knowledge/contracts/writing-style.md`
 
@@ -25,7 +24,6 @@ next with `plan.get` (see the Nucleus skill, `nucleus`).
 
 - Agents use the installed `nucleus` command from any directory (Tom, 2026-11-16); repository CLI files are internal.
 
-- `effigy qa:retired-concepts` — check for new retired references against the recorded baseline.
 - `effigy tasks` — task inventory; `effigy test --plan` shows the test shape.
 - `effigy check` — typecheck and publication gate.
 - `effigy qa:docs` — docs checks.

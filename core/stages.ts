@@ -6,8 +6,7 @@ import { owningDocumentPathsSchema } from "../shared/contracts";
 /**
  * Spec 043 (c): the declared review-stage declaration reader.
  *
- * Declared-stage execution was retired on 2026-10-06 (Tom; `retired.toml`,
- * `declared-step-execution`) and its engine code was removed on 2026-10-13.
+ * Declared-stage execution was retired on 2026-10-06 (Tom) and its engine code was removed on 2026-10-13.
  * This module keeps only what history needs: the schema that validates a
  * brief's `queue.stages`/`queue.subjectSets`/`queue.goal` frontmatter, so new
  * declarations are still refused precisely and historical declarations stay
