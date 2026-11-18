@@ -6,6 +6,7 @@ import { submissionSchema, summarizeTask } from "../shared/contracts";
 import type { Adapter } from "../core/host/adapter";
 import { fakeAdapter, profile, submission } from "./support/fakes";
 import { HostTransportFault } from "../core/host/adapter-routing";
+import { record as reviewRecord } from "./support/review-entry-fixture";
 
 test("an offline or unknown task host waits without starting a workspace effect", async () => {
   const store = new Store(":memory:");
@@ -302,5 +303,132 @@ test("real admission gives one free slot to healthy hosts while a BB host waits,
       await engine.stop();
       store.close();
     }
+  }
+});
+
+test("a refused BB origin holds only its review while Paseo and T3 use real admission", async () => {
+  const store = new Store(":memory:");
+  const worker = profile("worker");
+  const launches: string[] = [];
+  let originReads = 0;
+  const healthy = fakeAdapter({
+    validate: async () => "a".repeat(40),
+    createWorkspace: async (task) => ({
+      id: `ws-${task.id}`,
+      directory: `/synthetic/${task.id}`,
+    }),
+    originAgent: async () => null,
+    inspectReviewEntry: async () => {
+      throw Error("origin proof must run first");
+    },
+  });
+  const bb = fakeAdapter({
+    ...healthy,
+    originAgent: async () => {
+      originReads++;
+      throw Error("Transport not connected: host bb:origin is unavailable");
+    },
+  });
+  const engine = new Engine(store, healthy, 0);
+  store.setMeta("paused", false);
+  store.setMeta("globalLimit", 2);
+  store.setMeta("pool", [
+    {
+      profileId: worker.id,
+      enabled: true,
+      group: "workers",
+      weight: 1,
+      scopes: ["general"],
+    },
+  ]);
+  store.setProfiles([
+    {
+      id: worker.id,
+      name: worker.name,
+      provider: worker.provider,
+      model: worker.model,
+      notes: "",
+    },
+  ]);
+  engine.profiles = [worker];
+  engine.profileCatalogKnown = () => true;
+  engine.profilesFor = () => [worker];
+  engine.resolution.select = (() => ({
+    profile: worker,
+  })) as unknown as typeof engine.resolution.select;
+  engine.hostAvailable = () => true;
+  engine.resolveHostAdapter = (host) => (host === "bb:origin" ? bb : healthy);
+  engine.hostIds = () => ["bb:origin", "paseo:primary", "t3code:primary"];
+  engine.lastHookCleanupAt = Date.now();
+  engine.migrateProjectOwnersToPlanners = async () => {};
+  engine.resumePausedStops = async () => {};
+  engine.recoverExhaustedWorkers = async () => {};
+  engine.applyDeferredOwnerVerbs = async () => {};
+  engine.deliverPendingBriefAmendments = async () => {};
+  engine.continueAwaitingReviewers = async () => {};
+  engine.lifecycle.enqueuePass = async () => {};
+  engine.resolution.observe = async () => {};
+  engine.scheduleTaskQuantum = async () => {};
+  for (const method of [
+    "deliverNotices",
+    "deliverQueuedMessages",
+    "resumeAskQuestions",
+    "raiseOperatorQuestions",
+    "delegateNativeQuestions",
+    "resumeResponsibleAnsweredQuestions",
+    "deliverHoldNotices",
+    "deliverDecisionNotices",
+    "deliverDrainNotices",
+    "deliverHostOutageNotices",
+  ] as const)
+    engine.resolution[method] = async () => {};
+  engine.enqueueTitle = () => {};
+  engine.launchAgent = async (task) => {
+    launches.push(task.id);
+    store.update(task.id, {
+      phase: "working",
+      agentId: `agent-${task.id}`,
+      agentActive: true,
+    });
+  };
+  const review = store.insert(
+    submission({ title: "review", repoPath: "/synthetic/review" }),
+    "paseo:primary",
+    "handoff",
+    "a".repeat(40),
+    {
+      entrypoint: "review",
+      reviewEntry: reviewRecord(),
+      originHostId: "bb:origin",
+      workspaceId: "workspace",
+      directory: "/synthetic/review-workspace",
+    },
+  );
+  const paseo = store.insert(
+    submission({ title: "paseo", repoPath: "/synthetic/paseo" }),
+    "paseo:primary",
+    "handoff",
+    "a".repeat(40),
+  );
+  const t3 = store.insert(
+    submission({ title: "t3", repoPath: "/synthetic/t3" }),
+    "t3code:primary",
+    "handoff",
+    "a".repeat(40),
+  );
+  try {
+    const pass = await engine.auditPass(true);
+    assert.equal(pass.fault, null);
+    assert.equal(store.getMeta("engineError"), "");
+    assert.ok(originReads >= 1);
+    assert.equal(store.task(review.id).resolution.stop?.reason, "origin_busy");
+    assert.match(store.task(review.id).reason, /bb:origin/);
+    assert.equal(store.task(review.id).resolution.hostWait, null);
+    assert.deepEqual(new Set(launches), new Set([paseo.id, t3.id]));
+    assert.equal(engine.taskHostAvailable(store.task(paseo.id)), true);
+    assert.equal(engine.taskHostAvailable(store.task(t3.id)), true);
+  } finally {
+    await engine.stop();
+    store.close();
   }
 });

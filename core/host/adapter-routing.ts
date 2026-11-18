@@ -154,11 +154,6 @@ export function routeHostAdapter(
             engine.hostWait(task);
             if (!fault) continue;
             if (
-              engine.store.task(task.id).resolution.stop?.reason ===
-              "host_unavailable"
-            )
-              engine.noteStepFailure(task.id, fault);
-            else if (
               !engine.store
                 .events(task.id)
                 .some(

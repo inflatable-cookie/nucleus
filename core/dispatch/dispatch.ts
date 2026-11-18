@@ -155,6 +155,8 @@ export class Dispatch {
               failedHosts.add(task.hostId);
             }
             if (task.phase === "needs_attention") failedTasks.add(task.id);
+            if (task.resolution.stop?.reason === "origin_busy")
+              failedTasks.add(task.id);
           });
       for (;;) {
         const skipped = failedHosts.size
@@ -205,6 +207,13 @@ export class Dispatch {
     } catch (error) {
       if (!(error instanceof HostTransportFault)) throw error;
       recordHostFailure(this.adapter, error.hostId, error);
+      const task = this.store.task(taskId);
+      if (task.hostId !== error.hostId && task.originHostId === error.hostId)
+        this.engine.note(
+          taskId,
+          `Waiting for origin host ${error.hostId}: ${error.message}`,
+          "origin_busy",
+        );
       return;
     }
     const task = this.store.task(taskId);

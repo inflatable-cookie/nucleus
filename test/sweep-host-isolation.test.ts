@@ -262,7 +262,9 @@ test("a host fault in a fleet step leaves other hosts running and clears on retu
     "host_unavailable",
   );
   assert.match(
-    f.store.task(f.offline.id).resolution.stop?.detail ?? "",
+    f.store
+      .eventsAll(f.offline.id)
+      .find((event) => event.kind === "host_transport_fault")?.detail ?? "",
     /Transport not connected/,
   );
   assert.ok(f.processed.includes(`quantum:${f.healthy.id}`));
@@ -442,7 +444,9 @@ test("queued dispatch contains one host fault and retains other starts", async (
     "host_unavailable",
   );
   assert.match(
-    f.store.task(f.offline.id).resolution.stop?.detail ?? "",
+    f.store
+      .eventsAll(f.offline.id)
+      .find((event) => event.kind === "host_transport_fault")?.detail ?? "",
     /plugin build mismatch/,
   );
 });
@@ -484,4 +488,25 @@ test("an unavailable first queue head gives the free slot to a healthy host", as
   };
   await f.engine.dispatchOwner.dispatchQueued();
   assert.deepEqual(attempted, [f.offline.id, f.healthy.id]);
+});
+
+test("a repeated host fault keeps one stable wait and diagnostic", async (t) => {
+  const f = fixture(t);
+  f.engine.hostAvailable = (host) => host !== OFFLINE_HOST;
+  f.engine.resolution.deliverNotices = async () => {
+    throw new HostTransportFault(
+      OFFLINE_HOST,
+      new Error("Transport not connected: BB unavailable"),
+    );
+  };
+  await f.engine.auditPass(true);
+  const stop = f.store.task(f.offline.id).resolution.stop;
+  const events = f.store.eventsAll(f.offline.id);
+  await f.engine.auditPass(true);
+  assert.deepEqual(f.store.task(f.offline.id).resolution.stop, stop);
+  assert.deepEqual(f.store.eventsAll(f.offline.id), events);
+  assert.equal(
+    events.filter((event) => event.kind === "host_transport_fault").length,
+    1,
+  );
 });

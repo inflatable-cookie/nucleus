@@ -441,7 +441,11 @@ export function slotRequestDecision(
   if (
     candidate.phase === "queued" &&
     (candidate.resolution.hostWait ||
-      candidate.resolution.stop?.reason === "host_unavailable")
+      candidate.resolution.stop?.reason === "host_unavailable" ||
+      (candidate.entrypoint === "review" &&
+        candidate.originHostId &&
+        candidate.originHostId !== candidate.hostId &&
+        candidate.resolution.stop?.reason === "origin_busy"))
   )
     return false;
   if (mergeHeld(candidate) && candidate.phase === "verifying") return false;
