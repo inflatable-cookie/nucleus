@@ -21,6 +21,7 @@ import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import type { Leads } from "../planning/leads";
 import type { HostFacade } from "../host/host-facade";
 import { leadRepository } from "../planning/lead-repository";
+import type { IdentitySource } from "../../shared/host-kind";
 
 /** Planning dependencies; lifecycle and operation scheduling remain runtime-owned. */
 export interface PlanningContext {
@@ -117,7 +118,7 @@ export class RuntimePlanning {
       throw new Error(
         `Lead ${submitted.id} has a different brief; use lead.edit, then submit again`,
       );
-    let lead = await this.checkLeadAfterMutation(submitted);
+    let lead = await this.checkLeadAfterMutation(submitted, request.identitySource);
     if (lead.checkOperationId) {
       const operation = await this.context.engine.awaitOperation(
         lead.checkOperationId,
@@ -234,7 +235,13 @@ export class RuntimePlanning {
     return this.context.leads.promote(input);
   }
   async checkLead(
-    input: { id: string; repository?: string; baseBranch?: string },
+    input: {
+      id: string;
+      repository?: string;
+      baseBranch?: string;
+      hostId?: string;
+      identitySource?: IdentitySource;
+    },
     acceptance = true,
   ) {
     await this.context.started;
@@ -244,28 +251,44 @@ export class RuntimePlanning {
     if (input.baseBranch && input.baseBranch !== lead.baseBranch)
       throw new Error("Edit the lead's baseBranch before checking it");
     const repository = this.selectLeadRepository(lead, input.repository);
-    const checked = await this.checkDraft(
-      {
-        id: this.sourceBriefId(
-          "lead",
-          lead.id,
+    // An explicit hostId is validated and selected as lead.submit selects it. Without one the check
+    // runs on the host its origin resolves to; an ambiguous host selection is a submission-time refusal.
+    const hostId = input.hostId
+      ? this.context.engine.selectIngressHost(
+          input.hostId,
+          repository.path,
           repository.origin,
-          briefDigest(lead.body),
-        ),
-        text: lead.body,
-        repoPath: repository.path,
-        baseBranch: lead.baseBranch,
-        originAgentId: this.latestLeadAuthor(lead),
-        attachedLanes: lead.lanes,
-      },
-      acceptance,
-    );
+          input.identitySource?.hostId,
+        )
+      : undefined;
+    const request = {
+      id: this.sourceBriefId(
+        "lead",
+        lead.id,
+        repository.origin,
+        briefDigest(lead.body),
+      ),
+      text: lead.body,
+      repoPath: repository.path,
+      baseBranch: lead.baseBranch,
+      originAgentId: this.latestLeadAuthor(lead),
+      attachedLanes: lead.lanes,
+      ...(input.identitySource ? { originIdentity: input.identitySource } : {}),
+    };
+    const checked = hostId
+      ? await this.context.engine.withHost(hostId, () =>
+          this.checkDraft(request, acceptance),
+        )
+      : await this.checkDraft(request, acceptance);
     return this.context.store.recordLeadCheck(lead.id, lead.version, {
       ...checked.check,
       baseBranch: lead.baseBranch,
     });
   }
-  private async checkLeadAfterMutation(lead: Lead): Promise<Lead> {
+  private async checkLeadAfterMutation(
+    lead: Lead,
+    identitySource?: IdentitySource,
+  ): Promise<Lead> {
     if (!hasBriefFrontmatter(lead.body)) return lead;
     if (lead.checkOperationId) {
       const existing = this.context.store.operation(lead.checkOperationId);
@@ -293,6 +316,7 @@ export class RuntimePlanning {
       digest,
       repository: repository.origin,
       baseBranch: lead.baseBranch,
+      ...(identitySource ? { identitySource } : {}),
     });
     // A completed failed check is evidence of that attempt, not an answer to a
     // later submission. A pending check still joins above; a retry gets a new
@@ -389,6 +413,9 @@ export class RuntimePlanning {
       baseBranch: request.baseBranch,
       originAgentId: this.latestLeadAuthor(lead),
       attachedLanes: lead.lanes,
+      ...(request.identitySource
+        ? { originIdentity: request.identitySource }
+        : {}),
     });
     this.context.store.recordLeadCheck(
       lead.id,

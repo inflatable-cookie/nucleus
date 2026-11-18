@@ -23,6 +23,8 @@ export class PlanningSubmission {
   private get store() { return this.engine.store; }
   private get hooks() { return this.engine.hooks; }
   async performSubmit(submission: Submission, requirePushedPlanning = false, promotion?: {source:{kind:"lead"|"papercut";id:string;repository:string;digest:string;expectedSource:string}; initial?: Partial<Task>; identitySource?: IdentitySource}, hostId?: string, hostSelection?: QueueOperation['hostSelection']): Promise<OperationResult> {
+    // A reference-form prerequisite becomes its UUID before identity, replay and insertion see it.
+    submission = this.store.resolveSubmissionDependencies(submission);
     const originForSelection = promotion?.source.repository ?? await repositoryOrigin(submission.repoPath).catch(() => null);
     hostId ??= this.engine.selectIngressHost(submission.hostId, submission.repoPath, originForSelection, (promotion?.identitySource ?? submission.originIdentity)?.hostId);
     // A replay after a lost response resolves the durable submission identity

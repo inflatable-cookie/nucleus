@@ -194,6 +194,15 @@ export const STAMPING_RULES = [
       return stamp(input, 'setBy', context);
     },
   },
+  // lead.check resolves its origin host from the calling thread's proven identity, as lead.submit does.
+  {
+    matches: (method, input) => method === 'lead.check' && isRecord(input),
+    apply: async (input, context) => {
+      const identitySource = await context.callingThreadSource(await context.callingThread());
+      if (identitySource) input.identitySource = identitySource;
+      return input;
+    },
+  },
   {
     matches: method => method === 'lead.approve',
     apply: async (input, context) => {

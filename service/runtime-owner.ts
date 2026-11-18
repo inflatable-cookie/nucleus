@@ -1578,7 +1578,13 @@ export class QueueRuntime {
     return this.planning.promoteLead(input);
   }
   async checkLead(
-    input: { id: string; repository?: string; baseBranch?: string },
+    input: {
+      id: string;
+      repository?: string;
+      baseBranch?: string;
+      hostId?: string;
+      identitySource?: IdentitySource;
+    },
     acceptance = true,
   ) {
     return this.planning.checkLead(input, acceptance);

@@ -39,7 +39,9 @@ export const leadReopen = defineRpc({ name: "lead.reopen", input: z.object({ id:
 /** Hand promotion to a question or knowledge change; task and draft targets arrive with one-step promotion. */
 export const leadPromote = defineRpc({ name: "lead.promote", input: z.object({ id: z.string().min(1), kind: z.enum(["question", "knowledge"]), reference: z.string().trim().min(1).max(4000) }).strict(), output: leadSchema });
 
-export const leadCheck = defineRpc({ name: "lead.check", input: z.object({ id: z.string().min(1), repository: z.string().optional(), baseBranch: gitBranchNameSchema.optional() }).strict(), output: leadSchema });
+/** The check resolves its origin host the way lead.submit does: the same optional hostId and the calling thread's identity source. */
+export const leadCheck = defineRpc({ name: "lead.check", input: z.object({ id: z.string().min(1), repository: z.string().optional(), baseBranch: gitBranchNameSchema.optional(),
+  hostId: z.string().trim().min(1).max(240).optional(), identitySource: sourcePromotionInputSchema.shape.identitySource }).strict(), output: leadSchema });
 
 export const leadApprove = defineRpc({ name: "lead.approve", input: z.object({ id: z.string().min(1), version: z.number().int().positive(), digest: briefDigestSchema, approver: z.string().min(1), note: z.string().default(""), relayed: z.boolean().default(true) }).strict(), output: leadSchema });
 

@@ -86,8 +86,15 @@ line; see [SKILL.md](../SKILL.md)):
    `digest` and `check`. A lead that already holds the idea gets the brief
    through `lead.edit` instead.
 2. **Revise:** `lead.edit` with `id`, the current `version`, the complete new
-   `body` and `author`. Any edit clears approval. A version that fails its
-   check can't be approved; `lead.get` shows versions, digests and checks.
+   `body` and `author`. Any edit clears approval and the check, and Queue
+   checks the edited version. `lead.submit` checks the current version again
+   too, so a submission after a fix never returns the old failed check. A
+   version that fails its check can't be approved; `lead.get` shows versions,
+   digests and checks.
+   `lead.check` with `id` re-checks the current version on demand. It takes an
+   optional `hostId` with the same meaning as on `lead.submit`, and the calling
+   thread's identity, which Nucleus stamps from the CLI, decides the origin host
+   of a brief that notifies its origin, as at promotion.
 3. **Approve:** only after the operator has authorized this brief.
    `lead.approve` takes the latest `id`, `version` and `digest`, `approver`
    (your agent ID), `relayed: true` and a `note` naming the authorization

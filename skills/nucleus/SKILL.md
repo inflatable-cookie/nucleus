@@ -255,7 +255,8 @@ Nucleus rechecks the receipt and current evidence and refuses when proof is
 missing or conflicts. This call never resends the control or releases a hold;
 an old diagnostic or an empty timeline is not a receipt.
 
-`queue:` routing: `dependsOn` (all must reach `done` first), `lane` (one key) or
+`queue:` routing: `dependsOn` (task UUIDs or references such as `owner/repo#072`;
+all must reach `done` first), `lane` (one key) or
 `lanes` (a list, never both), `scope` (`general`/`complex`), `complexity`
 (**required**: `very_low`, `low`, `medium`, `high` or `very_high`), `preferredProfileId`,
 `requirePreferred`, `thinkingOptionId`, `skipPRReview`, `siblings: false`,
@@ -1131,7 +1132,9 @@ JSON
 ```
 
 `next` offers `set_dependencies` before dispatch. Its `dependsOn` list replaces
-the old list; `[]` clears it. Prerequisite references work as well as UUIDs.
+the old list; `[]` clears it. Prerequisite references work as well as UUIDs, in
+lead checks, `lead.submit`, promotion and `set_dependencies`; each is stored as the
+prerequisite's UUID.
 
 `next` lists `release` and `keep_hold` for each hold fence, with a summary
 naming the holder and its condition; release only once that condition is met.

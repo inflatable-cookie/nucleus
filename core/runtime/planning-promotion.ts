@@ -187,13 +187,14 @@ ${cut!.impact}${cut!.fix?`\n\n## Fix\n\n${cut!.fix}`:""}
     if (lead && !this.leadApprovalMatches(lead,digest)) {
       if (input.board) throw new Error("Approve this lead before promotion");
       // Inside an accepted promotion: its acceptance already settled the complexity requirement.
-      const refreshed=await this.planning.checkLead({id:lead.id,repository:repository.origin,baseBranch:lead.baseBranch},false);
+      const refreshed=await this.planning.checkLead({id:lead.id,repository:repository.origin,baseBranch:lead.baseBranch,...(input.identitySource?{identitySource:input.identitySource}:{})},false);
       if (!refreshed.check?.ok) throw new Error(`Promotion check failed: ${refreshed.check?.message}`);
       this.planning.approveLead({id:lead.id,version:lead.version,digest,approver:input.agent!,note:input.note,relayed:true});
     }
     const expectedApproval=lead?this.context.store.lead(lead.id).approval:null;
     const checked=await this.planning.checkDraft({id:this.planning.sourceBriefId(kind,input.id,repository.origin,digest,lead?.version),text,
-      repoPath:repository.path,baseBranch:lead?.baseBranch??"main",originAgentId:lead?this.planning.latestLeadAuthor(lead):(input.board?"operator (board)":input.agent!),attachedLanes:(lead??cut)!.lanes},false);
+      repoPath:repository.path,baseBranch:lead?.baseBranch??"main",originAgentId:lead?this.planning.latestLeadAuthor(lead):(input.board?"operator (board)":input.agent!),attachedLanes:(lead??cut)!.lanes,
+      ...(input.identitySource?{originIdentity:input.identitySource}:{})},false);
     if (lead) this.context.store.recordLeadCheck(lead.id,lead.version,{...checked.check,baseBranch:lead.baseBranch});
     if (!checked.check.ok) throw new Error(`Promotion check failed: ${checked.check.message}`);
     const promotedDeclaration=parseNorthstarDocument(text,"draft").queue;

@@ -13,6 +13,7 @@ import {
 import { validateSubmission } from "../git/index";
 import { assertBbSubmissionIngressAvailable } from "../planning/submission-routing";
 import type { PlanningContext } from "./planning";
+import type { IdentitySource } from "../../shared/host-kind";
 
 /** Owns draft and handoff preparation before the runtime accepts planning work. */
 export class PlanningSubmission {
@@ -40,6 +41,7 @@ export class PlanningSubmission {
       baseBranch: string;
       originAgentId: string;
       attachedLanes?: string[];
+      originIdentity?: IdentitySource;
     },
     acceptance = true,
   ) {
@@ -54,7 +56,10 @@ export class PlanningSubmission {
         originAgentId: input.originAgentId,
         draftId: input.id,
       });
-      const submission = prepared.submission;
+      // The caller's proven identity decides the origin host of a check, as it does for a submission.
+      const submission = input.originIdentity
+        ? { ...prepared.submission, originIdentity: input.originIdentity }
+        : prepared.submission;
       const missingComplexity = acceptance
         ? complexityRefusal(submission)
         : null;
@@ -116,6 +121,9 @@ export class PlanningSubmission {
     const prepared = await captureHandoff(input);
     if (input.hostId)
       prepared.submission = { ...prepared.submission, hostId: input.hostId };
+    prepared.submission = this.context.store.resolveSubmissionDependencies(
+      prepared.submission,
+    );
     if (input.dryRun) {
       const origin = await repositoryOrigin(prepared.submission.repoPath).catch(
         () => null,

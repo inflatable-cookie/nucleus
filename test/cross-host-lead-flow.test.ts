@@ -284,3 +284,30 @@ test('a proven caller keeps its ticket: caller.resolve repeats return the same p
     assert.equal(resolvedAgain.participantTicket, record!.path, 'the same ticket path comes back on every resolution');
   } finally { await f.close(); }
 });
+
+test('lead.check resolves the origin host from the calling thread, as lead.submit does; an ambiguous identity still refuses', async () => {
+  const f = await fixture();
+  try {
+    // A second Paseo-kind host is registered and offline. A bare planner identity cannot rule it out,
+    // so its origin is unknown unless the caller's own identity source proves the Paseo host.
+    const primary = f.runtime.hostRegistry.get(paseoHost)!;
+    const token = f.runtime.hostRegistry.connect('paseo:secondary', 'paseo-secondary-endpoint', { adapter: primary.adapter, admission: f.runtime.admission });
+    f.runtime.hostRegistry.disconnect('paseo:secondary', token);
+    const body = leadBody.replace('Cross-host lead', 'Origin lead');
+    const draft = await f.runtime.addLead({ repositories: [{ origin: f.repo, path: f.repo }], title: 'Origin lead', body, baseBranch: 'main', lanes: [], tags: [], author: 'planner' });
+    const ambiguous = await f.runtime.checkLead({ id: draft.id });
+    assert.equal(ambiguous.check?.ok, false);
+    assert.match(ambiguous.check?.message ?? '', /Origin host is unknown or ambiguous/);
+    const proven = await f.runtime.checkLead({ id: draft.id, identitySource: { agent: 'planner', hostId: paseoHost } });
+    assert.equal(proven.check?.ok, true, proven.check?.message);
+    // Another thread's identity proves nothing about this lead's origin.
+    const other = await f.runtime.checkLead({ id: draft.id, identitySource: { agent: 'someone-else', hostId: paseoHost } });
+    assert.equal(other.check?.ok, false);
+    assert.match(other.check?.message ?? '', /Origin host is unknown or ambiguous/);
+    // lead.submit from the same proven identity reaches promotion on the same origin host.
+    const submitted = await f.runtime.submitLead({ repository: { origin: f.repo, path: f.repo }, title: 'Origin lead', body, agent: 'planner',
+      identitySource: { agent: 'planner', hostId: paseoHost }, note: 'Tom authorized this fixture', baseBranch: 'main', lanes: [], tags: [] });
+    assert.ok('taskId' in submitted, JSON.stringify(submitted));
+    assert.equal(f.runtime.store.task(submitted.taskId).originHostId, paseoHost);
+  } finally { await f.close(); }
+});

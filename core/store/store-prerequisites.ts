@@ -10,6 +10,8 @@ export interface PrerequisiteServices extends ReviewEntryFacts {
   transaction<T>(fn: () => T): T;
   task(id: string): Task;
   taskReference(id: string): { title: string; phase: string; removedAt?: string | null } & Record<string, unknown>;
+  /** A prerequisite named by UUID or task reference, refused by name when unknown. */
+  dependencyTaskId(identity: string): string;
   update(id: string, change: Partial<Task>, kind?: string, detail?: string, expected?: number): Task;
   dependencyWait(task: Pick<Task, "dependsOn">): string;
   putNotice(notice: import("../../shared/contracts").Notice): void;
@@ -30,11 +32,15 @@ export class StorePrerequisites {
       && !task.agentId && !task.completion && !task.resolution.currentRunId;
     if (!beforeDispatch && !this.services.reviewEntryBeforeFirstRun(task))
       throw new Error("Dependencies can only change before dispatch begins");
-    for (const id of dependsOn) {
+    // The stored list names each prerequisite by UUID, whichever accepted form the caller used.
+    const resolved: string[] = [];
+    for (const named of dependsOn) {
+      const id = this.services.dependencyTaskId(named);
       if (id === task.id) throw new Error("A task cannot depend on itself");
       let dependency: ReturnType<PrerequisiteServices["taskReference"]>;
-      try { dependency = this.services.taskReference(id); } catch { throw new Error(`Prerequisite task does not exist: ${id}. Submit prerequisites first.`); }
-      if (dependency.removedAt && dependency.phase !== "done") throw new Error(`Prerequisite was removed before completion: ${dependency.title} (${id})`);
+      try { dependency = this.services.taskReference(id); } catch { throw new Error(`Prerequisite task does not exist: ${named}. Submit prerequisites first.`); }
+      if (dependency.removedAt && dependency.phase !== "done") throw new Error(`Prerequisite was removed before completion: ${dependency.title} (${named})`);
+      resolved.push(id);
       const pending = [id], visited = new Set<string>();
       while (pending.length) {
         const candidate = pending.pop()!;
@@ -44,7 +50,7 @@ export class StorePrerequisites {
         try { pending.push(...this.services.task(candidate).dependsOn); } catch { /* Purged completed history cannot point back to this live task. */ }
       }
     }
-    const normalized = [...dependsOn].sort();
+    const normalized = resolved.sort();
     if (JSON.stringify(normalized) === JSON.stringify(task.dependsOn)) return task;
     const reason = this.services.dependencyWait({ dependsOn: normalized }) || DISPATCH_WAIT_REASON;
     return this.services.update(task.id, { dependsOn: normalized, reason }, "dependencies_changed", `${task.dependsOn.join(", ") || "none"} → ${normalized.join(", ") || "none"}; requested by ${actor}`, task.version);
