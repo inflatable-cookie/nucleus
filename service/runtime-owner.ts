@@ -577,6 +577,7 @@ export class QueueRuntime {
               endpoint: z.string().url(),
               bearer: z.string().min(1),
               probeThreadId: z.string().min(1).optional(),
+              sessionId: z.string().min(1).optional(),
             })
             .optional(),
           uncertainMergeRetryMs: z

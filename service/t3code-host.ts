@@ -17,6 +17,7 @@ export interface T3ConnectionConfig {
   endpoint: string;
   bearer: string;
   probeThreadId?: string;
+  sessionId?: string;
 }
 
 interface NativeConnection {
@@ -124,6 +125,7 @@ export class T3HostConnection {
   status(): {
     id: string | null;
     connected: boolean;
+    sessionId: string | null;
     error: string;
     version: string;
     threadShapePending: boolean;
@@ -138,6 +140,7 @@ export class T3HostConnection {
       lastProtocolError: this.lastProtocolError,
       id: this.lastIdentity,
       connected: this.session !== null,
+      sessionId: this.session ? (this.#config.sessionId ?? null) : null,
       error: this.errorValue,
       version: this.versionValue,
       threadShapePending:
