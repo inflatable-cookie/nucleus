@@ -77,14 +77,18 @@ export class EscalationSettlement {
         || (selected.choice.verb === 'restart' || selected.choice.verb === 'route') && selected.choice.args.role === 'worker');
       if (source?.role === 'reviewer' && (workerChoice || selected.kind === 'other' && control.action === 'work')) {
         const deliverDirection = async (agentId = source.agentId) => {
-          const send = this.resolution.adapter.steerOrNotify ?? this.resolution.adapter.enqueueMessage;
-          if (!agentId || !send) throw Error('This host cannot steer or queue the reviewer direction');
+          if (!agentId) throw Error('The reviewer direction has no recipient');
           const prior = this.store.eventsAll(t.id).findLast(event => ['reviewer_escalation_direction_intent', 'reviewer_escalation_direction_sent', 'reviewer_escalation_direction_refused'].includes(event.kind) && event.detail.startsWith(`${id}:`));
           if (prior && prior.kind !== 'reviewer_escalation_direction_refused')
             throw Error('Reviewer direction delivery is already recorded or uncertain; inspect it before retrying');
           this.store.event(t.id, 'reviewer_escalation_direction_intent', `${id}: ${agentId}`);
           try {
-            await this.resolution.onTaskHost(current, () => send.call(this.resolution.adapter, agentId, `ns-escalation-direction-${id}`, `Owner direction for your review: ${answer}`));
+            await this.resolution.onTaskHost(current, () => {
+              const adapter = this.resolution.adapter;
+              const send = adapter.steerOrNotify ?? adapter.enqueueMessage;
+              if (!send) throw new ProvenPreSendRefusalError('This host cannot steer or queue the reviewer direction');
+              return send.call(adapter, agentId, `ns-escalation-direction-${id}`, `Owner direction for your review: ${answer}`);
+            });
           } catch (error) {
             if (error instanceof ProvenPreSendRefusalError) this.store.event(t.id, 'reviewer_escalation_direction_refused', `${id}: ${error.message}`);
             throw error;

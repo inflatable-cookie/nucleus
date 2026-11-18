@@ -950,6 +950,25 @@ test("reviewer-side free text and worker-labelled choices preserve the live revi
   }
 });
 
+test('reviewer escalation answers use the reviewer host rather than the planner host', async () => {
+  const f = fixture({ responsible: true });
+  try {
+    await f.engine.wake();
+    const run = f.run(), task = f.current(), id = 'cross-host-review', answer = 'Let the reviewer finish';
+    assert.equal(run.role, 'reviewer');
+    const delivered: string[] = [], wrongHost: string[] = [];
+    const reviewerAdapter = { ...f.adapter, steerOrNotify: async (agentId: string) => { delivered.push(agentId); } };
+    const plannerAdapter = { ...f.adapter, steerOrNotify: async (agentId: string) => { wrongHost.push(agentId); } };
+    f.engine.resolveHostAdapter = hostId => hostId === task.hostId ? reviewerAdapter : plannerAdapter;
+    f.store.event(task.id, 'planner_escalation', `${id}: cause ${'c'.repeat(64)}; run ${run.id}; question pending`);
+    f.store.event(task.id, 'planner_escalation_payload', `${id}: ${JSON.stringify({ runId: run.id, source: 'reviewer' })}`);
+    const refusal = await f.engine.withHost('planner-other-host', () => f.engine.resolution.ladder.applyDelegatedEscalationAnswer(task.id, id, `ns-escalation-${id}`, answer, 'planner planner-1'));
+    assert.equal(refusal, null);
+    assert.deepEqual(delivered, [run.agentId]);
+    assert.deepEqual(wrongHost, []);
+  } finally { await f.close(); }
+});
+
 test('a completed reviewer escalation queues its direction for the next reviewer role', async () => {
   const f = fixture({ responsible: true });
   try {

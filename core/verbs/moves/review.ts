@@ -47,10 +47,13 @@ export async function moveToReview(engine: Engine, input: ReviewMoveInput, opera
   if (input.prNumber !== undefined && input.prNumber !== prNumber) throw Error(evidence
     ? `Move to review must use PR #${prNumber}, which the current ready result names`
     : `Move to review must use the retained task PR #${prNumber}`);
-  const currentReader = input.fresh !== true ? runsBefore.findLast(run => run.role === 'reviewer' && !run.released && !run.completion && run.ordinaryDetached
-    && (run.id === task.resolution.currentRunId || !task.resolution.currentRunId && run.replacedAt && run.agentId === task.resolution.reviewerAgentId)) : null;
-  const pr = currentReader ? await verifyReviewerPr(engine, task, currentReader, prNumber) : await adapter.verifyPr(task, prNumber);
   if (input.fresh) await requireReviewerReplacement(engine, task, input.version);
+  // A refused move must not reattach a checkout still owned by a detached
+  // reviewer. Keep this proof read-only even when fresh replacement was asked;
+  // the launch path owns any later checkout handoff after admission.
+  const currentReader = runsBefore.findLast(run => run.role === 'reviewer' && !run.released && !run.completion && run.ordinaryDetached
+    && (run.id === task.resolution.currentRunId || !task.resolution.currentRunId && run.replacedAt && run.agentId === task.resolution.reviewerAgentId));
+  const pr = currentReader ? await verifyReviewerPr(engine, task, currentReader, prNumber, input.fresh !== true) : await adapter.verifyPr(task, prNumber);
   if (evidence && pr.head !== evidence.head)
     throw Error(`PR #${prNumber} is at ${pr.head}, not the head ${evidence.head} its current ready result reports; nothing was bound`);
   // Reapply only a verdict pending at the verified current head. A newer PR

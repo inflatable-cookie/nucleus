@@ -6,13 +6,13 @@ import { taskPrNumber } from '../forge';
 import { ordinaryReviewSource } from '../review/ordinary-review';
 
 /** Observe the canonical PR without reattaching an ordinary detached review checkout. */
-export async function verifyReviewerPr(engine: Engine, task: Task, run: Run, number: number) {
+export async function verifyReviewerPr(engine: Engine, task: Task, run: Run, number: number, requireRunHead = true) {
   if (!run.ordinaryDetached) return engine.adapter.verifyPr(task, number);
   if (!engine.adapter.verifyPrIdentity) throw Error('Ordinary review canonical PR observation unavailable');
   await ordinaryReviewSource(task, run.head, true);
   const pr = await engine.adapter.verifyPrIdentity(task, number);
   await ordinaryReviewSource(task, run.head, true);
-  if (pr.url !== task.prUrl || pr.head !== run.head) throw Error('Open PR, task and reviewer heads do not match');
+  if (pr.url !== task.prUrl || requireRunHead && pr.head !== run.head) throw Error('Open PR, task and reviewer heads do not match');
   return pr;
 }
 

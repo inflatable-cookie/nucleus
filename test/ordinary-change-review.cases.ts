@@ -745,6 +745,28 @@ test('a detached reviewer redelivers an accepted verdict without reattaching the
   } finally { process.env.PATH = oldPath; f.close(); }
 });
 
+test('refusing a fresh reviewer preserves the active detached checkout', async () => {
+  const f = fixture();
+  try {
+    await f.engine.wake(); await f.report(f.current(), 'changes_required');
+    const run = await authorRevision(f, 1);
+    assert.equal(run.ordinaryDetached, true);
+    assert.equal(runGit(f.workspace, 'branch', '--show-current'), '');
+    const head = runGit(f.workspace, 'rev-parse', 'HEAD');
+    const status = runGit(f.workspace, 'status', '--porcelain');
+    f.adapter.verifyPr = machineVerifyPr;
+    f.adapter.verifyPrIdentity = machineVerifyPrIdentity;
+    const current = f.store.task(f.task.id);
+    await assert.rejects(f.engine.performTaskControl(taskControlInputSchema.parse({ action: 'move', to: 'review', taskId: current.id, version: current.version, fresh: true, reason: 'Request another reviewer' })), /retained reviewer is still live/);
+    assert.equal(runGit(f.workspace, 'branch', '--show-current'), '');
+    assert.equal(runGit(f.workspace, 'rev-parse', 'HEAD'), head);
+    assert.equal(runGit(f.workspace, 'status', '--porcelain'), status);
+    assert.equal(f.store.task(f.task.id).resolution.currentRunId, run.id);
+    f.idle(run); await f.report(run, 'ready_to_merge');
+    assert.equal(f.store.run(run.id)?.completion?.status, 'ready_to_merge');
+  } finally { f.close(); }
+});
+
 test('later rounds keep the retained reviewer without resetting the author budget', async () => {
   const f = fixture();
   try {
