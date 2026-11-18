@@ -1639,8 +1639,9 @@ paths it looked in when there is none).
 **The commands.** `nucleus bb install` copies the packaged plugin under this Nucleus data home at
 `bb-plugin-install/nucleus`, then wraps BB's CLI: `bb plugin install path:<managed copy>`, then
 `bb plugin config nucleus set serviceDataDir <this Nucleus data home>` and `bb plugin reload nucleus`. The
-copy is required because BB's install/build can rewrite `dist/`; after BB finishes, Nucleus makes the
-copy read-only. Upgrades replace that managed copy, and uninstall removes it after BB removes the plugin.
+copy is required because BB's install/build can rewrite `dist/`; the copy is the owner's — the same user
+BB runs as — and stays **writable**, because BB rebuilds a plugin's frontend bundle into `dist/` whenever
+its SDK changes. Upgrades replace that managed copy, and uninstall removes it after BB removes the plugin.
 The setting is not optional: without it the plugin loads and waits, installed and never connected, which reads
 exactly like a healthy plugin with nothing to do — so the route writes it through BB's own `plugin config`,
 reads it back, and fails if BB did not keep it. `nucleus bb status` reports the installed plugin's version
@@ -1651,6 +1652,29 @@ command names only the plugin with ID `nucleus`: a locally patched plugin loaded
 operator's Usage Pace) and every other plugin are never read by id, never written and never removed.
 `--plugin-dir` installs a built plugin from an explicit directory instead of the packaged copy (the
 isolated proof uses it), and that directory must itself be a built Nucleus backend.
+
+**A BB update never needs a Nucleus action (nucleus#1348).** On Tom's BB 0.49 → 0.50.1 update (plugin SDK
+0.6.157) BB rebuilt every installed plugin's frontend bundle, and `nucleus` failed with
+`frontend bundle rebuild failed: EACCES: permission denied, mkdtemp '…/bb-plugin-install/nucleus/dist/.stage-…'`:
+the route made its managed copy read-only after installing (`0555`/`0444`), so the plugin ran with no
+frontend until someone ran `chmod -R u+w` and `bb plugin reload nucleus` by hand. Tom's question was the
+right one — "do we really need to pin the version in the plugin? This will get old real quick" — and the
+answer is no, in three parts:
+
+- **The managed copy stays writable by its owner.** BB runs as the same user, so the rebuild into `dist/`
+  succeeds without anyone's help. Integrity is the build-ID check (`nucleus-build.json` against the
+  running service), never a file mode: `nucleus bb status` and the service's check on a declaring plugin
+  compare that id alone, so a bundle BB rebuilt itself is never a mismatch. nucleus#1319's invariant
+  still holds: `nucleus bb install` never writes into an installed version directory in place — it
+  installs a fresh copy of the packaged plugin and switches over, and a reinstall after BB's rebuild
+  discards the rebuilt bundle rather than editing it.
+- **The plugin-to-service build pin is Nucleus-internal protocol compatibility,** not an operator
+  chore. A landed roll keeps it current (nucleus#1339), and the operator never manages it.
+- **The sidebar fork's pin to BB `desktop-v0.49.0`** (`hosts/bb/plugin/sidebar/UPSTREAM.json`,
+  `PATCHES.md`) is a source provenance record for rebases. It never blocks loading on a newer BB: the
+  plugin runs on any BB with a compatible SDK major, and the drift check only reports that a rebase is
+  available. The manifest's `engines.bb: ">=0.49"` and `engines.bbPluginSdk: ">=0.6.132"` are floors and
+  stay floors.
 
 **Installed version integrity.** A main-channel roll catches a failed verification while opening the
 current installed version, records a failed service roll with the changed file, and keeps the active Paseo
@@ -1675,8 +1699,8 @@ on the build it landed (nucleus#1339, after two 2026-11-18 rolls left the plugin
 stalled behind an offline host until a planner installed it by hand). As part of the replacement, once
 the new build answers and `current` is activated, the bridge runs the activated version's own
 `nucleus bb status`: only a plugin BB reports as `behind` is installed, through that version's own
-`nucleus bb install` — the route above, unchanged, including the read-only managed copy, so a roll
-never writes into the installed version directory. A machine without the plugin is untouched; a plugin
+`nucleus bb install` — the route above, unchanged, including the same owner-writable managed copy, so a
+roll never writes into the installed version directory. A machine without the plugin is untouched; a plugin
 that is not ours (`unrecognised`) or a checkout install (`unpinned`) is left alone, and a BB this host
 cannot run or read is left exactly as it was. The step records its outcome in owner-only
 `queue-bb-plugin-roll.json` beside the roll record, the roll's own detail names an install or its
@@ -1709,7 +1733,10 @@ removes it.
 write and reload name only ID `nucleus`; a namesake is refused for install and uninstall and written to
 nothing; an unrelated or namesake `--plugin-dir` never reaches BB; `status` for every state, including an
 unset or foreign `serviceDataDir`; the plugin's own reader agreeing with the shared record; the publication
-gate failing a package without the built plugin),
+gate failing a package without the built plugin; and, for nucleus#1348, that the managed copy stays
+writable, that a BB update's rebuild staged in `dist/.stage-*` and swapped in succeeds and still reads
+`match` and is accepted by the service's build check, and that a reinstall after that rebuild installs a
+fresh copy instead of editing the rebuilt one),
 and the pin cases live in `test/bb-host-registration.test.ts`. `test/bb-plugin-roll.test.ts` names the roll
 step (nucleus#1339): a plugin BB reports `behind` is installed and then reports `match`, with no file in
 packaged version directory changed; no plugin means no install; a plugin that is not ours is left alone;

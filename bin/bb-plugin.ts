@@ -29,13 +29,28 @@
  * command, and the plugin is pinned to the service build by the identity file the
  * release build writes into the package.
  *
+ * The managed copy stays writable by its owner (nucleus#1348). BB rebuilds a plugin's
+ * frontend bundle into `dist/` whenever its SDK changes, and a BB update does exactly
+ * that to every installed plugin; a read-only copy failed that rebuild with `EACCES`
+ * on `mkdtemp` inside `dist/`, leaving the plugin loaded with no frontend until an
+ * operator ran `chmod -R u+w` and reloaded it by hand. Integrity is the build identity
+ * (`nucleus-build.json` against the running service), never file modes, so a bundle BB
+ * rebuilt itself is never a mismatch.
+ *
  * It lives under `bin/` because the CLI may import `bin/` and `shared/` only (the
  * folder-import boundary), while the package layout, the identity file and the pin
  * decision are `shared/` facts.
  */
 import { execFileSync } from "node:child_process";
 import {
-  chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync,
+  chmodSync,
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  statSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { dataHome } from "../shared/data-home.mjs";
@@ -75,40 +90,75 @@ function ownedPluginDirectory(dataDir: string): string {
   return join(dataDir, "bb-plugin-install", BB_PLUGIN_ID);
 }
 
-function setTreeMode(root: string, directoryMode: number, fileMode: number): void {
+/** A mode with these bits set is writable, and reachable for a directory, by its owner. */
+const OWNER_WRITE = 0o200;
+const OWNER_WRITE_TRAVERSE = 0o300;
+
+/** Add owner mode bits, keeping whatever else the source carried. */
+function addOwnerMode(path: string, bits: number): void {
+  const mode = statSync(path).mode & 0o7777;
+  if ((mode & bits) !== bits) chmodSync(path, mode | bits);
+}
+
+/**
+ * Make a tree writable by its owner, which is the same user BB runs as: BB's own
+ * rebuild of a plugin's frontend stages files in `dist/` and swaps them in, and a
+ * directory it cannot write fails that rebuild with `EACCES` (nucleus#1348). Symlinks
+ * are never followed, so nothing outside the copy is chmodded.
+ */
+function grantOwnerWrite(root: string): void {
   for (const entry of readdirSync(root, { withFileTypes: true })) {
     const path = join(root, entry.name);
-    if (entry.isDirectory()) setTreeMode(path, directoryMode, fileMode);
-    else chmodSync(path, fileMode);
+    if (entry.isDirectory()) {
+      grantOwnerWrite(path);
+      addOwnerMode(path, OWNER_WRITE_TRAVERSE);
+    } else if (entry.isFile()) addOwnerMode(path, OWNER_WRITE);
   }
-  chmodSync(root, directoryMode);
+  addOwnerMode(root, OWNER_WRITE_TRAVERSE);
+}
+
+/**
+ * Loosen a tree enough to remove it. The installed copy is owner-writable now, but a
+ * copy an earlier Nucleus made is `0555`/`0444`, and its directories cannot be
+ * emptied while they are. This is only ever a removal path, never a post-install step.
+ */
+function makeTreeRemovable(root: string): void {
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const path = join(root, entry.name);
+    if (entry.isDirectory()) makeTreeRemovable(path);
+    else if (entry.isFile()) chmodSync(path, 0o600);
+  }
+  chmodSync(root, 0o700);
 }
 
 function prepareBbPluginCopy(source: string, dataDir: string): string {
   const destination = ownedPluginDirectory(dataDir);
-  mkdirSync(join(dataDir, "bb-plugin-install"), { recursive: true, mode: 0o700 });
+  mkdirSync(join(dataDir, "bb-plugin-install"), {
+    recursive: true,
+    mode: 0o700,
+  });
   try {
     if (lstatSync(destination).isSymbolicLink()) {
-      throw new Error(`refusing to replace BB plugin copy symlink at ${destination}`);
+      throw new Error(
+        `refusing to replace BB plugin copy symlink at ${destination}`,
+      );
     }
-    setTreeMode(destination, 0o700, 0o600);
+    makeTreeRemovable(destination);
     rmSync(destination, { recursive: true, force: true });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   cpSync(source, destination, { recursive: true, dereference: false });
+  // BB installs and builds this copy, and every later BB update rebuilds its frontend
+  // bundle into `dist/`: the owner must be able to write it, whoever packed the source.
+  grantOwnerWrite(destination);
   return destination;
-}
-
-function makeBbPluginCopyReadOnly(directory: string): void {
-  // BB may rebuild the plugin during `plugin install`; lock it after that finishes.
-  setTreeMode(directory, 0o555, 0o444);
 }
 
 function removeBbPluginCopy(directory: string): void {
   try {
     if (lstatSync(directory).isSymbolicLink()) return;
-    setTreeMode(directory, 0o700, 0o600);
+    makeTreeRemovable(directory);
     rmSync(directory, { recursive: true, force: true });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -243,9 +293,10 @@ export function installBbPlugin(
   }
   // BB builds the plugin it installs, and that build writes into dist/. Give it an
   // install-owned copy under the data home so version directories remain immutable.
+  // The copy stays writable: a BB update rebuilds its bundle in place, and the pin —
+  // not a file mode — is what tells the right build from the wrong one.
   const installDirectory = prepareBbPluginCopy(directory, input.dataDir);
   input.exec(["plugin", "install", `path:${installDirectory}`, "--yes"]);
-  makeBbPluginCopyReadOnly(installDirectory);
   // The one setting the plugin needs to connect: this CLI's own data home. Written
   // through BB's own `plugin config`, for the plugin with ID `nucleus` only.
   input.exec([
@@ -444,7 +495,10 @@ export function uninstallBbPlugin(
       `bb still lists a plugin with ID ${BB_PLUGIN_ID} after uninstall; read bb plugin logs ${BB_PLUGIN_ID}`,
     );
   }
-  if (resolve(existing.rootDir ?? "") === resolve(ownedPluginDirectory(input.dataDir))) {
+  if (
+    resolve(existing.rootDir ?? "") ===
+    resolve(ownedPluginDirectory(input.dataDir))
+  ) {
     removeBbPluginCopy(ownedPluginDirectory(input.dataDir));
   }
   return {

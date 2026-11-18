@@ -8,8 +8,9 @@
  * gap without a second install route: it runs the activated version's own
  * `nucleus bb status`, and only when BB reports the installed plugin as `behind`
  * it runs that same package's `nucleus bb install`. The route is unchanged —
- * including the read-only managed copy #1319 built, so nothing writes into the
- * installed version directory.
+ * including the owner-writable managed copy #1319 built, so nothing writes into the
+ * installed version directory — and a BB update's own rebuild of that copy's bundle
+ * changes nothing this step reads (nucleus#1348).
  *
  * Three rules decide what it does:
  *
