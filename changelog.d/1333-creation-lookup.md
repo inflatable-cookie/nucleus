@@ -1,1 +1,1 @@
-Keep misplaced creation matches owned and route proven-absent workers through fresh admission on the current route.
+Keep uncertain worker creation intents owned when an empty lookup cannot prove the original create has stopped.

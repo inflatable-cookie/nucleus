@@ -981,7 +981,7 @@ test('uncertain revision delivery is refused in next and control without releasi
   } finally { await f.close(); }
 });
 
-test('absent worker creation: restart returns to admission for a fresh run', async () => {
+test('absent worker creation: restart retains the run pending producer-proof cutover', async () => {
   const f = fixture(); try {
     f.store.update(f.taskId, {
       phase: 'needs_attention', reason: ABSENT_WORKER_REASON, workspaceIntent: true, agentIntent: true,
@@ -989,10 +989,10 @@ test('absent worker creation: restart returns to admission for a fresh run', asy
       resolution: { ...f.current().resolution, attention: true },
     });
     const task = await f.control({ instruction: 'Create the worker once and continue' });
-    assert.equal(task.phase, 'queued');
+    assert.equal(task.phase, 'dispatching');
     assert.equal(task.agentIntent, false);
-    assert.equal(task.runId, null, 'the old run cannot be reused');
-    assert.equal(task.restartRunId, null, 'ordinary admission creates a fresh run');
+    assert.equal(task.runId, 'absent-run');
+    assert.equal(task.restartRunId, 'absent-run');
     assert.equal(ownerControlCount(f), 1);
   } finally { await f.close(); }
 });

@@ -304,59 +304,50 @@ test('repository checkout contention waits in place and only one task escalates 
   } finally { await f.close(); }
 });
 
-test('a proven-absent worker creation is replaced once in the retained workspace without any coordinator', async () => {
+test('an empty worker lookup retains its run and credential across repeated passes', async () => {
   const f = fixture(); try {
-    const oldRunId = f.current().runId!;
-    const nextProfile = profile('current-worker-route');
-    addProfile(f, nextProfile, 'current-worker-route', 'worker');
-    const created: string[] = [];
-    const createAgent = f.adapter.createAgent;
-    f.adapter.createAgent = async (task, token, prompt, legacy) => {
-      created.push(task.runId!);
-      return createAgent(task, token, prompt, legacy);
-    };
-    f.store.setCredential(oldRunId, 'old-token');
-    f.store.update(f.task.id, { agentId: null, prUrl: null, prHead: null,
-      profileRequests: { ...f.current().profileRequests, worker: { profileId: nextProfile.id, reason: 'Current owner route', ownerRoute: true, required: true } } });
-    await f.engine.wake(); await f.engine.wake();
-    const t = f.current();
-    // Same role, same retained workspace, one fresh creation: no coordinator, no new workspace.
-    // Ordinary admission mints a fresh run after the old credential is revoked.
-    assert.equal(t.workspaceId, 'workspace'); assert.equal(t.agentIntent, true);
-    assert.notEqual(t.runId, oldRunId, 'the replacement receives a fresh run identity');
-    assert.equal(t.profile?.id, nextProfile.id, 'ordinary admission selects the current route');
-    assert.deepEqual(created, [t.runId], 'only the fresh occurrence is created');
-    await f.engine.wake();
-    assert.deepEqual(created, [t.runId], 'a repeated pass creates no additional worker');
-    assert.equal(t.agentId, `agent-${t.runId}`); assert.equal(t.phase, 'working');
-    assert.equal(f.store.runs(t.id).length, 0);
-    assert.throws(() => f.store.authenticate(oldRunId, 'old-token'), /Unauthorized/);
-    assert.ok(f.events('absent_worker_retry').length >= 1);
-    assert.equal(t.resolution.incident?.action, 'replacement');
-    assert.equal(t.resolution.incident?.role, 'worker');
-    assert.equal(t.resolution.incident?.cause, 'uncertain_delivery');
+    const runId = f.current().runId!;
+    f.store.setCredential(runId, 'old-token');
+    f.store.update(f.task.id, { agentId: null, prUrl: null, prHead: null });
+    let creates = 0;
+    f.adapter.createAgent = async () => { creates++; throw new Error('unexpected create'); };
+    await f.engine.recover(f.current());
+    const events = f.store.eventsAll(f.task.id).length;
+    await f.engine.recover(f.current());
+    assert.equal(f.store.eventsAll(f.task.id).length, events, 'repeated observation adds no event');
+    assert.equal(f.current().runId, runId);
+    assert.equal(f.current().agentIntent, true);
+    assert.equal(f.current().agentId, null);
+    assert.doesNotThrow(() => f.store.authenticate(runId, 'old-token'));
+    assert.equal(creates, 0);
   } finally { await f.close(); }
 });
 
-test('a second absent worker creation escalates to the coordinator instead of another launch', async () => {
-  const f = fixture(50_000); try {
-    enableRecovery(f);
-    f.store.update(f.task.id, { agentId: null, prUrl: null, prHead: null });
-    let attempts = 0; f.adapter.createAgent = async () => { attempts++; throw new Error('lost response') };
-    await f.engine.wake();
-    // Age the recorded exact-lookup window so the first absence concludes and the replacement launches.
-    f.store.update(f.task.id, { resolution: { ...f.store.task(f.task.id).resolution, incident: { ...f.store.task(f.task.id).resolution.incident!, createdAt: new Date(Date.now() - 100_000).toISOString() } } });
-    await f.engine.wake(); await f.engine.wake(); await f.engine.wake();
-    // The replacement launch also failed: age its exact-lookup window so the second absence concludes.
-    f.store.update(f.task.id, { resolution: { ...f.store.task(f.task.id).resolution, incident: { ...f.store.task(f.task.id).resolution.incident!, createdAt: new Date(Date.now() - 100_000).toISOString() } } });
-    await f.engine.wake();
-    // The first absence was automatically replaced; that replacement also proved absent.
-    const t = f.current();
-    // The second absence reached coordinator attention without another blind launch.
-    assert.equal(t.agentId, null); assert.equal(t.agentIntent, true);
-    assert.equal(attempts, 1);
-    assert.equal(f.creates.filter(r => r.role === 'recovery').length, 1);
-  } finally { await f.close(); }
+test('an in-flight worker create can arrive after an empty lookup without a second create', async () => {
+  const f = fixture();
+  let finish!: (value: { id: string; workspaceId: string }) => void;
+  let started!: () => void;
+  const begun = new Promise<void>(resolve => { started = resolve; });
+  const response = new Promise<{ id: string; workspaceId: string }>(resolve => { finish = resolve; });
+  let calls = 0, token = '';
+  try {
+    f.store.update(f.task.id, { phase: 'dispatching', agentIntent: false, agentId: null, runId: null, prUrl: null, prHead: null });
+    f.adapter.createAgent = async (_task, credential) => { calls++; token = credential; started(); return response; };
+    const launch = f.engine.launchAgent(f.current());
+    await Promise.race([begun, launch.then(() => { throw new Error('launch finished before create'); })]);
+    const original = f.current().runId!;
+    await f.engine.recover(f.current());
+    await f.engine.recover(f.current());
+    assert.equal(f.current().runId, original);
+    assert.equal(f.current().agentIntent, true);
+    assert.equal(calls, 1);
+    assert.doesNotThrow(() => f.store.authenticate(original, token));
+    finish({ id: 'late-worker', workspaceId: 'workspace' });
+    await launch;
+    assert.equal(f.current().agentId, 'late-worker');
+    assert.equal(f.current().runId, original);
+    assert.equal(calls, 1);
+  } finally { finish({ id: 'late-worker', workspaceId: 'workspace' }); await f.close(); }
 });
 
 test('a run whose completion is recorded but unreleased is settled by reconciliation', async () => {
@@ -409,39 +400,6 @@ test('settling an escalated recovery run records the escalation and launches no 
     assert.equal(f.store.run(launched.id)?.released, true);
     assert.equal(after.resolution.recovery?.status, 'escalated', 'the escalation is recorded with the release');
     assert.equal(f.creates.filter(run => run.role === 'recovery').length, 1, 'no second coordinator for the same issue');
-  } finally { await f.close(); }
-});
-
-test('an operator may mint a worker past the automatic budget, and the budget stays at one', async () => {
-  const f = fixture(50_000); try {
-    enableRecovery(f);
-    f.store.update(f.task.id, { agentId: null, prUrl: null, prHead: null });
-    let attempts = 0; f.adapter.createAgent = async () => { attempts++; throw new Error('lost response') };
-    await f.engine.wake();
-    f.store.update(f.task.id, { resolution: { ...f.store.task(f.task.id).resolution, incident: { ...f.store.task(f.task.id).resolution.incident!, createdAt: new Date(Date.now() - 100_000).toISOString() } } });
-    await f.engine.wake(); await f.engine.wake(); await f.engine.wake();
-    f.store.update(f.task.id, { resolution: { ...f.store.task(f.task.id).resolution, incident: { ...f.store.task(f.task.id).resolution.incident!, createdAt: new Date(Date.now() - 100_000).toISOString() } } });
-    await f.engine.wake();
-    // The state the automatic budget hands back: proven absent twice, escalated, workspace retained.
-    const held = f.current();
-    assert.equal(held.agentId, null); assert.equal(held.agentIntent, true);
-    assert.match(String(held.reason), /replacement worker creation also proved absent/i);
-    const automaticRetries = f.events('absent_worker_retry').length;
-    assert.equal(automaticRetries, 1, 'the automatic budget is one replacement');
-    const workspace = held.workspaceId;
-
-    // The operator route accepts that state and mints one worker in the retained workspace.
-    f.adapter.createAgent = async (t, token) => { attempts++; return { id: `agent-${t.runId}`, workspaceId: t.workspaceId }; };
-    f.adapter.stopAgentTurn = async () => {};
-    const resumed = await f.engine.performTaskControl({ taskId: held.id, version: held.version, action: 'restart', role: 'worker', reason: 'Resume the retained worker', instruction: 'Mint the retained worker and continue the approved dossiers.' });
-    assert.equal(resumed.phase, 'queued', 'replacement waits for ordinary admission');
-    assert.equal(resumed.runId, null, 'the absent run is not replayed');
-    await f.engine.wake();
-    assert.notEqual(f.current().runId, held.runId, 'admission mints a fresh run');
-    assert.ok(f.current().agentId, 'a fresh worker is created');
-    assert.equal(f.events('absent_worker_operator_replacement').length, 1, 'the operator replacement is recorded distinctly');
-    assert.equal(f.events('absent_worker_retry').length, automaticRetries, 'the automatic budget did not move');
-    assert.equal(f.current().workspaceId, workspace, 'the retained workspace is reused, not replaced');
   } finally { await f.close(); }
 });
 

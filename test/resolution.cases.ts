@@ -12134,13 +12134,13 @@ test("coordinator resume replaces a freshly verified absent initial worker witho
     );
     await f.engine.resolution.recovery.pass();
     const ready = f.current();
-    assert.equal(ready.phase, "queued");
+    assert.equal(ready.phase, "dispatching");
     assert.equal(ready.workspaceId, "workspace");
     assert.equal(ready.profile?.id, "author");
     assert.equal(ready.agentIntent, false);
     assert.equal(ready.agentId, null);
-    assert.equal(ready.runId, null);
-    assert.equal(ready.restartRunId, null);
+    assert.equal(ready.runId, oldRun);
+    assert.equal(ready.restartRunId, oldRun);
     assert.deepEqual(purged, [oldRun]);
     assert.throws(
       () => f.store.authenticate(oldRun, "old-token"),

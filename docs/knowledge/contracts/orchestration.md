@@ -687,9 +687,8 @@ restart. Enforces the restart arms in [Verbs](#verbs). Pures: `retryRoute`,
 Resolution, including `retry` so instance overrides still fire.
 
 **AbsentRestarts** (`core/recovery/absent-creation/restarts.ts`). Recreates
-proven-absent runs: an absent worker or resolution run releases its old
-identity and returns to ordinary admission for a fresh run from the current route,
-never replaying the recorded payload or run ID, and the
+uncertain creations: the worker sweep retains an intent while its producer might
+still deliver. Owner-control and resolution-run cutover remain follow-up work; the
 one-replacement creation budget, whose record shape and reader are
 `absent-creation/budget.ts`. Enforces
 [Orphan worktree after a timed-out create](#orphan-worktree-after-a-timed-out-create).

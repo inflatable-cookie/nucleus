@@ -61,9 +61,9 @@ export class AbsentRestarts {
     const action=this.admitAbsentWorker(t,instruction,authorized);
     return this.resolution.resumeWorkerContinuation(t,authorized,current=>{
       this.store.deleteCredential(current.runId!);
-      // A settled occurrence is never replayed. Ordinary admission selects the
-      // current route and reserves a fresh run before creating another worker.
-      return this.store.update(current.id,{agentIntent:false,runId:null,restartRunId:null,transientProviderRetry:undefined,phase:'queued',reason:'Confirmed absent worker; waiting for ordinary admission',resolution:{...current.resolution,attention:false,pendingWorkerInstruction:action}},authorized?'absent_worker_operator_replacement':'absent_worker_retry',action);
+      // The owner-restart path retains its existing behavior pending the
+      // producer-proof cutover; the sweep never calls it from an empty lookup.
+      return this.store.update(current.id,{agentIntent:false,runId:current.runId,restartRunId:current.runId,transientProviderRetry:undefined,phase:'dispatching',reason:'Confirmed absent worker; creating a worker in the retained workspace',resolution:{...current.resolution,pendingWorkerInstruction:action}},authorized?'absent_worker_operator_replacement':'absent_worker_retry',action);
     });
   }
 
