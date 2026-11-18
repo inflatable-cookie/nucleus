@@ -1,4 +1,7 @@
-import type { HostProcessFact, HostWorktreeWorkspaceSpec } from "../../host/types";
+import type {
+  HostProcessFact,
+  HostWorktreeWorkspaceSpec,
+} from "../../host/types";
 import type { Task } from "../../../shared/contracts";
 import { intakeOwnedReviewWorkspace } from "../../../shared/workspace-ownership";
 import { workspaceOutsideQueueAllocation } from "../../../shared/workspace-ownership";
@@ -7,7 +10,10 @@ import { existsSync } from "node:fs";
 import { git, queueCheckoutStatus } from "../../git/index";
 import { workspaceToolProcessIssue } from "../../recovery/stall";
 import { capPaseoTitle } from "../workspace-title";
-import type { WorkspaceInventoryEntry, WorkspacePlacement } from "../workspace-lifecycle";
+import type {
+  WorkspaceInventoryEntry,
+  WorkspacePlacement,
+} from "../workspace-lifecycle";
 
 export type { HostWorktreeWorkspaceSpec } from "../../host/types";
 
@@ -46,54 +52,120 @@ export type { HostWorktreeWorkspaceSpec } from "../../host/types";
 export class WorkspaceContinuation {
   constructor(private readonly host: WorkspaceContinuationHost) {}
 
-  async noLiveWorkspaceProcesses(workspaceId: string, runIds: readonly string[]): Promise<string | null> {
-    if (!runIds.length) return 'the participant has no recorded run identity for process proof';
+  async noLiveWorkspaceProcesses(
+    workspaceId: string,
+    runIds: readonly string[],
+    bbThreads: readonly string[] = [],
+  ): Promise<string | null> {
+    if (!runIds.length)
+      return "the participant has no recorded run identity for process proof";
     const workspace = this.host.workspaceHost.workspaceRef(workspaceId);
-    if (!await workspace.refresh()) return 'the participant workspace is unreadable for process proof';
+    if (!(await workspace.refresh()))
+      return "the participant workspace is unreadable for process proof";
     const directory = workspace.current()?.workspaceDirectory;
-    if (!directory) return 'the participant workspace directory is unreadable for process proof';
+    if (!directory)
+      return "the participant workspace directory is unreadable for process proof";
     const processes = await this.host.hostProcessListing();
-    if (!processes) return 'the host process listing is unreadable';
-    return workspaceToolProcessIssue(processes, directory, runIds);
+    if (!processes) return "the host process listing is unreadable";
+    return workspaceToolProcessIssue(processes, directory, runIds, bbThreads);
   }
   /** Check the exact retained task worktree before a deferred worker message is delivered. */
-  async preflightWorkerContinuation(task: Task): Promise<{ available: true } | { available: false; reason: string }> {
-    const unavailable = (reason: string) => ({ available: false as const, reason });
-    if (!task.workspaceId || !task.directory) return unavailable('Retained worker workspace identity is incomplete; no continuation was sent');
+  async preflightWorkerContinuation(
+    task: Task,
+  ): Promise<{ available: true } | { available: false; reason: string }> {
+    const unavailable = (reason: string) => ({
+      available: false as const,
+      reason,
+    });
+    if (!task.workspaceId || !task.directory)
+      return unavailable(
+        "Retained worker workspace identity is incomplete; no continuation was sent",
+      );
     const placement = this.host.placement();
     // External and intake-owned review-entry workspaces live outside Queue
     // placement. The latter still receive a direct volume check; every binding
     // is then checked against the retained workspace's own record and folder.
     if (placement && workspaceOutsideQueueAllocation(task)) {
-      try { if (intakeOwnedReviewWorkspace(task)) (placement.admitIntake ?? placement.admit)(task.directory); }
-      catch (error) { return unavailable(error instanceof Error ? error.message : String(error)); }
+      try {
+        if (intakeOwnedReviewWorkspace(task))
+          (placement.admitIntake ?? placement.admit)(task.directory);
+      } catch (error) {
+        return unavailable(
+          error instanceof Error ? error.message : String(error),
+        );
+      }
     } else if (placement) {
-      try { if (task.directory === await this.host.ownedPathFor(task)) placement.admit(task.directory); }
-      catch (error) { return unavailable(error instanceof Error ? error.message : String(error)); }
+      try {
+        if (task.directory === (await this.host.ownedPathFor(task)))
+          placement.admit(task.directory);
+      } catch (error) {
+        return unavailable(
+          error instanceof Error ? error.message : String(error),
+        );
+      }
     }
     const workspace = this.host.workspaceHost.workspaceRef(task.workspaceId);
     await workspace.refresh();
     const current = workspace.current();
     if (!current || !workspace.directory || !existsSync(workspace.directory))
-      return unavailable(`Retained worker workspace ${task.workspaceId} was archived or removed before continuation dispatch; no continuation was sent`);
-    if (workspace.directory !== task.directory || (current.projectRootPath !== task.repoPath && current.projectRootPath !== task.directory))
-      return unavailable(`Retained worker workspace ${task.workspaceId} changed identity before continuation dispatch; no continuation was sent`);
+      return unavailable(
+        `Retained worker workspace ${task.workspaceId} was archived or removed before continuation dispatch; no continuation was sent`,
+      );
+    if (
+      workspace.directory !== task.directory ||
+      (current.projectRootPath !== task.repoPath &&
+        current.projectRootPath !== task.directory)
+    )
+      return unavailable(
+        `Retained worker workspace ${task.workspaceId} changed identity before continuation dispatch; no continuation was sent`,
+      );
     return { available: true };
   }
-  async createCloseoutWorkspace(task:Task) {
-    const slug=`ns-closeout-${task.id}`;
-    const workspace=await this.host.workspaceHost.createCloseoutWorkspace({title:capPaseoTitle(`Closeout: ${task.title}`),requestId:`ns-closeout-workspace-${task.id}`,
-      source:{kind:"worktree",cwd:task.repoPath,action:"branch-off",baseBranch:task.resolution.closeoutWorkspaceHead!,branchName:slug,worktreeSlug:slug}});
-    if(!workspace.directory)throw Error('Closeout workspace returned no directory');return {id:workspace.id,directory:workspace.directory};
+  async createCloseoutWorkspace(task: Task) {
+    const slug = `ns-closeout-${task.id}`;
+    const workspace = await this.host.workspaceHost.createCloseoutWorkspace({
+      title: capPaseoTitle(`Closeout: ${task.title}`),
+      requestId: `ns-closeout-workspace-${task.id}`,
+      source: {
+        kind: "worktree",
+        cwd: task.repoPath,
+        action: "branch-off",
+        baseBranch: task.resolution.closeoutWorkspaceHead!,
+        branchName: slug,
+        worktreeSlug: slug,
+      },
+    });
+    if (!workspace.directory)
+      throw Error("Closeout workspace returned no directory");
+    return { id: workspace.id, directory: workspace.directory };
   }
-  async findCloseoutWorkspaces(task:Task) {
-    const slug=`ns-closeout-${task.id}`,entries=await this.host.workspaceHost.workspaceInventory();
-    return entries.filter(w=>w.projectRootPath===task.repoPath&&w.worktreeSlug===slug).map(w=>({id:w.id,directory:w.workspaceDirectory??''}));
+  async findCloseoutWorkspaces(task: Task) {
+    const slug = `ns-closeout-${task.id}`,
+      entries = await this.host.workspaceHost.workspaceInventory();
+    return entries
+      .filter(
+        (w) => w.projectRootPath === task.repoPath && w.worktreeSlug === slug,
+      )
+      .map((w) => ({ id: w.id, directory: w.workspaceDirectory ?? "" }));
   }
-  async verifyCloseoutWorkspace(task:Task,id:string,directory:string) {
-    const workspace=this.host.workspaceHost.workspaceRef(id);await workspace.refresh();const current=workspace.current();
-    if(current?.projectRootPath!==task.repoPath||current.worktreeSlug!==`ns-closeout-${task.id}`||workspace.directory!==directory)throw Error('Closeout workspace identity changed');
-    if(await git(directory,'rev-parse','HEAD')!==task.resolution.closeoutWorkspaceHead||await queueCheckoutStatus(directory,'status','--porcelain'))throw Error('Closeout workspace must be clean at its recorded integration commit');
+  async verifyCloseoutWorkspace(task: Task, id: string, directory: string) {
+    const workspace = this.host.workspaceHost.workspaceRef(id);
+    await workspace.refresh();
+    const current = workspace.current();
+    if (
+      current?.projectRootPath !== task.repoPath ||
+      current.worktreeSlug !== `ns-closeout-${task.id}` ||
+      workspace.directory !== directory
+    )
+      throw Error("Closeout workspace identity changed");
+    if (
+      (await git(directory, "rev-parse", "HEAD")) !==
+        task.resolution.closeoutWorkspaceHead ||
+      (await queueCheckoutStatus(directory, "status", "--porcelain"))
+    )
+      throw Error(
+        "Closeout workspace must be clean at its recorded integration commit",
+      );
   }
 }
 
@@ -122,5 +194,7 @@ export interface WorkspaceContinuationHostCalls {
   /** The complete active inventory, paged to its end by the host. */
   workspaceInventory(): Promise<WorkspaceInventoryEntry[]>;
   /** The host's own worktree registration; a registration without a directory is the host's answer. */
-  createCloseoutWorkspace(spec: HostWorktreeWorkspaceSpec): Promise<{ id: string; directory: string | null }>;
+  createCloseoutWorkspace(
+    spec: HostWorktreeWorkspaceSpec,
+  ): Promise<{ id: string; directory: string | null }>;
 }

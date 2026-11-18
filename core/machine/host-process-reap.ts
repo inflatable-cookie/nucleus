@@ -19,6 +19,7 @@ import { pidAlive } from "./pid";
 import { now, type Store } from "../store/store";
 import type { Task } from "../../shared/contracts";
 import { readHostUidProcesses } from "./host-process-listing";
+import { possibleBbRuntimePids } from "./owned-tool-process-proof";
 import {
   isGroupBirthIdentity,
   paseoProcessOwnership,
@@ -315,14 +316,22 @@ export async function reapHostProcesses(input: {
       reason: "no process in the host listing has a readable cwd",
     });
   const paseo = paseoProcessOwnership(processes, input.paseoDaemonPid);
+  const protectedPids = protectedHostPids([
+    ...(input.protectedPids ?? []),
+    ...paseo.pids,
+    ...possibleBbRuntimePids(processes),
+  ]);
+  const protectedPgids = new Set([
+    ...paseo.pgids,
+    ...processes
+      .filter((fact) => protectedPids.has(fact.pid))
+      .map((fact) => fact.pgid),
+  ]);
   const selection = selectHostProcessTargetsAndSkips({
     processes,
     worktree,
     recordedGroups: recorded,
-    protectedPids: protectedHostPids([
-      ...(input.protectedPids ?? []),
-      ...paseo.pids,
-    ]),
+    protectedPids,
     queuePgid: queueProcessGroupId(),
     paseo,
   });
@@ -331,7 +340,7 @@ export async function reapHostProcesses(input: {
     identityLiveness: input.identityLiveness,
     recordedGroups: recorded,
     paseoPids: paseo.pids,
-    paseoPgids: paseo.pgids,
+    paseoPgids: protectedPgids,
     processes,
   });
   return { ...result, skippedPaseo: selection.skippedPaseo, unavailable: null };

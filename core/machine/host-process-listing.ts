@@ -11,6 +11,8 @@ export type { HostProcessFact } from "../host/types";
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { homedir } from "node:os";
+import { basename, isAbsolute, join } from "node:path";
 import { readFileSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
 import {
   cwdMapFromLsof,
@@ -18,6 +20,14 @@ import {
 } from "../workspaces/worktree-validation";
 import { linuxProcCommandLine, type ProcCommandLine } from "./process-identity";
 import { linuxStartIdentity, macStartIdentity } from "./start-identity";
+import {
+  readHostRunStartIdentity,
+  startIdentityMatches,
+} from "./start-identity";
+import {
+  darwinBbThreadEnvironments,
+  runProcessEnvironments,
+} from "./run-process-identity";
 
 /** The longest command a process fact retains; the tail carries the arguments a proof reads. */
 export const HOST_PROCESS_COMMAND_MAX = 4096;
@@ -251,12 +261,182 @@ export async function readHostUidProcesses(): Promise<HostProcessListRead> {
       state: "unknown",
       reason: "the host process owner cannot be read on this platform",
     };
-  if (process.platform === "linux") return linuxProcesses(uid);
-  if (process.platform === "darwin") return darwinProcesses(uid);
+  if (process.platform === "linux" || process.platform === "darwin") {
+    const read =
+      process.platform === "linux"
+        ? await linuxProcesses(uid)
+        : await darwinProcesses(uid);
+    if (read.state === "listed") {
+      await readBbSessionEnvironments(read.processes);
+      await markTrustedCuaProcesses(read.processes);
+    }
+    return read;
+  }
   return {
     state: "unknown",
     reason: `host process listing is unsupported on ${process.platform}`,
   };
+}
+
+// proc_pidpath reads the loaded image, unlike argv or KERN_PROCARGS2's exec path.
+const DARWIN_LOADED_IMAGES = `ObjC.import('Foundation');
+ObjC.bindFunction('dlopen', ['void *', ['char *', 'int']]);
+ObjC.bindFunction('calloc', ['void *', ['size_t', 'size_t']]);
+ObjC.bindFunction('free', ['void', ['void *']]);
+$.dlopen('/usr/lib/libproc.dylib', 9);
+ObjC.bindFunction('proc_pidpath', ['int', ['int', 'void *', 'unsigned int']]);
+function run(args) {
+  const out = {};
+  for (const arg of args) {
+    const pid = Number(arg);
+    if (!Number.isSafeInteger(pid) || pid <= 0) continue;
+    const buf = $.calloc(4096, 1);
+    try {
+      const count = $.proc_pidpath(pid, buf, 4096);
+      if (count > 0 && count < 4096)
+        out[arg] = ObjC.unwrap($.NSData.dataWithBytesLength(buf, count).base64EncodedStringWithOptions(0));
+    } finally { $.free(buf); }
+  }
+  return JSON.stringify(out);
+}`;
+
+/** Read a loaded executable by PID, never from process arguments. */
+export async function loadedExecutablePaths(
+  pids: readonly number[],
+): Promise<Map<number, string | null>> {
+  const result = new Map<number, string | null>(pids.map((pid) => [pid, null]));
+  if (process.platform === "linux") {
+    for (const pid of pids)
+      try {
+        result.set(pid, readlinkSync(`/proc/${pid}/exe`));
+      } catch {
+        /* Unknown. */
+      }
+  } else if (process.platform === "darwin") {
+    for (let offset = 0; offset < pids.length; offset += 64) {
+      const chunk = pids.slice(offset, offset + 64);
+      try {
+        const { stdout } = await execFileAsync(
+          "/usr/bin/osascript",
+          [
+            "-l",
+            "JavaScript",
+            "-e",
+            DARWIN_LOADED_IMAGES,
+            "--",
+            ...chunk.map(String),
+          ],
+          { encoding: "utf8", timeout: PS_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
+        );
+        const output = JSON.parse(stdout) as Record<string, string>;
+        for (const pid of chunk)
+          if (typeof output[pid] === "string")
+            result.set(
+              pid,
+              Buffer.from(output[pid]!, "base64").toString("utf8"),
+            );
+      } catch {
+        /* Unknown; never use argv as a substitute. */
+      }
+    }
+  }
+  return result;
+}
+
+/** Only the installed executable loaded by this PID can be the standing Cua MCP server. */
+export async function markTrustedCuaProcesses(
+  facts: HostProcessFact[],
+  installed = join(homedir(), ".local/bin/cua-driver"),
+  reads: {
+    images?: typeof loadedExecutablePaths;
+    identity?: typeof readHostRunStartIdentity;
+  } = {},
+): Promise<void> {
+  for (const fact of facts) delete fact.trustedCuaExecutable;
+  let trusted: string;
+  try {
+    trusted = realpathSync(installed);
+  } catch {
+    return;
+  }
+  const candidates = facts.filter((fact) => {
+    const match = /^(?:"([^"]+)"|'([^']+)'|(\S+))/.exec(fact.command.trim());
+    const program = match?.[1] ?? match?.[2] ?? match?.[3];
+    return Boolean(
+      program && isAbsolute(program) && basename(program) === "cua-driver",
+    );
+  });
+  const images = await (reads.images ?? loadedExecutablePaths)(
+    candidates.map((fact) => fact.pid),
+  ).catch(() => new Map<number, string | null>());
+  await Promise.all(
+    candidates.map(async (fact) => {
+      try {
+        const image = images.get(fact.pid);
+        const identity = await (reads.identity ?? readHostRunStartIdentity)(
+          fact.pid,
+        );
+        if (
+          image &&
+          realpathSync(image) === trusted &&
+          identity.kind === "identity" &&
+          startIdentityMatches(fact.startIdentity, identity.identity)
+        )
+          fact.trustedCuaExecutable = true;
+      } catch {
+        /* An unreadable executable is not positive identity. */
+      }
+    }),
+  );
+}
+
+/** Read only possible bridge sessions, and keep a reused or unreadable pid unknown. */
+export async function readBbSessionEnvironments(
+  facts: HostProcessFact[],
+  reads: {
+    environments?: typeof runProcessEnvironments;
+    bbThreads?: typeof darwinBbThreadEnvironments;
+    platform?: NodeJS.Platform;
+    identity?: typeof readHostRunStartIdentity;
+  } = {},
+): Promise<void> {
+  const bridges = new Set(
+    facts
+      .filter((fact) =>
+        /(?:^|\/)host-daemon\/dist\/bb-provider-bridge-worker\.mjs(?:\s|$)/.test(
+          fact.command,
+        ),
+      )
+      .map((fact) => fact.pid),
+  );
+  const candidates = facts.filter(
+    (fact) => fact.ppid != null && bridges.has(fact.ppid),
+  );
+  if (!candidates.length) return;
+  const pids = candidates.map((fact) => fact.pid);
+  const platform = reads.platform ?? process.platform;
+  const threads =
+    platform === "darwin"
+      ? await (reads.bbThreads ?? darwinBbThreadEnvironments)(pids)
+      : new Map(
+          [
+            ...(await (reads.environments ?? runProcessEnvironments)(pids, {
+              platform,
+            })),
+          ].map(([pid, env]) => [pid, env?.BB_THREAD_ID ?? null]),
+        );
+  await Promise.all(
+    candidates.map(async (fact) => {
+      const identity = await (reads.identity ?? readHostRunStartIdentity)(
+        fact.pid,
+      ).catch(() => ({ kind: "unavailable" as const }));
+      fact.bbThreadId =
+        identity.kind === "identity" &&
+        startIdentityMatches(fact.startIdentity, identity.identity)
+          ? (threads.get(fact.pid) ?? null)
+          : null;
+    }),
+  );
 }
 
 /** Read only explicitly owned fixture PIDs; never infer a host-wide absence from this subset. */

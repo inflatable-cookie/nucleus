@@ -3406,6 +3406,22 @@ after the task finishes.
   it exited between the listing and its inspection leaves the table instead of
   blocking with an unreadable fact; only a genuinely unreadable read stays
   unknown.
+  BB's own provider bridge, session and direct `cua-driver mcp` server are
+  participant runtime when the session's readable `BB_THREAD_ID` matches the
+  recorded BB participant and the bridge's parent is the BB host daemon. The
+  bridge carries no thread identity itself. An unreadable or different thread
+  holds; a command beneath the session or its MCP server remains a tool. The
+  same binding protects these runtime processes from run cleanup and permits
+  workspace proof after BB reports the participant idle or closed. Archive
+  proof includes every recorded task run in the workspace, including recovery
+  and closeout, as well as task-row workers. The process
+  reader retains only the thread identity and checks the session's start identity
+  after reading its environment. The Cua server's loaded executable, read by PID
+  and rechecked against its start identity, must resolve to the installed
+  executable; displayed arguments alone do not prove it. On Darwin it reads NUL-delimited kernel process
+  arguments through the system JavaScript automation bridge and `sysctl`; an unavailable reader or
+  denied kernel read stays unknown. Task sweeps also preserve plausible BB
+  bridge runtimes with unknown identity and do not signal their process groups.
   Those runtimes take two facts from the listing, never a provider
   name list: the program is one the provider ships (inside an application bundle
   such as `Foo.app/Contents/…`, or beside the provider's own executable under
