@@ -12,15 +12,16 @@ import {
   HOST_CALLER_OBSERVE_MS, HOST_CALLER_RESOLVE_TIMEOUT_MS, HOST_SLOW_RETRY, resolveHostCallerIdentity,
 } from "../core/dispatch/caller-resolution";
 import { runTicketPath } from "../core/dispatch/agent-creation";
-import { taskPlannerTicketKey } from "../core/dispatch/participant-tickets";
+import { plannerTicketKey, resolveTicketCaller, taskPlannerTicketKey } from "../core/dispatch/participant-tickets";
 import { Engine } from "../core/engine";
+import { Decisions } from "../core/planning/decisions";
 import { HostUnknownDeliveryError } from "../core/host/errors";
 import { qaSettlementHostMessageId, qaSettlementNoticeId } from "../core/qa/project-qa-notice";
 import { projectQaSettlement } from "../core/qa/project-qa-settle";
 import { Store } from "../core/store/store";
 import { projectEndpointId } from "../core/questions/agent-messages";
 import { wireEngineHosts } from "../service/host-connections";
-import { formatAgentId } from "../shared/agent-identity";
+import { formatAgentId, parseAgentId } from "../shared/agent-identity";
 import { callerSource } from "../shared/caller.mjs";
 import { projectQaRunSchema, runSchema, submissionSchema } from "../shared/contracts";
 import type { Adapter } from "../core/host";
@@ -252,4 +253,89 @@ test("a QA settlement notice with typed unknown delivery stays uncertain and is 
     } finally { await engine.stop(); }
     assert.equal(store.notices(`qa:${saved.id}`)[0]!.status, "uncertain");
   } finally { store.close(); }
+});
+
+test("a T3 planner ticket records the ticket thread as asker and an answer delivers there", async () => {
+  const mcpSession = "mcp:b619ccc9-a078-49f6-b80f-6bececcfa6ca";
+  const desktopScope = "e3587e2bcde8d42fdde2f3615032716c";
+  const ticketThread = formatAgentId("t3code:fixture", "thread");
+  const mcpCaller = formatAgentId("t3code:32be2844-7204-4edc-a95a-35b05e42ded4", mcpSession);
+
+  const cli = await callerCliFixture();
+  try {
+    const result = await cli.invoke("participant", "queue-cli.mjs", ["decision.add", "-"],
+      { question: "Which planning lane?", options: ["A", "B"], recommendation: "A" },
+      { T3CODE_THREAD_ID: mcpSession, T3CODE_DESKTOP_HOST_SCOPE: desktopScope });
+    assert.equal(result.code, 1, result.stderr);
+    assert.equal(cli.hostResolutions.length, 0, "an explicit ticket never consults the T3 host identity");
+    assert.equal(cli.calls.at(-1)?.input.askedBy, ticketThread);
+    assert.notEqual(cli.calls.at(-1)?.input.askedBy, mcpCaller);
+  } finally { await cli.close(); }
+
+  const host = "t3code:synthetic";
+  const plannerNative = "planner-thread";
+  const planner = formatAgentId(host, plannerNative);
+  const f = projectAgentsFixture({ hostId: host });
+  f.live(plannerNative);
+  try {
+    f.store.setMeta("paused", false);
+    f.store.setProjectPlanner({ key: "example", agentId: planner, setBy: planner });
+    const ticketPath = await f.tickets.assigned("example");
+    assert.ok(ticketPath, "the self-named T3 planner takes its ticket in the assignment");
+    const record = f.store.getMeta<{ path: string }>(plannerTicketKey("example"));
+    assert.equal(record?.path, ticketPath);
+    const ticket = ticketOf(ticketPath);
+    const identity = resolveTicketCaller(f.store, { participantId: ticket.participantId }, ticket.token);
+    assert.equal(identity.caller, planner);
+    assert.equal(identity.source, "participant-ticket");
+    assert.deepEqual(
+      callerSource({
+        NUCLEUS_TICKET: ticketPath, T3CODE_THREAD_ID: mcpSession, T3CODE_DESKTOP_HOST_SCOPE: desktopScope,
+      }, hostCallerIdentity),
+      { source: "ticket", path: ticketPath },
+    );
+
+    const decisions = new Decisions(f.store);
+    const decision = decisions.add({
+      question: "Which planning lane?", askedBy: identity.caller,
+      options: ["Keep the ticket thread", "Record the MCP session"], recommendation: "Keep the ticket thread",
+    });
+    assert.equal(f.store.decision(decision.id).askedBy.agentId, planner);
+
+    const answered = decisions.answer({
+      id: decision.id, version: 1, answer: "Keep the ticket thread.",
+      answeredBy: "operator (board)", relayed: false, note: "",
+    });
+    assert.equal(answered.delivery?.agentId, planner);
+    assert.equal(answered.delivery?.status, "pending");
+    assert.equal(answered.delivery?.attempts, 0);
+
+    f.engine.identifyOriginHost = async (agentId) => parseAgentId(agentId)?.hostId === host ? host : undefined;
+    f.engine.hostAvailable = () => true;
+    try {
+      await f.engine.resolution.deliverDecisionNotices();
+      const delivered = f.store.decision(decision.id).delivery;
+      assert.equal(delivered?.status, "delivered", `${delivered?.status}: ${delivered?.error}`);
+      assert.equal(delivered?.agentId, planner);
+      assert.ok((delivered?.attempts ?? 0) > 0);
+      assert.equal(f.sends.length, 1);
+      assert.equal(f.sends[0]!.id, plannerNative);
+
+      const unroutable = decisions.add({
+        question: "Who receives this answer?", askedBy: planner,
+        options: ["The ticket thread", "Nowhere"], recommendation: "The ticket thread",
+      });
+      decisions.answer({
+        id: unroutable.id, version: 1, answer: "The ticket thread.",
+        answeredBy: "operator (board)", relayed: false, note: "",
+      });
+      f.engine.identifyOriginHost = async () => undefined;
+      await f.engine.resolution.deliverDecisionNotices();
+      const queued = f.store.decision(unroutable.id).delivery;
+      assert.equal(queued?.status, "pending");
+      assert.ok((queued?.attempts ?? 0) > 0, "an unroutable identity is queued with attempts, never silently pending");
+      assert.match(queued?.error ?? "", /Cannot route this identity/);
+      assert.equal(f.sends.length, 1, "an unroutable identity is never sent");
+    } finally { await f.engine.stop(); }
+  } finally { f.store.close(); }
 });

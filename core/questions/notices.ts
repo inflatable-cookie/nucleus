@@ -491,12 +491,20 @@ export class Notices {
    * failed or interrupted delivery can never become a second notice.
    */
   async deliverDecisionNotices() {
-    if (!this.adapter.notify || this.paused()) return;
+    if (this.paused()) return;
     for (const decision of this.store.pendingDecisionDeliveries()) {
       const delivery = decision.delivery;
       if (!delivery || delivery.version !== decision.version || !delivery.agentId) continue;
+      const wait = (reason: string) => {
+        if (delivery.error === reason && delivery.attempts > 0) return;
+        this.store.updateDecisionDelivery(decision.id, { ...delivery, error: reason, attempts: Math.max(delivery.attempts, 1) });
+      };
       const host = await this.resolution.identifyOriginHost(delivery.agentId);
-      if (!host || !this.resolution.withHost(host, () => this.resolution.originHostAvailable(host))) continue;
+      if (!host) { wait('Cannot route this identity'); continue; }
+      if (!this.resolution.withHost(host, () => this.resolution.originHostAvailable(host) && Boolean(this.adapter.notify))) {
+        wait(`Waiting for host ${host}`);
+        continue;
+      }
       const attempts = delivery.attempts + 1;
       const sent = await this.resolution.withHost(host, () => this.sendDurably({
         recipient: delivery.agentId,

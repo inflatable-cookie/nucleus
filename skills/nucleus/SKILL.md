@@ -34,7 +34,10 @@ The CLI and helpers identify the calling thread in one order: an explicit Nucleu
 ticket (`NUCLEUS_TICKET`); the current run's ticket, located from the thread's own
 identity even when the shell environment is stale; then the host-verified thread
 identity. A slow host never times out silently — the caller hears "The host is slow;
-retry". Any recognised caller can `tell` a project planner or task role, including a
+retry". An explicit ticket wins for every verb that records a caller (`decision.add`,
+`lead.submit`, `question.answer`, `tell`): Nucleus records the ticket's thread as
+asker and delivery target, never an MCP session or host scope from the environment.
+Any recognised caller can `tell` a project planner or task role, including a
 host-only identity and a task-planner ticket. `ask` still needs a run ticket.
 `NUCLEUS_TICKET` names the run or participant ticket; use the path delivered to this
 thread. An invalid or revoked ticket refuses. Without a ticket, T3Code uses
@@ -45,6 +48,8 @@ takes precedence; an incomplete T3 identity refuses instead of falling through t
 Paseo. If no source exists, the refusal names the sources tried. These identities
 identify the caller only; they do not grant authority beyond a Nucleus ticket's
 existing scope. Explicit operator and relayed-note paths keep their existing meaning.
+A decision answer is delivered to that recorded asker or queued with a visible wait
+(attempts > 0); an identity Nucleus cannot route is shown on the decision.
 
 Assigning a planner issues an owner-only participant ticket and hands its path over
 without messaging the thread: the planner that named itself takes it in that

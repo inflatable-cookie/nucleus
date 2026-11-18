@@ -226,6 +226,11 @@ refused claim on its retained connection like the Paseo bridge.
 The CLI and helpers resolve the calling thread from a Nucleus-issued run or
 participant ticket first, then a host-supplied identity; caller records are
 host-qualified and existing bare Paseo IDs retain their legacy interpretation.
+An explicit ticket is the asker and delivery target for every verb that records a
+caller (`decision.add`, `lead.submit`, `question.answer`, `tell`); Nucleus records
+the ticket's thread, never an MCP session or host scope from the environment. A
+decision answer is delivered to that recorded asker or queued with a visible wait
+(attempts > 0); an identity Nucleus cannot route is shown on the decision.
 Planner assignment issues an owner-only participant ticket that reaches the thread
 in the response to its own next authenticated call, or in the response to the
 assignment when the thread named itself. A ticket message is the last route: it goes
