@@ -3009,6 +3009,65 @@ movement invalidates source approval and preserves the normal readiness gates.
   coordinator archives and every closeout removal have durable intent, observed
   result and uncertain state.
 
+### Restart recovery inventory
+
+[Spec 066's commit boundary](../specs/066-one-reconciler.md#commit-boundary) requires
+each persisted action to complete, settle or surface an applicable owner action.
+The table lists the `*_intent` kinds derived from task-event writers, including
+event names assembled from state and the hook publication states. The reader
+column describes current behavior, including gaps where an intent only fences
+a repeat send. The terminal column records whether the sweep reaches that reader
+after the task finishes.
+
+| Recorded kind | Writer | Restart reader or owner exit | Terminal sweep |
+| --- | --- | --- | --- |
+| `agent_ask_resume_intent` | `AgentAsks.notifyAskAnswered` | `resumePendingAskAnswers` can deliver a saved answer before its send intent. A bare send intent fences delivery and lacks a receipt observer. | No bare-intent settlement |
+| `agent_intent` | `WorkerLauncher`, `WorkerFailover`, `review-continuation/result-fence.ts` | `TaskQuantum` calls creation recovery, which looks up the exact worker. Reviewer continuation uses its stored run and delivery fence. | No general terminal visit |
+| `brief_amendment_delivery_intent` | `BriefAmendmentDelivery.recordIntents` | `deliverPending` indexes the intent events and sends only before an attempt marker. An attempted send lacks a receipt observer. | Yes, for unattempted delivery |
+| `build_output_cleanup_intent` | `buildOutputCleanupHooks.begin` | `Lifecycle.archive` repeats the checkout and host proofs. For an already archived binding, it confirms storage, catalog and directory absence and records the result. A refused archive appears in `retry_effect workspace_archive.<id>`. | Done. Cancellation uses disposition or retirement |
+| `closeout_workspace_intent` | `CloseoutRecovery.recover` | The same lifecycle pass looks for one exact existing match before verifying and binding it. A missing or ambiguous result holds closeout. | No, requires syncing or closing |
+| `dispatch_intent` | `FirstDispatch` admission transaction | `TaskQuantum` calls creation recovery to verify and adopt the workspace. `retry_effect workspace_creation` can re-prove a parked pre-dispatch creation. | No general terminal visit |
+| `disposition_effect_intent` | `disposition/effects.ts` effect runner | `resumeDispositions` advances an active fence and reconciles the named target. An uncertain workspace step can use `retry_effect disposition_workspace.<id>`. | Yes, while its fence is active |
+| `executor_report_request_intent` | `resendExecutorReport` | The request fences a second send for the same run. A callback can settle the work. There is no sweep observer for the request. | No |
+| `external_workspace_archive_intent` | `settleExternalWorkspaceArchive` | The lifecycle observes the exact catalog registration. `retry_effect external_workspace_archive.<id>` uses the same proof and preserves the folder. | Done for preserved review-entry workspaces |
+| `hook_intent` | `HookOccurrence`; `HookRetention` for retained-worktree reconciliation | `RepositoryHooks.reconcileTask` reads the stored occurrence. Known gates revisit it and `retry_effect hook.<eventId>` handles applicable held occurrences. | Finished and pre-archive hooks have terminal readers |
+| `hook_workspace_intent` / `workspace_intent` | `HookPublication.executeIntegrationWrite`, event and hook state | `HookReconciler.reconcile` checks the recorded path, checkout and base before adopting or preparing it. | Through an applicable terminal hook |
+| `commit_intent` | `HookPublication.publish`, hook state | `HookReconciler.reconcile` looks for one exact attributed commit. Ambiguity holds the occurrence. | Through an applicable terminal hook |
+| `push_intent` | `HookPublication.publish`, hook state | `HookReconciler.reconcile` observes the base branch and the recorded commit before any publication. | Through an applicable terminal hook |
+| `sync_intent` | `HookPublication.completePublication`, hook state | `HookReconciler.reconcile` proves publication and rechecks the canonical checkout before synchronization. | Through an applicable terminal hook |
+| `cleanup_intent` | `HookPublication` completion and cleanup methods, hook state | `HookReconciler.reconcile` checks the isolated checkout and finishes the recorded cleanup. | Through an applicable terminal hook |
+| `hook_automatic_replay_intent` | `HookReplay` | The next applicable gate reads the replay lineage and prior occurrence in `RepositoryHooks.emit`. | Only through an applicable gate |
+| `hook_unpublished_checkout_discard_intent` | `HookRetry.discardUnpublishedOccurrence` | `retry_effect hook.<eventId>` re-proves the checkout and remote before explicit disposal. No general sweep resumes this operator action. | Owner action |
+| `merge_intent` | `MergeGates.requestMerge` | `MergeIntent.reconcileMergeIntent` observes the exact PR head and base. Unknown delivery holds the lease. `retry_effect merge-response.merge-response` observes the same response. | No normal terminal visit |
+| `merge_retry_intent` | `MergeIntent.reconcileMergeIntent` | The same reader verifies the result or settles the spent guarded retry as uncertain. | No normal terminal visit |
+| `native_manual_answer_intent` | `RuntimeQuestions` manual answer control | The same request identity fences repeat delivery. No sweep observes a receipt for the manual answer. | No |
+| `native_permission_cancel_intent` | `WithdrawnQuestion` permission cancellation | Dispatch re-reads the original pending permission and fences the same send. A still-present request after unknown delivery lacks a dedicated owner retry. | No |
+| `native_question_delegate_intent` | `NativeQuestions` delegation callback | `resumeAskQuestions` reads the saved delegation route and the decision ledger. | No general terminal visit |
+| `native_question_dismiss_intent` | `QuestionSupersession` | Dispatch re-reads withdrawn pending questions. A dismissal intent alone fences duplicate sends and lacks a dedicated sweep of its own. | No |
+| `native_question_response_intent` | `NativeQuestions` response delivery | `resumeResponsibleAnsweredQuestions` reads persisted answers and original requests. A bare delivery intent fences repeat sends and has no receipt observer. | No general terminal visit |
+| `owner_restart_instruction_intent` | `WorkerRestarts` | Recovery effects index the instruction. `retry_effect` observes the exact message on its retained binding or settles it from later evidence. | Owner action when still applicable |
+| `owner_settled_merge_intent` | `ForceVerbs` settlement | This event records an owner settlement already made in the same write. There is no outgoing request. | Already settled |
+| `owner_stop_intent` | `VerbFences.cancelDisplacedTurns` | The enclosing control can re-observe the run through the operation and owner stop path. The bare event has no standalone sweep reader. | No standalone visit |
+| `paused_resume_intent` | `PausedStops.resumeOnePausedStop` | `resumePausedStops` reads the paused-stop marker. The current path can repeat delivery using the stable request ID without first reading a receipt. | No |
+| `paused_stop_intent` | `PausedStops.stopActiveThreads` | The unpause sweep reads the post-send marker. A stop whose reply was lost before that marker is written lacks a sweep reader. | No |
+| `planner_escalation_wake_intent` | `resumeEscalationWaits` | The ladder revisits the recorded wait and observes whether the requested action applied before resuming ordinary work. | No general terminal visit |
+| `pre_merge_candidate_intent` | `ProspectiveMerge.prospectiveMergeGate` | The same gate re-proves the candidate path, integration base, reviewed head and pinned hook. | No, runs at the merge gate |
+| `project_validation_candidate_intent` | `ProjectValidation.projectValidationGate` | The same validation gate rechecks the candidate path and input identity. | No general terminal visit |
+| `project_validation_intent` | `ProjectValidation.projectValidationGate` | The gate reads the persisted supervisor and host run by binding. `retry_effect project-validation.project-validation` is the owner route for unsettled execution. | No general terminal visit |
+| `report_ready_planner_notice_intent` | `worker-reconcile/result-acceptance.ts` | The report is durably in `report_ready`, but the one-shot planner message has no receipt observer. | No |
+| `reviewer_escalation_direction_intent` | `EscalationSettlement` | The ladder retains its decision and fences repeat sends. No reader confirms a bare send intent against the reviewer timeline. | No |
+| `reviewer_report_request_intent` | `requestReviewerReport` | The owner action names the unknown request and directs the owner to its retained thread. No sweep reads a delivery receipt. | No |
+| `route_stop_intent` | `RouteControls.stopRouteRun` | Replay of the same durable control observes the recorded turn before doing anything. No standalone terminal reader for the event. | Operation replay only |
+| `run_build_output_intent` | `RunCallbackIntake.completeBuildOutput`; initial worker intake records the same row with its completion | Lifecycle schedules `settleRunBuildOutputs` after run release. The handler proves ownership and idle participants or confirms authoritative absence. | Done and cancelled |
+| `run_intent` | `RunReservationAdmission.admit` | `Observation.observe` performs the exact creation lookup. Lifecycle abandons an agentless reservation at terminal phase without a new launch. Terminal creation with unknown delivery still needs proof. | Agentless reservation settlement only |
+| `sibling_worktrees_intent` | `WorkspaceProvisioning.ensureSiblings` | The same provisioner checks recorded paths and pinned commits before adopting or creating a checkout. A terminal row with intent and no pins lacks a reader. | No, terminal cleanup reads pins |
+| `stalled_turn_stop_intent` | `StalledTurnStops` | Worker or run observation reconciles the recorded turn or accepts its authenticated completion. | No general terminal visit |
+| `thread_archive_intent` | `archiveFinishedThreads` and replacement archive writers | Thread cleanup observes the exact native identity. Terminal catch-up revisits deletion-capable hosts. Archive-only hosts lack that terminal catch-up. Exhausted matching retries can be rearmed through `retry_effect workspace_archive.<id>`. | Deletion-capable hosts only |
+| `transient_provider_resume_intent` | `TransientResume` worker and run paths | Worker and run observation re-enter the provider resume path using the retained binding and bounded episode. A terminal row receives no continuation. | No |
+| `unused_workspace_archive_intent` | `archiveUnusedWorkspace` | `retry_effect workspace_archive.<id>` observes the catalog or re-proves local teardown. The duplicate retains its own evidence. | Owner action |
+| `workspace_archive_intent` | `ArchiveProof.archiveProvedWorkspace` and `TaskRemoval.removeTask` | Lifecycle uses `reconcileGoneWorkspace` and the existing archive proofs. An unreadable binding remains a named `retry_effect workspace_archive.<id>` observation. | Done, plus observation of an outstanding removal intent |
+| `workspace_retirement_intent` | `progressWorkspaceRetirement` via `recordWorkspaceRetirement` | The terminal lifecycle schedules the same retirement on the task lane. It reads the catalog before continuing under recorded authority and current proofs. | Cancelled with recorded authorization |
+
 ## Cleanup
 
 ### Terminal workspace cleanup
