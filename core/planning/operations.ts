@@ -124,6 +124,8 @@ export class Operations {
     const submissionKind = ["submit", "review_entry", "source_promote"].includes(input.kind);
     const bbIngressHostId = plannerHostId && hostKindOf(plannerHostId) === "bb" ? plannerHostId
       : input.hostId && hostKindOf(input.hostId) === "bb" ? input.hostId : undefined;
+    if (!previous && submissionKind && input.hostId && hostKindOf(input.hostId) === "bb" && plannerHostId !== input.hostId)
+      throw new ProtocolError("invalid_input", `Selected BB submission host ${input.hostId} must match the verified caller identity`);
     if (!previous && submissionKind && bbIngressHostId && !this.engine.hostIngressAvailable(bbIngressHostId))
       throw new ProtocolError("invalid_input", `Selected submission host ${bbIngressHostId} is offline or unavailable for ingress`);
 

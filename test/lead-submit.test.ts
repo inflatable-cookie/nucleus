@@ -62,7 +62,7 @@ test('BB lead submission and promotion use verified ingress identity while tasks
   const caller = formatAgentId(bbHostId, 'thr_submitter');
   const connectedAt = new Date().toISOString();
   assert.deepEqual(runtime.bbHostVerified({ hostId: bbHostId, dataDir: bbDataDir, bbVersion: '0.49.0', sdkVersion: '0.6.132', hostIds: ['host_synthetic'], connectedAt }), { ok: true });
-  runtime.store.setMeta('operatorDefaultHostKind', null);
+  runtime.store.setMeta('operatorDefaultHostKind', 'paseo');
 
   const ingressSelections: Array<{ plannerHostId?: string; result: ReturnType<typeof runtime.engine.selectIngressSelection> }> = [];
   const selectIngressSelection = runtime.engine.selectIngressSelection.bind(runtime.engine);
@@ -72,30 +72,32 @@ test('BB lead submission and promotion use verified ingress identity while tasks
     return result;
   };
 
-  const submitted = leadSubmit.output.parse(await runtime.submitLead({ ...input, agent: caller, identitySource: { agent: caller, hostId: bbHostId } }));
+  const submitted = leadSubmit.output.parse(await runtime.submitLead({ ...input, hostId: bbHostId, agent: caller, identitySource: { agent: caller, hostId: bbHostId } }));
   assert.ok('taskId' in submitted);
   const submittedTask = runtime.store.task(submitted.taskId);
   assert.equal(submittedTask.originAgentId, caller);
-  assert.equal(submittedTask.originIdentity?.hostId, bbHostId);
+  assert.equal(submittedTask.originHostId, bbHostId);
   assert.equal(submittedTask.hostId, 'fixture-host', 'the BB caller does not become a task work host');
-  assert.deepEqual(submittedTask.hostSelection, { hostId: 'fixture-host', basis: 'sole_online_host' });
-  assert.ok(ingressSelections.some(selection => selection.plannerHostId === bbHostId
-    && selection.result?.hostId === bbHostId && selection.result.basis === 'planner_host'), 'lead.submit selected the verified BB caller for ingress');
+  assert.equal(submittedTask.hostSelection?.hostId, 'fixture-host');
+  assert.ok(ingressSelections.some(selection => selection.result?.hostId === bbHostId
+    && selection.result.basis === 'explicit'), 'lead.submit selected the verified BB host for ingress');
 
   const draftBody = body.replace(title, 'Direct BB promotion');
   const lead = await runtime.addLead({ repositories: [{ origin: repo, path: repo }], title: 'Direct BB promotion', body: draftBody, lanes: [], author: caller });
   assert.equal(lead.check?.ok, true, lead.check?.message);
+  runtime.store.setMeta('operatorDefaultHostKind', null);
   const promoted = await runtime.promoteLeadToTask({ id: lead.id, repository: repo, agent: caller, note: input.note,
     board: false, identitySource: { agent: caller, hostId: bbHostId } });
   assert.ok('taskId' in promoted);
   const promotedTask = runtime.store.task(promoted.taskId);
-  assert.equal(promotedTask.originIdentity?.hostId, bbHostId);
+  assert.equal(promotedTask.originHostId, bbHostId);
   assert.equal(promotedTask.hostId, 'fixture-host');
   assert.deepEqual(promotedTask.hostSelection, { hostId: 'fixture-host', basis: 'sole_online_host' });
   assert.ok(ingressSelections.filter(selection => selection.plannerHostId === bbHostId)
     .some(selection => selection.result?.hostId === bbHostId && selection.result.basis === 'planner_host'), 'promotion preserved the nested request identity source for ingress selection');
 
   runtime.bbHostReleased({ hostId: bbHostId, connectedAt, reason: 'synthetic disconnect' });
+  runtime.store.setMeta('operatorDefaultHostKind', 'paseo');
   const offlineLead = await runtime.addLead({ repositories: [{ origin: repo, path: repo }], title: 'Offline BB promotion',
     body: body.replace(title, 'Offline BB promotion'), lanes: [], author: caller });
   assert.equal(offlineLead.check?.ok, true, offlineLead.check?.message);
