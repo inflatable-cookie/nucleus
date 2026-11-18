@@ -49,7 +49,6 @@ import {
   BOARD_SIGNAL_CHANNEL,
   projectBoardHref,
   sidebarGroupsContract,
-  sidebarTaskActionContract,
   type SidebarGroup,
   type SidebarProject,
 } from "../../../sidebar-groups.js";
@@ -340,65 +339,6 @@ export function NucleusNestedTaskPointers({ pointers }: { pointers: readonly Nes
         </a>
       ))}
     </div>
-  );
-}
-
-/**
- * A Nucleus task group's own actions, in place of upstream's environment actions
- * (nucleus#1313, Tom 2026-11-17: "Can we get rid of it?"). The three upstream
- * actions are wrong for a task container: a new thread would add a participant
- * Nucleus does not know about, Edit renames an environment the header no longer
- * shows, and Archive would archive live role threads behind Nucleus's back. Instead
- * the menu opens the task, opens its pull request when it has one, and detaches the
- * group from its planner through the service's own `detach` owner control.
- */
-export function NucleusTaskGroupMenuItems({ group, taskHref, surface }: {
-  group: SidebarGroup;
-  /** The representative role thread's app route: where the task-detail tab lives. */
-  taskHref: string;
-  surface: ActionMenuSurface;
-}) {
-  const rpc = useRpc<typeof sidebarTaskActionContract>();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const detach = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await rpc.call("detachTask", { taskId: group.taskId, reason: "Detached from the BB sidebar" });
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <>
-      <ActionMenuItem surface={surface} icon="PanelRightOpen" href={taskHref}>
-        Open task
-      </ActionMenuItem>
-      {group.prUrl === null ? null : (
-        <ActionMenuItem surface={surface} icon="GitPullRequest" href={group.prUrl}>
-          Open pull request
-        </ActionMenuItem>
-      )}
-      <ActionMenuItem
-        surface={surface}
-        icon="Unlink"
-        disabled={busy}
-        onSelect={(event) => {
-          event.preventDefault();
-          void detach();
-        }}
-      >
-        Detach from planner
-      </ActionMenuItem>
-      {error === null ? null : (
-        <div role="alert" data-nucleus-task-group-action-error="" className="px-2 py-1 text-[11px] leading-4 text-destructive">
-          {error}
-        </div>
-      )}
-    </>
   );
 }
 

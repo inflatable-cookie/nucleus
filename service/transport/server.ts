@@ -74,6 +74,7 @@ const authInputSchema = z.object({ credential: z.string().regex(/^[a-f0-9]{64}$/
 /** A recovery ask names one request key; anything else fails closed. */
 const requestOutcomeInputSchema = z.object({ key: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,120}$/) }).strict();
 const bbHostOperationEnvelope = z.object({ hostId: z.string().regex(/^bb:[a-f0-9]{32}$/), op: z.string(), input: z.unknown() }).strict();
+const bbParentChangedEnvelope = z.object({ threadId: z.string().min(1).max(160), parentThreadId: z.string().min(1).max(160).nullable(), at: z.string().datetime({ offset: true }) }).strict();
 const SERVICE_RPC_CONTRACTS = rpcContractDigests();
 function configuredWebPort(): number {
   const configured = process.env.NUCLEUS_WEB_PORT;
@@ -496,6 +497,15 @@ export class QueueService {
                 : serviceError("internal", error);
             return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: mapped }, false, request.method);
           }
+          return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result }, false, request.method);
+        }
+        case "service.bb-parent-changed": {
+          const executor = connection.hostExecutor;
+          if (!executor || this.hostExecutors.get(executor.hostId) !== executor)
+            return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: "refused", message: "A registered BB host executor is required" } }, false, request.method);
+          const parsed = bbParentChangedEnvelope.safeParse(request.input);
+          if (!parsed.success) return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: serviceError("invalid_input", parsed.error) }, false, request.method);
+          const result = await this.executor.callHandler("bbParentChanged", { ...parsed.data, hostId: executor.hostId });
           return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result }, false, request.method);
         }
         case "service.request-outcome": {

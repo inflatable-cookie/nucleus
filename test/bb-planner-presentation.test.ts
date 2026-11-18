@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
-import { createBbHostAdapter } from '../service/bb-host';
+import { createBbHostAdapter, recordBbPresentationParentChange } from '../service/bb-host';
 import { bbFake, bbWire, BB_STAMP } from './support/bb-fake';
 import { HostOperationError, type HostOperationName } from '../hosts/bb/plugin/operations';
 import { formatAgentId } from '../shared/agent-identity';
@@ -166,6 +166,48 @@ test('BB presentation: reparent to a BB planner re-nests, reparent elsewhere or 
     await f.reconcile();
     for (const id of [worker.id, reviewer.id]) assert.equal(f.fake.rows.get(id)!.parentThreadId, 'thr_replacement');
   } finally { await f.close(engine); }
+});
+
+test('BB parentChanged: detaching and re-nesting any task thread moves the whole presentation group and later spawns follow it', async () => {
+  const f = fixture();
+  try {
+    f.store.update(f.task().id, { plannerAgentId: f.plannerId(bbHost, 'thr_planner') });
+    const worker = await f.adapter.guardedNativeAgentCreate(f.spec('run_worker_move', 'worker'), false, false);
+    const reviewer = await f.adapter.guardedNativeAgentCreate(f.spec('run_reviewer_move', 'reviewer'), false, false);
+    f.store.update(f.task().id, { agentId: worker.id });
+    assert.equal(f.fake.rows.get(worker.id)!.parentThreadId, 'thr_planner');
+    assert.equal(f.fake.rows.get(reviewer.id)!.parentThreadId, 'thr_planner');
+
+    // This is the service's real persistence handler for BB parentChanged. A
+    // thread dragged out records a standalone presentation without changing planner ownership.
+    const at = new Date().toISOString();
+    assert.equal(recordBbPresentationParentChange(f.store, bbHost, worker.id, null, at), f.task().id);
+    await f.reconcile();
+    assert.equal(f.task().plannerAgentId, f.plannerId(bbHost, 'thr_planner'));
+    for (const id of [worker.id, reviewer.id]) assert.equal(f.fake.rows.get(id)!.parentThreadId, null);
+
+    // Re-nesting by dropping just the reviewer under a different thread moves
+    // the entire task group and a later reviewer spawn uses that same parent.
+    f.livePlanner('thr_new_parent');
+    assert.equal(recordBbPresentationParentChange(f.store, bbHost, reviewer.id, 'thr_new_parent', at), f.task().id);
+    await f.reconcile();
+    const nextReviewer = await f.adapter.guardedNativeAgentCreate(f.spec('run_reviewer_later', 'reviewer'), false, false);
+    for (const id of [worker.id, reviewer.id, nextReviewer.id]) assert.equal(f.fake.rows.get(id)!.parentThreadId, 'thr_new_parent');
+    assert.equal(f.task().plannerAgentId, f.plannerId(bbHost, 'thr_planner'));
+
+    // No later Nucleus pass reverts the operator's choice back to the planner.
+    await f.reconcile();
+    for (const id of [worker.id, reviewer.id, nextReviewer.id]) assert.equal(f.fake.rows.get(id)!.parentThreadId, 'thr_new_parent');
+    // The group's other threads report the same parent again: one record, no new version.
+    const version = f.task().version;
+    assert.equal(recordBbPresentationParentChange(f.store, bbHost, worker.id, 'thr_new_parent', at), f.task().id);
+    assert.equal(f.task().version, version);
+    // A drop under one of the task's own threads cannot nest the group under itself.
+    assert.equal(recordBbPresentationParentChange(f.store, bbHost, worker.id, reviewer.id, at), null);
+    assert.equal(f.task().presentationParent?.parentThreadId, 'thr_new_parent');
+    // A thread Nucleus did not create (the planner itself) records nothing.
+    assert.equal(recordBbPresentationParentChange(f.store, bbHost, 'thr_planner', null, at), null);
+  } finally { await f.close(); }
 });
 
 test('BB presentation: titles name the repository and the role once the container holds a second participant', async () => {

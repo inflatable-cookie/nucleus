@@ -53,7 +53,6 @@ import { NO_HIDDEN_THREADS, useHiddenThreadsStatus } from "./groupRollups.js";
 import {
   NucleusNestedTaskPointers,
   NucleusProjectBoardMenuItem,
-  NucleusTaskGroupMenuItems,
   NucleusTaskGroupStateLine,
   taskGroupTitle,
   useNucleusNestedTaskPointers,
@@ -406,10 +405,6 @@ interface EnvironmentThreadGroupHeaderActionsProps {
   onRenameEnvironment: () => void;
   onOpenChange: (open: boolean) => void;
   onCloseAutoFocus?: (event: Event) => void;
-  /** nucleus#1313: the Nucleus task group this row stands for, or null for upstream's group. */
-  taskGroup: NucleusTaskGroup | null;
-  /** The representative role thread's route: where the task-detail tab lives. */
-  taskHref: string;
 }
 
 interface UseArchiveEnvironmentThreadGroupActionArgs {
@@ -675,46 +670,7 @@ function EnvironmentThreadGroupHeaderActions({
   onRenameEnvironment,
   onOpenChange,
   onCloseAutoFocus,
-  taskGroup,
-  taskHref,
 }: EnvironmentThreadGroupHeaderActionsProps) {
-  // nucleus#1313 (Tom, 2026-11-17): a Nucleus task container offers none of upstream's
-  // environment actions. A new thread would add a participant Nucleus does not know
-  // about, Edit renames an environment this header no longer shows, and Archive would
-  // archive live role threads behind Nucleus's back. The menu carries the task's own
-  // actions; every other group keeps upstream's exactly.
-  if (taskGroup !== null) {
-    return (
-      <SidebarRowControls primaryAction={null}>
-        <DropdownMenu onOpenChange={onOpenChange}>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label="Task actions"
-              data-sidebar-rename-anchor=""
-              className={SIDEBAR_CONTROL_BUTTON_CLASS}
-            >
-              <Icon
-                name="MoreHorizontal"
-                className={COARSE_POINTER_ICON_SIZE_CLASS}
-              />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            side="right"
-            align="start"
-            sideOffset={8}
-            mobileTitle="Task actions"
-            onCloseAutoFocus={onCloseAutoFocus}
-          >
-            <NucleusTaskGroupMenuItems group={taskGroup.group} taskHref={taskHref} surface="dropdown" />
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </SidebarRowControls>
-    );
-  }
   return (
     <SidebarRowControls
       primaryAction={
@@ -925,7 +881,7 @@ function EnvironmentThreadGroupHeader({
           revealOnHover={!isCollapsed}
         />
       </span>
-      <span
+      {showRollupGlyph || taskGroup === null ? <span
         className={cn(
           "relative z-10 inline-flex shrink-0 items-center",
           rename.isEditing && "hidden",
@@ -943,7 +899,7 @@ function EnvironmentThreadGroupHeader({
             <ThreadStatusGlyph indicator={rollup.indicator} />
           </span>
         ) : null}
-        <div
+        {taskGroup === null ? <div
           data-sidebar-hover-actions-open={isActionsOpen ? "true" : undefined}
           data-sidebar-hover-actions-mobile={
             SIDEBAR_HOVER_ACTIONS_MOBILE_ALWAYS_VALUE
@@ -963,11 +919,9 @@ function EnvironmentThreadGroupHeader({
             onRenameEnvironment={rename.startEditingFromMenu}
             onCloseAutoFocus={rename.onCloseAutoFocus}
             onOpenChange={setIsActionsOpen}
-            taskGroup={taskGroup}
-            taskHref={representativeThread.href}
           />
-        </div>
-      </span>
+        </div> : null}
+      </span> : null}
     </>
   );
 

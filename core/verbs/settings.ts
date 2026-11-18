@@ -165,8 +165,8 @@ export class SettingsControls {
     const caller = input.caller ?? OPERATOR_BOARD_CALLER;
     // An explicit detach a task already recorded is the same record: it is not a
     // second write and it never advances the version a caller holds.
-    if (task.presentationDetached) return task;
-    return this.store.update(task.id, { presentationDetached: { at: now(), by: caller } }, "presentation_detached",
+    if (task.presentationParent ? task.presentationParent.parentThreadId === null : task.presentationDetached) return task;
+    return this.store.update(task.id, { presentationDetached: { at: now(), by: caller }, presentationParent: { parentThreadId: null, at: now(), by: caller } }, "presentation_detached",
       `${caller} detached the task group from its planner thread${input.reason ? `: ${input.reason}` : ""}`.slice(0, 2000));
   }
   applyTaskControlHold(input: TaskControlInput, task: Task): Task {

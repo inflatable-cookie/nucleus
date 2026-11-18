@@ -1,0 +1,1 @@
+BB task containers now use the freed row width for their title and state, with no action menu. Dragging a task thread in BB detaches or re-nests the whole presentation group, and later task threads follow its current parent without changing planner ownership.

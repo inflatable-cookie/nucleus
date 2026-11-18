@@ -36,6 +36,8 @@ export const taskSchema = submissionSchema.extend({
    * standalone — and a reparent that names a new planner clears it.
    */
   presentationDetached:z.object({at:z.string().datetime({offset:true}),by:z.string().trim().min(1).max(300)}).strict().nullable().default(null),
+  /** BB's operator-selected sidebar parent; presentation only, independent of planner ownership. */
+  presentationParent:z.object({parentThreadId:z.string().trim().min(1).max(160).nullable(),at:z.string().datetime({offset:true}),by:z.string().trim().min(1).max(300)}).strict().nullable().default(null),
   creatorCompletionRecipients:z.array(completionRecipientSchema).default([]),
   completionSubscriptionOverrides:z.array(completionSubscriptionSchema).default([]),
   completionNotificationCohort:z.array(completionCohortMemberSchema).nullable().default(null),

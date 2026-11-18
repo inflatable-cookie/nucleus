@@ -1,13 +1,12 @@
 --- a/app/list/ProjectRow.tsx
 +++ b/app/list/ProjectRow.tsx
-@@ -50,6 +50,16 @@
+@@ -50,6 +50,15 @@
    useSdk,
  } from "@get-bb/plugin-sdk/app";
  import { NO_HIDDEN_THREADS, useHiddenThreadsStatus } from "./groupRollups.js";
 +import {
 +  NucleusNestedTaskPointers,
 +  NucleusProjectBoardMenuItem,
-+  NucleusTaskGroupMenuItems,
 +  NucleusTaskGroupStateLine,
 +  taskGroupTitle,
 +  useNucleusNestedTaskPointers,
@@ -17,7 +16,7 @@
  import {
    findEnvironmentDisplayProvider,
    getEnvironmentLabelIconName,
-@@ -373,6 +383,8 @@
+@@ -373,6 +382,8 @@
  
  interface EnvironmentThreadGroupHeaderProps {
    dragBindings?: SidebarSortableDragBindings;
@@ -26,65 +25,7 @@
    environmentId: string;
    environmentProviderId: string | null;
    representativeThread: SidebarThread;
-@@ -394,6 +406,10 @@
-   onRenameEnvironment: () => void;
-   onOpenChange: (open: boolean) => void;
-   onCloseAutoFocus?: (event: Event) => void;
-+  /** nucleus#1313: the Nucleus task group this row stands for, or null for upstream's group. */
-+  taskGroup: NucleusTaskGroup | null;
-+  /** The representative role thread's route: where the task-detail tab lives. */
-+  taskHref: string;
- }
- 
- interface UseArchiveEnvironmentThreadGroupActionArgs {
-@@ -659,7 +675,46 @@
-   onRenameEnvironment,
-   onOpenChange,
-   onCloseAutoFocus,
-+  taskGroup,
-+  taskHref,
- }: EnvironmentThreadGroupHeaderActionsProps) {
-+  // nucleus#1313 (Tom, 2026-11-17): a Nucleus task container offers none of upstream's
-+  // environment actions. A new thread would add a participant Nucleus does not know
-+  // about, Edit renames an environment this header no longer shows, and Archive would
-+  // archive live role threads behind Nucleus's back. The menu carries the task's own
-+  // actions; every other group keeps upstream's exactly.
-+  if (taskGroup !== null) {
-+    return (
-+      <SidebarRowControls primaryAction={null}>
-+        <DropdownMenu onOpenChange={onOpenChange}>
-+          <DropdownMenuTrigger asChild>
-+            <Button
-+              type="button"
-+              variant="ghost"
-+              size="icon"
-+              aria-label="Task actions"
-+              data-sidebar-rename-anchor=""
-+              className={SIDEBAR_CONTROL_BUTTON_CLASS}
-+            >
-+              <Icon
-+                name="MoreHorizontal"
-+                className={COARSE_POINTER_ICON_SIZE_CLASS}
-+              />
-+            </Button>
-+          </DropdownMenuTrigger>
-+          <DropdownMenuContent
-+            side="right"
-+            align="start"
-+            sideOffset={8}
-+            mobileTitle="Task actions"
-+            onCloseAutoFocus={onCloseAutoFocus}
-+          >
-+            <NucleusTaskGroupMenuItems group={taskGroup.group} taskHref={taskHref} surface="dropdown" />
-+          </DropdownMenuContent>
-+        </DropdownMenu>
-+      </SidebarRowControls>
-+    );
-+  }
-   return (
-     <SidebarRowControls
-       primaryAction={
-@@ -722,6 +777,7 @@
+@@ -722,6 +733,7 @@
  
  function EnvironmentThreadGroupHeader({
    dragBindings,
@@ -92,7 +33,7 @@
    environmentId,
    environmentProviderId,
    representativeThread,
-@@ -821,18 +877,44 @@
+@@ -821,18 +833,44 @@
            SIDEBAR_GROUP_TEXT_CLASS,
          )}
        >
@@ -149,16 +90,36 @@
          <SidebarChildToggleChevron
            disabled={rename.isEditing}
            className={rename.isEditing ? "hidden" : undefined}
-@@ -881,6 +963,8 @@
-             onRenameEnvironment={rename.startEditingFromMenu}
+@@ -843,7 +881,7 @@
+           revealOnHover={!isCollapsed}
+         />
+       </span>
+-      <span
++      {showRollupGlyph || taskGroup === null ? <span
+         className={cn(
+           "relative z-10 inline-flex shrink-0 items-center",
+           rename.isEditing && "hidden",
+@@ -861,7 +899,7 @@
+             <ThreadStatusGlyph indicator={rollup.indicator} />
+           </span>
+         ) : null}
+-        <div
++        {taskGroup === null ? <div
+           data-sidebar-hover-actions-open={isActionsOpen ? "true" : undefined}
+           data-sidebar-hover-actions-mobile={
+             SIDEBAR_HOVER_ACTIONS_MOBILE_ALWAYS_VALUE
+@@ -882,8 +920,8 @@
              onCloseAutoFocus={rename.onCloseAutoFocus}
              onOpenChange={setIsActionsOpen}
-+            taskGroup={taskGroup}
-+            taskHref={representativeThread.href}
            />
-         </div>
-       </span>
-@@ -959,6 +1043,20 @@
+-        </div>
+-      </span>
++        </div> : null}
++      </span> : null}
+     </>
+   );
+ 
+@@ -959,6 +997,20 @@
    const { sectionId, pinned } = useThreadCreationPlacement(sectionWhenUnpinned);
    const { archiveThreadsPending, onArchiveThreads } =
      useArchiveEnvironmentThreadGroupAction({ environmentId });
@@ -179,7 +140,7 @@
    const handleCreateNewThread = useCallback(() => {
      onProjectSelect?.();
      navigate.toCompose({
-@@ -976,7 +1074,7 @@
+@@ -976,7 +1028,7 @@
      useWindowedThreadItems({
        items: nodeItems,
        collapsedThreadIds,
@@ -188,7 +149,7 @@
        selectedThreadId,
      });
  
-@@ -989,6 +1087,7 @@
+@@ -989,6 +1041,7 @@
        >
          <EnvironmentThreadGroupHeader
            dragBindings={dragBindings}
@@ -196,7 +157,7 @@
            environmentId={environmentId}
            environmentProviderId={environmentProviderId}
            representativeThread={representativeThread}
-@@ -999,13 +1098,13 @@
+@@ -999,13 +1052,13 @@
            })}
            parentLineDepth={parentLineDepth}
            hiddenThreads={stats.hiddenThreads}
@@ -213,7 +174,7 @@
            <div className="relative space-y-px">
              <ThreadTreeGroupLine parentRowDepth={rowDepth} />
              <SidebarWindowedItems
-@@ -1840,12 +1939,20 @@
+@@ -1840,12 +1893,20 @@
        providedRootItems,
      ],
    );
@@ -234,7 +195,7 @@
      return (
        <ThreadListEmptyState
          message={
-@@ -2207,7 +2314,10 @@
+@@ -2207,7 +2268,10 @@
          onRename={rename.startEditingFromMenu}
          onRemove={requestRemove}
          extraActions={(surface) => (
@@ -246,7 +207,7 @@
          )}
        />
      </SidebarHeaderControls>
-@@ -2217,7 +2327,10 @@
+@@ -2217,7 +2281,10 @@
      <>
        <ProjectActionsContextMenu
          extraActions={(surface) => (
