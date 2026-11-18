@@ -1663,6 +1663,147 @@ is refused for install and uninstall and left byte-identical; and an unrelated p
 `--plugin-dir` is refused before BB's install sees it.
 
 
+## Sandboxed role threads (nucleus#1315)
+
+Tom's live trial (poodle-lab#29) ran Claude Code threads inside Claude Code's own
+sandbox (`provider-claude-code`'s `sandboxEnabled`, on by default, applies in
+Accept Edits and Approve for me modes). It found that a Nucleus role thread
+could not deliver its report, could not write its recorded scratch root, and
+could not run Effigy at all. This section records what was measured, what
+landed, and the mode the planner ruled (Full Access) once no sandbox allowance
+could satisfy a validating run.
+
+### What the sandbox allows (measured, Claude Code 2.1.326)
+
+Probed with BB's own sandbox shape (`enabled`, `failIfUnavailable`,
+`autoAllowBashIfSandboxed`, `allowUnsandboxedCommands`, `network.allowLocalBinding`):
+
+| Operation from inside the sandbox | Result |
+| --- | --- |
+| write under the checkout (`cwd`) | allowed |
+| write under the session's `$TMPDIR` | allowed |
+| write anywhere else (the recorded run scratch root, a sibling of `$TMPDIR`, `~/.nucleus`) | denied (`EPERM`) |
+| connect to `~/.nucleus/callback.sock` (any Unix socket) | denied (`EPERM`) |
+| connect to `127.0.0.1:<BB server port>` (loopback TCP) | allowed |
+| `proc_pidinfo` for its own pid | allowed |
+| `sysctlbyname("kern.bootsessionuuid")` (Effigy's boot identity) | denied (`EPERM`) |
+
+The Codex provider's workspace scope is the same shape for the reporting route:
+BB builds `workspaceWrite` with `networkAccess: true`, and Claude's sandbox
+leaves loopback reachable on purpose (its own documentation names loopback
+reachability as a risk). Both providers therefore reach a loopback service from
+inside the workspace sandbox; neither reaches a Unix socket.
+
+BB's Claude provider builds the workspace sandbox itself
+(`filesystem.allowWrite` from `additionalWorkspaceWriteRoots`, plus
+`network.allowLocalBinding`), and that provider option is not on the thread
+creation path (`sessionOptions` carries `string | boolean` only). No surface a
+plugin or a thread can reach adds `network.allowUnixSockets` or a write root, so
+the choice was never "which allowance": route (a) of the brief does not exist in
+BB 0.49.
+
+### The route that landed
+
+- **The mode: Full Access (planner ruling, 2026-11-18; recorded in the task's
+  Nucleus-held brief v2, `sha256:af17b0ce…`; carried into v3, `sha256:2c7bf152…`).**
+  A sandboxed BB role thread cannot
+  run Effigy at all: Effigy's foreground identity needs the boot
+  session (`sysctlbyname("kern.bootsessionuuid")`), which Claude Code's sandbox
+  refuses with `EPERM` (measured above), so Effigy refuses "foreground owner
+  identity unavailable" before any command. Claude Code's sandbox settings expose
+  no sysctl allowance, and BB's provider builds that sandbox itself. A BB role
+  thread therefore runs in BB's **Full Access** mode — the explicit sandbox and
+  approval bypass for unattended work — exactly as Paseo role threads run
+  full-access / `bypassPermissions`. The provider setting `sandboxEnabled`
+  remains on; the run's mode is what does not apply it. `commit`/`hosts/bb/threads.ts`
+  sets `permissionMode: "full"` for every role thread, and the profile's mode
+  still describes the run. The planner raises Effigy's sandboxed boot-identity
+  read with the Effigy planner separately; until then a sandboxed mode (Accept
+  Edits or Approve for me) is not a mode a Nucleus BB role thread can validate in.
+- **Reports.** A run ticket records its host (`writeRunTicket`). A `bb:` ticket's
+  generated helper POSTs the exact payload it would have sent to the socket, to
+  the BB backend's own loopback route
+  (`POST /api/v1/plugins/nucleus/http/report`, `auth: "local"`); the backend runs
+  in the BB server process, and forwards it to `<data home>/callback.sock` with
+  the ticket's own token. The route reads only this data home's
+  `tickets/<runId>.json` (by run id — never a path from the invoking machine,
+  which would name the wrong host's disk), requires an owner-only regular file,
+  the ticket's exact token, task and run, and forwards only the helper's routes
+  (`/complete`, `/ask`, `/message`, `/answer`, `/task-next`). No token is logged
+  or echoed. A relay that is not there (an older BB server, a fixture) falls back
+  to the callback socket, and the deterministic event id keeps a lost answer
+  idempotent. Every other host keeps the socket unchanged, and the prompt still
+  says `nucleus helper report`.
+- **Scratch.** BB hands a provider no per-thread environment. The BB adapter
+  creates the run's recorded scratch leaf (owner-only, repository namespace)
+  before `run.attach`, and refuses the launch when the leaf cannot be proved.
+  #1314 owns the same creation on the general launch path; this is the BB-side
+  guarantee beside it and is idempotent.
+- **Sibling checkouts.** A Paseo worktree root holds the sibling clones the
+  repository's own link tasks placed there, shared by every task of that
+  repository. On BB the root is the same shape, so
+  `WorkerLauncher` has the service make that shared checkout for a `bb:` task:
+  `WorkspaceProvisioning.ensureSharedSiblingCheckouts` creates one detached
+  worktree per project sibling member under the canonical worktree root at the
+  sibling's fetched `origin/<base>` when it is first created, never replaces an
+  existing path (Spec 028's refresh owns freshness and another task may be
+  reading it), records `shared_sibling_checkouts`, and the worker prompt names the
+  checkouts so `../<sibling>` resolves. Because it is shared per repository, a
+  second BB task on the same repository resolves the same checkout rather than
+  colliding with the first task's pin. Only a `bb:` host is affected; every other
+  host's worktree root is untouched.
+
+### Effigy in a BB role thread
+
+With Full Access, Effigy runs in the thread: `scripts/acceptance/bb-sandbox-private.ts`
+prints a report only after `effigy qa:docs` succeeds inside the worker thread, so
+the report's arrival proves Effigy's foreground guard started and completed. The
+sandboxed-mode limitation above is Effigy's (its boot identity read); the held
+brief's amendment says Effigy has been told and that running inside a sandbox
+later is its own decision.
+
+The amendment restates acceptance 1 as: on the isolated BB server, with role
+threads launched as production launches them (Full Access), two role threads
+(worker and reviewer) each deliver their report; each run's scratch directory is
+present, owner-only, before launch; an Effigy selector runs in a role thread; and
+a test reading a sibling path passes through the production placement. The proof
+records every one of those, including each run's scratch leaf (`0700`, a real
+directory) created by the same `runTemporaryEnvironment` call the BB adapter makes
+before `run.attach` and before either thread exists, and it keeps the sandbox
+probes as the evidence for the limit.
+
+**Brief v3 (2026-11-18) rules the hand-built launch production-equivalent for
+this task.** The proof writes its own run records, scratch, tickets and prompts
+and spawns the threads with the BB CLI in Full Access. That is sufficient here: it
+shows on a real BB that the relay, the callback socket, Full Access, the sibling
+placement and Effigy all work. The adapter's own scratch and ticket creation is
+covered by `test/bb-run-scratch.test.ts`, and the end-to-end production launch
+(Nucleus dispatch creating the runs and `BbThreads` spawning the threads) is the
+planner's live BB trial after this merges, not part of this PR.
+
+### Tests and proof
+
+`test/bb-report-relay.test.ts` pins the relay's gate (ticket by run id,
+owner-only file, exact token/task/run, allowed routes only, the service's own
+status and body, no forward on any refusal); `test/callback-client.test.ts`
+pins the generated helper choosing the loopback route for a `bb:` ticket and
+never printing the credential; `test/bb-plugin-backend.test.ts` pins the
+registered route and its refusals; `test/bb-run-scratch.test.ts` pins the
+owner-only leaf existing before `run.attach` and a launch refusal when it cannot
+be proved; `test/siblings.test.ts` pins one shared sibling checkout per
+repository for a `bb:` host, a second task re-observing it, no change on another
+host, and an occupied path left untouched.
+`effigy proof:bb:sandbox` runs two Claude Code role threads against an isolated
+BB server (the plugin installed into it, `sandboxEnabled` on, Full Access) in a
+real task worktree under the canonical per-repository root. The sibling checkout
+`../sylib` is placed by `WorkspaceProvisioning.ensureSharedSiblingCheckouts` — the
+production code — and a second task on the same repository re-observes it. Each
+thread's single command requires the sibling read (`test -s ../sylib/README.md`)
+and the worker's also requires a real `effigy qa:docs` run, then hands its report
+to the helper: a delivered report proves all of it. Both reports arrived at the
+recorded callback socket, the checkout stayed clean, and the evidence records each
+run's owner-only scratch leaf as present before either thread was spawned.
+
 ## Phase 0 evidence (2026-11-16)
 
 Phase 0 is implemented and proved against an isolated BB 0.49.0 server. `effigy proof:bb` runs the

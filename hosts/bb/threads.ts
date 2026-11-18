@@ -134,8 +134,12 @@ export class BbThreads {
       throw unknown('No exact metadata match is visible; the recorded spawn was not resent');
     }
     const parentThreadId = this.ports.parent(task);
-    const mode = spec.profile.modeId;
-    if (mode && !['default', 'full', 'auto', 'accept-edits'].includes(mode)) throw new ProvenPreSendRefusalError(`BB permission mode ${mode} is unavailable`);
+    // A BB role thread runs in Full Access (planner ruling, 2026-11-18): a
+    // sandboxed thread cannot run Effigy at all, because Claude Code's sandbox
+    // refuses the boot-session sysctl Effigy's foreground identity reads. That is
+    // also what Paseo role threads do (full-access / bypassPermissions). The
+    // profile's mode still describes the run; BB's sandbox and approval bypass is
+    // the mode this host needs for unattended work (Spec 062, nucleus#1315).
     const input = {
       projectId: workspace.projectId, title: `${this.ports.reference(task)} ${spec.title}`.slice(0, 200),
       environmentPath: workspace.directory,
@@ -143,7 +147,7 @@ export class BbThreads {
       // nest under: the group is standalone at the top level (nucleus#1313).
       ...(parentThreadId ? { parentThreadId } : {}), parentNotifications: 'off',
       prompt: attempt.prompt, providerId: spec.profile.provider, model: spec.profile.model,
-      permissionMode: mode && mode !== 'default' ? mode : 'full',
+      permissionMode: 'full',
       ...(spec.profile.thinkingOptionId ? { reasoningLevel: spec.profile.thinkingOptionId } : {}),
       ...(Object.keys(spec.profile.featureValues ?? {}).length ? { sessionOptions: spec.profile.featureValues } : {}),
       pluginMetadata: { nucleus: { task, run, role, host: this.ports.hostId, helperPath: this.ports.helperPath, ticketPath: this.ports.ticketPath(run) } },

@@ -74,6 +74,9 @@ export const workerHelper = helperCallbackClient + String.raw`
 
 import {createHash} from 'node:crypto';
 import {readFileSync,realpathSync} from 'node:fs';
+import {request as httpRequest} from 'node:http';
+import {homedir} from 'node:os';
+import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 // Importing this file has no side effects: it reports only when run as a script, so
 // a caller that imports callbackRequest from it never sends a stray request.
@@ -87,9 +90,68 @@ const currentRun=process.env.NUCLEUS_CONTINUATION_RUN_ID;
 if(currentRun&&ticket?.runId!==currentRun) throw new Error('Continuation ticket does not match the current run; use the ticket path supplied in the continuation prompt');
 const socketPath=ticket?ticket.socketPath:callbackEnvValue('SOCKET'),token=ticket?ticket.token:callbackEnvValue('RUN_TOKEN'),taskId=ticket?ticket.taskId:callbackEnvValue('TASK_ID'),runId=ticket?ticket.runId:callbackEnvValue('RUN_ID');
 if(!socketPath||!token||!taskId||!runId) throw new Error('Missing Nucleus callback environment');
+// A BB role thread runs inside its provider's OS sandbox, which refuses every Unix
+// socket. The run ticket records that host, and the payload then goes to the BB
+// backend over loopback; the backend forwards it to this same socket from outside
+// the sandbox with this ticket's own credential.
+const viaBbRelay=typeof ticket?.host==='string'&&ticket.host.startsWith('bb:');
+const BB_RELAY_ROUTE='/api/v1/plugins/nucleus/http/report';
+function bbRelayUrls(){
+  const urls=[];
+  const named=process.env.BB_SERVER_URL;
+  if(named)urls.push(String(named));
+  try{
+    const home=process.env.BB_DATA_DIR||join(homedir(),'.bb');
+    const runtime=JSON.parse(readFileSync(join(home,'bb-app-runtime.json'),'utf8'));
+    if(runtime&&typeof runtime.serverUrl==='string'&&runtime.serverUrl)urls.push(runtime.serverUrl);
+  }catch{}
+  return [...new Set(urls.map(url=>String(url).replace(/\/+$/,'')).filter(Boolean))];
+}
+function postBbRelay(base,body,timeoutMs){
+  const payload=JSON.stringify(body);
+  const url=new URL(base+'/'+BB_RELAY_ROUTE.replace(/^\//,''),base);
+  return new Promise((resolve,reject)=>{
+    const pending=httpRequest({hostname:url.hostname,port:url.port||80,path:url.pathname,method:'POST',headers:{'content-type':'application/json','content-length':Buffer.byteLength(payload)}},res=>{
+      let response='';res.setEncoding('utf8');res.on('data',chunk=>{response+=chunk;});
+      res.on('end',()=>{
+        if(res.statusCode!==200){const failure=new Error(response);failure.callbackStatus=res.statusCode;reject(failure);return;}
+        try{resolve(JSON.parse(response));}catch{reject(new Error('Invalid Queue response; inspect current state before retrying'));}
+      });
+      res.on('error',reject);
+    });
+    pending.setTimeout(timeoutMs,()=>pending.destroy(new Error('Queue request timed out; inspect current state before retrying')));
+    pending.on('error',reject);
+    pending.end(payload);
+  });
+}
+async function relayThroughBb(route,payload,options){
+  const urls=bbRelayUrls();
+  if(!urls.length) throw new Error('BB report relay: no BB server URL (BB_SERVER_URL or bb-app-runtime.json)');
+  let last=null;
+  for(const base of urls){
+    try{return await postBbRelay(base,{route,taskId,runId,token,payload},options&&options.timeoutMs?options.timeoutMs:60000);}
+    catch(error){last=error;if(error&&error.callbackStatus)throw error;}
+  }
+  throw last||new Error('BB report relay: no BB server answered');
+}
+async function deliver(route,payload,options){
+  if(!viaBbRelay)return await callbackRequest({socketPath,token},route,payload,options);
+  // The relay is the route a provider sandbox can reach. A relay that is not
+  // there (an older BB server, a fixture, a host whose plugin is not loaded) never
+  // strands the report: the callback socket is still tried, and the event id is
+  // deterministic, so a relay that forwarded before its answer was lost is
+  // answered from the receipt rather than applied twice.
+  let relayError=null;
+  try{return await relayThroughBb(route,payload,options);}catch(error){relayError=error;}
+  try{return await callbackRequest({socketPath,token},route,payload,options);}
+  catch(socketError){
+    const detail=(error)=>error&&error.message?error.message:String(error);
+    throw new Error('BB report relay failed (' + detail(relayError) + ') and the callback socket failed (' + detail(socketError) + ')');
+  }
+}
 // The next argument reads the task-scoped plan the recovery coordinator launched with; it sends no report and takes no stdin.
 const command=process.argv[3];
-if(command==='next'){const plan=await callbackRequest({socketPath,token},'/task-next',{callerTaskId:taskId,callerRunId:runId},{timeoutMs:45000,timeoutMessage:'Callback timed out; retry next'});console.log(JSON.stringify(plan));return;}
+if(command==='next'){const plan=await deliver('/task-next',{callerTaskId:taskId,callerRunId:runId},{timeoutMs:45000,timeoutMessage:'Callback timed out; retry next'});console.log(JSON.stringify(plan));return;}
 const route=command==='ask'?'/ask':command==='message'?'/message':command==='answer'?'/answer':'/complete';
 let text='',bytes=0;
 for await(const chunk of process.stdin){bytes+=chunk.length;if(bytes>5*1024*1024)throw new Error('Callback too large');text+=chunk;}
@@ -100,7 +162,7 @@ for(const [key,bound] of [['taskId',taskId],['runId',runId]])
 if(route!=='/complete'){
   const payload={...input,taskId,runId};
   payload.eventId=input.eventId||createHash('sha256').update(JSON.stringify(payload)).digest('hex');
-  const result=await callbackRequest({socketPath,token},route,payload,{timeoutMs:route==='/ask'?` + CALLBACK_ASK_TIMEOUT_MS + `:` + CALLBACK_SOCKET_TIMEOUT_MS + String.raw`,timeoutMessage:'Callback timed out; retry the same JSON'});
+  const result=await deliver(route,payload,{timeoutMs:route==='/ask'?` + CALLBACK_ASK_TIMEOUT_MS + `:` + CALLBACK_SOCKET_TIMEOUT_MS + String.raw`,timeoutMessage:'Callback timed out; retry the same JSON'});
   console.log(JSON.stringify(result));
   return;
 }
@@ -114,7 +176,7 @@ const payload={taskId,runId};
 for(const key of order)if(fields[key]!==undefined)payload[key]=fields[key];
 for(const [key,value] of Object.entries(fields))if(!order.includes(key)&&!['taskId','runId','eventId'].includes(key)&&value!==undefined)payload[key]=value;
 const eventId=input.eventId||createHash('sha256').update(JSON.stringify(payload)).digest('hex');
-const result=await callbackRequest({socketPath,token},'/complete',{eventId,...payload},{timeoutMs:45000,timeoutMessage:'Callback timed out; retry the same JSON'});
+const result=await deliver('/complete',{eventId,...payload},{timeoutMs:45000,timeoutMessage:'Callback timed out; retry the same JSON'});
 console.log(JSON.stringify(result));
 }
 `;
