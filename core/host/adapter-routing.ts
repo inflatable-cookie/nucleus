@@ -9,6 +9,7 @@ import {
   type OriginReviewHost,
 } from "../review/origin-review-adapter";
 import type { Adapter, AgentObservation, OriginAgent } from "./adapter";
+import { isTransportFailure } from "../../shared/transport";
 const faultHosts = new WeakMap<object, string>();
 
 /** A transport failure attributed at the adapter boundary, before host context is lost. */
@@ -96,6 +97,20 @@ export function routeHostAdapter(
   fallback: Adapter,
 ): Adapter {
   const record = attributed;
+  const recordCall = (
+    host: string | undefined,
+    method: PropertyKey,
+    error: unknown,
+  ) => {
+    if (
+      host &&
+      (method === "validate" || method === "preflightWorkspaceStorage") &&
+      !(error instanceof HostTransportFault) &&
+      isTransportFailure(error)
+    )
+      return new HostTransportFault(host, error);
+    return record(host, error);
+  };
   const proxy: Adapter = new Proxy(fallback, {
     get: (selectedFallback, property) => {
       const id = owner.activeHostId;
@@ -241,11 +256,11 @@ export function routeHostAdapter(
           const result: unknown = value.apply(selected, normalized);
           return result instanceof Promise
             ? result.catch((error) => {
-                throw record(id, error);
+                throw recordCall(id, property, error);
               })
             : result;
         } catch (error) {
-          throw record(id, error);
+          throw recordCall(id, property, error);
         }
       };
     },

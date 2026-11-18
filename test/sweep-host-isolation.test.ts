@@ -292,8 +292,8 @@ test("a host fault preserves an owner stop through outage and return", async (t)
   const f = fixture(t);
   f.engine.resolution.recordStop(
     f.store.task(f.offline.id),
-    "budget",
-    "Awaiting budget decision",
+    "awaiting_proof",
+    "Awaiting proof decision",
   );
   let failing = true;
   f.engine.resumePausedStops = async () => {
@@ -304,19 +304,25 @@ test("a host fault preserves an owner stop through outage and return", async (t)
       );
   };
   await f.engine.auditPass(true);
-  assert.equal(f.store.task(f.offline.id).resolution.stop?.reason, "budget");
+  assert.equal(
+    f.store.task(f.offline.id).resolution.stop?.reason,
+    "awaiting_proof",
+  );
   assert.equal(
     f.store.task(f.offline.id).resolution.stop?.detail,
-    "Awaiting budget decision",
+    "Awaiting proof decision",
   );
   assert.ok(f.store.task(f.offline.id).resolution.hostWait);
   failing = false;
   await f.engine.auditPass(true);
   assert.equal(f.store.task(f.offline.id).resolution.hostWait, null);
-  assert.equal(f.store.task(f.offline.id).resolution.stop?.reason, "budget");
+  assert.equal(
+    f.store.task(f.offline.id).resolution.stop?.reason,
+    "awaiting_proof",
+  );
   assert.equal(
     f.store.task(f.offline.id).resolution.stop?.detail,
-    "Awaiting budget decision",
+    "Awaiting proof decision",
   );
 });
 

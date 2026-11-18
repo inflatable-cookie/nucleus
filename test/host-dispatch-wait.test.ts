@@ -5,6 +5,7 @@ import { Store } from "../core/store/store";
 import { submissionSchema, summarizeTask } from "../shared/contracts";
 import type { Adapter } from "../core/host/adapter";
 import { fakeAdapter, profile, submission } from "./support/fakes";
+import { HostTransportFault } from "../core/host/adapter-routing";
 
 test("an offline or unknown task host waits without starting a workspace effect", async () => {
   const store = new Store(":memory:");
@@ -171,6 +172,8 @@ test("real admission gives one free slot to healthy hosts while a BB host waits,
     const refusing = fakeAdapter({
       ...adapter,
       validate: async () => {
+        if (refusal === "plugin build mismatch")
+          throw new HostTransportFault("bb:offline", new Error(refusal));
         throw new Error(refusal);
       },
     });
@@ -262,6 +265,25 @@ test("real admission gives one free slot to healthy hosts while a BB host waits,
         launches,
         [paseo.id, t3.id, bb.id, bb2.id],
         "no duplicate launch",
+      );
+      store.update(bb2.id, { phase: "done", agentActive: false });
+      const invalid = add("paseo:invalid", "invalid");
+      const after = add("t3code:primary", "after");
+      const invalidAdapter = fakeAdapter({
+        ...adapter,
+        validate: async () => {
+          throw new Error("Planning base unavailable");
+        },
+      });
+      engine.resolveHostAdapter = (host) =>
+        host === "paseo:invalid" ? invalidAdapter : adapter;
+      await engine.dispatchQueued();
+      assert.equal(store.task(invalid.id).phase, "needs_attention");
+      assert.match(store.task(invalid.id).reason, /Planning base unavailable/);
+      assert.equal(
+        launches.at(-1),
+        after.id,
+        "a task validation failure leaves the slot for another host",
       );
     } finally {
       await engine.stop();

@@ -47,13 +47,13 @@ export class Dispatch {
         void engine.cleanContext(() => engine.dispatchQueued()).catch(() => {}),
     });
     this.reviewEntryAdmission = new ReviewEntryAdmission(engine);
-    // FirstDispatch owns ordinary task errors. Let an attributed adapter failure
+    // FirstDispatch owns ordinary task errors. Let a typed host failure
     // escape its catch so the dispatch pass can hold that host and try other heads.
     const firstContext = new Proxy(engine, {
       get(target, property, receiver) {
         if (property === "noteStepFailure")
           return (taskId: string, error: unknown) => {
-            if (hostFaultHost(error)) throw error;
+            if (error instanceof HostTransportFault) throw error;
             return target.noteStepFailure(taskId, error);
           };
         return Reflect.get(target, property, receiver);
@@ -128,6 +128,7 @@ export class Dispatch {
     await this.resolution.withDispatchPass(async () => {
       const attempted = new Set<string>();
       const failedHosts = new Set<string>();
+      const failedTasks = new Set<string>();
       const visit = (candidate: Task) =>
         this.engine
           .scheduleLane(`task:${candidate.id}`, LANE_PRIORITY_TASK, () =>
@@ -171,6 +172,7 @@ export class Dispatch {
               task.resolution.stop?.reason === "host_unavailable"
             )
               failedHosts.add(task.hostId);
+            if (task.phase === "needs_attention") failedTasks.add(task.id);
           });
       for (;;) {
         const skipped = failedHosts.size
@@ -200,11 +202,11 @@ export class Dispatch {
         );
         if (!start.length) break;
         for (const task of start) attempted.add(task.id);
-        const before = failedHosts.size;
+        const before = failedHosts.size + failedTasks.size;
         const results = await Promise.allSettled(start.map(visit));
         const failed = results.find((result) => result.status === "rejected");
         if (failed) throw (failed as PromiseRejectedResult).reason;
-        if (failedHosts.size === before) break;
+        if (failedHosts.size + failedTasks.size === before) break;
       }
     });
   }
