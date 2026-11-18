@@ -106,7 +106,9 @@ export function automaticReachable(entry: Pick<PoolEntry, "cost" | "capability">
   role: "worker" | "reviewer" | "coordinator" = "worker"): boolean {
   const tier = entry.capability;
   if (level === "maximum" && role !== "coordinator") return topTier(tier);
-  if (requested && tier && demandRank(tier) > demandRank(requested)) return false;
+  // A reviewer is not capped at the task's requested tier (Tom, 2026-11-18):
+  // only the level's permission rule bounds it.
+  if (role !== "reviewer" && requested && tier && demandRank(tier) > demandRank(requested)) return false;
   return !requestOnly(entry, level, requested, climbTier);
 }
 

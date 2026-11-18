@@ -50,15 +50,31 @@ export function workerStartTier(usage: UsageLevel, complexity: CapabilityLevel |
 }
 
 /**
- * One run's demand: the level's start tier moved by the role offset. A reviewer
- * never sits below the worker's own tier ("at least the worker's capability"),
- * and a coordinator keeps its configured offset under every level, Maximum
- * included (Tom, 2026-11-17).
+ * One run's demand: the level's start tier moved by the role offset. The
+ * reviewer offset is relative to the worker's tier, so a negative offset lets a
+ * reviewer run below it (Tom, 2026-11-18: "a reviewer should be able to be lower
+ * tier"); a critical task floors its reviewer at the worker in `reviewerDemand`.
+ * A coordinator keeps its configured offset under every level, Maximum included
+ * (Tom, 2026-11-17).
  */
 export function runDemand(complexity: CapabilityLevel | null | undefined, role: DemandRole, usage: UsageLevel, offsets: DemandRoleOffsets = DEMAND_ROLE_OFFSETS): DemandLevel {
   const start = demandRank(workerStartTier(usage, complexity));
   const worker = start + offsets.worker;
-  const rank = role === "reviewer" ? Math.max(start + offsets.reviewer, worker) : role === "worker" ? worker : start + offsets.coordinator;
+  const rank = role === "reviewer" ? worker + offsets.reviewer : role === "worker" ? worker : start + offsets.coordinator;
+  return DEMAND_LEVELS[Math.max(0, Math.min(demandRank("frontier"), rank))];
+}
+
+/**
+ * The reviewer's demand: the worker's actual tier (or its calculated demand
+ * before a worker ran) moved by the reviewer offset. Only a critical task
+ * floors it at the worker's actual tier, as its brief asks for a reviewer at
+ * least as capable as the worker (Tom, 2026-11-18).
+ */
+export function reviewerDemand(task: { complexity?: CapabilityLevel | null; critical?: boolean | null; profile?: { id?: string; [key: string]: unknown } | null },
+  pool: readonly Pick<PoolEntry, "profileId" | "capability">[], usage: UsageLevel, offsets: DemandRoleOffsets = DEMAND_ROLE_OFFSETS): DemandLevel {
+  const worker = workerActualTier(task, pool) ?? runDemand(task.complexity, "worker", usage, offsets);
+  const moved = demandRank(worker) + offsets.reviewer;
+  const rank = task.critical ? Math.max(moved, demandRank(worker)) : moved;
   return DEMAND_LEVELS[Math.max(0, Math.min(demandRank("frontier"), rank))];
 }
 
@@ -266,12 +282,10 @@ export function taskDemandPreview(task: PreviewTask, pool: readonly PoolEntry[],
   const climbed = climbedTier(task);
   return (["worker", "reviewer", "coordinator"] as const).map(role => {
     const fullDemand = runDemand(task.complexity, role, usage, offsets);
-    const workerActual = workerActualTier(task, pool);
-    const roleDemand = role === "reviewer" && workerActual ? (demandRank(workerActual) > demandRank(fullDemand) ? workerActual : fullDemand) : fullDemand;
+    const roleDemand = role === "reviewer" ? reviewerDemand(task, pool, usage, offsets) : fullDemand;
     const demand = role === "worker" ? (climb ? climb.to : reviewed ? workerStepUp(roleDemand, requested) : roleDemand) : roleDemand;
     const ceiling = role === "coordinator" ? requested
-      : role === "reviewer" && demandRank(roleDemand) > demandRank(requested) ? roleDemand
-      : usage === "maximum" ? "frontier"
+      : role === "reviewer" || usage === "maximum" ? "frontier"
       : requested;
     const exception = role === "worker" ? climb?.to ?? climbed : climbed;
     const raw = task.profileRequests?.[role] ?? null;

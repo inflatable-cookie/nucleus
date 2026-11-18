@@ -938,6 +938,93 @@ test('an owner restart with an intent but no sent receipt reports unknown delive
   } finally { await f.close(); }
 });
 
+test("a real lost restart settles after its old worker is isolated and released", async () => {
+  const f = fixture();
+  try {
+    retainedWorker(f, "retained_worker", false);
+    f.store.update(f.taskId, {
+      phase: "working",
+      agentActive: false,
+      lastAgentStatus: "idle",
+    });
+    f.store.event(f.taskId, 'owner_stopped', JSON.stringify({ runIds: ['worker-run'] }));
+    let sends = 0;
+    f.setNotify(async () => {
+      sends++;
+      throw new Error("Transport timeout after send");
+    });
+    const input = taskControlInputSchema.parse({
+      taskId: f.taskId,
+      version: f.current().version,
+      action: "restart",
+      role: "worker",
+      reason: "Continue",
+      caller: CALLER,
+    });
+    const { key, payload } = taskControlOperation(input);
+    const accepted = await f.engine.startOperation({
+      key,
+      kind: "task_control",
+      taskId: f.taskId,
+      expectedVersion: input.version,
+      payload,
+    });
+    assert.ok("accepted" in accepted);
+    const operation = await f.engine.awaitOperation(accepted.operation.id);
+    assert.equal(operation.state, "needs_attention");
+    assert.equal(operation.effect?.status, "uncertain");
+    assert.equal(f.events("owner_control").length, 0);
+    const offered = () =>
+      f
+        .next()
+        .verbs.some(
+          (v) =>
+            v.verb === "retry_effect" &&
+            JSON.stringify(v.args ?? {}).includes(`operation.${operation.id}`),
+        );
+    assert.equal(offered(), true);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const alternate = profile('worker-alt', 'test/worker-alt', ['worker']);
+    f.engine.profiles = [f.profiles.worker, f.profiles.reviewer, f.profiles.coord, alternate];
+    f.store.setMeta('pool', [
+      { profileId: f.profiles.worker.id, enabled: true, group: f.profiles.worker.id, roles: ['worker'], weight: 1, scopes: ['general'] },
+      { profileId: alternate.id, enabled: true, group: alternate.id, roles: ['worker'], weight: 1, scopes: ['general'] },
+    ]);
+    f.observations.set('worker-agent', { ...f.observations.get('worker-agent')!, status: 'error', error: 'Connection error' });
+    f.store.update(f.taskId, { failoverReason: 'agent_errored: Connection error' });
+    assert.equal(offered(), true, 'the original worker remains the target before retirement');
+    await f.engine.recoverExhaustedWorkers();
+    assert.equal(f.store.run('worker-run'), null, 'initial workers have no Run row');
+    assert.equal(f.current().retiredWorkers.some(worker => worker.runId === 'worker-run' && worker.agentId === 'worker-agent'), true);
+    assert.equal(f.events('worker_replacement').length, 1);
+    assert.notEqual(f.current().agentId, 'worker-agent');
+    const replaced = f.current();
+    f.store.update(f.taskId, { retiredWorkers: [] });
+    assert.equal(offered(), true, 'a replacement without the target retirement stays unknown');
+    f.store.update(f.taskId, { retiredWorkers: replaced.retiredWorkers, agentId: 'worker-agent' });
+    assert.equal(offered(), true, 'a replacement using the old agent is not isolated');
+    f.store.update(f.taskId, { agentId: replaced.agentId });
+    assert.equal(offered(), false);
+    f.engine.reconcileBlockedEffects(f.taskId);
+    assert.equal(f.events("operation_superseded").length, 1);
+    f.engine.reconcileBlockedEffects(f.taskId);
+    assert.equal(f.events("operation_superseded").length, 1);
+    const repeated = await f.engine.startOperation({
+      key,
+      kind: "task_control",
+      taskId: f.taskId,
+      expectedVersion: input.version,
+      payload,
+    });
+    assert.ok("accepted" in repeated);
+    assert.equal(repeated.operation.state, "needs_attention");
+    assert.equal(sends, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+
 for (const change of ['task version', 'run binding', 'competing run', 'delivery'] as const) {
   test(`worker restart rechecks ${change} after the observation await`, async () => {
     const f = fixture(); try {

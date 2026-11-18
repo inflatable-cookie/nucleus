@@ -164,7 +164,7 @@ export interface RuntimeHealthContext {
   readonly engine: Engine;
   readonly lifecycle: RuntimeLifecycle;
   readonly hostRegistry: HostRegistry<RegisteredHost>;
-  readonly t3Host: T3HostConnection | null;
+  readonly t3Host: () => T3HostConnection | null;
   /** The BB host's registration, identity and heartbeat (Spec 062, phase 1). */
   bb(): BbHostStatus;
   readonly admission: Admission;
@@ -284,7 +284,7 @@ export class RuntimeHealthProjection {
    * `hosts` and Settings → Hosts (`host.list`) both read, so they never disagree.
    */
   hostStates(
-    t3 = this.context.t3Host?.status(),
+    t3 = this.context.t3Host()?.status(),
     bb = this.context.bb(),
   ): HostHealth[] {
     const { hostRegistry, lifecycle } = this.context;
@@ -307,7 +307,7 @@ export class RuntimeHealthProjection {
 
   health(): RuntimeHealth {
     const { store, hostRegistry, lifecycle } = this.context;
-    const t3 = this.context.t3Host?.status();
+    const t3 = this.context.t3Host()?.status();
     const bb = this.context.bb();
     const endpoint = this.context.hostRunEndpoint();
     return {
@@ -322,9 +322,7 @@ export class RuntimeHealthProjection {
       paused: store.getMeta<boolean>("paused") ?? true,
       ...this.context.drainProjection(),
       hostId:
-        this.context.hostSessionId() ||
-        hostRegistry.primary()?.id ||
-        "unknown",
+        this.context.hostSessionId() || hostRegistry.primary()?.id || "unknown",
       connected: this.context.anyHostConnected(),
       hostIdentityConflict: lifecycle.identityConflict,
       ...(t3 ? { t3code: t3 } : {}),

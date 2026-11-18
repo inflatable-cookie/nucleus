@@ -90,7 +90,9 @@ export interface RuntimeLifecycleOwner {
   /** The host seam's own connection rule, which also retires a stale session claim. */
   connected(): boolean;
   readonly plannerTickets: ParticipantTickets;
-  readonly t3Host: T3HostConnection | null;
+  readonly t3Host: () => T3HostConnection | null;
+  /** Adopt the stored T3Code connection if the operator route changed it (nucleus#1330). */
+  refreshT3Settings(): void;
   /** The configured daemon endpoint this runtime is meant to own. */
   readonly daemonUrl: string;
   /** Bounded daemon-connect window. */
@@ -206,6 +208,10 @@ export class RuntimeLifecycle {
    */
   async ensureBootstrap(): Promise<boolean> {
     if (this.closing || this.owner.idleShutdownLatched) return false;
+    // The operator's install route may have written or dropped the T3Code
+    // connection while this process ran; adopting it here is what makes the
+    // connection appear without a service restart (nucleus#1330).
+    this.owner.refreshT3Settings();
     // The legacy primary identity is recorded first; a secondary reconnect
     // remains independent of primary availability after that first bootstrap.
     // A secondary host coming online owes one catalog refresh so its own
@@ -213,14 +219,14 @@ export class RuntimeLifecycle {
     // ride the periodic profile pass. The chain runs on every bootstrap tick
     // and must never reject unhandled (a disconnected primary rejects refresh),
     // so the transition-guarded refresh is caught here.
-    if (this.owner.hostRegistry.known().length)
-      void this.owner.t3Host
-        ?.ensureConnected()
-        .then(() => this.owner.plannerTickets.ensure())
-        .then(() => this.refreshOnSecondaryArrival())
-        .catch(() => {
-          /* the next tick reconnects; the catalog rides the periodic profile pass */
-        });
+    void this.owner
+      .t3Host()
+      ?.ensureConnected()
+      .then(() => this.owner.plannerTickets.ensure())
+      .then(() => this.refreshOnSecondaryArrival())
+      .catch(() => {
+        /* the next tick reconnects; the catalog rides the periodic profile pass */
+      });
     if (this.bootstrapped && this.owner.connected()) {
       await this.owner.plannerTickets.ensure();
       return true;
@@ -271,7 +277,7 @@ export class RuntimeLifecycle {
             "Configured daemon identity changed; existing tasks belong to another host",
           );
         }
-        void this.owner.t3Host?.ensureConnected();
+        void this.owner.t3Host()?.ensureConnected();
         await this.boundedBootstrapStep(
           "Daemon catalog refresh",
           this.refresh(),
@@ -355,7 +361,7 @@ export class RuntimeLifecycle {
    * (nucleus#1139 review). Later refreshes ride the periodic profile pass.
    */
   async refreshOnSecondaryArrival(): Promise<void> {
-    const online = this.owner.t3Host?.status().connected === true;
+    const online = this.owner.t3Host()?.status().connected === true;
     if (!online || this.secondaryOnline) {
       this.secondaryOnline = online;
       return;

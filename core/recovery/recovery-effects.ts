@@ -1,9 +1,9 @@
-import type { Task } from '../../shared/contracts';
+import type { Run, Task } from '../../shared/contracts';
 import type { QueueOperation } from '../../shared/operations';
 import type { VerifiedEnclosingOperation } from '../planning/enclosing-operation';
 import { classifyReviewPublication, reviewPublicationKey, type ReviewPublicationClassification } from '../review/review-publication';
 import { reviewCheckpointRefusal } from '../review/review-continuation';
-import type { Store } from '../store/store';
+import { digest, operationIdForKey, operationInputHash, type Store } from '../store/store';
 import { provenAbsentCreation } from './absent-creation/decisions';
 
 /**
@@ -188,7 +188,11 @@ export function recoveryEffects(store: Store, task: Task, options: RecoveryEffec
       const checkpoint = run.reviewCheckpoints?.at(-1);
       const creationProven = Boolean(run.agentId) && Boolean(checkpoint)
         && reviewCheckpointRefusal(store, task, run, checkpoint!) === null;
-      if (!creationProven)
+      const evidence = releasedRunDeliveryEvidence(store, run);
+      if (evidence)
+        push({ kind: 'run-delivery', identity: run.id, taskId: task.id, runId: run.id, state: 'superseded',
+          reason: `run ${run.id} delivery was settled: ${evidence}`, publication: null });
+      else if (!creationProven)
         push({ kind: 'run-delivery', identity: run.id, taskId: task.id, runId: run.id, state: 'uncertain',
           reason: `run ${run.id} has an uncertain delivery`, publication: null });
     }
@@ -241,6 +245,44 @@ export function recoveryEffects(store: Store, task: Task, options: RecoveryEffec
     ? { ...effect, state: 'superseded' as const, reason: `Owner settled: ${effect.reason}` } : effect);
 }
 
+/** A released callback is terminal only when its own accepted receipt binds it. */
+export function authenticatedCompletion(store: Store, run: Run): boolean {
+  const completion = run.completion;
+  if (!completion || completion.taskId !== run.taskId || completion.runId !== run.id
+      || (run.role === 'reviewer' && completion.head !== run.head)) return false;
+  const receipt = store.db.prepare('SELECT hash,response FROM receipts WHERE id=? AND task=? AND run=?')
+    .get(completion.eventId, run.taskId, run.id) as { hash?: string; response?: string } | undefined;
+  try {
+    if (!receipt || JSON.parse(receipt.response ?? '').accepted !== true) return false;
+    const withoutReview = { ...completion };
+    delete withoutReview.reviewId;
+    const withoutComment = { ...completion };
+    delete withoutComment.reviewCommentId;
+    const withoutBoth = { ...withoutReview };
+    delete withoutBoth.reviewCommentId;
+    return [completion, withoutReview, withoutComment, withoutBoth]
+      .some(value => digest(JSON.stringify(value)) === receipt.hash);
+  } catch { return false; }
+}
+
+/** Evidence written by the delivery observer for this exact released run. */
+export function releasedRunDeliveryEvidence(store: Store, run: Run): string | null {
+  if (!run.released || run.status !== 'uncertain' || !run.agentId || !run.workspaceId) return null;
+  const created = Date.parse(run.createdAt);
+  if (!Number.isFinite(created)) return null;
+  const checkpoint = run.reviewCheckpoints?.at(-1);
+  if (checkpoint && reviewCheckpointRefusal(store, store.task(run.taskId), run, checkpoint) === null)
+    return `accepted checkpoint ${checkpoint.ordinal} proves this run's creation`;
+  const found = store.eventsAll(run.taskId).find(event => {
+    if (!(Date.parse(event.at) >= created)) return false;
+    if (event.kind === 'run_delivery_reconciled') return event.detail === `${run.id}: exact creation message observed`;
+    return event.kind === 'run_delivery_not_delivered'
+      && (event.detail === `${run.id}: agent ${run.agentId} archived; complete readable timeline has no ns-run-${run.id}`
+        || event.detail === `${run.id}: agent ${run.agentId} closed; complete readable timeline has no ns-run-${run.id}`);
+  });
+  return found ? `${found.kind} at ${found.at}: ${found.detail}` : null;
+}
+
 /** Stable occurrence identity; fixed-key effects carry the current attempt's identity. */
 export function recoverySettlementKey(task: Task, effect: RecoveryEffect): string {
   const validation = task.resolution.projectValidation;
@@ -255,48 +297,109 @@ export function blockingRecoveryEffects(store: Store, task: Task, options: Recov
   return recoveryEffects(store, task, options).filter(isBlockingRecoveryEffect);
 }
 
-/**
- * Nucleus#1159: later evidence that one uncertain host-effect control landed.
- *
- * Queue records the native command before sending it, so an unknown delivery is
- * never a resend. But the control's *creation* effects — the project
- * registration, the workspace and the thread in it — leave their own durable
- * record on the task: a binding event after the control was accepted, and a run
- * created in that workspace afterwards. When both exist the uncertainty is
- * already answered, and the honest answer is "delivered, with this evidence",
- * never "still unknown". Store reads only, so the reconciler can apply it on
- * every pass and while a host is offline.
- *
- * Only creation-class controls are answered this way. A control whose unknown
- * command has no visible artefact in the task's own record (a settle or a
- * rename, say) keeps its unchanged fence and reaches `retry_effect`, or the
- * blocked-effect bound, instead of being assumed delivered.
- */
-export function observedHostEffectEvidence(store: Store, task: Task, operation: QueueOperation): string | null {
-  if (operation.kind !== 'task_control' || operation.taskId !== task.id || operation.state !== 'needs_attention') return null;
-  // A promotion, submission or removal owns its own reconciler and effect shape.
-  if (operation.effect && operation.effect.kind !== 'task_control') return null;
-  if (!task.workspaceId || !task.directory) return null;
-  const accepted = Date.parse(operation.createdAt);
-  if (!Number.isFinite(accepted)) return null;
-  const binding = store.eventsAll(task.id)
-    .find(event => Date.parse(event.at) > accepted && boundWorkspaceId(event) === task.workspaceId);
-  if (!binding) return null;
-  const boundAt = Date.parse(binding.at);
-  const used = store.runs(task.id).find(run => run.agentId && run.workspaceId === task.workspaceId
-    && Number.isFinite(Date.parse(run.createdAt)) && Date.parse(run.createdAt) >= boundAt);
-  if (!used) return null;
-  return `workspace ${task.workspaceId} was bound at ${task.directory} after this control was accepted (${binding.at}) and ${used.role} run ${used.id} started there at ${used.createdAt} with agent ${used.agentId}`;
+/** The durable supersession belongs only to this attempt of this operation. */
+export function hasRecordedOperationSettlement(store: Store, task: Task, operation: QueueOperation): boolean {
+  return store.eventsAll(task.id).some(event => {
+    if (event.kind !== 'operation_superseded') return false;
+    try {
+      const record = JSON.parse(event.detail) as { id?: string; inputHash?: string; attempt?: number; intentAt?: string; evidence?: string };
+      return record.id === operation.id && record.inputHash === operation.inputHash && record.attempt === operation.attempts
+        && record.intentAt === operation.effect?.intentAt && typeof record.evidence === 'string';
+    } catch { return false; }
+  });
 }
 
-/** The workspace id one binding event records, or null for any other event. */
-function boundWorkspaceId(event: { kind: string; detail: string }): string | null {
-  if (event.kind === 'workspace_created') return event.detail.trim() || null;
-  if (event.kind !== 'dispatch_workspace_rebound') return null;
-  try {
-    const rebound = JSON.parse(event.detail) as { to?: { id?: unknown } };
-    return typeof rebound.to?.id === 'string' ? rebound.to.id : null;
-  } catch { return null; }
+/** Positive task-bound evidence that a control no longer owns the current step. */
+export function observedHostEffectEvidence(store: Store, task: Task, operation: QueueOperation): string | null {
+  if (operation.kind !== 'task_control' || operation.taskId !== task.id || operation.state !== 'needs_attention') return null;
+  if (operation.effect?.kind !== 'task_control' || operation.effect.target !== 'restart') return null;
+  if (hasRecordedOperationSettlement(store, task, operation)) return 'the occurrence has a durable supersession';
+  const owner = task.resolution.ownerSettlements.find(record =>
+    record.recoveryKeys.includes(JSON.stringify(['operation', operation.id, ''])));
+  if (owner) return `owner settlement at ${owner.at}: ${owner.reason}`;
+  const accepted = Date.parse(operation.createdAt);
+  const boundary = Date.parse(operation.settledAt ?? '');
+  const started = Date.parse(operation.startedAt ?? '');
+  const events = store.eventsAll(task.id);
+  const payload = store.operationPayload(operation.id) as { control?: {
+    action?: string; taskId?: string; version?: number; role?: string; instruction?: string;
+  } } | null;
+  const control = payload?.control;
+  if (Number.isFinite(accepted) && Number.isFinite(started) && Number.isFinite(boundary)
+      && started >= accepted && boundary >= started && operation.expectedVersion && task.version > operation.expectedVersion
+      && control?.action === 'restart' && control.taskId === task.id && control.version === operation.expectedVersion
+      && operation.id === operationIdForKey(operation.key) && operation.inputHash === operationInputHash(payload)
+      && operation.attempts > 0 && operation.effect.status === 'uncertain') {
+    // The initial worker has no Run row. Its durable pre-send intent names
+    // the exact target; replacement records that identity before launching the
+    // new worker and retains cleanup of the old thread.
+    if ((!control.role || control.role === 'worker') && (!operation.hostId || operation.hostId === task.hostId)) {
+      for (const event of events) {
+        if (event.kind !== 'owner_restart_instruction_intent'
+            || !(Date.parse(event.at) >= started && Date.parse(event.at) <= boundary)) continue;
+        try {
+          const target = JSON.parse(event.detail) as { runId?: string; agentId?: string; messageId?: string };
+          if (!target.runId || !target.agentId) continue;
+          const instruction = control.instruction?.trim()
+            || 'Continue the existing task under its current approved instruction source and within its approved scope.';
+          const messageId = `ns-owner-restart-${digest(`${task.id}:${target.runId}:${digest(instruction)}`).slice(0, 32)}`;
+          if (target.messageId !== messageId) continue;
+          const retired = task.retiredWorkers.some(worker => worker.runId === target.runId && worker.agentId === target.agentId);
+          const replacement = events.some(item => item.kind === 'worker_replacement'
+            && Date.parse(item.at) >= boundary && item.id > event.id);
+          const isolated = task.runId && task.agentId && task.runId !== target.runId && task.agentId !== target.agentId
+            && !store.runs(task.id).some(run => !run.released && run.agentId === target.agentId);
+          if (retired && replacement && isolated)
+            return `restart target ${target.runId} on ${target.agentId} was retired by worker replacement; its cleanup remains owed`;
+        } catch { /* malformed intent is not target evidence */ }
+      }
+    }
+    const roles: Record<string, Run['role'][]> = { worker: ['revision'], reviewer: ['reviewer'],
+      coordinator: ['recovery', 'closeout'], executor: ['executor'] };
+    const role = control.role ? roles[control.role] : ['reviewer', 'revision', 'verification', 'closeout', 'recovery', 'executor'] as Run['role'][];
+    if (role) {
+      const runs = store.runs(task.id);
+      const roleRuns = runs.filter(run => role.includes(run.role));
+      const incompleteHistory = roleRuns.some(run => !Number.isFinite(Date.parse(run.createdAt)));
+      // A run positively released before acceptance was no longer a possible
+      // target; it must not need a second release after this attempt.
+      const releasedBefore = (run: Run) => run.released && events.some(event => Date.parse(event.at) < accepted
+        && (event.kind === 'run_released_from_recorded_completion' && event.detail === `${run.role} ${run.id}`
+          || event.kind === 'run_released_from_observed_liveness' && event.detail.startsWith(`${run.role} ${run.id}: `)
+          || run.role === 'reviewer' && run.status === 'finished' && Boolean(run.head)
+            && ['changes_required', 'ready_to_merge'].includes(run.completion?.status ?? '')
+            && (event.kind === 'review_result_applied' || event.kind === 'review_reapplied')
+            && event.detail === run.id && authenticatedCompletion(store, run)));
+      const candidates = roleRuns.filter(run => Date.parse(run.createdAt) <= boundary && !releasedBefore(run));
+      const untrackedWorker = (!control.role || control.role === 'worker') && task.runId && !runs.some(run => run.id === task.runId);
+      const released = (run: Run) => run.released && Boolean(run.agentId) && ['finished', 'superseded'].includes(run.status)
+        && !(task.checkpoints.intent?.status === 'pending' && task.checkpoints.intent.runId === run.id)
+        && !(task.resolution.stalledTurnStop?.runId === run.id && task.resolution.stalledTurnStop.status !== 'completed')
+        && !(run.reviewDeliveries ?? []).some(delivery => delivery.status === 'reserved' || delivery.status === 'uncertain')
+        && !runs.some(other => !other.released && other.agentId === run.agentId)
+        && events.some(event => Date.parse(event.at) > boundary
+          && event.kind === 'run_released_from_observed_liveness' && event.detail.startsWith(`${run.role} ${run.id}: `));
+      const laterMove = events.some(event => {
+        if (event.kind !== 'owner_control' || Date.parse(event.at) <= boundary) return false;
+        try {
+          const value = JSON.parse(event.detail) as { verb?: string; identities?: { taskId?: string; version?: number } };
+          return value.verb === 'move' && value.identities?.taskId === task.id
+            && typeof value.identities.version === 'number' && value.identities.version > operation.expectedVersion!;
+        } catch { return false; }
+      });
+      const laterBinding = runs.some(run => role.includes(run.role) && Date.parse(run.createdAt) > boundary
+        && Boolean(run.agentId) && candidates.every(old => old.agentId !== run.agentId));
+      if (!untrackedWorker && !incompleteHistory && candidates.length && candidates.every(released) && (laterMove || laterBinding))
+        return `restart role ${control.role ?? 'implicit'} targets ${candidates.map(run => run.id).join(', ')} were released; ${laterMove ? 'a later owner move' : 'a later isolated run binding'} advanced the task`;
+    }
+  }
+  const { mergedCommit, mergeHead } = task.resolution;
+  if (!Number.isFinite(accepted) || !Number.isFinite(boundary) || boundary < accepted || !task.prUrl || !task.prHead || mergeHead !== task.prHead
+      || !mergedCommit || !['merging', 'syncing', 'closing', 'done'].includes(task.phase)
+      || store.runs(task.id).some(run => !run.released)) return null;
+  const merge = events.find(event => (event.kind === 'merge_verified' || event.kind === 'external_merge_observed')
+    && Date.parse(event.at) > boundary);
+  return merge ? `exact PR head ${mergeHead} merged as ${mergedCommit} (${merge.kind} at ${merge.at})` : null;
 }
 
 /**
@@ -306,9 +409,9 @@ function boundWorkspaceId(event: { kind: string; detail: string }): string | nul
  * past cannot hold review or merge (nucleus#1159).
  */
 export function blockingTaskOperations(store: Store, task: Task, options: { excludeId?: string | null } = {}): QueueOperation[] {
+  const blocking = new Set(blockingRecoveryEffects(store, task, { kinds: ['operation'] }).map(effect => effect.identity));
   return store.operations({ taskId: task.id, states: ['pending', 'running', 'needs_attention'], limit: 1000 })
-    .filter(operation => !options.excludeId || operation.id !== options.excludeId)
-    .filter(operation => operation.state !== 'needs_attention' || !observedHostEffectEvidence(store, task, operation));
+    .filter(operation => operation.id !== options.excludeId && blocking.has(operation.id));
 }
 
 /** The two labels the review-dispatch wait records for itself, in that writer's terms. */

@@ -788,12 +788,16 @@ project registration is untouched.
 
 **The provider is checked, never assumed.** The nested path needs an enabled,
 ready provider instance named `nucleus` whose driver is `acpRegistry`, advertising
-the `nucleus` model (the agent's two display models, Spec 065). An operator
-registers it once; the adapter reads `server.getConfig` at connect and at each
-create, records what it found in its own state, and reports it as
+the `nucleus` model (the agent's two display models, Spec 065). The operator
+registers it once with `nucleus t3 install` ([operator install
+route](#operator-install-route)); the adapter reads `server.getConfig` at connect
+and at each create, records what it found in its own state, and reports it as
 `service.health`'s `t3code.nativeParenting` line. A missing, disabled or
 wrong-driver instance falls back to top-level role threads with guidance naming the
-provider to register. Nucleus never writes T3 settings.
+provider to register. The adapter and the service never write T3 settings; only
+the operator's `nucleus t3 install` and `nucleus t3 uninstall` do, through T3's own
+`server.updateSettings`, and only the `nucleus` provider instance (Tom,
+2026-11-18; nucleus#1330).
 
 ## One row per task
 
@@ -989,17 +993,126 @@ task lifecycle dispatch. An unconfigured T3 adapter changes no default route. A
 configured second host never causes implicit rerouting of a live task, origin
 notice or pending question.
 
+## Operator install route
+
+One command connects an environment, and the same route reports and removes it
+(Tom, 2026-11-18: "We'd need a way to automate installation - I don't want to
+require people using this to set up the nucleus acp directly.. can we build a
+`nucleus t3 install` / `status` / `uninstall` suite like for bb?"). The three
+commands are `nucleus t3 install`, `nucleus t3 status` and `nucleus t3 uninstall`
+(`bin/t3-install.ts`, beside the BB route this one mirrors). They are the only
+writers of T3 settings anywhere in Nucleus: the adapter and the service still
+never write one.
+
+**Finding the server.** The running server's own descriptor,
+`<base>/userdata/server-runtime.json`, names its `origin`; `--base-dir` selects
+another T3 home and `--endpoint` names a server directly. The route proves the
+origin by reading T3's public `/.well-known/t3/environment` descriptor, and
+refuses clearly when nothing answers. The environment id in that descriptor is
+the host id the service must come online as, `t3code:<environmentId>`.
+
+**Bearers.** Two sessions, split by scope. The service's **runtime** bearer has
+`orchestration:read` and `orchestration:operate` only, with a long TTL
+(`--ttl`, default 365 days), label and subject `nucleus`; it is stored owner-only
+in `<data home>/settings.json` as `t3code: { endpoint, bearer, sessionId, environmentId, baseDir,
+expiresAt, probeThreadId? }`, and is never printed, reported or logged. The
+**install** bearer is minted for one registration with `providers:manage` and
+`orchestration:read`, used for the read and the single mutation, and revoked
+immediately; it is never stored. The nightly derives the scope from the payload,
+and a provider mutation with an empty patch requires `providers:manage`
+(`requiredScopesForSettingsUpdate`), so `settings:write` alone would be refused.
+A re-run rotates the runtime bearer: the new session is minted and stored first,
+then every other active session with subject `nucleus` is revoked.
+
+**Registering the provider.** One mutation through T3's own route:
+`server.updateSettings { patch: {}, providerInstanceMutation: { operation:
+"upsert", instanceId: "nucleus", instance: { driver: "acpRegistry",
+displayName: "Nucleus", enabled: true, config: { source: "local", commandPath } }
+} }`, where `commandPath` is the resolved absolute path of this install's
+`nucleus-acp` launcher (`~/.local/bin/nucleus-acp`, or `--acp-command`). The
+nightly's operations are `create`, `upsert` and `remove`. Ownership is the rule
+BB's route uses: an existing `nucleus` instance is ours only when its driver is
+`acpRegistry`, its `source` is `local`, and its `commandPath` is that launcher; a
+namesake — another driver, or another command path — is refused by name for
+install *and* uninstall and never overwritten or removed. A launcher must carry the ownership marker and invoke the ACP entry point; the ordinary CLI launcher is not an ACP launcher.
+
+**Proving it.** After the mutation, install re-reads `server.getConfig` until the
+instance is ours, enabled, advertising at least one model and its probe has settled (or the wait expires), and then has the
+running service adopt the stored connection without a restart: the service
+watches its settings file's stamp on its bootstrap tick
+(`RuntimeOwner.refreshT3Settings`) and replaces the T3 connection, so
+the host registers as `t3code:<environmentId>`. Install waits, bounded, for
+`service.health`'s `t3code` line to report exactly that host online and prints
+every step's result. A service that is not running is reported, not failed: the
+connection is recorded and adopted at its next start. `service.health` and the
+host list are read over the local service socket; the route never starts a
+service.
+
+The planner accepted the settled warning and default model for this lane (2026-11-18). Readiness is T3's own verdict, and this route never invents one. The nightly
+answers a provider upsert as `ready` and then runs an ACP probe that opens a
+*test session*; the Nucleus agent refuses a session for a directory no task has
+bound (Spec 065), so the installed provider settles at `warning` with the
+nightly's own note, `The ACP agent could not create a test session.`, and the
+adapter's readiness check falls back to top-level role threads. `install`
+therefore treats a non-`error` instance that is ours as installed, succeeds,
+prints T3's note verbatim and adds a `Provider readiness` step saying that native
+parenting is off until T3's probe succeeds; `status` reports `ready`, `usable` and
+the probe's note separately, and `ok` means the install is correct and connected,
+not that T3's probe passed. The probe's interaction with the agent's binding rule
+is recorded as papercut `056a7077-f86d-4ed6-9b11-6ec65eeef593`, not fixed here.
+
+**Status** (`nucleus t3 status`, `--json`) reports, with no secret:
+
+- the server: its endpoint, version and environment id, and the host id;
+- the runtime bearer: present, whether T3 accepted it for this run's read, its
+  scopes and expiry from `t3 auth session list`, and a warning while it is within
+  seven days of expiry (or when it carries a settings scope the service does not
+  need);
+- the provider: registered, ours, enabled, ready, its `commandPath` against this
+  install's `nucleus-acp`, and its models;
+- the adapter's own `t3code.nativeParenting` line and the support-thread line, as
+  the service reports them;
+- the repositories whose stored `hostKind` is `t3code`, i.e. the projects opted
+  into this host.
+
+`ok` is true only when the server answers, the bearer is present and not refused,
+and the provider is registered, ours, enabled not `error` and pointed at this
+install; `ready` and the probe note say whether T3's own ACP probe passed.
+
+**Uninstall** removes the `nucleus` provider instance with `operation: "remove"`,
+only when it is ours (a namesake is refused by name), revokes every active session
+with subject `nucleus`, and clears `t3code` from the settings file. While tasks
+are live on `t3code:<environmentId>` it names them from `host.list`'s dependents
+and refuses unless `--live-tasks` is passed; a service that cannot report its
+hosts is a refusal too, unless `--live-tasks` explicitly overrides the unknown state. The selected endpoint and any recorded environment and base directory must match the stored connection; a mismatch refuses without changes. Legacy endpoint-and-bearer settings can be checked at that same endpoint and migrated. WebSocket endpoints compare using their corresponding HTTP or HTTPS origin, preserving host, port and transport security. A missing or revoked runtime session does not prevent install from rotating it or uninstall from removing the connection: the short-lived session must authenticate to the selected server before its provider can be changed. Status attributes session scopes and expiry only to the saved session in a verified matching store. Status reports provider registration as unknown when authenticated configuration cannot be read. It never
+archives, deletes or edits a thread, and never touches a project registration.
+The service drops the connection on its next bootstrap tick.
+
 ## Trial
 
 Paseo stays the primary host. Opt a repository into T3Code for new tasks:
 
 1. Start T3Code.
-2. Issue a session bearer with `t3 auth session issue`.
-3. Write owner-only local settings (outside the repository, never logged): `t3code: { endpoint, bearer, probeThreadId? }`.
-4. In Settings, set the repository Host to T3Code, or `repository.set` with `hostKind: "t3code"`.
-5. Switch back to Paseo the same way. Live tasks keep the host they started on.
+2. Run `nucleus t3 install`. It mints the scoped bearer, registers the `nucleus`
+   ACP provider and waits for the host to come online; `nucleus t3 status` shows
+   each fact and `nucleus t3 uninstall` removes them again.
+3. In Settings, set the repository Host to T3Code, or `repository.set` with `hostKind: "t3code"`.
+4. Switch back to Paseo the same way. Live tasks keep the host they started on.
 
 ## Verification
+
+`test/t3-install.test.ts` drives the operator install route's three commands as a
+child process against the fake Nightly transport and a fake installed `t3`
+command: install mints the two split-scope sessions, sends the one provider
+mutation and stores the runtime connection owner-only; a re-run rotates the
+bearer; a namesake instance (another driver, or another `commandPath`) is refused
+for install and for uninstall with nothing written; status reports a missing,
+disabled and foreign provider and a near-expiry bearer; uninstall removes only
+our instance and our sessions, clears the connection, touches no project or
+thread, and refuses a namesake. `test/t3-settings.test.ts` covers the stored
+connection's shape, owner-only write, key preservation and change token;
+`test/t3code-composition.test.ts` proves the live reconfigure adopts a new
+connection, releases the previous claim and ignores an unchanged file.
 
 Fake-server tests cover each operation, the exact wire envelopes and scopes,
 authorization refusal, missing/incompatible protocol, a previously untested
@@ -1120,3 +1233,5 @@ The private proof selector is `effigy proof:t3code -- --asar <nightly archive>`.
 It copies the target app's bundled server into fresh scratch and uses a scripted
 local provider. Its evidence distinguishes source drift, injected incompatible
 read responses and actual lifecycle operations on the private nightly.
+
+When the server cannot be reached, uninstall refuses without changes and says the stored runtime bearer remains active; start T3Code and retry.

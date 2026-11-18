@@ -1,0 +1,1 @@
+- The Nucleus skill no longer carries Atlas; long-horizon direction with the operator is Northstar's separate Atlas skill again.

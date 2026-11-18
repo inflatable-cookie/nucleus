@@ -68,6 +68,11 @@ try {
     const service = await import('../service/transport/main-channel.mjs');
     console.log(JSON.stringify(await (command === 'channel' ? service.configureChannel(...args) : service.requestRollback())));
   }
+  else if (command === 't3') {
+    // The T3Code host's operator install route (nucleus#1330): connect, report and
+    // remove this integration's `nucleus` ACP provider, and nothing else in T3.
+    await import('./nucleus-t3.mjs');
+  }
   else if (command === 'bb') {
     // The BB host's operator install route (Spec 062, phase 7): install, report and
     // remove this integration's BB plugin, and nothing else in the operator's BB.

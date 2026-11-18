@@ -600,16 +600,29 @@ test("BB ordinary lifecycle: dispatch, helper report, independent review, revisi
     );
     f.fake.rows.get(workerId).queuedWork = "none";
     const displacedRunId = randomUUID();
-    const displaced = await f.adapter.createAgent(
-      { ...task, runId: displacedRunId },
-      "synthetic-retired-token",
-      "Synthetic displaced worker",
-    );
     const displacedTemporary = f.adapter.runTemporaryDirectory!(
       displacedRunId,
       task,
     );
-    mkdirSync(displacedTemporary, { recursive: true });
+    assert.equal(
+      existsSync(displacedTemporary),
+      false,
+      "the synthetic displaced run starts without a scratch leaf",
+    );
+    const displaced = await f.adapter.createAgent(
+      {
+        ...task,
+        runId: displacedRunId,
+        temporaryDirectory: displacedTemporary,
+      },
+      "synthetic-retired-token",
+      "Synthetic displaced worker",
+    );
+    assert.equal(
+      existsSync(displacedTemporary),
+      true,
+      "BB creates the displaced run scratch before attaching it",
+    );
     const displacedHead = (
         await git(task.directory!, "rev-parse", "HEAD")
       ).trim(),

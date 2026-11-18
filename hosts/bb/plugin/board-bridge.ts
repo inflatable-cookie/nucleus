@@ -27,25 +27,44 @@
  */
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { serviceStateSchema } from "../../../shared/schema/service";
 
 /** One catalogue name, as Contract 007 bounds it (`queue.ui-snapshot`, `bb.sidebar-groups`). */
 const CATALOGUE_METHOD = /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/;
 
 /**
- * Methods the board never forwards: the service's own control frames (`service.*`)
- * and the reverse channel (`host.*`) are not catalogue calls, and a worker's
- * self-registration names its thread from its own shell, as on the web board.
+ * Host methods are a reverse control channel, so only the calls the board itself
+ * uses may cross it: the QA run/accounting read and its capacity-release action.
+ * The service's control frames (`service.*`) and a worker's self-registration
+ * remain unavailable to the board.
  */
-const REFUSED_PREFIXES = ["service.", "host."] as const;
+const REFUSED_PREFIXES = ["service."] as const;
 const REFUSED_METHODS = new Set(["task.register"]);
+const BOARD_HOST_METHODS = new Set([
+  "host.run.board",
+  "host.run.capacity.release",
+]);
+
+/** Historical board clients can send this alias; the service catalogue uses a dotted wire name. */
+const METHOD_ALIASES: Readonly<Record<string, string>> = {
+  plans: "queue.plans",
+};
 
 /** The forwarded window: wide enough for the catalogue's slowest compatibility waits. */
 export const BOARD_CALL_TIMEOUT_MS = 60_000;
 
-export const boardCallInputSchema = z.object({
-  method: z.string().min(1).max(120).regex(CATALOGUE_METHOD),
-  input: z.unknown(),
-}).strict();
+export const boardCallInputSchema = z
+  .object({
+    method: z
+      .string()
+      .min(1)
+      .max(120)
+      .refine((method) =>
+        CATALOGUE_METHOD.test(METHOD_ALIASES[method] ?? method),
+      ),
+    input: z.unknown(),
+  })
+  .strict();
 
 /** The plugin's RPC method the board shell calls; its output is the catalogue's own answer. */
 export const boardContract = defineRpcContract({
@@ -54,15 +73,81 @@ export const boardContract = defineRpcContract({
 
 /** The refusal for a method the board does not forward, or null when it is forwarded. */
 export function boardCallRefusal(method: string): string | null {
-  if (!CATALOGUE_METHOD.test(method)) return `${method} is not a catalogue method`;
-  if (REFUSED_PREFIXES.some(prefix => method.startsWith(prefix)) || REFUSED_METHODS.has(method))
+  const canonical = METHOD_ALIASES[method] ?? method;
+  if (!CATALOGUE_METHOD.test(canonical))
+    return `${method} is not a catalogue method`;
+  if (
+    REFUSED_PREFIXES.some((prefix) => canonical.startsWith(prefix)) ||
+    REFUSED_METHODS.has(canonical) ||
+    (canonical.startsWith("host.") && !BOARD_HOST_METHODS.has(canonical))
+  )
     return `${method} is not served to the BB board. Nothing changed; do not retry from BB.`;
   return null;
 }
 
 /** One bounded service request on the retained connection. */
 export interface BoardBridgeSource {
-  request(method: string, input: unknown, timeoutMs?: number, via?: "bb"): Promise<unknown>;
+  request(
+    method: string,
+    input: unknown,
+    timeoutMs?: number,
+    via?: "bb",
+  ): Promise<unknown>;
+  /** `queue.service-state` is a bridge catalogue read, answered from the same health endpoint as Paseo. */
+  serviceState?(): Promise<unknown>;
+}
+
+/** Adapt the service health control read into the board's bridge-owned typed state contract. */
+export async function readBoardServiceState(
+  source: BoardBridgeSource,
+  pluginBuildId: string | null,
+): Promise<unknown> {
+  let health: Record<string, unknown> | null = null;
+  let state: "running" | "unhealthy" = "running";
+  let detail = "";
+  try {
+    const response = await source.request(
+      "service.health",
+      {},
+      BOARD_CALL_TIMEOUT_MS,
+      "bb",
+    );
+    if (!response || typeof response !== "object" || Array.isArray(response))
+      throw new Error(
+        "The Nucleus service returned an invalid health response",
+      );
+    health = response as Record<string, unknown>;
+  } catch (error) {
+    state = "unhealthy";
+    detail = error instanceof Error ? error.message : String(error);
+  }
+  const bootstrap =
+    health?.bootstrap && typeof health.bootstrap === "object"
+      ? (health.bootstrap as Record<string, unknown>)
+      : {};
+  return serviceStateSchema.parse({
+    state,
+    detail,
+    buildId: typeof health?.buildId === "string" ? health.buildId : null,
+    pid: typeof health?.pid === "number" ? health.pid : null,
+    startedAt: typeof health?.startedAt === "string" ? health.startedAt : null,
+    ready: typeof health?.ready === "boolean" ? health.ready : null,
+    paused: typeof health?.paused === "boolean" ? health.paused : null,
+    hostId: typeof health?.hostId === "string" ? health.hostId : null,
+    error:
+      state === "running"
+        ? typeof health?.startError === "string"
+          ? health.startError
+          : ""
+        : detail,
+    bootstrap: {
+      pending: bootstrap.pending === true,
+      startedAt:
+        typeof bootstrap.startedAt === "string" ? bootstrap.startedAt : null,
+    },
+    pluginBuildId,
+    roll: null,
+  });
 }
 
 /**
@@ -71,13 +156,29 @@ export interface BoardBridgeSource {
  */
 export function createBoardBridge(source: () => BoardBridgeSource | null) {
   return {
-    async boardCall(input: z.infer<typeof boardCallInputSchema>): Promise<unknown> {
+    async boardCall(
+      input: z.infer<typeof boardCallInputSchema>,
+    ): Promise<unknown> {
       const parsed = boardCallInputSchema.parse(input);
       const refusal = boardCallRefusal(parsed.method);
       if (refusal) throw new Error(refusal);
+      const method = METHOD_ALIASES[parsed.method] ?? parsed.method;
       const client = source();
-      if (!client) throw new Error("The Nucleus service channel is not connected");
-      return await client.request(parsed.method, parsed.input ?? null, BOARD_CALL_TIMEOUT_MS, "bb");
+      if (!client)
+        throw new Error("The Nucleus service channel is not connected");
+      if (method === "queue.service-state") {
+        if (!client.serviceState)
+          throw new Error(
+            "The Nucleus service state is unavailable through the BB bridge",
+          );
+        return await client.serviceState();
+      }
+      return await client.request(
+        method,
+        parsed.input ?? null,
+        BOARD_CALL_TIMEOUT_MS,
+        "bb",
+      );
     },
   };
 }
@@ -99,7 +200,9 @@ export const BB_LIFECYCLE_HINTS = {
 export type BbLifecycleEvent = keyof typeof BB_LIFECYCLE_HINTS;
 
 /** The bounded part of a BB thread event this bridge reads: the thread's id. */
-interface ThreadEventPayload { thread?: { id?: unknown } | null }
+interface ThreadEventPayload {
+  thread?: { id?: unknown } | null;
+}
 
 /**
  * Forward one BB event as a lifecycle hint. Best-effort: no channel, no hint; a
@@ -107,37 +210,100 @@ interface ThreadEventPayload { thread?: { id?: unknown } | null }
  * authoritative. The hint carries the kind, the thread id and the time — never a
  * turn, interaction, timeline or environment payload.
  */
-export function forwardLifecycleHint(source: () => BoardBridgeSource | null, event: BbLifecycleEvent, payload: ThreadEventPayload, now: () => Date = () => new Date()): Promise<void> | null {
+export function forwardLifecycleHint(
+  source: () => BoardBridgeSource | null,
+  event: BbLifecycleEvent,
+  payload: ThreadEventPayload,
+  now: () => Date = () => new Date(),
+): Promise<void> | null {
   const threadId = payload?.thread?.id;
-  if (typeof threadId !== "string" || threadId.length === 0 || threadId.length > 160) return null;
+  if (
+    typeof threadId !== "string" ||
+    threadId.length === 0 ||
+    threadId.length > 160
+  )
+    return null;
   const client = source();
   if (!client) return null;
   return client
-    .request("service.lifecycle-signal", { kind: BB_LIFECYCLE_HINTS[event], agentId: threadId, workspaceId: null, at: now().toISOString() }, 5_000)
-    .then(() => undefined, () => undefined);
+    .request(
+      "service.lifecycle-signal",
+      {
+        kind: BB_LIFECYCLE_HINTS[event],
+        agentId: threadId,
+        workspaceId: null,
+        at: now().toISOString(),
+      },
+      5_000,
+    )
+    .then(
+      () => undefined,
+      () => undefined,
+    );
 }
 
 /** Forward BB's real parentChanged DTO as durable presentation intent. */
-export function forwardParentChanged(source: () => BoardBridgeSource | null, payload: { thread?: { id?: unknown; parentThreadId?: unknown } | null }, isOwnChange: (threadId: string, parentThreadId: string | null) => boolean, now: () => Date = () => new Date()): Promise<void> | null {
+export function forwardParentChanged(
+  source: () => BoardBridgeSource | null,
+  payload: { thread?: { id?: unknown; parentThreadId?: unknown } | null },
+  isOwnChange: (threadId: string, parentThreadId: string | null) => boolean,
+  now: () => Date = () => new Date(),
+): Promise<void> | null {
   const threadId = payload?.thread?.id;
   const parent = payload?.thread?.parentThreadId;
-  if (typeof threadId !== "string" || threadId.length === 0 || threadId.length > 160 || !(parent === null || (typeof parent === "string" && parent.length > 0 && parent.length <= 160))) return null;
+  if (
+    typeof threadId !== "string" ||
+    threadId.length === 0 ||
+    threadId.length > 160 ||
+    !(
+      parent === null ||
+      (typeof parent === "string" && parent.length > 0 && parent.length <= 160)
+    )
+  )
+    return null;
   if (isOwnChange(threadId, parent)) return null;
   const client = source();
   if (!client) return null;
-  return client.request("service.bb-parent-changed", { threadId, parentThreadId: parent, at: now().toISOString() }, 5_000).then(() => undefined, () => undefined);
+  return client
+    .request(
+      "service.bb-parent-changed",
+      { threadId, parentThreadId: parent, at: now().toISOString() },
+      5_000,
+    )
+    .then(
+      () => undefined,
+      () => undefined,
+    );
 }
 
 /** The plugin's one `experimental_thread.parentChanged` listener: forward operator moves, drop Nucleus's own echoes. */
-export function parentChangedListener(source: () => BoardBridgeSource | null, operations: { consumeOwnParentChange(threadId: string, parentThreadId: string | null): boolean }) {
-  return (payload: { thread?: { id?: unknown; parentThreadId?: unknown } | null }): Promise<void> | null =>
-    forwardParentChanged(source, payload, (threadId, parentThreadId) => operations.consumeOwnParentChange(threadId, parentThreadId));
+export function parentChangedListener(
+  source: () => BoardBridgeSource | null,
+  operations: {
+    consumeOwnParentChange(
+      threadId: string,
+      parentThreadId: string | null,
+    ): boolean;
+  },
+) {
+  return (payload: {
+    thread?: { id?: unknown; parentThreadId?: unknown } | null;
+  }): Promise<void> | null =>
+    forwardParentChanged(source, payload, (threadId, parentThreadId) =>
+      operations.consumeOwnParentChange(threadId, parentThreadId),
+    );
 }
 
 /** The terminal surface this bridge uses: create, and nothing else. */
 export interface TerminalCreateSdk {
   terminals: {
-    create(args: { cols: number; rows: number; scope: { kind: "thread"; threadId: string }; start: { mode: "shell" }; title: string }): Promise<{ id?: unknown }>;
+    create(args: {
+      cols: number;
+      rows: number;
+      scope: { kind: "thread"; threadId: string };
+      start: { mode: "shell" };
+      title: string;
+    }): Promise<{ id?: unknown }>;
   };
 }
 
@@ -154,19 +320,48 @@ const TERMINAL_HELP = `${TERMINAL_COMMAND.usage}\n\n${TERMINAL_COMMAND.summary}.
  * thread, titled with the task when one is given. It needs the calling thread
  * (`ctx.threadId`), creates exactly one terminal, and reads nothing back.
  */
-export async function runTerminalCommand(argv: readonly string[], ctx: { threadId?: string }, sdk: TerminalCreateSdk): Promise<{ exitCode: number; stdout?: string; stderr?: string }> {
+export async function runTerminalCommand(
+  argv: readonly string[],
+  ctx: { threadId?: string },
+  sdk: TerminalCreateSdk,
+): Promise<{ exitCode: number; stdout?: string; stderr?: string }> {
   const args = argv[0] === TERMINAL_COMMAND.name ? argv.slice(1) : [...argv];
-  if (args.includes("--help") || args.includes("-h")) return { exitCode: 0, stdout: TERMINAL_HELP };
-  const unknown = args.find(arg => arg.startsWith("-"));
-  if (unknown) return { exitCode: 2, stderr: `Unknown option ${unknown}.\n${TERMINAL_HELP}` };
-  if (args.length > 1) return { exitCode: 2, stderr: `One task reference at most.\n${TERMINAL_HELP}` };
+  if (args.includes("--help") || args.includes("-h"))
+    return { exitCode: 0, stdout: TERMINAL_HELP };
+  const unknown = args.find((arg) => arg.startsWith("-"));
+  if (unknown)
+    return {
+      exitCode: 2,
+      stderr: `Unknown option ${unknown}.\n${TERMINAL_HELP}`,
+    };
+  if (args.length > 1)
+    return {
+      exitCode: 2,
+      stderr: `One task reference at most.\n${TERMINAL_HELP}`,
+    };
   const threadId = ctx.threadId;
-  if (!threadId) return { exitCode: 2, stderr: "Run this from a BB thread: the terminal opens in the calling thread.\n" };
+  if (!threadId)
+    return {
+      exitCode: 2,
+      stderr:
+        "Run this from a BB thread: the terminal opens in the calling thread.\n",
+    };
   const task = args[0]?.trim();
   const title = (task ? task : "Terminal").slice(0, 120);
-  const session = await sdk.terminals.create({ cols: 120, rows: 32, scope: { kind: "thread", threadId }, start: { mode: "shell" }, title });
+  const session = await sdk.terminals.create({
+    cols: 120,
+    rows: 32,
+    scope: { kind: "thread", threadId },
+    start: { mode: "shell" },
+    title,
+  });
   const id = typeof session?.id === "string" ? session.id : null;
-  return { exitCode: 0, stdout: id ? `Opened terminal ${id} in this thread.\n` : "Opened a terminal in this thread.\n" };
+  return {
+    exitCode: 0,
+    stdout: id
+      ? `Opened terminal ${id} in this thread.\n`
+      : "Opened a terminal in this thread.\n",
+  };
 }
 
 /** A CLI registration, as `bb.cli.register` takes it. */
@@ -175,7 +370,15 @@ export interface CliRegistration {
   summary: string;
   commands?: Array<{ name: string; summary?: string; usage?: string }>;
   rendersHelp?: boolean;
-  run(argv: string[], ctx: { threadId?: string; cwd?: string; projectId?: string; signal?: AbortSignal }): unknown;
+  run(
+    argv: string[],
+    ctx: {
+      threadId?: string;
+      cwd?: string;
+      projectId?: string;
+      signal?: AbortSignal;
+    },
+  ): unknown;
 }
 
 /**
@@ -183,17 +386,32 @@ export interface CliRegistration {
  * under the plugin id, so the terminal command joins that registration: `terminal`
  * runs here and every other argv goes to the list's own parser, unchanged.
  */
-export function withTerminalCommand(vendored: CliRegistration, sdk: () => TerminalCreateSdk): CliRegistration {
+export function withTerminalCommand(
+  vendored: CliRegistration,
+  sdk: () => TerminalCreateSdk,
+): CliRegistration {
   return {
     ...vendored,
     summary: `${vendored.summary}; open a terminal tab in this thread`,
     commands: [...(vendored.commands ?? []), { ...TERMINAL_COMMAND }],
     async run(argv, ctx) {
-      if (argv[0] === TERMINAL_COMMAND.name) return await runTerminalCommand(argv, ctx, sdk());
-      const answer = await vendored.run(argv, ctx) as { exitCode: number; stdout?: string; stderr?: string };
+      if (argv[0] === TERMINAL_COMMAND.name)
+        return await runTerminalCommand(argv, ctx, sdk());
+      const answer = (await vendored.run(argv, ctx)) as {
+        exitCode: number;
+        stdout?: string;
+        stderr?: string;
+      };
       // Top-level help is the list's; it names the terminal command too.
-      if ((argv.length === 0 || argv[0] === "--help" || argv[0] === "-h") && answer && typeof answer.stdout === "string")
-        return { ...answer, stdout: `${answer.stdout.replace(/\n?$/, "\n")}  ${TERMINAL_COMMAND.usage}\t${TERMINAL_COMMAND.summary}\n` };
+      if (
+        (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h") &&
+        answer &&
+        typeof answer.stdout === "string"
+      )
+        return {
+          ...answer,
+          stdout: `${answer.stdout.replace(/\n?$/, "\n")}  ${TERMINAL_COMMAND.usage}\t${TERMINAL_COMMAND.summary}\n`,
+        };
       return answer;
     },
   };

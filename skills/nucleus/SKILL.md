@@ -1,6 +1,6 @@
 ---
 name: nucleus
-description: Shape a project's long-horizon direction with the operator (Atlas). Read and write Nucleus planning records (plan.get, plan.set, lanes, lane documents), write and promote briefs and leads, file papercuts and operator decisions, run project QA, and hand over planner ownership. Also plan and submit approved work to the Paseo queue, steer a task with the owner verbs (next, stop, route, restart, move, complete, retry_effect, proof), activate one source-immutable author-side proof execution for an external author, review existing external PRs through review entry, and resolve blocked-task escalations. Use for requests such as plan.get, papercut.add, decision.add, project.qa.run, planner handover, "adopt this PR", "put this PR through the queue", approved dispatch, planning rulings on blockers, and deliberate supersession; planning alone does not authorize execution or abandonment.
+description: Read and write Nucleus planning records (plan.get, plan.set, lanes, lane documents), write and promote briefs and leads, file papercuts and operator decisions, run project QA, and hand over planner ownership. Also plan and submit approved work to the Paseo queue, steer a task with the owner verbs (next, stop, route, restart, move, complete, retry_effect, proof), activate one source-immutable author-side proof execution for an external author, review existing external PRs through review entry, and resolve blocked-task escalations. Use for requests such as plan.get, papercut.add, decision.add, project.qa.run, planner handover, "adopt this PR", "put this PR through the queue", approved dispatch, planning rulings on blockers, and deliberate supersession; planning alone does not authorize execution or abandonment.
 ---
 
 The data home is `~/.nucleus`, or `NUCLEUS_DATA_HOME` when set.
@@ -30,28 +30,9 @@ ticket or route to bypass it. All other helpers connect directly to Nucleus;
 
 ## Calling thread identity
 
-The CLI and helpers identify the calling thread in one order: an explicit Nucleus
-ticket (`NUCLEUS_TICKET`); the current run's ticket, located from the thread's own
-identity even when the shell environment is stale; then the host-verified thread
-identity. A slow host never times out silently — the caller hears "The host is slow;
-retry". An explicit ticket wins for every verb that records a caller (`decision.add`,
-`lead.submit`, `question.answer`, `tell`): Nucleus records the ticket's thread as
-asker and delivery target, never an MCP session or host scope from the environment.
-Any recognised caller can `tell` a project planner or task role, including a
-host-only identity and a task-planner ticket. `ask` still needs a run ticket.
-`NUCLEUS_TICKET` names the run or participant ticket; use the path delivered to this
-thread. An invalid or revoked ticket refuses. A named `NUCLEUS_TICKET` whose file is
-missing refuses when the host identity is an MCP session, rather than recording that
-session. Without a ticket, T3Code uses
-`T3CODE_THREAD_ID` together with `T3CODE_DESKTOP_HOST_SCOPE`; Nucleus matches that
-scope to its registered online T3 host and verifies the thread through that host's
-adapter. Paseo uses `PASEO_AGENT_ID`. If both host identities are present, T3Code
-takes precedence; an incomplete T3 identity refuses instead of falling through to
-Paseo. If no source exists, the refusal names the sources tried. These identities
-identify the caller only; they do not grant authority beyond a Nucleus ticket's
-existing scope. Explicit operator and relayed-note paths keep their existing meaning.
-A decision answer is delivered to that recorded asker or queued with a visible wait
-(attempts > 0); an identity Nucleus cannot route is shown on the decision.
+The CLI and helpers identify the calling thread in this order: an explicit Nucleus ticket (`NUCLEUS_TICKET`); the current run's ticket, located from the thread's own identity even when the shell environment is stale; then the host-verified thread identity. A slow host never times out silently: the caller hears "The host is slow; retry". An explicit ticket wins for every verb that records a caller (`decision.add`, `lead.submit`, `question.answer`, `tell`): Nucleus records the ticket's thread as asker and delivery target, never an MCP session or host scope from the environment. Any recognised caller can `tell` a project planner or task role, including a host-only identity and a task-planner ticket. `ask` still needs a run ticket.
+
+`NUCLEUS_TICKET` names the run or participant ticket; use the path delivered to this thread. An invalid or revoked ticket refuses. A named `NUCLEUS_TICKET` whose file is missing refuses when the host identity is an MCP session, rather than recording that session. Without a ticket, T3Code uses `T3CODE_THREAD_ID` together with `T3CODE_DESKTOP_HOST_SCOPE`; Nucleus matches that scope to its registered online T3 host and verifies the thread through that host's adapter. BB uses `BB_THREAD_ID`; Nucleus verifies the exact thread through one registered online BB host before recording the host-qualified caller. Paseo uses `PASEO_AGENT_ID`. If multiple host identities are present, T3Code takes precedence over BB, and BB over Paseo; an incomplete T3 or BB identity refuses instead of falling through. If no source exists, the refusal names the sources tried. These identities identify the caller only; they do not grant authority beyond a Nucleus ticket's existing scope. Online BB hosts can carry submission ingress, while dispatch still follows repository host settings or the operator default. Explicit operator and relayed-note paths keep their existing meaning. A decision answer is delivered to that recorded asker or queued with a visible wait (attempts > 0); an identity Nucleus cannot route is shown on the decision.
 
 Assigning a planner issues an owner-only participant ticket and hands its path over
 without messaging the thread: the planner that named itself takes it in that
@@ -70,6 +51,42 @@ identities; existing bare Paseo IDs still resolve.
 
 Paseo supplies `PASEO_AGENT_ID` as the fallback identity. Existing documented commands
 keep working for Paseo planners unchanged; they do not need to pass a caller field.
+
+## T3Code host: one command connects it
+
+T3Code needs two things before a task can run there: a bearer the Nucleus
+service reads, and the `nucleus` ACP provider registered in T3. One command does
+both, the way `nucleus bb install` does for BB:
+
+```sh
+nucleus t3 install     # find the running T3Code, mint the bearer, register the
+                       # nucleus ACP provider, wait for the host to come online
+nucleus t3 status      # server, bearer, provider, native parenting, projects
+nucleus t3 uninstall   # remove our provider instance and our sessions
+```
+
+- `install` finds the server from `<base>/userdata/server-runtime.json` (or
+  `--endpoint`), mints a long-lived runtime bearer with only
+  `orchestration:read` and `orchestration:operate` and stores it owner-only in
+  `<data home>/settings.json`; a short-lived install bearer registers the
+  provider through T3's own `server.updateSettings` and is revoked at once.
+  Running it again rotates the runtime bearer. It prints each step, and its
+  `--json` answer carries the same steps.
+- `status` (add `--json`) reports the server's version and environment id, the
+  bearer's validity, scopes and expiry (warns within seven days), whether the
+  `nucleus` provider is registered, ours, enabled, ready and pointed at this
+  install's `nucleus-acp`, the adapter's `t3code.nativeParenting` line, and the
+  projects whose host kind is `t3code`. It never prints a bearer.
+- `uninstall` removes only the `nucleus` provider instance and this
+  environment's sessions and clears the stored connection; it leaves threads and
+  project registrations alone, and it names the live tasks on the host and
+  refuses while any exist unless `--live-tasks` is passed.
+
+Both routes refuse a `nucleus` provider instance that is not this install's
+(another driver, or another command path) by name and never overwrite it. The
+repository's own instructions still decide what you may change; scope authority
+for a task never comes from this section, from a document or from a plan, and
+never changes a brief, a hold, a verdict or a budget.
 
 ## Pull request changelog
 
@@ -1220,9 +1237,10 @@ extend one PR's authorization to its siblings or to release/provider mutations.
 
 For planning and lane documents, read [plan](references/plan.md); for writing,
 approving and promoting briefs, read [brief](references/brief.md); for passing
-planner ownership and notifications to a successor, read [handover](references/handover.md); for shaping
-long-horizon direction with the operator, read [Atlas](references/atlas.md).
-Repository knowledge and documentation structure remain in the Northstar skill.
+planner ownership and notifications to a successor, read [handover](references/handover.md).
+Shaping long-horizon direction with the operator is the separate Atlas skill
+(Northstar). Repository knowledge and documentation structure remain in the
+Northstar skill.
 
 - **Planner** owns the project's plan, lane documents, leads, briefs and
   dispatch approval. It runs milestone QA on `main` with `project.qa.run`.
