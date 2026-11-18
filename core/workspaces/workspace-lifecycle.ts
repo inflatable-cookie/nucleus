@@ -1,18 +1,36 @@
 import type { ExternalWorkspaceCatalog } from "../host/adapter";
 import type { ProcessSearch } from "../machine/process-identity";
-import { assertCheckoutAvailable, assertIntakeWorkspaceAvailable, CheckoutRefusalError, CheckoutUnavailableError, liveCheckoutDataDir } from "./checkout-volume";
+import {
+  assertCheckoutAvailable,
+  assertIntakeWorkspaceAvailable,
+  CheckoutRefusalError,
+  CheckoutUnavailableError,
+  liveCheckoutDataDir,
+} from "./checkout-volume";
 import { git, gitAncestry, gitBulk, queueCheckoutStatus } from "../git/index";
 import { gitFastForward } from "../git/git-command";
 import {
-  classifyWorkspaceCreation, isOwnedWorkspacePath, ownedWorkspacePath, populateOwnedWorktree, removeOrphanCheckout,
-  repoCommonDir, workspaceCreationRefusal, workspaceDataDirFor, type OrphanWorkspace,
+  classifyWorkspaceCreation,
+  isOwnedWorkspacePath,
+  ownedWorkspacePath,
+  ownedBbWorkspacePath,
+  populateOwnedWorktree,
+  removeOrphanCheckout,
+  repoCommonDir,
+  workspaceCreationRefusal,
+  workspaceDataDirFor,
+  type OrphanWorkspace,
   type WorkspaceCreationState,
 } from "./workspace-allocation";
 import { capPaseoTitle, taskWorkspaceTitle } from "./workspace-title";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Task } from "../../shared/contracts";
-import { externalWorkspace, intakeOwnedReviewWorkspace, workspaceOutsideQueueAllocation } from "../../shared/workspace-ownership";
+import {
+  externalWorkspace,
+  intakeOwnedReviewWorkspace,
+  workspaceOutsideQueueAllocation,
+} from "../../shared/workspace-ownership";
 import type { HostProjectRef, HostWorkspaceSpec } from "../../shared/host";
 
 /**
@@ -43,19 +61,37 @@ import type { HostProjectRef, HostWorkspaceSpec } from "../../shared/host";
 export class WorkspaceLifecycle {
   constructor(private readonly host: WorkspaceLifecycleHost) {}
 
-  private async creationStep<T>(task: Task, step: string, work: () => Promise<T>): Promise<T> {
+  private async creationStep<T>(
+    task: Task,
+    step: string,
+    work: () => Promise<T>,
+  ): Promise<T> {
     const started = Date.now();
     this.host.workspaceCreationProgress?.(task.id, step, "started");
     try {
       const value = await work();
-      this.host.workspaceCreationProgress?.(task.id, step, "finished", Date.now() - started, "ok");
+      this.host.workspaceCreationProgress?.(
+        task.id,
+        step,
+        "finished",
+        Date.now() - started,
+        "ok",
+      );
       return value;
     } catch (error) {
-      this.host.workspaceCreationProgress?.(task.id, step, "finished", Date.now() - started, "failed");
+      this.host.workspaceCreationProgress?.(
+        task.id,
+        step,
+        "finished",
+        Date.now() - started,
+        "failed",
+      );
       throw error;
     }
   }
-  dataDir() { return workspaceDataDirFor(this.host.helperPath); }
+  dataDir() {
+    return workspaceDataDirFor(this.host.helperPath);
+  }
   /**
    * The placed allocation surface, or null when this machine has none. Whether
    * the data home is the live one is the checkout volume's own answer; deriving
@@ -64,14 +100,22 @@ export class WorkspaceLifecycle {
   placement() {
     if (this.host.testPlacement) return this.host.testPlacement;
     const live = liveCheckoutDataDir(this.host.dataDir());
-    return live ? {
-      dataDir: live,
-      admit: (path:string) => assertCheckoutAvailable({ target: path }),
-      admitIntake: (path:string) => assertIntakeWorkspaceAvailable({ target: path }),
-    } : null;
+    return live
+      ? {
+          dataDir: live,
+          admit: (path: string) => assertCheckoutAvailable({ target: path }),
+          admitIntake: (path: string) =>
+            assertIntakeWorkspaceAvailable({ target: path }),
+        }
+      : null;
   }
-  private admitWorkspace(placement: WorkspacePlacementFixture, task: Task, directory: string): void {
-    if (intakeOwnedReviewWorkspace(task)) (placement.admitIntake ?? placement.admit)(directory);
+  private admitWorkspace(
+    placement: WorkspacePlacementFixture,
+    task: Task,
+    directory: string,
+  ): void {
+    if (intakeOwnedReviewWorkspace(task))
+      (placement.admitIntake ?? placement.admit)(directory);
     else placement.admit(directory);
   }
   /**
@@ -82,7 +126,10 @@ export class WorkspaceLifecycle {
   private placementRoots(): string[] {
     const placement = this.host.placement();
     if (!placement) return [];
-    return [placement.dataDir, ...(this.host.testPlacement?.retainedDataDirs ?? [])];
+    return [
+      placement.dataDir,
+      ...(this.host.testPlacement?.retainedDataDirs ?? []),
+    ];
   }
   async preflightWorkspaceStorage(task: Task): Promise<void> {
     const placement = this.host.placement();
@@ -97,77 +144,200 @@ export class WorkspaceLifecycle {
     }
     const ownedPath = await this.host.ownedPathFor(task);
     const common = await repoCommonDir(task.repoPath);
-    if (!isOwnedWorkspacePath(ownedPath, this.host.dataDir(), common, task.id)) this.admitWorkspace(placement, task, ownedPath);
+    if (!isOwnedWorkspacePath(ownedPath, this.host.dataDir(), common, task.id))
+      this.admitWorkspace(placement, task, ownedPath);
   }
   async ownedPathFor(task: Task): Promise<string> {
-    if (workspaceOutsideQueueAllocation(task) && task.directory) return task.directory;
-    const common = await repoCommonDir(task.repoPath), placement = this.host.placement();
+    if (workspaceOutsideQueueAllocation(task) && task.directory)
+      return task.directory;
+    const common = await repoCommonDir(task.repoPath),
+      placement = this.host.placement();
+    if (
+      task.directory &&
+      isOwnedWorkspacePath(task.directory, this.host.dataDir(), common, task.id)
+    )
+      return task.directory;
     if (placement && task.directory) {
-      const recorded = this.placementRoots().find(root => isOwnedWorkspacePath(task.directory!, root, common, task.id));
+      const recorded = this.placementRoots().find((root) =>
+        isOwnedWorkspacePath(task.directory!, root, common, task.id),
+      );
       if (recorded) return task.directory;
-      if (!isOwnedWorkspacePath(task.directory, this.host.dataDir(), common, task.id))
-        throw new Error("Recorded workspace directory is not a Queue allocation");
+      if (
+        !isOwnedWorkspacePath(
+          task.directory,
+          this.host.dataDir(),
+          common,
+          task.id,
+        )
+      )
+        throw new Error(
+          "Recorded workspace directory is not a Queue allocation",
+        );
     }
-    return ownedWorkspacePath(placement?.dataDir ?? this.host.dataDir(), common, task.id);
+    return (
+      task.hostId?.startsWith("bb:") ? ownedBbWorkspacePath : ownedWorkspacePath
+    )(placement?.dataDir ?? this.host.dataDir(), common, task.id);
   }
   async ownedDataDirFor(task: Task, directory: string): Promise<string | null> {
-    const common = await repoCommonDir(task.repoPath), placement = this.host.placement();
-    if (isOwnedWorkspacePath(directory, this.host.dataDir(), common, task.id)) return this.host.dataDir();
-    for (const root of this.placementRoots()) if (isOwnedWorkspacePath(directory, root, common, task.id)) {
-      placement!.admit(directory);
-      return root;
-    }
+    const common = await repoCommonDir(task.repoPath),
+      placement = this.host.placement();
+    if (isOwnedWorkspacePath(directory, this.host.dataDir(), common, task.id))
+      return this.host.dataDir();
+    for (const root of this.placementRoots())
+      if (isOwnedWorkspacePath(directory, root, common, task.id)) {
+        placement!.admit(directory);
+        return root;
+      }
     return null;
   }
-  private admitObservedWorkspace(task: Task, common: string, directory: string): void {
+  private admitObservedWorkspace(
+    task: Task,
+    common: string,
+    directory: string,
+  ): void {
     const placement = this.host.placement();
-    if (placement && intakeOwnedReviewWorkspace(task) && directory === task.directory) this.admitWorkspace(placement, task, directory);
-    else if (placement && this.placementRoots().some(root => isOwnedWorkspacePath(directory, root, common, task.id))) this.admitWorkspace(placement, task, directory);
+    if (
+      placement &&
+      intakeOwnedReviewWorkspace(task) &&
+      directory === task.directory
+    )
+      this.admitWorkspace(placement, task, directory);
+    else if (
+      placement &&
+      this.placementRoots().some((root) =>
+        isOwnedWorkspacePath(directory, root, common, task.id),
+      )
+    )
+      this.admitWorkspace(placement, task, directory);
   }
   /**
    * Only a creation in progress reports steps. A reconciliation's inspection stays silent:
    * a progress write moves the task's version, and the replay it decides fences on that version.
    */
-  async inspectWorkspaceCreation(task: Task, options: { skipProcessScan?: boolean; skipRemoteCheck?: boolean; progress?: boolean } = {}): Promise<WorkspaceCreationState> {
+  async inspectWorkspaceCreation(
+    task: Task,
+    options: {
+      skipProcessScan?: boolean;
+      skipRemoteCheck?: boolean;
+      progress?: boolean;
+    } = {},
+  ): Promise<WorkspaceCreationState> {
     const common = await repoCommonDir(task.repoPath).catch(() => "");
     const placement = this.host.placement();
-    const legacyPath = common && ownedWorkspacePath(this.host.dataDir(), common, task.id);
-    const ownedPath = common && (task.directory === legacyPath ? legacyPath : await this.host.ownedPathFor(task));
-    if (!ownedPath) return { kind: "unknown", evidence: `task repository ${task.repoPath} is not a readable Git common dir` };
+    const legacyPath =
+      common && ownedWorkspacePath(this.host.dataDir(), common, task.id);
+    const ownedPath =
+      common &&
+      (task.directory === legacyPath
+        ? legacyPath
+        : await this.host.ownedPathFor(task));
+    if (!ownedPath)
+      return {
+        kind: "unknown",
+        evidence: `task repository ${task.repoPath} is not a readable Git common dir`,
+      };
     if (placement) {
       // An unavailable new root is not proof that an unbound creation is absent.
-      try { if (ownedPath !== legacyPath) this.admitWorkspace(placement, task, ownedPath); }
-      catch (error) { if (error instanceof CheckoutUnavailableError || error instanceof CheckoutRefusalError) throw error; return { kind: 'unknown', evidence: error instanceof Error ? error.message : String(error) }; }
+      try {
+        if (ownedPath !== legacyPath)
+          this.admitWorkspace(placement, task, ownedPath);
+      } catch (error) {
+        if (
+          error instanceof CheckoutUnavailableError ||
+          error instanceof CheckoutRefusalError
+        )
+          throw error;
+        return {
+          kind: "unknown",
+          evidence: error instanceof Error ? error.message : String(error),
+        };
+      }
     }
-    return classifyWorkspaceCreation({ task, ownedPath, legacyPaths: placement ? [legacyPath] : [], admitObserved: directory => this.admitObservedWorkspace(task, common, directory),
-      skipProcessScan: options.skipProcessScan, skipRemoteCheck: options.skipRemoteCheck, scan: this.host.scanForWorktreeAdd,
-      step: options.progress ? (step, work) => this.creationStep(task, `worktree_inspection_${step}`, work) : undefined });
+    return classifyWorkspaceCreation({
+      task,
+      ownedPath,
+      legacyPaths: legacyPath && legacyPath !== ownedPath ? [legacyPath] : [],
+      admitObserved: (directory) =>
+        this.admitObservedWorkspace(task, common, directory),
+      skipProcessScan: options.skipProcessScan,
+      skipRemoteCheck: options.skipRemoteCheck,
+      scan: this.host.scanForWorktreeAdd,
+      step: options.progress
+        ? (step, work) =>
+            this.creationStep(task, `worktree_inspection_${step}`, work)
+        : undefined,
+    });
   }
   async populateTaskWorktree(task: Task) {
-    if (task.workspaceId && !task.proofOnly) throw new Error("Workspace already recorded; creation cannot replace it");
+    if (task.workspaceId && !task.proofOnly)
+      throw new Error("Workspace already recorded; creation cannot replace it");
     if (task.proofOnly) {
       const ownedPath = await this.host.ownedPathFor(task);
-      const state = await this.host.inspectWorkspaceCreation(task, { progress: true });
-      if (state.kind === 'found_done') return { directory: state.directory, populated: false, budgetMs: 0, elapsedMs: 0 };
-      if (state.kind === 'proof_head_mismatch') {
+      const state = await this.host.inspectWorkspaceCreation(task, {
+        progress: true,
+      });
+      if (state.kind === "found_done")
+        return {
+          directory: state.directory,
+          populated: false,
+          budgetMs: 0,
+          elapsedMs: 0,
+        };
+      if (state.kind === "proof_head_mismatch") {
         const placement = this.host.placement();
         const common = await repoCommonDir(task.repoPath);
-        return populateOwnedWorktree({ task, ownedPath, legacyPaths: placement ? [ownedWorkspacePath(this.host.dataDir(), common, task.id)] : [],
-          admitObserved: directory => this.admitObservedWorkspace(task, common, directory), admit: placement ? () => this.admitWorkspace(placement, task, ownedPath) : undefined, scan: this.host.scanForWorktreeAdd });
+        return populateOwnedWorktree({
+          task,
+          ownedPath,
+          legacyPaths: [
+            ownedWorkspacePath(this.host.dataDir(), common, task.id),
+          ],
+          admitObserved: (directory) =>
+            this.admitObservedWorkspace(task, common, directory),
+          admit: placement
+            ? () => this.admitWorkspace(placement, task, ownedPath)
+            : undefined,
+          scan: this.host.scanForWorktreeAdd,
+        });
       }
       if (task.workspaceId) throw new Error(workspaceCreationRefusal(state));
     }
     const found = await this.host.findWorkspaces(task);
-    if (found.length > 1) throw new Error("Ambiguous workspace identity; no new resource created");
-    if (found.length === 1) return { directory: found[0]!.directory, populated: false, budgetMs: 0, elapsedMs: 0 };
+    if (found.length > 1)
+      throw new Error("Ambiguous workspace identity; no new resource created");
+    if (found.length === 1)
+      return {
+        directory: found[0]!.directory,
+        populated: false,
+        budgetMs: 0,
+        elapsedMs: 0,
+      };
     const ownedPath = await this.host.ownedPathFor(task);
-    const state = await this.host.inspectWorkspaceCreation(task, { progress: true });
-    if (state.kind === 'found_done') return { directory: state.directory, populated: false, budgetMs: 0, elapsedMs: 0 };
-    if (state.kind !== 'absent') throw new Error(workspaceCreationRefusal(state));
+    const state = await this.host.inspectWorkspaceCreation(task, {
+      progress: true,
+    });
+    if (state.kind === "found_done")
+      return {
+        directory: state.directory,
+        populated: false,
+        budgetMs: 0,
+        elapsedMs: 0,
+      };
+    if (state.kind !== "absent")
+      throw new Error(workspaceCreationRefusal(state));
     const placement = this.host.placement();
     const common = await repoCommonDir(task.repoPath);
-    return populateOwnedWorktree({ task, ownedPath, legacyPaths: placement ? [ownedWorkspacePath(this.host.dataDir(), common, task.id)] : [],
-      admitObserved: directory => this.admitObservedWorkspace(task, common, directory), admit: placement ? () => this.admitWorkspace(placement, task, ownedPath) : undefined, scan: this.host.scanForWorktreeAdd });
+    return populateOwnedWorktree({
+      task,
+      ownedPath,
+      legacyPaths: [ownedWorkspacePath(this.host.dataDir(), common, task.id)],
+      admitObserved: (directory) =>
+        this.admitObservedWorkspace(task, common, directory),
+      admit: placement
+        ? () => this.admitWorkspace(placement, task, ownedPath)
+        : undefined,
+      scan: this.host.scanForWorktreeAdd,
+    });
   }
   /**
    * Spec 017 (task 494): one folder, one truthful registration.
@@ -186,7 +356,10 @@ export class WorkspaceLifecycle {
    * cannot be read is not a duplicate: creation proceeds exactly as before, so a
    * daemon read failure never blocks dispatch on a guess.
    */
-  private async samePathRegistration(task: Task, directory: string): Promise<RegistrationDecision> {
+  private async samePathRegistration(
+    task: Task,
+    directory: string,
+  ): Promise<RegistrationDecision> {
     if (!this.host.externalWorkspaceCatalog) return { kind: "create" };
     const catalog = await this.host.externalWorkspaceCatalog(directory);
     if (!catalog.ok) {
@@ -194,14 +367,34 @@ export class WorkspaceLifecycle {
       // exactly as before, so a daemon read failure never blocks dispatch on a
       // guess. The skipped check is on the step trail rather than reported as a
       // check that found nothing.
-      this.host.workspaceCreationProgress?.(task.id, "path_registration_check", "skipped", 0);
+      this.host.workspaceCreationProgress?.(
+        task.id,
+        "path_registration_check",
+        "skipped",
+        0,
+      );
       return { kind: "unreadable", reason: catalog.reason };
     }
-    const own = task.workspaceId ? catalog.entries.find(entry => entry.workspaceId === task.workspaceId && entry.directory === directory) : undefined;
-    const aliases = catalog.entries.filter(entry => entry.workspaceId !== task.workspaceId);
+    const own = task.workspaceId
+      ? catalog.entries.find(
+          (entry) =>
+            entry.workspaceId === task.workspaceId &&
+            entry.directory === directory,
+        )
+      : undefined;
+    const aliases = catalog.entries.filter(
+      (entry) => entry.workspaceId !== task.workspaceId,
+    );
     if (aliases.length)
-      throw Error(`Workspace registration for ${directory} was not sent: the folder already has workspace registration${aliases.length === 1 ? '' : 's'} ${aliases.map(entry => entry.workspaceId).join(', ')}, which ${aliases.length === 1 ? 'is' : 'are'} not this task's. Nucleus never adds a second registration for one folder and never reparents another owner's workspace; inspect the existing registration instead.`);
-    return own ? { kind: "reuse", reuse: { id: own.workspaceId, directory: own.directory } } : { kind: "create" };
+      throw Error(
+        `Workspace registration for ${directory} was not sent: the folder already has workspace registration${aliases.length === 1 ? "" : "s"} ${aliases.map((entry) => entry.workspaceId).join(", ")}, which ${aliases.length === 1 ? "is" : "are"} not this task's. Nucleus never adds a second registration for one folder and never reparents another owner's workspace; inspect the existing registration instead.`,
+      );
+    return own
+      ? {
+          kind: "reuse",
+          reuse: { id: own.workspaceId, directory: own.directory },
+        }
+      : { kind: "create" };
   }
   /**
    * The host project rooted at the task's repository, read through the host.
@@ -212,31 +405,69 @@ export class WorkspaceLifecycle {
   private repositoryProject(task: Task) {
     return this.host.workspaceHost.repositoryProject(task.repoPath);
   }
-  async createWorkspace(task: Task, options: { freshlyPopulated?: boolean } = {}) {
+  async createWorkspace(
+    task: Task,
+    options: { freshlyPopulated?: boolean } = {},
+  ) {
     // A stable request ID does not prove the daemon will deduplicate a later
     // create. Recover a visible identity before asking Paseo for any resource.
-    if (task.workspaceId) throw new Error("Workspace already recorded; creation cannot replace it");
-    if (options.freshlyPopulated) this.host.workspaceCreationProgress?.(task.id, "workspace_identity_lookup", "skipped", 0);
+    if (task.workspaceId)
+      throw new Error("Workspace already recorded; creation cannot replace it");
+    if (options.freshlyPopulated)
+      this.host.workspaceCreationProgress?.(
+        task.id,
+        "workspace_identity_lookup",
+        "skipped",
+        0,
+      );
     else {
-      const found = await this.creationStep(task, "workspace_identity_lookup", () => this.host.findWorkspaces(task));
-      if (found.length > 1) throw new Error("Ambiguous workspace identity; no new resource created");
+      const found = await this.creationStep(
+        task,
+        "workspace_identity_lookup",
+        () => this.host.findWorkspaces(task),
+      );
+      if (found.length > 1)
+        throw new Error(
+          "Ambiguous workspace identity; no new resource created",
+        );
       if (found.length === 1) return found[0]!;
     }
-    const state = await this.creationStep(task, "worktree_inspection", () => this.host.inspectWorkspaceCreation(task, {
-      progress: true,
-      skipProcessScan: options.freshlyPopulated,
-      skipRemoteCheck: options.freshlyPopulated,
-    }));
-    if (state.kind !== "found_done") throw new Error(workspaceCreationRefusal(state));
+    const state = await this.creationStep(task, "worktree_inspection", () =>
+      this.host.inspectWorkspaceCreation(task, {
+        progress: true,
+        skipProcessScan: options.freshlyPopulated,
+        skipRemoteCheck: options.freshlyPopulated,
+      }),
+    );
+    if (state.kind !== "found_done")
+      throw new Error(workspaceCreationRefusal(state));
     const placement = this.host.placement();
-    const ownedPath = await this.creationStep(task, "owned_path_proof", () => this.host.ownedPathFor(task));
-    if (placement && state.directory === ownedPath) this.admitWorkspace(placement, task, state.directory);
-    const registered = await this.creationStep(task, "path_registration_check", () => this.samePathRegistration(task, state.directory));
+    const ownedPath = await this.creationStep(task, "owned_path_proof", () =>
+      this.host.ownedPathFor(task),
+    );
+    if (placement && state.directory === ownedPath)
+      this.admitWorkspace(placement, task, state.directory);
+    const registered = await this.creationStep(
+      task,
+      "path_registration_check",
+      () => this.samePathRegistration(task, state.directory),
+    );
     if (registered.kind === "reuse") return registered.reuse;
-    const project = await this.creationStep(task, "repository_project_lookup", () => this.repositoryProject(task));
-    const workspace = await this.creationStep(task, "workspace_creation", () => this.host.workspaceHost.createWorkspace({ title: capPaseoTitle(taskWorkspaceTitle(task)), requestId: `ns-workspace-${task.id}`,
-      directory: state.directory, project }));
-    if (!workspace.directory) throw new Error("Workspace returned no directory");
+    const project = await this.creationStep(
+      task,
+      "repository_project_lookup",
+      () => this.repositoryProject(task),
+    );
+    const workspace = await this.creationStep(task, "workspace_creation", () =>
+      this.host.workspaceHost.createWorkspace({
+        title: capPaseoTitle(taskWorkspaceTitle(task)),
+        requestId: `ns-workspace-${task.id}`,
+        directory: state.directory,
+        project,
+      }),
+    );
+    if (!workspace.directory)
+      throw new Error("Workspace returned no directory");
     return { id: workspace.id, directory: workspace.directory };
   }
   /**
@@ -254,9 +485,16 @@ export class WorkspaceLifecycle {
   }
   async removeOrphanWorkspace(task: Task, orphan: OrphanWorkspace) {
     const again = await this.host.inspectOrphanWorkspace(task);
-    if (!again || again.directory !== orphan.directory || again.head !== orphan.head) throw new Error("Orphan workspace changed; inspect again");
-    const ownedData = orphan.directory ? await this.host.ownedDataDirFor(task, orphan.directory) : null;
-    const ownedPath = ownedData ? ownedWorkspacePath(ownedData, await repoCommonDir(task.repoPath), task.id) : null;
+    if (
+      !again ||
+      again.directory !== orphan.directory ||
+      again.head !== orphan.head
+    )
+      throw new Error("Orphan workspace changed; inspect again");
+    const ownedData = orphan.directory
+      ? await this.host.ownedDataDirFor(task, orphan.directory)
+      : null;
+    const ownedPath = ownedData ? orphan.directory : null;
     await removeOrphanCheckout(task, orphan, ownedPath);
   }
   /**
@@ -267,11 +505,24 @@ export class WorkspaceLifecycle {
    * re-created checkout must hold; `local` is the branch ref it is placed from
    * (empty when no local branch survives).
    */
-  private async workerSource(task: Task): Promise<{ head: string; local: string }> {
-    const local = await git(task.repoPath, "rev-parse", "--verify", "--quiet", `refs/heads/${task.branch}`).catch(() => "");
+  private async workerSource(
+    task: Task,
+  ): Promise<{ head: string; local: string }> {
+    const local = await git(
+      task.repoPath,
+      "rev-parse",
+      "--verify",
+      "--quiet",
+      `refs/heads/${task.branch}`,
+    ).catch(() => "");
     // The advertisement is authoritative: the branch a worker pushes is the one
     // recovery reads, and an unreachable origin refuses with the Git cause.
-    const advertised = await git(task.repoPath, "ls-remote", "origin", `refs/heads/${task.branch}`);
+    const advertised = await git(
+      task.repoPath,
+      "ls-remote",
+      "origin",
+      `refs/heads/${task.branch}`,
+    );
     const remote = advertised.split(/\s+/)[0] ?? "";
     const remoteHead = /^[a-f0-9]{40}$/.test(remote) ? remote : "";
     if (local && remoteHead && local !== remoteHead) {
@@ -280,19 +531,37 @@ export class WorkspaceLifecycle {
       const remoteNewer = await gitAncestry(task.repoPath, local, remoteHead);
       const localNewer = await gitAncestry(task.repoPath, remoteHead, local);
       if (remoteNewer === "unknown" || localNewer === "unknown")
-        throw new Error(`The queue branch ${task.branch} ancestry at ${local} and origin ${remoteHead} is unreadable; inspect before recovering the worktree`);
+        throw new Error(
+          `The queue branch ${task.branch} ancestry at ${local} and origin ${remoteHead} is unreadable; inspect before recovering the worktree`,
+        );
       if (remoteNewer === "diverged" && localNewer === "diverged")
-        throw new Error(`The queue branch ${task.branch} is at ${local} locally and ${remoteHead} on origin with no fast-forward between them; inspect before recovering the worktree`);
-      if (remoteNewer === "ancestor") await gitBulk(task.repoPath, "fetch", "origin", `+refs/heads/${task.branch}:refs/remotes/origin/${task.branch}`);
+        throw new Error(
+          `The queue branch ${task.branch} is at ${local} locally and ${remoteHead} on origin with no fast-forward between them; inspect before recovering the worktree`,
+        );
+      if (remoteNewer === "ancestor")
+        await gitBulk(
+          task.repoPath,
+          "fetch",
+          "origin",
+          `+refs/heads/${task.branch}:refs/remotes/origin/${task.branch}`,
+        );
       return { head: remoteNewer === "ancestor" ? remoteHead : local, local };
     }
     if (remoteHead) {
-      if (remoteHead !== local) await gitBulk(task.repoPath, "fetch", "origin", `+refs/heads/${task.branch}:refs/remotes/origin/${task.branch}`);
+      if (remoteHead !== local)
+        await gitBulk(
+          task.repoPath,
+          "fetch",
+          "origin",
+          `+refs/heads/${task.branch}:refs/remotes/origin/${task.branch}`,
+        );
       return { head: remoteHead, local };
     }
     // A deleted branch leaves the accepted PR head as the last published source.
     if (!task.prHead)
-      throw new Error(`Task workspace recovery requires the branch ${task.branch} on origin, or an accepted PR head`);
+      throw new Error(
+        `Task workspace recovery requires the branch ${task.branch} on origin, or an accepted PR head`,
+      );
     await gitBulk(task.repoPath, "fetch", "origin", task.prHead);
     return { head: task.prHead, local: "" };
   }
@@ -302,24 +571,39 @@ export class WorkspaceLifecycle {
    * the newer published head instead, and a fresh branch is created only when
    * none survives.
    */
-  private async checkoutRecoveredBranch(task: Task, directory: string, source: { head: string; local: string }) {
-    const args = source.local ? [directory, task.branch] : ["-b", task.branch, directory, source.head];
-    try { await gitBulk(task.repoPath, "worktree", "add", ...args); }
-    catch (error) {
+  private async checkoutRecoveredBranch(
+    task: Task,
+    directory: string,
+    source: { head: string; local: string },
+  ) {
+    const args = source.local
+      ? [directory, task.branch]
+      : ["-b", task.branch, directory, source.head];
+    try {
+      await gitBulk(task.repoPath, "worktree", "add", ...args);
+    } catch (error) {
       // The lost volume can leave the same owned path registered as a missing
       // worktree. Only that stale registration is overridden, and only when the
       // target path itself does not exist; a live checkout is never displaced.
       if (existsSync(directory)) throw error;
       await gitBulk(task.repoPath, "worktree", "add", "--force", ...args);
     }
-    if (source.local && source.local !== source.head) await gitFastForward(directory, source.head);
+    if (source.local && source.local !== source.head)
+      await gitFastForward(directory, source.head);
   }
   /** The recovered checkout must be clean on the queue branch at the recovered head. */
-  private async verifiedRecoveredCheckout(task: Task, directory: string, head: string) {
+  private async verifiedRecoveredCheckout(
+    task: Task,
+    directory: string,
+    head: string,
+  ) {
     const checkoutHead = await git(directory, "rev-parse", "HEAD");
     const branch = await git(directory, "branch", "--show-current");
     const dirty = await queueCheckoutStatus(directory, "status", "--porcelain");
-    if (checkoutHead !== head || branch !== task.branch || dirty) throw new Error("Recovered task workspace must be clean at the recorded task head");
+    if (checkoutHead !== head || branch !== task.branch || dirty)
+      throw new Error(
+        "Recovered task workspace must be clean at the recorded task head",
+      );
     return directory;
   }
   /**
@@ -329,11 +613,19 @@ export class WorkspaceLifecycle {
    * A registration whose directory is gone is not a checkout: the worktree is
    * re-created at the owned path instead of rebinding a dead folder.
    */
-  async recoverTaskWorkspace(task: Task, options: { target?: "pr_head" | "branch" } = {}) {
-    const source = options.target === "branch" ? await this.workerSource(task) : { head: task.prHead ?? "", local: "" };
-    if (!source.head) throw new Error("Task workspace recovery requires an accepted PR head");
+  async recoverTaskWorkspace(
+    task: Task,
+    options: { target?: "pr_head" | "branch" } = {},
+  ) {
+    const source =
+      options.target === "branch"
+        ? await this.workerSource(task)
+        : { head: task.prHead ?? "", local: "" };
+    if (!source.head)
+      throw new Error("Task workspace recovery requires an accepted PR head");
     const found = await this.host.findWorkspaces(task);
-    if (found.length > 1) throw new Error("Ambiguous workspace identity; no new resource created");
+    if (found.length > 1)
+      throw new Error("Ambiguous workspace identity; no new resource created");
     const known = found[0]?.directory;
     let directory = known && existsSync(known) ? known : undefined;
     if (!directory) {
@@ -352,35 +644,73 @@ export class WorkspaceLifecycle {
         directory = ownedPath;
       } else throw new Error(workspaceCreationRefusal(state));
       const placement = this.host.placement();
-      if (placement && directory === await this.host.ownedPathFor(task)) this.admitWorkspace(placement, task, directory);
+      if (placement && directory === (await this.host.ownedPathFor(task)))
+        this.admitWorkspace(placement, task, directory);
       const registered = await this.samePathRegistration(task, directory);
-      const workspace = (registered.kind === "reuse" ? registered.reuse : null)
-        ?? await this.host.workspaceHost.createWorkspace({ title: capPaseoTitle(taskWorkspaceTitle(task)), requestId: `ns-recover-workspace-${task.id}`,
-          directory, project: await this.repositoryProject(task) });
-      if (!workspace.directory) throw new Error("Recovered task workspace returned no directory");
-      return { id: workspace.id, directory: await this.verifiedRecoveredCheckout(task, workspace.directory, source.head) };
+      const workspace =
+        (registered.kind === "reuse" ? registered.reuse : null) ??
+        (await this.host.workspaceHost.createWorkspace({
+          title: capPaseoTitle(taskWorkspaceTitle(task)),
+          requestId: `ns-recover-workspace-${task.id}`,
+          directory,
+          project: await this.repositoryProject(task),
+        }));
+      if (!workspace.directory)
+        throw new Error("Recovered task workspace returned no directory");
+      return {
+        id: workspace.id,
+        directory: await this.verifiedRecoveredCheckout(
+          task,
+          workspace.directory,
+          source.head,
+        ),
+      };
     }
-    return { ...found[0]!, directory: await this.verifiedRecoveredCheckout(task, directory, source.head) };
+    return {
+      ...found[0]!,
+      directory: await this.verifiedRecoveredCheckout(
+        task,
+        directory,
+        source.head,
+      ),
+    };
   }
   async findWorkspaces(task: Task) {
     const entries = await this.host.workspaceHost.workspaceInventory();
     const slug = `ns-${task.id}`;
     const ownedPath = await this.host.ownedPathFor(task).catch(() => null);
     const common = await repoCommonDir(task.repoPath).catch(() => null);
-    const legacyPath = common ? ownedWorkspacePath(this.host.dataDir(), common, task.id) : null;
+    const legacyPath = common
+      ? ownedWorkspacePath(this.host.dataDir(), common, task.id)
+      : null;
     // Identity is the exact path this task's allocation derives, or the task's own
     // slug or recorded workspace id inside its repository. A folder whose name
     // merely ends in `ns-<task id>` proves nothing: any other directory can be
     // called that. An external registered workspace is the task's own binding
     // wherever Paseo roots its project, so its recorded id matches as well
     // (nucleus#1261).
-    const allocated = [ownedPath, legacyPath].filter((path): path is string => Boolean(path));
-    const matches = entries.filter(w => allocated.some(path => w.workspaceDirectory === path || w.projectRootPath === path)
-      || (w.projectRootPath === task.repoPath && (w.worktreeSlug === slug || w.id === task.workspaceId))
-      || (workspaceOutsideQueueAllocation(task) && w.id === task.workspaceId))
-      .map(w => ({ id: w.id, directory: w.workspaceDirectory ?? "" }));
+    const allocated = [ownedPath, legacyPath].filter((path): path is string =>
+      Boolean(path),
+    );
+    const matches = entries
+      .filter(
+        (w) =>
+          allocated.some(
+            (path) =>
+              w.workspaceDirectory === path || w.projectRootPath === path,
+          ) ||
+          (w.projectRootPath === task.repoPath &&
+            (w.worktreeSlug === slug || w.id === task.workspaceId)) ||
+          (workspaceOutsideQueueAllocation(task) && w.id === task.workspaceId),
+      )
+      .map((w) => ({ id: w.id, directory: w.workspaceDirectory ?? "" }));
     const placement = this.host.placement();
-    if (placement && ownedPath && matches.some(match => match.directory === ownedPath)) this.admitWorkspace(placement, task, ownedPath);
+    if (
+      placement &&
+      ownedPath &&
+      matches.some((match) => match.directory === ownedPath)
+    )
+      this.admitWorkspace(placement, task, ownedPath);
     return matches;
   }
 }
@@ -406,11 +736,19 @@ export interface WorkspaceLifecycleHost {
   /** The placed allocation surface a fixture supplies instead of the live volume policy. */
   readonly testPlacement?: WorkspacePlacementFixture;
   /** The engine's durable per-step creation timing hook, set after construction. */
-  workspaceCreationProgress?: (taskId: string, step: string, status: "started" | "finished" | "skipped", elapsedMs?: number, outcome?: "ok" | "failed") => void;
+  workspaceCreationProgress?: (
+    taskId: string,
+    step: string,
+    status: "started" | "finished" | "skipped",
+    elapsedMs?: number,
+    outcome?: "ok" | "failed",
+  ) => void;
   /** Still-running or unknown process evidence for a worktree add; a host without one observes none. */
   scanForWorktreeAdd?: (targetPath: string) => ProcessSearch;
   /** Every catalog registration of one exact folder; absent when the host has no catalog. */
-  externalWorkspaceCatalog?(directory: string): Promise<ExternalWorkspaceCatalog>;
+  externalWorkspaceCatalog?(
+    directory: string,
+  ): Promise<ExternalWorkspaceCatalog>;
   /** The host's native workspace calls: complete inventory, project lookup and registration. */
   readonly workspaceHost: WorkspaceHostCalls;
   /**
@@ -423,7 +761,14 @@ export interface WorkspaceLifecycleHost {
   ownedPathFor(task: Task): Promise<string>;
   ownedDataDirFor(task: Task, directory: string): Promise<string | null>;
   findWorkspaces(task: Task): Promise<{ id: string; directory: string }[]>;
-  inspectWorkspaceCreation(task: Task, options?: { skipProcessScan?: boolean; skipRemoteCheck?: boolean; progress?: boolean }): Promise<WorkspaceCreationState>;
+  inspectWorkspaceCreation(
+    task: Task,
+    options?: {
+      skipProcessScan?: boolean;
+      skipRemoteCheck?: boolean;
+      progress?: boolean;
+    },
+  ): Promise<WorkspaceCreationState>;
   inspectOrphanWorkspace(task: Task): Promise<OrphanWorkspace | null>;
 }
 
@@ -437,7 +782,9 @@ export interface WorkspaceHostCalls {
   /** The host project rooted at a repository; `{}` when the host reports none. */
   repositoryProject(projectRoot: string): Promise<HostProjectRef>;
   /** The native registration of one folder; a missing directory is the host's own answer. */
-  createWorkspace(spec: HostWorkspaceSpec): Promise<{ id: string; directory: string | null }>;
+  createWorkspace(
+    spec: HostWorkspaceSpec,
+  ): Promise<{ id: string; directory: string | null }>;
 }
 
 /** A placed allocation surface: where Queue worktrees live and how one is admitted. */

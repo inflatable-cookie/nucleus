@@ -1437,9 +1437,12 @@ request identities and submitted handoffs are not rewritten.
 - On other hosts links resolve through configured primary checkouts, live and unpinned, are
   shared by the repository's tasks and are never removed by Nucleus. The worker
   prompt, task detail and `next` disclose the record.
-- On BB, a declared source with a task sibling pin instead links to that task's
-  recorded copy; a missing or changed copy or a conflicting shared link is a
-  named wait before the worker or reviewer. BB does not run `worktree.setup`.
+- New BB worktrees have task-owned parents, so each declared source with a task
+  sibling pin links to that task's recorded copy without colliding with another
+  task's links. Existing workspace bindings retain their original paths. A
+  missing or changed copy or a conflicting link is a named wait before the
+  worker or reviewer; review checks the current binding, declaration and pins.
+  BB does not run `worktree.setup`.
   BB cannot inject a per-thread environment, so visibility of Paseo's Playwright
   browser cache is a named capability gap until observed in the BB thread.
   Retained BB run prompts bind the helper to the current run's ticket explicitly,

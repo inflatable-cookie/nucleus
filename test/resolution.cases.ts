@@ -13,7 +13,10 @@ import { dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { Store, digest } from "../core/store/store";
-import { creationProducerId, readCreationAttempt } from "../core/store/store-task-funnel";
+import {
+  creationProducerId,
+  readCreationAttempt,
+} from "../core/store/store-task-funnel";
 import { Admission, admitAdapter } from "../core/host/admission";
 import { briefDigest } from "../core/planning/brief";
 import { Engine, controlHasExternalEffect } from "../core/engine";
@@ -87,7 +90,6 @@ import {
   WorkerSourceRefusal,
 } from "../core/git/index";
 import { DEFAULT_UNCERTAIN_MERGE_RETRY_MS } from "../shared/contracts";
-
 
 test("local Git status timeout classification requires the child timeout witness", () => {
   const timeout = gitReadTimeoutFailure(["status", "--porcelain"], 600000, {
@@ -1990,7 +1992,11 @@ test("changes return to the same worker and re-review resumes the same reviewer"
     await f.engine.wake();
     assert.equal(f.run().role, "revision");
     assert.equal(f.run().agentId, "worker");
-    assert.equal(f.store.counts()["author"] ?? 0, workerCharges, "a retained revision does not charge the group again");
+    assert.equal(
+      f.store.counts()["author"] ?? 0,
+      workerCharges,
+      "a retained revision does not charge the group again",
+    );
     const reviewCharges = f.store.counts()["review"] ?? 0;
     f.setHead("d".repeat(40));
     await f.report("ready_for_review");
@@ -1998,77 +2004,242 @@ test("changes return to the same worker and re-review resumes the same reviewer"
     assert.equal(f.run().role, "reviewer");
     assert.equal(f.run().agentId, reviewer);
     assert.equal(f.creates.length, 1);
-    assert.equal(f.store.counts()["review"] ?? 0, reviewCharges, "a retained re-review does not charge the group again");
+    assert.equal(
+      f.store.counts()["review"] ?? 0,
+      reviewCharges,
+      "a retained re-review does not charge the group again",
+    );
   } finally {
     await f.close();
   }
 });
-test('Spec 052: an applied changes-required review climbs the next worker run one tier, and a retained reviewer below the climbed worker is replaced',async()=>{
- const f=fixture(false,false,undefined,true);try{
-  f.adapter.verifyResume=async()=>{};
-  let created=0;
-  f.adapter.createAgent=async t=>{created++;const id=`agent-worker-${created}`;f.states.set(id,{id,workspaceId:t.workspaceId??'workspace',status:'running',active:true,permissions:false,error:''});return{id,workspaceId:t.workspaceId??'workspace'}};
-  f.store.update(f.task.id,{complexity:'high'});
-  const highWorker=profile('worker-high','test/worker-high');
-  f.engine.profiles=[...f.engine.profiles,highWorker];
-  f.store.setMeta('pool',[...f.store.pool(),
-   {profileId:highWorker.id,enabled:true,group:'worker-high',roles:['worker'],weight:1,scopes:['general'],capability:'high',cost:'low'}]);
-  await f.engine.wake();
-  assert.equal(f.run().role,'reviewer');
-  await f.report('changes_required');
-  // The ordinary revision launch reads the applied review outcome and continues
-  // on the climbed tier, on a fresh revision agent: a retained thread cannot
-  // change profile. The retained worker joins retiredWorkers for the archive sweep.
-  await f.engine.resolution.launch(f.current(),'revision');
-  const revision=f.run();
-  const climbed=f.current();
-  assert.equal(revision.role,'revision','the climbed run is the ordinary revision run');
-  assert.equal(revision.profile?.id,highWorker.id,'the revision runs on the high profile');
-  assert.notEqual(revision.agentId,'worker','the climb starts a fresh revision agent');
-  assert.equal(climbed.retiredWorkers.length,1,'the retained worker is retired for the archive sweep');
-  assert.equal(climbed.agentId,revision.agentId,'the fresh revision agent is bound as the task\'s retained worker');
-  assert.equal(revision.profileGroup,'worker-high','the revision run carries the selected subscription group');
-  assert.equal(climbed.profileGroup,'worker-high','the task keeps the selected subscription group');
-  assert.ok((f.store.counts()['worker-high'] ?? 0) >= 1,'the assignment is charged to the selected group');
-  assert.equal(climbed.runId,revision.id,'the revision run is the task\'s current worker run');
-  assert.equal(climbed.resolution.workerClimb?.to,'high');
-  assert.equal(climbed.resolution.workerClimb?.from,'medium');
-  assert.ok(f.store.events(f.task.id).some(event=>event.kind==='worker_climb_armed'));
-  // A later review round does not climb again: the worker already sits at the requested tier.
-  // The higher reviewer profile exists before the re-review is requested, so the
-  // retained medium reviewer is replaced by the profile selection itself.
-  const highReviewer=profile('reviewer-high','test/reviewer-high');
-  f.engine.profiles=[...f.engine.profiles,highReviewer];
-  f.store.setMeta('pool',[...f.store.pool(),
-   {profileId:highReviewer.id,enabled:true,group:'reviewer-high',roles:['reviewer'],weight:1,scopes:['general'],capability:'high',cost:'medium'}]);
-  f.store.update(f.task.id,{profile:highWorker,profileGroup:'worker-high',resolution:{...f.current().resolution,reviewerProfile:profile('reviewer')}});
-  assert.match(String(f.engine.resolution.reviewerCapabilityIssue(f.current(),profile('reviewer'))),/reviewer profile reviewer is rated medium/,'the retained reviewer reads below the tier this run needs');
-  f.setHead('d'.repeat(40));
-  await f.report('ready_for_review');
-  assert.equal(f.run().role,'reviewer');
-  assert.equal(f.run().profile?.id,highReviewer.id,'the retained medium reviewer is replaced above the climbed worker');
-  // Maximum raises the retained reviewer floor to the top two tiers as well.
-  f.store.setMeta('usageLevel',{level:'maximum',until:null,setAt:new Date().toISOString()});
-  assert.match(String(f.engine.resolution.reviewerCapabilityIssue(f.current(),highReviewer)),/top two tiers Maximum/,'a retained reviewer below Maximum\'s tiers is replaced');
-  const unrated=profile('reviewer-unrated','test/reviewer-unrated');
-  f.engine.profiles=[...f.engine.profiles,unrated];
-  f.store.setMeta('pool',[...f.store.pool(),{profileId:unrated.id,enabled:true,group:'reviewer-unrated',roles:['reviewer'],weight:1,scopes:['general'],cost:'medium'}]);
-  assert.match(String(f.engine.resolution.reviewerCapabilityIssue(f.current(),unrated)),/unrated.*top two tiers Maximum/,'an unrated retained reviewer is below Maximum\'s floor');
-  const topReviewer=profile('reviewer-top','test/reviewer-top');
-  f.engine.profiles=[...f.engine.profiles,topReviewer];
-  f.store.setMeta('pool',[...f.store.pool(),{profileId:topReviewer.id,enabled:true,group:'reviewer-top',roles:['reviewer'],weight:1,scopes:['general'],capability:'very_high',cost:'medium'}]);
-  assert.equal(f.engine.resolution.select({...f.current(),profile:highWorker,profileGroup:'worker-high'},'reviewer')?.profile.id,topReviewer.id,'Maximum selects a top-tier reviewer');
-  f.store.setMeta('usageLevel',{level:'normal',until:null,setAt:new Date().toISOString()});
-  const climbedCharges=f.store.counts()['worker-high']??0;
-  await f.report('changes_required');
-  await f.engine.resolution.launch(f.current(),'revision');
-  const second=f.run();
-  assert.equal(second.role,'revision');
-  assert.equal(second.profile?.id,highWorker.id,'the second revision stays at the requested tier');
-  assert.ok(f.store.events(f.task.id).filter(event=>event.kind==='worker_climb_armed').length===1,'only the first review round climbs');
-  assert.equal(f.store.counts()['worker-high']??0,climbedCharges,'the retained second revision does not charge the group again');
-  assert.equal(second.agentId,revision.agentId,'the next same-tier revision continues the worker the climb bound');
- }finally{await f.close()}
+test("Spec 052: an applied changes-required review climbs the next worker run one tier, and a retained reviewer below the climbed worker is replaced", async () => {
+  const f = fixture(false, false, undefined, true);
+  try {
+    f.adapter.verifyResume = async () => {};
+    let created = 0;
+    f.adapter.createAgent = async (t) => {
+      created++;
+      const id = `agent-worker-${created}`;
+      f.states.set(id, {
+        id,
+        workspaceId: t.workspaceId ?? "workspace",
+        status: "running",
+        active: true,
+        permissions: false,
+        error: "",
+      });
+      return { id, workspaceId: t.workspaceId ?? "workspace" };
+    };
+    f.store.update(f.task.id, { complexity: "high" });
+    const highWorker = profile("worker-high", "test/worker-high");
+    f.engine.profiles = [...f.engine.profiles, highWorker];
+    f.store.setMeta("pool", [
+      ...f.store.pool(),
+      {
+        profileId: highWorker.id,
+        enabled: true,
+        group: "worker-high",
+        roles: ["worker"],
+        weight: 1,
+        scopes: ["general"],
+        capability: "high",
+        cost: "low",
+      },
+    ]);
+    await f.engine.wake();
+    assert.equal(f.run().role, "reviewer");
+    await f.report("changes_required");
+    // The ordinary revision launch reads the applied review outcome and continues
+    // on the climbed tier, on a fresh revision agent: a retained thread cannot
+    // change profile. The retained worker joins retiredWorkers for the archive sweep.
+    await f.engine.resolution.launch(f.current(), "revision");
+    const revision = f.run();
+    const climbed = f.current();
+    assert.equal(
+      revision.role,
+      "revision",
+      "the climbed run is the ordinary revision run",
+    );
+    assert.equal(
+      revision.profile?.id,
+      highWorker.id,
+      "the revision runs on the high profile",
+    );
+    assert.notEqual(
+      revision.agentId,
+      "worker",
+      "the climb starts a fresh revision agent",
+    );
+    assert.equal(
+      climbed.retiredWorkers.length,
+      1,
+      "the retained worker is retired for the archive sweep",
+    );
+    assert.equal(
+      climbed.agentId,
+      revision.agentId,
+      "the fresh revision agent is bound as the task's retained worker",
+    );
+    assert.equal(
+      revision.profileGroup,
+      "worker-high",
+      "the revision run carries the selected subscription group",
+    );
+    assert.equal(
+      climbed.profileGroup,
+      "worker-high",
+      "the task keeps the selected subscription group",
+    );
+    assert.ok(
+      (f.store.counts()["worker-high"] ?? 0) >= 1,
+      "the assignment is charged to the selected group",
+    );
+    assert.equal(
+      climbed.runId,
+      revision.id,
+      "the revision run is the task's current worker run",
+    );
+    assert.equal(climbed.resolution.workerClimb?.to, "high");
+    assert.equal(climbed.resolution.workerClimb?.from, "medium");
+    assert.ok(
+      f.store
+        .events(f.task.id)
+        .some((event) => event.kind === "worker_climb_armed"),
+    );
+    // A later review round does not climb again: the worker already sits at the requested tier.
+    // The higher reviewer profile exists before the re-review is requested, so the
+    // retained medium reviewer is replaced by the profile selection itself.
+    const highReviewer = profile("reviewer-high", "test/reviewer-high");
+    f.engine.profiles = [...f.engine.profiles, highReviewer];
+    f.store.setMeta("pool", [
+      ...f.store.pool(),
+      {
+        profileId: highReviewer.id,
+        enabled: true,
+        group: "reviewer-high",
+        roles: ["reviewer"],
+        weight: 1,
+        scopes: ["general"],
+        capability: "high",
+        cost: "medium",
+      },
+    ]);
+    f.store.update(f.task.id, {
+      profile: highWorker,
+      profileGroup: "worker-high",
+      resolution: {
+        ...f.current().resolution,
+        reviewerProfile: profile("reviewer"),
+      },
+    });
+    assert.match(
+      String(
+        f.engine.resolution.reviewerCapabilityIssue(
+          f.current(),
+          profile("reviewer"),
+        ),
+      ),
+      /reviewer profile reviewer is rated medium/,
+      "the retained reviewer reads below the tier this run needs",
+    );
+    f.setHead("d".repeat(40));
+    await f.report("ready_for_review");
+    assert.equal(f.run().role, "reviewer");
+    assert.equal(
+      f.run().profile?.id,
+      highReviewer.id,
+      "the retained medium reviewer is replaced above the climbed worker",
+    );
+    // Maximum raises the retained reviewer floor to the top two tiers as well.
+    f.store.setMeta("usageLevel", {
+      level: "maximum",
+      until: null,
+      setAt: new Date().toISOString(),
+    });
+    assert.match(
+      String(
+        f.engine.resolution.reviewerCapabilityIssue(f.current(), highReviewer),
+      ),
+      /top two tiers Maximum/,
+      "a retained reviewer below Maximum's tiers is replaced",
+    );
+    const unrated = profile("reviewer-unrated", "test/reviewer-unrated");
+    f.engine.profiles = [...f.engine.profiles, unrated];
+    f.store.setMeta("pool", [
+      ...f.store.pool(),
+      {
+        profileId: unrated.id,
+        enabled: true,
+        group: "reviewer-unrated",
+        roles: ["reviewer"],
+        weight: 1,
+        scopes: ["general"],
+        cost: "medium",
+      },
+    ]);
+    assert.match(
+      String(f.engine.resolution.reviewerCapabilityIssue(f.current(), unrated)),
+      /unrated.*top two tiers Maximum/,
+      "an unrated retained reviewer is below Maximum's floor",
+    );
+    const topReviewer = profile("reviewer-top", "test/reviewer-top");
+    f.engine.profiles = [...f.engine.profiles, topReviewer];
+    f.store.setMeta("pool", [
+      ...f.store.pool(),
+      {
+        profileId: topReviewer.id,
+        enabled: true,
+        group: "reviewer-top",
+        roles: ["reviewer"],
+        weight: 1,
+        scopes: ["general"],
+        capability: "very_high",
+        cost: "medium",
+      },
+    ]);
+    assert.equal(
+      f.engine.resolution.select(
+        { ...f.current(), profile: highWorker, profileGroup: "worker-high" },
+        "reviewer",
+      )?.profile.id,
+      topReviewer.id,
+      "Maximum selects a top-tier reviewer",
+    );
+    f.store.setMeta("usageLevel", {
+      level: "normal",
+      until: null,
+      setAt: new Date().toISOString(),
+    });
+    const climbedCharges = f.store.counts()["worker-high"] ?? 0;
+    await f.report("changes_required");
+    await f.engine.resolution.launch(f.current(), "revision");
+    const second = f.run();
+    assert.equal(second.role, "revision");
+    assert.equal(
+      second.profile?.id,
+      highWorker.id,
+      "the second revision stays at the requested tier",
+    );
+    assert.ok(
+      f.store
+        .events(f.task.id)
+        .filter((event) => event.kind === "worker_climb_armed").length === 1,
+      "only the first review round climbs",
+    );
+    assert.equal(
+      f.store.counts()["worker-high"] ?? 0,
+      climbedCharges,
+      "the retained second revision does not charge the group again",
+    );
+    assert.equal(
+      second.agentId,
+      revision.agentId,
+      "the next same-tier revision continues the worker the climb bound",
+    );
+  } finally {
+    await f.close();
+  }
 });
 test("re-review replaces a closed reviewer while preserving the ordinary source workspace", async () => {
   const f = fixture(false, false, undefined, true);
@@ -3026,34 +3197,122 @@ test("responsible non-delivery gets one retained pushback, one same-capability p
     await f.close();
   }
 });
-test('Spec 052: a non-delivery alternate keeps the climbed tier in its permission filter', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'ns-nondelivery-climb-'));
-  const store = new Store(join(dir, 'queue.sqlite'));
+test("Spec 052: a non-delivery alternate keeps the climbed tier in its permission filter", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ns-nondelivery-climb-"));
+  const store = new Store(join(dir, "queue.sqlite"));
   try {
-    const task = store.insert(submissionSchema.parse({ submissionId: 'nondelivery-climb', title: 'Non-delivery climb', repoPath: '/repo',
-      planningCommit: base, handoffPath: 'h', originAgentId: 'origin', complexity: 'very_high' }), 'host', 'handoff', base);
-    const top = profile('top', 'test/top');
-    const alt = { ...profile('alt', 'test/alt'), provider: 'other' };
-    store.setMeta('pool', [
-      { profileId: top.id, enabled: true, group: 'top', roles: ['worker'], weight: 1, scopes: ['general'], capability: 'very_high', cost: 'high' },
-      { profileId: alt.id, enabled: true, group: 'alt', roles: ['worker'], weight: 1, scopes: ['general'], capability: 'very_high', cost: 'high' },
+    const task = store.insert(
+      submissionSchema.parse({
+        submissionId: "nondelivery-climb",
+        title: "Non-delivery climb",
+        repoPath: "/repo",
+        planningCommit: base,
+        handoffPath: "h",
+        originAgentId: "origin",
+        complexity: "very_high",
+      }),
+      "host",
+      "handoff",
+      base,
+    );
+    const top = profile("top", "test/top");
+    const alt = { ...profile("alt", "test/alt"), provider: "other" };
+    store.setMeta("pool", [
+      {
+        profileId: top.id,
+        enabled: true,
+        group: "top",
+        roles: ["worker"],
+        weight: 1,
+        scopes: ["general"],
+        capability: "very_high",
+        cost: "high",
+      },
+      {
+        profileId: alt.id,
+        enabled: true,
+        group: "alt",
+        roles: ["worker"],
+        weight: 1,
+        scopes: ["general"],
+        capability: "very_high",
+        cost: "high",
+      },
     ]);
-    store.setMeta('usageLevel', { level: 'normal', until: null, setAt: new Date().toISOString() });
-    const taskWith = (climb: boolean) => store.update(task.id, { profile: top, profileGroup: 'top', agentId: 'worker', runId: 'run',
-      workspaceId: 'workspace', directory: '/worktree',
-      resolution: { ...store.task(task.id).resolution, nonDeliveryRoutePending: true, currentRunId: null,
-        workerClimb: climb ? { reviewRunId: 'review-1', from: 'high' as const, to: 'very_high' as const, profileId: top.id, at: '2026-11-17T00:00:00.000Z' } : null } });
-    const ctx = () => ({ store, profiles: () => [top, alt], counts: () => store.counts(),
-      recentCounts: () => store.counts(), availability: () => [], update: () => {},
-      waiting: () => {}, openPlannerEscalation: () => {},
-      host: { observe: async (id: string) => ({ id, workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '' }) } } as never);
+    store.setMeta("usageLevel", {
+      level: "normal",
+      until: null,
+      setAt: new Date().toISOString(),
+    });
+    const taskWith = (climb: boolean) =>
+      store.update(task.id, {
+        profile: top,
+        profileGroup: "top",
+        agentId: "worker",
+        runId: "run",
+        workspaceId: "workspace",
+        directory: "/worktree",
+        resolution: {
+          ...store.task(task.id).resolution,
+          nonDeliveryRoutePending: true,
+          currentRunId: null,
+          workerClimb: climb
+            ? {
+                reviewRunId: "review-1",
+                from: "high" as const,
+                to: "very_high" as const,
+                profileId: top.id,
+                at: "2026-11-17T00:00:00.000Z",
+              }
+            : null,
+        },
+      });
+    const ctx = () =>
+      ({
+        store,
+        profiles: () => [top, alt],
+        counts: () => store.counts(),
+        recentCounts: () => store.counts(),
+        availability: () => [],
+        update: () => {},
+        waiting: () => {},
+        openPlannerEscalation: () => {},
+        host: {
+          observe: async (id: string) => ({
+            id,
+            workspaceId: "workspace",
+            status: "idle",
+            active: false,
+            permissions: false,
+            error: "",
+          }),
+        },
+      }) as never;
     const withClimb = taskWith(true);
-    const climbed = await resolveNonDeliveryRoute(ctx(), withClimb, 'revision');
-    assert.equal(climbed.kind, 'alternate', 'the very-high alternate is eligible on the climbed tier');
-    assert.equal(climbed.kind === 'alternate' ? climbed.profile.id : null, alt.id);
-    const beforeClimb = await resolveNonDeliveryRoute(ctx(), taskWith(false), 'revision');
-    assert.equal(beforeClimb.kind, 'handled', 'without the recorded climb the very-high alternate is filtered out');
-  } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
+    const climbed = await resolveNonDeliveryRoute(ctx(), withClimb, "revision");
+    assert.equal(
+      climbed.kind,
+      "alternate",
+      "the very-high alternate is eligible on the climbed tier",
+    );
+    assert.equal(
+      climbed.kind === "alternate" ? climbed.profile.id : null,
+      alt.id,
+    );
+    const beforeClimb = await resolveNonDeliveryRoute(
+      ctx(),
+      taskWith(false),
+      "revision",
+    );
+    assert.equal(
+      beforeClimb.kind,
+      "handled",
+      "without the recorded climb the very-high alternate is filtered out",
+    );
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("a pending non-delivery replacement with no eligible provider escalates once to the planner", async () => {
@@ -6509,19 +6768,27 @@ test("an uncertain reviewer creation stays owned after repeated empty lookups", 
   const f = fixture();
   try {
     let calls = 0;
-    f.adapter.createRun = async () => { calls++; throw new Error("Transport lost"); };
+    f.adapter.createRun = async () => {
+      calls++;
+      throw new Error("Transport lost");
+    };
     await f.engine.wake();
-    const run = f.store.runs(f.task.id).find(r => r.role === "reviewer")!;
+    const run = f.store.runs(f.task.id).find((r) => r.role === "reviewer")!;
     await f.engine.wake();
     const events = f.store.eventsAll(f.task.id).length;
     await f.engine.wake();
     assert.equal(calls, 1);
-    assert.equal(f.store.runs(f.task.id).filter(r => r.role === "reviewer").length, 1);
+    assert.equal(
+      f.store.runs(f.task.id).filter((r) => r.role === "reviewer").length,
+      1,
+    );
     assert.equal(f.store.run(run.id)?.released, false);
     assert.ok(!f.store.run(run.id)?.absentProvenAt);
     assert.equal(f.store.eventsAll(f.task.id).length, events);
     assert.match(f.current().reason, /still uncertain/);
-  } finally { await f.close(); }
+  } finally {
+    await f.close();
+  }
 });
 
 test("blocked closeout can resynchronize main and retry on the retained coordinator", async () => {
@@ -7254,8 +7521,14 @@ test("an overdue queued required check gets one recovery look, then waits and es
     );
     const recovery = f.store.run(poll.recoveryRunId)!;
     assert.equal(recovery.role, "recovery");
-    assert.equal(recovery.temporaryDirectory, `/synthetic/scratch/${recovery.id}`);
-    assert.equal(f.creates.find(run => run.id === recovery.id)?.temporaryDirectory, recovery.temporaryDirectory);
+    assert.equal(
+      recovery.temporaryDirectory,
+      `/synthetic/scratch/${recovery.id}`,
+    );
+    assert.equal(
+      f.creates.find((run) => run.id === recovery.id)?.temporaryDirectory,
+      recovery.temporaryDirectory,
+    );
     assert.match(f.current().reason, /queued, no runner yet/);
     assert.match(f.current().reason, /macos-latest/);
 
@@ -12344,7 +12617,12 @@ test("a recovery create that throws settles after exact absence without another 
     assert.equal(calls, 1);
     assert.deepEqual(recipients, ["origin"]);
     assert.equal(f.current().resolution.recovery?.status, "resolved");
-    assert.equal(f.store.eventsAll(f.task.id).filter(event => event.kind === "absent_recovery_released").length, 1);
+    assert.equal(
+      f.store
+        .eventsAll(f.task.id)
+        .filter((event) => event.kind === "absent_recovery_released").length,
+      1,
+    );
   } finally {
     await f.close();
   }
@@ -14232,31 +14510,55 @@ function startC4(f: ReturnType<typeof fixture>) {
   const recipients = enableRecovery(f);
   f.store.update(f.task.id, { phase: "needs_attention" });
   attention(f, "The integration check needs a follow-up");
-  let capture!: (value: {run: Run; token: string}) => void;
-  const started = new Promise<{run: Run; token: string}>(resolve => { capture = resolve; });
+  let capture!: (value: { run: Run; token: string }) => void;
+  const started = new Promise<{ run: Run; token: string }>((resolve) => {
+    capture = resolve;
+  });
   let finish!: () => void;
-  const finished = new Promise<void>(resolve => { finish = resolve; });
+  const finished = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
   f.adapter.createRun = async (_task, run, token) => {
     f.creates.push(run);
-    capture({run: f.store.run(run.id)!, token});
+    capture({ run: f.store.run(run.id)!, token });
     await finished;
-    throw new Error("Synthetic OpenCode launch ended before an agent was returned");
+    throw new Error(
+      "Synthetic OpenCode launch ended before an agent was returned",
+    );
   };
   const route = f.engine.resolution.recovery.route(f.current());
-  return { recipients, started: Promise.race([started, route.then(result => {
-    throw Error(`Recovery returned before reserving a run: ${result}; ${f.current().reason}`);
-  })]), finish, route };
+  return {
+    recipients,
+    started: Promise.race([
+      started,
+      route.then((result) => {
+        throw Error(
+          `Recovery returned before reserving a run: ${result}; ${f.current().reason}`,
+        );
+      }),
+    ]),
+    finish,
+    route,
+  };
 }
 
 function nextC4Move(store: Store, taskId: string) {
-  return ownerTaskNext(collectOwnerVerbFacts(store, store.task(taskId))).verbs.find(verb =>
-    verb.verb === "move" && (verb.args?.to === "review" || verb.refusal?.startsWith("move review:")));
+  return ownerTaskNext(
+    collectOwnerVerbFacts(store, store.task(taskId)),
+  ).verbs.find(
+    (verb) =>
+      verb.verb === "move" &&
+      (verb.args?.to === "review" || verb.refusal?.startsWith("move review:")),
+  );
 }
 
 function restartC4(f: ReturnType<typeof fixture>) {
   return f.engine.performTaskControl({
-    taskId: f.task.id, version: f.current().version, action: "restart",
-    role: "coordinator", reason: "Resume the recovery episode",
+    taskId: f.task.id,
+    version: f.current().version,
+    action: "restart",
+    role: "coordinator",
+    reason: "Resume the recovery episode",
   });
 }
 
@@ -14264,7 +14566,7 @@ test("C4 restart requires both exact absence and a settled producer", async () =
   const f = fixture();
   const launch = startC4(f);
   try {
-    const {run, token} = await launch.started;
+    const { run, token } = await launch.started;
     await f.engine.resolution.recovery.pass(f.task.id);
     assert.equal(f.current().resolution.recovery?.status, "escalated");
     await assert.rejects(restartC4(f), /producer has not been proved stopped/);
@@ -14274,7 +14576,9 @@ test("C4 restart requires both exact absence and a settled producer", async () =
 
     launch.finish();
     await launch.route;
-    f.adapter.findRunAgents = async () => [{ id: "late", workspaceId: "workspace" }];
+    f.adapter.findRunAgents = async () => [
+      { id: "late", workspaceId: "workspace" },
+    ];
     await assert.rejects(restartC4(f), /no longer proven absent/);
     assert.equal(f.store.run(run.id)?.released, false);
 
@@ -14292,8 +14596,10 @@ test("C4 restart requires both exact absence and a settled producer", async () =
       return create(task, next, credential);
     };
     await f.engine.resolution.recovery.route(f.current());
-    assert.equal(f.creates.filter(item => item.id === run.id).length, 1);
-    assert.ok(f.creates.some(item => item.role === "recovery" && item.id !== run.id));
+    assert.equal(f.creates.filter((item) => item.id === run.id).length, 1);
+    assert.ok(
+      f.creates.some((item) => item.role === "recovery" && item.id !== run.id),
+    );
   } finally {
     launch.finish();
     await launch.route;
@@ -14305,19 +14611,34 @@ test("C4 sweep releases the settled agentless recovery after reopen and permits 
   const f = fixture();
   const launch = startC4(f);
   try {
-    const {run, token} = await launch.started;
-    assert.deepEqual([run.role, run.status, run.agentId, run.released, run.active, run.completion],
-      ["recovery", "intent", null, false, null, null]);
+    const { run, token } = await launch.started;
+    assert.deepEqual(
+      [
+        run.role,
+        run.status,
+        run.agentId,
+        run.released,
+        run.active,
+        run.completion,
+      ],
+      ["recovery", "intent", null, false, null, null],
+    );
     assert.equal(f.current().resolution.recovery?.runId, run.id);
     const intent = readCreationAttempt(f.store, run);
     assert.equal(intent?.producerId, creationProducerId);
     assert.ok(intent.attemptId);
     assert.equal(intent.settlement, null);
-    assert.match(nextC4Move(f.store, f.task.id)?.refusal ?? "", /delivery is unknown|run-delivery/);
+    assert.match(
+      nextC4Move(f.store, f.task.id)?.refusal ?? "",
+      /delivery is unknown|run-delivery/,
+    );
 
     launch.finish();
     await launch.route;
-    assert.equal(readCreationAttempt(f.store, run)?.settlement?.outcome, "threw");
+    assert.equal(
+      readCreationAttempt(f.store, run)?.settlement?.outcome,
+      "threw",
+    );
     assert.equal(f.store.run(run.id)?.released, false);
     await f.engine.stop();
 
@@ -14325,13 +14646,29 @@ test("C4 sweep releases the settled agentless recovery after reopen and permits 
     const resumed = new Engine(reopened, f.adapter, 120_000);
     resumed.profiles = [...f.engine.profiles];
     try {
-      assert.equal(readCreationAttempt(reopened, run)?.settlement?.attemptId, intent.attemptId);
+      assert.equal(
+        readCreationAttempt(reopened, run)?.settlement?.attemptId,
+        intent.attemptId,
+      );
       await resumed.resolution.recovery.pass(f.task.id);
-      assert.equal(reopened.run(run.id)?.released, false, "the completed call still needs a lookup after grace");
-      reopened.db.prepare("UPDATE events SET at=? WHERE taskId=? AND kind='creation_attempt_settled'")
+      assert.equal(
+        reopened.run(run.id)?.released,
+        false,
+        "the completed call still needs a lookup after grace",
+      );
+      reopened.db
+        .prepare(
+          "UPDATE events SET at=? WHERE taskId=? AND kind='creation_attempt_settled'",
+        )
         .run(new Date(Date.now() - 180_000).toISOString(), f.task.id);
-      const countsBefore = [f.creates.length, f.sends.length, launch.recipients.length, reopened.notices(f.task.id).length];
-      const attemptsBefore = reopened.task(f.task.id).resolution.recoveryAttempts;
+      const countsBefore = [
+        f.creates.length,
+        f.sends.length,
+        launch.recipients.length,
+        reopened.notices(f.task.id).length,
+      ];
+      const attemptsBefore = reopened.task(f.task.id).resolution
+        .recoveryAttempts;
       await resumed.resolution.recovery.pass(f.task.id);
       const settled = reopened.task(f.task.id);
       assert.equal(reopened.run(run.id)?.released, true);
@@ -14342,23 +14679,50 @@ test("C4 sweep releases the settled agentless recovery after reopen and permits 
       assert.equal(settled.resolution.recovery?.status, "resolved");
       assert.equal(settled.resolution.recoveryActive, false);
       assert.equal(settled.resolution.recoveryAttempts, attemptsBefore);
-      const releases = reopened.eventsAll(f.task.id).filter(event => event.kind === "absent_recovery_released");
-      assert.deepEqual(releases.map(event => JSON.parse(event.detail)),
-        [{runId: run.id, attemptId: intent.attemptId, terminatedBy: "call_settled"}]);
+      const releases = reopened
+        .eventsAll(f.task.id)
+        .filter((event) => event.kind === "absent_recovery_released");
+      assert.deepEqual(
+        releases.map((event) => JSON.parse(event.detail)),
+        [
+          {
+            runId: run.id,
+            attemptId: intent.attemptId,
+            terminatedBy: "call_settled",
+          },
+        ],
+      );
       assert.equal(nextC4Move(reopened, f.task.id)?.available, true);
 
       const eventCount = reopened.eventsAll(f.task.id).length;
       await resumed.resolution.recovery.pass(f.task.id);
       await resumed.resolution.recovery.route(settled);
       assert.equal(reopened.eventsAll(f.task.id).length, eventCount);
-      assert.deepEqual([f.creates.length, f.sends.length, launch.recipients.length, reopened.notices(f.task.id).length], countsBefore);
+      assert.deepEqual(
+        [
+          f.creates.length,
+          f.sends.length,
+          launch.recipients.length,
+          reopened.notices(f.task.id).length,
+        ],
+        countsBefore,
+      );
 
-      f.adapter.createRun = async (task, next) => ({id: `agent-${next.id}`, workspaceId: task.workspaceId});
+      f.adapter.createRun = async (task, next) => ({
+        id: `agent-${next.id}`,
+        workspaceId: task.workspaceId,
+      });
       const moved = await resumed.performTaskControl({
-        taskId: f.task.id, version: settled.version, action: "move", to: "review",
+        taskId: f.task.id,
+        version: settled.version,
+        action: "move",
+        to: "review",
         reason: "Review the retained exact PR head",
       });
-      assert.ok(["awaiting_review", "reviewing"].includes(moved.phase), moved.reason);
+      assert.ok(
+        ["awaiting_review", "reviewing"].includes(moved.phase),
+        moved.reason,
+      );
     } finally {
       await resumed.stop();
       reopened.close();
@@ -14371,12 +14735,12 @@ test("C4 sweep releases the settled agentless recovery after reopen and permits 
 });
 
 test("C4 transport deadline keeps a live producer owned until the native call ends", async () => {
-  const admission = new Admission({startIntervalMs: 0, callDeadlineMs: 30});
+  const admission = new Admission({ startIntervalMs: 0, callDeadlineMs: 30 });
   const f = fixture(false, false, undefined, false, admission);
   const keepAlive = setTimeout(() => {}, 5000);
   const launch = startC4(f);
   try {
-    const {run, token} = await launch.started;
+    const { run, token } = await launch.started;
     await launch.route;
     assert.equal(admission.snapshot().abandoned.count, 1);
     assert.equal(readCreationAttempt(f.store, run)?.settlement, null);
@@ -14385,8 +14749,11 @@ test("C4 transport deadline keeps a live producer owned until the native call en
     assert.equal(nextC4Move(f.store, f.task.id)?.available, false);
     assert.doesNotThrow(() => f.store.authenticate(run.id, token));
     launch.finish();
-    await new Promise<void>(resolve => setImmediate(resolve));
-    assert.equal(readCreationAttempt(f.store, run)?.settlement?.outcome, "threw");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(
+      readCreationAttempt(f.store, run)?.settlement?.outcome,
+      "threw",
+    );
     await f.engine.resolution.recovery.pass(f.task.id);
     assert.equal(f.store.run(run.id)?.released, true);
   } finally {
@@ -14401,27 +14768,42 @@ test("C4 needs a complete online lookup and a recorded producer identity", async
   const f = fixture();
   const launch = startC4(f);
   try {
-    const {run, token} = await launch.started;
+    const { run, token } = await launch.started;
     launch.finish();
     await launch.route;
-    for (const reason of ["Exact inventory page was incomplete", "Host lookup timed out"]) {
-      f.adapter.findRunAgents = async () => { throw Error(reason); };
+    for (const reason of [
+      "Exact inventory page was incomplete",
+      "Host lookup timed out",
+    ]) {
+      f.adapter.findRunAgents = async () => {
+        throw Error(reason);
+      };
       await f.engine.resolution.recovery.pass(f.task.id);
       await assert.rejects(restartC4(f), new RegExp(reason));
       assert.equal(f.store.run(run.id)?.released, false);
       assert.equal(nextC4Move(f.store, f.task.id)?.available, false);
     }
     let lookups = 0;
-    f.adapter.findRunAgents = async () => { lookups++; return []; };
+    f.adapter.findRunAgents = async () => {
+      lookups++;
+      return [];
+    };
     f.engine.hostAvailable = () => false;
     await f.engine.resolution.recovery.pass(f.task.id);
-    await assert.rejects(restartC4(f), /waiting for host|host.*online|unavailable/);
+    await assert.rejects(
+      restartC4(f),
+      /waiting for host|host.*online|unavailable/,
+    );
     assert.equal(lookups, 0);
     assert.equal(f.store.run(run.id)?.released, false);
 
     f.engine.hostAvailable = () => true;
     // Recreate a legacy row from the real writer by removing its typed record.
-    f.store.db.prepare("DELETE FROM events WHERE taskId=? AND kind='creation_attempt_reserved'").run(f.task.id);
+    f.store.db
+      .prepare(
+        "DELETE FROM events WHERE taskId=? AND kind='creation_attempt_reserved'",
+      )
+      .run(f.task.id);
     await f.engine.resolution.recovery.pass(f.task.id);
     await assert.rejects(restartC4(f), /producer has not been proved stopped/);
     assert.equal(f.store.run(run.id)?.released, false);
@@ -14437,22 +14819,39 @@ test("C4 release after a service roll uses the recorded producer identity", asyn
   const f = fixture();
   const launch = startC4(f);
   try {
-    const {run, token} = await launch.started;
+    const { run, token } = await launch.started;
     const attempt = readCreationAttempt(f.store, run)!;
     launch.finish();
     await launch.route;
     // Replay the on-disk state from a different service process that exited
     // before recording a settlement. The run and binding came from real writers.
-    f.store.db.prepare("DELETE FROM events WHERE taskId=? AND kind='creation_attempt_settled'").run(f.task.id);
-    f.store.db.prepare("UPDATE events SET detail=json_set(detail,'$.producerId',?) WHERE taskId=? AND kind='creation_attempt_reserved'")
+    f.store.db
+      .prepare(
+        "DELETE FROM events WHERE taskId=? AND kind='creation_attempt_settled'",
+      )
+      .run(f.task.id);
+    f.store.db
+      .prepare(
+        "UPDATE events SET detail=json_set(detail,'$.producerId',?) WHERE taskId=? AND kind='creation_attempt_reserved'",
+      )
       .run(randomUUID(), f.task.id);
     assert.equal(readCreationAttempt(f.store, run)?.settlement, null);
     await f.engine.resolution.recovery.pass(f.task.id);
     assert.equal(f.store.run(run.id)?.released, true);
     assert.throws(() => f.store.authenticate(run.id, token), /Unauthorized/);
-    const releases = f.store.eventsAll(f.task.id).filter(event => event.kind === "absent_recovery_released");
-    assert.deepEqual(releases.map(event => JSON.parse(event.detail)),
-      [{runId: run.id, attemptId: attempt.attemptId, terminatedBy: "service_replaced"}]);
+    const releases = f.store
+      .eventsAll(f.task.id)
+      .filter((event) => event.kind === "absent_recovery_released");
+    assert.deepEqual(
+      releases.map((event) => JSON.parse(event.detail)),
+      [
+        {
+          runId: run.id,
+          attemptId: attempt.attemptId,
+          terminatedBy: "service_replaced",
+        },
+      ],
+    );
     assert.equal(nextC4Move(f.store, f.task.id)?.available, true);
   } finally {
     launch.finish();
@@ -14467,7 +14866,9 @@ test("recovery pass keeps an uncertain agentless coordinator owned on empty look
     enableRecovery(f);
     const run = plantAbsentRecovery(f);
     let purged = false;
-    f.adapter.purgeReportingFiles = () => { purged = true; };
+    f.adapter.purgeReportingFiles = () => {
+      purged = true;
+    };
     await f.engine.resolution.recovery.pass();
     const count = f.store.eventsAll(f.task.id).length;
     await f.engine.resolution.recovery.pass();
@@ -14477,8 +14878,13 @@ test("recovery pass keeps an uncertain agentless coordinator owned on empty look
     assert.equal(purged, false);
     assert.doesNotThrow(() => f.store.authenticate(run.id, "old-token"));
     assert.equal(f.current().resolution.recovery?.runId, run.id);
-    assert.equal(f.creates.filter(item => item.role === "recovery").length, 0);
-  } finally { await f.close(); }
+    assert.equal(
+      f.creates.filter((item) => item.role === "recovery").length,
+      0,
+    );
+  } finally {
+    await f.close();
+  }
 });
 test("recovery pass binds one exact coordinator match and keeps ambiguous creation escalated", async () => {
   const f = fixture();

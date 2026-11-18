@@ -60,6 +60,7 @@ function fixture(t: TestContext, bb = false) {
     agentId: string;
     role: string;
     hostId: string;
+    temporaryDirectory?: string;
   }> = [];
   let page: TimelinePage | null = toolTimelinePage([], {
     projection: "bounded",
@@ -86,17 +87,17 @@ function fixture(t: TestContext, bb = false) {
     },
     store: {
       task: () => task,
-      run: () => null,
+      run: (id: string) => runs.find((run) => run.id === id) ?? null,
       runs: () => runs,
       eventsAll: () => [],
       event: () => {},
     },
   } as unknown as Resolution;
   const tools = new OwnedTools(resolution);
-  const proof = () =>
+  const proof = (runId = task.runId) =>
     tools.ownedToolHold(task.agentId, {
       taskId: task.id,
-      runId: task.runId,
+      runId,
       workspaceId: task.workspaceId,
       requireCompleteEvidence: true,
     });
@@ -129,6 +130,24 @@ function fixture(t: TestContext, bb = false) {
     page: () => page!,
   };
 }
+
+test("an idle BB recovery participant clears its proof using the stored run scratch", async (t) => {
+  const f = fixture(t, true);
+  const runId = "synthetic-recovery";
+  f.setRuns([
+    {
+      id: runId,
+      taskId: f.task.id,
+      workspaceId: f.task.workspaceId,
+      agentId: f.task.agentId,
+      role: "recovery",
+      hostId: f.task.hostId,
+      temporaryDirectory: f.task.temporaryDirectory,
+    },
+  ]);
+  f.task.temporaryDirectory = "";
+  assert.equal(await f.proof(runId), null);
+});
 
 test("BB bridge and session are bound runtime, while their commands and unknown identities hold", async (t) => {
   const f = fixture(t, true);
