@@ -303,7 +303,15 @@ test("CLI, native UI and Queue MCP forward task controls through the shared cont
   const catalogue = read("shared/rpc-catalogue.ts");
   // The catalogue formats one field per line, so each fact is the name paired with
   // its contract, not two tokens on one line (the formatter's whole-file pass over
-  // `shared/rpc-catalogue.ts` broke the old same-line reads).
+  // `shared/rpc-catalogue.ts` broke the old same-line reads). Interpolated RPC
+  // names are matched literally: an unescaped dot would accept `queue.t4sk` for
+  // `queue.task`.
+  const literal = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  assert.equal(
+    new RegExp(`name: "${literal("queue.task")}",`).test('name: "queueXtask",'),
+    false,
+    "a name is matched literally, never with its dots as wildcards",
+  );
   for (const [name, contract] of [
     ["queue.task", "taskControl"],
     ["queue.operation-start", "operationStart"],
@@ -314,7 +322,9 @@ test("CLI, native UI and Queue MCP forward task controls through the shared cont
   ])
     assert.match(
       catalogue,
-      new RegExp(`name: "${name}",\\s*contract: contracts\\.${contract},`),
+      new RegExp(
+        `name: "${literal(name)}",\\s*contract: contracts\\.${literal(contract)},`,
+      ),
       `${name} forwards its own contract`,
     );
 });
