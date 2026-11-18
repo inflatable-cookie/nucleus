@@ -18,7 +18,7 @@ import {
   settleCreationAttempt,
 } from "../store/store-task-funnel";
 import { trackHostCreation } from "./admission";
-import { HostCallAbandonedError, HostUnknownDeliveryError, ProvenPreSendRefusalError } from "./errors";
+import { HostCallAbandonedError, ProvenPreSendRefusalError } from "./errors";
 const faultHosts = new WeakMap<object, string>();
 const HOST_FAILURE = Symbol("host-failure");
 
@@ -31,15 +31,6 @@ export function recordHostFailure(
   const record = Reflect.get(adapter, HOST_FAILURE);
   if (typeof record !== "function") return false;
   return record(hostId, error) === true;
-}
-
-/** The operation may have landed, but the host did not answer in time. */
-export class HostOperationTimeoutError extends HostUnknownDeliveryError {
-  constructor(readonly hostId: string, readonly operation: string, readonly timeoutMs: number) {
-    super({ command: operation, reason: 'host_operation_timed_out' });
-    this.name = 'HostOperationTimeoutError';
-    this.message = `Transport not connected: host ${hostId} operation ${operation} timed out after ${timeoutMs} ms; delivery is unknown`;
-  }
 }
 
 /** A transport failure attributed at the adapter boundary, before host context is lost. */
@@ -114,8 +105,6 @@ export interface HostAdapterRoutingOwner {
   hostAvailable: (id: string) => boolean;
   host: OriginReviewHost;
   hostOnline: (id: string) => boolean;
-  /** Testable per-operation deadline; production defaults to ten seconds. */
-  hostOperationTimeoutMs?: number;
 }
 
 /**
@@ -144,21 +133,6 @@ export function routeHostAdapter(
     return record(host, error);
   };
   const creating = new Set<string>();
-  // Race only an individual adapter operation. The original promise continues:
-  // native creation settlement and ordinary callback intake still own late results.
-  const bounded = <T>(result: T, host: string | undefined, method: PropertyKey): T => {
-    if (!(result instanceof Promise)) return result;
-    const timeoutMs = owner.hostOperationTimeoutMs ?? 10_000;
-    let timer: ReturnType<typeof setTimeout>;
-    const deadline = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        const error = new HostOperationTimeoutError(host ?? 'unknown', String(method), timeoutMs);
-        if (host) recordHostFailure(proxy, host, error);
-        reject(record(host, error));
-      }, timeoutMs);
-    });
-    return Promise.race([result, deadline]).finally(() => clearTimeout(timer)) as T;
-  };
   const proxy: Adapter = new Proxy(fallback, {
     get: (selectedFallback, property) => {
       if (property === HOST_FAILURE)
@@ -178,7 +152,7 @@ export function routeHostAdapter(
               : error instanceof HostTransportFault
                 ? error
                 : new HostTransportFault(hostId, error);
-          engine.markAuditHostUnavailable(hostId, error instanceof HostOperationTimeoutError ? error.message : undefined);
+          engine.markAuditHostUnavailable(hostId);
           engine.hostOutages.observe(hostId, false);
           for (const task of engine.store.tasks()) {
             if (
@@ -229,7 +203,7 @@ export function routeHostAdapter(
         ) => {
           try {
             if (suppliedProof || !taskId)
-              return await bounded(value.call(selected, input, taskId, suppliedProof), id, property);
+              return await value.call(selected, input, taskId, suppliedProof);
             const task = owner.store.task(taskId),
               originHost = task.originHostId;
             if (!originHost)
@@ -237,7 +211,7 @@ export function routeHostAdapter(
                 "Transport not connected: review-entry origin host is unknown",
               );
             if (originHost === task.hostId)
-              return await bounded(value.call(selected, input, taskId), id, property);
+              return await value.call(selected, input, taskId);
             if (
               !owner.withHost(originHost, () => owner.hostAvailable(originHost))
             )
@@ -251,7 +225,7 @@ export function routeHostAdapter(
               originHost,
               input.submission.originAgentId,
             );
-            return await bounded(value.call(selected, input, taskId, proof), id, property);
+            return await value.call(selected, input, taskId, proof);
           } catch (error) {
             throw record(id, error);
           }
@@ -259,7 +233,7 @@ export function routeHostAdapter(
       }
       if (typeof value !== "function") return value;
       if (property === "createAgent" || property === "createRun") {
-        return (...args: unknown[]) => bounded((async () => {
+        return async (...args: unknown[]) => {
           const task = args[0] as Task;
           const binding =
             property === "createRun"
@@ -321,7 +295,7 @@ export function routeHostAdapter(
               settleCreationAttempt(owner.store, attempt, "threw");
             throw recordCall(id, property, error);
           }
-        })(), id, property);
+        };
       }
       // Some older call sites still use adapter methods directly instead of
       // HostFacade. Keep that compatibility safe at the transport boundary:
@@ -412,7 +386,7 @@ export function routeHostAdapter(
         try {
           const result: unknown = value.apply(selected, normalized);
           return result instanceof Promise
-            ? bounded(result, id, property).catch((error) => {
+            ? result.catch((error) => {
                 throw recordCall(id, property, error);
               })
             : result;

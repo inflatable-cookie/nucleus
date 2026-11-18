@@ -137,7 +137,6 @@ test("real admission gives one free slot to healthy hosts while a BB host waits,
     "Transport not connected: host bb:offline is unavailable",
     "plugin build mismatch",
     "registry offline",
-    "hung operation",
   ]) {
     const store = new Store(":memory:");
     const worker = profile("worker");
@@ -151,8 +150,7 @@ test("real admission gives one free slot to healthy hosts while a BB host waits,
     });
     const engine = new Engine(store, adapter, 0);
     store.setMeta("paused", false);
-    store.setMeta("globalLimit", refusal === "hung operation" ? 2 : 1);
-    (engine as unknown as { hostOperationTimeoutMs: number }).hostOperationTimeoutMs = 10;
+    store.setMeta("globalLimit", 1);
     store.setMeta("pool", [
       {
         profileId: worker.id,
@@ -180,7 +178,6 @@ test("real admission gives one free slot to healthy hosts while a BB host waits,
     const refusing = fakeAdapter({
       ...adapter,
       validate: async () => {
-        if (refusal === "hung operation") return await new Promise<string>(() => {});
         if (refusal === "plugin build mismatch")
           throw new HostTransportFault("bb:offline", new Error(refusal));
         throw new Error(refusal);
@@ -242,11 +239,6 @@ test("real admission gives one free slot to healthy hosts while a BB host waits,
         store.task(bb2.id).resolution.stop?.reason,
         "host_unavailable",
       );
-      if (refusal === "hung operation") {
-        assert.match(store.task(bb.id).resolution.stop?.detail ?? "", /timed out/);
-        assert.deepEqual(new Set(launches), new Set([paseo.id, t3.id]));
-        continue;
-      }
       assert.deepEqual(
         launches,
         [paseo.id],

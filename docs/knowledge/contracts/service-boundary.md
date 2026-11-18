@@ -1163,16 +1163,7 @@ work drains serially and restart-safely without repeating delivery.
 A slow interruptible sweep is the restart and missed-event safety net: durable
 cursor, bounded pages, yields between quanta, never blocking health, compact
 reads or task controls; an explicit reconciliation drains pages until the cursor
-covers the fleet once.
-
-Each asynchronous adapter operation has a caller deadline. A timeout is unknown
-host delivery, not a refusal or permission to resend; the original operation may
-still answer, and its normal intake and recorded effect remain responsible for
-that answer. A host that times out in a sweep holds its tasks with the timed-out
-operation named while other hosts continue. Synchronous capability reads retain
-their values.
-
-Nucleus records SDK latency per admission class and
+covers the fleet once. Nucleus records SDK latency per admission class and
 publishes class depth, coalescing, admission wait and breaker state in health
 and telemetry; hook occurrences keep their own duration, and database and Git
 timing stay in their reconciliation records.

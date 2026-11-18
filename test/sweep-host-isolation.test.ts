@@ -510,28 +510,3 @@ test("a repeated host fault keeps one stable wait and diagnostic", async (t) => 
     1,
   );
 });
-
-
-test("a hung BB operation holds its tasks while Paseo and T3 continue", async (t) => {
-  const f = fixture(t);
-  const t3 = f.add("t3code:primary", "T3 task");
-  f.engine.hostIds = () => [OFFLINE_HOST, HEALTHY_HOST, t3.hostId!];
-  (f.engine as unknown as { hostOperationTimeoutMs: number }).hostOperationTimeoutMs = 10;
-  f.engine.resolveHostAdapter = host => ({
-    reconcileReportedSettlements: host === OFFLINE_HOST ? () => new Promise(() => {}) : async () => { f.settled.push(host); },
-  }) as unknown as Adapter;
-  f.engine.dispatchQueued = async () => {
-    for (const task of [f.offline, f.healthy, t3])
-      if (f.engine.taskHostAvailable(f.store.task(task.id))) f.processed.push(`dispatch:${task.id}`);
-  };
-  const started = Date.now();
-  const result = await f.engine.auditPass(true);
-  assert.equal(result.fault, null);
-  assert.ok(Date.now() - started < 2_000);
-  assert.match(f.store.task(f.offline.id).resolution.stop?.detail ?? "", /timed out/);
-  for (const task of [f.healthy, t3]) {
-    assert.ok(f.settled.includes(task.hostId!));
-    assert.ok(f.processed.includes(`dispatch:${task.id}`));
-  }
-  assert.ok(!f.processed.includes(`dispatch:${f.offline.id}`));
-});

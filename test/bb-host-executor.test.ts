@@ -141,3 +141,14 @@ test("an answer frame that names no in-flight operation is reported, not guessed
   assert.equal(instance.settle(null), false);
   assert.equal(instance.settle({ v: PROTOCOL_VERSION, id: "host-op-unknown", method: "host.op" }), false);
 });
+
+test("a late host reply remains correlated after the caller's deadline", async () => {
+  const { instance, written } = link(10);
+  const request = instance.request("call.counters", {});
+  await assert.rejects(request, HostOperationUnknownDeliveryError);
+  assert.equal(instance.settle({
+    v: PROTOCOL_VERSION,
+    id: written[0].id,
+    result: outcome("call.counters", { calls: {} }),
+  }), true, "a late answer belongs to its original request");
+});
