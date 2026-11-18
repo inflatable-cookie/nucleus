@@ -33,6 +33,11 @@ import {
 import type { Resolution } from "../resolution";
 import { settlementHeld, startsNoRuns } from "../closeout/queue-drain";
 import { provenAbsentCreation } from "./absent-creation/decisions";
+import {
+  HostTransportFault,
+  hostFaultHost,
+  recordHostFailure,
+} from "../host/adapter-routing";
 import { creationLookup } from "./absent-creation/restarts";
 
 export type ObservationContext = Pick<
@@ -146,15 +151,28 @@ export class Observation {
       const hosts = new Set(
         candidates.flatMap((run) => (run.hostId ? [run.hostId] : [])),
       );
-      for (const hostId of hosts)
-        await this.resolution.withHost(hostId, () =>
-          this.observe(
-            this.resolution.inventoryHostMatches(hostId) ? inventory : null,
-            completedTaskId,
-            onReleased,
-            hostId,
-          ),
-        );
+      for (const hostId of hosts) {
+        try {
+          await this.resolution.withHost(hostId, () =>
+            this.observe(
+              this.resolution.inventoryHostMatches(hostId) ? inventory : null,
+              completedTaskId,
+              onReleased,
+              hostId,
+            ),
+          );
+        } catch (error) {
+          const failedHost = hostFaultHost(error);
+          if (!failedHost) throw error;
+          if (recordHostFailure(this.adapter, failedHost, error)) continue;
+          for (const run of candidates)
+            if (run.hostId === failedHost)
+              this.resolution.transportDeferred(
+                this.store.task(run.taskId),
+                new HostTransportFault(failedHost, error),
+              );
+        }
+      }
       return;
     }
     for (const original of candidates) {
@@ -162,18 +180,17 @@ export class Observation {
       if (this.resolution.stopped()) return;
       let run = this.store.run(original.id)!;
       const task = this.store.task(run.taskId);
-      if (!this.resolution.hostAvailable(task, run)) continue;
-      if (isDispositionActive(task) || isDispositionComplete(task)) continue;
-      if (
-        !dispatchBlocked(task) &&
-        !settlementHeld(this.store, this.resolution.stopped()) &&
-        (await observeReviewerReplacement(this.store, this.adapter, run))
-      )
-        continue;
-      // An operator stop preserves the lease and checkpoint, without binding,
-      // reminding, resuming or replacing an unfinished retained thread.
-      if (dispatchBlocked(task) && !run.completion) continue;
       try {
+        if (!this.resolution.hostAvailable(task, run)) continue;
+        if (isDispositionActive(task) || isDispositionComplete(task)) continue;
+        if (
+          !dispatchBlocked(task) &&
+          !settlementHeld(this.store, this.resolution.stopped()) &&
+          (await observeReviewerReplacement(this.store, this.adapter, run))
+        )
+          continue;
+        // An operator stop preserves its lease and checkpoint.
+        if (dispatchBlocked(task) && !run.completion) continue;
         if (!run.agentId) {
           if (
             settlementHeld(this.store, this.resolution.stopped()) ||
@@ -624,11 +641,21 @@ export class Observation {
           await this.resolution.remindStoppedRun(this.store.task(task.id), run);
         }
       } catch (error) {
+        const failedHost = hostFaultHost(error);
+        if (failedHost && recordHostFailure(this.adapter, failedHost, error))
+          continue;
         if (
           this.resolution.paused() ||
           dispatchBlocked(this.store.task(task.id))
         )
           continue;
+        if (failedHost) {
+          this.resolution.transportDeferred(
+            this.store.task(task.id),
+            new HostTransportFault(failedHost, error),
+          );
+          continue;
+        }
         // A transport failure is not a task fault: leave the lane where it is so the next
         // sweep retries it, instead of parking it and letting the daemon's error text
         // become a worker instruction.

@@ -1343,6 +1343,16 @@ request identities and submitted handoffs are not rewritten.
   Nothing is settled from the stop's text or a reason prefix (the #1321 rule is
   retired), a host that did not answer settles nothing, a repeated pass adds no
   event, send or notice, and an owner stop beside the wait keeps its question.
+- A thrown adapter fault carries its host identity into sweep steps, observation
+  and dispatch. It holds that host's tasks while the sweep continues to later
+  steps and healthy tasks. The diagnostic is a separate idempotent event, so repeated
+  refusals leave the outage wait unchanged. A review waiting on a different origin
+  host names that host and does not mark its execution host offline or reserve a
+  slot. Queue scans continue past those waits; a recovered origin is proved before
+  the review rejoins fair slot ordering. A fault outside a host still records `engineError`.
+  Bounding calls that never return is tracked separately in nucleus#1347.
+- A queued task waiting for an unavailable host does not reserve an available
+  slot ahead of another host; its reservation returns when its host wait clears.
 - The wait is independent of the task's stop (nucleus#1198 review). When nothing
   more specific already stops the task the stop reads `host_unavailable`, naming
   the host and the outage start. A stop that belongs to an owner answer (budget,

@@ -1,9 +1,27 @@
-import { DEFAULT_PROJECT_LIMIT, DEFAULT_PAPERCUT_PROJECT_LIMIT } from "../../shared/contracts";
+import {
+  DEFAULT_PROJECT_LIMIT,
+  DEFAULT_PAPERCUT_PROJECT_LIMIT,
+} from "../../shared/contracts";
 import { externalWorkspace } from "../../shared/workspace-ownership";
-import { currentTaskStop, holdsOf, isDispositionActive, mergeHeld, runHoldsSlot, type Run, type Task } from "../../shared/contracts";
-import { DEFAULT_GLOBAL_LIMIT, formatTaskNumber, isParkedTask } from "../../shared/contracts";
+import {
+  currentTaskStop,
+  holdsOf,
+  isDispositionActive,
+  mergeHeld,
+  runHoldsSlot,
+  type Run,
+  type Task,
+} from "../../shared/contracts";
+import {
+  DEFAULT_GLOBAL_LIMIT,
+  formatTaskNumber,
+  isParkedTask,
+} from "../../shared/contracts";
 import { routeUnavailableStop } from "../../shared/task-stop";
-import { CAPACITY_WAIT_PREFIX, inFlightSlotWaitReason } from "../../shared/wait-state";
+import {
+  CAPACITY_WAIT_PREFIX,
+  inFlightSlotWaitReason,
+} from "../../shared/wait-state";
 import type { Resolution } from "../resolution";
 import type { Store } from "../store/store";
 
@@ -23,25 +41,49 @@ export const DISPATCH_HELD_REASON = "Dispatch held; release to continue";
 
 /** Count only nonterminal tasks that own, or are creating, a Queue workspace. */
 export function holdsQueueWorkspace(task: Task): boolean {
-  return !["done", "cancelled"].includes(task.phase) && !task.removedAt &&
+  return (
+    !["done", "cancelled"].includes(task.phase) &&
+    !task.removedAt &&
     !externalWorkspace(task) &&
-    Boolean(task.workspaceId || task.workspaceIntent || task.reviewEntry?.workspaceId);
+    Boolean(
+      task.workspaceId || task.workspaceIntent || task.reviewEntry?.workspaceId,
+    )
+  );
 }
 
-export function projectInFlightWaitReason(task: Task, tasks: Task[], projectKeyFor: (task: Task) => string | null,
-  limitFor: (task: Task) => number): string {
+export function projectInFlightWaitReason(
+  task: Task,
+  tasks: Task[],
+  projectKeyFor: (task: Task) => string | null,
+  limitFor: (task: Task) => number,
+): string {
   // This gate is only for a first dispatch that creates Queue-owned work.
   // Review-entry admission binds no workspace, so it never waits here.
-  if (task.phase !== "queued" || slotRequestFenced(task) || task.workspaceId || task.workspaceIntent || task.reviewEntry) return "";
+  if (
+    task.phase !== "queued" ||
+    slotRequestFenced(task) ||
+    task.workspaceId ||
+    task.workspaceIntent ||
+    task.reviewEntry
+  )
+    return "";
   const projectKey = projectKeyFor(task);
   if (!projectKey) return "";
   // Parked faults and explicit holds keep their workspaces and ownership, but
   // cannot advance until an owner acts. They must not exhaust first-dispatch
   // admission indefinitely. A live or starting agent still counts in any phase.
-  const count = tasks.filter(candidate => holdsQueueWorkspace(candidate) && projectKeyFor(candidate) === projectKey &&
-    (occupiesSlot(candidate) || !slotRequestFenced(candidate) && !["blocked", "error", "needs_attention"].includes(candidate.phase))).length;
+  const count = tasks.filter(
+    (candidate) =>
+      holdsQueueWorkspace(candidate) &&
+      projectKeyFor(candidate) === projectKey &&
+      (occupiesSlot(candidate) ||
+        (!slotRequestFenced(candidate) &&
+          !["blocked", "error", "needs_attention"].includes(candidate.phase))),
+  ).length;
   const limit = limitFor(task);
-  return count >= limit ? `Waiting: ${count} of ${limit} tasks in flight for this project` : "";
+  return count >= limit
+    ? `Waiting: ${count} of ${limit} tasks in flight for this project`
+    : "";
 }
 
 /**
@@ -51,9 +93,19 @@ export function projectInFlightWaitReason(task: Task, tasks: Task[], projectKeyF
  */
 export function slotRequestFenced(task: Task): boolean {
   const stop = currentTaskStop(task)?.reason;
-  return dispatchBlocked(task) || isDispositionActive(task)
-    || ["held", "operator_needed", "interactive", "responsible_question", "escalated", "budget"].includes(stop ?? "")
-    || (mergeHeld(task) && task.phase === "verifying");
+  return (
+    dispatchBlocked(task) ||
+    isDispositionActive(task) ||
+    [
+      "held",
+      "operator_needed",
+      "interactive",
+      "responsible_question",
+      "escalated",
+      "budget",
+    ].includes(stop ?? "") ||
+    (mergeHeld(task) && task.phase === "verifying")
+  );
 }
 
 /**
@@ -75,7 +127,12 @@ const workerHoldsSlot = (task: Task): boolean => {
   // in one flow (creation, then the launch intent, then the agent), so the whole
   // dispatch window keeps the serialization the slot check inside the dispatch
   // transaction relies on. A fenced or reported dispatch holds nothing.
-  if (task.phase === "dispatching" && !task.completion && !slotRequestFenced(task)) return true;
+  if (
+    task.phase === "dispatching" &&
+    !task.completion &&
+    !slotRequestFenced(task)
+  )
+    return true;
   return false;
 };
 
@@ -91,8 +148,10 @@ const workerHoldsSlot = (task: Task): boolean => {
 // tasks never hold slots.
 export const occupiesSlot = (task: CapacityTask, runs: Run[] = []) =>
   !["done", "cancelled"].includes(task.phase) &&
-  (workerHoldsSlot(task) || runs.some(runHoldsSlot) || task.hasLiveRun === true
-    || Boolean(task.resolution.restartSlotHold) && !slotRequestFenced(task));
+  (workerHoldsSlot(task) ||
+    runs.some(runHoldsSlot) ||
+    task.hasLiveRun === true ||
+    (Boolean(task.resolution.restartSlotHold) && !slotRequestFenced(task)));
 
 /** The next participant takes this task's held slot, whichever role resumes it. */
 export function consumeRestartSlotHold(task: Task): boolean {
@@ -112,21 +171,27 @@ function fairShareSlotOrder(requestsOldestFirst: Task[]): Task[] {
     queue.push(task);
     projects.set(task.repoPath, queue);
   }
-  for (const queue of projects.values()) queue.sort((a, b) => b.queuePriority - a.queuePriority);
+  for (const queue of projects.values())
+    queue.sort((a, b) => b.queuePriority - a.queuePriority);
   const order = [...projects.keys()];
-  const offsets = new Map(order.map(project => [project, 0]));
+  const offsets = new Map(order.map((project) => [project, 0]));
   const result: Task[] = [];
   let cursor = 0;
   while (result.length < requestsOldestFirst.length) {
-    const priority = Math.max(...order.flatMap(project => {
-      const task = projects.get(project)![offsets.get(project)!];
-      return task ? [task.queuePriority] : [];
-    }));
+    const priority = Math.max(
+      ...order.flatMap((project) => {
+        const task = projects.get(project)![offsets.get(project)!];
+        return task ? [task.queuePriority] : [];
+      }),
+    );
     let selected = -1;
     for (let step = 0; step < order.length; step++) {
       const index = (cursor + step) % order.length;
       const project = order[index];
-      if (projects.get(project)![offsets.get(project)!]?.queuePriority === priority) {
+      if (
+        projects.get(project)![offsets.get(project)!]?.queuePriority ===
+        priority
+      ) {
         selected = index;
         break;
       }
@@ -144,11 +209,18 @@ function fairShareSlotOrder(requestsOldestFirst: Task[]): Task[] {
  * In-flight requests rank ahead of never-dispatched queued requests. Within
  * each tier, priority is global and equal priorities retain project fair share.
  */
-export function fairSlotRequestOrder(tasksNewestFirst: Task[], isRequest: (task: Task) => boolean): Task[] {
-  const requests = tasksNewestFirst.toReversed().filter(task => isRequest(task) && !slotRequestFenced(task));
+export function fairSlotRequestOrder(
+  tasksNewestFirst: Task[],
+  isRequest: (task: Task) => boolean,
+): Task[] {
+  const requests = tasksNewestFirst
+    .toReversed()
+    .filter((task) => isRequest(task) && !slotRequestFenced(task));
   return [
     ...fairShareSlotOrder(requests.filter(isInFlightSlotRequest)),
-    ...fairShareSlotOrder(requests.filter(task => !isInFlightSlotRequest(task))),
+    ...fairShareSlotOrder(
+      requests.filter((task) => !isInFlightSlotRequest(task)),
+    ),
   ];
 }
 
@@ -160,8 +232,14 @@ export function fairSlotRequestOrder(tasksNewestFirst: Task[], isRequest: (task:
  * once. Tom, 2026-11-06: "The number of queued tasks shouldn't make a difference".
  */
 export const QUEUED_VISIT_MARGIN = 2;
-export function queuedVisits(order: Task[], occupied: Task[], projectLimitFor: (task: Task) => number, papercuts: PapercutDispatchPolicy,
-  prerequisiteWaitToRecord: (task: Task) => "none" | "recorded" | "record", globalLimit = Number.POSITIVE_INFINITY): { start: Task[]; rest: Task[] } {
+export function queuedVisits(
+  order: Task[],
+  occupied: Task[],
+  projectLimitFor: (task: Task) => number,
+  papercuts: PapercutDispatchPolicy,
+  prerequisiteWaitToRecord: (task: Task) => "none" | "recorded" | "record",
+  globalLimit = Number.POSITIVE_INFINITY,
+): { start: Task[]; rest: Task[] } {
   const occupiedByPool = new Map<string, number>();
   for (const task of occupied) {
     const key = slotPoolKey(task, papercuts);
@@ -170,55 +248,98 @@ export function queuedVisits(order: Task[], occupied: Task[], projectLimitFor: (
   const visitedByPool = new Map<string, number>();
   // `start` holds the tasks walking the order would admit, so starting them together
   // keeps the order's outcome. `rest` shows its wait after them.
-  const start: Task[] = [], rest: Task[] = [];
+  const start: Task[] = [],
+    rest: Task[] = [];
   let globalFree = globalLimit - occupied.length;
   for (const task of order) {
     const wait = prerequisiteWaitToRecord(task);
     if (wait === "record") rest.push(task);
     if (wait !== "none") continue;
     const key = slotPoolKey(task, papercuts);
-    const free = Math.max(0, slotPoolLimit(task, projectLimitFor(task), papercuts) - (occupiedByPool.get(key) ?? 0));
+    const free = Math.max(
+      0,
+      slotPoolLimit(task, projectLimitFor(task), papercuts) -
+        (occupiedByPool.get(key) ?? 0),
+    );
     const visited = visitedByPool.get(key) ?? 0;
     if (visited >= free + QUEUED_VISIT_MARGIN) continue;
     visitedByPool.set(key, visited + 1);
-    if (visited < free && globalFree > 0) { globalFree--; start.push(task); }
-    else rest.push(task);
+    if (visited < free && globalFree > 0) {
+      globalFree--;
+      start.push(task);
+    } else rest.push(task);
   }
   return { start, rest };
 }
 
-export const isPapercutTask = (task: Task) => task.papercutTask || task.planningSource?.kind === "papercut";
-type PapercutDispatchPolicy = { limit: number; projectKeyFor: (task: Task) => string };
-const defaultPapercutPolicy: PapercutDispatchPolicy = { limit: DEFAULT_PAPERCUT_PROJECT_LIMIT, projectKeyFor: task => task.repoPath };
-const slotPoolKey = (task: Task, papercuts: PapercutDispatchPolicy) => JSON.stringify(
-  isPapercutTask(task) ? ["papercut", papercuts.projectKeyFor(task)] : ["normal", task.repoPath]);
-const slotPoolLimit = (task: Task, projectLimit: number, papercuts: PapercutDispatchPolicy) =>
-  isPapercutTask(task) ? papercuts.limit : projectLimit;
+export const isPapercutTask = (task: Task) =>
+  task.papercutTask || task.planningSource?.kind === "papercut";
+type PapercutDispatchPolicy = {
+  limit: number;
+  projectKeyFor: (task: Task) => string;
+};
+const defaultPapercutPolicy: PapercutDispatchPolicy = {
+  limit: DEFAULT_PAPERCUT_PROJECT_LIMIT,
+  projectKeyFor: (task) => task.repoPath,
+};
+const slotPoolKey = (task: Task, papercuts: PapercutDispatchPolicy) =>
+  JSON.stringify(
+    isPapercutTask(task)
+      ? ["papercut", papercuts.projectKeyFor(task)]
+      : ["normal", task.repoPath],
+  );
+const slotPoolLimit = (
+  task: Task,
+  projectLimit: number,
+  papercuts: PapercutDispatchPolicy,
+) => (isPapercutTask(task) ? papercuts.limit : projectLimit);
 
 /** The limit that refuses a slot request: the global cap, or the request's own pool. */
-export type CapacityLimit = 'global' | 'project' | 'papercut';
+export type CapacityLimit = "global" | "project" | "papercut";
 
 /** Which limit refuses this request now, or null when it has capacity. */
-export function capacityLimitFor(task: Task, tasks: Task[], globalLimit: number, projectLimit: number = DEFAULT_PROJECT_LIMIT,
-  papercuts: PapercutDispatchPolicy = defaultPapercutPolicy): CapacityLimit | null {
-  const occupied = tasks.filter(task => occupiesSlot(task));
-  if (occupied.length >= globalLimit) return 'global';
+export function capacityLimitFor(
+  task: Task,
+  tasks: Task[],
+  globalLimit: number,
+  projectLimit: number = DEFAULT_PROJECT_LIMIT,
+  papercuts: PapercutDispatchPolicy = defaultPapercutPolicy,
+): CapacityLimit | null {
+  const occupied = tasks.filter((task) => occupiesSlot(task));
+  if (occupied.length >= globalLimit) return "global";
   const key = slotPoolKey(task, papercuts);
-  if (occupied.filter(t => slotPoolKey(t, papercuts) === key).length >= slotPoolLimit(task, projectLimit, papercuts))
-    return isPapercutTask(task) ? 'papercut' : 'project';
+  if (
+    occupied.filter((t) => slotPoolKey(t, papercuts) === key).length >=
+    slotPoolLimit(task, projectLimit, papercuts)
+  )
+    return isPapercutTask(task) ? "papercut" : "project";
   return null;
 }
 
 /** The sentence one limit is written as; the wait prefix is `CAPACITY_WAIT_PREFIX`. */
-export const capacityReason = (limit: CapacityLimit): string => limit === 'global'
-  ? 'Global concurrent task-slot limit reached'
-  : limit === 'papercut' ? 'Project papercut task-slot limit reached' : 'Project concurrent task-slot limit reached';
+export const capacityReason = (limit: CapacityLimit): string =>
+  limit === "global"
+    ? "Global concurrent task-slot limit reached"
+    : limit === "papercut"
+      ? "Project papercut task-slot limit reached"
+      : "Project concurrent task-slot limit reached";
 
 /** The capacity refusal a caller writes, or the empty string when the request has capacity. */
-export function capacityFor(task: Task, tasks: Task[], globalLimit: number, projectLimit: number = DEFAULT_PROJECT_LIMIT,
-  papercuts: PapercutDispatchPolicy = defaultPapercutPolicy): string {
-  const limit = capacityLimitFor(task, tasks, globalLimit, projectLimit, papercuts);
-  return limit === null ? '' : capacityReason(limit);
+export function capacityFor(
+  task: Task,
+  tasks: Task[],
+  globalLimit: number,
+  projectLimit: number = DEFAULT_PROJECT_LIMIT,
+  papercuts: PapercutDispatchPolicy = defaultPapercutPolicy,
+): string {
+  const limit = capacityLimitFor(
+    task,
+    tasks,
+    globalLimit,
+    projectLimit,
+    papercuts,
+  );
+  return limit === null ? "" : capacityReason(limit);
 }
 
 /**
@@ -227,19 +348,30 @@ export function capacityFor(task: Task, tasks: Task[], globalLimit: number, proj
  * intent cannot drift from one another.
  */
 export function capacityRefusal(
-  store: Pick<Store, 'activeCapacityTasks' | 'getMeta' | 'papercutDispatchPolicy' | 'projectDispatchLimitFor'>,
+  store: Pick<
+    Store,
+    | "activeCapacityTasks"
+    | "getMeta"
+    | "papercutDispatchPolicy"
+    | "projectDispatchLimitFor"
+  >,
   task: Task,
 ): string {
-  return capacityFor(task, store.activeCapacityTasks(), store.getMeta<number>('globalLimit') ?? DEFAULT_GLOBAL_LIMIT,
-    store.projectDispatchLimitFor(task), store.papercutDispatchPolicy());
+  return capacityFor(
+    task,
+    store.activeCapacityTasks(),
+    store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT,
+    store.projectDispatchLimitFor(task),
+    store.papercutDispatchPolicy(),
+  );
 }
 
 interface SlotAdmissionView {
   tasks: Task[];
   runsByTask: Map<string, Run[]>;
   globalLimit: number;
-  projectLimitFor: ReturnType<Store['projectDispatchLimitResolver']>;
-  papercuts: ReturnType<Store['papercutDispatchPolicy']>;
+  projectLimitFor: ReturnType<Store["projectDispatchLimitResolver"]>;
+  papercuts: ReturnType<Store["papercutDispatchPolicy"]>;
   dependencyWait: (task: Task) => string;
   integrationReady: (task: Task) => boolean;
   /** One board batch ranks its fixed tasks once; `requests` holds that ranking. */
@@ -253,110 +385,194 @@ export type { SlotAdmissionView };
  * integration turn it holds and the prerequisite it waits on. Both order requests
  * only, so a pass reads each task once instead of once per comparison.
  */
-function memoFacts(read: Pick<SlotAdmissionView, 'integrationReady' | 'dependencyWait'>): Pick<SlotAdmissionView, 'integrationReady' | 'dependencyWait'> {
+function memoFacts(
+  read: Pick<SlotAdmissionView, "integrationReady" | "dependencyWait">,
+): Pick<SlotAdmissionView, "integrationReady" | "dependencyWait"> {
   const integrationReady = new Map<string, boolean>();
   const dependencies = new Map<string, string>();
   return {
-    integrationReady: task => {
-      if (!integrationReady.has(task.id)) integrationReady.set(task.id, read.integrationReady(task));
+    integrationReady: (task) => {
+      if (!integrationReady.has(task.id))
+        integrationReady.set(task.id, read.integrationReady(task));
       return integrationReady.get(task.id)!;
     },
-    dependencyWait: task => {
-      if (!dependencies.has(task.id)) dependencies.set(task.id, read.dependencyWait(task));
+    dependencyWait: (task) => {
+      if (!dependencies.has(task.id))
+        dependencies.set(task.id, read.dependencyWait(task));
       return dependencies.get(task.id)!;
     },
   };
 }
 
 /** A prerequisite wait or an already occupied slot needs no admission. */
-function slotAdmissionExempt(task: Task, current?: Task, runs: Run[] = []): boolean {
-  return Boolean(task.phase === 'changes_requested' && task.prerequisiteWait?.releasedAt) ||
+function slotAdmissionExempt(
+  task: Task,
+  current?: Task,
+  runs: Run[] = [],
+): boolean {
+  return (
+    Boolean(
+      task.phase === "changes_requested" && task.prerequisiteWait?.releasedAt,
+    ) ||
     Boolean(task.prerequisiteWait && !task.prerequisiteWait.releasedAt) ||
-    Boolean(current && occupiesSlot(current, runs));
+    Boolean(current && occupiesSlot(current, runs))
+  );
 }
 
 /** Decide whether a candidate requests a slot from the facts read so far. */
-export function slotRequestDecision(candidate: Task, parkedPhases: readonly string[], includeRecovery: boolean,
-  facts: { integrationReady?: boolean; routingRetryAllowed?: boolean; dependencyWait?: string } = {}): boolean | 'read' {
-  if (dispatchBlocked(candidate) || isDispositionActive(candidate) || occupiesSlot(candidate)) return false;
-  if (mergeHeld(candidate) && candidate.phase === 'verifying') return false;
-  if (candidate.phase === 'verifying' && !candidate.resolution.mergedCommit && candidate.resolution.integrationTurn) {
-    if (facts.integrationReady === undefined) return 'read';
+export function slotRequestDecision(
+  candidate: Task,
+  parkedPhases: readonly string[],
+  includeRecovery: boolean,
+  facts: {
+    integrationReady?: boolean;
+    routingRetryAllowed?: boolean;
+    dependencyWait?: string;
+  } = {},
+): boolean | "read" {
+  if (
+    dispatchBlocked(candidate) ||
+    isDispositionActive(candidate) ||
+    occupiesSlot(candidate)
+  )
+    return false;
+  // An unavailable host cannot consume a future slot while healthy hosts wait.
+  // The independent hostWait survives when an owner-facing stop takes precedence.
+  if (
+    candidate.phase === "queued" &&
+    (candidate.resolution.hostWait ||
+      candidate.resolution.stop?.reason === "host_unavailable" ||
+      (candidate.entrypoint === "review" &&
+        candidate.originHostId &&
+        candidate.originHostId !== candidate.hostId &&
+        candidate.resolution.stop?.reason === "origin_busy"))
+  )
+    return false;
+  if (mergeHeld(candidate) && candidate.phase === "verifying") return false;
+  if (
+    candidate.phase === "verifying" &&
+    !candidate.resolution.mergedCommit &&
+    candidate.resolution.integrationTurn
+  ) {
+    if (facts.integrationReady === undefined) return "read";
     if (!facts.integrationReady) return false;
   }
   if (routeUnavailableStop(candidate)) {
-    if (facts.routingRetryAllowed === undefined) return 'read';
+    if (facts.routingRetryAllowed === undefined) return "read";
     if (!facts.routingRetryAllowed) return false;
   }
-  if (candidate.phase === 'queued') return facts.dependencyWait === undefined ? 'read' : !facts.dependencyWait;
-  if (candidate.prerequisiteWait && !candidate.prerequisiteWait.releasedAt) return false;
-  if (isParkedTask(candidate) && parkedPhases.includes(candidate.phase)) return true;
-  return includeRecovery && candidate.phase === 'needs_attention' && Boolean(candidate.resolution.recovery) && !candidate.resolution.recoveryActive;
+  if (candidate.phase === "queued")
+    return facts.dependencyWait === undefined ? "read" : !facts.dependencyWait;
+  if (candidate.prerequisiteWait && !candidate.prerequisiteWait.releasedAt)
+    return false;
+  if (isParkedTask(candidate) && parkedPhases.includes(candidate.phase))
+    return true;
+  return (
+    includeRecovery &&
+    candidate.phase === "needs_attention" &&
+    Boolean(candidate.resolution.recovery) &&
+    !candidate.resolution.recoveryActive
+  );
 }
 
 /** A waiting task's label: `repo#N` from another repository, `#N` from the same one. */
-const waitLabel = (candidate: Task, task: Task) => candidate.number
-  ? `${candidate.repository && candidate.repository !== task.repository ? `${candidate.repository}#` : "#"}${formatTaskNumber(candidate.number)}` : candidate.id;
+const waitLabel = (candidate: Task, task: Task) =>
+  candidate.number
+    ? `${candidate.repository && candidate.repository !== task.repository ? `${candidate.repository}#` : "#"}${formatTaskNumber(candidate.number)}`
+    : candidate.id;
 
 /** Decide a slot wait from a snapshot of capacity and eligible requests. */
-export function decideSlotAdmission(task: Task, tasks: Task[], globalLimit: number,
-  projectLimitFor: (task: Task) => number, papercuts: PapercutDispatchPolicy,
-  capacity: CapacityLimit | null, requests: Task[], waiters: Task[]): string {
-    if (capacity) {
-      // Running work fills the pool: name its occupancy against the limit, and
-      // list in-flight waiters that hold no slot (checks, merge turn, thread
-      // release) separately so they stay visible.
-      const globalScope = capacity === 'global';
-      const key = slotPoolKey(task, papercuts);
-      const sameScope = (candidate: Task) => globalScope || slotPoolKey(candidate, papercuts) === key;
-      const occupants = tasks.filter(candidate => occupiesSlot(candidate) && sameScope(candidate));
-      const limit = globalScope ? globalLimit : slotPoolLimit(task, projectLimitFor(task), papercuts);
-      const labels = occupants.map(candidate => waitLabel(candidate, task)).join(", ");
+export function decideSlotAdmission(
+  task: Task,
+  tasks: Task[],
+  globalLimit: number,
+  projectLimitFor: (task: Task) => number,
+  papercuts: PapercutDispatchPolicy,
+  capacity: CapacityLimit | null,
+  requests: Task[],
+  waiters: Task[],
+): string {
+  if (capacity) {
+    // Running work fills the pool: name its occupancy against the limit, and
+    // list in-flight waiters that hold no slot (checks, merge turn, thread
+    // release) separately so they stay visible.
+    const globalScope = capacity === "global";
+    const key = slotPoolKey(task, papercuts);
+    const sameScope = (candidate: Task) =>
+      globalScope || slotPoolKey(candidate, papercuts) === key;
+    const occupants = tasks.filter(
+      (candidate) => occupiesSlot(candidate) && sameScope(candidate),
+    );
+    const limit = globalScope
+      ? globalLimit
+      : slotPoolLimit(task, projectLimitFor(task), papercuts);
+    const labels = occupants
+      .map((candidate) => waitLabel(candidate, task))
+      .join(", ");
 
-      const waiterLabels = waiters.map(candidate => waitLabel(candidate, task)).join(", ");
-      const counts = ` (${occupants.length}/${limit} occupied${labels ? `: ${labels}` : ""}${waiterLabels ? `; ${waiters.length} waiting without a slot: ${waiterLabels}` : ""})`;
-      return `${CAPACITY_WAIT_PREFIX} ${capacityReason(capacity)}${counts}`;
+    const waiterLabels = waiters
+      .map((candidate) => waitLabel(candidate, task))
+      .join(", ");
+    const counts = ` (${occupants.length}/${limit} occupied${labels ? `: ${labels}` : ""}${waiterLabels ? `; ${waiters.length} waiting without a slot: ${waiterLabels}` : ""})`;
+    return `${CAPACITY_WAIT_PREFIX} ${capacityReason(capacity)}${counts}`;
+  }
+  const occupied = tasks.filter((candidate) => occupiesSlot(candidate));
+  let globalAvailable = globalLimit - occupied.length;
+  const occupiedByProject = new Map<string, number>();
+  for (const candidate of occupied) {
+    const key = slotPoolKey(candidate, papercuts);
+    occupiedByProject.set(key, (occupiedByProject.get(key) ?? 0) + 1);
+  }
+  // Actual occupancy, before earlier requests reserve the free slots below.
+  const runningByProject = new Map(occupiedByProject);
+  const inFlightAhead: Task[] = [];
+  let queuedAhead = 0;
+  for (const request of requests) {
+    const key = slotPoolKey(request, papercuts);
+    const projectAvailable =
+      slotPoolLimit(request, projectLimitFor(request), papercuts) -
+      (occupiedByProject.get(key) ?? 0);
+    if (request.id === task.id) {
+      if (globalAvailable > 0 && projectAvailable > 0) return "";
+      if (inFlightAhead.length > 0) {
+        return inFlightSlotWaitReason(
+          inFlightAhead.length,
+          inFlightAhead.map((candidate) => waitLabel(candidate, task)),
+        );
+      }
+      if (globalAvailable <= 0)
+        return `${CAPACITY_WAIT_PREFIX} Waiting behind ${queuedAhead} earlier queued reservations (${occupied.length}/${globalLimit} global slots occupied)`;
+      if (projectAvailable <= 0) {
+        // Name the real numbers: the limit can be met by earlier requests'
+        // reservations rather than by running work (papercut 1d72cbab).
+        const limit = slotPoolLimit(
+            request,
+            projectLimitFor(request),
+            papercuts,
+          ),
+          running = runningByProject.get(key) ?? 0;
+        const reserved = (occupiedByProject.get(key) ?? 0) - running;
+        const occupants = tasks.filter(
+          (candidate) =>
+            occupiesSlot(candidate) &&
+            slotPoolKey(candidate, papercuts) === key,
+        );
+        const labels = occupants
+          .map((candidate) => waitLabel(candidate, task))
+          .join(", ");
+        const counts = ` (${running}/${limit} occupied${labels ? `: ${labels}` : ""}${reserved > 0 ? `, ${reserved} reserved by earlier requests` : ""})`;
+        return `${CAPACITY_WAIT_PREFIX} ${capacityReason(isPapercutTask(request) ? "papercut" : "project")}${counts}`;
+      }
+      return "";
     }
-    const occupied = tasks.filter(candidate => occupiesSlot(candidate));
-    let globalAvailable = globalLimit - occupied.length;
-    const occupiedByProject = new Map<string, number>();
-    for (const candidate of occupied) {
-      const key = slotPoolKey(candidate, papercuts);
+    if (globalAvailable > 0 && projectAvailable > 0) {
+      globalAvailable--;
+      if (request.phase === "queued") queuedAhead++;
       occupiedByProject.set(key, (occupiedByProject.get(key) ?? 0) + 1);
     }
-    // Actual occupancy, before earlier requests reserve the free slots below.
-    const runningByProject = new Map(occupiedByProject);
-    const inFlightAhead: Task[] = [];
-    let queuedAhead = 0;
-    for (const request of requests) {
-      const key = slotPoolKey(request, papercuts);
-      const projectAvailable = slotPoolLimit(request, projectLimitFor(request), papercuts) - (occupiedByProject.get(key) ?? 0);
-      if (request.id === task.id) {
-        if (globalAvailable > 0 && projectAvailable > 0) return '';
-        if (inFlightAhead.length > 0) {
-          return inFlightSlotWaitReason(inFlightAhead.length, inFlightAhead.map(candidate => waitLabel(candidate, task)));
-        }
-        if (globalAvailable <= 0) return `${CAPACITY_WAIT_PREFIX} Waiting behind ${queuedAhead} earlier queued reservations (${occupied.length}/${globalLimit} global slots occupied)`;
-        if (projectAvailable <= 0) {
-          // Name the real numbers: the limit can be met by earlier requests'
-          // reservations rather than by running work (papercut 1d72cbab).
-          const limit = slotPoolLimit(request, projectLimitFor(request), papercuts), running = runningByProject.get(key) ?? 0;
-          const reserved = (occupiedByProject.get(key) ?? 0) - running;
-          const occupants = tasks.filter(candidate => occupiesSlot(candidate) && slotPoolKey(candidate, papercuts) === key);
-          const labels = occupants.map(candidate => waitLabel(candidate, task)).join(', ');
-          const counts = ` (${running}/${limit} occupied${labels ? `: ${labels}` : ''}${reserved > 0 ? `, ${reserved} reserved by earlier requests` : ''})`;
-          return `${CAPACITY_WAIT_PREFIX} ${capacityReason(isPapercutTask(request) ? 'papercut' : 'project')}${counts}`;
-        }
-        return '';
-      }
-      if (globalAvailable > 0 && projectAvailable > 0) {
-        globalAvailable--;
-        if (request.phase === "queued") queuedAhead++;
-        occupiedByProject.set(key, (occupiedByProject.get(key) ?? 0) + 1);
-      }
-      if (isInFlightSlotRequest(request)) inFlightAhead.push(request);
-    }
-    return '';
+    if (isInFlightSlotRequest(request)) inFlightAhead.push(request);
+  }
+  return "";
 }
 
 /**
@@ -367,8 +583,13 @@ export function decideSlotAdmission(task: Task, tasks: Task[], globalLimit: numb
  */
 export class SlotAdmission {
   constructor(readonly resolution: Resolution) {}
-  get store() { return this.resolution.store; }
-  private dispatchPassFacts: Pick<SlotAdmissionView, 'integrationReady' | 'dependencyWait'> | null = null;
+  get store() {
+    return this.resolution.store;
+  }
+  private dispatchPassFacts: Pick<
+    SlotAdmissionView,
+    "integrationReady" | "dependencyWait"
+  > | null = null;
   private dispatchPassDepth = 0;
   /**
    * One dispatch pass asks every queued task's admission, and each answer ranks
@@ -381,19 +602,26 @@ export class SlotAdmission {
   async withDispatchPass<T>(pass: () => Promise<T>): Promise<T> {
     if (this.dispatchPassDepth++ === 0) {
       this.dispatchPassFacts = memoFacts({
-        integrationReady: task => this.resolution.holdsIntegrationTurn(task),
-        dependencyWait: task => this.store.dependencyWait(task),
+        integrationReady: (task) => this.resolution.holdsIntegrationTurn(task),
+        dependencyWait: (task) => this.store.dependencyWait(task),
       });
     }
-    try { return await pass(); }
-    finally { if (--this.dispatchPassDepth === 0) this.dispatchPassFacts = null; }
+    try {
+      return await pass();
+    } finally {
+      if (--this.dispatchPassDepth === 0) this.dispatchPassFacts = null;
+    }
   }
   /** The prerequisite wait one dispatch pass has read, or a live read outside a pass. */
   passDependencyWait(task: Task): string {
     return (this.dispatchPassFacts ?? this.store).dependencyWait(task);
   }
   /** Read-only board batch; never retained across a revision or used by launch. */
-  slotAdmissionReader(tasks: Task[], runs: Run[], includeRecovery = false): (task: Task) => string {
+  slotAdmissionReader(
+    tasks: Task[],
+    runs: Run[],
+    includeRecovery = false,
+  ): (task: Task) => string {
     const runsByTask = new Map<string, Run[]>();
     for (const run of runs) {
       const queue = runsByTask.get(run.taskId);
@@ -401,15 +629,25 @@ export class SlotAdmission {
       else runsByTask.set(run.taskId, [run]);
     }
     const view: SlotAdmissionView = {
-      tasks, runsByTask, requestFlags: new Map(),
-      globalLimit: this.store.getMeta<number>('globalLimit') ?? DEFAULT_GLOBAL_LIMIT,
-      projectLimitFor: this.store.projectDispatchLimitResolver(), papercuts: this.store.papercutDispatchPolicy(),
+      tasks,
+      runsByTask,
+      requestFlags: new Map(),
+      globalLimit:
+        this.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT,
+      projectLimitFor: this.store.projectDispatchLimitResolver(),
+      papercuts: this.store.papercutDispatchPolicy(),
       ...memoFacts({
-        integrationReady: task => this.resolution.holdsIntegrationTurn(task),
-        dependencyWait: task => this.store.dependencyWait(task),
+        integrationReady: (task) => this.resolution.holdsIntegrationTurn(task),
+        dependencyWait: (task) => this.store.dependencyWait(task),
       }),
     };
-    return task => this.resolution.slotAdmissionReason(task, includeRecovery, undefined, view);
+    return (task) =>
+      this.resolution.slotAdmissionReason(
+        task,
+        includeRecovery,
+        undefined,
+        view,
+      );
   }
   /**
    * `parkedPhases`: parked phases that count as slot requests. Fair-share ranks
@@ -417,16 +655,62 @@ export class SlotAdmission {
    * review and revision share this set so a free slot goes to in-flight work first.
    */
   // Verification is mechanical: hosted checks and merge gates reserve no agent slot.
-  slotAdmissionReason(task: Task, includeRecovery = false, parkedPhases: readonly string[] = ['awaiting_review', 'changes_requested'], view?: SlotAdmissionView): string {
+  slotAdmissionReason(
+    task: Task,
+    includeRecovery = false,
+    parkedPhases: readonly string[] = ["awaiting_review", "changes_requested"],
+    view?: SlotAdmissionView,
+  ): string {
     // A completed retained wait on changes_requested is parked for explicit
     // operator action, so it is not currently requesting a revision slot.
-    if (slotAdmissionExempt(task)) return '';
-    const tasks = view?.tasks ?? this.store.admissionCandidates(task);
-    const current = tasks.find(candidate => candidate.id === task.id) ?? task;
+    if (slotAdmissionExempt(task)) return "";
+    let tasks = view?.tasks ?? this.store.admissionCandidates(task);
+    // A bounded queue page can be full of origin waits that reserve nothing.
+    // Rank the remaining requests too, including a review just recovered from
+    // that wait. Preserve the active-capacity projection for live run owners.
+    if (
+      !view &&
+      tasks.some(
+        (candidate) =>
+          candidate.phase === "queued" &&
+          candidate.entrypoint === "review" &&
+          candidate.originHostId &&
+          candidate.originHostId !== candidate.hostId &&
+          candidate.resolution.stop?.reason === "origin_busy",
+      )
+    ) {
+      const all = this.store.tasks();
+      const waiting = all.filter(
+        (candidate) =>
+          candidate.phase === "queued" &&
+          candidate.entrypoint === "review" &&
+          candidate.originHostId &&
+          candidate.originHostId !== candidate.hostId &&
+          candidate.resolution.stop?.reason === "origin_busy",
+      ).length;
+      const limit =
+        this.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT;
+      const included = new Map(
+        this.store
+          .readyQueueHeads(limit + 2 + waiting)
+          .map((candidate) => [candidate.id, candidate]),
+      );
+      for (const candidate of this.store.activeCapacityTasks())
+        included.set(candidate.id, candidate);
+      if (!included.has(task.id)) included.set(task.id, task);
+      tasks = all
+        .filter((candidate) => included.has(candidate.id))
+        .map((candidate) => included.get(candidate.id)!);
+    }
+    const current = tasks.find((candidate) => candidate.id === task.id) ?? task;
     const taskRuns = view?.runsByTask.get(task.id) ?? this.store.runs(task.id);
-    if (slotAdmissionExempt(task, current, taskRuns)) return '';
-    const globalLimit = view?.globalLimit ?? this.store.getMeta<number>('globalLimit') ?? DEFAULT_GLOBAL_LIMIT;
-    const projectLimitFor = view?.projectLimitFor ?? this.store.projectDispatchLimitResolver();
+    if (slotAdmissionExempt(task, current, taskRuns)) return "";
+    const globalLimit =
+      view?.globalLimit ??
+      this.store.getMeta<number>("globalLimit") ??
+      DEFAULT_GLOBAL_LIMIT;
+    const projectLimitFor =
+      view?.projectLimitFor ?? this.store.projectDispatchLimitResolver();
     const papercuts = view?.papercuts ?? this.store.papercutDispatchPolicy();
     const facts = view ?? this.dispatchPassFacts;
     const isRequest = (candidate: Task) => {
@@ -437,38 +721,94 @@ export class SlotAdmission {
       return requesting;
     };
     const readsAsRequest = (candidate: Task) => {
-      const input: { integrationReady?: boolean; routingRetryAllowed?: boolean; dependencyWait?: string } = {};
-      let result = slotRequestDecision(candidate, parkedPhases, includeRecovery, input);
-      if (result === 'read' && candidate.phase === 'verifying' && !candidate.resolution.mergedCommit && candidate.resolution.integrationTurn) {
-        input.integrationReady = facts ? facts.integrationReady(candidate) : this.resolution.holdsIntegrationTurn(candidate);
-        result = slotRequestDecision(candidate, parkedPhases, includeRecovery, input);
+      const input: {
+        integrationReady?: boolean;
+        routingRetryAllowed?: boolean;
+        dependencyWait?: string;
+      } = {};
+      let result = slotRequestDecision(
+        candidate,
+        parkedPhases,
+        includeRecovery,
+        input,
+      );
+      if (
+        result === "read" &&
+        candidate.phase === "verifying" &&
+        !candidate.resolution.mergedCommit &&
+        candidate.resolution.integrationTurn
+      ) {
+        input.integrationReady = facts
+          ? facts.integrationReady(candidate)
+          : this.resolution.holdsIntegrationTurn(candidate);
+        result = slotRequestDecision(
+          candidate,
+          parkedPhases,
+          includeRecovery,
+          input,
+        );
       }
-      if (result === 'read' && routeUnavailableStop(candidate)) {
+      if (result === "read" && routeUnavailableStop(candidate)) {
         input.routingRetryAllowed = this.store.routingRetryAllowed(candidate);
-        result = slotRequestDecision(candidate, parkedPhases, includeRecovery, input);
+        result = slotRequestDecision(
+          candidate,
+          parkedPhases,
+          includeRecovery,
+          input,
+        );
       }
-      if (result === 'read' && candidate.phase === 'queued') {
+      if (result === "read" && candidate.phase === "queued") {
         input.dependencyWait = (facts ?? this.store).dependencyWait(candidate);
-        result = slotRequestDecision(candidate, parkedPhases, includeRecovery, input);
+        result = slotRequestDecision(
+          candidate,
+          parkedPhases,
+          includeRecovery,
+          input,
+        );
       }
       return result === true;
     };
-    const capacity = capacityLimitFor(task, tasks, globalLimit, projectLimitFor(task), papercuts);
-    let requests: Task[] = [], waiters: Task[] = [];
+    const capacity = capacityLimitFor(
+      task,
+      tasks,
+      globalLimit,
+      projectLimitFor(task),
+      papercuts,
+    );
+    let requests: Task[] = [],
+      waiters: Task[] = [];
     if (capacity) {
       const key = slotPoolKey(task, papercuts);
-      waiters = tasks.filter(candidate => candidate.id !== task.id &&
-        (capacity === 'global' || slotPoolKey(candidate, papercuts) === key) &&
-        isInFlightSlotRequest(candidate) && isRequest(candidate));
+      waiters = tasks.filter(
+        (candidate) =>
+          candidate.id !== task.id &&
+          (capacity === "global" ||
+            slotPoolKey(candidate, papercuts) === key) &&
+          isInFlightSlotRequest(candidate) &&
+          isRequest(candidate),
+      );
     } else {
       requests = view?.requests ?? fairSlotRequestOrder(tasks, isRequest);
       if (view) view.requests = requests;
     }
-    return decideSlotAdmission(task, tasks, globalLimit, projectLimitFor, papercuts, capacity, requests, waiters);
+    return decideSlotAdmission(
+      task,
+      tasks,
+      globalLimit,
+      projectLimitFor,
+      papercuts,
+      capacity,
+      requests,
+      waiters,
+    );
   }
 
   projectInFlightAdmissionReason(task: Task): string {
-    return projectInFlightWaitReason(task, this.store.activeCapacityTasks(), this.store.projectKeyResolver(),
-      candidate => this.store.projectInFlightLimitFor(candidate));
+    return projectInFlightWaitReason(
+      task,
+      this.store.activeCapacityTasks(),
+      this.store.projectKeyResolver(),
+      (candidate) => this.store.projectInFlightLimitFor(candidate),
+    );
   }
 }
