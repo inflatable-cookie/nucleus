@@ -3339,8 +3339,9 @@ movement invalidates source approval and preserves the normal readiness gates.
   same binding protects these runtime processes from run cleanup and permits
   workspace proof after BB reports the participant idle or closed. The process
   reader retains only the thread identity and checks the session's start identity
-  after reading its environment. The Cua server must resolve to the installed
-  executable; a workspace copy remains a command. On Darwin it reads NUL-delimited kernel process
+  after reading its environment. The Cua server's loaded executable, read by PID
+  and rechecked against its start identity, must resolve to the installed
+  executable; displayed arguments alone do not prove it. On Darwin it reads NUL-delimited kernel process
   arguments through the system JavaScript automation bridge and `sysctl`; an unavailable reader or
   denied kernel read stays unknown. Task sweeps also preserve plausible BB
   bridge runtimes with unknown identity and do not signal their process groups.

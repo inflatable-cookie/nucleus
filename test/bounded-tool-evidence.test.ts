@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   mkdtempSync,
   mkdirSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -16,7 +17,10 @@ import type { HostProcessFact, TimelinePage } from "../core/host/types";
 import { workspaceToolProcessIssue } from "../core/recovery/stall";
 import { toolTimelinePage } from "./support/tool-timeline";
 import { bbProcessFixture } from "./support/bb-process-fixture";
-import { markTrustedCuaProcesses } from "../core/machine/host-process-listing";
+import {
+  loadedExecutablePaths,
+  markTrustedCuaProcesses,
+} from "../core/machine/host-process-listing";
 
 function fixture(t: TestContext, bb = false) {
   const root = mkdtempSync(join(tmpdir(), "bounded-tool-evidence-"));
@@ -163,7 +167,7 @@ test("BB bridge and session are bound runtime, while their commands and unknown 
   }
 });
 
-test("the process reader recognizes only the installed Cua executable", (t) => {
+test("the process reader checks the loaded image and its start identity", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "bb-cua-identity-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const installed = join(root, "installed"),
@@ -185,11 +189,60 @@ test("the process reader recognizes only the installed Cua executable", (t) => {
     command,
     cwd: workspace,
   });
-  const facts = [fact(1, `${alias} mcp`), fact(2, `${counterfeit} mcp`)];
-  markTrustedCuaProcesses(facts, alias);
+  const facts = [
+    fact(1, `${alias} mcp`),
+    fact(2, `${alias} mcp`),
+    fact(3, `${alias} mcp`),
+  ];
+  await markTrustedCuaProcesses(facts, alias, {
+    images: async () =>
+      new Map([
+        [1, trusted],
+        [2, counterfeit],
+        [3, trusted],
+      ]),
+    identity: async (pid) => ({
+      kind: "identity",
+      identity: pid === 3 ? "3@reused" : `${pid}@fixture`,
+    }),
+  });
   assert.equal(facts[0]!.trustedCuaExecutable, true);
   assert.equal(facts[1]!.trustedCuaExecutable, undefined);
+  assert.equal(facts[2]!.trustedCuaExecutable, undefined);
+  const runtime = await bbProcessFixture(workspace, "thread");
+  const impostor = {
+    ...runtime[3]!,
+    pid: 300,
+    command: `${alias} mcp`,
+    trustedCuaExecutable: false,
+  };
+  await markTrustedCuaProcesses([impostor], alias, {
+    images: async () => new Map([[300, counterfeit]]),
+    identity: async () => ({
+      kind: "identity",
+      identity: impostor.startIdentity,
+    }),
+  });
+  assert.match(
+    workspaceToolProcessIssue(
+      [...runtime, impostor],
+      workspace,
+      ["run"],
+      ["thread"],
+    )!,
+    /process 300 remains/,
+  );
 });
+
+test(
+  "the host reads the running executable image",
+  { skip: !["darwin", "linux"].includes(process.platform) },
+  async () => {
+    const image = (await loadedExecutablePaths([process.pid])).get(process.pid);
+    assert.ok(image);
+    assert.equal(realpathSync(image), realpathSync(process.execPath));
+  },
+);
 
 test("a retired initial worker without a run row remains bound to the shared workspace", async (t) => {
   const f = fixture(t, true);

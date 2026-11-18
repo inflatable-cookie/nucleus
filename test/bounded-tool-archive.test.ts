@@ -146,6 +146,46 @@ test("an idle BB participant can archive with its bound runtime present", async 
   assert.equal(existsSync(f.directory), false);
 });
 
+test("archive includes a task-row worker when proving another BB participant", async (t) => {
+  const f = await fixture(t, true, "bb:fixture");
+  f.store.update(f.task().id, {
+    retiredWorkers: [
+      {
+        agentId: "retired-worker",
+        runId: "retired-run",
+        reason: "replacement",
+        profile: {
+          id: "fixture",
+          name: "fixture",
+          provider: "fixture",
+          model: "fixture",
+          notes: "",
+          available: true,
+          problem: "",
+          supportedThinking: [],
+        },
+      },
+    ],
+  });
+  const worker = await bbProcessFixture(f.directory, "worker");
+  const reviewer = (await bbProcessFixture(f.directory, f.agentId)).map(
+    (fact) => ({
+      ...fact,
+      pid: fact.pid + 1000,
+      ppid: fact.ppid === 1 ? 1 : fact.ppid! + 1000,
+    }),
+  );
+  const retired = (await bbProcessFixture(f.directory, "retired-worker")).map(
+    (fact) => ({
+      ...fact,
+      pid: fact.pid + 2000,
+      ppid: fact.ppid === 1 ? 1 : fact.ppid! + 2000,
+    }),
+  );
+  f.setProcesses([...worker, ...reviewer, ...retired]);
+  assert.deepEqual(await f.archive(), []);
+});
+
 test("workspace archive refreshes the run inventory before local teardown", async (t) => {
   const f = await fixture(t, true);
   let reads = 0;

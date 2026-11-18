@@ -7,7 +7,10 @@ import type { WorkspaceContinuationHost } from "./workspace-continuation";
 import type { TimelinePage } from "../recovery/stall";
 import { participantToolRunIds } from "../recovery/task-reasons";
 import { boundedToolHold } from "../machine/bounded-tool";
-import { bbThreadForAgent } from "../machine/owned-tool-process-proof";
+import {
+  bbThreadForAgent,
+  bbWorkspaceThreads,
+} from "../machine/owned-tool-process-proof";
 import {
   readToolTimeline,
   liveToolIssue,
@@ -356,15 +359,7 @@ export class OwnedWorkspaceArchive {
                       const processes = await this.host.hostProcessListing();
                       if (!processes)
                         return "the host process listing is unreadable";
-                      const bbThreads = runs
-                        .filter((run) => run.workspaceId === id)
-                        .map((run) =>
-                          bbThreadForAgent(
-                            run.agentId,
-                            run.hostId ?? task.hostId,
-                          ),
-                        )
-                        .filter((thread): thread is string => Boolean(thread));
+                      const bbThreads = bbWorkspaceThreads(task, runs, id);
                       const ownThread = bbThreadForAgent(
                         agentId,
                         runs.find((run) => runIds.includes(run.id))?.hostId ??
