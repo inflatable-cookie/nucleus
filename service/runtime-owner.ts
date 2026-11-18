@@ -49,7 +49,7 @@ import { Admission, admitAdapter, type AdmissionOptions } from "../core/host/adm
 import { HostRegistry, HOST_IDLE_GRACE_MS, type KnownHost } from "../core/host/host-registry";
 import type { IdentitySource } from "../shared/host-kind";
 import { T3HostConnection, type T3ConnectionConfig } from "./t3code-host";
-import { BbHostConnection, type BbHostRejectedInput, type BbHostReleasedInput, type BbHostVerifiedInput } from "./bb-host";
+import { BbHostConnection, recordBbPresentationParentChange, type BbHostRejectedInput, type BbHostReleasedInput, type BbHostVerifiedInput } from "./bb-host";
 import {
   HostConnections,
   wireEngineHosts,
@@ -691,6 +691,15 @@ export class QueueRuntime {
    */
   bbHostVerified(input: BbHostVerifiedInput) {
     return this.bbHost.verified(input);
+  }
+  /** Record BB's operator-authored presentation parent for one Nucleus thread. */
+  bbParentChanged(input: unknown): { ok: true; matched: boolean } {
+    const value = input as { hostId?: unknown; threadId?: unknown; parentThreadId?: unknown; at?: unknown };
+    if (typeof value?.hostId !== "string" || typeof value.threadId !== "string" || !(value.parentThreadId === null || typeof value.parentThreadId === "string") || typeof value.at !== "string") return { ok: true, matched: false };
+    const taskId = recordBbPresentationParentChange(this.store, value.hostId, value.threadId, value.parentThreadId as string | null, value.at);
+    if (!taskId) return { ok: true, matched: false };
+    void this.engine.wakeTask(taskId);
+    return { ok: true, matched: true };
   }
   /** A declaration or probe left the identity unproven: the host is offline for the named reason. */
   bbHostRejected(input: BbHostRejectedInput) {

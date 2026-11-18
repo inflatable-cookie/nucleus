@@ -288,6 +288,24 @@ export function createBbHostAdapter(
   });
 }
 
+/** Record a parentChanged event only when its source is a Nucleus thread on that BB host. */
+export function recordBbPresentationParentChange(store: Store, hostId: string, threadId: string, parentThreadId: string | null, at: string): string | null {
+  const agents = store.getMeta<{ agents?: Record<string, { task?: string }> }>("bbThreads")?.agents;
+  const taskId = agents?.[threadId]?.task;
+  if (!taskId) return null;
+  const task = store.task(taskId);
+  if (task.hostId !== hostId || task.removedAt) return null;
+  // A drop under one of the task's own threads is not a new parent for the group:
+  // the group cannot nest under itself, so the recorded parent stands.
+  if (parentThreadId !== null && agents?.[parentThreadId]?.task === taskId) return null;
+  // The same parent again (a second thread of a dragged group) is the same record.
+  if (task.presentationParent && task.presentationParent.parentThreadId === parentThreadId) return taskId;
+  const by = "operator (BB drag and drop)";
+  store.update(taskId, { presentationParent: { parentThreadId, at, by } }, "presentation_parent_changed",
+    `BB operator moved task presentation under ${parentThreadId ?? "no parent"}; planner and authority unchanged`);
+  return taskId;
+}
+
 /**
  * One BB host identity's registry claim, admission and diagnostics.
  *

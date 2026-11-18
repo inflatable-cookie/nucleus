@@ -13,7 +13,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import type { BbPluginApi } from '@get-bb/plugin-sdk';
+import type { BbPluginApi, PluginThreadEventPayloads } from '@get-bb/plugin-sdk';
+import { createHostOperations, type BbHostSdk } from '../hosts/bb/plugin/operations';
 import plugin from '../hosts/bb/plugin/server';
 import {
   BB_LIFECYCLE_HINTS,
@@ -22,6 +23,8 @@ import {
   boardCallRefusal,
   createBoardBridge,
   forwardLifecycleHint,
+  forwardParentChanged,
+  parentChangedListener,
   runTerminalCommand,
 } from '../hosts/bb/plugin/board-bridge';
 import { lifecycleSignalSchema, lifecycleSignalKinds } from '../shared/lifecycle-signal';
@@ -140,6 +143,56 @@ test("BB's thread events become the existing bounded lifecycle hints, and nothin
   await forwardLifecycleHint(() => ({ request: async () => { throw new Error('service away'); } }), 'thread.idle', { thread: { id: 'thr_1' } });
 });
 
+/**
+ * nucleus#1323: BB's `experimental_thread.parentChanged` payload is `{ thread: ThreadResponse,
+ * previousParentThreadId }` (SDK 0.6.132's event map). The thread is the real ThreadResponse row
+ * recorded from the isolated BB 0.49 server (`fixtures/bb-0.49-wire.json`, `get`), with synthetic
+ * ids. The listener is the plugin's own, over the real host operations: a Nucleus `thread.reparent`
+ * fires the same event BB fires for a drag, and only the drag reaches the service.
+ */
+test("BB parentChanged: the plugin forwards an operator drag and drops Nucleus's own reparent echo", async () => {
+  const recorded = (JSON.parse(readFileSync(new URL('./fixtures/bb-0.49-wire.json', import.meta.url), 'utf8')) as { get: Record<string, unknown> }).get;
+  const rows = new Map<string, Record<string, unknown>>();
+  const row = (id: string, parentThreadId: string | null) => ({ ...recorded, id, parentThreadId });
+  rows.set('thr_synthetic_worker', row('thr_synthetic_worker', 'thr_synthetic_planner'));
+  type ParentChangedPayload = PluginThreadEventPayloads['experimental_thread.parentChanged'];
+  const listeners: Array<(payload: ParentChangedPayload) => unknown> = [];
+  // BB fires parentChanged for every `threads.update` of `parentThreadId`, Nucleus's own included.
+  const move = async (threadId: string, parentThreadId: string | null) => {
+    const before = rows.get(threadId)!;
+    const after = { ...before, parentThreadId };
+    rows.set(threadId, after);
+    const payload = { thread: after, previousParentThreadId: before.parentThreadId } as unknown as ParentChangedPayload;
+    for (const listener of listeners) await listener(payload);
+  };
+  const sdk = {
+    threads: {
+      update: async (args: { threadId: string; parentThreadId: string | null }) => { await move(args.threadId, args.parentThreadId); return { ok: true }; },
+      get: async (args: { threadId: string }) => rows.get(args.threadId),
+    },
+  } as unknown as BbHostSdk;
+  const operations = createHostOperations({ sdk, pluginId: 'nucleus', sdkVersion: '0.6.132', dataDir: () => 'synthetic', now: () => Date.now() });
+  const sent: Array<{ method: string; input: unknown }> = [];
+  const source = () => ({ request: async (method: string, input: unknown) => { sent.push({ method, input }); return {}; } });
+  listeners.push(parentChangedListener(source, operations) as (payload: ParentChangedPayload) => unknown);
+
+  // Nucleus's own reparent: BB echoes it as parentChanged, and nothing is recorded.
+  await operations.execute('thread.reparent', { threadId: 'thr_synthetic_worker', parentThreadId: null });
+  assert.deepEqual(sent, [], "Nucleus's own threads.update echo is not an operator move");
+
+  // The operator drags the same thread under another thread: forwarded once, as is.
+  await move('thr_synthetic_worker', 'thr_synthetic_other');
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0]!.method, 'service.bb-parent-changed');
+  assert.deepEqual({ ...(sent[0]!.input as object), at: undefined }, { threadId: 'thr_synthetic_worker', parentThreadId: 'thr_synthetic_other', at: undefined });
+  // The echo marker is spent: a later identical operator drag back to standalone is forwarded.
+  await move('thr_synthetic_worker', null);
+  assert.equal(sent.length, 2);
+  assert.equal((sent[1]!.input as { parentThreadId: unknown }).parentThreadId, null);
+  // A malformed payload forwards nothing.
+  assert.equal(forwardParentChanged(source, { thread: { id: 'thr_synthetic_worker' } }, () => false), null);
+});
+
 test('the terminal command creates one thread-scoped terminal in the calling thread and nothing else', async () => {
   const created: unknown[] = [];
   const sdk = { terminals: { create: async (args: unknown) => { created.push(args); return { id: 'term_9' }; } } };
@@ -173,8 +226,8 @@ test('the backend registers the board call, the hints and the terminal command b
   const board = fake.rpc.find(entry => entry.methods.includes('boardCall'));
   assert.ok(board, 'the board forwarding call registers');
   await assert.rejects(board!.handlers.boardCall({ method: 'queue.ui-snapshot', input: {} }) as Promise<unknown>, /not connected/u, 'with no service channel the board call fails closed');
-  assert.deepEqual([...fake.events.keys()].sort(), Object.keys(BB_LIFECYCLE_HINTS).sort(), 'every mapped BB event is listened to, and nothing else');
-  for (const [event, handlers] of fake.events) for (const handler of handlers) await handler({ thread: { id: `thr_${event}` }, interaction: { id: 'int_1' } });
+  assert.deepEqual([...fake.events.keys()].sort(), [...Object.keys(BB_LIFECYCLE_HINTS), 'experimental_thread.parentChanged'].sort(), 'mapped lifecycle events and parentChanged are listened to');
+  for (const [event, handlers] of fake.events) for (const handler of handlers) await handler({ thread: { id: `thr_${event}`, parentThreadId: null }, previousParentThreadId: 'thr_old', interaction: { id: 'int_1' } });
 
   assert.equal(fake.cli.length, 1, 'BB takes one CLI registration per plugin');
   const spec = fake.cli[0]!;

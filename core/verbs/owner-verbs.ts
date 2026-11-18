@@ -240,8 +240,10 @@ const detach: OwnerVerb = {
   input: verbInput({ reason: z.string().trim().min(1).max(4000).optional() }),
   applicable: ({task}) => task.removedAt
     ? { available: false, refusal: REMOVED_TASK_REFUSAL }
-    : task.presentationDetached
-      ? { available: false, refusal: `Presentation is already detached (${task.presentationDetached.by}); reparent the task to a planner thread to nest it again` }
+    // nucleus#1323: an operator drag can re-nest a detached group, so the latest
+    // presentation parent decides; only a group already standalone is refused.
+    : (task.presentationParent ? task.presentationParent.parentThreadId === null : task.presentationDetached)
+      ? { available: false, refusal: `Presentation is already detached (${task.presentationParent?.by ?? task.presentationDetached?.by}); reparent the task to a planner thread to nest it again` }
       : { available: true, args: {taskId: task.id, version: task.version}, fill: ['reason'] },
   apply: applyMapped('detach'),
 };

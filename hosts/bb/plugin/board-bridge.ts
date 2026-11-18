@@ -17,6 +17,11 @@
  *    (decision 7). There is no task-directory variant: phase 0 proved a
  *    `host_path` terminal does not appear where an operator looks.
  *
+ * 4. parentChanged — an operator drag in BB's sidebar becomes the bounded
+ *    `service.bb-parent-changed` intent: the moved thread and its new parent.
+ *    Echoes of Nucleus's own `thread.reparent` writes are dropped here, so only
+ *    an operator move is recorded. Presentation only: no planner or authority.
+ *
  * What none of it does (phase 6 acceptance): no BB settings write, no thread
  * lifecycle-owner write, and no terminal read, list, write or close.
  */
@@ -110,6 +115,23 @@ export function forwardLifecycleHint(source: () => BoardBridgeSource | null, eve
   return client
     .request("service.lifecycle-signal", { kind: BB_LIFECYCLE_HINTS[event], agentId: threadId, workspaceId: null, at: now().toISOString() }, 5_000)
     .then(() => undefined, () => undefined);
+}
+
+/** Forward BB's real parentChanged DTO as durable presentation intent. */
+export function forwardParentChanged(source: () => BoardBridgeSource | null, payload: { thread?: { id?: unknown; parentThreadId?: unknown } | null }, isOwnChange: (threadId: string, parentThreadId: string | null) => boolean, now: () => Date = () => new Date()): Promise<void> | null {
+  const threadId = payload?.thread?.id;
+  const parent = payload?.thread?.parentThreadId;
+  if (typeof threadId !== "string" || threadId.length === 0 || threadId.length > 160 || !(parent === null || (typeof parent === "string" && parent.length > 0 && parent.length <= 160))) return null;
+  if (isOwnChange(threadId, parent)) return null;
+  const client = source();
+  if (!client) return null;
+  return client.request("service.bb-parent-changed", { threadId, parentThreadId: parent, at: now().toISOString() }, 5_000).then(() => undefined, () => undefined);
+}
+
+/** The plugin's one `experimental_thread.parentChanged` listener: forward operator moves, drop Nucleus's own echoes. */
+export function parentChangedListener(source: () => BoardBridgeSource | null, operations: { consumeOwnParentChange(threadId: string, parentThreadId: string | null): boolean }) {
+  return (payload: { thread?: { id?: unknown; parentThreadId?: unknown } | null }): Promise<void> | null =>
+    forwardParentChanged(source, payload, (threadId, parentThreadId) => operations.consumeOwnParentChange(threadId, parentThreadId));
 }
 
 /** The terminal surface this bridge uses: create, and nothing else. */

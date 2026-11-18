@@ -47,9 +47,9 @@ the change belongs upstream (Spec 062, decision 5f's exit path).
    nucleus#1313 adds three things here. Where this row would render upstream's "No threads" and the
    project's own threads are all nested under another project's planner, it renders the fork's
    `NucleusNestedTaskPointers` instead — "1 task under <planner title>" on the planner's own route;
-   a project with no threads anywhere keeps upstream's empty state. A Nucleus container's action
-   controls are the fork's `NucleusTaskGroupMenuItems` (open task, open pull request, detach from the
-   planner) and never upstream's: no "New thread in environment" (it would add a participant Nucleus
+   a project with no threads anywhere keeps upstream's empty state. A Nucleus container has no
+   action controls and reserves no slot for them (nucleus#1323), so its title and state line take the
+   row's width; detach is BB drag and drop or the `detach` owner control. Upstream's are gone too: no "New thread in environment" (it would add a participant Nucleus
    does not know about), no Edit (it renames an environment the header no longer shows) and no
    Archive (it would archive live role threads behind Nucleus's back). Every ordinary worktree group
    keeps upstream's actions untouched.

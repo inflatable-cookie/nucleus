@@ -100,6 +100,7 @@ export class OriginRouting {
    // only ever recorded "no planner thread for presentation", so naming a planner
    // clears it and each host follows the new planner's own host.
    ...(task.presentationDetached?{presentationDetached:null}:{}),
+   ...(task.presentationParent?{presentationParent:null}:{}),
    ...(overrides!==task.completionSubscriptionOverrides?{completionSubscriptionOverrides:overrides}:{}),...movedPlanner},
    'owner_changed',`${from} → ${to} by ${caller}${task.plannerAgentId?` (planner ${task.plannerAgentId} → ${to})`:''}: ${reason}`.slice(0,2000));
  }

@@ -200,7 +200,6 @@ interface RenderOptions {
   failRead?: boolean;
   projects?: ReadonlyArray<SidebarGroups["projects"][number]>;
   onSetPreference?: (key: string, value: unknown) => void;
-  onDetach?: (input: { taskId: string }) => void;
   /** The project row under test. */
   project?: ReturnType<typeof makeSidebarProject>;
   /** What that row's own tree is given (the resolved project's threads). */
@@ -231,12 +230,6 @@ function renderTaskGroups(options: RenderOptions = {}): {
       projects: options.projects ?? [],
     });
   }
-  // The task container's own action (nucleus#1313): the plugin forwards it to the
-  // service's `detach` owner control and answers with the recorded detach.
-  (rpc as unknown as Record<string, unknown>).detachTask = async (input: unknown) => {
-    options.onDetach?.(input as { taskId: string });
-    return { taskId: (input as { taskId: string }).taskId, detachedAt: new Date(0).toISOString(), detachedBy: "operator (board)" };
-  };
   const project = options.project ?? makeSidebarProject({ id: "proj_test" });
   const allThreads = options.allThreads ?? THREADS;
   const slot = renderSlot(
@@ -564,13 +557,9 @@ describe("a project whose task nests under a planner in another project", () => 
 /**
  * nucleus#1313 (Tom, 2026-11-17, live trial poodle-lab#029): the container says what
  * repository the task works on, its PR is the standard icon plus `#39` in the state
- * colour, and a Nucleus container offers the task's own actions instead of upstream's
- * environment actions.
+ * colour, and the row title and state take the freed menu width.
  */
-describe("a task container's repository, PR chip and actions", () => {
-  function openTaskMenu(): void {
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Task actions" }), { button: 0 });
-  }
+describe("a task container's repository, PR chip and row width", () => {
 
   it("leads the state line with the folder icon and the repository", async () => {
     renderTaskGroups({ groups: [{ ...GROUP, repository: "poodle-lab" }] });
@@ -621,27 +610,21 @@ describe("a task container's repository, PR chip and actions", () => {
     expect(closed.getAttribute("data-nucleus-task-group-pr-tone")).toBe("danger");
   });
 
-  it("offers only the task's own actions on a Nucleus container, and calls detach once", async () => {
-    const { slot } = renderTaskGroups({ groups: [GROUP] });
+  it("removes the task container menu and gives the title and state line the row width", async () => {
+    renderTaskGroups({ groups: [GROUP] });
     await waitFor(() => {
       expect(taskGroupHeader(NUCLEUS_ENVIRONMENT)).not.toBeNull();
     });
-    // Upstream's environment actions are gone from a task container.
+    // The task row no longer reserves the action area left by its removed menu.
     const container = taskGroupRow(NUCLEUS_ENVIRONMENT);
     expect(within(container).queryByRole("button", { name: "New thread in environment" })).toBeNull();
     expect(within(container).queryByRole("button", { name: "Environment actions" })).toBeNull();
-    openTaskMenu();
-    expect(await screen.findByRole("menuitem", { name: "Open task" })).not.toBeNull();
-    expect(screen.getByRole("menuitem", { name: "Open pull request" }).getAttribute("href")).toBe(GROUP.prUrl);
-    // Upstream's rename/archive are gone; the task's own detach replaces them.
-    expect(screen.queryByRole("menuitem", { name: "Rename" })).toBeNull();
-    expect(screen.queryByRole("menuitem", { name: "Archive" })).toBeNull();
-    const detach = await screen.findByRole("menuitem", { name: "Detach from planner" });
-    fireEvent.click(detach);
-    await waitFor(() => {
-      expect(slot.rpcCalls.filter((call) => call.method === "detachTask")).toHaveLength(1);
-    });
-    expect(slot.rpcCalls.find((call) => call.method === "detachTask")!.input).toMatchObject({ taskId: "task_1296" });
+    expect(within(container).queryByRole("button", { name: "Task actions" })).toBeNull();
+    expect(within(container).queryByRole("menu")).toBeNull();
+    const title = container.querySelector<HTMLElement>("[data-nucleus-task-group] > span");
+    expect(title).not.toBeNull();
+    expect(title!.className).toContain("flex-1");
+    expect(within(container).getByText(/Reviewing/).className).toContain("min-w-0");
   });
 
   it("leaves an ordinary worktree group with upstream's actions", async () => {

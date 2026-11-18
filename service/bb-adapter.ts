@@ -61,6 +61,7 @@ export function composeBbAdapter(input: {
       // top-level group; questions still route to the task's real planner ladder,
       // never to a BB thread just because the task runs here.
       const task = store.task(taskId);
+      if (task.presentationParent) return task.presentationParent.parentThreadId;
       if (task.presentationDetached) return null;
       // The first rung the task's questions climb (`plannerRungsFor`): the planner
       // the brief named, else its owner — the thread that submitted or promoted it —

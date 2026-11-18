@@ -276,6 +276,15 @@ and re-nests the group (Tom, 2026-11-17: "We will also need the ability to detac
 a planner in case the planner needs replacing"). At closeout Nucleus archives the task's role threads
 and leaves them archived; it does not delete threads, so the planner's history stays readable.
 
+An operator drag in BB is a separate, authoritative **presentation-only** parent choice. BB's
+`experimental_thread.parentChanged` event carries the moved thread's new `parentThreadId`; Nucleus
+records that parent on the task and reconciles every live task thread to it. A null parent detaches
+the group, and a parent naming another BB thread nests it there. Dragging any one task thread moves
+the whole group. Nucleus filters its own `threads.update` echoes before recording the event, never
+reverts an operator choice, and spawns later task roles under the group's recorded parent. This
+does not change the task's planner, ticket, authority or question route; planner changes remain the
+`helper reparent` operation.
+
 **Evidence.** The parent link already draws the group (fact 2), `threads.update` sets or clears it on
 a live thread, and `parentNotifications: "off"` keeps BB's own wake-ups out of a planner that Nucleus
 already notifies through its own durable notices (facts 2, 3). `off` is the only value that does not duplicate the owner-owns-blockers rule: `auto` reports
@@ -472,9 +481,10 @@ exclusive slot does not care which plugin owns it.
   capacity (position N)`, `Merge hold`, `Needs operator input`) stays on the same line;
 - the rolled-up agent-status glyph upstream draws while the group is collapsed stays, from
   `experimental_resolveThreadStatus` over the group's hidden threads;
-- the toggle chevron and inline rename stay, and the actions are the **task's own** (nucleus#1313,
-  Tom 2026-11-17: "Can we get rid of it?"): open the task, open the pull request when there is one,
-  and detach from the planner. Upstream's "New thread in environment", Edit and Archive are removed
+- the toggle chevron and inline rename stay. The task row has no action menu and reserves no menu
+  slot, leaving the title and state line the available row width. Detach remains on the `detach`
+  owner control for agents and planners, while BB operator drag and drop can detach or re-nest the
+  group. Upstream's "New thread in environment", Edit and Archive are removed
   from a task container — a new thread would add a participant Nucleus does not know about, Edit
   renames an environment the header no longer shows, and Archive would archive live role threads
   behind Nucleus's back. Every ordinary worktree group keeps upstream's actions exactly.
