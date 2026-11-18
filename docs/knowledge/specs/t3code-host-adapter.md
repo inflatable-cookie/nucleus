@@ -793,8 +793,9 @@ registers it once with `nucleus t3 install` ([operator install
 route](#operator-install-route)); the adapter reads `server.getConfig` at connect
 and at each create, records what it found in its own state, and reports it as
 `service.health`'s `t3code.nativeParenting` line. A missing, disabled or
-wrong-driver instance falls back to top-level role threads with guidance naming the
-provider to register. The adapter and the service never write T3 settings; only
+wrong-driver instance falls back to top-level role threads. The status distinguishes
+an absent instance from a registered instance that is not ready, including T3's
+status message when present. The adapter and the service never write T3 settings; only
 the operator's `nucleus t3 install` and `nucleus t3 uninstall` do, through T3's own
 `server.updateSettings`, and only the `nucleus` provider instance (Tom,
 2026-11-18; nucleus#1330).
@@ -1048,18 +1049,13 @@ connection is recorded and adopted at its next start. `service.health` and the
 host list are read over the local service socket; the route never starts a
 service.
 
-The planner accepted the settled warning and default model for this lane (2026-11-18). Readiness is T3's own verdict, and this route never invents one. The nightly
-answers a provider upsert as `ready` and then runs an ACP probe that opens a
-*test session*; the Nucleus agent refuses a session for a directory no task has
-bound (Spec 065), so the installed provider settles at `warning` with the
-nightly's own note, `The ACP agent could not create a test session.`, and the
-adapter's readiness check falls back to top-level role threads. `install`
-therefore treats a non-`error` instance that is ours as installed, succeeds,
-prints T3's note verbatim and adds a `Provider readiness` step saying that native
-parenting is off until T3's probe succeeds; `status` reports `ready`, `usable` and
-the probe's note separately, and `ok` means the install is correct and connected,
-not that T3's probe passed. The probe's interaction with the agent's binding rule
-is recorded as papercut `056a7077-f86d-4ed6-9b11-6ec65eeef593`, not fixed here.
+Readiness is T3's own verdict. The nightly probes an unbound directory; the
+agent opens an inert session advertising `nucleus` and `nucleus-quiet` without
+attaching to a task (Spec 065). A genuine probe warning remains installed but
+unready: install prints T3's note and says native parenting falls back to
+top-level role threads until the probe succeeds. Status reports readiness,
+usability and the probe note separately. Install waits for the service to adopt
+the newly issued session, not just an earlier connection to the same environment.
 
 **Status** (`nucleus t3 status`, `--json`) reports, with no secret:
 

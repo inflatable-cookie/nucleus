@@ -332,7 +332,13 @@ function providerMutation(
 
 interface ServiceRead {
   available: boolean;
-  t3: (T3ServiceFacts & { id: string | null; version: string }) | null;
+  t3:
+    | (T3ServiceFacts & {
+        id: string | null;
+        version: string;
+        sessionId: string | null;
+      })
+    | null;
   hosts: Array<{
     id: string;
     state: string;
@@ -361,6 +367,7 @@ async function readService(dataDir: string): Promise<ServiceRead> {
       t3code?: {
         id?: string | null;
         connected?: boolean;
+        sessionId?: string | null;
         error?: string;
         version?: string;
         nativeParenting?: string;
@@ -381,6 +388,7 @@ async function readService(dataDir: string): Promise<ServiceRead> {
         ? {
             available: true,
             connected: t3.connected === true,
+            sessionId: t3.sessionId ?? null,
             id: t3.id ?? null,
             hostId: t3.id ?? null,
             error: t3.error ?? "",
@@ -413,10 +421,28 @@ const PROVIDER_READY_WAIT_MS = 60_000;
 const sleep = (ms: number) =>
   new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 
+/** A host with the same environment but an older bearer has not adopted this install. */
+export function serviceHasSession(
+  t3: {
+    connected: boolean;
+    id: string | null;
+    sessionId: string | null;
+  } | null,
+  hostId: string,
+  sessionId?: string,
+): boolean {
+  return (
+    t3?.connected === true &&
+    t3.id === hostId &&
+    (!sessionId || t3.sessionId === sessionId)
+  );
+}
+
 async function waitForServiceHost(
   dataDir: string,
   hostId: string,
   present: boolean,
+  sessionId?: string,
 ): Promise<ServiceRead> {
   const deadline = Date.now() + SERVICE_ADOPT_WAIT_MS;
   let last = await readService(dataDir);
@@ -424,7 +450,7 @@ async function waitForServiceHost(
   // for its next start, and waiting out the adoption window would prove nothing.
   if (!last.available) return last;
   while (Date.now() < deadline) {
-    const connected = last.t3?.connected === true && last.t3.id === hostId;
+    const connected = serviceHasSession(last.t3, hostId, sessionId);
     if (present ? connected : !last.t3 || last.t3.connected === false)
       return last;
     await sleep(SERVICE_ADOPT_POLL_MS);
@@ -651,6 +677,7 @@ async function install(
     context.dataDir,
     `t3code:${server.environmentId}`,
     true,
+    issuedRuntime.sessionId,
   );
   if (!service.available)
     steps.push({
@@ -660,7 +687,8 @@ async function install(
     });
   else if (
     service.t3?.connected === true &&
-    service.t3.id === `t3code:${server.environmentId}`
+    service.t3.id === `t3code:${server.environmentId}` &&
+    service.t3.sessionId === issuedRuntime.sessionId
   )
     steps.push({
       step: "Service",

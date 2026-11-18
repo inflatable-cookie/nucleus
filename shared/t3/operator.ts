@@ -270,11 +270,8 @@ export interface T3ProviderFacts {
   ready: boolean;
   /**
    * Registered, ours, enabled, command-matching, and T3 has not reported a
-   * failure. The nightly's ACP readiness probe opens a *test session* in a
-   * directory Nucleus has not bound, so this provider is reported `warning` with
-   * that note in steady state (`ready` only before the probe settles); install
-   * treats a warning as installed-but-unready and says so, never as a broken
-   * install.
+   * hard failure. A warning is installed but unready; the probe's status and
+   * message are reported separately.
    */
   usable: boolean;
   status: string;

@@ -34,7 +34,9 @@ nothing else:
   (T3 fails every turn without it), `agentInfo` naming `nucleus`, and no auth
   method — a session is authorized by its binding, not by an ACP auth flow;
 - `session/new` and `session/load` resolve the thread's working directory to a
-  bound session and attach to the service. The attach always answers with the
+  bound session and attach to the service. If no binding exists, `session/new`
+  instead opens an inert session advertising the same models; its prompts refuse
+  with guidance and never reach the service. `session/load` still refuses. The attach always answers with the
   task's current lifecycle line, even when this service already showed that line
   to an earlier agent process for the same session: a relaunched agent has
   nothing else to display. `session/load` replays nothing because Nucleus holds
