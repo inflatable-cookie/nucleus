@@ -245,6 +245,26 @@ export function recoveryEffects(store: Store, task: Task, options: RecoveryEffec
     ? { ...effect, state: 'superseded' as const, reason: `Owner settled: ${effect.reason}` } : effect);
 }
 
+/** A released callback is terminal only when its own accepted receipt binds it. */
+export function authenticatedCompletion(store: Store, run: Run): boolean {
+  const completion = run.completion;
+  if (!completion || completion.taskId !== run.taskId || completion.runId !== run.id
+      || (run.role === 'reviewer' && completion.head !== run.head)) return false;
+  const receipt = store.db.prepare('SELECT hash,response FROM receipts WHERE id=? AND task=? AND run=?')
+    .get(completion.eventId, run.taskId, run.id) as { hash?: string; response?: string } | undefined;
+  try {
+    if (!receipt || JSON.parse(receipt.response ?? '').accepted !== true) return false;
+    const withoutReview = { ...completion };
+    delete withoutReview.reviewId;
+    const withoutComment = { ...completion };
+    delete withoutComment.reviewCommentId;
+    const withoutBoth = { ...withoutReview };
+    delete withoutBoth.reviewCommentId;
+    return [completion, withoutReview, withoutComment, withoutBoth]
+      .some(value => digest(JSON.stringify(value)) === receipt.hash);
+  } catch { return false; }
+}
+
 /** Evidence written by the delivery observer for this exact released run. */
 export function releasedRunDeliveryEvidence(store: Store, run: Run): string | null {
   if (!run.released || run.status !== 'uncertain' || !run.agentId || !run.workspaceId) return null;
@@ -345,7 +365,11 @@ export function observedHostEffectEvidence(store: Store, task: Task, operation: 
       // target; it must not need a second release after this attempt.
       const releasedBefore = (run: Run) => run.released && events.some(event => Date.parse(event.at) < accepted
         && (event.kind === 'run_released_from_recorded_completion' && event.detail === `${run.role} ${run.id}`
-          || event.kind === 'run_released_from_observed_liveness' && event.detail.startsWith(`${run.role} ${run.id}: `)));
+          || event.kind === 'run_released_from_observed_liveness' && event.detail.startsWith(`${run.role} ${run.id}: `)
+          || run.role === 'reviewer' && run.status === 'finished' && Boolean(run.head)
+            && ['changes_required', 'ready_to_merge'].includes(run.completion?.status ?? '')
+            && (event.kind === 'review_result_applied' || event.kind === 'review_reapplied')
+            && event.detail === run.id && authenticatedCompletion(store, run)));
       const candidates = roleRuns.filter(run => Date.parse(run.createdAt) <= boundary && !releasedBefore(run));
       const untrackedWorker = (!control.role || control.role === 'worker') && task.runId && !runs.some(run => run.id === task.runId);
       const released = (run: Run) => run.released && Boolean(run.agentId) && ['finished', 'superseded'].includes(run.status)

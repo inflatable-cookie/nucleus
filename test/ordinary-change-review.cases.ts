@@ -5,9 +5,12 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { ownerRevisionFixture, runGit } from './support/review-entry-fixture';
-import { OPERATOR_BOARD_CALLER, submissionSchema, taskControlInputSchema, type Run, type Profile } from '../shared/contracts';
+import { OPERATOR_BOARD_CALLER, runSchema, submissionSchema, taskControlInputSchema, type Run, type Profile } from '../shared/contracts';
 import { Reports } from '../core/intake/report';
-import { digest } from '../core/store/store';
+import { digest, operationIdForKey, operationInputHash } from '../core/store/store';
+import { taskControlOperation } from '../core/verbs/task-control-key';
+import { queueOperationSchema } from '../shared/operations';
+import { supersedeIdleRunInTx } from '../core/recovery/fence-settlement';
 import { reviewPublicationBody } from '../core/forge/index';
 import { blockingRecoveryEffects } from '../core/recovery/recovery-effects';
 import type { ResolutionAdapter } from '../core/resolution';
@@ -127,6 +130,60 @@ async function pendingVerdict(status: 'ready_to_merge' | 'changes_required' = 'r
   f.store.db.prepare("DELETE FROM events WHERE taskId=? AND kind IN ('review_result_applied','review_reapplied','run_result_applied') AND detail=?").run(task.id, run.id);
   return { f, run, incident };
 }
+
+test('an ordinarily applied earlier review does not hold a displaced restart', async () => {
+  const f = fixture();
+  try {
+    await f.engine.wake();
+    const prior = f.current();
+    await f.report(prior, 'changes_required');
+    const history = f.store.run(prior.id)!;
+    assert.equal(history.status, 'finished');
+    assert.equal(history.released, true);
+    const events = f.store.eventsAll(f.task.id);
+    assert.ok(events.some(event => event.kind === 'review_result_applied' && event.detail === prior.id));
+    assert.equal(events.some(event => ['run_released_from_recorded_completion', 'run_released_from_observed_liveness']
+      .includes(event.kind) && event.detail.includes(prior.id)), false);
+    // Make the historical application unambiguously earlier than the new attempt.
+    await new Promise(resolve => setTimeout(resolve, 10));
+    const target = runSchema.parse({ id: 'restart-target', taskId: f.task.id, role: 'reviewer', generation: 1,
+      head: prior.head, base: prior.base, agentId: 'target-reader', workspaceId: prior.workspaceId,
+      profile: prior.profile, status: 'running', createdAt: new Date().toISOString(), lastObservedAt: null,
+      active: false, idleSince: null, completion: null, released: false });
+    f.store.putRun(target);
+    const input = taskControlInputSchema.parse({ taskId: f.task.id, version: f.store.task(f.task.id).version,
+      action: 'restart', role: 'reviewer', reason: 'Continue', caller: 'owner' });
+    const { key, payload } = taskControlOperation(input), id = operationIdForKey(key), at = new Date().toISOString();
+    f.store.putOperation(queueOperationSchema.parse({ id, key, kind: 'task_control', inputHash: operationInputHash(payload),
+      state: 'needs_attention', taskId: f.task.id, expectedVersion: input.version, createdAt: at, startedAt: at,
+      settledAt: at, attempts: 1, diagnostic: 'Transport', result: null,
+      effect: { kind: 'task_control', target: 'restart', intentAt: at, status: 'uncertain', result: null, resultAt: null } }), payload);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    const replacement = runSchema.parse({ ...target, id: 'replacement-reader', agentId: 'replacement-reader-agent', createdAt: new Date().toISOString() });
+    f.store.putRun(replacement);
+    const current = f.store.task(f.task.id);
+    f.store.update(current.id, { resolution: { ...current.resolution, currentRunId: replacement.id }, reason: 'New review binding' });
+    const offered = () => ownerTaskNext(collectOwnerVerbFacts(f.store, f.store.task(f.task.id))).verbs.some(view =>
+      view.verb === 'retry_effect' && JSON.stringify(view.args ?? {}).includes(`operation.${id}`));
+    assert.equal(offered(), true, 'the target still owns its run');
+    assert.equal(supersedeIdleRunInTx(f.store, f.task.id, target, 'Observed reader idle'), true);
+    const receipt = f.store.db.prepare('SELECT hash FROM receipts WHERE id=? AND task=? AND run=?')
+      .get(history.completion!.eventId, f.task.id, prior.id) as { hash: string };
+    f.store.db.prepare('UPDATE receipts SET hash=? WHERE id=?').run('0'.repeat(64), history.completion!.eventId);
+    assert.equal(offered(), true, 'a mismatched historical receipt is not terminal evidence');
+    f.store.db.prepare('UPDATE receipts SET hash=? WHERE id=?').run(receipt.hash, history.completion!.eventId);
+    const applied = f.store.eventsAll(f.task.id).find(event => event.kind === 'review_result_applied' && event.detail === prior.id)!;
+    f.store.db.prepare('UPDATE events SET at=? WHERE id=?').run(new Date(Date.parse(at) + 1000).toISOString(), applied.id);
+    assert.equal(offered(), true, 'an application after the attempt is not earlier release evidence');
+    f.store.db.prepare('UPDATE events SET at=? WHERE id=?').run(applied.at, applied.id);
+    assert.equal(offered(), false);
+    f.engine.reconcileBlockedEffects(f.task.id);
+    assert.equal(f.store.eventsAll(f.task.id).filter(event => event.kind === 'operation_superseded').length, 1);
+    f.engine.reconcileBlockedEffects(f.task.id);
+    assert.equal(f.store.eventsAll(f.task.id).filter(event => event.kind === 'operation_superseded').length, 1);
+    assert.equal(f.store.operation(id)?.effect?.status, 'uncertain');
+  } finally { f.close(); }
+});
 
 test('ordinary public changes-required lifecycle retains the reader with a new exact-head credential, delta and clean author return', async () => {
   const f = fixture();
