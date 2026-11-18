@@ -4,6 +4,7 @@ import { Button, DetailSection, Field, muted, row, type Colors } from "../contro
 import * as api from "../../shared/contracts";
 import { type Task, type UiQueueState } from "../../shared/contracts";
 import { workerThinking } from "../../shared/pool";
+import { climbedTier, requestedTier } from "../../shared/demand";
 import { choiceTag, NORMAL_USAGE, SelectedProfilePolicy } from "./next-section";
 import { useTaskDraft, type TaskDrafts } from "./drafts";
 import type { BoardAct } from "./parts";
@@ -152,7 +153,7 @@ export function TechnicalRouting({ task, state, drafts, busy, act, c }: {
                   small
                   wrap
                   c={c}
-                  text={`${profile!.name}${choiceTag(entry, state?.usage ?? NORMAL_USAGE, state?.availability ?? [])}`}
+                  text={`${profile!.name}${choiceTag(entry, state?.usage ?? NORMAL_USAGE, state?.availability ?? [], requestedTier(task.complexity), climbedTier(task))}`}
                   selected={
                     routingPreferred === entry.profileId
                   }
@@ -171,6 +172,9 @@ export function TechnicalRouting({ task, state, drafts, busy, act, c }: {
               }
               usage={state?.usage ?? NORMAL_USAGE}
               availability={state?.availability ?? []}
+              requested={requestedTier(task.complexity)}
+              climbTier={climbedTier(task)}
+              role="worker"
               explicit={(required) =>
                 required
                   ? "A preference alone does not select this profile; add a worker request with a reason. "

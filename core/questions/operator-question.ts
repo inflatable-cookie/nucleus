@@ -45,7 +45,7 @@ export type OperatorQuestionChoice = {
  * Spec 058 (task 540): every question Queue raises carries a kind. Only `scope`
  * (changing what the task delivers, abandoning work) and `release` (publishing,
  * production enablement, external resources) stay the operator's. Budget
- * extensions, including past 2x, are delegated; frontier or above-ceiling profiles
+ * extensions, including past 2x, are delegated; profiles the usage level holds
  * remain operator decisions. Every other kind is
  * delegated to the project's planner, then to a decider agent.
  */

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { capabilityLevelSchema, profileCapabilitySchema, scopeSchema } from "./capability";
+import { capabilityLevelSchema, demandLevelSchema, profileCapabilitySchema, scopeSchema } from "./capability";
 import { usageViewSchema } from "./usage";
 
 /**
@@ -23,10 +23,10 @@ export const routePolicySchema = z.object({
   source: z.enum(["request", "preference", "dispatched"]),
   inPool: z.boolean(),
   cost: capabilityLevelSchema.nullable(),
-  /** The pool entry's capability; a frontier profile is request-only below Maximum. */
+  /** The pool entry's capability; a top-tier profile needs permission at Low and Normal (Spec 052). */
   capability: profileCapabilitySchema.nullable().optional(),
   /** Null when the profile is not in the pool: automatic selection never reaches it. */
-  automatic: z.enum(["allowed", "request_ceiling", "request_frontier"]).nullable(),
+  automatic: z.enum(["allowed", "request_tier"]).nullable(),
   explanation: z.string(),
   gates: z.array(z.string()),
   /** Spec 052: a request row's board sign-off; absent for other rows and requests that need none. `grantId` when a planner grant covered it. */
@@ -58,11 +58,12 @@ export const selectionExplanationSchema = z.object({
   role: z.literal("worker"),
   complexity: capabilityLevelSchema,
   roleOffset: z.number().int(),
-  usageOffset: z.number().int(),
-  /** The first-attempt rule as it applies at dispatch (`workerStepLabel`). */
+  /** The tier this usage level starts a task of this complexity at (`workerStartTier`). */
+  startTier: demandLevelSchema,
+  /** How the first-attempt and step-up rules apply at dispatch (`workerStepLabel`). */
   step: z.string(),
-  fullDemand: z.enum(["very_low", "low", "medium", "high", "very_high", "frontier"]),
-  demand: z.enum(["very_low", "low", "medium", "high", "very_high", "frontier"]),
+  fullDemand: demandLevelSchema,
+  demand: demandLevelSchema,
   /** No eligible profile met the demand, so the most capable eligible ones form the set. */
   shortfall: z.boolean(),
   /** The set rotation chooses from, best placed first: recent use over effective weight. */
@@ -73,7 +74,12 @@ export const selectionExplanationSchema = z.object({
 }).strict();
 export type SelectionExplanation = z.infer<typeof selectionExplanationSchema>;
 
-export const routingPolicySchema = z.object({ usage: usageViewSchema, scope: scopeSchema, profiles: z.array(routePolicySchema),
+export const routingPolicySchema = z.object({ usage: usageViewSchema,
+  /** The task's own requested tier, which the tier bound and the climb exception read. */
+  requested: demandLevelSchema,
+  /** The tier a recorded climb earned, or null before any climb (the permission exception). */
+  climbTier: demandLevelSchema.nullable().default(null),
+  scope: scopeSchema, profiles: z.array(routePolicySchema),
   selection: selectionExplanationSchema.optional(),
   /** The task's host and the pool profiles it rules out or maps; absent when no host snapshot was read. */
   host: z.object({ hostId: z.string(), effects: z.array(hostEffectSchema) }).strict().optional(),
@@ -92,7 +98,7 @@ thinkingOptionId:z.string().optional(),
 requestedBy:z.string().max(300).optional(),
 /**
  * Spec 052 (Tom, 2026-10-21): a request for a profile above the usage level's
- * cost ceiling, or rated frontier below Maximum, applies only once the operator
+ * permission rule holds applies only once the operator
  * signs it off on the board.
  * Queue writes this; a submission or amendment never carries it.
  */

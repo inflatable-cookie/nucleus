@@ -53,9 +53,10 @@ convention.
   for ordinary work, `high` for subtle or cross-cutting changes, and
   `very_high` only when the strongest model is needed. Request a profile
   (`profileRequests`) only when the work needs it, with a reason the operator
-  can judge. A request above the usage level's cost ceiling, or for a frontier profile below Maximum,
-  opens a decision for the operator, and the role runs on automatic selection
-  meanwhile; nothing waits for the answer. Only the operator answers those
+  can judge. A request for a profile the usage level's permission rule holds
+  (a top-tier profile above the task's requested tier at Low or Normal, or
+  frontier at High) opens a decision for the operator, and the role runs on
+  automatic selection meanwhile; nothing waits for the answer. Only the operator answers those
   decisions; never answer or withdraw them for them.
 - Keep it short. If it needs pages of context, that context belongs in
   `docs/knowledge/` or the lane document, and the brief links to it.

@@ -1,6 +1,7 @@
 import { digest } from '../store/store';
 import type { CapabilityLevel, CoordinatorAction, ProfileCapability, RecoveryActionBinding, Task, TaskNextVerb, UsageLevel } from '../../shared/contracts';
-import { frontierAllowed, withinUsage } from '../../shared/pool';
+import { requestOnly } from '../../shared/pool';
+import { requestedTier } from '../../shared/demand';
 import type { ResolutionChanges } from './task-stops';
 
 /** A worker return cannot be valid after review; a held lifecycle check is the only cheap recovery left. */
@@ -59,8 +60,10 @@ export function coordinatorActionPlan(input: {
   stopReason?: string | null;
   /** The reported route profile's cost, when the verb is `route`. */
   routeCost: CapabilityLevel | null;
-  /** The reported route profile's capability; a frontier profile is request-only below Maximum. */
+  /** The reported route profile's capability, which decides whether it needs permission. */
   routeCapability?: ProfileCapability | null;
+  /** The task's complexity, which fixes its requested tier for the permission rule. */
+  complexity?: CapabilityLevel | null;
   usage: UsageLevel;
   /** Whether `ownerVerb` holds a handler for the reported verb. */
   verbRegistered: boolean;
@@ -86,14 +89,12 @@ export function coordinatorActionPlan(input: {
   }
   if (action.verb === "restart" && action.role && offeredArgs.role !== undefined && offeredArgs.role !== action.role)
     return { ok: false, refusal: `restart ${action.role} does not match the stopped role ${String(offeredArgs.role)}` };
-  // A coordinator stays within the operator's usage level (Spec 052). At
-  // `normal` that keeps the 2026-10-01/15 rule: a very_high-cost (Sol-class)
-  // route is the owner's last resort, since an availability or environment
-  // block is not a capability failure.
-  if (action.verb === "route" && input.routeCost && !withinUsage(input.usage, input.routeCost))
-    return { ok: false, refusal: `A coordinator cannot route to ${action.profileId}: its ${input.routeCost} cost is above the operator's ${input.usage} usage level. Wait out an availability block or use an equivalent-cost profile, and report an environment block (a missing tool or stack) as cannot` };
-  if (action.verb === "route" && !frontierAllowed(input.usage, input.routeCapability))
-    return { ok: false, refusal: `A coordinator cannot route to ${action.profileId}: it is rated frontier, which is request-only below Maximum. Use a profile within the ${input.usage} usage level, and report an environment block (a missing tool or stack) as cannot` };
+  // A coordinator stays within the operator's usage level's permission rule
+  // (Spec 052, Tom 2026-11-17): a top-tier route above the task's own requested
+  // tier at Low or Normal, or a frontier route at High, is the owner's call.
+  if (action.verb === "route" && input.routeCapability
+    && requestOnly({ cost: input.routeCost, capability: input.routeCapability }, input.usage, requestedTier(input.complexity)))
+    return { ok: false, refusal: `A coordinator cannot route to ${action.profileId}: its ${input.routeCapability.replaceAll("_", " ")} tier needs the operator's permission at the ${input.usage} usage level. Use a profile the level covers, and report an environment block (a missing tool or stack) as cannot` };
   if (!input.verbRegistered) return { ok: false, refusal: `The ${action.verb} owner verb is not registered` };
   const args: Record<string, unknown> = { ...offeredArgs, reason: action.reason };
   if (action.verb === "restart") Object.assign(args, {

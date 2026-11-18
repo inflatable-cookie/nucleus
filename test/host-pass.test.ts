@@ -50,4 +50,32 @@ test('a clean pass records no failure and answers the inventory it read', async 
 
   assert.equal(f.store.getMeta('hostPassError'), undefined, 'a clean pass writes no failure');
   assert.equal(result.inventory, observations);
+  assert.equal(result.transportAnswered, true, 'the host answered its pass');
+});
+
+/**
+ * Spec 066 C2 (R1/R6): the pass's own reading of a host. A step that fails at the
+ * transport boundary means the host did not answer, even while the registry claims
+ * a connection — the reading is the failure, not the claim — and a host's own
+ * failure never answers for another host's wait.
+ */
+test('a step that fails at the transport boundary answers nothing for that host and nothing for another', async t => {
+  const ran: string[] = [];
+  const f = fixture(t, {
+    reconcileReportedSettlements: async () => {
+      const host = f.engine.activeHostId;
+      if (host === HOST) throw new Error(`Transport not connected: host ${host} is unavailable`);
+    },
+    reconcileThreadTitles: () => { ran.push('titles'); },
+    reconcileSettledThreads: async () => { ran.push('settled'); },
+  });
+
+  const result = await f.engine.withHost(HOST, () => f.hostPass.run(HOST));
+  assert.equal(result.transportAnswered, false, 'a connected claim is not an answer');
+  assert.deepEqual(ran, ['titles', 'settled'], 'the host\'s later steps still run');
+  assert.match(String(f.store.getMeta('hostPassError')), /reconcileReportedSettlements: Transport not connected/);
+
+  // The next host's pass is its own reading, and the previous failure is not carried.
+  const other = await f.engine.withHost('host-2', () => f.hostPass.run('host-2'));
+  assert.equal(other.transportAnswered, true, 'one host\'s transport failure never answers for another');
 });

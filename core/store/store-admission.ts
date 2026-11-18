@@ -234,6 +234,8 @@ export class StoreAdmission {
       // are proved external from their own registration event on every open.
       this.hooks.migration.markRegisteredExternalWorkspaces();
       this.hooks.migration.stripRetiredPoolFields();
+      // Spec 052 naming (Tom, 2026-11-17): a stored `minimal` usage level reads as `low`.
+      this.hooks.migration.migrateUsageLevelName();
       // Task 1158: stored profiles move to the canonical vocabulary once; a
       // profile with a value the migration doesn't know stays as stored and is
       // reported in the record.
