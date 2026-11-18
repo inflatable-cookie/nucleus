@@ -292,7 +292,10 @@ async function archiveTerminalTaskThreads(
       }
       // Observation needs no authority to mutate the thread. Legacy archived
       // threads can lack labels, so read their exact identity before refusing a write.
-      if (!ownedByTask(observed.labels, task.id)) {
+      if (
+        !ownedByTask(observed.labels, task.id) ||
+        !["idle", "error", "closed"].includes(observed.status)
+      ) {
         try {
           const origin = await host.originAgent(agentId);
           if (
@@ -309,7 +312,12 @@ async function archiveTerminalTaskThreads(
             store.event(task.id, "thread_archive_observed", agentId);
             return;
           }
-          wait(agentId, "Thread ownership is not established");
+          wait(
+            agentId,
+            ownedByTask(observed.labels, task.id)
+              ? "Thread status is not idle"
+              : "Thread ownership is not established",
+          );
         } catch (error) {
           wait(agentId, `Archive observation unavailable: ${String(error)}`);
         }

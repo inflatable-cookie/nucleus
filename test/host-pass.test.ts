@@ -13,6 +13,8 @@ import { fakeAdapter, submission, observeIdle } from "./support/fakes";
 import { catchUpFinishedTaskThreads } from "../core/workspaces/thread-archive";
 import { hostDependents } from "../core/host/host-dependents";
 import { queueOperationSchema } from "../shared/operations";
+import { recoveryEffects } from "../core/recovery/recovery-effects";
+import { runSchema } from "../shared/contracts";
 
 /**
  * nucleus#1257: one host's audit steps are their own owner. A step that throws is
@@ -173,10 +175,24 @@ test("terminal history is observed and superseded once on an archive-only host",
     agentId: "gone",
     resolution: { ...initial.resolution, mergedCommit: "b".repeat(40) },
   });
+  const controlTask = f.store.insert(
+    submission(),
+    HOST,
+    "handoff",
+    "a".repeat(40),
+  );
+  f.store.update(controlTask.id, {
+    phase: "done",
+    resolution: { ...controlTask.resolution, mergedCommit: "b".repeat(40) },
+  });
   const at = new Date().toISOString();
   const payload = {
     type: "task_control",
-    control: { action: "restart", taskId, version: initial.version },
+    control: {
+      action: "restart",
+      taskId: controlTask.id,
+      version: controlTask.version,
+    },
   };
   const key = "terminal-control";
   f.store.putOperation(
@@ -186,9 +202,12 @@ test("terminal history is observed and superseded once on an archive-only host",
       kind: "task_control",
       inputHash: operationInputHash(payload),
       state: "needs_attention",
-      taskId,
+      taskId: controlTask.id,
       hostId: HOST,
       createdAt: at,
+      startedAt: at,
+      settledAt: at,
+      expectedVersion: controlTask.version,
       attempts: 1,
       effect: {
         kind: "task_control",
@@ -206,7 +225,7 @@ test("terminal history is observed and superseded once on an archive-only host",
   assert.equal(f.store.threadArchiveEffect("gone", HOST)?.status, "archived");
   assert.equal(
     f.store
-      .eventsAll(taskId)
+      .eventsAll(controlTask.id)
       .filter((event) => event.kind === "operation_superseded").length,
     1,
   );
@@ -226,7 +245,7 @@ test("terminal history is observed and superseded once on an archive-only host",
   await catchUpFinishedTaskThreads(f.store, adapter, taskId);
   assert.equal(
     f.store
-      .eventsAll(taskId)
+      .eventsAll(controlTask.id)
       .filter((event) => event.kind === "operation_superseded").length,
     1,
   );
@@ -309,6 +328,12 @@ test("terminal submit binds only its matching submission; cleanup controls stay 
   await pass();
   assert.equal(f.store.operation(op.id)?.taskId, task.id);
   assert.equal(
+    recoveryEffects(f.store, f.store.task(task.id), {
+      kinds: ["operation"],
+    }).find((effect) => effect.identity === op.id)?.state,
+    "superseded",
+  );
+  assert.equal(
     f.store
       .eventsAll(task.id)
       .filter((event) => event.kind === "operation_superseded").length,
@@ -330,14 +355,18 @@ test("terminal submit binds only its matching submission; cleanup controls stay 
 });
 
 test("a readable unlabelled archived thread settles, while an unreadable one waits", async (t) => {
+  let labelTaskId = "";
   const f = fixture(
     t,
     fakeAdapter({
       observe: async (id) => ({
         ...(await observeIdle("ws")(id)),
         active: id === "live",
-        status: id === "archived" ? "unknown" : "idle",
-        labels: {},
+        status: ["archived", "labelled"].includes(id) ? "unknown" : "idle",
+        labels:
+          id === "labelled"
+            ? { "northstar.task": labelTaskId }
+            : ({} as Record<string, string>),
       }),
       originAgent: async (id) => {
         if (id === "unknown") throw Error("offline");
@@ -346,24 +375,25 @@ test("a readable unlabelled archived thread settles, while an unreadable one wai
     }),
   );
   f.store.setMeta("paused", false);
-  for (const id of ["archived", "unknown", "live"]) {
+  for (const id of ["archived", "labelled", "unknown", "live"]) {
     const task = f.store.insert(submission(), HOST, "handoff", "a".repeat(40));
     f.store.update(task.id, {
       phase: "done",
       agentId: id,
       resolution: { ...task.resolution, mergedCommit: "b".repeat(40) },
     });
+    if (id === "labelled") labelTaskId = task.id;
     await catchUpFinishedTaskThreads(f.store, f.engine.adapter, task.id);
     await catchUpFinishedTaskThreads(f.store, f.engine.adapter, task.id);
     assert.equal(
       f.store.threadArchiveEffect(id, HOST)?.status,
-      id === "archived" ? "archived" : undefined,
+      ["archived", "labelled"].includes(id) ? "archived" : undefined,
     );
     assert.equal(
       f.store
         .eventsAll(task.id)
         .filter((event) => event.kind === "thread_archive_observed").length,
-      id === "archived" ? 1 : 0,
+      ["archived", "labelled"].includes(id) ? 1 : 0,
     );
   }
 });
@@ -412,6 +442,9 @@ test("terminal operation pages advance past an unprovable submission", async (t)
         taskId: task.id,
         hostId: HOST,
         createdAt: at,
+        startedAt: at,
+        settledAt: at,
+        expectedVersion: task.version,
         attempts: 1,
         effect: {
           kind: "task_control",
@@ -443,5 +476,112 @@ test("terminal operation pages advance past an unprovable submission", async (t)
     hostDependents(f.store, { id: HOST, kind: "paseo", primary: true })
       .find((item) => item.kind === "effect")
       ?.names.includes("submit"),
+  );
+});
+
+test("legacy submissions settle while a live restart target remains owed", async (t) => {
+  const f = fixture(t, fakeAdapter({}));
+  const submitted = submission();
+  const task = f.store.insert(submitted, HOST, "handoff", "a".repeat(40));
+  f.store.update(task.id, {
+    phase: "done",
+    resolution: { ...task.resolution, mergedCommit: "b".repeat(40) },
+  });
+  const { scope, ...rest } = submitted;
+  const payload = {
+    type: "submit",
+    submission: { ...rest, capability: scope },
+  };
+  const key = `submit:${submitted.submissionId}`;
+  const accepted = f.store.acceptOperation({
+    key,
+    kind: "submit",
+    submissionId: submitted.submissionId,
+    hostId: HOST,
+    inputHash: operationInputHash(payload),
+    payload,
+  });
+  assert.ok("accepted" in accepted);
+  f.store.putOperation({
+    ...accepted.operation,
+    state: "needs_attention",
+    attempts: 1,
+  });
+  const at = new Date().toISOString();
+  f.store.putRun(
+    runSchema.parse({
+      id: "live-run",
+      taskId: task.id,
+      hostId: HOST,
+      role: "revision",
+      generation: 1,
+      agentId: "live-agent",
+      workspaceId: "ws",
+      status: "running",
+      released: false,
+      head: "a".repeat(40),
+      base: "a".repeat(40),
+      profile: null,
+      lastObservedAt: null,
+      active: true,
+      idleSince: null,
+      completion: null,
+      createdAt: at,
+    }),
+  );
+  const control = {
+    type: "task_control",
+    control: { action: "restart", taskId: task.id, version: task.version },
+  };
+  const controlKey = "live-restart";
+  const restart = f.store.putOperation(
+    queueOperationSchema.parse({
+      id: operationIdForKey(controlKey),
+      key: controlKey,
+      kind: "task_control",
+      inputHash: operationInputHash(control),
+      state: "needs_attention",
+      taskId: task.id,
+      hostId: HOST,
+      expectedVersion: task.version,
+      createdAt: at,
+      startedAt: at,
+      settledAt: at,
+      attempts: 1,
+      effect: {
+        kind: "task_control",
+        target: "restart",
+        intentAt: at,
+        status: "uncertain",
+      },
+    }),
+    control,
+  );
+  const pass = () => f.engine.withHost(HOST, () => f.hostPass.run(HOST));
+  await pass();
+  assert.equal(f.store.operation(accepted.operation.id)?.taskId, task.id);
+  const effects = recoveryEffects(f.store, f.store.task(task.id), {
+    kinds: ["operation"],
+  });
+  assert.equal(
+    effects.find((effect) => effect.identity === accepted.operation.id)?.state,
+    "superseded",
+  );
+  assert.equal(
+    effects.find((effect) => effect.identity === restart.id)?.state,
+    "uncertain",
+  );
+  assert.equal(
+    f.store
+      .eventsAll(task.id)
+      .filter((event) => event.kind === "operation_superseded").length,
+    1,
+  );
+  await pass();
+  assert.equal(
+    f.store
+      .eventsAll(task.id)
+      .filter((event) => event.kind === "operation_superseded").length,
+    1,
   );
 });

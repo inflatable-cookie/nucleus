@@ -16,6 +16,7 @@ import {
 } from "../recovery/recovery-effects";
 import { operationIdForKey, operationInputHash } from "../store/store";
 import { submissionSchema } from "../../shared/contracts";
+import { submissionRecordFromLegacy } from "../../shared/schema/settings/legacy";
 
 const REVIEW_PHASES = new Set([
   "awaiting_review",
@@ -292,24 +293,13 @@ export class HostPass {
     // submission cannot starve later work. Settled occurrences stay history.
     await this.step(host, "settleTerminalOperations", () => {
       const cursor = this.terminalOperationCursor.get(host) ?? 0;
+      // Page by SQLite rowid first. Filtering and event reads happen only
+      // after this bounded read, even when all old operations are settled.
       const candidates = this.store.db
         .prepare(
-          `SELECT operations.rowid AS position, operations.id AS id, tasks.id AS taskId
-        FROM operations JOIN tasks ON (tasks.id=operations.taskId OR
-          (operations.kind='submit' AND operations.taskId IS NULL AND tasks.submission=json_extract(operations.data,'$.submissionId')))
-        WHERE operations.state='needs_attention' AND operations.kind IN ('task_control','submit')
-          AND COALESCE(json_extract(operations.data,'$.hostId'),json_extract(tasks.data,'$.hostId'))=?
-          AND json_extract(tasks.data,'$.hostId')=? AND json_extract(tasks.data,'$.phase') IN ('done','cancelled')
-          AND operations.rowid>? AND NOT EXISTS (SELECT 1 FROM events WHERE events.taskId=tasks.id
-            AND events.kind='operation_superseded' AND json_valid(events.detail)
-            AND json_extract(events.detail,'$.id')=operations.id
-            AND json_extract(events.detail,'$.inputHash')=operations.inputHash
-            AND json_extract(events.detail,'$.attempt')=json_extract(operations.data,'$.attempts')
-            AND json_extract(events.detail,'$.intentAt') IS json_extract(operations.data,'$.effect.intentAt')
-            AND json_type(events.detail,'$.evidence')='text')
-        ORDER BY operations.rowid LIMIT 25`,
+          "SELECT rowid AS position, id FROM operations WHERE rowid>? ORDER BY rowid LIMIT 25",
         )
-        .all(host, host, cursor);
+        .all(cursor);
       this.terminalOperationCursor.set(
         host,
         candidates.length
@@ -319,10 +309,26 @@ export class HostPass {
       for (const row of candidates)
         this.store.transaction(() => {
           let operation = this.store.operation(String(row.id));
-          if (!operation || operation.state !== "needs_attention") return;
-          const task = this.store.task(String(row.taskId));
+          if (
+            !operation ||
+            operation.state !== "needs_attention" ||
+            !["submit", "task_control"].includes(operation.kind)
+          )
+            return;
+          const taskRow = operation.taskId
+            ? this.store.db
+                .prepare("SELECT id FROM tasks WHERE id=?")
+                .get(operation.taskId)
+            : operation.kind === "submit" && operation.submissionId
+              ? this.store.db
+                  .prepare("SELECT id FROM tasks WHERE submission=?")
+                  .get(operation.submissionId)
+              : undefined;
+          if (!taskRow) return;
+          const task = this.store.task(String(taskRow.id));
           if (
             task.hostId !== host ||
+            (operation.hostId && operation.hostId !== host) ||
             !["done", "cancelled"].includes(task.phase)
           )
             return;
@@ -338,7 +344,17 @@ export class HostPass {
           )
             return;
           if (operation.kind === "submit") {
-            const parsed = submissionSchema.safeParse(payload.submission);
+            let parsed: ReturnType<typeof submissionSchema.safeParse>;
+            try {
+              parsed = submissionSchema.safeParse(
+                submissionRecordFromLegacy(
+                  payload.submission,
+                  "submit operation",
+                ),
+              );
+            } catch {
+              return;
+            }
             if (
               payload.type !== "submit" ||
               !parsed.success ||
@@ -378,6 +394,7 @@ export class HostPass {
             operation.kind === "task_control"
               ? observedHostEffectEvidence(this.store, task, operation)
               : null;
+          if (operation.kind === "task_control" && !evidence) return;
           this.store.event(
             task.id,
             "operation_superseded",
@@ -386,7 +403,9 @@ export class HostPass {
               inputHash: operation.inputHash,
               attempt: operation.attempts,
               intentAt: operation.effect?.intentAt,
-              evidence: evidence ?? `task is ${task.phase}`,
+              evidence:
+                evidence ??
+                `matching submission belongs to terminal task ${task.phase}`,
             }),
           );
         });
