@@ -336,6 +336,7 @@ test("a readable unlabelled archived thread settles, while an unreadable one wai
       observe: async (id) => ({
         ...(await observeIdle("ws")(id)),
         active: id === "live",
+        status: id === "archived" ? "unknown" : "idle",
         labels: {},
       }),
       originAgent: async (id) => {

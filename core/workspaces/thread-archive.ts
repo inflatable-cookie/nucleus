@@ -286,12 +286,7 @@ async function archiveTerminalTaskThreads(
         return;
       }
       // An active turn or pending permission waits for the next pass (review #543).
-      if (
-        observed.active ||
-        observed.activeTurnId ||
-        observed.permissions ||
-        !["idle", "error", "closed"].includes(observed.status)
-      ) {
+      if (observed.active || observed.activeTurnId || observed.permissions) {
         wait(agentId, "Thread is active or waiting for permission");
         return;
       }
@@ -318,6 +313,10 @@ async function archiveTerminalTaskThreads(
         } catch (error) {
           wait(agentId, `Archive observation unavailable: ${String(error)}`);
         }
+        return;
+      }
+      if (!["idle", "error", "closed"].includes(observed.status)) {
+        wait(agentId, "Thread status is not idle");
         return;
       }
       op = opFor(agentId, observed.labels);
