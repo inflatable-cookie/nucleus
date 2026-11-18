@@ -496,6 +496,10 @@ export class T3CodeHost implements Host {
   async enqueueMessage(id: string, input: HostMessage): Promise<void> { await this.sendMessage(id, input); }
 
   async sendGuarded(id: string, input: HostGuardedMessage, guard: HostSendGuard) {
+    // A thread this host no longer observes refuses here, as a guarded send refuses:
+    // the retained-thread fence is a pre-send decision, never a thrown read
+    // (nucleus#1328 review).
+    if (!await this.reads.isObserved(id)) return { sent: false as const, reason: 'T3Code retained-thread guard refused' };
     const observed = await this.reads.observe(id);
     if (observed.workspaceId !== input.expectedWorkspaceId || observed.active || observed.permissions || observed.archived || observed.status === 'gone' || !await guard.allowed()) return { sent: false as const, reason: 'T3Code retained-thread guard refused' };
     await this.presentation.unsettleBeforeMessage(id, input.messageId);
@@ -544,7 +548,13 @@ export class T3CodeHost implements Host {
     }
   }
 
-  async stopAgentTurn(id: string) { const p = await this.reads.readProjection(id, 'observation'); const runs = p.runs.filter(r => activeStatuses.has(r.status)).map(r => r.id).sort(); if (!runs.length) return;
+  /**
+   * One explicit stop of this thread's live runs. A thread that has left observation
+   * still answers with the run T3's own thread list names, so an operator or a stalled
+   * turn stop keeps working; with nothing live there is nothing to send
+   * (nucleus#1328 review).
+   */
+  async stopAgentTurn(id: string) { const runs = await this.reads.activeRunIds(id); if (!runs.length) return;
     const key = identity('stop', canonical([id, runs])); await this.intents.effect(key, 'orchestration.dispatchCommand', { type: 'thread.stop', commandId: key, threadId: id }); }
 
   async archiveAgent(id: string) { const key = identity('archive', id); await this.intents.effect(key, 'orchestration.dispatchCommand', { type: 'thread.archive', commandId: key, threadId: id }); }

@@ -508,6 +508,10 @@ export class T3Presentation {
       // the parent's held turn and release own that, so a child settle recorded before
       // nesting began is left as recorded rather than re-read and sent.
       if (this.core.nestedChild?.(intentThreadId(intent) ?? '')) return false;
+      // A thread that left observation proves nothing about this delivery: the entry
+      // stays exactly as recorded, unknown, and is not reconciled, resent or marked
+      // settled without a T3 read that proves it (nucleus#1328 review).
+      if (!this.core.reads.observes(intentThreadId(intent) ?? '')) return false;
       return isIntent('thread.settle', intent);
     });
     for (const [key, intent] of pending) {
@@ -530,14 +534,17 @@ export class T3Presentation {
    * thread). A bind that never named a latest run cannot be verified either
    * way, so it retires the same way instead of looping invisibly; a malformed
    * intent with no thread stays unknown delivery and is never resent.
+   * `unobserved` means this host no longer observes the thread, so nothing here
+   * can prove the delivery either way: the entry is left exactly as recorded and
+   * is never rewritten to settled without T3 evidence (nucleus#1328 review).
    */
-  async reconcileSettleIntent(key: string, intent: T3State['intents'][string]): Promise<'settled' | 'retired'> {
+  async reconcileSettleIntent(key: string, intent: T3State['intents'][string]): Promise<'settled' | 'retired' | 'unobserved'> {
     const threadId = intentThreadId(intent);
     if (!isIntent('thread.settle', intent) || !threadId) throw new HostUnknownDeliveryError();
-    // A settle for a thread that left observation proves nothing more: its task is
-    // over or T3 reports it archived, and the terminal lane owns the thread. The
-    // intent is retired as superseded, never resent (nucleus#1328).
-    if (!await this.core.reads.isObserved(threadId)) { this.markSettleObserved(key, { settled: false, superseded: true }); return 'retired'; }
+    // A thread that left observation proves nothing more: its task is over or T3
+    // reports it archived, the terminal lane owns the thread, and the recorded
+    // unknown delivery stays unknown. Nothing is written, read or resent.
+    if (!await this.core.reads.isObserved(threadId)) return 'unobserved';
     const payload = JSON.parse(intent.payload) as { payload?: { expectedLatestRunId?: string } };
     const projection = await this.core.reads.readProjection(threadId, 'observation');
     if (projection.thread.settledOverride === 'settled') { this.markSettleObserved(key); this.noteThreadSettled(threadId, key); return 'settled'; }

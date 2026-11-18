@@ -431,10 +431,24 @@ export class T3Reads {
   }
 
   async activeRunId(id: string): Promise<string | null> {
-    if (!await this.isObserved(id)) return null;
+    if (!await this.isObserved(id)) return (await this.listRow(id))?.activeRunId ?? null;
     const projection = await this.readProjection(id, 'observation');
     const native = (await this.inventory()).threads.find(t => t.id === id);
     return projection.runs.find(r => activeStatuses.has(r.status))?.id ?? native?.activeRunId ?? null;
+  }
+  /**
+   * Every run of this thread that is live, the identity an explicit stop names. A
+   * thread that has left observation still answers from the thread list's own
+   * `activeRunId`: stopping a live turn is a control action, not a read of the
+   * thread this host stopped paying for (nucleus#1328 review).
+   */
+  async activeRunIds(id: string): Promise<string[]> {
+    if (!await this.isObserved(id)) {
+      const row = await this.listRow(id);
+      return row?.activeRunId ? [row.activeRunId] : [];
+    }
+    const projection = await this.readProjection(id, 'observation');
+    return projection.runs.filter(r => activeStatuses.has(r.status)).map(r => r.id).sort();
   }
   /**
    * A thread's pending native questions, read from the bounded snapshot. The

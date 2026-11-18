@@ -39,6 +39,7 @@ async function fixture(t: TestContext, input: {
   threads: readonly StoredThread[];
   settled?: readonly { threadId: string; runId: string }[];
   pendingSettles?: readonly { threadId: string; runId: string }[];
+  unknownSettles?: readonly { threadId: string; runId: string }[];
   /** Threads this host proved it removed. */
   deleted?: readonly string[];
   seed?: (server: Fake, directory: string) => void;
@@ -48,7 +49,8 @@ async function fixture(t: TestContext, input: {
   const server = await t3Fake(t, directory);
   const statePath = join(root, 'state.json');
   writeFileSync(statePath, JSON.stringify(storedHostState({ directory, threads: input.threads,
-    settled: input.settled, pendingSettles: input.pendingSettles, deleted: input.deleted })), { mode: 0o600 });
+    settled: input.settled, pendingSettles: input.pendingSettles, unknownSettles: input.unknownSettles,
+    deleted: input.deleted })), { mode: 0o600 });
   for (const thread of input.threads) seed(server, thread.id, directory);
   input.seed?.(server, directory);
   const host = new T3CodeHost({ endpoint: server.endpoint, bearer: 'synthetic-bearer', statePath, timeoutMs: 1_000,
@@ -259,4 +261,62 @@ test('a live task still reads its own threads once for their step and row title'
   assert.ok(host.state.read().agents[reviewer.id] !== undefined, 'a live support thread stays observed');
   const titles = server.commands.filter(command => command.type === 'thread.metadata.update').map(command => command.title);
   assert.ok(titles.some(title => String(title).includes('blocked: reviewer')), 'the row names the faulted reviewer');
+});
+
+test('an explicit stop still stops a live run in a thread that left observation', async t => {
+  // A control action is not a read of the thread this host stopped paying for: the
+  // thread list's own activeRunId names the run, so the stop lands and serves no
+  // snapshot (nucleus#1328 review).
+  const stopped = { id: threadId('stopped'), taskId: 'task-done', runId: 'run-stopped', role: 'revision' as const };
+  const idle = { id: threadId('idle'), taskId: 'task-done', runId: 'run-idle' };
+  const { host, server, snapshotsFor, served } = await fixture(t, {
+    threads: [stopped, idle],
+    seed: (fake, directory) => {
+      const projection = seed(fake, stopped.id, directory, p => {
+        p.runs.push(syntheticRun(stopped.id, 1, { id: 'live-native-run', status: 'running', rootNodeId: 'node-root' }));
+      });
+      projection.thread.archivedAt = STAMP;
+      fake.threads.get(idle.id)!.thread.archivedAt = STAMP;
+    },
+  });
+  const tasks = [taskFact('task-done', 'done')] as Task[];
+  await host.beginHostPass(tasks);
+  assert.equal(host.state.read().agents[stopped.id], undefined, 'the thread left observation');
+  const before = served();
+  // A live run on a thread this host no longer observes is still stopped, once.
+  await host.stopAgentTurn(stopped.id);
+  const stops = server.commands.filter(command => command.type === 'thread.stop');
+  assert.deepEqual(stops.map(command => command.threadId), [stopped.id], 'the stop reached the live run');
+  // Nothing was read to decide it, and a thread with no live run sends nothing.
+  await host.stopAgentTurn(idle.id);
+  assert.equal(server.commands.filter(command => command.type === 'thread.stop').length, 1, 'nothing is stopped twice');
+  assert.equal(snapshotsFor(stopped.id, before), 0, 'the stop read no snapshot');
+  assert.equal(served(), before, 'neither stop served a thread snapshot');
+  await host.endHostPass();
+});
+
+test('an unknown settle for a thread that left observation stays exactly as recorded', async t => {
+  // Unknown delivery is never rewritten into a receipt: without a T3 read that proves
+  // the settle landed, the entry keeps the outcome it has, and nothing is resent,
+  // read for or marked settled (nucleus#1328 review).
+  const thread = { id: threadId('unknown'), taskId: 'task-done', runId: 'run-unknown', role: 'revision' as const };
+  const { host, server, snapshotsFor, served } = await fixture(t, {
+    threads: [thread], unknownSettles: [{ threadId: thread.id, runId: thread.runId }],
+  });
+  const recorded = Object.entries(host.state.read().intents)
+    .find(([, intent]) => (intent as { kind?: string }).kind === 'thread.settle')!;
+  assert.equal((recorded[1] as { status: string }).status, 'unknown');
+  const before = served();
+  await host.beginHostPass([taskFact('task-done', 'done') as Task]);
+  await host.settleReportedThread(thread.id, thread.runId);
+  await host.reconcileReportedSettlements();
+  await host.settleWorkerThread(thread.id, thread.runId);
+  await host.reconcileSettledThreads();
+  await host.endHostPass();
+  const after = host.state.read().intents[recorded[0]];
+  assert.equal(after?.status, 'unknown', 'the recorded outcome is not rewritten');
+  assert.equal(Object.hasOwn(after ?? {}, 'result'), false, 'no invented receipt is written');
+  assert.deepEqual(after?.payload, (recorded[1] as { payload: string }).payload, 'the recorded wire is untouched');
+  assert.equal(server.commands.filter(command => command.type === 'thread.settle').length, 0, 'nothing was sent');
+  assert.equal(snapshotsFor(thread.id, before), 0, 'and nothing was read for it');
 });

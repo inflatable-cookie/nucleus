@@ -558,6 +558,14 @@ one snapshot per pass. A transcript read is never served from a bounded snapshot
 and an unreadable thread list falls back to the plain per-thread read instead of
 holding a marker it could not prove.
 
+Leaving observation never turns a delivery fact into a settled one. An unknown
+`thread.settle` for a thread this host no longer observes is left exactly as
+recorded — never resent, never reconciled, and never marked settled without a T3
+read that proves it — and a recorded worker settle can no longer be presented, so
+its retry record is dropped while its receipt, if any, stays as recorded. A control
+action still works: an explicit stop reads the live run from the thread list's own
+`activeRunId`, and a guarded send refuses before it reads anything.
+
 Report active run, idle, pending question/permission and archived state from
 positive native facts. A removed thread has no projection; the origin read uses
 `deletedAt` or absence from a complete authoritative inventory to prove removal.

@@ -44,6 +44,11 @@ export interface StoredHostStateInput {
   settled?: readonly StoredSettle[];
   /** Threads whose handover settle was recorded and never completed. */
   pendingSettles?: readonly StoredSettle[];
+  /**
+   * A settle whose delivery is unknown, exactly as an interrupted send leaves it: the
+   * entry keeps its recorded status and result, and nothing may turn it into a receipt.
+   */
+  unknownSettles?: readonly StoredSettle[];
   /** Threads whose presentation intents are settled, so a title already landed. */
   rowTitles?: readonly { threadId: string; title: string }[];
   /** A settled deletion intent per thread, as a confirmed removal leaves it. */
@@ -90,6 +95,12 @@ export function storedHostState(input: StoredHostStateInput) {
     // A settle that is still waiting, not one past its own TTL: the record's timestamp
     // is the handover's, and an old one is retired on age before anything reads it.
     pendingSettles[commandId] = { agentId: pending.threadId, runId: pending.runId, commandId, recordedAt: new Date().toISOString() };
+  }
+  for (const unknown of input.unknownSettles ?? []) {
+    const commandId = unknown.commandId ?? identity('settle', canonical([hostId, unknown.threadId, unknown.runId]));
+    intents[commandId] = { payload: JSON.stringify({ method: 'orchestration.dispatchCommand',
+      payload: { type: 'thread.settle', commandId, threadId: unknown.threadId, expectedLatestRunId: unknown.runId } }),
+      status: 'unknown', kind: 'thread.settle', threadId: unknown.threadId };
   }
   for (const row of input.rowTitles ?? []) rowTitles[row.threadId] = row.title;
   for (const threadId of input.deleted ?? []) {
