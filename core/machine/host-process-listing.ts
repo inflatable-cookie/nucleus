@@ -11,6 +11,8 @@ export type { HostProcessFact } from "../host/types";
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { homedir } from "node:os";
+import { basename, isAbsolute, join } from "node:path";
 import { readFileSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
 import {
   cwdMapFromLsof,
@@ -264,14 +266,40 @@ export async function readHostUidProcesses(): Promise<HostProcessListRead> {
       process.platform === "linux"
         ? await linuxProcesses(uid)
         : await darwinProcesses(uid);
-    if (read.state === "listed")
+    if (read.state === "listed") {
       await readBbSessionEnvironments(read.processes);
+      markTrustedCuaProcesses(read.processes);
+    }
     return read;
   }
   return {
     state: "unknown",
     reason: `host process listing is unsupported on ${process.platform}`,
   };
+}
+
+/** Only the installed executable can be the standing Cua MCP server. */
+export function markTrustedCuaProcesses(
+  facts: HostProcessFact[],
+  installed = join(homedir(), ".local/bin/cua-driver"),
+): void {
+  let trusted: string;
+  try {
+    trusted = realpathSync(installed);
+  } catch {
+    return;
+  }
+  for (const fact of facts) {
+    const match = /^(?:"([^"]+)"|'([^']+)'|(\S+))/.exec(fact.command.trim());
+    const program = match?.[1] ?? match?.[2] ?? match?.[3];
+    if (!program || !isAbsolute(program) || basename(program) !== "cua-driver")
+      continue;
+    try {
+      if (realpathSync(program) === trusted) fact.trustedCuaExecutable = true;
+    } catch {
+      /* An unreadable executable is not positive identity. */
+    }
+  }
 }
 
 /** Read only possible bridge sessions, and keep a reused or unreadable pid unknown. */

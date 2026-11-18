@@ -56,6 +56,18 @@ export function bbWorkspaceThreads(
     if (thread) threads.add(thread);
   };
   if (task.workspaceId === workspaceId) add(task.agentId, task.hostId);
+  for (const retired of task.retiredWorkers ?? []) {
+    const run = runs.find((item) => item.id === retired.runId);
+    if (
+      run &&
+      (run.taskId !== task.id ||
+        run.role !== "revision" ||
+        run.agentId !== retired.agentId)
+    )
+      throw Error("Retired worker run identity conflicts");
+    if ((run?.workspaceId ?? task.workspaceId) === workspaceId)
+      add(retired.agentId, run?.hostId ?? task.hostId);
+  }
   for (const run of runs)
     if (
       run.taskId === task.id &&
@@ -70,7 +82,7 @@ export function bbWorkspaceThreads(
 export function bbRuntimePids(
   processes: readonly Pick<
     HostProcessFact,
-    "pid" | "ppid" | "command" | "bbThreadId"
+    "pid" | "ppid" | "command" | "bbThreadId" | "trustedCuaExecutable"
   >[],
   threadIds: readonly string[],
 ): Set<number> {
@@ -81,7 +93,7 @@ export function bbRuntimePids(
 export function possibleBbRuntimePids(
   processes: readonly Pick<
     HostProcessFact,
-    "pid" | "ppid" | "command" | "bbThreadId"
+    "pid" | "ppid" | "command" | "bbThreadId" | "trustedCuaExecutable"
   >[],
 ): Set<number> {
   return bbBridgePids(processes, null);
@@ -90,7 +102,7 @@ export function possibleBbRuntimePids(
 function bbBridgePids(
   processes: readonly Pick<
     HostProcessFact,
-    "pid" | "ppid" | "command" | "bbThreadId"
+    "pid" | "ppid" | "command" | "bbThreadId" | "trustedCuaExecutable"
   >[],
   wanted: Set<string> | null,
 ): Set<number> {
@@ -134,7 +146,12 @@ function bbBridgePids(
     for (const child of processes) {
       if (child.ppid !== session.pid) continue;
       const argv = commandArgv(child.command);
-      if (argvBase(argv[0]) === "cua-driver" && argv[1] === "mcp")
+      if (
+        child.trustedCuaExecutable &&
+        argvBase(argv[0]) === "cua-driver" &&
+        argv.length === 2 &&
+        argv[1] === "mcp"
+      )
         runtime.add(child.pid);
     }
   }

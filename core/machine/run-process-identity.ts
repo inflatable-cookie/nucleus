@@ -55,20 +55,34 @@ export function darwinBbThreadFromProcargs(data: Buffer): string | null {
 }
 
 // sysctl returns NUL-delimited argv and environment; ps -E loses the boundaries.
-// The helper emits only the requested PID's raw kernel response, never logs it,
-// and an unavailable system Python or denied sysctl leaves the fact unknown.
-const DARWIN_PROCARGS = `import base64, ctypes, json, sys
-lib = ctypes.CDLL(None, use_errno=True)
-out = {}
-for arg in sys.argv[1:]:
-    pid = int(arg)
-    mib = (ctypes.c_int * 3)(1, 49, pid)
-    size = ctypes.c_size_t(0)
-    if lib.sysctl(mib, 3, None, ctypes.byref(size), None, 0) != 0 or size.value > 2097152 or size.value < 5: continue
-    buf = ctypes.create_string_buffer(size.value)
-    if lib.sysctl(mib, 3, buf, ctypes.byref(size), None, 0) == 0:
-        out[arg] = base64.b64encode(buf.raw[:size.value]).decode('ascii')
-print(json.dumps(out))`;
+// macOS ships osascript and its Objective-C bridge; no developer tools are needed.
+// The helper returns the raw kernel response only over its private stdout pipe.
+const DARWIN_PROCARGS = `ObjC.import('Foundation');
+ObjC.bindFunction('calloc', ['void *', ['size_t', 'size_t']]);
+ObjC.bindFunction('free', ['void', ['void *']]);
+ObjC.bindFunction('sysctl', ['int', ['void *', 'unsigned int', 'void *', 'void *', 'void *', 'size_t']]);
+function put(p, offset, n) { for (let i = 0; i < 4; i++) p[offset + i] = (n >>> (i * 8)) & 255; }
+function size(p) { return p[0] + p[1] * 256 + p[2] * 65536 + p[3] * 16777216; }
+function run(args) {
+  const out = {};
+  for (const arg of args) {
+    const pid = Number(arg);
+    if (!Number.isSafeInteger(pid) || pid <= 0) continue;
+    const mib = $.calloc(12, 1), length = $.calloc(8, 1);
+    try {
+      put(mib, 0, 1); put(mib, 4, 49); put(mib, 8, pid);
+      if ($.sysctl(mib, 3, null, length, null, 0) !== 0) continue;
+      const count = size(length);
+      if (count < 5 || count > 2097152) continue;
+      const data = $.calloc(count, 1);
+      try {
+        if ($.sysctl(mib, 3, data, length, null, 0) === 0 && size(length) <= count)
+          out[arg] = ObjC.unwrap($.NSData.dataWithBytesLength(data, size(length)).base64EncodedStringWithOptions(0));
+      } finally { $.free(data); }
+    } finally { $.free(length); $.free(mib); }
+  }
+  return JSON.stringify(out);
+}`;
 
 export async function darwinBbThreadEnvironments(
   pids: readonly number[],
@@ -78,8 +92,8 @@ export async function darwinBbThreadEnvironments(
     const chunk = pids.slice(offset, offset + 32);
     try {
       const { stdout } = await execFileAsync(
-        "/usr/bin/python3",
-        ["-c", DARWIN_PROCARGS, ...chunk.map(String)],
+        "/usr/bin/osascript",
+        ["-l", "JavaScript", "-e", DARWIN_PROCARGS, "--", ...chunk.map(String)],
         { encoding: "utf8", timeout: 5000, maxBuffer: 16 * 1024 * 1024 },
       );
       const output = JSON.parse(stdout) as Record<string, string>;

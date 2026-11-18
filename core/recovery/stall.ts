@@ -978,7 +978,13 @@ export function workspaceToolProcessIssue(
   processes: Array<
     Pick<
       HostProcessFact,
-      "pid" | "ppid" | "state" | "command" | "cwd" | "bbThreadId"
+      | "pid"
+      | "ppid"
+      | "state"
+      | "command"
+      | "cwd"
+      | "bbThreadId"
+      | "trustedCuaExecutable"
     >
   >,
   directory: string,

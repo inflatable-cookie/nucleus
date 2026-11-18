@@ -1,6 +1,12 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OwnedTools } from "../core/machine/owned-tool";
@@ -10,6 +16,7 @@ import type { HostProcessFact, TimelinePage } from "../core/host/types";
 import { workspaceToolProcessIssue } from "../core/recovery/stall";
 import { toolTimelinePage } from "./support/tool-timeline";
 import { bbProcessFixture } from "./support/bb-process-fixture";
+import { markTrustedCuaProcesses } from "../core/machine/host-process-listing";
 
 function fixture(t: TestContext, bb = false) {
   const root = mkdtempSync(join(tmpdir(), "bounded-tool-evidence-"));
@@ -24,6 +31,12 @@ function fixture(t: TestContext, bb = false) {
     directory,
     temporaryDirectory,
     hostId: bb ? "bb:fixture" : "paseo-fixture",
+    retiredWorkers: [] as Array<{
+      agentId: string;
+      runId: string;
+      profile: null;
+      reason: string;
+    }>,
     resolution: { ownerSettlements: [] },
   };
   let observation: Partial<AgentObservation> | null = {
@@ -120,6 +133,16 @@ test("BB bridge and session are bound runtime, while their commands and unknown 
   assert.equal(await f.proof(), null);
   f.setProcesses([
     ...facts,
+    {
+      ...facts[3]!,
+      pid: 106,
+      command: `${f.task.directory}/cua-driver mcp`,
+      trustedCuaExecutable: false,
+    },
+  ]);
+  assert.match((await f.proof())!, /process 106 remains/);
+  f.setProcesses([
+    ...facts,
     { ...facts[2]!, pid: 104, ppid: 102, command: "node build.mjs" },
   ]);
   assert.match((await f.proof())!, /process 104 remains/);
@@ -138,6 +161,54 @@ test("BB bridge and session are bound runtime, while their commands and unknown 
     f.setProcesses(await bbProcessFixture(f.task.directory, thread));
     assert.match((await f.proof())!, /process 101 remains/);
   }
+});
+
+test("the process reader recognizes only the installed Cua executable", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "bb-cua-identity-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const installed = join(root, "installed"),
+    workspace = join(root, "workspace");
+  mkdirSync(installed);
+  mkdirSync(workspace);
+  const trusted = join(installed, "cua-driver"),
+    counterfeit = join(workspace, "cua-driver");
+  writeFileSync(trusted, "");
+  writeFileSync(counterfeit, "");
+  const alias = join(root, "cua-driver");
+  symlinkSync(trusted, alias);
+  const fact = (pid: number, command: string): HostProcessFact => ({
+    pid,
+    ppid: 1,
+    pgid: pid,
+    uid: 1,
+    startIdentity: `${pid}@fixture`,
+    command,
+    cwd: workspace,
+  });
+  const facts = [fact(1, `${alias} mcp`), fact(2, `${counterfeit} mcp`)];
+  markTrustedCuaProcesses(facts, alias);
+  assert.equal(facts[0]!.trustedCuaExecutable, true);
+  assert.equal(facts[1]!.trustedCuaExecutable, undefined);
+});
+
+test("a retired initial worker without a run row remains bound to the shared workspace", async (t) => {
+  const f = fixture(t, true);
+  f.task.retiredWorkers.push({
+    agentId: "retired-worker",
+    runId: "initial-run",
+    profile: null,
+    reason: "replacement",
+  });
+  const worker = await bbProcessFixture(f.task.directory, f.task.agentId);
+  const retired = (
+    await bbProcessFixture(f.task.directory, "retired-worker")
+  ).map((fact) => ({
+    ...fact,
+    pid: fact.pid + 1000,
+    ppid: fact.ppid === 1 ? 1 : fact.ppid! + 1000,
+  }));
+  f.setProcesses([...worker, ...retired]);
+  assert.equal(await f.proof(), null);
 });
 
 test("both BB participants in a shared workspace are runtime, but either session can run work", async (t) => {

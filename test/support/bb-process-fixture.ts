@@ -32,7 +32,10 @@ export async function bbProcessFixture(
       `${bb} /opt/host-daemon/dist/bb-provider-bridge-worker.mjs /artifact plugin /data`,
     ),
     fact(102, 101, "/fixture/bin/claude --output-format stream-json"),
-    fact(103, 102, "/fixture/bin/cua-driver mcp"),
+    {
+      ...fact(103, 102, "/fixture/bin/cua-driver mcp"),
+      trustedCuaExecutable: true,
+    },
   ];
   await readBbSessionEnvironments(facts, {
     identity: async (pid) => ({ kind: "identity", identity: `${pid}@fixture` }),
