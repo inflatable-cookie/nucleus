@@ -37,9 +37,7 @@ export interface RegistrationAdapter {
    * workspace belongs to. Throws with the reason when the caller cannot be
    * identified reliably.
    */
-  inspectRegistration(
-    callerAgentId: string,
-  ): Promise<{
+  inspectRegistration(callerAgentId: string): Promise<{
     workspaceId: string;
     directory: string;
     repoPath: string;

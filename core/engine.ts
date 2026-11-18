@@ -2983,9 +2983,7 @@ export class Engine {
   reconcile(task: Task): Promise<void> {
     return this.workerReconcile.reconcile(task);
   }
-  reconcileObservation(
-    task: Task,
-  ): Promise<{
+  reconcileObservation(task: Task): Promise<{
     state: Awaited<ReturnType<Adapter["observe"]>>;
     current: Task;
   } | null> {
