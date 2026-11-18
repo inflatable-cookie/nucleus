@@ -1560,6 +1560,9 @@ request identities and submitted handoffs are not rewritten.
   onto the sweep already waiting and it owes every run of the host, so no task's
   cleanup is dropped because another task asked first. Nothing is queued while the
   host owes no cleanup, so a task quantum never reads a process table for nothing.
+  Terminal sweeps use the host adapter’s listing when available; a failed or
+  unreadable listing retains the sweep intent. On macOS one listing uses one
+  process-table read and one cwd read for the PIDs in that snapshot.
   Prompts name the current run's directory, direct agents to prefix commands
   with that directory in `TMPDIR`, `TMP` and `TEMP` (including retained agents
   whose launch environment is older), direct agents to put fixtures in a child
@@ -1620,9 +1623,9 @@ request identities and submitted handoffs are not rewritten.
 - Skip full `effigy qa`/`ci` and repeat passes; raw `npx`/`cargo`/`bun`
   validation has no exception. Formatting applies only to changed formatted
   source with a covering Effigy format selector; a missing selector is a
-  papercut, not a review blocker. The TypeScript formatter applies only
-  formatter hunks overlapping changed lines, reports other formatting drift,
-  and exits successfully when it has formatted the changed hunks. Full
+  papercut, not a review blocker. `effigy fmt` formats whole changed TypeScript
+  files against the merge base with `origin/main`; `effigy fmt:check` reports
+  drift without writing, including in a clean review checkout. Full
   milestone QA is `project.qa.run` on main.
 - Counts requiring a live Nucleus store read are planner evidence. Reviewers
   judge the worker's recorded counts and list any live-store verification as a
@@ -3418,7 +3421,8 @@ bundled shell imports to the same host hooks and native stand-ins.
   correction.
 - Fixture Git mutation, disposal and server stop after `quiesce`/`wake`/`stop`
   are safe. A synthetic task workspace that can reach dispatch lives inside its
-  fixture's own root, never directly in the host temporary directory.
+  fixture's own root, never directly in the host temporary directory. A private
+  host-run fixture preserves its root when settlement or server stop is unknown.
 - The parallel unit runner orders files by the recorded per-file durations in
   `scripts/test-durations.json`, longest first; unmeasured files follow in
   alphabetical order. Explicit file selections retain their given order. Refresh

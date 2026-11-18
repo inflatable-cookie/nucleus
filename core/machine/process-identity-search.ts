@@ -1,7 +1,17 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { pidAlive } from "./pid";
-import { parseLinuxProcStat, linuxStartIdentity, macStartIdentity, readHostRunStartIdentity, startIdentityMatches } from "./start-identity";
-import { darwinProcessReads, darwinProcessReadsAsync, type HostProcessLine } from "./process-host-reads";
+import {
+  parseLinuxProcStat,
+  linuxStartIdentity,
+  macStartIdentity,
+  readHostRunStartIdentity,
+  startIdentityMatches,
+} from "./start-identity";
+import {
+  darwinProcessReads,
+  darwinProcessReadsAsync,
+  type HostProcessLine,
+} from "./process-host-reads";
 
 /**
  * Which host processes carry one process group's private birth identity, and
@@ -14,33 +24,49 @@ import { darwinProcessReads, darwinProcessReadsAsync, type HostProcessLine } fro
  */
 
 /** Unique birth identity inherited by a step's leader and descendants. */
-export const PROCESS_START_IDENTITY_ENV = "NUCLEUS_QUEUE_PROCESS_START_IDENTITY";
+export const PROCESS_START_IDENTITY_ENV =
+  "NUCLEUS_QUEUE_PROCESS_START_IDENTITY";
 /**
  * Retained read only: a process group recorded before Nucleus, or an escaped
  * descendant of one, still carries this marker and no launch writes it now.
  * Dropping the read would make that recorded group unprovable and unreapable.
  */
-export const LEGACY_PROCESS_START_IDENTITY_ENV = "NORTHSTAR_QUEUE_PROCESS_START_IDENTITY";
-const PROCESS_START_IDENTITY_ENVS = [PROCESS_START_IDENTITY_ENV, LEGACY_PROCESS_START_IDENTITY_ENV];
+export const LEGACY_PROCESS_START_IDENTITY_ENV =
+  "NORTHSTAR_QUEUE_PROCESS_START_IDENTITY";
+const PROCESS_START_IDENTITY_ENVS = [
+  PROCESS_START_IDENTITY_ENV,
+  LEGACY_PROCESS_START_IDENTITY_ENV,
+];
 
 /** One identity under the current name; the retained marker is read, never written. */
-export function processStartIdentityEnvironment(identity: string): Record<string, string> {
+export function processStartIdentityEnvironment(
+  identity: string,
+): Record<string, string> {
   return { [PROCESS_START_IDENTITY_ENV]: identity };
 }
 
 export function identityMarkers(identity: string): string[] {
-  return PROCESS_START_IDENTITY_ENVS.map(name => `${name}=${identity}`);
+  return PROCESS_START_IDENTITY_ENVS.map((name) => `${name}=${identity}`);
 }
 
-export function environmentHasIdentity(environment: Buffer, identity: string): boolean {
-  return identityMarkers(identity).some(marker => environment.includes(Buffer.from(`${marker}\0`)));
+export function environmentHasIdentity(
+  environment: Buffer,
+  identity: string,
+): boolean {
+  return identityMarkers(identity).some((marker) =>
+    environment.includes(Buffer.from(`${marker}\0`)),
+  );
 }
 
 export function commandHasIdentity(command: string, identity: string): boolean {
-  return identityMarkers(identity).some(marker => command.includes(marker));
+  return identityMarkers(identity).some((marker) => command.includes(marker));
 }
 
-export interface ProcessStartIdentityFact { pid: number; processGroupId: number; startIdentity: string }
+export interface ProcessStartIdentityFact {
+  pid: number;
+  processGroupId: number;
+  startIdentity: string;
+}
 export type ProcessStartIdentitySearch =
   | { state: "found"; processes: ProcessStartIdentityFact[] }
   | { state: "absent" }
@@ -52,11 +78,23 @@ export type ProcessStartIdentityLiveness = "alive" | "dead" | "unknown";
 const darwinReads = () => darwinProcessReads();
 
 /** Check a recorded pid against the same OS start identity used by process scans. */
-export function processStartIdentityLiveness(pid: number, startIdentity: string): ProcessStartIdentityLiveness {
-  if (!Number.isSafeInteger(pid) || pid <= 0 || !startIdentity.startsWith(`${pid}@`)) return "unknown";
+export function processStartIdentityLiveness(
+  pid: number,
+  startIdentity: string,
+): ProcessStartIdentityLiveness {
+  if (
+    !Number.isSafeInteger(pid) ||
+    pid <= 0 ||
+    !startIdentity.startsWith(`${pid}@`)
+  )
+    return "unknown";
   if (process.platform === "linux") {
     try {
-      const observed = linuxStartIdentity(pid, readFileSync(`/proc/${pid}/stat`, "utf8"), linuxBootId());
+      const observed = linuxStartIdentity(
+        pid,
+        readFileSync(`/proc/${pid}/stat`, "utf8"),
+        linuxBootId(),
+      );
       if (observed.endsWith("@unknown")) return "unknown";
       return startIdentityMatches(startIdentity, observed) ? "alive" : "dead";
     } catch (error) {
@@ -84,9 +122,18 @@ export function processStartIdentityLiveness(pid: number, startIdentity: string)
  * the pid still answers liveness and `dead` once only kernel ESRCH proves it
  * gone — the same rule the synchronous reader applies.
  */
-export async function processStartIdentityLivenessAsync(pid: number, startIdentity: string): Promise<ProcessStartIdentityLiveness> {
-  if (!Number.isSafeInteger(pid) || pid <= 0 || !startIdentity.startsWith(`${pid}@`)) return "unknown";
-  if (process.platform !== "darwin") return processStartIdentityLiveness(pid, startIdentity);
+export async function processStartIdentityLivenessAsync(
+  pid: number,
+  startIdentity: string,
+): Promise<ProcessStartIdentityLiveness> {
+  if (
+    !Number.isSafeInteger(pid) ||
+    pid <= 0 ||
+    !startIdentity.startsWith(`${pid}@`)
+  )
+    return "unknown";
+  if (process.platform !== "darwin")
+    return processStartIdentityLiveness(pid, startIdentity);
   const read = await readHostRunStartIdentity(pid);
   if (read.kind === "gone") return "dead";
   if (read.kind === "unavailable") return pidAlive(pid) ? "unknown" : "dead";
@@ -95,8 +142,16 @@ export async function processStartIdentityLivenessAsync(pid: number, startIdenti
 }
 
 /** Test seam: substitute identity listings. Production is null. */
-let identityListingOverride: ProcessStartIdentitySearch | null = null;
-export function overrideIdentityListing(result: ProcessStartIdentitySearch | null): void {
+let identityListingOverride:
+  | ProcessStartIdentitySearch
+  | ((identity: string) => ProcessStartIdentitySearch)
+  | null = null;
+export function overrideIdentityListing(
+  result:
+    | ProcessStartIdentitySearch
+    | ((identity: string) => ProcessStartIdentitySearch)
+    | null,
+): void {
   identityListingOverride = result;
 }
 
@@ -104,15 +159,23 @@ export function overrideIdentityListing(result: ProcessStartIdentitySearch | nul
 let cachedBootId: string | null | undefined;
 export function linuxBootId(): string | null {
   if (cachedBootId === undefined) {
-    try { cachedBootId = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() || null; }
-    catch { cachedBootId = null; }
+    try {
+      cachedBootId =
+        readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() || null;
+    } catch {
+      cachedBootId = null;
+    }
   }
   return cachedBootId;
 }
 
 function linuxIdentitySearch(identity: string): ProcessStartIdentitySearch {
   let entries: string[];
-  try { entries = readdirSync("/proc"); } catch { return { state: "unknown" }; }
+  try {
+    entries = readdirSync("/proc");
+  } catch {
+    return { state: "unknown" };
+  }
   const processes: ProcessStartIdentityFact[] = [];
   let unreadable = false;
   const bootId = linuxBootId();
@@ -124,7 +187,11 @@ function linuxIdentitySearch(identity: string): ProcessStartIdentitySearch {
       const fields = parseLinuxProcStat(stat);
       const environment = readFileSync(`/proc/${pid}/environ`);
       if (!fields || !environmentHasIdentity(environment, identity)) continue;
-      processes.push({ pid, processGroupId: fields.pgid, startIdentity: linuxStartIdentity(pid, stat, bootId) });
+      processes.push({
+        pid,
+        processGroupId: fields.pgid,
+        startIdentity: linuxStartIdentity(pid, stat, bootId),
+      });
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code !== "ENOENT" && code !== "ESRCH") unreadable = true;
@@ -135,14 +202,20 @@ function linuxIdentitySearch(identity: string): ProcessStartIdentitySearch {
 }
 
 /** Find live processes carrying a step's inherited private identity. */
-export function processesForStartIdentity(identity: string): ProcessStartIdentitySearch {
+export function processesForStartIdentity(
+  identity: string,
+): ProcessStartIdentitySearch {
   if (!identity) return { state: "absent" };
-  if (identityListingOverride) return identityListingOverride;
+  if (identityListingOverride)
+    return typeof identityListingOverride === "function"
+      ? identityListingOverride(identity)
+      : identityListingOverride;
   if (process.platform === "linux") return linuxIdentitySearch(identity);
   // A host-wide `ps -E -A` times out or overflows on a loaded board (load ~50
   // is normal here), and its failure is `unknown`, never "no escaped
   // descendants".
-  if (process.platform === "darwin") return darwinReads().fullEnvironmentScan(identity);
+  if (process.platform === "darwin")
+    return darwinReads().fullEnvironmentScan(identity);
   return { state: "unknown" };
 }
 
@@ -157,14 +230,23 @@ function identityTreeCandidates(
   const children = new Map<number, number[]>();
   for (const line of listing) {
     const siblings = children.get(line.ppid);
-    if (siblings) siblings.push(line.pid); else children.set(line.ppid, [line.pid]);
+    if (siblings) siblings.push(line.pid);
+    else children.set(line.ppid, [line.pid]);
   }
-  const candidates = new Set<number>(roots.pids.filter(pid => Number.isSafeInteger(pid) && pid > 0));
-  if (roots.processGroupId) for (const line of listing) if (line.pgid === roots.processGroupId) candidates.add(line.pid);
+  const candidates = new Set<number>(
+    roots.pids.filter((pid) => Number.isSafeInteger(pid) && pid > 0),
+  );
+  if (roots.processGroupId)
+    for (const line of listing)
+      if (line.pgid === roots.processGroupId) candidates.add(line.pid);
   const pending = [...candidates];
   while (pending.length) {
     const pid = pending.pop()!;
-    for (const child of children.get(pid) ?? []) if (!candidates.has(child)) { candidates.add(child); pending.push(child); }
+    for (const child of children.get(pid) ?? [])
+      if (!candidates.has(child)) {
+        candidates.add(child);
+        pending.push(child);
+      }
   }
   return [...candidates];
 }
@@ -179,11 +261,17 @@ function identityTreeCandidates(
  * answer by the same rule as the synchronous readers, including `unknown` for a
  * read that could not be made.
  */
-export async function processesForStartIdentityAsync(identity: string): Promise<ProcessStartIdentitySearch> {
+export async function processesForStartIdentityAsync(
+  identity: string,
+): Promise<ProcessStartIdentitySearch> {
   if (!identity) return { state: "absent" };
-  if (identityListingOverride) return identityListingOverride;
+  if (identityListingOverride)
+    return typeof identityListingOverride === "function"
+      ? identityListingOverride(identity)
+      : identityListingOverride;
   if (process.platform === "linux") return linuxIdentitySearch(identity);
-  if (process.platform === "darwin") return darwinProcessReadsAsync().fullEnvironmentScan(identity);
+  if (process.platform === "darwin")
+    return darwinProcessReadsAsync().fullEnvironmentScan(identity);
   return { state: "unknown" };
 }
 
@@ -193,7 +281,10 @@ export async function processesForStartIdentityInTreeAsync(
   roots: { processGroupId: number | null; pids: readonly number[] },
 ): Promise<ProcessStartIdentitySearch> {
   if (!identity) return { state: "absent" };
-  if (identityListingOverride) return identityListingOverride;
+  if (identityListingOverride)
+    return typeof identityListingOverride === "function"
+      ? identityListingOverride(identity)
+      : identityListingOverride;
   if (process.platform === "linux") return processesForStartIdentity(identity);
   if (process.platform !== "darwin") return { state: "unknown" };
   const reads = darwinProcessReadsAsync();
