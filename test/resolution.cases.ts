@@ -6397,41 +6397,23 @@ test("closeout recovery waits for normal merge synchronization before reading th
     await f.close();
   }
 });
-test("a proven-absent reviewer creation is replaced once, then escalates without another launch", async () => {
+test("an uncertain reviewer creation stays owned after repeated empty lookups", async () => {
   const f = fixture();
   try {
     let calls = 0;
-    f.adapter.createRun = async () => {
-      calls++;
-      throw new Error("Transport lost");
-    };
+    f.adapter.createRun = async () => { calls++; throw new Error("Transport lost"); };
+    await f.engine.wake();
+    const run = f.store.runs(f.task.id).find(r => r.role === "reviewer")!;
+    await f.engine.wake();
+    const events = f.store.eventsAll(f.task.id).length;
     await f.engine.wake();
     assert.equal(calls, 1);
-    assert.equal(
-      f.store.runs(f.task.id).filter((r) => r.role === "reviewer").length,
-      1,
-    );
-    await f.engine.wake();
-    // One automatic replacement ran after the exact lookup proved the creation absent.
-    assert.equal(calls, 2);
-    assert.equal(
-      f.store.runs(f.task.id).filter((r) => r.role === "reviewer" && r.released)
-        .length,
-      1,
-    );
-    await f.engine.wake();
-    // The second absence settles as absent and waits for the owner: no coordinator, no relaunch.
-    assert.equal(calls, 2);
-    assert.equal(f.current().resolution.attention, false);
-    assert.match(f.current().reason, /also proved absent/);
-    assert.deepEqual(f.current().resolution.stop?.suggestedVerbs, [
-      "route",
-      "restart",
-    ]);
-    assert.equal(f.current().resolution.recovery?.runId ?? null, null);
-  } finally {
-    await f.close();
-  }
+    assert.equal(f.store.runs(f.task.id).filter(r => r.role === "reviewer").length, 1);
+    assert.equal(f.store.run(run.id)?.released, false);
+    assert.ok(!f.store.run(run.id)?.absentProvenAt);
+    assert.equal(f.store.eventsAll(f.task.id).length, events);
+    assert.match(f.current().reason, /still uncertain/);
+  } finally { await f.close(); }
 });
 
 test("blocked closeout can resynchronize main and retry on the retained coordinator", async () => {
